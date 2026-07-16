@@ -93,6 +93,104 @@ export function navDedupKey(
     return `${loc.pathname}${loc.search}${loc.hash}`;
 }
 
+// ── Exact native-view ownership ─────────────────────────────────────────
+
+interface ShownRootRecord {
+    navigationKey: string;
+    sequence: number;
+}
+
+export interface CurrentViewRoot {
+    root: HTMLElement;
+    navigationKey: string;
+    showSequence: number;
+}
+
+let shownRoots = new WeakMap<HTMLElement, ShownRootRecord>();
+let showSequence = 0;
+let everRecordedViewLifecycle = false;
+
+function escapeAttributeValue(value: string): string {
+    if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') {
+        return CSS.escape(value);
+    }
+    return value.replace(/["\\]/g, '\\$&');
+}
+
+/**
+ * Enumerate every element carrying an exact id, including duplicate ids.
+ * Attribute selectors are intentional: selector engines may optimize `#id`
+ * through getElementById() and silently return only the first cached instance.
+ */
+export function queryElementsById(id: string, scope: ParentNode = document): HTMLElement[] {
+    return Array.from(
+        scope.querySelectorAll<HTMLElement>(`[id="${escapeAttributeValue(id)}"]`)
+    );
+}
+
+function isVisibleConnectedRoot(root: HTMLElement): boolean {
+    if (!root.isConnected || root.hidden) return false;
+    if (root.getAttribute('aria-hidden') === 'true') return false;
+    return root.closest('.hide, [hidden], [aria-hidden="true"]') === null;
+}
+
+/** Record one native view instance as shown for the current navigation. */
+export function recordViewRootShown(element: Element | null | undefined): void {
+    if (!(element instanceof HTMLElement)) return;
+    shownRoots.set(element, {
+        navigationKey: navDedupKey(),
+        sequence: ++showSequence,
+    });
+    everRecordedViewLifecycle = true;
+}
+
+/**
+ * Resolve the current visible instance of a native page id.
+ *
+ * Before the bundle has observed any view lifecycle event, one unique visible instance is
+ * safe to adopt: this is the normal "bundle booted on the page" case. After a
+ * lifecycle event has been observed, an unstamped visible element can be the
+ * outgoing half of a navigation transition, so callers wait for the incoming
+ * viewbeforeshow/viewshow.
+ */
+export function resolveCurrentViewRoot(pageId: string): CurrentViewRoot | null {
+    const navigationKey = navDedupKey();
+    const visibleRoots = queryElementsById(pageId).filter(isVisibleConnectedRoot);
+    let winner: { root: HTMLElement; record: ShownRootRecord } | null = null;
+
+    for (const root of visibleRoots) {
+        const record = shownRoots.get(root);
+        if (!record || record.navigationKey !== navigationKey) continue;
+        if (!winner || record.sequence > winner.record.sequence) {
+            winner = { root, record };
+        }
+    }
+
+    if (winner) {
+        return {
+            root: winner.root,
+            navigationKey: winner.record.navigationKey,
+            showSequence: winner.record.sequence,
+        };
+    }
+
+    if (!everRecordedViewLifecycle && visibleRoots.length === 1) {
+        const root = visibleRoots[0];
+        recordViewRootShown(root);
+        const record = shownRoots.get(root)!;
+        return { root, navigationKey: record.navigationKey, showSequence: record.sequence };
+    }
+
+    return null;
+}
+
+/** Test-only reset for the module-level weak ownership ledger. */
+export function resetViewRootTrackingForTests(): void {
+    shownRoots = new WeakMap<HTMLElement, ShownRootRecord>();
+    showSequence = 0;
+    everRecordedViewLifecycle = false;
+}
+
 /**
  * Patch history.pushState / history.replaceState to emit a 'jc:navigate'
  * event. Jellyfin's SPA router calls pushState for some transitions
@@ -229,9 +327,14 @@ export function onViewBeforeShow(callback: ViewBeforeShowCallback): () => void {
     };
 }
 
+function captureViewRootShown(event: Event): void {
+    recordViewRootShown(event.target as Element | null);
+}
+
 function dispatchViewBeforeShow(event: Event): void {
     const element = event.target;
     if (!(element instanceof Element)) return;
+    captureViewRootShown(event);
     for (const callback of viewBeforeShowCallbacks) {
         try {
             callback(element, event);
@@ -444,6 +547,7 @@ function initialize(): void {
     // expiry so a router-internal onViewShow that fires WITHOUT a preceding
     // viewshow (a later same-path resolve) can never consume this event.
     document.addEventListener('viewshow', (e) => {
+        captureViewRootShown(e);
         lastViewShowEvent = e as CustomEvent;
         if (lastViewShowClearTimer) clearTimeout(lastViewShowClearTimer);
         lastViewShowClearTimer = setTimeout(() => {

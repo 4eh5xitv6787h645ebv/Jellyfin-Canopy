@@ -67,11 +67,12 @@ async function fillShelf(
     itemsContainer: HTMLElement,
     signal: AbortSignal,
     context: IdentityContext,
-    scheduleFrame: (callback: FrameRequestCallback) => void
+    scheduleFrame: (callback: FrameRequestCallback) => void,
+    isCurrent: () => boolean
 ): Promise<void> {
     try {
         const results = await fetchRow(spec, mt, signal);
-        if (signal.aborted || !JC.identity.isCurrent(context)) return;
+        if (signal.aborted || !JC.identity.isCurrent(context) || !isCurrent()) return;
         const fragment = JC.discoveryFilter?.createCardsFragment?.(results, { cardClass: 'overflowPortraitCard' });
         if (!fragment || fragment.childElementCount === 0) {
             row.classList.add('jc-discovery-row--empty');
@@ -80,10 +81,15 @@ async function fillShelf(
         itemsContainer.appendChild(fragment);
         // R7: content is in place before we reveal it; fade in (opacity only, no reflow).
         scheduleFrame(() => {
-            if (!signal.aborted && JC.identity.isCurrent(context)) itemsContainer.classList.add('jc-in');
+            if (!signal.aborted && JC.identity.isCurrent(context) && isCurrent()) {
+                itemsContainer.classList.add('jc-in');
+            }
         });
     } catch (e) {
-        if ((e as Error)?.name === 'AbortError' || signal.aborted || !JC.identity.isCurrent(context)) return;
+        if ((e as Error)?.name === 'AbortError'
+            || signal.aborted
+            || !JC.identity.isCurrent(context)
+            || !isCurrent()) return;
         row.classList.add('jc-discovery-row--empty');
     }
 }
@@ -93,12 +99,22 @@ export interface DiscoveryFeedHandle {
     destroy: () => void;
 }
 
+export interface DiscoveryFeedOwner {
+    signal?: AbortSignal;
+    isCurrent?: () => boolean;
+}
+
 /**
  * Renders a discovery feed for a media type into `container`. `userRowIds` overrides the row set
  * (per-user customization); null uses the admin/default rows plus a few genre rows. Returns a
  * handle whose destroy() aborts in-flight fetches and disconnects the lazy-load observer.
  */
-export async function renderFeed(container: HTMLElement, mt: DiscoveryMediaType, userRowIds: string[] | null = null): Promise<DiscoveryFeedHandle> {
+export async function renderFeed(
+    container: HTMLElement,
+    mt: DiscoveryMediaType,
+    userRowIds: string[] | null = null,
+    owner: DiscoveryFeedOwner = {}
+): Promise<DiscoveryFeedHandle> {
     ensureCss();
     const context = JC.identity.capture();
     const abort = new AbortController();
@@ -111,6 +127,8 @@ export async function renderFeed(container: HTMLElement, mt: DiscoveryMediaType,
 
     let observer: IntersectionObserver | null = null;
     let destroyed = false;
+    let ownerAbort: (() => void) | null = null;
+    const isCurrent = (): boolean => owner.isCurrent?.() !== false;
     const frames = new Set<number>();
     const scheduleFrame = (callback: FrameRequestCallback): void => {
         const frame = requestAnimationFrame((time) => {
@@ -127,9 +145,14 @@ export async function renderFeed(container: HTMLElement, mt: DiscoveryMediaType,
         observer?.disconnect();
         frames.forEach((frame) => cancelAnimationFrame(frame));
         frames.clear();
+        if (ownerAbort) owner.signal?.removeEventListener('abort', ownerAbort);
+        ownerAbort = null;
         activeDestroyers.delete(destroy);
     };
     activeDestroyers.add(destroy);
+    ownerAbort = () => destroy();
+    if (owner.signal?.aborted || !isCurrent()) destroy();
+    else owner.signal?.addEventListener('abort', ownerAbort, { once: true });
 
     if (!context) {
         destroy();
@@ -137,7 +160,7 @@ export async function renderFeed(container: HTMLElement, mt: DiscoveryMediaType,
     }
 
     const genres = await fetchGenres(mt, abort.signal);
-    if (abort.signal.aborted || !JC.identity.isCurrent(context)) {
+    if (abort.signal.aborted || !JC.identity.isCurrent(context) || !isCurrent()) {
         destroy();
         return { element: feed, destroy };
     }
@@ -154,14 +177,16 @@ export async function renderFeed(container: HTMLElement, mt: DiscoveryMediaType,
 
     // Lazy-load: build every shelf shell (height reserved), fill each only when it nears the viewport.
     const feedObserver = new IntersectionObserver((entries) => {
-        if (abort.signal.aborted || !JC.identity.isCurrent(context)) return;
+        if (abort.signal.aborted || !JC.identity.isCurrent(context) || !isCurrent()) return;
         for (const entry of entries) {
             if (!entry.isIntersecting) continue;
             const el = entry.target as HTMLElement;
             feedObserver.unobserve(el);
             const spec = specs.find((s) => s.id === el.getAttribute('data-discovery-row'));
             const items = el.querySelector<HTMLElement>('.jc-discovery-row-cards');
-            if (spec && items) void fillShelf(spec, mt, el, items, abort.signal, context, scheduleFrame);
+            if (spec && items) {
+                void fillShelf(spec, mt, el, items, abort.signal, context, scheduleFrame, isCurrent);
+            }
         }
     }, { rootMargin: '400px 0px' });
     observer = feedObserver;
