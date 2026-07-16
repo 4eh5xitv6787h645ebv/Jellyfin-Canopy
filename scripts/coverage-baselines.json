@@ -21,12 +21,12 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 18326,
-        "totalLines": 26770
+        "coveredLines": 18443,
+        "totalLines": 26889
       },
       "tolerance": {
         "missingCoveredLines": 2,
-        "rationale": "Two clean post-rebase local .NET 10.0.9/Coverlet integration runs on 2026-07-16 each passed 1606 tests and measured the identical 26770-line assembly scope at 18325 and 18326 covered lines; the reviewed high-water is 18326. Relative to main's reviewed 18321/26765 baseline, Hide Favorites Tab adds five instrumented lines across the PluginConfiguration backing property and constructor initializer, the UserSettings backing property, the SettingDescriptors PublicUser admin-default-to-override pairing, and the UserSettingsController default-build assignment. Golden config-payload, user-file-format, config-control-coverage, and bool-projection tests cover all five lines. The existing two-line tolerance is unchanged and covers the reproduced one-line Coverlet variance; coverage-baseline.test.js retains the negative boundaries."
+        "rationale": "Two clean local .NET 10.0.9/Coverlet integration runs on 2026-07-16 each passed 1623 tests and measured the identical combined 26889-line assembly scope at the reviewed 18443-line high-water. Issue #155 adds the shared typed Arr QueueResource paginator, complete/incomplete status propagation, and deterministic Sonarr/Radarr regressions for the 1001st download row, action targets beyond the former 100/200-row prefixes, exact and partial boundaries, changing totals, duplicate/non-advancing pages, later-page failure, the aggregate record limit, and malformed scalar/projection records. The reviewed successor restores the prior fetch boundary's exception-to-explicit-incomplete behavior without swallowing caller cancellation. Relative to main's reviewed 18326/26770 Hide Favorites Tab baseline, the reviewed assembly scope grows by 119 instrumented lines and the high-water advances by 117 covered lines to 18443. The existing two-line tolerance is unchanged and covers the reproduced one-line Coverlet variance; coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, and broad-tolerance negative boundaries."
       }
     }
   }

@@ -176,11 +176,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         {
             var config = _configProvider.ConfigurationOrNull;
             if (config == null) return StatusCode(503, new { message = "Plugin configuration unavailable." });
-            if (!config.ArrSearchEnabled) return Ok(new { items = Array.Empty<object>() });
+            if (!config.ArrSearchEnabled) return Ok(new { items = Array.Empty<object>(), errors = Array.Empty<object>(), isComplete = true });
 
             var item = _resolver.Resolve(itemId);
-            var rows = await _actions.GetQueueStatusAsync(item, config, HttpContext.RequestAborted).ConfigureAwait(false);
-            return Ok(new { items = rows });
+            var status = await _actions.GetQueueStatusAsync(item, config, HttpContext.RequestAborted).ConfigureAwait(false);
+            return status.IsComplete ? Ok(status) : StatusCode(502, status);
         }
 
         // ── helpers ──────────────────────────────────────────────────────────

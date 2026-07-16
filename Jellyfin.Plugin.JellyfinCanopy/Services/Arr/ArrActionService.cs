@@ -392,46 +392,61 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
         // ── queue status (reuses the Downloads-page data source; no second UI) ─
 
         /// <summary>Active-download rows for a resolved item, for post-action progress feedback.</summary>
-        public async Task<List<ArrQueueRowDto>> GetQueueStatusAsync(ArrResolvedItem item, PluginConfiguration config, CancellationToken ct)
+        public async Task<ArrQueueStatusDto> GetQueueStatusAsync(ArrResolvedItem item, PluginConfiguration config, CancellationToken ct)
         {
-            var rows = new List<ArrQueueRowDto>();
+            var status = new ArrQueueStatusDto();
             if (item.Kind == ArrMediaKind.Unknown || !item.HasArrIdentity)
-                return rows;
+                return status;
 
             var service = ServiceOf(item);
             var instances = EnabledInstances(item, config);
-            var (matches, _) = await _targets.ResolveMatchesAsync(item, instances, service, ct).ConfigureAwait(false);
+            var (matches, resolutionErrors) = await _targets.ResolveMatchesAsync(item, instances, service, ct).ConfigureAwait(false);
+            status.Errors.AddRange(resolutionErrors);
 
             var perInstance = await Task.WhenAll(matches.Select(m => QueueForInstanceAsync(m, service, ct))).ConfigureAwait(false);
-            foreach (var list in perInstance) rows.AddRange(list);
-            return rows;
+            foreach (var instanceResult in perInstance)
+            {
+                status.Items.AddRange(instanceResult.Items);
+                if (instanceResult.Error != null)
+                {
+                    status.Errors.Add(new ArrErrorDto
+                    {
+                        InstanceName = instanceResult.InstanceName,
+                        Reason = instanceResult.Error,
+                    });
+                }
+            }
+
+            status.IsComplete = status.Errors.Count == 0;
+            return status;
         }
 
-        private async Task<List<ArrQueueRowDto>> QueueForInstanceAsync(ArrInstanceMatch m, string service, CancellationToken ct)
+        private async Task<(List<ArrQueueRowDto> Items, string? Error, string InstanceName)> QueueForInstanceAsync(ArrInstanceMatch m, string service, CancellationToken ct)
         {
-            var path = service == "radarr"
-                ? $"/api/v3/queue?movieIds={m.ArrId}&pageSize=100"
-                : $"/api/v3/queue?includeSeries=false&includeEpisode=false&pageSize=200";
+            var pageSize = service == "radarr" ? 100 : 200;
 
-            var (list, _) = await _fetch.FetchAndMapAsync<List<ArrQueueRowDto>>(
-                m.Instance, path,
-                node =>
+            var result = await _fetch.FetchQueueCollectionAsync<ArrQueueRowDto>(
+                m.Instance,
+                (page, size) => service == "radarr"
+                    ? $"/api/v3/queue?movieIds={m.ArrId}&page={page}&pageSize={size}"
+                    : $"/api/v3/queue?includeSeries=false&includeEpisode=false&page={page}&pageSize={size}",
+                pageSize,
+                identity: record => record["id"]?.ToJsonString(),
+                projector: record =>
                 {
-                    var result = new List<ArrQueueRowDto>();
-                    if (node?["records"] is JsonArray records)
-                    {
-                        foreach (var rec in records)
-                        {
-                            // Sonarr's queue isn't reliably server-filterable by series across versions —
-                            // filter to this series here so we only report the item the user acted on.
-                            if (service == "sonarr" && ArrSearchMapping.IntN(rec?["seriesId"]) != m.ArrId) continue;
-                            result.Add(ArrSearchMapping.MapQueueRow(rec, service, m.Instance.Name));
-                        }
-                    }
-                    return result;
+                    // Sonarr's queue isn't reliably server-filterable by series across versions —
+                    // filter to this series here so we only report the item the user acted on.
+                    if (service == "sonarr" && ArrSearchMapping.IntN(record["seriesId"]) != m.ArrId)
+                        return null;
+                    return ArrSearchMapping.MapQueueRow(record, service, m.Instance.Name);
                 },
-                emptyResult: new List<ArrQueueRowDto>(), QueueTimeout, "queue status", ct).ConfigureAwait(false);
-            return list;
+                requestTimeout: QueueTimeout,
+                contextLabel: $"{service} queue status",
+                ct: ct).ConfigureAwait(false);
+
+            return result.IsComplete
+                ? (result.Items, null, m.Instance.Name)
+                : (new List<ArrQueueRowDto>(), result.Error ?? "incomplete queue collection", m.Instance.Name);
         }
 
         private static JsonNode? Detach(JsonNode? node) => node == null ? null : JsonNode.Parse(node.ToJsonString());
