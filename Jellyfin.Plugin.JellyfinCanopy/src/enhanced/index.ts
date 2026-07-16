@@ -8,10 +8,8 @@
 import './config';
 import './helpers';
 import './native-tabs';
-import './tag-pipeline';
 import './icons';
 // Detail-page and home-action families are loader-owned ESM entries.
-import './features/hide-favorites-tab';
 import './events';
 // Playback, subtitles, hidden-content filtering and management are loader-owned ESM entries.
 import './themer';
