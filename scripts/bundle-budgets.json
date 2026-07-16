@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "limits": {
-    "maxOutputCount": 64,
+    "maxOutputCount": 68,
     "maxEsmEntryCount": 16,
     "maxEsmOutputCount": 32,
     "maxIndividualEsmRawBytes": 262144,

@@ -22,19 +22,7 @@ import './features/remove-multiselect';
 import './features/hide-favorites-tab';
 import './events';
 import './playback';
-// hidden-content modules — order matters: -data owns the store + lookup sets the
-// later files import; -init exposes the frozen JC.initializeHiddenContent /
-// JC.hiddenContent surface last.
-import './hidden-content/data';
-import './hidden-content/save';
-import './hidden-content/styles';
-import './hidden-content/dialogs';
-import './hidden-content/panel';
-import './hidden-content/filter';
-import './hidden-content/buttons';
-import './hidden-content/init';
-// Hidden-content management is a route-only ESM entry; the eager hidden-card
-// filtering feature above remains independent of its management UI cluster.
+// Hidden-content filtering and management are loader-owned ESM entries.
 import './subtitles';
 import './themer';
 // spoiler-guard — loads after tag-pipeline (uses invalidateServerCache) and

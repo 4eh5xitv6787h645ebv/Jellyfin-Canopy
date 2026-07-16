@@ -41,6 +41,7 @@ const ESM_ENTRIES = Object.freeze({
     'card-tags': path.join(SRC_ROOT, 'tags', 'feature.ts'),
     'colored-ratings': path.join(SRC_ROOT, 'extras', 'colored-ratings.feature.ts'),
     'discovery-library': path.join(SRC_ROOT, 'entries', 'discovery-library.ts'),
+    'hidden-content-runtime': path.join(SRC_ROOT, 'entries', 'hidden-content-runtime.ts'),
     'hidden-content-page': path.join(SRC_ROOT, 'entries', 'hidden-content-page.ts'),
     'hide-favorites-tab': path.join(SRC_ROOT, 'entries', 'hide-favorites-tab.ts'),
     'plugin-icons': path.join(SRC_ROOT, 'entries', 'plugin-icons.ts'),

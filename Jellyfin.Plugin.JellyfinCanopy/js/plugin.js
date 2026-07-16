@@ -1861,7 +1861,6 @@
         activateFeature(context, 'letterboxd-links', JC.pluginConfig?.LetterboxdEnabled, JC.initializeLetterboxdLinksScript);
         activateFeature(context, 'reviews', JC.pluginConfig?.ShowReviews || JC.pluginConfig?.ShowUserReviews, JC.initializeReviewsScript);
         activateFeature(context, 'osd-rating', typeof JC.initializeOsdRating === 'function', JC.initializeOsdRating);
-        activateFeature(context, 'hidden-content', JC.pluginConfig?.HiddenContentEnabled, JC.initializeHiddenContent);
     }
 
     async function runInitialization(context, client, scope) {

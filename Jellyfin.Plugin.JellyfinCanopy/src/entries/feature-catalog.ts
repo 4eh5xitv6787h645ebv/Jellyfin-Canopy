@@ -98,9 +98,19 @@ export const builtInFeatureDescriptors: readonly ClientFeatureDescriptor[] = Obj
         isApplicable: (state) => /#\/downloads(?:[?#]|$)/i.test(state.routeKey),
     },
     {
+        id: 'hidden-content-runtime',
+        entry: 'hidden-content-runtime',
+        scope: 'identity',
+        restartOnConfigChange: true,
+        isEnabled: (state) => Boolean(state.identity)
+            && JC.pluginConfig?.HiddenContentEnabled === true,
+        isApplicable: () => true,
+    },
+    {
         id: 'hidden-content-page',
         entry: 'hidden-content-page',
         scope: 'navigation',
+        dependsOn: ['hidden-content-runtime'],
         isEnabled: (state) => Boolean(state.identity)
             && JC.pluginConfig?.HiddenContentEnabled === true,
         isApplicable: (state) => /#\/hidden-content(?:[?#]|$)/i.test(state.routeKey),
