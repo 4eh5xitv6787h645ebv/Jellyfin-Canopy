@@ -27,6 +27,71 @@ function isLive(node: unknown, identity: IdentityContext | null | undefined): bo
         && (JC.identity.isOwned(node, identity) || (!!card && JC.identity.isOwned(card, identity)));
 }
 
+interface CapabilityStatus {
+    active: boolean;
+    userFound: boolean;
+}
+
+/**
+ * Rebuild request controls already owned by the current identity. A 4K arrow
+ * is a snapshot of both config and user-status, so leaving that node in place
+ * across a live config generation would retain an authorization affordance
+ * from the prior Seerr source. Replacing the control also retires all listeners
+ * closed over the old capability decision.
+ */
+export function reconcileRenderedCapabilityControls(status: CapabilityStatus): void {
+    const identity = JC.identity.capture();
+    if (!identity || !JC.identity.isCurrent(identity)) return;
+    internal.hide4KPopup?.();
+
+    document.querySelectorAll<HTMLElement>('.seerr-card').forEach((card) => {
+        if (!JC.identity.isOwned(card, identity)) return;
+        const current = card.querySelector<HTMLElement>('.seerr-button-group')
+            || card.querySelector<HTMLButtonElement>('.seerr-request-button');
+        if (!current) return;
+        const dataOwner = current.classList.contains('seerr-button-group')
+            ? current.querySelector<HTMLElement>('.seerr-split-main')
+            : current;
+        const rawItem = dataOwner?.dataset.searchResultItem;
+        if (!rawItem) return;
+
+        let item: any;
+        try {
+            item = JSON.parse(rawItem);
+        } catch {
+            return;
+        }
+        if (!item || (item.mediaType !== 'movie' && item.mediaType !== 'tv')) return;
+
+        const replacement = document.createElement('button');
+        replacement.type = 'button';
+        replacement.className = 'seerr-request-button';
+        replacement.dataset.tmdbId = String(item.id ?? '');
+        replacement.dataset.mediaType = item.mediaType;
+        // Offline/no-user branches return before the ordinary configurators
+        // stamp this data. Retain it so a later settled generation can rebuild
+        // the same control without refetching the card payload.
+        replacement.dataset.searchResultItem = JSON.stringify(item);
+        JC.identity.own(replacement, identity);
+        current.replaceWith(replacement);
+        configureRequestButton(replacement, item, status.active, status.userFound);
+    });
+}
+
+function refreshRenderedCapabilitiesForConfig(): void {
+    const identity = JC.identity.capture();
+    if (!identity || !JC.identity.isCurrent(identity)) return;
+    // Fail closed synchronously while the replacement source/status resolves.
+    reconcileRenderedCapabilityControls({ active: false, userFound: false });
+    void JC.seerrAPI!.checkUserStatus().then((status) => {
+        if (!JC.identity.isCurrent(identity)) return;
+        reconcileRenderedCapabilityControls(status);
+    }).catch(() => {
+        // Cancellation means a newer identity/config/navigation owns the next
+        // render. The synchronous fail-closed controls remain safe meanwhile.
+    });
+}
+
 /**
  * Configures the request button based on item status and type.
  * @param {HTMLElement} button - Button element to configure.
@@ -355,3 +420,5 @@ internal.configureRequestButton = configureRequestButton;
 internal.configureCollectionButton = configureCollectionButton;
 internal.configureTvShowButton = configureTvShowButton;
 internal.configureMovieButton = configureMovieButton;
+
+window.addEventListener('jc:config-changed', refreshRenderedCapabilitiesForConfig);

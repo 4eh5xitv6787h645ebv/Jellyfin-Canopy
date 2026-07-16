@@ -28,6 +28,7 @@ export interface SeerrModalApi {
     create: (options: SeerrModalOptions) => SeerrModalHandle;
     createAdvancedOptionsHTML: (idPrefix: string) => string;
     populateAdvancedOptions: (modalElement: HTMLElement, data: any, idPrefix: string) => void;
+    closeAll: () => void;
 }
 
 declare module '../types/jc' {
@@ -336,9 +337,15 @@ modal.populateAdvancedOptions = function(modalElement, data, idPrefix) {
     cleanups?.add(() => clearInterval(interval));
 };
 
-JC.identity.registerReset('seerr-request-modal', () => {
+modal.closeAll = function(): void {
     for (const active of [...activeModals]) active.destroy();
-});
+};
+
+JC.identity.registerReset('seerr-request-modal', modal.closeAll);
+// Advanced movie/TV/collection modals snapshot the 4K gate in their markup.
+// Close them at a config boundary so no prior-source action remains clickable;
+// reopening after the replacement status settles renders the current gate.
+window.addEventListener('jc:config-changed', modal.closeAll);
 
 // Expose the modal module on the global JC object
 JC.seerrModal = modal;
