@@ -4,6 +4,7 @@
 import { JC as JEBase } from '../globals';
 import { assetUrl } from '../core/asset-urls';
 import { onBodyMutation } from '../core/dom-observer';
+import { createStableMethodFacade } from '../core/feature-loader';
 import { onNavigate } from '../core/navigation';
 import type { IdentityContext, PluginConfig } from '../types/jc';
 
@@ -232,7 +233,7 @@ function cleanup(): void {
     processedElements = new WeakSet();
 }
 
-function reset(): void {
+export function resetColoredRatings(): void {
     generation += 1;
     cleanup();
     document.querySelectorAll<HTMLElement>('[data-jc-colored-rating="true"]').forEach((element) => {
@@ -247,7 +248,7 @@ function reset(): void {
 }
 
 function initialize(): void {
-    reset();
+    resetColoredRatings();
     if (!isFeatureEnabled()) {
         return;
     }
@@ -260,8 +261,8 @@ function initialize(): void {
     setupNavigationWatcher(context, expectedGeneration);
 }
 
-if (typeof document.visibilityState !== 'undefined') {
-    document.addEventListener('visibilitychange', () => {
+function handleVisibilityChange(): void {
+    if (typeof document.visibilityState !== 'undefined') {
         const context = JC.identity.capture();
         if (context && document.visibilityState === 'visible' && isFeatureEnabled()) {
             const expectedGeneration = generation;
@@ -273,12 +274,36 @@ if (typeof document.visibilityState !== 'undefined') {
                 }
             }, 100);
         }
-    });
+    }
 }
 
-window.addEventListener('beforeunload', cleanup);
-JC.identity.registerReset('colored-ratings', reset);
-JC.initializeColoredRatings = initialize;
-// Expose pause/resume functions for pausescreen.js to control
-JC.pauseRatingsPolling = pausePolling;
-JC.resumeRatingsPolling = resumePolling;
+const coloredRatingsApi = { initialize, pausePolling, resumePolling };
+const stableColoredRatings = createStableMethodFacade<typeof coloredRatingsApi>({
+    initialize() {},
+    pausePolling() {},
+    resumePolling() {},
+});
+
+/** Publish compatibility methods and listeners for one lazy-feature activation. */
+export function installColoredRatings(): () => void {
+    const uninstall = stableColoredRatings.install(coloredRatingsApi);
+    JC.initializeColoredRatings = stableColoredRatings.facade.initialize;
+    JC.pauseRatingsPolling = stableColoredRatings.facade.pausePolling;
+    JC.resumeRatingsPolling = stableColoredRatings.facade.resumePolling;
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('beforeunload', cleanup);
+    let disposed = false;
+    return () => {
+        if (disposed) return;
+        disposed = true;
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+        window.removeEventListener('beforeunload', cleanup);
+        resetColoredRatings();
+        uninstall();
+    };
+}
+
+/** Start the installed implementation without resolving through globals. */
+export function initializeColoredRatings(): void {
+    coloredRatingsApi.initialize();
+}

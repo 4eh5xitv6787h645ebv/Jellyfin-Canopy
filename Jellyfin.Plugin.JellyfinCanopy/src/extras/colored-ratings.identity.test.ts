@@ -1,5 +1,6 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JC } from '../globals';
+import { installColoredRatings, resetColoredRatings } from './colored-ratings';
 
 function switchIdentity(serverId: string, userId: string): void {
     JC.identity.transition(serverId, userId, 'colored-ratings-test');
@@ -14,20 +15,22 @@ function addRating(value = 'PG-13'): HTMLElement {
 }
 
 describe('colored ratings identity lifecycle', () => {
-    beforeAll(async () => {
-        window.Events = { on: vi.fn() } as unknown as JellyfinEvents;
-        await import('./colored-ratings');
-    });
+    let disposeFeature: () => void;
+    let unregisterReset: () => void;
 
     beforeEach(() => {
         vi.useFakeTimers();
         document.body.innerHTML = '';
         switchIdentity('ratings-server-a', 'ratings-user-a');
         JC.pluginConfig = { ColoredRatingsEnabled: true };
+        disposeFeature = installColoredRatings();
+        unregisterReset = JC.identity.registerReset('colored-ratings-test', resetColoredRatings);
     });
 
     afterEach(() => {
         JC.identity.transition('', '', 'colored-ratings-test-cleanup');
+        unregisterReset();
+        disposeFeature();
         vi.clearAllTimers();
         vi.useRealTimers();
         document.body.innerHTML = '';

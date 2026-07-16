@@ -1,5 +1,10 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JC } from '../globals';
+import {
+    installThemeSelector,
+    reconcileThemeSelectorIdentity,
+    resetThemeSelector,
+} from './theme-selector';
 
 function switchIdentity(serverId: string, userId: string): void {
     JC.identity.transition(serverId, userId, 'theme-selector-test');
@@ -15,10 +20,8 @@ function mountPreferencesPage(): void {
 }
 
 describe('theme selector identity lifecycle', () => {
-    beforeAll(async () => {
-        window.Events = { on: vi.fn() } as unknown as JellyfinEvents;
-        await import('./theme-selector');
-    });
+    let disposeFeature: () => void;
+    let unregisterReset: () => void;
 
     beforeEach(() => {
         vi.useFakeTimers();
@@ -28,10 +31,17 @@ describe('theme selector identity lifecycle', () => {
         mountPreferencesPage();
         switchIdentity('server-a', 'user-a');
         JC.pluginConfig = { ThemeSelectorEnabled: true };
+        disposeFeature = installThemeSelector();
+        unregisterReset = JC.identity.registerReset('theme-selector-test', (change) => {
+            resetThemeSelector();
+            reconcileThemeSelectorIdentity(change);
+        });
     });
 
     afterEach(() => {
         JC.identity.transition('', '', 'theme-selector-test-cleanup');
+        unregisterReset();
+        disposeFeature();
         vi.clearAllTimers();
         vi.useRealTimers();
         document.body.innerHTML = '';
