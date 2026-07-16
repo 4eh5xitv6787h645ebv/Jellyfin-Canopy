@@ -9,12 +9,12 @@
       "scope": "Jellyfin.Plugin.JellyfinCanopy/src/core/**",
       "report": "coverage/coverage-summary.json",
       "measured": {
-        "coveredLines": 1473,
-        "totalLines": 1797
+        "coveredLines": 1801,
+        "totalLines": 2149
       },
       "tolerance": {
         "missingCoveredLines": 1,
-        "rationale": "Two clean local Node 22/V8 runs on 2026-07-16 each passed 1015 tests and measured the expanded 1797-line core scope at 1473 covered lines. Issue #127 adds the shared current-view root resolver used by native preferences injectors, with deterministic coverage for duplicate cached IDs, URL handoff before an incoming lifecycle event, POP re-show, and modern/legacy view roots. Relative to the reviewed 1439/1762 issue #87 baseline, the reviewed core scope grows by 35 instrumented lines and the high-water advances by 34 covered lines. The existing one-line tolerance is unchanged and permits only the previously reproduced negligible instrumentation variance; coverage-baseline.test.js retains exact below-floor, above-baseline, scope-change, and broad-tolerance negative boundaries."
+        "rationale": "Two clean local Node 22/V8 runs on 2026-07-16 each passed 1060 tests and measured the expanded 2149-line core scope at 1801 covered lines (83.806%). Issue #318 adds the generation-aware feature loader and central manifest runtime, including bounded import concurrency/retries, identity/config/navigation ownership, atomic descriptor and dependency validation, and deterministic activation/disposal tests. Relative to the reviewed 1473/1797 issue #127 baseline, the reviewed core scope grows by 352 instrumented lines and the high-water advances by 328 covered lines while line coverage rises from 81.970%. The existing one-line tolerance is unchanged and permits only the previously reproduced negligible instrumentation variance; coverage-baseline.test.js retains exact below-floor, above-baseline, scope-change, and broad-tolerance negative boundaries."
       }
     },
     "server": {

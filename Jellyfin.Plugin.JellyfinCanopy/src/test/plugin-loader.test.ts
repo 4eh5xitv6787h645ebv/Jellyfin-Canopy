@@ -132,6 +132,104 @@ function caseTransforms(): {
 describe('plugin.js loader guards', () => {
     it('loaded the loader source', () => {
         expect(SRC.length).toBeGreaterThan(0);
+        expect(SRC).not.toContain('function loadBundle(');
+    });
+
+    it('validates the boot inventory and builds bounded reverse-proxy generation URLs', () => {
+        const safeSource = extractFunctionSource('isSafeClientDistPath');
+        const validateSource = extractFunctionSource('validateClientManifest');
+        const urlSource = extractFunctionSource('clientGenerationUrl');
+        expect(safeSource, 'isSafeClientDistPath not found').toBeTruthy();
+        expect(validateSource, 'validateClientManifest not found').toBeTruthy();
+        expect(urlSource, 'clientGenerationUrl not found').toBeTruthy();
+        const helpers = eval(`(() => {
+            ${safeSource}
+            ${validateSource}
+            ${urlSource}
+            return { validateClientManifest, clientGenerationUrl };
+        })()`) as {
+            validateClientManifest(value: unknown): Record<string, unknown>;
+            clientGenerationUrl(
+                client: { getUrl(path: string): string },
+                manifest: Record<string, unknown>,
+                path: string,
+                attempt: number,
+            ): string;
+        };
+        const manifest = {
+            schemaVersion: 2,
+            buildId: 'a'.repeat(64),
+            entries: { boot: { kind: 'module', role: 'boot', path: 'entries/boot.js' } },
+            files: {
+                'entries/boot.js': {
+                    kind: 'module-entry',
+                    contentType: 'text/javascript; charset=utf-8',
+                    sha256: 'b'.repeat(64),
+                },
+            },
+        };
+
+        expect(helpers.validateClientManifest(manifest)).toBe(manifest);
+        expect(helpers.clientGenerationUrl(
+            { getUrl: (path) => `/proxy/web${path}` }, manifest, 'entries/boot.js', 99,
+        )).toBe(`/proxy/web/JellyfinCanopy/dist/${'a'.repeat(64)}/entries/boot.js?attempt=2`);
+        expect(() => helpers.validateClientManifest({ ...manifest, buildId: '../bad' })).toThrow();
+        expect(() => helpers.validateClientManifest({
+            ...manifest,
+            entries: { boot: { kind: 'module', role: 'boot', path: '../boot.js' } },
+        })).toThrow();
+        expect(() => helpers.clientGenerationUrl(
+            { getUrl: (path) => path }, manifest, 'entries/missing.js', 0,
+        )).toThrow('Unknown Jellyfin Canopy distribution file');
+    });
+
+    it('retries boot imports only through attempt 2 and evicts a rejected flight', async () => {
+        const safeSource = extractFunctionSource('isSafeClientDistPath')!;
+        const validateSource = extractFunctionSource('validateClientManifest')!;
+        const urlSource = extractFunctionSource('clientGenerationUrl')!;
+        const loadSource = extractFunctionSource('loadClientRuntime')!;
+        const manifest = {
+            schemaVersion: 2,
+            buildId: 'c'.repeat(64),
+            entries: { boot: { kind: 'module', role: 'boot', path: 'entries/boot.js' } },
+            files: {
+                'entries/boot.js': {
+                    kind: 'module-entry',
+                    contentType: 'text/javascript; charset=utf-8',
+                    sha256: 'd'.repeat(64),
+                },
+            },
+        };
+        const runtime = { configurationPublished: vi.fn() };
+        const imports = vi.fn((url: string) => url.endsWith('?attempt=2')
+            ? Promise.resolve({ initializeClientRuntime: () => runtime })
+            : Promise.reject(new Error('transient module failure')));
+        const load = eval(`((importClientModule) => {
+            ${safeSource}
+            ${validateSource}
+            ${urlSource}
+            let clientRuntimeLoadPromise = null;
+            ${loadSource}
+            return loadClientRuntime;
+        })`) as (importer: (url: string) => Promise<unknown>) => (
+            client: { ajax(options: unknown): Promise<unknown>; getUrl(path: string): string },
+        ) => Promise<unknown>;
+        const ajax = vi.fn(() => Promise.resolve(manifest));
+        const client = { ajax, getUrl: (path: string) => `/proxy${path}` };
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+        await expect(load(imports)(client)).resolves.toBe(runtime);
+        expect(imports.mock.calls.map(([url]) => new URL(url, 'http://test').searchParams.get('attempt')))
+            .toEqual(['0', '1', '2']);
+
+        const failedImports = vi.fn(() => Promise.reject(new Error('persistent module failure')));
+        const retryableLoad = load(failedImports);
+        await expect(retryableLoad(client)).rejects.toThrow('persistent module failure');
+        await expect(retryableLoad(client)).rejects.toThrow('persistent module failure');
+        expect(failedImports).toHaveBeenCalledTimes(6);
+        // The failed single-flight was evicted, so the second identity attempt
+        // re-fetched the revalidating manifest instead of retaining rejection.
+        expect(ajax).toHaveBeenCalledTimes(3);
     });
 
     it('classifies every storage fault and quarantines only the corrupt owned key', () => {
@@ -411,15 +509,31 @@ describe('plugin.js loader guards', () => {
                 if (path.endsWith('/public-config')) return Promise.resolve({ AssetCacheEnabled: false });
                 if (path.endsWith('/private-config')) return Promise.resolve({});
                 if (path.endsWith('/version')) return Promise.resolve('test-version');
+                if (path.endsWith('/dist/client-manifest.json')) return Promise.resolve(clientManifest);
                 if (path.endsWith('/bookmark.json')) return Promise.resolve({ Revision: 0, Bookmarks: {} });
                 if (path.endsWith('/shortcuts.json')) return Promise.resolve({ Shortcuts: [] });
                 if (path.includes('/user-settings/')) return Promise.resolve({});
                 throw new Error(`Unexpected loader request: ${path}`);
             },
         };
+        const importedUrls: string[] = [];
+        const clientManifest = {
+            schemaVersion: 2,
+            buildId: 'a'.repeat(64),
+            entries: { boot: { kind: 'module', role: 'boot', path: 'entries/boot.js' } },
+            files: {
+                'entries/boot.js': {
+                    kind: 'module-entry',
+                    contentType: 'text/javascript; charset=utf-8',
+                    sha256: 'b'.repeat(64),
+                },
+            },
+        };
+        const runtime = { configurationPublished: vi.fn(() => Promise.resolve([])) };
         const fakeWindow: {
             ApiClient: typeof client;
             JellyfinCanopy?: unknown;
+            __jcImportClientModule(url: string): Promise<unknown>;
             localStorage: Storage;
             sessionStorage: Storage;
             location: { href: string; protocol: string; reload(): void };
@@ -427,6 +541,16 @@ describe('plugin.js loader guards', () => {
             setInterval: ReturnType<typeof vi.fn>;
         } = {
             ApiClient: client,
+            __jcImportClientModule(url: string) {
+                importedUrls.push(url);
+                const jc = fakeWindow.JellyfinCanopy as LoaderGlobal;
+                jc.loadSettings = () => ({ displayLanguage: '' });
+                jc.initializeShortcuts = vi.fn();
+                jc.initializeCanopyScript = legacyActivation;
+                jc.initializePagesFramework = laterLegacyActivation;
+                jc.identity.registerActivate('registered-owner', registeredFailure);
+                return Promise.resolve({ initializeClientRuntime: () => runtime });
+            },
             localStorage: local,
             sessionStorage: session,
             location: { href: 'http://loader.test/web/', protocol: 'http:', reload: vi.fn() },
@@ -465,12 +589,6 @@ describe('plugin.js loader guards', () => {
                     jc.hideSplashScreen = hideSplash;
                 } else if (node.src.includes('/dist/translations.js')) {
                     jc.loadTranslations = () => Promise.resolve({});
-                } else if (node.src.includes('/dist/jc.bundle.js')) {
-                    jc.loadSettings = () => ({ displayLanguage: '' });
-                    jc.initializeShortcuts = vi.fn();
-                    jc.initializeCanopyScript = legacyActivation;
-                    jc.initializePagesFramework = laterLegacyActivation;
-                    jc.identity.registerActivate('registered-owner', registeredFailure);
                 }
                 node.onload?.call(node, new Event('load'));
             });
@@ -482,9 +600,14 @@ describe('plugin.js loader guards', () => {
                 resolve(event as CustomEvent<IdentityContext>);
             }, { once: true });
         });
+        const executableSource = SRC.replace(
+            'return import(url);',
+            'return window.__jcImportClientModule(url);',
+        );
+        expect(executableSource).not.toBe(SRC);
         const execute = eval(
             '(function(window, document, ApiClient, CustomEvent, setTimeout, clearTimeout, URL, console) {'
-            + SRC
+            + executableSource
             + '\n})',
         ) as (...args: unknown[]) => void;
 
@@ -502,6 +625,11 @@ describe('plugin.js loader guards', () => {
         const jc = fakeWindow.JellyfinCanopy as LoaderGlobal;
 
         expect(registeredFailure).toHaveBeenCalledTimes(1);
+        expect(runtime.configurationPublished).toHaveBeenCalledWith(event.detail);
+        expect(importedUrls).toEqual([
+            `http://loader.test/JellyfinCanopy/dist/${'a'.repeat(64)}/entries/boot.js?attempt=0`,
+        ]);
+        expect([...loaderDocument.scripts].some((script) => script.src.includes('/dist/jc.bundle.js'))).toBe(false);
         expect(legacyActivation).toHaveBeenCalledTimes(1);
         expect(laterLegacyActivation).toHaveBeenCalledTimes(1);
         expect(jc.initialized).toBe(true);

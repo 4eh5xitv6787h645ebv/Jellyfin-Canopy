@@ -319,7 +319,7 @@
     /**
      * Create the document-lifetime identity owner. The controller is deliberately
      * defined in this classic loader (rather than only in the later bundle):
-     * Jellyfin 12 can replace authentication before jc.bundle.js has finished
+     * Jellyfin 12 can replace authentication before the boot module has finished
      * loading, and invalidation must still happen synchronously in that window.
      *
      * @param {(change: {previous: object|null, current: object|null, epoch: number, reason: string}) => void} [finalizeTransition]
@@ -1183,38 +1183,109 @@
     }
 
 
+    /** Reject traversal, query fragments and ambiguous distribution paths. */
+    function isSafeClientDistPath(value) {
+        if (typeof value !== 'string' || !value || value.startsWith('/')
+            || value.includes('\\') || value.includes('?') || value.includes('#')) return false;
+        return value.split('/').every((segment) => segment && segment !== '.' && segment !== '..');
+    }
+
     /**
-     * Loads the client bundle (src/main.ts + all remaining component scripts,
-     * concatenated in load order) as a single script. The bundle is generated
-     * at build time by scripts/build-bundle.js and embedded in the DLL, so it
-     * is present in every build; it is the ONLY way component code is loaded
-     * (dev mode included — DevMode serves it with no-store + a fresh
-     * cache-buster, and with a sourcemap for real-file stack traces).
-     * @returns {Promise<boolean>} true when the bundle loaded, false on failure.
+     * Validate the manifest fields used by the pre-module trust boundary. The
+     * server independently validates the complete embedded inventory; this
+     * check prevents a malformed response from becoming an executable URL.
      */
-    let bundleLoadPromise = null;
-    function loadBundle(client = ApiClient) {
-        if (bundleLoadPromise) return bundleLoadPromise;
-        bundleLoadPromise = new Promise((resolve) => {
-            const script = document.createElement('script');
-            script.async = false;
-            script.src = client.getUrl(`/JellyfinCanopy/dist/jc.bundle.js?v=${getScriptVersion()}`);
-            script.onload = () => resolve(true);
-            script.onerror = (e) => {
-                console.error(
-                    '🪼 Jellyfin Canopy: FATAL — the client bundle (/JellyfinCanopy/dist/jc.bundle.js) ' +
-                    'failed to load. The plugin cannot start without it; no per-file fallback exists. ' +
-                    'This usually means the plugin DLL was built without the bundle step (dotnet build ' +
-                    'runs scripts/build-bundle.js automatically) or the server failed to serve the resource.',
-                    e
-                );
-                script.remove();
-                bundleLoadPromise = null;
-                resolve(false);
-            };
-            document.head.appendChild(script);
-        });
-        return bundleLoadPromise;
+    function validateClientManifest(value) {
+        if (!value || typeof value !== 'object' || value.schemaVersion !== 2
+            || !/^[a-f0-9]{64}$/.test(String(value.buildId || ''))
+            || !value.entries || typeof value.entries !== 'object'
+            || Array.isArray(value.entries)
+            || !value.files || typeof value.files !== 'object'
+            || Array.isArray(value.files)) {
+            throw new Error('Invalid Jellyfin Canopy client manifest');
+        }
+        const boot = value.entries.boot;
+        if (!boot || boot.kind !== 'module' || boot.role !== 'boot'
+            || !isSafeClientDistPath(boot.path)) {
+            throw new Error('Jellyfin Canopy manifest has no valid boot module');
+        }
+        const bootFile = Object.prototype.hasOwnProperty.call(value.files, boot.path)
+            ? value.files[boot.path]
+            : null;
+        if (!bootFile || bootFile.kind !== 'module-entry'
+            || bootFile.contentType !== 'text/javascript; charset=utf-8'
+            || !/^[a-f0-9]{64}$/.test(String(bootFile.sha256 || ''))) {
+            throw new Error('Jellyfin Canopy boot module is missing from the manifest inventory');
+        }
+        return value;
+    }
+
+    /** Resolve one manifest-owned file through Jellyfin's reverse-proxy base. */
+    function clientGenerationUrl(client, manifest, path, attempt) {
+        if (!isSafeClientDistPath(path)
+            || !Object.prototype.hasOwnProperty.call(manifest?.files || {}, path)) {
+            throw new Error(`Unknown Jellyfin Canopy distribution file: ${String(path)}`);
+        }
+        const retry = Math.min(2, Math.max(0, Number.isSafeInteger(attempt) ? attempt : 0));
+        return client.getUrl(`/JellyfinCanopy/dist/${manifest.buildId}/${path}?attempt=${retry}`);
+    }
+
+    /** Native ESM import kept behind one named seam for the loader harness. */
+    function importClientModule(url) {
+        return import(url);
+    }
+
+    /**
+     * Fetch and import the manifest-owned boot module. A successful module is
+     * document-scoped; a rejected flight is evicted so the next identity init
+     * can retry. The compatibility monolith is deliberately not a fallback.
+     */
+    let clientRuntimeLoadPromise = null;
+    function loadClientRuntime(client = ApiClient, scope = null) {
+        if (!clientRuntimeLoadPromise) {
+            const flight = (async () => {
+                const request = client.ajax({
+                    type: 'GET',
+                    url: client.getUrl('/JellyfinCanopy/dist/client-manifest.json'),
+                    dataType: 'json',
+                    signal: scope?.signal
+                });
+                const manifest = validateClientManifest(await request);
+                let lastError = null;
+                for (let attempt = 0; attempt <= 2; attempt++) {
+                    try {
+                        const bootModule = await importClientModule(
+                            clientGenerationUrl(client, manifest, manifest.entries.boot.path, attempt)
+                        );
+                        if (typeof bootModule?.initializeClientRuntime !== 'function') {
+                            throw new Error('Jellyfin Canopy boot module has no runtime initializer');
+                        }
+                        return bootModule.initializeClientRuntime({
+                            manifest,
+                            generationUrl: (path, retry) => clientGenerationUrl(client, manifest, path, retry),
+                            onError: (featureId, phase, error) => {
+                                console.error(
+                                    `🪼 Jellyfin Canopy: feature "${String(featureId)}" ${String(phase)} failed`,
+                                    error
+                                );
+                            }
+                        });
+                    } catch (error) {
+                        lastError = error;
+                        console.warn(
+                            `🪼 Jellyfin Canopy: boot module attempt ${attempt} failed`,
+                            error
+                        );
+                    }
+                }
+                throw lastError || new Error('Jellyfin Canopy boot module failed to load');
+            })();
+            clientRuntimeLoadPromise = flight;
+            void flight.catch(() => {
+                if (clientRuntimeLoadPromise === flight) clientRuntimeLoadPromise = null;
+            });
+        }
+        return scope ? scope.race(clientRuntimeLoadPromise) : clientRuntimeLoadPromise;
     }
 
      /**
@@ -1895,17 +1966,13 @@
             preloadIconFonts();
             JC.initializeSplashScreen?.();
 
-            // The process bundle executes once per document. B reuses its module
-            // graph and only re-runs the owner activation phase below.
-            const bundleLoaded = await scope.race(loadBundle(client));
+            // The boot graph executes once per document. Later identities reuse
+            // its stable runtime while publishing a fresh config generation.
+            const clientRuntime = await scope.race(loadClientRuntime(client, scope));
             requireCurrentIdentity(context);
-            if (!bundleLoaded) {
-                JC.hideSplashScreen?.();
-                return;
-            }
 
             if (typeof JC.loadSettings !== 'function' || typeof JC.initializeShortcuts !== 'function') {
-                throw new Error('config.js functions not defined after bundle loading');
+                throw new Error('config functions not defined after client boot');
             }
             JC.currentSettings = identity.own(JC.loadSettings(), context);
             JC.initializeShortcuts();
@@ -1930,9 +1997,14 @@
             if (typeof JC.themer?.init === 'function') JC.themer.init();
             installCacheUnloadOnce();
 
-            // Bundle participants that self-wire (live socket, identity caches)
+            // Boot participants that self-wire (live socket, identity caches)
             // activate once per epoch before the legacy Stage-6 feature calls.
             await identity.activate(context);
+            requireCurrentIdentity(context);
+            if (!clientRuntime || typeof clientRuntime.configurationPublished !== 'function') {
+                throw new Error('client runtime handle is invalid after boot');
+            }
+            await clientRuntime.configurationPublished(context);
             requireCurrentIdentity(context);
             activateFeatures(context);
             requireCurrentIdentity(context);

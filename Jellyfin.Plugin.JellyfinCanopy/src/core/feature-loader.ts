@@ -58,6 +58,8 @@ export interface FeatureRegistration {
     readonly id: string;
     readonly importer: FeatureImporter;
     readonly scope: 'identity' | 'navigation';
+    /** Ordered prerequisite feature ids; each activation is awaited in order. */
+    readonly dependsOn?: readonly string[];
     isEnabled(state: FeatureLoaderState): boolean;
     isApplicable(state: FeatureLoaderState): boolean;
     /** Opt in when a live config generation requires a fresh instance. */
@@ -364,7 +366,10 @@ export function createFeatureLoader(options: FeatureLoaderOptions): FeatureLoade
             if (loadFlights.get(registration.id) === flight) {
                 loadFlights.delete(registration.id);
                 if (!(error instanceof StaleFeatureRequestError)) {
-                    loadAttempts.set(registration.id, flight.attempt + 1);
+                    // The server contract accepts exactly attempts 0..2. Keep
+                    // later retries on the terminal cache-buster instead of
+                    // manufacturing an unsupported attempt=3 URL.
+                    loadAttempts.set(registration.id, Math.min(2, flight.attempt + 1));
                     report(registration.id, 'load', error);
                 }
             }
@@ -448,10 +453,18 @@ export function createFeatureLoader(options: FeatureLoaderOptions): FeatureLoade
         return { featureId: registration.id, status: 'active' };
     };
 
-    const activate = (featureId: string): Promise<FeatureActivationResult> => {
+    function activateWithAncestors(
+        featureId: string,
+        ancestors: readonly string[],
+    ): Promise<FeatureActivationResult> {
         const registration = registrations.get(featureId);
         if (!registration || loaderDisposed) {
             return Promise.resolve({ featureId, status: 'inactive' });
+        }
+        if (ancestors.includes(featureId)) {
+            const error = new Error(`Feature dependency cycle: ${[...ancestors, featureId].join(' -> ')}`);
+            report(featureId, 'eligibility', error);
+            return Promise.resolve({ featureId, status: 'failed', error });
         }
 
         const state = options.captureState();
@@ -470,7 +483,7 @@ export function createFeatureLoader(options: FeatureLoaderOptions): FeatureLoade
         const existing = activationFlights.get(key);
         if (existing) return existing.promise;
 
-        const promise = runActivation(registration, token);
+        const promise = runActivationWithDependencies(registration, token, [...ancestors, featureId]);
         const flight = { promise };
         activationFlights.set(key, flight);
         void promise.then(
@@ -482,7 +495,30 @@ export function createFeatureLoader(options: FeatureLoaderOptions): FeatureLoade
             }
         );
         return promise;
+    }
+
+    const runActivationWithDependencies = async (
+        registration: FeatureRegistration,
+        token: FeatureScopeToken,
+        ancestors: readonly string[],
+    ): Promise<FeatureActivationResult> => {
+        for (const dependencyId of registration.dependsOn ?? []) {
+            const dependency = await activateWithAncestors(dependencyId, ancestors);
+            if (dependency.status === 'failed') {
+                return { featureId: registration.id, status: 'failed', error: dependency.error };
+            }
+            if (dependency.status !== 'active' && dependency.status !== 'already-active') {
+                return { featureId: registration.id, status: dependency.status };
+            }
+            if (!isTokenCurrent(registration, token)) {
+                return { featureId: registration.id, status: 'stale' };
+            }
+        }
+        return runActivation(registration, token);
     };
+
+    const activate = (featureId: string): Promise<FeatureActivationResult> =>
+        activateWithAncestors(featureId, []);
 
     return {
         register(registration): void {
@@ -542,41 +578,55 @@ export interface StableMethodFacade<T extends object> {
  * delegate.
  */
 export function createStableMethodFacade<T extends object>(fallback: T): StableMethodFacade<T> {
-    let delegate: T | null = null;
+    let delegate = fallback;
+    let hasDelegate = false;
     let generation = 0;
-    const facade = Object.create(null) as Record<PropertyKey, unknown>;
+    const facade = {} as Record<PropertyKey, unknown>;
 
     for (const key of Reflect.ownKeys(fallback)) {
         const fallbackMethod: unknown = Reflect.get(fallback, key);
         if (typeof fallbackMethod !== 'function') {
-            throw new TypeError(`Stable facade property must be a method: ${String(key)}`);
+            throw new TypeError('Stable facade property must be a method: ' + String(key));
         }
-        facade[key] = (...args: unknown[]): unknown => {
-            const receiver = delegate ?? fallback;
+        const stableMethod = (...args: unknown[]): unknown => {
+            const receiver = hasDelegate ? delegate : fallback;
             const method: unknown = Reflect.get(receiver, key);
             if (typeof method !== 'function') {
-                throw new TypeError(`Stable facade delegate method is missing: ${String(key)}`);
+                throw new TypeError('Stable facade delegate method is missing: ' + String(key));
             }
             const value: unknown = Reflect.apply(method, receiver, args);
             return value;
         };
+        // defineProperty handles a literal "__proto__" method as data instead
+        // of invoking Object.prototype's legacy setter.
+        Object.defineProperty(facade, key, {
+            value: stableMethod,
+            enumerable: true,
+            configurable: false,
+            writable: false,
+        });
     }
 
     return {
         facade: Object.freeze(facade) as Readonly<T>,
         install(next): () => void {
             delegate = next;
+            hasDelegate = true;
             generation += 1;
             const ownedGeneration = generation;
             let installed = true;
             return () => {
                 if (!installed) return;
                 installed = false;
-                if (generation === ownedGeneration && delegate === next) delegate = null;
+                if (generation === ownedGeneration && delegate === next) {
+                    delegate = fallback;
+                    hasDelegate = false;
+                }
             };
         },
         clear(): void {
-            delegate = null;
+            delegate = fallback;
+            hasDelegate = false;
             generation += 1;
         },
     };

@@ -234,6 +234,55 @@ describe('generation-aware feature loader', () => {
         expect(test.errors).toEqual([{ featureId: 'retryable', phase: 'load', error: failure }]);
     });
 
+    it('keeps repeated failures inside the server attempt range', async () => {
+        const test = harness();
+        const importer = vi.fn((_request: FeatureImportRequest) =>
+            Promise.reject(new Error('still unavailable')));
+        test.loader.register(registration('bounded-retry', importer));
+
+        for (let index = 0; index < 5; index += 1) {
+            await expect(test.loader.activate('bounded-retry')).resolves.toMatchObject({ status: 'failed' });
+        }
+
+        expect(importer.mock.calls.map(([request]) => request.attempt)).toEqual([0, 1, 2, 2, 2]);
+        expect(test.urls.mock.calls.map(([, attempt]) => attempt)).toEqual([0, 1, 2, 2, 2]);
+    });
+
+    it('awaits ordered dependency activation before importing a dependent feature', async () => {
+        const test = harness();
+        const prerequisite = deferred<FeatureModule>();
+        const order: string[] = [];
+        const prerequisiteImporter = vi.fn(() => prerequisite.promise);
+        const dependentImporter = vi.fn(() => {
+            order.push('dependent-import');
+            return Promise.resolve(moduleWith(() => { order.push('dependent-activate'); }));
+        });
+        test.loader.register(registration('seerr-core', prerequisiteImporter));
+        test.loader.register(registration('discovery-library', dependentImporter, {
+            dependsOn: ['seerr-core'],
+        }));
+
+        const activation = test.loader.activate('discovery-library');
+        await vi.waitFor(() => expect(prerequisiteImporter).toHaveBeenCalledTimes(1));
+        expect(dependentImporter).not.toHaveBeenCalled();
+        prerequisite.resolve(moduleWith(() => { order.push('prerequisite-activate'); }));
+
+        await expect(activation).resolves.toMatchObject({ status: 'active' });
+        expect(order).toEqual(['prerequisite-activate', 'dependent-import', 'dependent-activate']);
+    });
+
+    it('does not import a dependent when its prerequisite is disabled', async () => {
+        const test = harness();
+        const prerequisiteImporter = vi.fn(() => Promise.resolve(moduleWith(() => undefined)));
+        const dependentImporter = vi.fn(() => Promise.resolve(moduleWith(() => undefined)));
+        test.loader.register(registration('disabled-core', prerequisiteImporter, { isEnabled: () => false }));
+        test.loader.register(registration('dependent', dependentImporter, { dependsOn: ['disabled-core'] }));
+
+        await expect(test.loader.activate('dependent')).resolves.toMatchObject({ status: 'inactive' });
+        expect(prerequisiteImporter).not.toHaveBeenCalled();
+        expect(dependentImporter).not.toHaveBeenCalled();
+    });
+
     it('uses separate activation flights for new navigation scopes while sharing loaded code', async () => {
         const test = harness();
         const oldActivation = deferred<FeatureInstance>();
