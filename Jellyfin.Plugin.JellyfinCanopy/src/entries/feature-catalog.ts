@@ -28,6 +28,28 @@ function homeRoute(routeKey: string): boolean {
         || /(?:^|\/)home(?:[?#]|$)/.test(route);
 }
 
+function detailsRoute(routeKey: string): boolean {
+    return routeKey.toLowerCase().includes('details');
+}
+
+function arrSearchEnabled(): boolean {
+    const config = JC.pluginConfig as undefined | {
+        ArrSearchEnabled?: boolean;
+        RadarrInstances?: Array<{ Enabled?: boolean; Url?: string }>;
+        SonarrInstances?: Array<{ Enabled?: boolean; Url?: string }>;
+        RadarrUrl?: string;
+        SonarrUrl?: string;
+    };
+    if (config?.ArrSearchEnabled === false) return false;
+    const admin = JC.currentUser?.Policy?.IsAdministrator === true
+        || JC.currentSettings?.isAdmin === true;
+    if (!admin) return false;
+    const configured = [...(config?.RadarrInstances || []), ...(config?.SonarrInstances || [])]
+        .some((instance) => instance.Enabled !== false && typeof instance.Url === 'string'
+            && instance.Url.trim().length > 0);
+    return configured || Boolean(config?.RadarrUrl?.trim() || config?.SonarrUrl?.trim());
+}
+
 /**
  * Boot-only policy catalog. Predicates deliberately duplicate tiny config
  * reads instead of importing feature entries, which keeps disabled closures
@@ -161,5 +183,68 @@ export const builtInFeatureDescriptors: readonly ClientFeatureDescriptor[] = Obj
             const route = state.routeKey.toLowerCase();
             return route.includes('details') || route.includes('/video') || route.includes('#/video');
         },
+    },
+    {
+        id: 'details-enhancements',
+        entry: 'details-enhancements',
+        scope: 'navigation',
+        restartOnConfigChange: true,
+        isEnabled: (state) => Boolean(state.identity) && (
+            JC.currentSettings?.showWatchProgress === true
+            || JC.currentSettings?.showFileSizes === true
+            || JC.currentSettings?.showAudioLanguages === true
+            || (JC.pluginConfig?.ShowReleaseDates === true && JC.pluginConfig?.TmdbEnabled === true)
+            || JC.pluginConfig?.HiddenContentEnabled === true
+        ),
+        isApplicable: (state) => detailsRoute(state.routeKey),
+    },
+    {
+        id: 'elsewhere',
+        entry: 'elsewhere',
+        scope: 'navigation',
+        restartOnConfigChange: true,
+        isEnabled: (state) => Boolean(state.identity)
+            && JC.pluginConfig?.ElsewhereEnabled === true
+            && JC.pluginConfig?.TmdbEnabled === true,
+        isApplicable: (state) => detailsRoute(state.routeKey),
+    },
+    {
+        id: 'reviews',
+        entry: 'reviews',
+        scope: 'navigation',
+        restartOnConfigChange: true,
+        isEnabled: (state) => Boolean(state.identity) && (
+            (JC.pluginConfig?.ShowReviews === true && JC.pluginConfig?.TmdbEnabled === true)
+            || JC.pluginConfig?.ShowUserReviews === true
+        ),
+        isApplicable: (state) => detailsRoute(state.routeKey),
+    },
+    {
+        id: 'arr-detail-links',
+        entry: 'arr-detail-links',
+        scope: 'navigation',
+        restartOnConfigChange: true,
+        isEnabled: (state) => Boolean(state.identity) && (
+            JC.pluginConfig?.ArrLinksEnabled === true
+            || JC.pluginConfig?.ArrTagsShowAsLinks === true
+        ),
+        isApplicable: (state) => detailsRoute(state.routeKey),
+    },
+    {
+        id: 'arr-search',
+        entry: 'arr-search',
+        scope: 'identity',
+        restartOnConfigChange: true,
+        isEnabled: (state) => Boolean(state.identity) && arrSearchEnabled(),
+        isApplicable: () => true,
+    },
+    {
+        id: 'letterboxd-links',
+        entry: 'letterboxd-links',
+        scope: 'navigation',
+        restartOnConfigChange: true,
+        isEnabled: (state) => Boolean(state.identity)
+            && JC.pluginConfig?.LetterboxdEnabled === true,
+        isApplicable: (state) => detailsRoute(state.routeKey),
     },
 ]);

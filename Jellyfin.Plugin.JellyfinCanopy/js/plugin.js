@@ -1845,7 +1845,6 @@
     /** Stage-6 activation. Old-epoch teardown always ran before these gates. */
     function activateFeatures(context) {
         activateFeature(context, 'canopy', typeof JC.initializeCanopyScript === 'function', JC.initializeCanopyScript);
-        activateFeature(context, 'elsewhere', JC.pluginConfig?.ElsewhereEnabled, JC.initializeElsewhereScript);
         activateFeature(context, 'seerr', JC.pluginConfig?.SeerrEnabled && JC.pluginConfig?.SeerrShowSearchResults !== false, JC.initializeSeerrScript);
         activateFeature(
             context,
@@ -1856,10 +1855,6 @@
         );
         activateFeature(context, 'pause-screen', typeof JC.initializePauseScreen === 'function', JC.initializePauseScreen);
         activateFeature(context, 'bookmarks', typeof JC.initializeBookmarks === 'function', JC.initializeBookmarks);
-        activateFeature(context, 'arr-links', JC.pluginConfig?.ArrLinksEnabled, JC.initializeArrLinksScript);
-        activateFeature(context, 'arr-tag-links', JC.pluginConfig?.ArrTagsShowAsLinks, JC.initializeArrTagLinksScript);
-        activateFeature(context, 'letterboxd-links', JC.pluginConfig?.LetterboxdEnabled, JC.initializeLetterboxdLinksScript);
-        activateFeature(context, 'reviews', JC.pluginConfig?.ShowReviews || JC.pluginConfig?.ShowUserReviews, JC.initializeReviewsScript);
         activateFeature(context, 'osd-rating', typeof JC.initializeOsdRating === 'function', JC.initializeOsdRating);
     }
 
