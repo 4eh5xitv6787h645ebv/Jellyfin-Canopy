@@ -160,7 +160,10 @@ export function openCustomize(mt: DiscoveryMediaType, genres: Map<number, string
     a11y = installModalA11y(dialog, { labelledBy: 'jc-discovery-customize-title', initialFocus: save, onEscape: close });
 }
 
-JC.identity.registerReset('discovery-customize', () => activeClose?.());
+/** Close the activation-owned customization surface, if present. */
+export function resetDiscoveryCustomize(): void {
+    activeClose?.();
+}
 
 function mkTextButton(text: string, bg: string): HTMLButtonElement {
     const b = document.createElement('button');

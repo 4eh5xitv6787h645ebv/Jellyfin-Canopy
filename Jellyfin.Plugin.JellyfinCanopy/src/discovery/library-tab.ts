@@ -18,7 +18,7 @@ import { renderFeed, type DiscoveryFeedHandle } from './feed';
 import { fetchGenres } from './data';
 import { getUserRowIds } from './prefs';
 import { openCustomize } from './customize';
-import type { IdentityContext } from '../types/jc';
+import type { IdentityContext, LifecycleHandle } from '../types/jc';
 
 interface LibraryPageDef {
     id: string;
@@ -44,7 +44,7 @@ let injectPending = false;
 let injectFrame: number | null = null;
 let initialized = false;
 let activeContext: IdentityContext | null = null;
-const lifecycle = JC.core.lifecycle!.register('discovery-library-tab');
+let lifecycle: LifecycleHandle | null = null;
 
 function stateFor(id: string): PaneState {
     let s = state.get(id);
@@ -277,6 +277,7 @@ export function initLibraryTab(): void {
     if (!context) return;
     initialized = true;
     activeContext = context;
+    lifecycle = JC.core.lifecycle!.register('discovery-library-tab');
     ensureCss();
     lifecycle.track(JC.core.dom!.onBodyMutation('jc-discovery-library', () => scheduleInject(context)));
     lifecycle.track(onNavigate(() => scheduleInject(context)));
@@ -284,11 +285,12 @@ export function initLibraryTab(): void {
     scheduleInject(context);
 }
 
-function resetLibraryTab(): void {
+export function resetLibraryTab(): void {
     if (injectFrame !== null) cancelAnimationFrame(injectFrame);
     injectFrame = null;
     injectPending = false;
-    lifecycle.teardown();
+    lifecycle?.teardown();
+    lifecycle = null;
     for (const def of PAGES) closePane(def);
     state.clear();
     document.querySelectorAll('.jc-discovery-pane, .jc-discovery-toggle').forEach((node) => node.remove());
@@ -297,6 +299,3 @@ function resetLibraryTab(): void {
     activeContext = null;
     initialized = false;
 }
-
-JC.identity.registerReset('discovery-library-tab', resetLibraryTab);
-JC.identity.registerActivate('discovery-library-tab', () => initLibraryTab());

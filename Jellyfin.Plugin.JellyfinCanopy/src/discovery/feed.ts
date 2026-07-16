@@ -179,10 +179,11 @@ export async function renderFeed(container: HTMLElement, mt: DiscoveryMediaType,
     };
 }
 
-JC.identity.registerReset('discovery-feeds', () => {
+/** Dispose every feed owned by the current lazy-feature activation. */
+export function resetDiscoveryFeeds(): void {
     for (const destroy of [...activeDestroyers]) destroy();
     for (const controller of [...activeControllers]) controller.abort();
     activeControllers.clear();
     document.querySelectorAll('[data-jc-identity-owned="true"].jc-discovery-feed')
         .forEach((node) => node.remove());
-});
+}
