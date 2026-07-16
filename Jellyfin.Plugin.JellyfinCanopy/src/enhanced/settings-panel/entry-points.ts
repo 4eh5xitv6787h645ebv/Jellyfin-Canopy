@@ -8,6 +8,7 @@
 import { JC } from '../../globals';
 import { onBodyMutation } from '../../core/dom-observer';
 import { onNavigate, onViewPage } from '../../core/navigation';
+import { queryElementsById, resolveCurrentViewRoot } from '../../core/view-root';
 import { getSidebarContainer } from '../helpers';
 import { ensureCanopySection, insertSectionEntry } from '../pages/entry-points';
 
@@ -104,14 +105,23 @@ let prefsLinkNavHooksWired = false;
  * @returns True when the link exists (or was just added).
  */
 function addPrefsLinkIfOnPage(): boolean {
-    const page = document.getElementById('myPreferencesMenuPage');
-    if (!page || page.classList.contains('hide')) return false;
+    const current = resolveCurrentViewRoot('myPreferencesMenuPage');
+    if (!current) return false;
+    const page = current.root;
 
     const menuContainer = page.querySelector('.verticalSection');
     if (!menuContainer) return false;
 
-    // Check if link already exists
-    if (document.getElementById('jellyfinCanopyUserPrefsLink')) return true;
+    // Cached native views can retain the same page/link ids. Ownership follows
+    // the current view root: remove stale/duplicate copies, then gate only on a
+    // link inside this root.
+    const links = queryElementsById('jellyfinCanopyUserPrefsLink');
+    let currentLink: HTMLElement | null = null;
+    for (const link of links) {
+        if (page.contains(link) && !currentLink) currentLink = link;
+        else link.remove();
+    }
+    if (currentLink) return true;
 
     // Create the link element matching Jellyfin's structure
     const enhancedLink = document.createElement('a');

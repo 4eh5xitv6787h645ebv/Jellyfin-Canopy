@@ -9,12 +9,12 @@
       "scope": "Jellyfin.Plugin.JellyfinCanopy/src/core/**",
       "report": "coverage/coverage-summary.json",
       "measured": {
-        "coveredLines": 1439,
-        "totalLines": 1762
+        "coveredLines": 1473,
+        "totalLines": 1797
       },
       "tolerance": {
         "missingCoveredLines": 1,
-        "rationale": "Two clean local Node 22/V8 runs on 2026-07-16 each passed 970 tests and measured the unchanged 1762-line core scope at 1439 covered lines. The deterministic issue #87 viewshow regression now drives bookmark detail-request retirement through the real lifecycle and covers the existing dom-observer replacement diagnostic; no production core line was added. The reviewed high-water therefore advances by one covered line. The existing one-line tolerance is unchanged and permits only the previously reproduced negligible instrumentation variance; coverage-baseline.test.js retains exact below-floor, above-baseline, scope-change, and broad-tolerance negative boundaries."
+        "rationale": "Two clean local Node 22/V8 runs on 2026-07-16 each passed 1015 tests and measured the expanded 1797-line core scope at 1473 covered lines. Issue #127 adds the shared current-view root resolver used by native preferences injectors, with deterministic coverage for duplicate cached IDs, URL handoff before an incoming lifecycle event, POP re-show, and modern/legacy view roots. Relative to the reviewed 1439/1762 issue #87 baseline, the reviewed core scope grows by 35 instrumented lines and the high-water advances by 34 covered lines. The existing one-line tolerance is unchanged and permits only the previously reproduced negligible instrumentation variance; coverage-baseline.test.js retains exact below-floor, above-baseline, scope-change, and broad-tolerance negative boundaries."
       }
     },
     "server": {
