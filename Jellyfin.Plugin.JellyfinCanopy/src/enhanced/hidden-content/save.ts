@@ -115,11 +115,13 @@ export async function fetchUserHiddenItemsForAdmin(targetUserId: string): Promis
             url: ApiClient.getUrl(`/JellyfinCanopy/admin/hidden-content/${targetUserId}`),
             dataType: 'json'
         });
-        // The server returns PascalCase ({ Items, Settings }); reuse the shared converter so the
-        // items match locally-loaded ones (toCamelCase is idempotent and recurses into Items).
-        const hc = (typeof (JC as any).toCamelCase === 'function')
-            ? (JC as any).toCamelCase(res && res.hiddenContent)
-            : (res && res.hiddenContent);
+        // The server returns PascalCase ({ Items, Settings }); use the owning
+        // schema bridge so Items keys remain opaque while item DTOs camelCase.
+        const hc = typeof JC.transformUserFileCase === 'function'
+            ? JC.transformUserFileCase('hidden-content.json', res && res.hiddenContent, 'load')
+            : (typeof JC.toCamelCase === 'function'
+                ? JC.toCamelCase(res && res.hiddenContent)
+                : (res && res.hiddenContent));
         const items: Record<string, HiddenItem> = (hc && hc.items) || {};
         return Object.entries(items).map(([key, item]) => ({ ...item, _key: key }));
     } catch (e: any) {
@@ -177,7 +179,8 @@ export async function adminHideForUser(targetUserId: string, items: HiddenItem[]
 
 // Dedicated Hidden Content transport; its payload/state machine is distinct from
 // the revisioned settings/shortcuts/elsewhere writer.
-// Returns the JSON snapshot that was sent so the caller can compare it to current state and decide
+// Returns the local JSON snapshot represented by the request so the caller can
+// compare it to current state and decide
 // whether the success acknowledgement still represents the latest local intent.
 async function directSaveHiddenContent(context: IdentityContext): Promise<string> {
     if (!isUsableContext(context)) throw new StaleHiddenContentIdentityError();
@@ -186,18 +189,22 @@ async function directSaveHiddenContent(context: IdentityContext): Promise<string
     }
     const data = getHiddenData();
     if (!JC.identity.isOwned(data, context)) throw new StaleHiddenContentIdentityError();
-    const snapshot = JSON.stringify(data);
+    const localSnapshot = JSON.stringify(data);
+    const wire = typeof JC.transformUserFileCase === 'function'
+        ? JC.transformUserFileCase('hidden-content.json', data, 'save')
+        : data;
+    const wireSnapshot = JSON.stringify(wire);
     // Keep the last identity check adjacent to invocation. No task can switch
     // authentication between these two synchronous statements.
     if (!JC.identity.isCurrent(context)) throw new StaleHiddenContentIdentityError();
     await ApiClient.ajax({
         type: 'POST',
         url: ApiClient.getUrl(`/JellyfinCanopy/user-settings/${context.userId}/hidden-content.json`),
-        data: snapshot,
+        data: wireSnapshot,
         contentType: 'application/json'
     });
     if (!JC.identity.isCurrent(context)) throw new StaleHiddenContentIdentityError();
-    return snapshot;
+    return localSnapshot;
 }
 
 // After a successful save, decide whether the server is caught up.

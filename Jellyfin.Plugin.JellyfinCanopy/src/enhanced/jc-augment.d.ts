@@ -62,12 +62,21 @@ declare module '../types/jc' {
         rememberUserSettingsSnapshot?: (fileName: string, settings: unknown) => void;
         loadSettings?: () => UserSettings;
         initializeShortcuts?: () => void;
-        /**
-         * Provided by js/plugin.js (camelCase→PascalCase for C# serialization).
-         * opts.preserveKey copies matching keys verbatim (e.g. bookmark ids
-         * `Bm_…`) so ID-keyed dictionaries are not case-mangled.
-         */
-        toPascalCase?: (value: unknown, opts?: { preserveKey?: (key: string) => boolean }) => unknown;
+        /** Provided by js/plugin.js for generic DTO property conversion. */
+        toPascalCase?: (value: unknown, opts?: {
+            preserveKey?: (key: string) => boolean;
+            opaqueDictionaryPaths?: ReadonlyArray<ReadonlyArray<string>>;
+        }) => unknown;
+        toCamelCase?: (value: unknown, opts?: {
+            preserveKey?: (key: string) => boolean;
+            opaqueDictionaryPaths?: ReadonlyArray<ReadonlyArray<string>>;
+        }) => unknown;
+        /** Schema-aware user-file load/save bridge; dictionary keys stay opaque. */
+        transformUserFileCase?: (
+            fileName: string,
+            value: unknown,
+            direction: 'load' | 'save'
+        ) => unknown;
 
         // enhanced/native-tabs
         nativeTabs?: NativeTabsApi;

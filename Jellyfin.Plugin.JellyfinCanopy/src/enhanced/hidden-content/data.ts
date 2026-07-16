@@ -264,7 +264,9 @@ export async function refresh(): Promise<boolean> {
             dataType: 'json'
         });
         if (context && !JC.identity.isCurrent(context)) return false;
-        const camelCased = (typeof (JC as any).toCamelCase === 'function') ? (JC as any).toCamelCase(fresh) : fresh;
+        const camelCased = typeof JC.transformUserFileCase === 'function'
+            ? JC.transformUserFileCase('hidden-content.json', fresh, 'load')
+            : (typeof JC.toCamelCase === 'function' ? JC.toCamelCase(fresh) : fresh);
         const next = camelCased && typeof camelCased === 'object'
             ? camelCased as HiddenContentData
             : emptyHiddenData();

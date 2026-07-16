@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using System.Text.Json;
 using Jellyfin.Database.Implementations.Entities;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
 using Jellyfin.Plugin.JellyfinCanopy.Controllers;
@@ -202,6 +203,62 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             Assert.IsType<BadRequestObjectResult>(bad);
             Assert.Contains("a", State().Bookmarks);
             Assert.Equal(0, State().Revision);
+        }
+
+        [Fact]
+        public void FullReplacementAndGet_RoundTripOpaqueIdsAndDtoProperties()
+        {
+            Seed(("old", Bookmark("old-item")));
+            var ids = new[]
+            {
+                "Bm_1_AbC",
+                "abc",
+                "Abc",
+                "item-1:12.25",
+                ".leading",
+                "映画-☕",
+                "007",
+                "__proto__",
+                "toString",
+                "constructor",
+                "hasOwnProperty"
+            };
+            var replacement = ids.ToDictionary(
+                id => id,
+                id => Bookmark("item-" + id),
+                StringComparer.Ordinal);
+            var controller = Controller();
+            controller.Request.Headers["If-Match"] = "\"0\"";
+
+            var saved = controller.SaveUserBookmark(UserId, new UserBookmark
+            {
+                Revision = 0,
+                Bookmarks = replacement
+            });
+
+            var saveResponse = Assert.IsType<UserSettingsController.BookmarkMutationResponse>(
+                Assert.IsType<OkObjectResult>(saved).Value);
+            Assert.Equal(1, saveResponse.Revision);
+            Assert.Equal(ids, saveResponse.Bookmarks.Keys);
+
+            var persisted = State();
+            Assert.Equal(ids, persisted.Bookmarks.Keys);
+            Assert.Equal("item-abc", persisted.Bookmarks["abc"].ItemId);
+            Assert.Equal("item-Abc", persisted.Bookmarks["Abc"].ItemId);
+
+            var getController = Controller();
+            var get = Assert.IsType<UserBookmark>(
+                Assert.IsType<OkObjectResult>(getController.GetUserBookmark(UserId)).Value);
+            Assert.Equal(ids, get.Bookmarks.Keys);
+            Assert.Equal("\"1\"", getController.Response.Headers.ETag.ToString());
+
+            // Pin the real wire/file boundary: dictionary names remain exact,
+            // while the value remains a PascalCase BookmarkItem DTO.
+            using var json = JsonDocument.Parse(File.ReadAllText(BookmarkPath));
+            var bookmarkObject = json.RootElement.GetProperty("Bookmarks");
+            Assert.Equal(ids, bookmarkObject.EnumerateObject().Select(property => property.Name));
+            Assert.Equal("item-Abc", bookmarkObject.GetProperty("Abc").GetProperty("ItemId").GetString());
+            Assert.False(bookmarkObject.GetProperty("Abc").TryGetProperty("itemId", out _));
         }
 
         [Fact]

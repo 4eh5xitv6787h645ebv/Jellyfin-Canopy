@@ -29,7 +29,12 @@ function extractFunctionSource(name: string): string | null {
     return null;
 }
 
-type CaseFn = (obj: unknown, opts?: { preserveKey?: (key: string) => boolean }) => unknown;
+type CaseTransformOptions = {
+    preserveKey?: (key: string) => boolean;
+    opaqueDictionaryPaths?: ReadonlyArray<ReadonlyArray<string>>;
+};
+type CaseFn = (obj: unknown, opts?: CaseTransformOptions) => unknown;
+type UserFileCaseFn = (fileName: string, value: unknown, direction: 'load' | 'save') => unknown;
 type ResolveFactory = (
     jc: { pluginConfig?: Record<string, unknown> },
 ) => (userSettings: Record<string, unknown>) => boolean;
@@ -91,6 +96,36 @@ function memoryStorage(): Storage {
         key: (index) => [...values.keys()][index] ?? null,
         removeItem: (key) => { values.delete(key); },
         setItem: (key, value) => { values.set(key, String(value)); },
+    };
+}
+
+function caseTransforms(): {
+    toCamelCase: CaseFn;
+    toPascalCase: CaseFn;
+    transformUserFileCase: UserFileCaseFn;
+} {
+    const transformSource = extractFunctionSource('transformObjectKeys');
+    const camelSource = extractFunctionSource('toCamelCase');
+    const pascalSource = extractFunctionSource('toPascalCase');
+    const optionsSource = extractFunctionSource('userFileCaseOptions');
+    const userFileSource = extractFunctionSource('transformUserFileCase');
+    expect(transformSource, 'transformObjectKeys not found').toBeTruthy();
+    expect(camelSource, 'toCamelCase not found').toBeTruthy();
+    expect(pascalSource, 'toPascalCase not found').toBeTruthy();
+    expect(optionsSource, 'userFileCaseOptions not found').toBeTruthy();
+    expect(userFileSource, 'transformUserFileCase not found').toBeTruthy();
+    const evaluated: unknown = eval(`(() => {
+        ${transformSource}
+        ${camelSource}
+        ${pascalSource}
+        ${optionsSource}
+        ${userFileSource}
+        return { toCamelCase, toPascalCase, transformUserFileCase };
+    })()`);
+    return evaluated as {
+        toCamelCase: CaseFn;
+        toPascalCase: CaseFn;
+        transformUserFileCase: UserFileCaseFn;
     };
 }
 
@@ -985,8 +1020,9 @@ describe('plugin.js loader guards', () => {
             scope: LoaderScope,
         ) => Promise<Record<string, unknown>>;
         const isNotFound = eval(`(${notFoundSource})`) as (error: unknown) => boolean;
+        const { transformUserFileCase } = caseTransforms();
         const makeFetch = eval(
-            '(function(isNotFoundError, requireCurrentIdentity, emptyUserConfig, defaultUserFile, toCamelCase) {'
+            '(function(isNotFoundError, requireCurrentIdentity, emptyUserConfig, defaultUserFile, transformUserFileCase) {'
             + 'async ' + fetchSource
             + '; return fetchUserConfig; })',
         ) as (
@@ -994,14 +1030,14 @@ describe('plugin.js loader guards', () => {
             requireCurrentIdentity: (context: IdentityContext) => void,
             emptyUserConfig: () => Record<string, unknown>,
             defaultUserFile: (name: string) => Record<string, unknown>,
-            toCamelCase: (value: unknown) => unknown,
+            transformUserFileCase: UserFileCaseFn,
         ) => FetchUserConfig;
         const fetchUserConfig = makeFetch(
             isNotFound,
             () => undefined,
             () => ({ settings: {}, shortcuts: {}, bookmark: {}, elsewhere: {}, hiddenContent: {} }),
             (name) => name === 'shortcuts' ? { Shortcuts: [] } : {},
-            (value) => value,
+            transformUserFileCase,
         );
         const controller = new AbortController();
         const scope: LoaderScope = {
@@ -1010,7 +1046,16 @@ describe('plugin.js loader guards', () => {
         };
         const context = { serverId: 'server', userId: 'user/id', epoch: 1 };
         const validUserFile = (options: AjaxOptions): Record<string, unknown> =>
-            options.url.includes('bookmark.json') ? { revision: 0, bookmarks: {} } : {};
+            options.url.includes('bookmark.json')
+                ? {
+                    Revision: 0,
+                    Bookmarks: {
+                        abc: { ItemId: 'lower' },
+                        Abc: { ItemId: 'upper' },
+                        '映画-1': { ItemId: 'unicode' },
+                    }
+                }
+                : {};
         const transientError = Object.assign(new Error('temporary server failure'), { status: 503 });
         const transientAjax = vi.fn((options: AjaxOptions) => options.url.includes('settings.json')
             ? Promise.reject(transientError)
@@ -1035,6 +1080,10 @@ describe('plugin.js loader guards', () => {
 
         expect(missingAjax).toHaveBeenCalledTimes(5);
         expect(snapshot.shortcuts).toEqual({ Shortcuts: [] });
+        const loadedBookmarks = (snapshot.bookmark as Record<string, unknown>).bookmarks as Record<string, unknown>;
+        expect(Object.keys(loadedBookmarks)).toEqual(['abc', 'Abc', '映画-1']);
+        expect(loadedBookmarks.abc).toMatchObject({ itemId: 'lower' });
+        expect(loadedBookmarks.Abc).toMatchObject({ itemId: 'upper' });
         for (const [options] of missingAjax.mock.calls) {
             expect(options.url).toContain('/user-settings/user%2Fid/');
         }
@@ -1052,6 +1101,8 @@ describe('plugin.js loader guards', () => {
         expect(run).toContain('scope.race(client.getCurrentUser())');
         expect(run).not.toContain('scope.race(client.getCurrentUser()).catch');
         expect(fetchUser).toContain('encodeURIComponent(context.userId)');
+        expect(fetchUser).toContain("transformUserFileCase('bookmark.json', value, 'load')");
+        expect(fetchUser).not.toMatch(/preserveKey[^\n]+\^bm_/i);
         expect(SRC).toContain('/tag-cache/${encodeURIComponent(context.userId)}');
     });
 
@@ -1106,13 +1157,9 @@ describe('plugin.js loader guards', () => {
         expect(SRC).not.toMatch(/new RegExp\(`\{\$\{param\}\}`, 'g'\), value\)/);
     });
 
-    // LOADER-8 — a blanket toCamelCase lowercased bookmark ID dictionary keys
-    // (`Bm_…` → `bm_…`), diverging client/server id case. The opt-in preserveKey
-    // mode must keep matching keys verbatim while still camelCasing fields.
+    // LOADER-8 — compatibility coverage for the original opt-in predicate.
     it('toCamelCase preserveKey keeps ID keys verbatim and still camelCases fields (LOADER-8)', () => {
-        const fnSrc = extractFunctionSource('toCamelCase');
-        expect(fnSrc, 'toCamelCase not found').toBeTruthy();
-        const toCamelCase = eval(`(${fnSrc})`) as CaseFn;
+        const { toCamelCase } = caseTransforms();
 
         const out = toCamelCase(
             { Bookmarks: { Bm_1_abc: { ItemId: 'x' } } },
@@ -1130,9 +1177,7 @@ describe('plugin.js loader guards', () => {
     });
 
     it('toPascalCase preserveKey keeps ID keys verbatim and still PascalCases fields (LOADER-8)', () => {
-        const fnSrc = extractFunctionSource('toPascalCase');
-        expect(fnSrc, 'toPascalCase not found').toBeTruthy();
-        const toPascalCase = eval(`(${fnSrc})`) as CaseFn;
+        const { toPascalCase } = caseTransforms();
 
         // A client-generated id is lowercase (`bm_…`); PascalCasing it WOULD
         // change it to `Bm_…`, so preserveKey is what keeps it byte-stable.
@@ -1145,6 +1190,96 @@ describe('plugin.js loader guards', () => {
         expect(Object.keys(bookmarks)).toContain('bm_1_abc'); // id key preserved verbatim
         const entry = bookmarks.bm_1_abc as Record<string, unknown>;
         expect(Object.keys(entry)).toContain('ItemId'); // field still PascalCased
+    });
+
+    it('round-trips every opaque bookmark id while transforming DTO properties', () => {
+        const { transformUserFileCase } = caseTransforms();
+        const ids = [
+            'Bm_1_AbC', 'abc', 'Abc', 'item-1:12.25', '.leading', '映画-☕', '007',
+            '__proto__', 'toString', 'constructor', 'hasOwnProperty'
+        ];
+        const wire = {
+            Revision: 7,
+            Bookmarks: Object.fromEntries(ids.map((id, index) => [id, {
+                ItemId: `item-${index}`,
+                MediaType: 'movie',
+                Timestamp: index + 0.5,
+            }]))
+        };
+
+        const local = transformUserFileCase('bookmark.json', wire, 'load') as Record<string, unknown>;
+        const localBookmarks = local.bookmarks as Record<string, Record<string, unknown>>;
+        expect(Object.keys(localBookmarks)).toEqual(ids);
+        expect(Object.getPrototypeOf(localBookmarks)).toBeNull();
+        expect(localBookmarks.abc.itemId).toBe('item-1');
+        expect(localBookmarks.Abc.itemId).toBe('item-2');
+        expect(localBookmarks['__proto__'].mediaType).toBe('movie');
+        expect(localBookmarks['toString'].itemId).toBe('item-8');
+        expect(localBookmarks['constructor'].itemId).toBe('item-9');
+        expect(localBookmarks['hasOwnProperty'].itemId).toBe('item-10');
+
+        const saved = transformUserFileCase('bookmark.json', local, 'save');
+        expect(saved).toEqual(wire);
+    });
+
+    it('fails a DTO key collision before mutating the caller-owned bookmark payload', () => {
+        const { transformUserFileCase } = caseTransforms();
+        const wire = {
+            Revision: 0,
+            Bookmarks: {
+                keep: { ItemId: 'original', itemId: 'colliding', MediaType: 'movie' }
+            }
+        };
+        const before = JSON.stringify(wire);
+
+        expect(() => transformUserFileCase('bookmark.json', wire, 'load'))
+            .toThrow(/collision.*ItemId.*itemId/i);
+        expect(JSON.stringify(wire)).toBe(before);
+
+        const local = {
+            revision: 0,
+            bookmarks: {
+                keep: { itemId: 'original', ItemId: 'colliding', mediaType: 'movie' }
+            }
+        };
+        const localBefore = JSON.stringify(local);
+        expect(() => transformUserFileCase('bookmark.json', local, 'save'))
+            .toThrow(/collision.*itemId.*ItemId/i);
+        expect(JSON.stringify(local)).toBe(localBefore);
+    });
+
+    it('round-trips the committed bookmark API golden through load and save transforms', () => {
+        const { transformUserFileCase } = caseTransforms();
+        const goldenPath = PLUGIN_JS_PATH.replace(
+            /Jellyfin\.Plugin\.JellyfinCanopy\/js\/plugin\.js$/,
+            'Jellyfin.Plugin.JellyfinCanopy.Tests/Snapshots/UserFiles/bookmark.write.json',
+        );
+        const golden = JSON.parse(ts.sys.readFile(goldenPath) ?? 'null') as Record<string, unknown>;
+        const local = transformUserFileCase('bookmark.json', golden, 'load') as Record<string, unknown>;
+        const bookmarks = local.bookmarks as Record<string, Record<string, unknown>>;
+        expect(bookmarks['item-1:12.25'].itemId).toBe('item-1');
+        expect(transformUserFileCase('bookmark.json', local, 'save')).toEqual(golden);
+    });
+
+    it('preserves the audited hidden-content Items dictionary boundary', () => {
+        const { transformUserFileCase } = caseTransforms();
+        const ids = [
+            'Movie-A', 'movie-a', '.leading', '映画-1', '007',
+            '__proto__', 'toString', 'constructor', 'hasOwnProperty'
+        ];
+        const wire = {
+            Items: Object.fromEntries(ids.map(id => [id, { ItemId: id, HideScope: 'global' }])),
+            Settings: { FilterSearch: true }
+        };
+        const local = transformUserFileCase('hidden-content.json', wire, 'load') as Record<string, unknown>;
+        const items = local.items as Record<string, Record<string, unknown>>;
+        expect(Object.keys(items)).toEqual(ids);
+        expect(Object.getPrototypeOf(items)).toBeNull();
+        expect(items['Movie-A'].itemId).toBe('Movie-A');
+        expect(items['toString'].itemId).toBe('toString');
+        expect(items['constructor'].itemId).toBe('constructor');
+        expect((local.settings as Record<string, unknown>).filterSearch).toBe(true);
+        expect(transformUserFileCase('hidden-content.json', local, 'save')).toEqual(wire);
     });
 
     // LOADER-3 — the admin-aware genre-tag resolution is now a single helper so

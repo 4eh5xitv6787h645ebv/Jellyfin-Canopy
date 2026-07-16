@@ -116,17 +116,28 @@ import {
 
   function committedState(value: unknown): BookmarkCommittedState | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-    const record = value as Record<string, unknown>;
+    // Core API responses are raw ASP.NET JSON, unlike the boot loader's GET.
+    // Use the same schema owner for every response path; it preserves all
+    // bookmark IDs while converting BookmarkItem DTO properties.
+    const schemaTransform = JC.transformUserFileCase;
+    const localValue = typeof schemaTransform === 'function'
+      ? schemaTransform('bookmark.json', value, 'load')
+      : value;
+    if (!localValue || typeof localValue !== 'object' || Array.isArray(localValue)) return null;
+    const record = localValue as Record<string, unknown>;
     const revision = Number(record.revision ?? record.Revision);
     const bookmarks = record.bookmarks ?? record.Bookmarks;
     if (!Number.isSafeInteger(revision) || revision < 0
       || !bookmarks || typeof bookmarks !== 'object' || Array.isArray(bookmarks)) return null;
 
-    // Core API responses are raw ASP.NET JSON, unlike the boot loader's GET
-    // path. Preserve every dictionary id exactly while converting each nested
-    // BookmarkItem from PascalCase to the camelCase shape the live UI owns.
-    const converter = (JC as any).toCamelCase;
-    const normalized: Record<string, any> = {};
+    if (typeof schemaTransform === 'function') {
+      return { revision, bookmarks: bookmarks as Record<string, any> };
+    }
+
+    // Compatibility for a partially upgraded client where this bundle is
+    // newer than plugin.js: transform values individually so IDs stay exact.
+    const converter = JC.toCamelCase;
+    const normalized = Object.setPrototypeOf({}, null) as Record<string, any>;
     for (const [bookmarkId, bookmark] of Object.entries(bookmarks as Record<string, unknown>)) {
       normalized[bookmarkId] = typeof converter === 'function' ? converter(bookmark) : bookmark;
     }
@@ -180,14 +191,19 @@ import {
     return fields.every(field => (left[field] ?? '') === (right[field] ?? ''));
   }
 
+  function hasOwnBookmark(bookmarks: Record<string, any>, bookmarkId: string): boolean {
+    return Object.prototype.hasOwnProperty.call(bookmarks, bookmarkId);
+  }
+
   function bookmarkOperationsApplied(
     state: BookmarkCommittedState,
     operations: BookmarkOperation[]
   ): boolean {
     return operations.every(operation => {
+      const exists = hasOwnBookmark(state.bookmarks, operation.bookmarkId);
       const existing = state.bookmarks[operation.bookmarkId];
-      if (operation.type === 'delete') return !existing;
-      return !!existing && !!operation.bookmark && sameBookmark(existing, operation.bookmark);
+      if (operation.type === 'delete') return !exists;
+      return exists && !!operation.bookmark && sameBookmark(existing, operation.bookmark);
     });
   }
 
@@ -590,8 +606,8 @@ import {
 
     try {
       const committed = await commitBookmarkBatch(captured, root, state => {
-        const existing = state.bookmarks[bookmarkId];
-        if (existing) {
+        if (hasOwnBookmark(state.bookmarks, bookmarkId)) {
+          const existing = state.bookmarks[bookmarkId];
           if (sameBookmark(existing, bookmark)) return [];
           throw new Error(`Bookmark id collision for ${bookmarkId}`);
         }
@@ -602,7 +618,10 @@ import {
         || !isMediaItemCurrent(captured, requestedItemId)) return null;
       console.log(`${logPrefix} Bookmark added:`, bookmarkId, bookmark);
       if (!emitBookmarksUpdated(captured, 'add')) return null;
-      return { id: bookmarkId, ...(committed.bookmarks[bookmarkId] || bookmark) };
+      return {
+        id: bookmarkId,
+        ...(hasOwnBookmark(committed.bookmarks, bookmarkId) ? committed.bookmarks[bookmarkId] : bookmark)
+      };
     } catch (e) {
       if (!isBookmarkRootCurrent(captured, root)) return null;
       console.error(`${logPrefix} Failed to save bookmark:`, e);
@@ -617,7 +636,7 @@ import {
     const captured = captureIdentity();
     if (!captured.context) return false;
     const root = bookmarkRootFor(captured);
-    if (!root?.bookmarks?.[bookmarkId]) {
+    if (!root || !hasOwnBookmark(root.bookmarks, bookmarkId)) {
       console.warn(`${logPrefix} Bookmark not found:`, bookmarkId);
       return false;
     }
@@ -643,8 +662,8 @@ import {
 
     try {
       const committed = await commitBookmarkBatch(captured, root, state => {
+        if (!hasOwnBookmark(state.bookmarks, bookmarkId)) return [];
         const current = state.bookmarks[bookmarkId];
-        if (!current) return [];
         return [{
           type: 'update',
           bookmarkId,
@@ -657,7 +676,7 @@ import {
           }
         }];
       });
-      if (!committed || !committed.bookmarks[bookmarkId]) return false;
+      if (!committed || !hasOwnBookmark(committed.bookmarks, bookmarkId)) return false;
       if (!isBookmarkRootCurrent(captured, root)) return false;
       console.log(`${logPrefix} Bookmark updated:`, bookmarkId);
       return emitBookmarksUpdated(captured, 'update');
@@ -675,7 +694,7 @@ import {
     const captured = captureIdentity();
     if (!captured.context) return false;
     const root = bookmarkRootFor(captured);
-    if (!root?.bookmarks?.[bookmarkId]) {
+    if (!root || !hasOwnBookmark(root.bookmarks, bookmarkId)) {
       console.warn(`${logPrefix} Bookmark not found:`, bookmarkId);
       return false;
     }
@@ -683,7 +702,7 @@ import {
     const startingRevision = root.revision;
     try {
       const committed = await commitBookmarkBatch(captured, root, state =>
-        state.bookmarks[bookmarkId] ? [{ type: 'delete', bookmarkId }] : []);
+        hasOwnBookmark(state.bookmarks, bookmarkId) ? [{ type: 'delete', bookmarkId }] : []);
       if (!committed) return false;
       if (!isBookmarkRootCurrent(captured, root)) return false;
       console.log(`${logPrefix} Bookmark deleted:`, bookmarkId);
@@ -746,7 +765,7 @@ import {
         const operations: BookmarkOperation[] = [];
         for (const next of synced) {
           const { id, ...bookmark } = next;
-          if (state.bookmarks[id]) {
+          if (hasOwnBookmark(state.bookmarks, id)) {
             if (!sameBookmark(state.bookmarks[id], bookmark)) {
               throw new Error(`Bookmark id collision for ${id}`);
             }
@@ -755,7 +774,7 @@ import {
           }
         }
         for (const id of removeOldIds || []) {
-          if (state.bookmarks[id]) operations.push({ type: 'delete', bookmarkId: id });
+          if (hasOwnBookmark(state.bookmarks, id)) operations.push({ type: 'delete', bookmarkId: id });
         }
         return operations;
       });
@@ -823,7 +842,7 @@ import {
             // window. Counting every newly absent id avoids false zero-success;
             // this affects only the informational toast, never deletion policy.
             for (const bookmarkId of Object.keys(base.bookmarks)) {
-              if (!evidence.bookmarks[bookmarkId]) evidenceDeleted.add(bookmarkId);
+              if (!hasOwnBookmark(evidence.bookmarks, bookmarkId)) evidenceDeleted.add(bookmarkId);
             }
             if (!adoptCommittedState(captured, root, evidence)) return empty();
             if ((error as { name?: string }).name === 'AbortError') throw error;
@@ -852,10 +871,10 @@ import {
     if (ids.length === 0) return 0;
     const committed = await commitBookmarkBatch(captured, root, state =>
       ids
-        .filter(bookmarkId => !!state.bookmarks[bookmarkId])
+        .filter(bookmarkId => hasOwnBookmark(state.bookmarks, bookmarkId))
         .map(bookmarkId => ({ type: 'delete' as const, bookmarkId })));
     if (!committed || !isBookmarkRootCurrent(captured, root)) return 0;
-    const deleted = ids.filter(bookmarkId => !committed.bookmarks[bookmarkId]).length;
+    const deleted = ids.filter(bookmarkId => !hasOwnBookmark(committed.bookmarks, bookmarkId)).length;
     if (deleted > 0) emitBookmarksUpdated(captured, 'delete-all');
     return deleted;
   }
