@@ -157,7 +157,7 @@ Four new pages living right in Jellyfin's navigation, reorderable, native on des
 > **Jellyfin 12 required.** On Jellyfin 10.11, use the original [Jellyfin Enhanced](https://github.com/n00bcodr/Jellyfin-Enhanced) instead.
 
 > [!TIP]
-> If you also use plugins that write to the web folder (such as [Plugin Pages](https://github.com/IAmParadox27/jellyfin-plugin-pages) or [Custom Tabs](https://github.com/IAmParadox27/jellyfin-plugin-custom-tabs)), or you've switched Canopy to its legacy on-disk injection fallback, the [File Transformation plugin](https://github.com/IAmParadox27/jellyfin-plugin-file-transformation) avoids the file-permission issues those setups can hit. Canopy's default request-time injection doesn't need it.
+> Canopy's default request-time script and branding middleware do not need write access to Jellyfin's web or installation tree. [File Transformation](https://github.com/IAmParadox27/jellyfin-plugin-file-transformation), [Plugin Pages](https://github.com/IAmParadox27/jellyfin-plugin-pages), and [Custom Tabs](https://github.com/IAmParadox27/jellyfin-plugin-custom-tabs) are separate optional plugins; Canopy does not use them on Jellyfin 12. See the [least-privilege guidance](https://4eh5xitv6787h645ebv.github.io/Jellyfin-Canopy/getting-started/#permission-issues) before enabling any legacy web-file modification.
 
 Optional integrations — connect what you use, skip what you don't: **Seerr** (requests & discovery), **Sonarr / Radarr / Bazarr** (calendar, queue, item-menu search), a **media-segment provider** like Intro Skipper (auto-skip), and a free **TMDB API key** (Elsewhere, TMDB reviews, release dates, richer cast info).
 
@@ -235,11 +235,11 @@ By [n00bcodr](https://github.com/n00bcodr), the original author of Jellyfin Enha
 - [Jellyfin-JavaScript-Injector](https://github.com/n00bcodr/Jellyfin-JavaScript-Injector) — custom script injection
 - [Jellyfish](https://github.com/n00bcodr/Jellyfish/) — custom Jellyfin theme
 
-Recommended plugins:
+Other optional plugins:
 
-- [File Transformation](https://github.com/IAmParadox27/jellyfin-plugin-file-transformation) — safe file modifications
-- [Custom Tabs](https://github.com/IAmParadox27/jellyfin-plugin-custom-tabs) — custom navigation tabs
-- [Plugin Pages](https://github.com/IAmParadox27/jellyfin-plugin-pages) — helps plugins create custom pages
+- [File Transformation](https://github.com/IAmParadox27/jellyfin-plugin-file-transformation) — supports third-party plugins that deliberately modify web files; Canopy does not require it
+- [Custom Tabs](https://github.com/IAmParadox27/jellyfin-plugin-custom-tabs) — custom navigation tabs; Canopy does not use it on Jellyfin 12
+- [Plugin Pages](https://github.com/IAmParadox27/jellyfin-plugin-pages) — helps plugins create custom pages but does not support Jellyfin 12; Canopy does not use it
 - [Kefin Tweaks](https://github.com/ranaldsgift/KefinTweaks) — watchlist and more
 
 <br>

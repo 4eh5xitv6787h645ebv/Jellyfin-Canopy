@@ -323,6 +323,12 @@ npm run check:docs-assets
 mkdocs build --strict
 ```
 
+The Markdown-link command also runs the installation-permission contract. It
+rejects broad or recursive install-tree write guidance and verifies the docs
+against the middleware defaults, legacy `index.html` target, atomic-rename
+requirements, and plugin-owned `custom_branding` storage in the shipped C#
+source. Update the implementation and its least-privilege guidance together.
+
 `check:docs-assets` treats every tracked visual file anywhere under `docs/` as
 owned content: it must be referenced by the README, documentation, MkDocs
 theme, or this repository's plugin manifest, and both documentation-only and

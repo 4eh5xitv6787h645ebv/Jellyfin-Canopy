@@ -104,7 +104,7 @@ The v12-only target lets the plugin delete a stack of 10.11 shims and use the su
 | Hand-rolled `IsAdminUser()` + JSON 403 envelopes | **CONVERT** → `[Authorize(Policy = ...)]` |
 | `X-Emby-Token` / `X-MediaBrowser-Token` client header | **DELETED** — the avatar-fetch helper now sends only `Authorization: MediaBrowser Token=…` |
 | Request-time `index.html` injection middleware | **STAYS** (no native hook) |
-| Legacy on-disk `index.html` rewrite | keep `CleanupOldScript` only |
+| Legacy on-disk `index.html` rewrite | **STAYS as an explicit fallback only** when `DisableScriptInjectionMiddleware=true`; `CleanupOldScript` separately remains as best-effort migration cleanup |
 | `BrandingAssetStartupFilter` | **STAYS** (no server API) |
 | `CheckPluginPages` (PluginPages plugin config) | **STAYS (conditional)** |
 | Legacy-layout DOM fallbacks (`.headerRight` etc.) | **STAY** — they serve v12's legacy layout |

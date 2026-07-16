@@ -52,12 +52,12 @@ If you're moving up from a 10.11 setup, [Getting Started](getting-started.md) wa
 
 #### The plugin, scripts, or an update didn't show up
 
-These are all installation-environment issues rather than plugin bugs, and [Getting Started](getting-started.md) has the step-by-step fixes:
+These symptoms can come from installation state, configuration, another plugin, or a Canopy bug. [Getting Started](getting-started.md) has the first checks:
 
 - **Plugin not appearing after installation** — check the plugin repository and restart steps.
 - **Scripts not loading** — scripts are injected at request time by the built-in middleware in the default configuration; see the scripts-not-loading fix.
 - **Update not applying** — clear the plugin cache and force a browser refresh with ++ctrl+f5++.
-- **"Permission denied" errors in the logs** — a file-permission problem on the Jellyfin install directory; see the permissions section.
+- **"Permission denied" errors in the logs** — default Canopy does not write the Jellyfin install directory; use the surrounding log lines to identify the component, then see the least-privilege permissions section.
 
 ### Features not behaving
 
@@ -310,8 +310,7 @@ When you write up the report, include: the plugin version, Jellyfin version, bro
 
 | Error | Solution |
 |-------|----------|
-| `Access to the path '/jellyfin/jellyfin-web/index.html' is denied.` | Install the [File Transformation plugin](https://github.com/IAmParadox27/jellyfin-plugin-file-transformation) or follow the Docker workaround in [Getting Started](getting-started.md). |
-| `Access to the path 'C:\Program Files\Jellyfin\Server\jellyfin-web\index.html' is denied.` | Grant "NETWORK SERVICE" Read/Write permissions to the Jellyfin folder. |
+| `Access to ... jellyfin-web/index.html ... is denied.` | Default Canopy does not need write access to this file. Confirm `DisableScriptInjectionMiddleware` is `false`; if the log names Canopy's stale-script cleanup, restore that exact package file, otherwise identify the component from the surrounding lines. Do not broaden install-tree permissions. See [Permission issues](getting-started.md#permission-issues). |
 | Plugin installed but scripts don't load | Scripts are injected at request time by the built-in middleware in the default config — see the scripts-not-loading fix in [Getting Started](getting-started.md). The "Jellyfin Canopy Startup" task only matters in the legacy on-disk `index.html` rewrite mode. |
 | Reviews / Elsewhere / Seerr icons not working | TMDB API may be blocked in your region — see [Seerr's TMDB troubleshooting](https://docs.seerr.dev/troubleshooting#tmdb-failed-to-retrievefetch-xxx). |
 | Seerr search not working | Enable "Jellyfin Sign-In" in Seerr, then either enable plugin auto-import and run "Import Users Now" or import users manually in Seerr. Also verify the user isn't on the blocked-users list. |
