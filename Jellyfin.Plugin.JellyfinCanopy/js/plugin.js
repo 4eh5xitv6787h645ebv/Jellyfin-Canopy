@@ -890,57 +890,94 @@
     }
 
     /**
-     * Converts PascalCase object keys to camelCase recursively.
-     * @param {object} obj - The object to convert.
-     * @param {{preserveKey?: (key: string) => boolean}} [opts] - When
-     *   opts.preserveKey(key) is true the key is copied verbatim (not
-     *   camelCased) — used to keep ID-keyed dictionaries (e.g. bookmark ids
-     *   `Bm_…`) case-stable across the round trip.
-     * @returns {object} - A new object with camelCase keys.
+     * Shared key-conversion owner for both load and save directions.
+     * `opaqueDictionaryPaths` names DTO properties whose CHILD object is a map:
+     * map keys are copied byte-for-byte, while each map value resumes ordinary
+     * DTO-property conversion. Output collisions throw before the caller can
+     * publish or persist the returned value; the input object is never mutated.
+     *
+     * @param {unknown} obj
+     * @param {(key: string) => string} convertKey
+     * @param {{preserveKey?: (key: string) => boolean, opaqueDictionaryPaths?: readonly (readonly string[])[]}} [opts]
+     * @param {readonly string[]} [path]
+     * @returns {unknown}
      */
-    function toCamelCase(obj, opts) {
-        if (obj === null || typeof obj !== 'object' || Array.isArray(obj)) {
-            return obj; // Return primitives and arrays as-is
+    function transformObjectKeys(obj, convertKey, opts, path = []) {
+        if (obj === null || typeof obj !== 'object') return obj;
+        if (Array.isArray(obj)) {
+            return obj.map(value => transformObjectKeys(value, convertKey, opts, path));
         }
-        const preserveKey = opts && opts.preserveKey;
-        const camelCased = {};
-        for (const key in obj) {
-            if (obj.hasOwnProperty(key)) {
-                const camelKey = (preserveKey && preserveKey(key))
-                    ? key
-                    : key.charAt(0).toLowerCase() + key.slice(1);
-                camelCased[camelKey] = toCamelCase(obj[key], opts); // Recursive for nested objects
+
+        const opaqueHere = !!opts?.opaqueDictionaryPaths?.some(candidate =>
+            candidate.length === path.length
+            && candidate.every((segment, index) =>
+                String(segment).toLowerCase() === String(path[index]).toLowerCase()));
+        const converted = {};
+        const sourceByOutput = new Map();
+        for (const key of Object.keys(obj)) {
+            const outputKey = opaqueHere || opts?.preserveKey?.(key) ? key : convertKey(key);
+            if (Object.prototype.hasOwnProperty.call(converted, outputKey)) {
+                const location = path.length > 0 ? path.join('.') : '<root>';
+                throw new Error(
+                    `Case transformation collision at ${location}: `
+                    + `'${sourceByOutput.get(outputKey)}' and '${key}' both map to '${outputKey}'`);
             }
+            sourceByOutput.set(outputKey, key);
+            Object.defineProperty(converted, outputKey, {
+                configurable: true,
+                enumerable: true,
+                writable: true,
+                value: transformObjectKeys(obj[key], convertKey, opts, [...path, key])
+            });
         }
-        return camelCased;
+        return converted;
     }
+
+    /** Converts PascalCase DTO properties to camelCase without mutating input. */
+    function toCamelCase(obj, opts) {
+        return transformObjectKeys(
+            obj,
+            key => key.charAt(0).toLowerCase() + key.slice(1),
+            opts);
+    }
+
+    /** Converts camelCase DTO properties to PascalCase without mutating input. */
+    function toPascalCase(obj, opts) {
+        return transformObjectKeys(
+            obj,
+            key => key.charAt(0).toUpperCase() + key.slice(1),
+            opts);
+    }
+
+    /**
+     * Schema audit for user files that cross the classic loader's name bridge.
+     * Bookmarks and hidden-content Items are dictionaries keyed by external or
+     * generated identity, not DTOs. Settings/elsewhere/shortcuts have no such
+     * transformed dictionary boundary in this bridge. Spoiler maps and legacy
+     * reviews use typed, dedicated server APIs and never pass through it.
+     */
+    function userFileCaseOptions(fileName) {
+        switch (String(fileName || '').toLowerCase()) {
+            case 'bookmark.json':
+                return { opaqueDictionaryPaths: [['Bookmarks']] };
+            case 'hidden-content.json':
+                return { opaqueDictionaryPaths: [['Items']] };
+            default:
+                return undefined;
+        }
+    }
+
+    /** One schema-aware primitive used by user-file load and save transforms. */
+    function transformUserFileCase(fileName, value, direction) {
+        const opts = userFileCaseOptions(fileName);
+        if (direction === 'load') return toCamelCase(value, opts);
+        if (direction === 'save') return toPascalCase(value, opts);
+        throw new Error(`Unsupported user-file case-transform direction '${direction}'`);
+    }
+
     JC.toPascalCase = toPascalCase;
     JC.toCamelCase = toCamelCase;
-    /**
-     * Converts object keys from camelCase to PascalCase (recursively).
-     * @param {object} obj - The object to convert.
-     * @param {{preserveKey?: (key: string) => boolean}} [opts] - When
-     *   opts.preserveKey(key) is true the key is copied verbatim (not
-     *   PascalCased) — the save-side mirror of toCamelCase so ID-keyed
-     *   dictionaries (bookmark ids `Bm_…`) stay case-stable on disk.
-     * @returns {object} - A new object with PascalCase keys.
-     */
-    function toPascalCase(obj, opts) {
-        if (obj === null || typeof obj !== 'object' || Array.isArray(obj)) {
-            return obj; // Return primitives and arrays as-is
-        }
-        const preserveKey = opts && opts.preserveKey;
-        const pascalCased = {};
-        for (const key in obj) {
-            if (obj.hasOwnProperty(key)) {
-                const pascalKey = (preserveKey && preserveKey(key))
-                    ? key
-                    : key.charAt(0).toUpperCase() + key.slice(1);
-                pascalCased[pascalKey] = toPascalCase(obj[key], opts); // Recursive for nested objects
-            }
-        }
-        return pascalCased;
-    }
+    JC.transformUserFileCase = transformUserFileCase;
 
     /**
      * Injects Druidblack metadata icons CSS.
@@ -1657,7 +1694,7 @@
             } else if (!value || typeof value !== 'object' || Array.isArray(value)) {
                 throw new Error(`Invalid ${name} user-settings response`);
             } else if (name === 'bookmark') {
-                const converted = toCamelCase(value, { preserveKey: (key) => /^bm_/i.test(key) });
+                const converted = transformUserFileCase('bookmark.json', value, 'load');
                 if (!Number.isSafeInteger(converted?.revision) || converted.revision < 0
                     || !converted.bookmarks || typeof converted.bookmarks !== 'object'
                     || Array.isArray(converted.bookmarks)) {
@@ -1665,7 +1702,8 @@
                 }
                 snapshot[name] = converted;
             } else if (name === 'settings' || name === 'hiddenContent') {
-                snapshot[name] = toCamelCase(value);
+                const fileName = name === 'settings' ? 'settings.json' : 'hidden-content.json';
+                snapshot[name] = transformUserFileCase(fileName, value, 'load');
             } else {
                 snapshot[name] = value;
             }

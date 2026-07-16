@@ -3,6 +3,8 @@ import { JC } from '../../globals';
 import type { IdentityContext } from '../../types/jc';
 import { getHiddenData, hiddenIdSet, refresh, resetFromUserConfig, updateSettings } from './data';
 
+const originalTransformUserFileCase = JC.transformUserFileCase;
+
 function startSession(userId = 'test-user-id'): IdentityContext {
     JC.identity.transition('', '', 'test-logout');
     return JC.identity.transition('test-server-id', userId, 'test-login')!;
@@ -26,6 +28,7 @@ describe('hidden-content identity fencing', () => {
     });
 
     afterEach(() => {
+        JC.transformUserFileCase = originalTransformUserFileCase;
         vi.useRealTimers();
         vi.restoreAllMocks();
         document.body.innerHTML = '';
@@ -124,5 +127,67 @@ describe('hidden-content identity fencing', () => {
 
         await expect(pendingRefresh).resolves.toBe(false);
         expect(getHiddenData().items).toEqual({ b: { itemId: 'item-b' } });
+    });
+
+    it('loads refresh responses through the hidden-content schema bridge', async () => {
+        const wire = {
+            Items: {
+                'Movie-A': { ItemId: 'upper' },
+                'movie-a': { ItemId: 'lower' },
+                '映画-1': { ItemId: 'unicode' }
+            },
+            Settings: { FilterSearch: true }
+        };
+        const local = {
+            items: {
+                'Movie-A': { itemId: 'upper' },
+                'movie-a': { itemId: 'lower' },
+                '映画-1': { itemId: 'unicode' }
+            },
+            settings: { filterSearch: true }
+        };
+        const transform = vi.fn(() => local);
+        JC.transformUserFileCase = transform;
+        vi.spyOn(ApiClient, 'ajax').mockResolvedValue(wire);
+
+        await expect(refresh()).resolves.toBe(true);
+
+        expect(transform).toHaveBeenCalledWith('hidden-content.json', wire, 'load');
+        expect(Object.keys(getHiddenData().items)).toEqual(['Movie-A', 'movie-a', '映画-1']);
+        expect(getHiddenData().items['Movie-A'].itemId).toBe('upper');
+    });
+
+    it('saves hidden-content through the schema bridge without changing opaque keys', async () => {
+        const context = JC.identity.capture()!;
+        installHiddenData(context, {
+            'Movie-A': { itemId: 'upper' },
+            'movie-a': { itemId: 'lower' },
+            '映画-1': { itemId: 'unicode' }
+        });
+        const transform = vi.fn((_fileName: string, value: unknown, direction: 'load' | 'save') => {
+            expect(direction).toBe('save');
+            const local = value as { items: Record<string, { itemId?: string }>; settings: Record<string, unknown> };
+            return {
+                Items: Object.fromEntries(Object.entries(local.items).map(([key, item]) => [key, {
+                    ItemId: item.itemId
+                }])),
+                Settings: { FilterSearch: local.settings.filterSearch }
+            };
+        });
+        JC.transformUserFileCase = transform;
+        const ajax = vi.spyOn(ApiClient, 'ajax').mockResolvedValue({});
+
+        updateSettings({ filterSearch: true });
+        await vi.advanceTimersByTimeAsync(500);
+
+        expect(transform).toHaveBeenCalledWith('hidden-content.json', getHiddenData(), 'save');
+        const request = ajax.mock.calls[0][0] as { data: string };
+        const sent = JSON.parse(request.data) as {
+            Items: Record<string, { ItemId?: string }>;
+            Settings: { FilterSearch?: boolean };
+        };
+        expect(Object.keys(sent.Items)).toEqual(['Movie-A', 'movie-a', '映画-1']);
+        expect(sent.Items['Movie-A'].ItemId).toBe('upper');
+        expect(sent.Settings.FilterSearch).toBe(true);
     });
 });

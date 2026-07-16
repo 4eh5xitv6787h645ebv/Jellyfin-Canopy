@@ -173,8 +173,12 @@ function cloneRecord(value: Record<string, unknown>): Record<string, unknown> {
 
 function wireValue(fileName: string, settings: unknown): Record<string, unknown> {
     let value = settings;
-    if (fileName === 'settings.json' && typeof window.JellyfinCanopy?.toPascalCase === 'function') {
-        value = window.JellyfinCanopy.toPascalCase(settings);
+    if (fileName === 'settings.json') {
+        if (typeof window.JellyfinCanopy?.transformUserFileCase === 'function') {
+            value = window.JellyfinCanopy.transformUserFileCase(fileName, settings, 'save');
+        } else if (typeof window.JellyfinCanopy?.toPascalCase === 'function') {
+            value = window.JellyfinCanopy.toPascalCase(settings);
+        }
     }
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
         throw new UserSettingsPersistenceError(`Invalid ${fileName} payload`, { kind: 'validation' });
@@ -185,8 +189,16 @@ function wireValue(fileName: string, settings: unknown): Record<string, unknown>
 }
 
 function localValue(fileName: string, wire: Record<string, unknown>): Record<string, unknown> {
-    if (fileName === 'settings.json' && typeof (window.JellyfinCanopy as any)?.toCamelCase === 'function') {
-        return (window.JellyfinCanopy as any).toCamelCase(cloneRecord(wire)) as Record<string, unknown>;
+    if (fileName === 'settings.json') {
+        if (typeof window.JellyfinCanopy?.transformUserFileCase === 'function') {
+            return window.JellyfinCanopy.transformUserFileCase(
+                fileName,
+                cloneRecord(wire),
+                'load') as Record<string, unknown>;
+        }
+        if (typeof window.JellyfinCanopy?.toCamelCase === 'function') {
+            return window.JellyfinCanopy.toCamelCase(cloneRecord(wire)) as Record<string, unknown>;
+        }
     }
     return cloneRecord(wire);
 }

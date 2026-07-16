@@ -116,16 +116,27 @@ import {
 
   function committedState(value: unknown): BookmarkCommittedState | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-    const record = value as Record<string, unknown>;
+    // Core API responses are raw ASP.NET JSON, unlike the boot loader's GET.
+    // Use the same schema owner for every response path; it preserves all
+    // bookmark IDs while converting BookmarkItem DTO properties.
+    const schemaTransform = JC.transformUserFileCase;
+    const localValue = typeof schemaTransform === 'function'
+      ? schemaTransform('bookmark.json', value, 'load')
+      : value;
+    if (!localValue || typeof localValue !== 'object' || Array.isArray(localValue)) return null;
+    const record = localValue as Record<string, unknown>;
     const revision = Number(record.revision ?? record.Revision);
     const bookmarks = record.bookmarks ?? record.Bookmarks;
     if (!Number.isSafeInteger(revision) || revision < 0
       || !bookmarks || typeof bookmarks !== 'object' || Array.isArray(bookmarks)) return null;
 
-    // Core API responses are raw ASP.NET JSON, unlike the boot loader's GET
-    // path. Preserve every dictionary id exactly while converting each nested
-    // BookmarkItem from PascalCase to the camelCase shape the live UI owns.
-    const converter = (JC as any).toCamelCase;
+    if (typeof schemaTransform === 'function') {
+      return { revision, bookmarks: bookmarks as Record<string, any> };
+    }
+
+    // Compatibility for a partially upgraded client where this bundle is
+    // newer than plugin.js: transform values individually so IDs stay exact.
+    const converter = JC.toCamelCase;
     const normalized: Record<string, any> = {};
     for (const [bookmarkId, bookmark] of Object.entries(bookmarks as Record<string, unknown>)) {
       normalized[bookmarkId] = typeof converter === 'function' ? converter(bookmark) : bookmark;
