@@ -36,10 +36,19 @@
     /* Semantic status colors (handoff design-tokens.json). */
     --jc-success: #22C55E;
     --jc-warning: #F59E0B;
-    --jc-danger:  #EF4444;
+    --jc-danger:  #F87171;
     --jc-info:    #38BDF8;
     /* Signature gradient (mark, active tab, primary actions, hairlines). */
     --jc-grad: linear-gradient(135deg, var(--canopy-cyan) 0%, var(--canopy-blue) 52%, var(--canopy-violet) 100%);
+    /* Text-bearing controls need a darker gradient than the decorative brand
+       gradient: white text over the cyan brand stop is below WCAG contrast. */
+    --jc-control-start: #0E7490;
+    --jc-control-mid:   #1D4ED8;
+    --jc-control-end:   #6D28D9;
+    --jc-control-text:  #FFFFFF;
+    --jc-grad-control: linear-gradient(135deg, var(--jc-control-start) 0%, var(--jc-control-mid) 52%, var(--jc-control-end) 100%);
+    --jc-select-chevron: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'><path fill='none' stroke='%23e0e0e0' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' d='M1.5 1.5 L6 6 L10.5 1.5'/></svg>");
+    --jc-select-chevron-focus: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'><path fill='none' stroke='%2300a4dc' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' d='M1.5 1.5 L6 6 L10.5 1.5'/></svg>");
     --jc-grad-soft: linear-gradient(135deg, rgba(0, 212, 255, 0.16) 0%, rgba(47, 128, 255, 0.10) 52%, rgba(123, 76, 255, 0.16) 100%);
     /* Vertical rail variant for card/legend accents. */
     --jc-grad-rail: linear-gradient(180deg, var(--canopy-cyan) 0%, var(--canopy-violet) 100%);
@@ -59,7 +68,7 @@
     --jc-text-strong:    #F7F9FC;
     --jc-text-muted:     #B7C0D2;
     --jc-text-subtle:    #8B93A7;
-    --jc-text-dim:       #6B7386;
+    --jc-text-dim:       #8B93A7;
     /* Subtle decorative gradients for card surfaces (light shine → transparent).
        Swap to dark shine on light themes so cards keep a faint lift. */
     --jc-card-gradient:       linear-gradient(145deg, rgba(255, 255, 255, 0.06) 0%, rgba(255, 255, 255, 0.02) 100%);
@@ -80,9 +89,16 @@
     /* Brand accent legibility variant: cyan washes out on white, so light
        themes lean on the deeper Canopy blue for text/controls; the gradient
        (decorative) is shared. */
-    --jc-accent:        #1668CC;
+    --jc-accent:        #0F5CAB;
     --jc-accent-strong: var(--canopy-indigo);
     --jc-on-accent:     #ffffff;
+
+    --jc-success: #166534;
+    --jc-warning: #92400E;
+    --jc-danger:  #B91C1C;
+    --jc-info:    #0369A1;
+    --jc-select-chevron: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'><path fill='none' stroke='%23344054' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' d='M1.5 1.5 L6 6 L10.5 1.5'/></svg>");
+    --jc-select-chevron-focus: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'><path fill='none' stroke='%230369A1' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' d='M1.5 1.5 L6 6 L10.5 1.5'/></svg>");
 
     --jc-surface-1:      #F0F4FA;
     --jc-surface-2:      #E7EDF6;
@@ -95,7 +111,7 @@
     --jc-text-strong:    #0B1220;
     --jc-text-muted:     #344054;
     --jc-text-subtle:    #566174;
-    --jc-text-dim:       #6E7A8F;
+    --jc-text-dim:       #596579;
     --jc-card-gradient:       linear-gradient(145deg, rgba(0, 0, 0, 0.03) 0%, rgba(0, 0, 0, 0.01) 100%);
     --jc-card-gradient-lift:  linear-gradient(145deg, rgba(0, 0, 0, 0.05) 0%, rgba(0, 0, 0, 0.015) 100%);
     --jc-legend-gradient:     linear-gradient(180deg, rgba(0, 0, 0, 0.02) 0%, rgba(0, 0, 0, 0.01) 100%);
@@ -109,6 +125,16 @@
    user-selected dark themes stay dark even on a light OS). */
 @media (prefers-color-scheme: light) {
     #JellyfinCanopyPage:not(.jc-dark-theme):not(.jc-light-theme) {
+        --jc-card-bg:       #FFFFFF;
+        --jc-accent:        #0F5CAB;
+        --jc-accent-strong: var(--canopy-indigo);
+        --jc-on-accent:     #ffffff;
+        --jc-success:       #166534;
+        --jc-warning:       #92400E;
+        --jc-danger:        #B91C1C;
+        --jc-info:          #0369A1;
+        --jc-select-chevron: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'><path fill='none' stroke='%23344054' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' d='M1.5 1.5 L6 6 L10.5 1.5'/></svg>");
+        --jc-select-chevron-focus: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'><path fill='none' stroke='%230369A1' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' d='M1.5 1.5 L6 6 L10.5 1.5'/></svg>");
         --jc-surface-1:      #F0F4FA;
         --jc-surface-2:      #E7EDF6;
         --jc-surface-3:      #DDE6F2;
@@ -120,7 +146,7 @@
         --jc-text-strong:    #0B1220;
         --jc-text-muted:     #344054;
         --jc-text-subtle:    #566174;
-        --jc-text-dim:       #6E7A8F;
+        --jc-text-dim:       #596579;
         --jc-card-gradient:       linear-gradient(145deg, rgba(0, 0, 0, 0.03) 0%, rgba(0, 0, 0, 0.01) 100%);
         --jc-card-gradient-lift:  linear-gradient(145deg, rgba(0, 0, 0, 0.05) 0%, rgba(0, 0, 0, 0.015) 100%);
         --jc-legend-gradient:     linear-gradient(180deg, rgba(0, 0, 0, 0.02) 0%, rgba(0, 0, 0, 0.01) 100%);
@@ -134,8 +160,26 @@
    Base Form Container & Typography
    --------------------------------------------------------------------------- */
 #JellyfinCanopyPage {
-    color: inherit;
+    /* Pair the page foreground with its own surface palette. Inheriting the
+       host color recreates the original dark-text/dark-card failure while a
+       light theme sheet and the plugin page initialize at different times. */
+    color: var(--jc-text-strong);
     font-family: inherit;
+}
+
+/* A single keyboard-focus owner covers native controls plus Canopy's custom
+   nav, tabs, cards and action buttons. Host themes are free to restyle their
+   own dashboard controls, but cannot erase focus inside this page. */
+#JellyfinCanopyPage :is(
+    button,
+    a[href],
+    input,
+    select,
+    textarea,
+    [tabindex]:not([tabindex="-1"])
+):focus-visible {
+    outline: 3px solid var(--jc-border-focus);
+    outline-offset: 3px;
 }
 
 /* Override Jellyfin admin's `.content-primary form { max-width: ~803px }`
@@ -478,7 +522,7 @@
 }
 .jc-quick-action-detail {
     font-size: 0.8em;
-    opacity: 0.65;
+    color: var(--jc-text-muted);
     line-height: 1.3;
 }
 
@@ -522,9 +566,9 @@
 .jc-service-card:hover { background: var(--jc-surface-2); transform: translateY(-1px); }
 .jc-service-card.jc-state-ok       { border-left-color: var(--jc-success); }
 .jc-service-card.jc-state-warn     { border-left-color: var(--jc-warning); }
-.jc-service-card.jc-state-error    { border-left-color: #f44336; }
+.jc-service-card.jc-state-error    { border-left-color: var(--jc-danger); }
 .jc-service-card.jc-state-pending  { border-left-color: var(--jc-text-dim); }
-.jc-service-card.jc-state-off      { border-left-color: var(--jc-border-strong); opacity: 0.55; }
+.jc-service-card.jc-state-off      { border-left-color: var(--jc-border-strong); opacity: 1; }
 .jc-service-icon {
     font-size: 20px !important;
     color: var(--jc-text-muted);
@@ -532,7 +576,7 @@
 }
 .jc-service-card.jc-state-ok    .jc-service-icon { color: var(--jc-success); }
 .jc-service-card.jc-state-warn  .jc-service-icon { color: var(--jc-warning); }
-.jc-service-card.jc-state-error .jc-service-icon { color: #f44336; }
+.jc-service-card.jc-state-error .jc-service-icon { color: var(--jc-danger); }
 .jc-service-body {
     min-width: 0;
     flex: 1;
@@ -587,7 +631,6 @@
     height: 24px;
     border-radius: 4px;
     color: var(--jc-text-subtle);
-    opacity: 0.7;
     text-decoration: none;
     transition: opacity 0.15s ease, color 0.15s ease, background 0.15s ease;
 }
@@ -606,7 +649,7 @@
     padding-right: 28px;
 }
 .jc-optional-plugin-card.jc-state-installed  { border-left-color: var(--jc-success); }
-.jc-optional-plugin-card.jc-state-missing    { border-left-color: var(--jc-border-strong); opacity: 0.75; }
+.jc-optional-plugin-card.jc-state-missing    { border-left-color: var(--jc-border-strong); opacity: 1; }
 .jc-optional-plugin-card.jc-state-unknown    { border-left-color: var(--jc-text-dim); }
 .jc-optional-plugin-card.jc-state-warn       { border-left-color: var(--jc-warning); }
 .jc-optional-plugin-icon {
@@ -668,7 +711,7 @@
 }
 .jc-feature-row.jc-state-on         { border-left-color: var(--jc-success); }
 .jc-feature-row.jc-state-warn       { border-left-color: var(--jc-warning); }
-.jc-feature-row.jc-state-off        { border-left-color: var(--jc-border-strong); opacity: 0.55; }
+.jc-feature-row.jc-state-off        { border-left-color: var(--jc-border-strong); opacity: 1; }
 .jc-feature-icon {
     font-size: 18px !important;
     color: var(--jc-text-muted);
@@ -859,8 +902,8 @@
 }
 /* Active section segment: gradient fill, the signature moment. */
 #JellyfinCanopyPage .jellyfin-tab-button.active {
-    background: var(--jc-grad);
-    color: #fff !important;
+    background: var(--jc-grad-control);
+    color: var(--jc-control-text) !important;
     text-shadow: 0 1px 2px rgba(0, 6, 17, 0.35);
 }
 /* Per-section match count shown on nav items while searching. */
@@ -1038,7 +1081,7 @@
     -webkit-appearance: none;
     -moz-appearance: none;
     appearance: none;
-    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'><path fill='none' stroke='%23e0e0e0' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' d='M1.5 1.5 L6 6 L10.5 1.5'/></svg>");
+    background-image: var(--jc-select-chevron);
     background-repeat: no-repeat;
     background-position: right 14px center;
     background-size: 12px 8px;
@@ -1047,7 +1090,7 @@
 }
 #JellyfinCanopyPage select.emby-select:focus,
 #JellyfinCanopyPage select.emby-select:focus-visible {
-    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'><path fill='none' stroke='%2300a4dc' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' d='M1.5 1.5 L6 6 L10.5 1.5'/></svg>");
+    background-image: var(--jc-select-chevron-focus);
 }
 /* IE/Edge legacy — hide the built-in dropdown arrow to avoid double chevrons */
 #JellyfinCanopyPage select.emby-select::-ms-expand { display: none; }
@@ -1328,7 +1371,7 @@
     gap: 10px;
     margin-bottom: 10px;
 }
-.arr-instance-disabled { opacity: 0.6; }
+.arr-instance-disabled { opacity: 1; }
 .arr-instance-disabled > summary .arr-instance-enabled { opacity: 1; }
 .arr-instance-disabled > summary .arr-instance-summary-name {
     text-decoration: line-through;
@@ -1349,7 +1392,7 @@
 }
 .arr-instance-remove:hover {
     background: rgba(220,53,69,0.15);
-    color: #ff4c4c;
+    color: var(--jc-danger);
 }
 
 /* ---------------------------------------------------------------------------
@@ -1379,8 +1422,8 @@
     font-weight: 600;
     font-size: 1em;
     letter-spacing: 0.5px;
-    background: var(--jc-grad);
-    color: #fff;
+    background: var(--jc-grad-control);
+    color: var(--jc-control-text);
     text-shadow: 0 1px 2px rgba(0, 6, 17, 0.35);
     display: inline-flex;
     align-items: center;
@@ -1555,9 +1598,9 @@
 .jc-branding-placeholder { color: var(--jc-text-dim); font-size: 2em; }
 .jc-branding-placeholder-icon { font-size: 2.5em; }
 .jc-branding-status { font-size: 0.85em; margin-top: 5px; min-height: 1em; }
-.jc-branding-dimensions { font-size: 0.75em; opacity: 0.5; margin-top: 3px; }
-.jc-branding-hint { font-size: 0.85em; opacity: 0.7; margin-top: 5px; }
-.jc-branding-maxsize { font-size: 0.7em; opacity: 0.4; margin-top: 2px; }
+.jc-branding-dimensions { color: var(--jc-text-muted); font-size: 0.75em; margin-top: 3px; }
+.jc-branding-hint { color: var(--jc-text-muted); font-size: 0.85em; margin-top: 5px; }
+.jc-branding-maxsize { color: var(--jc-text-subtle); font-size: 0.7em; margin-top: 2px; }
 .jc-branding-delete {
     position: absolute;
     top: 10px; right: 10px;
@@ -1595,7 +1638,7 @@
 .jc-kbd { background: var(--jc-surface-3); padding: 3px 6px; border-radius: 4px; font-family: monospace; }
 .jc-screenshot-img { max-width: 100%; border-radius: 8px; margin-top: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); }
 .jc-screenshot-img-sm { max-width: 60%; }
-.jc-loading-text { opacity: 0.5; }
+.jc-loading-text { color: var(--jc-text-muted); }
 
 .jc-copy-code-wrapper {
     position: relative;
@@ -1873,7 +1916,7 @@ body.jc-has-introskipper .jc-needs-introskipper { display: none !important; }
     vertical-align: middle;
 }
 .jc-quality-cat-admin-row > button[disabled] {
-    opacity: 0.35;
+    opacity: 0.65;
     cursor: not-allowed;
 }
 /* Inline reorder-icon hints that live in the descriptive sentence above the
@@ -2052,7 +2095,7 @@ body.jc-has-kefintweaks  .jc-installed-badge[data-plugin="kefintweaks"]  { displ
     word-break: break-word;
 }
 .jc-audit-error {
-    color: #f44336;
+    color: var(--jc-danger);
     padding: 10px 14px;
     background: rgba(244,67,54,0.08);
     border-left: 3px solid #f44336;

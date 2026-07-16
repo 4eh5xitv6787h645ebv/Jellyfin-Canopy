@@ -5,10 +5,13 @@
             const form = document.querySelector('#JellyfinCanopyForm');
 
             // Theme detector: Jellyfin's themes hard-swap theme.css (no CSS
-            // variable contract) so we infer dark vs. light from the computed
-            // background-color of <html>. Dark themes return something like
-            // rgb(16,16,16) (sum ~48); the Light theme returns rgb(242,242,242)
-            // (sum 726). Threshold at 450 bins every shipped theme correctly.
+            // variable contract). Jellyfin 12 does expose the selected theme
+            // through <html data-theme>, so trust its explicit Light identity
+            // first. Theme CSS can leave <html> transparent while painting the
+            // page/body light; color sampling alone then misclassifies the real
+            // Light theme as dark. Unknown/custom themes still fall back to the
+            // first opaque host background we can sample. Threshold 450 bins
+            // the shipped dark/light palettes correctly.
             // We also re-run on `load` in case the theme sheet hadn't applied
             // by the time our initial check ran, and once more after ~600 ms
             // to catch late Jellyfin theme swaps during dashboard navigation.
@@ -20,8 +23,35 @@
                 // rest of the IIFE's listener wiring isn't aborted by a throw
                 // from this purely cosmetic detector.
                 try {
-                    var bg = getComputedStyle(document.documentElement).backgroundColor;
-                    var m = bg.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+                    var declaredTheme = (document.documentElement.getAttribute('data-theme') || '').toLowerCase();
+                    if (declaredTheme === 'light') {
+                        page.classList.add('jc-light-theme');
+                        page.classList.remove('jc-dark-theme');
+                        return;
+                    }
+
+                    var knownDarkThemes = ['dark', 'appletv', 'blueradiance', 'purplehaze', 'wmc'];
+                    if (knownDarkThemes.indexOf(declaredTheme) !== -1) {
+                        page.classList.remove('jc-light-theme');
+                        page.classList.add('jc-dark-theme');
+                        return;
+                    }
+
+                    var candidates = [
+                        document.documentElement,
+                        document.body,
+                        document.querySelector('.backgroundContainer'),
+                        document.querySelector('.mainAnimatedPage')
+                    ];
+                    var bg = '';
+                    var m = null;
+                    for (var i = 0; i < candidates.length; i++) {
+                        if (!candidates[i]) continue;
+                        bg = getComputedStyle(candidates[i]).backgroundColor;
+                        m = bg.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?/);
+                        if (m && (m[4] === undefined || +m[4] >= 0.5)) break;
+                        m = null;
+                    }
                     if (!m) {
                         // Named colors (`black`), `transparent`, or `initial`: can't
                         // tell light vs. dark reliably. Log once so a future broken
