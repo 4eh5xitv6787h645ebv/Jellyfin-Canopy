@@ -17,8 +17,17 @@ import {
     normalizeProjectionKey,
     readProjectionIdentity,
     readContentIdentity,
+    installTagPipeline,
+    resetTagPipelineIdentity,
     TagProjectionDependencyIndex,
 } from './tag-pipeline';
+
+const uninstallTagPipeline = installTagPipeline();
+const offPipelineReset = JC.identity.registerReset('tag-pipeline-test', resetTagPipelineIdentity);
+const offPipelineActivate = JC.identity.registerActivate(
+    'tag-pipeline-test',
+    () => JC.tagPipeline?.initialize?.()
+);
 
 afterAll(async () => {
     // Retire identity-owned scans while jsdom is still alive, then let the
@@ -26,6 +35,9 @@ afterAll(async () => {
     // Otherwise a real 16 ms timer can reach runScan() after environment
     // teardown and turn an entirely passing suite into an unhandled failure.
     JC.identity.transition('', '', 'tag-pipeline-test-teardown');
+    offPipelineActivate();
+    offPipelineReset();
+    uninstallTagPipeline();
     await new Promise((resolve) => setTimeout(resolve, 25));
     document.body.innerHTML = '';
 });

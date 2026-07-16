@@ -3,20 +3,23 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JC } from '../globals';
 import { emit, LIVE } from './live';
-import './live-rows'; // registers the handlers at import
+import { installLiveRows } from './live-rows';
 
 describe('live rows → tag rescan', () => {
     let scheduleScan: ReturnType<typeof vi.fn>;
     let refreshServerProjection: ReturnType<typeof vi.fn>;
+    let uninstall: () => void;
 
     beforeEach(() => {
         vi.useFakeTimers();
         scheduleScan = vi.fn();
         refreshServerProjection = vi.fn().mockResolvedValue(undefined);
         JC.tagPipeline = { scheduleScan, refreshServerProjection } as unknown as NonNullable<typeof JC.tagPipeline>;
+        uninstall = installLiveRows();
     });
 
     afterEach(() => {
+        uninstall();
         vi.runOnlyPendingTimers();
         vi.useRealTimers();
     });

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JC } from '../globals';
 import type { SpoilerGuardApi, TagPipelineLike } from '../types/jc';
 import { resolveTmdbKey } from './userreviewtags';
-import './ratingtags';
+import { installRatingTagsFacade } from './ratingtags';
 
 type RegisteredRenderer = {
     render(el: HTMLElement, item: unknown, extras?: unknown): void;
@@ -51,6 +51,7 @@ function spoilerGuard(hideRatings: boolean): SpoilerGuardApi {
 
 describe('rating tag guarded-Season projection parity (BI-SEC-125)', () => {
     let renderer: RegisteredRenderer;
+    let uninstallRatingTags: () => void;
 
     beforeEach(() => {
         document.body.innerHTML = '';
@@ -66,11 +67,13 @@ describe('rating tag guarded-Season projection parity (BI-SEC-125)', () => {
                 renderer = candidate as unknown as RegisteredRenderer;
             },
         } satisfies TagPipelineLike;
+        uninstallRatingTags = installRatingTagsFacade();
         const surface = JC as typeof JC & { initializeRatingTags?: () => void };
         surface.initializeRatingTags?.();
     });
 
     afterEach(() => {
+        uninstallRatingTags();
         document.body.innerHTML = '';
         JC.spoilerGuard = undefined;
         const surface = JC as typeof JC & { appendUserRatingToContainer?: unknown };

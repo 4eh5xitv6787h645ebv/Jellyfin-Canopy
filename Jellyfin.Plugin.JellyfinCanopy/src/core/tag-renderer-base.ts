@@ -19,17 +19,17 @@
 // Public surface: JC.core.tagRenderer { register, reinitialize, resolvePosition }.
 
 import { JC } from '../globals';
-import { injectCss as uiInjectCss } from './ui-kit';
+import { createStableMethodFacade } from './feature-loader';
+import { injectCss as uiInjectCss, removeCss as uiRemoveCss } from './ui-kit';
 import { createBoundedCache, type BoundedCache } from './bounded-cache';
 import type {
     IdentityContext,
     TagPosition,
+    TagPipelineLike,
     TagRendererApi,
     TagRendererContext,
     TagSpec,
 } from '../types/jc';
-
-JC.core = JC.core || {};
 
 // Contexts (cards) that should never receive tag overlays. Shared verbatim
 // by the language/rating/quality modules; genre supplies its own list.
@@ -59,6 +59,14 @@ interface TagInstance {
     initialize(): void;
     reinitialize(): void;
     resetIdentity(): void;
+    dispose(): void;
+}
+
+function canUnregisterRenderer(
+    pipeline: TagPipelineLike
+): pipeline is TagPipelineLike & { unregisterRenderer(rendererName: string): void } {
+    return 'unregisterRenderer' in pipeline
+        && typeof pipeline.unregisterRenderer === 'function';
 }
 
 /** name → tag instance */
@@ -549,12 +557,29 @@ function createTag(name: string, spec: TagSpec): TagInstance {
         });
     }
 
+    function dispose(): void {
+        resetIdentity();
+        if (state.saveRegistered) {
+            JC._cacheManager?.unregister(saveCache);
+            state.saveRegistered = false;
+        }
+        if (state.unloadRegistered) {
+            window.removeEventListener('beforeunload', saveCache);
+            state.unloadRegistered = false;
+        }
+        if (spec.styleId) uiRemoveCss(spec.styleId);
+        const pipeline = JC.tagPipeline;
+        if (pipeline && canUnregisterRenderer(pipeline)) {
+            pipeline.unregisterRenderer(name);
+        }
+    }
+
     function getContext(): TagRendererContext {
         const context = state.context;
         return context && isContextCurrent(context) ? scopedContext(context) : ctx;
     }
 
-    return { ctx, getContext, initialize, reinitialize, resetIdentity };
+    return { ctx, getContext, initialize, reinitialize, resetIdentity, dispose };
 }
 
 /**
@@ -597,10 +622,34 @@ const tagRenderer: TagRendererApi = {
     resolvePosition,
 };
 
-JC.core.tagRenderer = tagRenderer;
-
-JC.identity.registerReset('tag-renderer-base', () => {
-    for (const tag of tags.values()) tag.resetIdentity();
+const stableTagRenderer = createStableMethodFacade<TagRendererApi>({
+    register() {
+        throw new Error('Tag renderer is inactive');
+    },
+    reinitialize() {},
+    resolvePosition,
 });
 
-console.log('🪼 Jellyfin Canopy: Tag renderer core initialized');
+/** Reset every identity-owned renderer cache and overlay synchronously. */
+export function resetAllTagRenderers(): void {
+    for (const tag of tags.values()) tag.resetIdentity();
+}
+
+/** Dispose every renderer and remove the shared factory delegate. */
+export function disposeAllTagRenderers(): void {
+    for (const tag of tags.values()) tag.dispose();
+    tags.clear();
+}
+
+/** Install the frozen JC.core.tagRenderer facade for one feature activation. */
+export function installTagRendererBase(): () => void {
+    const uninstall = stableTagRenderer.install(tagRenderer);
+    JC.core.tagRenderer = stableTagRenderer.facade;
+    let active = true;
+    return () => {
+        if (!active) return;
+        active = false;
+        disposeAllTagRenderers();
+        uninstall();
+    };
+}

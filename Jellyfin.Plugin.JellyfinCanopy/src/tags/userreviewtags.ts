@@ -5,7 +5,8 @@
 // ShowUserRatingDash is false in admin config).
 
 import { JC as JEBase } from '../globals';
-import { ensureMaterialSymbolsFont, injectCss } from '../core/ui-kit';
+import { createStableMethodFacade } from '../core/feature-loader';
+import { ensureMaterialSymbolsFont, injectCss, removeCss } from '../core/ui-kit';
 import type { ApiApi, IdentityContext } from '../types/jc';
 
 /**
@@ -54,10 +55,11 @@ function isCurrent(context: IdentityContext | null | undefined): context is Iden
     return !!context && JC.identity.isCurrent(context);
 }
 
-function resetUserReviewTagsIdentity(): void {
+export function resetUserReviewTagsIdentity(): void {
     _reviewCache.clear();
     _inFlight.clear();
     document.querySelectorAll('.jc-userreview-tag').forEach((node) => node.remove());
+    removeCss('jc-userreview-tags-css');
 }
 
 /**
@@ -195,7 +197,7 @@ export function resolveTmdbKey(item: any, extras?: any): { tmdbKey: string; medi
     return null;
 }
 
-JC.initializeUserReviewTags = function() {
+function initializeUserReviewTags(): void {
     if (!JC.pluginConfig?.ShowUserReviews) {
         console.log(`${logPrefix} User reviews disabled, skipping.`);
         return;
@@ -234,7 +236,7 @@ JC.initializeUserReviewTags = function() {
     `);
 
     console.log(`${logPrefix} Initialized.`);
-};
+}
 
 /**
  * Called by ratingtags.ts after applying a rating overlay, OR directly
@@ -243,7 +245,11 @@ JC.initializeUserReviewTags = function() {
  * @param item - The Jellyfin item object.
  * @param extras - Pipeline extras (parentSeries, etc.).
  */
-JC.appendUserRatingToContainer = async function(containerOrEl: HTMLElement, item: any, extras?: any): Promise<void> {
+async function appendUserRatingToContainer(
+    containerOrEl: HTMLElement,
+    item: any,
+    extras?: any
+): Promise<void> {
     if (!JC.pluginConfig?.ShowUserReviews) return;
     if (!JC.pluginConfig?.ShowUserRatingOnPosters) return;
     if (!JC.currentSettings?.ratingTagsEnabled) return;
@@ -274,14 +280,37 @@ JC.appendUserRatingToContainer = async function(containerOrEl: HTMLElement, item
     }
 
     appendUserRatingChip(container, rating, context);
-};
+}
 
 /**
  * Invalidate cache for a specific tmdbKey (called after review save/delete).
  */
-JC.invalidateUserReviewTagCache = function(tmdbKey?: string) {
+function invalidateUserReviewTagCache(tmdbKey?: string): void {
     if (tmdbKey) _reviewCache.delete(tmdbKey);
     else _reviewCache.clear();
-};
+}
 
-JC.identity.registerReset('user-review-tags', resetUserReviewTagsIdentity);
+interface UserReviewTagsFacade {
+    initialize(): void;
+    append(containerOrEl: HTMLElement, item: any, extras?: any): Promise<void>;
+    invalidate(tmdbKey?: string): void;
+}
+
+const stableUserReviewTags = createStableMethodFacade<UserReviewTagsFacade>({
+    initialize() {},
+    append: () => Promise.resolve(),
+    invalidate() {},
+});
+
+/** Install frozen user-review tag methods for one cluster activation. */
+export function installUserReviewTagsFacade(): () => void {
+    const uninstall = stableUserReviewTags.install({
+        initialize: initializeUserReviewTags,
+        append: appendUserRatingToContainer,
+        invalidate: invalidateUserReviewTagCache,
+    });
+    JC.initializeUserReviewTags = stableUserReviewTags.facade.initialize;
+    JC.appendUserRatingToContainer = stableUserReviewTags.facade.append;
+    JC.invalidateUserReviewTagCache = stableUserReviewTags.facade.invalidate;
+    return uninstall;
+}

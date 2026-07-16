@@ -8,6 +8,7 @@
 // is quality-specific and intentionally stays in this module.
 
 import { JC as JEBase } from '../globals';
+import { createStableMethodFacade } from '../core/feature-loader';
 import { register, reinitialize, resolvePosition } from '../core/tag-renderer-base';
 import type { TagRendererContext, TagSpec } from '../types/jc';
 
@@ -864,14 +865,30 @@ const spec: TagSpec = {
 /**
  * Initializes the Quality Tags feature.
  */
-JC.initializeQualityTags = function() {
+function initializeQualityTags(): void {
     register('quality', spec);
-};
+}
 
 /**
  * Re-initializes the Quality Tags feature
  * Cleans up existing state and re-applies tags.
  */
-JC.reinitializeQualityTags = function() {
+function reinitializeQualityTags(): void {
     reinitialize('quality', spec);
-};
+}
+
+const stableQualityTags = createStableMethodFacade({
+    initialize: (): void => {},
+    reinitialize: (): void => {},
+});
+
+/** Install frozen quality-tag entry points for one cluster activation. */
+export function installQualityTagsFacade(): () => void {
+    const uninstall = stableQualityTags.install({
+        initialize: initializeQualityTags,
+        reinitialize: reinitializeQualityTags,
+    });
+    JC.initializeQualityTags = stableQualityTags.facade.initialize;
+    JC.reinitializeQualityTags = stableQualityTags.facade.reinitialize;
+    return uninstall;
+}

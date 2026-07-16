@@ -1,6 +1,15 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JC } from '../globals';
-import './userreviewtags';
+import { installUserReviewTagsFacade, resetUserReviewTagsIdentity } from './userreviewtags';
+
+const uninstallUserReviewTags = installUserReviewTagsFacade();
+const offUserReviewReset = JC.identity.registerReset('user-review-tags-test', resetUserReviewTagsIdentity);
+
+afterAll(() => {
+    offUserReviewReset();
+    resetUserReviewTagsIdentity();
+    uninstallUserReviewTags();
+});
 
 function deferred<T>() {
     let resolve!: (value: T) => void;

@@ -6,6 +6,7 @@
 
 import { JC as JEBase } from '../globals';
 import { flagSvgUrl } from '../core/asset-urls';
+import { createStableMethodFacade } from '../core/feature-loader';
 import { register, reinitialize, resolvePosition } from '../core/tag-renderer-base';
 import type { TagRendererContext, TagSpec } from '../types/jc';
 
@@ -301,14 +302,30 @@ const spec: TagSpec = {
     },
 };
 
-JC.initializeLanguageTags = function() {
+function initializeLanguageTags(): void {
     register('language', spec);
-};
+}
 
 /**
  * Re-initializes the Language Tags feature
  * Cleans up existing state and re-applies tags.
  */
-JC.reinitializeLanguageTags = function() {
+function reinitializeLanguageTags(): void {
     reinitialize('language', spec);
-};
+}
+
+const stableLanguageTags = createStableMethodFacade({
+    initialize: (): void => {},
+    reinitialize: (): void => {},
+});
+
+/** Install frozen language-tag entry points for one cluster activation. */
+export function installLanguageTagsFacade(): () => void {
+    const uninstall = stableLanguageTags.install({
+        initialize: initializeLanguageTags,
+        reinitialize: reinitializeLanguageTags,
+    });
+    JC.initializeLanguageTags = stableLanguageTags.facade.initialize;
+    JC.reinitializeLanguageTags = stableLanguageTags.facade.reinitialize;
+    return uninstall;
+}
