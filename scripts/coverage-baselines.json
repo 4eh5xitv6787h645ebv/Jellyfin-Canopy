@@ -14,7 +14,7 @@
       },
       "tolerance": {
         "missingCoveredLines": 1,
-        "rationale": "Two clean local Node 22/V8 runs on 2026-07-16 each passed 956 tests and measured the identical 1762-line core scope at 1438 covered lines after issue #130 routed tag-renderer storage through the fault-containing browser-storage adapter. The three-line scope increase is reviewed: two new executable lines are covered and one recovery branch remains outside the existing tag-renderer tests. The existing one-line tolerance is unchanged and permits only negligible instrumentation variance."
+        "rationale": "Two clean local Node 22/V8 runs on 2026-07-16 each passed 959 tests and measured the identical 1762-line core scope at 1438 covered lines after the independently reviewed issue #130 correction. The reviewed high-water is unchanged: routing tag-renderer storage through the fault-containing browser-storage adapter added three executable core lines, two covered and one recovery branch outside the existing tag-renderer tests; the follow-up registered-activation, canonical-integer, and pre-auth-diagnostic fixes live in the classic loader and test harness and therefore do not alter this core scope. The existing one-line tolerance is unchanged and permits only negligible instrumentation variance."
       }
     },
     "server": {
