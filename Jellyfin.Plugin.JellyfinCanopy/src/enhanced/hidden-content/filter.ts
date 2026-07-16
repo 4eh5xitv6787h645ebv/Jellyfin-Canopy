@@ -13,20 +13,28 @@ import { JC } from '../../globals';
 import { onViewPage } from '../../core/navigation';
 import { onBodyMutation } from '../../core/dom-observer';
 import type { BodySubscriberHandle, IdentityContext } from '../../types/jc';
+import {
+    acquireHomeRowScopes,
+    createHomeRowScopeResolver,
+    invalidateHomeRowSection,
+    resolveHomeRowScope,
+} from '../home-row-scope';
 import { hiddenIdSet, getSettings, shouldFilterSurface, shouldProcessNativeSurface, getHiddenData, getHiddenCount } from './data';
-import { addLibraryHideButtons } from './buttons';
+import { addLibraryHideButtons, removeLibraryHideButtons } from './buttons';
 import {
     PARENT_SERIES_ABSENCE_TTL_MS,
     ParentSeriesCache,
 } from './parent-series-cache';
 
 const parentSeriesCache = new ParentSeriesCache();
-let sectionSurfaceCache = new WeakMap<Element, string | null>();
 let filterGeneration = 0;
 let parentSeriesGeneration = 0;
 let viewPageUnsubscribe: (() => void) | null = null;
+let rowScopeRelease: (() => void) | null = null;
 let bodyMutationHandle: BodySubscriberHandle | null = null;
+const homeSectionObservers = new Map<HTMLElement, MutationObserver>();
 const detailRescanHandles = new Set<number>();
+const emptySectionReconcileFrames = new Set<number>();
 let parentInvalidationFrameHandle: number | null = null;
 let parentRetryHandle: number | null = null;
 let parentOverflowRetryHandle: number | null = null;
@@ -74,13 +82,18 @@ export function clearFilterIdentityState(): void {
     filterGeneration += 1;
     parentSeriesGeneration += 1;
     parentSeriesCache.clear();
-    sectionSurfaceCache = new WeakMap<Element, string | null>();
     viewPageUnsubscribe?.();
     viewPageUnsubscribe = null;
+    rowScopeRelease?.();
+    rowScopeRelease = null;
     bodyMutationHandle?.unsubscribe();
     bodyMutationHandle = null;
+    for (const observer of homeSectionObservers.values()) observer.disconnect();
+    homeSectionObservers.clear();
     for (const handle of detailRescanHandles) clearTimeout(handle);
     detailRescanHandles.clear();
+    for (const handle of emptySectionReconcileFrames) cancelAnimationFrame(handle);
+    emptySectionReconcileFrames.clear();
     if (filterDebounceHandle !== null) clearTimeout(filterDebounceHandle);
     if (filterFrameHandle !== null) cancelAnimationFrame(filterFrameHandle);
     if (parentInvalidationFrameHandle !== null) cancelAnimationFrame(parentInvalidationFrameHandle);
@@ -105,6 +118,7 @@ export function clearFilterIdentityState(): void {
     });
     document.querySelectorAll<HTMLElement>(`[${PROCESSED_ATTR}]`).forEach((card) => {
         card.removeAttribute(PROCESSED_ATTR);
+        card.removeAttribute(PROCESSED_SCOPE_ATTR);
     });
 }
 
@@ -217,6 +231,8 @@ const DETAIL_FINAL_RESCAN_DELAY_MS = 1200;
 const NATIVE_FILTER_DEBOUNCE_MS = 50;
 /** Data attribute marking a card as already scanned. */
 const PROCESSED_ATTR = 'data-jc-hidden-checked';
+/** Row signature paired with PROCESSED_ATTR so reused/moved cards are rescanned. */
+const PROCESSED_SCOPE_ATTR = 'data-jc-hidden-scope-signature';
 /** Data attribute storing the parent series ID that caused hiding. */
 const HIDDEN_PARENT_ATTR = 'data-jc-hidden-parent-series-id';
 /** Data attribute marking a directly-hidden card. */
@@ -262,16 +278,10 @@ async function getParentSeriesId(itemId: string): Promise<string | null> {
  * @returns The detected surface or null.
  */
 export function getCardSurface(card: HTMLElement): string | null {
-    const section = card.closest('.section, .verticalSection, .homeSection');
-    if (!section) return null;
-    if (sectionSurfaceCache.has(section)) return sectionSurfaceCache.get(section)!;
-    const titleEl = section.querySelector('.sectionTitle, h2, .headerText, .sectionTitle-sectionTitle');
-    const title = (titleEl?.textContent || '').toLowerCase();
-    let surface: string | null = null;
-    if (title.includes('next up')) surface = 'nextup';
-    else if (title.includes('continue watching')) surface = 'continuewatching';
-    sectionSurfaceCache.set(section, surface);
-    return surface;
+    const resolution = resolveHomeRowScope(card);
+    return resolution.kind === 'nextup' || resolution.kind === 'continuewatching'
+        ? resolution.kind
+        : null;
 }
 
 /**
@@ -573,6 +583,10 @@ export function refreshNativeCardVisibility(): void {
         return;
     }
     const fence = captureFilterFence();
+    // A stable title link may have appeared while filtering/buttons were off,
+    // when the structural fast path intentionally did no work. Enrol those
+    // sections before this activation pass so later in-place href reuse is seen.
+    syncHomeSectionObservers(fence);
     requestAnimationFrame(() => {
         if (!isFilterFenceCurrent(fence)) return;
         filterAllNativeCards();
@@ -607,16 +621,26 @@ export function filterNativeCards(syncApply = false): void {
     const toShow: HTMLElement[] = [];
     const pendingParentChecks: Array<{ card: HTMLElement; itemId: string }> = [];
     const cards = document.querySelectorAll<HTMLElement>(CARD_SEL_NEW);
+    const resolveRow = createHomeRowScopeResolver();
     for (let i = 0; i < cards.length; i++) {
         const card = cards[i];
         // Skip image editor cards (they have data-imagetype attribute)
         if (card.hasAttribute('data-imagetype')) continue;
         const itemId = getCardItemId(card);
-        card.setAttribute(PROCESSED_ATTR, '1');
         if (!itemId) continue;
 
         // Check scope-aware hiding for cards in Next Up / Continue Watching sections
-        const cardSurface = getCardSurface(card);
+        const row = resolveRow(card);
+        const cardSurface = row.kind === 'nextup' || row.kind === 'continuewatching'
+            ? row.kind
+            : null;
+        if (row.kind === 'unresolved') {
+            card.removeAttribute(PROCESSED_ATTR);
+            card.removeAttribute(PROCESSED_SCOPE_ATTR);
+        } else {
+            card.setAttribute(PROCESSED_ATTR, '1');
+            card.setAttribute(PROCESSED_SCOPE_ATTR, row.signature);
+        }
         if (cardSurface) {
             if (shouldFilterSurface(cardSurface) && isHiddenOnSurface(itemId, cardSurface)) {
                 toHide.push(card);
@@ -628,6 +652,10 @@ export function filterNativeCards(syncApply = false): void {
         }
 
         if (pageFilterable && hiddenIdSet.has(itemId)) {
+            // hiddenIdSet contains only global entries, so this is safe even
+            // while a home row's scoped identity is still unresolved.
+            card.setAttribute(PROCESSED_ATTR, '1');
+            card.setAttribute(PROCESSED_SCOPE_ATTR, row.signature);
             toHide.push(card);
             card.setAttribute(HIDDEN_DIRECT_ATTR, '1');
             card.removeAttribute(HIDDEN_PARENT_ATTR);
@@ -637,6 +665,9 @@ export function filterNativeCards(syncApply = false): void {
                 toShow.push(card);
                 card.removeAttribute(HIDDEN_DIRECT_ATTR);
             }
+            // Never run page/parent fallbacks against a pending home row. It
+            // remains visible and eligible for the preferences-ready rescan.
+            if (row.kind === 'unresolved') continue;
             if (pageFilterable && !isDetailPage) {
                 const cardType = card.dataset.type || '';
                 if (cardType === 'Episode' || cardType === 'Season') {
@@ -682,13 +713,23 @@ export function filterAllNativeCards(): void {
     const toShow: HTMLElement[] = [];
     const pendingParentChecks: Array<{ card: HTMLElement; itemId: string }> = [];
     const cards = document.querySelectorAll<HTMLElement>(CARD_SEL);
+    const resolveRow = createHomeRowScopeResolver();
     for (let i = 0; i < cards.length; i++) {
         const card = cards[i];
         const itemId = getCardItemId(card);
-        card.setAttribute(PROCESSED_ATTR, '1');
         if (!itemId) continue;
 
-        const cardSurface = getCardSurface(card);
+        const row = resolveRow(card);
+        const cardSurface = row.kind === 'nextup' || row.kind === 'continuewatching'
+            ? row.kind
+            : null;
+        if (row.kind === 'unresolved') {
+            card.removeAttribute(PROCESSED_ATTR);
+            card.removeAttribute(PROCESSED_SCOPE_ATTR);
+        } else {
+            card.setAttribute(PROCESSED_ATTR, '1');
+            card.setAttribute(PROCESSED_SCOPE_ATTR, row.signature);
+        }
         let hiddenByScope = false;
         if (cardSurface && shouldFilterSurface(cardSurface) && isHiddenOnSurface(itemId, cardSurface)) {
             toHide.push(card);
@@ -700,6 +741,8 @@ export function filterAllNativeCards(): void {
 
         if (!hiddenByScope) {
             if (pageFilterable && hiddenIdSet.has(itemId)) {
+                card.setAttribute(PROCESSED_ATTR, '1');
+                card.setAttribute(PROCESSED_SCOPE_ATTR, row.signature);
                 toHide.push(card);
                 card.setAttribute(HIDDEN_DIRECT_ATTR, '1');
                 card.removeAttribute(HIDDEN_PARENT_ATTR);
@@ -709,6 +752,7 @@ export function filterAllNativeCards(): void {
                     toShow.push(card);
                     card.removeAttribute(HIDDEN_DIRECT_ATTR);
                 }
+                if (row.kind === 'unresolved') continue;
                 if (pageFilterable && !isDetailPage) {
                     const cardType = card.dataset.type || '';
                     if (cardType === 'Episode' || cardType === 'Season') {
@@ -751,14 +795,148 @@ const debouncedFilterNative = (): void => {
     }, NATIVE_FILTER_DEBOUNCE_MS);
 };
 
+function shouldShowNativeButtons(): boolean {
+    const settings = getSettings();
+    return settings.showHideButtons && (settings.showButtonLibrary || settings.showButtonCast);
+}
+
+function reconcileEmptyHomeSections(): void {
+    if (typeof (JC as any).hideEmptyHomeSections === 'function') {
+        (JC as any).hideEmptyHomeSections();
+    }
+}
+
+function scheduleEmptyHomeSectionReconcile(fence: FilterFence): void {
+    const handle = requestAnimationFrame(() => {
+        emptySectionReconcileFrames.delete(handle);
+        if (isFilterFenceCurrent(fence)) reconcileEmptyHomeSections();
+    });
+    emptySectionReconcileFrames.add(handle);
+}
+
+function clearProcessedScopeMarkers(root: ParentNode = document): void {
+    root.querySelectorAll<HTMLElement>(`[${PROCESSED_ATTR}]`).forEach((card) => {
+        card.removeAttribute(PROCESSED_ATTR);
+        card.removeAttribute(PROCESSED_SCOPE_ATTR);
+    });
+}
+
+function reconcileProcessedScopeSignatures(root: ParentNode): boolean {
+    let changed = false;
+    const resolveRow = createHomeRowScopeResolver();
+    root.querySelectorAll<HTMLElement>(`[${PROCESSED_ATTR}][${PROCESSED_SCOPE_ATTR}]`).forEach((card) => {
+        const current = resolveRow(card).signature;
+        if (card.getAttribute(PROCESSED_SCOPE_ATTR) === current) return;
+        card.removeAttribute(PROCESSED_ATTR);
+        card.removeAttribute(PROCESSED_SCOPE_ATTR);
+        changed = true;
+    });
+    return changed;
+}
+
+function markAddedCardsForRecheck(node: Element): boolean {
+    let found = false;
+    if (node.closest('.homeSectionsContainer')
+        && [...node.classList].some((className) => /^section\d+$/.test(className))) {
+        invalidateHomeRowSection(node);
+        const container = node.closest('.homeSectionsContainer');
+        if (container) {
+            clearProcessedScopeMarkers(container);
+            found = Boolean(container.querySelector(CARD_SEL));
+        }
+    }
+    if (node.matches(CARD_SEL)) {
+        node.removeAttribute(PROCESSED_ATTR);
+        node.removeAttribute(PROCESSED_SCOPE_ATTR);
+        found = true;
+    }
+    const descendants = node.querySelectorAll<HTMLElement>(CARD_SEL);
+    if (descendants.length > 0) found = true;
+    descendants.forEach((card) => {
+        card.removeAttribute(PROCESSED_ATTR);
+        card.removeAttribute(PROCESSED_SCOPE_ATTR);
+    });
+    return found;
+}
+
+function markRemovedHomeStructureForRecheck(node: Element, target: Node): boolean {
+    const removedSection = [...node.classList].some((className) => /^section\d+$/.test(className))
+        || [...node.querySelectorAll('[class]')].some((element) => (
+            [...element.classList].some((className) => /^section\d+$/.test(className))
+        ));
+    if (!removedSection) return false;
+    const targetElement = target instanceof Element ? target : target.parentElement;
+    const container = (targetElement?.matches('.homeSectionsContainer') ? targetElement : null)
+        || targetElement?.closest('.homeSectionsContainer');
+    if (!container) return false;
+    invalidateHomeRowSection(container);
+    clearProcessedScopeMarkers(container);
+    return Boolean(container.querySelector(CARD_SEL));
+}
+
+const ROW_EVIDENCE_SELECTOR = 'a.sectionTitleTextButton[href], .sectionTitleContainer > a[href], .sectionTitle a[href], h2 > a[href]';
+
+function markLateRowEvidenceForRecheck(node: Element, target: Node): boolean {
+    const hasEvidence = node.matches(ROW_EVIDENCE_SELECTOR)
+        || Boolean(node.querySelector(ROW_EVIDENCE_SELECTOR));
+    if (!hasEvidence) return false;
+    const targetElement = target instanceof Element ? target : target.parentElement;
+    const section = (node.matches('.section, .verticalSection, .homeSection') ? node : node.closest('.section, .verticalSection, .homeSection'))
+        || targetElement?.closest('.section, .verticalSection, .homeSection');
+    if (!section) return false;
+    invalidateHomeRowSection(section);
+    clearProcessedScopeMarkers(section);
+    return Boolean(section.querySelector(CARD_SEL));
+}
+
+function syncHomeSectionObservers(fence: FilterFence): void {
+    for (const [section, observer] of [...homeSectionObservers]) {
+        if (section.isConnected) continue;
+        observer.disconnect();
+        homeSectionObservers.delete(section);
+    }
+    const sections = new Set<HTMLElement>(document.querySelectorAll<HTMLElement>(
+        '.homeSectionsContainer > .section, .homeSectionsContainer > .verticalSection, .homeSectionsContainer > .homeSection',
+    ));
+    document.querySelectorAll<HTMLElement>(ROW_EVIDENCE_SELECTOR).forEach((link) => {
+        const section = link.closest<HTMLElement>('.section, .verticalSection, .homeSection');
+        if (section) sections.add(section);
+    });
+    sections.forEach((section) => {
+        if (homeSectionObservers.has(section)) return;
+        const observer = new MutationObserver(() => {
+            if (!isFilterFenceCurrent(fence)) return;
+            invalidateHomeRowSection(section);
+            if (!reconcileProcessedScopeSignatures(section)) return;
+            removeLibraryHideButtons();
+            filterNativeCards(true);
+            if (shouldShowNativeButtons()) addLibraryHideButtons();
+            reconcileEmptyHomeSections();
+        });
+        observer.observe(section, { attributes: true, attributeFilter: ['class', 'href'], subtree: true });
+        homeSectionObservers.set(section, observer);
+    });
+}
+
 /**
  * Sets up page-navigation and MutationObserver hooks to trigger card
  * filtering and button injection when new cards appear in the DOM.
  */
 export function setupNativeObserver(): void {
     viewPageUnsubscribe?.();
+    rowScopeRelease?.();
     bodyMutationHandle?.unsubscribe();
     const setupFence = captureFilterFence();
+    rowScopeRelease = acquireHomeRowScopes(() => {
+        if (!isFilterFenceCurrent(setupFence)) return;
+        clearProcessedScopeMarkers();
+        removeLibraryHideButtons();
+        filterAllNativeCards();
+        if (shouldShowNativeButtons()) addLibraryHideButtons();
+        scheduleEmptyHomeSectionReconcile(setupFence);
+        syncHomeSectionObservers(setupFence);
+    });
+    syncHomeSectionObservers(setupFence);
     // Use onViewPage for page navigation — much cheaper than a body MutationObserver
     viewPageUnsubscribe = onViewPage(() => {
         if (!isFilterFenceCurrent(setupFence)) return;
@@ -767,7 +945,7 @@ export function setupNativeObserver(): void {
             const rescan = (): void => {
                 if (!isFilterFenceCurrent(setupFence)) return;
                 refreshNativeCardVisibility();
-                if (getSettings().showButtonLibrary) addLibraryHideButtons();
+                if (shouldShowNativeButtons()) addLibraryHideButtons();
             };
             const scheduleRescan = (delay: number): void => {
                 const handle = window.setTimeout(() => {
@@ -789,7 +967,8 @@ export function setupNativeObserver(): void {
         const settings = getSettings();
         if (!settings.enabled) return;
         const shouldFilter = getHiddenCount() > 0;
-        const shouldAddButtons = settings.showHideButtons && settings.showButtonLibrary;
+        const shouldAddButtons = settings.showHideButtons
+            && (settings.showButtonLibrary || settings.showButtonCast);
         if (!shouldFilter && !shouldAddButtons) return;
         let hasNewItems = false;
         for (let i = 0; i < mutations.length; i++) {
@@ -797,17 +976,25 @@ export function setupNativeObserver(): void {
             for (let j = 0; j < added.length; j++) {
                 const node = added[j] as Element;
                 if (node.nodeType === 1 && (
-                    node.classList?.contains('card') ||
-                    node.classList?.contains('listItem') ||
-                    node.querySelector?.('.card[data-id], .listItem[data-id]')
+                    markAddedCardsForRecheck(node)
+                    || markLateRowEvidenceForRecheck(node, mutations[i].target)
                 )) {
                     hasNewItems = true;
-                    break;
                 }
             }
-            if (hasNewItems) break;
+            const removed = mutations[i].removedNodes;
+            for (let j = 0; j < removed.length; j++) {
+                const node = removed[j] as Element;
+                if (node.nodeType !== 1) continue;
+                const rowEvidenceChanged = markLateRowEvidenceForRecheck(node, mutations[i].target);
+                const structureChanged = markRemovedHomeStructureForRecheck(node, mutations[i].target);
+                if (rowEvidenceChanged || structureChanged) {
+                    hasNewItems = true;
+                }
+            }
         }
         if (hasNewItems) {
+            syncHomeSectionObservers(setupFence);
             if (shouldFilter) {
                 // PERF(R8): filter SYNCHRONOUSLY inside this mutation batch — the
                 // hidden-ids set is in memory (a Set lookup per new card), so
@@ -820,6 +1007,8 @@ export function setupNativeObserver(): void {
                 debouncedFilterNative();
             }
             if (shouldAddButtons) addLibraryHideButtons();
+            reconcileEmptyHomeSections();
         }
     }, { priority: 10 });
+
 }

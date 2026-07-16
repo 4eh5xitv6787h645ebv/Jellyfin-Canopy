@@ -18,6 +18,12 @@ declare global {
         accessToken(): string;
         getCurrentUser(): Promise<unknown>;
         getItem(userId: string, itemId: string): Promise<unknown>;
+        /** Jellyfin 12 home-row ordering (`usersettings`, client `emby`). */
+        getDisplayPreferences?(
+            id: string,
+            userId: string,
+            app: string
+        ): Promise<{ CustomPrefs?: Record<string, unknown> | null }>;
         ajax(options: { type: string; url: string; dataType?: string; data?: unknown; contentType?: string; signal?: AbortSignal }): Promise<unknown>;
         /**
          * v12 SDK socket subscription: register a callback for one or more

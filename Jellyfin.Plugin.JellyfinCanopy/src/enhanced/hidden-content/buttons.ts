@@ -8,7 +8,8 @@ import { JC } from '../../globals';
 import { getItemCached } from '../helpers';
 import { hiddenIdSet, getSettings, hideItem, unhideItem } from './data';
 import type { HideItemParams } from './data';
-import { getCardSurface, getCardItemId } from './filter';
+import { getCardItemId } from './filter';
+import { createHomeRowScopeResolver, resolveHomeRowScope } from '../home-row-scope';
 import { confirmAndHide } from './dialogs';
 import type { IdentityContext } from '../../types/jc';
 
@@ -36,6 +37,14 @@ function removeButtonsAndRestorePosition(): void {
         }
         btn.remove();
     });
+}
+
+function removeButtonAndRestorePosition(btn: HTMLElement): void {
+    const cardBox = btn.parentElement;
+    if (cardBox && btn.dataset.jcHidePreviousPosition !== undefined) {
+        cardBox.style.position = btn.dataset.jcHidePreviousPosition;
+    }
+    btn.remove();
 }
 
 export function resetButtonUi(): void {
@@ -111,7 +120,15 @@ function createLibraryHideButton(cardBox: HTMLElement, card: HTMLElement, itemId
                 if (!isButtonFenceCurrent(fence)) return;
 
                 const cardName = card.querySelector('.cardText')?.textContent || '';
-                const surface = getCardSurface(card);
+                const row = resolveHomeRowScope(card);
+                if (row.kind === 'unresolved') {
+                    // A pending home-row identity must never silently become a
+                    // durable global hide. The resolver-ready pass will
+                    // reconcile this button against the resolved row.
+                    return;
+                }
+                if (row.kind === 'collection' && !getSettings().experimentalHideCollections) return;
+                const surface = row.kind;
 
                 if (surface === 'nextup' || surface === 'continuewatching') {
                     await handleScopedCardHide(card, itemId, cardName, surface, setHiddenState, fence);
@@ -247,10 +264,11 @@ export function addLibraryHideButtons(): void {
     const skipCollections = !s.experimentalHideCollections;
 
     const cards = document.querySelectorAll<HTMLElement>('.card[data-id] .cardBox, .card[data-itemid] .cardBox');
+    const resolveRow = createHomeRowScopeResolver();
     for (let i = 0; i < cards.length; i++) {
         if (!isButtonFenceCurrent(fence)) return;
         const cardBox = cards[i];
-        if (cardBox.querySelector('.jc-hide-btn')) continue;
+        const existingButton = cardBox.querySelector<HTMLElement>('.jc-hide-btn');
 
         const card = cardBox.closest<HTMLElement>('.card');
         if (!card) continue;
@@ -264,6 +282,12 @@ export function addLibraryHideButtons(): void {
         const itemId = getCardItemId(card);
         if (!itemId) continue;
 
+        const row = resolveRow(card);
+        if (row.kind === 'unresolved') {
+            if (existingButton) removeButtonAndRestorePosition(existingButton);
+            continue;
+        }
+
         const cardType = (card.dataset.type || '').toLowerCase();
         const isPerson = cardType === 'person' || card.classList.contains('personCard');
 
@@ -273,13 +297,13 @@ export function addLibraryHideButtons(): void {
         if (!isPerson && !s.showButtonLibrary) continue;
 
         if (skipCollections && !isPerson) {
-            if (cardType === 'collectionfolder' || cardType === 'userview' || cardType === 'boxset' || cardType === 'playlist' || cardType === 'channel') continue;
-            const section = card.closest('.section, .verticalSection, .homeSection');
-            if (section) {
-                const sTitle = (section.querySelector('.sectionTitle, h2, .headerText, .sectionTitle-sectionTitle')?.textContent || '').toLowerCase();
-                if (sTitle.includes('my media') || sTitle.includes('collections')) continue;
+            if (row.kind === 'collection') {
+                if (existingButton) removeButtonAndRestorePosition(existingButton);
+                continue;
             }
         }
+
+        if (existingButton) continue;
 
         createLibraryHideButton(cardBox, card, itemId, isPerson);
     }
