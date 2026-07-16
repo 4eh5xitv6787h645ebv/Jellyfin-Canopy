@@ -8,9 +8,11 @@ const test = require('node:test');
 const budget = require('./bundle-budgets.json');
 const {
     assertBudgets,
+    assertColdHomeCatalogOwnership,
     assertPublishedBudgets,
     assertSafeRelativePath,
     assertSourceCensus,
+    calculateBudgetMetrics,
     createBuildArtifacts,
     esmOptions,
     publishArtifacts,
@@ -38,6 +40,19 @@ test('production build is byte-deterministic with sorted, resolving dynamic inve
         first.manifest.budgets.featureExpandedClosures['settings-launcher'].rawBytes
         > first.manifest.budgets.featureClosures['settings-launcher'].rawBytes,
     );
+    assert.deepEqual(first.manifest.budgets.coldHomeEntries, [
+        'boot',
+        'enhanced-events',
+        'native-tabs',
+        'settings-launcher',
+    ]);
+    assert.equal(
+        new Set(first.manifest.budgets.coldHomeFiles).size,
+        first.manifest.budgets.coldHomeFiles.length,
+    );
+    assert.equal(first.manifest.budgets.coldHomeRequests, 22);
+    assert.ok(first.manifest.budgets.coldHomeRawBytes > first.manifest.budgets.bootRawBytes);
+    assert.ok(first.manifest.budgets.coldHomeGzipBytes > first.manifest.budgets.bootGzipBytes);
     assert.ok(Object.keys(first.manifest.files).some((name) => /^chunks\/chunk-[A-Z0-9]+\.js$/.test(name)));
     assert.deepEqual(
         Object.values(first.manifest.entries).filter((entry) => entry.role === 'bootstrap').length,
@@ -139,11 +154,77 @@ test('path safety and whole-source census reject traversal and missing productio
     );
 });
 
+test('cold Home ownership follows every identity-only, always-applicable runtime descriptor', () => {
+    assert.doesNotThrow(() => assertColdHomeCatalogOwnership());
+    const catalogPath = path.join(
+        __dirname,
+        '..',
+        'Jellyfin.Plugin.JellyfinCanopy',
+        'src',
+        'entries',
+        'feature-catalog.ts',
+    );
+    const catalog = fs.readFileSync(catalogPath, 'utf8');
+    const withUnownedEntry = catalog.replace(
+        '    ...seerrFeatureDescriptors,',
+        `    ...seerrFeatureDescriptors,
+    {
+        id: 'unowned-cold-feature',
+        entry: 'unowned-cold-feature',
+        scope: 'identity',
+        isEnabled: (state) => Boolean(state.identity),
+        isApplicable: () => true,
+    },`,
+    );
+    assert.throws(
+        () => assertColdHomeCatalogOwnership({ builtInFeatureDescriptors: withUnownedEntry }),
+        /cold Home entry ownership changed:[\s\S]*unowned-cold-feature/,
+    );
+    const withUnknownSpread = catalog.replace(
+        '    ...seerrFeatureDescriptors,',
+        '    ...seerrFeatureDescriptors,\n    ...anotherDescriptorCatalog,',
+    );
+    assert.throws(
+        () => assertColdHomeCatalogOwnership({ builtInFeatureDescriptors: withUnknownSpread }),
+        /cold Home catalog spread inventory changed/,
+    );
+});
+
+test('cold Home aggregate counts the unique static union instead of shared chunks repeatedly', () => {
+    const file = (bytes, gzipBytes, imports = []) => ({ bytes, dynamicImports: [], gzipBytes, imports });
+    const files = {
+        'entries/boot.js': file(10, 5, ['chunks/shared.js']),
+        'entries/feature-a.js': file(20, 8, ['chunks/shared.js']),
+        'entries/feature-b.js': file(30, 12, ['chunks/shared.js', 'chunks/unique.js']),
+        'chunks/shared.js': file(40, 15),
+        'chunks/unique.js': file(50, 18),
+    };
+    const entries = {
+        boot: { kind: 'module', path: 'entries/boot.js', role: 'boot' },
+        'feature-a': { kind: 'module', path: 'entries/feature-a.js', role: 'feature' },
+        'feature-b': { kind: 'module', path: 'entries/feature-b.js', role: 'feature' },
+    };
+    const metrics = calculateBudgetMetrics(entries, files, ['boot', 'feature-a', 'feature-b']);
+    assert.deepEqual(metrics.coldHomeFiles, [
+        'chunks/shared.js',
+        'chunks/unique.js',
+        'entries/boot.js',
+        'entries/feature-a.js',
+        'entries/feature-b.js',
+    ]);
+    assert.equal(metrics.coldHomeRequests, 5);
+    assert.equal(metrics.coldHomeRawBytes, 150);
+    assert.equal(metrics.coldHomeGzipBytes, 58);
+});
+
 test('output, request, and byte budgets fail closed', () => {
     const metrics = {
         bootGzipBytes: 1,
         bootRawBytes: 1,
         bootRequests: 1,
+        coldHomeGzipBytes: 1,
+        coldHomeRawBytes: 1,
+        coldHomeRequests: 1,
         esmEntryCount: 1,
         esmOutputCount: 1,
         featureClosures: { feature: { gzipBytes: 1, rawBytes: 1, requests: 1 } },
@@ -158,6 +239,9 @@ test('output, request, and byte budgets fail closed', () => {
         ['outputCount', 'maxOutputCount', 'output count'],
         ['bootRequests', 'maxBootRequests', 'boot requests'],
         ['bootRawBytes', 'maxBootRawBytes', 'boot raw bytes'],
+        ['coldHomeRequests', 'maxColdHomeRequests', 'cold Home requests'],
+        ['coldHomeRawBytes', 'maxColdHomeRawBytes', 'cold Home raw bytes'],
+        ['coldHomeGzipBytes', 'maxColdHomeGzipBytes', 'cold Home gzip bytes'],
     ]) {
         const constrained = JSON.parse(JSON.stringify(budget));
         constrained.limits[limit] = 0;
@@ -181,6 +265,26 @@ test('output, request, and byte budgets fail closed', () => {
         const missing = JSON.parse(JSON.stringify(budget));
         delete missing.limits[key];
         assert.throws(() => assertBudgets(metrics, missing), /bundle budget is missing feature/);
+    }
+
+    for (const key of [
+        'maxColdHomeRequests',
+        'maxColdHomeRawBytes',
+        'maxColdHomeGzipBytes',
+    ]) {
+        const missing = JSON.parse(JSON.stringify(budget));
+        delete missing.limits[key];
+        assert.throws(() => assertBudgets(metrics, missing), /bundle budget is missing cold Home/);
+    }
+
+    for (const [key, value] of [
+        ['maxColdHomeRequests', -1],
+        ['maxColdHomeRawBytes', '170000'],
+        ['maxColdHomeGzipBytes', Number.MAX_SAFE_INTEGER + 1],
+    ]) {
+        const malformed = JSON.parse(JSON.stringify(budget));
+        malformed.limits[key] = value;
+        assert.throws(() => assertBudgets(metrics, malformed), /bundle budget is missing cold Home/);
     }
 
     assert.doesNotThrow(() => assertPublishedBudgets(1, 1, budget));

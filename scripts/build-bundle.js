@@ -15,6 +15,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const zlib = require('node:zlib');
 const esbuild = require('esbuild');
+const ts = require('typescript');
 
 const REPO_ROOT = path.join(__dirname, '..');
 const PROJECT_DIR = path.join(REPO_ROOT, 'Jellyfin.Plugin.JellyfinCanopy');
@@ -22,6 +23,8 @@ const SRC_ROOT = path.join(PROJECT_DIR, 'src');
 const BOOTSTRAP_ROOT = path.join(SRC_ROOT, 'bootstrap');
 const OUT_DIR = path.join(PROJECT_DIR, 'dist');
 const BUDGET_PATH = path.join(__dirname, 'bundle-budgets.json');
+const FEATURE_CATALOG_PATH = path.join(SRC_ROOT, 'entries', 'feature-catalog.ts');
+const SEERR_CATALOG_PATH = path.join(SRC_ROOT, 'entries', 'seerr-descriptors.ts');
 
 const BOOTSTRAP_ENTRIES = Object.freeze({
     'login-image': path.join(BOOTSTRAP_ROOT, 'login-image.ts'),
@@ -68,6 +71,29 @@ const ESM_ENTRIES = Object.freeze({
     'spoiler-guard': path.join(SRC_ROOT, 'enhanced', 'spoiler-guard', 'feature.ts'),
     'theme-selector': path.join(SRC_ROOT, 'extras', 'theme-selector.feature.ts'),
 });
+
+// These entries activate for every authenticated identity on a cold Home load.
+// Keep the set explicit and verify it against the import-pure runtime catalogs
+// below: aggregate budgets must not silently omit a newly unconditional entry.
+const COLD_HOME_ENTRIES = Object.freeze([
+    'boot',
+    'enhanced-events',
+    'native-tabs',
+    'settings-launcher',
+]);
+
+const COLD_HOME_CATALOGS = Object.freeze([
+    {
+        exportName: 'builtInFeatureDescriptors',
+        expectedSpreads: ['seerrFeatureDescriptors'],
+        path: FEATURE_CATALOG_PATH,
+    },
+    {
+        exportName: 'seerrFeatureDescriptors',
+        expectedSpreads: [],
+        path: SEERR_CATALOG_PATH,
+    },
+]);
 
 function sha256(bytes) {
     return crypto.createHash('sha256').update(bytes).digest('hex');
@@ -265,6 +291,111 @@ function buildEntries(metadata) {
     return entries;
 }
 
+function propertyAssignment(object, name) {
+    return object.properties.find((property) => ts.isPropertyAssignment(property)
+        && ((ts.isIdentifier(property.name) && property.name.text === name)
+            || (ts.isStringLiteral(property.name) && property.name.text === name)));
+}
+
+function unwrapExpression(expression) {
+    let current = expression;
+    while (ts.isParenthesizedExpression(current)) current = current.expression;
+    return current;
+}
+
+function isIdentityOnlyPredicate(initializer) {
+    if (!ts.isArrowFunction(initializer) || initializer.parameters.length !== 1) return false;
+    const parameter = initializer.parameters[0].name;
+    if (!ts.isIdentifier(parameter)) return false;
+    const body = unwrapExpression(initializer.body);
+    if (!ts.isCallExpression(body) || body.arguments.length !== 1
+        || !ts.isIdentifier(body.expression) || body.expression.text !== 'Boolean') return false;
+    const argument = unwrapExpression(body.arguments[0]);
+    return ts.isPropertyAccessExpression(argument)
+        && ts.isIdentifier(argument.expression)
+        && argument.expression.text === parameter.text
+        && argument.name.text === 'identity';
+}
+
+function isAlwaysApplicablePredicate(initializer) {
+    if (!ts.isArrowFunction(initializer)) return false;
+    return unwrapExpression(initializer.body).kind === ts.SyntaxKind.TrueKeyword;
+}
+
+function descriptorArray(sourceText, filePath, exportName) {
+    const sourceFile = ts.createSourceFile(filePath, sourceText, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+    let initializer;
+    for (const statement of sourceFile.statements) {
+        if (!ts.isVariableStatement(statement)) continue;
+        const declaration = statement.declarationList.declarations.find((item) => ts.isIdentifier(item.name)
+            && item.name.text === exportName);
+        if (declaration) initializer = declaration.initializer;
+    }
+    if (!initializer) throw new Error(`cold Home catalog export is missing: ${exportName}`);
+    const expression = unwrapExpression(initializer);
+    if (!ts.isCallExpression(expression) || expression.arguments.length !== 1
+        || !ts.isPropertyAccessExpression(expression.expression)
+        || !ts.isIdentifier(expression.expression.expression)
+        || expression.expression.expression.text !== 'Object'
+        || expression.expression.name.text !== 'freeze') {
+        throw new Error(`cold Home catalog must remain an Object.freeze array: ${exportName}`);
+    }
+    const array = unwrapExpression(expression.arguments[0]);
+    if (!ts.isArrayLiteralExpression(array)) {
+        throw new Error(`cold Home catalog must remain an array: ${exportName}`);
+    }
+    return array;
+}
+
+/**
+ * Fail closed if the runtime catalogs' identity-only, always-applicable set
+ * drifts away from the entries owned by the aggregate cold Home budget.
+ */
+function assertColdHomeCatalogOwnership(sourceOverrides = {}) {
+    const discovered = [];
+    for (const catalog of COLD_HOME_CATALOGS) {
+        const source = sourceOverrides[catalog.exportName]
+            ?? fs.readFileSync(catalog.path, 'utf8');
+        const array = descriptorArray(source, catalog.path, catalog.exportName);
+        const spreads = [];
+        for (const element of array.elements) {
+            if (ts.isSpreadElement(element)) {
+                if (!ts.isIdentifier(element.expression)) {
+                    throw new Error(`cold Home catalog has an unsupported spread: ${catalog.exportName}`);
+                }
+                spreads.push(element.expression.text);
+                continue;
+            }
+            if (!ts.isObjectLiteralExpression(element)) {
+                throw new Error(`cold Home catalog has an unsupported descriptor: ${catalog.exportName}`);
+            }
+            const entry = propertyAssignment(element, 'entry');
+            const isEnabled = propertyAssignment(element, 'isEnabled');
+            const isApplicable = propertyAssignment(element, 'isApplicable');
+            if (!entry || !ts.isStringLiteral(entry.initializer) || !isEnabled || !isApplicable) {
+                throw new Error(`cold Home catalog descriptor is incomplete: ${catalog.exportName}`);
+            }
+            if (isIdentityOnlyPredicate(isEnabled.initializer)
+                && isAlwaysApplicablePredicate(isApplicable.initializer)) {
+                discovered.push(entry.initializer.text);
+            }
+        }
+        const actualSpreads = [...new Set(spreads)].sort();
+        if (actualSpreads.length !== spreads.length
+            || JSON.stringify(actualSpreads) !== JSON.stringify(catalog.expectedSpreads)) {
+            throw new Error(`cold Home catalog spread inventory changed: ${catalog.exportName}`);
+        }
+    }
+    const expected = COLD_HOME_ENTRIES.filter((name) => name !== 'boot').sort();
+    const actual = [...new Set(discovered)].sort();
+    if (actual.length !== discovered.length || JSON.stringify(actual) !== JSON.stringify(expected)) {
+        throw new Error(
+            `cold Home entry ownership changed: expected ${expected.join(', ') || '(none)'}; `
+            + `found ${actual.join(', ') || '(none)'}`,
+        );
+    }
+}
+
 function closure(start, files, includeDynamic = false) {
     const seen = new Set();
     const visit = (name) => {
@@ -279,11 +410,22 @@ function closure(start, files, includeDynamic = false) {
     return [...seen].filter((name) => name.endsWith('.js')).sort();
 }
 
-function calculateBudgetMetrics(entries, files) {
+function calculateBudgetMetrics(entries, files, coldHomeEntryNames = COLD_HOME_ENTRIES) {
     const esmEntries = Object.values(entries).filter((entry) => entry.kind === 'module');
     const bootPaths = esmEntries.filter((entry) => entry.role === 'boot').map((entry) => entry.path);
     const bootFiles = [...new Set(bootPaths.flatMap((entry) => closure(entry, files)))];
     const sum = (names, field) => names.reduce((total, name) => total + files[name][field], 0);
+    if (!Array.isArray(coldHomeEntryNames) || coldHomeEntryNames.length === 0
+        || coldHomeEntryNames.some((name) => typeof name !== 'string' || !entries[name])
+        || new Set(coldHomeEntryNames).size !== coldHomeEntryNames.length) {
+        throw new Error('cold Home entry inventory is invalid');
+    }
+    const coldHomeEntries = [...coldHomeEntryNames].sort();
+    const coldHomeFiles = [...new Set(coldHomeEntries.flatMap((name) => {
+        const entry = entries[name];
+        if (entry.kind !== 'module') throw new Error(`cold Home entry is not an ES module: ${name}`);
+        return closure(entry.path, files);
+    }))].sort();
     const featureClosures = {};
     const featureExpandedClosures = {};
     for (const [name, entry] of Object.entries(entries)) {
@@ -309,6 +451,11 @@ function calculateBudgetMetrics(entries, files) {
         bootGzipBytes: sum(bootFiles, 'gzipBytes'),
         bootRawBytes: sum(bootFiles, 'bytes'),
         bootRequests: bootFiles.length,
+        coldHomeEntries,
+        coldHomeFiles,
+        coldHomeGzipBytes: sum(coldHomeFiles, 'gzipBytes'),
+        coldHomeRawBytes: sum(coldHomeFiles, 'bytes'),
+        coldHomeRequests: coldHomeFiles.length,
         esmEntryCount: esmEntries.length,
         esmOutputCount: esmOutputs.length,
         featureClosures,
@@ -331,6 +478,9 @@ function assertBudgets(metrics, budget) {
         ['boot requests', metrics.bootRequests, budget.limits.maxBootRequests],
         ['boot raw bytes', metrics.bootRawBytes, budget.limits.maxBootRawBytes],
         ['boot gzip bytes', metrics.bootGzipBytes, budget.limits.maxBootGzipBytes],
+        ['cold Home requests', metrics.coldHomeRequests, budget.limits.maxColdHomeRequests],
+        ['cold Home raw bytes', metrics.coldHomeRawBytes, budget.limits.maxColdHomeRawBytes],
+        ['cold Home gzip bytes', metrics.coldHomeGzipBytes, budget.limits.maxColdHomeGzipBytes],
         ['feature requests', 0, budget.limits.maxFeatureRequests],
         ['feature raw bytes', 0, budget.limits.maxFeatureRawBytes],
         ['feature gzip bytes', 0, budget.limits.maxFeatureGzipBytes],
@@ -399,6 +549,7 @@ function createClientManifest(artifacts, metadata, budget) {
 
 async function createBuildArtifacts({ devMode = false, outDir = OUT_DIR, budget } = {}) {
     const resolvedBudget = budget || JSON.parse(fs.readFileSync(BUDGET_PATH, 'utf8'));
+    assertColdHomeCatalogOwnership();
     const results = await Promise.all([
         esbuild.build(bootstrapOptions(devMode, outDir)),
         esbuild.build(esmOptions(devMode, outDir)),
@@ -466,7 +617,9 @@ function report(manifest, devMode) {
         `Built ${Object.keys(manifest.files).length + 1} deterministic dist files${devMode ? ' (dev)' : ''}\n`
         + `  build: ${manifest.buildId}\n`
         + `  ESM boot: ${manifest.budgets.bootRequests} request(s), `
-        + `${kb(manifest.budgets.bootRawBytes)} raw / ${kb(manifest.budgets.bootGzipBytes)} gzip`,
+        + `${kb(manifest.budgets.bootRawBytes)} raw / ${kb(manifest.budgets.bootGzipBytes)} gzip\n`
+        + `  Cold Home union: ${manifest.budgets.coldHomeRequests} unique request(s), `
+        + `${kb(manifest.budgets.coldHomeRawBytes)} raw / ${kb(manifest.budgets.coldHomeGzipBytes)} gzip`,
     );
 }
 
@@ -526,6 +679,7 @@ if (require.main === module) {
 
 module.exports = {
     assertBudgets,
+    assertColdHomeCatalogOwnership,
     assertPublishedBudgets,
     assertSafeRelativePath,
     assertSourceCensus,
