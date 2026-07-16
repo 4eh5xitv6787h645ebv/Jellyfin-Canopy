@@ -33,8 +33,12 @@ const BOOTSTRAP_ENTRIES = Object.freeze({
 // This map is the deliberate migration seam: feature conversion adds a named
 // entry here without changing output naming, manifest generation, or serving.
 const ESM_ENTRIES = Object.freeze({
+    'active-streams': path.join(SRC_ROOT, 'entries', 'active-streams.ts'),
+    'activity-icons': path.join(SRC_ROOT, 'entries', 'activity-icons.ts'),
     boot: path.join(SRC_ROOT, 'entries', 'boot.ts'),
-    'feature-foundation': path.join(SRC_ROOT, 'entries', 'feature-foundation.ts'),
+    'card-tags': path.join(SRC_ROOT, 'tags', 'feature.ts'),
+    'hide-favorites-tab': path.join(SRC_ROOT, 'entries', 'hide-favorites-tab.ts'),
+    'plugin-icons': path.join(SRC_ROOT, 'entries', 'plugin-icons.ts'),
 });
 
 function sha256(bytes) {

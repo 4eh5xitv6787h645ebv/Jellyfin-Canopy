@@ -9,9 +9,29 @@ import '../core/identity';
 import '../core/live';
 import '../core/live-config';
 import '../enhanced/config';
+import {
+    builtInFeatureDescriptors,
+} from './feature-catalog';
+import {
+    initializeClientRuntime as initializeRuntime,
+    registerFeatureDescriptors,
+    type ClientRuntime,
+    type ClientRuntimeOptions,
+} from '../core/client-runtime';
+
+let descriptorsRegistered = false;
+
+/** Initialize the singleton runtime and atomically install the built-in catalog once. */
+export function initializeClientRuntime(options: ClientRuntimeOptions): ClientRuntime {
+    const runtime = initializeRuntime(options);
+    if (!descriptorsRegistered) {
+        runtime.registerFeatureDescriptors(builtInFeatureDescriptors);
+        descriptorsRegistered = true;
+    }
+    return runtime;
+}
 
 export {
-    initializeClientRuntime,
     registerFeatureDescriptors,
     type ClientFeatureDescriptor,
     type ClientManifest,
