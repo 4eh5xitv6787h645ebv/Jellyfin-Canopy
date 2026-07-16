@@ -3,7 +3,7 @@ import { JC } from '../../arr/arr-globals';
 import { createTestFeatureScope } from '../../test/feature-scope';
 import { getPage } from './registry';
 import { activateRoutePage } from './route-feature';
-import { drain, initFallbackHost } from './fallback-host';
+import { adoptedPageId, drain, initFallbackHost } from './fallback-host';
 import '../../core/lifecycle';
 import '../../core/navigation';
 import './facades';
@@ -63,18 +63,58 @@ describe('route-only page feature activation', () => {
         expect(refresh).toHaveBeenCalledTimes(1);
     });
 
-    it('rolls back synchronously when a scope turns stale during attachment', () => {
+    it('adopts a fallback that rendered before the delayed route feature activated', async () => {
+        const catalog = getPage('calendar');
+        const feature = createTestFeatureScope();
+        const render = vi.fn(({ host }: { host: HTMLElement }) => {
+            const content = document.createElement('section');
+            content.id = 'late-calendar-content';
+            host.appendChild(content);
+        });
+
+        window.location.hash = '#/calendar';
+        window.dispatchEvent(new Event('hashchange'));
+        const fallback = document.createElement('div');
+        fallback.id = 'fallbackPage';
+        fallback.textContent = 'Page not found';
+        document.body.appendChild(fallback);
+
+        activateRoutePage(feature.scope, {
+            ...catalog!, id: 'calendar', render,
+        }, {});
+
+        expect(adoptedPageId()).toBe('calendar');
+        expect(render).toHaveBeenCalledTimes(1);
+        expect(fallback.querySelector('#late-calendar-content')).not.toBeNull();
+        expect(fallback.textContent).not.toContain('Page not found');
+
+        await feature.dispose();
+    });
+
+    it('never adopts when the generation scope turns stale during attachment', () => {
         const catalog = getPage('calendar');
         const feature = createTestFeatureScope();
         let checks = 0;
         feature.scope.isCurrent = () => ++checks === 1;
         const reset = vi.fn();
+        const render = vi.fn();
+
+        window.location.hash = '#/calendar';
+        window.dispatchEvent(new Event('hashchange'));
+        const fallback = document.createElement('div');
+        fallback.id = 'fallbackPage';
+        fallback.textContent = 'Page not found';
+        document.body.appendChild(fallback);
+
         activateRoutePage(feature.scope, {
-            ...catalog!, id: 'calendar', render: vi.fn(), onHide: reset,
+            ...catalog!, id: 'calendar', render, onHide: reset,
         }, {});
 
         expect(getPage('calendar')).toBe(catalog);
         expect(reset).toHaveBeenCalledTimes(1);
+        expect(adoptedPageId()).toBeNull();
+        expect(render).not.toHaveBeenCalled();
+        expect(fallback.textContent).toBe('Page not found');
     });
 
     it('navigation drains adoption resources and cluster state exactly once', async () => {

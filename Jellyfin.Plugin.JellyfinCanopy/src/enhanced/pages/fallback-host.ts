@@ -186,6 +186,32 @@ export function refreshCurrent(): void {
     }
 }
 
+/**
+ * Reconcile a newly activated lazy page implementation with the visible
+ * fallback route. Jellyfin may mount its unknown-route fallback before the
+ * feature import finishes (or while a failed import is waiting for retry), so
+ * there is not always a catalog-placeholder adoption for refreshCurrent() to
+ * replace. Require the exact newly registered descriptor to still own the
+ * current URL before either refreshing that placeholder or adopting the
+ * already-mounted fallback. This prevents an obsolete activation from
+ * reviving a route after another registration or navigation won ownership.
+ */
+export function adoptOrRefreshCurrent(descriptor: PageDescriptor): void {
+    if (resolvePage() !== descriptor || !pageAvailable(descriptor)) return;
+
+    const currentId = adoptedPageId();
+    if (currentId === descriptor.id) {
+        refreshCurrent();
+        return;
+    }
+    if (currentId !== null) return;
+
+    const fallback = document.getElementById('fallbackPage');
+    if (fallback instanceof HTMLElement && fallback.isConnected) {
+        adopt(descriptor, fallback);
+    }
+}
+
 /** The routed element the router renders for unknown routes. */
 function isFallbackElement(element: Element): element is HTMLElement {
     return element instanceof HTMLElement && element.id === 'fallbackPage';

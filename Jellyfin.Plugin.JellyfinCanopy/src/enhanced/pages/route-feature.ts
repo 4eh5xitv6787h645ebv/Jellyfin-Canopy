@@ -1,7 +1,7 @@
 import type { FeatureScope } from '../../core/feature-loader';
 import { JC } from '../../globals';
 import type { PageDescriptor } from './types';
-import { adoptedPageId, drain, refreshCurrent } from './fallback-host';
+import { adoptedPageId, adoptOrRefreshCurrent, drain } from './fallback-host';
 import { attachPageFacade } from './facades';
 import { registerPage } from './registry';
 
@@ -51,5 +51,9 @@ export function activateRoutePage(
         dispose();
         return;
     }
-    if (adoptedPageId() === descriptor.id) refreshCurrent();
+    // The router can render its unknown-route fallback before a cold or retried
+    // feature import completes. The second scope check above proves this exact
+    // identity/config/navigation generation still owns activation; the host
+    // then additionally proves this runtime descriptor still owns the URL.
+    adoptOrRefreshCurrent(runtimeDescriptor);
 }
