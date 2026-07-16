@@ -58,7 +58,8 @@ function setup(opts: { admin: boolean; allUsers?: boolean }): { plugin: ReturnTy
 }
 
 async function openPanel(): Promise<void> {
-    await import('./active-streams');
+    const { installActiveStreams } = await import('./active-streams');
+    installActiveStreams();
     api().activeStreams.initialize();
     await flush();
     document.getElementById('jc-active-streams')!.dispatchEvent(new MouseEvent('click', { bubbles: true }));

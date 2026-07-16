@@ -4,6 +4,7 @@
 import { JC as JEBase } from '../globals';
 import { describeFetchError } from '../core/fetch-error';
 import { insertHeaderTrayButton, HeaderTrayOrder } from '../enhanced/header-tray';
+import { createStableMethodFacade } from '../core/feature-loader';
 import type { ApiApi, IdentityContext, LifecycleApi, LifecycleHandle, NavigationApi, PluginConfig, UiApi } from '../types/jc';
 
 /**
@@ -1897,12 +1898,12 @@ const stopObserver = (): void => {
 };
 
 // ── Public API ───────────────────────────────────────────────────────────
-JC.activeStreams = {
+const activeStreamsApi = {
     initialize() {
         // Re-entry is allowed after an identity/config activation. Always drain
         // the prior controller before evaluating the new user's visibility gate.
         if (_observer || _pollTimer || _lifecycle || document.getElementById('jc-active-streams')) {
-            JC.activeStreams!.destroy();
+            activeStreamsApi.destroy();
         }
         if (!JC?.pluginConfig?.ActiveStreamsEnabled) {
             return;
@@ -1946,4 +1947,30 @@ JC.activeStreams = {
     }
 };
 
-JC.identity.registerReset('active-streams', () => JC.activeStreams?.destroy());
+const stableActiveStreams = createStableMethodFacade<typeof activeStreamsApi>({
+    initialize() {},
+    destroy() {},
+});
+
+/**
+ * Publish the frozen public facade and install this activation's delegate.
+ * Importing the module alone intentionally performs no browser/global work.
+ */
+export function installActiveStreams(): () => void {
+    const uninstall = stableActiveStreams.install(activeStreamsApi);
+    JC.activeStreams = stableActiveStreams.facade;
+    const unregisterReset = JC.identity.registerReset('active-streams', () => activeStreamsApi.destroy());
+    let disposed = false;
+    return () => {
+        if (disposed) return;
+        disposed = true;
+        activeStreamsApi.destroy();
+        unregisterReset();
+        uninstall();
+    };
+}
+
+/** Start the currently installed activation without resolving through globals. */
+export function initializeActiveStreams(): void {
+    activeStreamsApi.initialize();
+}

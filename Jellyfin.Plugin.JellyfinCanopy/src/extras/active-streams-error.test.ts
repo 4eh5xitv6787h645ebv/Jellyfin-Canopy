@@ -45,7 +45,8 @@ describe('active-streams panel error state', () => {
             navigation: { onNavigate: () => () => { /* unsubscribe */ } },
         };
 
-        await import('./active-streams');
+        const { installActiveStreams } = await import('./active-streams');
+        installActiveStreams();
         api().activeStreams.initialize();
         await flush(); // initial (panel-closed) fetch settles
 
