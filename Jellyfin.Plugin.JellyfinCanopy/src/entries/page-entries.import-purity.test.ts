@@ -103,8 +103,8 @@ describe('route page entries', () => {
         });
     }
 
-    it('the cold main graph contains none of the four route clusters', () => {
-        const inputs = runtimeGraph(`${SRC_ROOT}main.ts`).map((file) => file.replace(/\\/g, '/'));
+    it('the cold boot graph contains none of the four route clusters', () => {
+        const inputs = runtimeGraph(`${SRC_ROOT}entries/boot.ts`).map((file) => file.replace(/\\/g, '/'));
         const forbidden = [
             '/arr/calendar/',
             '/arr/requests/',
@@ -118,7 +118,7 @@ describe('route page entries', () => {
     });
 
     it('route-only modules have no top-level DOM, listener, timer, request, or identity calls', () => {
-        const cold = new Set(runtimeGraph(`${SRC_ROOT}main.ts`));
+        const cold = new Set(runtimeGraph(`${SRC_ROOT}entries/boot.ts`));
         for (const entry of entries) {
             const entryFile = ts.sys.resolvePath(`${SRC_ROOT}entries/${entry.slice(2)}.ts`);
             const routeOnly = runtimeGraph(entryFile).filter((file) => !cold.has(file));
