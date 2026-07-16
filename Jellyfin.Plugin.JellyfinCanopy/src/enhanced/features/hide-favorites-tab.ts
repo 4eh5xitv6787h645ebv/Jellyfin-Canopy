@@ -20,8 +20,8 @@
 //      may have changed) and when the setting is toggled.
 
 import { JC } from '../../globals';
-import { onNavigate } from '../../core/navigation';
-import { isOnHomePage } from '../helpers';
+import { createStableMethodFacade } from '../../core/feature-loader';
+import { isOnHomePage } from '../../core/route-match';
 
 const STYLE_ID = 'jc-hide-favorites-tab';
 const HTML_CLASS = 'jc-hide-favorites-tab';
@@ -57,16 +57,27 @@ export function applyHideFavoritesTab(): void {
     if (enabled) ensureStyle();
     document.documentElement.classList.toggle(HTML_CLASS, enabled && isOnHomePage());
 }
-JC.applyHideFavoritesTab = applyHideFavoritesTab;
 
-// The route decides whether the rule applies, so re-evaluate on every navigation
-// (this also runs at boot the first time the home view is reached).
-onNavigate(applyHideFavoritesTab);
-
-// Apply once the authenticated identity (and therefore currentSettings) is active,
-// and clear the gate on identity teardown so a logged-out shell isn't left with a
-// stale class.
-JC.identity.registerActivate('hide-favorites-tab', applyHideFavoritesTab);
-JC.identity.registerReset('hide-favorites-tab', () => {
+function resetHideFavoritesTab(): void {
     document.documentElement.classList.remove(HTML_CLASS);
-});
+    JC.core.ui?.removeCss?.(STYLE_ID);
+    styleInjected = false;
+}
+
+const hideFavoritesApi = { apply: applyHideFavoritesTab };
+const stableHideFavorites = createStableMethodFacade<typeof hideFavoritesApi>({ apply() {} });
+
+/** Publish the frozen compatibility method for one loader-owned activation. */
+export function installHideFavoritesTab(): () => void {
+    const uninstall = stableHideFavorites.install(hideFavoritesApi);
+    JC.applyHideFavoritesTab = stableHideFavorites.facade.apply;
+    const unregisterReset = JC.identity.registerReset('hide-favorites-tab', resetHideFavoritesTab);
+    let disposed = false;
+    return () => {
+        if (disposed) return;
+        disposed = true;
+        resetHideFavoritesTab();
+        unregisterReset();
+        uninstall();
+    };
+}

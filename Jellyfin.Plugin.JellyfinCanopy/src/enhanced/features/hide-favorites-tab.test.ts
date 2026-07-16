@@ -11,9 +11,12 @@ import { JC } from '../../globals';
 const HTML_CLASS = 'jc-hide-favorites-tab';
 
 let injectCss: ReturnType<typeof vi.fn>;
+let dispose: (() => void) | null = null;
 
 async function loadModule(): Promise<typeof import('./hide-favorites-tab')> {
-    return import('./hide-favorites-tab');
+    const module = await import('./hide-favorites-tab');
+    dispose = module.installHideFavoritesTab();
+    return module;
 }
 
 describe('hide-favorites-tab', () => {
@@ -31,6 +34,8 @@ describe('hide-favorites-tab', () => {
     });
 
     afterEach(() => {
+        dispose?.();
+        dispose = null;
         vi.restoreAllMocks();
         document.documentElement.classList.remove(HTML_CLASS);
     });
