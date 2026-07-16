@@ -1,15 +1,21 @@
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JC } from '../globals';
+
+let disposeEvents: (() => void) | undefined;
+let installEnhancedEvents: typeof import('./events').installEnhancedEvents;
 
 describe('enhanced shortcut dispatch', () => {
     beforeAll(async () => {
         window.Events = { on: vi.fn() } as unknown as JellyfinEvents;
-        await import('./events');
+        ({ installEnhancedEvents } = await import('./events'));
     });
 
     beforeEach(() => {
+        disposeEvents?.();
+        disposeEvents = undefined;
         JC.identity.transition('', '', 'shortcut-dispatch-test-reset');
         JC.identity.transition('shortcut-server', 'shortcut-user', 'shortcut-dispatch-test-start');
+        disposeEvents = installEnhancedEvents();
         JC.pluginConfig = { DisableAllShortcuts: false };
         JC.currentSettings = { disableAllShortcuts: false };
         JC.state = {
@@ -20,6 +26,11 @@ describe('enhanced shortcut dispatch', () => {
         (JC as unknown as { isVideoPage: () => boolean }).isVideoPage = () => false;
         JC.t = (key: string) => key;
         window.location.hash = '#/start';
+    });
+
+    afterAll(() => {
+        disposeEvents?.();
+        disposeEvents = undefined;
     });
 
     it('dispatches a legacy persisted multi-modifier permutation semantically', () => {

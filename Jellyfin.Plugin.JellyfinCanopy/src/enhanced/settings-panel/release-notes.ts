@@ -210,10 +210,10 @@ export async function showReleaseNotesNotification(): Promise<void> {
     resetAutoCloseTimer();
 }
 
-JC.identity.registerReset('settings-release-notes', () => {
+export function resetReleaseNotes(): void {
     for (const controller of releaseControllers) controller.abort();
     releaseControllers.clear();
     for (const timer of releaseTimers) clearTimeout(timer);
     releaseTimers.clear();
     document.getElementById('jellyfin-release-notes-notification')?.remove();
-});
+}

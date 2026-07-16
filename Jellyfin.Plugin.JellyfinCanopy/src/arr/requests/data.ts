@@ -679,7 +679,7 @@ export async function handleRequestAction(btn: HTMLButtonElement, action: 'appro
     }
 }
 
-function resetRequestsIdentityState(): void {
+export function resetRequestsIdentityState(): void {
     if (state.searchDebounceTimer) clearTimeout(state.searchDebounceTimer);
     Object.assign(state, {
         downloads: [],
@@ -706,5 +706,3 @@ function resetRequestsIdentityState(): void {
     _toastedDownloadsErrors.clear();
     clearAvatarObjectUrlCache(true);
 }
-
-JC.identity.registerReset('arr-requests-data', resetRequestsIdentityState);

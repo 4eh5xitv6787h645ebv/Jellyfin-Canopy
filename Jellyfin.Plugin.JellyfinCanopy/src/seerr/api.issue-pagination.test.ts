@@ -13,7 +13,8 @@ describe('Seerr issue query ownership', () => {
             fetch: fetchMock,
             plugin: vi.fn(),
         } as unknown as NonNullable<typeof JC.core.api>;
-        await import('./api');
+        const { installSeerrApi } = await import('./api');
+        installSeerrApi();
     });
 
     afterEach(() => {

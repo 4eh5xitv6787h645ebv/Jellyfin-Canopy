@@ -18,7 +18,7 @@ vi.mock('./snooze', () => ({
 }));
 
 import { JC } from '../../globals';
-import { confirmDisableSpoiler } from './dialog';
+import { confirmDisableSpoiler, resetSpoilerDisableConfirms } from './dialog';
 
 function deferred(): { promise: Promise<void>; resolve(): void } {
     let resolve!: () => void;
@@ -32,9 +32,15 @@ async function flush(): Promise<void> {
 }
 
 describe('Spoiler Guard disable-confirm identity ownership', () => {
+    let unregisterReset: (() => void) | undefined;
+
     beforeEach(() => {
         document.body.innerHTML = '';
         JC.identity.transition('', '', 'dialog-test-reset');
+        unregisterReset = JC.identity.registerReset(
+            'spoiler-disable-confirms-test',
+            resetSpoilerDisableConfirms,
+        );
         JC.identity.transition('server-a', 'user-a', 'dialog-test-start');
         JC.t = (key: string) => key;
         mocks.whenLoaded.mockReset().mockResolvedValue(undefined);
@@ -45,6 +51,9 @@ describe('Spoiler Guard disable-confirm identity ownership', () => {
 
     afterEach(() => {
         JC.identity.transition('', '', 'dialog-test-cleanup');
+        unregisterReset?.();
+        unregisterReset = undefined;
+        resetSpoilerDisableConfirms();
         document.body.innerHTML = '';
     });
 

@@ -1,7 +1,9 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JC } from '../../globals';
 import type { ApiApi } from '../../types/jc';
-import { removeFromHomeSurface } from './remove-home';
+import { installRemoveHome, removeFromHomeSurface } from './remove-home';
+
+let disposeFeature: (() => void) | null = null;
 
 function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
     let resolve!: (value: T) => void;
@@ -15,6 +17,12 @@ describe('Continue Watching removal identity ownership', () => {
         JC.identity.transition('test-server-id', 'user-a', 'remove-home-test-start');
         JC.t = (key: string) => key;
         JC.escapeHtml = (value: unknown) => typeof value === 'string' ? value : '';
+        disposeFeature = installRemoveHome();
+    });
+
+    afterEach(() => {
+        disposeFeature?.();
+        disposeFeature = null;
     });
 
     it('drops a held A completion without mutating B UI or hidden state', async () => {

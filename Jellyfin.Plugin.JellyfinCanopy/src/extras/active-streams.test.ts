@@ -34,7 +34,8 @@ function stubEnvironment(): void {
 async function loadFresh(): Promise<void> {
     vi.resetModules();
     stubEnvironment();
-    await import('./active-streams');
+    const { installActiveStreams } = await import('./active-streams');
+    installActiveStreams();
 }
 
 describe('active-streams header-retry teardown', () => {

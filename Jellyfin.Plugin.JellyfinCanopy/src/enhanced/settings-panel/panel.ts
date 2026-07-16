@@ -14,6 +14,8 @@ import { wireSettingsListeners, wireMiscSettingsControls } from './settings';
 import { wireHiddenContentListeners } from './hidden-content-tab';
 import { wireSpoilerGuardListeners } from '../spoiler-guard/settings-tab';
 import { wireLanguageControls } from './language';
+import { resetLanguageControls } from './language';
+import { resetReleaseNotes } from './release-notes';
 import type { IdentityContext } from '../../types/jc';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -51,7 +53,7 @@ const CANOPY_GRADIENT = 'linear-gradient(135deg, #00D4FF 0%, #2F80FF 52%, #7B4CF
 /**
  * Toggles the main settings and help panel for the plugin.
  */
-JC.showEnhancedPanel = async () => {
+export async function showEnhancedPanel(): Promise<void> {
     const identityContext = JC.identity.capture();
     if (!identityContext) return;
     // Refresh user settings when panel opens to ensure correct user's settings are displayed
@@ -461,13 +463,15 @@ JC.showEnhancedPanel = async () => {
     wireSpoilerGuardListeners(ctx.resetAutoCloseTimer);
     wireMiscSettingsControls(ctx);
     wireLanguageControls(ctx);
-};
+}
 
-JC.identity.registerReset('settings-panel', () => {
+export function resetSettingsPanel(): void {
     const panel = document.getElementById('jellyfin-canopy-panel');
     const cleanup = panel
         ? (panel as unknown as { _identityCleanup?: () => void })._identityCleanup
         : undefined;
     if (cleanup) cleanup();
     else panel?.remove();
-});
+    resetReleaseNotes();
+    resetLanguageControls();
+}

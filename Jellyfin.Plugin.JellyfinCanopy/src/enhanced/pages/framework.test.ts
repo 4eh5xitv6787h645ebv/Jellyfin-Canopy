@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JC } from '../../globals';
 import '../../core/lifecycle';
 import '../../core/navigation';
+import '../../core/dom-observer';
 import { registerPage, resolvePage, orderedPages } from './registry';
 import { initFallbackHost, adoptedPageId, drain, lateAdoptIfOnPage } from './fallback-host';
 
@@ -90,6 +91,52 @@ describe('pages framework', () => {
         expect(fallback.querySelector('.jc-test-alpha')).not.toBeNull();
         expect(fallback.textContent).not.toContain('Page not found');
         expect(fallback.getAttribute('data-title')).toBe('ALPHA');
+    });
+
+    it('adopts a fallback mounted after navigation without viewbeforeshow', async () => {
+        setHash('#/alpha');
+        const fallback = mountFallback();
+
+        await vi.waitFor(() => expect(adoptedPageId()).toBe('alpha'));
+        expect(renders).toEqual(['alpha']);
+        expect(fallback.querySelector('.jc-test-alpha')).not.toBeNull();
+        expect(fallback.textContent).not.toContain('Page not found');
+    });
+
+    it('re-adopts a connected fallback after React rewrites it to the native 404 shell', async () => {
+        setHash('#/alpha');
+        const fallback = mountFallback();
+        fireViewBeforeShow(fallback);
+        expect(adoptedPageId()).toBe('alpha');
+
+        // Jellyfin retains this same element while Home is visible. On POP,
+        // navigation first adopts it and React then overwrites the connected
+        // host in place instead of adding a fresh #fallbackPage.
+        setHash('#/home');
+        expect(adoptedPageId()).toBeNull();
+        setHash('#/alpha');
+        expect(adoptedPageId()).toBe('alpha');
+        fallback.className = 'page mainAnimatedPage libraryPage';
+        fallback.setAttribute('data-title', 'Page not found');
+        fallback.innerHTML = '<h1>Page not found</h1>';
+
+        await vi.waitFor(() => {
+            expect(fallback.querySelector('.jc-test-alpha')).not.toBeNull();
+        });
+        expect(fallback.classList.contains('jc-page-host')).toBe(true);
+        expect(fallback.textContent).not.toContain('Page not found');
+        expect(adoptedPageId()).toBe('alpha');
+    });
+
+    it('rejects a deferred fallback after its page route becomes stale', async () => {
+        setHash('#/alpha');
+        const fallback = mountFallback();
+        setHash('#/home');
+
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(adoptedPageId()).toBeNull();
+        expect(renders).toEqual([]);
+        expect(fallback.textContent).toContain('Page not found');
     });
 
     it('never adopts for a disabled page or an unregistered route', () => {

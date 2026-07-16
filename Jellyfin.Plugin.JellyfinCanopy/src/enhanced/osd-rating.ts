@@ -6,6 +6,7 @@
 import { JC } from '../globals';
 import { onBodyMutation } from '../core/dom-observer';
 import { onNavigate } from '../core/navigation';
+import { createStableMethodFacade } from '../core/feature-loader';
 import type { IdentityContext } from '../types/jc';
 
 /** Ratings resolved for one item (display-ready values). */
@@ -336,9 +337,10 @@ function reset(): void {
   ratingCache.clear();
   pendingRatings.clear();
   document.querySelectorAll(`#${CONTAINER_ID}`).forEach((node) => node.remove());
+  document.getElementById('jc-osd-rating-style')?.remove();
 }
 
-JC.initializeOsdRating = function() {
+function initializeOsdRating(): void {
   reset();
   if (!isEnabled()) {
     console.log(`${logPrefix} Feature is disabled in settings.`);
@@ -360,6 +362,27 @@ JC.initializeOsdRating = function() {
     syncWithPage(); // boot may happen while already on a video page
     console.log(`${logPrefix} Initialized successfully.`);
   } catch (e) { console.warn(`${logPrefix} Init failed`, e); }
-};
+}
 
-JC.identity.registerReset('osd-rating', reset);
+const osdRatingApi = { initialize: initializeOsdRating };
+const stableOsdRating = createStableMethodFacade<typeof osdRatingApi>({ initialize() {} });
+
+/** Publish the OSD compatibility initializer for one loader-owned activation. */
+export function installOsdRating(): () => void {
+  const uninstall = stableOsdRating.install(osdRatingApi);
+  JC.initializeOsdRating = stableOsdRating.facade.initialize;
+  const unregisterReset = JC.identity.registerReset('osd-rating', reset);
+  let disposed = false;
+  return () => {
+    if (disposed) return;
+    disposed = true;
+    reset();
+    unregisterReset();
+    uninstall();
+  };
+}
+
+/** Start OSD rating without resolving through its global compatibility method. */
+export function initializeInstalledOsdRating(): void {
+  initializeOsdRating();
+}

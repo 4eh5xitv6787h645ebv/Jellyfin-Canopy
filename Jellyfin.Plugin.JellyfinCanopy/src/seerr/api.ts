@@ -110,7 +110,8 @@ declare global {
 }
 
 const logPrefix = '🪼 Jellyfin Canopy: Seerr API:';
-const api = {} as SeerrApi;
+export const seerrApi = {} as SeerrApi;
+const api = seerrApi;
 
 // Cache for user status (shared across all modules).
 // caching the failure result with no TTL caused discovery
@@ -1208,11 +1209,17 @@ api.resolveSeerrBaseUrl = function() {
     return baseUrl;
 };
 
-// Expose the API module on the global JC object
-JC.seerrAPI = api;
-JC.identity.registerReset('seerr-api', resetIdentityCaches);
-// live-config publishes this only after the replacement config is current and
-// old managed requests have been aborted. Retire the module-local capability
-// cache at the same boundary; the generation fence also rejects an old request
-// whose transport ignores or narrowly outruns abort.
-window.addEventListener('jc:config-changed', retireUserStatusCache);
+/** Install activation-owned cache retirement while preserving facade identity. */
+export function installSeerrApi(): () => void {
+    JC.seerrAPI = api;
+    const uninstallIdentityReset = JC.identity.registerReset('seerr-api', resetIdentityCaches);
+    window.addEventListener('jc:config-changed', retireUserStatusCache);
+    let installed = true;
+    return () => {
+        if (!installed) return;
+        installed = false;
+        uninstallIdentityReset();
+        window.removeEventListener('jc:config-changed', retireUserStatusCache);
+        resetIdentityCaches();
+    };
+}

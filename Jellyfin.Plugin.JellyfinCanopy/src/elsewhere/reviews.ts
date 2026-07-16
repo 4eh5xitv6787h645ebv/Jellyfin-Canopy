@@ -2,6 +2,7 @@
 
 import { JC as JEBase } from '../globals';
 import { ensureMaterialSymbolsFont } from '../core/ui-kit';
+import { createStableMethodFacade } from '../core/feature-loader';
 import { decideReviewSuppression, type SuppressionItem } from '../enhanced/spoiler-guard/suppression';
 import type { ApiApi, IdentityContext, JELegacyHelpers, UserSettings } from '../types/jc';
 
@@ -96,7 +97,7 @@ let reviewsGeneration = 0;
 let reviewsUnregister: (() => void) | null = null;
 const reviewsTimers = new Map<ReturnType<typeof setTimeout>, () => void>();
 
-function resetReviews(): void {
+export function resetReviews(): void {
     reviewsGeneration++;
     reviewsUnregister?.();
     reviewsUnregister = null;
@@ -107,6 +108,7 @@ function resetReviews(): void {
     reviewsTimers.clear();
     document.querySelectorAll('.tmdb-reviews-section, .jc-review-form, .jc-review-form-placeholder, .jc-avg-user-rating-chip')
         .forEach((node) => node.remove());
+    document.getElementById('tmdb-reviews-enhanced-styles')?.remove();
 }
 
 function reviewsActive(context: IdentityContext, expectedGeneration: number): boolean {
@@ -124,7 +126,7 @@ function reviewsDelay(delay: number): Promise<void> {
     });
 }
 
-JC.initializeReviewsScript = function () {
+function initializeReviews(): void {
     resetReviews();
     const tmdbReviewsEnabled = JC.pluginConfig.ShowReviews && JC.pluginConfig.TmdbEnabled;
     const userReviewsEnabled = JC.pluginConfig.ShowUserReviews;
@@ -1426,6 +1428,23 @@ JC.initializeReviewsScript = function () {
         immediate: true // Process current page immediately on load
     });
     reviewsUnregister = unregister;
-};
+}
 
-JC.identity.registerReset('reviews', resetReviews);
+const reviewsApi = { initialize: initializeReviews };
+const stableReviews = createStableMethodFacade<typeof reviewsApi>({ initialize() {} });
+
+export function installReviews(): () => void {
+    const uninstall = stableReviews.install(reviewsApi);
+    JC.initializeReviewsScript = stableReviews.facade.initialize;
+    let disposed = false;
+    return () => {
+        if (disposed) return;
+        disposed = true;
+        resetReviews();
+        uninstall();
+    };
+}
+
+export function initializeReviewsFeature(): void {
+    reviewsApi.initialize();
+}

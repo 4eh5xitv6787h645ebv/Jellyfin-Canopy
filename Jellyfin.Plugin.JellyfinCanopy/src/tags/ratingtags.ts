@@ -6,6 +6,7 @@
 // markup, and the synthetic items handed to the user-review tag module.
 
 import { JC as JEBase } from '../globals';
+import { createStableMethodFacade } from '../core/feature-loader';
 import { register, reinitialize, resolvePosition } from '../core/tag-renderer-base';
 import type { TagRendererContext, TagSpec } from '../types/jc';
 import { shouldSuppressRatingTag as decideSuppressRatingTag, type SuppressionItem } from '../enhanced/spoiler-guard/suppression';
@@ -480,13 +481,29 @@ const spec: TagSpec = {
     },
 };
 
-JC.initializeRatingTags = function() {
+function initializeRatingTags(): void {
     console.log(`${logPrefix} Starting...`);
     const ctx = register('rating', spec);
     ctx.injectCss();
     console.log(`${logPrefix} Initialized successfully.`);
-};
+}
 
-JC.reinitializeRatingTags = function() {
+function reinitializeRatingTags(): void {
     reinitialize('rating', spec);
-};
+}
+
+const stableRatingTags = createStableMethodFacade({
+    initialize: (): void => {},
+    reinitialize: (): void => {},
+});
+
+/** Install frozen rating-tag entry points for one cluster activation. */
+export function installRatingTagsFacade(): () => void {
+    const uninstall = stableRatingTags.install({
+        initialize: initializeRatingTags,
+        reinitialize: reinitializeRatingTags,
+    });
+    JC.initializeRatingTags = stableRatingTags.facade.initialize;
+    JC.reinitializeRatingTags = stableRatingTags.facade.reinitialize;
+    return uninstall;
+}

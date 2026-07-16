@@ -1,6 +1,9 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JC } from '../globals';
 
+let ensureStyles: typeof import('./osd-rating').ensureStyles;
+let installOsdRating: typeof import('./osd-rating').installOsdRating;
+
 function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
     let resolve!: (value: T) => void;
     const promise = new Promise<T>((done) => { resolve = done; });
@@ -24,12 +27,15 @@ async function flushPromises(): Promise<void> {
 }
 
 describe('OSD rating identity lifecycle', () => {
+    let disposeOsdRating: (() => void) | undefined;
+
     beforeAll(async () => {
         window.Events = { on: vi.fn() } as unknown as JellyfinEvents;
-        await import('./osd-rating');
+        ({ ensureStyles, installOsdRating } = await import('./osd-rating'));
     });
 
     beforeEach(() => {
+        disposeOsdRating = installOsdRating();
         vi.useFakeTimers();
         document.body.innerHTML = '';
         JC.identity.transition('osd-server-a', 'osd-user-a', 'osd-rating-test');
@@ -38,6 +44,8 @@ describe('OSD rating identity lifecycle', () => {
     });
 
     afterEach(() => {
+        disposeOsdRating?.();
+        disposeOsdRating = undefined;
         JC.identity.transition('', '', 'osd-rating-test-cleanup');
         vi.clearAllTimers();
         vi.useRealTimers();
@@ -89,5 +97,15 @@ describe('OSD rating identity lifecycle', () => {
         const activeNavCount = JC.core.navigation!.getNavCallbackCount();
         JC.initializeOsdRating!();
         expect(JC.core.navigation!.getNavCallbackCount()).toBe(activeNavCount);
+    });
+
+    it('removes its lazy style on loader-owned disposal', () => {
+        ensureStyles();
+        expect(document.getElementById('jc-osd-rating-style')).not.toBeNull();
+
+        disposeOsdRating?.();
+        disposeOsdRating = undefined;
+
+        expect(document.getElementById('jc-osd-rating-style')).toBeNull();
     });
 });

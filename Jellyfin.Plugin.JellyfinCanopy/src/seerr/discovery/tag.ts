@@ -6,6 +6,7 @@
 // share the same keyword id.
 import { JC } from '../../globals';
 import { classifyResultsEnvelope } from '../../core/cache-policy';
+import { discoveryBase } from './base';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload shapes; typed incrementally */
 
@@ -90,7 +91,7 @@ async function resolveFeeds({ id: tagName, signal }: { id: string; signal: Abort
     };
 }
 
-const discovery = JC.discoveryBase!.createDiscovery({
+export const tagDiscovery = discoveryBase.createDiscovery({
     key: 'tag',
     mode: 'dual-feed',
     logLabel: 'Tag Discovery',
@@ -101,5 +102,3 @@ const discovery = JC.discoveryBase!.createDiscovery({
         ? `/JellyfinCanopy/seerr/discover/tv/keyword/${id}`
         : `/JellyfinCanopy/seerr/discover/movies/keyword/${id}`
 });
-
-discovery.start();

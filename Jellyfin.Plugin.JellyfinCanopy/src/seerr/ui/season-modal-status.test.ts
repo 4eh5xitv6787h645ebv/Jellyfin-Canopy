@@ -12,7 +12,8 @@ describe('season modal status domains', () => {
         client.ajax = vi.fn().mockResolvedValue({ Items: [] });
 
         await import('../../core/ui-kit');
-        await import('../seerr-status');
+        const { installSeerrStatus } = await import('../seerr-status');
+        installSeerrStatus();
         const module = await import('./internal');
         internal = module.internal;
         await import('./season-modal');

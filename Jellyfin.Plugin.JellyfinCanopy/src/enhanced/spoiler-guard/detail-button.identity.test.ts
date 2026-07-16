@@ -31,7 +31,7 @@ vi.mock('./image-refresh', () => ({
 }));
 
 import { JC } from '../../globals';
-import { addSpoilerBlurButton } from './detail-button';
+import { addSpoilerBlurButton, resetSpoilerDetailControls } from './detail-button';
 
 function deferred(): { promise: Promise<void>; resolve(): void } {
     let resolve!: () => void;
@@ -51,10 +51,16 @@ async function flush(): Promise<void> {
 }
 
 describe('Spoiler Guard detail button identity ownership', () => {
+    let unregisterReset: (() => void) | undefined;
+
     beforeEach(() => {
         vi.useFakeTimers();
         document.body.innerHTML = '';
         JC.identity.transition('', '', 'detail-button-test-reset');
+        unregisterReset = JC.identity.registerReset(
+            'spoiler-detail-controls-test',
+            resetSpoilerDetailControls,
+        );
         JC.identity.transition('server-a', 'user-a', 'detail-button-test-start');
         (JC.pluginConfig as Record<string, unknown>).SpoilerBlurEnabled = true;
         (JC.pluginConfig as Record<string, unknown>).SpoilerBlurStrictRefresh = false;
@@ -73,6 +79,9 @@ describe('Spoiler Guard detail button identity ownership', () => {
 
     afterEach(() => {
         JC.identity.transition('', '', 'detail-button-test-cleanup');
+        unregisterReset?.();
+        unregisterReset = undefined;
+        resetSpoilerDetailControls();
         vi.useRealTimers();
         document.body.innerHTML = '';
     });

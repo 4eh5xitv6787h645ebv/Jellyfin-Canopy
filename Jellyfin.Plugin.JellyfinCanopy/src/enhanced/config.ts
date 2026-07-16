@@ -540,6 +540,25 @@ function notifyImmediatePersistenceFailure(fileName: string, error: UserSettings
     emitPersistenceFailure(fileName, `immediate:${fileName}`, error);
 }
 
+function reconcileAcknowledgedUserSettings(
+    fileName: string,
+    owner: SaveIntent['owner'],
+): void {
+    if (fileName !== 'settings.json') return;
+    const runtime = JC.core.clientRuntime;
+    if (!runtime) return;
+    void runtime.reconcileUserSettings(owner).catch((error: unknown) => {
+        console.error('Jellyfin Canopy: Failed to reconcile acknowledged user settings:', error);
+    });
+}
+
+function reconcileSettledUserSettings(intent: SaveIntent, settledWire: Record<string, unknown>): void {
+    // restoreTarget deliberately preserves edits made after this request was
+    // captured. Do not activate from those newer, unacknowledged values.
+    if (!sameContent(wireValue(intent.fileName, intent.target), settledWire)) return;
+    reconcileAcknowledgedUserSettings(intent.fileName, intent.owner);
+}
+
 async function drainQueue(queue: SaveQueue): Promise<void> {
     if (queue.running) return;
     queue.running = true;
@@ -572,6 +591,7 @@ async function drainQueue(queue: SaveQueue): Promise<void> {
                 if (!currentPending(queue) && queue.latestSeq === intent.seq) {
                     _latestIntentWire.set(intent.cacheKey, cloneRecord(ack.data));
                     restoreTarget(intent, ack.data);
+                    reconcileSettledUserSettings(intent, ack.data);
                 }
                 const result: UserSettingsSaveResult = {
                     acknowledged: true,
@@ -616,6 +636,7 @@ async function drainQueue(queue: SaveQueue): Promise<void> {
                             rollbackApplied = true;
                         }
                         _latestIntentWire.set(intent.cacheKey, cloneRecord(rollback || intent.desiredWire));
+                        if (rollbackApplied && rollback) reconcileSettledUserSettings(intent, rollback);
                     } catch (rollbackError) {
                         console.error(`🪼 Jellyfin Canopy: Failed to restore ${intent.fileName} after rejection:`, rollbackError);
                     }
@@ -690,6 +711,7 @@ JC.saveUserSettings = (fileName: string, settings: unknown): Promise<UserSetting
         if (!queue?.active && !queue?.pending
             && !_conflictedKeys.has(key)
             && _ackedSerialized.get(key) === serialized && acknowledgedHash) {
+            reconcileAcknowledgedUserSettings(fileName, owner);
             return Promise.resolve({
                 acknowledged: true,
                 deduplicated: true,

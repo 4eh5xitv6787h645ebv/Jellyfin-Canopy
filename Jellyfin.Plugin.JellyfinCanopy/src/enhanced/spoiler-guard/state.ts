@@ -396,5 +396,3 @@ export function hasAnyState(): boolean {
     return caches.series.size > 0 || caches.movies.size > 0 || caches.collections.size > 0
         || caches.pendingTmdb.size > 0;
 }
-
-JC.identity.registerReset('spoiler-state', resetState);

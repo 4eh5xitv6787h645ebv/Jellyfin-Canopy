@@ -8,19 +8,8 @@ const mocks = vi.hoisted(() => ({
     confirmDisableSpoiler: vi.fn<() => Promise<boolean>>(),
 }));
 
-vi.mock('./state', () => ({
-    isTmdbEnabled: () => mocks.enabled,
-    whenLoaded: () => mocks.whenLoaded(),
-    enableForTmdb: () => mocks.enableForTmdb(),
-    disableForTmdb: () => mocks.disableForTmdb(),
-}));
-
-vi.mock('./dialog', () => ({
-    confirmDisableSpoiler: () => mocks.confirmDisableSpoiler(),
-}));
-
 import { JC } from '../../globals';
-import { buildSeerrPendingToggle } from './seerr-toggle';
+import { buildSeerrPendingToggle, resetSpoilerSeerrControls } from './seerr-toggle';
 
 function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
     let resolve!: (value: T) => void;
@@ -35,9 +24,15 @@ async function flush(): Promise<void> {
 }
 
 describe('Spoiler Guard Seerr control identity ownership', () => {
+    let unregisterReset: (() => void) | undefined;
+
     beforeEach(() => {
         document.body.innerHTML = '';
         JC.identity.transition('', '', 'seerr-toggle-test-reset');
+        unregisterReset = JC.identity.registerReset(
+            'spoiler-seerr-controls-test',
+            resetSpoilerSeerrControls,
+        );
         JC.identity.transition('server-a', 'user-a', 'seerr-toggle-test-start');
         (JC.pluginConfig as Record<string, unknown>).SpoilerBlurEnabled = true;
         JC.t = (key: string) => key;
@@ -47,10 +42,21 @@ describe('Spoiler Guard Seerr control identity ownership', () => {
         mocks.enableForTmdb.mockReset().mockResolvedValue({ promoted: 'pending' });
         mocks.disableForTmdb.mockReset().mockResolvedValue({});
         mocks.confirmDisableSpoiler.mockReset().mockResolvedValue(true);
+        JC.spoilerGuard = {
+            isTmdbEnabled: () => mocks.enabled,
+            whenLoaded: () => mocks.whenLoaded(),
+            enableForTmdb: () => mocks.enableForTmdb(),
+            disableForTmdb: () => mocks.disableForTmdb(),
+            confirmDisableSpoiler: () => mocks.confirmDisableSpoiler(),
+        } as unknown as NonNullable<typeof JC.spoilerGuard>;
     });
 
     afterEach(() => {
         JC.identity.transition('', '', 'seerr-toggle-test-cleanup');
+        unregisterReset?.();
+        unregisterReset = undefined;
+        resetSpoilerSeerrControls();
+        JC.spoilerGuard = undefined;
         document.body.innerHTML = '';
     });
 

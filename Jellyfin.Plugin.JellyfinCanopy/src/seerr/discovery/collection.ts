@@ -5,6 +5,7 @@
 // and the missing-movies render.
 import { JC } from '../../globals';
 import { classifyObjectDetails } from '../../core/cache-policy';
+import { discoveryBase } from './base';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload shapes; typed incrementally */
 
@@ -213,13 +214,11 @@ async function renderCollectionDiscovery({ id: itemId, signal, waitForPageReady 
     return true;
 }
 
-const discovery = JC.discoveryBase!.createDiscovery({
+export const collectionDiscovery = discoveryBase.createDiscovery({
     key: 'collection',
     mode: 'one-shot',
     logLabel: 'Collection Discovery',
     configKey: 'SeerrShowCollectionDiscovery',
-    getIdFromUrl: JC.discoveryBase!.idFromDetailUrl,
+    getIdFromUrl: discoveryBase.idFromDetailUrl,
     renderOneShot: renderCollectionDiscovery
 });
-
-discovery.start();

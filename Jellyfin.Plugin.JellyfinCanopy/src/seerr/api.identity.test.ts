@@ -18,7 +18,8 @@ describe('Seerr API identity-owned caches and issue writes', () => {
         JC.pluginConfig = { SeerrEnable4KRequests: true };
         JC.escapeHtml = (value: unknown) => String(value);
         JC.toast = vi.fn();
-        await import('./api');
+        const { installSeerrApi } = await import('./api');
+        installSeerrApi();
     });
 
     afterEach(() => {

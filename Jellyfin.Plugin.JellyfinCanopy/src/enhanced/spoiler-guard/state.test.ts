@@ -1,5 +1,5 @@
 // src/enhanced/spoiler-guard/state.test.ts
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JC } from '../../globals';
 import {
     applyPromoteResponse, applyRemoveResponse, enableForSeries, isEnabledFor,
@@ -78,8 +78,15 @@ describe('spoiler-guard pending cache transitions', () => {
 
 describe('spoiler-guard identity fencing', () => {
     const originalApi = JC.core.api;
+    let unregisterReset: (() => void) | undefined;
+
+    beforeEach(() => {
+        unregisterReset = JC.identity.registerReset('spoiler-state-test', resetState);
+    });
 
     afterEach(() => {
+        unregisterReset?.();
+        unregisterReset = undefined;
         JC.core.api = originalApi;
         resetState();
     });

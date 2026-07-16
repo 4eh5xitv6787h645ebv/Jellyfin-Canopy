@@ -8,6 +8,7 @@
 // Loads last among the hidden-content/* modules.
 
 import { JC } from '../../globals';
+import { createStableMethodFacade } from '../../core/feature-loader';
 import {
     resetFromUserConfig,
     isHidden,
@@ -50,13 +51,10 @@ import { addLibraryHideButtons, removeLibraryHideButtons } from './buttons';
 const INIT_FILTER_DELAY_MS = 150;
 let initialFilterTimeout: number | null = null;
 
-function cancelInitialFilter(): void {
+export function cancelInitialFilter(): void {
     if (initialFilterTimeout != null) clearTimeout(initialFilterTimeout);
     initialFilterTimeout = null;
-    JC.hiddenContent = undefined;
 }
-
-JC.identity?.registerReset?.('hidden-content-init', cancelInitialFilter);
 
 // ============================================================
 // Initialization
@@ -66,7 +64,7 @@ JC.identity?.registerReset?.('hidden-content-init', cancelInitialFilter);
  * Initializes the hidden content module: loads data, rebuilds lookup sets,
  * injects CSS, sets up the MutationObserver, and exposes the public API.
  */
-JC.initializeHiddenContent = function (): void {
+export function initializeHiddenContent(): void {
     const context = JC.identity?.capture?.() || null;
     if (context && !JC.identity.isCurrent(context)) return;
     cancelInitialFilter();
@@ -81,40 +79,60 @@ JC.initializeHiddenContent = function (): void {
         }, INIT_FILTER_DELAY_MS);
     }
 
-    // Expose public API
-    JC.hiddenContent = {
-        isHidden,
-        isHiddenByTmdbId,
-        isHiddenMedia,
-        getHiddenStorageKey,
-        isHiddenOnSurface,
-        hideItem,
-        unhideItem,
-        confirmAndHide,
-        getSettings,
-        updateSettings,
-        getAllHiddenItems,
-        getHiddenCount,
-        filterSeerrResults,
-        filterCalendarEvents,
-        filterRequestItems,
-        filterNativeCards,
-        showUndoToast,
-        showManagementPanel,
-        createItemCard,
-        unhideAll,
-        addLibraryHideButtons,
-        removeLibraryHideButtons,
-        refresh,
-        markScopedHidden,
-        resolveLegacyIdentity,
-        flushPendingSave,
-        // Admin-only cross-user visibility + editing
-        fetchHiddenContentUsers,
-        fetchUserHiddenItemsForAdmin,
-        adminUnhideForUser,
-        adminHideForUser
-    };
-
     console.log(`🪼 Jellyfin Canopy: Hidden Content initialized (${getHiddenCount()} items hidden)`);
+}
+
+const hiddenContentApi = {
+    isHidden,
+    isHiddenByTmdbId,
+    isHiddenMedia,
+    getHiddenStorageKey,
+    isHiddenOnSurface,
+    hideItem,
+    unhideItem,
+    confirmAndHide,
+    getSettings,
+    updateSettings,
+    getAllHiddenItems,
+    getHiddenCount,
+    filterSeerrResults,
+    filterCalendarEvents,
+    filterRequestItems,
+    filterNativeCards,
+    showUndoToast,
+    showManagementPanel,
+    createItemCard,
+    unhideAll,
+    addLibraryHideButtons,
+    removeLibraryHideButtons,
+    refresh,
+    markScopedHidden,
+    resolveLegacyIdentity,
+    flushPendingSave,
+    fetchHiddenContentUsers,
+    fetchUserHiddenItemsForAdmin,
+    adminUnhideForUser,
+    adminHideForUser,
 };
+
+const fallbackHiddenContent = Object.fromEntries(
+    Object.keys(hiddenContentApi).map((key) => [key, () => undefined]),
+) as unknown as typeof hiddenContentApi;
+const stableHiddenContent = createStableMethodFacade<typeof hiddenContentApi>(fallbackHiddenContent);
+const stableInitializer = createStableMethodFacade({ initialize() {} });
+
+/** Publish stable public facades for one loader-owned activation. */
+export function installHiddenContent(): () => void {
+    const uninstallApi = stableHiddenContent.install(hiddenContentApi);
+    const uninstallInitializer = stableInitializer.install({ initialize: initializeHiddenContent });
+    JC.hiddenContent = stableHiddenContent.facade;
+    JC.initializeHiddenContent = stableInitializer.facade.initialize;
+    let disposed = false;
+    return () => {
+        if (disposed) return;
+        disposed = true;
+        cancelInitialFilter();
+        uninstallInitializer();
+        uninstallApi();
+    };
+}

@@ -10,15 +10,8 @@ const invalidateServerCache = vi.fn(() => Promise.resolve());
 let loadOkValue = true;
 let loadPromise: Promise<void> = Promise.resolve();
 
-vi.mock('./state', () => ({
-    whenLoaded: () => loadPromise,
-    isLoadOk: () => loadOkValue,
-    getUserPrefs: () => ({}),
-    setUserPrefs: (next: unknown) => setUserPrefs(next),
-}));
-
 import { JC } from '../../globals';
-import { wireSpoilerGuardListeners } from './settings-tab';
+import { resetSpoilerSettingsControls, wireSpoilerGuardListeners } from './settings-tab';
 
 function renderRatingsBox(checked: boolean): HTMLInputElement {
     document.body.innerHTML = `
@@ -35,8 +28,14 @@ function deferred(): { promise: Promise<void>; resolve(): void } {
 }
 
 describe('spoiler-guard settings-tab save-guard', () => {
+    let unregisterReset: (() => void) | undefined;
+
     beforeEach(() => {
         JC.identity.transition('', '', 'settings-test-reset');
+        unregisterReset = JC.identity.registerReset(
+            'spoiler-settings-controls-test',
+            resetSpoilerSettingsControls,
+        );
         JC.identity.transition('server-a', 'user-a', 'settings-test-start');
         (JC.pluginConfig as Record<string, unknown>).SpoilerBlurEnabled = true;
         JC.tagPipeline = {
@@ -47,9 +46,19 @@ describe('spoiler-guard settings-tab save-guard', () => {
         invalidateServerCache.mockClear();
         loadOkValue = true;
         loadPromise = Promise.resolve();
+        JC.spoilerGuard = {
+            whenLoaded: () => loadPromise,
+            isLoadOk: () => loadOkValue,
+            getUserPrefs: () => ({}),
+            setUserPrefs: (next: unknown) => setUserPrefs(next),
+        } as unknown as NonNullable<typeof JC.spoilerGuard>;
     });
     afterEach(() => {
         JC.identity.transition('', '', 'settings-test-cleanup');
+        unregisterReset?.();
+        unregisterReset = undefined;
+        resetSpoilerSettingsControls();
+        JC.spoilerGuard = undefined;
         document.body.innerHTML = '';
     });
 

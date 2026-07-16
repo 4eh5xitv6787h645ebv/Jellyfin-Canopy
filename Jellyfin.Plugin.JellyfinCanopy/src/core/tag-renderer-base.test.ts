@@ -13,7 +13,7 @@
 import * as ts from 'typescript';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JC } from '../globals';
-import { register } from './tag-renderer-base';
+import { register, resetAllTagRenderers } from './tag-renderer-base';
 import type { TagSpec } from '../types/jc';
 
 // A minimal spec: no cache / pipeline, so register() → initialize() is a clean
@@ -232,6 +232,7 @@ describe('tag-renderer-base identity ownership', () => {
         expect(retainedA).not.toBeNull();
 
         JC.identity.transition('server-b', `user-b-${suffix}`, 'tag-renderer-test');
+        resetAllTagRenderers();
         expect(localStorage.getItem(cacheKey)).toBeNull();
         expect(hotA.get('item')).toBeUndefined();
         expect(ctxA.getPersistent('item')).toBeUndefined();

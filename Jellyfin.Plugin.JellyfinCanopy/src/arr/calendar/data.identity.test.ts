@@ -1,6 +1,15 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JC } from '../arr-globals';
 import type { ApiApi } from '../../types/jc';
+import { createTestFeatureScope, type TestFeatureScope } from '../../test/feature-scope';
+
+let feature: TestFeatureScope | undefined;
+
+async function activateCalendarFeature(): Promise<void> {
+    feature = createTestFeatureScope();
+    const entry = await import('../../entries/calendar-page');
+    entry.activate(feature.scope);
+}
 
 function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
     let resolve!: (value: T) => void;
@@ -18,6 +27,7 @@ function requestSnapshot(tmdbId: number): Record<string, unknown> {
 
 describe('Calendar identity ownership', () => {
     beforeEach(() => {
+        feature = undefined;
         vi.resetModules();
         localStorage.clear();
         document.body.innerHTML = '';
@@ -29,12 +39,15 @@ describe('Calendar identity ownership', () => {
         JC.toast = vi.fn();
     });
 
+    afterEach(async () => { await feature?.dispose(); });
+
     it('synchronously clears A request/user projections, drops the held snapshot, and refetches for B', async () => {
         const heldA = deferred<unknown>();
         const plugin = vi.fn()
             .mockImplementationOnce(() => heldA.promise)
             .mockResolvedValueOnce(requestSnapshot(202));
         JC.core.api = { plugin } as unknown as ApiApi;
+        await activateCalendarFeature();
         const data = await import('./data');
 
         data.state.userDataMap.set('a-event', { isFavorite: true });
@@ -82,6 +95,7 @@ describe('Calendar identity ownership', () => {
             return Promise.reject(new Error(`Unexpected path: ${path}`));
         });
         JC.core.api = { plugin } as unknown as ApiApi;
+        await activateCalendarFeature();
         const data = await import('./data');
         data.state.settings.highlightFavorites = true;
         data.state.events = [{ id: 'a-event', releaseDate: '2001-01-01T00:00:00Z' }];
@@ -110,6 +124,7 @@ describe('Calendar identity ownership', () => {
     it('adopts the legacy show-unmonitored preference once and scopes later writes by server and user', async () => {
         const plugin = vi.fn();
         JC.core.api = { plugin } as unknown as ApiApi;
+        await activateCalendarFeature();
         const data = await import('./data');
         const legacyKey = 'jc.calendar.showUnmonitored';
         const aKey = `${legacyKey}:servera:usera`;

@@ -45,8 +45,10 @@ describe('season modal refresh lifecycle', () => {
         jc.toast = vi.fn();
 
         await import('../../core/ui-kit');
-        await import('../seerr-status');
-        const { internal } = await import('./internal');
+        const { installSeerrStatus } = await import('../seerr-status');
+        installSeerrStatus();
+        const { installSeerrUiFacade, internal } = await import('./internal');
+        installSeerrUiFacade();
         internal.buildQuotaChip = vi.fn(() => null);
         internal.createInlineProgress = vi.fn(() => null);
         internal.markCardRequested = vi.fn();
@@ -78,7 +80,8 @@ describe('season modal refresh lifecycle', () => {
             }),
         };
 
-        await import('./season-modal');
+        const { installSeerrSeasonModal } = await import('./season-modal');
+        installSeerrSeasonModal();
     });
 
     afterEach(() => {

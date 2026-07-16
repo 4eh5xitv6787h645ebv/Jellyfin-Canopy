@@ -16,7 +16,8 @@ describe('seerr api.search error channel', () => {
         JC.core = { api: { fetch: fetchMock } };
         JC.pluginConfig = {};
         JC.t = (k: string) => k;
-        await import('./api');
+        const { installSeerrApi } = await import('./api');
+        installSeerrApi();
     });
 
     function api(): { search: (q: string, p?: number, o?: unknown) => Promise<{ results: unknown[]; error?: string }> } {

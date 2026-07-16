@@ -5,6 +5,7 @@
 // wiring; this module keeps the Jellyfin-genre → TMDB-genre resolution.
 import { JC } from '../../globals';
 import { classifyArrayPayload, classifyObjectDetails } from '../../core/cache-policy';
+import { discoveryBase } from './base';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload shapes; typed incrementally */
 
@@ -147,16 +148,14 @@ async function resolveFeeds({ id: genreId, signal }: { id: string; signal: Abort
     };
 }
 
-const discovery = JC.discoveryBase!.createDiscovery({
+export const genreDiscovery = discoveryBase.createDiscovery({
     key: 'genre',
     mode: 'dual-feed',
     logLabel: 'Genre Discovery',
     configKey: 'SeerrShowGenreDiscovery',
-    getIdFromUrl: JC.discoveryBase!.idFromListParam('genreId'),
+    getIdFromUrl: discoveryBase.idFromListParam('genreId'),
     resolveFeeds,
     buildDiscoverPath: (kind: string, id: number) => kind === 'tv'
         ? `/JellyfinCanopy/seerr/discover/tv/genre/${id}`
         : `/JellyfinCanopy/seerr/discover/movies/genre/${id}`
 });
-
-discovery.start();

@@ -3,6 +3,7 @@
 // availability chips, unrequested-season detection and the seasons section.
 import { JC } from '../../globals';
 import type { IdentityContext } from '../../types/jc';
+import { seerrStatus } from '../seerr-status';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload + DOM shapes; typed incrementally */
 
@@ -15,7 +16,7 @@ const state: {
 } = internal.state;
 const logPrefix = '🪼 Jellyfin Canopy: Seerr More Info:';
 const escapeHtml = JC.escapeHtml;
-const MediaStatus = JC.seerrStatus!.MEDIA;
+const MediaStatus = seerrStatus.MEDIA;
 
 /**
  * Validates that a string starts with an ISO date format (YYYY-MM-DD).

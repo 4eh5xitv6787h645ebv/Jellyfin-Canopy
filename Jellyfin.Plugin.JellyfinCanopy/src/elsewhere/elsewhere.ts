@@ -7,6 +7,7 @@ import { JC as JEBase } from '../globals';
 import { assetUrl } from '../core/asset-urls';
 import { isDetailsPageVisible } from '../core/details-view';
 import { onBodyMutation } from '../core/dom-observer';
+import { createStableMethodFacade } from '../core/feature-loader';
 import { onNavigate, onViewPage } from '../core/navigation';
 import type { ApiApi, JELegacyHelpers, PluginConfig } from '../types/jc';
 
@@ -46,20 +47,19 @@ const JC = JEBase as typeof JEBase & {
 
 let activeElsewhereCleanup: (() => void) | null = null;
 
-function resetElsewhereIdentity(): void {
+export function resetElsewhereIdentity(): void {
     activeElsewhereCleanup?.();
     activeElsewhereCleanup = null;
     document.getElementById('streaming-settings-modal')?.remove();
     document.querySelectorAll('.streaming-lookup-container').forEach((node) => node.remove());
+    document.querySelectorAll('style[data-jellyfin-elsewhere]').forEach((node) => node.remove());
 }
-
-JC.identity?.registerReset?.('elsewhere', resetElsewhereIdentity);
 
 /**
  * Initializes the Jellyfin Elsewhere script.
  * It will only run if the server reports TMDB is configured.
  */
-JC.initializeElsewhereScript = function() {
+function initializeElsewhereImpl(): void {
     // Every delayed callback created by this initializer belongs to this exact
     // account epoch. In particular, a modal left over from A must tag its fresh
     // settings object as A-owned even if the user clicks Save after B signs in.
@@ -1333,4 +1333,23 @@ JC.initializeElsewhereScript = function() {
     scheduleIdle(addStreamingLookup, 1000);
 
     console.log('🪼 Jellyfin Canopy: 🎬 Jellyfin Elsewhere loaded!');
-};
+}
+
+const elsewhereApi = { initialize: initializeElsewhereImpl };
+const stableElsewhere = createStableMethodFacade<typeof elsewhereApi>({ initialize() {} });
+
+export function installElsewhere(): () => void {
+    const uninstall = stableElsewhere.install(elsewhereApi);
+    JC.initializeElsewhereScript = stableElsewhere.facade.initialize;
+    let disposed = false;
+    return () => {
+        if (disposed) return;
+        disposed = true;
+        resetElsewhereIdentity();
+        uninstall();
+    };
+}
+
+export function initializeElsewhere(): void {
+    elsewhereApi.initialize();
+}

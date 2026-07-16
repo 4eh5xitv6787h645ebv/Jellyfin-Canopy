@@ -36,6 +36,7 @@ interface Adoption {
 
 let adoption: Adoption | null = null;
 let draining = false;
+let fallbackMountSubscribed = false;
 
 // ONE stable registry handle for every adoption. Handles (and their
 // persistent onTeardown hooks) live in the lifecycle registry forever, so a
@@ -178,7 +179,38 @@ export function refreshCurrent(): void {
     if (!adoption || !adoption.host.isConnected) return;
     const { descriptor, host } = adoption;
     drain('refresh');
-    adopt(descriptor, host);
+    // A lazy page feature may have replaced the catalog placeholder between
+    // adoption and refresh. Resolve again so the active implementation wins.
+    const current = resolvePage();
+    if (current && current.id === descriptor.id && pageAvailable(current)) {
+        adopt(current, host);
+    }
+}
+
+/**
+ * Reconcile a newly activated lazy page implementation with the visible
+ * fallback route. Jellyfin may mount its unknown-route fallback before the
+ * feature import finishes (or while a failed import is waiting for retry), so
+ * there is not always a catalog-placeholder adoption for refreshCurrent() to
+ * replace. Require the exact newly registered descriptor to still own the
+ * current URL before either refreshing that placeholder or adopting the
+ * already-mounted fallback. This prevents an obsolete activation from
+ * reviving a route after another registration or navigation won ownership.
+ */
+export function adoptOrRefreshCurrent(descriptor: PageDescriptor): void {
+    if (resolvePage() !== descriptor || !pageAvailable(descriptor)) return;
+
+    const currentId = adoptedPageId();
+    if (currentId === descriptor.id) {
+        refreshCurrent();
+        return;
+    }
+    if (currentId !== null) return;
+
+    const fallback = document.getElementById('fallbackPage');
+    if (fallback instanceof HTMLElement && fallback.isConnected) {
+        adopt(descriptor, fallback);
+    }
 }
 
 /** The routed element the router renders for unknown routes. */
@@ -234,6 +266,50 @@ function handleNavigate(): void {
     }
 }
 
+/** Return the canonical fallback changed by one structural batch. */
+function structurallyChangedFallback(mutations: readonly MutationRecord[]): HTMLElement | null {
+    const fallback = document.getElementById('fallbackPage');
+    if (!(fallback instanceof HTMLElement) || !fallback.isConnected) return null;
+
+    for (const mutation of mutations) {
+        // Jellyfin's POP path can retain the same connected fallback while on
+        // Home, then let React rewrite that element's attributes and children
+        // back to the native 404 shell. The child-list record targets the
+        // existing fallback (or a descendant); no new #fallbackPage is added.
+        if (mutation.target === fallback || fallback.contains(mutation.target)) {
+            return fallback;
+        }
+        for (const node of mutation.addedNodes) {
+            if (node === fallback || node.contains(fallback)) {
+                return fallback;
+            }
+        }
+    }
+    return null;
+}
+
+/**
+ * POP can announce the page URL before React mounts a fresh fallback, or React
+ * can reuse the still-connected fallback and overwrite an early adoption with
+ * its native 404 shell. Jellyfin 12 does not reliably emit viewbeforeshow on
+ * either path, so reuse the shared structural observer as the final mount or
+ * rewrite signal. The first route lookup is a cheap fast-path; after finding
+ * the element, resolve again so an alpha -> home/beta transition can never
+ * adopt alpha's stale owner.
+ */
+function handleFallbackMount(mutations: readonly MutationRecord[]): void {
+    if (!resolvePage()) return;
+    const fallback = structurallyChangedFallback(mutations);
+    if (!fallback) return;
+
+    const descriptor = resolvePage();
+    if (!descriptor || !pageAvailable(descriptor)) return;
+    const currentId = adoptedPageId();
+    if (currentId === descriptor.id && fallback.classList.contains('jc-page-host')) return;
+    if (currentId !== null && adoption?.host !== fallback) return;
+    adopt(descriptor, fallback);
+}
+
 /**
  * Cold-start adoption: the plugin bundle can initialize AFTER the router
  * already rendered the fallback for a deep link or refresh. IDEMPOTENT and
@@ -259,5 +335,14 @@ export function initFallbackHost(): void {
     }
     navigation.onViewBeforeShow((element) => handleViewBeforeShow(element));
     navigation.onNavigate(() => handleNavigate());
+    if (!fallbackMountSubscribed) {
+        const dom = JC.core.dom;
+        if (dom) {
+            dom.onBodyMutation('jc-pages-fallback-host', handleFallbackMount);
+            fallbackMountSubscribed = true;
+        } else {
+            console.error(`${logPrefix} core DOM observer missing; deferred fallback adoption disabled`);
+        }
+    }
     lateAdoptIfOnPage();
 }

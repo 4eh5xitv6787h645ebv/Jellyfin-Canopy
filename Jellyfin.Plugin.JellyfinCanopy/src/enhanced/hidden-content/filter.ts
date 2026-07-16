@@ -10,7 +10,6 @@
 // pass, and setupNativeObserver keeps the same onViewPage hook.
 
 import { JC } from '../../globals';
-import { debounce } from '../helpers';
 import { onViewPage } from '../../core/navigation';
 import { onBodyMutation } from '../../core/dom-observer';
 import type { BodySubscriberHandle, IdentityContext } from '../../types/jc';
@@ -39,7 +38,10 @@ function isFilterFenceCurrent(fence: FilterFence): boolean {
         && (!fence.context || JC.identity.isCurrent(fence.context));
 }
 
-function clearFilterIdentityState(): void {
+let filterDebounceHandle: number | null = null;
+let filterFrameHandle: number | null = null;
+
+export function clearFilterIdentityState(): void {
     filterGeneration += 1;
     parentSeriesCache.clear();
     parentSeriesRequestMap.clear();
@@ -50,6 +52,10 @@ function clearFilterIdentityState(): void {
     bodyMutationHandle = null;
     for (const handle of detailRescanHandles) clearTimeout(handle);
     detailRescanHandles.clear();
+    if (filterDebounceHandle !== null) clearTimeout(filterDebounceHandle);
+    if (filterFrameHandle !== null) cancelAnimationFrame(filterFrameHandle);
+    filterDebounceHandle = null;
+    filterFrameHandle = null;
 
     // Remove only visibility markers owned by this feature. Other users of the
     // generic jc-hidden class are left untouched.
@@ -62,8 +68,6 @@ function clearFilterIdentityState(): void {
         card.removeAttribute(PROCESSED_ATTR);
     });
 }
-
-JC.identity?.registerReset?.('hidden-content-filter', clearFilterIdentityState);
 
 /** Delay for first detail-page rescan (async episode loading). */
 const DETAIL_RESCAN_DELAY_MS = 500;
@@ -525,7 +529,17 @@ export function filterAllNativeCards(): void {
 // Native observer setup
 // ============================================================
 
-const debouncedFilterNative = debounce(() => { requestAnimationFrame(() => filterNativeCards()); }, NATIVE_FILTER_DEBOUNCE_MS);
+const debouncedFilterNative = (): void => {
+    if (filterDebounceHandle !== null) clearTimeout(filterDebounceHandle);
+    filterDebounceHandle = window.setTimeout(() => {
+        filterDebounceHandle = null;
+        const fence = captureFilterFence();
+        filterFrameHandle = requestAnimationFrame(() => {
+            filterFrameHandle = null;
+            if (isFilterFenceCurrent(fence)) filterNativeCards();
+        });
+    }, NATIVE_FILTER_DEBOUNCE_MS);
+};
 
 /**
  * Sets up page-navigation and MutationObserver hooks to trigger card

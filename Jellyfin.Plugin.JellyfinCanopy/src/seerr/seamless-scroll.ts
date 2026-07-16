@@ -356,7 +356,7 @@ function cleanupInfiniteScroll(state: any): void {
 // EXPOSE API
 // ============================================================================
 
-JC.seamlessScroll = {
+export const seamlessScroll: SeamlessScrollApi = {
     // Helpers
     createDeduplicator,
 
@@ -367,3 +367,8 @@ JC.seamlessScroll = {
     // Configuration (can be modified at runtime)
     CONFIG
 };
+
+export function installSeamlessScroll(): () => void {
+    JC.seamlessScroll = seamlessScroll;
+    return () => undefined;
+}

@@ -48,9 +48,11 @@ reviewing that audit and intentionally applying the documented policy.
 
 ### Project Structure
 
-The plugin is one C# project (server) plus one TypeScript module tree (client), bundled into a single client artifact:
+The plugin is one C# project (server) plus one TypeScript module tree (client),
+published as a deterministic, manifest-owned client distribution:
 
-- `Jellyfin.Plugin.JellyfinCanopy/src/` — **the client.** TypeScript ES modules (strict mode, real imports), organized by area: `core/` (platform layer: navigation, lifecycle, dom-observer, ui-kit, api-client, live) whose modules `src/main.ts` imports individually, plus the feature areas `enhanced/`, `seerr/`, `arr/`, `tags/`, `elsewhere/`, `extras/`, `others/` — each feature area has an `index.ts` barrel that `src/main.ts` imports; `scripts/build-bundle.js` (esbuild) produces `dist/jc.bundle.js`.
+- `Jellyfin.Plugin.JellyfinCanopy/src/` — **the client.** Strict TypeScript ES modules organized into the boot-critical platform, import-pure feature entries under `src/entries/`, and implementation areas (`enhanced/`, `seerr/`, `arr/`, `tags/`, `elsewhere/`, `extras/`, `others/`). `scripts/build-bundle.js` uses esbuild splitting to produce `dist/entries/*.js`, content-addressed `dist/chunks/*.js`, adjacent source maps, and `dist/client-manifest.json`; there is no client monolith or area-barrel boot path.
+- `scripts/bundle-budgets.json` — fail-closed limits for the boot graph, feature static and dynamically expanded closures, individual/output counts, source maps, the client manifest, and total published bytes.
 - `Jellyfin.Plugin.JellyfinCanopy/Controllers/` — one small feature controller per HTTP surface, nearly all deriving from `JellyfinCanopyControllerBase` (the anonymous asset-serving `AssetsController` derives directly from `ControllerBase`).
 - `Jellyfin.Plugin.JellyfinCanopy/Configuration/` — `PluginConfiguration.cs` (admin settings), `SettingDescriptors.cs` (the settings registry — the single source of truth for what reaches clients), the admin config page.
 - `Jellyfin.Plugin.JellyfinCanopy.Tests/` — xUnit tests, including golden snapshots that pin the config payload contract.
@@ -61,13 +63,21 @@ The [Developer Guide](docs/developers.md) covers the platform contracts and arch
 
 ## 🛣️ The Paved Road — adding a feature
 
-Every feature is four small, declarative pieces. Start from the scaffolder:
+Every feature is a small set of declarative pieces. Start from the closest
+import-pure entry under `src/entries/` and its descriptor in
+`src/entries/feature-catalog.ts`:
 
 ```bash
 node scripts/new-feature.js my-feature            # --area arr|seerr|... , --dry-run
 ```
 
-It generates a typed client module, a controller, an e2e spec stub and a docs stub — every gap marked `TODO(my-feature)` — wires the module into its area barrel, and prints the remaining wiring checklist. What each piece looks like:
+The scaffolder creates an import-pure implementation module, its lazy
+`src/entries/` activation boundary, a controller, an E2E stub, and a docs stub.
+It also wires the logical entry into `ESM_ENTRIES` and adds an identity-scoped,
+always-applicable starter descriptor to `feature-catalog.ts`; both architecture
+anchors are validated before anything is written. It deliberately leaves the
+feature behavior, route predicate/scope, settings and admin control, docs nav,
+reviewed budget adjustment, and completed E2E proof for the contributor.
 
 1. **A setting = a descriptor + a `data-config-key` attribute.**
    Add the property to `PluginConfiguration.cs`, register it in `SettingDescriptors.BuildRegistry()` (`Public(...)` / `Private(...)` / `PublicUser(...)` for per-user overrides — exposure lists are whitelists; secrets never get a descriptor), and add a control with `data-config-key="MyFeatureEnabled"` to `Configuration/configPage.html` — the config-page binder loads/saves every `data-config-key` automatically. The golden snapshot tests pin the payload contract, so a renamed or leaked setting fails CI.
@@ -75,8 +85,10 @@ It generates a typed client module, a controller, an e2e spec stub and a docs st
 2. **An endpoint = a small controller + a policy attribute.**
    A class deriving from `JellyfinCanopyControllerBase` with `[Route("JellyfinCanopy")]`. Auth is declarative: bare `[Authorize]` for any authenticated user, `[Authorize(Policy = Policies.RequiresElevation)]` for admin-only (returns a bare 403 with an empty body — clients branch on status code alone; JSON envelopes are for business errors only).
 
-3. **UI = a typed module over `JC.core`.**
-   Import `JC` from `src/globals`, register a lifecycle handle (`JC.core.lifecycle` — tracked resources get torn down cleanly), inject via `JC.core.dom.ensureInjected(key, anchorFn, buildFn)` — durable, idempotent, re-attaches across React re-renders, param-only navigations and the `/video` round trip — and build markup with the ui-kit (`JC.core.ui.muiIconButton` / `muiMenuItem` / `sectionContainer`) so it wears native MUI classes and theme tokens. Type the public surface as an interface and augment `JEGlobal` — the `window.JellyfinCanopy` contract stays compile-checked.
+3. **UI = an import-pure feature entry over `JC.core`.**
+   Put implementation code in the appropriate feature area and expose an entry whose module evaluation has no DOM, listener, timer, request, identity-registration, or facade-publication side effects. The entry exports `activate(scope)`; create listeners, observers, timers, and subscriptions only inside that activation, register ownership with `scope.track(...)` or return a disposer, and use `scope.signal` / `scope.isCurrent()` to reject stale async work. The scaffolder supplies the initial `ESM_ENTRIES` and catalog wiring; review its descriptor and deliberately choose identity or navigation scope, enable/applicability predicates, dependencies, and config-restart policy. If creating a feature manually, make those same two wiring changes. Descriptors name manifest keys, never paths or URLs. The build census fails if production source is unreachable from every generated graph.
+
+   Import `JC` from `src/globals`, inject via `JC.core.dom.ensureInjected(key, anchorFn, buildFn)` — durable, idempotent, re-attaches across React re-renders, param-only navigations and the `/video` round trip — and build markup with the ui-kit (`JC.core.ui.muiIconButton` / `muiMenuItem` / `sectionContainer`) so it wears native MUI classes and theme tokens. Type the public surface as an interface and augment `JEGlobal` — the `window.JellyfinCanopy` contract stays compile-checked.
 
 4. **Live updates = `JC.core.live.on(LIVE.*)`.**
    Subscribe to `LIVE.CONFIG_CHANGED` (admin saved config — re-init instead of requiring a reload), `LIVE.LIBRARY_CHANGED`, or `LIVE.USER_DATA_CHANGED` instead of polling. The server side pushes through `ISessionManager` (see `Services/LiveNotifierService.cs`).
@@ -221,7 +233,7 @@ updates. Each manifest has exactly one owner and one weekly schedule:
 Compatible minor and patch updates may be grouped. Major npm, NuGet, action,
 runtime, and ABI updates stay explicit. Jellyfin image updates are never grouped
 with tooling images. There is no Dependabot auto-merge path: every bot PR must
-pass the normal security, build, unit, coverage, bundle-reproducibility, and six
+pass the normal security, build, unit, coverage, client-distribution reproducibility, and six
 shard unstable/nightly E2E gates before a maintainer can merge it.
 
 Dependabot alerts and security updates are enabled for this public repository.
@@ -248,7 +260,7 @@ npm run typecheck:src          # tsc --strict over the TypeScript module tree (s
 npm run test:client            # vitest unit tests for src/ modules
 npm run test:client:coverage   # the same full suite once + the src/core ratchet
 npm run check:performance-rules # isolated one-pass R3/R5/R6 scan + 5s CPU budget
-npm run build:bundle           # esbuild bundle — fails on unreachable src/ modules
+npm run build:bundle           # deterministic split dist — fails on unreachable src/ modules
 npm run syntax                 # node --check on the frozen legacy js/ tree
 npm run typecheck              # opt-in @ts-check over legacy js/ files
 

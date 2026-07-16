@@ -5,6 +5,7 @@
 // this module keeps the TMDB person resolution and the credits fetch.
 import { JC } from '../../globals';
 import { classifyObjectDetails, classifyResultsEnvelope } from '../../core/cache-policy';
+import { discoveryBase } from './base';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload shapes; typed incrementally */
 
@@ -195,14 +196,12 @@ async function resolveItems({ id: itemId, signal }: { id: string; signal: AbortS
     };
 }
 
-const discovery = JC.discoveryBase!.createDiscovery({
+export const personDiscovery = discoveryBase.createDiscovery({
     key: 'person',
     mode: 'client-paged',
     logLabel: 'Person Discovery',
     configKey: 'SeerrShowPersonDiscovery',
-    getIdFromUrl: JC.discoveryBase!.idFromDetailUrl,
+    getIdFromUrl: discoveryBase.idFromDetailUrl,
     pageSize: 40,
     resolveItems
 });
-
-discovery.start();

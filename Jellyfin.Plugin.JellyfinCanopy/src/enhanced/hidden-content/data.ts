@@ -138,13 +138,11 @@ function commitHiddenData(data: HiddenContentData, previous: HiddenContentData):
     return true;
 }
 
-function clearIdentityData(): void {
+export function clearIdentityData(): void {
     hiddenData = null;
     hiddenIdSet.clear();
     hiddenProviderIdentitySet.clear();
 }
-
-JC.identity?.registerReset?.('hidden-content-data', clearIdentityData);
 
 // ============================================================
 // Internal helpers

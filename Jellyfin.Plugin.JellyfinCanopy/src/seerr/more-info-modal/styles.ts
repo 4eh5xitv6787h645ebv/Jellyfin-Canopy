@@ -1165,4 +1165,7 @@ const css = `
 `;
 
 // Inject styles when module loads
-JC.core.ui!.injectCss('jc-more-info-modal-styles', css);
+export function installMoreInfoStyles(): () => void {
+    JC.core.ui!.injectCss('jc-more-info-modal-styles', css);
+    return () => JC.core.ui?.removeCss('jc-more-info-modal-styles');
+}

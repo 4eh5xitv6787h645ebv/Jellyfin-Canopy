@@ -11,17 +11,16 @@
 // adminOnly — every authenticated user may open the page.
 
 import { JC } from '../../globals';
-import { registerPage } from '../pages/registry';
-import { openPage } from '../pages/router-bridge';
 import { injectStyles } from './styles';
 import { renderPage, setActiveContainer } from './render';
+import { resetAdminUi } from './admin';
 import {
     capturePageFence,
     resetHiddenContentPageState,
     schedulePageTimeout,
     state,
 } from './state';
-import type { PageContext } from '../pages/types';
+import type { PageContext, PageDescriptor } from '../pages/types';
 
 function render({ host, handle }: PageContext): void {
     injectStyles();
@@ -87,10 +86,12 @@ function render({ host, handle }: PageContext): void {
  * has been left; clearing adminUsersLoading frees the next open to re-fetch.
  */
 function onHide(): void {
+    document.getElementById('jc-hidden-content-page-styles')?.remove();
+    resetAdminUi();
     resetHiddenContentPageState();
 }
 
-registerPage({
+export const hiddenContentPageDescriptor: PageDescriptor & { id: 'hidden-content' } = {
     id: 'hidden-content',
     route: '/hidden-content',
     titleKey: 'hidden_content_manage_title',
@@ -98,8 +99,8 @@ registerPage({
     icon: 'visibility_off',
     isEnabled: () => !!JC.pluginConfig?.HiddenContentEnabled,
     render,
-    onHide
-});
+    onHide,
+};
 
 /** The frozen JC.hiddenContentPage contract (PluginPages HTML + e2e). */
 export interface HiddenContentPageApi {
@@ -111,8 +112,7 @@ export interface HiddenContentPageApi {
 // The frozen public surface. showPage delegates to the framework; renderPage /
 // injectStyles remain for the (soon-dead) PluginPages HTML and are now
 // no-op-safe (renderPage no-ops without an adopted container).
-JC.hiddenContentPage = {
-    showPage: () => { openPage('hidden-content'); },
+export const hiddenContentPageFacade: Omit<HiddenContentPageApi, 'showPage'> = {
     renderPage,
     injectStyles,
 };

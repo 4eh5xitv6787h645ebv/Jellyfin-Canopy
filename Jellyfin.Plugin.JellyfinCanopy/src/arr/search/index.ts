@@ -8,11 +8,13 @@
 import { JC } from '../../globals';
 import { getItemIdFromUrl } from '../../core/details-view';
 import { LIVE, on } from '../../core/live';
+import { createStableMethodFacade } from '../../core/feature-loader';
 import { setAdmin, searchEnabled, cacheDetailsType, getDetailsType, resetArrSearchState } from './state';
-import { injectArrSearchStyles } from './styles';
+import { injectArrSearchStyles, removeArrSearchStyles } from './styles';
 import { installCapture } from './capture';
 import { requestInject, resetSearchItems } from './menu';
-import type { IdentityContext } from '../../types/jc';
+import { closeArrSearchModals } from './modal';
+import type { IdentityContext, LifecycleHandle } from '../../types/jc';
 
 /** Public surface exposed as window.JellyfinCanopy.arrSearch. */
 export interface ArrSearchApi {
@@ -29,7 +31,7 @@ declare module '../../types/jc' {
     }
 }
 
-const lifecycle = JC.core.lifecycle!.register('arr-search');
+let lifecycle: LifecycleHandle | null = null;
 let installed = false;
 
 interface UserWithPolicy { Policy?: { IsAdministrator?: boolean }; }
@@ -73,8 +75,9 @@ async function install(): Promise<void> {
     if (installed) return; // re-entrancy guard across the await
 
     installed = true;
+    lifecycle = JC.core.lifecycle!.register('arr-search');
     injectArrSearchStyles();
-    installCapture((unregister) => lifecycle.track(unregister));
+    installCapture((unregister) => lifecycle?.track(unregister));
 
     // Reuse the shared body-observer multiplexer; a sheet opening triggers a re-inject.
     lifecycle.track(JC.core.dom!.onBodyMutation('jc-arr-search-actionsheet', () => requestInject()));
@@ -88,21 +91,42 @@ function initialize(): void {
     void install();
 }
 
-function teardown(): void {
-    lifecycle.teardown();
+export function teardown(): void {
+    lifecycle?.teardown();
+    lifecycle = null;
     installed = false;
     resetArrSearchState();
     resetSearchItems();
+    closeArrSearchModals();
+    removeArrSearchStyles();
 }
 
-// Always listen for config hot-reload so enabling the feature mid-session installs it, and a
-// disable is reflected immediately (the injector also reads the live flag each pass).
-on(LIVE.CONFIG_CHANGED, () => {
-    if (searchEnabled()) initialize(); else teardown();
+const arrSearchApi: ArrSearchApi = { initialize, teardown };
+const stableArrSearch = createStableMethodFacade<ArrSearchApi>({
+    initialize() {},
+    teardown() {},
+});
+const arrSearchFacade = Object.freeze({
+    initialize: (): void => stableArrSearch.facade.initialize(),
+    teardown: (): void => stableArrSearch.facade.teardown(),
 });
 
-JC.arrSearch = { initialize, teardown };
-JC.identity.registerReset('arr-search', teardown);
-JC.identity.registerActivate('arr-search', () => initialize());
+export function installArrSearch(): () => void {
+    const uninstall = stableArrSearch.install(arrSearchApi);
+    JC.arrSearch = arrSearchFacade;
+    const offConfig = on(LIVE.CONFIG_CHANGED, () => {
+        if (searchEnabled()) initialize(); else teardown();
+    });
+    let disposed = false;
+    return () => {
+        if (disposed) return;
+        disposed = true;
+        offConfig();
+        teardown();
+        uninstall();
+    };
+}
 
-console.log('🪼 Jellyfin Canopy: arr Search: module loaded');
+export function initializeArrSearch(): void {
+    arrSearchApi.initialize();
+}

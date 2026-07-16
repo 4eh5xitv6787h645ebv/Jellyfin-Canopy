@@ -4,6 +4,7 @@
 import { JC as JEBase } from '../globals';
 import { assetUrl } from '../core/asset-urls';
 import { routeHref } from '../core/navigation';
+import { createStableMethodFacade } from '../core/feature-loader';
 import type { IdentityContext, LifecycleApi, LifecycleHandle, NavigationApi } from '../types/jc';
 
 /** Icon override descriptor for a built-in plugin link. */
@@ -452,22 +453,53 @@ function initialize(): void {
     void tryInitialize();
 }
 
-JC.initializePluginIcons = initialize;
-JC.stopPluginIconsMonitoring = stopMonitoring;
-
-JC.identity.registerReset('plugin-icons', () => {
+function resetPluginIcons(): void {
     generation++;
     isProcessing = false;
     customPluginsCache = null;
     stopMonitoring();
     restoreOwnedUi();
-});
+    document.getElementById('plugin-icons-material')?.remove();
+}
 
-// Expose API for refreshing custom plugins
-JC.customPlugins = {
+const pluginIconsApi = {
+    initialize,
+    stopMonitoring,
     refresh: () => {
         // Clear cache to force reload
         customPluginsCache = null;
         void processPluginIcons();
     }
 };
+
+const stablePluginIcons = createStableMethodFacade<typeof pluginIconsApi>({
+    initialize() {},
+    stopMonitoring() {},
+    refresh() {},
+});
+
+const customPluginsFacade = Object.freeze({
+    refresh: (): void => stablePluginIcons.facade.refresh(),
+});
+
+/** Publish stable compatibility facades for one loader-owned activation. */
+export function installPluginIcons(): () => void {
+    const uninstall = stablePluginIcons.install(pluginIconsApi);
+    JC.initializePluginIcons = stablePluginIcons.facade.initialize;
+    JC.stopPluginIconsMonitoring = stablePluginIcons.facade.stopMonitoring;
+    JC.customPlugins = customPluginsFacade;
+    const unregisterReset = JC.identity.registerReset('plugin-icons', resetPluginIcons);
+    let disposed = false;
+    return () => {
+        if (disposed) return;
+        disposed = true;
+        resetPluginIcons();
+        unregisterReset();
+        uninstall();
+    };
+}
+
+/** Start the installed feature without resolving through its global facade. */
+export function initializePluginIcons(): void {
+    pluginIconsApi.initialize();
+}

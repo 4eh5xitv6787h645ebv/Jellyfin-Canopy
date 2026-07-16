@@ -1,30 +1,10 @@
-// src/enhanced/native-tabs.ts
-//
-// Shared registry for adding self-contained tabs to the Home page's native tab
-// strip, without depending on the external Custom Tabs plugin.
-// (Converted from js/enhanced/native-tabs.js — bodies semantically identical.)
-//
-// Jellyfin's own tab mechanism (components/maintabsmanager.js + the emby-tabs
-// element) is generic: a button in `.emby-tabs-slider` with `data-index="N"`
-// and a `.tabContent.pageTabContent` panel at DOM position N (relative to the
-// other panels) is all it takes. Jellyfin wires up the click-to-switch and
-// .is-active toggling itself, the same way it does for its own Home/Favorites
-// tabs (index 0/1) and the same way the Custom Tabs plugin adds its own tabs.
-// This is the exact mechanism the Custom Tabs plugin uses internally, just
-// run from JC's own already-injected script instead of a separate plugin.
-//
-// Works on Jellyfin 12's legacy layout, where `.emby-tabs-slider` is part
-// of the normal, visible header. On
-// Jellyfin 12's modern (React/MUI) layout the tab *button* itself is invisible
-// (it lives inside `.skinHeader`, which that layout hides, see
-// getHeaderRightContainer in helpers.ts for the equivalent header-button
-// problem), but the tab *panel* is not inside `.skinHeader` and stays fully
-// reachable: navigating to `#/home?tab=N` (Jellyfin's own deep-link
-// convention, used natively for `?tab=1` = Favorites) still activates it.
+// Loader-owned registry for self-contained tabs in Jellyfin's native Home tab
+// strip. Importing this module is deliberately side-effect free.
 
+import { createStableMethodFacade } from '../core/feature-loader';
+import type { FeatureScope } from '../core/feature-loader';
+import { isOnHomePage } from '../core/route-match';
 import { JC } from '../globals';
-import { onNavigate } from '../core/navigation';
-import { getHeaderRightContainer, isOnHomePage } from './helpers';
 
 declare global {
     interface Window {
@@ -41,236 +21,308 @@ interface NativeTabEntry {
     index?: number | null;
 }
 
-/** Ordered list of {id, title, onMount, index}. Order determines data-index assignment. */
-let entries: NativeTabEntry[] = [];
-let injectPending = false;
-// PERF(R1): link ids that already had their one-time boot entrance animation.
-// Re-injections (header re-mounts) attach instantly — they run rAF-coalesced
-// off the remount mutation, i.e. before the rebuilt header's first paint.
-const animatedLinkIds = new Set<string>();
-
-/** The shared parent of all native `.tabContent.pageTabContent` panels (Home's page root). */
-function getTabsRoot(): HTMLElement | null {
-    const nativePanel = document.querySelector('.tabContent.pageTabContent[data-index="0"]');
-    return nativePanel ? nativePanel.parentElement : null;
+export interface NativeTabsApi {
+    register: (id: string, title: string, onMount: (panel: HTMLElement) => void, icon?: string) => void;
+    unregister: (id: string) => void;
 }
 
-/**
- * Highest `data-index` currently in use on the tab strip, plus 1. Scanning
- * live rather than assuming "native tabs are 0/1, ours start at 2" matters
- * because the external Custom Tabs plugin claims indices the exact same
- * way (`i + 2`, with no collision checking of its own either) -- if a user
- * runs both, blindly assuming an index is free would clash with it.
- */
+const inactiveApi: NativeTabsApi = Object.freeze({
+    register: () => undefined,
+    unregister: () => undefined,
+});
+const stableApi = createStableMethodFacade<NativeTabsApi>(inactiveApi);
+let activationGeneration = 0;
+let currentGeneration = 0;
+
+interface NativeTabsRuntime {
+    readonly api: NativeTabsApi;
+    dispose(): void;
+}
+
 function nextFreeIndex(slider: Element): number {
-    let max = 1; // native Home(0)/Favorites(1) always present
-    slider.querySelectorAll('[data-index]').forEach(function (el) {
-        const idx = parseInt(el.getAttribute('data-index') || '', 10);
-        if (!isNaN(idx) && idx > max) max = idx;
+    let max = 1;
+    slider.querySelectorAll('[data-index]').forEach((element) => {
+        const index = Number.parseInt(element.getAttribute('data-index') || '', 10);
+        if (Number.isInteger(index) && index > max) max = index;
     });
     return max + 1;
 }
 
-function ensureInjected(): void {
-    if (entries.length === 0) return;
+function headerRightContainer(): HTMLElement | null {
+    const helpers = JC.helpers as { getHeaderRightContainer?: () => HTMLElement | null } | undefined;
+    return helpers?.getHeaderRightContainer?.() ?? null;
+}
 
-    if (!isOnHomePage()) {
-        console.debug('🪼 Jellyfin Canopy: [native-tabs] not on home page (hash=' + window.location.hash + '), skipping');
-        return;
-    }
+function createRuntime(scope: FeatureScope): NativeTabsRuntime {
+    const generation = ++activationGeneration;
+    currentGeneration = generation;
+    let disposed = false;
+    let injectFrame: number | null = null;
+    const entries: NativeTabEntry[] = [];
+    const animatedLinkIds = new Set<string>();
+    const ownedNodes = new Set<HTMLElement>();
+    const ownedEntryNodes = new Map<string, Set<HTMLElement>>();
+    const animationCleanups = new Set<() => void>();
 
-    const slider = document.querySelector('.emby-tabs-slider');
-    const root = getTabsRoot();
-    if (!slider || !root) {
-        console.debug('🪼 Jellyfin Canopy: [native-tabs] waiting for DOM - .emby-tabs-slider ' +
-            (slider ? 'found' : 'MISSING') + ', tab panel root ' + (root ? 'found' : 'MISSING'));
-        return;
-    }
+    const isCurrent = (): boolean => !disposed
+        && currentGeneration === generation
+        && scope.isCurrent();
 
-    entries.forEach(function (entry) {
-        // Assign the index once and cache it -- recomputing on every pass
-        // could hand an entry a *different* index later (if something else's
-        // tabs come and go), which would desync its already-created button
-        // from its already-created panel.
-        if (entry.index == null) {
-            entry.index = nextFreeIndex(slider);
+    const markOwned = <T extends HTMLElement>(node: T, entryId?: string): T => {
+        node.dataset.jcNativeTabsOwner = String(generation);
+        ownedNodes.add(node);
+        if (entryId) {
+            let nodes = ownedEntryNodes.get(entryId);
+            if (!nodes) {
+                nodes = new Set<HTMLElement>();
+                ownedEntryNodes.set(entryId, nodes);
+            }
+            nodes.add(node);
         }
+        return node;
+    };
 
-        if (!document.getElementById('jc-native-tab-btn-' + entry.id)) {
-            const btn = document.createElement('button');
-            btn.type = 'button';
-            btn.setAttribute('is', 'emby-button');
-            btn.id = 'jc-native-tab-btn-' + entry.id;
-            btn.className = 'emby-tab-button';
-            btn.setAttribute('data-index', String(entry.index));
-
-            const label = document.createElement('div');
-            label.className = 'emby-button-foreground';
-            label.textContent = entry.title;
-            btn.appendChild(label);
-
-            slider.appendChild(btn);
-            window.CustomElements?.upgradeSubtree?.(slider);
-            console.log('🪼 Jellyfin Canopy: [native-tabs] added tab button "' + entry.title + '" at data-index=' + entry.index);
+    const forgetOwned = (node: HTMLElement): void => {
+        ownedNodes.delete(node);
+        for (const [entryId, nodes] of ownedEntryNodes) {
+            nodes.delete(node);
+            if (nodes.size === 0) ownedEntryNodes.delete(entryId);
         }
+    };
 
-        if (!document.getElementById('jc-native-tab-panel-' + entry.id)) {
-            const panel = document.createElement('div');
-            panel.id = 'jc-native-tab-panel-' + entry.id;
-            panel.className = 'tabContent pageTabContent';
-            panel.setAttribute('data-index', String(entry.index));
-            root.appendChild(panel);
-            entry.onMount(panel);
-            console.log('🪼 Jellyfin Canopy: [native-tabs] added tab panel "' + entry.title + '" at data-index=' + entry.index);
+    const removeOwned = (node: HTMLElement): void => {
+        node.remove();
+        forgetOwned(node);
+    };
+
+    const removeOwnedEntryNodes = (id: string): void => {
+        const nodes = ownedEntryNodes.get(id);
+        if (!nodes) return;
+        for (const node of [...nodes]) removeOwned(node);
+        ownedEntryNodes.delete(id);
+    };
+
+    const getTabsRoot = (): HTMLElement | null => {
+        const nativePanel = document.querySelector('.tabContent.pageTabContent[data-index="0"]');
+        return nativePanel?.parentElement ?? null;
+    };
+
+    const removeGroupIfEmpty = (): void => {
+        const group = document.getElementById('jc-native-tabs-group');
+        if (group && group.children.length <= 1) {
+            removeOwned(group);
         }
+    };
 
-        ensureDiscoverable(entry);
+    const getOrCreateGroup = (headerRight: HTMLElement): HTMLElement => {
+        const existing = document.getElementById('jc-native-tabs-group');
+        if (existing?.dataset.jcNativeTabsOwner === String(generation)) return existing;
+        existing?.remove();
+
+        const group = markOwned(document.createElement('div'));
+        group.id = 'jc-native-tabs-group';
+        group.style.cssText = 'display:flex;align-items:center;order:-1;';
+        const separator = document.createElement('span');
+        separator.id = 'jc-native-tabs-separator';
+        separator.setAttribute('aria-hidden', 'true');
+        separator.style.cssText = 'display:inline-block;width:1px;height:1.4em;margin:0 0.5em;background:rgba(255,255,255,0.3);';
+        group.appendChild(separator);
+        headerRight.appendChild(group);
+        return group;
+    };
+
+    const expandOwned = (element: HTMLElement, instant: boolean): void => {
+        if (instant || !element.isConnected) return;
+        const targetWidth = element.getBoundingClientRect().width;
+        if (targetWidth <= 0) return;
+        const previousOverflow = element.style.overflow;
+        element.style.overflow = 'hidden';
+        element.style.width = '0px';
+        void element.offsetWidth;
+        element.style.transition = 'width 150ms ease';
+        element.style.width = `${targetWidth}px`;
+        let timer: number | null = null;
+        let cleaned = false;
+        const cleanup = (): void => {
+            if (cleaned) return;
+            cleaned = true;
+            element.removeEventListener('transitionend', cleanup);
+            if (timer !== null) window.clearTimeout(timer);
+            timer = null;
+            element.style.transition = '';
+            element.style.width = '';
+            element.style.overflow = previousOverflow;
+            animationCleanups.delete(cleanup);
+        };
+        animationCleanups.add(cleanup);
+        element.addEventListener('transitionend', cleanup, { once: true });
+        timer = window.setTimeout(cleanup, 250);
+    };
+
+    const syncDeepLink = (): void => {
+        if (!isCurrent()) return;
+        const match = /[?&]tab=(\d+)/.exec(window.location.hash);
+        if (!match) return;
+        const wantedIndex = Number.parseInt(match[1], 10);
+        const entry = entries.find((candidate) => candidate.index === wantedIndex);
+        if (!entry) return;
+        const button = document.getElementById(`jc-native-tab-btn-${entry.id}`);
+        const tabs = document.querySelector<HTMLElement & { selectedIndex?: (index?: number) => number }>('[is="emby-tabs"]');
+        if (button && tabs?.selectedIndex && tabs.selectedIndex() !== wantedIndex) {
+            tabs.selectedIndex(wantedIndex);
+        }
+    };
+
+    const ensureDiscoverable = (entry: NativeTabEntry): void => {
+        if (!isCurrent()) return;
+        const button = document.getElementById(`jc-native-tab-btn-${entry.id}`);
+        const linkId = `jc-native-tab-link-${entry.id}`;
+        if (button && button.offsetParent !== null) {
+            const link = document.getElementById(linkId);
+            if (link?.dataset.jcNativeTabsOwner === String(generation)) removeOwned(link);
+            removeGroupIfEmpty();
+            return;
+        }
+        const existingLink = document.getElementById(linkId);
+        if (existingLink?.dataset.jcNativeTabsOwner === String(generation)) return;
+        existingLink?.remove();
+        const headerRight = headerRightContainer();
+        if (!headerRight || !isCurrent()) return;
+        const groupExisted = document.getElementById('jc-native-tabs-group') !== null;
+        const group = getOrCreateGroup(headerRight);
+        const separator = document.getElementById('jc-native-tabs-separator');
+        if (!separator) return;
+        const link = markOwned(JC.core.ui!.muiIconButton({
+            id: linkId,
+            icon: entry.icon || 'tab',
+            title: entry.title,
+            className: 'headerButton headerButtonRight paper-icon-button-light',
+            onClick: () => {
+                if (!isCurrent()) return;
+                const hash = window.location.hash;
+                const base = hash.indexOf('#/home') === 0 ? hash.split('?')[0] : '#/home';
+                window.location.hash = `${base}?tab=${entry.index}`;
+            },
+        }), entry.id);
+        group.insertBefore(link, separator);
+        const firstAppearance = !animatedLinkIds.has(entry.id);
+        animatedLinkIds.add(entry.id);
+        expandOwned(groupExisted ? link : group, !firstAppearance);
+    };
+
+    const ensureInjected = (): void => {
+        if (!isCurrent() || entries.length === 0 || !isOnHomePage()) return;
+        for (const node of [...ownedNodes]) {
+            if (!node.isConnected) forgetOwned(node);
+        }
+        const slider = document.querySelector('.emby-tabs-slider');
+        const root = getTabsRoot();
+        if (!slider || !root) return;
+
+        for (const entry of entries) {
+            if (!isCurrent()) return;
+            entry.index ??= nextFreeIndex(slider);
+            const buttonId = `jc-native-tab-btn-${entry.id}`;
+            const existingButton = document.getElementById(buttonId);
+            if (existingButton?.dataset.jcNativeTabsOwner !== String(generation)) existingButton?.remove();
+            if (!document.getElementById(buttonId)) {
+                const button = markOwned(document.createElement('button'), entry.id);
+                button.type = 'button';
+                button.setAttribute('is', 'emby-button');
+                button.id = buttonId;
+                button.className = 'emby-tab-button';
+                button.setAttribute('data-index', String(entry.index));
+                const label = document.createElement('div');
+                label.className = 'emby-button-foreground';
+                label.textContent = entry.title;
+                button.appendChild(label);
+                slider.appendChild(button);
+                window.CustomElements?.upgradeSubtree?.(slider);
+            }
+            const panelId = `jc-native-tab-panel-${entry.id}`;
+            const existingPanel = document.getElementById(panelId);
+            if (existingPanel?.dataset.jcNativeTabsOwner !== String(generation)) existingPanel?.remove();
+            if (!document.getElementById(panelId)) {
+                const panel = markOwned(document.createElement('div'), entry.id);
+                panel.id = panelId;
+                panel.className = 'tabContent pageTabContent';
+                panel.setAttribute('data-index', String(entry.index));
+                root.appendChild(panel);
+                entry.onMount(panel);
+                if (!isCurrent()) return;
+            }
+            ensureDiscoverable(entry);
+        }
+        syncDeepLink();
+    };
+
+    const scheduleInject = (): void => {
+        if (!isCurrent() || injectFrame !== null) return;
+        injectFrame = window.requestAnimationFrame(() => {
+            injectFrame = null;
+            if (!isCurrent()) return;
+            ensureInjected();
+        });
+    };
+
+    const bodySubscription = JC.core.dom!.onBodyMutation(`native-tabs-${generation}`, scheduleInject);
+    const unsubscribeNavigation = JC.core.navigation!.onNavigate(scheduleInject);
+
+    const api: NativeTabsApi = Object.freeze({
+        register(id: string, title: string, onMount: (panel: HTMLElement) => void, icon?: string): void {
+            if (!isCurrent() || entries.some((entry) => entry.id === id)) return;
+            entries.push({ id, title, onMount, icon });
+            scheduleInject();
+        },
+        unregister(id: string): void {
+            if (!isCurrent()) return;
+            const index = entries.findIndex((entry) => entry.id === id);
+            if (index >= 0) entries.splice(index, 1);
+            removeOwnedEntryNodes(id);
+            removeGroupIfEmpty();
+        },
     });
 
-    syncDeepLink();
+    return {
+        api,
+        dispose(): void {
+            if (disposed) return;
+            disposed = true;
+            if (currentGeneration === generation) currentGeneration = 0;
+            if (injectFrame !== null) window.cancelAnimationFrame(injectFrame);
+            injectFrame = null;
+            bodySubscription.unsubscribe();
+            unsubscribeNavigation();
+            for (const cleanup of [...animationCleanups]) cleanup();
+            for (const node of [...ownedNodes].reverse()) node.remove();
+            ownedNodes.clear();
+            ownedEntryNodes.clear();
+            entries.length = 0;
+            animatedLinkIds.clear();
+        },
+    };
 }
 
-/**
- * Header-tray group holding every fallback link, plus a trailing `|`
- * separator between it and the random-button/active-streams group. Given
- * `order: -1`, it always renders first within the tray regardless of DOM
- * insertion order -- random button and active-streams each run their own
- * independent retry loop, so racing them on raw prepend() timing is not
- * reliable; flexbox order sidesteps the race entirely.
- */
-function getOrCreateGroup(headerRight: HTMLElement): HTMLElement {
-    let group = document.getElementById('jc-native-tabs-group');
-    if (group) return group;
-
-    group = document.createElement('div');
-    group.id = 'jc-native-tabs-group';
-    group.style.cssText = 'display:flex;align-items:center;order:-1;';
-
-    const separator = document.createElement('span');
-    separator.id = 'jc-native-tabs-separator';
-    separator.setAttribute('aria-hidden', 'true');
-    separator.style.cssText = 'display:inline-block;width:1px;height:1.4em;margin:0 0.5em;background:rgba(255,255,255,0.3);';
-    group.appendChild(separator);
-
-    headerRight.appendChild(group);
-    return group;
-}
-
-function removeGroupIfEmpty(): void {
-    const group = document.getElementById('jc-native-tabs-group');
-    // Only the separator left -> nothing to separate -> drop the whole group.
-    if (group && group.children.length <= 1) {
-        group.remove();
+/** Loader-owned activation; the public facade remains frozen across epochs. */
+export function activateNativeTabs(scope: FeatureScope): void {
+    if (!scope.isCurrent()) return;
+    if (JC.nativeTabs !== stableApi.facade) {
+        JC.nativeTabs = stableApi.facade;
     }
-}
-
-/**
- * On Jellyfin 12's experimental layout the tab strip button lives inside
- * `.skinHeader`, which that layout hides -- so the button exists but is
- * never visible to click. When that's detected, add a fallback entry
- * point in the header button tray (the same `.headerRight`/MUI-toolbar
- * container random-button-style features use) that deep-links to
- * `#/home?tab=N`. Skipped entirely when the real tab button is already
- * visible (old/stable layout), so that layout doesn't get a redundant
- * second way to reach the same tab.
- */
-function ensureDiscoverable(entry: NativeTabEntry): void {
-    const btn = document.getElementById('jc-native-tab-btn-' + entry.id);
-    const linkId = 'jc-native-tab-link-' + entry.id;
-
-    if (btn && btn.offsetParent !== null) {
-        document.getElementById(linkId)?.remove();
-        removeGroupIfEmpty();
+    const runtime = createRuntime(scope);
+    const uninstallDelegate = stableApi.install(runtime.api);
+    let disposed = false;
+    const dispose = (): void => {
+        if (disposed) return;
+        disposed = true;
+        runtime.dispose();
+        uninstallDelegate();
+    };
+    if (!scope.isCurrent()) {
+        dispose();
         return;
     }
-
-    if (document.getElementById(linkId)) return;
-
-    const headerRight = getHeaderRightContainer();
-    if (!headerRight) return;
-
-    const groupExisted = document.getElementById('jc-native-tabs-group') !== null;
-    const group = getOrCreateGroup(headerRight);
-    const separator = document.getElementById('jc-native-tabs-separator');
-
-    // This fallback only appears on the modern/experimental layout (the real
-    // tab button is hidden there), so build it with the native MUI AppBar
-    // action-button markup via the UI kit. Legacy classes are kept so it sits
-    // in the header group consistently with the other tray buttons.
-    const link = JC.core.ui!.muiIconButton({
-        id: linkId,
-        icon: entry.icon || 'tab',
-        title: entry.title,
-        className: 'headerButton headerButtonRight paper-icon-button-light',
-        onClick: function () {
-            const hash = window.location.hash;
-            const base = hash.indexOf('#/home') === 0 ? hash.split('?')[0] : '#/home';
-            window.location.hash = base + '?tab=' + entry.index;
-        }
-    });
-
-    group.insertBefore(link, separator);
-    // PERF(R1, doctrine: reserved-space entrance): the group keeps its designed
-    // slot (flex order:-1, always first in the tray). At boot the tray painted
-    // long before JC loaded, so the FIRST appearance of each link expands from
-    // width 0 over 150ms instead of snap-shifting the native buttons; header
-    // re-mounts re-inject rAF-coalesced before the rebuilt tray's first paint,
-    // so they attach instantly with no animation. When the group already
-    // existed only the new link animates, otherwise the whole group (link +
-    // separator) expands as one block.
-    const firstAppearance = !animatedLinkIds.has(entry.id);
-    animatedLinkIds.add(entry.id);
-    JC.core.ui!.expandIn(groupExisted ? link : group, { instant: !firstAppearance });
-    console.log('🪼 Jellyfin Canopy: [native-tabs] tab button for "' + entry.title + '" is hidden (experimental layout), added header-tray fallback link');
+    scope.track(dispose);
 }
 
-/** If the URL asks for one of our tab indices (Jellyfin's own `?tab=N` convention) but it isn't active yet, activate it. */
-function syncDeepLink(): void {
-    const match = /[?&]tab=(\d+)/.exec(window.location.hash);
-    if (!match) return;
-    const wantedIndex = parseInt(match[1], 10);
-    const entry = entries.find(function (e) { return e.index === wantedIndex; });
-    if (!entry) return;
-
-    const btn = document.getElementById('jc-native-tab-btn-' + entry.id);
-    const tabsElem = document.querySelector<HTMLElement & { selectedIndex?: (index?: number) => number }>('[is="emby-tabs"]');
-    if (btn && tabsElem?.selectedIndex && tabsElem.selectedIndex() !== wantedIndex) {
-        tabsElem.selectedIndex(wantedIndex);
-    }
-}
-
-function scheduleInject(): void {
-    if (injectPending) return;
-    injectPending = true;
-    requestAnimationFrame(function () {
-        injectPending = false;
-        ensureInjected();
-    });
-}
-
-JC.nativeTabs = {
-    /**
-     * Register a self-contained Home-page tab. Safe to call multiple times
-     * with the same id (no-op after the first).
-     * @param id - Stable identifier (e.g. "requests").
-     * @param title - Tab label.
-     * @param onMount - Called once with the new panel to fill it.
-     * @param icon - Material Icons ligature for the header-tray fallback link. Defaults to "tab".
-     */
-    register: function (id: string, title: string, onMount: (panel: HTMLElement) => void, icon?: string): void {
-        if (entries.some(function (e) { return e.id === id; })) return;
-        entries.push({ id: id, title: title, onMount: onMount, icon: icon });
-        console.log('🪼 Jellyfin Canopy: [native-tabs] registered "' + title + '" (id=' + id + ')');
-        scheduleInject();
-    },
-    unregister: function (id: string): void {
-        entries = entries.filter(function (e) { return e.id !== id; });
-        document.getElementById('jc-native-tab-btn-' + id)?.remove();
-        document.getElementById('jc-native-tab-panel-' + id)?.remove();
-    }
-};
-
-JC.core.dom!.onBodyMutation('native-tabs', scheduleInject);
-// Re-inject on every navigation (hashchange, popstate AND pushState navs
-// the old raw hashchange listener missed).
-onNavigate(scheduleInject);
+export const nativeTabsFacade = stableApi.facade;

@@ -167,7 +167,8 @@ describe('updateCounter request ordering (_refreshSeq guard)', () => {
             return Promise.resolve({});
         });
         stubCore(plugin);
-        await import('./active-streams');
+        const { installActiveStreams } = await import('./active-streams');
+        installActiveStreams();
         api().activeStreams.initialize();
         await flush();
         resolvers[0]([]); // settle the initial (panel-closed) fetch
@@ -215,7 +216,8 @@ describe('startLive gating', () => {
         setupImmediate();
         const subscribe = vi.fn(() => () => { /* unsub */ });
         (globalThis as any).ApiClient.subscribe = subscribe;
-        await import('./active-streams');
+        const { installActiveStreams } = await import('./active-streams');
+        installActiveStreams();
         api().activeStreams.initialize();
         await flush();
 
@@ -230,7 +232,8 @@ describe('startLive gating', () => {
 
     it('arms the fallback interval when no socket is available, and its tick skips while hidden', async () => {
         const plugin = setupImmediate();
-        await import('./active-streams');
+        const { installActiveStreams } = await import('./active-streams');
+        installActiveStreams();
         api().activeStreams.initialize();
         await flush();
 

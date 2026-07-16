@@ -6,7 +6,7 @@ import type { SpoilerUserPrefs, PromoteResponse, RemoveResponse } from './state'
 import type { MovieScope } from './suppression';
 
 declare module '../../types/jc' {
-    /** The public JC.spoilerGuard surface (assigned by the module init). */
+    /** The stable public JC.spoilerGuard surface (published by lazy activation). */
     interface SpoilerGuardApi {
         init(): void;
         addSpoilerBlurButton(itemId: string, visiblePage: Element, itemType: string): void;
@@ -32,7 +32,7 @@ declare module '../../types/jc' {
     }
 
     interface JEGlobal {
-        /** The Spoiler Guard public API (assigned at bundle init when enabled). */
+        /** The Spoiler Guard public API (published when its lazy feature activates). */
         spoilerGuard?: SpoilerGuardApi;
     }
 }

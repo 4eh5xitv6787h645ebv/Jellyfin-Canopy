@@ -6,7 +6,9 @@
 import { JC } from '../globals';
 import { onBodyMutation } from '../core/dom-observer';
 import { cssColorOr } from '../core/css-safe';
+import { createStableMethodFacade } from '../core/feature-loader';
 import type { BodySubscriberHandle, IdentityContext } from '../types/jc';
+import { fontFamilyPresets, fontSizePresets, publishSubtitlePresets } from './subtitle-presets';
 
 interface SubtitleStyle {
     textColor?: string;
@@ -19,41 +21,6 @@ interface SubtitleStyle {
 let subtitleObserver: BodySubscriberHandle | null = null;
 let currentSubtitleStyle: SubtitleStyle = {};
 let activeSubtitleContext: IdentityContext | null = null;
-
-/**
- * Preset styles for subtitles.
- */
-JC.subtitlePresets = [
-    { name: "Clean White", textColor: "#FFFFFFFF", bgColor: "transparent", textShadow: "0 0 4px #000, 0 0 8px #000, 1px 1px 2px #000", previewText: "Aa" },
-    { name: "Classic Black Box", textColor: "#FFFFFFFF", bgColor: "#000000FF", previewText: "Aa" },
-    { name: "Netflix Style", textColor: "#FFFFFFFF", bgColor: "#000000B2", previewText: "Aa" },
-    { name: "Cinema Yellow", textColor: "#FFFF00FF", bgColor: "#000000B2", previewText: "Aa" },
-    { name: "Soft Gray", textColor: "#FFFFFFFF", bgColor: "#444444B2", previewText: "Aa" },
-    { name: "High Contrast", textColor: "#000000FF", bgColor: "#FFFFFFFF", previewText: "Aa" }
-];
-
-/**
- * Preset font sizes for subtitles.
- */
-JC.fontSizePresets = [
-    { name: "Tiny", size: 0.8, previewText: "Aa" },
-    { name: "Small", size: 1, previewText: "Aa" },
-    { name: "Normal", size: 1.2, previewText: "Aa" },
-    { name: "Large", size: 1.8, previewText: "Aa" },
-    { name: "Extra Large", size: 2, previewText: "Aa" },
-    { name: "Gigantic", size: 3, previewText: "Aa" }
-];
-
-/**
- * Preset font families for subtitles.
- */
-JC.fontFamilyPresets = [
-    { name: "Default", family: "inherit", previewText: "AaBb" },
-    { name: "Noto Sans", family: "Noto Sans,sans-serif", previewText: "AaBb" },
-    { name: "Sans Serif", family: "Arial,Helvetica,sans-serif", previewText: "AaBb" },
-    { name: "Typewriter", family: "Courier New,Courier,monospace", previewText: "AaBb" },
-    { name: "Roboto", family: "Roboto Mono,monospace", previewText: "AaBb" }
-];
 
 /**
  * Applies subtitle position to the .videoSubtitles container element.
@@ -133,9 +100,6 @@ function removeInjectedStyles(): void {
     }
 }
 
-// Expose so the position observer (started in startSubtitleObserver) can reapply on new containers
-JC.applySubtitlePosition = applySubtitlePosition;
-
 /**
  * Directly modifies the inline style of a subtitle element to ensure overrides.
  * Jellyfin renders subtitles into .videoSubtitlesInner DOM elements; inline
@@ -201,7 +165,7 @@ function startSubtitleObserver(context: IdentityContext): void {
 /**
  * Main function to apply styles. It sets the desired style and starts the process.
  */
-JC.applySubtitleStyles = (textColor: string, bgColor: string, fontSize: number, fontFamily: string, textShadow: string) => {
+function applySubtitleStyles(textColor: string, bgColor: string, fontSize: number, fontFamily: string, textShadow: string): void {
     const context = JC.identity.capture();
     if (!context) return;
     activeSubtitleContext = context;
@@ -243,7 +207,7 @@ JC.applySubtitleStyles = (textColor: string, bgColor: string, fontSize: number, 
     // most common browser. Position settings cannot apply to native cues
     // (::cue supports style properties only).
     applyNativeCueStyles(context);
-};
+}
 
 /**
  * Upserts (or clears) the JC ::cue override sheet for the native-cue path.
@@ -299,7 +263,7 @@ function applyNativeCueStyles(context: IdentityContext): void {
  * Loads saved settings and triggers the style application.
  * When custom styles are disabled, removes all JC-injected styles cleanly.
  */
-JC.applySavedStylesWhenReady = () => {
+function applySavedStylesWhenReady(): void {
     const context = JC.identity.capture();
     if (!context) return;
     activeSubtitleContext = context;
@@ -320,11 +284,11 @@ JC.applySavedStylesWhenReady = () => {
         ? '0 0 4px #000, 0 0 8px #000, 1px 1px 2px #000'
         : 'none';
 
-    const fontSizePreset = JC.fontSizePresets![(JC.currentSettings?.selectedFontSizePresetIndex as number | undefined) ?? 2];
-    const fontFamilyPreset = JC.fontFamilyPresets![(JC.currentSettings?.selectedFontFamilyPresetIndex as number | undefined) ?? 0];
+    const fontSizePreset = fontSizePresets[(JC.currentSettings?.selectedFontSizePresetIndex as number | undefined) ?? 2];
+    const fontFamilyPreset = fontFamilyPresets[(JC.currentSettings?.selectedFontFamilyPresetIndex as number | undefined) ?? 0];
 
     if (fontSizePreset && fontFamilyPreset) {
-        JC.applySubtitleStyles!(
+        applySubtitleStyles(
             textColor,
             bgColor,
             fontSizePreset.size,
@@ -332,7 +296,7 @@ JC.applySavedStylesWhenReady = () => {
             textShadow
         );
     }
-};
+}
 
 function resetSubtitleIdentity(): void {
     activeSubtitleContext = null;
@@ -340,5 +304,32 @@ function resetSubtitleIdentity(): void {
     removeInjectedStyles();
 }
 
-JC.identity.registerReset('enhanced-subtitles', resetSubtitleIdentity);
-JC.identity.registerActivate('enhanced-subtitles', () => JC.applySavedStylesWhenReady?.());
+const subtitlesApi = { applySubtitlePosition, applySubtitleStyles, applySavedStylesWhenReady };
+const stableSubtitles = createStableMethodFacade<typeof subtitlesApi>({
+    applySubtitlePosition() {},
+    applySubtitleStyles() {},
+    applySavedStylesWhenReady() {},
+});
+
+/** Publish subtitle styling methods and reset ownership for one activation. */
+export function installSubtitles(): () => void {
+    publishSubtitlePresets();
+    const uninstall = stableSubtitles.install(subtitlesApi);
+    JC.applySubtitlePosition = stableSubtitles.facade.applySubtitlePosition;
+    JC.applySubtitleStyles = stableSubtitles.facade.applySubtitleStyles;
+    JC.applySavedStylesWhenReady = stableSubtitles.facade.applySavedStylesWhenReady;
+    const unregisterReset = JC.identity.registerReset('enhanced-subtitles', resetSubtitleIdentity);
+    let disposed = false;
+    return () => {
+        if (disposed) return;
+        disposed = true;
+        resetSubtitleIdentity();
+        unregisterReset();
+        uninstall();
+    };
+}
+
+/** Apply current settings to an already-mounted player. */
+export function initializeSubtitles(): void {
+    applySavedStylesWhenReady();
+}

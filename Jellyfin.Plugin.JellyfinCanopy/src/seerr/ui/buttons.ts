@@ -2,6 +2,7 @@
 // Request-button configuration for movie/TV/collection cards.
 import { JC } from '../../globals';
 import type { IdentityContext } from '../../types/jc';
+import { seerrStatus } from '../seerr-status';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload + DOM shapes; typed incrementally */
 
@@ -9,8 +10,8 @@ import type { IdentityContext } from '../../types/jc';
 import { ui, internal } from './internal';
 const state = internal.state;
 const escapeHtml = JC.escapeHtml;
-const MediaStatus = JC.seerrStatus!.MEDIA;
-const DisplayStatus = JC.seerrStatus!.DISPLAY;
+const MediaStatus = seerrStatus.MEDIA;
+const DisplayStatus = seerrStatus.DISPLAY;
 const icons = internal.icons; // requires ui/icons.ts to be loaded first
 
 function resolveIdentity(node: unknown): IdentityContext | null {
@@ -430,4 +431,19 @@ internal.configureCollectionButton = configureCollectionButton;
 internal.configureTvShowButton = configureTvShowButton;
 internal.configureMovieButton = configureMovieButton;
 
-window.addEventListener('jc:config-changed', refreshRenderedCapabilitiesForConfig);
+let installLeases = 0;
+
+export function installSeerrButtons(): () => void {
+    if (installLeases === 0) {
+        window.addEventListener('jc:config-changed', refreshRenderedCapabilitiesForConfig);
+    }
+    installLeases += 1;
+    let installed = true;
+    return () => {
+        if (!installed) return;
+        installed = false;
+        installLeases -= 1;
+        if (installLeases > 0) return;
+        window.removeEventListener('jc:config-changed', refreshRenderedCapabilitiesForConfig);
+    };
+}

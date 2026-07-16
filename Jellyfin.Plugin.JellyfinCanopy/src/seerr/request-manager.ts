@@ -9,6 +9,9 @@
 
 import { JC } from '../globals';
 
-// core/api-client.ts (imported by main.ts before this module) always sets
-// JC.core.api — a missing surface means broken bundle ordering.
-JC.requestManager = JC.core.api!.manager;
+/** Publish the core manager alias only when the Seerr foundation activates. */
+export function installSeerrRequestManager(): () => void {
+    // core/api-client.ts is boot-owned and must exist before features activate.
+    JC.requestManager = JC.core.api!.manager;
+    return () => undefined;
+}

@@ -31,6 +31,7 @@ export interface DiscoveryController {
     render: () => Promise<void>;
     handlePageNavigation: () => void;
     start: () => void;
+    dispose: () => void;
 }
 
 interface DiscoveryResolveContext {
@@ -176,6 +177,9 @@ function createDiscovery(spec: DiscoverySpec): DiscoveryController {
     let renderGeneration = 0;
     let initialized = false;
     let started = false;
+    const navigationSubscriptions: Array<() => void> = [];
+    let unregisterIdentityReset: (() => void) | null = null;
+    let unregisterIdentityActivate: (() => void) | null = null;
     const renderFrames = new Set<number>();
 
     // ---- Pagination state (dual-feed + client-paged) --------------------
@@ -1075,24 +1079,24 @@ function createDiscovery(spec: DiscoverySpec): DiscoveryController {
     function initialize() {
         if (initialized) return;
         initialized = true;
-        // Lifecycle: run cleanup() on EVERY navigation — hashchange, popstate
-        // AND the pushState transitions the old raw hashchange listener
-        // missed. Registration order matters: the teardown wiring is
-        // registered first so cleanup always runs before handlePageNavigation
-        // on a navigation.
-        const lifecycle = JC.core.lifecycle!.register(`seerr-${key}-discovery`);
-        lifecycle.onTeardown(cleanup);
-        lifecycle.teardownOn('navigate');
-        JC.core.navigation!.onNavigate(handlePageNavigation);
+        navigationSubscriptions.push(JC.core.navigation!.onNavigate(() => {
+            cleanup();
+            handlePageNavigation();
+        }));
 
         handlePageNavigation();
-        JC.core.navigation!.onViewPage(handlePageNavigation);
+        navigationSubscriptions.push(JC.core.navigation!.onViewPage(handlePageNavigation));
     }
 
     /** Run initialize now, or on DOMContentLoaded if still loading. */
     function start() {
         if (started) return;
         started = true;
+        unregisterIdentityReset ??= JC.identity.registerReset(`seerr-${key}-discovery`, cleanup);
+        unregisterIdentityActivate ??= JC.identity.registerActivate(
+            `seerr-${key}-discovery`,
+            handlePageNavigation,
+        );
         if (document.readyState === 'loading') {
             document.addEventListener('DOMContentLoaded', initialize);
         } else {
@@ -1100,14 +1104,29 @@ function createDiscovery(spec: DiscoverySpec): DiscoveryController {
         }
     }
 
-    JC.identity.registerReset(`seerr-${key}-discovery`, cleanup);
-    JC.identity.registerActivate(`seerr-${key}-discovery`, () => handlePageNavigation());
+    function dispose(): void {
+        document.removeEventListener('DOMContentLoaded', initialize);
+        for (const unsubscribe of navigationSubscriptions.splice(0).reverse()) unsubscribe();
+        unregisterIdentityReset?.();
+        unregisterIdentityReset = null;
+        unregisterIdentityActivate?.();
+        unregisterIdentityActivate = null;
+        cleanup();
+        initialized = false;
+        started = false;
+    }
 
-    return { initialize, cleanup, render, handlePageNavigation, start };
+    return { initialize, cleanup, render, handlePageNavigation, start, dispose };
 }
 
-JC.discoveryBase = {
+export const discoveryBase: DiscoveryBaseApi = {
     createDiscovery,
     idFromDetailUrl,
     idFromListParam
 };
+
+/** Publish the stable discovery chassis only while its feature graph activates. */
+export function installDiscoveryBase(): () => void {
+    JC.discoveryBase = discoveryBase;
+    return () => undefined;
+}

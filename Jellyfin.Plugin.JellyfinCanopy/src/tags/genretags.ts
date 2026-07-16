@@ -6,6 +6,7 @@
 
 import { JC as JEBase } from '../globals';
 import { assetUrl } from '../core/asset-urls';
+import { createStableMethodFacade } from '../core/feature-loader';
 import { register, reinitialize, resolvePosition } from '../core/tag-renderer-base';
 import type { TagRendererContext, TagSpec } from '../types/jc';
 
@@ -21,6 +22,7 @@ const JC = JEBase as typeof JEBase & {
 const logPrefix = '🪼 Jellyfin Canopy: Genre Tags:';
 const containerClass = 'genre-overlay-container';
 const tagClass = 'genre-tag';
+let genreFontOwned = false;
 
 const genreIconMap: Record<string, string> = {
     // Default
@@ -313,7 +315,7 @@ const spec: TagSpec = {
     },
 };
 
-JC.initializeGenreTags = function() {
+function initializeGenreTags(): void {
     // Ensure Material Symbols font is loaded.
     // PERF(R6): no remote assets — the Google Fonts stylesheet is served from the
     // local asset cache, its @font-face urls rewritten to local woff2 copies.
@@ -323,16 +325,39 @@ JC.initializeGenreTags = function() {
         link.rel = 'stylesheet';
         link.href = assetUrl('fonts/material-symbols-outlined.css');
         document.head.appendChild(link);
+        genreFontOwned = true;
     }
 
     register('genre', spec);
     console.log(`${logPrefix} Initialized successfully.`);
-};
+}
 
 /**
  * Re-initializes the Genre Tags feature.
  * Cleans up existing tags and triggers a pipeline rescan.
  */
-JC.reinitializeGenreTags = function() {
+function reinitializeGenreTags(): void {
     reinitialize('genre', spec);
-};
+}
+
+const stableGenreTags = createStableMethodFacade({
+    initialize: (): void => {},
+    reinitialize: (): void => {},
+});
+
+/** Install frozen genre-tag entry points without evaluating feature effects at import. */
+export function installGenreTagsFacade(): () => void {
+    const uninstall = stableGenreTags.install({
+        initialize: initializeGenreTags,
+        reinitialize: reinitializeGenreTags,
+    });
+    JC.initializeGenreTags = stableGenreTags.facade.initialize;
+    JC.reinitializeGenreTags = stableGenreTags.facade.reinitialize;
+    return uninstall;
+}
+
+export function disposeGenreTags(): void {
+    if (!genreFontOwned) return;
+    document.getElementById('mat-sym')?.remove();
+    genreFontOwned = false;
+}

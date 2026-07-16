@@ -4,7 +4,7 @@
 // toggle button on-state, the Seerr pending toggle (ghost) button, and the
 // disable-confirm dialog overlay. Injected once via core/ui-kit injectCss.
 
-import { injectCss } from '../../core/ui-kit';
+import { injectCss, removeCss } from '../../core/ui-kit';
 
 const STYLE_ID = 'jc-spoiler-guard-css';
 
@@ -144,4 +144,9 @@ export function injectSpoilerGuardCss(): void {
             background: rgba(90, 63, 184, 0.8);
         }
     `);
+}
+
+/** Remove the activation-owned stylesheet. */
+export function removeSpoilerGuardCss(): void {
+    removeCss(STYLE_ID);
 }

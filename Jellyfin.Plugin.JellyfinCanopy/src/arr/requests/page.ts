@@ -7,11 +7,9 @@
 // run the poll + live-nudge for the lifetime of one adoption.
 
 import { JC } from '../arr-globals';
-import { registerPage } from '../../enhanced/pages/registry';
-import { openPage } from '../../enhanced/pages/router-bridge';
 import { LIVE } from '../../core/live';
 import { injectStyles } from './styles';
-import { clearAvatarObjectUrlCache, loadAllData, state } from './data';
+import { clearAvatarObjectUrlCache, loadAllData, resetRequestsIdentityState, state } from './data';
 import { handleRequestsClick, renderPage, setActiveContainer } from './render';
 import {
     filterDownloads,
@@ -23,7 +21,7 @@ import {
     prevPage,
     searchDownloads
 } from './actions';
-import type { PageContext } from '../../enhanced/pages/types';
+import type { PageContext, PageDescriptor } from '../../enhanced/pages/types';
 import type { LifecycleHandle } from '../../types/jc';
 
 /**
@@ -218,15 +216,20 @@ function render({ host, handle, signal }: PageContext): void {
     startPolling(handle);
 }
 
-registerPage({
+export const downloadsPageDescriptor: PageDescriptor & { id: 'downloads' } = {
     id: 'downloads',
     route: '/downloads',
     titleKey: 'requests_requests',
     titleFallback: 'Requests',
     icon: 'download',
     isEnabled: () => !!JC.pluginConfig?.DownloadsPageEnabled,
-    render
-});
+    render,
+    onHide: () => {
+        document.getElementById('jc-downloads-styles')?.remove();
+        document.getElementById('jc-downloads-theme-colors')?.remove();
+        resetRequestsIdentityState();
+    },
+};
 
 /** The frozen JC.downloadsPage compatibility contract (e2e + integrations). */
 export interface DownloadsPageApi {
@@ -247,8 +250,7 @@ export interface DownloadsPageApi {
 // The frozen public surface remains for e2e/integrations. Page markup uses the
 // adoption-owned delegated handlers above, so detached A controls cannot resolve
 // this live facade and act on B.
-JC.downloadsPage = {
-    showPage: () => { openPage('downloads'); },
+export const downloadsPageFacade: Omit<DownloadsPageApi, 'showPage'> = {
     refresh: loadAllData,
     filterDownloads,
     searchDownloads,

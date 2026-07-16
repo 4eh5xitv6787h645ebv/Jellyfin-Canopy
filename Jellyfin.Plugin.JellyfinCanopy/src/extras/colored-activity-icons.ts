@@ -2,6 +2,7 @@
 // Replaces activity icons with Material Design icons and adds colors
 
 import { JC as JEBase } from '../globals';
+import { createStableMethodFacade } from '../core/feature-loader';
 import type { IdentityContext, LifecycleApi, LifecycleHandle, NavigationApi } from '../types/jc';
 
 /**
@@ -530,12 +531,36 @@ function initialize(): void {
     }));
 }
 
-JC.initializeActivityIcons = initialize;
-JC.stopActivityIconsMonitoring = stopMonitoring;
-
-JC.identity.registerReset('colored-activity-icons', () => {
+function resetActivityIcons(): void {
     generation++;
     isProcessing = false;
     stopMonitoring();
     restoreOwnedUi();
+    document.getElementById('activity-icons-hide-svg')?.remove();
+}
+
+const activityIconsApi = { initialize, stopMonitoring };
+const stableActivityIcons = createStableMethodFacade<typeof activityIconsApi>({
+    initialize() {},
+    stopMonitoring() {},
 });
+
+/** Publish stable compatibility methods for one lazy-feature activation. */
+export function installActivityIcons(): () => void {
+    const uninstall = stableActivityIcons.install(activityIconsApi);
+    JC.initializeActivityIcons = stableActivityIcons.facade.initialize;
+    JC.stopActivityIconsMonitoring = stableActivityIcons.facade.stopMonitoring;
+    const unregisterReset = JC.identity.registerReset('colored-activity-icons', resetActivityIcons);
+    let disposed = false;
+    return () => {
+        if (disposed) return;
+        disposed = true;
+        resetActivityIcons();
+        unregisterReset();
+        uninstall();
+    };
+}
+
+export function initializeActivityIcons(): void {
+    activityIconsApi.initialize();
+}

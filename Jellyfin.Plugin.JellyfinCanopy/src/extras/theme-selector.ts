@@ -4,8 +4,9 @@
 import { JC as JEBase } from '../globals';
 import { themeCssUrl } from '../core/asset-urls';
 import { onBodyMutation } from '../core/dom-observer';
+import { createStableMethodFacade } from '../core/feature-loader';
 import { escapeHtml } from '../core/ui-kit';
-import type { IdentityContext } from '../types/jc';
+import type { IdentityChange, IdentityContext } from '../types/jc';
 
 /**
  * Local view of the shared namespace adding the public member this module
@@ -493,10 +494,11 @@ function cleanup(): void {
     notificationTimer = null;
     reloadTimer = null;
     document.getElementById(SELECTOR_ID)?.remove();
+    document.getElementById(CSS_STYLE_ID)?.remove();
     document.body.classList.remove('theme-applying', 'theme-applied');
 }
 
-function reset(): void {
+export function resetThemeSelector(): void {
     generation += 1;
     cleanup();
 }
@@ -508,7 +510,7 @@ const MAX_INIT_ATTEMPTS = 100;
 const initialize = (attempt = 0): void => {
     // Browser-only module — never reschedule in a non-DOM (SSR/test) context.
     if (typeof window === 'undefined') return;
-    if (attempt === 0) reset();
+    if (attempt === 0) resetThemeSelector();
     const context = JC.identity.capture();
     if (!context || !isFeatureEnabled()) return;
     const expectedGeneration = generation;
@@ -555,8 +557,8 @@ const initialize = (attempt = 0): void => {
     callback();
 };
 
-JC.identity.registerReset('theme-selector', (change) => {
-    reset();
+/** Reconcile the Jellyfish compatibility mirror during an identity handoff. */
+export function reconcileThemeSelectorIdentity(change: IdentityChange): void {
     if (change.previous) {
         JC.storage.local.remove('theme-selector', getCompatibilityKey(change.previous, 'customCss'), 'compatibility-theme');
         JC.storage.session.remove('theme-selector', getNotificationKey(change.previous), 'pending-notification');
@@ -568,5 +570,27 @@ JC.identity.registerReset('theme-selector', (change) => {
         else JC.storage.local.remove('theme-selector', compatibilityKey, 'compatibility-theme');
     }
     JC.storage.session.remove('theme-selector', LEGACY_NOTIFICATION_KEY, 'legacy-notification');
+}
+
+const themeSelectorApi = { initialize };
+const stableThemeSelector = createStableMethodFacade<typeof themeSelectorApi>({
+    initialize() {},
 });
-JC.initializeThemeSelector = initialize;
+
+/** Publish the stable compatibility method for one lazy-feature activation. */
+export function installThemeSelector(): () => void {
+    const uninstall = stableThemeSelector.install(themeSelectorApi);
+    JC.initializeThemeSelector = stableThemeSelector.facade.initialize;
+    let disposed = false;
+    return () => {
+        if (disposed) return;
+        disposed = true;
+        resetThemeSelector();
+        uninstall();
+    };
+}
+
+/** Start the installed implementation without resolving through the global facade. */
+export function initializeThemeSelector(): void {
+    themeSelectorApi.initialize();
+}

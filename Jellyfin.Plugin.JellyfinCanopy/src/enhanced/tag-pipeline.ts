@@ -14,6 +14,7 @@ import type { IdentityContext, TagPipelineLike } from '../types/jc';
 import { addCSS, clearItemCache, getItemCached } from './helpers';
 import { onBodyMutation } from '../core/dom-observer';
 import { onNavigate } from '../core/navigation';
+import { createStableMethodFacade } from '../core/feature-loader';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -397,7 +398,7 @@ const forceFreshProjectionIds = new Set<string>();
 let batchForceAllProjectionIds = false;
 const batchFreshProjectionIds = new Set<string>();
 let projectionRequestGeneration = 0;
-let projectionResetPending = JC.pluginConfig?.TagCacheServerMode === true;
+let projectionResetPending = false;
 // PERF(R9): per-element failure counter — a card whose data fetch failed is
 // un-marked from processedCards (so later mutation/nav passes retry it) up to
 // this cap, then stays marked so an unreachable server isn't hammered forever.
@@ -412,6 +413,8 @@ let batchGeneration = 0; // Incremented on navigation to cancel stale in-flight 
 let requestQueue: QueueEntry[] = []; // { el, itemId, itemType }
 let firstFetchAfterNav = true; // PERF(R7): shortens the debounce for the first batch of a navigation
 let processWired = false;
+let bodySubscription: ReturnType<typeof onBodyMutation> | null = null;
+let navigationUnsubscribe: (() => void) | null = null;
 let activeIdentityEpoch: number | null = null;
 let identityActivationGeneration = 0;
 
@@ -496,6 +499,14 @@ function registerRenderer(name: string, config: RendererConfig): void {
         processedCards = new WeakSet();
         scheduleScan();
     }
+}
+
+function unregisterRenderer(name: string): void {
+    const renderer = renderers.get(name);
+    if (!renderer) return;
+    renderers.delete(name);
+    try { renderer.cleanup?.(); } catch { /* continue teardown */ }
+    processedCards = new WeakSet();
 }
 
 // ── Shared Data Fetching ───────────────────────────────────────────
@@ -1207,6 +1218,22 @@ function resetTagPipelineIdentity(): void {
     document.body.classList.remove('jc-tags-hide-on-hover');
 }
 
+/** Tear down every activation-owned listener, renderer, style and cache. */
+export function disposeTagPipeline(): void {
+    resetTagPipelineIdentity();
+    bodySubscription?.unsubscribe();
+    bodySubscription = null;
+    navigationUnsubscribe?.();
+    navigationUnsubscribe = null;
+    processWired = false;
+    for (const renderer of renderers.values()) {
+        try { renderer.cleanup?.(); } catch { /* continue teardown */ }
+    }
+    renderers.clear();
+    JC.core.ui?.removeCss('jc-tag-pipeline-perf');
+    JC.core.ui?.removeCss('jc-tag-hover-fade');
+}
+
 /**
  * Process a single card: skip checks, render-target resolution, cache render
  * (server cache first, then localStorage/hot cache), queueing misses for the
@@ -1785,7 +1812,7 @@ async function initialize(
         // Register as body mutation subscriber at priority 0 (after hidden-content and prefetch).
         // Only trigger scans when nodes were actually added to the DOM — ignore attribute
         // changes, text changes, and hover/focus effects which cause jank if we scan on each.
-        onBodyMutation('tag-pipeline', (mutations) => {
+        bodySubscription = onBodyMutation('tag-pipeline', (mutations) => {
             for (let i = 0; i < mutations.length; i++) {
                 if (mutations[i].addedNodes.length > 0) {
                     // PERF(R1): cache-resident tags render synchronously in this same
@@ -1801,7 +1828,7 @@ async function initialize(
 
         // Also trigger on navigation. This callback is process-lifetime; every
         // branch reads the current identity/config at call time.
-        onNavigate(() => {
+        navigationUnsubscribe = onNavigate(() => {
         // Invalidate any in-flight batch processing (don't reset isProcessing
         // directly — let stale batches finish naturally and discard results)
         batchGeneration++;
@@ -1945,6 +1972,7 @@ async function invalidateServerCache(): Promise<void> {
 
 const tagPipelineApi = {
     registerRenderer,
+    unregisterRenderer,
     initialize,
     getFirstEpisode,
     getParentSeries,
@@ -1963,11 +1991,32 @@ const tagPipelineApi = {
     refreshServerProjection,
 };
 
-JC.identity.registerReset('tag-pipeline', resetTagPipelineIdentity);
-JC.identity.registerActivate('tag-pipeline', (context) => initialize(context));
+const stableTagPipeline = createStableMethodFacade<typeof tagPipelineApi>({
+    registerRenderer() {},
+    unregisterRenderer() {},
+    initialize: () => Promise.resolve(),
+    getFirstEpisode: () => Promise.resolve(null),
+    getParentSeries: () => Promise.resolve(null),
+    getRenderer: () => undefined,
+    clearProcessed() {},
+    scheduleScan() {},
+    invalidateServerCache: () => Promise.resolve(),
+    refreshServerProjection: () => Promise.resolve(),
+});
 
-// JEGlobal types tagPipeline as the narrow TagPipelineLike consumer view; the
-// real surface (this object) is a superset with null-able optional callbacks.
-JC.tagPipeline = tagPipelineApi as unknown as TagPipelineLike;
+/** Reset the pipeline for the identity handler installed by the feature entry. */
+export { resetTagPipelineIdentity };
 
-console.log(`${logPrefix} Module loaded`);
+/** Install the frozen JC.tagPipeline facade for one feature activation. */
+export function installTagPipeline(): () => void {
+    const uninstall = stableTagPipeline.install(tagPipelineApi);
+    // JEGlobal exposes a deliberately narrow consumer view of the full facade.
+    JC.tagPipeline = stableTagPipeline.facade as unknown as TagPipelineLike;
+    let active = true;
+    return () => {
+        if (!active) return;
+        active = false;
+        disposeTagPipeline();
+        uninstall();
+    };
+}

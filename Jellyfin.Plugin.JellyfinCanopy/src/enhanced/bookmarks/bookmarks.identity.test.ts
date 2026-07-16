@@ -39,6 +39,7 @@ describe('bookmark player identity ownership', () => {
   let save: ReturnType<typeof vi.fn>;
   let ajax: ReturnType<typeof vi.fn>;
   let video: HTMLVideoElement;
+  let disposeBookmarks: (() => void) | undefined;
 
   async function loadModule(initialBookmarks: AnyRecord = { existing: bookmark() }): Promise<AnyRecord> {
     vi.resetModules();
@@ -94,7 +95,8 @@ describe('bookmark player identity ownership', () => {
     Object.defineProperty(video, 'duration', { configurable: true, value: 100 });
     video.currentTime = 5;
 
-    await import('./bookmarks');
+    const bookmarks = await import('./bookmarks');
+    disposeBookmarks = bookmarks.installBookmarks();
     return JC.bookmarks;
   }
 
@@ -106,10 +108,14 @@ describe('bookmark player identity ownership', () => {
   }
 
   beforeEach(() => {
+    disposeBookmarks?.();
+    disposeBookmarks = undefined;
     vi.restoreAllMocks();
   });
 
   afterEach(() => {
+    disposeBookmarks?.();
+    disposeBookmarks = undefined;
     vi.useRealTimers();
     document.body.innerHTML = '';
   });

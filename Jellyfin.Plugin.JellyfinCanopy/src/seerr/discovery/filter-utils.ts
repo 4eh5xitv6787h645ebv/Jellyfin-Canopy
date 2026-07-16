@@ -3,6 +3,7 @@
 import { JC } from '../../globals';
 import { getVisibleDetailsPage } from '../../core/details-view';
 import { waitForSharedResult } from '../../core/shared-result';
+import { seerrStatus } from '../seerr-status';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload shapes; typed incrementally */
 
@@ -54,10 +55,10 @@ const FILTER_MODES = {
 const runtimeFilterModes = new Map<string, string>();
 const runtimeSortModes = new Map<string, string>();
 
-JC.identity.registerReset('seerr-discovery-filter', () => {
+function resetDiscoveryFilterState(): void {
     runtimeFilterModes.clear();
     runtimeSortModes.clear();
-});
+}
 
 const SORT_OPTIONS = [
     { value: '', label: 'Popular' },
@@ -439,7 +440,7 @@ function createCardsFragment(results: any[], options: any = {}): DocumentFragmen
             continue;
         }
 
-        if (excludeBlocklistedItems && item.mediaInfo?.status === JC.seerrStatus!.MEDIA.BLOCKED) {
+        if (excludeBlocklistedItems && item.mediaInfo?.status === seerrStatus.MEDIA.BLOCKED) {
             continue;
         }
         const card = JC.seerrUI?.createSeerrCard?.(item, true, true);
@@ -630,8 +631,8 @@ function applyFilterVisibility(container: HTMLElement | null, mode: string): voi
 /**
  * Injects CSS rules for fast filter visibility (once per page)
  */
-function injectFilterStyles() {
-    if (document.getElementById('seerr-filter-styles')) return;
+function injectFilterStyles(): HTMLStyleElement | null {
+    if (document.getElementById('seerr-filter-styles')) return null;
 
     const style = document.createElement('style');
     style.id = 'seerr-filter-styles';
@@ -640,13 +641,11 @@ function injectFilterStyles() {
         .filter-tv [data-media-type="movie"] { display: none !important; }
     `;
     document.head.appendChild(style);
+    return style;
 }
 
-// Inject styles on load
-injectFilterStyles();
-
-// Export utilities
-JC.discoveryFilter = {
+// Stable facade populated at module evaluation, published by activation.
+export const discoveryFilter: DiscoveryFilterApi = {
     MODES: FILTER_MODES,
     SORT_OPTIONS,
     getFilterMode,
@@ -671,3 +670,20 @@ JC.discoveryFilter = {
     cleanupScrollObserver,
     applyFilterVisibility
 };
+
+export function installDiscoveryFilter(): () => void {
+    JC.discoveryFilter = discoveryFilter;
+    const ownedStyle = injectFilterStyles();
+    const uninstallIdentityReset = JC.identity.registerReset(
+        'seerr-discovery-filter',
+        resetDiscoveryFilterState,
+    );
+    let installed = true;
+    return () => {
+        if (!installed) return;
+        installed = false;
+        uninstallIdentityReset();
+        resetDiscoveryFilterState();
+        ownedStyle?.remove();
+    };
+}

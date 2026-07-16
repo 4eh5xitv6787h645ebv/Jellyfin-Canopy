@@ -129,7 +129,8 @@ describe('active-streams identity-owned controls', () => {
         vi.resetModules();
         document.body.innerHTML = '';
         switchIdentity('server-a', 'user-a', 'identity-test-a');
-        await import('./active-streams');
+        const { installActiveStreams } = await import('./active-streams');
+        installActiveStreams();
     });
 
     afterEach(() => {

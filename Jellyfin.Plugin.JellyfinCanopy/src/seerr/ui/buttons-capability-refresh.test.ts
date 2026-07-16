@@ -13,14 +13,17 @@ describe('rendered Seerr 4K controls across config generations', () => {
             SeerrEnable4KRequests: true,
             SeerrEnable4KTvRequests: true,
         };
-        await import('../seerr-status');
-        const { internal } = await import('./internal');
+        const { installSeerrStatus } = await import('../seerr-status');
+        installSeerrStatus();
+        const { installSeerrUiFacade, internal } = await import('./internal');
+        installSeerrUiFacade();
         internal.icons = new Proxy({}, { get: () => '' });
         internal.analyzeSeasonStatuses = vi.fn(() => null);
         internal.addDownloadProgressHover = vi.fn();
         internal.hide4KPopup = vi.fn();
         internal.show4KPopup = vi.fn();
-        await import('./buttons');
+        const { installSeerrButtons } = await import('./buttons');
+        installSeerrButtons();
     });
 
     beforeEach(() => {

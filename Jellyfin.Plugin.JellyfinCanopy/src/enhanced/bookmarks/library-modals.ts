@@ -39,11 +39,11 @@ function closeModal(modal: HTMLElement): void {
   modalTimers.add(timer);
 }
 
-JC.identity.registerReset('bookmarks-library-modals', () => {
+export function resetBookmarksLibraryModals(): void {
   for (const timer of modalTimers) window.clearTimeout(timer);
   modalTimers.clear();
   document.querySelectorAll('[data-jc-bookmark-library-modal="true"]').forEach((modal) => modal.remove());
-});
+}
 
 /**
  * Show modal to adjust time offset for synced bookmarks

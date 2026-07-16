@@ -319,7 +319,7 @@
     /**
      * Create the document-lifetime identity owner. The controller is deliberately
      * defined in this classic loader (rather than only in the later bundle):
-     * Jellyfin 12 can replace authentication before jc.bundle.js has finished
+     * Jellyfin 12 can replace authentication before the boot module has finished
      * loading, and invalidation must still happen synchronously in that window.
      *
      * @param {(change: {previous: object|null, current: object|null, epoch: number, reason: string}) => void} [finalizeTransition]
@@ -1183,38 +1183,109 @@
     }
 
 
+    /** Reject traversal, query fragments and ambiguous distribution paths. */
+    function isSafeClientDistPath(value) {
+        if (typeof value !== 'string' || !value || value.startsWith('/')
+            || value.includes('\\') || value.includes('?') || value.includes('#')) return false;
+        return value.split('/').every((segment) => segment && segment !== '.' && segment !== '..');
+    }
+
     /**
-     * Loads the client bundle (src/main.ts + all remaining component scripts,
-     * concatenated in load order) as a single script. The bundle is generated
-     * at build time by scripts/build-bundle.js and embedded in the DLL, so it
-     * is present in every build; it is the ONLY way component code is loaded
-     * (dev mode included — DevMode serves it with no-store + a fresh
-     * cache-buster, and with a sourcemap for real-file stack traces).
-     * @returns {Promise<boolean>} true when the bundle loaded, false on failure.
+     * Validate the manifest fields used by the pre-module trust boundary. The
+     * server independently validates the complete embedded inventory; this
+     * check prevents a malformed response from becoming an executable URL.
      */
-    let bundleLoadPromise = null;
-    function loadBundle(client = ApiClient) {
-        if (bundleLoadPromise) return bundleLoadPromise;
-        bundleLoadPromise = new Promise((resolve) => {
-            const script = document.createElement('script');
-            script.async = false;
-            script.src = client.getUrl(`/JellyfinCanopy/dist/jc.bundle.js?v=${getScriptVersion()}`);
-            script.onload = () => resolve(true);
-            script.onerror = (e) => {
-                console.error(
-                    '🪼 Jellyfin Canopy: FATAL — the client bundle (/JellyfinCanopy/dist/jc.bundle.js) ' +
-                    'failed to load. The plugin cannot start without it; no per-file fallback exists. ' +
-                    'This usually means the plugin DLL was built without the bundle step (dotnet build ' +
-                    'runs scripts/build-bundle.js automatically) or the server failed to serve the resource.',
-                    e
-                );
-                script.remove();
-                bundleLoadPromise = null;
-                resolve(false);
-            };
-            document.head.appendChild(script);
-        });
-        return bundleLoadPromise;
+    function validateClientManifest(value) {
+        if (!value || typeof value !== 'object' || value.schemaVersion !== 2
+            || !/^[a-f0-9]{64}$/.test(String(value.buildId || ''))
+            || !value.entries || typeof value.entries !== 'object'
+            || Array.isArray(value.entries)
+            || !value.files || typeof value.files !== 'object'
+            || Array.isArray(value.files)) {
+            throw new Error('Invalid Jellyfin Canopy client manifest');
+        }
+        const boot = value.entries.boot;
+        if (!boot || boot.kind !== 'module' || boot.role !== 'boot'
+            || !isSafeClientDistPath(boot.path)) {
+            throw new Error('Jellyfin Canopy manifest has no valid boot module');
+        }
+        const bootFile = Object.prototype.hasOwnProperty.call(value.files, boot.path)
+            ? value.files[boot.path]
+            : null;
+        if (!bootFile || bootFile.kind !== 'module-entry'
+            || bootFile.contentType !== 'text/javascript; charset=utf-8'
+            || !/^[a-f0-9]{64}$/.test(String(bootFile.sha256 || ''))) {
+            throw new Error('Jellyfin Canopy boot module is missing from the manifest inventory');
+        }
+        return value;
+    }
+
+    /** Resolve one manifest-owned file through Jellyfin's reverse-proxy base. */
+    function clientGenerationUrl(client, manifest, path, attempt) {
+        if (!isSafeClientDistPath(path)
+            || !Object.prototype.hasOwnProperty.call(manifest?.files || {}, path)) {
+            throw new Error(`Unknown Jellyfin Canopy distribution file: ${String(path)}`);
+        }
+        const retry = Math.min(2, Math.max(0, Number.isSafeInteger(attempt) ? attempt : 0));
+        return client.getUrl(`/JellyfinCanopy/dist/${manifest.buildId}/attempts/${retry}/${path}`);
+    }
+
+    /** Native ESM import kept behind one named seam for the loader harness. */
+    function importClientModule(url) {
+        return import(url);
+    }
+
+    /**
+     * Fetch and import the manifest-owned boot module. A successful module is
+     * document-scoped; a rejected flight is evicted so the next identity init
+     * can retry. The compatibility monolith is deliberately not a fallback.
+     */
+    let clientRuntimeLoadPromise = null;
+    function loadClientRuntime(client = ApiClient, scope = null) {
+        if (!clientRuntimeLoadPromise) {
+            const flight = (async () => {
+                const request = client.ajax({
+                    type: 'GET',
+                    url: client.getUrl('/JellyfinCanopy/dist/client-manifest.json'),
+                    dataType: 'json',
+                    signal: scope?.signal
+                });
+                const manifest = validateClientManifest(await request);
+                let lastError = null;
+                for (let attempt = 0; attempt <= 2; attempt++) {
+                    try {
+                        const bootModule = await importClientModule(
+                            clientGenerationUrl(client, manifest, manifest.entries.boot.path, attempt)
+                        );
+                        if (typeof bootModule?.initializeClientRuntime !== 'function') {
+                            throw new Error('Jellyfin Canopy boot module has no runtime initializer');
+                        }
+                        return bootModule.initializeClientRuntime({
+                            manifest,
+                            generationUrl: (path, retry) => clientGenerationUrl(client, manifest, path, retry),
+                            onError: (featureId, phase, error) => {
+                                console.error(
+                                    `🪼 Jellyfin Canopy: feature "${String(featureId)}" ${String(phase)} failed`,
+                                    error
+                                );
+                            }
+                        });
+                    } catch (error) {
+                        lastError = error;
+                        console.warn(
+                            `🪼 Jellyfin Canopy: boot module attempt ${attempt} failed`,
+                            error
+                        );
+                    }
+                }
+                throw lastError || new Error('Jellyfin Canopy boot module failed to load');
+            })();
+            clientRuntimeLoadPromise = flight;
+            void flight.catch(() => {
+                if (clientRuntimeLoadPromise === flight) clientRuntimeLoadPromise = null;
+            });
+        }
+        return scope ? scope.race(clientRuntimeLoadPromise) : clientRuntimeLoadPromise;
     }
 
      /**
@@ -1751,71 +1822,6 @@
         console.error(`🪼 Jellyfin Canopy: feature "${name}" initialized in degraded mode`, error);
     }
 
-    /** Contain one feature owner without downgrading identity/auth/config failures. */
-    function activateFeature(context, name, enabled, initializer) {
-        if (!enabled || typeof initializer !== 'function') return;
-        requireCurrentIdentity(context);
-        try {
-            // Preserve the historical root-namespace receiver for feature
-            // methods that consult `this`; nested owners use explicit wrappers.
-            const produced = initializer.call(JC);
-            if (produced && typeof produced.then === 'function') {
-                Promise.resolve(produced).catch((error) => {
-                    recordFeatureFailure(context, name, error);
-                });
-            }
-        } catch (error) {
-            if (error?.name === 'IdentityChangedError' || !identity.isCurrent(context)) throw error;
-            recordFeatureFailure(context, name, error);
-        }
-        requireCurrentIdentity(context);
-    }
-
-    /** Stage-6 activation. Old-epoch teardown always ran before these gates. */
-    function activateFeatures(context) {
-        activateFeature(context, 'canopy', typeof JC.initializeCanopyScript === 'function', JC.initializeCanopyScript);
-        activateFeature(context, 'elsewhere', JC.pluginConfig?.ElsewhereEnabled, JC.initializeElsewhereScript);
-        activateFeature(context, 'seerr', JC.pluginConfig?.SeerrEnabled && JC.pluginConfig?.SeerrShowSearchResults !== false, JC.initializeSeerrScript);
-        activateFeature(
-            context,
-            'seerr-issue-reporter',
-            JC.pluginConfig?.SeerrEnabled && JC.pluginConfig?.SeerrShowReportButton
-                && typeof JC.seerrIssueReporter?.initialize === 'function',
-            () => JC.seerrIssueReporter.initialize()
-        );
-        activateFeature(context, 'pause-screen', typeof JC.initializePauseScreen === 'function', JC.initializePauseScreen);
-        activateFeature(context, 'bookmarks', typeof JC.initializeBookmarks === 'function', JC.initializeBookmarks);
-        activateFeature(context, 'quality-tags', JC.currentSettings?.qualityTagsEnabled, JC.initializeQualityTags);
-        activateFeature(context, 'genre-tags', JC.currentSettings?.genreTagsEnabled, JC.initializeGenreTags);
-        activateFeature(context, 'rating-tags', JC.currentSettings?.ratingTagsEnabled, JC.initializeRatingTags);
-        activateFeature(context, 'user-review-tags', JC.pluginConfig?.ShowUserReviews && JC.pluginConfig?.ShowUserRatingOnPosters && JC.currentSettings?.ratingTagsEnabled, JC.initializeUserReviewTags);
-        activateFeature(context, 'arr-links', JC.pluginConfig?.ArrLinksEnabled, JC.initializeArrLinksScript);
-        activateFeature(context, 'arr-tag-links', JC.pluginConfig?.ArrTagsShowAsLinks, JC.initializeArrTagLinksScript);
-        activateFeature(context, 'letterboxd-links', JC.pluginConfig?.LetterboxdEnabled, JC.initializeLetterboxdLinksScript);
-        activateFeature(context, 'reviews', JC.pluginConfig?.ShowReviews || JC.pluginConfig?.ShowUserReviews, JC.initializeReviewsScript);
-        activateFeature(context, 'language-tags', JC.currentSettings?.languageTagsEnabled, JC.initializeLanguageTags);
-        activateFeature(context, 'people-tags', JC.currentSettings?.peopleTagsEnabled, JC.initializePeopleTags);
-        activateFeature(
-            context,
-            'tag-pipeline',
-            typeof JC.tagPipeline?.initialize === 'function',
-            () => JC.tagPipeline.initialize()
-        );
-        activateFeature(context, 'osd-rating', typeof JC.initializeOsdRating === 'function', JC.initializeOsdRating);
-        activateFeature(context, 'hidden-content', JC.pluginConfig?.HiddenContentEnabled, JC.initializeHiddenContent);
-        activateFeature(context, 'colored-ratings', JC.pluginConfig?.ColoredRatingsEnabled, JC.initializeColoredRatings);
-        activateFeature(context, 'theme-selector', JC.pluginConfig?.ThemeSelectorEnabled, JC.initializeThemeSelector);
-        activateFeature(context, 'activity-icons', JC.pluginConfig?.ColoredActivityIconsEnabled, JC.initializeActivityIcons);
-        activateFeature(context, 'plugin-icons', JC.pluginConfig?.PluginIconsEnabled, JC.initializePluginIcons);
-        activateFeature(
-            context,
-            'active-streams',
-            JC.pluginConfig?.ActiveStreamsEnabled && typeof JC.activeStreams?.initialize === 'function',
-            () => JC.activeStreams.initialize()
-        );
-        activateFeature(context, 'pages-framework', typeof JC.initializePagesFramework === 'function', JC.initializePagesFramework);
-    }
-
     async function runInitialization(context, client, scope) {
         try {
             requireCurrentIdentity(context);
@@ -1895,17 +1901,13 @@
             preloadIconFonts();
             JC.initializeSplashScreen?.();
 
-            // The process bundle executes once per document. B reuses its module
-            // graph and only re-runs the owner activation phase below.
-            const bundleLoaded = await scope.race(loadBundle(client));
+            // The boot graph executes once per document. Later identities reuse
+            // its stable runtime while publishing a fresh config generation.
+            const clientRuntime = await scope.race(loadClientRuntime(client, scope));
             requireCurrentIdentity(context);
-            if (!bundleLoaded) {
-                JC.hideSplashScreen?.();
-                return;
-            }
 
             if (typeof JC.loadSettings !== 'function' || typeof JC.initializeShortcuts !== 'function') {
-                throw new Error('config.js functions not defined after bundle loading');
+                throw new Error('config functions not defined after client boot');
             }
             JC.currentSettings = identity.own(JC.loadSettings(), context);
             JC.initializeShortcuts();
@@ -1930,13 +1932,15 @@
             if (typeof JC.themer?.init === 'function') JC.themer.init();
             installCacheUnloadOnce();
 
-            // Bundle participants that self-wire (live socket, identity caches)
-            // activate once per epoch before the legacy Stage-6 feature calls.
+            // Boot participants that self-wire (live socket, identity caches)
+            // activate once per epoch before loader-owned feature descriptors.
             await identity.activate(context);
             requireCurrentIdentity(context);
-            activateFeatures(context);
+            if (!clientRuntime || typeof clientRuntime.configurationPublished !== 'function') {
+                throw new Error('client runtime handle is invalid after boot');
+            }
+            await clientRuntime.configurationPublished(context);
             requireCurrentIdentity(context);
-
             initializedEpoch = context.epoch;
             JC.initialized = true;
             document.dispatchEvent(new CustomEvent('jc:identityactivated', { detail: context }));

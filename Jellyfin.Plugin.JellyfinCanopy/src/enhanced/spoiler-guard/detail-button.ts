@@ -287,7 +287,7 @@ function performToggle(
     });
 }
 
-JC.identity.registerReset('spoiler-detail-controls', () => {
+export function resetSpoilerDetailControls(): void {
     cancelFullReload();
     document.querySelectorAll('.jc-spoiler-blur-btn').forEach((node) => node.remove());
-});
+}

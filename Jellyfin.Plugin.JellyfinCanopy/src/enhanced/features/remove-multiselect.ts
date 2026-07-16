@@ -6,8 +6,15 @@
 // identical; the eager JC.internals.features destructure is now real imports.)
 
 import { JC } from '../../globals';
+import { createStableMethodFacade } from '../../core/feature-loader';
 import { installModalA11y, type ModalA11yHandle } from '../../core/modal-a11y';
-import { showNotification, REMOVE_SURFACES, removeFromHomeSurface, hideEmptyHomeSections } from './remove-home';
+import {
+    detectCardSurface,
+    showNotification,
+    REMOVE_SURFACES,
+    removeFromHomeSurface,
+    hideEmptyHomeSections,
+} from './remove-home';
 import {
     buildNativeActionSheetItem, setActionSheetItemIcon, fitActionSheetItem,
     closeOpenActionSheet, getActiveActionSheetScroller,
@@ -37,7 +44,7 @@ function collectSelectedRemovableCards(): RemovableCardTarget[] {
         const card = chk.closest<HTMLElement>('.card[data-id]') || chk.closest<HTMLElement>('[data-id]');
         const itemId = card && card.getAttribute('data-id');
         if (!itemId || seen.has(itemId)) return;
-        const surface = JC.detectCardSurface!(card);
+        const surface = detectCardSurface(card);
         if (surface === 'continuewatching' || surface === 'nextup') {
             seen.add(itemId);
             const name = (card.querySelector('.cardText-first, .cardText')?.textContent || '').trim();
@@ -234,7 +241,7 @@ function createMultiSelectRemoveButton(context: IdentityContext, scroller: HTMLE
  * Adds the Remove option to the multi-select / long-press menu when it is open and at
  * least one selected card is in Continue Watching or Next Up. Idempotent per menu.
  */
-JC.addMultiSelectRemoveButton = (): void => {
+export function addMultiSelectRemoveButton(): void {
     const context = JC.identity.capture();
     if (!context) return;
     if (!JC.currentSettings!.removeContinueWatchingEnabled) return;
@@ -258,11 +265,29 @@ JC.addMultiSelectRemoveButton = (): void => {
         scroller.appendChild(removeButton);
     }
     fitActionSheetItem(removeButton, scroller);
-};
+}
 
-JC.identity.registerReset('remove-multiselect', () => {
+export function resetRemoveMultiSelect(): void {
     activeConfirmClose?.(false);
     activeConfirmClose = null;
     document.querySelectorAll('.jc-remove-confirm-overlay, [data-id="jc-multiselect-remove"]')
         .forEach((node) => node.remove());
-});
+}
+
+const removeMultiSelectApi = { add: addMultiSelectRemoveButton };
+const stableRemoveMultiSelect = createStableMethodFacade<typeof removeMultiSelectApi>({ add() {} });
+
+/** Publish the frozen compatibility method for one loader-owned activation. */
+export function installRemoveMultiSelect(): () => void {
+    const uninstall = stableRemoveMultiSelect.install(removeMultiSelectApi);
+    JC.addMultiSelectRemoveButton = stableRemoveMultiSelect.facade.add;
+    const unregisterReset = JC.identity.registerReset('remove-multiselect', resetRemoveMultiSelect);
+    let disposed = false;
+    return () => {
+        if (disposed) return;
+        disposed = true;
+        resetRemoveMultiSelect();
+        unregisterReset();
+        uninstall();
+    };
+}

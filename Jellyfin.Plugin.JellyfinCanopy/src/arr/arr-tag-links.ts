@@ -5,12 +5,13 @@
 
 import { isDetailsPageVisible } from '../core/details-view';
 import { onBodyMutation } from '../core/dom-observer';
+import { createStableMethodFacade } from '../core/feature-loader';
 import { register as registerLifecycle } from '../core/lifecycle';
 import { onNavigate, onViewPage } from '../core/navigation';
 import { JC } from './arr-globals';
-import type { IdentityContext } from '../types/jc';
+import type { IdentityContext, LifecycleHandle } from '../types/jc';
 
-const arrTagLifecycle = registerLifecycle('arr-tag-links');
+let arrTagLifecycle: LifecycleHandle | null = null;
 let arrTagGeneration = 0;
 let arrTagTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -21,11 +22,12 @@ function removeArrTagLinks(): void {
     });
 }
 
-function resetArrTagLinks(): void {
+export function resetArrTagLinks(): void {
     arrTagGeneration++;
     if (arrTagTimer) clearTimeout(arrTagTimer);
     arrTagTimer = null;
-    arrTagLifecycle.teardown();
+    arrTagLifecycle?.teardown();
+    arrTagLifecycle = null;
     removeArrTagLinks();
 }
 
@@ -34,7 +36,7 @@ function isActive(context: IdentityContext, expectedGeneration: number): boolean
 }
 
 // eslint-disable-next-line @typescript-eslint/require-await -- frozen contract: initializer has always been async (plugin.js Stage 6 may rely on the Promise)
-JC.initializeArrTagLinksScript = async function () {
+async function initializeArrTagLinks(): Promise<void> {
     const logPrefix = '🪼 Jellyfin Canopy: Arr Tag Links:';
 
     resetArrTagLinks();
@@ -49,6 +51,7 @@ JC.initializeArrTagLinksScript = async function () {
     const context: IdentityContext = capturedIdentity;
     const expectedGeneration = arrTagGeneration;
     const client = ApiClient;
+    arrTagLifecycle = registerLifecycle('arr-tag-links');
 
     console.log(`${logPrefix} Initializing...`);
 
@@ -290,6 +293,25 @@ JC.initializeArrTagLinksScript = async function () {
     }, 500);
 
     console.log(`${logPrefix} Initialized successfully`);
-};
+}
 
-JC.identity.registerReset('arr-tag-links', resetArrTagLinks);
+const arrTagLinksApi = { initialize: initializeArrTagLinks };
+const stableArrTagLinks = createStableMethodFacade<typeof arrTagLinksApi>({
+    initialize: () => Promise.resolve(),
+});
+
+export function installArrTagLinks(): () => void {
+    const uninstall = stableArrTagLinks.install(arrTagLinksApi);
+    JC.initializeArrTagLinksScript = stableArrTagLinks.facade.initialize;
+    let disposed = false;
+    return () => {
+        if (disposed) return;
+        disposed = true;
+        resetArrTagLinks();
+        uninstall();
+    };
+}
+
+export function initializeArrTagLinksFeature(): Promise<void> {
+    return arrTagLinksApi.initialize();
+}

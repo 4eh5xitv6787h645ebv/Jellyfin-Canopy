@@ -5,8 +5,8 @@
 
 import { JC } from '../../globals';
 import { escapeHtml, toast } from '../../core/ui-kit';
-import { debounce } from '../helpers';
 import { createObserver, disconnectObserver } from '../../core/dom-observer';
+import { createStableMethodFacade } from '../../core/feature-loader';
 import type { BookmarkCleanupResult, BookmarksApi } from './surface';
 import type { IdentityContext } from '../../types/jc';
 import { normalizeBookmarkMediaType } from './media-types';
@@ -15,6 +15,30 @@ import {
   persistedBookmarkIdentity,
   type BookmarkIdentityRecord
 } from './bookmark-identity';
+
+interface CancelableDebounced<T extends (...args: any[]) => void> {
+  (...args: Parameters<T>): void;
+  cancel(): void;
+}
+
+function createBookmarkDebounce<T extends (...args: any[]) => void>(
+  callback: T,
+  wait: number,
+): CancelableDebounced<T> {
+  let timer: number | undefined;
+  const debounced = (...args: Parameters<T>): void => {
+    if (timer !== undefined) clearTimeout(timer);
+    timer = window.setTimeout(() => {
+      timer = undefined;
+      callback(...args);
+    }, wait);
+  };
+  debounced.cancel = (): void => {
+    if (timer !== undefined) clearTimeout(timer);
+    timer = undefined;
+  };
+  return debounced;
+}
 import {
   createItemDetailsCache,
   type ItemDetailsCacheOutcome
@@ -25,8 +49,6 @@ import {
 // Define the surface for the document lifetime. The enabled gate is evaluated
 // on every identity activation; an A-disabled/B-enabled SPA switch must still
 // be able to start the feature without re-executing the bundle.
-{
-
   const logPrefix = '🪼 Jellyfin Canopy: Bookmarks:';
   const ownedBookmarkMarkerSelector = '.jc-bookmark-marker[data-jc-identity-owned="true"]';
   let bookmarkGeneration = 0;
@@ -36,6 +58,7 @@ import {
   const activeModalDisposers = new Map<HTMLElement, () => void>();
   const bookmarkTimers = new Set<number>();
   let forceCleanupBookmarks: (() => void) | null = null;
+  let cleanupBookmarks = (): void => undefined;
 
   interface BookmarkIdentityCapture {
     readonly context: Readonly<IdentityContext> | null;
@@ -1610,7 +1633,7 @@ import {
   }
 
   // Public API
-  JC.bookmarks = {
+  const bookmarksApi = {
     add: addBookmark,
     update: updateBookmark,
     delete: deleteBookmark,
@@ -1671,13 +1694,13 @@ import {
   /**
    * Initialize bookmarks system
    */
-  JC.initializeBookmarks = (function() {
+  const initializeBookmarks = (function() {
     let initialized = false;
     let cleanupFunctions: (() => void)[] = [];
 
     return function() {
       if (!JC.pluginConfig?.BookmarksEnabled) {
-        JC.cleanupBookmarks?.();
+        cleanupBookmarks();
         return;
       }
       // Prevent multiple initializations
@@ -1705,7 +1728,7 @@ import {
       }
 
       // Debounced OSD injection - prevents rapid re-injection
-      const debouncedOsdInjection = debounce(() => {
+      const debouncedOsdInjection = createBookmarkDebounce(() => {
         if (!isActivationCurrent()) return;
         if (!(JC as any).isVideoPage()) return;
 
@@ -1741,14 +1764,14 @@ import {
       }
 
       // Debounced handlers for video events
-      const handlePlayingEvent = debounce((e: Event) => {
+      const handlePlayingEvent = createBookmarkDebounce((e: Event) => {
         if (!isActivationCurrent()) return;
         if ((e.target as HTMLElement).tagName === 'VIDEO' && (JC as any).isVideoPage()) {
           debouncedOsdInjection();
         }
       }, 300);
 
-      const handleMetadataEvent = debounce((e: Event) => {
+      const handleMetadataEvent = createBookmarkDebounce((e: Event) => {
         if (!isActivationCurrent()) return;
         if ((e.target as HTMLElement).tagName === 'VIDEO' && (JC as any).isVideoPage()) {
           debouncedOsdInjection();
@@ -1811,6 +1834,9 @@ import {
         disposed = true;
         cleanupFunctions.forEach(fn => fn());
         cleanupFunctions = [];
+        debouncedOsdInjection.cancel();
+        handlePlayingEvent.cancel();
+        handleMetadataEvent.cancel();
         disconnectObserver(osdObserverId);
         disconnectObserver(videoObserverId);
         for (const timer of bookmarkTimers) clearTimeout(timer);
@@ -1827,13 +1853,13 @@ import {
 
       // The public cleanup is identity-owned, so a retained A function cannot
       // tear down B. The reset hook retains the private force variant.
-      JC.cleanupBookmarks = (): void => cleanupActivation(false);
+      cleanupBookmarks = (): void => cleanupActivation(false);
 
       console.log(`${logPrefix} ✓ Initialized`);
     };
   })();
 
-  JC.identity.registerReset('bookmarks', () => {
+  function resetBookmarks(): void {
     bookmarkGeneration += 1;
     invalidateBookmarkMarkerOutput();
     for (const timer of bookmarkTimers) clearTimeout(timer);
@@ -1842,8 +1868,53 @@ import {
     itemDetailsCache.clear();
     forceCleanupBookmarks?.();
     forceCleanupBookmarks = null;
+    cleanupBookmarks = (): void => undefined;
     removeOwnedBookmarkButtons();
     document.querySelectorAll('.jc-bm-player-modal-overlay').forEach((node) => node.remove());
+  }
+
+  const stableBookmarks = createStableMethodFacade<BookmarksApi>({
+    add: () => Promise.resolve(null),
+    update: () => Promise.resolve(false),
+    delete: () => Promise.resolve(false),
+    findForItem: () => ({ bookmarks: [], hasIdMismatch: false, exactMatches: [], providerMatches: [] }),
+    showModal() {},
+    updateMarkers() {},
+    formatTimestamp: () => '',
+    syncBookmarks: () => Promise.resolve([]),
+    cleanupOrphaned: () => Promise.resolve({ deleted: 0, retainedUncertain: 0, errors: 0 }),
+    deleteAll: () => Promise.resolve(0),
   });
 
-}
+  const bookmarksControlApi = {
+    initialize: initializeBookmarks,
+    cleanup: (): void => { cleanupBookmarks(); },
+  };
+  const stableBookmarksControl = createStableMethodFacade<typeof bookmarksControlApi>({
+    initialize() {},
+    cleanup() {},
+  });
+
+  /** Publish stable bookmark CRUD and playback controls for one activation. */
+  export function installBookmarks(): () => void {
+    const uninstallBookmarks = stableBookmarks.install(bookmarksApi);
+    const uninstallControl = stableBookmarksControl.install(bookmarksControlApi);
+    JC.bookmarks = stableBookmarks.facade;
+    JC.initializeBookmarks = stableBookmarksControl.facade.initialize;
+    JC.cleanupBookmarks = stableBookmarksControl.facade.cleanup;
+    const unregisterReset = JC.identity.registerReset('bookmarks', resetBookmarks);
+    let disposed = false;
+    return () => {
+      if (disposed) return;
+      disposed = true;
+      resetBookmarks();
+      unregisterReset();
+      uninstallControl();
+      uninstallBookmarks();
+    };
+  }
+
+  /** Start bookmark playback ownership without resolving through the facade. */
+  export function initializeInstalledBookmarks(): void {
+    initializeBookmarks();
+  }

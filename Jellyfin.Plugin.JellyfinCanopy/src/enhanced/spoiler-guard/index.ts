@@ -1,20 +1,12 @@
 // src/enhanced/spoiler-guard/index.ts
 //
-// Spoiler Guard client feature — barrel + init/wiring.
-//
-// Assigns the JC.spoilerGuard public surface unconditionally (so consumers —
-// ratingtags, reviews, the Seerr modal — can feature-detect and call
-// whenLoaded()/isEnabledFor safely even when the admin switch is off; whenLoaded
-// short-circuits without a network call in that case). The network load, the
-// identity cookie, the CSS and the watched-state subscription are gated on the
-// admin master switch inside init(), which runs at import time (the v12 paved
-// road: modules self-wire rather than waiting to be called from js/plugin.js).
-// A LIVE.CONFIG_CHANGED handler re-runs init so an admin enabling the feature
-// takes effect without a reload.
+// Activation-owned Spoiler Guard implementation and stable public facade.
+// Importing this module is inert: the feature entry owns facade publication,
+// config/live subscriptions, identity fencing, CSS, timers and requests.
 
 import { JC } from '../../globals';
-import { on, LIVE } from '../../core/live';
-import { addSpoilerBlurButton } from './detail-button';
+import { createStableMethodFacade } from '../../core/feature-loader';
+import { addSpoilerBlurButton, resetSpoilerDetailControls } from './detail-button';
 import {
     loadState, resetState, whenLoaded, isLoadOk,
     isEnabledFor, isMovieEnabledFor, isCollectionEnabledFor,
@@ -25,39 +17,48 @@ import {
     isTmdbEnabled, enableForTmdb, disableForTmdb,
     getUserPrefs, setUserPrefs,
 } from './state';
-import { confirmDisableSpoiler } from './dialog';
-import { injectSpoilerGuardCss } from './styles';
-import { primeIdentityCookieEarly, setIdentityCookie } from './identity';
-import { installWatchedRefresh } from './watched-refresh';
-import type { IdentityContext } from '../../types/jc';
+import { confirmDisableSpoiler, resetSpoilerDisableConfirms } from './dialog';
+import { injectSpoilerGuardCss, removeSpoilerGuardCss } from './styles';
+import { primeIdentityCookieEarly, resetIdentityCookie, setIdentityCookie } from './identity';
+import { installWatchedRefresh, resetWatchedRefresh } from './watched-refresh';
+import { resetSpoilerSettingsControls } from './settings-tab';
+import { resetSpoilerSeerrControls } from './seerr-toggle';
+import type { IdentityContext, SpoilerGuardApi } from '../../types/jc';
 
-const logPrefix = '🪼 Jellyfin Canopy [SpoilerGuard]:';
-
-let inited = false;
 let activeEpoch: number | null = null;
+let watchedCleanup: (() => void) | null = null;
 
-/**
- * Boot the client feature. Gated on the admin master switch. Idempotent: safe
- * to re-run on LIVE.CONFIG_CHANGED (re-fetches state; the cookie / CSS / live
- * subscription install once).
- */
-function init(context: IdentityContext | null = JC.identity.capture()): void {
+async function initializeRuntime(
+    context: IdentityContext | null = JC.identity.capture(),
+): Promise<void> {
     if (JC.pluginConfig?.SpoilerBlurEnabled !== true) return;
     if (!context || !JC.identity.isCurrent(context)) return;
     setIdentityCookie(context);
     primeIdentityCookieEarly(context);
-    if (!inited) {
-        inited = true;
-        injectSpoilerGuardCss();
-    }
-    installWatchedRefresh();
-    if (activeEpoch === context.epoch) return;
+    injectSpoilerGuardCss();
+    watchedCleanup ??= installWatchedRefresh();
+    if (activeEpoch === context.epoch) return whenLoaded();
     activeEpoch = context.epoch;
-    void loadState();
+    await loadState();
 }
 
-JC.spoilerGuard = {
-    init,
+/** Tear down every resource or UI surface owned by one activation. */
+export function resetSpoilerGuardRuntime(): void {
+    activeEpoch = null;
+    watchedCleanup?.();
+    watchedCleanup = null;
+    resetWatchedRefresh();
+    resetSpoilerSettingsControls();
+    resetSpoilerSeerrControls();
+    resetSpoilerDetailControls();
+    resetSpoilerDisableConfirms();
+    resetIdentityCookie();
+    resetState();
+    removeSpoilerGuardCss();
+}
+
+const spoilerGuardApi: SpoilerGuardApi = {
+    init(): void { void initializeRuntime(); },
     addSpoilerBlurButton,
     isEnabledFor,
     isMovieEnabledFor,
@@ -80,27 +81,50 @@ JC.spoilerGuard = {
     setUserPrefs,
 };
 
-// Write the identity cookie as EARLY as possible — before the first wave of
-// card <img> requests — with a bounded retry until ApiClient reports a user.
-primeIdentityCookieEarly();
+const inactiveError = (): Promise<never> => Promise.reject(
+    new Error('Spoiler Guard is not active for the current identity'),
+);
 
-JC.identity.registerReset('spoiler-guard', () => {
-    activeEpoch = null;
-});
-JC.identity.registerActivate('spoiler-guard', (context) => {
-    init(context);
+const stableSpoilerGuard = createStableMethodFacade<SpoilerGuardApi>({
+    init() {},
+    addSpoilerBlurButton() {},
+    isEnabledFor: () => false,
+    isMovieEnabledFor: () => false,
+    isCollectionEnabledFor: () => false,
+    hasEnabledCollections: () => false,
+    fetchMovieScope: () => Promise.resolve(null),
+    enableForSeries: inactiveError,
+    disableForSeries: inactiveError,
+    enableForMovie: inactiveError,
+    disableForMovie: inactiveError,
+    enableForCollection: inactiveError,
+    disableForCollection: inactiveError,
+    isTmdbEnabled: () => false,
+    enableForTmdb: inactiveError,
+    disableForTmdb: inactiveError,
+    whenLoaded: () => Promise.resolve(),
+    isLoadOk: () => false,
+    confirmDisableSpoiler: () => Promise.resolve(false),
+    getUserPrefs: () => ({}),
+    setUserPrefs: inactiveError,
 });
 
-// Boot now, and re-boot when an admin saves config (re-init instead of reload).
-init();
-on(LIVE.CONFIG_CHANGED, () => {
-    try {
-        if (JC.pluginConfig?.SpoilerBlurEnabled === true) {
-            resetState();
-            activeEpoch = null;
-            init();
-        }
-    } catch (e) {
-        console.warn(`${logPrefix} re-init on config change failed:`, e);
-    }
-});
+/** Publish the stable facade for one loader-owned activation. */
+export function installSpoilerGuard(): () => void {
+    const uninstall = stableSpoilerGuard.install(spoilerGuardApi);
+    JC.spoilerGuard = stableSpoilerGuard.facade;
+    let disposed = false;
+    return () => {
+        if (disposed) return;
+        disposed = true;
+        resetSpoilerGuardRuntime();
+        uninstall();
+    };
+}
+
+/** Initialize one current feature-loader generation. */
+export function initializeSpoilerGuard(
+    context: IdentityContext | null = JC.identity.capture(),
+): Promise<void> {
+    return initializeRuntime(context);
+}

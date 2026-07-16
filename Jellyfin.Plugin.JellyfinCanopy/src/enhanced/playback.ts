@@ -5,6 +5,7 @@
 
 import { JC } from '../globals';
 import { toast } from '../core/ui-kit';
+import { createStableMethodFacade } from '../core/feature-loader';
 import { createAutoSkipEngine,
     createSessionItemResolver, parseTranscodeOffsetTicksFromSrc } from './auto-skip';
 import type { AutoSkipEngine, MediaSegment, VideoLike } from './auto-skip';
@@ -41,12 +42,18 @@ function longPressEventData(event: Event): LongPressEventData {
     return event as Event & LongPressEventData;
 }
 
+let playbackGeneration = 0;
 const playbackTimers = new Set<number>();
 
+function isPlaybackCurrent(context: IdentityContext, expectedGeneration: number): boolean {
+    return playbackGeneration === expectedGeneration && JC.identity.isCurrent(context);
+}
+
 function schedulePlaybackTimer(context: IdentityContext, callback: () => void, delay: number): number {
+    const expectedGeneration = playbackGeneration;
     const timer = window.setTimeout(() => {
         playbackTimers.delete(timer);
-        if (JC.identity.isCurrent(context)) callback();
+        if (isPlaybackCurrent(context, expectedGeneration)) callback();
     }, delay);
     playbackTimers.add(timer);
     return timer;
@@ -72,7 +79,7 @@ const settingsBtn = (): HTMLElement | null => document.querySelector<HTMLElement
 '.videoOsdBottom .btnVideoOsdSettings, .videoOsdBottom button[title="Settings"], .videoOsdBottom button[aria-label="Settings"]'
 );
 
-JC.openSettings = (cb: () => void) => {
+const openSettings = (cb: () => void): void => {
     const context = JC.identity.capture();
     if (!context) return;
     settingsBtn()?.click();
@@ -83,7 +90,7 @@ JC.openSettings = (cb: () => void) => {
  * Adjusts playback speed up or down through a predefined list of speeds.
  * @param direction Either 'increase' or 'decrease'.
  */
-JC.adjustPlaybackSpeed = (direction: 'increase' | 'decrease') => {
+const adjustPlaybackSpeed = (direction: 'increase' | 'decrease'): void => {
     const video = getVideo();
     if (!video) {
         toast(JC.t!('toast_no_video_found'));
@@ -107,7 +114,7 @@ JC.adjustPlaybackSpeed = (direction: 'increase' | 'decrease') => {
 /**
  * Resets the video playback speed to normal (1.0x).
  */
-JC.resetPlaybackSpeed = () => {
+const resetPlaybackSpeed = (): void => {
     const video = getVideo();
     if (!video) {
         toast(JC.t!('toast_no_video_found'));
@@ -121,7 +128,7 @@ JC.resetPlaybackSpeed = () => {
  * Jumps to a specific percentage of the video's duration.
  * @param percentage The percentage to jump to (0-100).
  */
-JC.jumpToPercentage = (percentage: number) => {
+const jumpToPercentage = (percentage: number): void => {
     const video = getVideo();
     if (!video || !video.duration) {
         toast(JC.t!('toast_no_video_found'));
@@ -180,11 +187,12 @@ async function fetchFpsForItem(
     context: IdentityContext,
     itemId: string,
     activeMediaSourceId: string | null,
+    expectedGeneration: number,
 ): Promise<number | null> {
     if (!itemId || !window.ApiClient) return null;
     try {
         const item = await window.ApiClient.getItem(context.userId, itemId) as FpsItem | null;
-        if (!JC.identity.isCurrent(context)) return null;
+        if (!isPlaybackCurrent(context, expectedGeneration)) return null;
         const sources = Array.isArray(item?.MediaSources) ? item.MediaSources : [];
         const ordered = activeMediaSourceId
             ? [...sources.filter((source) => source.Id === activeMediaSourceId), ...sources.filter((source) => source.Id !== activeMediaSourceId)]
@@ -195,7 +203,7 @@ async function fetchFpsForItem(
             if (fps) return fps;
         }
     } catch (err) {
-        if (!JC.identity.isCurrent(context)) return null;
+        if (!isPlaybackCurrent(context, expectedGeneration)) return null;
         console.warn('🪼 Jellyfin Canopy: frame-step fps lookup failed', err);
     }
     return null;
@@ -214,8 +222,12 @@ function getFpsCacheKey(
     return `${owner}|${itemId}|src:${src}`;
 }
 
-async function resolveFps(context: IdentityContext, video: HTMLVideoElement | null): Promise<number> {
-    if (!JC.identity.isCurrent(context)) return FRAME_STEP_FALLBACK_FPS;
+async function resolveFps(
+    context: IdentityContext,
+    video: HTMLVideoElement | null,
+    expectedGeneration: number,
+): Promise<number> {
+    if (!isPlaybackCurrent(context, expectedGeneration)) return FRAME_STEP_FALLBACK_FPS;
     const itemId = getCurrentVideoItemId();
     const cacheKey = getFpsCacheKey(context, itemId, video);
     if (cacheKey && _fpsCache.has(cacheKey)) return _fpsCache.get(cacheKey)!;
@@ -228,8 +240,10 @@ async function resolveFps(context: IdentityContext, video: HTMLVideoElement | nu
     const activeMediaSourceId = getActiveMediaSourceId(video);
     const activeSourcePath = (video?.currentSrc || video?.src || '').split('?')[0];
     const promise = (async () => {
-        const fetched = itemId ? await fetchFpsForItem(context, itemId, activeMediaSourceId) : null;
-        if (!JC.identity.isCurrent(context)) return FRAME_STEP_FALLBACK_FPS;
+        const fetched = itemId
+            ? await fetchFpsForItem(context, itemId, activeMediaSourceId, expectedGeneration)
+            : null;
+        if (!isPlaybackCurrent(context, expectedGeneration)) return FRAME_STEP_FALLBACK_FPS;
         const isReal = Number.isFinite(fetched) && (fetched as number) >= 1;
         const fps = isReal ? (fetched as number) : FRAME_STEP_FALLBACK_FPS;
         // Build write key from the source we fetched for, not getVideo() which may have swapped.
@@ -326,10 +340,11 @@ function showFrameOverlay(context: IdentityContext, text: string): void {
     }, 900);
 }
 
-JC.frameStep = async (direction: 'forward' | 'back') => {
+const frameStep = async (direction: 'forward' | 'back'): Promise<void> => {
   try {
     const context = JC.identity.capture();
     if (!context) return;
+    const expectedGeneration = playbackGeneration;
     const video = getVideo();
     if (!video) {
         toast(JC.t!('toast_no_video_found'));
@@ -352,8 +367,8 @@ JC.frameStep = async (direction: 'forward' | 'back') => {
         }
     }
 
-    const fps = await resolveFps(context, video);
-    if (!JC.identity.isCurrent(context)
+    const fps = await resolveFps(context, video, expectedGeneration);
+    if (!isPlaybackCurrent(context, expectedGeneration)
         || getVideo() !== video
         || !video.isConnected
         || getFpsCacheKey(context, getCurrentVideoItemId(), video) !== playbackKey) return;
@@ -408,7 +423,7 @@ function detachSeekTracker(): void {
  * listeners are stored on the element and only attached once.
  * @param video
  */
-JC.attachSeekTracker = (video: HTMLVideoElement) => {
+const attachSeekTracker = (video: HTMLVideoElement): void => {
     const context = JC.identity.capture();
     if (!context || !video) return;
     if (_seekTracker?.video === video && JC.identity.isCurrent(_seekTracker.context)) return;
@@ -441,7 +456,7 @@ JC.attachSeekTracker = (video: HTMLVideoElement) => {
 /**
  * Jumps back to the position captured just before the last seek.
  */
-JC.jumpToLastPosition = () => {
+const jumpToLastPosition = (): void => {
     const context = JC.identity.capture();
     if (!context) return;
     const video = getVideo();
@@ -472,7 +487,7 @@ JC.jumpToLastPosition = () => {
 /**
  * Manually triggers the skip intro/outro button if it's visible.
  */
-JC.skipIntroOutro = () => {
+const skipIntroOutro = (): void => {
     const skipButton = document.querySelector('button.skip-button.emby-button:not(.skip-button-hidden):not(.hide)');
     if (skipButton) {
         const buttonText = skipButton.textContent || '';
@@ -494,7 +509,7 @@ JC.skipIntroOutro = () => {
 /**
  * Cycles through available subtitle tracks in the OSD menu.
  */
-JC.cycleSubtitleTrack = () => {
+const cycleSubtitleTrack = (): void => {
     const context = JC.identity.capture();
     if (!context) return;
     const performCycle = () => {
@@ -547,7 +562,7 @@ JC.cycleSubtitleTrack = () => {
 /**
  * Cycles through available audio tracks in the OSD menu.
  */
-JC.cycleAudioTrack = () => {
+const cycleAudioTrack = (): void => {
     const context = JC.identity.capture();
     if (!context) return;
     const performCycle = () => {
@@ -616,11 +631,11 @@ const performAspectCycle = (context: IdentityContext, attempts = 0) => {
 };
 
 // The main function called by the shortcut to start the process.
-JC.cycleAspect = () => {
+const cycleAspect = (): void => {
     const context = JC.identity.capture();
     if (!context) return;
     // This opens the main settings panel ONCE and then hands off to the inner logic.
-    JC.openSettings!(() => performAspectCycle(context));
+    openSettings(() => performAspectCycle(context));
 };
 
 // --- Auto-Skip v2 (data-driven, honours native Media Segment boundaries) ---
@@ -751,7 +766,7 @@ function autoSkipEngine(context: IdentityContext): AutoSkipEngine {
  * this each video-page tick (idempotent — attach no-ops on the same element and
  * only re-checks for an item change).
  */
-JC.initializeAutoSkipObserver = () => {
+const initializeAutoSkipObserver = (): void => {
     const context = JC.identity.capture();
     if (!context) return;
     const video = getVideo();
@@ -760,7 +775,7 @@ JC.initializeAutoSkipObserver = () => {
 };
 
 /** Tears the auto-skip engine down (video-page leave). */
-JC.stopAutoSkip = () => {
+const stopAutoSkip = (): void => {
     _autoSkipEngine?.detach();
 };
 
@@ -841,7 +856,7 @@ function clearLongPressState(hideVisibleOverlay: boolean): boolean {
     return wasLongPress;
 }
 
-JC.handleLongPressDown = (e: Event) => {
+const handleLongPressDown = (e: Event): void => {
     const eventData = longPressEventData(e);
     if (!JC.currentSettings?.longPress2xEnabled || (eventData.button !== undefined && eventData.button !== 0) || pressTimer) {
         return;
@@ -883,7 +898,7 @@ JC.handleLongPressDown = (e: Event) => {
     pressTimer = timer;
 };
 
-JC.handleLongPressUp = (e: Event) => {
+const handleLongPressUp = (e: Event): void => {
     if (!pressTimer) return;
     if (clearLongPressState(true)) {
         e.preventDefault();
@@ -892,12 +907,12 @@ JC.handleLongPressUp = (e: Event) => {
     }
 };
 
-JC.handleLongPressCancel = () => {
+const handleLongPressCancel = (): void => {
     clearLongPressState(true);
 };
 
 // Handle mouse movement during press to detect drag/scrub
-JC.handleLongPressMove = (e: Event) => {
+const handleLongPressMove = (e: Event): void => {
     if (!pressTimer || isLongPress || pressStartX === null || pressStartY === null) return;
 
     const eventData = longPressEventData(e);
@@ -917,7 +932,7 @@ JC.handleLongPressMove = (e: Event) => {
 };
 
 // Block click events that would pause/play when doing a long press
-JC.handleLongPressClick = (e: Event) => {
+const handleLongPressClick = (e: Event): void => {
     // If long press is just completed OR user is still holding (timer active),
     // prevent the click from pausing the video
     if (isLongPress || pressTimer) {
@@ -929,6 +944,7 @@ JC.handleLongPressClick = (e: Event) => {
 };
 
 function resetPlaybackState(): void {
+    playbackGeneration += 1;
     for (const timer of playbackTimers) clearTimeout(timer);
     playbackTimers.clear();
 
@@ -968,11 +984,69 @@ function resetPlaybackState(): void {
         .forEach((node) => node.remove());
 }
 
-JC.identity.registerReset('enhanced-playback', resetPlaybackState);
-JC.identity.registerActivate('enhanced-playback', (context) => {
-    if (!JC.identity.isCurrent(context) || !JC.isVideoPage?.()) return;
+const playbackApi = {
+    openSettings,
+    adjustPlaybackSpeed,
+    resetPlaybackSpeed,
+    jumpToPercentage,
+    frameStep,
+    attachSeekTracker,
+    jumpToLastPosition,
+    skipIntroOutro,
+    cycleSubtitleTrack,
+    cycleAudioTrack,
+    cycleAspect,
+    initializeAutoSkipObserver,
+    stopAutoSkip,
+    handleLongPressDown,
+    handleLongPressUp,
+    handleLongPressCancel,
+    handleLongPressMove,
+    handleLongPressClick,
+};
+
+const stablePlayback = createStableMethodFacade<typeof playbackApi>({
+    openSettings() {},
+    adjustPlaybackSpeed() {},
+    resetPlaybackSpeed() {},
+    jumpToPercentage() {},
+    frameStep: () => Promise.resolve(),
+    attachSeekTracker() {},
+    jumpToLastPosition() {},
+    skipIntroOutro() {},
+    cycleSubtitleTrack() {},
+    cycleAudioTrack() {},
+    cycleAspect() {},
+    initializeAutoSkipObserver() {},
+    stopAutoSkip() {},
+    handleLongPressDown() {},
+    handleLongPressUp() {},
+    handleLongPressCancel() {},
+    handleLongPressMove() {},
+    handleLongPressClick() {},
+});
+
+/** Publish stable shortcut/player methods for one loader-owned activation. */
+export function installPlayback(): () => void {
+    const uninstall = stablePlayback.install(playbackApi);
+    Object.assign(JC, stablePlayback.facade);
+    const unregisterReset = JC.identity.registerReset('enhanced-playback', resetPlaybackState);
+    let disposed = false;
+    return () => {
+        if (disposed) return;
+        disposed = true;
+        resetPlaybackState();
+        unregisterReset();
+        uninstall();
+    };
+}
+
+/** Adopt an already-mounted player without resolving through the global facade. */
+export function initializePlayback(): void {
+    const context = JC.identity.capture();
+    if (!context || !JC.identity.isCurrent(context) || !JC.isVideoPage?.()) return;
     const video = getVideo();
     if (!video) return;
-    JC.attachSeekTracker!(video);
-    JC.initializeAutoSkipObserver!();
-});
+    attachSeekTracker(video);
+    initializeAutoSkipObserver();
+}

@@ -6,13 +6,11 @@
 // (see bookmarks/library-init.ts for the boot sequence).
 // (Converted from js/enhanced/bookmarks-library-styles.js — bodies semantically identical.)
 
-import { JC } from "../../globals";
-
-if (!JC.pluginConfig?.BookmarksEnabled) {
-  console.log("🪼 Jellyfin Canopy: Bookmarks library feature is disabled");
-} else {
-  // Inject custom styles
+/** Inject page-owned styles lazily; importing this module is DOM-pure. */
+export function injectBookmarksLibraryStyles(): void {
+  if (document.getElementById('jc-bookmarks-library-styles')) return;
   const style = document.createElement("style");
+  style.id = 'jc-bookmarks-library-styles';
   style.textContent = `
     .jc-bookmarks-wrapper {
       display: flex;

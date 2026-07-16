@@ -64,7 +64,8 @@ describe('Seerr search identity lifecycle', () => {
         };
         JC.t = (key: string) => key;
         JC.toast = vi.fn();
-        await import('./seerr');
+        const { installSeerrSearch } = await import('./seerr');
+        installSeerrSearch();
     });
 
     afterEach(() => {

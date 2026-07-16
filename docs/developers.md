@@ -433,7 +433,7 @@ Jellyfin Canopy keeps open browser sessions in step with the server without manu
 | **Admin saves plugin configuration** | Every open session refetches the plugin config and applies it live — toggles that drive cheap, idempotent surfaces (e.g. tag overlays) re-render in place; everything else picks up the fresh values on its next page mount. No reload needed. |
 | **Watch state changes** (played/favorite/progress — from any device) | Watch-state-dependent overlays (rating/user-review tags) are rescanned so they match the new state. |
 | **Library changes** (items added/updated/removed) | Newly mounted cards are tagged as usual; a coalesced rescan picks up data changes behind already-visible cards. The [Sonarr &amp; Radarr](sonarr-radarr.md) Requests page refreshes its list when a monitored download lands in the library. |
-| **The plugin itself is updated** (new DLL while sessions are open) | Sessions still running the old client bundle detect the newer server version and show a **one-time toast** prompting a refresh. The toast only fires when the server version is strictly newer than the one the session loaded — never for a same-version session. |
+| **The plugin itself is updated** (new DLL while sessions are open) | Sessions still running the old client generation detect the newer server version and show a **one-time toast** prompting a refresh. The toast only fires when the server version is strictly newer than the one the session loaded — never for a same-version session. |
 
 ### Honest limits
 
@@ -764,7 +764,7 @@ The jank doctrine is measured, not asserted. The numbers below come from `e2e/pe
 
 - **R3 stragglers (resolved):** `src/arr/arr-tag-links.ts`, `src/elsewhere/elsewhere.ts`, and `src/others/letterboxd-links.ts` — once body-wide observers with `attributeFilter: ['class']` — now ride the shared `JC.core.dom.onBodyMutation` multiplexer (childList-only). No feature owns a body-wide attribute-observing observer any more, so the *after* count is **0**. The only `attributeFilter` observers left are player-scoped (`src/enhanced/playback.ts`) and element-scoped (`src/bootstrap/login-image.ts`), neither body-wide.
 - **R5 note:** the one standing JC interval is `src/core/live-update.ts`'s 15-minute version recheck — visibility-gated and push-nudged (config pushes carry the version), but app-scoped rather than page-scoped.
-- **Home-page first-tag latency after a cold boot** is higher on the fixed build (median ≈ 2.7 s after card mount vs ≈ 0.7 s before): home cards paint long before the bundle finishes booting, and first tags wait for the server tag-cache fetch. They fade into absolute overlays, so this costs zero shift — but it is the number to beat next.
+- **Home-page first-tag latency after a cold boot** is higher on the fixed build (median ≈ 2.7 s after card mount vs ≈ 0.7 s before): home cards paint long before client initialization finishes, and first tags wait for the server tag-cache fetch. They fade into absolute overlays, so this costs zero shift — but it is the number to beat next.
 - **Residual JC-attributed shifts** (the 0.0002 above) are micrometric, ≤ 0.0001 each: the Material Symbols icon-font swap reflowing already-injected icons at boot, the `#jc-active-streams` header button's one-time entrance, and the audio-language chip whose reserved width is close-but-not-exact to its final content.
 
 **Re-running:**
@@ -851,7 +851,7 @@ New user-influenced URLs in `href`/`src` positions should prefer a validator of 
 
 #### The splash-screen exception
 
-`src/bootstrap/splashscreen.ts` is compiled to its own out-of-band IIFE that runs **before** the main bundle, so it cannot import `core/ui-kit`. It carries a local copy of `escapeHtml` as an inline `.replace(...)` chain for the admin-configured splash image URL. That is the **only** sanctioned copy — everything inside the bundle imports the one `escapeHtml` from `core/ui-kit`. (The guard recognizes the inline chain by its shape, so the exception is verified, not just tolerated.)
+`src/bootstrap/splashscreen.ts` is compiled to its own out-of-band IIFE that runs **before** authenticated ESM boot, so it cannot import `core/ui-kit`. It carries a local copy of `escapeHtml` as an inline `.replace(...)` chain for the admin-configured splash image URL. That is the **only** sanctioned copy — authenticated modules import the one `escapeHtml` from `core/ui-kit`. (The guard recognizes the inline chain by its shape, so the exception is verified, not just tolerated.)
 
 **Enforced.** `src/test/escape-guard.test.ts` parses every shipped `src/**/*.ts` file with the TypeScript compiler API on each `npm run test:client` and classifies **every interpolation in every HTML-bearing template literal**, plus the arguments of `toast(...)`, `insertAdjacentHTML(...)`, `innerHTML`/`outerHTML` assignments, and HTML string concatenation. An interpolation that is not recognizably one of the three classes fails the build with its `file:line` and expression text. It resolves local `const`/`let` values, tracks builder functions across files (a builder that interpolates a bare parameter raw obligates *every call site* to pass a safe value), understands `.map(...).join(...)` over constant tables, validator guards, and the producers above. Genuinely-safe-but-unprovable expressions live in a small justified allowlist **inside the test file**; a stale entry fails a companion test, so the list cannot rot. If the guard fails on your code, fix it in this order: `escapeHtml(...)` → `Number(x) || 0` → route through a recognized producer → (last resort, with justification) allowlist. The allowlist is **line-pinned** — each entry names the exact `file:line` it covers and must match exactly one finding there, so an entry can never silently blanket a *new* interpolation added elsewhere in the same file.
 
@@ -888,20 +888,46 @@ JC's custom overlays go through `src/core/modal-a11y.ts` (`installModalA11y`), w
 
 ## Project structure
 
-The plugin is one C# project (the server side) plus one TypeScript module tree (the client), compiled into a single client artifact. The only entry point the browser loads directly is `js/plugin.js` — a small loader that boots the shared `JC` namespace (`window.JellyfinCanopy`), fetches config/translations, and then loads the whole feature tree as **one esbuild bundle**, `dist/jc.bundle.js` — built on every `dotnet build` and embedded in the plugin DLL, minified in production, unminified and served fresh (no-store) in dev mode, with an external sourcemap shipping in both.
+The plugin is one C# project (the server side) plus one TypeScript module tree
+(the client). The browser first runs `js/plugin.js`, the classic loader that
+boots the shared `JC` namespace (`window.JellyfinCanopy`), obtains configuration
+and translations, fetches `dist/client-manifest.json`, validates its boot entry,
+and imports that entry through the manifest's build-generation URL. The small
+boot graph installs the platform runtime and a declarative feature catalog.
+Feature modules are then imported only when their identity, configuration, and
+SPA-route predicates make them eligible.
+
+`scripts/build-bundle.js` builds the three pre-login scripts as standalone
+IIFEs and the authenticated boot/features as split ES modules. It emits named
+`dist/entries/*.js` files, content-addressed `dist/chunks/*.js`, adjacent source
+maps, and a stable `dist/client-manifest.json` containing the build id, logical
+entry roles, import graphs, content types, byte counts, gzip sizes, and SHA-256
+digests. A complete distribution is published with one directory swap, so a
+failed build cannot mix generations. Every generated file is embedded in the
+plugin DLL.
 
 ### The client (`Jellyfin.Plugin.JellyfinCanopy/src/`)
 
-Every component lives in `src/` as a strict TypeScript ES module (own program: `tsconfig.src.json`, `npm run typecheck:src`), unit-tested with vitest (`npm run test:client`, colocated `*.test.ts`). Execution order is defined by the real `import` edges — `src/main.ts` imports each area's `index.ts` barrel, and `scripts/build-bundle.js` (esbuild) follows the graph to produce `dist/jc.bundle.js`. There is no hand-maintained script list anywhere.
+Every component lives in `src/` as a strict TypeScript ES module (own program:
+`tsconfig.src.json`, `npm run typecheck:src`), unit-tested with vitest
+(`npm run test:client`, colocated `*.test.ts`). Real import edges define each
+entry's graph. The deliberate entry inventory in `scripts/build-bundle.js`
+defines stable logical names; `src/entries/feature-catalog.ts` maps those names
+to runtime policy without importing their implementations into boot. The build
+census rejects any production module that is unreachable from all bootstrap or
+ESM entry graphs.
 
 ```text
 Jellyfin.Plugin.JellyfinCanopy/
 └── src/
-    ├── main.ts              # Bundle entry: imports the core modules + area barrels in dependency order
+    ├── entries/             # Authenticated boot + import-pure feature boundaries
+    │   ├── boot.ts          # Boot-critical platform graph; installs the feature runtime/catalog
+    │   ├── feature-catalog.ts # Identity/config/route predicates and feature dependencies
+    │   └── *.ts             # Named feature entries exporting activate(scope)
     ├── globals.ts           # The one place src/ obtains window.JellyfinCanopy
     ├── facade.ts            # The FROZEN public surface of window.JellyfinCanopy, as types
     │                        # (JEGlobal extends it — the compiler proves the contract holds)
-    ├── core/                # Shared platform layer — executes before every feature module
+    ├── core/                # Shared platform/runtime primitives; boot imports only its required subset
     │   ├── navigation.ts    # One place for SPA navigation (pushState patch, HISTORY_UPDATE,
     │   │                    # hashchange/viewshow dedup — see the platform section)
     │   ├── details-view.ts  # Resolves the details page for the URL's item across Jellyfin's
@@ -926,8 +952,8 @@ Jellyfin.Plugin.JellyfinCanopy/
     │   ├── modal-a11y.ts    # Shared modal focus-trap + global-shortcut suppression for JC overlays
     │   ├── locale.ts        # One display locale for every date/number format in a session
     │   └── *.test.ts        # Vitest unit tests, colocated (coverage ratchet in vitest.config.ts)
-    ├── bootstrap/           # Out-of-band loaders compiled to their OWN dist/<name>.js files
-    │   │                    # (fetched by plugin.js separately — before login / before the bundle)
+    ├── bootstrap/           # Out-of-band scripts compiled to their OWN dist/<name>.js files
+    │   │                    # (fetched by plugin.js separately, before authenticated ESM boot)
     │   ├── splashscreen.ts / login-image.ts / translations.ts
     ├── enhanced/            # Core features. Flat singles: config, events, playback, subtitles,
     │   │                    # pausescreen, themer, icons, native-tabs, osd-rating, tag-pipeline
@@ -963,6 +989,20 @@ Jellyfin.Plugin.JellyfinCanopy/
 
 Feature-internal state is shared through real module imports (typed `surface.d.ts` files / interface augmentations where a surface crosses files). The legacy `JC.internals` bag is gone; the only global surface is the typed `window.JellyfinCanopy` facade (`src/facade.ts`).
 
+Feature entries are import-pure: evaluation must not touch the DOM, register a
+listener, start a timer, issue a request, transition identity, or publish a
+facade. Each exports `activate(scope)`. The runtime limits concurrent imports,
+orders declared dependencies, rejects stale navigation/config/identity work,
+and owns cleanup through the scope's abort signal, tracked resources, and the
+returned feature instance. Descriptors refer only to logical manifest keys;
+neither descriptors nor feature code supply executable URLs.
+
+`scripts/bundle-budgets.json` is the fail-closed size and fan-out ratchet. The
+build checks output and entry counts, the largest ESM output, boot's static
+closure, every feature's static and dynamically expanded closure, source maps,
+the manifest, and total published bytes. Missing limits fail the build instead
+of disabling a check.
+
 ### The loader and locales (`Jellyfin.Plugin.JellyfinCanopy/js/`)
 
 The `js/` tree is no longer where features live — it holds exactly three things:
@@ -970,14 +1010,21 @@ The `js/` tree is no longer where features live — it holds exactly three thing
 ```text
 Jellyfin.Plugin.JellyfinCanopy/
 └── js/
-    ├── plugin.js            # THE entry point: boots JC, loads config + translations,
-    │                        # then loads dist/jc.bundle.js (no per-file fallback)
+    ├── plugin.js            # THE classic entry point: boots JC, loads config/translations,
+    │                        # validates the client manifest, then imports its ESM boot entry
     ├── core/globals.d.ts    # Ambient host-global types for the // @ts-check'd loader
     └── locales/             # 26 locale JSON files, en.json is the base; validated by
                              # scripts/validate-translations.js (npm run validate-translations) in CI
 ```
 
-Everything the browser runs comes from five served artifacts: the loader (`/JellyfinCanopy/script`), the bundle (`/JellyfinCanopy/dist/jc.bundle.js`), and the out-of-band bootstrap files (`dist/splashscreen.js`, `dist/login-image.js`, `dist/translations.js`). Per-file serving of feature scripts no longer exists.
+The loader is served at `/JellyfinCanopy/script`; the three bootstrap scripts
+remain independently addressable. Authenticated assets are allowlisted by the
+embedded manifest and served only as
+`/JellyfinCanopy/dist/{buildId}/{manifest-path}`. The build id prevents a retry
+from mixing old and new chunks. `ClientDistResourceCatalog` validates the full
+embedded inventory, paths, roles, MIME metadata, references, sizes, and digests
+before serving it; unknown or stale-generation paths fail closed. There is no
+compatibility monolith or arbitrary per-file source serving.
 
 !!! note "Translations are a local-JSON validate flow"
     Locales are plain JSON files in `js/locales/`, with `en.json` as the base. `scripts/validate-translations.js` (`npm run validate-translations`) validates every locale against the base in CI — that is the whole workflow; there is no external translation-platform round trip.
@@ -991,7 +1038,7 @@ Jellyfin.Plugin.JellyfinCanopy/
 ├── Controllers/               # One controller per feature area over JellyfinCanopyControllerBase.
 │   │                          # Admin-only endpoints use [Authorize(Policy = Policies.RequiresElevation)]
 │   │                          # — authorization failures are bare 401/403 (empty body, see REST API)
-│   ├── ConfigController.cs    # public/private config (driven by SettingDescriptors), loader/bundle/locale serving
+│   ├── ConfigController.cs    # public/private config plus loader/manifest-owned dist/locale serving
 │   ├── AssetsController.cs    # Serves locally cached third-party assets (/JellyfinCanopy/assets/{key}) so browsers never hit a CDN
 │   ├── SeerrProxyController.cs / SeerrUserController.cs
 │   ├── ArrLinksController.cs / ArrCalendarController.cs / ArrRequestsController.cs
@@ -1130,8 +1177,8 @@ repository root, then `npm run check:toolchain`; `.nvmrc`, `packageManager`, and
 release. MSBuild rejects a missing or different runtime before `npm ci`.
 
 - `npm run typecheck:src` / `./verify.sh lint` / `npm run test:client` — strict type check, advisory ESLint reporting, and vitest unit tests for the `src/` tree. `npm run test:client:coverage` runs that complete suite once with the `src/core` ratchet; `npm run test:server:coverage` does the same for xUnit and Cobertura. Do not precede either coverage command with its plain test command: the coverage run is the test evidence. Client and server coverage use the exact repeated-clean measurements in `scripts/coverage-baselines.json`; a one-line instrumentation tolerance permits negligible tool variance, while coverage loss, scope drift, and an unrecorded coverage gain fail with measured-versus-required diagnostics. A legitimate scope change updates that artifact explicitly in the reviewed change. Use raw `npm run lint` only when you specifically need ESLint's unmodified exit code.
-- `npm run build:bundle` — the client bundle (also run automatically by the C# build); `npm run watch` rebuilds it (unminified) on every source change. CI compares SHA-256 manifests from independent plugin/client jobs, and xUnit compares every generated `dist/**` file with the exact resource bytes embedded in the DLL.
-- `npm run syntax` / `npm run typecheck` — the blocking syntax inventory parses every raw `js/**` resource, the separately served admin script, and every executable inline bootstrap in `Configuration/configPage.html`, with class counts that fail closed on inventory shrink; opt-in `@ts-check` covers the classic loader. Generated `dist/**` remains owned by the blocking esbuild bundle instead of being redundantly parsed as source.
+- `npm run build:bundle` — the deterministic client distribution (also run automatically by the C# build); `npm run watch` rebuilds it unminified on every source change. The build emits the split entries/chunks, adjacent maps, and `client-manifest.json`, enforces `scripts/bundle-budgets.json`, then atomically swaps the complete output directory. CI compares SHA-256 manifests from independent plugin/client jobs, and xUnit compares every generated `dist/**` file with the exact resource bytes embedded in the DLL.
+- `npm run syntax` / `npm run typecheck` — the blocking syntax inventory parses every raw `js/**` resource, the separately served admin script, and every executable inline bootstrap in `Configuration/configPage.html`, with class counts that fail closed on inventory shrink; opt-in `@ts-check` covers the classic loader. Generated `dist/**` remains owned by the blocking esbuild build instead of being redundantly parsed as source.
 - `Jellyfin.Plugin.JellyfinCanopy.Tests/` — xUnit tests, including golden snapshots for the config payloads and on-disk user-file formats, plus a line-coverage ratchet (`scripts/check-dotnet-coverage.js`). Its `Configuration/` tests bridge the `SettingDescriptors` registry to both ends of the admin config page over one shared source parser (`ConfigPageSource.cs`, read by both directions so they can never drift): `ConfigControlCoverageTests` fails if any admin-settable descriptor backed by a real `PluginConfiguration` property has no config-page control (an admin default stuck at its hardcoded value), and `ClientConfigKeyLivenessTests` scans the shipped client source and fails if any `JC.pluginConfig.X` read is not a projected (`Public`/`Private`) descriptor key (a client knob that is always `undefined`).
 - Cross-cutting **guard tests** parse the shipped source and fail on a whole *class* of regression, not just one instance. `src/test/` owns `escape-guard` (HTML-injection, incl. an escape-first check of pre-escaping producers), `css-injection-guard` (CSS-context values), `leak-guard` (object URLs, observers, TTL maps, unbounded retry loops), `error-as-empty-guard` (fetch errors surfaced, not swallowed), `locale-guard`, `ratings-css`, `injected-css-balance`, `legacy-auth-header`, `plugin-loader`, and `build-scripts`. The blocking `scripts/check-performance-rules.js` gate owns the R3/R5/R6 one-pass scan and isolated CPU budget. The retired PluginPages HTML no longer ships on Jellyfin 12; admin-page inline JavaScript is owned by the blocking `scripts/check-syntax.js` inventory. Server-side, `LibraryScanEventGuardTests` scans every reviewed scan-thread subscriber's synchronous body (see [S1](#s1-never-block-jellyfins-synchronous-threads)).
 - `e2e/` — the committed Playwright suite (`npm run e2e`) + `e2e/docker/` (dockerized, seeded Jellyfin unstable/nightly for CI and local runs). The required lane pins one nightly by immutable multi-platform digest; the separate advisory lane follows the mutable `unstable` tag. Required CI uses six isolated native file shards, each with one serial browser worker and an explicitly verified two-CPU Jellyfin quota. Jellyfin, the Node integration fixture, Playwright, and Chromium are pinned by image digest or package lock. A test-only Node service supplies deterministic Seerr, Radarr, and TLS TMDB responses on the private Compose network; each seed generates a short-lived CA in disposable state, so required integration coverage needs no personal secret or third-party network. The committed `e2e/required-test-inventory.json` is exact: the reporter and aggregate fail every runtime skip, flaky/failed test, missing or unexpected test, duplicate shard, stale SHA/run artifact, and inventory drift. The stable aggregate blocks pull requests and main pushes; `release.yml` calls the same workflow and cannot publish the tag SHA until it passes. The separate scheduled/manual latest-nightly compatibility workflow is advisory and cannot weaken the digest-pinned gate.
@@ -1149,7 +1196,7 @@ no-reload identity lifecycle is tested. Failed E2E jobs pass server logs through
 Playwright start time when available and a bounded 200-line tail fallback when
 seeding fails or the marker is unavailable.
 - `e2e/perf/` — hand-run (not CI) measurement tools that drive a real Chromium against a live server: `jank-benchmark.js` (aggregate jank/CLS/long-task/pop-in numbers behind [Measured impact](#measured-impact)) and `capture-traces.js` (`npm run perf:trace`) — the trace-capture harness described under [Performance trace capture](#performance-trace-capture).
-- `node scripts/new-feature.js <name>` — the paved-road scaffolder: generates a typed client module, a controller, an e2e spec stub, and a docs stub, wired into the area barrel (see `CONTRIBUTING.md`).
+- `node scripts/new-feature.js <name>` — the paved-road scaffolder creates an import-pure implementation, its lazy `src/entries/` activation boundary, a controller, an E2E stub, and a docs stub; it also validates and updates `ESM_ENTRIES` plus the boot-only feature catalog. The generated descriptor is identity-scoped and route-agnostic, so the contributor must implement the behavior, narrow route/scope policy where needed, wire settings/admin controls and docs nav, review bundle-budget changes, and complete the E2E proof (see `CONTRIBUTING.md`).
 - `scripts/release/` — release packaging + manifest generation/validation (see `RELEASING.md`).
 
 ### Local sharded E2E

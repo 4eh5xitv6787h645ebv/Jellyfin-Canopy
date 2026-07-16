@@ -6,6 +6,7 @@
 // resolution (known-network map + company search scoring).
 import { JC } from '../../globals';
 import { classifyObjectDetails, classifyResultsEnvelope } from '../../core/cache-policy';
+import { discoveryBase } from './base';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload shapes; typed incrementally */
 
@@ -197,14 +198,14 @@ async function resolveFeeds({ id: studioId, signal }: { id: string; signal: Abor
     };
 }
 
-const discovery = JC.discoveryBase!.createDiscovery({
+export const networkDiscovery = discoveryBase.createDiscovery({
     key: 'network',
     mode: 'dual-feed',
     logLabel: 'Network Discovery',
     configKey: 'SeerrShowNetworkDiscovery',
     // Unlike the other discovery sections, network discovery is opt-in.
     defaultEnabled: false,
-    getIdFromUrl: JC.discoveryBase!.idFromListParam('studioId'),
+    getIdFromUrl: discoveryBase.idFromListParam('studioId'),
     // Historical page-key format: no 'network-' prefix.
     pageKey: (id: string) => `${id}-${window.location.hash}`,
     resolveFeeds,
@@ -212,5 +213,3 @@ const discovery = JC.discoveryBase!.createDiscovery({
         ? `/JellyfinCanopy/seerr/discover/tv/network/${id}`
         : `/JellyfinCanopy/seerr/discover/movies/studio/${id}`
 });
-
-discovery.start();

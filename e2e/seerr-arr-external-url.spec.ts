@@ -14,9 +14,34 @@
 //      502), the app still boots clean (window.JellyfinCanopy.initialized),
 //      Seerr surfaces stay absent, and there are zero real console errors
 //      beyond the deliberately-induced request failures.
-import { test, expect, loginAs, assertNoRuntimeErrors, type Role } from './fixtures/auth';
+import {
+    test,
+    expect,
+    loginAs,
+    showRoute,
+    assertNoRuntimeErrors,
+    type Role,
+} from './fixtures/auth';
+import { seerrReady } from './fixtures/seerr';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
+
+const SEERR_OFF = 'Seerr not configured — set SEERR_* at seed time to run';
+
+/** Wait for the lazy Seerr surfaces after entering an applicable route. */
+async function waitForSeerrFacades(
+    page: import('playwright/test').Page,
+): Promise<void> {
+    await page.waitForFunction(
+        () => {
+            const jc = (window as any).JellyfinCanopy;
+            return typeof jc?.seerrAPI?.resolveSeerrBaseUrl === 'function'
+                && typeof jc?.seerrUI?.updateSeerrResults === 'function';
+        },
+        undefined,
+        { timeout: 60_000 }
+    );
+}
 
 /** Read the resolved Seerr link base the injected client would use for deep links. */
 async function resolveSeerrBase(page: import('playwright/test').Page): Promise<string> {
@@ -30,6 +55,10 @@ test.describe('Seerr/arr split internal/external URLs', () => {
     for (const role of ['admin', 'user'] as Role[]) {
         test(`[${role}] Seerr link base falls back to the internal URL when no external URL is set`, async ({ page, consoleErrors }) => {
             await loginAs(page, role, consoleErrors);
+            await showRoute(page, '/search');
+            if (await seerrReady(page)) {
+                await waitForSeerrFacades(page);
+            }
 
             const { baseUrl, resolved } = await page.evaluate(() => {
                 const cfg = (window as any).JellyfinCanopy?.pluginConfig || {};
@@ -57,6 +86,9 @@ test.describe('Seerr/arr split internal/external URLs', () => {
 
     test('[admin] a configured external URL becomes the browser link base', async ({ page, consoleErrors }) => {
         await loginAs(page, 'admin', consoleErrors);
+        test.skip(!(await seerrReady(page)), SEERR_OFF);
+        await showRoute(page, '/search');
+        await waitForSeerrFacades(page);
 
         // The server projects the external URL into SeerrBaseUrl. Simulate that
         // projection client-side and confirm the resolver honours it verbatim (no
@@ -74,6 +106,9 @@ test.describe('Seerr/arr split internal/external URLs', () => {
 
     test('[admin] a matching URL mapping wins over the external URL', async ({ page, consoleErrors }) => {
         await loginAs(page, 'admin', consoleErrors);
+        test.skip(!(await seerrReady(page)), SEERR_OFF);
+        await showRoute(page, '/search');
+        await waitForSeerrFacades(page);
 
         const resolved = await page.evaluate(() => {
             const JC = (window as any).JellyfinCanopy;
@@ -138,6 +173,7 @@ test.describe('Seerr resilience: a bad/down Seerr never breaks the UI (591)', ()
             });
 
             await loginAs(page, role, consoleErrors);
+            test.skip(!(await seerrReady(page)), SEERR_OFF);
 
             // The plugin must have fully initialised despite Seerr being dead.
             const initialized = await page.evaluate(() => (window as any).JellyfinCanopy?.initialized === true);
@@ -150,8 +186,15 @@ test.describe('Seerr resilience: a bad/down Seerr never breaks the UI (591)', ()
             // triggers the host's documented querySelector race and obscures the
             // Seerr resilience signal this test owns.
             await page.waitForSelector('#indexPage .card', { timeout: 60_000 });
-            await page.evaluate(() => { void (window as any).Emby?.Page?.show?.('/search.html?query=test'); });
+            await showRoute(page, '/search');
+            await waitForSeerrFacades(page);
+            await showRoute(page, '/search.html?query=test');
             await page.waitForTimeout(2500);
+
+            // Prove both deliberately induced failure modes actually ran. Without
+            // positive request evidence, an absent Seerr surface could make this
+            // resilience contract pass vacuously.
+            expect(seerrCalls, 'at least one aborted and one fulfilled Seerr request').toBeGreaterThanOrEqual(2);
 
             // Seerr surfaces must be absent, never a broken/half-rendered section.
             const seerrResultsVisible = await page.evaluate(() =>

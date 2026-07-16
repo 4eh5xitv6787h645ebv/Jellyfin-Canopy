@@ -12,15 +12,20 @@
 // render (no view cache).
 
 import { JC } from '../../globals';
-import { registerPage } from '../pages/registry';
-import { openPage } from '../pages/router-bridge';
-import { renderBookmarksLibrary, renderActiveBookmarks, setActiveContainer } from './library-render';
-import type { PageContext } from '../pages/types';
-// Styles inject themselves on import (also imported by the enhanced barrel);
-// importing here keeps the descriptor self-sufficient regardless of barrel order.
-import './library-styles';
+import {
+    renderBookmarksLibrary,
+    renderActiveBookmarks,
+    resetBookmarksLibraryRender,
+    setActiveContainer,
+} from './library-render';
+import { resetBookmarksLibraryPlayback } from './library-items';
+import { resetBookmarksLibraryModals } from './library-modals';
+import { resetBookmarksLibraryReplacementModals } from './library-replacements';
+import { injectBookmarksLibraryStyles } from './library-styles';
+import type { PageContext, PageDescriptor } from '../pages/types';
 
 function render({ host, handle }: PageContext): void {
+    injectBookmarksLibraryStyles();
     const content = document.createElement('div');
     content.setAttribute('data-role', 'content');
     const primary = document.createElement('div');
@@ -51,15 +56,22 @@ function render({ host, handle }: PageContext): void {
     void renderBookmarksLibrary(container);
 }
 
-registerPage({
+export const bookmarksPageDescriptor: PageDescriptor & { id: 'bookmarks' } = {
     id: 'bookmarks',
     route: '/bookmarks',
     titleKey: 'bookmarks_library_title',
     titleFallback: 'Bookmarks',
     icon: 'bookmarks',
     isEnabled: () => !!JC.pluginConfig?.BookmarksEnabled,
-    render
-});
+    render,
+    onHide: () => {
+        document.getElementById('jc-bookmarks-library-styles')?.remove();
+        resetBookmarksLibraryReplacementModals();
+        resetBookmarksLibraryModals();
+        resetBookmarksLibraryPlayback();
+        resetBookmarksLibraryRender();
+    },
+};
 
 /** The frozen JC.bookmarksPage contract (parity with JC.calendarPage; e2e-facing). */
 export interface BookmarksPageApi {
@@ -71,7 +83,6 @@ export interface BookmarksPageApi {
 
 // showPage delegates to the framework router; refresh re-renders the adopted
 // host in place. Symmetric with JC.calendarPage / downloadsPage / etc.
-JC.bookmarksPage = {
-    showPage: () => { openPage('bookmarks'); },
+export const bookmarksPageFacade: Omit<BookmarksPageApi, 'showPage'> = {
     refresh: () => { renderActiveBookmarks(); }
 };

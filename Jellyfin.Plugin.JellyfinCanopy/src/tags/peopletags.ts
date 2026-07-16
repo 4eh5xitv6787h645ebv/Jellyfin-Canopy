@@ -9,7 +9,8 @@
 import { JC as JEBase } from '../globals';
 import { flagPngUrl } from '../core/asset-urls';
 import { createBoundedCache, type BoundedCache } from '../core/bounded-cache';
-import { ensureMaterialSymbolsFont, injectCss } from '../core/ui-kit';
+import { createStableMethodFacade } from '../core/feature-loader';
+import { ensureMaterialSymbolsFont, injectCss, removeCss } from '../core/ui-kit';
 import type { ApiApi, JELegacyHelpers, PluginConfig, UserSettings } from '../types/jc';
 
 interface PersonData {
@@ -68,8 +69,9 @@ function teardownPeopleTags(clearPersistent: boolean): void {
     document.querySelectorAll('.jc-deceased-poster').forEach((node) => node.classList.remove('jc-deceased-poster'));
 }
 
-function resetPeopleTagsIdentity(): void {
+export function resetPeopleTagsIdentity(): void {
     teardownPeopleTags(true);
+    removeCss('jc-people-tags-styles');
 }
 
 /**
@@ -84,7 +86,7 @@ export function peopleTagsCacheTtlMs(cfg: PluginConfig | null | undefined): numb
     return ((cfg?.TagsCacheTtlDays) || 30) * 24 * 60 * 60 * 1000;
 }
 
-JC.initializePeopleTags = function() {
+function initializePeopleTags(): void {
     // A same-user settings reinitialization should replace observers/timers
     // without throwing away that user's valid persistent cache.
     teardownPeopleTags(false);
@@ -690,6 +692,15 @@ JC.initializePeopleTags = function() {
     }
 
     initialize();
-};
+}
 
-JC.identity.registerReset('people-tags', resetPeopleTagsIdentity);
+const stablePeopleTags = createStableMethodFacade({
+    initialize: (): void => {},
+});
+
+/** Install the frozen people-tags initializer for one cluster activation. */
+export function installPeopleTagsFacade(): () => void {
+    const uninstall = stablePeopleTags.install({ initialize: initializePeopleTags });
+    JC.initializePeopleTags = stablePeopleTags.facade.initialize;
+    return uninstall;
+}

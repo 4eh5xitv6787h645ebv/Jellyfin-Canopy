@@ -100,6 +100,3 @@ export function primeIdentityCookieEarly(context: IdentityContext | null = JC.id
         /* setInterval unavailable — init() still sets the cookie once. */
     }
 }
-
-JC.identity.registerReset('spoiler-identity-cookie', resetIdentityCookie);
-JC.identity.registerActivate('spoiler-identity-cookie', primeIdentityCookieEarly);

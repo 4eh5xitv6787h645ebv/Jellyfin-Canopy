@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JC } from './arr-globals';
 import type { ApiApi, UserSettings } from '../types/jc';
+import { createTestFeatureScope } from '../test/feature-scope';
 
 const originalApi = JC.core.api;
 const originalSave = JC.saveUserSettings;
@@ -65,7 +66,9 @@ describe('Arr page control identity ownership', () => {
 
     it('routes live Requests controls through one adoption and drains retained A controls', async () => {
         await import('../core/lifecycle');
-        await import('./requests/page');
+        const entry = await import('../entries/requests-page');
+        const feature = createTestFeatureScope();
+        entry.activate(feature.scope);
         const { getPage } = await import('../enhanced/pages/registry');
         const { state } = await import('./requests/data');
         const { renderPage } = await import('./requests/render');
@@ -98,5 +101,6 @@ describe('Arr page control identity ownership', () => {
 
         expect(state.requestsFilter).toBe('all');
         expect(plugin).toHaveBeenCalledTimes(callsBeforeSwitch);
+        await feature.dispose();
     });
 });

@@ -27,12 +27,10 @@ import { renderPage } from './render';
 const logPrefix = '🪼 Jellyfin Canopy: Hidden Content Page:';
 let activeAdminModalClose: (() => void) | null = null;
 
-function resetAdminUi(): void {
+export function resetAdminUi(): void {
     activeAdminModalClose?.();
     activeAdminModalClose = null;
 }
-
-JC.identity?.registerReset?.('hidden-content-page-admin-ui', resetAdminUi);
 
 // ============================================================
 // Admin cross-user view

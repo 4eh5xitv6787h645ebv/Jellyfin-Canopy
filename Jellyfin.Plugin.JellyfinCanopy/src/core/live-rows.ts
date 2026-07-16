@@ -54,16 +54,25 @@ function handleUserDataChanged(data: unknown): void {
     scheduleRescan();
 }
 
-// Items added/updated → re-tag any newly-eligible cards JC owns overlays on.
-on(LIVE.LIBRARY_CHANGED, scheduleRescan);
-
-// Watch-state / favourite / played changes → refresh watch-state-dependent
-// overlays (e.g. user-review / rating tags) to match the new state.
-on(LIVE.USER_DATA_CHANGED, handleUserDataChanged);
-
-JC.identity.registerReset('core-live-rows', () => {
+/** Cancel the activation-owned debounce synchronously. */
+export function resetLiveRows(): void {
     if (rescanTimer) clearTimeout(rescanTimer);
     rescanTimer = null;
-});
+}
 
-console.log(`${logPrefix} initialized`);
+/** Install live tag-row reactions for one feature activation. */
+export function installLiveRows(): () => void {
+    // Items added/updated → re-tag any newly-eligible cards JC owns overlays on.
+    const offLibrary = on(LIVE.LIBRARY_CHANGED, scheduleRescan);
+    // Watch-state / favourite / played changes → refresh watch-state-dependent
+    // overlays (e.g. user-review / rating tags) to match the new state.
+    const offUserData = on(LIVE.USER_DATA_CHANGED, handleUserDataChanged);
+    let active = true;
+    return () => {
+        if (!active) return;
+        active = false;
+        offUserData();
+        offLibrary();
+        resetLiveRows();
+    };
+}

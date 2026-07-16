@@ -57,7 +57,7 @@ function scheduleRetry(
     retryTimers.add(timer);
 }
 
-function resetDetailsMediaInfo(): void {
+export function resetDetailsMediaInfo(): void {
     for (const timer of retryTimers) clearTimeout(timer);
     retryTimers.clear();
     watchProgressCache.clear();
@@ -697,5 +697,3 @@ export function displayAudioLanguages(itemId: string, container: HTMLElement): v
     // hits fill the chip in the same task as the insertion, one reflow total.
     void performFetch();
 }
-
-JC.identity.registerReset('details-media-info', resetDetailsMediaInfo);

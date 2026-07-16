@@ -319,7 +319,7 @@ export async function flushPendingSave(): Promise<void> {
     }
 }
 
-function cancelAllPersistence(): void {
+export function cancelAllPersistence(): void {
     if (saveTimeout != null) clearTimeout(saveTimeout);
     saveTimeout = null;
     pendingDebounceContext = null;
@@ -332,10 +332,11 @@ function cancelAllPersistence(): void {
     pendingRetryContext = null;
 }
 
-JC.identity?.registerReset?.('hidden-content-persistence', cancelAllPersistence);
-
-// Cancel pending retries on tab teardown so a stale snapshot can't overwrite server state after navigation.
-// Only pagehide — visibilitychange fires on backgrounded tabs the user may return to within the retry window.
-try {
+/** Install the pagehide fence for one lazy-feature activation. */
+export function installPersistenceLifecycle(): () => void {
     window.addEventListener('pagehide', cancelAllPersistence);
-} catch (_) { /* non-browser env, harmless */ }
+    return () => {
+        window.removeEventListener('pagehide', cancelAllPersistence);
+        cancelAllPersistence();
+    };
+}

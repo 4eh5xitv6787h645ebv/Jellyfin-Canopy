@@ -4,6 +4,7 @@
 import { JC } from '../../globals';
 // PERF(R6): no remote assets — Seerr icon served from the local asset cache.
 import { assetUrl } from '../../core/asset-urls';
+import { seerrStatus } from '../seerr-status';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload + DOM shapes; typed incrementally */
 
@@ -11,7 +12,7 @@ import { assetUrl } from '../../core/asset-urls';
 import { ui, internal } from './internal';
 const state = internal.state;
 const logPrefix = '🪼 Jellyfin Canopy: Seerr UI:';
-const MediaStatus = JC.seerrStatus!.MEDIA;
+const MediaStatus = seerrStatus.MEDIA;
 const icons = internal.icons; // requires ui-icons.js to be loaded first
 
 // Keep card buttons in sync when a request is made from other surfaces (e.g., more info modal)
@@ -49,11 +50,12 @@ function markCardRequested(tmdbId: any, mediaType: any, is4k: any = false) {
     }
 }
 
-document.addEventListener('seerr-media-requested', (e: any) => {
-    const { tmdbId, mediaType, is4k } = e.detail || {};
+function handleMediaRequested(e: Event): void {
+    const requestEvent = e as CustomEvent<any>;
+    const { tmdbId, mediaType, is4k } = requestEvent.detail || {};
     if (!tmdbId || !mediaType) return;
     markCardRequested(String(tmdbId), mediaType, is4k);
-});
+}
 
 // ================================
 // UI MANAGEMENT FUNCTIONS
@@ -185,7 +187,6 @@ export function resetSeerrResultsIdentity(): void {
 }
 
 ui.resetResultsIdentity = resetSeerrResultsIdentity;
-JC.identity.registerReset('seerr-results-placement', resetSeerrResultsIdentity);
 
 /**
  * Renders Seerr search results into the search page with improved placement logic.
@@ -458,3 +459,34 @@ ui.updateSeerrResults = function (newResults: any, isSeerrActive: any, seerrUser
 internal.markCardRequested = markCardRequested;
 internal.analyzeSeasonStatuses = analyzeSeasonStatuses;
 internal.createSeerrSection = createSeerrSection;
+
+let uninstallIdentityReset: (() => void) | null = null;
+let installLeases = 0;
+
+export function installSeerrResults(): () => void {
+    if (installLeases === 0) {
+        const unregisterReset = JC.identity.registerReset(
+            'seerr-results-placement',
+            resetSeerrResultsIdentity,
+        );
+        try {
+            document.addEventListener('seerr-media-requested', handleMediaRequested);
+        } catch (error) {
+            unregisterReset();
+            throw error;
+        }
+        uninstallIdentityReset = unregisterReset;
+    }
+    installLeases += 1;
+    let installed = true;
+    return () => {
+        if (!installed) return;
+        installed = false;
+        installLeases -= 1;
+        if (installLeases > 0) return;
+        uninstallIdentityReset?.();
+        uninstallIdentityReset = null;
+        document.removeEventListener('seerr-media-requested', handleMediaRequested);
+        resetSeerrResultsIdentity();
+    };
+}

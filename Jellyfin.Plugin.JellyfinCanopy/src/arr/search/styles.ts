@@ -193,3 +193,8 @@ export function injectArrSearchStyles(): void {
     injected = true;
     JC.core.ui!.injectCss('jc-arr-search-styles', CSS);
 }
+
+export function removeArrSearchStyles(): void {
+    JC.core.ui!.removeCss('jc-arr-search-styles');
+    injected = false;
+}

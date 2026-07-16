@@ -1,11 +1,6 @@
 // src/seerr/ui/styles.ts
 // CSS for Seerr search cards, buttons, popovers and the season modal.
-import { JC } from '../../globals';
-
- 
-
-
-import { ui, internal } from './internal';
+import { ui } from './internal';
 
 // ================================
 // STYLING SYSTEM
@@ -383,8 +378,23 @@ ui.addSeasonModalStyles = function () {
     `;
     document.head.appendChild(style);
 };
-// Inject styles immediately on module load so all self-initializing Seerr
-// sub-modules (item-details, discovery pages, issue reporter, etc.) get CSS
-// regardless of whether the search module is enabled.
-ui.addMainStyles();
-ui.addSeasonModalStyles();
+/** Install the shared Seerr styles and remove only nodes owned by this activation. */
+export function installSeerrStyles(): () => void {
+    const owned: HTMLElement[] = [];
+    if (!document.getElementById('seerr-styles')) {
+        ui.addMainStyles();
+        const style = document.getElementById('seerr-styles');
+        if (style) owned.push(style);
+    }
+    if (!document.getElementById('seerr-season-styles')) {
+        ui.addSeasonModalStyles();
+        const style = document.getElementById('seerr-season-styles');
+        if (style) owned.push(style);
+    }
+    let installed = true;
+    return () => {
+        if (!installed) return;
+        installed = false;
+        for (const style of owned.splice(0).reverse()) style.remove();
+    };
+}

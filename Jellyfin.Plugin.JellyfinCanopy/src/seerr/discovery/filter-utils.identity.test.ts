@@ -21,7 +21,8 @@ describe('discovery managed request identity paving', () => {
             setCache,
             fetchWithRetry,
         } as unknown as NonNullable<typeof JC.requestManager>;
-        await import('./filter-utils');
+        const { installDiscoveryFilter } = await import('./filter-utils');
+        installDiscoveryFilter();
     });
 
     it('delegates parsing, cache publication, and identity fencing to core API', async () => {

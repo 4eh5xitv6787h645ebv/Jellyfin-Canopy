@@ -9,16 +9,16 @@ import { JC } from '../globals';
 
 const logPrefix = '🪼 Jellyfin Canopy: HSS Discovery Handler:';
 
-function initDiscoveryHandler() {
-
-    document.addEventListener('click', function(e: any) {
+function handleDiscoveryClick(e: Event): void {
+        const target = e.target instanceof Element ? e.target : null;
+        if (!target) return;
         // Don't intercept if clicking the request button
-        if (e.target.closest('.discover-requestbutton')) {
+        if (target.closest('.discover-requestbutton')) {
             return;
         }
 
         // Target any click on the discover card (except the request button)
-        const discoverCard = e.target.closest('.discover-card');
+        const discoverCard = target.closest<HTMLElement>('.discover-card');
 
         if (!discoverCard) {
             return;
@@ -39,7 +39,14 @@ function initDiscoveryHandler() {
 
         // Open the more-info modal
         JC.seerrMoreInfo.open(tmdbId, mediaType);
-    }, true);
 }
 
-initDiscoveryHandler();
+export function installHssDiscoveryHandler(): () => void {
+    document.addEventListener('click', handleDiscoveryClick, true);
+    let installed = true;
+    return () => {
+        if (!installed) return;
+        installed = false;
+        document.removeEventListener('click', handleDiscoveryClick, true);
+    };
+}

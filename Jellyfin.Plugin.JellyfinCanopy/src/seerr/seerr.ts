@@ -68,13 +68,11 @@ function resetSeerrSearchIdentity(): void {
     document.querySelectorAll('.section-hidden').forEach((node) => node.classList.remove('section-hidden'));
 }
 
-JC.identity.registerReset('seerr-search', resetSeerrSearchIdentity);
-
 /**
  * Main initialization function for Seerr search integration.
  * This function sets up the state, observers, and event listeners.
  */
-JC.initializeSeerrScript = function() {
+function initializeSeerrScript(): void {
     resetSeerrSearchIdentity();
     // Early exit if Seerr integration or search results are disabled in plugin settings
     if (!JC.pluginConfig.SeerrEnabled) {
@@ -780,4 +778,21 @@ JC.initializeSeerrScript = function() {
     });
 
     console.log(`${logPrefix} Initialization complete.`);
-};
+}
+
+let uninstallIdentityReset: (() => void) | null = null;
+
+export function installSeerrSearch(): () => void {
+    JC.initializeSeerrScript = initializeSeerrScript;
+    uninstallIdentityReset ??= JC.identity.registerReset('seerr-search', resetSeerrSearchIdentity);
+    let installed = true;
+    return () => {
+        if (!installed) return;
+        installed = false;
+        uninstallIdentityReset?.();
+        uninstallIdentityReset = null;
+        resetSeerrSearchIdentity();
+    };
+}
+
+export { initializeSeerrScript };

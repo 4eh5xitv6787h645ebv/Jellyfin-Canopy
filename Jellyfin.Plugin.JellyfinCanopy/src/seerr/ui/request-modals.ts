@@ -3,12 +3,13 @@
 import { JC } from '../../globals';
 // PERF(R6): no remote assets — poster placeholder embedded in the plugin DLL.
 import { assetUrl } from '../../core/asset-urls';
+import { seerrStatus } from '../seerr-status';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload + DOM shapes; typed incrementally */
 
 
 import { ui, internal } from './internal';
-const MediaStatus = JC.seerrStatus!.MEDIA;
+const MediaStatus = seerrStatus.MEDIA;
 const logPrefix = '🪼 Jellyfin Canopy: Seerr UI:';
 const escapeHtml = JC.escapeHtml;
 const icons = internal.icons; // requires ui-icons.js to be loaded first

@@ -30,7 +30,8 @@ describe('Seerr card identity ownership', () => {
         JC.pluginConfig = { SeerrUseMoreInfoModal: true, ShowElsewhereOnSeerr: false };
         JC.t = (key: string) => key;
         cardSurfaces.seerrMoreInfo = { open };
-        await import('./cards');
+        const { installSeerrCards } = await import('./cards');
+        installSeerrCards();
     });
 
     beforeEach(() => {

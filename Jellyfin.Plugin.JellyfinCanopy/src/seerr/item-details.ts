@@ -25,6 +25,10 @@ const REQUEST_MORE_BTN_CLASS = 'jc-series-request-more-btn';
 let currentAbortController: AbortController | null = null;
 let requestMoreAbortController: AbortController | null = null;
 const pendingFrames = new Set<number>();
+let initialized = false;
+const navigationSubscriptions: Array<() => void> = [];
+let unregisterIdentityReset: (() => void) | null = null;
+let unregisterIdentityActivate: (() => void) | null = null;
 
 function isCurrent(context: IdentityContext | null, signal?: AbortSignal): context is IdentityContext {
     return !!context && !signal?.aborted && JC.identity.isCurrent(context);
@@ -828,6 +832,8 @@ function injectRequestMoreStyles() {
  * Initializes the item details handler
  */
 function initialize() {
+    if (initialized) return;
+    initialized = true;
     console.debug(`${logPrefix} Initializing Recommendations and Similar sections`);
     injectRequestMoreStyles();
 
@@ -835,26 +841,38 @@ function initialize() {
     // AND the pushState transitions the old raw hashchange listener
     // missed. Teardown wiring is registered first so cleanup always runs
     // before handleItemDetailsPage on a navigation.
-    const lifecycle = JC.core.lifecycle!.register('seerr-item-details');
-    lifecycle.onTeardown(cleanup);
-    lifecycle.teardownOn('navigate');
-    JC.core.navigation!.onNavigate(() => handleItemDetailsPage());
+    navigationSubscriptions.push(JC.core.navigation!.onNavigate(() => {
+        cleanup();
+        handleItemDetailsPage();
+    }));
 
     // Check current page on load
     handleItemDetailsPage();
 
     // Also react to view shows (Jellyfin's custom viewshow event)
-    JC.core.navigation!.onViewPage(() => handleItemDetailsPage());
+    navigationSubscriptions.push(JC.core.navigation!.onViewPage(() => handleItemDetailsPage()));
 }
 
-// Initialize when DOM is ready
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', initialize);
-} else {
-    initialize();
+export function installSeerrItemDetails(): () => void {
+    unregisterIdentityReset ??= JC.identity.registerReset('seerr-item-details-identity', cleanup);
+    unregisterIdentityActivate ??= JC.identity.registerActivate(
+        'seerr-item-details-identity',
+        handleItemDetailsPage,
+    );
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initialize);
+    else initialize();
+    let installed = true;
+    return () => {
+        if (!installed) return;
+        installed = false;
+        document.removeEventListener('DOMContentLoaded', initialize);
+        for (const unsubscribe of navigationSubscriptions.splice(0).reverse()) unsubscribe();
+        unregisterIdentityReset?.();
+        unregisterIdentityReset = null;
+        unregisterIdentityActivate?.();
+        unregisterIdentityActivate = null;
+        cleanup();
+        document.getElementById('jc-series-request-more-styles')?.remove();
+        initialized = false;
+    };
 }
-
-JC.identity.registerReset('seerr-item-details-identity', cleanup);
-JC.identity.registerActivate('seerr-item-details-identity', () => {
-    handleItemDetailsPage();
-});
