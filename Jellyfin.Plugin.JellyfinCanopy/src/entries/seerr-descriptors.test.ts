@@ -38,6 +38,7 @@ describe('Seerr descriptor fragment', () => {
     it('keeps disabled and off-route closures ineligible', () => {
         const search = seerrFeatureDescriptors[1];
         const discovery = seerrFeatureDescriptors[4];
+        expect(discovery.scope).toBe('identity');
         expect(search.isApplicable(state('/web/#/home'))).toBe(false);
         expect(discovery.isApplicable(state('/web/#/home'))).toBe(false);
 
