@@ -10,18 +10,6 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Build
     /// </summary>
     public sealed class EmbeddedBundleEquivalenceTests
     {
-        private static readonly string[] BundleFiles =
-        {
-            "jc.bundle.js",
-            "jc.bundle.js.map",
-            "login-image.js",
-            "login-image.js.map",
-            "splashscreen.js",
-            "splashscreen.js.map",
-            "translations.js",
-            "translations.js.map"
-        };
-
         [Fact]
         public void PluginAssembly_EmbedsExactGeneratedBundleBytes()
         {
@@ -32,8 +20,19 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Build
                 "dist");
             var assembly = typeof(ConfigController).Assembly;
             const string prefix = "Jellyfin.Plugin.JellyfinCanopy.dist.";
-            var expectedResources = BundleFiles
-                .Select(name => prefix + name)
+            var bundleFiles = Directory.EnumerateFiles(
+                    distDirectory,
+                    "*",
+                    SearchOption.AllDirectories)
+                .Select(file => Path.GetRelativePath(distDirectory, file))
+                .OrderBy(name => name, StringComparer.Ordinal)
+                .ToArray();
+            Assert.NotEmpty(bundleFiles);
+            Assert.Contains("client-manifest.json", bundleFiles);
+            Assert.Contains(Path.Combine("entries", "boot.js"), bundleFiles);
+
+            var expectedResources = bundleFiles
+                .Select(name => prefix + name.Replace(Path.DirectorySeparatorChar, '.'))
                 .OrderBy(name => name, StringComparer.Ordinal)
                 .ToArray();
             var embeddedResources = assembly.GetManifestResourceNames()
@@ -42,11 +41,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Build
                 .ToArray();
 
             Assert.Equal(expectedResources, embeddedResources);
-            foreach (var name in BundleFiles)
+            foreach (var name in bundleFiles)
             {
                 var file = Path.Combine(distDirectory, name);
                 Assert.True(File.Exists(file), $"Generated bundle file is missing: {file}");
-                using var stream = assembly.GetManifestResourceStream(prefix + name);
+                var resourceName = prefix + name.Replace(Path.DirectorySeparatorChar, '.');
+                using var stream = assembly.GetManifestResourceStream(resourceName);
                 Assert.NotNull(stream);
                 using var memory = new MemoryStream();
                 stream!.CopyTo(memory);
