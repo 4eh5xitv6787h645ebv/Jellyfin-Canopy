@@ -22,6 +22,7 @@
 import { JC } from '../../globals';
 import { onBodyMutation } from '../../core/dom-observer';
 import { onNavigate, onViewPage } from '../../core/navigation';
+import { queryElementsById, resolveCurrentViewRoot } from '../../core/view-root';
 import { getSidebarContainer, getHeaderRightContainer } from '../helpers';
 import { insertHeaderTrayButton } from '../header-tray';
 import { orderedPages, pageAvailable, resolvePage } from './registry';
@@ -194,12 +195,23 @@ function prefsLinkId(descriptor: PageDescriptor): string {
 function reconcilePrefsMenu(): void {
     const context = JC.identity.capture();
     if (!context) return;
-    const page = document.getElementById('myPreferencesMenuPage');
-    if (!page || page.classList.contains('hide')) return;
+    const current = resolveCurrentViewRoot('myPreferencesMenuPage');
+    if (!current) return;
+    const page = current.root;
     const menuContainer = page.querySelector('.verticalSection');
     if (!menuContainer) return;
+
+    // A cached old preferences view may retain identity-owned links with the
+    // same ids. Remove every non-current copy before reconciling this root so
+    // neither selector order nor stale identity can suppress current entries.
+    document.querySelectorAll<HTMLElement>('[id^="jcPagePrefs-"]').forEach((entry) => {
+        if (!page.contains(entry)) entry.remove();
+    });
+
     for (const descriptor of orderedPages()) {
-        let existing = document.getElementById(prefsLinkId(descriptor));
+        const matches = queryElementsById(prefsLinkId(descriptor), page);
+        let existing = matches.shift() ?? null;
+        matches.forEach((duplicate) => duplicate.remove());
         if (existing && !JC.identity.isOwned(existing, context)) {
             existing.remove();
             existing = null;

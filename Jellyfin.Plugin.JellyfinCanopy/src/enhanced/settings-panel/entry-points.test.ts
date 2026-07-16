@@ -4,6 +4,7 @@
 // call made off the preferences page, and never disconnected them).
 import { beforeEach, describe, expect, it } from 'vitest';
 import { JC } from '../../globals';
+import { resetViewRootTrackingForTests } from '../../core/view-root';
 import './entry-points';
 
 const addLink = (): void => (JC as unknown as { addUserPreferencesLink: () => void }).addUserPreferencesLink();
@@ -22,6 +23,7 @@ function buildPrefsPage(hidden = false): HTMLElement {
 describe('JC.addUserPreferencesLink', () => {
     beforeEach(() => {
         document.body.innerHTML = '';
+        resetViewRootTrackingForTests();
     });
 
     it('creates no observers and no link when off the preferences page', () => {
@@ -58,6 +60,19 @@ describe('JC.addUserPreferencesLink', () => {
         expect(document.getElementById('jellyfinCanopyUserPrefsLink')).toBeNull();
     });
 
+    it('reconciles a hidden cached page into the current visible page', () => {
+        const stalePage = buildPrefsPage(true);
+        const staleLink = document.createElement('a');
+        staleLink.id = 'jellyfinCanopyUserPrefsLink';
+        stalePage.querySelector('.verticalSection')!.appendChild(staleLink);
+        const currentPage = buildPrefsPage();
+
+        addLink();
+
+        expect(stalePage.querySelector('#jellyfinCanopyUserPrefsLink')).toBeNull();
+        expect(currentPage.querySelectorAll('#jellyfinCanopyUserPrefsLink')).toHaveLength(1);
+    });
+
     it('adds the link via the navigation hook once the cached page is re-shown', () => {
         const page = buildPrefsPage(true);
         addLink(); // wires the nav hooks; page hidden so no link yet
@@ -69,5 +84,31 @@ describe('JC.addUserPreferencesLink', () => {
         history.pushState({}, '', '/test-prefs-link-reshow');
 
         expect(document.getElementById('jellyfinCanopyUserPrefsLink')).not.toBeNull();
+    });
+
+    it('moves ownership across repeated cached-view re-shows without accumulating links', () => {
+        history.replaceState({}, '', '/web/#/mypreferencesmenu.html?instance=a');
+        const pageA = buildPrefsPage();
+        pageA.dispatchEvent(new CustomEvent('viewshow', { bubbles: true }));
+        addLink();
+
+        history.replaceState({}, '', '/web/#/mypreferencesmenu.html?instance=b');
+        pageA.classList.add('hide');
+        const pageB = buildPrefsPage();
+        pageB.dispatchEvent(new CustomEvent('viewshow', { bubbles: true }));
+        addLink();
+
+        expect(pageA.querySelector('#jellyfinCanopyUserPrefsLink')).toBeNull();
+        expect(pageB.querySelectorAll('#jellyfinCanopyUserPrefsLink')).toHaveLength(1);
+
+        history.replaceState({}, '', '/web/#/mypreferencesmenu.html?instance=a');
+        pageB.classList.add('hide');
+        pageA.classList.remove('hide');
+        pageA.dispatchEvent(new CustomEvent('viewshow', { bubbles: true }));
+        addLink();
+
+        expect(pageB.querySelector('#jellyfinCanopyUserPrefsLink')).toBeNull();
+        expect(pageA.querySelectorAll('#jellyfinCanopyUserPrefsLink')).toHaveLength(1);
+        expect(document.querySelectorAll('#jellyfinCanopyUserPrefsLink')).toHaveLength(1);
     });
 });
