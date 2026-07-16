@@ -1227,7 +1227,7 @@
             throw new Error(`Unknown Jellyfin Canopy distribution file: ${String(path)}`);
         }
         const retry = Math.min(2, Math.max(0, Number.isSafeInteger(attempt) ? attempt : 0));
-        return client.getUrl(`/JellyfinCanopy/dist/${manifest.buildId}/${path}?attempt=${retry}`);
+        return client.getUrl(`/JellyfinCanopy/dist/${manifest.buildId}/attempts/${retry}/${path}`);
     }
 
     /** Native ESM import kept behind one named seam for the loader harness. */

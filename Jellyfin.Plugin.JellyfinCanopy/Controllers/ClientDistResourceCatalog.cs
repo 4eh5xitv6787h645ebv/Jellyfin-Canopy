@@ -74,6 +74,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         private const int MaximumEntries = 128;
         private const int MaximumPathLength = 256;
         private const int MaximumPathSegments = 12;
+        private const int MaximumRequestPathLength = MaximumPathLength + 80;
+        private const int MaximumRequestPathSegments = MaximumPathSegments + 3;
         private const int MaximumFileBytes = 32 * 1024 * 1024;
         private const long MaximumTotalBytes = 128L * 1024 * 1024;
 
@@ -255,7 +257,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
 
         public ClientDistResolution Resolve(string? requestPath)
         {
-            if (!TryValidatePath(requestPath, allowManifest: true, out var safePath))
+            if (!TryValidatePath(
+                requestPath,
+                allowManifest: true,
+                out var safePath,
+                MaximumRequestPathLength,
+                MaximumRequestPathSegments))
             {
                 return new ClientDistResolution(
                     ClientDistResolutionStatus.Invalid,
@@ -263,10 +270,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                     null);
             }
 
-            var separator = safePath.IndexOf('/');
-            var firstSegment = separator < 0
-                ? safePath
-                : safePath.Substring(0, separator);
+            var segments = safePath.Split('/');
+            var firstSegment = segments[0];
             var generationScoped = IsLowerHexSha256(firstSegment);
             if (generationScoped)
             {
@@ -278,8 +283,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                         null);
                 }
 
-                if (separator < 0
-                    || separator == safePath.Length - 1)
+                // The attempt belongs in the path rather than the query so
+                // native static and dynamic relative imports inherit one
+                // cache identity for the complete module graph.
+                if (segments.Length < 4
+                    || !string.Equals(segments[1], "attempts", StringComparison.Ordinal)
+                    || segments[2] is not ("0" or "1" or "2"))
                 {
                     return new ClientDistResolution(
                         ClientDistResolutionStatus.Invalid,
@@ -287,7 +296,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                         null);
                 }
 
-                safePath = safePath.Substring(separator + 1);
+                safePath = string.Join('/', segments.Skip(3));
                 if (string.Equals(safePath, ManifestPath, StringComparison.Ordinal))
                 {
                     return new ClientDistResolution(
@@ -442,11 +451,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         private static bool TryValidatePath(
             string? path,
             bool allowManifest,
-            out string safePath)
+            out string safePath,
+            int maximumLength = MaximumPathLength,
+            int maximumSegments = MaximumPathSegments)
         {
             safePath = string.Empty;
             if (string.IsNullOrEmpty(path)
-                || path.Length > MaximumPathLength
+                || path.Length > maximumLength
                 || path[0] == '/'
                 || path[^1] == '/'
                 || path.Contains('\\')
@@ -458,7 +469,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             }
 
             var segments = path.Split('/');
-            if (segments.Length > MaximumPathSegments)
+            if (segments.Length > maximumSegments)
             {
                 return false;
             }

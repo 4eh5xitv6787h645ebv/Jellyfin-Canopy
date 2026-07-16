@@ -172,7 +172,10 @@ describe('plugin.js loader guards', () => {
         expect(helpers.validateClientManifest(manifest)).toBe(manifest);
         expect(helpers.clientGenerationUrl(
             { getUrl: (path) => `/proxy/web${path}` }, manifest, 'entries/boot.js', 99,
-        )).toBe(`/proxy/web/JellyfinCanopy/dist/${'a'.repeat(64)}/entries/boot.js?attempt=2`);
+        )).toBe(`/proxy/web/JellyfinCanopy/dist/${'a'.repeat(64)}/attempts/2/entries/boot.js`);
+        expect(helpers.clientGenerationUrl(
+            { getUrl: (path) => `/nested/base${path}` }, manifest, 'entries/boot.js', -1,
+        )).toBe(`/nested/base/JellyfinCanopy/dist/${'a'.repeat(64)}/attempts/0/entries/boot.js`);
         expect(() => helpers.validateClientManifest({ ...manifest, buildId: '../bad' })).toThrow();
         expect(() => helpers.validateClientManifest({
             ...manifest,
@@ -201,7 +204,7 @@ describe('plugin.js loader guards', () => {
             },
         };
         const runtime = { configurationPublished: vi.fn() };
-        const imports = vi.fn((url: string) => url.endsWith('?attempt=2')
+        const imports = vi.fn((url: string) => url.includes('/attempts/2/')
             ? Promise.resolve({ initializeClientRuntime: () => runtime })
             : Promise.reject(new Error('transient module failure')));
         const load = eval(`((importClientModule) => {
@@ -219,8 +222,10 @@ describe('plugin.js loader guards', () => {
         vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 
         await expect(load(imports)(client)).resolves.toBe(runtime);
-        expect(imports.mock.calls.map(([url]) => new URL(url, 'http://test').searchParams.get('attempt')))
+        expect(imports.mock.calls.map(([url]) => new URL(url, 'http://test').pathname
+            .match(/\/attempts\/(\d+)\//)?.[1]))
             .toEqual(['0', '1', '2']);
+        expect(imports.mock.calls.every(([url]) => !new URL(url, 'http://test').search)).toBe(true);
 
         const failedImports = vi.fn(() => Promise.reject(new Error('persistent module failure')));
         const retryableLoad = load(failedImports);
@@ -574,7 +579,7 @@ describe('plugin.js loader guards', () => {
         expect(registeredFailure).toHaveBeenCalledTimes(1);
         expect(runtime.configurationPublished).toHaveBeenCalledWith(event.detail);
         expect(importedUrls).toEqual([
-            `http://loader.test/JellyfinCanopy/dist/${'a'.repeat(64)}/entries/boot.js?attempt=0`,
+            `http://loader.test/JellyfinCanopy/dist/${'a'.repeat(64)}/attempts/0/entries/boot.js`,
         ]);
         expect([...loaderDocument.scripts].some((script) => script.src.includes('/dist/jc.bundle.js'))).toBe(false);
         expect(legacyActivation).not.toHaveBeenCalled();

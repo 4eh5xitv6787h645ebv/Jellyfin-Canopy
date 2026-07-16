@@ -34,7 +34,7 @@ public sealed class ClientDistResourceControllerTests
         Assert.Equal(BootBytes, bare.Resource!.Content);
 
         var generated = fixture.Catalog.Resolve(
-            $"{BuildId}/chunks/chunk-ABC123.js");
+            $"{BuildId}/attempts/2/chunks/chunk-ABC123.js");
         Assert.Equal(ClientDistResolutionStatus.Found, generated.Status);
         Assert.True(generated.IsGenerationScoped);
         Assert.Equal(ChunkBytes, generated.Resource!.Content);
@@ -45,10 +45,44 @@ public sealed class ClientDistResourceControllerTests
 
         Assert.Equal(
             ClientDistResolutionStatus.Unknown,
-            fixture.Catalog.Resolve($"{BuildId}/client-manifest.json").Status);
+            fixture.Catalog.Resolve($"{BuildId}/attempts/0/client-manifest.json").Status);
         Assert.Equal(
             ClientDistResolutionStatus.Unknown,
             fixture.Catalog.Resolve("entries/unknown.js").Status);
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("1")]
+    [InlineData("2")]
+    public void Catalog_MapsEveryBoundedAttemptGraphToExactManifestBytes(
+        string attempt)
+    {
+        var resolution = CreateFixture().Catalog.Resolve(
+            $"{BuildId}/attempts/{attempt}/chunks/chunk-ABC123.js");
+
+        Assert.Equal(ClientDistResolutionStatus.Found, resolution.Status);
+        Assert.True(resolution.IsGenerationScoped);
+        Assert.Equal(ChunkBytes, resolution.Resource!.Content);
+        Assert.Equal("chunks/chunk-ABC123.js", resolution.Resource.Path);
+    }
+
+    [Theory]
+    [InlineData("entries/boot.js")]
+    [InlineData("attempts/0")]
+    [InlineData("attempts/3/entries/boot.js")]
+    [InlineData("attempts/-1/entries/boot.js")]
+    [InlineData("attempts/01/entries/boot.js")]
+    [InlineData("attempts/0/attempts/1/entries/boot.js")]
+    [InlineData("attempt/0/entries/boot.js")]
+    public void Catalog_RejectsMissingMalformedOrDuplicateAttemptNamespaces(
+        string suffix)
+    {
+        var resolution = CreateFixture().Catalog.Resolve($"{BuildId}/{suffix}");
+
+        Assert.NotEqual(ClientDistResolutionStatus.Found, resolution.Status);
+        Assert.True(resolution.IsGenerationScoped);
+        Assert.Null(resolution.Resource);
     }
 
     [Theory]
@@ -90,17 +124,11 @@ public sealed class ClientDistResourceControllerTests
 
     [Theory]
     [InlineData(null, true)]
-    [InlineData("?attempt=0", true)]
-    [InlineData("?attempt=1", true)]
-    [InlineData("?attempt=2", true)]
-    [InlineData("?attempt=3", false)]
-    [InlineData("?attempt=-1", false)]
-    [InlineData("?attempt=+1", false)]
-    [InlineData("?attempt=01", false)]
+    [InlineData("?attempt=0", false)]
     [InlineData("?attempt=0&attempt=1", false)]
     [InlineData("?attempt=1&v=legacy", false)]
     [InlineData("?v=legacy", false)]
-    public void GenerationRoute_BoundsRetryCacheKeys(
+    public void GenerationRoute_RejectsEveryQueryCacheAlias(
         string? query,
         bool expectedSuccess)
     {
@@ -110,7 +138,7 @@ public sealed class ClientDistResourceControllerTests
             query);
 
         var result = controller.GetBundleResource(
-            $"{BuildId}/entries/boot.js");
+            $"{BuildId}/attempts/1/entries/boot.js");
 
         if (expectedSuccess)
         {
@@ -175,7 +203,7 @@ public sealed class ClientDistResourceControllerTests
             manifestController.Response.Headers.CacheControl.ToString());
 
         var fileController = CreateController(fixture.Catalog);
-        fileController.GetBundleResource($"{BuildId}/entries/boot.js");
+        fileController.GetBundleResource($"{BuildId}/attempts/0/entries/boot.js");
         Assert.Equal(
             "public, max-age=31536000, immutable",
             fileController.Response.Headers.CacheControl.ToString());
@@ -186,11 +214,10 @@ public sealed class ClientDistResourceControllerTests
     {
         var controller = CreateController(
             CreateFixture().Catalog,
-            devMode: true,
-            "?attempt=2");
+            devMode: true);
 
         Assert.IsType<FileContentResult>(controller.GetBundleResource(
-            $"{BuildId}/entries/boot.js"));
+            $"{BuildId}/attempts/2/entries/boot.js"));
         Assert.Equal("no-store", controller.Response.Headers.CacheControl.ToString());
     }
 

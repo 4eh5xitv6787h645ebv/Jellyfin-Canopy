@@ -22,12 +22,17 @@ interface ClientManifest {
     schemaVersion: number;
     buildId: string;
     entries: Record<string, ClientManifestEntry>;
+    files: Record<string, ClientManifestFile>;
 }
 
-interface EntryTarget {
+interface ClientManifestFile {
+    dynamicImports: string[];
+    imports: string[];
+}
+
+interface AssetTarget {
     id: string;
     path: string;
-    pathnameSuffix: string;
     routePattern: RegExp;
 }
 
@@ -43,36 +48,46 @@ async function liveClientManifest(request: APIRequestContext): Promise<ClientMan
     expect(manifest.schemaVersion, 'supported client-manifest schema').toBe(2);
     expect(manifest.buildId, 'manifest build generation').toMatch(/^[a-f0-9]{64}$/);
     expect(manifest.entries && typeof manifest.entries, 'manifest entry inventory').toBe('object');
+    expect(manifest.files && typeof manifest.files, 'manifest file inventory').toBe('object');
     return manifest;
 }
 
-function entryTarget(manifest: ClientManifest, id: string): EntryTarget {
-    const entry = manifest.entries[id];
-    expect(entry, `manifest contains the ${id} entry`).toBeTruthy();
-    expect(entry.kind, `${id} is an ESM entry`).toBe('module');
-    expect(entry.role, `${id} is feature-owned`).toBe('feature');
-    expect(entry.path, `${id} has a safe distribution path`).toMatch(/^[A-Za-z0-9._/-]+$/);
-
-    const pathnameSuffix = `/JellyfinCanopy/dist/${manifest.buildId}/${entry.path}`;
+function assetTarget(manifest: ClientManifest, id: string, path: string): AssetTarget {
+    expect(manifest.files[path], `manifest contains the ${id} asset`).toBeTruthy();
+    expect(path, `${id} has a safe distribution path`).toMatch(/^[A-Za-z0-9._/-]+$/);
+    const graphPrefix = `/JellyfinCanopy/dist/${manifest.buildId}/attempts/`;
     return {
         id,
-        path: entry.path,
-        pathnameSuffix,
-        routePattern: new RegExp(`${escapeRegExp(pathnameSuffix)}(?:\\?[^#]*)?$`),
+        path,
+        routePattern: new RegExp(
+            `${escapeRegExp(graphPrefix)}[0-2]/${escapeRegExp(path)}(?:\\?[^#]*)?$`
+        ),
     };
 }
 
-function isEntryRequest(rawUrl: string, target: EntryTarget): boolean {
+function entryTarget(
+    manifest: ClientManifest,
+    id: string,
+    role: ClientManifestEntry['role'] = 'feature',
+): AssetTarget {
+    const entry = manifest.entries[id];
+    expect(entry, `manifest contains the ${id} entry`).toBeTruthy();
+    expect(entry.kind, `${id} is an ESM entry`).toBe('module');
+    expect(entry.role, `${id} has the expected role`).toBe(role);
+    return assetTarget(manifest, id, entry.path);
+}
+
+function isAssetRequest(rawUrl: string, target: AssetTarget): boolean {
     try {
-        return new URL(rawUrl).pathname.endsWith(target.pathnameSuffix);
+        return target.routePattern.test(new URL(rawUrl).pathname);
     } catch {
         return false;
     }
 }
 
 function requestAttempt(rawUrl: string): number {
-    const value = new URL(rawUrl).searchParams.get('attempt');
-    return value === null ? -1 : Number(value);
+    const match = new URL(rawUrl).pathname.match(/\/attempts\/([0-9]+)\//);
+    return match ? Number(match[1]) : -1;
 }
 
 function assertOnlyInducedImportFailure(
@@ -80,7 +95,8 @@ function assertOnlyInducedImportFailure(
     featureId: string,
 ): void {
     const induced = new RegExp(
-        `feature ["']${escapeRegExp(featureId)}["'] load failed`
+        `feature ["']${escapeRegExp(featureId)}["'] (?:load|activate) failed`
+        + '|boot module attempt [0-2] failed'
         + '|Failed to fetch dynamically imported module'
         + '|Failed to load resource: net::ERR_FAILED',
         'i'
@@ -118,7 +134,7 @@ test.describe('manifest-owned code splitting', () => {
         ].map((id) => entryTarget(manifest, id));
         for (const target of offRoute) {
             expect(
-                requestedUrls.filter((url) => isEntryRequest(url, target)),
+                requestedUrls.filter((url) => isAssetRequest(url, target)),
                 `${target.id} entry stays outside the authenticated Home request graph`
             ).toEqual([]);
         }
@@ -139,11 +155,61 @@ test.describe('manifest-owned code splitting', () => {
         expect(disabled, 'the fixture provides a representative disabled split feature').not.toBeNull();
         const disabledTarget = entryTarget(manifest, disabled!.id);
         expect(
-            requestedUrls.filter((url) => isEntryRequest(url, disabledTarget)),
+            requestedUrls.filter((url) => isAssetRequest(url, disabledTarget)),
             `${disabledTarget.id} entry stays absent while disabled`
         ).toEqual([]);
 
         assertNoRuntimeErrors(consoleErrors);
+    });
+
+    test('a failed static boot child retries the complete graph in a new path namespace', async ({
+        page,
+        request,
+        consoleErrors,
+    }) => {
+        const manifest = await liveClientManifest(request);
+        const boot = entryTarget(manifest, 'boot', 'boot');
+        const bootImports = manifest.files[boot.path]?.imports || [];
+        expect(bootImports.length, 'the boot entry has a representative static child').toBeGreaterThan(0);
+        const bootChild = assetTarget(manifest, 'boot-static-child', bootImports[0]);
+        const bootAttempts: number[] = [];
+        const childAttempts: number[] = [];
+
+        await page.addInitScript(() => {
+            (window as any).__jcIdentityActivationCount = 0;
+            document.addEventListener('jc:identityactivated', () => {
+                (window as any).__jcIdentityActivationCount += 1;
+            });
+        });
+        page.on('request', (browserRequest) => {
+            if (isAssetRequest(browserRequest.url(), boot)) {
+                bootAttempts.push(requestAttempt(browserRequest.url()));
+            }
+        });
+        await page.route(bootChild.routePattern, async (route) => {
+            const attempt = requestAttempt(route.request().url());
+            childAttempts.push(attempt);
+            if (attempt === 0) {
+                await route.abort('failed');
+                return;
+            }
+            await route.continue();
+        });
+
+        await loginAs(page, 'admin', consoleErrors);
+        await page.waitForFunction(
+            () => (window as any).JellyfinCanopy?.initialized === true,
+            undefined,
+            { timeout: 60_000 }
+        );
+
+        expect(bootAttempts, 'the rejected boot graph is imported once more at attempt 1').toEqual([0, 1]);
+        expect(childAttempts, 'the relative static child inherits both graph namespaces').toEqual([0, 1]);
+        expect(
+            await page.evaluate(() => (window as any).__jcIdentityActivationCount),
+            'only the recovered boot runtime publishes identity activation'
+        ).toBe(1);
+        assertOnlyInducedImportFailure(consoleErrors, 'boot');
     });
 
     test('concurrent generation triggers share one applicable route-module load', async ({
@@ -172,7 +238,7 @@ test.describe('manifest-owned code splitting', () => {
         ).toBe(true);
 
         const importStarted = page.waitForRequest(
-            (browserRequest) => isEntryRequest(browserRequest.url(), calendar),
+            (browserRequest) => isAssetRequest(browserRequest.url(), calendar),
             { timeout: 30_000 }
         );
         await showRoute(page, '/calendar');
@@ -193,7 +259,7 @@ test.describe('manifest-owned code splitting', () => {
         assertNoRuntimeErrors(consoleErrors);
     });
 
-    test('a failed route-module import retries with the next manifest attempt', async ({
+    test('a failed route-module import retries automatically with the next manifest attempt', async ({
         page,
         request,
         consoleErrors,
@@ -218,25 +284,100 @@ test.describe('manifest-owned code splitting', () => {
         ).toBe(true);
 
         await showRoute(page, '/calendar');
-        await expect.poll(
-            () => attempts.length,
-            { message: 'attempt=0 was actually aborted', timeout: 30_000 }
-        ).toBe(1);
-        await expect.poll(
-            () => consoleErrors.real().some((text) => /feature ["']calendar-page["'] load failed/i.test(text)),
-            { message: 'the loader observed the induced import failure', timeout: 30_000 }
-        ).toBe(true);
-
-        // Two simultaneous retry triggers prove the rejected flight was
-        // evicted without allowing duplicate attempt=1 imports.
-        await page.evaluate(() => {
-            window.dispatchEvent(new CustomEvent('jc:config-changed'));
-            window.dispatchEvent(new CustomEvent('jc:config-changed'));
-        });
-
         await page.waitForSelector('#jc-calendar-container', { state: 'visible', timeout: 60_000 });
         await expect(page.locator('#jc-calendar-container')).toHaveCount(1);
-        expect(attempts, 'the failed URL is replaced by exactly one bounded retry URL').toEqual([0, 1]);
+        expect(attempts, 'the scoped retry owner replaces the failed graph exactly once').toEqual([0, 1]);
         assertOnlyInducedImportFailure(consoleErrors, calendar.id);
+    });
+
+    test('a failed dynamic implementation child retries automatically and rejects a stale route', async ({
+        page,
+        request,
+        consoleErrors,
+    }) => {
+        const manifest = await liveClientManifest(request);
+        const entry = entryTarget(manifest, 'seerr-search');
+        const dynamicImports = manifest.files[entry.path]?.dynamicImports || [];
+        expect(dynamicImports.length, 'Seerr search has an activation-time implementation child').toBe(1);
+        const implementation = assetTarget(manifest, 'seerr-search-implementation', dynamicImports[0]);
+        const entryAttempts: number[] = [];
+        const implementationAttempts: number[] = [];
+        const activationLogs: string[] = [];
+        const pageErrors: string[] = [];
+        let releaseRecoveredChild!: () => void;
+        const recoveredChildReleased = new Promise<void>((resolve) => {
+            releaseRecoveredChild = resolve;
+        });
+        let markRecoveredChildStarted!: () => void;
+        const recoveredChildStarted = new Promise<void>((resolve) => {
+            markRecoveredChildStarted = resolve;
+        });
+
+        page.on('request', (browserRequest) => {
+            if (isAssetRequest(browserRequest.url(), entry)) {
+                entryAttempts.push(requestAttempt(browserRequest.url()));
+            }
+        });
+        page.on('console', (message) => {
+            if (/Jellyfin Canopy: Seerr: Initializing/i.test(message.text())) {
+                activationLogs.push(message.text());
+            }
+        });
+        page.on('pageerror', (error) => pageErrors.push(error.stack || error.message));
+        await page.route(implementation.routePattern, async (route) => {
+            const attempt = requestAttempt(route.request().url());
+            implementationAttempts.push(attempt);
+            if (attempt === 0) {
+                await route.abort('failed');
+                return;
+            }
+            markRecoveredChildStarted();
+            await recoveredChildReleased;
+            await route.continue();
+        });
+
+        await loginAs(page, 'admin', consoleErrors);
+        expect(
+            await page.evaluate(() => (window as any).JellyfinCanopy?.pluginConfig?.SeerrEnabled),
+            'the official live fixture enables Seerr'
+        ).toBe(true);
+
+        await showRoute(page, '/search');
+        await recoveredChildStarted;
+
+        // The automatic attempt=1 child is deliberately held while the route
+        // becomes inapplicable. Its eventual completion must not publish even
+        // a transient stale feature instance.
+        await showRoute(page, '/home');
+        await page.waitForSelector('#indexPage', { state: 'visible', timeout: 30_000 });
+        const recoveredResponse = page.waitForResponse(
+            (response) => isAssetRequest(response.url(), implementation)
+                && requestAttempt(response.url()) === 1,
+            { timeout: 30_000 }
+        );
+        releaseRecoveredChild();
+        await recoveredResponse;
+        await page.evaluate(() => new Promise<void>((resolve) => {
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+        }));
+        expect(activationLogs, 'the obsolete Search activation never reaches implementation setup')
+            .toEqual([]);
+
+        await showRoute(page, '/search');
+        await expect.poll(
+            () => activationLogs.length,
+            { message: 'the current route activates the recovered implementation', timeout: 60_000 }
+        ).toBe(1);
+        expect(
+            activationLogs.length,
+            'the recovered current route publishes exactly one feature instance'
+        ).toBe(1);
+        expect(entryAttempts, 'the entry is re-imported in the recovered graph').toEqual([0, 1]);
+        expect(
+            implementationAttempts,
+            'the dynamic relative child inherits the failed and recovered graph paths'
+        ).toEqual([0, 1]);
+        expect(pageErrors, `no page errors after recovery\n${pageErrors.join('\n')}`).toEqual([]);
+        assertOnlyInducedImportFailure(consoleErrors, entry.id);
     });
 });

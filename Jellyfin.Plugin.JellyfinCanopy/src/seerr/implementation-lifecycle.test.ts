@@ -50,6 +50,54 @@ afterEach(() => {
 });
 
 describe('Seerr implementation graph ownership', () => {
+    it('reuses the activated UI facade across a fresh module-graph attempt', async () => {
+        const first = await import('./ui/internal');
+        expect(JC.seerrUI).toBeUndefined();
+
+        first.installSeerrUiFacade();
+        const published = first.ui;
+        published.retryProbe = vi.fn();
+        expect(JC.seerrUI).toBe(published);
+
+        // A native import retry has a distinct URL/module registry entry. The
+        // equivalent reset proves reevaluation reads, but does not republish,
+        // the one document-owned surface.
+        vi.resetModules();
+        const retried = await import('./ui/internal');
+        expect(retried.ui).toBe(published);
+        expect(retried.internal).toBe(first.internal);
+        expect(retried.ui.retryProbe).toBe(published.retryProbe);
+        expect(JC.seerrUI).toBe(published);
+        const symbols = Object.getOwnPropertySymbols(published);
+        expect(symbols).toHaveLength(1);
+        expect(Object.getOwnPropertyDescriptor(published, symbols[0])).toMatchObject({
+            value: first.internal,
+            enumerable: false,
+            configurable: false,
+            writable: false,
+        });
+    });
+
+    it('copies a frozen legacy UI surface only when activation publishes retry ownership', async () => {
+        const legacyMethod = vi.fn();
+        const legacy = Object.freeze({ legacyMethod });
+        JC.seerrUI = legacy;
+
+        vi.resetModules();
+        const graph = await import('./ui/internal');
+        expect(JC.seerrUI).toBe(legacy);
+        expect(graph.ui).not.toBe(legacy);
+        expect(graph.ui.legacyMethod).toBe(legacyMethod);
+        expect(Object.getOwnPropertySymbols(graph.ui)).toEqual([]);
+
+        graph.installSeerrUiFacade();
+        expect(JC.seerrUI).toBe(graph.ui);
+        expect(graph.ui.legacyMethod).toBe(legacyMethod);
+        const symbols = Object.getOwnPropertySymbols(graph.ui);
+        expect(symbols).toHaveLength(1);
+        expect(Reflect.get(graph.ui, symbols[0])).toBe(graph.internal);
+    });
+
     it('evaluates every implementation graph without facade, DOM, listener, reset, frame or timer work', async () => {
         // This is a Seerr-graph assertion. details-view is a boot-owned core
         // module with its own document-lifetime listener, so evaluate it before

@@ -129,10 +129,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         public ActionResult GetScript(string path) => GetScriptResource($"js/{path}");
         // Generated client assets are served only from the embedded schema-v2
         // manifest inventory. Bare paths retain the classic loader/bootstrap
-        // contract; module entries and nested chunks may additionally use the
-        // current build-id prefix plus a bounded retry attempt. This keeps
-        // ApiClient.getUrl reverse-proxy handling unchanged while stale builds,
-        // unknown files, and path traversal fail closed.
+        // contract. Module graphs use /{build}/attempts/{0..2}/{asset}; putting
+        // the bounded attempt in the path makes every relative child import
+        // inherit that graph identity. This keeps ApiClient.getUrl reverse-
+        // proxy handling unchanged while stale builds, unknown files, queries,
+        // and path traversal fail closed.
         [HttpGet("dist/{**path}")]
         public ActionResult GetBundleResource(string path)
         {
@@ -367,20 +368,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         private bool IsValidClientAttempt(bool generationScoped)
         {
             var query = Request.Query;
-            if (!query.TryGetValue("attempt", out var values))
+            if (generationScoped)
             {
-                return !generationScoped || query.Count == 0;
+                return query.Count == 0;
             }
 
-            if (!generationScoped
-                || query.Count != 1
-                || values.Count != 1)
-            {
-                return false;
-            }
-
-            var attempt = values[0];
-            return attempt is "0" or "1" or "2";
+            // Compatibility assets predate the module graph and retain their
+            // existing version query, but an attempt query is never valid.
+            return !query.ContainsKey("attempt");
         }
 
         private static bool IfNoneMatchSatisfied(
