@@ -431,7 +431,7 @@ describe('plugin.js loader guards', () => {
         expect(diagnostics.snapshot()).toMatchObject({ epoch: 2, degraded: false, entries: [] });
     });
 
-    it('continues later feature owners after sync/async degradation and still reaches the boot marker', async () => {
+    it('contains sync/async legacy activation failures and still reaches the boot marker', async () => {
         const recordSource = extractFunctionSource('recordFeatureFailure');
         const oneSource = extractFunctionSource('activateFeature');
         const allSource = extractFunctionSource('activateFeatures');
@@ -451,7 +451,12 @@ describe('plugin.js loader guards', () => {
         const identity = { isCurrent: () => true };
         const activate = eval(
             `(function(JC, identity, bootDiagnostics, requireCurrentIdentity) {`
-            + recordSource + oneSource + allSource + '; return activateFeatures; })',
+            + recordSource + oneSource + allSource
+            + `; return function(context) {
+                activateFeature(context, 'canopy', true, JC.initializeCanopyScript);
+                activateFeature(context, 'bookmarks', true, JC.initializeBookmarks);
+                activateFeature(context, 'pages-framework', true, JC.initializePagesFramework);
+            }; })`,
         ) as (
             jc: Record<string, unknown>,
             identity: { isCurrent(context: IdentityContext): boolean },
@@ -476,13 +481,15 @@ describe('plugin.js loader guards', () => {
             }),
         ]);
         expect(error).toHaveBeenCalledTimes(2);
+        expect(allSource).not.toContain('initializeBookmarks');
+        expect(allSource).not.toContain('initializePagesFramework');
 
         const run = extractFunctionSource('runInitialization') || '';
         expect(run.indexOf('activateFeatures(context)')).toBeGreaterThanOrEqual(0);
         expect(run.indexOf('JC.initialized = true')).toBeGreaterThan(run.indexOf('activateFeatures(context)'));
     });
 
-    it('completes the real loader marker, event, splash, and legacy tier after a registered owner fails', async () => {
+    it('completes the real loader marker, event, splash, and shell after a registered owner fails', async () => {
         const loaderDocument = document.implementation.createHTMLDocument('loader-containment');
         const local = memoryStorage();
         const session = memoryStorage();
@@ -490,7 +497,7 @@ describe('plugin.js loader guards', () => {
             .mockRejectedValueOnce(new Error('registered owner failed'))
             .mockResolvedValue(undefined);
         const legacyActivation = vi.fn();
-        const laterLegacyActivation = vi.fn();
+        const laterRegisteredActivation = vi.fn();
         const hideSplash = vi.fn();
         const initializeSplash = vi.fn();
         const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
@@ -547,8 +554,8 @@ describe('plugin.js loader guards', () => {
                 jc.loadSettings = () => ({ displayLanguage: '' });
                 jc.initializeShortcuts = vi.fn();
                 jc.initializeCanopyScript = legacyActivation;
-                jc.initializePagesFramework = laterLegacyActivation;
                 jc.identity.registerActivate('registered-owner', registeredFailure);
+                jc.identity.registerActivate('registered-later', laterRegisteredActivation);
                 return Promise.resolve({ initializeClientRuntime: () => runtime });
             },
             localStorage: local,
@@ -574,7 +581,6 @@ describe('plugin.js loader guards', () => {
             loadSettings?: () => Record<string, unknown>;
             initializeShortcuts?: () => void;
             initializeCanopyScript?: () => void;
-            initializePagesFramework?: () => void;
             initializeSplashScreen?: () => void;
             hideSplashScreen?: () => void;
         };
@@ -631,7 +637,7 @@ describe('plugin.js loader guards', () => {
         ]);
         expect([...loaderDocument.scripts].some((script) => script.src.includes('/dist/jc.bundle.js'))).toBe(false);
         expect(legacyActivation).toHaveBeenCalledTimes(1);
-        expect(laterLegacyActivation).toHaveBeenCalledTimes(1);
+        expect(laterRegisteredActivation).toHaveBeenCalledTimes(1);
         expect(jc.initialized).toBe(true);
         expect(event.detail).toEqual({ serverId: 'loaderserver', userId: 'loaderuser', epoch: 1 });
         // Early script load paints immediately; authenticated boot refreshes it
