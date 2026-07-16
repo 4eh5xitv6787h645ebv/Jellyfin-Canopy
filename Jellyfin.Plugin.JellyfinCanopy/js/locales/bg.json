@@ -343,7 +343,7 @@
   "panel_settings_language_display": "Език на интерфейса",
   "panel_settings_language_display_desc": "Изберете език за интерфейса на Jellyfin Canopy. Промените влизат в сила след презареждане на страницата.",
   "panel_settings_language_clear_cache": "Изчистване на кеша за преводи",
-  "panel_settings_language_clear_cache_desc": "Премахва всички кеширани преводи. Полезно за извличане на наскоро актуализиран превод от Github.",
+  "panel_settings_language_clear_cache_desc": "Премахва кешираните преводи и презарежда езиковия файл, включен в инсталирания плъгин.",
   "toast_language_changed": "{{icon:language}} Езикът е променен! Презареждане на страницата…",
   "toast_translation_cache_cleared": "{{icon:trash}} Кешът за преводи е изчистен! Премахнати са {count} кеширани превода. Презареждане…",
   "bookmark_add_title": "Добавяне на отметка",

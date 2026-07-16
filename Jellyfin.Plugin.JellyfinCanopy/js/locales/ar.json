@@ -343,7 +343,7 @@
   "panel_settings_language_display": "لغة العرض",
   "panel_settings_language_display_desc": "حدد اللغة لواجهة Jellyfin Canopy. تسري التغييرات بعد تحديث الصفحة.",
   "panel_settings_language_clear_cache": "مسح ذاكرة التخزين المؤقت للترجمة",
-  "panel_settings_language_clear_cache_desc": "يزيل جميع الترجمات المخزنة مؤقتاً. مفيد لجلب ترجمة تم تحديثها مؤخراً من Github.",
+  "panel_settings_language_clear_cache_desc": "يزيل الترجمات المخزنة مؤقتًا ويعيد تحميل ملف اللغة المضمّن في الإضافة المثبّتة.",
   "toast_language_changed": "{{icon:language}} تم تغيير اللغة! جاري تحديث الصفحة…",
   "toast_translation_cache_cleared": "{{icon:trash}} تم مسح ذاكرة التخزين المؤقت للترجمة! تمت إزالة {count} ترجمة مخزنة مؤقتاً. جاري التحديث…",
   "bookmark_add_title": "إضافة إشارة مرجعية",

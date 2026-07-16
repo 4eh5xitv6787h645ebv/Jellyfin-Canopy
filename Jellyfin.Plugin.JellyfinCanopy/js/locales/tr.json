@@ -343,7 +343,7 @@
   "panel_settings_language_display": "Görüntüleme Dili",
   "panel_settings_language_display_desc": "Jellyfin Canopy arayüzü için dili seçin. Değişiklikler sayfa yenilemesinden sonra geçerli olur.",
   "panel_settings_language_clear_cache": "Çeviri Önbelleğini Temizle",
-  "panel_settings_language_clear_cache_desc": "Önbelleğe alınmış tüm çevirileri kaldırır. Github'dan yakın zamanda güncellenmiş bir çeviri almak için kullanışlıdır.",
+  "panel_settings_language_clear_cache_desc": "Önbelleğe alınmış çevirileri kaldırır ve yüklü eklentiyle birlikte gelen dil dosyasını yeniden yükler.",
   "toast_language_changed": "{{icon:language}} Dil değiştirildi! Sayfa yenileniyor…",
   "toast_translation_cache_cleared": "{{icon:trash}} Çeviri önbelleği temizlendi! {count} önbelleğe alınmış çeviri kaldırıldı. Yenileniyor…",
   "bookmark_add_title": "Yer İmi Ekle",

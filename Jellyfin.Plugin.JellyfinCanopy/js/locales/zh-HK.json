@@ -343,7 +343,7 @@
   "panel_settings_language_display": "顯示語言",
   "panel_settings_language_display_desc": "選擇 Jellyfin Canopy 介面的顯示語言。更改會在重新載入頁面後生效。",
   "panel_settings_language_clear_cache": "清除翻譯快取",
-  "panel_settings_language_clear_cache_desc": "移除所有已快取的翻譯。可用於從 GitHub 取得最近更新的翻譯。",
+  "panel_settings_language_clear_cache_desc": "移除已快取的翻譯，並重新載入已安裝插件隨附的語言檔案。",
   "toast_language_changed": "{{icon:language}} 語言已更改！正在重新載入頁面…",
   "toast_translation_cache_cleared": "{{icon:trash}} 已清除翻譯快取！已移除 {count} 個已快取翻譯。正在重新載入…",
   "bookmark_add_title": "新增書籤",

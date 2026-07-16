@@ -233,7 +233,7 @@
   "panel_settings_spoiler_guard_skip_confirm": "אל תבקש ממני אישור בעת כיבוי מגן הספוילרים",
   "panel_settings_spoiler_guard_skip_confirm_desc": "דילוג על דיאלוג אישור הכיבוי. חוסך לחיצה בעת כיבוי מגן הספוילרים עבור סדרה.",
   "hidden_content_hide_button": "Hide",
-  "panel_settings_language_clear_cache_desc": "Removes all cached translations. Useful to fetch a recently updated translation from Github.",
+  "panel_settings_language_clear_cache_desc": "מסיר את התרגומים השמורים במטמון וטוען מחדש את קובץ השפה הכלול בתוסף המותקן.",
   "downloads_status_downloading": "Downloading",
   "active_streams_count": "{count} Active Stream|{count} Active Streams",
   "active_streams_load_error": "Failed to fetch sessions",

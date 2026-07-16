@@ -53,6 +53,6 @@ export interface JellyfinCanopyPublicApi {
     hideSplashScreen?: () => void;
     /** login-image: wires the login-page profile-image behaviour. */
     initializeLoginImage?: () => void;
-    /** translations: loads the active language table (GitHub + bundled fallback). */
+    /** translations: loads the bundled language table with a gated remote fallback. */
     loadTranslations?: () => Promise<Record<string, string>>;
 }

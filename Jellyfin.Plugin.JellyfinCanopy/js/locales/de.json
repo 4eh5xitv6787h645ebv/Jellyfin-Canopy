@@ -343,7 +343,7 @@
   "panel_settings_language_display": "Anzeigesprache",
   "panel_settings_language_display_desc": "Wählen Sie die Sprache für die Jellyfin Canopy-Oberfläche. Änderungen werden nach Seitenaktualisierung wirksam.",
   "panel_settings_language_clear_cache": "Übersetzungscache leeren",
-  "panel_settings_language_clear_cache_desc": "Entfernt alle zwischengespeicherten Übersetzungen. Nützlich zum Abrufen einer kürzlich aktualisierten Übersetzung von Github.",
+  "panel_settings_language_clear_cache_desc": "Entfernt zwischengespeicherte Übersetzungen und lädt die im installierten Plugin enthaltene Sprachversion neu.",
   "toast_language_changed": "{{icon:language}} Sprache geändert! Seite wird neu geladen…",
   "toast_translation_cache_cleared": "{{icon:trash}} Übersetzungscache geleert! {count} zwischengespeicherte Übersetzung(en) entfernt. Wird neu geladen…",
   "bookmark_add_title": "Lesezeichen hinzufügen",

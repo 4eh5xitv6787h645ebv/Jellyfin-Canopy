@@ -343,7 +343,7 @@
   "panel_settings_language_display": "Idioma de visualització",
   "panel_settings_language_display_desc": "Seleccioneu l'idioma per a la interfície de Jellyfin Canopy. Els canvis tenen efecte després d'actualitzar la pàgina.",
   "panel_settings_language_clear_cache": "Netejar la memòria cau de traducció",
-  "panel_settings_language_clear_cache_desc": "Elimina totes les traduccions a la memòria cau. Útil per obtenir una traducció recentment actualitzada de Github.",
+  "panel_settings_language_clear_cache_desc": "Elimina les traduccions de la memòria cau i torna a carregar la configuració regional inclosa en el connector instal·lat.",
   "toast_language_changed": "{{icon:language}} Idioma canviat! Recarregant la pàgina…",
   "toast_translation_cache_cleared": "{{icon:trash}} Memòria cau de traducció esborrada! {count} traducció(ons) a la memòria cau eliminades. Recarregant…",
   "bookmark_add_title": "Afegir marcador",

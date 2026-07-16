@@ -343,7 +343,7 @@
   "panel_settings_language_display": "Display Tongue",
   "panel_settings_language_display_desc": "Pick th' speakin' tongue fer Jellyfin Canopy interface. Changes take effect after reloadin' th' page.",
   "panel_settings_language_clear_cache": "Clear Translation Hold",
-  "panel_settings_language_clear_cache_desc": "Tosses all cached translations overboard. Useful to fetch a freshly updated translation from Github.",
+  "panel_settings_language_clear_cache_desc": "Tosses cached translations overboard and reloads th' locale shipped with th' installed plugin.",
   "toast_language_changed": "{{icon:language}} Tongue changed! Reloadin' th' page…",
   "toast_translation_cache_cleared": "{{icon:trash}} Translation hold cleared! {count} cached translation(s) thrown overboard. Reloadin'…",
   "bookmark_add_title": "Mark a New Spot",

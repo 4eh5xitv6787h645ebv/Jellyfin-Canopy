@@ -343,7 +343,7 @@
   "panel_settings_language_display": "Langue d'affichage",
   "panel_settings_language_display_desc": "Sélectionnez la langue pour l'interface Jellyfin Canopy. Les modifications prennent effet après l'actualisation de la page.",
   "panel_settings_language_clear_cache": "Effacer le cache de traduction",
-  "panel_settings_language_clear_cache_desc": "Supprime toutes les traductions en cache. Utile pour récupérer une traduction récemment mise à jour depuis Github.",
+  "panel_settings_language_clear_cache_desc": "Supprime les traductions mises en cache et recharge la version localisée incluse dans le plugin installé.",
   "toast_language_changed": "{{icon:language}} Langue modifiée ! Actualisation de la page…",
   "toast_translation_cache_cleared": "{{icon:trash}} Cache de traduction effacé ! {count} traduction(s) en cache supprimée(s). Actualisation…",
   "bookmark_add_title": "Ajouter un signet",

@@ -106,6 +106,31 @@ test('all shipped locales validate clean against en.json', () => {
     }
 });
 
+test('clear-cache copy reloads the installed locale instead of promising a remote update', () => {
+    const inventory = readLocaleInventory();
+    const expectedEnglish = 'Removes cached translations and reloads the locale included with the installed plugin.';
+    for (const locale of inventory.locales) {
+        const translation = JSON.parse(
+            fs.readFileSync(path.join(LOCALES_DIR, `${locale}.json`), 'utf8')
+        );
+        const description = translation.panel_settings_language_clear_cache_desc;
+        assert.ok(
+            typeof description === 'string' && description.trim() !== '',
+            `${locale}.json must describe translation cache clearing`
+        );
+        assert.doesNotMatch(
+            description,
+            /github|weblate/i,
+            `${locale}.json must not present cache clearing as a remote deployment path`
+        );
+    }
+    assert.strictEqual(
+        JSON.parse(fs.readFileSync(path.join(LOCALES_DIR, 'en.json'), 'utf8'))
+            .panel_settings_language_clear_cache_desc,
+        expectedEnglish
+    );
+});
+
 test('canonical inventory is the exact source for all 26 shipped locale files', () => {
     const inventory = readLocaleInventory();
     assert.strictEqual(inventory.baseLocale, 'en');
@@ -208,6 +233,116 @@ test('server loader, workflow, and contributor docs consume the canonical invent
         new RegExp(`${readLocaleInventory().locales.length} synchronized language catalogs`)
     );
     assert.ok(fs.existsSync(INVENTORY_PATH));
+});
+
+test('translation deployment docs stay aligned with the bundled-first runtime contract', () => {
+    const root = path.join(__dirname, '..');
+    const read = relativePath => fs.readFileSync(path.join(root, relativePath), 'utf8');
+    const loader = read('Jellyfin.Plugin.JellyfinCanopy/src/bootstrap/translations.ts');
+    const validator = read('scripts/validate-translations.js');
+    const project = read('Jellyfin.Plugin.JellyfinCanopy/JellyfinCanopy.csproj');
+    const controller = read('Jellyfin.Plugin.JellyfinCanopy/Controllers/ConfigController.cs');
+    const task = read('Jellyfin.Plugin.JellyfinCanopy/ScheduledTasks/ClearTranslationCacheTask.cs');
+    const contributing = read('CONTRIBUTING.md');
+    const help = read('docs/help.md');
+    const customization = read('docs/customization.md');
+    const section = (source, startHeading, endHeading) => {
+        const start = source.indexOf(startHeading);
+        const end = source.indexOf(endHeading, start + startHeading.length);
+        assert.ok(start >= 0 && end > start, `missing section ${startHeading}`);
+        return source.slice(start, end);
+    };
+    const contributingTranslations = section(
+        contributing,
+        '### 2. Translation Contributions',
+        '### Issue triage and inactivity'
+    );
+    const helpTranslations = section(help, '## Translate Jellyfin Canopy', '## Community and support');
+    const customizationTranslations = section(customization, '## Internationalization', '## Server controls');
+
+    const bundledFetch = loader.indexOf('/JellyfinCanopy/locales/${code}.json');
+    const fallbackGate = loader.indexOf('AssetCacheEnabled === false', bundledFetch);
+    const remoteFetch = loader.indexOf('fetch(`${GITHUB_RAW_BASE}/${code}.json`');
+    assert.ok(bundledFetch >= 0, 'runtime must request the installed bundled locale');
+    assert.ok(fallbackGate > bundledFetch, 'remote fallback gate must follow bundled loading');
+    assert.ok(remoteFetch > fallbackGate, 'GitHub must remain a gated last-resort fallback');
+    assert.match(loader, /JC_translation_\$\{code\}_\$\{pluginVersion\}/);
+    assert.match(loader, /const CACHE_DURATION = 24 \* 60 \* 60 \* 1000/);
+    assert.match(loader, /cleanOldTranslationCache\(pluginVersion\)/);
+    assert.match(loader, /Jellyfin-Canopy\/main\/Jellyfin\.Plugin\.JellyfinCanopy\/js\/locales/);
+    assert.doesNotMatch(loader, /n00bcodr\/Jellyfin-Enhanced/);
+
+    assert.match(project, /EmbeddedResource Include="js\\\*\*"/);
+    assert.match(project, /EmbeddedResource Include="locale-manifest\.json"/);
+    assert.match(controller, /HttpGet\("locales"\)/);
+    assert.match(controller, /HttpGet\("locales\/\{lang\}\.json"\)/);
+    assert.match(task, /public string Name => "Refresh Translation Cache"/);
+    assert.match(task, /ClearTranslationCacheTimestamp\s*=/);
+    assert.doesNotMatch(task, /HttpClient|WebRequest|Download|File\./);
+    assert.match(validator, /npm run validate-translations[\s\S]*open a pull request/i);
+    assert.doesNotMatch(
+        validator,
+        /hosted\.weblate\.org|Translate in Weblate|workflow[^\n]*Weblate|n00bcodr\/Jellyfin-Enhanced/i
+    );
+
+    const contributionContract = `${contributingTranslations}\n${helpTranslations}`;
+    assert.match(contributionContract, /plain pull request/i);
+    assert.match(contributionContract, /both edits[\s\S]*newly registered locales require a subsequent plugin[\s\S]*update/i);
+    assert.match(helpTranslations, /merging alone[\s\S]*does not change a running installation/i);
+    assert.match(helpTranslations, /asset cache is explicitly disabled[\s\S]*failed bundled-locale request/i);
+    assert.match(helpTranslations, /scheduled task[\s\S]*cannot add or update locale files/i);
+    assert.match(customizationTranslations, /loads the matching translation from the plugin's bundled locale files/i);
+    assert.match(customizationTranslations, /There is no config-page button for clearing translation caches/i);
+
+    const deploymentDocs = `${contributingTranslations}\n${helpTranslations}\n${customizationTranslations}`;
+    assert.doesNotMatch(deploymentDocs, /available immediately after merge/i);
+    assert.doesNotMatch(deploymentDocs, /no plugin update is needed/i);
+    assert.doesNotMatch(deploymentDocs, /hosted\.weblate\.org/i);
+    assert.doesNotMatch(deploymentDocs, /n00bcodr\/Jellyfin-Enhanced/i);
+});
+
+test('locale contribution fixtures validate content edits and newly registered locales', t => {
+    const existing = inventoryFixture(t);
+    fs.writeFileSync(path.join(existing.localeDir, 'en.json'), '{"greeting":"Hello {name}"}\n');
+    fs.writeFileSync(path.join(existing.localeDir, 'fr.json'), '{"greeting":"Bonjour {name}"}\n');
+    assert.deepStrictEqual(
+        validateLocaleInventory(existing.localeDir, existing.inventoryPath).errors,
+        [],
+        'editing a registered locale must not require an inventory change'
+    );
+    assert.deepStrictEqual(
+        validateEntries(
+            JSON.parse(fs.readFileSync(path.join(existing.localeDir, 'en.json'), 'utf8')),
+            JSON.parse(fs.readFileSync(path.join(existing.localeDir, 'fr.json'), 'utf8'))
+        ).errors,
+        [],
+        'an existing-locale edit must pass full key and placeholder validation'
+    );
+
+    fs.writeFileSync(path.join(existing.localeDir, 'it.json'), '{"greeting":"Ciao {name}"}\n');
+    assert.match(
+        validateLocaleInventory(existing.localeDir, existing.inventoryPath).errors.join('\n'),
+        /Unregistered locale file: it\.json/,
+        'a new locale must be registered before it can ship'
+    );
+
+    fs.writeFileSync(
+        existing.inventoryPath,
+        `${JSON.stringify({ baseLocale: 'en', locales: ['en', 'fr', 'it'] }, null, 2)}\n`
+    );
+    assert.deepStrictEqual(
+        validateLocaleInventory(existing.localeDir, existing.inventoryPath).errors,
+        [],
+        'adding the locale file and canonical inventory entry completes the contribution path'
+    );
+    assert.deepStrictEqual(
+        validateEntries(
+            JSON.parse(fs.readFileSync(path.join(existing.localeDir, 'en.json'), 'utf8')),
+            JSON.parse(fs.readFileSync(path.join(existing.localeDir, 'it.json'), 'utf8'))
+        ).errors,
+        [],
+        'a registered new locale must also pass full key and placeholder validation'
+    );
 });
 
 // --- Presence of the localized nav/calendar labels ---
