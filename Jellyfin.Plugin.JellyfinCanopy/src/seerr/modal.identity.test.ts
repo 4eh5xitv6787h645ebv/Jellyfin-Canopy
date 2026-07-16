@@ -4,7 +4,8 @@ import { JC } from '../globals';
 describe('Seerr request modal identity ownership', () => {
     beforeAll(async () => {
         JC.t = (key: string) => key;
-        await import('./modal');
+        const { installSeerrModal } = await import('./modal');
+        installSeerrModal();
     });
 
     beforeEach(() => {

@@ -16,7 +16,8 @@ describe('seerr api.canRequest4k gating', () => {
         JC.t = (k: string) => k;
         JC.toast = vi.fn();
         JC.escapeHtml = (s: unknown) => String(s);
-        await import('./api');
+        const { installSeerrApi } = await import('./api');
+        installSeerrApi();
     });
 
     function api(): {

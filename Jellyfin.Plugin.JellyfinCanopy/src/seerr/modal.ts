@@ -15,7 +15,6 @@ export interface SeerrModalOptions {
     onClose?: () => void;
     buttonText?: string;
 }
-
 /** Handle returned by SeerrModalApi.create. */
 export interface SeerrModalHandle {
     modalElement: HTMLElement;
@@ -365,6 +364,3 @@ export function installSeerrModal(): () => void {
         modal.closeAll();
     };
 }
-
-
-installSeerrModal();

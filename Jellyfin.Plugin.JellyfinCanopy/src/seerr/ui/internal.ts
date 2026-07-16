@@ -46,8 +46,6 @@ export function installSeerrUiFacade(): () => void {
     return () => undefined;
 }
 
-installSeerrUiFacade();
-
 /** The shared internal bag, private to the ui-* family. */
 export const internal: SeerrUiInternal = {
     state: { seerrHoverPopover: null, seerrHoverLock: false, active4KPopup: null }

@@ -16,7 +16,8 @@ describe('more-info unrequested-season per-title request state', () => {
         client.getUrl = (path: string) => `http://jellyfin.test${path}`;
         client.getCurrentUserId = () => 'test-user-id';
 
-        await import('../seerr-status');
+        const { installSeerrStatus } = await import('../seerr-status');
+        installSeerrStatus();
         const { internal } = await import('./internal');
         await import('./seasons');
         checkForUnrequestedSeasons = internal.checkForUnrequestedSeasons as typeof checkForUnrequestedSeasons;

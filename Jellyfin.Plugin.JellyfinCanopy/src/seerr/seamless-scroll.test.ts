@@ -10,7 +10,9 @@
 // no more pages.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JC } from '../globals';
-import './seamless-scroll'; // side-effect: populates JC.seamlessScroll
+import { installSeamlessScroll } from './seamless-scroll';
+
+installSeamlessScroll();
 
 /**
  * Minimal controllable IntersectionObserver. `intersecting` models whether the

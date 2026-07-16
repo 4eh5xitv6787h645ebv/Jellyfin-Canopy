@@ -286,7 +286,3 @@ export function installSeerrStatus(): () => void {
     // object and method identities.
     return () => undefined;
 }
-
-// Compatibility for direct module consumers; lazy entries only import this
-// module from inside activate(), so production cold evaluation stays pure.
-installSeerrStatus();

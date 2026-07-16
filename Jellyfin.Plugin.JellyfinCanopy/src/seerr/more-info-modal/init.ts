@@ -347,5 +347,3 @@ export function installSeerrMoreInfo(): () => void {
 // Series page "Request More" button) so the unrequested-seasons check
 // logic does not need to be duplicated.
 moreInfoModal.checkForUnrequestedSeasons = internal.checkForUnrequestedSeasons;
-
-installSeerrMoreInfo();

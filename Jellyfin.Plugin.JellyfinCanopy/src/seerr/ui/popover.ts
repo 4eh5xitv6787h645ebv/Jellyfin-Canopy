@@ -6,8 +6,9 @@ import { JC } from '../../globals';
 
 
 import { ui, internal } from './internal';
+import { seerrStatus } from '../seerr-status';
 const logPrefix = '🪼 Jellyfin Canopy: Seerr UI:';
-const DisplayStatus = JC.seerrStatus!.DISPLAY;
+const DisplayStatus = seerrStatus.DISPLAY;
 const state = internal.state;
 const escapeHtml = JC.escapeHtml;
 const icons = internal.icons; // requires ui-icons.js to be loaded first
@@ -365,19 +366,13 @@ export function resetSeerrPopovers(): void {
     state.seerrHoverLock = false;
 }
 
-let uninstallIdentityReset: (() => void) | null = null;
-
 export function installSeerrPopovers(): () => void {
-    uninstallIdentityReset ??= JC.identity.registerReset('seerr-popovers', resetSeerrPopovers);
+    const uninstallIdentityReset = JC.identity.registerReset('seerr-popovers', resetSeerrPopovers);
     let installed = true;
     return () => {
         if (!installed) return;
         installed = false;
-        uninstallIdentityReset?.();
-        uninstallIdentityReset = null;
+        uninstallIdentityReset();
         resetSeerrPopovers();
     };
 }
-
-
-installSeerrPopovers();

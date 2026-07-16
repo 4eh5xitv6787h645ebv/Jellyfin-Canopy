@@ -18,7 +18,9 @@ describe('Seerr results identity placement', () => {
     });
 
     it('cancels A detached placement so it cannot insert into B', async () => {
+        const { installSeerrUiFacade } = await import('./internal');
         await import('./results');
+        installSeerrUiFacade();
         JC.seerrUI!.renderSeerrResults([], 'account-a', false, true, true);
         expect(document.querySelector('.seerr-section')).toBeNull();
 

@@ -32,7 +32,8 @@ describe('Seerr more-info modal identity ownership', () => {
         internal.buildRatingLogos = vi.fn(() => '');
         internal.showError = vi.fn();
         JC.seerrUI = { showCollectionRequestModal: vi.fn() };
-        await import('./init');
+        const { installSeerrMoreInfo } = await import('./init');
+        installSeerrMoreInfo();
     });
 
     beforeEach(() => {

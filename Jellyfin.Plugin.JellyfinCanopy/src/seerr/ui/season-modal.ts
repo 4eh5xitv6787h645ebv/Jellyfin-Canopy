@@ -399,8 +399,6 @@ export function installSeerrSeasonModal(): () => void {
 }
 
 
-installSeerrSeasonModal();
-
 function invalidateSeasonRequestState(seasonListElement: any): void {
     if (!seasonListElement) return;
     seasonListElement._requestStateValid = false;

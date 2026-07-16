@@ -372,5 +372,3 @@ export function installSeamlessScroll(): () => void {
     JC.seamlessScroll = seamlessScroll;
     return () => undefined;
 }
-
-installSeamlessScroll();

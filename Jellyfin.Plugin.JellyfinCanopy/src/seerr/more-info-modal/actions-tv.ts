@@ -3,13 +3,14 @@
 // the "Request More" button.
 import { JC } from '../../globals';
 import type { IdentityContext } from '../../types/jc';
+import { seerrStatus } from '../seerr-status';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload + DOM shapes; typed incrementally */
 /* eslint-disable @typescript-eslint/no-misused-promises, @typescript-eslint/require-await -- legacy async event listeners with fire-and-forget bodies; semantics preserved verbatim */
 
 
 import { internal } from './internal';
-const DisplayStatus = JC.seerrStatus!.DISPLAY;
+const DisplayStatus = seerrStatus.DISPLAY;
 interface ActionModal extends HTMLElement {
     _actionCleanups?: Set<() => void>;
 }

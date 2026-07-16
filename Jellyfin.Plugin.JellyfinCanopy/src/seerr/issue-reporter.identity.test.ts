@@ -11,7 +11,8 @@ describe('Seerr issue reporter identity fencing', () => {
         JC.t = (key: string) => key;
         JC.escapeHtml = (value: unknown) => String(value);
         JC.toast = vi.fn();
-        await import('./issue-reporter');
+        const { installSeerrIssueReporter } = await import('./issue-reporter');
+        installSeerrIssueReporter();
     });
 
     afterEach(() => {

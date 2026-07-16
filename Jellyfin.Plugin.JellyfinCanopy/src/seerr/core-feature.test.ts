@@ -5,7 +5,7 @@ const mocks = vi.hoisted(() => {
     const named = () => ({ install: vi.fn(), cleanup: vi.fn() });
     return {
         status: named(), request: named(), api: named(), seamless: named(), ui: named(),
-        popover: named(), cards: named(), filter: named(),
+        styles: named(), popover: named(), cards: named(), filter: named(),
     };
 });
 
@@ -19,7 +19,7 @@ vi.mock('./api', () => ({ installSeerrApi: mocks.api.install }));
 vi.mock('./seamless-scroll', () => ({ installSeamlessScroll: mocks.seamless.install }));
 vi.mock('./ui/internal', () => ({ installSeerrUiFacade: mocks.ui.install }));
 vi.mock('./ui/icons', () => ({}));
-vi.mock('./ui/styles', () => ({}));
+vi.mock('./ui/styles', () => ({ installSeerrStyles: mocks.styles.install }));
 vi.mock('./ui/popover', () => ({ installSeerrPopovers: mocks.popover.install }));
 vi.mock('./ui/badges', () => ({}));
 vi.mock('./ui/cards', () => ({ installSeerrCards: mocks.cards.install }));
@@ -64,12 +64,42 @@ describe('Seerr core activation', () => {
         expect(Object.values(mocks).every(({ cleanup }) => cleanup.mock.calls.length === 1)).toBe(true);
     });
 
-    it('rejects a stale scope and rolls the implementation back', () => {
+    it('does no implementation work for an initially stale scope', () => {
         const test = harness();
         test.current.value = false;
         activateSeerrCore(test.scope);
+        expect(Object.values(mocks).every(({ install }) => install.mock.calls.length === 0)).toBe(true);
+        expect(test.cleanups).toHaveLength(0);
+    });
+
+    it('rolls back successful acquisitions when a later installer throws', () => {
+        const failure = new Error('cards install failed');
+        mocks.cards.install.mockImplementationOnce(() => { throw failure; });
+        const test = harness();
+
+        expect(() => activateSeerrCore(test.scope)).toThrow(failure);
+
+        expect(mocks.filter.install).not.toHaveBeenCalled();
+        expect(mocks.cards.cleanup).not.toHaveBeenCalled();
+        for (const key of ['status', 'request', 'api', 'seamless', 'ui', 'styles', 'popover'] as const) {
+            expect(mocks[key].cleanup).toHaveBeenCalledTimes(1);
+        }
+        expect(test.cleanups).toHaveLength(0);
+    });
+
+    it('stops and rolls back when the scope becomes stale mid-sequence', () => {
+        const test = harness();
+        mocks.api.install.mockImplementationOnce(() => {
+            test.current.value = false;
+            return mocks.api.cleanup;
+        });
+
+        activateSeerrCore(test.scope);
+
         expect(mocks.status.cleanup).toHaveBeenCalledTimes(1);
-        expect(mocks.request.install).toHaveBeenCalledTimes(1);
+        expect(mocks.request.cleanup).toHaveBeenCalledTimes(1);
+        expect(mocks.api.cleanup).toHaveBeenCalledTimes(1);
+        expect(mocks.seamless.install).not.toHaveBeenCalled();
         expect(test.cleanups).toHaveLength(0);
     });
 });

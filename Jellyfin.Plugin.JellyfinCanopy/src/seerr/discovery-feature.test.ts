@@ -4,12 +4,13 @@ import type { FeatureScope } from '../core/feature-loader';
 const mocks = vi.hoisted(() => {
     const controller = () => ({ start: vi.fn(), dispose: vi.fn() });
     return {
+        base: { install: vi.fn(), cleanup: vi.fn() },
         network: controller(), person: controller(), genre: controller(),
         tag: controller(), collection: controller(),
     };
 });
 
-vi.mock('./discovery/base', () => ({}));
+vi.mock('./discovery/base', () => ({ installDiscoveryBase: mocks.base.install }));
 vi.mock('./discovery/network', () => ({ networkDiscovery: mocks.network }));
 vi.mock('./discovery/person', () => ({ personDiscovery: mocks.person }));
 vi.mock('./discovery/genre', () => ({ genreDiscovery: mocks.genre }));
@@ -35,21 +36,33 @@ function harness(current = true): { scope: FeatureScope; cleanups: Array<() => v
     };
 }
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.base.install.mockImplementation(() => mocks.base.cleanup);
+});
 
 describe('Seerr route discovery activation', () => {
     it('starts every controller and disposes each exactly once', () => {
         const test = harness();
         activateSeerrDiscovery(test.scope);
-        for (const controller of Object.values(mocks)) expect(controller.start).toHaveBeenCalledTimes(1);
+        expect(mocks.base.install).toHaveBeenCalledTimes(1);
+        for (const controller of [mocks.network, mocks.person, mocks.genre, mocks.tag, mocks.collection]) {
+            expect(controller.start).toHaveBeenCalledTimes(1);
+        }
         expect(test.cleanups).toHaveLength(1);
         test.cleanups[0]();
         test.cleanups[0]();
-        for (const controller of Object.values(mocks)) expect(controller.dispose).toHaveBeenCalledTimes(1);
+        for (const controller of [mocks.network, mocks.person, mocks.genre, mocks.tag, mocks.collection]) {
+            expect(controller.dispose).toHaveBeenCalledTimes(1);
+        }
+        expect(mocks.base.cleanup).toHaveBeenCalledTimes(1);
     });
 
     it('does not import-owned start work for a stale activation', () => {
         activateSeerrDiscovery(harness(false).scope);
-        for (const controller of Object.values(mocks)) expect(controller.start).not.toHaveBeenCalled();
+        expect(mocks.base.install).not.toHaveBeenCalled();
+        for (const controller of [mocks.network, mocks.person, mocks.genre, mocks.tag, mocks.collection]) {
+            expect(controller.start).not.toHaveBeenCalled();
+        }
     });
 });

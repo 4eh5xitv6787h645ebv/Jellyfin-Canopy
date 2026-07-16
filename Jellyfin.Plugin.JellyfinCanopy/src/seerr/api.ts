@@ -1209,30 +1209,17 @@ api.resolveSeerrBaseUrl = function() {
     return baseUrl;
 };
 
-let uninstallIdentityReset: (() => void) | null = null;
-let configListenerInstalled = false;
-
 /** Install activation-owned cache retirement while preserving facade identity. */
 export function installSeerrApi(): () => void {
     JC.seerrAPI = api;
-    uninstallIdentityReset ??= JC.identity.registerReset('seerr-api', resetIdentityCaches);
-    if (!configListenerInstalled) {
-        window.addEventListener('jc:config-changed', retireUserStatusCache);
-        configListenerInstalled = true;
-    }
+    const uninstallIdentityReset = JC.identity.registerReset('seerr-api', resetIdentityCaches);
+    window.addEventListener('jc:config-changed', retireUserStatusCache);
     let installed = true;
     return () => {
         if (!installed) return;
         installed = false;
-        uninstallIdentityReset?.();
-        uninstallIdentityReset = null;
-        if (configListenerInstalled) {
-            window.removeEventListener('jc:config-changed', retireUserStatusCache);
-            configListenerInstalled = false;
-        }
+        uninstallIdentityReset();
+        window.removeEventListener('jc:config-changed', retireUserStatusCache);
         resetIdentityCaches();
     };
 }
-
-
-installSeerrApi();

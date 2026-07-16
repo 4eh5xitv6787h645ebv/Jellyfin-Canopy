@@ -796,5 +796,3 @@ export function installSeerrSearch(): () => void {
 }
 
 export { initializeSeerrScript };
-
-installSeerrSearch();

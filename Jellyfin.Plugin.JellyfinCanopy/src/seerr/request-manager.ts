@@ -15,5 +15,3 @@ export function installSeerrRequestManager(): () => void {
     JC.requestManager = JC.core.api!.manager;
     return () => undefined;
 }
-
-installSeerrRequestManager();

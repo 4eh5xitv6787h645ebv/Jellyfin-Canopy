@@ -7,8 +7,9 @@ import { JC } from '../../globals';
 
 
 import { ui, internal } from './internal';
+import { seerrStatus } from '../seerr-status';
 const escapeHtml = JC.escapeHtml;
-const DisplayStatus = JC.seerrStatus!.DISPLAY;
+const DisplayStatus = seerrStatus.DISPLAY;
 const logPrefix = '🪼 Jellyfin Canopy: Seerr UI:';
 
 /**
@@ -33,8 +34,8 @@ function setStatusBadge(card: any, item: any) {
     }
 
     const hasDownloads = (item.mediaInfo?.downloadStatus?.length > 0 || item.mediaInfo?.downloadStatus4k?.length > 0);
-    const displayStatus = JC.seerrStatus!.resolveDisplayStatus(status, hasDownloads);
-    const badgeConfig = JC.seerrStatus!.getBadgeConfig(displayStatus);
+    const displayStatus = seerrStatus.resolveDisplayStatus(status, hasDownloads);
+    const badgeConfig = seerrStatus.getBadgeConfig(displayStatus);
 
     if (!badgeConfig) {
         badge.style.display = 'none';

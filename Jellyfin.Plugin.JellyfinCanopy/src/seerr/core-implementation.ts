@@ -5,13 +5,16 @@ import { installSeerrApi } from './api';
 import { installSeamlessScroll } from './seamless-scroll';
 import { installSeerrUiFacade } from './ui/internal';
 import './ui/icons';
-import './ui/styles';
+import { installSeerrStyles } from './ui/styles';
 import { installSeerrPopovers } from './ui/popover';
 import './ui/badges';
 import { installSeerrCards } from './ui/cards';
 import { installDiscoveryFilter } from './discovery/filter-utils';
 
 type Cleanup = () => void;
+type Installer = () => Cleanup;
+
+let activeDispose: Cleanup | null = null;
 
 function composeCleanup(cleanups: Cleanup[]): Cleanup {
     let disposed = false;
@@ -26,21 +29,44 @@ function composeCleanup(cleanups: Cleanup[]): Cleanup {
 
 /** Synchronous installer for the single bundled Seerr foundation chunk. */
 export function activateSeerrCoreImplementation(scope: FeatureScope): FeatureInstance | void {
-    const cleanups = [
-        installSeerrStatus(),
-        installSeerrRequestManager(),
-        installSeerrApi(),
-        installSeamlessScroll(),
-        installSeerrUiFacade(),
-        installSeerrPopovers(),
-        installSeerrCards(),
-        installDiscoveryFilter(),
+    if (!scope.isCurrent()) return;
+    activeDispose?.();
+
+    const cleanups: Cleanup[] = [];
+    let dispose: Cleanup;
+    dispose = composeCleanup(cleanups);
+    const ownedDispose = dispose;
+    dispose = () => {
+        ownedDispose();
+        if (activeDispose === dispose) activeDispose = null;
+    };
+
+    const installers: Installer[] = [
+        installSeerrStatus,
+        installSeerrRequestManager,
+        installSeerrApi,
+        installSeamlessScroll,
+        installSeerrUiFacade,
+        installSeerrStyles,
+        installSeerrPopovers,
+        installSeerrCards,
+        installDiscoveryFilter,
     ];
-    const dispose = composeCleanup(cleanups);
-    if (!scope.isCurrent()) {
+
+    try {
+        for (const install of installers) {
+            cleanups.push(install());
+            if (!scope.isCurrent()) {
+                dispose();
+                return;
+            }
+        }
+    } catch (error) {
         dispose();
-        return;
+        throw error;
     }
+
+    activeDispose = dispose;
     scope.track(dispose);
     return { dispose };
 }

@@ -28,8 +28,12 @@ describe('Seerr request settings fail closed', () => {
             populateAdvancedOptions: vi.fn(),
         };
 
-        await import('./api');
-        await import('./ui/season-modal');
+        const { installSeerrApi } = await import('./api');
+        const { installSeerrUiFacade } = await import('./ui/internal');
+        const { installSeerrSeasonModal } = await import('./ui/season-modal');
+        installSeerrApi();
+        installSeerrUiFacade();
+        installSeerrSeasonModal();
     });
 
     function jc(): Record<string, any> {

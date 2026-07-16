@@ -1,15 +1,10 @@
 // src/seerr/ui/icons.ts
 // Shared SVG icon library for the Seerr UI modules.
-import { JC } from '../../globals';
-
- 
-
-
 import { ui, internal } from './internal';
 // ================================
 // SVG ICONS LIBRARY
 // ================================
-const icons = {
+export const icons = {
     // Star rating icon (yellow)
     star: '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor" role="img" style="color:#ffc107;"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"></path></svg>',
     // download_done

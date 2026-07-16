@@ -1119,8 +1119,14 @@ function createDiscovery(spec: DiscoverySpec): DiscoveryController {
     return { initialize, cleanup, render, handlePageNavigation, start, dispose };
 }
 
-JC.discoveryBase = {
+export const discoveryBase: DiscoveryBaseApi = {
     createDiscovery,
     idFromDetailUrl,
     idFromListParam
 };
+
+/** Publish the stable discovery chassis only while its feature graph activates. */
+export function installDiscoveryBase(): () => void {
+    JC.discoveryBase = discoveryBase;
+    return () => undefined;
+}

@@ -4,6 +4,7 @@
 import { JC } from '../../globals';
 // PERF(R6): no remote assets — Seerr icon served from the local asset cache.
 import { assetUrl } from '../../core/asset-urls';
+import { seerrStatus } from '../seerr-status';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload + DOM shapes; typed incrementally */
 
@@ -11,7 +12,7 @@ import { assetUrl } from '../../core/asset-urls';
 import { ui, internal } from './internal';
 const state = internal.state;
 const logPrefix = '🪼 Jellyfin Canopy: Seerr UI:';
-const MediaStatus = JC.seerrStatus!.MEDIA;
+const MediaStatus = seerrStatus.MEDIA;
 const icons = internal.icons; // requires ui-icons.js to be loaded first
 
 // Keep card buttons in sync when a request is made from other surfaces (e.g., more info modal)
@@ -484,6 +485,3 @@ export function installSeerrResults(): () => void {
         resetSeerrResultsIdentity();
     };
 }
-
-
-installSeerrResults();

@@ -6,6 +6,7 @@
 // share the same keyword id.
 import { JC } from '../../globals';
 import { classifyResultsEnvelope } from '../../core/cache-policy';
+import { discoveryBase } from './base';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload shapes; typed incrementally */
 
@@ -90,7 +91,7 @@ async function resolveFeeds({ id: tagName, signal }: { id: string; signal: Abort
     };
 }
 
-export const tagDiscovery = JC.discoveryBase!.createDiscovery({
+export const tagDiscovery = discoveryBase.createDiscovery({
     key: 'tag',
     mode: 'dual-feed',
     logLabel: 'Tag Discovery',

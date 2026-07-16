@@ -9,8 +9,9 @@ import { assetUrl } from '../../core/asset-urls';
 
 
 import { ui, internal } from './internal';
-const MediaStatus = JC.seerrStatus!.MEDIA;
-const icons = internal.icons; // requires ui/icons.ts to be loaded first
+import { seerrStatus } from '../seerr-status';
+import { icons } from './icons';
+const MediaStatus = seerrStatus.MEDIA;
 const escapeHtml = JC.escapeHtml;
 const cardTimers = new Set<ReturnType<typeof setTimeout>>();
 const outsideOverviewCleanups = new Set<() => void>();
@@ -51,9 +52,9 @@ function createSeerrCard(item: any, isSeerrActive: any, seerrUserFound: any) {
     let cardEffectiveStatus;
     if (item.mediaType === 'tv' && item.mediaInfo?.seasons?.length) {
         const sa = internal.analyzeSeasonStatuses(item.mediaInfo.seasons);
-        cardEffectiveStatus = sa ? sa.overallStatus : JC.seerrStatus!.effectiveMediaStatus(item.mediaInfo?.status, jellyfinMediaId);
+        cardEffectiveStatus = sa ? sa.overallStatus : seerrStatus.effectiveMediaStatus(item.mediaInfo?.status, jellyfinMediaId);
     } else {
-        cardEffectiveStatus = JC.seerrStatus!.effectiveMediaStatus(item.mediaInfo?.status, jellyfinMediaId);
+        cardEffectiveStatus = seerrStatus.effectiveMediaStatus(item.mediaInfo?.status, jellyfinMediaId);
     }
     const isAvailable = Boolean(jellyfinMediaId)
         && (cardEffectiveStatus === MediaStatus.AVAILABLE || cardEffectiveStatus === MediaStatus.PARTIALLY_AVAILABLE);
@@ -443,19 +444,13 @@ export function resetSeerrCards(): void {
     document.querySelectorAll('.seerr-card[data-jc-identity-owned="true"]').forEach((card) => card.remove());
 }
 
-let uninstallIdentityReset: (() => void) | null = null;
-
 export function installSeerrCards(): () => void {
-    uninstallIdentityReset ??= JC.identity.registerReset('seerr-cards', resetSeerrCards);
+    const uninstallIdentityReset = JC.identity.registerReset('seerr-cards', resetSeerrCards);
     let installed = true;
     return () => {
         if (!installed) return;
         installed = false;
-        uninstallIdentityReset?.();
-        uninstallIdentityReset = null;
+        uninstallIdentityReset();
         resetSeerrCards();
     };
 }
-
-
-installSeerrCards();

@@ -2,6 +2,7 @@
 // Request-button configuration for movie/TV/collection cards.
 import { JC } from '../../globals';
 import type { IdentityContext } from '../../types/jc';
+import { seerrStatus } from '../seerr-status';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload + DOM shapes; typed incrementally */
 
@@ -9,8 +10,8 @@ import type { IdentityContext } from '../../types/jc';
 import { ui, internal } from './internal';
 const state = internal.state;
 const escapeHtml = JC.escapeHtml;
-const MediaStatus = JC.seerrStatus!.MEDIA;
-const DisplayStatus = JC.seerrStatus!.DISPLAY;
+const MediaStatus = seerrStatus.MEDIA;
+const DisplayStatus = seerrStatus.DISPLAY;
 const icons = internal.icons; // requires ui/icons.ts to be loaded first
 
 function resolveIdentity(node: unknown): IdentityContext | null {
@@ -447,6 +448,3 @@ export function installSeerrButtons(): () => void {
         }
     };
 }
-
-
-installSeerrButtons();

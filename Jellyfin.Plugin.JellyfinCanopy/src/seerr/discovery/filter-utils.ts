@@ -3,6 +3,7 @@
 import { JC } from '../../globals';
 import { getVisibleDetailsPage } from '../../core/details-view';
 import { waitForSharedResult } from '../../core/shared-result';
+import { seerrStatus } from '../seerr-status';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload shapes; typed incrementally */
 
@@ -439,7 +440,7 @@ function createCardsFragment(results: any[], options: any = {}): DocumentFragmen
             continue;
         }
 
-        if (excludeBlocklistedItems && item.mediaInfo?.status === JC.seerrStatus!.MEDIA.BLOCKED) {
+        if (excludeBlocklistedItems && item.mediaInfo?.status === seerrStatus.MEDIA.BLOCKED) {
             continue;
         }
         const card = JC.seerrUI?.createSeerrCard?.(item, true, true);
@@ -630,8 +631,8 @@ function applyFilterVisibility(container: HTMLElement | null, mode: string): voi
 /**
  * Injects CSS rules for fast filter visibility (once per page)
  */
-function injectFilterStyles() {
-    if (document.getElementById('seerr-filter-styles')) return;
+function injectFilterStyles(): HTMLStyleElement | null {
+    if (document.getElementById('seerr-filter-styles')) return null;
 
     const style = document.createElement('style');
     style.id = 'seerr-filter-styles';
@@ -640,6 +641,7 @@ function injectFilterStyles() {
         .filter-tv [data-media-type="movie"] { display: none !important; }
     `;
     document.head.appendChild(style);
+    return style;
 }
 
 // Stable facade populated at module evaluation, published by activation.
@@ -669,12 +671,10 @@ export const discoveryFilter: DiscoveryFilterApi = {
     applyFilterVisibility
 };
 
-let uninstallIdentityReset: (() => void) | null = null;
-
 export function installDiscoveryFilter(): () => void {
     JC.discoveryFilter = discoveryFilter;
-    injectFilterStyles();
-    uninstallIdentityReset ??= JC.identity.registerReset(
+    const ownedStyle = injectFilterStyles();
+    const uninstallIdentityReset = JC.identity.registerReset(
         'seerr-discovery-filter',
         resetDiscoveryFilterState,
     );
@@ -682,12 +682,8 @@ export function installDiscoveryFilter(): () => void {
     return () => {
         if (!installed) return;
         installed = false;
-        uninstallIdentityReset?.();
-        uninstallIdentityReset = null;
+        uninstallIdentityReset();
         resetDiscoveryFilterState();
-        document.getElementById('seerr-filter-styles')?.remove();
+        ownedStyle?.remove();
     };
 }
-
-
-installDiscoveryFilter();

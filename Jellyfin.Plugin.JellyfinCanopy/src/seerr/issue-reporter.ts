@@ -1343,5 +1343,3 @@ export function installSeerrIssueReporter(): () => void {
         resetIssueReporterIdentity();
     };
 }
-
-installSeerrIssueReporter();

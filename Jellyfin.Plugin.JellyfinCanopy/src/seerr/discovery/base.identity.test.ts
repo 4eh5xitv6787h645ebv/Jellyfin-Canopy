@@ -21,7 +21,8 @@ describe('Seerr discovery controller identity lifecycle', () => {
     it('removes A synchronously, drops held A, and renders B on activation', async () => {
         const heldA = deferred();
         let call = 0;
-        await import('./base');
+        const { installDiscoveryBase } = await import('./base');
+        installDiscoveryBase();
         const controller = JC.discoveryBase!.createDiscovery({
             key: 'identity-test',
             mode: 'one-shot',

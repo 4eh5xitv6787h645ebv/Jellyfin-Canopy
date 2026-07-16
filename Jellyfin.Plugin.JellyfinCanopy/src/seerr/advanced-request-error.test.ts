@@ -16,8 +16,10 @@ describe('seerr advanced-request error state', () => {
         JC.core = { api: { fetch: fetchMock } };
         JC.pluginConfig = {};
         JC.t = (k: string) => k;
-        await import('./api');
-        await import('./modal');
+        const { installSeerrApi } = await import('./api');
+        const { installSeerrModal } = await import('./modal');
+        installSeerrApi();
+        installSeerrModal();
     });
 
     function jc(): Record<string, any> {

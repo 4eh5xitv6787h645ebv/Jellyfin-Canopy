@@ -3,6 +3,7 @@
 // and the renderActions orchestrator for the action/chip/download mounts.
 import { JC } from '../../globals';
 import type { IdentityContext } from '../../types/jc';
+import { seerrStatus } from '../seerr-status';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload + DOM shapes; typed incrementally */
 /* eslint-disable @typescript-eslint/no-misused-promises -- legacy async event listeners with fire-and-forget bodies; semantics preserved verbatim */
@@ -21,7 +22,7 @@ const state: {
 } = internal.state;
 const logPrefix = '🪼 Jellyfin Canopy: Seerr More Info:';
 const escapeHtml = JC.escapeHtml;
-const DisplayStatus = JC.seerrStatus!.DISPLAY;
+const DisplayStatus = seerrStatus.DISPLAY;
 
 function isLiveNode(node?: Node | null): boolean {
     return !!state.identity
