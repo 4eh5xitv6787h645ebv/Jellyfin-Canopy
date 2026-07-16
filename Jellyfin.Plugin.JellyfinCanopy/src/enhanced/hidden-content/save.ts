@@ -9,6 +9,7 @@ import type { IdentityContext } from '../../types/jc';
 import { toast } from '../../core/ui-kit';
 import { getHiddenData } from './data';
 import type { HiddenItem } from './data';
+import { identityFromSource } from './media-identity';
 
 let saveTimeout: number | null = null;
 let pendingDebounceContext: IdentityContext | null = null;
@@ -123,7 +124,14 @@ export async function fetchUserHiddenItemsForAdmin(targetUserId: string): Promis
                 ? JC.toCamelCase(res && res.hiddenContent)
                 : (res && res.hiddenContent));
         const items: Record<string, HiddenItem> = (hc && hc.items) || {};
-        return Object.entries(items).map(([key, item]) => ({ ...item, _key: key }));
+        return Object.entries(items).map(([key, item]) => ({
+            ...item,
+            _key: key,
+            _identityStatus: identityFromSource(item)
+                ? 'resolved'
+                : (item.tmdbId ? 'legacy-unresolved' : 'local-only'),
+            _identityReadOnly: true,
+        }));
     } catch (e: any) {
         if (e && e.status === 403) console.warn('🪼 Jellyfin Canopy: Hidden Content admin read denied (not an admin).');
         return null;

@@ -409,7 +409,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         /// <summary>
         /// Admin-only: hides one or more items on behalf of another user (admin adding).
         /// The body is a list of hidden-content items (the same shape the client stores). Each is keyed
-        /// by its item id (or tmdb-{id}) and RMW-merged into the user's hidden-content.json without
+        /// by its exact Jellyfin item id (or versioned provider identity) and RMW-merged into the user's hidden-content.json without
         /// overwriting an item the user already hid. Returns how many were newly added.
         /// </summary>
         [HttpPost("admin/hidden-content/{userId}/hide")]
@@ -439,6 +439,36 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             static string Clamp(string? s, int max) =>
                 string.IsNullOrEmpty(s) ? string.Empty : (s.Length <= max ? s : s.Substring(0, max));
 
+            static HiddenContentIdentity? ResolveIdentity(HiddenContentItem item)
+            {
+                var mediaType = item.Identity?.MediaType;
+                var provider = item.Identity?.Provider;
+                var id = item.Identity?.Id;
+                if (item.Identity != null)
+                {
+                    if (item.Identity.Version != 1
+                        || !string.Equals(provider, "tmdb", StringComparison.Ordinal)
+                        || (mediaType != "movie" && mediaType != "tv")
+                        || string.IsNullOrEmpty(id)
+                        || id.Length > 32
+                        || id.Any(static c => c < '0' || c > '9')
+                        || id.All(static c => c == '0')
+                        || (!string.IsNullOrEmpty(item.TmdbId) && !string.Equals(item.TmdbId, id, StringComparison.Ordinal))) return null;
+
+                    return new HiddenContentIdentity { Version = 1, Provider = "tmdb", MediaType = mediaType, Id = id };
+                }
+
+                mediaType = string.Equals(item.Type, "Movie", StringComparison.OrdinalIgnoreCase) ? "movie"
+                    : (string.Equals(item.Type, "Series", StringComparison.OrdinalIgnoreCase) ? "tv" : null);
+                id = item.TmdbId;
+                if ((mediaType != "movie" && mediaType != "tv")
+                    || string.IsNullOrEmpty(id)
+                    || id.Length > 32
+                    || id.Any(static c => c < '0' || c > '9')
+                    || id.All(static c => c == '0')) return null;
+                return new HiddenContentIdentity { Version = 1, Provider = "tmdb", MediaType = mediaType, Id = id };
+            }
+
             try
             {
                 var added = 0;
@@ -448,12 +478,23 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                     foreach (var it in items)
                     {
                         if (it == null) continue;
-                        // Mirror the client's key scheme: item id, else tmdb-{id}.
+                        var identity = ResolveIdentity(it);
+                        // Exact local identity wins. Provider-only rows use the same
+                        // versioned key as the browser; ambiguous legacy rows are refused.
                         var key = !string.IsNullOrEmpty(it.ItemId)
                             ? it.ItemId
-                            : (!string.IsNullOrEmpty(it.TmdbId) ? $"tmdb-{it.TmdbId}" : null);
+                            : (identity != null ? $"hc1:tmdb:{identity.MediaType}:{identity.Id}" : null);
                         if (string.IsNullOrEmpty(key) || key.Length > 256) continue;
                         if (cfg.Items.ContainsKey(key)) continue; // never clobber the user's own hide
+                        if (identity != null && cfg.Items.Values.Any(existing =>
+                        {
+                            if (existing == null) return false;
+                            var current = ResolveIdentity(existing);
+                            return current != null
+                                && string.Equals(current.Provider, identity.Provider, StringComparison.Ordinal)
+                                && string.Equals(current.MediaType, identity.MediaType, StringComparison.Ordinal)
+                                && string.Equals(current.Id, identity.Id, StringComparison.Ordinal);
+                        })) continue;
                         // Cross-user write path: bound the admin-supplied free-text fields and constrain
                         // HideScope to the known set, so a compromised admin token can't persist multi-MB
                         // strings or an unrecognised scope into another user's store.
@@ -463,6 +504,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                         it.SeriesId = Clamp(it.SeriesId, 128);
                         it.Type = Clamp(it.Type, 64);
                         it.TmdbId = Clamp(it.TmdbId, 32);
+                        it.Identity = identity;
                         it.HiddenAt = string.IsNullOrEmpty(it.HiddenAt) ? DateTime.UtcNow.ToString("o") : Clamp(it.HiddenAt, 64);
                         it.HideScope = it.HideScope is "global" or "continuewatching" or "nextup" or "homesections" ? it.HideScope : "global";
                         cfg.Items[key] = it;

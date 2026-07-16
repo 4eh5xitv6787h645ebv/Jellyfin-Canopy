@@ -12,6 +12,8 @@ import {
     resetFromUserConfig,
     isHidden,
     isHiddenByTmdbId,
+    isHiddenMedia,
+    getHiddenStorageKey,
     hideItem,
     unhideItem,
     getSettings,
@@ -24,6 +26,7 @@ import {
     unhideAll,
     refresh,
     markScopedHidden,
+    resolveLegacyIdentity,
 } from './data';
 import {
     flushPendingSave,
@@ -82,6 +85,8 @@ JC.initializeHiddenContent = function (): void {
     JC.hiddenContent = {
         isHidden,
         isHiddenByTmdbId,
+        isHiddenMedia,
+        getHiddenStorageKey,
         isHiddenOnSurface,
         hideItem,
         unhideItem,
@@ -102,6 +107,7 @@ JC.initializeHiddenContent = function (): void {
         removeLibraryHideButtons,
         refresh,
         markScopedHidden,
+        resolveLegacyIdentity,
         flushPendingSave,
         // Admin-only cross-user visibility + editing
         fetchHiddenContentUsers,

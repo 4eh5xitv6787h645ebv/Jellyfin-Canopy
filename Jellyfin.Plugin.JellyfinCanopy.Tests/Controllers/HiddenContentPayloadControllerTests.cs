@@ -143,6 +143,46 @@ public sealed class HiddenContentPayloadControllerTests : IDisposable
         Assert.Contains("items=1", fileText, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void AdminHide_UsesTypedProviderKeysAndNeverCreatesAnAmbiguousBareTmdbRow()
+    {
+        _manager.SaveUserConfiguration(UserId, "hidden-content.json", new UserHiddenContent
+        {
+            Items = new Dictionary<string, HiddenContentItem>
+            {
+                ["tmdb-549"] = new() { Name = "Legacy movie", Type = "Movie", TmdbId = "549" }
+            }
+        });
+        var controller = Controller(NullLogger<HiddenContentController>.Instance);
+        var result = controller.AdminHideForUser(UserId, new List<HiddenContentItem>
+        {
+            new() { Name = "Legacy movie", Type = "Movie", TmdbId = "549" },
+            new() { Name = "Movie 550", Type = "Movie", TmdbId = "550" },
+            new() { Name = "TV 550", Type = "Series", TmdbId = "550" },
+            new() { Name = "Ambiguous 551", TmdbId = "551" },
+            new() { ItemId = "jf-exact", Name = "Local", TmdbId = "552" }
+        });
+
+        Assert.IsType<OkObjectResult>(result);
+        var stored = _manager.GetUserConfigurationStrict<UserHiddenContent>(UserId, "hidden-content.json");
+        Assert.Equal(4, stored.Items.Count);
+        Assert.True(stored.Items.ContainsKey("tmdb-549"));
+        Assert.False(stored.Items.ContainsKey("hc1:tmdb:movie:549"));
+        Assert.Equal("movie", stored.Items["hc1:tmdb:movie:550"].Identity?.MediaType);
+        Assert.Equal("tv", stored.Items["hc1:tmdb:tv:550"].Identity?.MediaType);
+        Assert.True(stored.Items.ContainsKey("jf-exact"));
+        Assert.Equal(
+            new[] { "tmdb-549" },
+            stored.Items.Keys.Where(static key => key.StartsWith("tmdb-", StringComparison.Ordinal)));
+
+        Assert.IsType<OkObjectResult>(controller.AdminUnhideForUser(
+            UserId,
+            new List<string> { "hc1:tmdb:movie:550" }));
+        stored = _manager.GetUserConfigurationStrict<UserHiddenContent>(UserId, "hidden-content.json");
+        Assert.False(stored.Items.ContainsKey("hc1:tmdb:movie:550"));
+        Assert.True(stored.Items.ContainsKey("hc1:tmdb:tv:550"));
+    }
+
     private HiddenContentController Controller(ILogger<HiddenContentController> logger)
     {
         var controller = new HiddenContentController(

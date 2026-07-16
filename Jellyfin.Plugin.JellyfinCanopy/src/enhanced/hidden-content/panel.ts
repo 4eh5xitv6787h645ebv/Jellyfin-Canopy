@@ -5,9 +5,10 @@
 // (Converted from js/enhanced/hidden-content-panel.js — bodies semantically identical.)
 
 import { JC } from '../../globals';
-import { getHiddenData, unhideItem, unhideAll } from './data';
+import { getAllHiddenItems, resolveLegacyIdentity, unhideItem, unhideAll } from './data';
 import type { HiddenItem } from './data';
 import type { IdentityContext } from '../../types/jc';
+import { identityFromSource } from './media-identity';
 
 /** Max poster width when loading images from TMDB / Jellyfin. */
 const POSTER_MAX_WIDTH = 300;
@@ -93,14 +94,15 @@ export function createItemCard(item: HiddenItem, onNavigate?: () => void): HTMLE
 
     const hasJellyfinId = !!item.itemId;
     const hasTmdbId = !!item.tmdbId;
-    const mediaType = item.type === 'Series' ? 'tv' : 'movie';
+    const hasResolvedTmdbId = hasTmdbId && item._identityStatus !== 'legacy-unresolved';
+    const mediaType = identityFromSource(item)?.mediaType || (item.type === 'Series' ? 'tv' : 'movie');
 
     // Clickable poster area that navigates to item detail
     const posterLink = document.createElement('a');
     posterLink.className = 'jc-hidden-item-poster-link';
     if (hasJellyfinId) {
         posterLink.href = `#/details?id=${item.itemId}`;
-    } else if (hasTmdbId) {
+    } else if (hasResolvedTmdbId) {
         posterLink.href = '#';
         posterLink.dataset.tmdbId = String(item.tmdbId);
         posterLink.dataset.mediaType = mediaType;
@@ -123,16 +125,16 @@ export function createItemCard(item: HiddenItem, onNavigate?: () => void): HTMLE
             if (!isPanelFenceCurrent(fence)) return;
             const self = img;
             // Switch card to Seerr navigation
-            if (hasTmdbId && (JC as any).seerrMoreInfo) {
+            if (hasResolvedTmdbId && (JC as any).seerrMoreInfo) {
                 card.dataset.jellyfinRemoved = '1';
             }
             // Item removed from Jellyfin — fall back to TMDB poster
-            if (hasTmdbId && item.posterPath) {
+            if (hasResolvedTmdbId && item.posterPath) {
                 self.src = `https://image.tmdb.org/t/p/w${POSTER_MAX_WIDTH}${item.posterPath}`;
                 self.onerror = function(this: HTMLImageElement) {
                     if (isPanelFenceCurrent(fence)) this.style.display = 'none';
                 };
-            } else if (hasTmdbId && (JC as any).seerrAPI) {
+            } else if (hasResolvedTmdbId && (JC as any).seerrAPI) {
                 // No posterPath stored — fetch it from Seerr
                 self.onerror = function(this: HTMLImageElement) {
                     if (isPanelFenceCurrent(fence)) this.style.display = 'none';
@@ -196,7 +198,7 @@ export function createItemCard(item: HiddenItem, onNavigate?: () => void): HTMLE
     nameLink.textContent = item.name || 'Unknown';
     if (hasJellyfinId) {
         nameLink.href = `#/details?id=${item.itemId}`;
-    } else if (hasTmdbId) {
+    } else if (hasResolvedTmdbId) {
         nameLink.href = '#';
         nameLink.dataset.tmdbId = String(item.tmdbId);
         nameLink.dataset.mediaType = mediaType;
@@ -214,15 +216,15 @@ export function createItemCard(item: HiddenItem, onNavigate?: () => void): HTMLE
             // If item was removed from Jellyfin, fall back to the Seerr modal — using the
             // stored TMDB id, or one resolved at render time by a Seerr search.
             const removedId = (card.dataset.jellyfinRemoved === '1')
-                ? (hasTmdbId ? item.tmdbId : card.dataset.resolvedTmdbId)
+                ? (hasResolvedTmdbId ? item.tmdbId : card.dataset.resolvedTmdbId)
                 : '';
             if (hasJellyfinId && removedId && (JC as any).seerrMoreInfo) {
                 e.preventDefault();
-                (JC as any).seerrMoreInfo.open(parseInt(String(removedId), 10), hasTmdbId ? mediaType : (card.dataset.resolvedMediaType || mediaType));
+                (JC as any).seerrMoreInfo.open(parseInt(String(removedId), 10), hasResolvedTmdbId ? mediaType : (card.dataset.resolvedMediaType || mediaType));
                 if (onNavigate) onNavigate();
             } else if (hasJellyfinId) {
                 if (onNavigate) onNavigate();
-            } else if (hasTmdbId && (JC as any).seerrMoreInfo) {
+            } else if (hasResolvedTmdbId && (JC as any).seerrMoreInfo) {
                 e.preventDefault();
                 (JC as any).seerrMoreInfo.open(parseInt(String(item.tmdbId), 10), mediaType);
                 if (onNavigate) onNavigate();
@@ -241,8 +243,33 @@ export function createItemCard(item: HiddenItem, onNavigate?: () => void): HTMLE
         _scope === 'nextup'           ? JC.t!('hidden_content_scope_nextup_label') :
         _scope === 'homesections'     ? JC.t!('hidden_content_scope_homesections_label') :
         '';
-    metaDiv.textContent = [item.type, _scopeText, hiddenDate].filter(Boolean).join(' · ');
+    const identityText = item._identityStatus === 'legacy-unresolved' ? 'Legacy identity — review required' : '';
+    metaDiv.textContent = [item.type, identityText, _scopeText, hiddenDate].filter(Boolean).join(' · ');
     info.appendChild(metaDiv);
+
+    if (item._identityStatus === 'legacy-unresolved' && item._key && !item._identityReadOnly) {
+        const resolution = document.createElement('div');
+        resolution.className = 'jc-hidden-item-identity-resolution';
+        const prompt = document.createElement('span');
+        prompt.textContent = 'Treat this TMDB item as: ';
+        resolution.appendChild(prompt);
+        for (const [mediaType, label] of [['movie', 'Movie'], ['tv', 'TV']] as const) {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.textContent = label;
+            button.addEventListener('click', () => {
+                if (!isPanelFenceCurrent(fence)) return;
+                if (resolveLegacyIdentity(item._key!, mediaType)) {
+                    item._identityStatus = 'resolved';
+                    item.type = mediaType === 'tv' ? 'Series' : 'Movie';
+                    metaDiv.textContent = [item.type, _scopeText, hiddenDate].filter(Boolean).join(' · ');
+                    resolution.remove();
+                }
+            });
+            resolution.appendChild(button);
+        }
+        info.appendChild(resolution);
+    }
 
     const unhideBtn = document.createElement('button');
     unhideBtn.className = 'jc-hidden-item-unhide';
@@ -264,8 +291,7 @@ export function showManagementPanel(): void {
     if (!isPanelFenceCurrent(fence)) return;
     activeManagementClose?.();
 
-    const data = getHiddenData();
-    const items = Object.entries(data.items || {}).map(([key, item]) => ({ ...item, _key: key }));
+    const items = getAllHiddenItems();
 
     const overlay = document.createElement('div');
     overlay.className = 'jc-hidden-management-overlay';

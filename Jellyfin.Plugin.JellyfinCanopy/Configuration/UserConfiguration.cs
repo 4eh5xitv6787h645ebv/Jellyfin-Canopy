@@ -304,12 +304,22 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         public List<ProcessedWatchlistItem> Items { get; set; } = new List<ProcessedWatchlistItem>();
     }
 
+    public class HiddenContentIdentity
+    {
+        public int Version { get; set; }
+        public string Provider { get; set; } = string.Empty;
+        public string MediaType { get; set; } = string.Empty;
+        public string Id { get; set; } = string.Empty;
+    }
+
     public class HiddenContentItem
     {
         public string ItemId { get; set; } = string.Empty;
         public string Name { get; set; } = string.Empty;
         public string Type { get; set; } = string.Empty;
         public string TmdbId { get; set; } = string.Empty;
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public HiddenContentIdentity? Identity { get; set; }
         public string HiddenAt { get; set; } = string.Empty;
         public string PosterPath { get; set; } = string.Empty;
         public string SeriesId { get; set; } = string.Empty;
