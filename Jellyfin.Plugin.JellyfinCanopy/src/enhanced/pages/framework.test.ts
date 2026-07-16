@@ -92,6 +92,27 @@ describe('pages framework', () => {
         expect(fallback.getAttribute('data-title')).toBe('ALPHA');
     });
 
+    it('adopts a fallback mounted after navigation without viewbeforeshow', async () => {
+        setHash('#/alpha');
+        const fallback = mountFallback();
+
+        await vi.waitFor(() => expect(adoptedPageId()).toBe('alpha'));
+        expect(renders).toEqual(['alpha']);
+        expect(fallback.querySelector('.jc-test-alpha')).not.toBeNull();
+        expect(fallback.textContent).not.toContain('Page not found');
+    });
+
+    it('rejects a deferred fallback after its page route becomes stale', async () => {
+        setHash('#/alpha');
+        const fallback = mountFallback();
+        setHash('#/home');
+
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(adoptedPageId()).toBeNull();
+        expect(renders).toEqual([]);
+        expect(fallback.textContent).toContain('Page not found');
+    });
+
     it('never adopts for a disabled page or an unregistered route', () => {
         setHash('#/gated');
         const fallback = mountFallback();
