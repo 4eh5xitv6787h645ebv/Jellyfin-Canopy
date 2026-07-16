@@ -8,8 +8,9 @@
 import { JC } from '../globals';
 import type { BodySubscriberHandle, IdentityContext } from '../types/jc';
 import { onBodyMutation } from '../core/dom-observer';
+import { createStableMethodFacade } from '../core/feature-loader';
 
-JC.initializePauseScreen = function() {
+function initializePauseScreen(): void {
   // Singleton: a prior instance (Stage-6 re-invokes this on config hot-reload /
   // account switch) must be torn down before constructing a new one, or its
   // overlay/style/document listeners stack. The boot below now retains the
@@ -39,8 +40,12 @@ JC.initializePauseScreen = function() {
       imgProbeCache = new Map<string, boolean>();
       itemCache = new Map<string, { item: any; domain: string }>();
       fetchAbort: AbortController | null = null;
+      assetFetchControllers = new Set<AbortController>();
+      assetFetchTimers = new Set<number>();
+      assetGeneration = 0;
       observer: BodySubscriberHandle | null = null;
       identityContext: IdentityContext | null = null;
+      disposed = false;
       prevFocused: Element | null = null;
 
       // Pause screen delay state
@@ -76,8 +81,12 @@ JC.initializePauseScreen = function() {
         this.imgProbeCache = new Map();
         this.itemCache = new Map();
         this.fetchAbort = null;
+        this.assetFetchControllers = new Set();
+        this.assetFetchTimers = new Set();
+        this.assetGeneration = 0;
         this.observer = null;
         this.identityContext = JC.identity.capture();
+        this.disposed = false;
         this.prevFocused = null;
 
         // Pause screen delay state
@@ -121,7 +130,19 @@ JC.initializePauseScreen = function() {
       }
 
       isIdentityCurrent(): boolean {
-        return JC.identity.isCurrent(this.identityContext);
+        return !this.disposed && JC.identity.isCurrent(this.identityContext);
+      }
+
+      isContentCurrent(expectedGeneration: number): boolean {
+        return expectedGeneration === this.assetGeneration && this.isIdentityCurrent();
+      }
+
+      cancelAssetRequests(): void {
+        this.assetGeneration += 1;
+        for (const controller of this.assetFetchControllers) controller.abort();
+        this.assetFetchControllers.clear();
+        for (const timer of this.assetFetchTimers) clearTimeout(timer);
+        this.assetFetchTimers.clear();
       }
 
       getCredentials(): { token: string; userId: string } | null {
@@ -759,7 +780,9 @@ JC.initializePauseScreen = function() {
         if (!this.isIdentityCurrent()) return;
           this.clearDisplayData();
           this.fetchAbort?.abort();
+          this.cancelAssetRequests();
           this.fetchAbort = new AbortController();
+          const expectedGeneration = this.assetGeneration;
 
           try {
               let record = this.itemCache.get(itemId);
@@ -767,38 +790,61 @@ JC.initializePauseScreen = function() {
               const itemResp = await this.fetchWithRetry(ApiClient.getUrl(`/Items/${itemId}`), {
                   headers: { "Authorization": 'MediaBrowser Token="' + this.token + '"', "Accept": "application/json" },
                   signal: this.fetchAbort.signal
-              });
-              if (!this.isIdentityCurrent()) return;
+              }, expectedGeneration);
+              if (!this.isContentCurrent(expectedGeneration)) return;
               record = { item: itemResp, domain: (ApiClient as any).serverAddress() };
               this.itemCache.set(itemId, record);
               }
-              await this.displayItemInfo(record.item, record.domain, itemId);
+              await this.displayItemInfo(record.item, record.domain, itemId, expectedGeneration);
           } catch (err: any) {
-              if (err.name !== 'AbortError') {
+              if (err.name !== 'AbortError' && this.isContentCurrent(expectedGeneration)) {
               console.error("🪼 Jellyfin Canopy: Error fetching item info:", err);
               this.overlayPlot.textContent = JC.t!('pausescreen_fetch_error');
               }
           }
           }
 
-      async fetchWithRetry(url: string, options: RequestInit, maxRetries = 2): Promise<any> {
+      async fetchWithRetry(
+        url: string,
+        options: RequestInit,
+        expectedGeneration: number,
+        maxRetries = 2,
+      ): Promise<any> {
         for (let i = 0; i <= maxRetries; i++) {
           try {
-            if (!this.isIdentityCurrent()) throw new DOMException('Identity changed', 'AbortError');
+            if (!this.isContentCurrent(expectedGeneration)) throw new DOMException('Content changed', 'AbortError');
             const response = await fetch(url, options);
-            if (!this.isIdentityCurrent()) throw new DOMException('Identity changed', 'AbortError');
+            if (!this.isContentCurrent(expectedGeneration)) throw new DOMException('Content changed', 'AbortError');
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
-            return await response.json();
+            const result = await response.json();
+            if (!this.isContentCurrent(expectedGeneration)) throw new DOMException('Content changed', 'AbortError');
+            return result;
           } catch (error) {
             if ((error as Error)?.name === 'AbortError') throw error;
             if (i === maxRetries) throw error;
-            await new Promise(r => setTimeout(r, 1000 * (i + 1)));
+            await new Promise<void>((resolve, reject) => {
+              const signal = options.signal;
+              let settled = false;
+              const settle = (error?: DOMException): void => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timer);
+                this.assetFetchTimers.delete(timer);
+                signal?.removeEventListener('abort', onAbort);
+                if (error) reject(error); else resolve();
+              };
+              const onAbort = (): void => settle(new DOMException('Content changed', 'AbortError'));
+              const timer = window.setTimeout(() => settle(), 1000 * (i + 1));
+              this.assetFetchTimers.add(timer);
+              signal?.addEventListener('abort', onAbort, { once: true });
+              if (signal?.aborted || !this.isContentCurrent(expectedGeneration)) onAbort();
+            });
           }
         }
       }
 
-      async displayItemInfo(item: any, domain: string, itemId: string) {
-        if (!this.isIdentityCurrent()) return;
+      async displayItemInfo(item: any, domain: string, itemId: string, expectedGeneration: number) {
+        if (!this.isContentCurrent(expectedGeneration)) return;
         // Details
         const year = item.ProductionYear || "";
         const rating = item.OfficialRating || "";
@@ -817,11 +863,11 @@ JC.initializePauseScreen = function() {
         const backdropUrls = this.getBackdropUrls(item, domain, itemId);
 
         const [logoURL, discURL, backdropURL] = await Promise.all([
-          this.firstAvailableBlobURL(logoUrls),
-          this.firstAvailableBlobURL(discUrls),
-          this.firstAvailableBlobURL(backdropUrls)
+          this.firstAvailableBlobURL(logoUrls, expectedGeneration),
+          this.firstAvailableBlobURL(discUrls, expectedGeneration),
+          this.firstAvailableBlobURL(backdropUrls, expectedGeneration)
         ]);
-        if (!this.isIdentityCurrent()) return;
+        if (!this.isContentCurrent(expectedGeneration)) return;
 
         if (logoURL) this.overlayLogo.src = logoURL;
         if (discURL) this.overlayDisc.src = discURL;
@@ -883,57 +929,69 @@ JC.initializePauseScreen = function() {
       }
 
       // ------- Image helpers (blob cache) -------
-      async firstAvailableBlobURL(urls: string[]): Promise<string | null> {
+      async firstAvailableBlobURL(urls: string[], expectedGeneration: number): Promise<string | null> {
         for (const url of urls) {
-          if (!this.isIdentityCurrent()) return null;
+          if (!this.isContentCurrent(expectedGeneration)) return null;
           if (!url) continue;
-          const ok = await this.probeImage(url);
+          const ok = await this.probeImage(url, 2500, expectedGeneration);
           if (!ok) continue;
-          const blobURL = await this.toBlobURL(url);
+          const blobURL = await this.toBlobURL(url, 5000, expectedGeneration);
           if (blobURL) return blobURL;
         }
         return null;
       }
-      async probeImage(url: string, timeoutMs = 2500): Promise<boolean> {
+      async probeImage(url: string, timeoutMs = 2500, expectedGeneration = this.assetGeneration): Promise<boolean> {
         if (!this.isIdentityCurrent()) return false;
         if (this.imgProbeCache.has(url)) return this.imgProbeCache.get(url)!;
+        const isCurrent = (): boolean => expectedGeneration === this.assetGeneration && this.isIdentityCurrent();
+        const ctl = new AbortController();
+        this.assetFetchControllers.add(ctl);
+        const t = window.setTimeout(() => ctl.abort(), timeoutMs);
+        this.assetFetchTimers.add(t);
         try {
-          const ctl = new AbortController();
-          const t = setTimeout(() => ctl.abort(), timeoutMs);
           const res = await fetch(url, {
             method: "HEAD",
             headers: { "Authorization": 'MediaBrowser Token="' + this.token + '"' },
             signal: ctl.signal
           });
-          clearTimeout(t);
-          if (!this.isIdentityCurrent()) return false;
+          if (!isCurrent()) return false;
           const ok = res.ok;
           this.imgProbeCache.set(url, ok);
           return ok;
         } catch {
-          this.imgProbeCache.set(url, false);
+          if (isCurrent()) this.imgProbeCache.set(url, false);
           return false;
+        } finally {
+          clearTimeout(t);
+          this.assetFetchTimers.delete(t);
+          this.assetFetchControllers.delete(ctl);
         }
       }
-      async toBlobURL(url: string, timeoutMs = 5000): Promise<string | null> {
+      async toBlobURL(url: string, timeoutMs = 5000, expectedGeneration = this.assetGeneration): Promise<string | null> {
         if (!this.isIdentityCurrent()) return null;
         if (this.imgBlobCache.has(url)) return this.imgBlobCache.get(url)!;
+        const isCurrent = (): boolean => expectedGeneration === this.assetGeneration && this.isIdentityCurrent();
+        const ctl = new AbortController();
+        this.assetFetchControllers.add(ctl);
+        const t = window.setTimeout(() => ctl.abort(), timeoutMs);
+        this.assetFetchTimers.add(t);
         try {
-          const ctl = new AbortController();
-          const t = setTimeout(() => ctl.abort(), timeoutMs);
           const res = await fetch(url, {
             headers: { "Authorization": 'MediaBrowser Token="' + this.token + '"' },
             signal: ctl.signal
           });
-          clearTimeout(t);
-          if (!res.ok || !this.isIdentityCurrent()) return null;
+          if (!res.ok || !isCurrent()) return null;
           const blob = await res.blob();
-          if (!this.isIdentityCurrent()) return null;
+          if (!isCurrent()) return null;
           const obj = URL.createObjectURL(blob);
           this.imgBlobCache.set(url, obj);
           return obj;
         } catch {
           return null;
+        } finally {
+          clearTimeout(t);
+          this.assetFetchTimers.delete(t);
+          this.assetFetchControllers.delete(ctl);
         }
       }
 
@@ -966,6 +1024,7 @@ JC.initializePauseScreen = function() {
       clearState() {
         this.hideOverlay();
         this.clearDisplayData();
+        this.cancelAssetRequests();
 
         // Clear pause screen timer
         if (this.pauseScreenTimer) {
@@ -980,6 +1039,8 @@ JC.initializePauseScreen = function() {
       }
 
       destroy() {
+        if (this.disposed) return;
+        this.disposed = true;
         this.clearState();
         if (this.observer) { this.observer.unsubscribe(); this.observer = null; }
 
@@ -1005,9 +1066,9 @@ JC.initializePauseScreen = function() {
     // Boot — retain the instance so a later re-init can destroy() it (above).
     JC._pauseScreenInstance = new JellyfinPauseScreen();
       console.log('🪼 Jellyfin Canopy: Custom Pause Screen initialized.');
-  };
+  }
 
-JC.identity.registerReset('pause-screen', () => {
+function resetPauseScreen(): void {
   const instance = JC._pauseScreenInstance;
   if (instance) {
     try { instance.destroy(); } catch { /* complete the shared reset */ }
@@ -1017,4 +1078,27 @@ JC.identity.registerReset('pause-screen', () => {
     clearTimeout(JC.state.pauseScreenClickTimer);
     JC.state.pauseScreenClickTimer = null;
   }
-});
+}
+
+const pauseScreenApi = { initialize: initializePauseScreen };
+const stablePauseScreen = createStableMethodFacade<typeof pauseScreenApi>({ initialize() {} });
+
+/** Publish the stable pause-screen initializer for one lazy activation. */
+export function installPauseScreen(): () => void {
+  const uninstall = stablePauseScreen.install(pauseScreenApi);
+  JC.initializePauseScreen = stablePauseScreen.facade.initialize;
+  const unregisterReset = JC.identity.registerReset('pause-screen', resetPauseScreen);
+  let disposed = false;
+  return () => {
+    if (disposed) return;
+    disposed = true;
+    resetPauseScreen();
+    unregisterReset();
+    uninstall();
+  };
+}
+
+/** Start the installed pause screen without resolving through the global method. */
+export function initializeInstalledPauseScreen(): void {
+  initializePauseScreen();
+}

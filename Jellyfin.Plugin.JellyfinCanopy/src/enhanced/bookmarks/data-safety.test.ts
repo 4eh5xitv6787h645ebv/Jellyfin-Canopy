@@ -8,7 +8,7 @@
 // The functions under test live inside bookmarks.ts's `if (BookmarksEnabled)`
 // closure and are reached through the frozen JC.bookmarks facade, so each test
 // configures the globals then imports the module fresh.
-import { describe, expect, it, beforeEach, vi } from 'vitest';
+import { afterEach, describe, expect, it, beforeEach, vi } from 'vitest';
 
 // This test deliberately manipulates the untyped window.JellyfinCanopy global
 // and its mock surface, so the no-unsafe-* family is disabled file-wide (as the
@@ -25,6 +25,7 @@ describe('bookmarks data-safety', () => {
     let JC: AnyRec;
     let getItem: ReturnType<typeof vi.fn<(userId: string, itemId: string) => Promise<unknown>>>;
     let plugin: ReturnType<typeof vi.fn>;
+    let disposeBookmarks: (() => void) | undefined;
 
     async function loadModule(bookmarks: AnyRec): Promise<any> {
         vi.resetModules();
@@ -91,12 +92,20 @@ describe('bookmarks data-safety', () => {
         (globalThis as AnyRec).ApiClient = apiClient;
         (window as AnyRec).ApiClient = apiClient;
 
-        await import('./bookmarks');
+        const bookmarksModule = await import('./bookmarks');
+        disposeBookmarks = bookmarksModule.installBookmarks();
         return JC.bookmarks;
     }
 
     beforeEach(() => {
+        disposeBookmarks?.();
+        disposeBookmarks = undefined;
         vi.restoreAllMocks();
+    });
+
+    afterEach(() => {
+        disposeBookmarks?.();
+        disposeBookmarks = undefined;
     });
 
     describe('cleanupOrphaned: authoritative server transaction', () => {

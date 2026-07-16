@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const MALICIOUS = 'red;background-image:url(https://evil/x)';
 
 describe('subtitles ::cue insertRule injection', () => {
+    let disposeSubtitles: (() => void) | undefined;
     beforeEach(() => {
         vi.resetModules();
         document.head.innerHTML = '';
@@ -21,6 +22,8 @@ describe('subtitles ::cue insertRule injection', () => {
         };
     });
     afterEach(() => {
+        disposeSubtitles?.();
+        disposeSubtitles = undefined;
         delete (globalThis as unknown as { CSS?: unknown }).CSS;
         vi.restoreAllMocks();
     });
@@ -40,7 +43,8 @@ describe('subtitles ::cue insertRule injection', () => {
         clientSheet.id = 'htmlvideoplayer-cuestyle';
         document.head.appendChild(clientSheet);
 
-        await import('./subtitles');
+        const subtitles = await import('./subtitles');
+        disposeSubtitles = subtitles.installSubtitles();
 
         const insertSpy = vi.spyOn(CSSStyleSheet.prototype, 'insertRule');
         JC.applySavedStylesWhenReady?.();
@@ -69,7 +73,8 @@ describe('subtitles ::cue insertRule injection', () => {
         const clientSheet = document.createElement('style');
         clientSheet.id = 'htmlvideoplayer-cuestyle';
         document.head.appendChild(clientSheet);
-        await import('./subtitles');
+        const subtitles = await import('./subtitles');
+        disposeSubtitles = subtitles.installSubtitles();
 
         JC.applySavedStylesWhenReady?.();
         expect(innerA.style.getPropertyValue('color')).not.toBe('');

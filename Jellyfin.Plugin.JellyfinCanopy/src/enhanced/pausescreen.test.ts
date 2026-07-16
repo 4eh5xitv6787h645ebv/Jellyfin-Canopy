@@ -2,7 +2,7 @@
 // (THEME-3 duplicate stacking, THEME-4 leaked capturing keydown, THEME-5
 // blob-URL leak on item change).
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import './pausescreen'; // attaches JC.initializePauseScreen
+import { installPauseScreen } from './pausescreen';
 
 interface PauseApi {
     initializePauseScreen: () => void;
@@ -24,8 +24,17 @@ function destroyPauseScreen(): void {
     jc()._pauseScreenInstance = undefined;
 }
 
+function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((done) => { resolve = done; });
+    return { promise, resolve };
+}
+
 describe('pause-screen singleton + teardown', () => {
+    let disposePauseScreen: (() => void) | undefined;
+
     beforeEach(() => {
+        disposePauseScreen = installPauseScreen();
         // Do not discard the only handle to a previous test's shared-body
         // subscription. A connected jsdom MutationObserver can otherwise
         // deliver its final record after the environment has removed the
@@ -43,6 +52,8 @@ describe('pause-screen singleton + teardown', () => {
 
     afterEach(() => {
         destroyPauseScreen();
+        disposePauseScreen?.();
+        disposePauseScreen = undefined;
         vi.restoreAllMocks();
         localStorage.clear();
     });
@@ -95,5 +106,36 @@ describe('pause-screen singleton + teardown', () => {
         await Promise.resolve();
 
         expect(checkSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not publish a held blob after loader-owned disposal', async () => {
+        initPauseScreen();
+        const inst = jc()._pauseScreenInstance as {
+            toBlobURL: (url: string) => Promise<string | null>;
+            destroy: () => void;
+            imgBlobCache: Map<string, string>;
+            assetFetchControllers: Set<AbortController>;
+            assetFetchTimers: Set<number>;
+        };
+        const response = deferred<Response>();
+        const fetchRequest = vi.spyOn(globalThis, 'fetch').mockReturnValue(response.promise);
+        const createObjectUrl = vi.spyOn(URL, 'createObjectURL');
+
+        const pending = inst.toBlobURL('/Items/held/Images/Backdrop');
+        await Promise.resolve();
+        const signal = fetchRequest.mock.calls[0]?.[1]?.signal;
+        disposePauseScreen?.();
+        disposePauseScreen = undefined;
+        expect(signal?.aborted).toBe(true);
+        expect(inst.assetFetchControllers.size).toBe(0);
+        expect(inst.assetFetchTimers.size).toBe(0);
+        response.resolve({
+            ok: true,
+            blob: () => Promise.resolve(new Blob(['held'])),
+        } as Response);
+
+        await expect(pending).resolves.toBeNull();
+        expect(createObjectUrl).not.toHaveBeenCalled();
+        expect(inst.imgBlobCache.size).toBe(0);
     });
 });

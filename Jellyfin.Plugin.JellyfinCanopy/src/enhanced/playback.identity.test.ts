@@ -1,5 +1,6 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JC } from '../globals';
+import { installPlayback } from './playback';
 
 function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
     let resolve!: (value: T) => void;
@@ -33,11 +34,10 @@ function fpsItem(fps: number): unknown {
 }
 
 describe('playback identity lifecycle', () => {
-    beforeAll(async () => {
-        await import('./playback');
-    });
+    let disposePlayback: (() => void) | undefined;
 
     beforeEach(() => {
+        disposePlayback = installPlayback();
         vi.useFakeTimers();
         document.body.innerHTML = '';
         window.history.replaceState(null, '', '/web/index.html#/video');
@@ -51,6 +51,8 @@ describe('playback identity lifecycle', () => {
     });
 
     afterEach(() => {
+        disposePlayback?.();
+        disposePlayback = undefined;
         JC.identity.transition('', '', 'playback-test-cleanup');
         JC.core.api = undefined;
         vi.restoreAllMocks();
@@ -85,6 +87,23 @@ describe('playback identity lifecycle', () => {
 
         expect(video.currentTime).toBeCloseTo(bTime, 8);
         expect(document.querySelector('[data-jc-frame-overlay="true"]')?.textContent).toContain('60 fps');
+    });
+
+    it('drops a held FPS lookup after the loader disposes the same identity', async () => {
+        window.history.replaceState(null, '', '/web/index.html#/video?id=item-held');
+        const video = mountVideo('http://jellyfin.test/Videos/item-held/stream?MediaSourceId=source-1');
+        const response = deferred<unknown>();
+        vi.spyOn(ApiClient, 'getItem').mockReturnValue(response.promise);
+
+        const step = JC.frameStep!('forward');
+        await flushPromises();
+        disposePlayback?.();
+        disposePlayback = undefined;
+        response.resolve(fpsItem(24));
+        await step;
+
+        expect(video.currentTime).toBe(10);
+        expect(document.querySelector('[data-jc-frame-overlay="true"]')).toBeNull();
     });
 
     it('does not share or apply FPS across a same-item media-source switch', async () => {
