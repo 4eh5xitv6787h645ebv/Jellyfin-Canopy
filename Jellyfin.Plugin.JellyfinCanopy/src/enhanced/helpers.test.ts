@@ -2,9 +2,12 @@
 // getHeaderRightContainer (PERF(R4) fix: offsetParent is a forced layout read and
 // used to be re-read on every observer tick; it must now be read at most once
 // per navigation).
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JC } from '../globals';
-import { clearItemCache, getHeaderRightContainer, getItemCached } from './helpers';
+import {
+    clearItemCache, getHeaderRightContainer, getItemCached,
+    ITEM_CACHE_MAX_ENTRIES, ITEM_CACHE_MAX_IN_FLIGHT,
+} from './helpers';
 import { insertHeaderTrayButton, HeaderTrayOrder } from './header-tray';
 
 /** Builds a `.headerRight` whose offsetParent getter counts layout reads. */
@@ -126,6 +129,74 @@ describe('privacy reset item-cache invalidation (BI-SEC-035)', () => {
             .resolves.toEqual({ server: 'b' });
         expect(getItem).toHaveBeenCalledTimes(2);
         getItem.mockRestore();
+    });
+});
+
+describe('shared item DTO cache bounds', () => {
+    beforeEach(() => {
+        clearItemCache();
+        vi.useFakeTimers();
+        vi.setSystemTime(0);
+    });
+
+    afterEach(() => {
+        clearItemCache();
+        vi.useRealTimers();
+        vi.restoreAllMocks();
+    });
+
+    it('drops an expired DTO before publishing its replacement', async () => {
+        const getItem = vi.spyOn(ApiClient, 'getItem')
+            .mockResolvedValueOnce({ version: 1 })
+            .mockResolvedValueOnce({ version: 2 });
+
+        await expect(getItemCached('ttl-item', { userId: 'ttl-user' }))
+            .resolves.toEqual({ version: 1 });
+        await expect(getItemCached('ttl-item', { userId: 'ttl-user' }))
+            .resolves.toEqual({ version: 1 });
+        expect(getItem).toHaveBeenCalledTimes(1);
+
+        vi.advanceTimersByTime(30_001);
+        await expect(getItemCached('ttl-item', { userId: 'ttl-user' }))
+            .resolves.toEqual({ version: 2 });
+        expect(getItem).toHaveBeenCalledTimes(2);
+    });
+
+    it('evicts the least-recently-used DTO at one over the hard cap', async () => {
+        const getItem = vi.spyOn(ApiClient, 'getItem')
+            .mockImplementation((_userId, itemId) => Promise.resolve({ itemId }));
+
+        for (let index = 0; index <= ITEM_CACHE_MAX_ENTRIES; index += 1) {
+            await getItemCached(`bounded-${index}`, { userId: 'bounded-user' });
+        }
+        expect(getItem).toHaveBeenCalledTimes(ITEM_CACHE_MAX_ENTRIES + 1);
+
+        await getItemCached(`bounded-${ITEM_CACHE_MAX_ENTRIES}`, { userId: 'bounded-user' });
+        expect(getItem).toHaveBeenCalledTimes(ITEM_CACHE_MAX_ENTRIES + 1);
+        await getItemCached('bounded-0', { userId: 'bounded-user' });
+        expect(getItem).toHaveBeenCalledTimes(ITEM_CACHE_MAX_ENTRIES + 2);
+    });
+
+    it('keeps in-flight deduplication independent from resolved-cache eviction', async () => {
+        const resolvers: Array<(value: unknown) => void> = [];
+        const getItem = vi.spyOn(ApiClient, 'getItem').mockImplementation(
+            (_userId, itemId) => new Promise((resolve) => {
+                resolvers.push(() => resolve({ itemId }));
+            }),
+        );
+        const pending = Array.from(
+            { length: ITEM_CACHE_MAX_IN_FLIGHT },
+            (_, index) => getItemCached(`pending-${index}`, { userId: 'pending-user' }),
+        );
+        const duplicateOldest = getItemCached('pending-0', { userId: 'pending-user' });
+
+        expect(getItem).toHaveBeenCalledTimes(ITEM_CACHE_MAX_IN_FLIGHT);
+        await expect(getItemCached('pending-overflow', { userId: 'pending-user' }))
+            .rejects.toThrow(/capacity exceeded/i);
+        expect(getItem).toHaveBeenCalledTimes(ITEM_CACHE_MAX_IN_FLIGHT);
+        resolvers.forEach((resolve) => resolve({}));
+        await Promise.all([...pending, duplicateOldest]);
+        expect(getItem).toHaveBeenCalledTimes(ITEM_CACHE_MAX_IN_FLIGHT);
     });
 });
 

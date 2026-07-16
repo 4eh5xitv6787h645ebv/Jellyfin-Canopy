@@ -41,9 +41,21 @@ interface AllowlistEntry {
     rule: RuleId;
     /** One-line justification. */
     why: string;
+    /** Raw Map binding for rules that can report multiple owners per file. */
+    owner?: string;
 }
 
-const ALLOWLIST: AllowlistEntry[] = [];
+const ALLOWLIST: AllowlistEntry[] = [{
+    file: 'core/api-client.ts',
+    rule: 'ttl-map',
+    owner: 'responseCache',
+    why: 'Weighted response LRU is independently capped at 200 entries and 16 MiB with dedicated budget tests.',
+}, {
+    file: 'enhanced/helpers.ts',
+    rule: 'ttl-map',
+    owner: 'itemCache',
+    why: 'Boot-local resolved DTO LRU is capped at 500; sharing the split primitive exceeds cold-output budgets.',
+}];
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Scanner
@@ -56,6 +68,7 @@ interface Violation {
     line: number;
     rule: RuleId;
     detail: string;
+    owner?: string;
 }
 
 interface ScanStats {
@@ -65,10 +78,6 @@ interface ScanStats {
 }
 
 const UPPER_SNAKE_RE = /^[A-Z][A-Z0-9_]*$/;
-
-// A read-time TTL comparison: `now - x.ts < FOO_TTL` / `Date.now() - x.timestamp < CACHE_TTL`
-// (an optional `)` from `(now - x.ts)` is tolerated; the RHS identifier must end in TTL).
-const TTL_READ_RE = /\b(?:now|Date\.now\(\))\s*-\s*\w+\.(?:ts|timestamp)\s*\)?\s*<\s*\w*(?:CACHE_)?TTL\b/;
 
 const REL_OPS = new Set<ts.SyntaxKind>([
     ts.SyntaxKind.LessThanToken,
@@ -348,33 +357,140 @@ function scanTextRules(sf: ts.SourceFile, rel: string, text: string): Violation[
         });
     }
 
-    // Rule 3: hand-rolled TTL cache — module-scope `new Map` + a read-time TTL check,
-    // not routed through core/bounded-cache.
-    if (TTL_READ_RE.test(text) && hasModuleScopeNewMap(sf) && !text.includes('createBoundedCache')) {
-        const m = TTL_READ_RE.exec(text);
+    // Rule 3: hand-rolled TTL cache — module-scope `new Map` + an AST-recognized
+    // read-time TTL comparison, not routed through core/bounded-cache. Identifier
+    // spelling is deliberately not the contract: FOO_TTL, SCOPE_TTL_MS and
+    // CACHE_TTL_SECONDS all describe the same cache semantics.
+    for (const ttlRead of findTtlReadComparisons(sf)) {
         violations.push({
             file: rel,
-            line: m ? text.slice(0, m.index).split('\n').length : 1,
+            line: lineOf(sf, ttlRead.node),
             rule: 'ttl-map',
-            detail: 'module-scope `new Map` cache with a read-time TTL check must route through core/bounded-cache',
+            owner: ttlRead.owner,
+            detail: `module-scope raw Map '${ttlRead.owner}' with a read-time TTL check must route through core/bounded-cache`,
         });
     }
 
     return violations;
 }
 
-/** A top-level `const/let X = new Map(...)` declaration. */
-function hasModuleScopeNewMap(sf: ts.SourceFile): boolean {
+/** True for a Date.now() call (the canonical wall-clock source). */
+function isDateNowCall(node: ts.Node): boolean {
+    return ts.isCallExpression(node)
+        && ts.isPropertyAccessExpression(node.expression)
+        && ts.isIdentifier(node.expression.expression)
+        && node.expression.expression.text === 'Date'
+        && node.expression.name.text === 'now';
+}
+
+/** A TTL identifier in snake/camel variants, including unit suffixes. */
+function isTtlIdentifier(node: ts.Node): boolean {
+    if (!ts.isIdentifier(node)) return false;
+    return /(?:^|_)ttl(?:_|$)|ttl(?:ms|msec|seconds?|secs?|minutes?|mins?)?$/i.test(node.text);
+}
+
+/** Module-scope raw Map binding names. */
+function moduleScopeMapNames(sf: ts.SourceFile): Set<string> {
+    const names = new Set<string>();
     for (const stmt of sf.statements) {
         if (!ts.isVariableStatement(stmt)) continue;
         for (const decl of stmt.declarationList.declarations) {
             const init = decl.initializer;
-            if (init && ts.isNewExpression(init) && ts.isIdentifier(init.expression) && init.expression.text === 'Map') {
-                return true;
+            if (ts.isIdentifier(decl.name) && init && ts.isNewExpression(init)
+                && ts.isIdentifier(init.expression) && init.expression.text === 'Map') {
+                names.add(decl.name.text);
             }
         }
     }
+    return names;
+}
+
+function isAncestor(ancestor: ts.Node, node: ts.Node): boolean {
+    for (let current: ts.Node | undefined = node; current; current = current.parent) {
+        if (current === ancestor) return true;
+    }
     return false;
+}
+
+function lexicalContainer(node: ts.Node): ts.Node {
+    for (let current: ts.Node | undefined = node.parent; current; current = current.parent) {
+        if (ts.isBlock(current) || ts.isSourceFile(current)) return current;
+    }
+    return node.getSourceFile();
+}
+
+/** Resolve one `.ts` receiver to the nearest lexical `const hit = rawMap.get(...)`. */
+function rawMapReadOwner(
+    sf: ts.SourceFile,
+    receiver: ts.Identifier,
+    mapNames: Set<string>,
+): string | null {
+    const useFunction = immediateEnclosingFunction(receiver);
+    let best: { position: number; owner: string | null } | null = null;
+    const walk = (node: ts.Node): void => {
+        if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)
+            && node.name.text === receiver.text
+            && node.getStart(sf) <= receiver.getStart(sf)
+            && immediateEnclosingFunction(node) === useFunction
+            && isAncestor(lexicalContainer(node), receiver)) {
+            const init = node.initializer;
+            const owner = init && ts.isCallExpression(init)
+                && ts.isPropertyAccessExpression(init.expression)
+                && init.expression.name.text === 'get'
+                && ts.isIdentifier(init.expression.expression)
+                && mapNames.has(init.expression.expression.text)
+                ? init.expression.expression.text
+                : null;
+            const candidate = {
+                position: node.getStart(sf),
+                owner,
+            };
+            if (!best || candidate.position > best.position) best = candidate;
+        }
+        ts.forEachChild(node, walk);
+    };
+    walk(sf);
+    return best ? (best as { position: number; owner: string | null }).owner : null;
+}
+
+/**
+ * Locate a relational cache-age comparison by meaning rather than source text:
+ * it must combine a wall-clock read (`now` or `Date.now()`), a `.ts`/`.timestamp`
+ * slot, and a TTL-named bound. Parentheses, direction and unit suffixes do not
+ * affect recognition.
+ */
+function findTtlReadComparisons(sf: ts.SourceFile): Array<{ node: ts.BinaryExpression; owner: string }> {
+    const mapNames = moduleScopeMapNames(sf);
+    if (mapNames.size === 0) return [];
+    const matches = new Map<string, ts.BinaryExpression>();
+    const walk = (node: ts.Node): void => {
+        if (ts.isBinaryExpression(node) && REL_OPS.has(node.operatorToken.kind)) {
+            let hasClock = false;
+            let hasTtl = false;
+            const owners = new Set<string>();
+            const inspect = (part: ts.Node): void => {
+                if (isDateNowCall(part)
+                    || (ts.isIdentifier(part) && part.text.toLowerCase() === 'now')) hasClock = true;
+                if (ts.isPropertyAccessExpression(part)
+                    && /^(?:ts|timestamp)$/i.test(part.name.text)
+                    && ts.isIdentifier(part.expression)) {
+                    const owner = rawMapReadOwner(sf, part.expression, mapNames);
+                    if (owner) owners.add(owner);
+                }
+                if (isTtlIdentifier(part)) hasTtl = true;
+                ts.forEachChild(part, inspect);
+            };
+            inspect(node);
+            if (hasClock && hasTtl) {
+                for (const owner of owners) {
+                    if (!matches.has(owner)) matches.set(owner, node);
+                }
+            }
+        }
+        ts.forEachChild(node, walk);
+    };
+    walk(sf);
+    return [...matches].map(([owner, node]) => ({ node, owner }));
 }
 
 function scanFile(rel: string, text: string, stats: ScanStats): Violation[] {
@@ -413,6 +529,12 @@ function formatViolations(violations: Violation[]): string {
     return violations.map((v) => `  [${v.rule}] ${v.file}:${v.line}  ${v.detail}`).join('\n');
 }
 
+function isAllowlisted(violation: Violation): boolean {
+    return ALLOWLIST.some((entry) => entry.file === violation.file
+        && entry.rule === violation.rule
+        && entry.owner === violation.owner);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // The guard
 // ─────────────────────────────────────────────────────────────────────────────
@@ -437,7 +559,7 @@ describe('leak-guard: observers, object URLs, TTL caches and retry loops are bou
 
     it('every leak is torn down / bounded, or allowlisted', () => {
         const unmatched = result.violations.filter(
-            (v) => !ALLOWLIST.some((e) => e.file === v.file && e.rule === v.rule)
+            (violation) => !isAllowlisted(violation)
         );
         expect(
             unmatched,
@@ -451,7 +573,9 @@ describe('leak-guard: observers, object URLs, TTL caches and retry loops are bou
 
     it('allowlist entries are current and still needed', () => {
         const stale = ALLOWLIST.filter(
-            (e) => !result.violations.some((v) => v.file === e.file && v.rule === e.rule)
+            (entry) => !result.violations.some((violation) => entry.file === violation.file
+                && entry.rule === violation.rule
+                && entry.owner === violation.owner)
         );
         expect(
             stale.map((e) => `[${e.rule}] ${e.file}`),
@@ -466,6 +590,10 @@ describe('leak-guard: observers, object URLs, TTL caches and retry loops are bou
 
 function scanFixture(source: string): Violation[] {
     return scanFile('fixture.ts', source, { files: 0, observers: 0, selfReschedulers: 0 });
+}
+
+function scanFixtureAt(file: string, source: string): Violation[] {
+    return scanFile(file, source, { files: 0, observers: 0, selfReschedulers: 0 });
 }
 
 describe('leak-guard classifier self-tests', () => {
@@ -487,8 +615,31 @@ describe('leak-guard classifier self-tests', () => {
     it('ttl-map: flags a module-scope Map+TTL cache without bounded-cache, accepts the routed form', () => {
         const raw = 'const c = new Map();\nfunction f(){ const cached = c.get(id); if (cached && now - cached.ts < FOO_TTL) return; }';
         expect(scanFixture(raw).map((v) => v.rule)).toEqual(['ttl-map']);
+        const productionShape = 'const SCOPE_TTL_MS = 30_000;\nconst scopeCache = new Map();\nfunction f(){ const hit = scopeCache.get(id); if (hit && Date.now() - hit.ts < SCOPE_TTL_MS) return hit.value; }';
+        expect(scanFixture(productionShape).map((v) => v.rule)).toEqual(['ttl-map']);
+        const secondsSuffix = 'const CACHE_TTL_SECONDS = 30;\nconst c = new Map();\nfunction f(){ const hit = c.get(id); if (CACHE_TTL_SECONDS > now - hit.timestamp) return hit; }';
+        expect(scanFixture(secondsSuffix).map((v) => v.rule)).toEqual(['ttl-map']);
+        const perEntryTtl = 'const c = new Map();\nfunction f(){ const entry = c.get(id); if (entry && Date.now() - entry.timestamp < entry.ttlMs) return entry.data; }';
+        expect(scanFixture(perEntryTtl).map((v) => v.rule)).toEqual(['ttl-map']);
         const routed = 'import { createBoundedCache } from \'../core/bounded-cache\';\nconst c = createBoundedCache({ maxEntries: 5, ttlMs: 1 });\nfunction f(){ const cached = c.get(id); if (cached && now - cached.ts < FOO_TTL) return; }';
         expect(scanFixture(routed)).toEqual([]);
+        const mixed = `${routed}\nconst raw = new Map();\nfunction leak(){ const hit = raw.get(id); if (hit && now - hit.ts < RAW_TTL_MS) return hit; }`;
+        expect(scanFixture(mixed).map((v) => v.rule)).toEqual(['ttl-map']);
+        const allowlistedAndLeaking = [
+            'const responseCache = new Map();',
+            'function safe(){ const entry = responseCache.get(id); if (entry && Date.now() - entry.timestamp < entry.ttlMs) return entry; }',
+            'const surpriseCache = new Map();',
+            'function leak(){ const hit = surpriseCache.get(id); if (hit && now - hit.ts < SURPRISE_TTL_MS) return hit; }',
+        ].join('\n');
+        const granular = scanFixtureAt('core/api-client.ts', allowlistedAndLeaking);
+        expect(granular.map((v) => v.owner).sort()).toEqual(['responseCache', 'surpriseCache']);
+        expect(granular.filter((v) => !isAllowlisted(v)).map((v) => v.owner)).toEqual(['surpriseCache']);
+        const unrelated = 'const labels = new Map();\nfunction f(){ if (Date.now() - state.ts < STATE_TTL_MS) return labels.get(id); }';
+        expect(scanFixture(unrelated)).toEqual([]);
+        const lexicalNames = 'const c = new Map();\nfunction a(){ const hit = c.get(id); return hit; }\nfunction b(){ const hit = state; if (now - hit.ts < STATE_TTL_MS) return hit; }';
+        expect(scanFixture(lexicalNames)).toEqual([]);
+        const nestedShadow = 'const c = new Map();\nfunction f(){ const hit = c.get(id); { const hit = state; if (now - hit.ts < STATE_TTL_MS) return hit; } }';
+        expect(scanFixture(nestedShadow)).toEqual([]);
         // A function-local Map (not module scope) is not flagged.
         expect(scanFixture('function f(){ const c = new Map(); if (now - x.ts < FOO_TTL) return; }')).toEqual([]);
     });
