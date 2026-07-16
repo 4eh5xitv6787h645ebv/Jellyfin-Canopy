@@ -199,17 +199,177 @@ If a log reports access denied for `jellyfin-web/index.html`, first open `Jellyf
 
 #### Optional legacy on-disk fallback
 
-Setting `DisableScriptInjectionMiddleware` to `true` is an advanced compatibility escape hatch. It makes the **Jellyfin Canopy Startup** task rewrite the exact `index.html` reported by Jellyfin's resolved web path. The crash-safe writer reads that file, creates and writes a temporary sibling, then atomically replaces the destination. The service principal therefore needs directory traversal plus create/delete/rename access only in the immediate `jellyfin-web` directory; it does not need access to the rest of the installation tree.
+Setting `DisableScriptInjectionMiddleware` to `true` is an advanced compatibility escape hatch. It makes the **Jellyfin Canopy Startup** task rewrite the `index.html` under Jellyfin's resolved web path. The crash-safe writer reads that file, creates and writes a temporary sibling, then atomically replaces the destination. The service principal therefore needs read access to `index.html` plus create, write, delete, and rename access in its immediate parent directory. It does not need access to the rest of the installation tree.
 
-Before enabling this fallback:
+Do not wait for a success log to identify the path: the successful legacy-rewrite message does not include it. Discover the path and service principal from the running native service, and refuse to continue if discovery is ambiguous. The following procedures deliberately preserve the package owner and unrelated ACL entries.
 
-1. Record the exact `index.html` path from Canopy's log; paths differ by package and image.
-2. Identify the actual Jellyfin service principal: the container's configured UID/GID, the `User=` in the Linux service unit, or **Log On As** in Windows Services. Do not assume a username such as `jellyfin` or `NETWORK SERVICE`.
-3. Back up that exact file outside the installation tree and record its owner, mode, or ACL.
-4. Add only the file and immediate-directory access described above for that principal. Preserve the package owner and all unrelated entries. If your platform cannot express that narrow access, keep the request-time middleware enabled.
-5. Restart Jellyfin, run **Jellyfin Canopy Startup** once, and confirm the log names the same file.
+##### Linux native service
 
-The legacy fallback is a poor fit for immutable containers: a bind-mounted `index.html` cannot be replaced reliably by the required temporary-sibling rename. Keep the middleware enabled rather than making the image writable. Recreating the container from its original image removes any accidental image-layer changes.
+Run this Bash block from an account with `sudo`. It reads the real systemd service user, then takes the web directory from the running process's `--webdir` argument or `JELLYFIN_WEB_DIR` environment. Only when neither is present does it accept one unambiguous `index.html` from the installed `jellyfin-web` package.
+
+```bash
+service_name=jellyfin
+service_user="$(systemctl show "$service_name" --property=User --value)"
+service_pid="$(systemctl show "$service_name" --property=MainPID --value)"
+[ -n "$service_user" ] || service_user=root
+case "$service_pid" in ''|0|*[!0-9]*) echo "Jellyfin must be running for safe path discovery" >&2; exit 1;; esac
+
+web_dir=
+expect_web_dir=false
+while IFS= read -r -d '' argument; do
+    if [ "$expect_web_dir" = true ]; then web_dir="$argument"; expect_web_dir=false; continue; fi
+    case "$argument" in
+        --webdir=*) web_dir="${argument#--webdir=}" ;;
+        --webdir) expect_web_dir=true ;;
+    esac
+done < <(sudo cat "/proc/$service_pid/cmdline")
+
+if [ -z "$web_dir" ]; then
+    web_dir="$(sudo awk 'BEGIN { RS="\0" } /^JELLYFIN_WEB_DIR=/ { sub(/^JELLYFIN_WEB_DIR=/, ""); print; exit }' "/proc/$service_pid/environ")"
+fi
+
+if [ -n "$web_dir" ]; then
+    index_path="${web_dir%/}/index.html"
+else
+    mapfile -t package_indexes < <(
+        if command -v dpkg-query >/dev/null 2>&1; then dpkg-query -L jellyfin-web 2>/dev/null; fi
+        if command -v rpm >/dev/null 2>&1; then rpm -ql jellyfin-web 2>/dev/null; fi
+    )
+    mapfile -t package_indexes < <(printf '%s\n' "${package_indexes[@]}" | awk '/\/index\.html$/ && !seen[$0]++')
+    [ "${#package_indexes[@]}" -eq 1 ] || { echo "Could not identify exactly one package-owned index.html" >&2; exit 1; }
+    index_path="${package_indexes[0]}"
+fi
+
+[ -f "$index_path" ] || { echo "Resolved index.html does not exist: $index_path" >&2; exit 1; }
+index_dir="$(dirname -- "$index_path")"
+backup_dir="$HOME/jellyfin-canopy-index-backup-$(date +%Y%m%dT%H%M%S)"
+install -d -m 0700 -- "$backup_dir"
+sudo cp --preserve=all -- "$index_path" "$backup_dir/index.html.original"
+sudo getfacl --absolute-names -- "$index_path" "$index_dir" > "$backup_dir/access.acl"
+sudo stat -c '%U:%G %a %n' -- "$index_path" "$index_dir"
+printf 'Service principal: %s\nResolved index: %s\nRollback data: %s\n' "$service_user" "$index_path" "$backup_dir"
+read -r -p 'Review those values, then type YES to add the narrow ACLs: ' confirmation
+[ "$confirmation" = YES ] || { echo "No permissions changed" >&2; exit 1; }
+
+sudo setfacl -m "u:${service_user}:r" -- "$index_path"
+sudo setfacl -m "u:${service_user}:rwx" -- "$index_dir"
+```
+
+`getfacl` and `setfacl` must be available. The file ACE permits the initial read. The non-inherited directory ACE permits the service to create and write the temporary sibling, replace `index.html`, and delete a leftover temporary file. Directory `rwx` also permits manipulating other immediate children, which is the unavoidable Linux directory boundary for an atomic sibling rename; it is not applied recursively.
+
+Keep the printed backup directory. To roll back, disable the legacy setting first and run:
+
+```bash
+read -r -p 'Paste the exact Rollback data path: ' backup_dir
+[ -f "$backup_dir/access.acl" ] && [ -f "$backup_dir/index.html.original" ] || { echo "Invalid rollback directory" >&2; exit 1; }
+index_path="$(awk '/^# file: / { print substr($0, 9); exit }' "$backup_dir/access.acl")"
+sudo systemctl stop jellyfin
+trap 'sudo systemctl start jellyfin' EXIT
+sudo cp --preserve=all -- "$backup_dir/index.html.original" "$index_path"
+sudo setfacl --restore="$backup_dir/access.acl"
+sudo systemctl start jellyfin
+trap - EXIT
+```
+
+##### Windows native service
+
+Run the whole block in an elevated Windows PowerShell session. It accepts exactly one Windows service whose executable is Jellyfin, records that service's actual **Log On As** principal, resolves an explicit `--webdir` or otherwise requires exactly one `index.html` below the service executable, and saves the original content and SDDL outside the installation tree.
+
+```powershell
+$Services = @(Get-CimInstance Win32_Service | Where-Object {
+    $_.PathName -match '(?i)(^|[\\/])jellyfin(?:\.exe)?(?:["\s]|$)'
+})
+if ($Services.Count -ne 1) { throw "Expected exactly one Jellyfin service; found $($Services.Count)." }
+$Service = $Services[0]
+$Principal = $Service.StartName
+
+if ($Service.PathName -match '^\s*"([^"]+\.exe)"') { $Executable = $Matches[1] }
+elseif ($Service.PathName -match '^\s*(\S+\.exe)') { $Executable = $Matches[1] }
+else { throw "Could not resolve the Jellyfin service executable." }
+$Executable = [Environment]::ExpandEnvironmentVariables($Executable)
+$InstallRoot = Split-Path -Parent $Executable
+
+if ($Service.PathName -match '(?i)--webdir(?:=|\s+)(?:"([^"]+)"|(\S+))') {
+    $WebDirectory = if ($Matches[1]) { $Matches[1] } else { $Matches[2] }
+    $WebDirectory = [Environment]::ExpandEnvironmentVariables($WebDirectory)
+    if (-not [IO.Path]::IsPathRooted($WebDirectory)) { throw "The service's --webdir is not an absolute path." }
+    $Candidates = @(Get-Item -LiteralPath (Join-Path $WebDirectory 'index.html') -ErrorAction Stop)
+} else {
+    $Candidates = @(Get-ChildItem -LiteralPath $InstallRoot -Filter index.html -File -Recurse -ErrorAction Stop)
+}
+if ($Candidates.Count -ne 1) { throw "Expected exactly one index.html; found $($Candidates.Count)." }
+$IndexPath = $Candidates[0].FullName
+$IndexDirectory = $Candidates[0].DirectoryName
+$BackupDirectory = Join-Path ([Environment]::GetFolderPath('MyDocuments')) ("JellyfinCanopyIndexBackup-" + (Get-Date -Format 'yyyyMMddTHHmmss'))
+New-Item -ItemType Directory -Path $BackupDirectory -ErrorAction Stop | Out-Null
+Write-Host "Service principal: $Principal"
+Write-Host "Resolved index: $IndexPath"
+Write-Host "Rollback data: $BackupDirectory"
+$Confirmation = Read-Host 'Review those values, then type YES to add the narrow ACLs'
+if ($Confirmation -cne 'YES') { throw 'No permissions changed.' }
+
+$WasRunning = $Service.State -eq 'Running'
+if ($WasRunning) { Stop-Service -Name $Service.Name -ErrorAction Stop }
+try {
+    Copy-Item -LiteralPath $IndexPath -Destination (Join-Path $BackupDirectory 'index.html.original') -ErrorAction Stop
+    [ordered]@{
+        IndexPath = $IndexPath
+        IndexDirectory = $IndexDirectory
+        ServiceName = $Service.Name
+        Principal = $Principal
+        IndexSddl = (Get-Acl -LiteralPath $IndexPath).Sddl
+        DirectorySddl = (Get-Acl -LiteralPath $IndexDirectory).Sddl
+    } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $BackupDirectory 'state.json') -Encoding utf8
+
+    $FileAcl = Get-Acl -LiteralPath $IndexPath
+    $FileRule = [System.Security.AccessControl.FileSystemAccessRule]::new(
+        $Principal, [System.Security.AccessControl.FileSystemRights]::Read,
+        [System.Security.AccessControl.InheritanceFlags]::None,
+        [System.Security.AccessControl.PropagationFlags]::None,
+        [System.Security.AccessControl.AccessControlType]::Allow)
+    $FileAcl.AddAccessRule($FileRule)
+    Set-Acl -LiteralPath $IndexPath -AclObject $FileAcl
+
+    $DirectoryRights = [System.Security.AccessControl.FileSystemRights]::ReadAndExecute `
+        -bor [System.Security.AccessControl.FileSystemRights]::Write `
+        -bor [System.Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles
+    $DirectoryAcl = Get-Acl -LiteralPath $IndexDirectory
+    $DirectoryRule = [System.Security.AccessControl.FileSystemAccessRule]::new(
+        $Principal, $DirectoryRights,
+        [System.Security.AccessControl.InheritanceFlags]::None,
+        [System.Security.AccessControl.PropagationFlags]::None,
+        [System.Security.AccessControl.AccessControlType]::Allow)
+    $DirectoryAcl.AddAccessRule($DirectoryRule)
+    Set-Acl -LiteralPath $IndexDirectory -AclObject $DirectoryAcl
+} finally {
+    if ($WasRunning) { Start-Service -Name $Service.Name }
+}
+```
+
+The file rule is read-only. The non-inherited parent-directory rule supplies the create/write/delete-child operations that the temporary-sibling replace needs, without propagating rights into subdirectories. To roll back, disable the legacy setting, paste the printed backup directory into the first line below, and run the block elevated:
+
+```powershell
+$BackupDirectory = Read-Host 'Paste the exact Rollback data path printed by the grant block'
+$State = Get-Content -LiteralPath (Join-Path $BackupDirectory 'state.json') -Raw | ConvertFrom-Json
+Stop-Service -Name $State.ServiceName -ErrorAction Stop
+try {
+    Copy-Item -LiteralPath (Join-Path $BackupDirectory 'index.html.original') -Destination $State.IndexPath -Force -ErrorAction Stop
+    $FileAcl = Get-Acl -LiteralPath $State.IndexPath
+    $FileAcl.SetSecurityDescriptorSddlForm($State.IndexSddl)
+    Set-Acl -LiteralPath $State.IndexPath -AclObject $FileAcl
+    $DirectoryAcl = Get-Acl -LiteralPath $State.IndexDirectory
+    $DirectoryAcl.SetSecurityDescriptorSddlForm($State.DirectorySddl)
+    Set-Acl -LiteralPath $State.IndexDirectory -AclObject $DirectoryAcl
+} finally {
+    Start-Service -Name $State.ServiceName
+}
+```
+
+##### Docker and other immutable containers
+
+Docker has no supported legacy fallback. Do not copy the package-owned `index.html` out of a container and bind-mount that single file back in: a file mount cannot accept the temporary sibling's atomic rename, and the copied file also drifts from the image on upgrade. Keep `DisableScriptInjectionMiddleware=false` and recreate the container from its original image to discard accidental image-layer changes.
+
+If discovery is ambiguous, an ACL command fails, or the platform cannot express these exact non-recursive rights, leave the request-time middleware enabled.
 
 `index.html` is package-owned and can be replaced by a Jellyfin or `jellyfin-web` upgrade. Before an upgrade, set `DisableScriptInjectionMiddleware` back to `false`, restart, restore the backed-up file (or reinstall/verify the owning package), and remove only the temporary ACL entries you added. Those same steps are the rollback procedure if the fallback fails. Never preserve a modified `index.html` across versions.
 

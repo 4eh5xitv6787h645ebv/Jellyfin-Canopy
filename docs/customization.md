@@ -175,7 +175,7 @@ The splash screen override replaces the image Jellyfin shows while it loads, so 
 | **Enable Splash Screen Override** | Enables the custom splash screen |
 | **Splash Screen Image URL** | Full URL or relative path to the image. Defaults to `/web/assets/img/banner-light.png` |
 
-To use your own image, provide an HTTPS URL already served by your reverse proxy, object store, or another trusted static host, then save and refresh. Do not copy the image into Jellyfin's package-owned web directory. Use a PNG, JPG, or SVG sized for full-screen display, and pick something that holds up responsively across screen sizes.
+To use your own image, provide a same-origin relative path, an existing plugin-served URL, or a URL served by your reverse proxy or another trusted static host, then save and refresh. LAN-only HTTP is supported when Jellyfin itself is intentionally served over HTTP on that trusted LAN; use HTTPS for an externally hosted production image. Do not copy the image into Jellyfin's package-owned web directory. Use a PNG, JPG, or SVG sized for full-screen display, and pick something that holds up responsively across screen sizes.
 
 ## Icons
 

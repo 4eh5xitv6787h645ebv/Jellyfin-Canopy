@@ -47,6 +47,21 @@ test('rejects broad recursive grants and package web-tree asset copies', () => {
     });
 });
 
+test('rejects Docker copy-out and single-file bind-mount legacy workarounds', () => {
+    fixture({
+        'docs/docker-bad.md': [
+            'docker cp jellyfin:/jellyfin/jellyfin-web/index.html /srv/jellyfin/index.html',
+            'volumes:',
+            '  - /srv/jellyfin/index.html:/jellyfin/jellyfin-web/index.html:rw',
+        ].join('\n'),
+    }, (root) => {
+        const problems = checkUnsafeGuidance(['docs/docker-bad.md'], root);
+        assert.equal(problems.length, 2);
+        assert.match(problems.join('\n'), /Docker copy-out workaround/);
+        assert.match(problems.join('\n'), /single-file Docker bind mount/);
+    });
+});
+
 test('accepts narrowly scoped legacy and default-middleware explanations', () => {
     fixture({
         'docs/good.md': [

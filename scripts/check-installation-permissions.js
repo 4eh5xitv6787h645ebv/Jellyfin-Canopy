@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const ROOT = path.join(__dirname, '..');
-const REQUIRED_DOCS = ['README.md', 'docs/getting-started.md', 'docs/customization.md', 'docs/help.md', 'docs/about.md'];
+const REQUIRED_DOCS = ['README.md', 'docs/getting-started.md', 'docs/customization.md', 'docs/help.md', 'docs/about.md', 'docs/developers.md'];
 const RUNTIME_FILES = {
     atomic: 'Jellyfin.Plugin.JellyfinCanopy/Configuration/AtomicFile.cs',
     config: 'Jellyfin.Plugin.JellyfinCanopy/Configuration/PluginConfiguration.cs',
@@ -32,6 +32,14 @@ const UNSAFE_GUIDANCE = [
     {
         name: 'blanket File Transformation recommendation for Canopy',
         pattern: /file transformation[^\n]*(?:highly\s+recommended|required|common solution)[^\n]*(?:canopy|install)/giu,
+    },
+    {
+        name: 'Docker copy-out workaround for package-owned index.html',
+        pattern: /\bdocker\s+cp\b[^\n]*\bjellyfin-web\/index\.html\b/giu,
+    },
+    {
+        name: 'single-file Docker bind mount over package-owned index.html',
+        pattern: /^\s*-\s*[^\n#]*index\.html\s*:\s*[^\n#]*(?:jellyfin-web|\/web)\/index\.html(?:\s*:\s*(?:ro|rw))?\s*$/gimu,
     },
 ];
 
@@ -161,13 +169,19 @@ function checkDocumentationContract(root = ROOT) {
         ['README.md', /do(?:es)? not need write access to Jellyfin's web or installation tree/, 'state the default no-install-tree-write contract'],
         ['docs/getting-started.md', /Default Jellyfin 12 permission contract/, 'contain the canonical permission contract'],
         ['docs/getting-started.md', /creates and writes a temporary sibling, then atomically replaces the destination/, 'explain the exact legacy directory operations'],
+        ['docs/getting-started.md', /Do not wait for a success log to identify the path/, 'use deterministic legacy-path discovery instead of a nonexistent success-path log'],
+        ['docs/getting-started.md', /systemctl show[\s\S]*setfacl -m/, 'provide concrete Linux service discovery and narrow ACL commands'],
+        ['docs/getting-started.md', /Get-CimInstance Win32_Service[\s\S]*FileSystemAccessRule/, 'provide concrete Windows service discovery and narrow ACL commands'],
+        ['docs/getting-started.md', /Docker has no supported legacy fallback/, 'prohibit unsupported container copy and bind-mount workarounds'],
         ['docs/getting-started.md', /best-effort attempt to remove a stale on-disk Canopy tag/, 'explain the non-fatal migration cleanup attempt'],
         ['docs/getting-started.md', /`index\.html` is package-owned/, 'explain upgrade and package ownership semantics'],
         ['docs/getting-started.md', /Those same steps are the rollback procedure/, 'document legacy rollback'],
         ['docs/customization.md', /directory that contains Canopy's plugin configuration/, 'identify the actual branding storage owner boundary'],
         ['docs/customization.md', /Do not copy the image into Jellyfin's package-owned web directory/, 'keep splash assets out of the web tree'],
+        ['docs/customization.md', /LAN-only HTTP is supported[\s\S]*use HTTPS for an externally hosted production image/, 'preserve supported splash URL forms and scope the HTTPS requirement'],
         ['docs/help.md', /Default Canopy does not need write access to this file/, 'route permission errors through the default contract'],
         ['docs/about.md', /does not use or require it/, 'keep File Transformation explicitly optional'],
+        ['docs/developers.md', /Legacy on-disk `index\.html` rewrite \| \*\*STAYS as an explicit fallback only\*\* when `DisableScriptInjectionMiddleware=true`; `CleanupOldScript` separately remains as best-effort migration cleanup/, 'keep the developer fallback matrix aligned with runtime'],
     ];
     for (const [file, pattern, description] of expectations) {
         const absolute = path.join(root, file);
