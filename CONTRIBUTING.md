@@ -67,6 +67,18 @@ Every feature is a small set of declarative pieces. Start from the closest
 import-pure entry under `src/entries/` and its descriptor in
 `src/entries/feature-catalog.ts`:
 
+```bash
+node scripts/new-feature.js my-feature            # --area arr|seerr|... , --dry-run
+```
+
+The scaffolder creates an import-pure implementation module, its lazy
+`src/entries/` activation boundary, a controller, an E2E stub, and a docs stub.
+It also wires the logical entry into `ESM_ENTRIES` and adds an identity-scoped,
+always-applicable starter descriptor to `feature-catalog.ts`; both architecture
+anchors are validated before anything is written. It deliberately leaves the
+feature behavior, route predicate/scope, settings and admin control, docs nav,
+reviewed budget adjustment, and completed E2E proof for the contributor.
+
 1. **A setting = a descriptor + a `data-config-key` attribute.**
    Add the property to `PluginConfiguration.cs`, register it in `SettingDescriptors.BuildRegistry()` (`Public(...)` / `Private(...)` / `PublicUser(...)` for per-user overrides — exposure lists are whitelists; secrets never get a descriptor), and add a control with `data-config-key="MyFeatureEnabled"` to `Configuration/configPage.html` — the config-page binder loads/saves every `data-config-key` automatically. The golden snapshot tests pin the payload contract, so a renamed or leaked setting fails CI.
 
@@ -74,7 +86,7 @@ import-pure entry under `src/entries/` and its descriptor in
    A class deriving from `JellyfinCanopyControllerBase` with `[Route("JellyfinCanopy")]`. Auth is declarative: bare `[Authorize]` for any authenticated user, `[Authorize(Policy = Policies.RequiresElevation)]` for admin-only (returns a bare 403 with an empty body — clients branch on status code alone; JSON envelopes are for business errors only).
 
 3. **UI = an import-pure feature entry over `JC.core`.**
-   Put implementation code in the appropriate feature area and expose an entry whose module evaluation has no DOM, listener, timer, request, identity-registration, or facade-publication side effects. The entry exports `activate(scope)`; create listeners, observers, timers, and subscriptions only inside that activation, register ownership with `scope.track(...)` or return a disposer, and use `scope.signal` / `scope.isCurrent()` to reject stale async work. Add the named entry to `ESM_ENTRIES` in `scripts/build-bundle.js`, then add its identity- or navigation-scoped descriptor, enable/applicability predicates, dependencies, and config-restart policy to `src/entries/feature-catalog.ts` (or its delegated descriptor table). Descriptors name manifest keys, never paths or URLs. The build census fails if production source is unreachable from every generated graph.
+   Put implementation code in the appropriate feature area and expose an entry whose module evaluation has no DOM, listener, timer, request, identity-registration, or facade-publication side effects. The entry exports `activate(scope)`; create listeners, observers, timers, and subscriptions only inside that activation, register ownership with `scope.track(...)` or return a disposer, and use `scope.signal` / `scope.isCurrent()` to reject stale async work. The scaffolder supplies the initial `ESM_ENTRIES` and catalog wiring; review its descriptor and deliberately choose identity or navigation scope, enable/applicability predicates, dependencies, and config-restart policy. If creating a feature manually, make those same two wiring changes. Descriptors name manifest keys, never paths or URLs. The build census fails if production source is unreachable from every generated graph.
 
    Import `JC` from `src/globals`, inject via `JC.core.dom.ensureInjected(key, anchorFn, buildFn)` — durable, idempotent, re-attaches across React re-renders, param-only navigations and the `/video` round trip — and build markup with the ui-kit (`JC.core.ui.muiIconButton` / `muiMenuItem` / `sectionContainer`) so it wears native MUI classes and theme tokens. Type the public surface as an interface and augment `JEGlobal` — the `window.JellyfinCanopy` contract stays compile-checked.
 

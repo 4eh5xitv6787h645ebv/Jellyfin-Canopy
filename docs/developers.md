@@ -1196,7 +1196,7 @@ no-reload identity lifecycle is tested. Failed E2E jobs pass server logs through
 Playwright start time when available and a bounded 200-line tail fallback when
 seeding fails or the marker is unavailable.
 - `e2e/perf/` — hand-run (not CI) measurement tools that drive a real Chromium against a live server: `jank-benchmark.js` (aggregate jank/CLS/long-task/pop-in numbers behind [Measured impact](#measured-impact)) and `capture-traces.js` (`npm run perf:trace`) — the trace-capture harness described under [Performance trace capture](#performance-trace-capture).
-- New features follow the import-pure entry and manifest/catalog wiring described in `CONTRIBUTING.md`; copy the nearest `src/entries/` pattern and its focused lifecycle/import-purity tests.
+- `node scripts/new-feature.js <name>` — the paved-road scaffolder creates an import-pure implementation, its lazy `src/entries/` activation boundary, a controller, an E2E stub, and a docs stub; it also validates and updates `ESM_ENTRIES` plus the boot-only feature catalog. The generated descriptor is identity-scoped and route-agnostic, so the contributor must implement the behavior, narrow route/scope policy where needed, wire settings/admin controls and docs nav, review bundle-budget changes, and complete the E2E proof (see `CONTRIBUTING.md`).
 - `scripts/release/` — release packaging + manifest generation/validation (see `RELEASING.md`).
 
 ### Local sharded E2E
