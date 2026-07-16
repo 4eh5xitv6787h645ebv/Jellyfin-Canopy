@@ -9,24 +9,24 @@
       "scope": "Jellyfin.Plugin.JellyfinCanopy/src/core/**",
       "report": "coverage/coverage-summary.json",
       "measured": {
-        "coveredLines": 1801,
-        "totalLines": 2149
+        "coveredLines": 1842,
+        "totalLines": 2180
       },
       "tolerance": {
         "missingCoveredLines": 1,
-        "rationale": "Two clean local Node 22/V8 runs on 2026-07-16 each passed 1060 tests and measured the expanded 2149-line core scope at 1801 covered lines (83.806%). Issue #318 adds the generation-aware feature loader and central manifest runtime, including bounded import concurrency/retries, identity/config/navigation ownership, atomic descriptor and dependency validation, and deterministic activation/disposal tests. Relative to the reviewed 1473/1797 issue #127 baseline, the reviewed core scope grows by 352 instrumented lines and the high-water advances by 328 covered lines while line coverage rises from 81.970%. The existing one-line tolerance is unchanged and permits only the previously reproduced negligible instrumentation variance; coverage-baseline.test.js retains exact below-floor, above-baseline, scope-change, and broad-tolerance negative boundaries."
+        "rationale": "Two final clean local Node 22/V8 runs on 2026-07-16 each passed 1203 tests and identically measured the complete 2180-line core scope at 1842 covered lines (84.495%). Issue #318's final manifest-owned runtime, monolith retirement, route-generation ownership, and delayed/retried activation regressions expand the reviewed V8 scope by 31 instrumented lines and advance the high-water by 41 covered lines relative to the intermediate 1801/2149 measurement, raising line coverage from 83.806%. The existing one-line tolerance is unchanged and permits only the previously reproduced negligible instrumentation variance; coverage-baseline.test.js retains exact below-floor, above-baseline, scope-change, and broad-tolerance negative boundaries."
       }
     },
     "server": {
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 18443,
-        "totalLines": 26889
+        "coveredLines": 18744,
+        "totalLines": 27277
       },
       "tolerance": {
         "missingCoveredLines": 2,
-        "rationale": "Two clean local .NET 10.0.9/Coverlet integration runs on 2026-07-16 each passed 1623 tests and measured the identical combined 26889-line assembly scope at the reviewed 18443-line high-water. Issue #155 adds the shared typed Arr QueueResource paginator, complete/incomplete status propagation, and deterministic Sonarr/Radarr regressions for the 1001st download row, action targets beyond the former 100/200-row prefixes, exact and partial boundaries, changing totals, duplicate/non-advancing pages, later-page failure, the aggregate record limit, and malformed scalar/projection records. The reviewed successor restores the prior fetch boundary's exception-to-explicit-incomplete behavior without swallowing caller cancellation. Relative to main's reviewed 18326/26770 Hide Favorites Tab baseline, the reviewed assembly scope grows by 119 instrumented lines and the high-water advances by 117 covered lines to 18443. The existing two-line tolerance is unchanged and covers the reproduced one-line Coverlet variance; coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, and broad-tolerance negative boundaries."
+        "rationale": "Two clean local .NET 10.0.9/Coverlet integration runs on 2026-07-16 each passed 1668 tests and measured the identical combined 27277-line assembly scope at 18743 and 18744 covered lines. Issue #318 adds the fail-closed manifest-owned client distribution catalog, build-generation resource validation and serving, deterministic embedded-resource contracts, and controller regressions for malformed, stale, incompatible, and valid inventories. Relative to the reviewed 18443/26889 baseline, the reviewed assembly scope grows by 388 instrumented lines and the high-water advances by 301 covered lines while line coverage rises from 68.589% to 68.717%. The existing two-line tolerance is unchanged and covers the reproduced one-line Coverlet variance; coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, and broad-tolerance negative boundaries."
       }
     }
   }

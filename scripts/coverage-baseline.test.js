@@ -18,8 +18,8 @@ const ROOT = path.join(__dirname, '..');
 const baselines = loadBaselines();
 
 test('reviewed coverage baselines match the repeated clean measurements', () => {
-    assert.deepEqual(baselines.profiles.client.measured, { coveredLines: 1801, totalLines: 2149 });
-    assert.deepEqual(baselines.profiles.server.measured, { coveredLines: 18443, totalLines: 26889 });
+    assert.deepEqual(baselines.profiles.client.measured, { coveredLines: 1842, totalLines: 2180 });
+    assert.deepEqual(baselines.profiles.server.measured, { coveredLines: 18744, totalLines: 27277 });
     assert.equal(baselines.profiles.client.tolerance.missingCoveredLines, 1);
     assert.equal(baselines.profiles.server.tolerance.missingCoveredLines, 2);
 });
