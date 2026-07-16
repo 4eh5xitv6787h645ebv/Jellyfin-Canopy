@@ -15,6 +15,10 @@ import {
   persistedBookmarkIdentity,
   type BookmarkIdentityRecord
 } from './bookmark-identity';
+import {
+  createItemDetailsCache,
+  type ItemDetailsCacheOutcome
+} from './item-details-cache';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -375,48 +379,45 @@ import {
       && isMediaItemCurrent(captured, mediaItemId);
   }
 
-  interface ItemDetailsCache {
-    itemId: string | null;
-    data: any;
-    pending: Promise<any> | null;
-    epoch: number;
-    requestId: number;
+  interface BookmarkItemDetails extends BookmarkIdentityRecord {
+    readonly itemId: string;
+    readonly identityVersion: 1;
+    readonly itemType: string;
+    readonly tmdbId: string | null;
+    readonly tvdbId: string | null;
+    readonly seriesTmdbId: string | null;
+    readonly seriesTvdbId: string | null;
+    readonly mediaType: string;
+    readonly seasonNumber: number | null;
+    readonly episodeNumber: number | null;
+    readonly episodeEndNumber: number | null;
+    readonly name: string;
+    readonly type: string;
   }
-  const itemDetailsCache: ItemDetailsCache = {
-    itemId: null,
-    data: null,
-    pending: null,
-    epoch: -1,
-    requestId: 0
-  };
+
+  const itemDetailsCache = createItemDetailsCache<BookmarkItemDetails>({
+    maxEntries: 32,
+    successTtlMs: 15_000,
+    negativeTtlMs: 1_000,
+    failureTtlMs: 500
+  });
 
   /**
    * Fetch full item details including TMDB/TVDB IDs (cached per item for a few seconds)
    */
-  async function fetchItemDetails(itemId: string): Promise<any> {
+  async function fetchItemDetails(itemId: string): Promise<BookmarkItemDetails | null> {
     const captured = captureIdentity();
     const context = captured.context;
     if (!context) return null;
-    if (itemDetailsCache.epoch === context.epoch && itemDetailsCache.itemId === itemId && itemDetailsCache.data) {
-      return itemDetailsCache.data;
-    }
 
-    if (itemDetailsCache.epoch === context.epoch && itemDetailsCache.pending && itemDetailsCache.itemId === itemId) {
-      return itemDetailsCache.pending;
-    }
-
-    const requestId = itemDetailsCache.requestId + 1;
-    itemDetailsCache.itemId = itemId;
-    itemDetailsCache.data = null;
-    itemDetailsCache.epoch = context.epoch;
-    itemDetailsCache.requestId = requestId;
-
-    // Begin on the next microtask so the cache owns the request before even a
-    // synchronously-throwing host ApiClient can reach the finally block.
-    const fetchPromise = Promise.resolve().then(async () => {
+    const outcome = await itemDetailsCache.getOrLoad({
+      serverId: context.serverId,
+      userId: context.userId,
+      itemId
+    }, context.epoch, async (signal): Promise<ItemDetailsCacheOutcome<BookmarkItemDetails>> => {
       try {
         const userId = context.userId;
-        if (!isIdentityCurrent(captured)) return null;
+        if (signal.aborted || !isIdentityCurrent(captured)) return { kind: 'aborted' };
 
         const result: any = await ApiClient.ajax({
           type: 'GET',
@@ -424,16 +425,22 @@ import {
             Ids: itemId,
             Fields: 'ProviderIds,Type,Name,SeriesId,ParentIndexNumber,IndexNumber,IndexNumberEnd'
           }),
-          dataType: 'json'
+          dataType: 'json',
+          signal
         });
 
         const item = result?.Items?.[0];
-        if (!item || !isIdentityCurrent(captured)) return null;
+        if (signal.aborted || !isIdentityCurrent(captured)) return { kind: 'aborted' };
+        if (!item) return { kind: 'negative', reason: 'not-found' };
+        if (typeof item.Id !== 'string' || item.Id !== itemId) {
+          return { kind: 'negative', reason: 'invalid-response' };
+        }
 
         // Episode/season provider IDs identify that concrete item. Keep them in
         // their namespace and fetch the parent series IDs into separate fields.
         let seriesItem: any = null;
         if ((item.Type === 'Season' || item.Type === 'Episode') && item.SeriesId) {
+          if (signal.aborted || !isIdentityCurrent(captured)) return { kind: 'aborted' };
           try {
             const seriesResult: any = await ApiClient.ajax({
               type: 'GET',
@@ -441,11 +448,12 @@ import {
                 Ids: item.SeriesId,
                 Fields: 'ProviderIds,Type,Name'
               }),
-              dataType: 'json'
+              dataType: 'json',
+              signal
             });
             seriesItem = seriesResult?.Items?.[0] || null;
           } catch (e) {
-            if (!isIdentityCurrent(captured)) return null;
+            if (signal.aborted || !isIdentityCurrent(captured)) return { kind: 'aborted' };
             console.warn(`${logPrefix} Failed to fetch series info:`, e);
           }
         }
@@ -457,7 +465,7 @@ import {
         const isSeason = item.Type === 'Season';
         const episodeNumber = isEpisode && Number.isSafeInteger(item.IndexNumber) ? item.IndexNumber : null;
 
-        const details = {
+        const details: BookmarkItemDetails = {
           itemId: item.Id,
           identityVersion: 1,
           itemType: String(item.Type || 'other').toLowerCase(),
@@ -477,25 +485,15 @@ import {
           type: item.Type
         };
 
-        if (!isIdentityCurrent(captured)) return null;
-        if (itemDetailsCache.epoch === context.epoch
-          && itemDetailsCache.requestId === requestId
-          && itemDetailsCache.itemId === itemId) {
-          itemDetailsCache.data = details;
-        }
-        return details;
+        if (signal.aborted || !isIdentityCurrent(captured)) return { kind: 'aborted' };
+        return { kind: 'success', value: details };
       } catch (e) {
-        if (!isIdentityCurrent(captured)) return null;
+        if (signal.aborted || !isIdentityCurrent(captured)) return { kind: 'aborted' };
         console.warn(`${logPrefix} Error fetching item details:`, e);
-        return null;
-      } finally {
-        if (itemDetailsCache.epoch === context.epoch
-          && itemDetailsCache.requestId === requestId) itemDetailsCache.pending = null;
+        return { kind: 'failure', reason: 'transport' };
       }
     });
-
-    itemDetailsCache.pending = fetchPromise;
-    return fetchPromise;
+    return outcome.kind === 'success' ? outcome.value : null;
   }
 
   /**
@@ -511,8 +509,8 @@ import {
    */
   function findBookmarksForItem(
     itemId: string,
-    tmdbId?: string,
-    tvdbId?: string,
+    tmdbId?: string | null,
+    tvdbId?: string | null,
     mediaType?: unknown,
     identity?: BookmarkIdentityRecord
   ): { bookmarks: any[]; hasIdMismatch: boolean; exactMatches: any[]; providerMatches: any[] } {
@@ -631,7 +629,7 @@ import {
     if (startingBookmark.identityVersion !== 1 && typeof startingBookmark.itemId === 'string') {
       const details = await fetchItemDetails(startingBookmark.itemId);
       if (!isBookmarkRootCurrent(captured, root)) return false;
-      if (details?.itemId === startingBookmark.itemId) {
+      if (details && details.itemId === startingBookmark.itemId) {
         identityUpgrade = persistedBookmarkIdentity(details);
         identityUpgradeMediaType = details.mediaType;
       }
@@ -1740,6 +1738,10 @@ import {
 
       const handleViewShow = () => {
         if (!isActivationCurrent()) return;
+        // A host navigation retires unresolved detail work immediately. The
+        // settled keyed entries remain reusable within this identity epoch,
+        // while every continuation still carries the exact current item fence.
+        itemDetailsCache.cancelPending();
         if ((JC as any).isVideoPage()) {
           lastInjectedOsdKey = null; // Reset for new page
           ensureOsdObserver();
@@ -1818,11 +1820,7 @@ import {
     for (const timer of bookmarkTimers) clearTimeout(timer);
     bookmarkTimers.clear();
     disposeActiveModals();
-    itemDetailsCache.itemId = null;
-    itemDetailsCache.data = null;
-    itemDetailsCache.pending = null;
-    itemDetailsCache.epoch = -1;
-    itemDetailsCache.requestId += 1;
+    itemDetailsCache.clear();
     forceCleanupBookmarks?.();
     forceCleanupBookmarks = null;
     removeOwnedBookmarkButtons();

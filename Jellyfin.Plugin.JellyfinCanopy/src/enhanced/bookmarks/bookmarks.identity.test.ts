@@ -229,6 +229,118 @@ describe('bookmark player identity ownership', () => {
     expect(document.querySelector('.jc-bookmark-hero-subtitle')?.textContent).toBe('Movie Two');
   });
 
+  it('keeps the current B marker and modal after B completes before a late A', async () => {
+    const api = await loadModule({
+      one: bookmark('item-one', 'One'),
+      two: bookmark('item-two', 'Two')
+    });
+    const first = deferred<unknown>();
+    const second = deferred<unknown>();
+    ajax.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    const rating = document.querySelector<HTMLElement>('.btnUserRating')!;
+
+    rating.dataset.id = 'item-one';
+    const markersA = api.updateMarkers();
+    await vi.waitFor(() => expect(ajax).toHaveBeenCalledTimes(1));
+
+    rating.dataset.id = 'item-two';
+    const markersB = api.updateMarkers();
+    await vi.waitFor(() => expect(ajax).toHaveBeenCalledTimes(2));
+    second.resolve({ Items: [{
+      Id: 'item-two',
+      Name: 'Movie Two',
+      Type: 'Movie',
+      ProviderIds: { Tmdb: 'tmdb-two' }
+    }] });
+    await markersB;
+
+    expect(document.querySelectorAll('.jc-bookmark-marker')).toHaveLength(1);
+    expect(document.querySelector<HTMLElement>('.jc-bookmark-marker')?.title).toContain('Two');
+
+    first.resolve({ Items: [{
+      Id: 'item-one',
+      Name: 'Movie One',
+      Type: 'Movie',
+      ProviderIds: { Tmdb: 'tmdb-one' }
+    }] });
+    await markersA;
+
+    expect(document.querySelectorAll('.jc-bookmark-marker')).toHaveLength(1);
+    expect(document.querySelector<HTMLElement>('.jc-bookmark-marker')?.title).toContain('Two');
+    await api.showModal('view');
+    expect(ajax).toHaveBeenCalledTimes(2);
+    expect(document.querySelector('.jc-bookmark-hero-subtitle')?.textContent).toBe('Movie Two');
+  });
+
+  it('does not reuse the same item cache entry after a server/account switch', async () => {
+    const api = await loadModule({ existing: bookmark('item-a', 'A') });
+    await api.showModal('view');
+    expect(document.querySelector('.jc-bookmark-hero-subtitle')?.textContent).toBe('Movie A');
+    document.querySelector<HTMLElement>('.jc-bm-player-modal-overlay')?.remove();
+
+    switchToB({ existing: { ...bookmark('item-a', 'B'), tmdbId: 'tmdb-b' } });
+    ajax.mockResolvedValueOnce({ Items: [{
+      Id: 'item-a',
+      Name: 'Movie B',
+      Type: 'Movie',
+      ProviderIds: { Tmdb: 'tmdb-b' }
+    }] });
+    await api.showModal('view');
+
+    expect(ajax).toHaveBeenCalledTimes(2);
+    expect(document.querySelector('.jc-bookmark-hero-subtitle')?.textContent).toBe('Movie B');
+  });
+
+  it('retries a short-lived detail failure without publishing stale navigation output', async () => {
+    let now = 10_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const api = await loadModule({
+      a: bookmark('item-a', 'A'),
+      b: bookmark('item-b', 'B')
+    });
+    const rating = document.querySelector<HTMLElement>('.btnUserRating')!;
+    ajax.mockReset();
+    ajax.mockRejectedValueOnce(new Error('temporary outage'));
+
+    rating.dataset.id = 'item-a';
+    await api.updateMarkers();
+    expect(document.querySelector('.jc-bookmark-marker')).toBeNull();
+    expect(ajax).toHaveBeenCalledTimes(1);
+
+    // The typed failure is briefly cached for this exact key only.
+    await api.updateMarkers();
+    expect(ajax).toHaveBeenCalledTimes(1);
+
+    const heldRetry = deferred<unknown>();
+    now += 500;
+    ajax.mockReturnValueOnce(heldRetry.promise);
+    const staleRetry = api.updateMarkers();
+    await vi.waitFor(() => expect(ajax).toHaveBeenCalledTimes(2));
+
+    rating.dataset.id = 'item-b';
+    ajax.mockResolvedValueOnce({ Items: [{
+      Id: 'item-b',
+      Name: 'Movie B',
+      Type: 'Movie',
+      ProviderIds: { Tmdb: 'tmdb-a' }
+    }] });
+    const currentB = api.updateMarkers();
+    await vi.waitFor(() => expect(ajax).toHaveBeenCalledTimes(3));
+    await currentB;
+    expect(document.querySelector<HTMLElement>('.jc-bookmark-marker')?.title).toContain('B');
+
+    heldRetry.resolve({ Items: [{
+      Id: 'item-a',
+      Name: 'Movie A retry',
+      Type: 'Movie',
+      ProviderIds: { Tmdb: 'tmdb-a' }
+    }] });
+    await staleRetry;
+
+    expect(document.querySelectorAll('.jc-bookmark-marker')).toHaveLength(1);
+    expect(document.querySelector<HTMLElement>('.jc-bookmark-marker')?.title).toContain('B');
+  });
+
   it('drops item-one marker and modal continuations after same-identity navigation to item two', async () => {
     const api = await loadModule({
       one: bookmark('item-one', 'One'),
@@ -270,6 +382,53 @@ describe('bookmark player identity ownership', () => {
     expect(document.querySelectorAll('.jc-bookmark-marker')).toHaveLength(1);
     expect(document.querySelector<HTMLElement>('.jc-bookmark-marker')?.title).toContain('Two');
     expect(document.querySelector('.jc-bm-player-modal-overlay')).toBeNull();
+  });
+
+  it('aborts unresolved detail ownership on viewshow before rendering the next item', async () => {
+    const api = await loadModule({
+      one: bookmark('item-one', 'One'),
+      two: bookmark('item-two', 'Two')
+    });
+    JC.initializeBookmarks();
+    const first = deferred<unknown>();
+    const second = deferred<unknown>();
+    ajax.mockReset();
+    ajax.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    const rating = document.querySelector<HTMLElement>('.btnUserRating')!;
+
+    rating.dataset.id = 'item-one';
+    const retiredMarkers = api.updateMarkers();
+    await vi.waitFor(() => expect(ajax).toHaveBeenCalledTimes(1));
+    const firstSignal = (ajax.mock.calls[0][0] as { signal?: AbortSignal }).signal;
+    expect(firstSignal?.aborted).toBe(false);
+
+    rating.dataset.id = 'item-two';
+    document.dispatchEvent(new Event('viewshow'));
+    await retiredMarkers;
+    expect(firstSignal?.aborted).toBe(true);
+
+    const currentMarkers = api.updateMarkers();
+    await vi.waitFor(() => expect(ajax).toHaveBeenCalledTimes(2));
+    second.resolve({ Items: [{
+      Id: 'item-two',
+      Name: 'Movie Two',
+      Type: 'Movie',
+      ProviderIds: { Tmdb: 'tmdb-two' }
+    }] });
+    await currentMarkers;
+
+    expect(document.querySelectorAll('.jc-bookmark-marker')).toHaveLength(1);
+    expect(document.querySelector<HTMLElement>('.jc-bookmark-marker')?.title).toContain('Two');
+    first.resolve({ Items: [{
+      Id: 'item-one',
+      Name: 'Movie One',
+      Type: 'Movie',
+      ProviderIds: { Tmdb: 'tmdb-one' }
+    }] });
+    await Promise.resolve();
+    expect(document.querySelectorAll('.jc-bookmark-marker')).toHaveLength(1);
+    expect(document.querySelector<HTMLElement>('.jc-bookmark-marker')?.title).toContain('Two');
+    JC.cleanupBookmarks();
   });
 
   it('makes an already-open item-one modal and marker inert after playback advances to item two', async () => {

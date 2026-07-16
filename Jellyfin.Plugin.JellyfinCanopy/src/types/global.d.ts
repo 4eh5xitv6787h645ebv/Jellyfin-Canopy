@@ -18,7 +18,7 @@ declare global {
         accessToken(): string;
         getCurrentUser(): Promise<unknown>;
         getItem(userId: string, itemId: string): Promise<unknown>;
-        ajax(options: { type: string; url: string; dataType?: string; data?: unknown; contentType?: string }): Promise<unknown>;
+        ajax(options: { type: string; url: string; dataType?: string; data?: unknown; contentType?: string; signal?: AbortSignal }): Promise<unknown>;
         /**
          * v12 SDK socket subscription: register a callback for one or more
          * SessionMessageType names, receiving `{ MessageType, Data }` envelopes.
