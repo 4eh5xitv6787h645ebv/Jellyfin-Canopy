@@ -31,14 +31,29 @@ async function fetchUserStatus(page: any): Promise<UserStatus> {
     });
 }
 
-/** Resolve user-status, force the admin master switch, then read the gate. */
-async function gateWithAdminToggle(page: any, mediaType: 'movie' | 'tv', adminToggle: boolean): Promise<boolean> {
+/** Resolve status, force the master switch, then render the real split-button owner. */
+async function rendered4kToggle(page: any, mediaType: 'movie' | 'tv', adminToggle: boolean): Promise<boolean> {
     return page.evaluate(async (args: { mediaType: string; adminToggle: boolean }) => {
         const jc = (window as any).JellyfinCanopy;
         await jc.seerrAPI.checkUserStatus(); // ensure capability is resolved
         jc.pluginConfig.SeerrEnable4KRequests = args.adminToggle;
         jc.pluginConfig.SeerrEnable4KTvRequests = args.adminToggle;
-        return jc.seerrAPI.canRequest4k(args.mediaType) as boolean;
+        const identity = jc.identity.capture();
+        const card = document.createElement('div');
+        card.className = 'seerr-card';
+        jc.identity.own(card, identity);
+        const button = document.createElement('button');
+        card.appendChild(button);
+        jc.identity.own(button, identity);
+        jc.seerrUI.configureRequestButton(button, {
+            id: args.mediaType === 'tv' ? 1399 : 550,
+            mediaType: args.mediaType,
+            title: '4K lifecycle fixture',
+            mediaInfo: { status: 1, status4k: 1, seasons: [] },
+        }, true, true);
+        const rendered = !!card.querySelector('.seerr-split-arrow[data-toggle4k="true"]');
+        card.remove();
+        return rendered;
     }, { mediaType, adminToggle });
 }
 
@@ -60,8 +75,8 @@ for (const role of ['admin', 'user'] as Role[]) {
             expect(surface.hasCollectionModal, 'showCollectionRequestModal exposed').toBe(true);
 
             // With the admin master switch OFF, the 4K option is always hidden.
-            expect(await gateWithAdminToggle(page, 'movie', false)).toBe(false);
-            expect(await gateWithAdminToggle(page, 'tv', false)).toBe(false);
+            expect(await rendered4kToggle(page, 'movie', false)).toBe(false);
+            expect(await rendered4kToggle(page, 'tv', false)).toBe(false);
 
             // The user-status endpoint always answers with a typed reason.
             const status = await fetchUserStatus(page);
@@ -69,8 +84,8 @@ for (const role of ['admin', 'user'] as Role[]) {
 
             // With the admin master switch ON, the option follows the server-
             // reported capability + permission — never the toggle alone.
-            const movieOn = await gateWithAdminToggle(page, 'movie', true);
-            const tvOn = await gateWithAdminToggle(page, 'tv', true);
+            const movieOn = await rendered4kToggle(page, 'movie', true);
+            const tvOn = await rendered4kToggle(page, 'tv', true);
 
             if (status.userFound) {
                 // Linked user: the capability fields are present and are booleans,

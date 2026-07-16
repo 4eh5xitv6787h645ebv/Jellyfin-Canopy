@@ -120,6 +120,11 @@ const api = {} as SeerrApi;
 let cachedUserStatus: SeerrUserStatus | null = null;
 let cachedUserStatusAt = 0;
 let cachedUserStatusEpoch: number | null = null;
+// Identity changes are not the only boundary that retires capability work.
+// A live config refresh can replace the Seerr source, credentials and 4K
+// switches without changing the Jellyfin user. Fence pending status reads by a
+// local generation so an old-source answer cannot repopulate the new cache.
+let userStatusGeneration = 0;
 const NEGATIVE_USER_STATUS_TTL_MS = 60 * 1000;
 // PERF(R9): a TRANSIENT transport failure (no answer from the server at all)
 // is remembered even more briefly than a genuine negative answer — one blip
@@ -148,11 +153,26 @@ function assertCurrentIdentity(context: IdentityContext): void {
     if (!JC.identity.isCurrent(context)) throw identityChangedError();
 }
 
-function resetIdentityCaches(): void {
+function statusGenerationChangedError(): Error {
+    const error = new Error('Seerr user status belongs to a stale configuration');
+    error.name = 'AbortError';
+    return error;
+}
+
+function assertCurrentUserStatusGeneration(generation: number): void {
+    if (generation !== userStatusGeneration) throw statusGenerationChangedError();
+}
+
+function retireUserStatusCache(): void {
+    userStatusGeneration += 1;
     cachedUserStatus = null;
     cachedUserStatusAt = 0;
     cachedUserStatusEpoch = null;
     cachedUserStatusTtl = NEGATIVE_USER_STATUS_TTL_MS;
+}
+
+function resetIdentityCaches(): void {
+    retireUserStatusCache();
     cachedOverrideRules = null;
     overrideRulesCachedAt = 0;
     overrideRulesEpoch = null;
@@ -268,6 +288,7 @@ function emitMediaRequested(tmdbId: any, mediaType: any, is4k = false): void {
  */
 api.checkUserStatus = async function() {
     const context = captureIdentity();
+    const generation = userStatusGeneration;
     if (cachedUserStatus !== null && cachedUserStatusEpoch === context.epoch) {
         // Successful result is sticky for the SPA session.
         if (cachedUserStatus.active && cachedUserStatus.userFound) {
@@ -284,6 +305,7 @@ api.checkUserStatus = async function() {
     try {
         const status = await get('/user-status', { skipCache: true }) as unknown as SeerrUserStatus;
         assertCurrentIdentity(context);
+        assertCurrentUserStatusGeneration(generation);
         cachedUserStatus = status;
         cachedUserStatusAt = Date.now();
         cachedUserStatusEpoch = context.epoch;
@@ -294,6 +316,12 @@ api.checkUserStatus = async function() {
         return status;
     } catch (error: unknown) {
         assertCurrentIdentity(context);
+        assertCurrentUserStatusGeneration(generation);
+        // Navigation and config/identity teardown intentionally abort managed
+        // requests. Cancellation is not evidence that Seerr is unavailable:
+        // publishing a negative TTL here strands the newly rendered page on a
+        // false capability even when the next status request succeeds.
+        if ((error as Error | null)?.name === 'AbortError') throw error;
         console.warn(`${logPrefix} Status check failed:`, error);
         const errorShape = error && typeof error === 'object'
             ? error as { responseJSON?: unknown }
@@ -365,9 +393,7 @@ api.surfaceUserStatusBanner = function(status) {
  * don't outlive the page they happened on.
  */
 api.clearUserStatusCache = function() {
-    cachedUserStatus = null;
-    cachedUserStatusAt = 0;
-    cachedUserStatusEpoch = null;
+    retireUserStatusCache();
 };
 
 /**
@@ -1185,3 +1211,8 @@ api.resolveSeerrBaseUrl = function() {
 // Expose the API module on the global JC object
 JC.seerrAPI = api;
 JC.identity.registerReset('seerr-api', resetIdentityCaches);
+// live-config publishes this only after the replacement config is current and
+// old managed requests have been aborted. Retire the module-local capability
+// cache at the same boundary; the generation fence also rejects an old request
+// whose transport ignores or narrowly outruns abort.
+window.addEventListener('jc:config-changed', retireUserStatusCache);

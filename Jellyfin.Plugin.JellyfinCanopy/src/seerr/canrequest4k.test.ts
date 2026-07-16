@@ -69,4 +69,66 @@ describe('seerr api.canRequest4k gating', () => {
         fetchMock.mockResolvedValue({ active: true, userFound: true, canRequest4kMovie: true });
         expect(api().canRequest4k('movie')).toBe(false);
     });
+
+    it('does not memoize a navigation cancellation as an unavailable capability', async () => {
+        setConfig({ SeerrEnable4KRequests: true });
+        const cancellation = new Error('Request was aborted');
+        cancellation.name = 'AbortError';
+        fetchMock
+            .mockRejectedValueOnce(cancellation)
+            .mockResolvedValueOnce({
+                active: true,
+                userFound: true,
+                canRequest4kMovie: true,
+            });
+
+        await expect(api().checkUserStatus()).rejects.toMatchObject({ name: 'AbortError' });
+
+        await expect(api().checkUserStatus()).resolves.toMatchObject({
+            active: true,
+            userFound: true,
+            canRequest4kMovie: true,
+        });
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        expect(api().canRequest4k('movie')).toBe(true);
+    });
+
+    it('retires pending and cached capability work when live config changes', async () => {
+        setConfig({ SeerrEnable4KRequests: true });
+        let resolveOld!: (value: unknown) => void;
+        fetchMock
+            // eslint-disable-next-line @typescript-eslint/no-misused-promises -- deterministic config-generation race
+            .mockImplementationOnce(() => new Promise((resolve) => { resolveOld = resolve; }))
+            .mockResolvedValueOnce({
+                active: true,
+                userFound: true,
+                canRequest4kMovie: false,
+            })
+            .mockResolvedValueOnce({
+                active: true,
+                userFound: true,
+                canRequest4kMovie: true,
+            });
+
+        const oldStatus = api().checkUserStatus();
+        window.dispatchEvent(new CustomEvent('jc:config-changed'));
+        resolveOld({ active: true, userFound: true, canRequest4kMovie: true });
+
+        await expect(oldStatus).rejects.toThrow(/stale configuration/i);
+        await expect(api().checkUserStatus()).resolves.toMatchObject({
+            canRequest4kMovie: false,
+        });
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        expect(api().canRequest4k('movie')).toBe(false);
+
+        // A settled positive/negative status is sticky until this same config
+        // boundary; after it, the next caller must resolve the replacement
+        // source instead of reusing B's cached capability.
+        window.dispatchEvent(new CustomEvent('jc:config-changed'));
+        await expect(api().checkUserStatus()).resolves.toMatchObject({
+            canRequest4kMovie: true,
+        });
+        expect(fetchMock).toHaveBeenCalledTimes(3);
+        expect(api().canRequest4k('movie')).toBe(true);
+    });
 });
