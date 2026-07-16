@@ -42,11 +42,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
     public readonly struct UserConfigReadResult<T>
         where T : new()
     {
-        public UserConfigReadResult(UserConfigReadStatus status, T? value, string? faultDetail)
+        public UserConfigReadResult(
+            UserConfigReadStatus status,
+            T? value,
+            string? faultDetail,
+            bool wasCreated = false)
         {
             Status = status;
             Value = value;
             FaultDetail = faultDetail;
+            WasCreated = wasCreated;
         }
 
         /// <summary>Gets the classified read outcome.</summary>
@@ -57,6 +62,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
 
         /// <summary>Gets a short machine/operator-facing reason for a fault, or null when not a fault.</summary>
         public string? FaultDetail { get; }
+
+        /// <summary>
+        /// Gets a value indicating whether this operation atomically materialized
+        /// the returned value after observing a genuinely missing file.
+        /// </summary>
+        public bool WasCreated { get; }
 
         /// <summary>Gets a value indicating whether this read is a persistence fault (Corrupt or Unavailable).</summary>
         public bool IsFault => Status is UserConfigReadStatus.Corrupt or UserConfigReadStatus.Unavailable;

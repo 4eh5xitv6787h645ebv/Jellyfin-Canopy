@@ -62,6 +62,35 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         public UserConfigReadResult<T> ReadUserConfiguration<T>(string userId, string fileName) where T : new()
             => _store.ReadUserConfiguration<T>(userId, fileName);
 
+        /// <summary>
+        /// Atomically reads or initializes a user file under the store-owned
+        /// per-user/per-file lock.
+        /// </summary>
+        public UserConfigReadResult<T> GetOrCreateUserConfiguration<T>(
+            string userId,
+            string fileName,
+            Func<T?> create,
+            Func<T, bool> isValid)
+            where T : class, new()
+            => _store.GetOrCreateUserConfiguration(userId, fileName, create, isValid);
+
+        /// <summary>
+        /// Runs a strict logical transaction under the same store-owned lock used
+        /// by first-read initialization.
+        /// </summary>
+        public TResult TransactUserConfiguration<T, TResult>(
+            string userId,
+            string fileName,
+            Func<T, TResult> transaction)
+            where T : class, new()
+            => _store.TransactUserConfiguration(userId, fileName, transaction);
+
+        internal Action<UserFileLockObservation>? UserFileLockObserverForTests
+        {
+            get => _store.LockObserverForTests;
+            set => _store.LockObserverForTests = value;
+        }
+
         // Locked read-modify-write: holds GetUserFileLock, strict-reads, mutates, and saves when the mutator returns > 0.
         public int RmwUserConfiguration<T>(string userId, string fileName, Func<T, int> mutate) where T : class, new()
             => _store.RmwUserConfiguration(userId, fileName, mutate);

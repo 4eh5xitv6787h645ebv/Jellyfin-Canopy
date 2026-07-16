@@ -79,48 +79,51 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 return authorizationResult;
             }
 
-            lock (_userConfigurationManager.GetUserFileLock(authorizedUserId, "settings.json"))
+            UserConfigReadResult<UserSettings> read;
+            try
             {
-                var read = _userConfigurationManager.ReadUserConfiguration<UserSettings>(authorizedUserId, "settings.json");
-                if (!read.HasUsableValue || read.Value == null || !IsValidUserFileState(read.Value))
-                {
-                    return UserFileReadFailure<UserSettings>("settings.json", read.Status, read.FaultDetail);
-                }
-
-                var userConfig = read.Value;
-                if (read.Status == UserConfigReadStatus.Missing && _configProvider.ConfigurationOrNull is PluginConfiguration defaults)
-                {
-                    userConfig = BuildDefaultUserSettings(defaults);
-                    StampServerManagedFields(authorizedUserId, userConfig);
-                    if (!IsValidUserFileState(userConfig))
+                read = _userConfigurationManager.GetOrCreateUserConfiguration<UserSettings>(
+                    authorizedUserId,
+                    "settings.json",
+                    () =>
                     {
-                        _logger.LogError($"Refusing to seed invalid default settings for {ResolveUserDisplay(authorizedUserId)}.");
-                        return StatusCode(StatusCodes.Status503ServiceUnavailable, new UserFileMutationResponse<UserSettings>
+                        if (_configProvider.ConfigurationOrNull is not PluginConfiguration defaults)
                         {
-                            File = "settings.json",
-                            Message = "The configured user-settings defaults are invalid; no user file was written."
-                        });
-                    }
-                    try
-                    {
-                        _userConfigurationManager.SaveUserConfiguration(authorizedUserId, "settings.json", userConfig);
-                        _logger.LogInformation($"Saved default settings.json for new user {ResolveUserDisplay(authorizedUserId)} from plugin configuration.");
-                    }
-                    catch (Exception ex) when (ex is InvalidDataException || ex is JsonException || ex is IOException || ex is UnauthorizedAccessException)
-                    {
-                        _logger.LogError($"Failed to seed settings.json for {ResolveUserDisplay(authorizedUserId)}: {ex.Message}");
-                        return StatusCode(StatusCodes.Status503ServiceUnavailable, new UserFileMutationResponse<UserSettings>
-                        {
-                            File = "settings.json",
-                            Message = "The settings store is unavailable; defaults were not acknowledged."
-                        });
-                    }
-                }
+                            return null;
+                        }
 
-                StampServerManagedFields(authorizedUserId, userConfig);
-                SetUserFileEvidence(userConfig);
-                return Ok(userConfig);
+                        var initial = BuildDefaultUserSettings(defaults);
+                        StampServerManagedFields(authorizedUserId, initial);
+                        return initial;
+                    },
+                    IsValidUserFileState);
             }
+            catch (Exception ex) when (ex is InvalidDataException || ex is JsonException || ex is IOException || ex is UnauthorizedAccessException)
+            {
+                _logger.LogError(
+                    $"Failed to initialize settings.json for {ResolveUserDisplay(authorizedUserId)} " +
+                    $"(exception={ex.GetType().Name}).");
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, new UserFileMutationResponse<UserSettings>
+                {
+                    File = "settings.json",
+                    Message = "The settings store or configured defaults are unavailable; initialization was not acknowledged."
+                });
+            }
+
+            if (!read.HasUsableValue || read.Value == null || !IsValidUserFileState(read.Value))
+            {
+                return UserFileReadFailure<UserSettings>("settings.json", read.Status, read.FaultDetail);
+            }
+
+            var userConfig = read.Value;
+            if (read.WasCreated)
+            {
+                _logger.LogInformation($"Saved default settings.json for new user {ResolveUserDisplay(authorizedUserId)} from plugin configuration.");
+            }
+
+            StampServerManagedFields(authorizedUserId, userConfig);
+            SetUserFileEvidence(userConfig);
+            return Ok(userConfig);
         }
 
         [HttpGet("user-settings/{userId}/shortcuts.json")]
@@ -355,9 +358,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             T candidate)
             where T : class, IRevisionedUserConfiguration, new()
         {
-            lock (_userConfigurationManager.GetUserFileLock(authorizedUserId, fileName))
+            return _userConfigurationManager.TransactUserConfiguration<T, UserFileCommitResult<T>>(
+                authorizedUserId,
+                fileName,
+                current =>
             {
-                var current = _userConfigurationManager.GetUserConfigurationStrict<T>(authorizedUserId, fileName);
                 StampServerManagedFields(authorizedUserId, current);
                 StampServerManagedFields(authorizedUserId, candidate);
                 if (!IsValidUserFileState(current))
@@ -408,7 +413,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
 
                 _userConfigurationManager.SaveUserConfiguration(authorizedUserId, fileName, candidate);
                 return new UserFileCommitResult<T> { Status = UserFileCommitStatus.Success, State = candidate };
-            }
+            });
         }
 
         private static bool IsValidUserFileState<T>(T state)
