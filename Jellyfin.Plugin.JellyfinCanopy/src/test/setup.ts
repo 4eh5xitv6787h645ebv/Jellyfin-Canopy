@@ -83,7 +83,7 @@ const identity: IdentityApi = {
     async activate(context = testIdentity) {
         if (!context || !this.isCurrent(context)) return;
         const work: Promise<void>[] = [];
-        for (const record of activateHandlers.values()) {
+        for (const [name, record] of activateHandlers.entries()) {
             if (record.epoch === context.epoch) continue;
             if (record.pendingEpoch === context.epoch && record.pending) {
                 work.push(record.pending);
@@ -97,6 +97,20 @@ const identity: IdentityApi = {
                     // retryable, and late older success cannot replace newer.
                     if (record.epoch < context.epoch) record.epoch = context.epoch;
                 })
+                .catch((error: unknown) => {
+                    const errorName = (error as { name?: string } | null)?.name;
+                    if (errorName === 'IdentityChangedError' || errorName === 'AbortError'
+                        || !this.isCurrent(context)) return;
+                    bootDiagnostics.record({
+                        feature: name,
+                        phase: 'feature-initialization',
+                        operation: 'initialize',
+                        state: 'FeatureFailure',
+                        storage: 'none',
+                        key: 'none',
+                    });
+                    console.error(`Test identity activate handler "${name}" failed`, error);
+                })
                 .finally(() => {
                     if (record.pending === invocation) {
                         record.pending = null;
@@ -108,13 +122,7 @@ const identity: IdentityApi = {
             work.push(invocation);
         }
 
-        const results = await Promise.allSettled(work);
-        const failure = results.find((result): result is PromiseRejectedResult => result.status === 'rejected');
-        if (failure) {
-            throw failure.reason instanceof Error
-                ? failure.reason
-                : new Error('Test identity activation failed', { cause: failure.reason });
-        }
+        await Promise.all(work);
     },
     getEpoch: () => testEpoch,
     getResetHandlerCount: () => resetHandlers.size,
@@ -127,8 +135,14 @@ const diagnosticEntries: ReturnType<BootDiagnosticsApi['snapshot']>['entries'][n
 let diagnosticEpoch = testEpoch;
 const bootDiagnostics: BootDiagnosticsApi = {
     beginEpoch(epoch) {
+        const previousEpoch = diagnosticEpoch;
         diagnosticEpoch = epoch;
-        diagnosticEntries.length = 0;
+        if (previousEpoch === 0 && epoch > 0) {
+            const carried = diagnosticEntries.map((entry) => Object.freeze({ ...entry, epoch }));
+            diagnosticEntries.splice(0, diagnosticEntries.length, ...carried);
+        } else {
+            diagnosticEntries.length = 0;
+        }
     },
     record(entry) {
         const value = Object.freeze({ epoch: diagnosticEpoch, count: 1, ...entry });
@@ -174,8 +188,16 @@ function testStorageAdapter(getStorage: () => Storage): BrowserStorageAdapter {
         readNumber(feature, key, validate) {
             const raw = this.read(feature, key);
             if (raw.state !== 'Valid') return raw;
+            if (!/^(?:0|-?[1-9]\d*)$/.test(raw.value)) {
+                const recovery = this.remove(feature, key);
+                return {
+                    state: 'Corrupt',
+                    value: null,
+                    recovery: recovery.state === 'Valid' ? 'Removed' : recovery.state,
+                };
+            }
             const value = Number(raw.value);
-            if (Number.isFinite(value) && (!validate || validate(value))) return { state: 'Valid', value };
+            if (Number.isSafeInteger(value) && (!validate || validate(value))) return { state: 'Valid', value };
             const recovery = this.remove(feature, key);
             return {
                 state: 'Corrupt',

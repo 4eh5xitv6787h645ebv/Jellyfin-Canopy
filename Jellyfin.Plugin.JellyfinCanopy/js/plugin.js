@@ -150,8 +150,15 @@
         let entries = [];
 
         function beginEpoch(nextEpoch) {
+            const previousEpoch = epoch;
             epoch = Math.max(0, Number(nextEpoch) || 0);
-            entries = [];
+            // Storage can fail before Jellyfin publishes an authenticated
+            // identity (layout enforcement and credential probing both run in
+            // epoch 0). Carry that bounded/redacted evidence into the first
+            // real boot; later identity transitions start a clean generation.
+            entries = previousEpoch === 0 && epoch > 0
+                ? entries.map((entry) => Object.freeze({ ...entry, epoch }))
+                : [];
         }
 
         function record(entry) {
@@ -289,8 +296,11 @@
         function readNumber(feature, key, validate, keyLabel = 'owned-number') {
             const result = read(feature, key, keyLabel);
             if (result.state !== 'Valid') return result;
+            if (!/^(?:0|-?[1-9]\d*)$/.test(result.value)) {
+                return quarantine(feature, key, keyLabel);
+            }
             const value = Number(result.value);
-            if (!Number.isFinite(value) || (typeof validate === 'function' && !validate(value))) {
+            if (!Number.isSafeInteger(value) || (typeof validate === 'function' && !validate(value))) {
                 return quarantine(feature, key, keyLabel);
             }
             return { state: 'Valid', value };
@@ -447,8 +457,27 @@
                         if (record.lastEpoch < context.epoch) record.lastEpoch = context.epoch;
                     })
                     .catch((error) => {
-                        console.error(`🪼 Jellyfin Canopy: identity activate handler "${name}" failed`, error);
-                        throw error;
+                        // A failed participant stays unmarked and therefore
+                        // retryable, but it cannot abort its peers or the
+                        // legacy activation tier for this current epoch.
+                        if (error?.name === 'IdentityChangedError' || error?.name === 'AbortError'
+                            || !isCurrent(context)) return;
+                        try {
+                            if (typeof diagnostics?.recordFeatureFailure === 'function') {
+                                diagnostics.recordFeatureFailure(context, name, error);
+                            } else {
+                                console.error(
+                                    `🪼 Jellyfin Canopy: identity activate handler "${name}" failed`,
+                                    error
+                                );
+                            }
+                        } catch (reportError) {
+                            console.error(
+                                `🪼 Jellyfin Canopy: identity activate handler "${name}" failed`,
+                                error,
+                                reportError
+                            );
+                        }
                     })
                     .finally(() => {
                         if (record.pending === invocation) {
@@ -460,17 +489,7 @@
                 record.pending = invocation;
                 work.push(invocation);
             }
-            const results = await Promise.allSettled(work);
-            let failure = null;
-            for (const result of results) {
-                if (result.status === 'rejected') {
-                    console.error('🪼 Jellyfin Canopy: identity activate handler rejected', result.reason);
-                    failure ||= result.reason instanceof Error
-                        ? result.reason
-                        : new Error('Identity activation failed', { cause: result.reason });
-                }
-            }
-            if (failure) throw failure;
+            await Promise.all(work);
         }
 
         function getRawUserId(context = current) {
@@ -505,7 +524,8 @@
     let initializationRegistry = null;
     const loaderDiagnostics = {
         getPendingInitializationCount: () => initializationRegistry?.getPendingCount?.() || 0,
-        getInitializationControllerCount: () => initializationRegistry?.getControllerCount?.() || 0
+        getInitializationControllerCount: () => initializationRegistry?.getControllerCount?.() || 0,
+        recordFeatureFailure: (context, name, error) => recordFeatureFailure(context, name, error)
     };
 
     function emptyUserConfig() {

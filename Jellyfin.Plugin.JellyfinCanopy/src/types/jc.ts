@@ -73,6 +73,7 @@ export interface BrowserStorageAdapter {
         validate?: (value: unknown) => value is T,
         keyLabel?: string,
     ): BrowserStorageResult<T>;
+    /** Read one canonical base-10 safe integer; other spellings are corrupt. */
     readNumber(
         feature: string,
         key: string,

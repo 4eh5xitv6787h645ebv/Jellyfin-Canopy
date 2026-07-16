@@ -15,11 +15,13 @@ describe('shared test identity activation contract', () => {
             .mockResolvedValue(undefined);
         unregister.push(JC.identity.registerActivate('setup-retry-probe', flaky));
 
-        await expect(JC.identity.activate(context)).rejects.toThrow('first activation failed');
+        const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+        await expect(JC.identity.activate(context)).resolves.toBeUndefined();
         await expect(JC.identity.activate(context)).resolves.toBeUndefined();
         await expect(JC.identity.activate(context)).resolves.toBeUndefined();
 
         expect(flaky).toHaveBeenCalledTimes(2);
+        expect(error).toHaveBeenCalledTimes(1);
     });
 
     it('deduplicates concurrent activation for the same handler and epoch', async () => {

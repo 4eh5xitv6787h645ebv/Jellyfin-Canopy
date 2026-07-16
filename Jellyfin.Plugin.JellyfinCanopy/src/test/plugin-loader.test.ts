@@ -210,6 +210,94 @@ describe('plugin.js loader guards', () => {
         expect(adapter.keys('probe').state).toBe('Unavailable');
     });
 
+    it('accepts only canonical base-10 safe integers and quarantines each exact invalid key', () => {
+        const classifySource = extractFunctionSource('classifyStorageFailure')!;
+        const adapterSource = extractFunctionSource('createStorageAdapter')!;
+        const classify = eval(`(${classifySource})`) as (error: unknown) => StorageState;
+        const makeAdapter = eval(
+            `(function(classifyStorageFailure) { ${adapterSource}; return createStorageAdapter; })`,
+        ) as (
+            classifyStorageFailure: (error: unknown) => StorageState,
+        ) => (name: string, getStorage: () => Storage, diagnostics?: unknown) => SafeStorage;
+        const storage = memoryStorage();
+        const adapter = makeAdapter(classify)('local', () => storage);
+
+        const healthy = [
+            ['zero', '0', 0],
+            ['positive', '42', 42],
+            ['negative', '-42', -42],
+            ['max-safe', String(Number.MAX_SAFE_INTEGER), Number.MAX_SAFE_INTEGER],
+            ['min-safe', String(Number.MIN_SAFE_INTEGER), Number.MIN_SAFE_INTEGER],
+        ] as const;
+        for (const [key, raw, expected] of healthy) {
+            storage.setItem(key, raw);
+            expect(adapter.readNumber('number-probe', key, undefined, 'numeric-value'))
+                .toEqual({ state: 'Valid', value: expected });
+            expect(storage.getItem(key)).toBe(raw);
+        }
+
+        storage.setItem('unrelated-private-key', 'leave-me');
+        const corrupt = [
+            ['', 'empty'],
+            ['   ', 'whitespace'],
+            ['0x10', 'hex'],
+            ['1e3', 'exponent'],
+            ['NaN', 'nan'],
+            ['Infinity', 'infinity'],
+            ['01', 'leading-zero'],
+            ['-0', 'negative-zero'],
+            [String(Number.MAX_SAFE_INTEGER + 1), 'over-max-safe'],
+            [String(Number.MIN_SAFE_INTEGER - 1), 'under-min-safe'],
+        ] as const;
+        for (const [raw, key] of corrupt) {
+            storage.setItem(key, raw);
+            expect(adapter.readNumber('number-probe', key, undefined, 'numeric-value'))
+                .toEqual({ state: 'Corrupt', value: null, recovery: 'Removed' });
+            expect(storage.getItem(key)).toBeNull();
+            expect(storage.getItem('unrelated-private-key')).toBe('leave-me');
+        }
+    });
+
+    it('rolls bounded redacted pre-auth storage faults into the first identity epoch only', () => {
+        const diagnosticsSource = extractFunctionSource('createBootDiagnostics')!;
+        const classifySource = extractFunctionSource('classifyStorageFailure')!;
+        const adapterSource = extractFunctionSource('createStorageAdapter')!;
+        const createDiagnostics = eval(`(${diagnosticsSource})`) as (limit?: number) => {
+            beginEpoch(epoch: number): void;
+            snapshot(): { epoch: number; degraded: boolean; entries: Array<Record<string, unknown>> };
+        };
+        const classify = eval(`(${classifySource})`) as (error: unknown) => StorageState;
+        const makeAdapter = eval(
+            `(function(classifyStorageFailure) { ${adapterSource}; return createStorageAdapter; })`,
+        ) as (
+            classifyStorageFailure: (error: unknown) => StorageState,
+        ) => (name: string, getStorage: () => Storage, diagnostics?: unknown) => SafeStorage;
+        const diagnostics = createDiagnostics(4);
+        const secret = 'raw-user-storage-key';
+        const security = Object.assign(new Error('private browser denial'), { name: 'SecurityError' });
+        const adapter = makeAdapter(classify)('local', () => { throw security; }, diagnostics);
+
+        expect(adapter.read('pre-auth-layout', secret, 'host-layout').state).toBe('Unavailable');
+        expect(diagnostics.snapshot()).toMatchObject({
+            epoch: 0,
+            degraded: true,
+            entries: [expect.objectContaining({ epoch: 0, feature: 'pre-auth-layout', key: 'host-layout' })],
+        });
+
+        diagnostics.beginEpoch(1);
+        const firstBoot = diagnostics.snapshot();
+        expect(firstBoot).toMatchObject({
+            epoch: 1,
+            degraded: true,
+            entries: [expect.objectContaining({ epoch: 1, feature: 'pre-auth-layout', key: 'host-layout' })],
+        });
+        expect(JSON.stringify(firstBoot)).not.toContain(secret);
+        expect(JSON.stringify(firstBoot)).not.toContain('private browser denial');
+
+        diagnostics.beginEpoch(2);
+        expect(diagnostics.snapshot()).toMatchObject({ epoch: 2, degraded: false, entries: [] });
+    });
+
     it('continues later feature owners after sync/async degradation and still reaches the boot marker', async () => {
         const recordSource = extractFunctionSource('recordFeatureFailure');
         const oneSource = extractFunctionSource('activateFeature');
@@ -259,6 +347,153 @@ describe('plugin.js loader guards', () => {
         const run = extractFunctionSource('runInitialization') || '';
         expect(run.indexOf('activateFeatures(context)')).toBeGreaterThanOrEqual(0);
         expect(run.indexOf('JC.initialized = true')).toBeGreaterThan(run.indexOf('activateFeatures(context)'));
+    });
+
+    it('completes the real loader marker, event, splash, and legacy tier after a registered owner fails', async () => {
+        const loaderDocument = document.implementation.createHTMLDocument('loader-containment');
+        const local = memoryStorage();
+        const session = memoryStorage();
+        const registeredFailure = vi.fn()
+            .mockRejectedValueOnce(new Error('registered owner failed'))
+            .mockResolvedValue(undefined);
+        const legacyActivation = vi.fn();
+        const laterLegacyActivation = vi.fn();
+        const hideSplash = vi.fn();
+        const initializeSplash = vi.fn();
+        const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+        const client = {
+            getCurrentUserId: () => 'loader-user',
+            getCurrentUser: () => Promise.resolve({ Id: 'loader-user' }),
+            serverId: () => 'loader-server',
+            serverAddress: () => 'http://loader.test',
+            getUrl: (path: string) => `http://loader.test${path}`,
+            setAuthenticationInfo(_token: string | null, _userId: string | null) { return undefined; },
+            ajax: (options: { url: string }) => {
+                const path = new URL(options.url).pathname;
+                if (path.endsWith('/public-config')) return Promise.resolve({ AssetCacheEnabled: false });
+                if (path.endsWith('/private-config')) return Promise.resolve({});
+                if (path.endsWith('/version')) return Promise.resolve('test-version');
+                if (path.endsWith('/bookmark.json')) return Promise.resolve({ Revision: 0, Bookmarks: {} });
+                if (path.endsWith('/shortcuts.json')) return Promise.resolve({ Shortcuts: [] });
+                if (path.includes('/user-settings/')) return Promise.resolve({});
+                throw new Error(`Unexpected loader request: ${path}`);
+            },
+        };
+        const fakeWindow: {
+            ApiClient: typeof client;
+            JellyfinCanopy?: unknown;
+            localStorage: Storage;
+            sessionStorage: Storage;
+            location: { href: string; protocol: string; reload(): void };
+            addEventListener: ReturnType<typeof vi.fn>;
+            setInterval: ReturnType<typeof vi.fn>;
+        } = {
+            ApiClient: client,
+            localStorage: local,
+            sessionStorage: session,
+            location: { href: 'http://loader.test/web/', protocol: 'http:', reload: vi.fn() },
+            addEventListener: vi.fn(),
+            setInterval: vi.fn(() => 1),
+        };
+        Object.defineProperty(fakeWindow, 'ApiClient', {
+            configurable: true,
+            enumerable: true,
+            writable: true,
+            value: client,
+        });
+
+        type LoaderGlobal = {
+            initialized?: boolean;
+            identity: IdentitySession;
+            bootDiagnostics: {
+                snapshot(): { entries: Array<Record<string, unknown>> };
+            };
+            loadTranslations?: () => Promise<Record<string, string>>;
+            loadSettings?: () => Record<string, unknown>;
+            initializeShortcuts?: () => void;
+            initializeCanopyScript?: () => void;
+            initializePagesFramework?: () => void;
+            initializeSplashScreen?: () => void;
+            hideSplashScreen?: () => void;
+        };
+        const originalAppend = loaderDocument.head.appendChild.bind(loaderDocument.head);
+        vi.spyOn(loaderDocument.head, 'appendChild').mockImplementation((node: Node) => {
+            const appended = originalAppend(node);
+            if (!(node instanceof HTMLScriptElement)) return appended;
+            queueMicrotask(() => {
+                const jc = fakeWindow.JellyfinCanopy as LoaderGlobal;
+                if (node.src.includes('/dist/splashscreen.js')) {
+                    jc.initializeSplashScreen = initializeSplash;
+                    jc.hideSplashScreen = hideSplash;
+                } else if (node.src.includes('/dist/translations.js')) {
+                    jc.loadTranslations = () => Promise.resolve({});
+                } else if (node.src.includes('/dist/jc.bundle.js')) {
+                    jc.loadSettings = () => ({ displayLanguage: '' });
+                    jc.initializeShortcuts = vi.fn();
+                    jc.initializeCanopyScript = legacyActivation;
+                    jc.initializePagesFramework = laterLegacyActivation;
+                    jc.identity.registerActivate('registered-owner', registeredFailure);
+                }
+                node.onload?.call(node, new Event('load'));
+            });
+            return appended;
+        });
+
+        const activated = new Promise<CustomEvent<IdentityContext>>((resolve) => {
+            loaderDocument.addEventListener('jc:identityactivated', (event) => {
+                resolve(event as CustomEvent<IdentityContext>);
+            }, { once: true });
+        });
+        const execute = eval(
+            '(function(window, document, ApiClient, CustomEvent, setTimeout, clearTimeout, URL, console) {'
+            + SRC
+            + '\n})',
+        ) as (...args: unknown[]) => void;
+
+        execute(
+            fakeWindow,
+            loaderDocument,
+            client,
+            CustomEvent,
+            vi.fn(() => 1),
+            vi.fn(),
+            URL,
+            console,
+        );
+        const event = await activated;
+        const jc = fakeWindow.JellyfinCanopy as LoaderGlobal;
+
+        expect(registeredFailure).toHaveBeenCalledTimes(1);
+        expect(legacyActivation).toHaveBeenCalledTimes(1);
+        expect(laterLegacyActivation).toHaveBeenCalledTimes(1);
+        expect(jc.initialized).toBe(true);
+        expect(event.detail).toEqual({ serverId: 'loaderserver', userId: 'loaderuser', epoch: 1 });
+        // Early script load paints immediately; authenticated boot refreshes it
+        // once more after publishing the owner snapshot.
+        expect(initializeSplash).toHaveBeenCalledTimes(2);
+        expect(hideSplash).toHaveBeenCalledTimes(1);
+        expect(jc.bootDiagnostics.snapshot().entries).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                feature: 'registered-owner',
+                phase: 'feature-initialization',
+                state: 'FeatureFailure',
+            }),
+        ]));
+        expect(error).toHaveBeenCalledWith(
+            expect.stringContaining('registered-owner'),
+            expect.any(Error),
+        );
+
+        // The failed registered participant remains retryable without replaying
+        // the already-completed legacy tier or disturbing the boot marker.
+        await expect(jc.identity.activate(event.detail)).resolves.toBeUndefined();
+        await expect(jc.identity.activate(event.detail)).resolves.toBeUndefined();
+        expect(registeredFailure).toHaveBeenCalledTimes(2);
+        expect(legacyActivation).toHaveBeenCalledTimes(1);
+        expect(jc.initialized).toBe(true);
     });
 
     it('routes every runtime TypeScript storage access through the loader-owned adapter', () => {
@@ -391,7 +626,7 @@ describe('plugin.js loader guards', () => {
         session.registerActivate('successful', successful);
         session.registerActivate('flaky', flaky);
 
-        await expect(session.activate(context)).rejects.toThrow('first activation failed');
+        await expect(session.activate(context)).resolves.toBeUndefined();
         expect(successful).toHaveBeenCalledTimes(1);
         expect(flaky).toHaveBeenCalledTimes(1);
 
