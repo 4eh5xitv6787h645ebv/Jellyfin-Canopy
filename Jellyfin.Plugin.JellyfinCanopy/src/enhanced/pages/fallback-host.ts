@@ -178,7 +178,12 @@ export function refreshCurrent(): void {
     if (!adoption || !adoption.host.isConnected) return;
     const { descriptor, host } = adoption;
     drain('refresh');
-    adopt(descriptor, host);
+    // A lazy page feature may have replaced the catalog placeholder between
+    // adoption and refresh. Resolve again so the active implementation wins.
+    const current = resolvePage();
+    if (current && current.id === descriptor.id && pageAvailable(current)) {
+        adopt(current, host);
+    }
 }
 
 /** The routed element the router renders for unknown routes. */

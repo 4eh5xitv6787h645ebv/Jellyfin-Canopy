@@ -8,14 +8,12 @@
 // the next adoption (formerly the old hidePage teardown).
 import { afterEach, describe, expect, it } from 'vitest';
 import { JC } from '../../globals';
-import { getPage } from '../pages/registry';
 import { setActiveContainer, renderPage } from './render';
 import { state } from './state';
-import './page';
+import { hiddenContentPageDescriptor as descriptor } from './page';
+import '../pages/facades';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-
-const descriptor = getPage('hidden-content')!;
 
 describe('hidden-content page descriptor', () => {
     it('registers with the expected route/title/icon and is not admin-only', () => {

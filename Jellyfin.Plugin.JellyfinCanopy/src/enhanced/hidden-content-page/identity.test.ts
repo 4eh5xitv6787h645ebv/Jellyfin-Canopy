@@ -4,9 +4,12 @@ import type { IdentityContext } from '../../types/jc';
 import { maybeInitAdminFilter, openAdminAddModal } from './admin';
 import { createGroupCard } from './cards';
 import { state } from './state';
+import { activate } from '../../entries/hidden-content-page';
+import { createTestFeatureScope, type TestFeatureScope } from '../../test/feature-scope';
 
 const originalApi = JC.core.api;
 const originalSeerrApi = JC.seerrAPI;
+let feature: TestFeatureScope;
 
 function startSession(serverId = 'server-a', userId = 'user-a'): IdentityContext {
     JC.identity.transition('', '', 'test-logout');
@@ -20,9 +23,12 @@ describe('hidden-content page identity lifecycle', () => {
         JC.t = (key: string) => key;
         startSession();
         JC.currentSettings = { isAdmin: true };
+        feature = createTestFeatureScope();
+        activate(feature.scope);
     });
 
-    afterEach(() => {
+    afterEach(async () => {
+        await feature.dispose();
         JC.identity.transition('', '', 'test-cleanup');
         JC.core.api = originalApi;
         JC.seerrAPI = originalSeerrApi;

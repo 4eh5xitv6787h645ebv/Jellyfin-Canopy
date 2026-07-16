@@ -30,6 +30,7 @@ describe('hidden-content page navigation (no polling)', () => {
 
     it('showPage() delegates to the push-based router bridge (Emby.Page.show, no polling)', async () => {
         await import('./hidden-content-page/page');
+        await import('./pages/facades');
         const showSpy = vi.fn();
         (window as any).Emby = { Page: { show: showSpy } };
         const intervalSpy = vi.spyOn(window, 'setInterval');

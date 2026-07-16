@@ -15,6 +15,7 @@ import { JC } from '../../globals';
 import { installEarlyMask } from './early-mask';
 import { drain, initFallbackHost, lateAdoptIfOnPage } from './fallback-host';
 import { initEntryPoints } from './entry-points';
+import './facades';
 
 installEarlyMask();
 

@@ -4,18 +4,7 @@
 // imports this barrel once, so conversions never edit main.ts itself.
 import './arr-links';
 import './arr-tag-links';
-import './requests/styles';
-import './requests/data';
-import './requests/render-helpers';
-import './requests/render-cards';
-import './requests/render';
-import './requests/actions';
-import './requests/page';
-import './calendar/styles';
-import './calendar/data';
-import './calendar/render-events';
-import './calendar/render-views';
-import './calendar/actions';
-import './calendar/page';
+// The requests/downloads and calendar SCCs are route-only ESM entries. They
+// must not enter the cold-home graph through this eager area barrel.
 // Admin-only action-sheet Search / Interactive Search / Manage (Sonarr/Radarr).
 import './search';

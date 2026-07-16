@@ -11,10 +11,63 @@ import type { PageDescriptor } from './types';
 const byId = new Map<string, PageDescriptor>();
 const byRoute = new Map<string, PageDescriptor>();
 
-/** Register a page descriptor (bundle init; idempotent by id). */
-export function registerPage(descriptor: PageDescriptor): void {
+function renderLoadingPage({ host }: import('./types').PageContext): void {
+    const loading = document.createElement('div');
+    loading.className = 'jc-page-loading padded-left padded-right';
+    loading.setAttribute('role', 'status');
+    loading.textContent = JC.t?.('loading') || 'Loading…';
+    host.appendChild(loading);
+}
+
+/** Boot-safe route metadata. Feature chunks replace these placeholders only
+ * for their current navigation activation, then unregistration restores them. */
+const catalog: readonly PageDescriptor[] = [
+    {
+        id: 'calendar', route: '/calendar', titleKey: 'calendar_title',
+        titleFallback: 'Calendar', icon: 'calendar_today',
+        isEnabled: () => !!JC.pluginConfig?.CalendarPageEnabled, render: renderLoadingPage,
+    },
+    {
+        id: 'downloads', route: '/downloads', titleKey: 'requests_requests',
+        titleFallback: 'Requests', icon: 'download',
+        isEnabled: () => !!JC.pluginConfig?.DownloadsPageEnabled, render: renderLoadingPage,
+    },
+    {
+        id: 'hidden-content', route: '/hidden-content', titleKey: 'hidden_content_manage_title',
+        titleFallback: 'Hidden Content', icon: 'visibility_off',
+        isEnabled: () => !!JC.pluginConfig?.HiddenContentEnabled, render: renderLoadingPage,
+    },
+    {
+        id: 'bookmarks', route: '/bookmarks', titleKey: 'bookmarks_library_title',
+        titleFallback: 'Bookmarks', icon: 'bookmarks',
+        isEnabled: () => !!JC.pluginConfig?.BookmarksEnabled, render: renderLoadingPage,
+    },
+];
+
+/** Register an active descriptor and return an idempotent restoration closure. */
+export function registerPage(descriptor: PageDescriptor): () => void {
+    const previousById = byId.get(descriptor.id);
+    const previousByRoute = byRoute.get(descriptor.route);
     byId.set(descriptor.id, descriptor);
     byRoute.set(descriptor.route, descriptor);
+    let active = true;
+    return () => {
+        if (!active) return;
+        active = false;
+        if (byId.get(descriptor.id) === descriptor) {
+            if (previousById) byId.set(descriptor.id, previousById);
+            else byId.delete(descriptor.id);
+        }
+        if (byRoute.get(descriptor.route) === descriptor) {
+            if (previousByRoute) byRoute.set(descriptor.route, previousByRoute);
+            else byRoute.delete(descriptor.route);
+        }
+    };
+}
+
+/** Immutable route catalog used by early boot without importing page chunks. */
+export function catalogPages(): readonly PageDescriptor[] {
+    return catalog;
 }
 
 /** Look a page up by id. */
@@ -73,3 +126,5 @@ export function orderedPages(): PageDescriptor[] {
     }
     return ordered;
 }
+
+for (const descriptor of catalog) registerPage(descriptor);

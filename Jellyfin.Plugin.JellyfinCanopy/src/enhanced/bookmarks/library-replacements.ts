@@ -152,11 +152,11 @@ function closeReplacementModal(modal: HTMLElement): void {
   replacementModalTimers.add(timer);
 }
 
-JC.identity.registerReset('bookmarks-library-replacement-modals', () => {
+export function resetBookmarksLibraryReplacementModals(): void {
   for (const timer of replacementModalTimers) window.clearTimeout(timer);
   replacementModalTimers.clear();
   document.querySelectorAll('[data-jc-bookmark-library-modal="true"]').forEach((modal) => modal.remove());
-});
+}
 
 /**
  * Search Jellyfin for items matching a TMDB/TVDB ID

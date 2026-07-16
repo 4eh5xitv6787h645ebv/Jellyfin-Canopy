@@ -19,8 +19,9 @@
 // 404 once the mask clears).
 
 import { PAGE_NAV_ATTR } from './router-bridge';
+import { catalogPages } from './registry';
 
-const STATIC_ROUTES = ['/calendar', '/downloads', '/hidden-content', '/bookmarks'];
+const STATIC_ROUTES = catalogPages().map((descriptor) => descriptor.route);
 
 const BOOT_ATTR = 'data-jc-page-boot';
 const NAV_ATTR = PAGE_NAV_ATTR;

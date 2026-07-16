@@ -125,8 +125,6 @@ export function resetHiddenContentPageState(): void {
     state.adminUsersLoading = false;
 }
 
-JC.identity?.registerReset?.('hidden-content-page-state', resetHiddenContentPageState);
-
 export function scopeBadgeText(scope: string | undefined): string {
     const s = (scope || '').toLowerCase();
     if (s === 'continuewatching') return JC.t!('hidden_content_scope_cw_label');

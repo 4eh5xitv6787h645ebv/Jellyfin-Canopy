@@ -67,12 +67,12 @@ export function setActiveContainer(container: HTMLElement | null): void {
 let renderQueueGeneration = 0;
 let queuedIdentity: IdentityContext | null = null;
 
-JC.identity.registerReset('bookmarks-library-render', () => {
+export function resetBookmarksLibraryRender(): void {
   renderQueueGeneration += 1;
   queuedIdentity = null;
   activeContainer = null;
   activeContainerIdentity = null;
-});
+}
 
 /**
  * Re-render the bookmarks library into the active container. No-op when the

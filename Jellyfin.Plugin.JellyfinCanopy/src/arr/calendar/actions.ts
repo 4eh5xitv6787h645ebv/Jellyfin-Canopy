@@ -361,10 +361,10 @@ export function handleEventClick(e: MouseEvent): void {
     void navigateToJellyfinItem(event, { preferSeries: true });
 }
 
-JC.identity.registerReset('arr-calendar-actions', () => {
+export function resetCalendarActions(): void {
     // The in-flight promise is allowed to settle naturally; its captured
     // identity fences every continuation. A B adoption queues one fresh pass
     // behind it, while stale A-only queued work is discarded synchronously.
     activeSignal = null;
     loadQueued = false;
-});
+}

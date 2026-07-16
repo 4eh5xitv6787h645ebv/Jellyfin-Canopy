@@ -6,10 +6,8 @@
 // adopted host and which actions its scoped delegated handler needs.
 
 import { JC } from '../arr-globals';
-import { registerPage } from '../../enhanced/pages/registry';
-import { openPage } from '../../enhanced/pages/router-bridge';
 import { injectStyles } from './styles';
-import { loadSettings } from './data';
+import { loadSettings, resetCalendarIdentityState } from './data';
 import { renderPage, setActiveContainer, toggleSidebarCollapsed, updateDisplayModeButtons } from './render-views';
 import {
     goToday,
@@ -19,9 +17,10 @@ import {
     setViewMode,
     shiftPeriod,
     toggleFilter,
-    toggleShowUnmonitored
+    toggleShowUnmonitored,
+    resetCalendarActions,
 } from './actions';
-import type { PageContext } from '../../enhanced/pages/types';
+import type { PageContext, PageDescriptor } from '../../enhanced/pages/types';
 
 function render({ host, handle, signal }: PageContext): void {
     const context = JC.identity.capture();
@@ -55,15 +54,21 @@ function render({ host, handle, signal }: PageContext): void {
     void loadAllData(signal);
 }
 
-registerPage({
+export const calendarPageDescriptor: PageDescriptor & { id: 'calendar' } = {
     id: 'calendar',
     route: '/calendar',
     titleKey: 'calendar_title',
     titleFallback: 'Calendar',
     icon: 'calendar_today',
     isEnabled: () => !!JC.pluginConfig?.CalendarPageEnabled,
-    render
-});
+    render,
+    onHide: () => {
+        document.getElementById('jc-calendar-styles')?.remove();
+        document.getElementById('jc-calendar-theme-colors')?.remove();
+        resetCalendarActions();
+        resetCalendarIdentityState();
+    },
+};
 
 /** The frozen JC.calendarPage compatibility contract (e2e + integrations). */
 export interface CalendarPageApi {
@@ -86,8 +91,7 @@ export interface CalendarPageApi {
 // The frozen public surface remains for e2e/integrations. Page markup uses the
 // adoption-owned delegated listener above so detached A controls cannot resolve
 // this live facade and act on B.
-JC.calendarPage = {
-    showPage: () => { openPage('calendar'); },
+export const calendarPageFacade: Omit<CalendarPageApi, 'showPage'> = {
     refresh: loadAllData,
     setViewMode,
     shiftPeriod,

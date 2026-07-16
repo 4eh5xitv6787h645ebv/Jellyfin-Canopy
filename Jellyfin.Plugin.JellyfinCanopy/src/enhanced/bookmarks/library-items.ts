@@ -20,10 +20,10 @@ const logPrefix = '🪼 Jellyfin Canopy: Bookmarks Library:';
 
 const playbackTimers = new Set<number>();
 
-JC.identity.registerReset('bookmarks-library-playback', () => {
+export function resetBookmarksLibraryPlayback(): void {
   for (const timer of playbackTimers) window.clearTimeout(timer);
   playbackTimers.clear();
-});
+}
 
 /**
  * Render bookmark items with posters

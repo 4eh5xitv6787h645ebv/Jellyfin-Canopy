@@ -607,7 +607,7 @@ export async function searchFromProviders(event: CalendarEvent, options: { prefe
 }
 
 /** Drop every identity-derived projection before the transition returns. */
-function resetCalendarIdentityState(): void {
+export function resetCalendarIdentityState(): void {
     try { state.locationUnsubscribe?.(); } catch { /* continue synchronous reset */ }
     Object.assign(state, {
         events: [],
@@ -641,5 +641,3 @@ function resetCalendarIdentityState(): void {
     });
     _toastedCalendarErrors.clear();
 }
-
-JC.identity.registerReset('arr-calendar-data', resetCalendarIdentityState);
