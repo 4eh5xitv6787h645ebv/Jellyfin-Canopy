@@ -184,6 +184,7 @@ test.describe('manifest-owned code splitting', () => {
         const bootChild = assetTarget(manifest, 'boot-static-child', bootImports[0]);
         const bootAttempts: number[] = [];
         const childAttempts: number[] = [];
+        let mainDocumentPending = false;
 
         await page.addInitScript(() => {
             (window as any).__jcIdentityActivationCount = 0;
@@ -195,16 +196,35 @@ test.describe('manifest-owned code splitting', () => {
             if (browserRequest.isNavigationRequest()
                 && browserRequest.frame() === page.mainFrame()) {
                 // loginAs may replace the document while establishing the
-                // authenticated session. Keep the graph assertion scoped to
-                // the final document instead of retaining pre-login attempts.
+                // authenticated session. A request from the old document can
+                // arrive after this event but before the replacement commits,
+                // so suspend both observation and fault injection until the
+                // matching main-frame navigation reaches framenavigated.
+                mainDocumentPending = true;
                 bootAttempts.length = 0;
                 childAttempts.length = 0;
+                return;
             }
-            if (isAssetRequest(browserRequest.url(), boot)) {
+            if (!mainDocumentPending && isAssetRequest(browserRequest.url(), boot)) {
                 bootAttempts.push(requestAttempt(browserRequest.url()));
             }
         });
+        page.on('framenavigated', (frame) => {
+            if (frame === page.mainFrame() && mainDocumentPending) {
+                // Drop any late old-document request observed between the
+                // navigation request and commit. Same-document SPA navigation
+                // cannot clear the final graph because it has no pending main
+                // document request.
+                bootAttempts.length = 0;
+                childAttempts.length = 0;
+                mainDocumentPending = false;
+            }
+        });
         await page.route(bootChild.routePattern, async (route) => {
+            if (mainDocumentPending) {
+                await route.continue();
+                return;
+            }
             const attempt = requestAttempt(route.request().url());
             childAttempts.push(attempt);
             if (attempt === 0) {
