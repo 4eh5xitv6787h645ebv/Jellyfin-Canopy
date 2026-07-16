@@ -46,6 +46,8 @@ const ESM_ENTRIES = Object.freeze({
     'hide-favorites-tab': path.join(SRC_ROOT, 'entries', 'hide-favorites-tab.ts'),
     'plugin-icons': path.join(SRC_ROOT, 'entries', 'plugin-icons.ts'),
     'requests-page': path.join(SRC_ROOT, 'entries', 'requests-page.ts'),
+    'random-button': path.join(SRC_ROOT, 'entries', 'random-button.ts'),
+    'remove-home-actions': path.join(SRC_ROOT, 'entries', 'remove-home-actions.ts'),
     'theme-selector': path.join(SRC_ROOT, 'extras', 'theme-selector.feature.ts'),
 });
 

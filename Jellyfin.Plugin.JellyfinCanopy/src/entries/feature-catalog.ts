@@ -82,6 +82,24 @@ export const builtInFeatureDescriptors: readonly ClientFeatureDescriptor[] = Obj
         isApplicable: (state) => homeRoute(state.routeKey),
     },
     {
+        id: 'random-button',
+        entry: 'random-button',
+        scope: 'identity',
+        restartOnConfigChange: true,
+        isEnabled: (state) => Boolean(state.identity)
+            && JC.currentSettings?.randomButtonEnabled === true,
+        isApplicable: () => true,
+    },
+    {
+        id: 'remove-home-actions',
+        entry: 'remove-home-actions',
+        scope: 'navigation',
+        restartOnConfigChange: true,
+        isEnabled: (state) => Boolean(state.identity)
+            && JC.currentSettings?.removeContinueWatchingEnabled === true,
+        isApplicable: (state) => homeRoute(state.routeKey),
+    },
+    {
         id: 'calendar-page',
         entry: 'calendar-page',
         scope: 'navigation',
