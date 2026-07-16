@@ -123,10 +123,28 @@ interface ActivationFlight {
     readonly promise: Promise<FeatureActivationResult>;
 }
 
+interface RetryOwner {
+    readonly registration: FeatureRegistration;
+    readonly token: FeatureScopeToken;
+    readonly key: string;
+    readonly nextAttempt: 1 | 2;
+    timer: ReturnType<typeof setTimeout> | null;
+}
+
 class StaleFeatureRequestError extends Error {
     constructor() {
         super('Feature request became stale before its module import started');
         this.name = 'StaleFeatureRequestError';
+    }
+}
+
+class FeatureLoadFailureError extends Error {
+    constructor(
+        readonly failure: unknown,
+        readonly attempt: number,
+    ) {
+        super('Feature module import failed');
+        this.name = 'FeatureLoadFailureError';
     }
 }
 
@@ -194,24 +212,36 @@ function sameIdentity(left: FeatureScopeToken, right: FeatureScopeToken): boolea
         && left.identityEpoch === right.identityEpoch;
 }
 
-function sameToken(left: FeatureScopeToken, right: FeatureScopeToken): boolean {
-    return sameIdentity(left, right)
-        && left.configGeneration === right.configGeneration
-        && left.navigationGeneration === right.navigationGeneration
-        && left.routeKey === right.routeKey;
+function sameRegistrationScope(
+    registration: FeatureRegistration,
+    left: FeatureScopeToken,
+    right: FeatureScopeToken,
+): boolean {
+    if (!sameIdentity(left, right)) return false;
+    if (registration.restartOnConfigChange
+        && left.configGeneration !== right.configGeneration) return false;
+    return registration.scope !== 'navigation'
+        || (left.navigationGeneration === right.navigationGeneration && left.routeKey === right.routeKey);
 }
 
-function activationKey(featureId: string, token: FeatureScopeToken): string {
-    return JSON.stringify([
-        featureId,
+function activationKey(registration: FeatureRegistration, token: FeatureScopeToken): string {
+    const owner: Array<string | number> = [
+        registration.id,
         token.serverId,
         token.userId,
         token.identityEpoch,
-        token.configGeneration,
-        token.navigationGeneration,
-        token.routeKey,
-    ]);
+    ];
+    if (registration.restartOnConfigChange) owner.push(token.configGeneration);
+    if (registration.scope === 'navigation') {
+        owner.push(token.navigationGeneration, token.routeKey);
+    }
+    return JSON.stringify(owner);
 }
+
+const RETRY_BACKOFF_MS: Readonly<Record<1 | 2, number>> = Object.freeze({
+    1: 250,
+    2: 1_000,
+});
 
 function cleanupFunction(resource: FeatureCleanup): () => void | Promise<void> {
     if (typeof resource === 'function') return resource;
@@ -230,11 +260,14 @@ export function createFeatureLoader(options: FeatureLoaderOptions): FeatureLoade
     const scheduler = new LoadScheduler(options.maxConcurrentLoads ?? 2);
     const registrations = new Map<string, FeatureRegistration>();
     const modules = new Map<string, FeatureModule>();
+    const moduleAttempts = new Map<string, number>();
     const loadFlights = new Map<string, LoadFlight>();
     const loadAttempts = new Map<string, number>();
     const activationFlights = new Map<string, ActivationFlight>();
+    const retryOwners = new Map<string, RetryOwner>();
     const activeFeatures = new Map<string, ActiveFeature>();
     const disposalFlights = new Map<string, Promise<void>>();
+    const visibilityDocument = typeof document === 'undefined' ? null : document;
     let loaderDisposed = false;
 
     const report = (featureId: string, phase: FeatureLoaderPhase, error: unknown): void => {
@@ -256,7 +289,9 @@ export function createFeatureLoader(options: FeatureLoaderOptions): FeatureLoade
         if (loaderDisposed) return false;
         const state = options.captureState();
         const current = tokenFromState(state);
-        return current !== null && sameToken(current, token) && eligible(registration, state);
+        return current !== null
+            && sameRegistrationScope(registration, current, token)
+            && eligible(registration, state);
     };
 
     const activeMatches = (
@@ -265,14 +300,72 @@ export function createFeatureLoader(options: FeatureLoaderOptions): FeatureLoade
         state: FeatureLoaderState,
         current: FeatureScopeToken
     ): boolean => {
-        if (!eligible(registration, state) || !sameIdentity(active.token, current)) return false;
-        if (registration.scope === 'navigation') {
-            if (active.token.navigationGeneration !== current.navigationGeneration
-                || active.token.routeKey !== current.routeKey) return false;
-        }
-        return !registration.restartOnConfigChange
-            || active.token.configGeneration === current.configGeneration;
+        return eligible(registration, state)
+            && sameRegistrationScope(registration, active.token, current);
     };
+
+    const cancelRetry = (featureId: string): void => {
+        const owner = retryOwners.get(featureId);
+        if (!owner) return;
+        retryOwners.delete(featureId);
+        if (owner.timer !== null) clearTimeout(owner.timer);
+        owner.timer = null;
+    };
+
+    const documentVisible = (): boolean => visibilityDocument?.visibilityState !== 'hidden';
+
+    const armRetry = (owner: RetryOwner): void => {
+        if (loaderDisposed || retryOwners.get(owner.registration.id) !== owner) return;
+        if (!isTokenCurrent(owner.registration, owner.token)) {
+            cancelRetry(owner.registration.id);
+            return;
+        }
+        if (!documentVisible()) return;
+
+        owner.timer = setTimeout(() => {
+            owner.timer = null;
+            if (retryOwners.get(owner.registration.id) !== owner) return;
+            if (!documentVisible()) return;
+            if (!isTokenCurrent(owner.registration, owner.token)) {
+                cancelRetry(owner.registration.id);
+                return;
+            }
+            // Remove this owner before activation. A matching failure installs
+            // the next backoff owner; success leaves no timer behind.
+            retryOwners.delete(owner.registration.id);
+            void activateWithAncestors(owner.registration.id, []);
+        }, RETRY_BACKOFF_MS[owner.nextAttempt]);
+    };
+
+    const scheduleRetry = (
+        registration: FeatureRegistration,
+        token: FeatureScopeToken,
+        failedAttempt: number,
+    ): void => {
+        if (failedAttempt >= 2 || !isTokenCurrent(registration, token)) return;
+        const nextAttempt = (failedAttempt + 1) as 1 | 2;
+        const key = activationKey(registration, token);
+        const existing = retryOwners.get(registration.id);
+        if (existing?.key === key && existing.nextAttempt === nextAttempt) return;
+        cancelRetry(registration.id);
+        const owner: RetryOwner = {
+            registration,
+            token,
+            key,
+            nextAttempt,
+            timer: null,
+        };
+        retryOwners.set(registration.id, owner);
+        armRetry(owner);
+    };
+
+    const resumeVisibleRetries = (): void => {
+        if (!documentVisible()) return;
+        for (const owner of retryOwners.values()) {
+            if (owner.timer === null) armRetry(owner);
+        }
+    };
+    visibilityDocument?.addEventListener('visibilitychange', resumeVisibleRetries);
 
     const runCleanup = async (
         featureId: string,
@@ -317,6 +410,13 @@ export function createFeatureLoader(options: FeatureLoaderOptions): FeatureLoade
     const prepareForState = (state: FeatureLoaderState): Promise<void>[] => {
         const current = tokenFromState(state);
         const disposals: Promise<void>[] = [];
+        for (const [featureId, owner] of retryOwners) {
+            if (!current
+                || !eligible(owner.registration, state)
+                || !sameRegistrationScope(owner.registration, owner.token, current)) {
+                cancelRetry(featureId);
+            }
+        }
         for (const [featureId, active] of activeFeatures) {
             const registration = registrations.get(featureId);
             if (!current || !registration || !activeMatches(active, registration, state, current)) {
@@ -357,6 +457,7 @@ export function createFeatureLoader(options: FeatureLoaderOptions): FeatureLoade
             const loaded = await flight.promise;
             if (loadFlights.get(registration.id) === flight) {
                 modules.set(registration.id, loaded);
+                moduleAttempts.set(registration.id, flight.attempt);
                 loadFlights.delete(registration.id);
             }
             return loaded;
@@ -373,7 +474,9 @@ export function createFeatureLoader(options: FeatureLoaderOptions): FeatureLoade
                     report(registration.id, 'load', error);
                 }
             }
-            throw error;
+            throw error instanceof StaleFeatureRequestError
+                ? error
+                : new FeatureLoadFailureError(error, flight.attempt);
         }
     };
 
@@ -397,7 +500,11 @@ export function createFeatureLoader(options: FeatureLoaderOptions): FeatureLoade
             if (error instanceof StaleFeatureRequestError || !isTokenCurrent(registration, token)) {
                 return stale();
             }
-            return { featureId: registration.id, status: 'failed', error };
+            const failure = error instanceof FeatureLoadFailureError ? error.failure : error;
+            if (error instanceof FeatureLoadFailureError) {
+                scheduleRetry(registration, token, error.attempt);
+            }
+            return { featureId: registration.id, status: 'failed', error: failure };
         }
         if (!isTokenCurrent(registration, token)) return stale();
 
@@ -427,6 +534,13 @@ export function createFeatureLoader(options: FeatureLoaderOptions): FeatureLoade
             scopeClosed = true;
             await runCleanup(registration.id, undefined, controller, cleanups);
             report(registration.id, 'activation', error);
+            if (isTokenCurrent(registration, token) && modules.get(registration.id) === featureModule) {
+                const failedAttempt = moduleAttempts.get(registration.id) ?? 0;
+                modules.delete(registration.id);
+                moduleAttempts.delete(registration.id);
+                loadAttempts.set(registration.id, Math.min(2, failedAttempt + 1));
+                scheduleRetry(registration, token, failedAttempt);
+            }
             return { featureId: registration.id, status: 'failed', error };
         }
 
@@ -450,6 +564,7 @@ export function createFeatureLoader(options: FeatureLoaderOptions): FeatureLoade
         }
 
         activeFeatures.set(registration.id, { registration, token, dispose });
+        cancelRetry(registration.id);
         return { featureId: registration.id, status: 'active' };
     };
 
@@ -479,7 +594,7 @@ export function createFeatureLoader(options: FeatureLoaderOptions): FeatureLoade
             return Promise.resolve({ featureId, status: 'already-active' });
         }
 
-        const key = activationKey(featureId, token);
+        const key = activationKey(registration, token);
         const existing = activationFlights.get(key);
         if (existing) return existing.promise;
 
@@ -541,13 +656,18 @@ export function createFeatureLoader(options: FeatureLoaderOptions): FeatureLoade
             await Promise.all(disposals);
             return Promise.all(activationPromises);
         },
-        deactivate: deactivateActive,
+        deactivate(featureId): Promise<void> {
+            cancelRetry(featureId);
+            return deactivateActive(featureId);
+        },
         async dispose(): Promise<void> {
             if (loaderDisposed) {
                 await Promise.all(disposalFlights.values());
                 return;
             }
             loaderDisposed = true;
+            visibilityDocument?.removeEventListener('visibilitychange', resumeVisibleRetries);
+            for (const featureId of [...retryOwners.keys()]) cancelRetry(featureId);
             const disposals = [...activeFeatures.keys()].map((featureId) => deactivateActive(featureId));
             await Promise.all(disposals);
         },

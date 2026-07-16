@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
     createFeatureLoader,
     createStableMethodFacade,
@@ -16,6 +16,14 @@ interface Deferred<T> {
     resolve(value: T): void;
     reject(reason: unknown): void;
 }
+
+const loaders: FeatureLoader[] = [];
+
+afterEach(async () => {
+    await Promise.all(loaders.splice(0).map((loader) => loader.dispose()));
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+});
 
 function deferred<T>(): Deferred<T> {
     let resolve!: (value: T) => void;
@@ -74,6 +82,7 @@ function harness(initial = state(), maxConcurrentLoads: 1 | 2 = 2): {
         maxConcurrentLoads,
         onError: (event) => errors.push(event),
     });
+    loaders.push(loader);
     return {
         loader,
         getState: () => current,
@@ -212,7 +221,8 @@ describe('generation-aware feature loader', () => {
         expect(targetImporter).toHaveBeenCalledTimes(1);
     });
 
-    it('retries a matching load failure with a new generation URL', async () => {
+    it('automatically retries one shared transient load failure with a new generation URL', async () => {
+        vi.useFakeTimers();
         const test = harness();
         const failure = new Error('chunk unavailable');
         const importer = vi.fn((request: FeatureImportRequest): Promise<FeatureModule> => request.attempt === 0
@@ -225,7 +235,10 @@ describe('generation-aware feature loader', () => {
         await expect(first).resolves.toEqual({ featureId: 'retryable', status: 'failed', error: failure });
         await expect(sameFlight).resolves.toEqual({ featureId: 'retryable', status: 'failed', error: failure });
 
-        await expect(test.loader.activate('retryable')).resolves.toMatchObject({ status: 'active' });
+        await vi.advanceTimersByTimeAsync(249);
+        expect(importer).toHaveBeenCalledTimes(1);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(test.loader.diagnostics().activeFeatures).toBe(1);
         expect(importer.mock.calls.map(([request]) => request.attempt)).toEqual([0, 1]);
         expect(importer.mock.calls.map(([request]) => request.url)).toEqual([
             '/client/retryable.js?v=g1-r0',
@@ -234,18 +247,74 @@ describe('generation-aware feature loader', () => {
         expect(test.errors).toEqual([{ featureId: 'retryable', phase: 'load', error: failure }]);
     });
 
-    it('keeps repeated failures inside the server attempt range', async () => {
+    it('stops automatic retries after the terminal attempt while preserving attempts 0..2', async () => {
+        vi.useFakeTimers();
         const test = harness();
         const importer = vi.fn((_request: FeatureImportRequest) =>
             Promise.reject(new Error('still unavailable')));
         test.loader.register(registration('bounded-retry', importer));
 
-        for (let index = 0; index < 5; index += 1) {
-            await expect(test.loader.activate('bounded-retry')).resolves.toMatchObject({ status: 'failed' });
-        }
+        await expect(test.loader.activate('bounded-retry')).resolves.toMatchObject({ status: 'failed' });
+        await vi.advanceTimersByTimeAsync(250);
+        await vi.advanceTimersByTimeAsync(999);
+        expect(importer).toHaveBeenCalledTimes(2);
+        await vi.advanceTimersByTimeAsync(1);
+        await vi.advanceTimersByTimeAsync(60_000);
 
-        expect(importer.mock.calls.map(([request]) => request.attempt)).toEqual([0, 1, 2, 2, 2]);
-        expect(test.urls.mock.calls.map(([, attempt]) => attempt)).toEqual([0, 1, 2, 2, 2]);
+        expect(importer.mock.calls.map(([request]) => request.attempt)).toEqual([0, 1, 2]);
+        expect(test.urls.mock.calls.map(([, attempt]) => attempt)).toEqual([0, 1, 2]);
+    });
+
+    it('pauses a retry while hidden and resumes its full backoff when visible', async () => {
+        vi.useFakeTimers();
+        let hidden = true;
+        vi.spyOn(document, 'visibilityState', 'get').mockImplementation(() => hidden ? 'hidden' : 'visible');
+        const test = harness();
+        const importer = vi.fn((request: FeatureImportRequest): Promise<FeatureModule> => request.attempt === 0
+            ? Promise.reject(new Error('offline while backgrounded'))
+            : Promise.resolve(moduleWith(() => undefined)));
+        test.loader.register(registration('visibility-retry', importer));
+
+        await expect(test.loader.activate('visibility-retry')).resolves.toMatchObject({ status: 'failed' });
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(importer).toHaveBeenCalledTimes(1);
+
+        hidden = false;
+        document.dispatchEvent(new Event('visibilitychange'));
+        await vi.advanceTimersByTimeAsync(249);
+        expect(importer).toHaveBeenCalledTimes(1);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(importer.mock.calls.map(([request]) => request.attempt)).toEqual([0, 1]);
+        expect(test.loader.diagnostics().activeFeatures).toBe(1);
+    });
+
+    it('cancels a pending retry when its navigation owner becomes ineligible', async () => {
+        vi.useFakeTimers();
+        const test = harness();
+        const importer = vi.fn(() => Promise.reject(new Error('route chunk unavailable')));
+        test.loader.register(registration('route-retry', importer, {
+            isApplicable: (snapshot) => snapshot.routeKey === 'home',
+        }));
+
+        await expect(test.loader.activate('route-retry')).resolves.toMatchObject({ status: 'failed' });
+        test.setState(state({ navigationGeneration: 2, routeKey: 'details' }));
+        await expect(test.loader.reconcile()).resolves.toEqual([]);
+        await vi.advanceTimersByTimeAsync(60_000);
+
+        expect(importer).toHaveBeenCalledTimes(1);
+    });
+
+    it('cancels a pending retry on loader disposal', async () => {
+        vi.useFakeTimers();
+        const test = harness();
+        const importer = vi.fn(() => Promise.reject(new Error('chunk unavailable')));
+        test.loader.register(registration('dispose-retry', importer));
+
+        await expect(test.loader.activate('dispose-retry')).resolves.toMatchObject({ status: 'failed' });
+        await test.loader.dispose();
+        await vi.advanceTimersByTimeAsync(60_000);
+
+        expect(importer).toHaveBeenCalledTimes(1);
     });
 
     it('awaits ordered dependency activation before importing a dependent feature', async () => {
@@ -311,6 +380,60 @@ describe('generation-aware feature loader', () => {
         expect(importer).toHaveBeenCalledTimes(1);
         expect(disposeOld).toHaveBeenCalledTimes(1);
         expect(disposeCurrent).not.toHaveBeenCalled();
+    });
+
+    it('keeps native-tabs-like identity activation current across irrelevant state changes', async () => {
+        const test = harness();
+        const activation = deferred<FeatureInstance>();
+        let capturedScope: FeatureScope | undefined;
+        const activate = vi.fn((scope: FeatureScope) => {
+            capturedScope = scope;
+            return activation.promise;
+        });
+        const importer = vi.fn(() => Promise.resolve(moduleWith(activate)));
+        test.loader.register(registration('native-tabs-like', importer, { scope: 'identity' }));
+
+        const first = test.loader.activate('native-tabs-like');
+        await vi.waitFor(() => expect(activate).toHaveBeenCalledTimes(1));
+        test.setState(state({
+            configGeneration: 8,
+            navigationGeneration: 7,
+            routeKey: 'details?id=2',
+        }));
+        const afterIrrelevantChanges = test.loader.activate('native-tabs-like');
+
+        expect(afterIrrelevantChanges).toBe(first);
+        expect(capturedScope?.isCurrent()).toBe(true);
+        activation.resolve({ dispose: vi.fn() });
+        await expect(first).resolves.toMatchObject({ status: 'active' });
+        expect(importer).toHaveBeenCalledTimes(1);
+        expect(activate).toHaveBeenCalledTimes(1);
+        expect(capturedScope?.isCurrent()).toBe(true);
+    });
+
+    it('uses a fresh activation flight when an opted-in identity config owner changes', async () => {
+        const test = harness();
+        const oldActivation = deferred<FeatureInstance>();
+        const nextActivation = deferred<FeatureInstance>();
+        let index = 0;
+        const activate = vi.fn(() => index++ === 0 ? oldActivation.promise : nextActivation.promise);
+        test.loader.register(registration(
+            'config-owned',
+            () => Promise.resolve(moduleWith(activate)),
+            { scope: 'identity', restartOnConfigChange: true },
+        ));
+
+        const first = test.loader.activate('config-owned');
+        await vi.waitFor(() => expect(activate).toHaveBeenCalledTimes(1));
+        test.setState(state({ configGeneration: 2 }));
+        const second = test.loader.activate('config-owned');
+        expect(second).not.toBe(first);
+        await vi.waitFor(() => expect(activate).toHaveBeenCalledTimes(2));
+
+        nextActivation.resolve({ dispose: vi.fn() });
+        await expect(second).resolves.toMatchObject({ status: 'active' });
+        oldActivation.resolve({ dispose: vi.fn() });
+        await expect(first).resolves.toMatchObject({ status: 'stale' });
     });
 
     it('rejects an old identity completion and activates the new identity from one code load', async () => {
@@ -429,7 +552,8 @@ describe('generation-aware feature loader', () => {
         expect(persistentActivate).toHaveBeenCalledTimes(1);
     });
 
-    it('cleans partial activation resources and allows activation retry', async () => {
+    it('cleans a failed dynamic activation and automatically reloads its next graph attempt', async () => {
+        vi.useFakeTimers();
         const test = harness();
         const partialCleanup = vi.fn();
         const successfulDispose = vi.fn();
@@ -452,8 +576,10 @@ describe('generation-aware feature loader', () => {
         expect(firstSignal?.aborted).toBe(true);
         expect(partialCleanup).toHaveBeenCalledTimes(1);
 
-        await expect(test.loader.activate('partial')).resolves.toMatchObject({ status: 'active' });
-        expect(importer).toHaveBeenCalledTimes(1);
+        await vi.advanceTimersByTimeAsync(250);
+        expect(test.loader.diagnostics().activeFeatures).toBe(1);
+        expect(importer).toHaveBeenCalledTimes(2);
+        expect(test.urls.mock.calls.map(([, attempt]) => attempt)).toEqual([0, 1]);
         expect(activate).toHaveBeenCalledTimes(2);
         expect(test.errors).toContainEqual({
             featureId: 'partial', phase: 'activation', error: activationFailure,
