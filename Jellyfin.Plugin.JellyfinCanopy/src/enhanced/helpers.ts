@@ -34,8 +34,22 @@ interface ItemCacheEntry {
 }
 
 // Shared cache for item payloads to deduplicate cross-module ApiClient.getItem calls
+export const ITEM_CACHE_MAX_ENTRIES = 500;
+export const ITEM_CACHE_MAX_IN_FLIGHT = 500;
 const itemCache = new Map<string, ItemCacheEntry>();
+const inFlightItems = new Map<string, ItemCacheEntry>();
 const ITEM_CACHE_TTL_MS = 30000; // 30s -- long enough for batch prefetch to warm cache before tag systems scan
+
+/** Boot-local resolved-value LRU; avoids adding a split request to cold boot. */
+function setItemCache(key: string, entry: ItemCacheEntry): void {
+    itemCache.delete(key);
+    itemCache.set(key, entry);
+    while (itemCache.size > ITEM_CACHE_MAX_ENTRIES) {
+        const oldest = itemCache.keys().next().value;
+        if (oldest === undefined) break;
+        itemCache.delete(oldest);
+    }
+}
 
 /**
  * Drop short-lived native item DTOs for one account (or every account).
@@ -45,6 +59,7 @@ const ITEM_CACHE_TTL_MS = 30000; // 30s -- long enough for batch prefetch to war
 export function clearItemCache(userId?: string, itemIds?: string[]): void {
     if (!userId) {
         itemCache.clear();
+        inFlightItems.clear();
         return;
     }
     const normalizedUserId = userId.replace(/-/g, '').toLowerCase();
@@ -54,6 +69,10 @@ export function clearItemCache(userId?: string, itemIds?: string[]): void {
     for (const [key, entry] of itemCache) {
         if (entry.userId !== normalizedUserId) continue;
         if (!selected || selected.has(entry.itemId)) itemCache.delete(key);
+    }
+    for (const [key, entry] of inFlightItems) {
+        if (entry.userId !== normalizedUserId) continue;
+        if (!selected || selected.has(entry.itemId)) inFlightItems.delete(key);
     }
 }
 
@@ -81,21 +100,34 @@ export async function getItemCached(itemId: string, options: GetItemCachedOption
     const entry = itemCache.get(key);
 
     if (!options.forceRefresh && entry && JC.identity.isCurrent(entry.owner)) {
-        if (entry.promise) {
-            return entry.promise;
-        }
         if (entry.item && (now - entry.ts) < ttlMs) {
+            // Refresh recency only for a live hit.
+            itemCache.delete(key);
+            itemCache.set(key, entry);
             return entry.item;
         }
     }
+    // TTL limits freshness, while the hard LRU cap limits cardinality. Drop a
+    // stale value immediately so a failed replacement request cannot leave the
+    // full DTO retained until the next identity reset.
+    if (entry) itemCache.delete(key);
 
+    const active = inFlightItems.get(key);
+    if (!options.forceRefresh && active && JC.identity.isCurrent(active.owner) && active.promise) {
+        return active.promise;
+    }
+    if (inFlightItems.size >= ITEM_CACHE_MAX_IN_FLIGHT) {
+        throw new Error(`Shared item lookup capacity exceeded (${ITEM_CACHE_MAX_IN_FLIGHT} active requests)`);
+    }
+
+    let token: ItemCacheEntry;
     const promise = ApiClient.getItem(userId, itemId)
         .then((item) => {
             if (!JC.identity.isCurrent(context)) return null;
             // A privacy reset or newer forced fetch may retire this request while
             // it is in flight. Only the promise that still owns the key may publish.
-            if (itemCache.get(key)?.promise === promise) {
-                itemCache.set(key, {
+            if (inFlightItems.get(key) === token) {
+                setItemCache(key, {
                     item,
                     ts: Date.now(),
                     promise: null,
@@ -103,28 +135,33 @@ export async function getItemCached(itemId: string, options: GetItemCachedOption
                     userId: normalizedUserId,
                     itemId: normalizedItemId
                 });
+                inFlightItems.delete(key);
             }
             return item;
         })
         .catch((err: unknown) => {
             // Likewise, an older rejection must not delete a newer request/value.
-            if (itemCache.get(key)?.promise === promise) itemCache.delete(key);
+            if (inFlightItems.get(key) === token) inFlightItems.delete(key);
             if (!JC.identity.isCurrent(context)) return null;
             throw err;
         });
 
-    itemCache.set(key, {
+    token = {
         item: null,
         ts: now,
         promise,
         owner: context,
         userId: normalizedUserId,
         itemId: normalizedItemId
-    });
+    };
+    inFlightItems.set(key, token);
     return promise;
 }
 
-JC.identity.registerReset('enhanced-item-cache', () => itemCache.clear());
+JC.identity.registerReset('enhanced-item-cache', () => {
+    itemCache.clear();
+    inFlightItems.clear();
+});
 
 /**
  * Debounce a function call

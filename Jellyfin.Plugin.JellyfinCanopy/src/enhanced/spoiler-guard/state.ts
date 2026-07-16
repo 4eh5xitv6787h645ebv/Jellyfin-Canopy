@@ -8,6 +8,7 @@
 // used (the v12 server keeps identical /spoiler-blur/* paths).
 
 import { JC } from '../../globals';
+import { createBoundedCache } from '../../core/bounded-cache';
 import { normalizeId, pendingKey } from './ids';
 import type { IdentityContext } from '../../types/jc';
 
@@ -72,8 +73,24 @@ const caches: SpoilerCaches = {
  * every re-render / navigation within the TTL window.
  */
 interface MovieScopeResult { inScope: boolean; played: boolean; }
-const SCOPE_TTL_MS = 30_000;
-const scopeCache = new Map<string, { value: MovieScopeResult; ts: number }>();
+export const SCOPE_CACHE_TTL_MS = 30_000;
+// More than eight distinct movie details per second for the full TTL would be
+// required to reach this cap during ordinary browsing.
+export const SCOPE_CACHE_MAX_ENTRIES = 256;
+const scopeCache = createBoundedCache<string, MovieScopeResult>({
+    maxEntries: SCOPE_CACHE_MAX_ENTRIES,
+    ttlMs: SCOPE_CACHE_TTL_MS,
+});
+let scopeCacheGeneration = 0;
+
+function scopeCacheKey(context: IdentityContext, movieId: string): string {
+    return JSON.stringify([context.serverId, context.userId, context.epoch, movieId]);
+}
+
+function clearScopeCache(): void {
+    scopeCacheGeneration += 1;
+    scopeCache.clear();
+}
 
 let userPrefs: SpoilerUserPrefs = {};
 
@@ -119,7 +136,7 @@ export function resetState(): void {
     caches.collections.clear();
     caches.pendingTmdb.clear();
     caches.tmdbToJellyfin.clear();
-    scopeCache.clear();
+    clearScopeCache();
     userPrefs = {};
     loaded = false;
     loadOk = false;
@@ -229,13 +246,18 @@ export function hasEnabledCollections(): boolean {
 export function fetchMovieScope(movieId: string): Promise<MovieScopeResult | null> {
     const n = normalizeId(movieId);
     if (!n) return Promise.resolve(null);
-    const hit = scopeCache.get(n);
-    if (hit && Date.now() - hit.ts < SCOPE_TTL_MS) return Promise.resolve(hit.value);
+    const context = JC.identity.capture();
+    if (!context || !JC.identity.isCurrent(context)) return Promise.resolve(null);
+    const key = scopeCacheKey(context, n);
+    const cacheGeneration = scopeCacheGeneration;
+    const hit = scopeCache.get(key);
+    if (hit) return Promise.resolve(hit);
     return runOwned(() => JC.core.api!.plugin(`/spoiler-blur/scope/movie/${encodeURIComponent(n)}`))
         .then((resp: unknown) => {
             const r = (resp ?? {}) as Partial<MovieScopeResult>;
             const value: MovieScopeResult = { inScope: r.inScope === true, played: r.played === true };
-            scopeCache.set(n, { value, ts: Date.now() });
+            if (scopeCacheGeneration !== cacheGeneration) return null;
+            scopeCache.set(key, value);
             return value;
         })
         .catch((err: unknown) => {
@@ -273,9 +295,9 @@ export function enableForCollection(collectionId: string, collectionName?: strin
         method: 'POST', body: JC.identity.own({ CollectionName: collectionName || '' }, context),
     })).then(() => {
         caches.collections.add(n);
-        // Collection membership changes movie scope — cached scope answers
-        // (keyed by movie id only) are now stale, so drop them all.
-        scopeCache.clear();
+        // Collection membership changes movie scope — every identity-owned
+        // cached movie answer is now stale, so drop them all.
+        clearScopeCache();
     });
 }
 export function disableForCollection(collectionId: string): Promise<void> {
@@ -283,7 +305,7 @@ export function disableForCollection(collectionId: string): Promise<void> {
     return runOwned(() => JC.core.api!.plugin(`/spoiler-blur/collections/${encodeURIComponent(n)}`, { method: 'DELETE' }))
         .then(() => {
             caches.collections.delete(n);
-            scopeCache.clear();
+            clearScopeCache();
         });
 }
 
