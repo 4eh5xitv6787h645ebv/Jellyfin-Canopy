@@ -912,7 +912,10 @@
             candidate.length === path.length
             && candidate.every((segment, index) =>
                 String(segment).toLowerCase() === String(path[index]).toLowerCase()));
-        const converted = {};
+        // Opaque dictionaries must not inherit Object.prototype: otherwise an
+        // absent id such as `toString` or `constructor` looks present to a
+        // consumer that performs property lookup. DTO objects remain ordinary.
+        const converted = opaqueHere ? Object.create(null) : {};
         const sourceByOutput = new Map();
         for (const key of Object.keys(obj)) {
             const outputKey = opaqueHere || opts?.preserveKey?.(key) ? key : convertKey(key);

@@ -218,7 +218,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                 ".leading",
                 "映画-☕",
                 "007",
-                "__proto__"
+                "__proto__",
+                "toString",
+                "constructor",
+                "hasOwnProperty"
             };
             var replacement = ids.ToDictionary(
                 id => id,

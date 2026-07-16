@@ -1194,7 +1194,10 @@ describe('plugin.js loader guards', () => {
 
     it('round-trips every opaque bookmark id while transforming DTO properties', () => {
         const { transformUserFileCase } = caseTransforms();
-        const ids = ['Bm_1_AbC', 'abc', 'Abc', 'item-1:12.25', '.leading', '映画-☕', '007', '__proto__'];
+        const ids = [
+            'Bm_1_AbC', 'abc', 'Abc', 'item-1:12.25', '.leading', '映画-☕', '007',
+            '__proto__', 'toString', 'constructor', 'hasOwnProperty'
+        ];
         const wire = {
             Revision: 7,
             Bookmarks: Object.fromEntries(ids.map((id, index) => [id, {
@@ -1207,9 +1210,13 @@ describe('plugin.js loader guards', () => {
         const local = transformUserFileCase('bookmark.json', wire, 'load') as Record<string, unknown>;
         const localBookmarks = local.bookmarks as Record<string, Record<string, unknown>>;
         expect(Object.keys(localBookmarks)).toEqual(ids);
+        expect(Object.getPrototypeOf(localBookmarks)).toBeNull();
         expect(localBookmarks.abc.itemId).toBe('item-1');
         expect(localBookmarks.Abc.itemId).toBe('item-2');
         expect(localBookmarks['__proto__'].mediaType).toBe('movie');
+        expect(localBookmarks['toString'].itemId).toBe('item-8');
+        expect(localBookmarks['constructor'].itemId).toBe('item-9');
+        expect(localBookmarks['hasOwnProperty'].itemId).toBe('item-10');
 
         const saved = transformUserFileCase('bookmark.json', local, 'save');
         expect(saved).toEqual(wire);
@@ -1256,7 +1263,10 @@ describe('plugin.js loader guards', () => {
 
     it('preserves the audited hidden-content Items dictionary boundary', () => {
         const { transformUserFileCase } = caseTransforms();
-        const ids = ['Movie-A', 'movie-a', '.leading', '映画-1', '007'];
+        const ids = [
+            'Movie-A', 'movie-a', '.leading', '映画-1', '007',
+            '__proto__', 'toString', 'constructor', 'hasOwnProperty'
+        ];
         const wire = {
             Items: Object.fromEntries(ids.map(id => [id, { ItemId: id, HideScope: 'global' }])),
             Settings: { FilterSearch: true }
@@ -1264,7 +1274,10 @@ describe('plugin.js loader guards', () => {
         const local = transformUserFileCase('hidden-content.json', wire, 'load') as Record<string, unknown>;
         const items = local.items as Record<string, Record<string, unknown>>;
         expect(Object.keys(items)).toEqual(ids);
+        expect(Object.getPrototypeOf(items)).toBeNull();
         expect(items['Movie-A'].itemId).toBe('Movie-A');
+        expect(items['toString'].itemId).toBe('toString');
+        expect(items['constructor'].itemId).toBe('constructor');
         expect((local.settings as Record<string, unknown>).filterSearch).toBe(true);
         expect(transformUserFileCase('hidden-content.json', local, 'save')).toEqual(wire);
     });

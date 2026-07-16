@@ -371,6 +371,28 @@ describe('bookmarks data-safety', () => {
         });
     });
 
+    it('owns prototype-named IDs across create, update, delete, post-delete, and delete-all', async () => {
+        const initial = Object.fromEntries([
+            ['toString', { itemId: 'item-string', identityVersion: 1, mediaType: 'movie', timestamp: 10 }],
+            ['constructor', { itemId: 'item-constructor', identityVersion: 1, mediaType: 'movie', timestamp: 20 }]
+        ]);
+        const api = await loadModule(initial);
+
+        expect(Object.keys(JC.userConfig.bookmark.bookmarks)).toEqual(['toString', 'constructor']);
+        await expect(api.update('toString', { label: 'updated' })).resolves.toBe(true);
+        expect(JC.userConfig.bookmark.bookmarks.toString.label).toBe('updated');
+
+        await expect(api.delete('toString')).resolves.toBe(true);
+        expect(Object.prototype.hasOwnProperty.call(JC.userConfig.bookmark.bookmarks, 'toString')).toBe(false);
+        const callsAfterDelete = plugin.mock.calls.length;
+        await expect(api.delete('toString')).resolves.toBe(false);
+        expect(plugin).toHaveBeenCalledTimes(callsAfterDelete);
+
+        await expect(api.deleteAll()).resolves.toBe(1);
+        expect(Object.keys(JC.userConfig.bookmark.bookmarks)).toEqual([]);
+        expect(Object.prototype.hasOwnProperty.call(JC.userConfig.bookmark.bookmarks, 'constructor')).toBe(false);
+    });
+
     it.each([
         ['400', httpError(400)],
         ['401', httpError(401)],
