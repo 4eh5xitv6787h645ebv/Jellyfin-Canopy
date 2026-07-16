@@ -37,6 +37,8 @@ import './core/lifecycle';
 import './core/dom-observer';
 import './core/ui-kit';
 import './core/api-client';
+// Reach the import-pure lazy feature-loader primitive without activating it.
+import './core/feature-loader';
 // Connect the loader-owned identity epoch to core request/lifecycle teardown
 // only after both owners above have installed their public surfaces.
 import './core/identity';
