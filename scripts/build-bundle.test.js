@@ -8,6 +8,7 @@ const test = require('node:test');
 const budget = require('./bundle-budgets.json');
 const {
     assertBudgets,
+    assertPublishedBudgets,
     assertSafeRelativePath,
     assertSourceCensus,
     createBuildArtifacts,
@@ -138,4 +139,18 @@ test('output, request, and byte budgets fail closed', () => {
     const expandedConstrained = JSON.parse(JSON.stringify(budget));
     expandedConstrained.limits.maxFeatureExpandedRequests = 0;
     assert.throws(() => assertBudgets(metrics, expandedConstrained), /feature feature expanded closure budget exceeded/);
+
+    assert.doesNotThrow(() => assertPublishedBudgets(1, 1, budget));
+    const manifestConstrained = JSON.parse(JSON.stringify(budget));
+    manifestConstrained.limits.maxClientManifestRawBytes = 0;
+    assert.throws(
+        () => assertPublishedBudgets(1, 1, manifestConstrained),
+        /client manifest raw bytes budget exceeded/,
+    );
+    const publishedConstrained = JSON.parse(JSON.stringify(budget));
+    publishedConstrained.limits.maxPublishedRawBytes = 1;
+    assert.throws(
+        () => assertPublishedBudgets(1, 1, publishedConstrained),
+        /published raw bytes budget exceeded/,
+    );
 });

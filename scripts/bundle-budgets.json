@@ -17,6 +17,8 @@
     "maxCompatibilityRawBytes": 1500000,
     "maxCompatibilityGzipBytes": 400000,
     "maxSourceMapRawBytes": 6000000,
-    "maxTotalRawBytes": 7000000
+    "maxTotalRawBytes": 7000000,
+    "maxClientManifestRawBytes": 262144,
+    "maxPublishedRawBytes": 7000000
   }
 }

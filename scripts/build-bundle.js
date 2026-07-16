@@ -371,6 +371,19 @@ function assertBudgets(metrics, budget) {
     }
 }
 
+function assertPublishedBudgets(manifestRawBytes, artifactRawBytes, budget) {
+    const checks = [
+        ['client manifest raw bytes', manifestRawBytes, budget.limits.maxClientManifestRawBytes],
+        ['published raw bytes', artifactRawBytes + manifestRawBytes, budget.limits.maxPublishedRawBytes],
+    ];
+    for (const [label, actual, maximum] of checks) {
+        if (!Number.isSafeInteger(maximum) || maximum < 0) {
+            throw new Error(`bundle budget is missing ${label}`);
+        }
+        if (actual > maximum) throw new Error(`${label} budget exceeded: ${actual} > ${maximum}`);
+    }
+}
+
 function createClientManifest(artifacts, metadata, budget) {
     validateArtifacts(artifacts, metadata);
     const files = {};
@@ -406,7 +419,9 @@ async function createBuildArtifacts({ devMode = false, outDir = OUT_DIR, budget 
     const artifacts = collectOutputBytes(results, outDir);
     const metadata = normalizeOutputMetadata(results, outDir);
     const manifest = createClientManifest(artifacts, metadata, resolvedBudget);
-    artifacts.set('client-manifest.json', Buffer.from(`${stableStringify(manifest)}\n`));
+    const manifestBytes = Buffer.from(`${stableStringify(manifest)}\n`);
+    assertPublishedBudgets(manifestBytes.length, manifest.budgets.totalRawBytes, resolvedBudget);
+    artifacts.set('client-manifest.json', manifestBytes);
     return { artifacts, manifest };
 }
 
@@ -507,6 +522,7 @@ if (require.main === module) {
 
 module.exports = {
     assertBudgets,
+    assertPublishedBudgets,
     assertSafeRelativePath,
     assertSourceCensus,
     calculateBudgetMetrics,
