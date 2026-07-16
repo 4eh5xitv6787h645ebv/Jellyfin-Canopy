@@ -574,6 +574,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 RatingTagsPosition = defaultConfig.RatingTagsPosition,
                 ShowRatingInPlayer = defaultConfig.ShowRatingInPlayer,
                 RemoveContinueWatchingEnabled = defaultConfig.RemoveContinueWatchingEnabled,
+                HideFavoritesTab = defaultConfig.HideFavoritesTab,
                 ReviewsExpandedByDefault = defaultConfig.ReviewsExpandedByDefault,
                 DisplayLanguage = defaultConfig.DefaultLanguage,
                 CalendarDisplayMode = "list",

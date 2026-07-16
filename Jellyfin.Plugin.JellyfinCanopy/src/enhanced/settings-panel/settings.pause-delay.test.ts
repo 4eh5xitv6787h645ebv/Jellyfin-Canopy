@@ -14,6 +14,7 @@ import '../config'; // registers the real JC.saveUserSettings
 // Captured before any test overrides JC.saveUserSettings with a spy.
 const realSaveUserSettings = JC.saveUserSettings!;
 const realShowEnhancedPanel = JC.showEnhancedPanel;
+const realApplyHideFavoritesTab = JC.applyHideFavoritesTab;
 
 // Every element wireSettingsListeners() touches synchronously at wiring time is
 // an addSettingToggleListener target (`getElementById(id)!.addEventListener`),
@@ -23,7 +24,7 @@ const TOGGLE_IDS = [
     'autoSkipIntroToggle', 'autoSkipOutroToggle',
     'randomButtonToggle', 'randomUnwatchedOnly',
     'showWatchProgressToggle', 'showFileSizesToggle', 'showAudioLanguagesToggle',
-    'removeContinueWatchingToggle',
+    'removeContinueWatchingToggle', 'hideFavoritesTabToggle',
     'qualityTagsToggle', 'genreTagsToggle', 'pauseScreenToggle',
     'languageTagsToggle', 'ratingTagsToggle', 'peopleTagsToggle',
     'tagsHideOnHoverToggle', 'disableCustomSubtitleStyles', 'longPress2xEnabled',
@@ -61,6 +62,7 @@ describe('pause-screen delay persistence (ENH-1)', () => {
         vi.restoreAllMocks();
         JC.saveUserSettings = realSaveUserSettings;
         JC.showEnhancedPanel = realShowEnhancedPanel;
+        JC.applyHideFavoritesTab = realApplyHideFavoritesTab;
     });
 
     it('POSTs settings.json with the new delay when the delay input changes', () => {
@@ -99,6 +101,30 @@ describe('pause-screen delay persistence (ENH-1)', () => {
 
         await vi.waitFor(() => expect(rebuild).toHaveBeenCalledTimes(2));
         expect(JC.currentSettings.pauseScreenDelaySeconds).toBe(5);
+    });
+
+    it('reapplies the restored Favorites gate after a rejected save with no panel open', async () => {
+        buildSettingsDom();
+        JC.currentSettings = { hideFavoritesTab: true };
+        const appliedValues: boolean[] = [];
+        JC.applyHideFavoritesTab = vi.fn(() => {
+            appliedValues.push(JC.currentSettings?.hideFavoritesTab === true);
+        });
+        JC.saveUserSettings = vi.fn(() => Promise.resolve().then(() => {
+            // Mirrors config.ts restoring the last acknowledged snapshot before
+            // the caller's rejection handler runs.
+            JC.currentSettings!.hideFavoritesTab = true;
+            throw Object.assign(new Error('unavailable'), { status: 503 });
+        }));
+
+        wireSettingsListeners(makeCtx());
+        const toggle = document.getElementById('hideFavoritesTabToggle') as HTMLInputElement;
+        toggle.checked = false;
+        toggle.dispatchEvent(new Event('change'));
+
+        await vi.waitFor(() => expect(appliedValues).toEqual([false, true]));
+        expect(document.getElementById('jellyfin-canopy-panel')).toBeNull();
+        expect(JC.currentSettings.hideFavoritesTab).toBe(true);
     });
 });
 

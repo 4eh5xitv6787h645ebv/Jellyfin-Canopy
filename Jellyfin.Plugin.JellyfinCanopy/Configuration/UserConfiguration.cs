@@ -63,6 +63,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         public string RatingTagsPosition { get; set; } = "bottom-right";
         public bool ShowRatingInPlayer { get; set; } = true;
         public bool RemoveContinueWatchingEnabled { get; set; }
+        public bool HideFavoritesTab { get; set; }
         public string LastOpenedTab { get; set; } = string.Empty;
         public bool ReviewsExpandedByDefault { get; set; }
         public string DisplayLanguage { get; set; } = string.Empty;

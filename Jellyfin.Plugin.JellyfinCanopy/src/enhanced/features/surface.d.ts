@@ -17,5 +17,7 @@ declare module '../../types/jc' {
         addRemoveButton?: () => void;
         /** features-remove-multiselect: injects Remove into the multi-select menu. */
         addMultiSelectRemoveButton?: () => void;
+        /** features-hide-favorites-tab: re-applies the Home Favorites-tab hide gate. */
+        applyHideFavoritesTab?: () => void;
     }
 }

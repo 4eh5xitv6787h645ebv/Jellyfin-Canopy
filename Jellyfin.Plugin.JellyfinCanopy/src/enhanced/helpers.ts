@@ -349,6 +349,23 @@ export function addCSS(id: string, css: string): void {
     JC.core.ui!.injectCss(id, css);
 }
 
+/**
+ * Whether the current route is the Home page that owns the native
+ * Home/Favorites tab strip. Legacy clients route in the hash; modern clients
+ * leave the hash empty and route through pathname/search. Shared by native-tabs
+ * and hide-favorites-tab so both follow core/navigation's route dialect split.
+ */
+export function isOnHomePage(): boolean {
+    const hash = window.location.hash;
+    if (hash) {
+        const legacyRoute = hash.split('?')[0];
+        return legacyRoute === '#/home' || legacyRoute === '#/home.html';
+    }
+
+    const modernRoute = `${window.location.pathname}${window.location.search}`;
+    return modernRoute === '/home' || modernRoute.startsWith('/home?');
+}
+
 export interface ExternalLinkOptions {
     /** Text content. */
     text?: string;

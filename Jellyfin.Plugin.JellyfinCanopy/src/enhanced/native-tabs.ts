@@ -24,7 +24,7 @@
 
 import { JC } from '../globals';
 import { onNavigate } from '../core/navigation';
-import { getHeaderRightContainer } from './helpers';
+import { getHeaderRightContainer, isOnHomePage } from './helpers';
 
 declare global {
     interface Window {
@@ -48,12 +48,6 @@ let injectPending = false;
 // Re-injections (header re-mounts) attach instantly — they run rAF-coalesced
 // off the remount mutation, i.e. before the rebuilt header's first paint.
 const animatedLinkIds = new Set<string>();
-
-function isOnHomePage(): boolean {
-    const hash = window.location.hash;
-    return hash === '' || hash === '#/home' || hash === '#/home.html'
-        || hash.indexOf('#/home?') !== -1 || hash.indexOf('#/home.html?') !== -1;
-}
 
 /** The shared parent of all native `.tabContent.pageTabContent` panels (Home's page root). */
 function getTabsRoot(): HTMLElement | null {

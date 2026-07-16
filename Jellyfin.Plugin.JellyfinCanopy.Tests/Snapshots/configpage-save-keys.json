@@ -99,6 +99,7 @@
   "HiddenContentDefaultShowHideButtons",
   "HiddenContentDefaultShowHideConfirmation",
   "HiddenContentEnabled",
+  "HideFavoritesTab",
   "HideReviewsFromDisabledUsers",
   "HideReviewsFromHiddenUsers",
   "IGNORE_PROVIDERS",
