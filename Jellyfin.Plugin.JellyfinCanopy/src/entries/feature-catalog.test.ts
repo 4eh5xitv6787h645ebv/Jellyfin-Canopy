@@ -41,6 +41,44 @@ describe('built-in detail integration catalog', () => {
         expect(descriptor('bookmarks-page').dependsOn).toEqual(['bookmarks-runtime']);
     });
 
+    it('keeps enabled remove actions identity-global for event-shell menus on any route', () => {
+        const removeActions = descriptor('remove-home-actions');
+        JC.currentSettings = { removeContinueWatchingEnabled: true };
+
+        expect(removeActions.scope).toBe('identity');
+        expect(removeActions.restartOnConfigChange).toBe(true);
+        expect(removeActions.isEnabled(state)).toBe(true);
+        for (const routeKey of ['/web/#/home', '/web/#/details?id=item', '/web/#/nextup']) {
+            expect(removeActions.isApplicable({ ...state, routeKey })).toBe(true);
+        }
+
+        JC.currentSettings.removeContinueWatchingEnabled = false;
+        expect(removeActions.isEnabled(state)).toBe(false);
+        expect(removeActions.isEnabled({ ...state, identity: null })).toBe(false);
+    });
+
+    it('loads activity icons for the dashboard widget without widening to unrelated routes', () => {
+        const activityIcons = descriptor('activity-icons');
+        JC.pluginConfig = { ColoredActivityIconsEnabled: true };
+
+        for (const routeKey of [
+            '/web/#/dashboard',
+            '/web/#/dashboard?tab=home',
+            '/web/#/dashboard/activity',
+            '/web/#/configurationpage?name=plugin',
+        ]) expect(activityIcons.isApplicable({ ...state, routeKey })).toBe(true);
+        for (const routeKey of [
+            '/web/#/home',
+            '/web/#/details?id=item',
+            '/web/#/dashboard/plugins',
+        ]) expect(activityIcons.isApplicable({ ...state, routeKey })).toBe(false);
+
+        expect(activityIcons.isEnabled(state)).toBe(true);
+        JC.pluginConfig.ColoredActivityIconsEnabled = false;
+        expect(activityIcons.isEnabled(state)).toBe(false);
+        expect(activityIcons.isEnabled({ ...state, identity: null })).toBe(false);
+    });
+
     it('keeps every detail integration off non-detail routes and before identity', () => {
         for (const id of ['details-enhancements', 'elsewhere', 'reviews', 'arr-detail-links', 'letterboxd-links']) {
             const item = descriptor(id);

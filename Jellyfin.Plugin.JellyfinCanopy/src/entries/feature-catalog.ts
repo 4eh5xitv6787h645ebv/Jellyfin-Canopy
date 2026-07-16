@@ -38,6 +38,15 @@ function homeRoute(routeKey: string): boolean {
         || /(?:^|\/)home(?:[?#]|$)/.test(route);
 }
 
+function activityIconsRoute(routeKey: string): boolean {
+    const route = routeKey.toLowerCase();
+    // The dashboard landing page embeds recent activity links even though its
+    // route is not the dedicated activity page.
+    return /#\/dashboard(?:[?#]|$)/.test(route)
+        || /#\/dashboard\/activity(?:[/?#]|$)/.test(route)
+        || /#\/configurationpage(?:[?#]|$)/.test(route);
+}
+
 function detailsRoute(routeKey: string): boolean {
     return routeKey.toLowerCase().includes('details');
 }
@@ -131,10 +140,7 @@ export const builtInFeatureDescriptors: readonly ClientFeatureDescriptor[] = Obj
         restartOnConfigChange: true,
         isEnabled: (state) => Boolean(state.identity)
             && JC.pluginConfig?.ColoredActivityIconsEnabled === true,
-        isApplicable: (state) => {
-            const route = state.routeKey.toLowerCase();
-            return route.includes('#/dashboard/activity') || route.includes('#/configurationpage');
-        },
+        isApplicable: (state) => activityIconsRoute(state.routeKey),
     },
     {
         id: 'hide-favorites-tab',
@@ -157,11 +163,13 @@ export const builtInFeatureDescriptors: readonly ClientFeatureDescriptor[] = Obj
     {
         id: 'remove-home-actions',
         entry: 'remove-home-actions',
-        scope: 'navigation',
+        // The global event shell can open a resume/Next-Up card menu outside
+        // the Home route, so its late-bound action facades must follow identity.
+        scope: 'identity',
         restartOnConfigChange: true,
         isEnabled: (state) => Boolean(state.identity)
             && JC.currentSettings?.removeContinueWatchingEnabled === true,
-        isApplicable: (state) => homeRoute(state.routeKey),
+        isApplicable: () => true,
     },
     {
         id: 'calendar-page',

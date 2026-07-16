@@ -36,10 +36,13 @@ beforeEach(() => {
 });
 
 describe('Colored Activity Icons lazy entry', () => {
-    it('requires config plus an activity/configuration route', () => {
+    it('requires config plus a dashboard landing/activity or configuration route', () => {
         expect(isActivityIconsEnabled(state())).toBe(true);
         expect(isActivityIconsRoute(state())).toBe(true);
+        expect(isActivityIconsRoute(state('/web/#/dashboard'))).toBe(true);
+        expect(isActivityIconsRoute(state('/web/#/dashboard?tab=home'))).toBe(true);
         expect(isActivityIconsRoute(state('/web/#/configurationpage?name=x'))).toBe(true);
+        expect(isActivityIconsRoute(state('/web/#/dashboard/plugins'))).toBe(false);
         expect(isActivityIconsRoute(state('/web/#/home'))).toBe(false);
         JC.pluginConfig.ColoredActivityIconsEnabled = false;
         expect(isActivityIconsEnabled(state())).toBe(false);

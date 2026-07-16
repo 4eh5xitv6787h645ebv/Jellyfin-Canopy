@@ -8,7 +8,9 @@ export function isActivityIconsEnabled(state: FeatureLoaderState): boolean {
 
 export function isActivityIconsRoute(state: FeatureLoaderState): boolean {
     const route = state.routeKey.toLowerCase();
-    return route.includes('#/dashboard/activity') || route.includes('#/configurationpage');
+    return /#\/dashboard(?:[?#]|$)/.test(route)
+        || /#\/dashboard\/activity(?:[/?#]|$)/.test(route)
+        || /#\/configurationpage(?:[?#]|$)/.test(route);
 }
 
 export const activityIconsFeature: FeatureModule = Object.freeze({
