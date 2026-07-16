@@ -266,6 +266,8 @@ interface DeclRecord {
 interface FileContext {
     project: Project;
     sf: ts.SourceFile;
+    /** Calls collected during the context pass for deferred contract checks. */
+    calls: ts.CallExpression[];
     /** name -> declarations (resolved lexically at the use site). */
     decls: Map<string, DeclRecord[]>;
     /** name -> `name = rhs` / `name += rhs` assignments (with position). */
@@ -1174,6 +1176,7 @@ function buildContext(project: Project, sf: ts.SourceFile): FileContext {
     const decls = new Map<string, DeclRecord[]>();
     const assignments = new Map<string, Array<{ rhs: ts.Expression; pos: number }>>();
     const pushArgs = new Map<string, Array<{ arg: ts.Expression; pos: number }>>();
+    const calls: ts.CallExpression[] = [];
 
     const record = (name: string, entry: DeclRecord): void => {
         const list = decls.get(name) ?? [];
@@ -1263,6 +1266,7 @@ function buildContext(project: Project, sf: ts.SourceFile): FileContext {
                 }
             }
         } else if (ts.isCallExpression(node)) {
+            calls.push(node);
             const callee = unwrap(node.expression);
             if (ts.isPropertyAccessExpression(callee) && callee.name.text === 'push') {
                 const target = unwrap(callee.expression);
@@ -1276,7 +1280,7 @@ function buildContext(project: Project, sf: ts.SourceFile): FileContext {
         ts.forEachChild(node, collect);
     };
 
-    const ctx: FileContext = { project, sf, decls, assignments, pushArgs, resolving: new Set() };
+    const ctx: FileContext = { project, sf, calls, decls, assignments, pushArgs, resolving: new Set() };
     collect(sf);
     return ctx;
 }
@@ -1553,22 +1557,21 @@ function scanProject(files: Array<{ relPath: string; text: string }>): {
     // site was walked (files are independent) — re-validate every call to a
     // function with sensitive params, project-wide.
     for (const ctx of project.contexts) {
-        const revisit = (node: ts.Node): void => {
-            if (ts.isCallExpression(node) && !isWithinEscaperCall(node)) {
-                const name = calleeName(node);
-                const infos = name !== null ? project.functions.get(name) : undefined;
-                for (const info of infos ?? []) {
-                    const analysis = project.analyses.get(info.fn);
-                    if (analysis && analysis.sensitiveParams.length > 0) {
-                        offenders.push(...validateSensitiveArgs(ctx, node, analysis));
-                    }
+        // Phase 1 already visits every AST node to build lexical context. Reuse
+        // its exact call inventory instead of traversing the whole tree a third
+        // time under V8 coverage merely to rediscover CallExpression nodes.
+        for (const call of ctx.calls) {
+            if (isWithinEscaperCall(call)) continue;
+            const name = calleeName(call);
+            const infos = name !== null ? project.functions.get(name) : undefined;
+            for (const info of infos ?? []) {
+                const analysis = project.analyses.get(info.fn);
+                if (analysis && analysis.sensitiveParams.length > 0) {
+                    offenders.push(...validateSensitiveArgs(ctx, call, analysis));
                 }
             }
-            ts.forEachChild(node, revisit);
-        };
-        revisit(ctx.sf);
+        }
     }
-
     // Dedupe: overlapping rules and repeated function analyses may report
     // the same offending node more than once.
     const seen = new Set<string>();
