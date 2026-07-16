@@ -170,6 +170,16 @@ describe('route page entries', () => {
         }
     });
 
+    it('the boot runtime wires the permanent pages framework before lazy route activation', () => {
+        const bootSource = ts.sys.readFile(`${SRC_ROOT}entries/boot.ts`) ?? '';
+        expect(bootSource).toMatch(/import\s*\{\s*initPagesFramework\s*\}\s*from\s*['"]\.\.\/enhanced\/pages['"]/);
+        const initializeBody = bootSource.slice(bootSource.indexOf('export function initializeClientRuntime'));
+        expect(initializeBody.indexOf('initPagesFramework();')).toBeGreaterThanOrEqual(0);
+        expect(initializeBody.indexOf('runtime.registerFeatureDescriptors')).toBeGreaterThan(
+            initializeBody.indexOf('initPagesFramework();')
+        );
+    });
+
     it('route-only modules have no top-level DOM, listener, timer, request, or identity calls', () => {
         const cold = new Set(runtimeGraph(`${SRC_ROOT}entries/boot.ts`));
         for (const entry of entries) {

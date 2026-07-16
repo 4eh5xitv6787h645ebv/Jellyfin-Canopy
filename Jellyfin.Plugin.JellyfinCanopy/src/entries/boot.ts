@@ -15,7 +15,7 @@ import '../core/live-update';
 import '../enhanced/config';
 import '../enhanced/helpers';
 import '../enhanced/icons';
-import '../enhanced/pages';
+import { initPagesFramework } from '../enhanced/pages';
 import '../enhanced/themer';
 import {
     builtInFeatureDescriptors,
@@ -36,6 +36,10 @@ let descriptorsRegistered = false;
 /** Initialize the singleton runtime and atomically install the built-in catalog once. */
 export function initializeClientRuntime(options: ClientRuntimeOptions): ClientRuntime {
     const runtime = initializeRuntime(options);
+    // The lazy page entries own only their route-scoped renderers. Their
+    // permanent router, fallback-rewrite and entry-point hooks remain boot
+    // infrastructure and must be wired before the first descriptor activation.
+    initPagesFramework();
     if (!descriptorsRegistered) {
         runtime.registerFeatureDescriptors(builtInFeatureDescriptors);
         descriptorsRegistered = true;

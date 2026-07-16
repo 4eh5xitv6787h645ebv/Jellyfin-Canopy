@@ -9,12 +9,12 @@
       "scope": "Jellyfin.Plugin.JellyfinCanopy/src/core/**",
       "report": "coverage/coverage-summary.json",
       "measured": {
-        "coveredLines": 1908,
-        "totalLines": 2250
+        "coveredLines": 1914,
+        "totalLines": 2253
       },
       "tolerance": {
         "missingCoveredLines": 1,
-        "rationale": "Two final clean local Node 22/V8 runs on 2026-07-16 each passed 1210 tests and identically measured the complete 2250-line core scope at 1908 covered lines (84.800%). Issue #318's scope-aware automatic module retry owner adds bounded backoff, visibility pause/resume, graph-attempt eviction, cancellation, and negative lifecycle coverage. Relative to the reviewed 1842/2180 baseline, the reviewed V8 scope grows by 70 instrumented lines and the high-water advances by 66 covered lines while line coverage rises from 84.495%. The existing one-line tolerance is unchanged and permits only the previously reproduced negligible instrumentation variance; coverage-baseline.test.js retains exact below-floor, above-baseline, scope-change, and broad-tolerance negative boundaries."
+        "rationale": "Final clean local Node 22/V8 validation on 2026-07-16 passed 1215 tests and measured the complete 2253-line core scope at 1914 covered lines (84.953%). Issue #318's post-CI settings reconciliation coverage adds three instrumented lines and six covered lines over the reviewed 1908/2250 baseline, increasing rather than diluting line coverage. The existing one-line tolerance is unchanged and permits only the previously reproduced negligible instrumentation variance; coverage-baseline.test.js retains exact below-floor, above-baseline, scope-change, and broad-tolerance negative boundaries."
       }
     },
     "server": {

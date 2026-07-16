@@ -103,6 +103,31 @@ describe('pages framework', () => {
         expect(fallback.textContent).not.toContain('Page not found');
     });
 
+    it('re-adopts a connected fallback after React rewrites it to the native 404 shell', async () => {
+        setHash('#/alpha');
+        const fallback = mountFallback();
+        fireViewBeforeShow(fallback);
+        expect(adoptedPageId()).toBe('alpha');
+
+        // Jellyfin retains this same element while Home is visible. On POP,
+        // navigation first adopts it and React then overwrites the connected
+        // host in place instead of adding a fresh #fallbackPage.
+        setHash('#/home');
+        expect(adoptedPageId()).toBeNull();
+        setHash('#/alpha');
+        expect(adoptedPageId()).toBe('alpha');
+        fallback.className = 'page mainAnimatedPage libraryPage';
+        fallback.setAttribute('data-title', 'Page not found');
+        fallback.innerHTML = '<h1>Page not found</h1>';
+
+        await vi.waitFor(() => {
+            expect(fallback.querySelector('.jc-test-alpha')).not.toBeNull();
+        });
+        expect(fallback.classList.contains('jc-page-host')).toBe(true);
+        expect(fallback.textContent).not.toContain('Page not found');
+        expect(adoptedPageId()).toBe('alpha');
+    });
+
     it('rejects a deferred fallback after its page route becomes stale', async () => {
         setHash('#/alpha');
         const fallback = mountFallback();

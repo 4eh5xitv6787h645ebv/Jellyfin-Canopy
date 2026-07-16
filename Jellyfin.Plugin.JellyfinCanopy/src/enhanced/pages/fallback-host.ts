@@ -266,17 +266,22 @@ function handleNavigate(): void {
     }
 }
 
-/** Return the canonical newly-connected fallback from one structural batch. */
-function addedFallback(mutations: readonly MutationRecord[]): HTMLElement | null {
+/** Return the canonical fallback changed by one structural batch. */
+function structurallyChangedFallback(mutations: readonly MutationRecord[]): HTMLElement | null {
+    const fallback = document.getElementById('fallbackPage');
+    if (!(fallback instanceof HTMLElement) || !fallback.isConnected) return null;
+
     for (const mutation of mutations) {
+        // Jellyfin's POP path can retain the same connected fallback while on
+        // Home, then let React rewrite that element's attributes and children
+        // back to the native 404 shell. The child-list record targets the
+        // existing fallback (or a descendant); no new #fallbackPage is added.
+        if (mutation.target === fallback || fallback.contains(mutation.target)) {
+            return fallback;
+        }
         for (const node of mutation.addedNodes) {
-            const candidate = node instanceof HTMLElement && node.id === 'fallbackPage'
-                ? node
-                : node instanceof Element
-                    ? node.querySelector<HTMLElement>('#fallbackPage')
-                    : null;
-            if (candidate?.isConnected && document.getElementById('fallbackPage') === candidate) {
-                return candidate;
+            if (node === fallback || node.contains(fallback)) {
+                return fallback;
             }
         }
     }
@@ -284,21 +289,24 @@ function addedFallback(mutations: readonly MutationRecord[]): HTMLElement | null
 }
 
 /**
- * POP can announce the page URL before React mounts its fresh fallback and,
- * on that path, Jellyfin 12 does not reliably emit viewbeforeshow afterwards.
- * Reuse the shared structural observer as the final mount signal. The first
- * route lookup is a cheap fast-path; after finding the element, resolve again
- * so an alpha -> home/beta transition can never adopt alpha's stale owner.
+ * POP can announce the page URL before React mounts a fresh fallback, or React
+ * can reuse the still-connected fallback and overwrite an early adoption with
+ * its native 404 shell. Jellyfin 12 does not reliably emit viewbeforeshow on
+ * either path, so reuse the shared structural observer as the final mount or
+ * rewrite signal. The first route lookup is a cheap fast-path; after finding
+ * the element, resolve again so an alpha -> home/beta transition can never
+ * adopt alpha's stale owner.
  */
 function handleFallbackMount(mutations: readonly MutationRecord[]): void {
     if (!resolvePage()) return;
-    const fallback = addedFallback(mutations);
+    const fallback = structurallyChangedFallback(mutations);
     if (!fallback) return;
 
     const descriptor = resolvePage();
     if (!descriptor || !pageAvailable(descriptor)) return;
     const currentId = adoptedPageId();
-    if (currentId === descriptor.id || currentId !== null) return;
+    if (currentId === descriptor.id && fallback.classList.contains('jc-page-host')) return;
+    if (currentId !== null && adoption?.host !== fallback) return;
     adopt(descriptor, fallback);
 }
 
