@@ -9,12 +9,12 @@
       "scope": "Jellyfin.Plugin.JellyfinCanopy/src/core/**",
       "report": "coverage/coverage-summary.json",
       "measured": {
-        "coveredLines": 1914,
+        "coveredLines": 1915,
         "totalLines": 2253
       },
       "tolerance": {
         "missingCoveredLines": 1,
-        "rationale": "Final clean local Node 22/V8 validation on 2026-07-16 passed 1215 tests and measured the complete 2253-line core scope at 1914 covered lines (84.953%). Issue #318's post-CI settings reconciliation coverage adds three instrumented lines and six covered lines over the reviewed 1908/2250 baseline, increasing rather than diluting line coverage. The existing one-line tolerance is unchanged and permits only the previously reproduced negligible instrumentation variance; coverage-baseline.test.js retains exact below-floor, above-baseline, scope-change, and broad-tolerance negative boundaries."
+        "rationale": "Clean local Node 22/V8 validation on 2026-07-17 passed 1228 tests and measured the complete 2253-line core scope at 1915 covered lines (84.998%). Issue #123's live hidden-content invalidation subscription covers one previously uncovered core live-event line over the reviewed 1914/2253 baseline, increasing rather than diluting line coverage. The existing one-line tolerance is unchanged and permits only the previously reproduced negligible instrumentation variance; coverage-baseline.test.js retains exact below-floor, above-baseline, scope-change, and broad-tolerance negative boundaries."
       }
     },
     "server": {

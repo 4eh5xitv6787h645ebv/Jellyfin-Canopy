@@ -1,6 +1,9 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { LIVE } from '../core/live';
 import { JC } from '../globals';
 import { createTestFeatureScope } from '../test/feature-scope';
+
+let liveOnSpy: ReturnType<typeof vi.spyOn>;
 
 const mocks = vi.hoisted(() => ({
     cancelInitial: vi.fn(),
@@ -8,8 +11,10 @@ const mocks = vi.hoisted(() => ({
     clearFilter: vi.fn(),
     disposeFacade: vi.fn(),
     initialize: vi.fn(),
+    invalidateParentSeries: vi.fn(),
     install: vi.fn(),
     installPersistence: vi.fn(),
+    liveDispose: vi.fn(),
     persistenceDispose: vi.fn(),
     resetButtons: vi.fn(),
     resetDialogs: vi.fn(),
@@ -20,7 +25,10 @@ const mocks = vi.hoisted(() => ({
 vi.mock('../enhanced/hidden-content/buttons', () => ({ resetButtonUi: mocks.resetButtons }));
 vi.mock('../enhanced/hidden-content/data', () => ({ clearIdentityData: mocks.clearData }));
 vi.mock('../enhanced/hidden-content/dialogs', () => ({ resetDialogUi: mocks.resetDialogs }));
-vi.mock('../enhanced/hidden-content/filter', () => ({ clearFilterIdentityState: mocks.clearFilter }));
+vi.mock('../enhanced/hidden-content/filter', () => ({
+    clearFilterIdentityState: mocks.clearFilter,
+    invalidateParentSeriesAssociations: mocks.invalidateParentSeries,
+}));
 vi.mock('../enhanced/hidden-content/init', () => ({
     cancelInitialFilter: mocks.cancelInitial,
     initializeHiddenContent: mocks.initialize,
@@ -41,7 +49,12 @@ beforeEach(() => {
     vi.clearAllMocks();
     mocks.install.mockReturnValue(mocks.disposeFacade);
     mocks.installPersistence.mockReturnValue(mocks.persistenceDispose);
+    liveOnSpy = vi.spyOn(JC.core.live!, 'on').mockReturnValue(mocks.liveDispose);
     JC.pluginConfig = { HiddenContentEnabled: true };
+});
+
+afterEach(() => {
+    vi.restoreAllMocks();
 });
 
 describe('Hidden Content lazy runtime contract', () => {
@@ -73,6 +86,10 @@ describe('Hidden Content lazy runtime contract', () => {
         expect(mocks.install).toHaveBeenCalledTimes(1);
         expect(mocks.installPersistence).toHaveBeenCalledTimes(1);
         expect(mocks.initialize).toHaveBeenCalledTimes(1);
+        expect(liveOnSpy).toHaveBeenCalledWith(
+            LIVE.LIBRARY_CHANGED,
+            mocks.invalidateParentSeries,
+        );
 
         await harness.dispose();
         await harness.dispose();
@@ -85,6 +102,7 @@ describe('Hidden Content lazy runtime contract', () => {
             mocks.resetDialogs,
             mocks.resetPanel,
             mocks.resetPersistence,
+            mocks.liveDispose,
         ]) expect(cleanup).toHaveBeenCalledTimes(1);
     });
 });
