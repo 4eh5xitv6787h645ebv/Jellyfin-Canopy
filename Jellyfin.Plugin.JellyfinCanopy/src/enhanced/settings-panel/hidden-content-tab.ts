@@ -71,7 +71,8 @@ export function wireHiddenContentListeners(ctx: PanelContext): void {
             buttonsToggle.addEventListener('change', (e) => {
                 (JC as any).hiddenContent.updateSettings({ showHideButtons: (e.target as HTMLInputElement).checked });
                 if ((e.target as HTMLInputElement).checked) {
-                    if ((JC as any).hiddenContent.getSettings().showButtonLibrary) {
+                    const settings = (JC as any).hiddenContent.getSettings();
+                    if (settings.showButtonLibrary || settings.showButtonCast) {
                         (JC as any).hiddenContent.addLibraryHideButtons();
                     }
                 } else {

@@ -7,6 +7,7 @@
 
 import { JC } from '../../globals';
 import { createStableMethodFacade } from '../../core/feature-loader';
+import { onBodyMutation } from '../../core/dom-observer';
 // Shared action-sheet platform helpers live in core (used by Remove, multi-select Remove and arr
 // Search) — one source, so a positioning/close bug is fixed once for every injector.
 import {
@@ -14,6 +15,12 @@ import {
     fitActionSheetItem, closeOpenActionSheet,
 } from '../../core/action-sheet';
 import type { IdentityContext } from '../../types/jc';
+import {
+    acquireHomeRowScopes,
+    createHomeRowScopeResolver,
+    primeHomeRowScopes,
+    resolveHomeRowScope,
+} from '../home-row-scope';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -55,36 +62,15 @@ export const REMOVE_SURFACES: Record<string, RemoveSurfaceConfig> = {
 const REMOVE_CONTEXT_TTL_MS = 5000;
 
 /**
- * Determines which home-screen surface a card belongs to, using locale-independent
- * signals so detection survives translated section titles and custom themes:
- *   • Next Up — the section title is a link to the Next Up list (`?type=nextup`).
- *   • Continue Watching — resume cards carry a `data-positionticks` playback position.
- * A localized section-title text check is kept as a last-resort fallback.
+ * Determines which home-screen surface a card belongs to through the shared,
+ * identity-scoped Jellyfin 12 row resolver. Unresolved rows deliberately
+ * return null so a first interaction cannot target the wrong endpoint.
  * @param el A `.card` element, or any element inside/representing one.
  */
 export function detectCardSurface(el: any): 'continuewatching' | 'nextup' | null {
-    if (!el) return null;
-    const card = (typeof el.closest === 'function' ? el.closest('.card') : null) || el;
-    const section = typeof card.closest === 'function'
-        ? card.closest('.section, .verticalSection, .homeSection')
-        : null;
-
-    // Next Up: the section title links to the Next Up list — present regardless of locale.
-    if (section && section.querySelector('a[href*="type=nextup"]')) return 'nextup';
-
-    // Continue Watching: only resume cards expose a playback position.
-    const ticks = (card.getAttribute && card.getAttribute('data-positionticks'))
-        || (el.getAttribute && el.getAttribute('data-positionticks'));
-    if (ticks) return 'continuewatching';
-
-    // Fallback for markup/themes without the link or ticks: localized section title text.
-    if (section) {
-        const title = (section.querySelector('.sectionTitle, h2, .headerText, .sectionTitle-sectionTitle')?.textContent || '')
-            .toLowerCase().trim();
-        if (title.includes('next up')) return 'nextup';
-        if (title.includes('continue watching')) return 'continuewatching';
-    }
-    return null;
+    if (!(el instanceof Element)) return null;
+    const row = resolveHomeRowScope(el);
+    return row.kind === 'continuewatching' || row.kind === 'nextup' ? row.kind : null;
 }
 
 /**
@@ -177,14 +163,30 @@ export async function removeFromHomeSurface(itemId: string, surface: string, car
 export function hideEmptyHomeSections(): void {
     try {
         const sections = document.querySelectorAll<HTMLElement>('.verticalSection, .section, .homeSection');
+        const resolveRow = createHomeRowScopeResolver();
         for (const section of sections) {
-            const titleEl = section.querySelector('.sectionTitle, h2, .headerText, .sectionTitle-sectionTitle');
-            const title = (titleEl?.textContent || '').toLowerCase().trim();
-            const isCW = title.startsWith('continue watching');
-            const isNextUp = title.startsWith('next up');
-            if (!isCW && !isNextUp) continue;
+            const row = resolveRow(section);
+            const isScoped = row.kind === 'continuewatching' || row.kind === 'nextup';
+            if (!isScoped) {
+                if (section.dataset.jcHomeSectionHidden === '1') {
+                    section.style.removeProperty('display');
+                    delete section.dataset.jcHomeSectionHidden;
+                }
+                continue;
+            }
 
-            const cards = section.querySelectorAll<HTMLElement>('.card[data-positionticks], .card[data-id]');
+            const cards = section.querySelectorAll<HTMLElement>('.card[data-id], .card[data-itemid]');
+            // An empty row is also Jellyfin's normal pre-fetch state. Only
+            // collapse rows whose cards exist and were all hidden by a
+            // completed plugin action/filter pass; otherwise fail visible so
+            // late async cards are never trapped inside display:none.
+            if (cards.length === 0) {
+                if (section.dataset.jcHomeSectionHidden === '1') {
+                    section.style.removeProperty('display');
+                    delete section.dataset.jcHomeSectionHidden;
+                }
+                continue;
+            }
             let visibleCount = 0;
             for (const card of cards) {
                 if (card.classList.contains('jc-hidden')) continue;
@@ -194,6 +196,9 @@ export function hideEmptyHomeSections(): void {
             if (visibleCount === 0) {
                 section.style.display = 'none';
                 section.dataset.jcHomeSectionHidden = '1';
+            } else if (section.dataset.jcHomeSectionHidden === '1') {
+                section.style.removeProperty('display');
+                delete section.dataset.jcHomeSectionHidden;
             }
         }
     } catch (err) {
@@ -296,7 +301,10 @@ export function addRemoveButton(): void {
         }
         existing.remove();
     }
-    if (!wantSurface) { JC.state!.removeContext = null; return; }
+    // Keep an unresolved trigger until its short TTL expires. The shared
+    // preferences-ready callback can then resolve the same source card and
+    // inject into the action sheet that is already open.
+    if (!wantSurface) return;
 
     const removeButton = createRemoveButton(context, scroller, ctx.itemId, wantSurface, ctx.card as HTMLElement | undefined);
     insertionPoint.after(removeButton);
@@ -328,19 +336,45 @@ const stableRemoveHome = createStableMethodFacade<typeof removeHomeApi>({
     detect: () => null,
     hideEmpty() {},
 });
+let removeHomeObserverSequence = 0;
+
+function reconcilePendingRemoveContext(): void {
+    hideEmptyHomeSections();
+    const ctx = JC.state?.removeContext;
+    if (!ctx?.itemId || (Date.now() - (ctx.ts || 0)) > REMOVE_CONTEXT_TTL_MS) return;
+    const card = ctx.card;
+    if (!(card instanceof Element)) return;
+    const surface = detectCardSurface(card);
+    if (!surface) return;
+    ctx.surface = surface;
+    addRemoveButton();
+}
 
 /** Publish frozen compatibility methods for one loader-owned activation. */
 export function installRemoveHome(): () => void {
     const uninstall = stableRemoveHome.install(removeHomeApi);
+    const releaseRowScopes = acquireHomeRowScopes(reconcilePendingRemoveContext);
+    primeHomeRowScopes();
     JC.addRemoveButton = stableRemoveHome.facade.add;
     JC.detectCardSurface = stableRemoveHome.facade.detect;
     JC.hideEmptyHomeSections = stableRemoveHome.facade.hideEmpty;
+    const mutationHandle = onBodyMutation(`remove-home-row-restore-${++removeHomeObserverSequence}`, (mutations) => {
+        for (const mutation of mutations) {
+            const target = mutation.target;
+            const targetElement = target instanceof Element ? target : target.parentElement;
+            if (!targetElement?.closest('[data-jc-home-section-hidden="1"]')) continue;
+            hideEmptyHomeSections();
+            break;
+        }
+    });
     const unregisterReset = JC.identity.registerReset('remove-home', resetRemoveHome);
     let disposed = false;
     return () => {
         if (disposed) return;
         disposed = true;
         resetRemoveHome();
+        mutationHandle.unsubscribe();
+        releaseRowScopes();
         unregisterReset();
         uninstall();
     };
