@@ -108,6 +108,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
         public sealed class SeerrIntegrationSnapshot
         {
             private readonly SeerrMutationConfigStamp _stamp;
+            private readonly PluginConfiguration? _configuration;
             private readonly string[] _urls;
 
             private SeerrIntegrationSnapshot(
@@ -119,7 +120,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                 SeerrMutationConfigStamp stamp)
             {
                 State = state;
-                Configuration = configuration;
+                _configuration = configuration;
                 ConfigurationRevision = configurationRevision;
                 _urls = (string[])urls.Clone();
                 ApiKey = apiKey;
@@ -130,7 +131,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
 
             public bool IsActive => State == SeerrIntegrationState.Active;
 
-            public PluginConfiguration? Configuration { get; }
+            /// <summary>
+            /// Gets an isolated copy of the captured options. Mutating the
+            /// returned object cannot alter this snapshot's URL, credential,
+            /// option, stamp, or generation projections.
+            /// </summary>
+            public PluginConfiguration? Configuration => _configuration == null
+                ? null
+                : SeerrMutationConfigStamp.CloneOwnedConfiguration(_configuration);
 
             public long ConfigurationRevision { get; }
 
@@ -140,16 +148,41 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
 
             internal SeerrMutationConfigStamp ConfigurationStamp => _stamp;
 
+            /// <summary>
+            /// Opaque owner key for caches, reservations and single-flight work
+            /// whose result is valid only for this exact configuration
+            /// generation. Identical replacement saves remain distinct while
+            /// an unpublished/failed save leaves the identity unchanged.
+            /// </summary>
+            internal string GenerationIdentity => _stamp.GenerationIdentity;
+
             internal SeerrDispatchFence CreateDispatchFence(IPluginConfigProvider provider)
                 => SeerrDispatchFence.Create(this, provider);
 
             internal static SeerrIntegrationSnapshot Capture(IPluginConfigProvider provider)
             {
-                var configuration = provider.ConfigurationOrNull;
+                var liveConfiguration = provider.ConfigurationOrNull;
                 var revision = provider.ConfigurationRevision;
-                if (configuration == null)
+                if (liveConfiguration == null)
                 {
                     return Inactive(SeerrIntegrationState.ConfigurationUnavailable, revision);
+                }
+
+                PluginConfiguration configuration;
+                SeerrMutationConfigStamp stamp;
+                try
+                {
+                    (configuration, stamp) = SeerrMutationConfigStamp.CaptureOwnedSnapshot(
+                        liveConfiguration,
+                        revision);
+                }
+                catch
+                {
+                    // A concurrent same-object mutation can make serialization
+                    // fail. Capture is an authorization boundary, so it must
+                    // return no credentials or targets rather than leak a
+                    // partial projection or authorize fail-open.
+                    return Inactive(SeerrIntegrationState.ConfigurationChanged, revision);
                 }
 
                 if (!AllowsDeferredScheduling(configuration))
@@ -168,7 +201,6 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                     return Inactive(SeerrIntegrationState.UrlsInvalid, revision);
                 }
 
-                var stamp = SeerrMutationConfigStamp.Capture(configuration, revision);
                 var snapshot = new SeerrIntegrationSnapshot(
                     SeerrIntegrationState.Active,
                     configuration,

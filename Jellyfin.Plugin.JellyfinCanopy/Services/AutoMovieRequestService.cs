@@ -29,7 +29,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         private readonly IUserManager _userManager;
         private readonly ILibraryManager _libraryManager;
 
-        // Track which movies have already been requested to avoid duplicates (with timestamps for expiry)
+        // Track which movies have already been requested in an exact Seerr
+        // configuration generation to avoid duplicates (with timestamps for expiry).
         private static readonly TimeSpan RequestReservationTtl = TimeSpan.FromHours(1);
         private readonly BoundedTtlCache<string, byte> _requestedMovies = new(
             maximumEntries: 16_384,
@@ -65,14 +66,23 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
         // Checks a movie to determine if the next movie in collection should be requested.
         // Event-driven entry point called when a user starts watching a movie.
-        public async Task<AutoRequestPlaybackOutcome> CheckMovieForCollectionRequestAsync(
+        public Task<AutoRequestPlaybackOutcome> CheckMovieForCollectionRequestAsync(
             BaseItem movieItem,
             Guid userId)
+            => CheckMovieForCollectionRequestAsync(
+                movieItem,
+                userId,
+                SeerrIntegrationPolicy.Capture(_configProvider));
+
+        internal async Task<AutoRequestPlaybackOutcome> CheckMovieForCollectionRequestAsync(
+            BaseItem movieItem,
+            Guid userId,
+            SeerrIntegrationPolicy.SeerrIntegrationSnapshot integration)
         {
-            var config = _configProvider.ConfigurationOrNull;
-            if (config == null
-                || !config.AutoMovieRequestEnabled
-                || !SeerrIntegrationPolicy.HasUsableSavedConfiguration(config))
+            var config = integration.Configuration;
+            if (!integration.IsActive
+                || config?.AutoMovieRequestEnabled != true
+                || !integration.IsCurrent(_configProvider))
             {
                 return AutoRequestPlaybackOutcome.DefinitiveNoop;
             }
@@ -83,9 +93,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 return AutoRequestPlaybackOutcome.RetryableFailure;
             }
 
-            var mutationConfigStamp = SeerrMutationConfigStamp.Capture(
-                config,
-                _configProvider.ConfigurationRevision);
+            var mutationConfigStamp = integration.ConfigurationStamp;
+            var operationGenerationIdentity = integration.GenerationIdentity;
 
             // Custom Radarr ids and root folders are instance-local, but the
             // persisted settings do not carry a Seerr source identity. They are
@@ -186,7 +195,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             // callers see it immediately, then remove on failure to allow retries.
             var requestKey = BuildSourceScopedKey(
                 seerrSourceUrl,
-                $"{nextMovieInfo.TmdbId}:{(requestIs4k ? "4k" : "normal")}");
+                $"{operationGenerationIdentity}:{nextMovieInfo.TmdbId}:{(requestIs4k ? "4k" : "normal")}");
             BoundedTtlCache<string, byte>.CacheToken reservation;
             lock (_movieCacheLock)
             {

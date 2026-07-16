@@ -843,15 +843,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                         _configProvider.ConfigurationOrNull,
                         _configProvider.ConfigurationRevision));
 
-                // Claim the throttle slot atomically to prevent concurrent imports
-                lock (_seerrCache.ImportThrottleLock)
+                // Claim the generation-owned throttle slot atomically to
+                // prevent concurrent imports without suppressing a replacement.
+                if (!_seerrCache.TryReserveManualImport(
+                    integration.GenerationIdentity,
+                    DateTime.UtcNow))
                 {
-                    if ((DateTime.UtcNow - _seerrCache.LastManualImport).TotalSeconds < 30)
-                    {
-                        return StatusCode(429, new { error = "Import was run recently. Please wait before retrying." });
-                    }
-
-                    _seerrCache.LastManualImport = DateTime.UtcNow;
+                    return StatusCode(429, new { error = "Import was run recently. Please wait before retrying." });
                 }
 
                 _logger.LogInformation("[Manual User Import] Starting manual Seerr user import...");
@@ -887,10 +885,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 // and retry without waiting 30s.
                 if (importResult.Imported == 0 && importResult.Errors.Count > 0)
                 {
-                    lock (_seerrCache.ImportThrottleLock)
-                    {
-                        _seerrCache.LastManualImport = DateTime.MinValue;
-                    }
+                    // An old generation may finish after B has claimed its own
+                    // slot. It can release only the reservation it owns.
+                    _seerrCache.ReleaseManualImport(integration.GenerationIdentity);
                 }
 
                 if (importResult.Succeeded)

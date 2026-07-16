@@ -457,6 +457,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             var config = integration.Configuration!;
             var configurationRevision = integration.ConfigurationRevision;
             var configurationIdentity = BuildConfigurationIdentity(config);
+            var autoImportThrottleKey = BuildAutoImportThrottleKey(
+                NormalizeUserId(jellyfinUserId),
+                integration.GenerationIdentity);
             var importConfigStamp = SeerrMutationConfigStamp.Capture(
                 config,
                 configurationRevision);
@@ -585,7 +588,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
 
                 if (cachedResolution.IsFound)
                 {
-                    ClearAutoImportFailureThrottle(cacheKey);
+                    ClearAutoImportFailureThrottle(autoImportThrottleKey);
                 }
 
                 return cachedResolution;
@@ -700,7 +703,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
 
                 // A successful authoritative lookup supersedes any previous
                 // transient auto-import failure for this user.
-                ClearAutoImportFailureThrottle(cacheKey);
+                ClearAutoImportFailureThrottle(autoImportThrottleKey);
 
                 if (!ConfigurationIsCurrent())
                 {
@@ -755,7 +758,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                 // response-cache setting: it never represents absence, it only
                 // prevents repeated/concurrent mutation attempts after an
                 // incomplete outcome. An explicit bypass forces a retry.
-                if (!TryReserveAutoImportAttempt(cacheKey, bypassCache))
+                if (!TryReserveAutoImportAttempt(autoImportThrottleKey, bypassCache))
                 {
                     return SeerrUserResolution.Incomplete(
                         "A recent Seerr user import attempt was inconclusive; retry is temporarily throttled.");
@@ -783,23 +786,26 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                     // bypass) so another caller cannot immediately replay this
                     // non-idempotent import. The original cancellation still
                     // propagates, and the normal short TTL permits a later retry.
-                    RecordAutoImportFailure(cacheKey);
+                    if (ConfigurationIsCurrent())
+                    {
+                        RecordAutoImportFailure(autoImportThrottleKey);
+                    }
                     throw;
                 }
 
                 if (!ConfigurationIsCurrent())
                 {
                     // The POST may have committed just before the generation
-                    // changed. Keep the ambiguity throttle and never publish
-                    // that old-generation identity to this caller.
-                    RecordAutoImportFailure(cacheKey);
+                    // changed. Never publish an old-generation throttle after
+                    // save-time invalidation; the replacement endpoint is a
+                    // distinct identity domain and must be allowed to refetch.
                     return ConfigurationChanged();
                 }
 
                 importDefinite = authoritativeNotImportable;
                 if (importedUser != null)
                 {
-                    ClearAutoImportFailureThrottle(cacheKey);
+                    ClearAutoImportFailureThrottle(autoImportThrottleKey);
                     if (cacheEnabled)
                     {
                         lock (_seerrCache.UserCacheLock)
@@ -815,7 +821,6 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                     if (!ConfigurationIsCurrent())
                     {
                         RemovePublishedUserCache(cacheKey, importedUser);
-                        RecordAutoImportFailure(cacheKey);
                         return ConfigurationChanged();
                     }
 
@@ -824,11 +829,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
 
                 if (importDefinite)
                 {
-                    ClearAutoImportFailureThrottle(cacheKey);
+                    ClearAutoImportFailureThrottle(autoImportThrottleKey);
                 }
                 else
                 {
-                    RecordAutoImportFailure(cacheKey);
+                    RecordAutoImportFailure(autoImportThrottleKey);
                 }
             }
 
@@ -905,6 +910,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                 _seerrCache.AutoImportFailureThrottle.Remove(cacheKey);
             }
         }
+
+        internal static string BuildAutoImportThrottleKey(
+            string normalizedJellyfinUserId,
+            string generationIdentity)
+            => $"{generationIdentity}:{normalizedJellyfinUserId}";
 
         private async Task<(SeerrUser? User, bool Definite)> TryAutoImportSeerrUser(
             string jellyfinUserId,

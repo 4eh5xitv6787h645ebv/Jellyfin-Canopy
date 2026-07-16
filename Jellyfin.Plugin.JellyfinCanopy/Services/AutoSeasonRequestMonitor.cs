@@ -55,8 +55,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             try
             {
                 // Check if auto-season-request is enabled
-                var config = GetEnabledConfiguration();
-                if (config == null)
+                var integration = GetEnabledIntegration();
+                if (integration?.Configuration is not PluginConfiguration config)
                 {
                     return;
                 }
@@ -93,12 +93,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     var userId = session.UserId;
                     var sessionItemKey = $"stopped_{userId}_{item.Id}";
                     var executed = await ExecuteDeduplicatedAsync(
+                        integration,
                         sessionItemKey,
                         async () =>
                         {
                             _logger.LogInformation($"[Auto-Season-Request] Episode '{item.Name}' completed by {session.UserName ?? "Unknown"}, checking threshold");
                             return await _autoSeasonRequestService
-                                .CheckEpisodeCompletionAsync(item, userId)
+                                .CheckEpisodeCompletionAsync(item, userId, integration)
                                 .ConfigureAwait(false);
                         }).ConfigureAwait(false);
                     if (!executed)
@@ -129,8 +130,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             try
             {
                 // Check if auto-season-request is enabled
-                var config = GetEnabledConfiguration();
-                if (config == null)
+                var integration = GetEnabledIntegration();
+                if (integration?.Configuration is not PluginConfiguration config)
                 {
                     return;
                 }
@@ -162,12 +163,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                         var sessionItemKey = $"{userId}_{item.Id}";
 
                         await ExecuteDeduplicatedAsync(
+                            integration,
                             sessionItemKey,
                             async () =>
                             {
                                 _logger.LogInformation($"[Auto-Season-Request] Episode '{item.Name}' started by {session.UserName ?? "Unknown"}, checking threshold");
                                 return await _autoSeasonRequestService
-                                    .CheckEpisodeCompletionAsync(item, userId)
+                                    .CheckEpisodeCompletionAsync(item, userId, integration)
                                     .ConfigureAwait(false);
                             }).ConfigureAwait(false);
                     }

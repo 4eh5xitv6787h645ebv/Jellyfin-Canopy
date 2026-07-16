@@ -31,7 +31,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         private readonly IUserDataManager _userDataManager;
         private readonly ILibraryManager _libraryManager;
 
-        // In-memory cache of recently requested seasons to avoid duplicates (keyed by tmdbId_seasonNumber, global across all users)
+        // In-memory cache of recently requested seasons to avoid duplicates,
+        // global across users but partitioned by exact Seerr configuration generation.
         private static readonly TimeSpan RequestReservationTtl = TimeSpan.FromHours(1);
         private readonly BoundedTtlCache<string, byte> _requestedSeasons = new(
             maximumEntries: 16_384,
@@ -253,14 +254,23 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
         // Checks a completed episode to determine if next season should be requested.
         // Event-driven entry point called when a user finishes or starts watching an episode.
-        public async Task<AutoRequestPlaybackOutcome> CheckEpisodeCompletionAsync(
+        public Task<AutoRequestPlaybackOutcome> CheckEpisodeCompletionAsync(
             BaseItem episodeItem,
             Guid userId)
+            => CheckEpisodeCompletionAsync(
+                episodeItem,
+                userId,
+                SeerrIntegrationPolicy.Capture(_configProvider));
+
+        internal async Task<AutoRequestPlaybackOutcome> CheckEpisodeCompletionAsync(
+            BaseItem episodeItem,
+            Guid userId,
+            SeerrIntegrationPolicy.SeerrIntegrationSnapshot integration)
         {
-            var config = _configProvider.ConfigurationOrNull;
-            if (config == null
-                || !config.AutoSeasonRequestEnabled
-                || !SeerrIntegrationPolicy.HasUsableSavedConfiguration(config))
+            var config = integration.Configuration;
+            if (!integration.IsActive
+                || config?.AutoSeasonRequestEnabled != true
+                || !integration.IsCurrent(_configProvider))
             {
                 return AutoRequestPlaybackOutcome.DefinitiveNoop;
             }
@@ -289,7 +299,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 series,
                 seasonNumber,
                 episodeNumber,
-                user).ConfigureAwait(false);
+                user,
+                integration).ConfigureAwait(false);
         }
 
         // Checks if a specific season needs its next season requested
@@ -298,18 +309,30 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             int currentSeasonNumber,
             int currentEpisodeNumber,
             JUser user)
+            => await CheckSeasonForAutoRequest(
+                series,
+                currentSeasonNumber,
+                currentEpisodeNumber,
+                user,
+                SeerrIntegrationPolicy.Capture(_configProvider)).ConfigureAwait(false);
+
+        internal async Task<AutoRequestPlaybackOutcome> CheckSeasonForAutoRequest(
+            Series series,
+            int currentSeasonNumber,
+            int currentEpisodeNumber,
+            JUser user,
+            SeerrIntegrationPolicy.SeerrIntegrationSnapshot integration)
         {
-            var config = _configProvider.ConfigurationOrNull;
-            if (config == null
-                || !config.AutoSeasonRequestEnabled
-                || !SeerrIntegrationPolicy.HasUsableSavedConfiguration(config))
+            var config = integration.Configuration;
+            if (!integration.IsActive
+                || config?.AutoSeasonRequestEnabled != true
+                || !integration.IsCurrent(_configProvider))
             {
                 return AutoRequestPlaybackOutcome.DefinitiveNoop;
             }
 
-            var mutationConfigStamp = SeerrMutationConfigStamp.Capture(
-                config,
-                _configProvider.ConfigurationRevision);
+            var mutationConfigStamp = integration.ConfigurationStamp;
+            var operationGenerationIdentity = integration.GenerationIdentity;
 
             // Get TMDB ID first - we'll need it for Seerr checks
             var tmdbId = GetTmdbId(series);
@@ -419,7 +442,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             // callers see it immediately, then remove on failure to allow retries.
             var cacheKey = BuildSourceScopedKey(
                 seerrSourceUrl,
-                $"{tmdbId}:S{nextSeasonNumber}");
+                $"{operationGenerationIdentity}:{tmdbId}:S{nextSeasonNumber}");
             BoundedTtlCache<string, byte>.CacheToken reservation;
             lock (_requestCacheLock)
             {

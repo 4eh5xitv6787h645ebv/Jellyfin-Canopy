@@ -20,25 +20,23 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.AutoRequest
         private const int MaximumEntries = 16_384;
 
         private readonly object _gate = new();
-        private readonly Dictionary<string, long> _inFlight = new(StringComparer.Ordinal);
-        private readonly BoundedTtlCache<string, byte> _committed;
-        private readonly BoundedTtlCache<string, RetryState> _retryStates;
+        private readonly Dictionary<GenerationKey, long> _inFlight = new();
+        private readonly BoundedTtlCache<GenerationKey, byte> _committed;
+        private readonly BoundedTtlCache<GenerationKey, RetryState> _retryStates;
         private readonly TimeProvider _timeProvider;
         private long _nextGeneration;
 
         public PlaybackRequestDeduplicator(TimeProvider? timeProvider = null)
         {
             _timeProvider = timeProvider ?? TimeProvider.System;
-            _committed = new BoundedTtlCache<string, byte>(
+            _committed = new BoundedTtlCache<GenerationKey, byte>(
                 MaximumEntries,
                 MaximumEntries,
-                comparer: StringComparer.Ordinal,
                 timeProvider: _timeProvider,
                 defaultTtl: () => CommittedTtl);
-            _retryStates = new BoundedTtlCache<string, RetryState>(
+            _retryStates = new BoundedTtlCache<GenerationKey, RetryState>(
                 MaximumEntries,
                 MaximumEntries,
-                comparer: StringComparer.Ordinal,
                 timeProvider: _timeProvider,
                 defaultTtl: () => RetryStateTtl);
         }
@@ -49,13 +47,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.AutoRequest
         /// deduplicated without invoking the operation.
         /// </summary>
         public async Task<bool> ExecuteAsync(
+            string generationIdentity,
             string key,
             Func<Task<AutoRequestPlaybackOutcome>> operation)
         {
+            ArgumentException.ThrowIfNullOrWhiteSpace(generationIdentity);
             ArgumentException.ThrowIfNullOrWhiteSpace(key);
             ArgumentNullException.ThrowIfNull(operation);
 
-            if (!TryReserve(key, out var reservation))
+            if (!TryReserve(new GenerationKey(generationIdentity, key), out var reservation))
             {
                 return false;
             }
@@ -79,7 +79,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.AutoRequest
             return true;
         }
 
-        private bool TryReserve(string key, out Reservation reservation)
+        private bool TryReserve(GenerationKey key, out Reservation reservation)
         {
             lock (_gate)
             {
@@ -106,7 +106,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.AutoRequest
             }
         }
 
-        private bool IsBackedOff(string key)
+        private bool IsBackedOff(GenerationKey key)
         {
             return _retryStates.TryGet(key, out var state)
                 && state.RetryAfter > _timeProvider.GetUtcNow();
@@ -158,7 +158,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.AutoRequest
             return delay <= MaximumBackoff ? delay : MaximumBackoff;
         }
 
-        private readonly record struct Reservation(string Key, long Generation);
+        private readonly record struct GenerationKey(
+            string GenerationIdentity,
+            string OperationKey);
+
+        private readonly record struct Reservation(GenerationKey Key, long Generation);
 
         private readonly record struct RetryState(int Failures, DateTimeOffset RetryAfter);
     }
