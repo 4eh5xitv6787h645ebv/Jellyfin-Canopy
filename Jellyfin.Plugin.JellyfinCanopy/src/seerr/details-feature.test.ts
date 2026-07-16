@@ -31,7 +31,7 @@ vi.mock('./more-info-modal/init', () => ({ installSeerrMoreInfo: mocks.moreInfo.
 
 import { activateSeerrDetailsImplementation } from './details-implementation';
 
-function scope(current = true): { value: FeatureScope; cleanups: Array<() => void> } {
+function scope(current: boolean | { value: boolean } = true): { value: FeatureScope; cleanups: Array<() => void> } {
     const cleanups: Array<() => void> = [];
     return {
         cleanups,
@@ -39,7 +39,7 @@ function scope(current = true): { value: FeatureScope; cleanups: Array<() => voi
             serverId: 'server', userId: 'user', identityEpoch: 1,
             configGeneration: 1, navigationGeneration: 1, routeKey: '/web/#/details?id=1',
             signal: new AbortController().signal,
-            isCurrent: () => current,
+            isCurrent: () => typeof current === 'boolean' ? current : current.value,
             track: <T>(resource: T): T => {
                 cleanups.push(resource as () => void);
                 return resource;
@@ -73,9 +73,53 @@ describe('Seerr details activation', () => {
         }
     });
 
-    it('rolls back stale surface evaluation before reporter initialization', () => {
+    it('does no installer work for an initially stale scope', () => {
         activateSeerrDetailsImplementation(scope(false).value);
         expect(mocks.initializeReporter).not.toHaveBeenCalled();
-        expect(mocks.itemDetails.cleanup).toHaveBeenCalledTimes(1);
+        expect(mocks.modal.install).not.toHaveBeenCalled();
+    });
+
+    it('rolls back prior installers when a later installer throws', () => {
+        const failure = new Error('more-info styles failed');
+        mocks.styles.install.mockImplementationOnce(() => { throw failure; });
+
+        expect(() => activateSeerrDetailsImplementation(scope().value)).toThrow(failure);
+
+        for (const key of ['modal', 'buttons', 'results', 'seasons', 'reporter'] as const) {
+            expect(mocks[key].cleanup).toHaveBeenCalledTimes(1);
+        }
+        expect(mocks.moreInfo.install).not.toHaveBeenCalled();
+        expect(mocks.itemDetails.install).not.toHaveBeenCalled();
+    });
+
+    it('contains a throwing cleanup and continues the reverse teardown', () => {
+        const test = scope();
+        mocks.itemDetails.cleanup.mockImplementationOnce(() => { throw new Error('cleanup failed'); });
+        activateSeerrDetailsImplementation(test.value);
+
+        expect(() => test.cleanups[0]()).not.toThrow();
+        for (const value of Object.values(mocks)) {
+            if (typeof value === 'object' && 'cleanup' in value) {
+                expect(value.cleanup).toHaveBeenCalledTimes(1);
+            }
+        }
+    });
+
+    it('stops and rolls back when the scope becomes stale mid-install', () => {
+        const current = { value: true };
+        mocks.results.install.mockImplementationOnce(() => {
+            current.value = false;
+            return mocks.results.cleanup;
+        });
+        const test = scope(current);
+
+        activateSeerrDetailsImplementation(test.value);
+
+        expect(mocks.modal.cleanup).toHaveBeenCalledTimes(1);
+        expect(mocks.buttons.cleanup).toHaveBeenCalledTimes(1);
+        expect(mocks.results.cleanup).toHaveBeenCalledTimes(1);
+        expect(mocks.seasons.install).not.toHaveBeenCalled();
+        expect(mocks.initializeReporter).not.toHaveBeenCalled();
+        expect(test.cleanups).toHaveLength(0);
     });
 });

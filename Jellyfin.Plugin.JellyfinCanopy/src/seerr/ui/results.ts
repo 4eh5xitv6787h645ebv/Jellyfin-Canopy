@@ -461,27 +461,32 @@ internal.analyzeSeasonStatuses = analyzeSeasonStatuses;
 internal.createSeerrSection = createSeerrSection;
 
 let uninstallIdentityReset: (() => void) | null = null;
-let requestListenerInstalled = false;
+let installLeases = 0;
 
 export function installSeerrResults(): () => void {
-    uninstallIdentityReset ??= JC.identity.registerReset(
-        'seerr-results-placement',
-        resetSeerrResultsIdentity,
-    );
-    if (!requestListenerInstalled) {
-        document.addEventListener('seerr-media-requested', handleMediaRequested);
-        requestListenerInstalled = true;
+    if (installLeases === 0) {
+        const unregisterReset = JC.identity.registerReset(
+            'seerr-results-placement',
+            resetSeerrResultsIdentity,
+        );
+        try {
+            document.addEventListener('seerr-media-requested', handleMediaRequested);
+        } catch (error) {
+            unregisterReset();
+            throw error;
+        }
+        uninstallIdentityReset = unregisterReset;
     }
+    installLeases += 1;
     let installed = true;
     return () => {
         if (!installed) return;
         installed = false;
+        installLeases -= 1;
+        if (installLeases > 0) return;
         uninstallIdentityReset?.();
         uninstallIdentityReset = null;
-        if (requestListenerInstalled) {
-            document.removeEventListener('seerr-media-requested', handleMediaRequested);
-            requestListenerInstalled = false;
-        }
+        document.removeEventListener('seerr-media-requested', handleMediaRequested);
         resetSeerrResultsIdentity();
     };
 }

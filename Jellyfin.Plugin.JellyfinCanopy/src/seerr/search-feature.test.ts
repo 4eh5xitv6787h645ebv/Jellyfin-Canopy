@@ -22,7 +22,7 @@ vi.mock('./seerr', () => ({
 
 import { activateSeerrSearchImplementation as activateSeerrSearch } from './search-implementation';
 
-function scope(current = true): { value: FeatureScope; cleanups: Array<() => void> } {
+function scope(current: boolean | { value: boolean } = true): { value: FeatureScope; cleanups: Array<() => void> } {
     const cleanups: Array<() => void> = [];
     return {
         cleanups,
@@ -30,7 +30,7 @@ function scope(current = true): { value: FeatureScope; cleanups: Array<() => voi
             serverId: 'server', userId: 'user', identityEpoch: 1,
             configGeneration: 1, navigationGeneration: 1, routeKey: '/web/#/search',
             signal: new AbortController().signal,
-            isCurrent: () => current,
+            isCurrent: () => typeof current === 'boolean' ? current : current.value,
             track: <T>(resource: T): T => {
                 cleanups.push(resource as () => void);
                 return resource;
@@ -60,11 +60,62 @@ describe('Seerr Search activation', () => {
         for (const value of Object.values(mocks)) expect(value.cleanup).toHaveBeenCalledTimes(1);
     });
 
-    it('rolls back an implementation evaluated for a stale scope', () => {
+    it('does no installer work for an initially stale scope', () => {
         const test = scope(false);
         activateSeerrSearch(test.value);
-        expect(mocks.modal.install).toHaveBeenCalledTimes(1);
-        expect(mocks.modal.cleanup).toHaveBeenCalledTimes(1);
+        expect(mocks.modal.install).not.toHaveBeenCalled();
         expect(mocks.search.initialize).not.toHaveBeenCalled();
+    });
+
+    it('rolls back prior installers when a later installer throws', () => {
+        const failure = new Error('results install failed');
+        mocks.results.install.mockImplementationOnce(() => { throw failure; });
+
+        expect(() => activateSeerrSearch(scope().value)).toThrow(failure);
+
+        expect(mocks.modal.cleanup).toHaveBeenCalledTimes(1);
+        expect(mocks.buttons.cleanup).toHaveBeenCalledTimes(1);
+        expect(mocks.seasons.install).not.toHaveBeenCalled();
+        expect(mocks.search.install).not.toHaveBeenCalled();
+    });
+
+    it('contains a throwing cleanup and continues the reverse teardown', () => {
+        const test = scope();
+        mocks.search.cleanup.mockImplementationOnce(() => { throw new Error('cleanup failed'); });
+        activateSeerrSearch(test.value);
+
+        expect(() => test.cleanups[0]()).not.toThrow();
+        for (const value of Object.values(mocks)) expect(value.cleanup).toHaveBeenCalledTimes(1);
+    });
+
+    it('stops and rolls back when the scope becomes stale mid-install', () => {
+        const current = { value: true };
+        mocks.results.install.mockImplementationOnce(() => {
+            current.value = false;
+            return mocks.results.cleanup;
+        });
+        const test = scope(current);
+
+        activateSeerrSearch(test.value);
+
+        expect(mocks.modal.cleanup).toHaveBeenCalledTimes(1);
+        expect(mocks.buttons.cleanup).toHaveBeenCalledTimes(1);
+        expect(mocks.results.cleanup).toHaveBeenCalledTimes(1);
+        expect(mocks.seasons.install).not.toHaveBeenCalled();
+        expect(test.cleanups).toHaveLength(0);
+    });
+
+    it('replaces a warm activation without letting its late cleanup retire the newer one', () => {
+        const first = scope();
+        activateSeerrSearch(first.value);
+        const second = scope();
+        activateSeerrSearch(second.value);
+        for (const value of Object.values(mocks)) expect(value.cleanup).toHaveBeenCalledTimes(1);
+
+        first.cleanups[0]();
+        for (const value of Object.values(mocks)) expect(value.cleanup).toHaveBeenCalledTimes(1);
+
+        second.cleanups[0]();
+        for (const value of Object.values(mocks)) expect(value.cleanup).toHaveBeenCalledTimes(2);
     });
 });

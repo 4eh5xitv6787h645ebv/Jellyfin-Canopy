@@ -431,20 +431,19 @@ internal.configureCollectionButton = configureCollectionButton;
 internal.configureTvShowButton = configureTvShowButton;
 internal.configureMovieButton = configureMovieButton;
 
-let configListenerInstalled = false;
+let installLeases = 0;
 
 export function installSeerrButtons(): () => void {
-    if (!configListenerInstalled) {
+    if (installLeases === 0) {
         window.addEventListener('jc:config-changed', refreshRenderedCapabilitiesForConfig);
-        configListenerInstalled = true;
     }
+    installLeases += 1;
     let installed = true;
     return () => {
         if (!installed) return;
         installed = false;
-        if (configListenerInstalled) {
-            window.removeEventListener('jc:config-changed', refreshRenderedCapabilitiesForConfig);
-            configListenerInstalled = false;
-        }
+        installLeases -= 1;
+        if (installLeases > 0) return;
+        window.removeEventListener('jc:config-changed', refreshRenderedCapabilitiesForConfig);
     };
 }

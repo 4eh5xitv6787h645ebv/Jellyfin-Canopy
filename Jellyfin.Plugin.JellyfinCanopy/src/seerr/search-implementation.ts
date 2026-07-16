@@ -6,32 +6,50 @@ import { installSeerrResults } from './ui/results';
 import './ui/request-modals';
 import { installSeerrSeasonModal } from './ui/season-modal';
 import { initializeSeerrScript, installSeerrSearch } from './seerr';
+import { createSeerrActivationTransaction, type SeerrCleanup, type SeerrInstaller } from './activation-transaction';
 
-type Cleanup = () => void;
+let activeDispose: SeerrCleanup | null = null;
 
 export function activateSeerrSearchImplementation(scope: FeatureScope): FeatureInstance | void {
-    const cleanups: Cleanup[] = [
-        installSeerrModal(),
-        installSeerrButtons(),
-        installSeerrResults(),
-        installSeerrSeasonModal(),
-        installSeerrSearch(),
-    ];
-    let disposed = false;
-    const dispose = () => {
-        if (disposed) return;
-        disposed = true;
-        for (const cleanup of cleanups.splice(0).reverse()) cleanup();
+    if (!scope.isCurrent()) return;
+    activeDispose?.();
+    const transaction = createSeerrActivationTransaction();
+    const dispose: SeerrCleanup = () => {
+        transaction.dispose();
+        if (activeDispose === dispose) activeDispose = null;
     };
-    if (!scope.isCurrent()) {
+    activeDispose = dispose;
+    const installers: SeerrInstaller[] = [
+        installSeerrModal,
+        installSeerrButtons,
+        installSeerrResults,
+        installSeerrSeasonModal,
+        installSeerrSearch,
+    ];
+
+    try {
+        for (const install of installers) {
+            transaction.install(install);
+            if (!scope.isCurrent()) {
+                dispose();
+                return;
+            }
+        }
+        initializeSeerrScript();
+        if (!scope.isCurrent()) {
+            dispose();
+            return;
+        }
+    } catch (error) {
         dispose();
-        return;
+        throw error;
     }
-    initializeSeerrScript();
-    if (!scope.isCurrent()) {
+
+    try {
+        scope.track(dispose);
+    } catch (error) {
         dispose();
-        return;
+        throw error;
     }
-    scope.track(dispose);
     return { dispose };
 }

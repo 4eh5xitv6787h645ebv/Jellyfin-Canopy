@@ -341,26 +341,31 @@ modal.closeAll = function(): void {
 };
 
 let uninstallIdentityReset: (() => void) | null = null;
-let configListenerInstalled = false;
+let installLeases = 0;
 
 export function installSeerrModal(): () => void {
     JC.seerrModal = modal;
-    uninstallIdentityReset ??= JC.identity.registerReset('seerr-request-modal', modal.closeAll);
-    // Advanced modals snapshot the 4K gate. Retire them at config boundaries.
-    if (!configListenerInstalled) {
-        window.addEventListener('jc:config-changed', modal.closeAll);
-        configListenerInstalled = true;
+    if (installLeases === 0) {
+        const unregisterReset = JC.identity.registerReset('seerr-request-modal', modal.closeAll);
+        // Advanced modals snapshot the 4K gate. Retire them at config boundaries.
+        try {
+            window.addEventListener('jc:config-changed', modal.closeAll);
+        } catch (error) {
+            unregisterReset();
+            throw error;
+        }
+        uninstallIdentityReset = unregisterReset;
     }
+    installLeases += 1;
     let installed = true;
     return () => {
         if (!installed) return;
         installed = false;
+        installLeases -= 1;
+        if (installLeases > 0) return;
         uninstallIdentityReset?.();
         uninstallIdentityReset = null;
-        if (configListenerInstalled) {
-            window.removeEventListener('jc:config-changed', modal.closeAll);
-            configListenerInstalled = false;
-        }
+        window.removeEventListener('jc:config-changed', modal.closeAll);
         modal.closeAll();
     };
 }

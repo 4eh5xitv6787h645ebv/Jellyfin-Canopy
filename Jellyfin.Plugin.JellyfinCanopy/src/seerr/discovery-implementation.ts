@@ -5,6 +5,7 @@ import { personDiscovery } from './discovery/person';
 import { genreDiscovery } from './discovery/genre';
 import { tagDiscovery } from './discovery/tag';
 import { collectionDiscovery } from './discovery/collection';
+import { createSeerrActivationTransaction, type SeerrCleanup } from './activation-transaction';
 
 const controllers: DiscoveryController[] = [
     networkDiscovery,
@@ -14,21 +15,42 @@ const controllers: DiscoveryController[] = [
     collectionDiscovery,
 ];
 
+let activeDispose: SeerrCleanup | null = null;
+
 export function activateSeerrDiscoveryImplementation(scope: FeatureScope): FeatureInstance | void {
     if (!scope.isCurrent()) return;
-    const uninstallBase = installDiscoveryBase();
-    for (const controller of controllers) controller.start();
-    let disposed = false;
-    const dispose = () => {
-        if (disposed) return;
-        disposed = true;
-        for (const controller of [...controllers].reverse()) controller.dispose();
-        uninstallBase();
+    activeDispose?.();
+    const transaction = createSeerrActivationTransaction();
+    const dispose: SeerrCleanup = () => {
+        transaction.dispose();
+        if (activeDispose === dispose) activeDispose = null;
     };
-    if (!scope.isCurrent()) {
+    activeDispose = dispose;
+
+    try {
+        transaction.install(installDiscoveryBase);
+        if (!scope.isCurrent()) {
+            dispose();
+            return;
+        }
+        for (const controller of controllers) {
+            transaction.add(() => controller.dispose());
+            controller.start();
+            if (!scope.isCurrent()) {
+                dispose();
+                return;
+            }
+        }
+    } catch (error) {
         dispose();
-        return;
+        throw error;
     }
-    scope.track(dispose);
+
+    try {
+        scope.track(dispose);
+    } catch (error) {
+        dispose();
+        throw error;
+    }
     return { dispose };
 }

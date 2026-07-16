@@ -16,38 +16,54 @@ import './more-info-modal/render';
 import './more-info-modal/actions-tv';
 import './more-info-modal/actions';
 import { installSeerrMoreInfo } from './more-info-modal/init';
+import { createSeerrActivationTransaction, type SeerrCleanup, type SeerrInstaller } from './activation-transaction';
 
-type Cleanup = () => void;
+let activeDispose: SeerrCleanup | null = null;
 
 export function activateSeerrDetailsImplementation(scope: FeatureScope): FeatureInstance | void {
-    const cleanups: Cleanup[] = [
-        installSeerrModal(),
-        installSeerrButtons(),
-        installSeerrResults(),
-        installSeerrSeasonModal(),
-        installSeerrIssueReporter(),
-        installMoreInfoStyles(),
-        installSeerrMoreInfo(),
-        installHssDiscoveryHandler(),
-        installSeerrItemDetails(),
-    ];
-    let disposed = false;
-    const dispose = () => {
-        if (disposed) return;
-        disposed = true;
-        for (const cleanup of cleanups.splice(0).reverse()) {
-            try { cleanup(); } catch { /* continue */ }
-        }
+    if (!scope.isCurrent()) return;
+    activeDispose?.();
+    const transaction = createSeerrActivationTransaction();
+    const dispose: SeerrCleanup = () => {
+        transaction.dispose();
+        if (activeDispose === dispose) activeDispose = null;
     };
-    if (!scope.isCurrent()) {
+    activeDispose = dispose;
+    const installers: SeerrInstaller[] = [
+        installSeerrModal,
+        installSeerrButtons,
+        installSeerrResults,
+        installSeerrSeasonModal,
+        installSeerrIssueReporter,
+        installMoreInfoStyles,
+        installSeerrMoreInfo,
+        installHssDiscoveryHandler,
+        installSeerrItemDetails,
+    ];
+
+    try {
+        for (const install of installers) {
+            transaction.install(install);
+            if (!scope.isCurrent()) {
+                dispose();
+                return;
+            }
+        }
+        void window.JellyfinCanopy.seerrIssueReporter?.initialize();
+        if (!scope.isCurrent()) {
+            dispose();
+            return;
+        }
+    } catch (error) {
         dispose();
-        return;
+        throw error;
     }
-    void window.JellyfinCanopy.seerrIssueReporter?.initialize();
-    if (!scope.isCurrent()) {
+
+    try {
+        scope.track(dispose);
+    } catch (error) {
         dispose();
-        return;
+        throw error;
     }
-    scope.track(dispose);
     return { dispose };
 }

@@ -381,16 +381,22 @@ ui.showSeasonSelectionModal = async function (tmdbId: any, mediaType: any, showT
 };
 
 let uninstallIdentityReset: (() => void) | null = null;
+let installLeases = 0;
 
 export function installSeerrSeasonModal(): () => void {
-    uninstallIdentityReset ??= JC.identity.registerReset(
-        'seerr-season-modal',
-        cancelSeasonModalRefresh,
-    );
+    if (installLeases === 0) {
+        uninstallIdentityReset = JC.identity.registerReset(
+            'seerr-season-modal',
+            cancelSeasonModalRefresh,
+        );
+    }
+    installLeases += 1;
     let installed = true;
     return () => {
         if (!installed) return;
         installed = false;
+        installLeases -= 1;
+        if (installLeases > 0) return;
         uninstallIdentityReset?.();
         uninstallIdentityReset = null;
         cancelSeasonModalRefresh();
