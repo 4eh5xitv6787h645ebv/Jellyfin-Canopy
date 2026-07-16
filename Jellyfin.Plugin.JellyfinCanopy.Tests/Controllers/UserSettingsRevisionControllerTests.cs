@@ -43,14 +43,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             try { Directory.Delete(_baseDir, recursive: true); } catch { /* best effort */ }
         }
 
-        private UserSettingsController Controller(long? ifMatch = null)
+        private UserSettingsController Controller(
+            long? ifMatch = null,
+            IPluginConfigProvider? configProvider = null)
         {
+            configProvider ??= _provider;
             var controller = new UserSettingsController(
                 new RecordingHttpClientFactory(new HttpClientHandler()),
                 NullLogger<UserSettingsController>.Instance,
                 new StubUserManager(_user),
-                new SeerrCache(_provider),
-                _provider,
+                new SeerrCache(configProvider),
+                configProvider,
                 _manager,
                 new CountingLibraryManager());
             controller.ControllerContext = new ControllerContext
@@ -64,6 +67,23 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             };
             if (ifMatch.HasValue) controller.Request.Headers["If-Match"] = $"\"{ifMatch.Value}\"";
             return controller;
+        }
+
+        private sealed class DelegatingConfigProvider : IPluginConfigProvider
+        {
+            private readonly Func<PluginConfiguration?> _get;
+
+            public DelegatingConfigProvider(Func<PluginConfiguration?> get)
+            {
+                _get = get;
+            }
+
+            public PluginConfiguration Configuration =>
+                ConfigurationOrNull ?? throw new InvalidOperationException("Plugin configuration unavailable.");
+
+            public PluginConfiguration? ConfigurationOrNull => _get();
+
+            public long ConfigurationRevision => 1;
         }
 
         private void SeedSettings(long revision = 0, string mode = "percentage")
@@ -195,6 +215,176 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             var stored = _manager.GetUserConfigurationStrict<UserSettings>(UserId, "settings.json");
             Assert.Equal(6, stored.Revision);
             Assert.Equal("time", stored.WatchProgressMode);
+        }
+
+        [Fact]
+        public async Task FirstGetPausedAfterMissing_PostQueuesThenWinsDurably()
+        {
+            using var defaultFactoryEntered = new ManualResetEventSlim();
+            using var releaseDefaultFactory = new ManualResetEventSlim();
+            using var postQueuedAtStore = new ManualResetEventSlim();
+            var provider = new DelegatingConfigProvider(() =>
+            {
+                defaultFactoryEntered.Set();
+                if (!releaseDefaultFactory.Wait(TimeSpan.FromSeconds(10)))
+                {
+                    throw new TimeoutException("Default factory barrier was not released.");
+                }
+
+                return new PluginConfiguration { WatchProgressDefaultMode = "percentage" };
+            });
+
+            var getTask = Task.Run(() => Controller(configProvider: provider).GetUserSettingsSettings(UserId));
+            Assert.True(defaultFactoryEntered.Wait(TimeSpan.FromSeconds(10)));
+
+            _manager.UserFileLockObserverForTests = observation =>
+            {
+                if (observation.Operation == "transaction"
+                    && observation.FileName == "settings.json"
+                    && observation.Phase == UserFileLockPhase.Waiting)
+                {
+                    postQueuedAtStore.Set();
+                }
+            };
+
+            try
+            {
+                var postTask = Task.Run(() => Controller(0, provider).SaveUserSettingsSettings(
+                    UserId,
+                    new UserSettings { Revision = 0, WatchProgressMode = "time" }));
+                Assert.True(postQueuedAtStore.Wait(TimeSpan.FromSeconds(10)));
+
+                releaseDefaultFactory.Set();
+
+                var get = Assert.IsType<OkObjectResult>(await getTask.WaitAsync(TimeSpan.FromSeconds(10)));
+                var getState = Assert.IsType<UserSettings>(get.Value);
+                Assert.Equal("percentage", getState.WatchProgressMode);
+                Assert.Equal(0, getState.Revision);
+
+                var post = Assert.IsType<OkObjectResult>(await postTask.WaitAsync(TimeSpan.FromSeconds(10)));
+                var acknowledgement = Assert.IsType<UserSettingsController.UserFileMutationResponse<UserSettings>>(post.Value);
+                Assert.True(acknowledgement.Success);
+                Assert.Equal("time", acknowledgement.Data!.WatchProgressMode);
+                Assert.Equal(1, acknowledgement.Revision);
+
+                var durable = _manager.GetUserConfigurationStrict<UserSettings>(UserId, "settings.json");
+                Assert.Equal("time", durable.WatchProgressMode);
+                Assert.Equal(1, durable.Revision);
+            }
+            finally
+            {
+                releaseDefaultFactory.Set();
+                _manager.UserFileLockObserverForTests = null;
+            }
+        }
+
+        [Fact]
+        public void PostCommittedBeforeFirstGet_GetReturnsPostWithoutConsultingDefaults()
+        {
+            var provider = new DelegatingConfigProvider(() =>
+                throw new InvalidOperationException("Defaults must not be read after POST committed."));
+            var post = Controller(0, provider).SaveUserSettingsSettings(
+                UserId,
+                new UserSettings { Revision = 0, WatchProgressMode = "time" });
+            Assert.IsType<OkObjectResult>(post);
+
+            var get = Assert.IsType<OkObjectResult>(Controller(configProvider: provider).GetUserSettingsSettings(UserId));
+            var state = Assert.IsType<UserSettings>(get.Value);
+            Assert.Equal("time", state.WatchProgressMode);
+            Assert.Equal(1, state.Revision);
+
+            var durable = _manager.GetUserConfigurationStrict<UserSettings>(UserId, "settings.json");
+            Assert.Equal("time", durable.WatchProgressMode);
+            Assert.Equal(1, durable.Revision);
+        }
+
+        [Fact]
+        public async Task ConcurrentFirstGets_ConstructAndCommitExactlyOneLogicalInitialValue()
+        {
+            using var firstFactoryEntered = new ManualResetEventSlim();
+            using var releaseFirstFactory = new ManualResetEventSlim();
+            using var secondGetQueuedAtStore = new ManualResetEventSlim();
+            var factoryCalls = 0;
+            var provider = new DelegatingConfigProvider(() =>
+            {
+                Interlocked.Increment(ref factoryCalls);
+                firstFactoryEntered.Set();
+                if (!releaseFirstFactory.Wait(TimeSpan.FromSeconds(10)))
+                {
+                    throw new TimeoutException("First default factory barrier was not released.");
+                }
+
+                return new PluginConfiguration { WatchProgressDefaultMode = "time" };
+            });
+
+            var first = Task.Run(() => Controller(configProvider: provider).GetUserSettingsSettings(UserId));
+            Assert.True(firstFactoryEntered.Wait(TimeSpan.FromSeconds(10)));
+
+            _manager.UserFileLockObserverForTests = observation =>
+            {
+                if (observation.Operation == "get-or-create"
+                    && observation.FileName == "settings.json"
+                    && observation.Phase == UserFileLockPhase.Waiting)
+                {
+                    secondGetQueuedAtStore.Set();
+                }
+            };
+
+            try
+            {
+                var second = Task.Run(() => Controller(configProvider: provider).GetUserSettingsSettings(UserId));
+                Assert.True(secondGetQueuedAtStore.Wait(TimeSpan.FromSeconds(10)));
+                releaseFirstFactory.Set();
+
+                var firstState = Assert.IsType<UserSettings>(
+                    Assert.IsType<OkObjectResult>(await first.WaitAsync(TimeSpan.FromSeconds(10))).Value);
+                var secondState = Assert.IsType<UserSettings>(
+                    Assert.IsType<OkObjectResult>(await second.WaitAsync(TimeSpan.FromSeconds(10))).Value);
+
+                Assert.Equal(1, Volatile.Read(ref factoryCalls));
+                Assert.Equal("time", firstState.WatchProgressMode);
+                Assert.Equal("time", secondState.WatchProgressMode);
+                Assert.Equal(firstState.Revision, secondState.Revision);
+
+                var durable = _manager.GetUserConfigurationStrict<UserSettings>(UserId, "settings.json");
+                Assert.Equal("time", durable.WatchProgressMode);
+                Assert.Equal(0, durable.Revision);
+            }
+            finally
+            {
+                releaseFirstFactory.Set();
+                _manager.UserFileLockObserverForTests = null;
+            }
+        }
+
+        [Fact]
+        public void InitializationPersistenceFailure_Returns503AndRetryCreatesFreshState()
+        {
+            var providerReads = 0;
+            var provider = new DelegatingConfigProvider(() =>
+            {
+                if (Interlocked.Increment(ref providerReads) == 1)
+                {
+                    Directory.CreateDirectory(FilePath("settings.json"));
+                }
+
+                return new PluginConfiguration { WatchProgressDefaultMode = "time" };
+            });
+
+            var failed = Controller(configProvider: provider).GetUserSettingsSettings(UserId);
+            Assert.Equal(StatusCodes.Status503ServiceUnavailable, Assert.IsType<ObjectResult>(failed).StatusCode);
+            Assert.True(Directory.Exists(FilePath("settings.json")));
+            Assert.Empty(Directory.GetFiles(
+                Path.GetDirectoryName(FilePath("settings.json"))!,
+                "settings.json.tmp.*"));
+
+            Directory.Delete(FilePath("settings.json"));
+            var retry = Assert.IsType<OkObjectResult>(Controller(configProvider: provider).GetUserSettingsSettings(UserId));
+            var state = Assert.IsType<UserSettings>(retry.Value);
+            Assert.Equal("time", state.WatchProgressMode);
+            Assert.Equal(2, providerReads);
+            Assert.True(File.Exists(FilePath("settings.json")));
+            Assert.Equal("time", _manager.GetUserConfigurationStrict<UserSettings>(UserId, "settings.json").WatchProgressMode);
         }
 
         [Fact]

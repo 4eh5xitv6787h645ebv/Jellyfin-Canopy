@@ -11,6 +11,18 @@ using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
 {
+    internal enum UserFileLockPhase
+    {
+        Waiting,
+        Entered
+    }
+
+    internal readonly record struct UserFileLockObservation(
+        string Operation,
+        string UserId,
+        string FileName,
+        UserFileLockPhase Phase);
+
     /// <summary>
     /// Per-user configuration file IO: path resolution, lenient/strict reads,
     /// atomic saves, and the locked read-modify-write helper. Split out of
@@ -38,6 +50,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         // Static so the Singleton ResponseFilter and the Scoped IEventConsumer share one pool.
         private static readonly ConcurrentDictionary<string, object> _userFileLocks = new ConcurrentDictionary<string, object>();
 
+        // Deterministic test seam for proving queue order at the actual store
+        // ownership boundary. Production leaves this null; no timing or behavior
+        // changes occur unless a test explicitly observes the phases.
+        internal Action<UserFileLockObservation>? LockObserverForTests { get; set; }
+
         public UserConfigurationStore(string configBaseDir, ILogger logger)
         {
             _configBaseDir = configBaseDir;
@@ -49,6 +66,28 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
             var normalized = (userId ?? string.Empty).Replace("-", "").ToLowerInvariant();
             var key = normalized + "|" + (fileName ?? string.Empty);
             return _userFileLocks.GetOrAdd(key, _ => new object());
+        }
+
+        private TResult WithUserFileLock<TResult>(
+            string operation,
+            string userId,
+            string fileName,
+            Func<TResult> action)
+        {
+            LockObserverForTests?.Invoke(new UserFileLockObservation(
+                operation,
+                userId,
+                fileName,
+                UserFileLockPhase.Waiting));
+            lock (GetUserFileLock(userId, fileName))
+            {
+                LockObserverForTests?.Invoke(new UserFileLockObservation(
+                    operation,
+                    userId,
+                    fileName,
+                    UserFileLockPhase.Entered));
+                return action();
+            }
         }
 
         private string GetUserConfigDir(string userId)
@@ -351,6 +390,63 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
                 return new UserConfigReadResult<T>(UserConfigReadStatus.Corrupt, default, ex.Message);
             }
         }
+
+        /// <summary>
+        /// Reads or initializes a user file as one logical transaction. The
+        /// classified read, candidate construction, validation, and atomic save
+        /// all run while holding the same per-user/per-file lock used by writers.
+        /// A null factory result preserves the historical missing-value response
+        /// without materializing a file.
+        /// </summary>
+        public UserConfigReadResult<T> GetOrCreateUserConfiguration<T>(
+            string userId,
+            string fileName,
+            Func<T?> create,
+            Func<T, bool> isValid)
+            where T : class, new()
+            => WithUserFileLock("get-or-create", userId, fileName, () =>
+            {
+                var read = ReadUserConfiguration<T>(userId, fileName);
+                if (read.Status != UserConfigReadStatus.Missing)
+                {
+                    return read;
+                }
+
+                var candidate = create();
+                if (candidate == null)
+                {
+                    return read;
+                }
+
+                if (!isValid(candidate))
+                {
+                    throw new InvalidDataException($"Refusing to initialize invalid user configuration '{fileName}'.");
+                }
+
+                SaveUserConfiguration(userId, fileName, candidate);
+                return new UserConfigReadResult<T>(
+                    UserConfigReadStatus.Valid,
+                    candidate,
+                    faultDetail: null,
+                    wasCreated: true);
+            });
+
+        /// <summary>
+        /// Runs a strict read and caller-owned logical mutation under the central
+        /// per-user/per-file lock. Any save performed by the callback is reentrant
+        /// on this exact lock, so the complete read/check/write transaction remains
+        /// serialized with initialization and other writers.
+        /// </summary>
+        public TResult TransactUserConfiguration<T, TResult>(
+            string userId,
+            string fileName,
+            Func<T, TResult> transaction)
+            where T : class, new()
+            => WithUserFileLock("transaction", userId, fileName, () =>
+            {
+                var current = GetUserConfigurationStrict<T>(userId, fileName);
+                return transaction(current);
+            });
 
         // Locked read-modify-write: holds GetUserFileLock, strict-reads, mutates, and saves when the mutator returns > 0.
         public int RmwUserConfiguration<T>(string userId, string fileName, Func<T, int> mutate) where T : class, new()
