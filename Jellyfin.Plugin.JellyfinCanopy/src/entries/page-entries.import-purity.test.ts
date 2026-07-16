@@ -11,6 +11,33 @@ const entries = [
 
 const TEST_PATH = decodeURIComponent(new URL(import.meta.url).pathname);
 const SRC_ROOT = TEST_PATH.replace(/\/entries\/[^/]+$/, '/');
+const sourceFiles = new Map<string, ts.SourceFile>();
+const runtimeImports = new Map<string, readonly string[]>();
+const runtimeGraphs = new Map<string, readonly string[]>();
+const forbiddenCalls = new Map<string, readonly string[]>();
+const sourceAnalysisCounts = new Map<string, number>();
+const dependencyAnalysisCounts = new Map<string, number>();
+const graphAnalysisCounts = new Map<string, number>();
+const purityAnalysisCounts = new Map<string, number>();
+
+function incrementCount(counts: Map<string, number>, key: string): void {
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+}
+
+function sourceFile(file: string): ts.SourceFile {
+    const normalized = ts.sys.resolvePath(file);
+    const cached = sourceFiles.get(normalized);
+    if (cached) return cached;
+    incrementCount(sourceAnalysisCounts, normalized);
+    const source = ts.createSourceFile(
+        normalized,
+        ts.sys.readFile(normalized) ?? '',
+        ts.ScriptTarget.Latest,
+        true,
+    );
+    sourceFiles.set(normalized, source);
+    return source;
+}
 
 function resolveModule(fromFile: string, specifier: string): string | null {
     if (!specifier.startsWith('.')) return null;
@@ -22,26 +49,50 @@ function resolveModule(fromFile: string, specifier: string): string | null {
     return null;
 }
 
-function runtimeGraph(entry: string): string[] {
-    const pending = [ts.sys.resolvePath(entry)];
+function runtimeDependencies(file: string): readonly string[] {
+    const normalized = ts.sys.resolvePath(file);
+    const cached = runtimeImports.get(normalized);
+    if (cached) return cached;
+
+    incrementCount(dependencyAnalysisCounts, normalized);
+    const dependencies: string[] = [];
+    for (const statement of sourceFile(normalized).statements) {
+        if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue;
+        if (statement.importClause?.isTypeOnly) continue;
+        const resolved = resolveModule(normalized, statement.moduleSpecifier.text);
+        if (resolved) dependencies.push(resolved);
+    }
+    const result = Object.freeze(dependencies);
+    runtimeImports.set(normalized, result);
+    return result;
+}
+
+function runtimeGraph(entry: string): readonly string[] {
+    const root = ts.sys.resolvePath(entry);
+    const cached = runtimeGraphs.get(root);
+    if (cached) return cached;
+
+    incrementCount(graphAnalysisCounts, root);
+    const pending = [root];
     const visited = new Set<string>();
     while (pending.length > 0) {
         const file = pending.pop()!;
         if (visited.has(file)) continue;
         visited.add(file);
-        const source = ts.createSourceFile(file, ts.sys.readFile(file) ?? '', ts.ScriptTarget.Latest, true);
-        for (const statement of source.statements) {
-            if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue;
-            if (statement.importClause?.isTypeOnly) continue;
-            const resolved = resolveModule(file, statement.moduleSpecifier.text);
-            if (resolved) pending.push(resolved);
-        }
+        pending.push(...runtimeDependencies(file));
     }
-    return [...visited];
+    const result = Object.freeze([...visited]);
+    runtimeGraphs.set(root, result);
+    return result;
 }
 
-function topLevelForbiddenCalls(file: string): string[] {
-    const source = ts.createSourceFile(file, ts.sys.readFile(file) ?? '', ts.ScriptTarget.Latest, true);
+function topLevelForbiddenCalls(file: string): readonly string[] {
+    const normalized = ts.sys.resolvePath(file);
+    const cached = forbiddenCalls.get(normalized);
+    if (cached) return cached;
+
+    incrementCount(purityAnalysisCounts, normalized);
+    const source = sourceFile(normalized);
     const findings: string[] = [];
     const forbidden = new Set([
         'addEventListener', 'createElement', 'fetch', 'observe', 'plugin',
@@ -53,12 +104,14 @@ function topLevelForbiddenCalls(file: string): string[] {
             const name = ts.isIdentifier(node.expression)
                 ? node.expression.text
                 : ts.isPropertyAccessExpression(node.expression) ? node.expression.name.text : '';
-            if (forbidden.has(name)) findings.push(`${file}:${source.getLineAndCharacterOfPosition(node.getStart()).line + 1}:${name}`);
+            if (forbidden.has(name)) findings.push(`${normalized}:${source.getLineAndCharacterOfPosition(node.getStart()).line + 1}:${name}`);
         }
         ts.forEachChild(node, visit);
     };
     source.statements.forEach(visit);
-    return findings;
+    const result = Object.freeze(findings);
+    forbiddenCalls.set(normalized, result);
+    return result;
 }
 
 describe('route page entries', () => {
@@ -124,5 +177,17 @@ describe('route page entries', () => {
             const routeOnly = runtimeGraph(entryFile).filter((file) => !cold.has(file));
             expect(routeOnly.flatMap(topLevelForbiddenCalls), entry).toEqual([]);
         }
+
+        // Coverage instrumentation makes TypeScript AST work substantially
+        // more expensive. Prove the optimization itself: shared sources,
+        // graph roots and purity scans are each analyzed once, while the
+        // assertions above still consume every route entry's complete graph.
+        expect(graphAnalysisCounts.size).toBe(entries.length + 1);
+        expect(sourceAnalysisCounts.size).toBeGreaterThan(0);
+        expect(purityAnalysisCounts.size).toBeGreaterThan(0);
+        expect([...sourceAnalysisCounts.values()].every((count) => count === 1)).toBe(true);
+        expect([...dependencyAnalysisCounts.values()].every((count) => count === 1)).toBe(true);
+        expect([...graphAnalysisCounts.values()].every((count) => count === 1)).toBe(true);
+        expect([...purityAnalysisCounts.values()].every((count) => count === 1)).toBe(true);
     });
 });
