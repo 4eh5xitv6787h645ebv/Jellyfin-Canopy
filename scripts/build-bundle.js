@@ -54,6 +54,7 @@ const ESM_ENTRIES = Object.freeze({
     'arr-detail-links': path.join(SRC_ROOT, 'arr', 'links.feature.ts'),
     'arr-search': path.join(SRC_ROOT, 'arr', 'search', 'feature.ts'),
     'letterboxd-links': path.join(SRC_ROOT, 'others', 'letterboxd-links.feature.ts'),
+    'native-tabs': path.join(SRC_ROOT, 'entries', 'native-tabs.ts'),
     'requests-page': path.join(SRC_ROOT, 'entries', 'requests-page.ts'),
     'random-button': path.join(SRC_ROOT, 'entries', 'random-button.ts'),
     'remove-home-actions': path.join(SRC_ROOT, 'entries', 'remove-home-actions.ts'),

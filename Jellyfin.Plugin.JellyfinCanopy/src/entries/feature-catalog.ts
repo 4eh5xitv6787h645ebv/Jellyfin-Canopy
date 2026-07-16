@@ -75,6 +75,13 @@ export const builtInFeatureDescriptors: readonly ClientFeatureDescriptor[] = Obj
         isApplicable: () => true,
     },
     {
+        id: 'native-tabs',
+        entry: 'native-tabs',
+        scope: 'identity',
+        isEnabled: (state) => Boolean(state.identity),
+        isApplicable: () => true,
+    },
+    {
         id: 'spoiler-guard',
         entry: 'spoiler-guard',
         scope: 'identity',

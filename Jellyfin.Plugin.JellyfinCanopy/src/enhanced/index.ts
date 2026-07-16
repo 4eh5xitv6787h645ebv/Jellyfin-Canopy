@@ -7,7 +7,6 @@
 // convert, because later legacy files still assume everything above them ran.
 import './config';
 import './helpers';
-import './native-tabs';
 import './icons';
 // Detail-page and home-action families are loader-owned ESM entries.
 import './events';
