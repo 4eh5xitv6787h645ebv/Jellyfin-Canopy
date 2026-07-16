@@ -1,6 +1,7 @@
 // Boot-critical platform only. Feature implementations remain outside this
 // graph and are imported through their manifest descriptors on demand.
 import '../core/navigation';
+import '../core/layout';
 import '../core/lifecycle';
 import '../core/dom-observer';
 import '../core/ui-kit';
@@ -8,8 +9,12 @@ import '../core/api-client';
 import '../core/identity';
 import '../core/live';
 import '../core/live-config';
+import '../core/live-update';
 import '../enhanced/config';
+import '../enhanced/helpers';
+import '../enhanced/icons';
 import '../enhanced/pages';
+import '../enhanced/themer';
 import {
     builtInFeatureDescriptors,
 } from './feature-catalog';
