@@ -48,7 +48,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             var a = Guid.NewGuid();
             var b = Guid.NewGuid();
             using var harness = new Harness(new[] { a, b });
-            harness.Service.GetFullContentForUser(harness.User);
+            var full = harness.Service.GetFullContentForUser(harness.User);
 
             harness.Service.SetLegacyTimestampForTest(1_000);
             harness.Service.PublishUpsertForTest(Key(a), Entry("same-millisecond-a"));
@@ -63,7 +63,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             Assert.Equal(1, afterA);
             Assert.Equal(2, afterB);
             Assert.Equal(3, afterRollback);
-            var delta = harness.Service.GetContentDeltaForUser(harness.User, harness.Service.ContentEpoch, 0);
+            var delta = harness.Service.GetContentDeltaForUser(harness.User, full.Epoch, 0);
             Assert.Equal(3, delta.Revision);
             Assert.Equal(3, delta.JournalRowsVisited);
             Assert.Equal("clock-rollback-a", delta.Items[Key(a)].Type);
@@ -92,6 +92,52 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             AssertReset(harness.Service.GetContentDeltaForUser(harness.User, full.Epoch, -1), 3);
             AssertReset(harness.Service.GetContentDeltaForUser(harness.User, full.Epoch, null), 3);
             AssertReset(harness.Service.GetContentDeltaForUser(harness.User, null, 3), 3);
+        }
+
+        [Fact]
+        public void AuthorizationGenerationChange_InvalidatesContentCursorAndServedProof()
+        {
+            var id = Guid.NewGuid();
+            using var harness = new Harness(new[] { id });
+            harness.Service.SeedEntryForTest(Key(id), Entry("Movie"));
+            var full = harness.Service.GetFullContentForUser(harness.User);
+            Assert.Contains(Key(id), full.Items.Keys);
+
+            var updatedUser = new User(
+                harness.User.Username,
+                harness.User.AuthenticationProviderId,
+                harness.User.PasswordResetProviderId)
+            {
+                Id = harness.User.Id,
+            };
+            updatedUser.OnSavingChanges();
+            harness.Library.GetItemIdsHook = _ => Array.Empty<Guid>();
+
+            var delta = harness.Service.GetContentDeltaForUser(
+                updatedUser,
+                full.Epoch,
+                full.Revision);
+
+            Assert.True(delta.ResetRequired);
+            Assert.NotEqual(full.Epoch, delta.Epoch);
+            Assert.Empty(delta.Items);
+            Assert.Empty(delta.RemovedIds);
+
+            var control = harness.Service.GetCurrentContentControl(updatedUser);
+            var proofless = harness.Service.GetContentDeltaForUser(
+                updatedUser,
+                control.Epoch,
+                control.Revision);
+            Assert.True(proofless.ResetRequired);
+
+            var currentFull = harness.Service.GetFullContentForUser(updatedUser);
+            var currentDelta = harness.Service.GetContentDeltaForUser(
+                updatedUser,
+                currentFull.Epoch,
+                currentFull.Revision);
+            Assert.Equal(delta.Epoch, control.Epoch);
+            Assert.Equal(delta.Epoch, currentFull.Epoch);
+            Assert.False(currentDelta.ResetRequired);
         }
 
         [Fact]

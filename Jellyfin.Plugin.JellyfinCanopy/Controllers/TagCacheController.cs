@@ -137,7 +137,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 return ProjectionResetResponse(
                     effectiveUserId,
                     projection,
-                    _tagCacheService.GetCurrentContentControl(),
+                    _tagCacheService.GetCurrentContentControl(user),
                     contentVersion,
                     contentTimestamp);
             }
@@ -149,7 +149,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             Services.TagCacheService.ContentDelta content;
             if (projectionOnly)
             {
-                content = _tagCacheService.GetCurrentContentControl();
+                content = _tagCacheService.GetCurrentContentControl(user);
             }
             else if (contentEpoch != null || contentRevision.HasValue)
             {
@@ -161,7 +161,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 // bundle: retain its timestamp delta while teaching it the new
                 // content cursor in this response. Current clients send the exact
                 // epoch/revision pair and never take this full-cache-scan path.
-                content = _tagCacheService.GetCurrentContentControl();
+                content = _tagCacheService.GetCurrentContentControl(user);
                 content = new Services.TagCacheService.ContentDelta(
                     content.Epoch,
                     content.Revision,
@@ -246,6 +246,27 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                     effectiveUserId,
                     latest,
                     content,
+                    contentVersion,
+                    contentTimestamp);
+            }
+
+            // Jellyfin 12 increments User.RowVersion when UpdatePolicyAsync saves
+            // folder access and every other user policy field. Re-resolve at the
+            // publication boundary so an access change observed while this request
+            // was selecting/stripping rows returns a fail-closed reset instead of
+            // labelling stale bytes with the old authorization generation.
+            var currentUser = _userManager.GetUserById(effectiveUserId);
+            if (currentUser is null)
+            {
+                return NotFound();
+            }
+
+            if (currentUser.RowVersion != user.RowVersion)
+            {
+                return ContentResetResponse(
+                    effectiveUserId,
+                    projection,
+                    _tagCacheService.GetCurrentContentControl(currentUser),
                     contentVersion,
                     contentTimestamp);
             }

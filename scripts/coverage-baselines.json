@@ -21,12 +21,12 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 18841,
-        "totalLines": 27308
+        "coveredLines": 18876,
+        "totalLines": 27327
       },
       "tolerance": {
         "missingCoveredLines": 2,
-        "rationale": "Two clean local .NET 10.0.9/Coverlet integration runs on 2026-07-17 each passed 1685 tests and measured the identical combined 27308-line assembly scope at 18841 covered lines (68.994%). Issue #161 replaces payload-sized public-branding buffers with cancellation-aware fixed-buffer streaming and adds response-ownership, allocation, concurrent-request, validator, fault, and atomic-generation regressions. Relative to the reviewed 18748/27276 baseline, the reviewed assembly scope grows by 32 executable lines and the high-water advances by 93 covered lines while line coverage rises from 68.734% to 68.994%. The existing two-line tolerance is unchanged and covers only the previously reproduced negligible Coverlet variance; coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, and broad-tolerance negative boundaries."
+        "rationale": "Two clean post-rebase local .NET 10.0.9/Coverlet integration runs on 2026-07-17 each passed 1690 tests and measured the identical combined 27327-line assembly scope at 18876 covered lines (69.075%). Issue #97 scopes tag-cache access sets, in-flight work, content cursors, and served-id proof to Jellyfin's persisted User.RowVersion, with immediate revoke/grant, isolation, cursor-reset, and publication-race regressions. Relative to the reviewed 18841/27308 baseline from issue #161, the reviewed assembly scope grows by 19 instrumented lines and the high-water advances by 35 covered lines while line coverage rises from 68.994% to 69.075%. The existing two-line tolerance is unchanged and covers only the previously reproduced negligible Coverlet variance; coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, and broad-tolerance negative boundaries."
       }
     }
   }

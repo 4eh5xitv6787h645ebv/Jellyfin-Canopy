@@ -94,6 +94,22 @@ export function decideContentResponse(
     return 'apply';
 }
 
+/**
+ * Projection-only refreshes deliberately do not apply or advance the shared
+ * content cursor. They must still honor its epoch, because the server folds the
+ * current Jellyfin user-policy generation into that identity. Missing control
+ * or a changed epoch therefore requires one authoritative full reload.
+ */
+export function projectionOnlyContentRequiresReset(
+    current: TagContentIdentity | null,
+    response: any,
+): boolean {
+    const incoming = readContentIdentity(response);
+    if (!current || !incoming) return true;
+    if (response?.contentReset === true || response?.reset === true) return true;
+    return incoming.epoch !== current.epoch;
+}
+
 export interface ContentApplyResult {
     decision: ContentResponseDecision;
     identity: TagContentIdentity | null;
@@ -796,6 +812,21 @@ async function refreshServerCache(projectionOnly = false): Promise<void> {
         // A newer watch event, account switch, or reset supersedes this request.
         if (requestGeneration !== projectionRequestGeneration) return;
         if (normalizeProjectionKey(ApiClient.getCurrentUserId()) !== userKey) return;
+
+        // Check authorization ownership before projection ordering. A delayed
+        // projection response can be older than the watched-state cursor while
+        // still carrying the first control identity for a newly-revoked policy;
+        // ignoring it first would leave the old authorized rows renderable.
+        if (requestProjectionOnly && projectionOnlyContentRequiresReset(serverContent, resp)) {
+            console.log(`${logPrefix} Content authorization epoch changed, reloading one full snapshot`);
+            resetServerProjection(true);
+            await loadServerCache();
+            if (serverCache) {
+                processedCards = new WeakSet();
+                runScan();
+            }
+            return;
+        }
 
         const decision = decideProjectionResponse(serverProjection, resp, userId);
         if (decision === 'ignore') {

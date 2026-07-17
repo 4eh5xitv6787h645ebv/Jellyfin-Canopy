@@ -20,6 +20,19 @@ public sealed class StubUserManager : IUserManager
     /// <summary>Mutates the fixed user set — used by identity-cache invalidation tests.</summary>
     public void AddUser(User user) => _users.Add(user);
 
+    /// <summary>Replaces the current snapshot for one persisted user id.</summary>
+    public void ReplaceUser(User user)
+    {
+        var index = _users.FindIndex(existing => existing.Id == user.Id);
+        if (index < 0)
+        {
+            _users.Add(user);
+            return;
+        }
+
+        _users[index] = user;
+    }
+
     public event EventHandler<GenericEventArgs<User>> OnUserUpdated { add { } remove { } }
 
     public IEnumerable<User> GetUsers() => _users;
