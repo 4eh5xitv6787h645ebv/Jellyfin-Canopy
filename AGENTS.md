@@ -5,6 +5,13 @@ or Project task, read and follow
 [`.agents/skills/jellyfin-canopy-engineering/SKILL.md`](.agents/skills/jellyfin-canopy-engineering/SKILL.md).
 Treat it as the canonical workflow; do not copy it into tool-specific files.
 
+Optionally, to carry a change through a Bun-style multi-agent loop (parallel
+explore/plan, single-writer implement, and a mixed-model adversarial
+review-until-clean loop), use the accelerator at
+[`.agents/skills/jellyfin-canopy-agentic-loop/SKILL.md`](.agents/skills/jellyfin-canopy-agentic-loop/SKILL.md).
+It changes only *how* the work runs and obeys every contract and invariant here
+and in the canonical skill unchanged.
+
 Critical invariants:
 
 - `n00bcodr/Jellyfin-Enhanced` is strictly read-only. Never push, open or edit
