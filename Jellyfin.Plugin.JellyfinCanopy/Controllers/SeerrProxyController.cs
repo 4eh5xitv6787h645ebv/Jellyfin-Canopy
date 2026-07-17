@@ -56,7 +56,6 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
 
         private readonly ISeerrClient _seerr;
         private readonly ISeerrParentalFilter _parentalFilter;
-        private readonly SpoilerPendingService _spoilerPending;
 
         internal Action? BeforeIssueProjectionPublishForTest { get; set; }
 
@@ -73,7 +72,6 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         {
             _seerr = seerr;
             _parentalFilter = parentalFilter;
-            _spoilerPending = spoilerPending;
         }
 
         // Thin delegation kept so the ~35 proxy endpoints below read unchanged;
@@ -242,77 +240,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         [Authorize]
         public async Task<IActionResult> SeerrRequest([FromBody] JsonElement requestBody)
         {
-            var result = await ProxySeerrRequest("/api/v1/request", HttpMethod.Post, requestBody.ToString());
-
-            // Auto-on-request Spoiler Guard pending — best-effort, never blocks the
-            // request. Gated by SpoilerBlurEnabled + SpoilerAutoEnableOnSeerrRequest.
-            // Only a 2xx counts as user intent; anything else fails closed.
-            try
-            {
-                var cfg = _configProvider.ConfigurationOrNull;
-                if (cfg?.SpoilerBlurEnabled == true
-                    && cfg?.SpoilerAutoEnableOnSeerrRequest == true
-                    && IsSeerrRequestResultSuccessful(result))
-                {
-                    // Snapshot identity + body BEFORE Task.Run — HttpContext/User are
-                    // invalid after we return; clone the request-scoped JsonElement.
-                    var userId = UserHelper.GetCurrentUserId(User);
-                    if (userId != null && userId != Guid.Empty)
-                    {
-                        var capturedUserId = userId.Value;
-                        JsonElement bodyClone;
-                        try { bodyClone = requestBody.Clone(); }
-                        catch { bodyClone = default; }
-
-                        if (bodyClone.ValueKind == JsonValueKind.Object)
-                        {
-                            _ = Task.Run(() => _spoilerPending.TryAutoEnableFromSeerrRequest(capturedUserId, bodyClone));
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning($"Spoiler Guard auto-on-request hook threw {ex.GetType().Name}: {ex.Message}");
-            }
-
-            return result;
-        }
-
-        // True only for a 2xx proxy result. 409 fails closed: it's an ambiguous Seerr
-        // conflict (MEDIA_EXISTS vs quota/permission denial) whose body SeerrHttpHelper
-        // has already replaced, so we can't distinguish. Null StatusCode counts as OK
-        // only for ContentResult (the success path defaults to 200); a null on
-        // ObjectResult/StatusCodeResult is failure.
-        private static bool IsSeerrRequestResultSuccessful(IActionResult result)
-        {
-            int? status;
-            bool allowNullAsOk = false;
-            if (result is ContentResult cr)
-            {
-                status = cr.StatusCode;
-                allowNullAsOk = true;
-            }
-            else if (result is ObjectResult or)
-            {
-                status = or.StatusCode;
-            }
-            else if (result is StatusCodeResult sr)
-            {
-                status = sr.StatusCode;
-            }
-            else
-            {
-                return false;
-            }
-
-            if (status is null)
-            {
-                if (!allowNullAsOk) return false;
-                status = 200;
-            }
-            int sc = status.Value;
-            return sc >= 200 && sc < 300;
+            // The shared SeerrClient owns the success boundary.  It durably
+            // records any configured Spoiler Guard intent before returning the
+            // upstream 2xx, which also covers the TV-seasons controller route.
+            return await ProxySeerrRequest("/api/v1/request", HttpMethod.Post, requestBody.ToString());
         }
 
         [HttpGet("seerr/request")]

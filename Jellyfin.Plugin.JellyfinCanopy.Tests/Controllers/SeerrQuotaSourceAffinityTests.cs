@@ -587,7 +587,8 @@ public class SeerrQuotaSourceAffinityTests
             userManager: null!,
             new SeerrCache(provider),
             provider,
-            new PassthroughParentalFilter());
+            new PassthroughParentalFilter(),
+            null!);
         var resolvedUser = new SeerrUser { Id = 7, SourceUrl = SourceA };
 
         var result = await client.ProxyRequestAsync(
@@ -642,7 +643,8 @@ public class SeerrQuotaSourceAffinityTests
             userManager: null!,
             cache,
             provider,
-            new PassthroughParentalFilter());
+            new PassthroughParentalFilter(),
+            null!);
 
         var result = await client.ProxyRequestAsync(
             "/api/v1/user/7/quota",
@@ -670,7 +672,8 @@ public class SeerrQuotaSourceAffinityTests
             userManager: null!,
             new SeerrCache(provider),
             provider,
-            new PassthroughParentalFilter());
+            new PassthroughParentalFilter(),
+            null!);
 
         var result = await client.ProxyRequestAsync(
             "/api/v1/user/7/quota",
@@ -699,7 +702,8 @@ public class SeerrQuotaSourceAffinityTests
             userManager: null!,
             new SeerrCache(provider),
             provider,
-            new PassthroughParentalFilter());
+            new PassthroughParentalFilter(),
+            null!);
 
         var result = await client.ProxyRequestAsync(
             "/api/v1/user/7/quota",

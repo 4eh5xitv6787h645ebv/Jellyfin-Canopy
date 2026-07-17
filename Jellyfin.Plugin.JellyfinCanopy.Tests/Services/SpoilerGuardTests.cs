@@ -225,40 +225,60 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             }
         }
 
-        // ─── SpoilerSeerrPendingPromoter static gate atomicity ───────────────────
+        // ─── SpoilerSeerrPendingPromoter instance gate atomicity ─────────────────
 
         [Fact]
         public void PromoterGate_RegisterUnregister_TracksUsersAndRemovesEmptyKey()
         {
+            var directory = Path.Combine(Path.GetTempPath(), "jc-promoter-gate-" + Guid.NewGuid().ToString("N"));
+            var manager = new UserConfigurationManager(
+                new StubAppPaths(directory),
+                NullLogger<UserConfigurationManager>.Instance);
+            var library = new CountingLibraryManager();
+            var users = new StubUserManager();
+            var pending = new SpoilerPendingService(
+                manager,
+                library,
+                users,
+                NullLogger<SpoilerPendingService>.Instance);
+            var promoter = new SpoilerSeerrPendingPromoter(
+                library,
+                users,
+                manager,
+                new FakePluginConfigProvider(null),
+                pending,
+                NullLogger<SpoilerSeerrPendingPromoter>.Instance);
             var key = "tv:" + Guid.NewGuid().ToString("N");
             var userA = Guid.NewGuid();
             var userB = Guid.NewGuid();
 
-            Assert.False(SpoilerSeerrPendingPromoter.IsKeyRegisteredForTest(key));
+            Assert.False(promoter.IsKeyRegisteredForTest(key));
 
-            SpoilerSeerrPendingPromoter.RegisterPending(key, userA);
-            SpoilerSeerrPendingPromoter.RegisterPending(key, userB);
-            Assert.True(SpoilerSeerrPendingPromoter.IsKeyRegisteredForTest(key));
-            Assert.Equal(2, SpoilerSeerrPendingPromoter.RegisteredUserCountForTest(key));
+            promoter.RegisterPending(key, userA);
+            promoter.RegisterPending(key, userB);
+            Assert.True(promoter.IsKeyRegisteredForTest(key));
+            Assert.Equal(2, promoter.RegisteredUserCountForTest(key));
 
             // Re-register is idempotent (set semantics).
-            SpoilerSeerrPendingPromoter.RegisterPending(key, userA);
-            Assert.Equal(2, SpoilerSeerrPendingPromoter.RegisteredUserCountForTest(key));
+            promoter.RegisterPending(key, userA);
+            Assert.Equal(2, promoter.RegisteredUserCountForTest(key));
 
-            SpoilerSeerrPendingPromoter.UnregisterPending(key, userA);
-            Assert.Equal(1, SpoilerSeerrPendingPromoter.RegisteredUserCountForTest(key));
-            Assert.True(SpoilerSeerrPendingPromoter.IsKeyRegisteredForTest(key));
+            promoter.UnregisterPending(key, userA);
+            Assert.Equal(1, promoter.RegisteredUserCountForTest(key));
+            Assert.True(promoter.IsKeyRegisteredForTest(key));
 
             // Removing the last user drops the key entirely.
-            SpoilerSeerrPendingPromoter.UnregisterPending(key, userB);
-            Assert.False(SpoilerSeerrPendingPromoter.IsKeyRegisteredForTest(key));
+            promoter.UnregisterPending(key, userB);
+            Assert.False(promoter.IsKeyRegisteredForTest(key));
 
             // Unregistering a gone key + empty inputs are no-ops (no throw).
-            SpoilerSeerrPendingPromoter.UnregisterPending(key, userB);
-            SpoilerSeerrPendingPromoter.RegisterPending(string.Empty, userA);
-            SpoilerSeerrPendingPromoter.RegisterPending(key, Guid.Empty);
-            Assert.False(SpoilerSeerrPendingPromoter.IsKeyRegisteredForTest(key));
-            Assert.False(SpoilerSeerrPendingPromoter.IsKeyRegisteredForTest(string.Empty));
+            promoter.UnregisterPending(key, userB);
+            promoter.RegisterPending(string.Empty, userA);
+            promoter.RegisterPending(key, Guid.Empty);
+            Assert.False(promoter.IsKeyRegisteredForTest(key));
+            Assert.False(promoter.IsKeyRegisteredForTest(string.Empty));
+
+            try { Directory.Delete(directory, recursive: true); } catch { /* best-effort cleanup */ }
         }
 
         // ─── ImageBlurService ─────────────────────────────────────────────────────

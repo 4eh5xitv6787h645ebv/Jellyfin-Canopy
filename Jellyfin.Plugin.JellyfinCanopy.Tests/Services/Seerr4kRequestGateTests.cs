@@ -42,7 +42,8 @@ public class Seerr4kRequestGateTests
             null!,
             new SeerrCache(provider),
             provider,
-            new PassthroughParentalFilter());
+            new PassthroughParentalFilter(),
+            null!);
         return (client, handler);
     }
 

@@ -196,13 +196,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 {
                     foreach (var key in userConfiguration.PendingTmdb.Keys)
                     {
-                        SpoilerSeerrPendingPromoter.RegisterPending(key, gateUserId);
+                        _pendingService.NotifyPendingRegistered(key, gateUserId);
                     }
                     foreach (var stale in priorPending)
                     {
                         if (!userConfiguration.PendingTmdb.ContainsKey(stale))
                         {
-                            SpoilerSeerrPendingPromoter.UnregisterPending(stale, gateUserId);
+                            _pendingService.NotifyPendingRemoved(stale, gateUserId);
                         }
                     }
                 }
@@ -896,7 +896,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 SpoilerUserResolver.InvalidateUser(userKey);
                 // Either way the key is no longer pending for this user — keep the
                 // promoter's gate consistent so it stops sweeping this user.
-                SpoilerSeerrPendingPromoter.UnregisterPending(pendingKey, userId.Value);
+                _pendingService.NotifyPendingRemoved(pendingKey, userId.Value);
                 var (removedAnything, removedFrom, removedJellyfinId) = resultBox[0];
                 if (!removedAnything)
                 {

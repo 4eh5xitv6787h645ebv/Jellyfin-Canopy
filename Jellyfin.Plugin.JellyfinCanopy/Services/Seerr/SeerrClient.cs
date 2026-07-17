@@ -11,6 +11,7 @@ using Jellyfin.Plugin.JellyfinCanopy.Configuration;
 using Jellyfin.Plugin.JellyfinCanopy.Helpers;
 using Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr;
 using Jellyfin.Plugin.JellyfinCanopy.Model.Seerr;
+using Jellyfin.Plugin.JellyfinCanopy.Services;
 using MediaBrowser.Controller.Library;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
@@ -39,6 +40,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
         private readonly ISeerrCache _seerrCache;
         private readonly IPluginConfigProvider _configProvider;
         private readonly ISeerrParentalFilter _parentalFilter;
+        private readonly SpoilerPendingService _spoilerPendingService;
         private readonly ConcurrentDictionary<string, SemaphoreSlim> _userResolutionGates = new(
             StringComparer.OrdinalIgnoreCase);
 
@@ -48,7 +50,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             IUserManager userManager,
             ISeerrCache seerrCache,
             IPluginConfigProvider configProvider,
-            ISeerrParentalFilter parentalFilter)
+            ISeerrParentalFilter parentalFilter,
+            SpoilerPendingService spoilerPendingService)
         {
             _httpClientFactory = httpClientFactory;
             _logger = logger;
@@ -56,6 +59,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             _seerrCache = seerrCache;
             _configProvider = configProvider;
             _parentalFilter = parentalFilter;
+            _spoilerPendingService = spoilerPendingService;
         }
 
         // ── URL / id helpers (hoisted from SeerrUserResolver) ───────────
@@ -2121,6 +2125,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                 urls = new[] { boundSourceUrl! };
             }
 
+            // Freeze this mutation's local durability obligation after the final
+            // pre-dispatch configuration/identity proof. PluginConfiguration is
+            // mutable, so reading the live object again after a Seerr 2xx could
+            // let an in-place true→false change silently abandon an obligation
+            // that was enabled when the request was sent.
+            var persistSpoilerIntentOnSuccess = config.SpoilerBlurEnabled
+                && config.SpoilerAutoEnableOnSeerrRequest
+                && IsCreateMediaRequest(apiPath, method);
             var httpClient = SeerrHttpHelper.CreateClient(_httpClientFactory);
             httpClient.Timeout = TimeSpan.FromSeconds(15);
 
@@ -2190,12 +2202,37 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                     using var request = SeerrHttpHelper.BuildRequest(method, requestUri, config.SeerrApiKey, requestUserId, content);
                     if (content != null) _logger.LogDebug($"Request body: {content}");
 
+                    IActionResult? spoilerIntentFailure = null;
                     var (json, error, _) = await SeerrHttpHelper.SendAndReadJsonAsync(
                         httpClient,
                         request,
                         requestUri,
                         requestDispatchFence,
+                        response =>
+                        {
+                            if (persistSpoilerIntentOnSuccess
+                                && response.IsSuccessStatusCode
+                                && SeerrHttpHelper.IsJsonContentType(response))
+                            {
+                                // ResponseHeadersRead has confirmed the upstream
+                                // mutation before the caller cancellation token is
+                                // next observed by the bounded JSON body reader.
+                                spoilerIntentFailure = RecordSpoilerIntent(
+                                    jellyfinUserId,
+                                    content);
+                            }
+
+                            // A combined-failure result is already complete at
+                            // this boundary; do not let a slow/cancelled response
+                            // body hide the explicit remediation from the caller.
+                            return spoilerIntentFailure == null;
+                        },
                         cancellationToken).ConfigureAwait(false);
+
+                    if (spoilerIntentFailure != null)
+                    {
+                        return spoilerIntentFailure;
+                    }
 
                     if (error == null && json != null)
                     {
@@ -2311,6 +2348,71 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             }
 
             return new ObjectResult(lastErrorBody) { StatusCode = lastStatusCode };
+        }
+
+        private static bool IsCreateMediaRequest(string apiPath, HttpMethod method)
+        {
+            if (method != HttpMethod.Post)
+            {
+                return false;
+            }
+
+            var queryIndex = apiPath.IndexOf('?', StringComparison.Ordinal);
+            var pathOnly = queryIndex >= 0 ? apiPath.Substring(0, queryIndex) : apiPath;
+            pathOnly = pathOnly.TrimEnd('/');
+            return string.Equals(pathOnly, "/api/v1/request", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private IActionResult? RecordSpoilerIntent(string jellyfinUserId, string? content)
+        {
+            string failureCode;
+            try
+            {
+                if (_spoilerPendingService == null)
+                {
+                    failureCode = "intent_service_unavailable";
+                }
+                else if (!Guid.TryParse(jellyfinUserId, out var userId) || userId == Guid.Empty)
+                {
+                    failureCode = "jellyfin_user_unavailable";
+                }
+                else
+                {
+                    var registration = _spoilerPendingService.RegisterSeerrIntent(userId, content);
+                    if (registration.IsDurable)
+                    {
+                        return null;
+                    }
+
+                    failureCode = registration.Code;
+                }
+            }
+            catch (Exception ex)
+            {
+                failureCode = "intent_store_unavailable";
+                _logger.LogError(
+                    ex,
+                    "Seerr accepted a media request for {User}, but its Spoiler Guard intent could not be persisted.",
+                    ResolveUserDisplay(jellyfinUserId));
+            }
+
+            _logger.LogWarning(
+                "Seerr accepted a media request for {User}, but Spoiler Guard intent registration failed: {FailureCode}",
+                ResolveUserDisplay(jellyfinUserId),
+                failureCode);
+            var message = failureCode == "unsupported_request_target"
+                ? "Seerr accepted a request target outside its supported movie/tv contract, so Spoiler Guard cannot auto-protect it. Do not retry the request; verify the accepted request in Seerr and manually protect a supported movie or series if needed."
+                : "Seerr accepted the request, but Spoiler Guard could not record its pending intent. Do not retry the Seerr request; add the title to Spoiler Guard manually.";
+            return new ObjectResult(new
+            {
+                error = true,
+                code = "seerr_accepted_spoiler_intent_failed",
+                message,
+                seerrAccepted = true,
+                spoilerIntentRecorded = false,
+                reason = failureCode,
+            })
+            { StatusCode = 500 };
         }
 
         public void InvalidateUserIdentityCache(string jellyfinUserId)

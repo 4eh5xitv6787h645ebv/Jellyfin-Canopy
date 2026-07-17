@@ -343,7 +343,8 @@ public sealed class SeerrUserManualWatchlistSyncTests
             users,
             cache,
             provider,
-            parentalFilter: null!);
+            parentalFilter: null!,
+            spoilerPendingService: null!);
         var controller = new SeerrUserController(
             factory,
             NullLogger<SeerrUserController>.Instance,
