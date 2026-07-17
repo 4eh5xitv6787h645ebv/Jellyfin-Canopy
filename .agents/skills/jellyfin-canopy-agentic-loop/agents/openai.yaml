@@ -1,0 +1,4 @@
+interface:
+  display_name: "Jellyfin Canopy Agentic Loop"
+  short_description: "Bun-style multi-agent write/adversarial-review loop for Canopy changes"
+  default_prompt: "Use $jellyfin-canopy-agentic-loop to carry this Jellyfin Canopy change through parallel explore/plan, a single-writer implement, an adversarial review-until-clean loop, and repo-native verification."
