@@ -27,17 +27,17 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 30222,
-        "totalLines": 38901
+        "coveredLines": 31019,
+        "totalLines": 39687
       },
       "observations": {
-        "cleanRuns": 5,
-        "minimumCoveredLines": 30221,
-        "maximumCoveredLines": 30222
+        "cleanRuns": 4,
+        "minimumCoveredLines": 31018,
+        "maximumCoveredLines": 31019
       },
       "tolerance": {
         "missingCoveredLines": 1,
-        "rationale": "The final #88 review fixes add a worst-case escaping-bounded full-quota move request envelope, compact rich-episode duplicate indexing, whitespace-normalized legacy media aliases, deferred/coalesced backups for imports and ordinary mutations, final-file-only snapshot discovery, and owned-schema plus metadata-invariant recovery validation. Five clean Coverlet runs on the identical 2026-08-02 source and 38,901-line scope each passed all 2,583 server tests: four local runs observed 30,221 covered lines and the GitHub Actions run for PR #569 observed 30,222. Relative to the preceding #88 review baseline, the reviewed implementation adds 25 instrumented lines and 24 covered high-water lines while increasing the enforced floor to 30,221/38,901 (77.687%). The one-line allowance is exactly the observed local-versus-CI instrumentation envelope; the measured high-water is 30,222/38,901 (77.690%), and broader regressions still fail. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
+        "rationale": "The #93 dependency-invalidation change adds an explicit tag-cache dependency graph, bounded descendant repair, relationship-aware pending-change coalescing, and regression coverage for episode, season, and series mutations. Four clean Coverlet runs on the identical 2026-08-02 source and 39,687-line scope each passed all 2,645 server tests: three runs observed 31,018 covered lines and the final official coverage entry point observed 31,019. Relative to the reviewed #88 main baseline of 30,222/38,901 (77.690%), the reviewed implementation adds 786 instrumented lines and 797 covered high-water lines while increasing the high-water to 31,019/39,687 (78.159%) and the enforced floor to 31,018/39,687 (78.157%). The one-line allowance is exactly the same-head fixed-scope instrumentation envelope tracked in #575; the measured high-water is retained and broader regressions still fail. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
       }
     }
   }

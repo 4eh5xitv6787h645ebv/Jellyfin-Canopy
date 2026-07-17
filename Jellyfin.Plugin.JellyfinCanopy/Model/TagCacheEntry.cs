@@ -28,6 +28,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Model
         // without a per-episode library lookup on every request.
         public string? SeriesId { get; set; }
 
+        // Season ID in N format (lowercase). Set for Episodes only. This is persisted
+        // dependency metadata: an ItemUpdated event exposes the Episode's NEW parent,
+        // while invalidation also needs the cached OLD Season after a reparent.
+        public string? SeasonId { get; set; }
+
+        // ID in N format of the item that supplied StreamData/AudioLanguages. For a
+        // Series or Season this is its selected first Episode; for an ordinary item it
+        // is the item itself. Probe-failure fallback may retain last-good media only
+        // when this identity is unchanged, never across first-Episode replacement.
+        public string? StreamSourceId { get; set; }
+
         // Source item revision (BaseItem.DateLastSaved ticks) captured when this
         // entry was built. The daily reconcile (TagCacheService.BuildFullCache)
         // uses it as a cheap candidate gate: an item whose revision is unchanged
@@ -66,6 +77,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Model
             StreamData = StreamData,
             LastUpdated = LastUpdated,
             SeriesId = SeriesId,
+            SeasonId = SeasonId,
+            StreamSourceId = StreamSourceId,
             SourceRevision = SourceRevision,
         };
     }

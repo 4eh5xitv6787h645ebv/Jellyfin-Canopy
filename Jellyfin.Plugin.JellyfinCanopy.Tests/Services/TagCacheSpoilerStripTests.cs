@@ -352,19 +352,21 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             return path;
         }
 
-        [Fact]
-        public void LoadFromDisk_OldSchema_DiscardsEntries()
+        [Theory]
+        [InlineData(1)]
+        [InlineData(2)]
+        public void LoadFromDisk_OldSchema_DiscardsEntries(int schemaVersion)
         {
             var dir = Path.Combine(Path.GetTempPath(), "jc-tagcache-" + Guid.NewGuid().ToString("N"));
             try
             {
                 var key = Guid.NewGuid().ToString("N");
-                WriteCache(dir, schemaVersion: 1, key, new TagCacheEntry { Type = "Episode", SeriesId = null });
+                WriteCache(dir, schemaVersion, key, new TagCacheEntry { Type = "Episode", SeriesId = null });
 
                 using var svc = NewServiceAt(dir);
                 svc.LoadFromDisk();
 
-                // v1 cache lacks SeriesId → discarded, so the strip can't be defeated by stale data.
+                // v1 lacks SeriesId; v2 lacks SeasonId/StreamSourceId. Both are discarded.
                 Assert.Equal(0, svc.Count);
             }
             finally
@@ -381,7 +383,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             {
                 var key = Guid.NewGuid().ToString("N");
                 var seriesN = Guid.NewGuid().ToString("N");
-                WriteCache(dir, schemaVersion: 2, key, new TagCacheEntry { Type = "Episode", SeriesId = seriesN });
+                WriteCache(dir, schemaVersion: 3, key, new TagCacheEntry { Type = "Episode", SeriesId = seriesN });
 
                 using var svc = NewServiceAt(dir);
                 svc.LoadFromDisk();
