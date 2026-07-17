@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JC } from '../../globals';
+import { driveOwnedFakeTimersUntil } from '../../test/owned-timer-driver';
 import { resetFromUserConfig } from './data';
 import {
     clearFilterIdentityState,
@@ -136,31 +137,47 @@ describe('hidden-content parent-Series resolution', () => {
     });
 
     it('recovers overflow beyond both 1,000-entry backpressure tables', async () => {
-        const responseItems = Array.from({ length: 1_001 }, (_value, index) => ({
-            Id: `overflow-episode-${index}`,
-            SeriesId: 'hidden-series',
-        }));
-        let calls = 0;
-        const ajax = vi.spyOn(ApiClient, 'ajax').mockImplementation(() => {
-            calls += 1;
-            // The first 20 requests cover the first bounded 1,000 IDs in
-            // 50-item chunks and omit every row. The bounded overflow pass
-            // must later recover all 1,001 cards without retaining card 1,001.
-            return Promise.resolve({ Items: calls <= 20 ? [] : responseItems });
-        });
-        for (let index = 0; index < 1_001; index += 1) {
-            episodeCard(`overflow-episode-${index}`);
-        }
+        vi.useFakeTimers();
+        try {
+            const responseItems = Array.from({ length: 1_001 }, (_value, index) => ({
+                Id: `overflow-episode-${index}`,
+                SeriesId: 'hidden-series',
+            }));
+            let calls = 0;
+            const ajax = vi.spyOn(ApiClient, 'ajax').mockImplementation(() => {
+                calls += 1;
+                // The first 20 requests cover the first bounded 1,000 IDs in
+                // 50-item chunks and omit every row. The bounded overflow pass
+                // must later recover all 1,001 cards without retaining card 1,001.
+                return Promise.resolve({ Items: calls <= 20 ? [] : responseItems });
+            });
+            for (let index = 0; index < 1_001; index += 1) {
+                episodeCard(`overflow-episode-${index}`);
+            }
 
-        filterAllNativeCards();
+            filterAllNativeCards();
 
-        await vi.waitFor(() => {
+            await driveOwnedFakeTimersUntil({
+                label: 'hidden parent-Series overflow recovery',
+                isComplete: () => document.querySelectorAll('.card.jc-hidden').length === 1_001,
+                diagnostics: () => (
+                    `hidden=${document.querySelectorAll('.card.jc-hidden').length}; api calls=${calls}`
+                ),
+            });
             expect(document.querySelectorAll('.card.jc-hidden')).toHaveLength(1_001);
-        }, { timeout: 4_000 });
-        expect(ajax.mock.calls.length).toBeGreaterThan(20);
-        // Initial wave plus at most three capped overflow waves, each no more
-        // than 20 sequential 50-ID requests for the 1,000-ID pending bound.
-        expect(ajax.mock.calls.length).toBeLessThanOrEqual(80);
+            expect(ajax.mock.calls.length).toBeGreaterThan(20);
+            // Initial wave plus at most three capped overflow waves, each no more
+            // than 20 sequential 50-ID requests for the 1,000-ID pending bound.
+            expect(ajax.mock.calls.length).toBeLessThanOrEqual(80);
+        } finally {
+            clearFilterIdentityState();
+            try {
+                expect(vi.getTimerCount()).toBe(0);
+            } finally {
+                vi.clearAllTimers();
+                vi.useRealTimers();
+            }
+        }
     });
 
     it('invalidates an old parent association on a library change', async () => {
