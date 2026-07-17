@@ -1,5 +1,5 @@
 import type { ClientFeatureDescriptor } from '../core/client-runtime';
-import { JC } from '../globals';
+import { JC, isDiscoveryLibraryConfigured } from '../globals';
 
 function enabled(): boolean {
     return JC.pluginConfig?.SeerrEnabled === true;
@@ -58,9 +58,7 @@ export const seerrFeatureDescriptors: readonly ClientFeatureDescriptor[] = Objec
         dependsOn: ['seerr-core'],
         restartOnConfigChange: true,
         isEnabled: (state) => Boolean(state.identity)
-            && enabled()
-            && JC.pluginConfig?.DiscoveryEnabled !== false
-            && JC.pluginConfig?.DiscoveryLibraryTab !== false,
+            && isDiscoveryLibraryConfigured(JC.pluginConfig),
         isApplicable: (state) => /#\/(?:movies|tvshows)(?:[/?#]|$)/i.test(state.routeKey),
     },
 ]);

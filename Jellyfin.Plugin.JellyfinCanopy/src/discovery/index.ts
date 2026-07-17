@@ -4,17 +4,15 @@
 // placement-agnostic; this barrel wires the first placement — the Movies/TV library page tab.
 // Follow-up placements (home tab, standalone page, search suggestions) register alongside it.
 import type { FeatureLoaderState, FeatureModule, FeatureScope } from '../core/feature-loader';
+import { isDiscoveryLibraryConfigured } from '../globals';
 import { resetDiscoveryCustomize } from './customize';
 import { resetDiscoveryFeeds } from './feed';
 import { initLibraryTab, resetLibraryTab } from './library-tab';
 
 /** Configuration-only eligibility; route applicability remains independent. */
 export function isDiscoveryEnabled(state: FeatureLoaderState): boolean {
-    const config = window.JellyfinCanopy?.pluginConfig;
     return Boolean(state.identity)
-        && config?.DiscoveryEnabled !== false
-        && config?.DiscoveryLibraryTab !== false
-        && config?.SeerrEnabled === true;
+        && isDiscoveryLibraryConfigured(window.JellyfinCanopy?.pluginConfig);
 }
 
 /** Only library surfaces should download the Discovery feature closure. */

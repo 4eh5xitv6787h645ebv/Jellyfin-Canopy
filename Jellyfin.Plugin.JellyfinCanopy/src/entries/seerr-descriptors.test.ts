@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { FeatureLoaderState } from '../core/feature-loader';
-import { JC } from '../globals';
+import { JC, isDiscoveryLibraryConfigured } from '../globals';
 import { seerrFeatureDescriptors } from './seerr-descriptors';
 
 function state(routeKey: string, identity = true): FeatureLoaderState {
@@ -45,5 +45,14 @@ describe('Seerr descriptor fragment', () => {
         expect(search.isEnabled(state('/web/#/search'))).toBe(false);
         expect(discovery.isEnabled(state('/web/#/movies'))).toBe(false);
         expect(search.isEnabled(state('/web/#/search', false))).toBe(false);
+    });
+
+    it.each([
+        [{ DiscoveryEnabled: false, DiscoveryLibraryTab: true, SeerrEnabled: true }, false],
+        [{ DiscoveryEnabled: true, DiscoveryLibraryTab: false, SeerrEnabled: true }, false],
+        [{ DiscoveryEnabled: true, DiscoveryLibraryTab: true, SeerrEnabled: false, TmdbEnabled: true }, false],
+        [{ SeerrEnabled: true }, true],
+    ])('owns the Discovery library configuration truth table %#', (config, expected) => {
+        expect(isDiscoveryLibraryConfigured(config)).toBe(expected);
     });
 });

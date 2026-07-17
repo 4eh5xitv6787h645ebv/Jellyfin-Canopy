@@ -6,7 +6,7 @@
 // the global must exist — a missing namespace means the bundle was loaded
 // out of order, which we fail on loudly instead of half-initializing.
 
-import type { JEGlobal } from './types/jc';
+import type { JEGlobal, PluginConfig } from './types/jc';
 
 if (!window.JellyfinCanopy) {
     throw new Error(
@@ -17,3 +17,10 @@ if (!window.JellyfinCanopy) {
 
 /** The shared plugin namespace (window.JellyfinCanopy). */
 export const JC: JEGlobal = window.JellyfinCanopy;
+
+/** One configuration owner for the Seerr-backed Discovery library placement. */
+export function isDiscoveryLibraryConfigured(config: PluginConfig | undefined): boolean {
+    return config?.DiscoveryEnabled !== false
+        && config?.DiscoveryLibraryTab !== false
+        && config?.SeerrEnabled === true;
+}

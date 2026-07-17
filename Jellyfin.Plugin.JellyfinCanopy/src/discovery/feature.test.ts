@@ -65,14 +65,15 @@ beforeEach(() => {
 });
 
 describe('Discovery lazy feature contract', () => {
-    it('gates download eligibility on config and the exact library route', () => {
+    it('gates download eligibility on shared config and the exact library route', () => {
         expect(isDiscoveryEnabled(state())).toBe(true);
         expect(isDiscoveryLibraryRoute(state('/web/#/movies?topParentId=1'))).toBe(true);
         expect(isDiscoveryLibraryRoute(state('/web/#/tvshows'))).toBe(true);
         expect(isDiscoveryLibraryRoute(state('/web/#/home'))).toBe(false);
 
-        window.JellyfinCanopy.pluginConfig.DiscoveryEnabled = false;
+        window.JellyfinCanopy.pluginConfig = { SeerrEnabled: false, TmdbEnabled: true };
         expect(isDiscoveryEnabled(state())).toBe(false);
+        expect(isDiscoveryEnabled({ ...state(), identity: null })).toBe(false);
     });
 
     it('does not activate or register cleanup for a stale scope', async () => {
