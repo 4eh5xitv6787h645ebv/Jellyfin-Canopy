@@ -1,0 +1,5 @@
+# Direct documentation dependencies. Regenerate requirements-docs.txt with
+# pip-tools 7.5.2 and pip 25.3 under the version in .python-version-docs:
+# pip-compile --generate-hashes --strip-extras --output-file=requirements-docs.txt requirements-docs.in
+mkdocs-material==9.6.12
+mdx-truly-sane-lists==1.3

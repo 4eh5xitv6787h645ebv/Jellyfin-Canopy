@@ -1,15 +1,50 @@
-name: Deploy Documentation
+name: Documentation
 
 on:
-  push:
-    branches:
-      - main
+  pull_request:
+    branches: [main]
     paths:
       - 'docs/**'
+      - 'theme/**'
       - 'README.md'
       - 'CONTRIBUTING.md'
+      - 'requirements-docs.in'
+      - 'requirements-docs.txt'
+      - '.python-version-docs'
+      - 'scripts/check-docs.js'
+      - 'scripts/check-docs.test.js'
+      - 'scripts/docs-external-links.json'
       - 'scripts/check-markdown-links.js'
       - 'scripts/check-markdown-links.test.js'
+      - 'scripts/check-installation-permissions.js'
+      - 'scripts/check-installation-permissions.test.js'
+      - 'scripts/check-doc-assets.js'
+      - 'scripts/check-doc-assets.test.js'
+      - 'scripts/docs-asset-policy.json'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'mkdocs.yml'
+      - '.github/workflows/docs.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - 'theme/**'
+      - 'README.md'
+      - 'CONTRIBUTING.md'
+      - 'requirements-docs.in'
+      - 'requirements-docs.txt'
+      - '.python-version-docs'
+      - 'scripts/check-docs.js'
+      - 'scripts/check-docs.test.js'
+      - 'scripts/docs-external-links.json'
+      - 'scripts/check-markdown-links.js'
+      - 'scripts/check-markdown-links.test.js'
+      - 'scripts/check-installation-permissions.js'
+      - 'scripts/check-installation-permissions.test.js'
+      - 'scripts/check-doc-assets.js'
+      - 'scripts/check-doc-assets.test.js'
+      - 'scripts/docs-asset-policy.json'
       - 'package.json'
       - 'package-lock.json'
       - 'mkdocs.yml'
@@ -18,12 +53,66 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 jobs:
-  deploy:
+  validate:
+    name: Validate and build preview
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Verify Node toolchain
+        run: npm run check:toolchain
+
+      - name: Install dev dependencies
+        run: npm ci
+
+      - name: Set up exact Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version-file: .python-version-docs
+          cache: pip
+          cache-dependency-path: requirements-docs.txt
+
+      - name: Install hash-locked documentation dependencies
+        run: python -m pip install --require-hashes --requirement requirements-docs.txt
+
+      - name: Reproducible documentation validation
+        run: npm run check:docs
+
+      - name: Upload exact-commit documentation preview
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: documentation-preview-${{ github.sha }}
+          path: site
+          if-no-files-found: error
+          retention-days: 7
+          overwrite: true
+
+  deploy:
+    name: Deploy validated preview
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'workflow_dispatch' || github.event_name == 'push')
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -33,54 +122,20 @@ jobs:
         with:
           egress-policy: audit
 
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
-        with:
-          fetch-depth: 0
-
-      - name: Set up Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version-file: .nvmrc
-
-      - name: Verify Node toolchain
-        run: npm run check:toolchain
-
-      - name: Install dev dependencies
-        run: npm ci
-
-      - name: Check internal Markdown links
-        run: npm run check:markdown-links
-
-      - name: Check documentation asset ownership and size budgets
-        run: npm run check:docs-assets
-
-      - name: Set up Python
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
-        with:
-          python-version: 3.x
-
-      - name: Cache dependencies
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          key: ${{ github.ref }}
-          path: .cache
-
-      - name: Install dependencies
-        run: |
-          pip install mkdocs-material==9.6.12 mdx-truly-sane-lists==1.3
-
       - name: Configure Pages
-        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
 
-      - name: Build site
-        run: mkdocs build --strict -d site
-
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9
+      - name: Download exact validated commit
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          path: site
+          name: documentation-preview-${{ github.sha }}
+          path: validated-site
+
+      - name: Create Pages artifact from validated bytes
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: validated-site
 
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128
-# Registered for Jellyfin Canopy CI (no functional change).
+        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5.0.0

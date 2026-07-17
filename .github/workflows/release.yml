@@ -189,6 +189,16 @@ jobs:
       - name: Install dev dependencies
         run: npm ci
 
+      - name: Setup exact Python for documentation validation
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version-file: .python-version-docs
+          cache: pip
+          cache-dependency-path: requirements-docs.txt
+
+      - name: Install hash-locked documentation dependencies
+        run: python -m pip install --require-hashes --requirement requirements-docs.txt
+
       - name: Syntax check (node --check, every served file)
         run: npm run syntax
 
@@ -201,11 +211,8 @@ jobs:
       - name: Client performance architecture guard (isolated CPU budget)
         run: npm run check:performance-rules
 
-      - name: Internal Markdown links
-        run: npm run check:markdown-links
-
-      - name: Documentation asset ownership and size budgets
-        run: npm run check:docs-assets
+      - name: Reproducible documentation validation
+        run: npm run check:docs
 
       - name: Type check (opt-in @ts-check files)
         run: npm run typecheck

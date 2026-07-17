@@ -250,11 +250,13 @@ test('rejects asset and reference-source symlinks instead of following them', ()
     });
 });
 
-test('build, release and docs workflows run the live asset gate explicitly', () => {
+test('build, release and docs workflows run the shared docs gate that owns live assets', () => {
     const root = path.join(__dirname, '..');
+    const scripts = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).scripts;
+    assert.match(scripts['check:docs'], /node scripts\/check-doc-assets\.js/);
     for (const workflow of ['build.yml', 'release.yml', 'docs.yml']) {
         const source = fs.readFileSync(path.join(root, '.github', 'workflows', workflow), 'utf8');
-        assert.match(source, /run: npm run check:docs-assets/);
-        assert.doesNotMatch(source, /check:docs-assets[^\n]*\n\s+continue-on-error:/);
+        assert.match(source, /run: npm run check:docs/);
+        assert.doesNotMatch(source, /check:docs[^\n]*\n\s+continue-on-error:/);
     }
 });

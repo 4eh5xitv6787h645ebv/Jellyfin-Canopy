@@ -182,7 +182,7 @@ test('CI and release share the verifier while every non-lint workflow gate stays
         'npm run syntax',
         'npm run test:scripts',
         'npm run check:performance-rules',
-        'npm run check:markdown-links',
+        'npm run check:docs',
         'npm run typecheck',
         'npm run typecheck:src',
         'npm run build:bundle',

@@ -330,7 +330,7 @@ If-Match: "7"
 
 {
   "Revision": 7,
-  "Bookmarks": { ... }
+  "Bookmarks": {}
 }
 ```
 

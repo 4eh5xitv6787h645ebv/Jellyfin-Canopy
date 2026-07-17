@@ -174,16 +174,18 @@ test('heading slugs match repository GitHub-style anchors', () => {
     );
 });
 
-test('CI, release, and documentation workflows keep the link and strict-build gates blocking', () => {
+test('CI, release, and documentation workflows keep the shared docs gate blocking', () => {
     const root = path.join(__dirname, '..');
     const build = fs.readFileSync(path.join(root, '.github', 'workflows', 'build.yml'), 'utf8');
     const release = fs.readFileSync(path.join(root, '.github', 'workflows', 'release.yml'), 'utf8');
     const docs = fs.readFileSync(path.join(root, '.github', 'workflows', 'docs.yml'), 'utf8');
-    assert.match(build, /run: npm run check:markdown-links/);
-    assert.match(release, /run: npm run check:markdown-links/);
-    assert.match(docs, /run: npm run check:markdown-links/);
-    assert.match(docs, /run: mkdocs build --strict -d site/);
+    const scripts = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).scripts;
+    assert.match(scripts['check:docs'], /node scripts\/check-docs\.js/);
+    assert.match(scripts['check:docs'], /python -m mkdocs build --strict -d site/);
+    assert.match(build, /run: npm run check:docs/);
+    assert.match(release, /run: npm run check:docs/);
+    assert.match(docs, /run: npm run check:docs/);
     const client = build.slice(build.indexOf('  client-scripts:'), build.indexOf('  e2e_shard:'));
-    assert.match(client, /run: npm run check:markdown-links[\s\S]*run: mkdocs build --strict -d site/);
+    assert.match(client, /run: npm run check:docs/);
     assert.doesNotMatch(docs, /continue-on-error:/);
 });

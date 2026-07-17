@@ -126,4 +126,5 @@ test('the blocking Markdown gate cannot omit the installation contract', () => {
         scripts['check:markdown-links'],
         /node scripts\/check-markdown-links\.js && node scripts\/check-installation-permissions\.js/,
     );
+    assert.match(scripts['check:docs'], /node scripts\/check-installation-permissions\.js/);
 });

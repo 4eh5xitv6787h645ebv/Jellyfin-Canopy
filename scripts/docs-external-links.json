@@ -1,0 +1,264 @@
+{
+  "schemaVersion": 1,
+  "offlinePolicy": "Blocking PR and deploy validation never probes the network. Every published external URL must be reviewed here; optional bounded live probes report transient failures distinctly and are not part of the blocking reproducible gate.",
+  "allowedUrls": [
+    {
+      "url": "https://4eh5xitv6787h645ebv.github.io/Jellyfin-Canopy/",
+      "reason": "Canonical Jellyfin Canopy project link."
+    },
+    {
+      "url": "https://4eh5xitv6787h645ebv.github.io/Jellyfin-Canopy/customization/",
+      "reason": "Canonical Jellyfin Canopy project link."
+    },
+    {
+      "url": "https://4eh5xitv6787h645ebv.github.io/Jellyfin-Canopy/developers/",
+      "reason": "Canonical Jellyfin Canopy project link."
+    },
+    {
+      "url": "https://4eh5xitv6787h645ebv.github.io/Jellyfin-Canopy/discover/",
+      "reason": "Canonical Jellyfin Canopy project link."
+    },
+    {
+      "url": "https://4eh5xitv6787h645ebv.github.io/Jellyfin-Canopy/enhanced/",
+      "reason": "Canonical Jellyfin Canopy project link."
+    },
+    {
+      "url": "https://4eh5xitv6787h645ebv.github.io/Jellyfin-Canopy/getting-started/",
+      "reason": "Canonical Jellyfin Canopy project link."
+    },
+    {
+      "url": "https://4eh5xitv6787h645ebv.github.io/Jellyfin-Canopy/getting-started/#permission-issues",
+      "reason": "Canonical Jellyfin Canopy project link."
+    },
+    {
+      "url": "https://4eh5xitv6787h645ebv.github.io/Jellyfin-Canopy/help/",
+      "reason": "Canonical Jellyfin Canopy project link."
+    },
+    {
+      "url": "https://4eh5xitv6787h645ebv.github.io/Jellyfin-Canopy/reference/",
+      "reason": "Canonical Jellyfin Canopy project link."
+    },
+    {
+      "url": "https://4eh5xitv6787h645ebv.github.io/Jellyfin-Canopy/sonarr-radarr/",
+      "reason": "Canonical Jellyfin Canopy project link."
+    },
+    {
+      "url": "https://4eh5xitv6787h645ebv.github.io/Jellyfin-Canopy/spoiler-guard/",
+      "reason": "Canonical Jellyfin Canopy project link."
+    },
+    {
+      "url": "https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png",
+      "reason": "Original upstream author support link."
+    },
+    {
+      "url": "https://cdn.jsdelivr.net/gh/n00bcodr/Jellyfin-Elsewhere/resources/providers.txt",
+      "reason": "Historical upstream attribution or source reference."
+    },
+    {
+      "url": "https://cdn.jsdelivr.net/gh/n00bcodr/Jellyfin-Elsewhere/resources/regions.txt",
+      "reason": "Historical upstream attribution or source reference."
+    },
+    {
+      "url": "https://contrib.rocks/image?repo=n00bcodr/Jellyfin-Enhanced",
+      "reason": "Historical upstream attribution or source reference."
+    },
+    {
+      "url": "https://dash.cloudflare.com",
+      "reason": "Reviewed public third-party documentation or asset."
+    },
+    {
+      "url": "https://discord.gg/EYNFf7y4CG",
+      "reason": "Reviewed public third-party documentation or asset."
+    },
+    {
+      "url": "https://docs.seerr.dev/",
+      "reason": "Reviewed public third-party documentation or asset."
+    },
+    {
+      "url": "https://docs.seerr.dev/troubleshooting#tmdb-failed-to-retrievefetch-xxx",
+      "reason": "Reviewed public third-party documentation or asset."
+    },
+    {
+      "url": "https://fonts.google.com/icons",
+      "reason": "Reviewed public third-party documentation or asset."
+    },
+    {
+      "url": "https://fonts.googleapis.com",
+      "reason": "Theme preconnect for the reviewed Google Fonts stylesheet.",
+      "probe": "dns-only"
+    },
+    {
+      "url": "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:ital,wght@0,400;0,600;1,400&display=swap",
+      "reason": "Theme typography stylesheet loaded by the published site."
+    },
+    {
+      "url": "https://fonts.gstatic.com",
+      "reason": "Theme preconnect for the reviewed Google Fonts assets.",
+      "probe": "dns-only"
+    },
+    {
+      "url": "https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy",
+      "reason": "Canonical Jellyfin Canopy project link."
+    },
+    {
+      "url": "https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/blob/main/Jellyfin.Plugin.JellyfinCanopy/locale-manifest.json",
+      "reason": "Canonical Jellyfin Canopy project link."
+    },
+    {
+      "url": "https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/discussions",
+      "reason": "Canonical Jellyfin Canopy project link."
+    },
+    {
+      "url": "https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues",
+      "reason": "Canonical Jellyfin Canopy project link."
+    },
+    {
+      "url": "https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/new",
+      "reason": "Canonical Jellyfin Canopy project link."
+    },
+    {
+      "url": "https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/pulls",
+      "reason": "Canonical Jellyfin Canopy project link."
+    },
+    {
+      "url": "https://github.com/BobHasNoSoul/",
+      "reason": "Reviewed public third-party documentation or asset."
+    },
+    {
+      "url": "https://github.com/BobHasNoSoul/Jellyfin-PauseScreen",
+      "reason": "Reviewed public third-party documentation or asset."
+    },
+    {
+      "url": "https://github.com/BobHasNoSoul/Jellyfin-Qualitytags/",
+      "reason": "Reviewed public third-party documentation or asset."
+    },
+    {
+      "url": "https://github.com/Druidblack/jellyfin-icon-metadata",
+      "reason": "Reviewed public third-party documentation or asset."
+    },
+    {
+      "url": "https://github.com/IAmParadox27/",
+      "reason": "Reviewed public third-party documentation or asset."
+    },
+    {
+      "url": "https://github.com/IAmParadox27/jellyfin-plugin-custom-tabs",
+      "reason": "Reviewed public third-party documentation or asset."
+    },
+    {
+      "url": "https://github.com/IAmParadox27/jellyfin-plugin-file-transformation",
+      "reason": "Reviewed public third-party documentation or asset."
+    },
+    {
+      "url": "https://github.com/IAmParadox27/jellyfin-plugin-pages",
+      "reason": "Reviewed public third-party documentation or asset."
+    },
+    {
+      "url": "https://github.com/intro-skipper/intro-skipper",
+      "reason": "Reviewed public third-party documentation or asset."
+    },
+    {
+      "url": "https://github.com/n00bcodr",
+      "reason": "Historical upstream attribution or source reference."
+    },
+    {
+      "url": "https://github.com/n00bcodr/Jellyfin-Elsewhere",
+      "reason": "Historical upstream attribution or source reference."
+    },
+    {
+      "url": "https://github.com/n00bcodr/Jellyfin-Enhanced",
+      "reason": "Historical upstream attribution or source reference."
+    },
+    {
+      "url": "https://github.com/n00bcodr/Jellyfin-Enhanced/graphs/contributors",
+      "reason": "Historical upstream attribution or source reference."
+    },
+    {
+      "url": "https://github.com/n00bcodr/Jellyfin-Enhanced/issues/175",
+      "reason": "Historical upstream attribution or source reference."
+    },
+    {
+      "url": "https://github.com/n00bcodr/Jellyfin-Enhanced/issues/570",
+      "reason": "Historical upstream attribution or source reference."
+    },
+    {
+      "url": "https://github.com/n00bcodr/Jellyfin-Enhanced/raw/05dd5b54802f149e45c76102dabf6235aaf7a5fb/jf_enhanced.user.js",
+      "reason": "Historical upstream attribution or source reference."
+    },
+    {
+      "url": "https://github.com/n00bcodr/Jellyfin-JavaScript-Injector",
+      "reason": "Historical upstream attribution or source reference."
+    },
+    {
+      "url": "https://github.com/n00bcodr/JellyfinTweaks",
+      "reason": "Historical upstream attribution or source reference."
+    },
+    {
+      "url": "https://github.com/n00bcodr/Jellyfish/",
+      "reason": "Historical upstream attribution or source reference."
+    },
+    {
+      "url": "https://github.com/Namo2/InPlayerEpisodePreview/",
+      "reason": "Reviewed public third-party documentation or asset."
+    },
+    {
+      "url": "https://github.com/ranaldsgift/KefinTweaks",
+      "reason": "Reviewed public third-party documentation or asset."
+    },
+    {
+      "url": "https://github.com/seerr-team/seerr",
+      "reason": "Reviewed public third-party documentation or asset."
+    },
+    {
+      "url": "https://img.buymeacoffee.com/button-api/?text=Buy me a coffee&emoji=☕&slug=n00bcodr&button_colour=FFDD00&font_colour=000000&font_family=Ubuntu&outline_colour=000000&coffee_colour=ffffff",
+      "reason": "Historical upstream attribution or source reference."
+    },
+    {
+      "url": "https://img.shields.io/badge/Development-100%25%20AI-AA5CC3?labelColor=black",
+      "reason": "Reviewed public third-party documentation or asset."
+    },
+    {
+      "url": "https://img.shields.io/badge/Jellyfin%20Version-12-AA5CC3?logo=jellyfin&logoColor=00A4DC&labelColor=black",
+      "reason": "Reviewed public third-party documentation or asset."
+    },
+    {
+      "url": "https://img.shields.io/badge/Languages-26-2F80FF?labelColor=black",
+      "reason": "Reviewed public third-party documentation or asset."
+    },
+    {
+      "url": "https://img.shields.io/badge/License-GPL--3.0-00A4DC?labelColor=black",
+      "reason": "Reviewed public third-party documentation or asset."
+    },
+    {
+      "url": "https://jellyfin.org/",
+      "reason": "Reviewed public third-party documentation or asset."
+    },
+    {
+      "url": "https://ko-fi.com/G2G51TIZF0",
+      "reason": "Original upstream author support link."
+    },
+    {
+      "url": "https://ko-fi.com/n00bcodr",
+      "reason": "Historical upstream attribution or source reference."
+    },
+    {
+      "url": "https://storage.ko-fi.com/cdn/kofi1.png?v=6",
+      "reason": "Original upstream author support link."
+    },
+    {
+      "url": "https://storage.ko-fi.com/cdn/kofi5.png?v=6",
+      "reason": "Original upstream author support link."
+    },
+    {
+      "url": "https://www.buymeacoffee.com/n00bcodr",
+      "reason": "Historical upstream attribution or source reference."
+    },
+    {
+      "url": "https://www.themoviedb.org/",
+      "reason": "Reviewed public third-party documentation or asset."
+    },
+    {
+      "url": "https://www.themoviedb.org/settings/api",
+      "reason": "Reviewed public third-party documentation or asset."
+    }
+  ]
+}
