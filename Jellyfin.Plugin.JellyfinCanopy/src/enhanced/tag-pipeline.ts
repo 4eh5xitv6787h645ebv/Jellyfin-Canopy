@@ -377,11 +377,13 @@ interface QueueEntry {
     renderTarget: HTMLElement;
     itemId: string;
     itemType: string | null;
+    claim: object;
 }
 
 /** True only while a queued element/target still belongs to the captured item. */
 function queueEntryStillOwnsItem(entry: QueueEntry, itemId: string): boolean {
-    return document.contains(entry.el)
+    return queuedClaimByElement.get(entry.el) === entry.claim
+        && document.contains(entry.el)
         && entry.renderTarget.isConnected
         && getItemId(entry.el) === itemId;
 }
@@ -389,6 +391,7 @@ function queueEntryStillOwnsItem(entry: QueueEntry, itemId: string): boolean {
 const renderers = new Map<string, RendererEntry>(); // name → { render, isEnabled, needsFirstEpisode, needsParentSeries }
 let processedCards = new WeakSet<Element>(); // let, not const — needs reassignment on reinit
 let renderedItemByElement = new WeakMap<Element, string>();
+const queuedClaimByElement = new WeakMap<Element, object>();
 const pendingProjectionIds = new Set<string>();
 // Batch-mode watched flips bypass every local/helper cache and must be satisfied
 // by a successful fresh /tag-data response before their cards can render again.
@@ -410,6 +413,11 @@ let fetchTimer: number | null = null;
 let isProcessing = false;
 let processingGeneration = 0;
 let batchGeneration = 0; // Incremented on navigation to cancel stale in-flight batches
+interface BatchRunOwner {
+    controller: AbortController;
+    entries: Set<QueueEntry>;
+}
+let activeBatchOwner: BatchRunOwner | null = null;
 let requestQueue: QueueEntry[] = []; // { el, itemId, itemType }
 let firstFetchAfterNav = true; // PERF(R7): shortens the debounce for the first batch of a navigation
 let processWired = false;
@@ -417,6 +425,54 @@ let bodySubscription: ReturnType<typeof onBodyMutation> | null = null;
 let navigationUnsubscribe: (() => void) | null = null;
 let activeIdentityEpoch: number | null = null;
 let identityActivationGeneration = 0;
+
+function enqueueTagRequest(
+    el: HTMLElement,
+    renderTarget: HTMLElement,
+    itemId: string,
+    itemType: string | null,
+): void {
+    const claim = {};
+    queuedClaimByElement.set(el, claim);
+    requestQueue.push({ el, renderTarget, itemId, itemType, claim });
+}
+
+/** Release a queued card only if this exact request still owns its marker. */
+function releaseQueueEntry(entry: QueueEntry): void {
+    if (queuedClaimByElement.get(entry.el) !== entry.claim) return;
+    queuedClaimByElement.delete(entry.el);
+    processedCards.delete(entry.el);
+    renderedItemByElement.delete(entry.el);
+}
+
+/** Retire an accepted request claim without making the card eligible again. */
+function settleQueueEntry(entry: QueueEntry): void {
+    if (queuedClaimByElement.get(entry.el) === entry.claim) {
+        queuedClaimByElement.delete(entry.el);
+    }
+}
+
+/**
+ * Retire the current batch owner and release the queue lock immediately.
+ * The generation fence remains authoritative even if a host transport ignores
+ * AbortSignal; the exact processing-generation check prevents retired work
+ * from clearing a replacement owner's lock in its finally block.
+ */
+function retireBatchGeneration(): void {
+    batchGeneration += 1;
+    const owner = activeBatchOwner;
+    if (!owner) return;
+    activeBatchOwner = null;
+    for (const entry of owner.entries) releaseQueueEntry(entry);
+    owner.controller.abort();
+    processingGeneration += 1;
+    isProcessing = false;
+    // The retired owner had already spliced its cards out of requestQueue.
+    // Rescan releases those exact claims into the new generation, while any
+    // unaffected queued entries resume without waiting for another mutation.
+    scheduleScan();
+    if (requestQueue.length > 0) scheduleFetchIfQueued();
+}
 
 // ── Pipeline-level exclusions ─────────────────────────────────────
 // Elements matching these selectors are skipped before any renderer runs.
@@ -871,10 +927,10 @@ function normalizeIdList(value: unknown): string[] {
  */
 async function refreshUnknownServerProjection(ids: string[]): Promise<void> {
     projectionRequestGeneration++;
-    batchGeneration++;
+    retireBatchGeneration();
     projectionResetPending = true;
     for (const id of normalizeIdList(ids)) pendingProjectionIds.add(id);
-    for (const entry of requestQueue) processedCards.delete(entry.el);
+    for (const entry of requestQueue) releaseQueueEntry(entry);
     requestQueue = [];
     firstEpisodeCache.clear();
     parentSeriesCache.clear();
@@ -1065,6 +1121,7 @@ function clearRenderedCard(el: HTMLElement): void {
     }
     processedCards.delete(el);
     renderedItemByElement.delete(el);
+    queuedClaimByElement.delete(el);
 }
 
 /**
@@ -1077,10 +1134,10 @@ function invalidateRenderedItems(ids: string[], evictServerRows: boolean): void 
 
     // Any pre-invalidation tag-data response is stale. Its generation checks
     // unmark the captured cards rather than repainting them.
-    batchGeneration++;
+    retireBatchGeneration();
     requestQueue = requestQueue.filter((entry) => {
         if (!idSet.has(entry.itemId)) return true;
-        processedCards.delete(entry.el);
+        releaseQueueEntry(entry);
         return false;
     });
 
@@ -1123,8 +1180,8 @@ function clearRendererProjectionState(clearDom: boolean): void {
 
 /** Start a new local privacy generation and retire every pre-generation source. */
 function beginBatchProjectionGeneration(userId: string): void {
-    batchGeneration++;
-    for (const entry of requestQueue) processedCards.delete(entry.el);
+    retireBatchGeneration();
+    for (const entry of requestQueue) releaseQueueEntry(entry);
     requestQueue = [];
     firstEpisodeCache.clear();
     parentSeriesCache.clear();
@@ -1168,7 +1225,7 @@ function armBatchProjectionRefresh(ids: string[], userId: string): void {
 function resetServerProjection(clearDom: boolean): void {
     serverCacheLoadGeneration++;
     projectionRequestGeneration++;
-    batchGeneration++;
+    retireBatchGeneration();
     serverCache = null;
     serverCacheVersion = 0;
     serverCacheTimestamp = 0;
@@ -1181,7 +1238,7 @@ function resetServerProjection(clearDom: boolean): void {
     forceFreshProjectionIds.clear();
     batchForceAllProjectionIds = false;
     batchFreshProjectionIds.clear();
-    for (const entry of requestQueue) processedCards.delete(entry.el);
+    for (const entry of requestQueue) releaseQueueEntry(entry);
     requestQueue = [];
     firstEpisodeCache.clear();
     parentSeriesCache.clear();
@@ -1205,8 +1262,6 @@ function resetTagPipelineIdentity(): void {
     scanScheduleGeneration++;
     scanScheduled = false;
     scanGeneration++;
-    processingGeneration++;
-    isProcessing = false;
     firstFetchAfterNav = true;
     cardFetchFailures = new WeakMap<Element, number>();
     JC._tagCachePrefetch = null;
@@ -1336,7 +1391,7 @@ function processCard(el: HTMLElement, fadeIn: boolean): void {
     }
 
     if (forceFresh) {
-        requestQueue.push({ el, renderTarget, itemId, itemType });
+        enqueueTagRequest(el, renderTarget, itemId, itemType);
         return;
     }
 
@@ -1355,7 +1410,7 @@ function processCard(el: HTMLElement, fadeIn: boolean): void {
     if (fadeIn) withFadeIn(renderTarget, renderCached); else renderCached();
 
     if (!allCacheHits) {
-        requestQueue.push({ el, renderTarget, itemId, itemType });
+        enqueueTagRequest(el, renderTarget, itemId, itemType);
     }
 }
 
@@ -1481,13 +1536,18 @@ function getItemType(el: HTMLElement): string | null {
 // ── Queue Processing ───────────────────────────────────────────────
 
 const SERVER_BATCH_LIMIT = 200;
+/** Maximum owned item/episode requests in the current fallback generation. */
+export const TAG_FALLBACK_CONCURRENCY = 6;
 
 /**
  * Drain the request queue in SERVER_BATCH_LIMIT-sized chunks.
  */
 async function processQueue(): Promise<void> {
     if (isProcessing || requestQueue.length === 0) return;
-    const myProcessingGeneration = processingGeneration;
+    const myProcessingGeneration = ++processingGeneration;
+    const controller = new AbortController();
+    const owner: BatchRunOwner = { controller, entries: new Set() };
+    activeBatchOwner = owner;
     isProcessing = true;
 
     try {
@@ -1495,11 +1555,17 @@ async function processQueue(): Promise<void> {
 
         // Chunk into batches of SERVER_BATCH_LIMIT to avoid 400 errors
         while (requestQueue.length > 0) {
-            if (myGeneration !== batchGeneration) break; // navigation happened
+            if (controller.signal.aborted || myGeneration !== batchGeneration) break;
             const batch = requestQueue.splice(0, SERVER_BATCH_LIMIT);
-            await processBatch(batch, myGeneration);
+            for (const entry of batch) owner.entries.add(entry);
+            await processBatch(batch, myGeneration, controller.signal);
+            for (const entry of batch) {
+                owner.entries.delete(entry);
+                settleQueueEntry(entry);
+            }
         }
     } finally {
+        if (activeBatchOwner === owner) activeBatchOwner = null;
         // Identity reset can allow B to start while an unsignalled ApiClient.ajax
         // from A is still settling. A must not clear B's processing lock.
         if (myProcessingGeneration === processingGeneration) {
@@ -1513,12 +1579,202 @@ async function processQueue(): Promise<void> {
     }
 }
 
+function fallbackRunIsCurrent(
+    userKey: string,
+    generation: number,
+    signal: AbortSignal,
+): boolean {
+    return !signal.aborted
+        && generation === batchGeneration
+        && normalizeProjectionKey(ApiClient.getCurrentUserId()) === userKey
+        && !projectionResetPending;
+}
+
+function releaseFallbackEntries(entries: QueueEntry[]): void {
+    for (const entry of entries) releaseQueueEntry(entry);
+}
+
+/** Fetch one item without publishing it into the shared DTO cache. */
+async function fetchFallbackItem(
+    userId: string,
+    itemId: string,
+    signal: AbortSignal,
+): Promise<any> {
+    return ApiClient.ajax({
+        type: 'GET',
+        url: ApiClient.getUrl(`/Users/${encodeURIComponent(userId)}/Items/${encodeURIComponent(itemId)}`),
+        dataType: 'json',
+        signal,
+    });
+}
+
+/** A fallback worker owns at most one cancellable request at a time. */
+async function fetchFallbackFirstEpisode(
+    userId: string,
+    parentId: string,
+    signal: AbortSignal,
+): Promise<any> {
+    const response: any = await ApiClient.ajax({
+        type: 'GET',
+        url: (ApiClient as { getUrl(path: string, params?: unknown): string }).getUrl('/Items', {
+            ParentId: parentId,
+            IncludeItemTypes: 'Episode',
+            Recursive: true,
+            SortBy: 'PremiereDate',
+            SortOrder: 'Ascending',
+            Limit: 1,
+            Fields: 'MediaStreams,MediaSources,Genres',
+            userId,
+        }),
+        dataType: 'json',
+        signal,
+    });
+    return response?.Items?.[0] || null;
+}
+
+async function processFallbackItem(
+    itemId: string,
+    entries: QueueEntry[],
+    userId: string,
+    userKey: string,
+    generation: number,
+    signal: AbortSignal,
+): Promise<void> {
+    if (!fallbackRunIsCurrent(userKey, generation, signal)
+        || pendingProjectionIds.has(itemId)) {
+        releaseFallbackEntries(entries);
+        return;
+    }
+
+    let liveEntries = entries.filter((entry) => queueEntryStillOwnsItem(entry, itemId));
+    if (liveEntries.length !== entries.length) {
+        for (const entry of entries) {
+            if (!liveEntries.includes(entry)) releaseQueueEntry(entry);
+        }
+        if (entries.some((entry) => entry.el.isConnected)) scheduleScan();
+    }
+    if (liveEntries.length === 0) return;
+
+    // Privacy-forced ids may only be satisfied by /tag-data. A generic item
+    // endpoint could replay pre-policy DTO fields after the authoritative batch
+    // failed, so keep those cards blank for the next fresh batch attempt.
+    if (forceFreshProjectionIds.has(itemId)) {
+        releaseFallbackEntries(liveEntries);
+        return;
+    }
+
+    try {
+        const item: any = await fetchFallbackItem(userId, itemId, signal);
+        if (!fallbackRunIsCurrent(userKey, generation, signal)
+            || pendingProjectionIds.has(itemId)) {
+            releaseFallbackEntries(liveEntries);
+            scheduleScan();
+            return;
+        }
+        if (!item || !MEDIA_TYPES.has(item.Type)) return;
+
+        const stillOwned = liveEntries.filter((entry) => queueEntryStillOwnsItem(entry, itemId));
+        if (stillOwned.length !== liveEntries.length) {
+            for (const entry of liveEntries) {
+                if (!stillOwned.includes(entry)) releaseQueueEntry(entry);
+            }
+            if (liveEntries.some((entry) => entry.el.isConnected)) scheduleScan();
+        }
+        liveEntries = stillOwned;
+        if (liveEntries.length === 0) return;
+
+        let firstEpisode: any = null;
+        if (item.Type === 'Series' || item.Type === 'Season') {
+            try {
+                firstEpisode = await fetchFallbackFirstEpisode(userId, item.Id, signal);
+            } catch {
+                // Supplemental metadata is optional. Preserve the previous
+                // fail-soft render contract for an ordinary endpoint failure,
+                // while cancellation/generation retirement still rejects all
+                // publication through the owner check immediately below.
+                firstEpisode = null;
+            }
+        }
+        if (!fallbackRunIsCurrent(userKey, generation, signal)
+            || pendingProjectionIds.has(itemId)) {
+            releaseFallbackEntries(liveEntries);
+            scheduleScan();
+            return;
+        }
+
+        let recycled = false;
+        for (const entry of liveEntries) {
+            if (!queueEntryStillOwnsItem(entry, itemId)) {
+                releaseQueueEntry(entry);
+                recycled = true;
+                continue;
+            }
+            const { renderTarget } = entry;
+            const extras = { firstEpisode, parentSeries: null, ratingParentSeries: null, renderTarget };
+            // PERF(R7): post-paint fallback render — fade late tags in.
+            withFadeIn(renderTarget, () => {
+                for (const [, renderer] of renderers) {
+                    if (!renderer.isEnabled()) continue;
+                    try { renderer.render(renderTarget, item, extras); } catch {}
+                }
+            });
+        }
+        if (recycled) scheduleScan();
+    } catch {
+        if (!fallbackRunIsCurrent(userKey, generation, signal)) {
+            releaseFallbackEntries(liveEntries);
+            scheduleScan();
+            return;
+        }
+        // PERF(R9): fail open — un-mark each live card (bounded) so a later
+        // mutation/navigation retries it without an immediate request loop.
+        for (const entry of liveEntries) {
+            const failures = (cardFetchFailures.get(entry.el) || 0) + 1;
+            cardFetchFailures.set(entry.el, failures);
+            if (failures < CARD_FETCH_MAX_FAILURES) releaseQueueEntry(entry);
+        }
+    }
+}
+
+/** Drain unique fallback item ids through an explicit fixed-size worker pool. */
+async function processFallbackBatch(
+    entriesByItem: Map<string, QueueEntry[]>,
+    userId: string,
+    userKey: string,
+    generation: number,
+    signal: AbortSignal,
+): Promise<void> {
+    const groups = [...entriesByItem.entries()];
+    let nextGroup = 0;
+    const worker = async (): Promise<void> => {
+        while (fallbackRunIsCurrent(userKey, generation, signal)) {
+            const index = nextGroup;
+            nextGroup += 1;
+            if (index >= groups.length) return;
+            const [itemId, entries] = groups[index];
+            await processFallbackItem(itemId, entries, userId, userKey, generation, signal);
+        }
+    };
+    const workerCount = Math.min(TAG_FALLBACK_CONCURRENCY, groups.length);
+    await Promise.all(Array.from({ length: workerCount }, () => worker()));
+
+    if (!fallbackRunIsCurrent(userKey, generation, signal)) {
+        for (const [, entries] of groups) releaseFallbackEntries(entries);
+        scheduleScan();
+    }
+}
+
 /**
  * Fetch item data for a batch of cards and fan out to all enabled renderers.
  * @param batch - Queued card entries.
  * @param generation - Batch generation counter to detect stale navigations.
+ * @param signal - Exact queue-owner cancellation signal.
  */
-async function processBatch(batch: QueueEntry[], generation: number): Promise<void> {
+async function processBatch(
+    batch: QueueEntry[],
+    generation: number,
+    signal: AbortSignal,
+): Promise<void> {
     const userId = ApiClient.getCurrentUserId();
     const userKey = normalizeProjectionKey(userId);
     if (!userId || !userKey) return;
@@ -1538,7 +1794,8 @@ async function processBatch(batch: QueueEntry[], generation: number): Promise<vo
             url: ApiClient.getUrl(`/JellyfinCanopy/tag-data/${userId}`),
             data: JSON.stringify(ids),
             contentType: 'application/json',
-            dataType: 'json'
+            dataType: 'json',
+            signal,
         });
 
         if (!Array.isArray(response?.Items)
@@ -1556,7 +1813,7 @@ async function processBatch(batch: QueueEntry[], generation: number): Promise<vo
         // able to pick them up again instead of seeing a hollow "processed".
         if (generation !== batchGeneration
             || normalizeProjectionKey(ApiClient.getCurrentUserId()) !== userKey) {
-            for (const b of batch) processedCards.delete(b.el);
+            for (const entry of batch) releaseQueueEntry(entry);
             scheduleScan();
             return;
         }
@@ -1619,7 +1876,7 @@ async function processBatch(batch: QueueEntry[], generation: number): Promise<vo
                 || normalizeProjectionKey(ApiClient.getCurrentUserId()) !== userKey
                 || projectionResetPending
                 || pendingProjectionIds.has(itemId)) {
-                for (const entry of batchEntries) processedCards.delete(entry.el);
+                for (const entry of batchEntries) releaseQueueEntry(entry);
                 scheduleScan();
                 return;
             }
@@ -1641,7 +1898,7 @@ async function processBatch(batch: QueueEntry[], generation: number): Promise<vo
             let recycled = false;
             for (const entry of batchEntries) {
                 if (!queueEntryStillOwnsItem(entry, itemId)) {
-                    processedCards.delete(entry.el);
+                    releaseQueueEntry(entry);
                     recycled = true;
                     continue;
                 }
@@ -1689,66 +1946,15 @@ async function processBatch(batch: QueueEntry[], generation: number): Promise<vo
             await Promise.all(pendingFirstEps);
         }
     } catch (err) {
-        console.warn(`${logPrefix} Batch fetch failed, falling back to individual fetches:`, err);
-        // Fallback: process items individually
-        for (const entry of batch) {
-            const { el, renderTarget, itemId } = entry;
-            try {
-                if (generation !== batchGeneration
-                    || normalizeProjectionKey(ApiClient.getCurrentUserId()) !== userKey
-                    || projectionResetPending
-                    || pendingProjectionIds.has(itemId)) {
-                    processedCards.delete(el);
-                    if (generation !== batchGeneration
-                        || normalizeProjectionKey(ApiClient.getCurrentUserId()) !== userKey) {
-                        scheduleScan();
-                    }
-                    continue;
-                }
-                if (!queueEntryStillOwnsItem(entry, itemId)) {
-                    processedCards.delete(el);
-                    scheduleScan();
-                    continue;
-                }
-                // Privacy-forced ids may only be satisfied by /tag-data. The
-                // generic helper carries its own short-lived DTO cache, so using
-                // it after a batch failure could replay the pre-flip projection.
-                if (forceFreshProjectionIds.has(itemId)) {
-                    processedCards.delete(el);
-                    continue;
-                }
-                const item: any = await getItemCached(itemId, { userId });
-                if (!item || !MEDIA_TYPES.has(item.Type)) continue;
-
-                const firstEpisode = (item.Type === 'Series' || item.Type === 'Season')
-                    ? await getFirstEpisode(userId, item.Id) : null;
-                const extras = { firstEpisode, parentSeries: null, ratingParentSeries: null, renderTarget };
-
-                if (generation !== batchGeneration
-                    || normalizeProjectionKey(ApiClient.getCurrentUserId()) !== userKey
-                    || projectionResetPending
-                    || pendingProjectionIds.has(itemId)
-                    || !queueEntryStillOwnsItem(entry, itemId)) {
-                    processedCards.delete(el);
-                    scheduleScan();
-                    continue;
-                }
-
-                // PERF(R7): post-paint fallback render — fade late tags in.
-                withFadeIn(renderTarget, () => {
-                    for (const [, renderer] of renderers) {
-                        if (!renderer.isEnabled()) continue;
-                        try { renderer.render(renderTarget, item, extras); } catch {}
-                    }
-                });
-            } catch {
-                // PERF(R9): fail open — un-mark the card (bounded) so a later
-                // pass retries its tags instead of leaving it hollow forever.
-                const failures = (cardFetchFailures.get(el) || 0) + 1;
-                cardFetchFailures.set(el, failures);
-                if (failures < CARD_FETCH_MAX_FAILURES) processedCards.delete(el);
-            }
+        if (signal.aborted
+            || generation !== batchGeneration
+            || normalizeProjectionKey(ApiClient.getCurrentUserId()) !== userKey) {
+            for (const entry of batch) releaseQueueEntry(entry);
+            scheduleScan();
+            return;
         }
+        console.warn(`${logPrefix} Batch fetch failed, falling back to individual fetches:`, err);
+        await processFallbackBatch(elMap, userId, userKey, generation, signal);
     }
 }
 
@@ -1831,7 +2037,7 @@ async function initialize(
         navigationUnsubscribe = onNavigate(() => {
         // Invalidate any in-flight batch processing (don't reset isProcessing
         // directly — let stale batches finish naturally and discard results)
-        batchGeneration++;
+        retireBatchGeneration();
         firstEpisodeCache.clear();
         parentSeriesCache.clear();
         // PERF(R9): fail open — queued cards were already marked processed at
@@ -1839,7 +2045,7 @@ async function initialize(
         // that survives navigation (cached legacy page re-show, §6.8) keeps
         // its "processed" mark with no tags rendered, permanently. Un-mark so
         // a later pass over the same elements retries.
-        for (const entry of requestQueue) processedCards.delete(entry.el);
+        for (const entry of requestQueue) releaseQueueEntry(entry);
         requestQueue = [];
         firstFetchAfterNav = true; // PERF(R7): fast-track the next batch fetch
         if (JC.pluginConfig?.TagCacheServerMode) {
@@ -1981,8 +2187,9 @@ const tagPipelineApi = {
     // For reinitialize support
     clearProcessed() {
         processedCards = new WeakSet(); // Create fresh WeakSet so all cards get re-scanned
+        for (const entry of requestQueue) releaseQueueEntry(entry);
         requestQueue = [];
-        batchGeneration++;
+        retireBatchGeneration();
         firstEpisodeCache.clear();
         parentSeriesCache.clear();
     },
