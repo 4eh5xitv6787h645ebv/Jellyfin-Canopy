@@ -44,10 +44,17 @@ test.describe('panel', () => {
         await expect(aboutPane.locator('#releaseNotesBtn')).toBeVisible();
 
         // The section search filters the nav.
-        await panel.locator('#jcPanelSearch').fill('subtitle');
+        const search = panel.locator('#jcPanelSearch');
+        await search.fill('subtitle');
         await expect(subtitlesItem).toBeVisible();
         await expect(panel.locator('.tab-button[data-tab="random-button"]')).toBeHidden();
-        await panel.locator('#jcPanelSearch').fill('');
+        await search.fill('');
+
+        // Printable keys belong to the focused editor: the panel-level `?`
+        // dismissal must not steal the character or destroy the search context.
+        await search.press('Shift+/');
+        await expect(search).toHaveValue('?');
+        await expect(panel).toBeVisible();
 
         // Escape closes the panel.
         await page.keyboard.press('Escape');
