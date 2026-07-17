@@ -7,7 +7,12 @@ export function hasValidConcurrentLogoutResponses(
     responses: Array<{ requestIndex: number; status: number; bodyBytes: number }>
 ): boolean;
 export function isKnownHiddenContentHostNoise(text: string): boolean;
-export function isKnownJellyfinWebHostNoise(detail: { text: string; stack?: string }): boolean;
+export function isKnownJellyfinWebScrollHandlerError(
+    detail: { text: string; stack?: string; source?: string }
+): boolean;
+export function isKnownJellyfinWebHostNoise(
+    detail: { text: string; stack?: string; source?: string }
+): boolean;
 export function isExpectedSignedOutHostLogout4xx(
     response: { url: string; status: number; method: string },
     evidence: LogoutEvidence

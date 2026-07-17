@@ -8,7 +8,7 @@ import {
 
 const CONFIG_HASH = '#/configurationpage?name=Jellyfin%20Canopy';
 const DASHBOARD_CHROME =
-    /scrollHandler is not a function|\/Users\/[^/]+\/Images\/Primary|\/JellyfinCanopy\/BrandingImage/i;
+    /\/Users\/[^/]+\/Images\/Primary|\/JellyfinCanopy\/BrandingImage/i;
 
 function assertNoConfigPageRuntimeErrors(consoleErrors: ConsoleErrors): void {
     assertNoRuntimeErrors({

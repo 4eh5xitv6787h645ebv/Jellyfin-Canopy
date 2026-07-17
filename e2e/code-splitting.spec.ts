@@ -109,16 +109,6 @@ function assertOnlyInducedImportFailure(
     ).toEqual([]);
 }
 
-/**
- * Jellyfin-web can emit this dashboard/search transition error from its own
- * hashed chunk while the recovered Seerr route settles. Keep the exception
- * source-gated so an identically worded Canopy error still fails the contract.
- */
-function isKnownJellyfinWebScrollError(text: string): boolean {
-    return /scrollHandler is not a function/.test(text)
-        && /\/web\/[A-Za-z0-9._-]+\.chunk\.js(?::\d+){1,2}/.test(text);
-}
-
 test.describe('manifest-owned code splitting', () => {
     test('cold authenticated home excludes disabled and off-route feature entries', async ({
         page,
@@ -341,7 +331,6 @@ test.describe('manifest-owned code splitting', () => {
         const entryAttempts: number[] = [];
         const implementationAttempts: number[] = [];
         const activationLogs: string[] = [];
-        const pageErrors: string[] = [];
         let releaseRecoveredChild!: () => void;
         const recoveredChildReleased = new Promise<void>((resolve) => {
             releaseRecoveredChild = resolve;
@@ -361,7 +350,6 @@ test.describe('manifest-owned code splitting', () => {
                 activationLogs.push(message.text());
             }
         });
-        page.on('pageerror', (error) => pageErrors.push(error.stack || error.message));
         await page.route(implementation.routePattern, async (route) => {
             const attempt = requestAttempt(route.request().url());
             implementationAttempts.push(attempt);
@@ -415,10 +403,6 @@ test.describe('manifest-owned code splitting', () => {
             implementationAttempts,
             'the dynamic relative child inherits the failed and recovered graph paths'
         ).toEqual([0, 1]);
-        expect(
-            pageErrors.filter((text) => !isKnownJellyfinWebScrollError(text)),
-            `no page errors after recovery\n${pageErrors.join('\n')}`
-        ).toEqual([]);
         assertOnlyInducedImportFailure(consoleErrors, entry.id);
     });
 });

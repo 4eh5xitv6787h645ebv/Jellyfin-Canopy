@@ -29,7 +29,7 @@ const NEEDS_TMDB = 'TMDB not configured on this exploratory server';
 // exceptions. The adapter leaves every 5xx and every unrelated error visible
 // to the shared runtime assertion.
 const DASHBOARD_CHROME =
-    /scrollHandler is not a function|\/Users\/[^/]+\/Images\/Primary|\/JellyfinCanopy\/BrandingImage/i;
+    /\/Users\/[^/]+\/Images\/Primary|\/JellyfinCanopy\/BrandingImage/i;
 
 function assertNoConfigPageRuntimeErrors(consoleErrors: ConsoleErrors): void {
     assertNoRuntimeErrors({
