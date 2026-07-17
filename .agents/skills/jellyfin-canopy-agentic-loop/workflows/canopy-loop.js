@@ -69,6 +69,49 @@ const SOL_VIA = a.solVia || 'agent' // 'agent' | 'codex-cli'
 const CODEX_SCHEMA_PATH =
   a.codexSchema || `${WORKTREE}/.agents/skills/jellyfin-canopy-agentic-loop/references/codex-review-schema.json`
 
+// ── multi-model split (token offload) ───────────────────────────────────────
+// Route ~50% of the READ-ONLY reasoning to gpt-5.6-sol so a run doesn't spend
+// all of Claude's budget. The split covers explore, plan, the review lenses,
+// finding-verification, and the verify/gate runner. IMPLEMENTATION and every
+// code-writing fixer always stay Claude — one writer per worktree, and you don't
+// want two models editing the same files. A slot runs on Sol only when it's a
+// split-Sol slot AND the model-param route is available (SOL_VIA==='agent', i.e.
+// the router). Under 'codex-cli' the split degrades to Claude everywhere except
+// the review round (which has a dedicated codex harness), so the router yields
+// the largest saving. Turn the whole thing off with modelSplit:false.
+const MODEL_SPLIT = a.modelSplit !== false
+const SOL_AGENT_OK = SOL_VIA === 'agent'
+const solSlot = (i) => MODEL_SPLIT && i % 2 === 1 // odd indices → Sol (~50/50)
+
+// A read-only phase agent that runs on Sol for split-Sol slots (model-param
+// route), else Claude. If the Sol attempt throws (model not routable) or returns
+// null, it FALLS BACK to Claude so the slot is never simply lost.
+// opts carries schema/agentType/effort/phase/label.
+async function splitAgent(i, prompt, opts) {
+  if (solSlot(i) && SOL_AGENT_OK) {
+    try {
+      const r = await agent(prompt, { ...opts, model: SOL_MODEL, effort: SOL_EFFORT })
+      if (r != null) return r
+    } catch (_) {
+      /* Sol not routable → Claude fallback below */
+    }
+  }
+  return agent(prompt, opts)
+}
+// A singleton read-only step we prefer to offload to Sol (synthesis, gate
+// runner) to spare Claude tokens; falls back to Claude when Sol isn't routable.
+async function soloSolAgent(prompt, opts) {
+  if (MODEL_SPLIT && SOL_AGENT_OK) {
+    try {
+      const r = await agent(prompt, { ...opts, model: SOL_MODEL, effort: SOL_EFFORT })
+      if (r != null) return r
+    } catch (_) {
+      /* fall through to Claude */
+    }
+  }
+  return agent(prompt, opts)
+}
+
 // ── shared prompt preamble ──────────────────────────────────────────────────
 const CONTRACTS = `You are working on the Jellyfin Canopy plugin repository in the worktree at:
   ${WORKTREE}
@@ -238,7 +281,8 @@ const exploreAngles = [
 const explorations = (
   await parallel(
     exploreAngles.map((angle, i) => () =>
-      agent(
+      splitAgent(
+        i,
         `${CONTRACTS}
 
 PHASE: EXPLORE (read-only — do NOT edit any file).
@@ -246,7 +290,7 @@ Your angle: ${angle}.
 Use rg/ls/Read to trace real code. Return a precise map: where the change lives,
 who is affected, the analogue to copy, helpers to reuse (so we don't write new),
 the contracts touched, and the test seams. Cite real paths; never guess.`,
-        { schema: EXPLORE_SCHEMA, agentType: 'Explore', effort: 'medium', phase: 'Explore', label: `explore:${i + 1}` }
+        { schema: EXPLORE_SCHEMA, agentType: 'Explore', effort: 'medium', phase: 'Explore', label: `explore:${i + 1}${solSlot(i) && SOL_AGENT_OK ? ':sol' : ''}` }
       )
     )
   )
@@ -269,7 +313,8 @@ const planAngles = [
 const plans = (
   await parallel(
     planAngles.map((angle, i) => () =>
-      agent(
+      splitAgent(
+        i,
         `${CONTRACTS}
 
 PHASE: PLAN (read-only). Explore maps (JSON):
@@ -281,13 +326,13 @@ model (and explicitly what NOT to add — no speculative flag/retry/lock/observe
 polling/migration), the failing-first tests (admin AND non-admin, negative/
 fallback, concurrency/cache invalidation where relevant), and the locale keys +
 docs to update.`,
-        { schema: PLAN_SCHEMA, effort: 'high', phase: 'Plan', label: `plan:${i + 1}` }
+        { schema: PLAN_SCHEMA, effort: 'high', phase: 'Plan', label: `plan:${i + 1}${solSlot(i) && SOL_AGENT_OK ? ':sol' : ''}` }
       )
     )
   )
 ).filter(Boolean)
 
-const canonicalPlan = await agent(
+const canonicalPlan = await soloSolAgent(
   `${CONTRACTS}
 
 PHASE: PLAN SYNTHESIS (read-only). You are the adversarial judge. Here are ${plans.length}
@@ -307,8 +352,7 @@ log(`Plan: ${plans.length} plans → 1 canonical (${(canonicalPlan && canonicalP
 // ═══════════════════════════════════════════════════════════════════════════
 phase('Implement')
 
-const implemented = await agent(
-  `${CONTRACTS}
+const implementPrompt = `${CONTRACTS}
 
 PHASE: IMPLEMENT. You are the SOLE writer in this worktree. Follow this canonical
 plan exactly (JSON):
@@ -329,9 +373,26 @@ Rules:
   trailers. Keep issue "#N" out of commit messages and comments.
 - Run the directly-affected focused tests as you go. Do not run the full gate.
 Report the changed files, commits, tests added, a diff stat, and an honest
-self-confidence (high/medium/low) with any open TODOs.`,
-  { schema: IMPLEMENT_SCHEMA, agentType: 'general-purpose', effort: 'high', phase: 'Implement', label: 'implement' }
-)
+self-confidence (high/medium/low) with any open TODOs.`
+
+// Implementer runs on Fable (high) to spare Opus budget; if Fable is exhausted
+// or errors (agent returns null), fall back to Opus (high). The single writer is
+// never split across models mid-change. Fixers stay on the session model (Opus).
+const IMPL_MODEL = a.implementModel || 'fable'
+const IMPL_FALLBACK = a.implementFallback || 'opus'
+const implOpts = { schema: IMPLEMENT_SCHEMA, agentType: 'general-purpose', effort: 'high', phase: 'Implement' }
+let implemented = await agent(implementPrompt, { ...implOpts, model: IMPL_MODEL, label: `implement:${IMPL_MODEL}` })
+if (!implemented) {
+  log(`Implement: ${IMPL_MODEL} unavailable/exhausted → falling back to ${IMPL_FALLBACK} (high)`)
+  implemented = await agent(
+    `${implementPrompt}
+
+NOTE: a previous attempt may have left partial changes or commits in the
+worktree. Inspect \`git -C ${WORKTREE} status\` and \`git -C ${WORKTREE} log --oneline ${BASE}..HEAD\`
+and CONTINUE from there rather than restarting from scratch.`,
+    { ...implOpts, model: IMPL_FALLBACK, label: `implement:${IMPL_FALLBACK}-fallback` }
+  )
+}
 log(`Implement: ${(implemented && implemented.changedFiles && implemented.changedFiles.length) || 0} files, confidence ${(implemented && implemented.selfConfidence) || '?'}`)
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -346,19 +407,25 @@ The change is on branch ${BRANCH}. Inspect it with:
   git -C ${WORKTREE} log --oneline ${BASE}..HEAD
 You see ONLY the diff and this brief — never the implementer's reasoning.`
 
-// gpt-5.6-sol whole-diff adversarial reviewer (high effort). One thunk per Sol
-// reviewer; obtained via the subagent model param ('agent') or the codex CLI.
-function solThunk(roundNo, i) {
+// gpt-5.6-sol adversarial reviewer (high effort). One thunk per Sol reviewer;
+// obtained via the subagent model param ('agent') or the codex CLI. With a lens,
+// the review is scoped to that lens (used by the 50/50 split); without one it is
+// a whole-diff pass (used by the dedicated SOL_REVIEWERS when not splitting).
+function solThunk(roundNo, i, lens) {
+  const scope = lens
+    ? `THROUGH THIS LENS ONLY: "${lens}".`
+    : `across correctness, security/privacy (fail-closed), lifecycle/concurrency,
+bounds/perf/no-jank, JF12 + MUI/legacy compatibility, test strength, product
+scope, and docs/locale/generated-artifact gaps.`
   const solPrompt = `${reviewContext}
 
-PHASE: ADVERSARIAL REVIEW (gpt-5.6-sol, whole diff). Assume the change is WRONG and
-prove how. Cover correctness, security/privacy (fail-closed), lifecycle/
-concurrency, bounds/perf/no-jank, JF12 + MUI/legacy compatibility, test strength,
-product scope, and docs/locale/generated-artifact gaps. Every finding needs a
-real file/line and a concrete failure scenario (inputs/state → wrong output /
-crash / leak / contract violation). Reject workarounds that need a paragraph-long
-comment to justify them. Watch for mechanically-similar-but-semantically-
-different code. Return only real findings (empty array if none).`
+PHASE: ADVERSARIAL REVIEW (gpt-5.6-sol). Assume the change is WRONG and prove how,
+${scope}
+Every finding needs a real file/line and a concrete failure scenario (inputs/
+state → wrong output / crash / leak / contract violation). Reject workarounds
+that need a paragraph-long comment to justify them. Watch for
+mechanically-similar-but-semantically-different code. Return only real findings
+(empty array if none).`
 
   if (SOL_VIA === 'codex-cli') {
     return () =>
@@ -391,9 +458,8 @@ let cleanRound = false
 let round = 0
 while (round < SIZING.roundCap && !cleanRound) {
   round++
-  log(`Review round ${round}/${SIZING.roundCap} — ${LENSES.length} Claude lenses + ${SOL_REVIEWERS}× ${SOL_MODEL} (${SOL_VIA}, ${SOL_EFFORT})`)
 
-  const claudeThunks = LENSES.map((lens, i) => () =>
+  const claudeLensThunk = (lens, i) => () =>
     agent(
       `${reviewContext}
 
@@ -408,12 +474,24 @@ over the wrong data). Reject any workaround that needs a paragraph-long comment
 to justify it. Return only real findings (empty array if none this lens).`,
       { schema: FINDINGS_SCHEMA, agentType: 'code-reviewer', effort: 'medium', phase: 'Review', label: `review-r${round}:${i + 1}` }
     )
-  )
-  const solThunks = Array.from({ length: SOL_REVIEWERS }, (_, i) => solThunk(round, i))
 
-  const raw = (await parallel([...claudeThunks, ...solThunks]))
-    .filter(Boolean)
-    .flatMap((r) => (r && r.findings) || [])
+  // Split the lenses ~50/50 across models when modelSplit is on (Sol takes the
+  // odd slots, lens-scoped). Otherwise: all Claude lenses + the dedicated
+  // whole-diff SOL_REVIEWERS. Either way ≥1 Claude and ≥1 Sol reviewer run.
+  let roundThunks
+  if (MODEL_SPLIT) {
+    roundThunks = LENSES.map((lens, i) => (solSlot(i) ? solThunk(round, i, lens) : claudeLensThunk(lens, i)))
+  } else {
+    roundThunks = [
+      ...LENSES.map((lens, i) => claudeLensThunk(lens, i)),
+      ...Array.from({ length: SOL_REVIEWERS }, (_, i) => solThunk(round, i)),
+    ]
+  }
+  const solCount = MODEL_SPLIT ? LENSES.filter((_, i) => solSlot(i)).length : SOL_REVIEWERS
+  const claudeCount = roundThunks.length - solCount
+  log(`Review round ${round}/${SIZING.roundCap} — ${claudeCount} Claude + ${solCount}× ${SOL_MODEL} (${SOL_VIA}, ${SOL_EFFORT})${MODEL_SPLIT ? ' [50/50]' : ''}`)
+
+  const raw = (await parallel(roundThunks)).filter(Boolean).flatMap((r) => (r && r.findings) || [])
 
   const deduped = dedupe(raw)
   if (!deduped.length) {
@@ -425,7 +503,8 @@ to justify it. Return only real findings (empty array if none this lens).`,
   // Adversarially verify each finding — try to REFUTE it; default refuted.
   const verdicts = await parallel(
     deduped.map((f, i) => () =>
-      agent(
+      splitAgent(
+        i,
         `${reviewContext}
 
 PHASE: VERIFY FINDING. Try hard to REFUTE this claimed defect. Default to
@@ -483,7 +562,7 @@ Compose projects this run created. Do NOT touch :8099 or any shared/prod server.
 let verify = null
 let vround = 0
 while (vround <= SIZING.verifyFixCap) {
-  verify = await agent(
+  verify = await soloSolAgent(
     `${CONTRACTS}
 
 PHASE: VERIFY. Run the repository-native gates for surface="${SURFACE}", in order,

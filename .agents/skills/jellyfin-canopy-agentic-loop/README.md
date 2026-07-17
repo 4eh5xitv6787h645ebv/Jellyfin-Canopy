@@ -72,11 +72,20 @@ oracle.
 builds the Release DLL and runs `npm run e2e:local` (dockerized
 `jellyfin/jellyfin:unstable`).
 
-### Review model mix
+### Model routing
 
-Every review round runs **both** the Claude lens reviewers and **≥1
-`gpt-5.6-sol` reviewer at high effort**. The Sol reviewer is obtained one of two
-ways, chosen with `solVia`:
+The loop spreads models by role to spare Claude/Opus budget:
+
+- **Implementation** — the single writer runs on **Fable (high)**, falling back
+  to **Opus (high)** if Fable is exhausted (`implementModel` / `implementFallback`).
+- **Read-only steps except implementation** — with `modelSplit: true` (default),
+  explore, plan, the review lenses, finding-verification, and the gate runner
+  alternate **~50/50 Claude / `gpt-5.6-sol` (high)**; an unroutable Sol slot
+  falls back to Claude.
+- **Fixers** — stay on Claude/Opus (they write code).
+
+Every review round still runs **both** Claude and **≥1 `gpt-5.6-sol` (high)**
+reviewer. The Sol side is obtained one of two ways, chosen with `solVia`:
 
 - `"agent"` (default) — requests `gpt-5.6-sol` directly on the subagent. Needs a
   Sol-capable route for Claude Code, e.g. the CLIProxyAPI router that exposes

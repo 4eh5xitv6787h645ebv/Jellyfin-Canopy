@@ -79,14 +79,37 @@ Workflow({
     runtime:  true,                                       // true → also run e2e:local
     depth:    "standard",                                 // "quick" | "standard" | "deep"
 
-    // Review model mix (every round runs Claude lenses AND ≥1 gpt-5.6-sol high):
-    solVia:      "agent",        // "agent" (subagent model param) | "codex-cli"
+    // Model routing (see "Model routing" below):
+    modelSplit:  true,           // ~50/50 Claude/Sol on read-only steps to spare Opus budget
+    solVia:      "agent",        // "agent" (subagent model param, needs router) | "codex-cli"
     solModel:    "gpt-5.6-sol",
     solEffort:   "high",
-    solReviewers: 1              // ≥1 Sol reviewer per round
+    solReviewers: 1,             // Sol whole-diff reviewers when modelSplit is off
+    implementModel:    "fable",  // implementer runs on Fable (high) …
+    implementFallback: "opus"    // … falling back to Opus (high) if Fable is exhausted
   }
 })
 ```
+
+### Model routing
+
+To keep a run from burning all of Claude's budget, the loop deliberately spreads
+models by role:
+
+- **Implementation** — the single writer runs on **Fable (high)**, falling back
+  to **Opus (high)** if Fable is exhausted/unavailable. Never split mid-change.
+- **Everything read-only except implementation** — with `modelSplit: true`,
+  explore, plan, the review lenses, finding-verification, and the gate runner
+  alternate **~50/50 Claude / `gpt-5.6-sol` (high)**. A Sol slot that can't be
+  routed falls back to Claude, so no slot is lost.
+- **Fixers** (review fixer, verify fixer) — stay on Claude/Opus. They write code,
+  so they follow the one-writer, single-model rule.
+
+Sol slots run on Sol only when `solVia: "agent"` (the model param) is backed by a
+Sol-capable route — e.g. the CLIProxyAPI router that exposes `gpt-5.6-sol` to
+Claude Code. With `solVia: "codex-cli"`, only the review round uses Sol (via the
+`codex` CLI harness); the other split steps run on Claude. Set `modelSplit: false`
+to run everything on Claude (implementer still uses Fable→Opus).
 
 The script fans out agents per phase, loops the review until a clean round, runs
 the repo-native gates, and returns a structured result (diff stat, findings
