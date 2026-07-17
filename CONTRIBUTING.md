@@ -228,6 +228,9 @@ updates. Each manifest has exactly one owner and one weekly schedule:
   a conflicting schedule.
 - npm scans the root `package.json` and `package-lock.json` under the exact
   Node/npm toolchain contract.
+- pip scans the root `requirements-docs.in` and generated
+  `requirements-docs.txt`; documentation builds use the exact Python patch in
+  `.python-version-docs` and install the complete transitive lock with hashes.
 - Docker Compose scans `e2e/docker/compose.yml`. The required Jellyfin image
   must remain `jellyfin/jellyfin:unstable@sha256:…`: Dependabot may refresh its
   nightly digest, but it must not replace the `unstable` channel with an RC or
@@ -332,19 +335,34 @@ documented test credentials to a LAN or public interface.
 
 ### Docs
 
-If you touch `docs/` (any user- or admin-visible change should), the site must build strictly:
+If you touch `docs/` (any user- or admin-visible change should), install the
+hash-locked Python dependencies once and run the same offline, reproducible gate
+used by pull requests, releases, and Pages deployment:
 
 ```bash
-npm run check:markdown-links
-npm run check:docs-assets
-mkdocs build --strict
+python -m pip install --require-hashes --requirement requirements-docs.txt
+npm run check:docs
 ```
 
-The Markdown-link command also runs the installation-permission contract. It
-rejects broad or recursive install-tree write guidance and verifies the docs
-against the middleware defaults, legacy `index.html` target, atomic-rename
-requirements, and plugin-owned `custom_branding` storage in the shipped C#
-source. Update the implementation and its least-privilege guidance together.
+The docs command validates local links and anchors, an explicit offline external
+URL inventory across Markdown, MkDocs configuration, and published theme
+HTML/CSS, JSON/YAML/shell/HTTP examples, installation permissions, visual asset
+ownership, and a strict MkDocs build. Blocking CI never probes the public
+Internet. `npm run check:docs:external` is an explicit bounded live audit: before
+each request and redirect it requires an inventoried HTTPS URL, resolves every
+address as public, and pins those reviewed DNS answers into the request. It uses
+bounded manual redirects, retries, timeouts, and a range-limited GET fallback for
+HEAD false negatives; origin-only preconnect entries use DNS-only validation so
+an intentionally route-less host is not reported dead. It returns a distinct non-zero result for transient
+DNS/TLS/timeout/rate-limit/5xx conditions and fails policy blocks or confirmed
+repeated 404/410 responses. It is not a substitute for the deterministic offline
+gate.
+
+The installation-permission contract rejects broad or recursive install-tree
+write guidance and verifies the docs against the middleware defaults, legacy
+`index.html` target, atomic-rename requirements, and plugin-owned
+`custom_branding` storage in the shipped C# source. Update the implementation
+and its least-privilege guidance together.
 
 `check:docs-assets` treats every tracked visual file anywhere under `docs/` as
 owned content: it must be referenced by the README, documentation, MkDocs

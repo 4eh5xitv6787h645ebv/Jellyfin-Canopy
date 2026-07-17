@@ -76,18 +76,20 @@ function assertCommonPolicy(section, ecosystemLabel) {
     assert.deepEqual(listInput(section, 'labels'), ['dependencies', ecosystemLabel]);
 }
 
-test('npm, Docker Compose, NuGet and Actions each have one intentional manifest owner', () => {
+test('npm, pip, Docker Compose, NuGet and Actions each have one intentional manifest owner', () => {
     const entries = updateEntries();
     assert.deepEqual([...entries.keys()].sort(), [
         'docker-compose',
         'github-actions',
         'npm',
         'nuget',
+        'pip',
     ]);
 
     const expected = new Map([
         ['nuget', { directory: '/', label: 'nuget' }],
         ['npm', { directory: '/', label: 'npm' }],
+        ['pip', { directory: '/', label: 'python' }],
         ['docker-compose', { directory: '/e2e/docker', label: 'docker' }],
         ['github-actions', { directory: '/', label: 'github-actions' }],
     ]);
@@ -103,6 +105,8 @@ test('npm, Docker Compose, NuGet and Actions each have one intentional manifest 
     assert.doesNotMatch(dependabot, /directory: "?\/Jellyfin\.Plugin\.JellyfinCanopy"?/);
     assert.ok(fs.existsSync(path.join(ROOT, 'package.json')));
     assert.ok(fs.existsSync(path.join(ROOT, 'package-lock.json')));
+    assert.ok(fs.existsSync(path.join(ROOT, 'requirements-docs.in')));
+    assert.ok(fs.existsSync(path.join(ROOT, 'requirements-docs.txt')));
 });
 
 test('compatible updates group while every major update remains explicit', () => {
@@ -110,6 +114,7 @@ test('compatible updates group while every major update remains explicit', () =>
     assert.match(entries.get('nuget'), /jellyfin-sdk:[\s\S]+"Jellyfin\.\*"/);
     assert.match(entries.get('nuget'), /skiasharp:[\s\S]+"SkiaSharp\*"/);
     assert.match(entries.get('npm'), /npm-minor-patch:[\s\S]+patterns:\n {10}- "\*"/);
+    assert.match(entries.get('pip'), /docs-python-minor-patch:[\s\S]+patterns:\n {10}- "\*"/);
     assert.match(
         entries.get('github-actions'),
         /github-actions-minor-patch:[\s\S]+patterns:\n {10}- "\*"/

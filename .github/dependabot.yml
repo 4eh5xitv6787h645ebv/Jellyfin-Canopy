@@ -68,6 +68,32 @@ updates:
           - "minor"
           - "patch"
 
+  # requirements-docs.in owns the human-reviewed direct pins; the generated
+  # requirements-docs.txt lock carries every transitive hash used by CI.
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "4eh5xitv6787h645ebv"
+    labels:
+      - "dependencies"
+      - "python"
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+    groups:
+      docs-python-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+
   # Compose defaults include the digest-pinned Jellyfin unstable/nightly image
   # and the Node integration fixture. Jellyfin stays outside tooling groups so
   # every moving-nightly digest update is an explicit full-E2E PR.
