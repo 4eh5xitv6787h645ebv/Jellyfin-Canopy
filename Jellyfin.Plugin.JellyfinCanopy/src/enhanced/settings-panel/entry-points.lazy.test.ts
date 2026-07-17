@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { JC } from '../../globals';
+import { handleHistoryUpdate } from '../../core/navigation';
 
 const mocks = vi.hoisted(() => {
     let release!: () => void;
@@ -32,7 +33,7 @@ afterEach(() => {
 });
 
 describe('settings panel dynamic import fence', () => {
-    it('singleflights the graph and rejects a completion from an obsolete identity', async () => {
+    it('singleflights the graph and rejects navigation or identity-obsolete completions', async () => {
         JC.identity.transition('', '', 'settings-lazy-test-logout');
         JC.identity.transition('server', 'user-a', 'settings-lazy-test-a');
         dispose = installSettingsLauncher();
@@ -42,11 +43,24 @@ describe('settings panel dynamic import fence', () => {
         await vi.waitFor(() => expect(mocks.loadCount).toBe(1));
         expect(mocks.show).not.toHaveBeenCalled();
 
-        JC.identity.transition('server', 'user-b', 'settings-lazy-test-b');
+        history.pushState({}, '', `#/settings-lazy-nav-${Date.now()}`);
         mocks.release();
         await Promise.all([first, second]);
 
         expect(mocks.loadCount).toBe(1);
+        expect(mocks.show).not.toHaveBeenCalled();
+        expect(mocks.reset).not.toHaveBeenCalled();
+
+        await openEnhancedPanel();
+        expect(mocks.show).toHaveBeenCalledTimes(1);
+        mocks.show.mockClear();
+        history.pushState({}, '', `#/settings-lazy-active-${Date.now()}`);
+        handleHistoryUpdate();
+        expect(mocks.reset).toHaveBeenCalledTimes(1);
+
+        const obsoleteIdentity = openEnhancedPanel();
+        JC.identity.transition('server', 'user-b', 'settings-lazy-test-b');
+        await obsoleteIdentity;
         expect(mocks.show).not.toHaveBeenCalled();
     });
 });

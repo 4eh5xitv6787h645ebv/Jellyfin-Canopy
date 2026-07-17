@@ -7,7 +7,7 @@
 // (Converted from js/enhanced/ui-panel.js — bodies semantically identical.)
 
 import { JC } from '../../globals';
-import { installModalA11y, type ModalA11yHandle } from '../../core/modal-a11y';
+import { installModalA11y } from '../../core/modal-a11y';
 import { buildPanelHtml } from './template';
 import { wireShortcutEditor } from './shortcut-editor';
 import { wireSettingsListeners, wireMiscSettingsControls } from './settings';
@@ -49,13 +49,114 @@ export interface PanelContext {
 const CANOPY_ACCENT = '#00D4FF';
 const CANOPY_ACCENT_FILL = '#2F80FF';
 const CANOPY_GRADIENT = 'linear-gradient(135deg, #00D4FF 0%, #2F80FF 52%, #7B4CFF 100%)';
+const PANEL_ID = 'jellyfin-canopy-panel';
+const BACKDROP_ID = 'jellyfin-canopy-panel-backdrop';
 
-/**
- * Toggles the main settings and help panel for the plugin.
- */
-export async function showEnhancedPanel(): Promise<void> {
+type PanelPhase = 'opening' | 'open' | 'disposed';
+
+interface PanelOwner {
+    readonly identityContext: IdentityContext;
+    readonly abortController: AbortController;
+    phase: PanelPhase;
+    root: HTMLElement | null;
+    isCurrent(): boolean;
+    registerCleanup(cleanup: () => void): void;
+    trackTimer(timer: number): void;
+    forgetTimer(timer: number): void;
+    dispose(): void;
+}
+
+let currentPanelOwner: PanelOwner | null = null;
+let openingPromise: Promise<void> | null = null;
+
+function createPanelOwner(identityContext: IdentityContext): PanelOwner {
+    const cleanups: Array<() => void> = [];
+    const timers = new Set<number>();
+    const owner: PanelOwner = {
+        identityContext,
+        abortController: new AbortController(),
+        phase: 'opening',
+        root: null,
+        isCurrent: () => owner.phase !== 'disposed'
+            && currentPanelOwner === owner
+            && JC.identity.isCurrent(identityContext),
+        registerCleanup(cleanup) {
+            if (owner.phase === 'disposed') {
+                try { cleanup(); } catch (error) {
+                    console.warn('🪼 Jellyfin Canopy: Settings panel late cleanup failed:', error);
+                }
+                return;
+            }
+            cleanups.push(cleanup);
+        },
+        trackTimer(timer) {
+            if (owner.phase === 'disposed') clearTimeout(timer);
+            else timers.add(timer);
+        },
+        forgetTimer(timer) {
+            timers.delete(timer);
+        },
+        dispose() {
+            if (owner.phase === 'disposed') return;
+            owner.phase = 'disposed';
+            if (currentPanelOwner === owner) currentPanelOwner = null;
+            owner.abortController.abort();
+            for (const timer of timers) clearTimeout(timer);
+            timers.clear();
+            for (const cleanup of cleanups.splice(0).reverse()) {
+                try { cleanup(); } catch (error) {
+                    // One faulty child cleanup must not strand later listeners,
+                    // the modal gate, focus restoration, or the exact panel DOM.
+                    console.warn('🪼 Jellyfin Canopy: Settings panel cleanup failed:', error);
+                }
+            }
+            owner.root = null;
+        },
+    };
+    return owner;
+}
+
+type OwnedPanelElement = HTMLElement & { _identityCleanup?: () => void };
+
+/** Toggle the main settings panel, joining calls made during the same open. */
+export function showEnhancedPanel(): Promise<void> {
+    if (currentPanelOwner?.phase === 'open') {
+        currentPanelOwner.dispose();
+        return Promise.resolve();
+    }
+    if (currentPanelOwner?.phase === 'opening' && openingPromise) return openingPromise;
+
+    // A DOM node from an obsolete bundle cannot be a valid owner. Retire its
+    // full stored disposer before any network work; raw removal is defensive
+    // only for foreign/stale markup that never acquired resources here.
+    const existing: OwnedPanelElement | null = document.getElementById(PANEL_ID);
+    if (existing) {
+        if (existing._identityCleanup) existing._identityCleanup();
+        else existing.remove();
+        document.getElementById(BACKDROP_ID)?.remove();
+        return Promise.resolve();
+    }
+    document.getElementById(BACKDROP_ID)?.remove();
+
     const identityContext = JC.identity.capture();
-    if (!identityContext) return;
+    if (!identityContext) return Promise.resolve();
+    const owner = createPanelOwner(identityContext);
+    currentPanelOwner = owner;
+
+    const opening = openPanel(owner).catch((error: unknown) => {
+        owner.dispose();
+        throw error;
+    }).finally(() => {
+        if (openingPromise === opening) openingPromise = null;
+        // Every early/stale return leaves the reservation in opening state.
+        if (owner.phase === 'opening') owner.dispose();
+    });
+    openingPromise = opening;
+    return opening;
+}
+
+async function openPanel(owner: PanelOwner): Promise<void> {
+    const { identityContext } = owner;
     // Refresh user settings when panel opens to ensure correct user's settings are displayed
     const currentUserId = identityContext.userId;
     if (currentUserId) {
@@ -64,14 +165,15 @@ export async function showEnhancedPanel(): Promise<void> {
             const settingsResponse = JC.core.api?.plugin
                 ? await JC.core.api.plugin(
                     `/user-settings/${currentUserId}/settings.json?_=${Date.now()}`,
-                    { skipCache: true }
+                    { skipCache: true, signal: owner.abortController.signal }
                 )
                 : await ApiClient.ajax({
                     type: 'GET',
                     url: ApiClient.getUrl(`/JellyfinCanopy/user-settings/${currentUserId}/settings.json?_=${Date.now()}`),
-                    dataType: 'json'
+                    dataType: 'json',
+                    signal: owner.abortController.signal
                 });
-            if (!JC.identity.isCurrent(identityContext)) return;
+            if (!owner.isCurrent()) return;
 
             // Update the userConfig with fresh data
             if (settingsResponse) {
@@ -87,34 +189,18 @@ export async function showEnhancedPanel(): Promise<void> {
                 }
             }
         } catch (e) {
-            if (!JC.identity.isCurrent(identityContext) || (e as Error)?.name === 'AbortError') return;
+            if (!owner.isCurrent() || (e as Error)?.name === 'AbortError') return;
             console.warn("🪼 Jellyfin Canopy: Could not refresh settings for panel display:", e);
         }
     }
 
-    if (!JC.identity.isCurrent(identityContext)) return;
+    if (!owner.isCurrent()) return;
 
     // Re-initialize shortcuts to ensure they're populated before building the panel
     if (typeof JC.initializeShortcuts === 'function') {
         JC.initializeShortcuts();
     }
 
-    const panelId = 'jellyfin-canopy-panel';
-    const existing = document.getElementById(panelId);
-    if (existing) {
-        // Toggle-close: release the modal-a11y handle BEFORE removal so the
-        // jc-modal-open gate drops, focus is restored and the capture-phase
-        // keydown listener is torn down — otherwise all JC shortcuts stay
-        // suppressed for the rest of the session (the normal close paths below
-        // already release; this early-return branch used to skip it).
-        const owned = existing as unknown as { _a11y?: ModalA11yHandle; _identityCleanup?: () => void };
-        if (owned._identityCleanup) owned._identityCleanup();
-        else {
-            owned._a11y?.release();
-            existing.remove();
-        }
-        return;
-    }
     // Get theme-appropriate styles
     const themeVars: any = (JC as any).themer.getThemeVariables();
 
@@ -138,9 +224,11 @@ export async function showEnhancedPanel(): Promise<void> {
     const logoUrl = themeVars.logo;
 
     const help = document.createElement('div');
-    help.id = panelId;
+    help.id = PANEL_ID;
     help.setAttribute('data-jc-identity-owned', 'true');
     JC.identity.own(help, identityContext);
+    owner.root = help;
+    owner.registerCleanup(() => help.remove());
     Object.assign(help.style, {
         position: 'fixed',
         top: '50%',
@@ -166,6 +254,22 @@ export async function showEnhancedPanel(): Promise<void> {
         flexDirection: 'column'
     });
 
+    const backdrop = document.createElement('div');
+    backdrop.id = BACKDROP_ID;
+    backdrop.setAttribute('data-jc-identity-owned', 'true');
+    backdrop.setAttribute('aria-hidden', 'true');
+    JC.identity.own(backdrop, identityContext);
+    Object.assign(backdrop.style, {
+        position: 'fixed',
+        inset: '0',
+        zIndex: 999998,
+        background: 'rgba(0, 0, 0, 0.45)',
+    });
+    backdrop.addEventListener('click', () => {
+        if (owner.isCurrent()) owner.dispose();
+    });
+    owner.registerCleanup(() => backdrop.remove());
+
     const pluginShortcuts = Array.isArray(JC.pluginConfig.Shortcuts) ? JC.pluginConfig.Shortcuts : [];
 
     // Ensure activeShortcuts is initialized before building the panel
@@ -181,11 +285,7 @@ export async function showEnhancedPanel(): Promise<void> {
     let offset = { x: 0, y: 0 };
     let autoCloseTimer: number | null = null;
     let isMouseInside = false;
-    let a11y: ModalA11yHandle | null = null;
-    let panelClosed = false;
     let closeHelp: (ev: any) => void = () => undefined;
-    const panelTimers = new Set<number>();
-    const panelCleanupCallbacks: Array<() => void> = [];
 
     // Every descendant listener installed by the split panel modules is
     // authorization-gated at the panel root. This also protects a retained,
@@ -195,45 +295,47 @@ export async function showEnhancedPanel(): Promise<void> {
         'mousedown', 'mouseup', 'touchstart', 'touchend'
     ];
     const guardStalePanelEvent = (event: Event) => {
-        if (JC.identity.isCurrent(identityContext)) return;
+        if (owner.isCurrent()) return;
         event.preventDefault();
         event.stopImmediatePropagation();
     };
     guardedEvents.forEach((type) => help.addEventListener(type, guardStalePanelEvent, true));
-    // Deliberately do not unregister this root fence in cleanupPanel(). The
+    // Deliberately do not unregister this root fence during owner disposal. The
     // panel subtree itself is removed, so it is collectible normally; if a host
     // or extension retains an A descendant, however, the capture listener must
     // remain on that detached ancestry and keep its existing child handlers
     // inert after B becomes current.
 
-    const cleanupPanel = () => {
-        if (panelClosed) return;
-        panelClosed = true;
-        if (autoCloseTimer) clearTimeout(autoCloseTimer);
+    const clearAutoCloseTimer = () => {
+        if (autoCloseTimer === null) return;
+        clearTimeout(autoCloseTimer);
+        owner.forgetTimer(autoCloseTimer);
         autoCloseTimer = null;
-        for (const timer of panelTimers) clearTimeout(timer);
-        panelTimers.clear();
-        help.remove();
-        document.removeEventListener('keydown', closeHelp);
-        document.removeEventListener('mousemove', handleMouseMove);
-        document.removeEventListener('mouseup', handleMouseUp);
-        for (const cleanup of panelCleanupCallbacks.splice(0)) cleanup();
-        a11y?.release();
-        a11y = null;
     };
+    owner.registerCleanup(() => {
+        clearAutoCloseTimer();
+        isDragging = false;
+        isMouseInside = false;
+        offset = { x: 0, y: 0 };
+        help.style.cursor = '';
+    });
 
     const resetAutoCloseTimer = () => {
-        if (!JC.identity.isCurrent(identityContext)) return;
-        if (autoCloseTimer) clearTimeout(autoCloseTimer);
-        autoCloseTimer = window.setTimeout(() => {
-            if (!isMouseInside && document.getElementById(panelId)) {
-                cleanupPanel();
+        if (!owner.isCurrent()) return;
+        clearAutoCloseTimer();
+        const timer = window.setTimeout(() => {
+            owner.forgetTimer(timer);
+            if (autoCloseTimer === timer) autoCloseTimer = null;
+            if (!isMouseInside && owner.isCurrent()) {
+                owner.dispose();
             }
         }, JC.CONFIG!.HELP_PANEL_AUTOCLOSE_DELAY as number);
+        autoCloseTimer = timer;
+        owner.trackTimer(timer);
     };
 
     const handleMouseDown = (e: MouseEvent) => {
-        if (!JC.identity.isCurrent(identityContext)) return;
+        if (!owner.isCurrent()) return;
         // Drag only from the header bar: the panes host interactive surfaces
         // (subtitle position grid, selects, sliders) that must own their own
         // pointer gestures — a blanket panel-drag stole them once the old
@@ -248,7 +350,7 @@ export async function showEnhancedPanel(): Promise<void> {
     };
 
     const handleMouseMove = (e: MouseEvent) => {
-        if (!JC.identity.isCurrent(identityContext)) return;
+        if (!owner.isCurrent()) return;
         if (isDragging) {
             help.style.left = `${e.clientX - offset.x}px`;
             help.style.top = `${e.clientY - offset.y}px`;
@@ -258,7 +360,7 @@ export async function showEnhancedPanel(): Promise<void> {
     };
 
     const handleMouseUp = () => {
-        if (!JC.identity.isCurrent(identityContext)) return;
+        if (!owner.isCurrent()) return;
         isDragging = false;
         help.style.cursor = 'grab';
         resetAutoCloseTimer();
@@ -266,9 +368,11 @@ export async function showEnhancedPanel(): Promise<void> {
 
     help.addEventListener('mousedown', handleMouseDown);
     document.addEventListener('mousemove', handleMouseMove);
+    owner.registerCleanup(() => document.removeEventListener('mousemove', handleMouseMove));
     document.addEventListener('mouseup', handleMouseUp);
+    owner.registerCleanup(() => document.removeEventListener('mouseup', handleMouseUp));
     // Reset the auto-close timer when the mouse enters or leaves the panel.
-    help.addEventListener('mouseenter', () => { isMouseInside = true; if (autoCloseTimer) clearTimeout(autoCloseTimer); });
+    help.addEventListener('mouseenter', () => { isMouseInside = true; clearAutoCloseTimer(); });
     help.addEventListener('mouseleave', () => { isMouseInside = false; resetAutoCloseTimer(); });
     help.addEventListener('click', resetAutoCloseTimer);
     help.addEventListener('wheel', (e) => { e.stopPropagation(); resetAutoCloseTimer(); });
@@ -278,8 +382,8 @@ export async function showEnhancedPanel(): Promise<void> {
     const ctx: PanelContext = {
         help,
         identityContext,
-        registerCleanup: (cleanup) => panelCleanupCallbacks.push(cleanup),
-        trackTimer: (timer) => panelTimers.add(timer),
+        registerCleanup: (cleanup) => owner.registerCleanup(cleanup),
+        trackTimer: (timer) => owner.trackTimer(timer),
         pluginShortcuts,
         resetAutoCloseTimer,
         panelBgColor,
@@ -297,7 +401,7 @@ export async function showEnhancedPanel(): Promise<void> {
 
     help.innerHTML = buildPanelHtml(ctx);
 
-    document.body.appendChild(help);
+    document.body.append(backdrop, help);
 
     wireShortcutEditor(ctx);
     resetAutoCloseTimer();
@@ -341,7 +445,7 @@ export async function showEnhancedPanel(): Promise<void> {
         };
         const handlePhoneMediaChange = () => syncLayerFocus(false);
         phoneMedia.addEventListener('change', handlePhoneMediaChange);
-        panelCleanupCallbacks.push(() => phoneMedia.removeEventListener('change', handlePhoneMediaChange));
+        owner.registerCleanup(() => phoneMedia.removeEventListener('change', handlePhoneMediaChange));
 
         const activate = (pane: HTMLElement, persist: boolean) => {
             panes.forEach(p => p.classList.toggle('active', p === pane));
@@ -413,11 +517,11 @@ export async function showEnhancedPanel(): Promise<void> {
         details.addEventListener('toggle', () => {
             if (details.open) {
                 const timer = window.setTimeout(() => {
-                    panelTimers.delete(timer);
-                    if (panelClosed || !JC.identity.isCurrent(identityContext)) return;
+                    owner.forgetTimer(timer);
+                    if (!owner.isCurrent()) return;
                     details.scrollIntoView({ behavior: 'smooth', block: index === 0 ? 'center' : 'nearest' });
                 }, 150);
-                panelTimers.add(timer);
+                owner.trackTimer(timer);
             }
             resetAutoCloseTimer();
         });
@@ -431,7 +535,7 @@ export async function showEnhancedPanel(): Promise<void> {
             // absent — guard it. Calling it unconditionally threw a TypeError
             // here, aborting the close so Escape never dismissed the panel.
             ev.stopPropagation?.();
-            cleanupPanel();
+            owner.dispose();
         }
     };
 
@@ -441,21 +545,20 @@ export async function showEnhancedPanel(): Promise<void> {
         return JC.t!('toast_feature_status', { feature, status });
     };
     document.addEventListener('keydown', closeHelp);
-    document.getElementById('closeSettingsPanel')!.addEventListener('click', closeHelp);
+    owner.registerCleanup(() => document.removeEventListener('keydown', closeHelp));
+    help.querySelector<HTMLElement>('#closeSettingsPanel')!.addEventListener('click', closeHelp);
 
     // Make the panel an accessible modal dialog: dialog role, focus trap +
     // restore, and the jc-modal-open gate that suppresses JC.keyListener while
     // it is open (INT-1) — replacing the former manual remove/re-add dance.
-    a11y = installModalA11y(help, {
+    const a11y = installModalA11y(help, {
         label: JC.t!('panel_settings_tab'),
         onEscape: () => closeHelp({ type: 'keydown', key: 'Escape' }),
     });
-    // Stash the handle on the panel element so the toggle-close early-return
-    // branch (top of this function) can release it without re-entering this
-    // closure. The close paths that DO reach this closure use `a11y` directly.
-    const ownedPanel = help as unknown as { _a11y?: ModalA11yHandle; _identityCleanup?: () => void };
-    ownedPanel._a11y = a11y;
-    ownedPanel._identityCleanup = cleanupPanel;
+    owner.registerCleanup(() => a11y.release());
+    // DOM consumers retain only the exact owner's full idempotent disposer;
+    // there is no partial a11y-only close path.
+    (help as OwnedPanelElement)._identityCleanup = () => owner.dispose();
     ctx.createToast = createToast;
 
     wireSettingsListeners(ctx);
@@ -463,15 +566,16 @@ export async function showEnhancedPanel(): Promise<void> {
     wireSpoilerGuardListeners(ctx.resetAutoCloseTimer);
     wireMiscSettingsControls(ctx);
     wireLanguageControls(ctx);
+    if (!owner.isCurrent()) return;
+    owner.phase = 'open';
 }
 
 export function resetSettingsPanel(): void {
-    const panel = document.getElementById('jellyfin-canopy-panel');
-    const cleanup = panel
-        ? (panel as unknown as { _identityCleanup?: () => void })._identityCleanup
-        : undefined;
-    if (cleanup) cleanup();
+    currentPanelOwner?.dispose();
+    const panel: OwnedPanelElement | null = document.getElementById(PANEL_ID);
+    if (panel?._identityCleanup) panel._identityCleanup();
     else panel?.remove();
+    document.getElementById(BACKDROP_ID)?.remove();
     resetReleaseNotes();
     resetLanguageControls();
 }
