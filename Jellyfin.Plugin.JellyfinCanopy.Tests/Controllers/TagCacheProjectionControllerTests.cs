@@ -200,6 +200,38 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                 removed.GetProperty("removedIds").EnumerateArray().Select(static id => id.GetString()));
         }
 
+        [Fact]
+        public void PolicyChangeObservedBeforePublication_ReturnsFailClosedCurrentGenerationReset()
+        {
+            using var harness = new Harness();
+            var itemId = Guid.NewGuid().ToString("N");
+            harness.Cache.SeedUserAccessCacheForTest(harness.User.Id.ToString("N"), itemId);
+            harness.Cache.SeedEntryForTest(itemId, new TagCacheEntry { Type = "Movie" });
+            var oldEpoch = harness.Cache.GetCurrentContentControl(harness.User).Epoch;
+
+            harness.Cache.OnAfterUserCacheSnapshotForTest = () =>
+            {
+                harness.Cache.OnAfterUserCacheSnapshotForTest = null;
+                var updated = new User(
+                    harness.User.Username,
+                    harness.User.AuthenticationProviderId,
+                    harness.User.PasswordResetProviderId)
+                {
+                    Id = harness.User.Id,
+                };
+                updated.OnSavingChanges();
+                harness.Users.ReplaceUser(updated);
+            };
+
+            var payload = Payload(harness.Controller.GetTagCache(harness.User.Id));
+
+            Assert.True(payload.GetProperty("contentReset").GetBoolean());
+            Assert.True(payload.GetProperty("reset").GetBoolean());
+            Assert.Equal(0, payload.GetProperty("count").GetInt32());
+            Assert.Empty(payload.GetProperty("items").EnumerateObject());
+            Assert.NotEqual(oldEpoch, payload.GetProperty("contentEpoch").GetString());
+        }
+
         private static JsonElement Payload(IActionResult result)
         {
             var ok = Assert.IsType<OkObjectResult>(result);
@@ -220,7 +252,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                 Directory.CreateDirectory(_tempDir);
 
                 User = new User("projection-controller", "Provider", "PasswordProvider");
-                var users = new StubUserManager(User);
+                Users = new StubUserManager(User);
                 Library = new CountingLibraryManager();
                 UserData = new StubUserDataManager();
                 var appPaths = new StubAppPaths(_tempDir);
@@ -234,11 +266,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                     appPaths,
                     NullLogger<UserConfigurationManager>.Instance);
                 var markers = new SpoilerIdentityService(
-                    users,
+                    Users,
                     NullLogger<SpoilerIdentityService>.Instance);
                 var identity = new RequestIdentityService(
                     new CountingSessionManager(),
-                    users,
+                    Users,
                     markers,
                     NullLogger<RequestIdentityService>.Instance);
                 var resolver = new SpoilerUserResolver(
@@ -258,7 +290,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                 Controller = new TagCacheController(
                     new RecordingHttpClientFactory(new HttpClientHandler()),
                     NullLogger<TagCacheController>.Instance,
-                    users,
+                    Users,
                     new SeerrCache(configProvider),
                     configProvider,
                     Cache,
@@ -279,6 +311,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             }
 
             public User User { get; }
+
+            public StubUserManager Users { get; }
 
             public TagCacheService Cache { get; }
 

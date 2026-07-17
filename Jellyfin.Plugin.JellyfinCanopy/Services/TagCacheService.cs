@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
@@ -156,7 +157,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         // starts empty (client falls back to the live/per-batch strip) until rebuild.
         private const int CurrentCacheSchemaVersion = 2;
 
-        // User access cache: avoids expensive GetItemIds query on every request
+        // User access cache: avoids expensive GetItemIds query on every request.
+        // Jellyfin increments User.RowVersion for every persisted policy update,
+        // including EnabledFolders/EnableAllFolders. The authorization generation
+        // must therefore be part of both the cache and singleflight key: a request
+        // under generation R+1 may never join or reuse work started under R.
         private static readonly TimeSpan UserAccessCacheTtl = TimeSpan.FromSeconds(60);
         private readonly BoundedTtlCache<string, (HashSet<string> Ids, DateTime CachedAt)> _userAccessCache = new(
             maximumEntries: 2_048,
@@ -200,7 +205,6 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         public long Version => Interlocked.Read(ref _version);
         public long LastModified => Interlocked.Read(ref _lastModified);
         public int Count => _cache.Count;
-        internal string ContentEpoch => _contentEpoch;
         internal long ContentRevision => Interlocked.Read(ref _contentRevision);
         internal long ServedContentIdsVisited => Interlocked.Read(ref _servedContentIdsVisited);
         internal void SetLegacyTimestampForTest(long timestamp)
@@ -210,7 +214,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         internal int UserAccessCacheCount => _userAccessCache.Count;
 
         internal void SeedUserAccessCacheForTest(string userKey, params string[] itemIds)
-            => _userAccessCache[userKey] = (
+            => _userAccessCache[AuthorizationKey(userKey, 0)] = (
                 new HashSet<string>(itemIds, StringComparer.Ordinal),
                 DateTime.UtcNow);
 
@@ -804,9 +808,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         {
             ArgumentNullException.ThrowIfNull(user);
             ArgumentNullException.ThrowIfNull(visibleIds);
+            var authorizationKey = AuthorizationKey(user);
             lock (_contentGate)
             {
-                PublishServedState(user.Id.ToString("N"), visibleIds);
+                PublishServedState(authorizationKey, visibleIds);
             }
         }
 
@@ -819,6 +824,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         internal ContentDelta GetFullContentForUser(JUser user)
         {
             ArgumentNullException.ThrowIfNull(user);
+            var authorizationKey = AuthorizationKey(user);
+            var contentEpoch = ContentEpochFor(authorizationKey);
             long revision;
             lock (_contentGate)
             {
@@ -828,10 +835,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             var items = GetCacheForUser(user);
             lock (_contentGate)
             {
-                PublishServedState(user.Id.ToString("N"), items.Keys);
+                PublishServedState(authorizationKey, items.Keys);
             }
             return new ContentDelta(
-                _contentEpoch,
+                contentEpoch,
                 revision,
                 resetRequired: false,
                 items,
@@ -851,26 +858,27 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             long? clientRevision)
         {
             ArgumentNullException.ThrowIfNull(user);
-            var userKey = user.Id.ToString("N");
+            var authorizationKey = AuthorizationKey(user);
+            var contentEpoch = ContentEpochFor(authorizationKey);
 
             lock (_contentGate)
             {
                 var currentRevision = _contentRevision;
                 if (string.IsNullOrWhiteSpace(clientEpoch)
                     || !clientRevision.HasValue
-                    || !string.Equals(clientEpoch, _contentEpoch, StringComparison.Ordinal)
+                    || !string.Equals(clientEpoch, contentEpoch, StringComparison.Ordinal)
                     || clientRevision.Value < 0
                     || clientRevision.Value > currentRevision
-                    || !_servedContentStates.TryGetValue(userKey, out var served))
+                    || !_servedContentStates.TryGetValue(authorizationKey, out var served))
                 {
-                    return ContentResetLocked(currentRevision);
+                    return ContentResetLocked(contentEpoch, currentRevision);
                 }
 
                 var requestedRevision = clientRevision.Value;
                 if (requestedRevision == currentRevision)
                 {
                     return new ContentDelta(
-                        _contentEpoch,
+                        contentEpoch,
                         currentRevision,
                         resetRequired: false,
                         new Dictionary<string, TagCacheEntry>(StringComparer.Ordinal),
@@ -881,7 +889,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 var earliestRetained = currentRevision - _contentJournalCount + 1;
                 if (_contentJournalCount == 0 || requestedRevision < earliestRetained - 1)
                 {
-                    return ContentResetLocked(currentRevision);
+                    return ContentResetLocked(contentEpoch, currentRevision);
                 }
 
                 // Each revision maps to exactly one ring row, so start directly at
@@ -918,9 +926,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     }
                 }
 
-                PublishServedState(userKey, items.Keys);
+                PublishServedState(authorizationKey, items.Keys);
                 return new ContentDelta(
-                    _contentEpoch,
+                    contentEpoch,
                     currentRevision,
                     resetRequired: false,
                     items,
@@ -929,12 +937,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             }
         }
 
-        internal ContentDelta GetCurrentContentControl()
+        internal ContentDelta GetCurrentContentControl(JUser user)
         {
+            ArgumentNullException.ThrowIfNull(user);
+            var contentEpoch = ContentEpochFor(AuthorizationKey(user));
             lock (_contentGate)
             {
                 return new ContentDelta(
-                    _contentEpoch,
+                    contentEpoch,
                     _contentRevision,
                     resetRequired: false,
                     new Dictionary<string, TagCacheEntry>(StringComparer.Ordinal),
@@ -943,9 +953,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             }
         }
 
-        private ContentDelta ContentResetLocked(long currentRevision)
+        private static ContentDelta ContentResetLocked(string contentEpoch, long currentRevision)
             => new(
-                _contentEpoch,
+                contentEpoch,
                 currentRevision,
                 resetRequired: true,
                 new Dictionary<string, TagCacheEntry>(StringComparer.Ordinal),
@@ -959,14 +969,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         /// </summary>
         public Dictionary<string, TagCacheEntry> GetCacheForUser(JUser user, long? since = null)
         {
+            ArgumentNullException.ThrowIfNull(user);
             // Capture local reference for thread safety (cache reference may be swapped)
             var cache = _cache;
             OnAfterUserCacheSnapshotForTest?.Invoke();
-            var userKey = user.Id.ToString("N");
+            var authorizationKey = AuthorizationKey(user);
 
             // Check user access cache
             HashSet<string> accessibleSet;
-            if (_userAccessCache.TryGetValue(userKey, out var cached) && DateTime.UtcNow - cached.CachedAt < UserAccessCacheTtl)
+            if (_userAccessCache.TryGetValue(authorizationKey, out var cached) && DateTime.UtcNow - cached.CachedAt < UserAccessCacheTtl)
             {
                 accessibleSet = cached.Ids;
             }
@@ -974,11 +985,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             {
                 OnAfterUserAccessCacheMissForTest?.Invoke();
                 var flight = _userAccessInFlight.GetOrAdd(
-                    userKey,
+                    authorizationKey,
                     _ => new Lazy<HashSet<string>>(
                         () =>
                         {
-                            if (_userAccessCache.TryGetValue(userKey, out var published)
+                            if (_userAccessCache.TryGetValue(authorizationKey, out var published)
                                 && DateTime.UtcNow - published.CachedAt < UserAccessCacheTtl)
                             {
                                 return published.Ids;
@@ -992,7 +1003,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                             var result = new HashSet<string>(
                                 accessibleIds.Select(id => id.ToString("N").ToLowerInvariant()));
                             _userAccessCache.Set(
-                                userKey,
+                                authorizationKey,
                                 (result, DateTime.UtcNow),
                                 UserAccessCacheTtl);
                             return result;
@@ -1005,7 +1016,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 finally
                 {
                     ((ICollection<KeyValuePair<string, Lazy<HashSet<string>>>>)_userAccessInFlight)
-                        .Remove(new KeyValuePair<string, Lazy<HashSet<string>>>(userKey, flight));
+                        .Remove(new KeyValuePair<string, Lazy<HashSet<string>>>(authorizationKey, flight));
                 }
             }
 
@@ -1019,6 +1030,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
             return result;
         }
+
+        private static string AuthorizationKey(JUser user)
+            => AuthorizationKey(user.Id.ToString("N"), user.RowVersion);
+
+        private static string AuthorizationKey(string userKey, uint rowVersion)
+            => string.Concat(userKey, ":", rowVersion.ToString(CultureInfo.InvariantCulture));
+
+        private string ContentEpochFor(string authorizationKey)
+            => $"{_contentEpoch}:{authorizationKey}";
 
         /// <summary>
         /// Select a small, server-generated set of cache entries for one user without

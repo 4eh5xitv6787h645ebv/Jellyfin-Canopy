@@ -11,6 +11,7 @@ import { getItemCached } from './helpers';
 import {
     applyContentResponse,
     decideContentResponse,
+    projectionOnlyContentRequiresReset,
     decideProjectionResponse,
     extractUserDataChangedIds,
     isListViewRow,
@@ -527,6 +528,34 @@ describe('watched/privacy projection response ordering (BI-SEC-035)', () => {
                     projectionReset: false,
                 });
             }
+            if (call === 5) {
+                return Promise.resolve({
+                    version: 1,
+                    timestamp: 275,
+                    contentEpoch: 'nav-content-policy-2',
+                    contentRevision: 3,
+                    items: {},
+                    projectionUserId: userA,
+                    projectionEpoch: 'nav-process',
+                    projectionRevision: 4,
+                    projectionIds: [],
+                    projectionReset: false,
+                });
+            }
+            if (call === 6) {
+                return Promise.resolve({
+                    version: 1,
+                    timestamp: 275,
+                    contentEpoch: 'nav-content-policy-2',
+                    contentRevision: 3,
+                    items: {},
+                    projectionUserId: userA,
+                    projectionEpoch: 'nav-process',
+                    projectionRevision: 4,
+                    projectionIds: [],
+                    projectionReset: false,
+                });
+            }
             return new Promise((resolve) => { navigationResolvers.push(resolve); });
         });
 
@@ -622,6 +651,18 @@ describe('watched/privacy projection response ordering (BI-SEC-035)', () => {
             projectionReset: false,
         });
         await vi.waitFor(() => expect(projectedLabels).toContain('stripped'));
+        expect(document.querySelector('.navigation-projection-secret')).toBeNull();
+
+        // A policy-generation change can first arrive on a watched-state-only
+        // refresh. It must invalidate the old content snapshot and perform one
+        // full reload without advancing that snapshot to the control revision.
+        await JC.tagPipeline!.refreshServerProjection!({
+            UserId: userA,
+            UserDataList: [{ ItemId: itemId }],
+        });
+        await vi.waitFor(() => expect(ajax).toHaveBeenCalledTimes(6));
+        expect(urls[4]).toContain('projectionOnly=true');
+        expect(urls[5]).not.toContain('projectionOnly=true');
         expect(document.querySelector('.navigation-projection-secret')).toBeNull();
 
         ajax.mockRestore();
@@ -1400,5 +1441,15 @@ describe('revisioned tag-cache content protocol (issue 72)', () => {
             contentEpoch: 'content-process-2',
         })).toBe('reset');
         expect(decideContentResponse(current, response(21, {}, [], true))).toBe('reset');
+    });
+
+    it('treats an authorization epoch change in projection-only control as a reset without advancing same-epoch content', () => {
+        const current = readContentIdentity(response(20))!;
+        expect(projectionOnlyContentRequiresReset(current, {
+            ...response(99),
+            contentEpoch: 'content-process-user-policy-2',
+        })).toBe(true);
+        expect(projectionOnlyContentRequiresReset(current, response(99))).toBe(false);
+        expect(current).toEqual({ epoch: 'content-process-1', revision: 20 });
     });
 });
