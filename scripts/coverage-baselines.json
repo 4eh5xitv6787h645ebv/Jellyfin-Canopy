@@ -21,12 +21,12 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 18748,
-        "totalLines": 27276
+        "coveredLines": 18841,
+        "totalLines": 27308
       },
       "tolerance": {
         "missingCoveredLines": 2,
-        "rationale": "Two clean local .NET 10.0.9/Coverlet integration runs on 2026-07-16 each passed 1672 tests and measured the identical combined 27276-line assembly scope at 18748 and 18747 covered lines. Issue #318's final graph-wide retry delivery adds bounded path namespaces and controller regressions for missing, malformed, out-of-range, duplicate, queried, stale, traversal, unknown, and valid static/dynamic asset graphs. Relative to the reviewed 18744/27277 baseline, the reviewed assembly scope decreases by one instrumented line and the high-water advances by four covered lines while line coverage rises from 68.717% to 68.734%. The existing two-line tolerance is unchanged and covers the reproduced one-line Coverlet variance; coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, and broad-tolerance negative boundaries."
+        "rationale": "Two clean local .NET 10.0.9/Coverlet integration runs on 2026-07-17 each passed 1685 tests and measured the identical combined 27308-line assembly scope at 18841 covered lines (68.994%). Issue #161 replaces payload-sized public-branding buffers with cancellation-aware fixed-buffer streaming and adds response-ownership, allocation, concurrent-request, validator, fault, and atomic-generation regressions. Relative to the reviewed 18748/27276 baseline, the reviewed assembly scope grows by 32 executable lines and the high-water advances by 93 covered lines while line coverage rises from 68.734% to 68.994%. The existing two-line tolerance is unchanged and covers only the previously reproduced negligible Coverlet variance; coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, and broad-tolerance negative boundaries."
       }
     }
   }

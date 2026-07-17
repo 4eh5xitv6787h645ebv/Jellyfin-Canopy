@@ -30,13 +30,18 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
     /// request and streams those bytes directly (no buffering, no de/recompression —
     /// PNG/ICO are already compressed). When it does not, it calls next() and the
     /// stock asset is served, preserving the original "no custom image = no change"
-    /// behaviour. Any error falls through to next(). Disable via
-    /// DisableBrandingMiddleware.
+    /// behaviour. Errors before a custom response is claimed fall through; after
+    /// response ownership begins they terminate that response and never invoke a
+    /// second body producer. Disable via DisableBrandingMiddleware.
     /// </summary>
     public class BrandingAssetStartupFilter : IStartupFilter
     {
+        internal const FileShare BrandingFileShare = FileShare.Read | FileShare.Delete;
+        internal const int CopyBufferSize = 64 * 1024;
+
         private readonly ILogger<BrandingAssetStartupFilter> _logger;
         private readonly IPluginConfigProvider _configProvider;
+        private readonly Func<string> _brandingDirectoryProvider;
         private int _loggedOnce;
 
         private static readonly RegexOptions Opts = RegexOptions.IgnoreCase | RegexOptions.Compiled;
@@ -68,9 +73,18 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         };
 
         public BrandingAssetStartupFilter(ILogger<BrandingAssetStartupFilter> logger, IPluginConfigProvider configProvider)
+            : this(logger, configProvider, () => JellyfinCanopy.BrandingDirectory)
+        {
+        }
+
+        internal BrandingAssetStartupFilter(
+            ILogger<BrandingAssetStartupFilter> logger,
+            IPluginConfigProvider configProvider,
+            Func<string> brandingDirectoryProvider)
         {
             _logger = logger;
             _configProvider = configProvider;
+            _brandingDirectoryProvider = brandingDirectoryProvider;
         }
 
         public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next)
@@ -105,33 +119,56 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 return;
             }
 
+            var responseOwned = false;
             try
             {
-                var brandingDir = JellyfinCanopy.BrandingDirectory;
+                var brandingDir = _brandingDirectoryProvider();
                 if (!string.IsNullOrWhiteSpace(brandingDir))
                 {
                     // Resolve under BrandingDirectory and confirm the candidate stays
                     // inside it (defence in depth; OnDiskFileName is a constant).
                     var fullDir = Path.GetFullPath(brandingDir);
                     var filePath = Path.GetFullPath(Path.Join(fullDir, onDiskFileName));
-                    if (string.Equals(Path.GetDirectoryName(filePath), fullDir, StringComparison.OrdinalIgnoreCase)
-                        && File.Exists(filePath))
+                    if (string.Equals(Path.GetDirectoryName(filePath), fullDir, StringComparison.OrdinalIgnoreCase))
                     {
-                        var fileInfo = new FileInfo(filePath);
-                        if (fileInfo.Length > 0)
+                        // FileStream construction has no cancellable overload, so reject
+                        // an already-aborted request immediately before acquiring the
+                        // response-owned handle. CopyToAsync owns all later file reads and
+                        // response writes under the same RequestAborted token.
+                        context.RequestAborted.ThrowIfCancellationRequested();
+                        await using var stream = new FileStream(
+                            filePath,
+                            new FileStreamOptions
+                            {
+                                Mode = FileMode.Open,
+                                Access = FileAccess.Read,
+                                Share = BrandingFileShare,
+                                BufferSize = 4096,
+                                Options = FileOptions.Asynchronous | FileOptions.SequentialScan,
+                            });
+                        context.RequestAborted.ThrowIfCancellationRequested();
+
+                        var length = stream.Length;
+                        if (length > 0)
                         {
+                            // Metadata comes from the exact open handle whose bytes will be
+                            // copied. AtomicFile can rename a replacement over the path while
+                            // this handle remains alive (FileShare.Delete is required on
+                            // Windows); this response still serves one coherent old generation.
+                            var lastWriteTimeUtc = File.GetLastWriteTimeUtc(stream.SafeFileHandle);
                             // Validator from size + mtime so unchanged assets revalidate
                             // cheaply (304, no body). Cache-Control stays no-cache because
                             // the URL hash reflects the stock asset, not the custom file —
                             // so a re-uploaded image (new mtime -> new ETag) is picked up
                             // immediately on the next revalidation.
-                            var etag = "\"" + (fileInfo.LastWriteTimeUtc.Ticks ^ fileInfo.Length)
+                            var etag = "\"" + (lastWriteTimeUtc.Ticks ^ length)
                                 .ToString("x", CultureInfo.InvariantCulture) + "\"";
-                            var lastModified = fileInfo.LastWriteTimeUtc.ToString("R", CultureInfo.InvariantCulture);
+                            var lastModified = lastWriteTimeUtc.ToString("R", CultureInfo.InvariantCulture);
 
                             if (context.Request.Headers.TryGetValue("If-None-Match", out var inm)
                                 && IfNoneMatchSatisfied(inm, etag))
                             {
+                                responseOwned = true;
                                 context.Response.StatusCode = 304;
                                 context.Response.Headers["Cache-Control"] = "no-cache";
                                 context.Response.Headers["ETag"] = etag;
@@ -146,9 +183,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                             }
 
                             var isHead = HttpMethods.IsHead(context.Request.Method);
-                            byte[]? bytes = isHead ? null : await File.ReadAllBytesAsync(filePath).ConfigureAwait(false);
-                            var length = isHead ? fileInfo.Length : bytes!.Length;
-
+                            responseOwned = true;
                             context.Response.StatusCode = 200;
                             context.Response.ContentType = contentType;
                             context.Response.ContentLength = length;
@@ -164,7 +199,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                             // HEAD: headers only, no body.
                             if (!isHead)
                             {
-                                await context.Response.Body.WriteAsync(bytes!, 0, bytes!.Length).ConfigureAwait(false);
+                                await stream.CopyToAsync(
+                                    context.Response.Body,
+                                    CopyBufferSize,
+                                    context.RequestAborted).ConfigureAwait(false);
                             }
 
                             return; // short-circuit: do not fall through to the static-file handler
@@ -172,9 +210,36 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     }
                 }
             }
+            catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
+            {
+                // The client owns cancellation. Dispose the exact file generation and
+                // stop immediately; a disconnected request must never start the stock
+                // static-file producer or emit a warning as if the server had failed.
+                return;
+            }
+            catch (FileNotFoundException)
+            {
+                // A missing override is the normal stock-branding path. The file can
+                // also disappear between path resolution and open when an admin
+                // deletes it; neither case is a middleware failure worth logging.
+            }
+            catch (DirectoryNotFoundException)
+            {
+                // The custom-branding directory is optional and may not exist yet.
+            }
             catch (Exception ex)
             {
-                // Never break asset serving — fall through to the stock asset below.
+                if (responseOwned)
+                {
+                    // Headers/body now describe the custom generation. Falling through
+                    // could append a stock asset to a partial custom body or attempt a
+                    // second response. Abort the owned response instead.
+                    _logger.LogWarning($"Branding middleware error after response ownership (response terminated): {ex.Message}");
+                    context.Abort();
+                    return;
+                }
+
+                // No custom response was claimed, so the host can safely serve stock.
                 _logger.LogWarning($"Branding middleware error (serving stock asset): {ex.Message}");
             }
 
