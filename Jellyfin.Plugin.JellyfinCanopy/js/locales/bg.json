@@ -233,6 +233,7 @@
   "seerr_quota_reset_in_minutes": "Можете да направите нова заявка след около {minutes} мин",
   "seerr_quota_reset_in_hours": "Можете да направите нова заявка след около {hours} ч",
   "seerr_quota_reset_in_days": "Можете да направите нова заявка след около {days} дни",
+  "seerr_quota_reset_unavailable": "Времето за нулиране в момента не е налично.",
   "seerr_toast_collection_failed_count": "{count} failed",
   "seerr_seasons_available": "{count} налични сезона",
   "seerr_all_seasons": "Всички {count} сезона",

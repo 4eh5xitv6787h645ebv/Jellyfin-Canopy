@@ -526,6 +526,7 @@
   "seerr_modal_title": "Request Series",
   "seerr_card_badge_series": "Series",
   "seerr_quota_reset_in_days": "You can make another request in about {days} days",
+  "seerr_quota_reset_unavailable": "Reset time is currently unavailable.",
   "seerr_report_issue_type_audio": "Audio",
   "seerr_report_issue_episode": "Episode",
   "bookmark_no_duplicates": "No duplicates found! All bookmarks are unique.",

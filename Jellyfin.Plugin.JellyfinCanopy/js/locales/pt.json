@@ -233,6 +233,7 @@
   "seerr_quota_reset_in_minutes": "Pode fazer outro pedido em cerca de {minutes} min",
   "seerr_quota_reset_in_hours": "Pode fazer outro pedido em cerca de {hours} h",
   "seerr_quota_reset_in_days": "Pode fazer outro pedido em cerca de {days} dias",
+  "seerr_quota_reset_unavailable": "A hora de reposição está indisponível de momento.",
   "seerr_toast_collection_failed_count": "{count} failed",
   "seerr_seasons_available": "{count} temporadas disponíveis",
   "seerr_all_seasons": "Todas as {count} temporadas",

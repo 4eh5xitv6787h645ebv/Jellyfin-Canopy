@@ -233,6 +233,7 @@
   "seerr_quota_reset_in_minutes": "Yaklaşık {minutes} dakika içinde yeni bir istek yapabilirsiniz",
   "seerr_quota_reset_in_hours": "Yaklaşık {hours} saat içinde yeni bir istek yapabilirsiniz",
   "seerr_quota_reset_in_days": "Yaklaşık {days} gün içinde yeni bir istek yapabilirsiniz",
+  "seerr_quota_reset_unavailable": "Sıfırlama zamanı şu anda kullanılamıyor.",
   "seerr_toast_collection_failed_count": "{count} failed",
   "seerr_seasons_available": "{count} sezon mevcut",
   "seerr_all_seasons": "Tüm {count} sezon",

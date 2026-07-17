@@ -233,6 +233,7 @@
   "seerr_quota_reset_in_minutes": "يمكنك تقديم طلب آخر خلال حوالي {minutes} دقيقة",
   "seerr_quota_reset_in_hours": "يمكنك تقديم طلب آخر خلال حوالي {hours} ساعة",
   "seerr_quota_reset_in_days": "يمكنك تقديم طلب آخر خلال حوالي {days} يوم",
+  "seerr_quota_reset_unavailable": "وقت إعادة التعيين غير متاح حاليًا.",
   "seerr_toast_collection_failed_count": "{count} failed",
   "seerr_seasons_available": "{count} مواسم متوفرة",
   "seerr_all_seasons": "جميع المواسم الـ {count}",

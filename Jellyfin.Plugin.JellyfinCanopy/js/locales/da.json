@@ -233,6 +233,7 @@
   "seerr_quota_reset_in_minutes": "Du kan lave en ny anmodning om ca. {minutes} min",
   "seerr_quota_reset_in_hours": "Du kan lave en ny anmodning om ca. {hours} t",
   "seerr_quota_reset_in_days": "Du kan lave en ny anmodning om ca. {days} dage",
+  "seerr_quota_reset_unavailable": "Nulstillingstidspunktet er ikke tilgængeligt i øjeblikket.",
   "seerr_toast_collection_failed_count": "{count} failed",
   "seerr_seasons_available": "{count} sæsoner tilgængelige",
   "seerr_all_seasons": "Alle {count} sæsoner",

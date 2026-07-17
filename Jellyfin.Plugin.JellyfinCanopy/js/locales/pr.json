@@ -233,6 +233,7 @@
   "seerr_quota_reset_in_minutes": "Ye can make another demand in about {minutes} min",
   "seerr_quota_reset_in_hours": "Ye can make another demand in about {hours} hrs",
   "seerr_quota_reset_in_days": "Ye can make another demand in about {days} days",
+  "seerr_quota_reset_unavailable": "The reset time be lost in the fog fer now.",
   "seerr_toast_collection_failed_count": "{count} failed",
   "seerr_seasons_available": "{count} seasons in th' hold",
   "seerr_all_seasons": "All {count} seasons",

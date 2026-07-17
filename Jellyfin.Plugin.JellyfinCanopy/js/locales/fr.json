@@ -233,6 +233,7 @@
   "seerr_quota_reset_in_minutes": "Vous pouvez faire une nouvelle demande dans environ {minutes} min",
   "seerr_quota_reset_in_hours": "Vous pouvez faire une nouvelle demande dans environ {hours} h",
   "seerr_quota_reset_in_days": "Vous pouvez faire une nouvelle demande dans environ {days} jours",
+  "seerr_quota_reset_unavailable": "L'heure de réinitialisation est actuellement indisponible.",
   "seerr_toast_collection_failed_count": "{count} failed",
   "seerr_seasons_available": "{count} saisons disponibles",
   "seerr_all_seasons": "Toutes les {count} saisons",

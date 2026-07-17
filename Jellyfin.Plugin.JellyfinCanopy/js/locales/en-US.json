@@ -234,6 +234,7 @@
   "seerr_quota_reset_in_minutes": "You can make another request in about {minutes} min",
   "seerr_quota_reset_in_hours": "You can make another request in about {hours} hrs",
   "seerr_quota_reset_in_days": "You can make another request in about {days} days",
+  "seerr_quota_reset_unavailable": "Reset time is currently unavailable.",
   "seerr_toast_collection_failed_count": "{count} failed",
   "seerr_seasons_available": "{count} seasons available",
   "seerr_all_seasons": "All {count} seasons",

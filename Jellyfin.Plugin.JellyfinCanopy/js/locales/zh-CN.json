@@ -233,6 +233,7 @@
   "seerr_quota_reset_in_minutes": "约 {minutes} 分钟后可再次发起请求",
   "seerr_quota_reset_in_hours": "约 {hours} 小时后可再次发起请求",
   "seerr_quota_reset_in_days": "约 {days} 天后可再次发起请求",
+  "seerr_quota_reset_unavailable": "重置时间暂时不可用。",
   "seerr_toast_collection_failed_count": "{count} failed",
   "seerr_seasons_available": "{count} 季可用",
   "seerr_all_seasons": "全部 {count} 季",
