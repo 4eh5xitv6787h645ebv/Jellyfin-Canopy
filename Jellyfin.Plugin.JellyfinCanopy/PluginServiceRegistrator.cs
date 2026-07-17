@@ -162,8 +162,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy
             serviceCollection.AddSingleton<SpoilerBlurImageFilter>();
             serviceCollection.AddSingleton<SpoilerFieldStripFilter>();
             // Shared pre-acquisition ("pending") pending-add core used by BOTH the
-            // SpoilerGuardController HTTP endpoints and the Seerr auto-request hook on
-            // SeerrProxyController. Depends only on the config store + library +
+            // SpoilerGuardController HTTP endpoints and SeerrClient's durable
+            // auto-request success boundary. Depends only on the config store + library +
             // user managers (never ISeerrClient), so it stays cycle-free.
             serviceCollection.AddSingleton<SpoilerPendingService>();
             serviceCollection.AddHostedService<SpoilerSeerrPendingPromoter>();

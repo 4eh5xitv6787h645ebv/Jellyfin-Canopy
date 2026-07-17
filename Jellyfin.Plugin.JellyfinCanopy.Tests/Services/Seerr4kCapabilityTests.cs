@@ -39,7 +39,8 @@ public class Seerr4kCapabilityTests
             null!,
             new SeerrCache(provider),
             provider,
-            new PassthroughParentalFilter());
+            new PassthroughParentalFilter(),
+            null!);
         return (client, handler);
     }
 

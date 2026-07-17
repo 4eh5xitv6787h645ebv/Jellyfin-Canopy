@@ -37,12 +37,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             public required UserConfigurationManager Mgr { get; init; }
             public required CountingLibraryManager Lib { get; init; }
             public required SpoilerPendingService Pending { get; init; }
+            public required SpoilerSeerrPendingPromoter Promoter { get; init; }
             public required SpoilerGuardController Controller { get; init; }
             public required StubUserDataManager UserData { get; init; }
             public required User User { get; init; }
 
             public void Dispose()
             {
+                Promoter.StopAsync(CancellationToken.None).GetAwaiter().GetResult();
                 try { Directory.Delete(Dir, recursive: true); } catch { /* best-effort */ }
             }
         }
@@ -58,6 +60,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             var userManager = includeUserInManager ? new StubUserManager(user) : new StubUserManager();
             var provider = new FakePluginConfigProvider(cfg);
             var pending = new SpoilerPendingService(mgr, lib, userManager, NullLogger<SpoilerPendingService>.Instance);
+            var promoter = new SpoilerSeerrPendingPromoter(
+                lib,
+                userManager,
+                mgr,
+                provider,
+                pending,
+                NullLogger<SpoilerSeerrPendingPromoter>.Instance);
+            promoter.StartAsync(CancellationToken.None).GetAwaiter().GetResult();
             var sessions = new CountingSessionManager();
             var requestIdentity = new RequestIdentityService(
                 sessions,
@@ -85,7 +95,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                 HttpContext = new DefaultHttpContext { User = new ClaimsPrincipal(identity) },
             };
 
-            return new Harness { Dir = dir, Mgr = mgr, Lib = lib, Pending = pending, Controller = controller, UserData = userData, User = user };
+            return new Harness { Dir = dir, Mgr = mgr, Lib = lib, Pending = pending, Promoter = promoter, Controller = controller, UserData = userData, User = user };
         }
 
         // ─── Display-name sanitizer ───────────────────────────────────────────────
@@ -157,19 +167,19 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             first.PendingTmdb[keyB] = new SpoilerBlurPendingEntry { MediaType = "movie", TmdbId = "2" };
             var r1 = h.Controller.SaveUserSpoilerBlur(userId.ToString(), first);
             Assert.IsType<OkObjectResult>(r1);
-            Assert.True(SpoilerSeerrPendingPromoter.IsKeyRegisteredForTest(keyA));
-            Assert.True(SpoilerSeerrPendingPromoter.IsKeyRegisteredForTest(keyB));
+            Assert.True(h.Promoter.IsKeyRegisteredForTest(keyA));
+            Assert.True(h.Promoter.IsKeyRegisteredForTest(keyB));
 
             // Second save drops keyB → it is unregistered; keyA survives.
             var second = new UserSpoilerBlur();
             second.PendingTmdb[keyA] = new SpoilerBlurPendingEntry { MediaType = "tv", TmdbId = "1" };
             var r2 = h.Controller.SaveUserSpoilerBlur(userId.ToString(), second);
             Assert.IsType<OkObjectResult>(r2);
-            Assert.True(SpoilerSeerrPendingPromoter.IsKeyRegisteredForTest(keyA));
-            Assert.False(SpoilerSeerrPendingPromoter.IsKeyRegisteredForTest(keyB));
+            Assert.True(h.Promoter.IsKeyRegisteredForTest(keyA));
+            Assert.False(h.Promoter.IsKeyRegisteredForTest(keyB));
 
             // Cleanup so the static gate doesn't leak into other tests.
-            SpoilerSeerrPendingPromoter.UnregisterPending(keyA, userId);
+            h.Promoter.UnregisterPending(keyA, userId);
         }
 
         // ─── Pending cap (429) via the HTTP endpoint ──────────────────────────────
@@ -262,7 +272,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             Assert.Equal("My Show", stored.PendingTmdb["tv:888"].DisplayName);
 
             // The recorded pending key primes the promoter gate; clean it up.
-            SpoilerSeerrPendingPromoter.UnregisterPending("tv:888", h.User.Id);
+            h.Promoter.UnregisterPending("tv:888", h.User.Id);
         }
 
         [Fact]
@@ -284,7 +294,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
 
             Assert.False(SpoilerUserResolver.IsUserStateCachedForTest(userKey));
 
-            SpoilerSeerrPendingPromoter.UnregisterPending("tv:999", h.User.Id);
+            h.Promoter.UnregisterPending("tv:999", h.User.Id);
         }
 
         // ─── Health endpoint: non-admin sees only own corruption events ───────────
@@ -383,11 +393,6 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
         public void PromoteForUser_EventItemInaccessible_PromotesAccessibleTmdbDuplicate()
         {
             using var h = Build();
-            var userManager = new StubUserManager(h.User);
-            var promoter = new SpoilerSeerrPendingPromoter(
-                h.Lib, userManager, h.Mgr, new FakePluginConfigProvider(null), h.Pending,
-                NullLogger<SpoilerSeerrPendingPromoter>.Instance);
-
             const string pendingKey = "tv:555";
             var state = new UserSpoilerBlur();
             state.PendingTmdb[pendingKey] = new SpoilerBlurPendingEntry { MediaType = "tv", TmdbId = "555" };
@@ -398,7 +403,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             h.Lib.GetItemByIdUserHook = (_, _) => null;                                    // event item not visible
             h.Lib.GetItemListHook = _ => new List<BaseItem> { new Series { Id = dupId, Name = "Dup Show" } };
 
-            var outcome = promoter.PromoteForUser(h.User.Id, eventItemId, pendingKey, "Orig", isSeries: true);
+            var outcome = h.Promoter.PromoteForUser(h.User.Id, eventItemId, pendingKey, "Orig", isSeries: true);
 
             Assert.Equal(SpoilerSeerrPendingPromoter.PromotionOutcome.Promoted, outcome);
             var stored = h.Mgr.GetUserConfiguration<UserSpoilerBlur>(h.User.Id.ToString("N"), SpoilerFile);

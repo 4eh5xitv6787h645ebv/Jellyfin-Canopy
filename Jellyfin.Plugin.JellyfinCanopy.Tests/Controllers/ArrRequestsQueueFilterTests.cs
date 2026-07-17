@@ -94,7 +94,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                 userManager: null!,
                 new SeerrCache(provider),
                 provider,
-                parentalFilter: null!);
+                parentalFilter: null!,
+                spoilerPendingService: null!);
 
             var items = await client.GetRequestsForUser("7");
 
