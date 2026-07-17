@@ -9,7 +9,7 @@
 // overlay pane over the library content on the stable #moviesPage/#tvshowsPage div. Re-injected on
 // navigation + a scoped body-observer tick so it survives React re-renders; torn down on nav away.
 
-import { JC } from '../globals';
+import { JC, isDiscoveryLibraryConfigured } from '../globals';
 import { onNavigate } from '../core/navigation';
 import { getHeaderRightContainer } from '../enhanced/helpers';
 import { injectCss } from '../core/ui-kit';
@@ -56,10 +56,7 @@ function stateFor(id: string): PaneState {
 }
 
 function enabled(): boolean {
-    if (JC.pluginConfig?.DiscoveryEnabled === false) return false;
-    if (JC.pluginConfig?.DiscoveryLibraryTab === false) return false;
-    // Discovery is Seerr-backed (parental-filtered + request-aware); it needs a Seerr connection.
-    return JC.pluginConfig?.SeerrEnabled === true;
+    return isDiscoveryLibraryConfigured(JC.pluginConfig);
 }
 
 function ensureCss(): void {

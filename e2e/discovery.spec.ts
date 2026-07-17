@@ -1,18 +1,20 @@
 // E2E for the Discovery / Trending library placement.
 //
-// The Discovery feed needs a data source (Seerr and/or a TMDB key). Required CI
-// supplies both hermetically; the readiness skip is only for exploratory runs
+// The Discovery library placement needs Seerr for parental-filtered, request-aware data. Required CI
+// supplies it hermetically; the readiness skip is only for exploratory runs
 // against arbitrary unconfigured servers. It asserts the library toggle, that the pane renders real shelves, and
 // that the per-user Customize modal opens; it never triggers a request (no indexer/side effects).
 import { test, expect, loginAs } from './fixtures/auth';
 import type { Page } from 'playwright/test';
+import { discoveryLibraryAvailability } from './helpers/discovery-availability.mjs';
 
-/** True when the session's plugin config has a Discovery data source (Seerr or TMDB) configured. */
-async function discoveryAvailable(page: Page): Promise<boolean> {
-    return page.evaluate(() => {
-        const cfg = (window as unknown as { JellyfinCanopy?: { pluginConfig?: Record<string, unknown> } }).JellyfinCanopy?.pluginConfig || {};
-        return cfg.DiscoveryEnabled !== false && (cfg.SeerrEnabled === true || cfg.TmdbEnabled === true);
-    });
+/** Apply the production-owned library eligibility contract to the current session config. */
+async function discoveryAvailability(page: Page) {
+    const config = await page.evaluate(() => (
+        (window as unknown as { JellyfinCanopy?: { pluginConfig?: Record<string, unknown> } })
+            .JellyfinCanopy?.pluginConfig || {}
+    ));
+    return discoveryLibraryAvailability(config);
 }
 
 test.describe('Discovery / Trending — library placement', () => {
@@ -21,7 +23,8 @@ test.describe('Discovery / Trending — library placement', () => {
         await loginAs(page, 'admin', consoleErrors);
         await page.goto('/web/#/movies');
         await page.waitForTimeout(3000);
-        test.skip(!(await discoveryAvailable(page)), 'no Discovery data source configured on this exploratory server');
+        const availability = await discoveryAvailability(page);
+        test.skip(!availability.available, availability.reason || 'Discovery library placement is unavailable');
 
         const toggle = page.locator('#jc-discovery-toggle-movies');
         await expect(toggle).toBeVisible({ timeout: 20_000 });
