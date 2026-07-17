@@ -24,12 +24,11 @@ const CONFIG_HASH = '#/configurationpage?name=Jellyfin%20Canopy';
 // runs against arbitrary servers whose config page cannot meet the precondition.
 const NEEDS_TMDB = 'TMDB not configured on this exploratory server';
 
-// Jellyfin dashboard chrome can lack an admin avatar/branding preview and its
-// host bundle can emit the exact scroll-handler pageerror. Keep that existing
-// config-page exception local; every 5xx and every other console/4xx still
-// flows through the shared runtime assertion.
+// Jellyfin dashboard chrome can lack an admin avatar/branding preview. Keep
+// those config-page exceptions local; every 5xx and every other console/4xx
+// still flows through the shared runtime assertion.
 const DASHBOARD_CHROME =
-    /scrollHandler is not a function|\/Users\/[^/]+\/Images\/Primary|\/JellyfinCanopy\/BrandingImage/i;
+    /\/Users\/[^/]+\/Images\/Primary|\/JellyfinCanopy\/BrandingImage/i;
 
 function assertNoConfigPageRuntimeErrors(consoleErrors: ConsoleErrors): void {
     assertNoRuntimeErrors({

@@ -10,6 +10,7 @@ const HOME_LOGOUT_AXIOS_401 = 'AxiosError: Request failed with status code 401';
 const HOME_TAB_CHUNK = /\/web\/hometab\.[A-Za-z0-9]+\.chunk\.js:\d+:\d+/;
 const HOME_CHUNK = /\/web\/home\.[A-Za-z0-9]+\.chunk\.js:\d+:\d+/;
 const JELLYFIN_WEB_BUNDLE_FRAME = /\/web\/[A-Za-z0-9_.%-]+\.[A-Fa-f0-9]{12,}\.chunk\.js:\d+:\d+/;
+const JELLYFIN_WEB_CHUNK_FRAME = /(?:^|\n)[^\n]*(?:(?:https?:\/\/[^/\s)]+)|(?<![A-Za-z0-9._~!$&'()*+,;=:@%/?#-]))\/web\/[A-Za-z0-9_.%-]+\.[A-Fa-f0-9]{12,}\.chunk\.js:\d+(?::\d+)?(?:\)?\s*$)/m;
 const CANOPY_STACK_FRAME = /(?:^|\n)[^\n]*(?:\bJellyfinCanopy\b|\/JellyfinCanopy(?:\/|[?#]))/i;
 const HOME_TAB_SOURCE = /^\/web\/hometab\.[A-Za-z0-9]{12,}\.chunk\.js$/;
 const AXIOS_BUNDLE_PATH = '/web/node_modules.axios.bundle.js';
@@ -205,11 +206,26 @@ function isExpectedSignedOutHostLogout4xx(response, evidence) {
  * @param {string} text
  */
 function isKnownHiddenContentHostNoise(text) {
-    if (text === SCROLL_HANDLER_ERROR) return true;
     return text.startsWith(HOME_TAB_PREFIX)
         && HOME_TAB_CHUNK.test(text)
         && HOME_CHUNK.test(text)
         && !CANOPY_STACK_FRAME.test(text);
+}
+
+/**
+ * Exact Jellyfin-web scroll cleanup race. The message alone is not evidence of
+ * host ownership: require a pageerror with an immutable hashed stock-web frame,
+ * and fail closed when any Canopy frame appears in the same stack.
+ *
+ * @param {{text: string, stack?: string, source?: string}} detail
+ */
+function isKnownJellyfinWebScrollHandlerError(detail) {
+    const text = String(detail?.text || '');
+    const stack = String(detail?.stack || '');
+    return detail?.source === 'pageerror'
+        && text === SCROLL_HANDLER_ERROR
+        && JELLYFIN_WEB_CHUNK_FRAME.test(stack)
+        && !CANOPY_STACK_FRAME.test(stack);
 }
 
 /**
@@ -218,11 +234,12 @@ function isKnownHiddenContentHostNoise(text) {
  * not sufficient: it is accepted only with a browser stack pointing at the
  * immutable hashed Jellyfin-web chunk and with no Canopy frame.
  *
- * @param {{text: string, stack?: string}} detail
+ * @param {{text: string, stack?: string, source?: string}} detail
  */
 function isKnownJellyfinWebHostNoise(detail) {
     const text = String(detail?.text || '');
     const stack = String(detail?.stack || '');
+    if (isKnownJellyfinWebScrollHandlerError(detail)) return true;
     if (isKnownHiddenContentHostNoise(text)) return true;
     return text === HOME_SELECTED_INDEX_ERROR
         && JELLYFIN_WEB_BUNDLE_FRAME.test(stack)
@@ -285,6 +302,7 @@ module.exports = {
     SCROLL_HANDLER_ERROR,
     hasValidConcurrentLogoutResponses,
     isKnownHiddenContentHostNoise,
+    isKnownJellyfinWebScrollHandlerError,
     isKnownJellyfinWebHostNoise,
     isExpectedSignedOutHostLogout4xx,
     isExpectedSignedOutHomeAxios401,

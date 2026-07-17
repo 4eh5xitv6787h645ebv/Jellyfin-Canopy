@@ -12,6 +12,7 @@ const {
     SCROLL_HANDLER_ERROR,
     hasValidConcurrentLogoutResponses,
     isKnownHiddenContentHostNoise,
+    isKnownJellyfinWebScrollHandlerError,
     isKnownJellyfinWebHostNoise,
     isExpectedSignedOutHostLogout4xx,
     isExpectedSignedOutHomeAxios401,
@@ -22,6 +23,13 @@ const ROOT = path.resolve(__dirname, '../..');
 const OBSERVED_HOME_RACE = `${HOME_TAB_PREFIX}\n`
     + '    at new e (http://localhost:8100/web/hometab.2be9340f81cc7f0987ef.chunk.js:1:1173)\n'
     + '    at http://localhost:8100/web/home.ea733a1f3e4e4f7bee3b.chunk.js:1:2950';
+
+const OBSERVED_SCROLL_HANDLER_RACE = {
+    source: 'pageerror',
+    text: SCROLL_HANDLER_ERROR,
+    stack: 'TypeError: t.scrollHandler is not a function\n'
+        + '    at http://localhost:8100/web/dashboard.2be9340f81cc7f0987ef.chunk.js:1:1173',
+};
 
 const LOGOUT_ORIGIN = 'http://127.0.0.1:8100';
 const OLD_USER_ID = '92bdc95c7381435689451ad246198f74';
@@ -102,10 +110,71 @@ const OBSERVED_SIGNED_OUT_HOME_401S = [
     '/Items/Latest?userId=92bdc95c7381435689451ad246198f74&parentId=f137a2dd21bbc1b99aa5c0f6bf02a805&fields=PrimaryImageAspectRatio&fields=Path&imageTypeLimit=1&enableImageTypes=Primary&enableImageTypes=Backdrop&enableImageTypes=Thumb&limit=16',
 ];
 
-test('accepts only the exact observed scroll-handler host message', () => {
-    assert.equal(isKnownHiddenContentHostNoise(SCROLL_HANDLER_ERROR), true);
-    assert.equal(isKnownHiddenContentHostNoise(`${SCROLL_HANDLER_ERROR} extra`), false);
-    assert.equal(isKnownHiddenContentHostNoise('t.scrollHandler is not a function'), false);
+test('scroll-handler host race requires the exact pageerror and a hashed stock-web frame', () => {
+    assert.equal(isKnownJellyfinWebScrollHandlerError(OBSERVED_SCROLL_HANDLER_RACE), true);
+    assert.equal(isKnownJellyfinWebHostNoise(OBSERVED_SCROLL_HANDLER_RACE), true);
+    assert.equal(
+        isKnownJellyfinWebScrollHandlerError({
+            ...OBSERVED_SCROLL_HANDLER_RACE,
+            stack: OBSERVED_SCROLL_HANDLER_RACE.stack.replace(':1:1173', ':1'),
+        }),
+        true,
+        'a browser frame with a line and no column remains valid'
+    );
+    assert.equal(
+        isKnownHiddenContentHostNoise(SCROLL_HANDLER_ERROR),
+        false,
+        'the legacy string-only predicate cannot establish source ownership'
+    );
+});
+
+test('scroll-handler classifier rejects missing, similar, non-pageerror, and non-stock evidence', () => {
+    const rejected = [
+        { ...OBSERVED_SCROLL_HANDLER_RACE, stack: '' },
+        { ...OBSERVED_SCROLL_HANDLER_RACE, source: 'console' },
+        { ...OBSERVED_SCROLL_HANDLER_RACE, source: undefined },
+        { ...OBSERVED_SCROLL_HANDLER_RACE, text: 't.scrollHandler is not a function' },
+        { ...OBSERVED_SCROLL_HANDLER_RACE, text: `${SCROLL_HANDLER_ERROR} extra` },
+        {
+            ...OBSERVED_SCROLL_HANDLER_RACE,
+            stack: 'TypeError: t.scrollHandler is not a function\n'
+                + '    at http://localhost:8100/web/dashboard.chunk.js:1:1173',
+        },
+        {
+            ...OBSERVED_SCROLL_HANDLER_RACE,
+            stack: 'TypeError: t.scrollHandler is not a function\n'
+                + '    at http://localhost:8100/api/web/dashboard.2be9340f81cc7f0987ef.chunk.js:1:1173',
+        },
+        {
+            ...OBSERVED_SCROLL_HANDLER_RACE,
+            stack: 'TypeError: t.scrollHandler is not a function\n'
+                + '    at http://localhost:8100/dashboard?/web/dashboard.2be9340f81cc7f0987ef.chunk.js:1:1173',
+        },
+        {
+            ...OBSERVED_SCROLL_HANDLER_RACE,
+            stack: 'TypeError: t.scrollHandler is not a function\n'
+                + '    at http://localhost:8100/dashboard#/web/dashboard.2be9340f81cc7f0987ef.chunk.js:1:1173',
+        },
+        {
+            ...OBSERVED_SCROLL_HANDLER_RACE,
+            stack: 'TypeError: t.scrollHandler is not a function\n'
+                + '    at http://localhost:8100/JellyfinCanopy/dist/dashboard.2be9340f81cc7f0987ef.chunk.js:1:1173',
+        },
+    ];
+    for (const detail of rejected) {
+        assert.equal(isKnownJellyfinWebScrollHandlerError(detail), false, JSON.stringify(detail));
+        assert.equal(isKnownJellyfinWebHostNoise(detail), false, JSON.stringify(detail));
+    }
+});
+
+test('scroll-handler classifier rejects a mixed stock-web and Canopy stack', () => {
+    const mixed = {
+        ...OBSERVED_SCROLL_HANDLER_RACE,
+        stack: `${OBSERVED_SCROLL_HANDLER_RACE.stack}\n`
+            + '    at http://localhost:8100/JellyfinCanopy/dist/jc.bundle.js:4:20',
+    };
+    assert.equal(isKnownJellyfinWebScrollHandlerError(mixed), false);
+    assert.equal(isKnownJellyfinWebHostNoise(mixed), false);
 });
 
 test('accepts the observed Home race only with both Jellyfin host chunks', () => {
@@ -372,4 +441,33 @@ test('account switching scopes logout Axios noise to the phase-local response cl
     assert.match(source, /response\.status === 401\s*&& isExpectedSignedOutHostLogout4xx\(response, evidence\)/);
     assert.match(source, /failed\.filter\(\(response\) => !isExpectedSignedOutHostLogout4xx\(response, evidence\)\)/);
     assert.doesNotMatch(source, /HOST_LOGOUT_NOISE[\s\S]*AxiosError/);
+});
+
+test('every former scroll-handler E2E consumer delegates to the shared fixture', () => {
+    const e2eRoot = path.join(ROOT, 'e2e');
+    const e2eTypeScript = fs.readdirSync(e2eRoot, { recursive: true })
+        .filter((relativePath) => relativePath.endsWith('.ts'));
+    for (const relativePath of e2eTypeScript) {
+        const source = fs.readFileSync(path.join(e2eRoot, relativePath), 'utf8');
+        assert.doesNotMatch(source, /scrollHandler is not a function/, relativePath);
+        assert.doesNotMatch(source, /isKnownJellyfinWebScrollError/, relativePath);
+    }
+
+    const consumers = [
+        'e2e/admin-theme-contrast.spec.ts',
+        'e2e/code-splitting.spec.ts',
+        'e2e/pages-lifecycle.spec.ts',
+        'e2e/requests-gating.spec.ts',
+        'e2e/reviews-gating.spec.ts',
+        'e2e/settings-persist.spec.ts',
+    ];
+    for (const relativePath of consumers) {
+        const source = fs.readFileSync(path.join(ROOT, relativePath), 'utf8');
+        assert.match(source, /consoleErrors/);
+    }
+
+    const fixture = fs.readFileSync(path.join(ROOT, 'e2e/fixtures/auth.ts'), 'utf8');
+    assert.match(fixture, /source: 'pageerror'/);
+    assert.match(fixture, /stack: String\(error\.stack \|\| ''\)/);
+    assert.match(fixture, /!isKnownJellyfinWebHostNoise\(detail\)/);
 });

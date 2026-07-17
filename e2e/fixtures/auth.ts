@@ -69,10 +69,11 @@ const CONSOLE_NOISE: RegExp[] = [
 //   - /JellyfinCanopy/admin/ : RequiresElevation endpoints a non-admin
 //                                 session legitimately hits and degrades on
 //                                 (bare 403 — docs/developers.md#authorization-policies)
-// Config-page-only chrome noise (admin dashboard branding previews, the admin's
-// absent avatar, jellyfin-web's own dashboard pageerror) is NOT listed here — it
-// is scoped locally by each config-page spec so this web-client net stays tight
-// for normal pages.
+// Config-page-only chrome noise (admin dashboard branding previews and the
+// admin's absent avatar) is NOT listed here; each config-page spec scopes those
+// URL exceptions locally. The exact Jellyfin-web dashboard pageerror is instead
+// source- and stack-gated by isKnownJellyfinWebHostNoise below so every spec uses
+// one fail-closed owner without broadening the normal web-client noise list.
 const ALLOWED_4XX_URL: RegExp[] = [
     /\/socket(\?|$)/i,
     /favicon/i,
