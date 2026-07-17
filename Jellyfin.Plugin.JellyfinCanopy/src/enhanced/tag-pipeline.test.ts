@@ -402,10 +402,9 @@ describe('watched/privacy projection response ordering (BI-SEC-035)', () => {
         JC._tagCachePrefetch = null;
         const currentUser = vi.spyOn(ApiClient, 'getCurrentUserId').mockReturnValue(userA);
         const getItem = vi.spyOn(ApiClient, 'getItem')
-            .mockResolvedValueOnce({ Id: itemId, Type: 'Movie', label: 'stale-helper-secret' })
-            .mockResolvedValueOnce({ Id: itemId, Type: 'Movie', label: 'fresh-helper-safe' });
+            .mockResolvedValueOnce({ Id: itemId, Type: 'Movie', label: 'stale-helper-secret' });
         let ajaxCall = 0;
-        const ajax = vi.spyOn(ApiClient, 'ajax').mockImplementation(() => {
+        const ajax = vi.spyOn(ApiClient, 'ajax').mockImplementation((options) => {
             ajaxCall++;
             if (ajaxCall === 1) {
                 return Promise.resolve({
@@ -435,6 +434,9 @@ describe('watched/privacy projection response ordering (BI-SEC-035)', () => {
                     projectionReset: false,
                 });
             }
+            if (options.type === 'GET' && options.url.includes(`/Users/${userA}/Items/${itemId}`)) {
+                return Promise.resolve({ Id: itemId, Type: 'Movie', label: 'fresh-helper-safe' });
+            }
             return Promise.reject(new Error('tag-data unavailable'));
         });
         let enabled = true;
@@ -461,8 +463,12 @@ describe('watched/privacy projection response ordering (BI-SEC-035)', () => {
             UserId: userA,
             UserDataList: [{ ItemId: itemId }],
         });
-        await vi.waitFor(() => expect(getItem).toHaveBeenCalledTimes(2));
+        await vi.waitFor(() => {
+            expect(ajax.mock.calls.some(([options]) => options.type === 'GET'
+                && options.url.includes(`/Users/${userA}/Items/${itemId}`))).toBe(true);
+        });
 
+        expect(getItem).toHaveBeenCalledTimes(1);
         expect(renderedLabels).not.toContain('stale-helper-secret');
         expect(renderedLabels).toContain('fresh-helper-safe');
 
@@ -854,6 +860,489 @@ describe('watched/privacy projection response ordering (BI-SEC-035)', () => {
         ajax.mockRestore();
         currentUser.mockRestore();
         document.body.innerHTML = '';
+    });
+
+    it('drains 200 failed-batch cards with six workers and one lookup per duplicate id', async () => {
+        document.body.innerHTML = '';
+        const oldConfig = JC.pluginConfig;
+        const oldUi = JC.core.ui;
+        JC.pluginConfig = {
+            ...oldConfig,
+            TagCacheServerMode: false,
+            SpoilerBlurEnabled: false,
+        };
+        JC.core.ui = {
+            injectCss: vi.fn(),
+            removeCss: vi.fn(),
+        } as unknown as NonNullable<typeof JC.core.ui>;
+        const currentUser = vi.spyOn(ApiClient, 'getCurrentUserId').mockReturnValue(userA);
+        const fallbackIds: string[] = [];
+        let activeFallbacks = 0;
+        let maxActiveFallbacks = 0;
+        const ajax = vi.spyOn(ApiClient, 'ajax').mockImplementation(async (options) => {
+            if (options.type === 'POST') throw new Error('batch unavailable');
+            const itemId = options.url.split('/').pop()!;
+            fallbackIds.push(itemId);
+            activeFallbacks += 1;
+            maxActiveFallbacks = Math.max(maxActiveFallbacks, activeFallbacks);
+            await new Promise((resolve) => setTimeout(resolve, 1));
+            activeFallbacks -= 1;
+            return { Id: itemId, Type: 'Movie' };
+        });
+        const getItem = vi.spyOn(ApiClient, 'getItem');
+        const renderedTargets = new Set<HTMLElement>();
+        JC.tagPipeline!.registerRenderer('drained-fallback-test', {
+            isEnabled: () => true,
+            render: (target: HTMLElement) => { renderedTargets.add(target); },
+        });
+
+        try {
+            resetTagPipelineIdentity();
+            JC.tagPipeline!.initialize?.();
+            JC.tagPipeline!.clearProcessed?.();
+            for (let index = 1; index <= 199; index += 1) {
+                const itemId = index.toString(16).padStart(32, '0');
+                const copies = index === 1 ? 2 : 1;
+                for (let copy = 0; copy < copies; copy += 1) {
+                    const image = gridCardImage();
+                    const card = image.closest<HTMLElement>('.card')!;
+                    card.dataset.id = itemId;
+                    card.dataset.type = 'Movie';
+                    document.body.appendChild(card);
+                }
+            }
+            JC.tagPipeline!.scheduleScan?.();
+
+            await vi.waitFor(() => expect(renderedTargets.size).toBe(200), { timeout: 5_000 });
+            expect(fallbackIds).toHaveLength(199);
+            expect(new Set(fallbackIds).size).toBe(199);
+            expect(maxActiveFallbacks).toBe(6);
+            expect(activeFallbacks).toBe(0);
+            expect(getItem).not.toHaveBeenCalled();
+        } finally {
+            history.pushState({}, '', `/drained-fallback-cleanup-${Date.now()}`);
+            (JC.tagPipeline as unknown as { unregisterRenderer(name: string): void })
+                .unregisterRenderer('drained-fallback-test');
+            ajax.mockRestore();
+            getItem.mockRestore();
+            currentUser.mockRestore();
+            JC.pluginConfig = oldConfig;
+            JC.core.ui = oldUi;
+            document.body.innerHTML = '';
+        }
+    });
+
+    it('keeps the successful batch path at one POST and renders every duplicate with embedded episode data', async () => {
+        document.body.innerHTML = '';
+        const itemId = 'dddddddddddddddddddddddddddddddd';
+        const firstEpisode = { Id: 'cccccccccccccccccccccccccccccccc', Type: 'Episode' };
+        const oldConfig = JC.pluginConfig;
+        const oldUi = JC.core.ui;
+        JC.pluginConfig = {
+            ...oldConfig,
+            TagCacheServerMode: false,
+            SpoilerBlurEnabled: false,
+        };
+        JC.core.ui = {
+            injectCss: vi.fn(),
+            removeCss: vi.fn(),
+        } as unknown as NonNullable<typeof JC.core.ui>;
+        const currentUser = vi.spyOn(ApiClient, 'getCurrentUserId').mockReturnValue(userA);
+        const ajax = vi.spyOn(ApiClient, 'ajax').mockResolvedValue({
+            Items: [{ Id: itemId, Type: 'Series', FirstEpisode: firstEpisode }],
+        });
+        const renderExtras: unknown[] = [];
+        JC.tagPipeline!.registerRenderer('successful-batch-test', {
+            isEnabled: () => true,
+            render: (_target: HTMLElement, _item: unknown, extras: unknown) => { renderExtras.push(extras); },
+        });
+
+        try {
+            resetTagPipelineIdentity();
+            JC.tagPipeline!.initialize?.();
+            JC.tagPipeline!.clearProcessed?.();
+            for (let copy = 0; copy < 2; copy += 1) {
+                const image = gridCardImage();
+                const card = image.closest<HTMLElement>('.card')!;
+                card.dataset.id = itemId;
+                card.dataset.type = 'Series';
+                document.body.appendChild(card);
+            }
+            JC.tagPipeline!.scheduleScan?.();
+
+            await vi.waitFor(() => expect(renderExtras).toHaveLength(2));
+            expect(ajax).toHaveBeenCalledTimes(1);
+            expect((ajax.mock.calls[0][0] as { type: string }).type).toBe('POST');
+            expect(renderExtras.every((extras) => (
+                extras as { firstEpisode?: unknown }
+            ).firstEpisode === firstEpisode)).toBe(true);
+        } finally {
+            history.pushState({}, '', `/successful-batch-cleanup-${Date.now()}`);
+            (JC.tagPipeline as unknown as { unregisterRenderer(name: string): void })
+                .unregisterRenderer('successful-batch-test');
+            ajax.mockRestore();
+            currentUser.mockRestore();
+            JC.pluginConfig = oldConfig;
+            JC.core.ui = oldUi;
+            document.body.innerHTML = '';
+        }
+    });
+
+    it('skips stale Series supplemental work and renders base data when the episode lookup fails', async () => {
+        document.body.innerHTML = '';
+        const disconnectedId = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa3';
+        const renderedId = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb4';
+        const oldConfig = JC.pluginConfig;
+        const oldUi = JC.core.ui;
+        JC.pluginConfig = {
+            ...oldConfig,
+            TagCacheServerMode: false,
+            SpoilerBlurEnabled: false,
+        };
+        JC.core.ui = {
+            injectCss: vi.fn(),
+            removeCss: vi.fn(),
+        } as unknown as NonNullable<typeof JC.core.ui>;
+        const currentUser = vi.spyOn(ApiClient, 'getCurrentUserId').mockReturnValue(userA);
+        let resolveDisconnected!: (value: unknown) => void;
+        let supplementalRequests = 0;
+        const ajax = vi.spyOn(ApiClient, 'ajax').mockImplementation((options) => {
+            if (options.type === 'POST') return Promise.reject(new Error('batch unavailable'));
+            if (options.url.includes('/Users/') && options.url.endsWith(disconnectedId)) {
+                return new Promise((resolve) => { resolveDisconnected = resolve; });
+            }
+            if (options.url.includes('/Users/') && options.url.endsWith(renderedId)) {
+                return Promise.resolve({ Id: renderedId, Type: 'Series' });
+            }
+            supplementalRequests += 1;
+            return Promise.reject(new Error('episode unavailable'));
+        });
+        const renders: Array<{ id: string; firstEpisode: unknown }> = [];
+        JC.tagPipeline!.registerRenderer('series-fallback-test', {
+            isEnabled: () => true,
+            render: (_target: HTMLElement, rawItem: unknown, rawExtras: unknown) => {
+                renders.push({
+                    id: normalizeProjectionKey((rawItem as { Id: string }).Id)!,
+                    firstEpisode: (rawExtras as { firstEpisode?: unknown }).firstEpisode,
+                });
+            },
+        });
+
+        try {
+            resetTagPipelineIdentity();
+            JC.tagPipeline!.initialize?.();
+            JC.tagPipeline!.clearProcessed?.();
+            const staleImage = gridCardImage();
+            const staleCard = staleImage.closest<HTMLElement>('.card')!;
+            staleCard.dataset.id = disconnectedId;
+            staleCard.dataset.type = 'Series';
+            document.body.appendChild(staleCard);
+            JC.tagPipeline!.scheduleScan?.();
+            await vi.waitFor(() => expect(resolveDisconnected).toBeTypeOf('function'));
+
+            staleCard.remove();
+            resolveDisconnected({ Id: disconnectedId, Type: 'Series' });
+            await new Promise((resolve) => setTimeout(resolve, 30));
+            expect(supplementalRequests).toBe(0);
+            expect(renders).toEqual([]);
+
+            const renderedImage = gridCardImage();
+            const renderedCard = renderedImage.closest<HTMLElement>('.card')!;
+            renderedCard.dataset.id = renderedId;
+            renderedCard.dataset.type = 'Series';
+            document.body.appendChild(renderedCard);
+            JC.tagPipeline!.scheduleScan?.();
+
+            await vi.waitFor(() => expect(renders).toEqual([{ id: renderedId, firstEpisode: null }]));
+            expect(supplementalRequests).toBe(1);
+        } finally {
+            history.pushState({}, '', `/series-fallback-cleanup-${Date.now()}`);
+            (JC.tagPipeline as unknown as { unregisterRenderer(name: string): void })
+                .unregisterRenderer('series-fallback-test');
+            ajax.mockRestore();
+            currentUser.mockRestore();
+            JC.pluginConfig = oldConfig;
+            JC.core.ui = oldUi;
+            document.body.innerHTML = '';
+        }
+    });
+
+    it('bounds failed-batch fallback work and lets navigation preempt all stale requests', async () => {
+        document.body.innerHTML = '';
+        const oldConfig = JC.pluginConfig;
+        const oldUi = JC.core.ui;
+        JC.pluginConfig = {
+            ...oldConfig,
+            TagCacheServerMode: false,
+            SpoilerBlurEnabled: false,
+        };
+        JC.core.ui = {
+            injectCss: vi.fn(),
+            removeCss: vi.fn(),
+        } as unknown as NonNullable<typeof JC.core.ui>;
+        const currentUser = vi.spyOn(ApiClient, 'getCurrentUserId').mockReturnValue(userA);
+        const fallbackStarted: string[] = [];
+        const fallbackSignals: AbortSignal[] = [];
+        let activeFallbacks = 0;
+        let maxActiveFallbacks = 0;
+        let batchCalls = 0;
+        const nextItemId = 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
+
+        const beginFallback = (itemId: string, signal?: AbortSignal): Promise<unknown> => {
+            fallbackStarted.push(itemId);
+            activeFallbacks += 1;
+            maxActiveFallbacks = Math.max(maxActiveFallbacks, activeFallbacks);
+            if (signal) fallbackSignals.push(signal);
+            return new Promise((_resolve, reject) => {
+                signal?.addEventListener('abort', () => {
+                    activeFallbacks -= 1;
+                    reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+                }, { once: true });
+            });
+        };
+
+        // This spy is the old, non-abortable fallback seam. Keeping it pending
+        // makes the regression fail on the original serial implementation while
+        // the corrected path must use abortable Ajax requests instead.
+        const getItem = vi.spyOn(ApiClient, 'getItem').mockImplementation(
+            (_userId, itemId) => beginFallback(itemId),
+        );
+        const ajax = vi.spyOn(ApiClient, 'ajax').mockImplementation((options) => {
+            if (options.type === 'POST') {
+                batchCalls += 1;
+                if (batchCalls === 1) return Promise.reject(new Error('batch unavailable'));
+                return Promise.resolve({ Items: [{ Id: nextItemId, Type: 'Movie' }] });
+            }
+            const itemId = options.url.split('/').pop()!;
+            return beginFallback(itemId, options.signal);
+        });
+        const staleRenders: string[] = [];
+        JC.tagPipeline!.registerRenderer('bounded-fallback-test', {
+            isEnabled: () => true,
+            render: (target: HTMLElement, rawItem: unknown) => {
+                const item = rawItem as { Id: string };
+                const id = normalizeProjectionKey(item.Id)!;
+                staleRenders.push(id);
+                const marker = document.createElement('span');
+                marker.className = `bounded-fallback-${id}`;
+                target.appendChild(marker);
+            },
+        });
+
+        try {
+            resetTagPipelineIdentity();
+            JC.tagPipeline!.initialize?.();
+            for (let index = 1; index <= 200; index += 1) {
+                const itemId = index.toString(16).padStart(32, '0');
+                const image = gridCardImage();
+                const card = image.closest<HTMLElement>('.card')!;
+                card.dataset.id = itemId;
+                card.dataset.type = 'Movie';
+                document.body.appendChild(card);
+            }
+            JC.tagPipeline!.clearProcessed?.();
+            JC.tagPipeline!.scheduleScan?.();
+
+            await vi.waitFor(() => expect(fallbackStarted).toHaveLength(6), { timeout: 2_000 });
+            expect(maxActiveFallbacks).toBe(6);
+            expect(getItem).not.toHaveBeenCalled();
+
+            history.pushState({}, '', `/bounded-fallback-next-${Date.now()}`);
+            document.body.innerHTML = '';
+            const nextImage = gridCardImage();
+            const nextCard = nextImage.closest<HTMLElement>('.card')!;
+            nextCard.dataset.id = nextItemId;
+            nextCard.dataset.type = 'Movie';
+            document.body.appendChild(nextCard);
+            JC.tagPipeline!.scheduleScan?.();
+
+            await vi.waitFor(() => expect(fallbackSignals.every(signal => signal.aborted)).toBe(true));
+            await vi.waitFor(() => {
+                expect(document.querySelector(`.bounded-fallback-${nextItemId}`)).not.toBeNull();
+            });
+            expect(fallbackStarted).toHaveLength(6);
+            expect(activeFallbacks).toBe(0);
+            expect(staleRenders).toEqual([nextItemId]);
+        } finally {
+            history.pushState({}, '', `/bounded-fallback-cleanup-${Date.now()}`);
+            (JC.tagPipeline as unknown as { unregisterRenderer(name: string): void })
+                .unregisterRenderer('bounded-fallback-test');
+            ajax.mockRestore();
+            getItem.mockRestore();
+            currentUser.mockRestore();
+            JC.pluginConfig = oldConfig;
+            JC.core.ui = oldUi;
+            document.body.innerHTML = '';
+        }
+    });
+
+    it('keeps a replacement claim authoritative when an abort-ignoring old lookup settles', async () => {
+        document.body.innerHTML = '';
+        const itemId = 'fffffffffffffffffffffffffffffff5';
+        const oldConfig = JC.pluginConfig;
+        const oldUi = JC.core.ui;
+        JC.pluginConfig = {
+            ...oldConfig,
+            TagCacheServerMode: false,
+            SpoilerBlurEnabled: false,
+        };
+        JC.core.ui = {
+            injectCss: vi.fn(),
+            removeCss: vi.fn(),
+        } as unknown as NonNullable<typeof JC.core.ui>;
+        const currentUser = vi.spyOn(ApiClient, 'getCurrentUserId').mockReturnValue(userA);
+        let resolveOld!: (value: unknown) => void;
+        let oldSignal: AbortSignal | undefined;
+        let postCalls = 0;
+        const ajax = vi.spyOn(ApiClient, 'ajax').mockImplementation((options) => {
+            if (options.type === 'POST') {
+                postCalls += 1;
+                if (postCalls === 1) return Promise.reject(new Error('batch unavailable'));
+                return Promise.resolve({ Items: [{ Id: itemId, Type: 'Movie', label: 'new' }] });
+            }
+            oldSignal = options.signal;
+            return new Promise((resolve) => { resolveOld = resolve; });
+        });
+        const labels: string[] = [];
+        const claimedTargets: HTMLElement[] = [];
+        JC.tagPipeline!.registerRenderer('fallback-claim-test', {
+            isEnabled: () => true,
+            render: (target: HTMLElement, rawItem: unknown) => {
+                const label = String((rawItem as { label?: string }).label);
+                labels.push(label);
+                target.dataset.fallbackClaim = label;
+                claimedTargets.push(target);
+            },
+        });
+
+        try {
+            resetTagPipelineIdentity();
+            JC.tagPipeline!.initialize?.();
+            const image = gridCardImage();
+            const card = image.closest<HTMLElement>('.card')!;
+            card.dataset.id = itemId;
+            card.dataset.type = 'Movie';
+            document.body.appendChild(card);
+            JC.tagPipeline!.scheduleScan?.();
+            await vi.waitFor(() => expect(oldSignal).toBeDefined());
+
+            history.pushState({}, '', `/fallback-claim-new-${Date.now()}`);
+            expect(oldSignal!.aborted).toBe(true);
+            await vi.waitFor(() => expect(labels).toEqual(['new']));
+            expect(postCalls).toBe(2);
+            expect(claimedTargets[0]?.dataset.fallbackClaim).toBe('new');
+
+            resolveOld({ Id: itemId, Type: 'Movie', label: 'old' });
+            await new Promise((resolve) => setTimeout(resolve, 30));
+            expect(labels).toEqual(['new']);
+            expect(claimedTargets[0]?.dataset.fallbackClaim).toBe('new');
+        } finally {
+            history.pushState({}, '', `/fallback-claim-cleanup-${Date.now()}`);
+            (JC.tagPipeline as unknown as { unregisterRenderer(name: string): void })
+                .unregisterRenderer('fallback-claim-test');
+            ajax.mockRestore();
+            currentUser.mockRestore();
+            JC.pluginConfig = oldConfig;
+            JC.core.ui = oldUi;
+            document.body.innerHTML = '';
+        }
+    });
+
+    it('releases the queue on account switch and rejects an abort-ignoring fallback result', async () => {
+        document.body.innerHTML = '';
+        const originalIdentity = JC.identity.capture()!;
+        const oldConfig = JC.pluginConfig;
+        const oldUi = JC.core.ui;
+        JC.pluginConfig = {
+            ...oldConfig,
+            TagCacheServerMode: false,
+            SpoilerBlurEnabled: false,
+        };
+        JC.core.ui = {
+            injectCss: vi.fn(),
+            removeCss: vi.fn(),
+        } as unknown as NonNullable<typeof JC.core.ui>;
+        const staleItemId = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1';
+        const currentItemId = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb2';
+        let activeUser = userA;
+        const currentUser = vi.spyOn(ApiClient, 'getCurrentUserId').mockImplementation(() => activeUser);
+        let staleSignal: AbortSignal | undefined;
+        let resolveStale!: (value: unknown) => void;
+        let batchCalls = 0;
+        const ajax = vi.spyOn(ApiClient, 'ajax').mockImplementation((options) => {
+            if (options.type === 'POST') {
+                batchCalls += 1;
+                if (batchCalls === 1) return Promise.reject(new Error('batch unavailable'));
+                return Promise.resolve({ Items: [{ Id: currentItemId, Type: 'Movie' }] });
+            }
+            staleSignal = options.signal;
+            // Deliberately ignore AbortSignal and resolve later. The generation
+            // owner, not transport cooperation, must still reject publication.
+            return new Promise((resolve) => { resolveStale = resolve; });
+        });
+        const getItem = vi.spyOn(ApiClient, 'getItem');
+        const renders: string[] = [];
+        JC.tagPipeline!.registerRenderer('account-fallback-test', {
+            isEnabled: () => true,
+            render: (target: HTMLElement, rawItem: unknown) => {
+                const id = normalizeProjectionKey((rawItem as { Id: string }).Id)!;
+                renders.push(id);
+                const marker = document.createElement('span');
+                marker.className = `account-fallback-${id}`;
+                target.appendChild(marker);
+            },
+        });
+
+        try {
+            const identityA = JC.identity.transition('tag-fallback-server-a', userA, 'tag-fallback-account-a')!;
+            await JC.identity.activate(identityA);
+            const staleImage = gridCardImage();
+            const staleCard = staleImage.closest<HTMLElement>('.card')!;
+            staleCard.dataset.id = staleItemId;
+            staleCard.dataset.type = 'Movie';
+            document.body.appendChild(staleCard);
+            JC.tagPipeline!.clearProcessed?.();
+            JC.tagPipeline!.scheduleScan?.();
+            await vi.waitFor(() => expect(staleSignal).toBeDefined());
+
+            activeUser = userB;
+            const identityB = JC.identity.transition('tag-fallback-server-b', userB, 'tag-fallback-account-b')!;
+            expect(staleSignal!.aborted).toBe(true);
+            const currentImage = gridCardImage();
+            const currentCard = currentImage.closest<HTMLElement>('.card')!;
+            currentCard.dataset.id = currentItemId;
+            currentCard.dataset.type = 'Movie';
+            document.body.appendChild(currentCard);
+            await JC.identity.activate(identityB);
+            JC.tagPipeline!.scheduleScan?.();
+
+            await vi.waitFor(() => {
+                expect(document.querySelector(`.account-fallback-${currentItemId}`)).not.toBeNull();
+            });
+            expect(batchCalls).toBe(2);
+            expect(getItem).not.toHaveBeenCalled();
+
+            resolveStale({ Id: staleItemId, Type: 'Movie' });
+            await new Promise((resolve) => setTimeout(resolve, 30));
+            expect(document.querySelector(`.account-fallback-${staleItemId}`)).toBeNull();
+            expect(renders).toEqual([currentItemId]);
+        } finally {
+            (JC.tagPipeline as unknown as { unregisterRenderer(name: string): void })
+                .unregisterRenderer('account-fallback-test');
+            activeUser = originalIdentity.userId;
+            const restored = JC.identity.transition(
+                originalIdentity.serverId,
+                originalIdentity.userId,
+                'tag-fallback-account-restore',
+            );
+            if (restored) await JC.identity.activate(restored);
+            JC.pluginConfig = oldConfig;
+            JC.core.ui = oldUi;
+            ajax.mockRestore();
+            getItem.mockRestore();
+            currentUser.mockRestore();
+            document.body.innerHTML = '';
+        }
     });
 });
 
