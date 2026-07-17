@@ -260,10 +260,19 @@ export function installSettingsLauncher(): () => void {
     JC.isVideoPage = stableSettingsLauncher.facade.videoPage;
     JC.showEnhancedPanel = stableSettingsLauncher.facade.show;
     const unregisterReset = JC.identity.registerReset('settings-launcher', resetSettingsLauncher);
+    // A settings panel belongs to the exact page on which the user opened it.
+    // Retire both a pending dynamic import/settings refresh and an active panel
+    // on same-identity SPA navigation. This subscription is activation-owned,
+    // so importing the lazy panel graph remains side-effect free.
+    const unregisterNavigation = onNavigate(() => {
+        launcherGeneration += 1;
+        panelModule?.resetSettingsPanel();
+    });
     let disposed = false;
     return () => {
         if (disposed) return;
         disposed = true;
+        unregisterNavigation();
         resetSettingsLauncher();
         unregisterReset();
         uninstall();
