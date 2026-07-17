@@ -1054,23 +1054,104 @@ let scanScheduleGeneration = 0;
 const CARDS_PER_CHUNK = 20;
 let scanGeneration = 0; // Incremented on each new scan to cancel stale chunk chains
 
+type IdleTaskId = number;
+
+interface PendingIdleTask {
+    cancel: () => void;
+}
+
+// One lifecycle owner covers both scan-start jobs and chunk continuations. The
+// old scheduler discarded browser handles, so generation guards could prevent
+// stale DOM writes but could not stop callbacks from reaching a torn-down
+// jsdom/window. Retaining every handle makes reset/dispose synchronous while
+// the generation remains a second fence for callbacks a hostile scheduler
+// invokes after cancellation.
+const pendingIdleTasks = new Map<IdleTaskId, PendingIdleTask>();
+let nextIdleTaskId = 0;
+let idleLifecycleGeneration = 0;
+let scanStartIdleTask: IdleTaskId | null = null;
+let chunkIdleTask: IdleTaskId | null = null;
+
+/** Schedule cancellable idle work against the currently available browser backend. */
+function scheduleIdle(fn: () => void): IdleTaskId | null {
+    const taskId = ++nextIdleTaskId;
+    const generation = idleLifecycleGeneration;
+    let registered = false;
+    let ranBeforeRegistration = false;
+
+    const run = (): void => {
+        if (!registered) {
+            // Defensive support for deterministic/synthetic schedulers that
+            // invoke inline. Real requestIdleCallback/setTimeout are async.
+            ranBeforeRegistration = true;
+        } else if (!pendingIdleTasks.delete(taskId)) {
+            return;
+        }
+        if (generation !== idleLifecycleGeneration) return;
+        fn();
+    };
+
+    let cancel: () => void;
+    if (typeof requestIdleCallback === 'function' && typeof cancelIdleCallback === 'function') {
+        const cancelNativeIdle = cancelIdleCallback;
+        const handle = requestIdleCallback(run, { timeout: 100 });
+        cancel = () => cancelNativeIdle(handle);
+    } else {
+        const handle = setTimeout(run, 16);
+        cancel = () => clearTimeout(handle);
+    }
+
+    registered = true;
+    if (!ranBeforeRegistration && generation === idleLifecycleGeneration) {
+        pendingIdleTasks.set(taskId, { cancel });
+        return taskId;
+    }
+
+    // The callback either completed inline or retired this lifecycle before
+    // registration. Do not publish a phantom pending handle.
+    if (!ranBeforeRegistration) {
+        try { cancel(); } catch { /* generation fencing still retires the job */ }
+    }
+    return null;
+}
+
+/** Cancel one queued idle job; a late callback is rejected by map ownership. */
+function cancelIdleTask(taskId: IdleTaskId | null): void {
+    if (taskId === null) return;
+    const task = pendingIdleTasks.get(taskId);
+    if (!task) return;
+    pendingIdleTasks.delete(taskId);
+    try { task.cancel(); } catch { /* cancellation remains generation-fenced */ }
+}
+
+/** Retire every queued scan job before its DOM/window owner is torn down. */
+function retireIdleTasks(): void {
+    idleLifecycleGeneration++;
+    const tasks = Array.from(pendingIdleTasks.values());
+    pendingIdleTasks.clear();
+    for (const task of tasks) {
+        try { task.cancel(); } catch { /* continue retiring the remaining jobs */ }
+    }
+    scanStartIdleTask = null;
+    chunkIdleTask = null;
+}
+
 /**
  * Schedule scan. Coalesces multiple mutations into a single scan start.
  */
 // Use requestIdleCallback for all tag work so it never competes with
 // user interactions (hover, scroll, click). Falls back to setTimeout
 // for browsers without requestIdleCallback support.
-// PERF(R8): idle timeout 100ms (was 500ms) — the first scan after cards mount must
-// not sit behind half a second of idle waiting while the posters are visible.
-const scheduleIdle: (fn: () => void) => unknown = typeof requestIdleCallback === 'function'
-    ? (fn: () => void) => requestIdleCallback(fn, { timeout: 100 })
-    : (fn: () => void) => setTimeout(fn, 16);
+// PERF(R8): native idle timeout 100ms (was 500ms); the 16ms cancellable
+// fallback keeps the first scan prompt in browsers without the paired native
+// request/cancel contract.
 
 function scheduleScan(): void {
     if (scanScheduled) return;
     scanScheduled = true;
     const scheduledGeneration = scanScheduleGeneration;
-    scheduleIdle(() => {
+    scanStartIdleTask = scheduleIdle(() => {
+        scanStartIdleTask = null;
         if (scheduledGeneration !== scanScheduleGeneration) return;
         scanScheduled = false;
         runScan();
@@ -1290,6 +1371,7 @@ function resetTagPipelineIdentity(): void {
         clearTimeout(fetchTimer);
         fetchTimer = null;
     }
+    retireIdleTasks();
     scanScheduleGeneration++;
     scanScheduled = false;
     scanGeneration++;
@@ -1495,6 +1577,15 @@ function syncScanAddedCards(mutations: MutationRecord[]): void {
  * are cancelled when a new scan starts (e.g., rapid page changes).
  */
 function runScan(): void {
+    // A direct scan (initialization/live invalidation) supersedes any queued
+    // scan start, and every new scan supersedes the prior chunk continuation.
+    cancelIdleTask(scanStartIdleTask);
+    scanStartIdleTask = null;
+    scanScheduled = false;
+    cancelIdleTask(chunkIdleTask);
+    chunkIdleTask = null;
+    const myGeneration = ++scanGeneration;
+
     if (!hasAnyEnabledRenderer()) return;
     if (typeof ApiClient === 'undefined') return;
 
@@ -1510,8 +1601,6 @@ function runScan(): void {
     }
     if (unprocessed.length === 0) return;
 
-    // Cancel any in-progress chunk chain from a previous scan
-    const myGeneration = ++scanGeneration;
     let index = 0;
 
     function processChunk(): void {
@@ -1527,7 +1616,10 @@ function runScan(): void {
 
         if (index < unprocessed.length) {
             // More cards to process — yield and continue when browser is idle
-            scheduleIdle(processChunk);
+            chunkIdleTask = scheduleIdle(() => {
+                chunkIdleTask = null;
+                processChunk();
+            });
         } else {
             // All cards processed — schedule batch fetch for cache misses
             scheduleFetchIfQueued();

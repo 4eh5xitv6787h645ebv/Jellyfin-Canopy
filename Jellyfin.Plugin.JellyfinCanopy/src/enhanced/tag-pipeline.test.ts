@@ -18,6 +18,7 @@ import {
     normalizeProjectionKey,
     readProjectionIdentity,
     readContentIdentity,
+    disposeTagPipeline,
     installTagPipeline,
     resetTagPipelineIdentity,
     TagProjectionDependencyIndex,
@@ -30,16 +31,13 @@ const offPipelineActivate = JC.identity.registerActivate(
     () => JC.tagPipeline?.initialize?.()
 );
 
-afterAll(async () => {
-    // Retire identity-owned scans while jsdom is still alive, then let the
-    // uncancellable requestIdleCallback fallback drain its generation guard.
-    // Otherwise a real 16 ms timer can reach runScan() after environment
-    // teardown and turn an entirely passing suite into an unhandled failure.
+afterAll(() => {
+    // Production teardown synchronously cancels every owned idle handle; no
+    // real-time drain/sleep is needed before jsdom removes the document.
     JC.identity.transition('', '', 'tag-pipeline-test-teardown');
     offPipelineActivate();
     offPipelineReset();
     uninstallTagPipeline();
-    await new Promise((resolve) => setTimeout(resolve, 25));
     document.body.innerHTML = '';
 });
 
@@ -75,6 +73,182 @@ function legacyNoImageRow(): HTMLElement {
     row.appendChild(img);
     return img;
 }
+
+describe('idle scan lifecycle (BI-QA-129)', () => {
+    const restoreGlobal = (name: 'requestIdleCallback' | 'cancelIdleCallback', descriptor?: PropertyDescriptor): void => {
+        if (descriptor) Object.defineProperty(globalThis, name, descriptor);
+        else Reflect.deleteProperty(globalThis, name);
+    };
+
+    it('cancels timeout-fallback scans on repeated reset and runs a fresh generation normally', () => {
+        vi.useFakeTimers();
+        JC.tagPipeline!.registerRenderer('idle-timeout-lifecycle-test', {
+            render: () => undefined,
+            isEnabled: () => true,
+        });
+
+        try {
+            resetTagPipelineIdentity();
+            JC.tagPipeline!.scheduleScan?.();
+            expect(vi.getTimerCount()).toBe(1);
+
+            resetTagPipelineIdentity();
+            expect(vi.getTimerCount()).toBe(0);
+            expect(() => resetTagPipelineIdentity()).not.toThrow();
+            expect(vi.getTimerCount()).toBe(0);
+
+            const query = vi.spyOn(document, 'querySelectorAll');
+            JC.tagPipeline!.scheduleScan?.();
+            expect(vi.getTimerCount()).toBe(1);
+            vi.advanceTimersByTime(16);
+            expect(query).toHaveBeenCalledWith('.cardImageContainer');
+            expect(vi.getTimerCount()).toBe(0);
+            query.mockRestore();
+        } finally {
+            (JC.tagPipeline as unknown as { unregisterRenderer(name: string): void })
+                .unregisterRenderer('idle-timeout-lifecycle-test');
+            resetTagPipelineIdentity();
+            vi.clearAllTimers();
+            vi.useRealTimers();
+        }
+    });
+
+    it('cancels native idle scans and rejects an abort-ignoring stale callback', () => {
+        const requestDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'requestIdleCallback');
+        const cancelDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'cancelIdleCallback');
+        const callbacks = new Map<number, IdleRequestCallback>();
+        let handle = 0;
+        const request = vi.fn((callback: IdleRequestCallback): number => {
+            const id = ++handle;
+            callbacks.set(id, callback);
+            return id;
+        });
+        const cancel = vi.fn((id: number): void => { callbacks.delete(id); });
+        Object.defineProperty(globalThis, 'requestIdleCallback', { configurable: true, writable: true, value: request });
+        Object.defineProperty(globalThis, 'cancelIdleCallback', { configurable: true, writable: true, value: cancel });
+        JC.tagPipeline!.registerRenderer('idle-native-lifecycle-test', {
+            render: () => undefined,
+            isEnabled: () => true,
+        });
+
+        try {
+            JC.tagPipeline!.scheduleScan?.();
+            const staleCallback = callbacks.get(1)!;
+            expect(request).toHaveBeenCalledTimes(1);
+
+            resetTagPipelineIdentity();
+            expect(cancel).toHaveBeenCalledWith(1);
+            expect(callbacks.size).toBe(0);
+
+            const query = vi.spyOn(document, 'querySelectorAll');
+            staleCallback({ didTimeout: false, timeRemaining: () => 50 });
+            expect(query).not.toHaveBeenCalled();
+
+            JC.tagPipeline!.scheduleScan?.();
+            const freshCallback = callbacks.get(2)!;
+            callbacks.delete(2);
+            freshCallback({ didTimeout: false, timeRemaining: () => 50 });
+            expect(query).toHaveBeenCalledWith('.cardImageContainer');
+            query.mockRestore();
+        } finally {
+            (JC.tagPipeline as unknown as { unregisterRenderer(name: string): void })
+                .unregisterRenderer('idle-native-lifecycle-test');
+            resetTagPipelineIdentity();
+            restoreGlobal('requestIdleCallback', requestDescriptor);
+            restoreGlobal('cancelIdleCallback', cancelDescriptor);
+        }
+    });
+
+    it('uses the cancellable timeout fallback when native idle has no cancel API', () => {
+        vi.useFakeTimers();
+        const requestDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'requestIdleCallback');
+        const cancelDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'cancelIdleCallback');
+        const request = vi.fn(() => 1);
+        Object.defineProperty(globalThis, 'requestIdleCallback', { configurable: true, writable: true, value: request });
+        Reflect.deleteProperty(globalThis, 'cancelIdleCallback');
+        JC.tagPipeline!.registerRenderer('idle-unpaired-native-test', {
+            render: () => undefined,
+            isEnabled: () => true,
+        });
+
+        try {
+            JC.tagPipeline!.scheduleScan?.();
+            expect(request).not.toHaveBeenCalled();
+            expect(vi.getTimerCount()).toBe(1);
+            resetTagPipelineIdentity();
+            expect(vi.getTimerCount()).toBe(0);
+        } finally {
+            (JC.tagPipeline as unknown as { unregisterRenderer(name: string): void })
+                .unregisterRenderer('idle-unpaired-native-test');
+            resetTagPipelineIdentity();
+            restoreGlobal('requestIdleCallback', requestDescriptor);
+            restoreGlobal('cancelIdleCallback', cancelDescriptor);
+            vi.clearAllTimers();
+            vi.useRealTimers();
+        }
+    });
+
+    it('cancels a queued native chunk continuation before it processes the final card', () => {
+        vi.useFakeTimers();
+        const requestDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'requestIdleCallback');
+        const cancelDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'cancelIdleCallback');
+        const callbacks = new Map<number, IdleRequestCallback>();
+        const retainedCallbacks = new Map<number, IdleRequestCallback>();
+        let handle = 0;
+        const request = vi.fn((callback: IdleRequestCallback): number => {
+            const id = ++handle;
+            callbacks.set(id, callback);
+            retainedCallbacks.set(id, callback);
+            return id;
+        });
+        const cancel = vi.fn((id: number): void => { callbacks.delete(id); });
+        Object.defineProperty(globalThis, 'requestIdleCallback', { configurable: true, writable: true, value: request });
+        Object.defineProperty(globalThis, 'cancelIdleCallback', { configurable: true, writable: true, value: cancel });
+        const ajax = vi.spyOn(ApiClient, 'ajax');
+        JC.tagPipeline!.registerRenderer('idle-chunk-lifecycle-test', {
+            render: () => undefined,
+            isEnabled: () => true,
+        });
+
+        try {
+            for (let index = 1; index <= 21; index += 1) {
+                const image = gridCardImage();
+                const card = image.closest<HTMLElement>('.card')!;
+                card.dataset.id = index.toString(16).padStart(32, '0');
+                card.dataset.type = 'Movie';
+                document.body.appendChild(card);
+            }
+
+            JC.tagPipeline!.scheduleScan?.();
+            const firstScan = callbacks.get(1)!;
+            callbacks.delete(1);
+            firstScan({ didTimeout: false, timeRemaining: () => 50 });
+            expect(callbacks.has(2)).toBe(true);
+            expect(vi.getTimerCount()).toBe(0);
+
+            const staleContinuation = retainedCallbacks.get(2)!;
+            resetTagPipelineIdentity();
+            expect(cancel).toHaveBeenCalledWith(2);
+            expect(callbacks.size).toBe(0);
+            expect(vi.getTimerCount()).toBe(0);
+
+            staleContinuation({ didTimeout: false, timeRemaining: () => 50 });
+            vi.runAllTimers();
+            expect(ajax).not.toHaveBeenCalled();
+        } finally {
+            (JC.tagPipeline as unknown as { unregisterRenderer(name: string): void })
+                .unregisterRenderer('idle-chunk-lifecycle-test');
+            resetTagPipelineIdentity();
+            ajax.mockRestore();
+            document.body.innerHTML = '';
+            restoreGlobal('requestIdleCallback', requestDescriptor);
+            restoreGlobal('cancelIdleCallback', cancelDescriptor);
+            vi.clearAllTimers();
+            vi.useRealTimers();
+        }
+    });
+
+});
 
 describe('isListViewRow — the single list-view gate (issue 34)', () => {
     it('treats a .cardImageContainer nested in a .listItem row as a list row (skipped)', () => {
@@ -1451,5 +1625,31 @@ describe('revisioned tag-cache content protocol (issue 72)', () => {
         })).toBe(true);
         expect(projectionOnlyContentRequiresReset(current, response(99))).toBe(false);
         expect(current).toEqual({ epoch: 'content-process-1', revision: 20 });
+    });
+});
+
+// Keep the destructive full-dispose proof last: disposeTagPipeline clears the
+// renderer registry by contract, so running it earlier would weaken unrelated
+// tests that share this file's installed facade.
+describe('tag pipeline final teardown (BI-QA-129)', () => {
+    it('cancels queued idle work synchronously during full pipeline disposal', () => {
+        vi.useFakeTimers();
+        JC.tagPipeline!.registerRenderer('idle-dispose-lifecycle-test', {
+            render: () => undefined,
+            isEnabled: () => true,
+        });
+
+        try {
+            resetTagPipelineIdentity();
+            JC.tagPipeline!.scheduleScan?.();
+            expect(vi.getTimerCount()).toBe(1);
+            disposeTagPipeline();
+            expect(vi.getTimerCount()).toBe(0);
+            vi.runAllTimers();
+        } finally {
+            resetTagPipelineIdentity();
+            vi.clearAllTimers();
+            vi.useRealTimers();
+        }
     });
 });
