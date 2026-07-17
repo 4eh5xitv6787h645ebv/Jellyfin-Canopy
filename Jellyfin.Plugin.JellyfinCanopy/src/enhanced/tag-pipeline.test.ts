@@ -250,6 +250,102 @@ describe('idle scan lifecycle (BI-QA-129)', () => {
 
 });
 
+describe('hard identity reset fetch ownership (issue 336)', () => {
+    it('retires an active owner and queued follower without consuming the next 50 ms fetch', async () => {
+        vi.useFakeTimers();
+        document.body.innerHTML = '';
+        const userId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+        const oldConfig = JC.pluginConfig;
+        const oldUi = JC.core.ui;
+        JC.pluginConfig = {
+            ...oldConfig,
+            TagCacheServerMode: false,
+            SpoilerBlurEnabled: false,
+        };
+        JC.core.ui = {
+            injectCss: vi.fn(),
+            removeCss: vi.fn(),
+        } as unknown as NonNullable<typeof JC.core.ui>;
+        const currentUser = vi.spyOn(ApiClient, 'getCurrentUserId').mockReturnValue(userId);
+        const timeout = vi.spyOn(window, 'setTimeout');
+        let postCalls = 0;
+        const ajax = vi.spyOn(ApiClient, 'ajax').mockImplementation((options) => {
+            postCalls += 1;
+            if (postCalls === 1) {
+                return new Promise((_resolve, reject) => {
+                    options.signal?.addEventListener('abort', () => {
+                        reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+                    }, { once: true });
+                });
+            }
+            return Promise.resolve({ Items: [] });
+        });
+        JC.tagPipeline!.registerRenderer('identity-reset-fetch-test', {
+            render: () => undefined,
+            isEnabled: () => true,
+        });
+        const appendCard = (itemId: string): void => {
+            const image = gridCardImage();
+            const card = image.closest<HTMLElement>('.card')!;
+            card.dataset.id = itemId;
+            card.dataset.type = 'Movie';
+            document.body.appendChild(card);
+        };
+        const appendObservedCard = async (itemId: string): Promise<void> => {
+            await new Promise<void>((resolve) => {
+                const observer = new MutationObserver(() => {
+                    observer.disconnect();
+                    resolve();
+                });
+                observer.observe(document.body, { childList: true, subtree: true });
+                appendCard(itemId);
+            });
+        };
+
+        try {
+            resetTagPipelineIdentity();
+            await Promise.resolve(JC.tagPipeline!.initialize?.());
+            await appendObservedCard('11111111111111111111111111111111');
+            JC.tagPipeline!.scheduleScan?.();
+            await vi.runAllTimersAsync();
+            expect(ajax).toHaveBeenCalledTimes(1);
+
+            await appendObservedCard('22222222222222222222222222222222');
+            JC.tagPipeline!.scheduleScan?.();
+            await vi.advanceTimersByTimeAsync(16);
+            expect(ajax).toHaveBeenCalledTimes(1);
+
+            timeout.mockClear();
+            resetTagPipelineIdentity();
+            await Promise.resolve();
+            expect(timeout.mock.calls.map((call) => call[1])).not.toContain(50);
+            document.body.innerHTML = '';
+            await Promise.resolve();
+            await Promise.resolve(JC.tagPipeline!.initialize?.());
+            timeout.mockClear();
+            await appendObservedCard('33333333333333333333333333333333');
+            expect(timeout.mock.calls.map((call) => call[1])).toContain(50);
+            expect(timeout.mock.calls.map((call) => call[1])).not.toContain(150);
+            await vi.advanceTimersByTimeAsync(49);
+            expect(ajax).toHaveBeenCalledTimes(1);
+            await vi.advanceTimersByTimeAsync(1);
+            expect(ajax).toHaveBeenCalledTimes(2);
+        } finally {
+            (JC.tagPipeline as unknown as { unregisterRenderer(name: string): void })
+                .unregisterRenderer('identity-reset-fetch-test');
+            resetTagPipelineIdentity();
+            ajax.mockRestore();
+            currentUser.mockRestore();
+            timeout.mockRestore();
+            JC.pluginConfig = oldConfig;
+            JC.core.ui = oldUi;
+            document.body.innerHTML = '';
+            vi.clearAllTimers();
+            vi.useRealTimers();
+        }
+    });
+});
+
 describe('isListViewRow — the single list-view gate (issue 34)', () => {
     it('treats a .cardImageContainer nested in a .listItem row as a list row (skipped)', () => {
         expect(isListViewRow(listRowImage())).toBe(true);

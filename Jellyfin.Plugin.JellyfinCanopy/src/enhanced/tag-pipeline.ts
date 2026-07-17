@@ -474,7 +474,7 @@ function settleQueueEntry(entry: QueueEntry): void {
  * AbortSignal; the exact processing-generation check prevents retired work
  * from clearing a replacement owner's lock in its finally block.
  */
-function retireBatchGeneration(): void {
+function retireBatchGeneration(resumeQueued = true): void {
     batchGeneration += 1;
     const owner = activeBatchOwner;
     if (!owner) return;
@@ -483,11 +483,13 @@ function retireBatchGeneration(): void {
     owner.controller.abort();
     processingGeneration += 1;
     isProcessing = false;
-    // The retired owner had already spliced its cards out of requestQueue.
-    // Rescan releases those exact claims into the new generation, while any
-    // unaffected queued entries resume without waiting for another mutation.
-    scheduleScan();
-    if (requestQueue.length > 0) scheduleFetchIfQueued();
+    if (resumeQueued) {
+        // The retired owner had already spliced its cards out of requestQueue.
+        // Rescan releases those exact claims into the new generation, while any
+        // unaffected queued entries resume without waiting for another mutation.
+        scheduleScan();
+        if (requestQueue.length > 0) scheduleFetchIfQueued();
+    }
 }
 
 // ── Pipeline-level exclusions ─────────────────────────────────────
@@ -1334,10 +1336,10 @@ function armBatchProjectionRefresh(ids: string[], userId: string): void {
 }
 
 /** Clear all visible tag projections and all cache ownership/cursor state. */
-function resetServerProjection(clearDom: boolean): void {
+function resetServerProjection(clearDom: boolean, resumeRetiredQueue = true): void {
     serverCacheLoadGeneration++;
     projectionRequestGeneration++;
-    retireBatchGeneration();
+    retireBatchGeneration(resumeRetiredQueue);
     serverCache = null;
     serverCacheVersion = 0;
     serverCacheTimestamp = 0;
@@ -1378,7 +1380,10 @@ function resetTagPipelineIdentity(): void {
     firstFetchAfterNav = true;
     cardFetchFailures = new WeakMap<Element, number>();
     JC._tagCachePrefetch = null;
-    resetServerProjection(true);
+    // The hard identity reset releases and discards the complete queue.
+    // Do not arm replacement work for entries that cannot survive it or consume
+    // the new identity generation's 50 ms first-fetch fast path.
+    resetServerProjection(true, false);
     document.querySelectorAll(
         '.jc-tag-host, .genre-overlay-container, .quality-overlay-container, ' +
         '.language-overlay-container, .rating-overlay-container'
