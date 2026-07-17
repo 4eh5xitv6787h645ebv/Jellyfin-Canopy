@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Jellyfin.Database.Implementations.Entities;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
 using Jellyfin.Plugin.JellyfinCanopy.EventHandlers;
 using Jellyfin.Plugin.JellyfinCanopy.Services;
@@ -260,43 +261,602 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
         }
 
         [Fact]
-        public void LibraryHook_Drain_RearmsTimer_WhenRemovalArrivesMidDrain()
+        public async Task LibraryHook_Lifecycle_IsIdempotentAndTerminal()
         {
-            var tempDir = Path.Combine(Path.GetTempPath(), "jc-cw-drain-" + Guid.NewGuid().ToString("N"));
+            var tempDir = Path.Combine(Path.GetTempPath(), "jc-cw-lifecycle-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(tempDir);
             try
             {
                 var ucm = new UserConfigurationManager(new StubAppPaths(tempDir), NullLogger<UserConfigurationManager>.Instance);
-                using var hook = new ContinueWatchingLibraryHook(
-                    new CountingLibraryManager(),
+                var library = new CountingLibraryManager();
+                var hook = new ContinueWatchingLibraryHook(
+                    library,
                     ucm,
-                    new StubUserManager(),   // no users -> DrainBatch is a no-op; we only test the re-arm
+                    new StubUserManager(),
                     NullLogger<ContinueWatchingLibraryHook>.Instance);
 
-                // Item A gives the drain work to snapshot.
-                hook.EnqueueRemovalForTest(Guid.NewGuid());
+                await hook.StartAsync(CancellationToken.None);
+                await hook.StartAsync(CancellationToken.None);
+                Assert.Equal(1, library.ItemRemovedCount);
 
-                // Simulate a removal arriving mid-drain (a concurrent ItemRemoved, or a second timer
-                // tick that bailed on the _draining guard): it lands AFTER this drain snapshotted its
-                // ids, so it is NOT processed by this drain.
-                var b = Guid.NewGuid();
-                hook.OnDrainProcessingForTest = () =>
-                {
-                    hook.OnDrainProcessingForTest = null;
-                    hook.EnqueueRemovalForTest(b);
-                };
+                await hook.StopAsync(CancellationToken.None);
+                await hook.StopAsync(CancellationToken.None);
+                Assert.Equal(0, library.ItemRemovedCount);
 
-                hook.DrainForTest();
+                await hook.StartAsync(CancellationToken.None);
+                Assert.Equal(0, library.ItemRemovedCount);
 
-                // The drain's finally must re-arm because work (B) still remains — otherwise B sits in
-                // _pendingRemovals with no tick to process it until the next unrelated ItemRemoved.
-                // RED against the old finally that only reset _draining.
-                Assert.Equal(1, hook.DrainRearmCountForTest);
-                Assert.False(hook.PendingIsEmptyForTest);
+                hook.Dispose();
+                hook.Dispose();
             }
             finally
             {
                 try { Directory.Delete(tempDir, recursive: true); } catch { /* best-effort */ }
+            }
+        }
+
+        [Fact]
+        public async Task LibraryHook_StopWaitsForActiveDrainAndProcessesRemovalAcceptedAfterSnapshot()
+        {
+            var tempDir = Path.Combine(Path.GetTempPath(), "jc-cw-stop-drain-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+            using var enteredDrain = new ManualResetEventSlim();
+            using var releaseDrain = new ManualResetEventSlim();
+            try
+            {
+                var ucm = new UserConfigurationManager(
+                    new StubAppPaths(tempDir),
+                    NullLogger<UserConfigurationManager>.Instance);
+                var user = new User("cw-worker", "provider", "password-provider");
+                var batches = 0;
+                using var hook = new ContinueWatchingLibraryHook(
+                    new CountingLibraryManager(),
+                    ucm,
+                    new StubUserManager(user),
+                    NullLogger<ContinueWatchingLibraryHook>.Instance,
+                    pendingRemovalCapacity: 32,
+                    drainDebounce: TimeSpan.Zero,
+                    drainRetryDelay: TimeSpan.Zero,
+                    pruneUserForTest: (_, index) =>
+                    {
+                        Assert.Equal(1, index.Count);
+                        Interlocked.Increment(ref batches);
+
+                        if (!enteredDrain.IsSet)
+                        {
+                            enteredDrain.Set();
+                            releaseDrain.Wait();
+                        }
+
+                        return true;
+                    });
+
+                await hook.StartAsync(CancellationToken.None);
+                var first = Guid.NewGuid();
+                var second = Guid.NewGuid();
+                Assert.True(hook.EnqueueRemovalForTest(first));
+                Assert.True(enteredDrain.Wait(TimeSpan.FromSeconds(10)));
+
+                // B is accepted after A left the pending snapshot. Stop must join
+                // the active drain and keep ownership until B is processed too.
+                Assert.True(hook.EnqueueRemovalForTest(second));
+                var stop = hook.StopAsync(CancellationToken.None);
+                var stopWaitedForActiveDrain = !stop.IsCompleted;
+
+                releaseDrain.Set();
+                await stop;
+
+                Assert.True(stopWaitedForActiveDrain);
+                Assert.True(hook.PendingIsEmptyForTest);
+                Assert.False(hook.EnqueueRemovalForTest(Guid.NewGuid()));
+                Assert.Equal(2, batches);
+            }
+            finally
+            {
+                releaseDrain.Set();
+                try { Directory.Delete(tempDir, recursive: true); } catch { /* best-effort */ }
+            }
+        }
+
+        [Fact]
+        public async Task LibraryHook_AlreadyDispatchedHandlerCannotAcceptAfterStopClosesIntake()
+        {
+            var tempDir = Path.Combine(Path.GetTempPath(), "jc-cw-dispatched-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+            using var handlerEntered = new ManualResetEventSlim();
+            using var releaseHandler = new ManualResetEventSlim();
+            try
+            {
+                var library = new CountingLibraryManager();
+                var hook = new ContinueWatchingLibraryHook(
+                    library,
+                    new UserConfigurationManager(new StubAppPaths(tempDir), NullLogger<UserConfigurationManager>.Instance),
+                    new StubUserManager(),
+                    NullLogger<ContinueWatchingLibraryHook>.Instance);
+                await hook.StartAsync(CancellationToken.None);
+                hook.OnBeforeRemovalAcceptanceForTest = () =>
+                {
+                    handlerEntered.Set();
+                    releaseHandler.Wait();
+                };
+
+                var dispatched = Task.Run(() => library.RaiseItemRemoved(new Movie { Id = Guid.NewGuid() }));
+                Assert.True(handlerEntered.Wait(TimeSpan.FromSeconds(10)));
+
+                await hook.StopAsync(CancellationToken.None);
+                releaseHandler.Set();
+                await dispatched;
+
+                Assert.True(hook.PendingIsEmptyForTest);
+                hook.Dispose();
+            }
+            finally
+            {
+                releaseHandler.Set();
+                try { Directory.Delete(tempDir, recursive: true); } catch { }
+            }
+        }
+
+        [Fact]
+        public async Task LibraryHook_CanceledStopIsObservableAndLaterStopJoinsWorker()
+        {
+            var tempDir = Path.Combine(Path.GetTempPath(), "jc-cw-cancel-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+            using var writeEntered = new ManualResetEventSlim();
+            using var releaseWrite = new ManualResetEventSlim();
+            try
+            {
+                var logger = new CollectingLogger<ContinueWatchingLibraryHook>();
+                var user = new User("cw-cancel", "provider", "password-provider");
+                using var hook = new ContinueWatchingLibraryHook(
+                    new CountingLibraryManager(),
+                    new UserConfigurationManager(new StubAppPaths(tempDir), NullLogger<UserConfigurationManager>.Instance),
+                    new StubUserManager(user),
+                    logger,
+                    pendingRemovalCapacity: 32,
+                    drainDebounce: TimeSpan.Zero,
+                    drainRetryDelay: TimeSpan.Zero,
+                    pruneUserForTest: (_, _) =>
+                    {
+                        writeEntered.Set();
+                        releaseWrite.Wait();
+                        return true;
+                    });
+
+                await hook.StartAsync(CancellationToken.None);
+                Assert.True(hook.EnqueueRemovalForTest(Guid.NewGuid()));
+                Assert.True(writeEntered.Wait(TimeSpan.FromSeconds(10)));
+
+                using var canceled = new CancellationTokenSource();
+                canceled.Cancel();
+                await Assert.ThrowsAnyAsync<OperationCanceledException>(() => hook.StopAsync(canceled.Token));
+                Assert.Contains(logger.Messages, message => message.Contains("shutdown canceled", StringComparison.Ordinal));
+
+                releaseWrite.Set();
+                await hook.StopAsync(CancellationToken.None);
+                Assert.True(hook.PendingIsEmptyForTest);
+            }
+            finally
+            {
+                releaseWrite.Set();
+                try { Directory.Delete(tempDir, recursive: true); } catch { }
+            }
+        }
+
+        [Fact]
+        public async Task LibraryHook_DisposeAfterCanceledStopReportsTerminalUndrainedWork()
+        {
+            var tempDir = Path.Combine(Path.GetTempPath(), "jc-cw-terminal-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+            using var pruneAttempted = new ManualResetEventSlim();
+            try
+            {
+                var logger = new CollectingLogger<ContinueWatchingLibraryHook>();
+                var user = new User("cw-terminal", "provider", "password-provider");
+                var hook = new ContinueWatchingLibraryHook(
+                    new CountingLibraryManager(),
+                    new UserConfigurationManager(new StubAppPaths(tempDir), NullLogger<UserConfigurationManager>.Instance),
+                    new StubUserManager(user),
+                    logger,
+                    pendingRemovalCapacity: 32,
+                    drainDebounce: TimeSpan.Zero,
+                    drainRetryDelay: TimeSpan.FromHours(1),
+                    pruneUserForTest: (_, _) =>
+                    {
+                        pruneAttempted.Set();
+                        return false;
+                    });
+
+                await hook.StartAsync(CancellationToken.None);
+                Assert.True(hook.EnqueueRemovalForTest(Guid.NewGuid()));
+                Assert.True(pruneAttempted.Wait(TimeSpan.FromSeconds(10)));
+
+                using var canceled = new CancellationTokenSource();
+                canceled.Cancel();
+                await Assert.ThrowsAnyAsync<OperationCanceledException>(() => hook.StopAsync(canceled.Token));
+
+                hook.Dispose();
+
+                Assert.False(hook.PendingIsEmptyForTest);
+                Assert.Contains(
+                    logger.Messages,
+                    message => message.Contains("TERMINAL shutdown failure", StringComparison.Ordinal)
+                        && message.Contains("undrained", StringComparison.Ordinal));
+
+                // All terminal lifecycle combinations remain idempotent after the failure report.
+                hook.Dispose();
+                var terminal = await Assert.ThrowsAsync<InvalidOperationException>(
+                    () => hook.StopAsync(CancellationToken.None));
+                Assert.Contains("TERMINAL shutdown failure", terminal.Message, StringComparison.Ordinal);
+            }
+            finally
+            {
+                try { Directory.Delete(tempDir, recursive: true); } catch { }
+            }
+        }
+
+        [Fact]
+        public async Task LibraryHook_TransientPruneFailureRetainsBatchForRetry()
+        {
+            var tempDir = Path.Combine(Path.GetTempPath(), "jc-cw-retry-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+            try
+            {
+                var attempts = 0;
+                var user = new User("cw-retry", "provider", "password-provider");
+                using var hook = new ContinueWatchingLibraryHook(
+                    new CountingLibraryManager(),
+                    new UserConfigurationManager(new StubAppPaths(tempDir), NullLogger<UserConfigurationManager>.Instance),
+                    new StubUserManager(user),
+                    NullLogger<ContinueWatchingLibraryHook>.Instance,
+                    pendingRemovalCapacity: 32,
+                    drainDebounce: TimeSpan.Zero,
+                    drainRetryDelay: TimeSpan.Zero,
+                    pruneUserForTest: (_, _) => Interlocked.Increment(ref attempts) >= 2);
+
+                await hook.StartAsync(CancellationToken.None);
+                Assert.True(hook.EnqueueRemovalForTest(Guid.NewGuid()));
+                await hook.StopAsync(CancellationToken.None);
+
+                Assert.Equal(2, attempts);
+                Assert.True(hook.PendingIsEmptyForTest);
+            }
+            finally
+            {
+                try { Directory.Delete(tempDir, recursive: true); } catch { }
+            }
+        }
+
+        [Fact]
+        public async Task LibraryHook_CapacityOverflowRejectsNewIdentityWithoutDiscardingAcceptedIds()
+        {
+            var tempDir = Path.Combine(Path.GetTempPath(), "jc-cw-overflow-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+            try
+            {
+                var acceptedBatchSize = 0;
+                var logger = new CollectingLogger<ContinueWatchingLibraryHook>();
+                var user = new User("cw-overflow", "provider", "password-provider");
+                using var hook = new ContinueWatchingLibraryHook(
+                    new CountingLibraryManager(),
+                    new UserConfigurationManager(new StubAppPaths(tempDir), NullLogger<UserConfigurationManager>.Instance),
+                    new StubUserManager(user),
+                    logger,
+                    pendingRemovalCapacity: 2,
+                    drainDebounce: TimeSpan.FromHours(1),
+                    drainRetryDelay: TimeSpan.Zero,
+                    pruneUserForTest: (_, index) =>
+                    {
+                        acceptedBatchSize = index.Count;
+                        return true;
+                    });
+
+                await hook.StartAsync(CancellationToken.None);
+                Assert.True(hook.EnqueueRemovalForTest(Guid.NewGuid()));
+                Assert.True(hook.EnqueueRemovalForTest(Guid.NewGuid()));
+                Assert.False(hook.EnqueueRemovalForTest(Guid.NewGuid()));
+                Assert.Equal(1, hook.RejectedRemovalCountForTest);
+
+                await hook.StopAsync(CancellationToken.None);
+
+                Assert.Equal(2, acceptedBatchSize);
+                Assert.True(hook.PendingIsEmptyForTest);
+                Assert.Contains(
+                    logger.Messages,
+                    message => message.Contains("rejected 1 distinct removal", StringComparison.Ordinal));
+            }
+            finally
+            {
+                try { Directory.Delete(tempDir, recursive: true); } catch { }
+            }
+        }
+
+        [Fact]
+        public async Task LibraryHook_ImmediateDisposeDuringDebounceReportsRejectedOverflowExactlyOnce()
+        {
+            var tempDir = Path.Combine(Path.GetTempPath(), "jc-cw-overflow-dispose-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+            using var debounceEntered = new ManualResetEventSlim();
+            using var releaseDebounce = new ManualResetEventSlim();
+            using var abortRequested = new ManualResetEventSlim();
+            try
+            {
+                var logger = new CollectingLogger<ContinueWatchingLibraryHook>();
+                var scanChecks = 0;
+                var itemLookups = 0;
+                var library = new CountingLibraryManager
+                {
+                    IsScanRunningHook = () =>
+                    {
+                        Interlocked.Increment(ref scanChecks);
+                        return true;
+                    },
+                    GetItemByIdNonGenericHook = _ =>
+                    {
+                        Interlocked.Increment(ref itemLookups);
+                        return null;
+                    }
+                };
+                var user = new User("cw-overflow-dispose", "provider", "password-provider");
+                var hook = new ContinueWatchingLibraryHook(
+                    library,
+                    new UserConfigurationManager(new StubAppPaths(tempDir), NullLogger<UserConfigurationManager>.Instance),
+                    new StubUserManager(user),
+                    logger,
+                    pendingRemovalCapacity: 1,
+                    drainDebounce: TimeSpan.FromHours(1),
+                    drainRetryDelay: TimeSpan.Zero,
+                    pruneUserForTest: (_, _) =>
+                        throw new Xunit.Sdk.XunitException("Dispose must abort before any config prune"));
+                hook.OnDrainDebounceStartedForTest = () =>
+                {
+                    debounceEntered.Set();
+                    releaseDebounce.Wait();
+                };
+                hook.OnDisposeWaitingForTest = abortRequested.Set;
+
+                await hook.StartAsync(CancellationToken.None);
+                Assert.True(hook.EnqueueRemovalForTest(Guid.NewGuid()));
+                Assert.True(debounceEntered.Wait(TimeSpan.FromSeconds(10)));
+                Assert.False(hook.EnqueueRemovalForTest(Guid.NewGuid()));
+
+                var dispose = Task.Run(hook.Dispose);
+                Assert.True(abortRequested.Wait(TimeSpan.FromSeconds(10)));
+                releaseDebounce.Set();
+                await dispose;
+
+                Assert.Equal(1, hook.RejectedRemovalCountForTest);
+                Assert.Single(
+                    logger.Messages,
+                    message => message.Contains("bounded orphan-cleanup intake rejected 1 distinct removal", StringComparison.Ordinal));
+                Assert.Equal(0, Volatile.Read(ref scanChecks));
+                Assert.Equal(0, Volatile.Read(ref itemLookups));
+                Assert.True(hook.WorkerIsCompletedForTest);
+            }
+            finally
+            {
+                releaseDebounce.Set();
+                try { Directory.Delete(tempDir, recursive: true); } catch { }
+            }
+        }
+
+        [Theory]
+        [InlineData(false)]
+        [InlineData(true)]
+        public async Task LibraryHook_OverflowNeverUsesTransientGlobalNullToPruneUnrelatedGuid(bool scanRunning)
+        {
+            var tempDir = Path.Combine(Path.GetTempPath(), "jc-cw-overflow-null-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+            try
+            {
+                var firstRemoved = Guid.NewGuid();
+                var secondRemoved = Guid.NewGuid();
+                var rejectedRemoved = Guid.NewGuid();
+                var unrelated = Guid.NewGuid();
+                var scanChecks = 0;
+                var itemLookups = 0;
+                var library = new CountingLibraryManager
+                {
+                    // Even with no scan reported and every global lookup transiently null, exact-id
+                    // cleanup must never consult this broad negative source.
+                    IsScanRunningHook = () =>
+                    {
+                        Interlocked.Increment(ref scanChecks);
+                        return scanRunning;
+                    },
+                    GetItemByIdNonGenericHook = _ =>
+                    {
+                        Interlocked.Increment(ref itemLookups);
+                        return null;
+                    }
+                };
+                var user = new User("cw-overflow-scan", "provider", "password-provider");
+                var userId = user.Id.ToString("N");
+                var ucm = new UserConfigurationManager(
+                    new StubAppPaths(tempDir),
+                    NullLogger<UserConfigurationManager>.Instance);
+                var seed = new UserHiddenContent();
+                seed.Items["removed-1"] = new HiddenContentItem { ItemId = firstRemoved.ToString("N") };
+                seed.Items["removed-2"] = new HiddenContentItem { ItemId = secondRemoved.ToString("N") };
+                seed.Items["unrelated"] = new HiddenContentItem { ItemId = unrelated.ToString("N") };
+                ucm.SaveUserConfiguration(userId, "hidden-content.json", seed);
+
+                using var hook = new ContinueWatchingLibraryHook(
+                    library,
+                    ucm,
+                    new StubUserManager(user),
+                    NullLogger<ContinueWatchingLibraryHook>.Instance,
+                    pendingRemovalCapacity: 2,
+                    drainDebounce: TimeSpan.FromHours(1),
+                    drainRetryDelay: TimeSpan.Zero,
+                    pruneUserForTest: null);
+
+                await hook.StartAsync(CancellationToken.None);
+                Assert.True(hook.EnqueueRemovalForTest(firstRemoved));
+                Assert.True(hook.EnqueueRemovalForTest(secondRemoved));
+                Assert.False(hook.EnqueueRemovalForTest(rejectedRemoved));
+                await hook.StopAsync(CancellationToken.None);
+
+                var stored = ucm.GetUserConfigurationStrict<UserHiddenContent>(userId, "hidden-content.json");
+                Assert.Equal(new[] { "unrelated" }, stored.Items.Keys);
+                Assert.Equal(0, Volatile.Read(ref scanChecks));
+                Assert.Equal(0, Volatile.Read(ref itemLookups));
+                Assert.Equal(1, hook.RejectedRemovalCountForTest);
+            }
+            finally
+            {
+                try { Directory.Delete(tempDir, recursive: true); } catch { }
+            }
+        }
+
+        [Fact]
+        public async Task LibraryHook_ConcurrentDisposeCallersJoinSameWorkerCompletion()
+        {
+            var tempDir = Path.Combine(Path.GetTempPath(), "jc-cw-dispose-join-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+            using var writeEntered = new ManualResetEventSlim();
+            using var releaseWrite = new ManualResetEventSlim();
+            using var bothDisposeCallersWaiting = new ManualResetEventSlim();
+            try
+            {
+                var disposeWaiters = 0;
+                var user = new User("cw-dispose-join", "provider", "password-provider");
+                var hook = new ContinueWatchingLibraryHook(
+                    new CountingLibraryManager(),
+                    new UserConfigurationManager(new StubAppPaths(tempDir), NullLogger<UserConfigurationManager>.Instance),
+                    new StubUserManager(user),
+                    NullLogger<ContinueWatchingLibraryHook>.Instance,
+                    pendingRemovalCapacity: 32,
+                    drainDebounce: TimeSpan.Zero,
+                    drainRetryDelay: TimeSpan.Zero,
+                    pruneUserForTest: (_, _) =>
+                    {
+                        writeEntered.Set();
+                        releaseWrite.Wait();
+                        return true;
+                    });
+                hook.OnDisposeWaitingForTest = () =>
+                {
+                    if (Interlocked.Increment(ref disposeWaiters) == 2)
+                    {
+                        bothDisposeCallersWaiting.Set();
+                    }
+                };
+
+                await hook.StartAsync(CancellationToken.None);
+                Assert.True(hook.EnqueueRemovalForTest(Guid.NewGuid()));
+                Assert.True(writeEntered.Wait(TimeSpan.FromSeconds(10)));
+
+                var firstDispose = Task.Run(hook.Dispose);
+                var secondDispose = Task.Run(hook.Dispose);
+                Assert.True(bothDisposeCallersWaiting.Wait(TimeSpan.FromSeconds(10)));
+                Assert.False(firstDispose.IsCompleted);
+                Assert.False(secondDispose.IsCompleted);
+
+                releaseWrite.Set();
+                await Task.WhenAll(firstDispose, secondDispose);
+
+                Assert.True(hook.WorkerIsCompletedForTest);
+                hook.Dispose();
+            }
+            finally
+            {
+                releaseWrite.Set();
+                try { Directory.Delete(tempDir, recursive: true); } catch { }
+            }
+        }
+
+        [Fact]
+        public async Task LibraryHook_DisposeRacingStopCannotTurnUndrainedAbortIntoSuccessfulStop()
+        {
+            var tempDir = Path.Combine(Path.GetTempPath(), "jc-cw-stop-dispose-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+            using var pruneEntered = new ManualResetEventSlim();
+            using var releasePrune = new ManualResetEventSlim();
+            using var disposeWaiting = new ManualResetEventSlim();
+            try
+            {
+                var logger = new CollectingLogger<ContinueWatchingLibraryHook>();
+                var user = new User("cw-stop-dispose", "provider", "password-provider");
+                var hook = new ContinueWatchingLibraryHook(
+                    new CountingLibraryManager(),
+                    new UserConfigurationManager(new StubAppPaths(tempDir), NullLogger<UserConfigurationManager>.Instance),
+                    new StubUserManager(user),
+                    logger,
+                    pendingRemovalCapacity: 32,
+                    drainDebounce: TimeSpan.Zero,
+                    drainRetryDelay: TimeSpan.FromHours(1),
+                    pruneUserForTest: (_, _) =>
+                    {
+                        pruneEntered.Set();
+                        releasePrune.Wait();
+                        return false;
+                    });
+                hook.OnDisposeWaitingForTest = disposeWaiting.Set;
+
+                await hook.StartAsync(CancellationToken.None);
+                Assert.True(hook.EnqueueRemovalForTest(Guid.NewGuid()));
+                Assert.True(pruneEntered.Wait(TimeSpan.FromSeconds(10)));
+
+                var stop = hook.StopAsync(CancellationToken.None);
+                var dispose = Task.Run(hook.Dispose);
+                Assert.True(disposeWaiting.Wait(TimeSpan.FromSeconds(10)));
+                releasePrune.Set();
+
+                await dispose;
+                var terminal = await Assert.ThrowsAsync<InvalidOperationException>(async () => await stop);
+                Assert.Contains("TERMINAL shutdown failure", terminal.Message, StringComparison.Ordinal);
+                Assert.Contains(logger.Messages, message => message.Contains("undrained", StringComparison.Ordinal));
+                Assert.True(hook.WorkerIsCompletedForTest);
+            }
+            finally
+            {
+                releasePrune.Set();
+                try { Directory.Delete(tempDir, recursive: true); } catch { }
+            }
+        }
+
+        [Fact]
+        public async Task LibraryHook_BurstCoalescesDuplicatesIntoOneWritePerUser()
+        {
+            var tempDir = Path.Combine(Path.GetTempPath(), "jc-cw-burst-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+            try
+            {
+                var firstUser = new User("cw-burst-1", "provider", "password-provider");
+                var secondUser = new User("cw-burst-2", "provider", "password-provider");
+                var calls = new Dictionary<Guid, int>();
+                var removed = Enumerable.Range(0, 5).Select(_ => Guid.NewGuid()).ToArray();
+                using var hook = new ContinueWatchingLibraryHook(
+                    new CountingLibraryManager(),
+                    new UserConfigurationManager(new StubAppPaths(tempDir), NullLogger<UserConfigurationManager>.Instance),
+                    new StubUserManager(firstUser, secondUser),
+                    NullLogger<ContinueWatchingLibraryHook>.Instance,
+                    pendingRemovalCapacity: 32,
+                    drainDebounce: TimeSpan.FromHours(1),
+                    drainRetryDelay: TimeSpan.Zero,
+                    pruneUserForTest: (userId, index) =>
+                    {
+                        calls[userId] = calls.GetValueOrDefault(userId) + 1;
+                        Assert.Equal(removed.Length, index.Count);
+                        return true;
+                    });
+
+                await hook.StartAsync(CancellationToken.None);
+                foreach (var id in removed)
+                {
+                    Assert.True(hook.EnqueueRemovalForTest(id));
+                    Assert.True(hook.EnqueueRemovalForTest(id));
+                }
+
+                await hook.StopAsync(CancellationToken.None);
+
+                Assert.Equal(1, calls[firstUser.Id]);
+                Assert.Equal(1, calls[secondUser.Id]);
+            }
+            finally
+            {
+                try { Directory.Delete(tempDir, recursive: true); } catch { }
             }
         }
 

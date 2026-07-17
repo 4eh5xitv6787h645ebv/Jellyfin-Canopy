@@ -64,6 +64,10 @@ public sealed class CountingLibraryManager : ILibraryManager
     public void RaiseItemAdded(BaseItem item)
         => _itemAdded?.Invoke(this, new ItemChangeEventArgs { Item = item });
 
+    /// <summary>Raise Jellyfin's synchronous item-removed event.</summary>
+    public void RaiseItemRemoved(BaseItem item)
+        => _itemRemoved?.Invoke(this, new ItemChangeEventArgs { Item = item });
+
     // ---- Optional query hooks (default null = throw, per convention). Set by tests that need
     //      BuildFullCache's full scan (GetItemList) and per-id resolve (GetItemById<T>). ----
 
@@ -86,7 +90,11 @@ public sealed class CountingLibraryManager : ILibraryManager
 
     public AggregateFolder RootFolder => throw new NotImplementedException();
 
-    public bool IsScanRunning => throw new NotImplementedException();
+    /// <summary>When set, backs <see cref="IsScanRunning"/>.</summary>
+    public Func<bool>? IsScanRunningHook { get; set; }
+
+    public bool IsScanRunning
+        => IsScanRunningHook is null ? throw new NotImplementedException() : IsScanRunningHook();
 
     public BaseItem? ResolvePath(FileSystemMetadata fileInfo, Folder? parent = null, IDirectoryService? directoryService = null, CollectionType? collectionType = null) => throw new NotImplementedException();
 

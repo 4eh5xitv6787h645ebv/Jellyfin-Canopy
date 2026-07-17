@@ -21,12 +21,12 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 18876,
-        "totalLines": 27327
+        "coveredLines": 19042,
+        "totalLines": 27479
       },
       "tolerance": {
         "missingCoveredLines": 2,
-        "rationale": "Two clean post-rebase local .NET 10.0.9/Coverlet integration runs on 2026-07-17 each passed 1690 tests and measured the identical combined 27327-line assembly scope at 18876 covered lines (69.075%). Issue #97 scopes tag-cache access sets, in-flight work, content cursors, and served-id proof to Jellyfin's persisted User.RowVersion, with immediate revoke/grant, isolation, cursor-reset, and publication-race regressions. Relative to the reviewed 18841/27308 baseline from issue #161, the reviewed assembly scope grows by 19 instrumented lines and the high-water advances by 35 covered lines while line coverage rises from 68.994% to 69.075%. The existing two-line tolerance is unchanged and covers only the previously reproduced negligible Coverlet variance; coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, and broad-tolerance negative boundaries."
+        "rationale": "Two clean final post-review local .NET 10.0.9/Coverlet integration runs on 2026-07-17 each passed 1702 tests and measured the identical complete 27479-line assembly scope at 19042 covered lines (69.297%). Issue #174 replaces the Continue Watching Timer race with bounded lifecycle-owned exact-id intake, deterministic drain/join, shared concurrent-disposal completion, observable cancellation/forced-terminal failure, retained retries, and exactly-once aggregated overflow rejection evidence on normal and abort exits. Adversarial stop, dispatch, retry, capacity, immediate-dispose, transient-global-null, coalescing, and lifecycle regressions cover the accepted-work contract without broad point-in-time library pruning. Relative to the reviewed 18876/27327 baseline, the reviewed assembly scope grows by 152 instrumented lines and the high-water advances by 166 covered lines while line coverage rises from 69.075% to 69.297%. The existing two-line tolerance is unchanged and covers only previously reproduced negligible Coverlet variance; coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, and broad-tolerance negative boundaries."
       }
     }
   }
