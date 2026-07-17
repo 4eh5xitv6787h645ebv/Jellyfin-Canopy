@@ -47,27 +47,36 @@ describe('discovery managed request identity paving', () => {
         expect(fetchWithRetry).not.toHaveBeenCalled();
     });
 
-    it('cancels only the lifecycle waiter and leaves shared transport ownership in core', async () => {
+    it('lets B succeed from the same shared request after A aborts', async () => {
         let resolve!: (value: unknown) => void;
-        jf.mockReturnValue(new Promise(done => { resolve = done; }));
-        const controller = new AbortController();
+        const sharedRequest = new Promise(done => { resolve = done; });
+        jf.mockReturnValue(sharedRequest);
+        const controllerA = new AbortController();
+        const controllerB = new AbortController();
 
-        const waiting = JC.discoveryFilter!.fetchWithManagedRequest(
+        const waitingA = JC.discoveryFilter!.fetchWithManagedRequest(
             '/JellyfinCanopy/tmdb/search/person?query=a',
             'person',
-            { signal: controller.signal },
+            { signal: controllerA.signal },
         );
-        controller.abort();
+        controllerA.abort();
 
-        await expect(waiting).rejects.toMatchObject({ name: 'AbortError' });
-        expect(jf).toHaveBeenCalledWith(
+        await expect(waitingA).rejects.toMatchObject({ name: 'AbortError' });
+
+        const waitingB = JC.discoveryFilter!.fetchWithManagedRequest(
+            '/JellyfinCanopy/tmdb/search/person?query=a',
+            'person',
+            { signal: controllerB.signal },
+        );
+        expect(jf).toHaveBeenNthCalledWith(
+            2,
             '/JellyfinCanopy/tmdb/search/person?query=a',
             expect.not.objectContaining({ signal: expect.anything() }),
         );
 
-        // The underlying shared request remains settleable/cacheable for other
-        // waiters; this aborted lifecycle did not own its transport.
-        resolve({ results: [] });
-        await Promise.resolve();
+        // A's lifecycle abort cannot poison the identity-owned shared transport
+        // that a current B waiter legitimately reuses.
+        resolve({ results: ['current-b'] });
+        await expect(waitingB).resolves.toEqual({ results: ['current-b'] });
     });
 });
