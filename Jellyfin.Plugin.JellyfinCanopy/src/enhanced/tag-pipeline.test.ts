@@ -7,6 +7,7 @@
 // card scan selector could otherwise surface — is still caught.
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import { JC } from '../globals';
+import { driveOwnedFakeTimersUntil } from '../test/owned-timer-driver';
 import { getItemCached } from './helpers';
 import {
     applyContentResponse,
@@ -1174,6 +1175,7 @@ describe('watched/privacy projection response ordering (BI-SEC-035)', () => {
     });
 
     it('drains 200 failed-batch cards with six workers and one lookup per duplicate id', async () => {
+        vi.useFakeTimers();
         document.body.innerHTML = '';
         const oldConfig = JC.pluginConfig;
         const oldUi = JC.core.ui;
@@ -1209,7 +1211,7 @@ describe('watched/privacy projection response ordering (BI-SEC-035)', () => {
 
         try {
             resetTagPipelineIdentity();
-            JC.tagPipeline!.initialize?.();
+            await Promise.resolve(JC.tagPipeline!.initialize?.());
             JC.tagPipeline!.clearProcessed?.();
             for (let index = 1; index <= 199; index += 1) {
                 const itemId = index.toString(16).padStart(32, '0');
@@ -1224,7 +1226,15 @@ describe('watched/privacy projection response ordering (BI-SEC-035)', () => {
             }
             JC.tagPipeline!.scheduleScan?.();
 
-            await vi.waitFor(() => expect(renderedTargets.size).toBe(200), { timeout: 5_000 });
+            await driveOwnedFakeTimersUntil({
+                label: 'tag fallback 200-card drain',
+                isComplete: () => renderedTargets.size === 200,
+                diagnostics: () => (
+                    `rendered=${renderedTargets.size}; fallback requests=${fallbackIds.length}; `
+                    + `active=${activeFallbacks}; max active=${maxActiveFallbacks}`
+                ),
+            });
+            expect(renderedTargets.size).toBe(200);
             expect(fallbackIds).toHaveLength(199);
             expect(new Set(fallbackIds).size).toBe(199);
             expect(maxActiveFallbacks).toBe(6);
@@ -1240,6 +1250,13 @@ describe('watched/privacy projection response ordering (BI-SEC-035)', () => {
             JC.pluginConfig = oldConfig;
             JC.core.ui = oldUi;
             document.body.innerHTML = '';
+            resetTagPipelineIdentity();
+            try {
+                expect(vi.getTimerCount()).toBe(0);
+            } finally {
+                vi.clearAllTimers();
+                vi.useRealTimers();
+            }
         }
     });
 
@@ -1379,6 +1396,7 @@ describe('watched/privacy projection response ordering (BI-SEC-035)', () => {
     });
 
     it('bounds failed-batch fallback work and lets navigation preempt all stale requests', async () => {
+        vi.useFakeTimers();
         document.body.innerHTML = '';
         const oldConfig = JC.pluginConfig;
         const oldUi = JC.core.ui;
@@ -1442,7 +1460,7 @@ describe('watched/privacy projection response ordering (BI-SEC-035)', () => {
 
         try {
             resetTagPipelineIdentity();
-            JC.tagPipeline!.initialize?.();
+            await Promise.resolve(JC.tagPipeline!.initialize?.());
             for (let index = 1; index <= 200; index += 1) {
                 const itemId = index.toString(16).padStart(32, '0');
                 const image = gridCardImage();
@@ -1454,7 +1472,15 @@ describe('watched/privacy projection response ordering (BI-SEC-035)', () => {
             JC.tagPipeline!.clearProcessed?.();
             JC.tagPipeline!.scheduleScan?.();
 
-            await vi.waitFor(() => expect(fallbackStarted).toHaveLength(6), { timeout: 2_000 });
+            await driveOwnedFakeTimersUntil({
+                label: 'tag fallback six-worker admission',
+                isComplete: () => fallbackStarted.length === 6,
+                diagnostics: () => (
+                    `started=${fallbackStarted.length}; active=${activeFallbacks}; `
+                    + `max active=${maxActiveFallbacks}; batch calls=${batchCalls}`
+                ),
+            });
+            expect(fallbackStarted).toHaveLength(6);
             expect(maxActiveFallbacks).toBe(6);
             expect(getItem).not.toHaveBeenCalled();
 
@@ -1467,10 +1493,17 @@ describe('watched/privacy projection response ordering (BI-SEC-035)', () => {
             document.body.appendChild(nextCard);
             JC.tagPipeline!.scheduleScan?.();
 
-            await vi.waitFor(() => expect(fallbackSignals.every(signal => signal.aborted)).toBe(true));
-            await vi.waitFor(() => {
-                expect(document.querySelector(`.bounded-fallback-${nextItemId}`)).not.toBeNull();
+            await driveOwnedFakeTimersUntil({
+                label: 'tag fallback navigation preemption and replacement drain',
+                isComplete: () => fallbackSignals.every(signal => signal.aborted)
+                    && document.querySelector(`.bounded-fallback-${nextItemId}`) !== null,
+                diagnostics: () => (
+                    `aborted=${fallbackSignals.filter(signal => signal.aborted).length}/${fallbackSignals.length}; `
+                    + `started=${fallbackStarted.length}; active=${activeFallbacks}; renders=${staleRenders.join(',')}`
+                ),
             });
+            expect(fallbackSignals.every(signal => signal.aborted)).toBe(true);
+            expect(document.querySelector(`.bounded-fallback-${nextItemId}`)).not.toBeNull();
             expect(fallbackStarted).toHaveLength(6);
             expect(activeFallbacks).toBe(0);
             expect(staleRenders).toEqual([nextItemId]);
@@ -1484,6 +1517,13 @@ describe('watched/privacy projection response ordering (BI-SEC-035)', () => {
             JC.pluginConfig = oldConfig;
             JC.core.ui = oldUi;
             document.body.innerHTML = '';
+            resetTagPipelineIdentity();
+            try {
+                expect(vi.getTimerCount()).toBe(0);
+            } finally {
+                vi.clearAllTimers();
+                vi.useRealTimers();
+            }
         }
     });
 
