@@ -26,8 +26,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         public static PersistedPayloadValidation Invalid(string code)
             => new(PersistedPayloadStatus.Invalid, code, 0);
 
-        public static PersistedPayloadValidation TooLarge(int serializedBytes)
-            => new(PersistedPayloadStatus.TooLarge, "payload_too_large", serializedBytes);
+        public static PersistedPayloadValidation TooLarge(
+            int serializedBytes,
+            string code = "payload_too_large")
+            => new(PersistedPayloadStatus.TooLarge, code, serializedBytes);
     }
 
     /// <summary>
@@ -43,6 +45,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         public const int HiddenContentPersistedBytes = 7 * 1024 * 1024;
         public const long SpoilerOverridesRequestBytes = 2L * 1024 * 1024;
         public const int SpoilerOverridesPersistedBytes = 2 * 1024 * 1024;
+        // A 1,000-operation move can repeat every bounded bookmark field plus
+        // source/target ids. Field limits count UTF-16 characters, while JSON
+        // control-character escaping can consume six UTF-8 bytes per character.
+        // Twenty MiB covers that proven worst-case shape while remaining below
+        // Kestrel's 30,000,000-byte host ceiling; persisted state stays at 1 MiB.
+        public const long BookmarkRequestBytes = 20L * 1024 * 1024;
+        public const int BookmarkPersistedBytes = 1024 * 1024;
         public const int AbsolutePersistedBytes = 8 * 1024 * 1024;
 
         public const int MaximumStandardStringLength = 512;
@@ -58,6 +67,18 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         public const int MaximumSpoilerEntriesPerDictionary = 1000;
         public const int MaximumSpoilerKeyLength = 128;
         public const int MaximumHiddenIndex = 100_000;
+        public const int MaximumBookmarks = 1000;
+        public const int MaximumBookmarkIdLength = 256;
+        public const int MaximumBookmarkItemIdLength = 256;
+        // Base64url may expand a 256-code-unit legacy item id beyond 512 bytes
+        // when it contains non-ASCII text. Keep the opaque cursor itself bounded
+        // while accepting every item id the migration policy accepts.
+        public const int MaximumBookmarkCursorLength = 2048;
+        public const int MaximumBookmarkProviderIdLength = 128;
+        public const int MaximumBookmarkTypeLength = 64;
+        public const int MaximumBookmarkTextLength = 512;
+        public const int MaximumBookmarkTimestampLength = 64;
+        public const int MaximumBookmarkPageSize = 100;
 
         /// <summary>
         /// Deterministically bounds a server-derived display name before it is
@@ -372,7 +393,6 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
             replace(replacement);
             return true;
         }
-
         public static PersistedPayloadValidation Validate(IRevisionedUserConfiguration? payload)
             => payload switch
             {
@@ -382,9 +402,61 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
                 HiddenContentSettings hiddenSettings => ValidateHiddenSettings(hiddenSettings),
                 SpoilerBlurUserPrefs spoilerPrefs => ValidateSpoilerPrefs(spoilerPrefs),
                 SpoilerGuardOverrides spoilerOverrides => Validate(spoilerOverrides),
+                UserBookmark bookmarks => Validate(bookmarks),
                 null => PersistedPayloadValidation.Invalid("payload_required"),
                 _ => PersistedPayloadValidation.Invalid("unsupported_payload")
             };
+
+        public static PersistedPayloadValidation Validate(UserBookmark? payload)
+        {
+            if (payload?.Bookmarks == null || payload.Revision < 0)
+            {
+                return PersistedPayloadValidation.Invalid("invalid_bookmark_shape");
+            }
+
+            if (payload.Bookmarks.Count > MaximumBookmarks)
+            {
+                return PersistedPayloadValidation.TooLarge(0, "too_many_bookmarks");
+            }
+
+            foreach (var pair in payload.Bookmarks)
+            {
+                if (!IsValidBookmarkId(pair.Key) || !IsValidBookmarkItem(pair.Value))
+                {
+                    return PersistedPayloadValidation.Invalid("invalid_bookmark_entry");
+                }
+            }
+
+            return ValidateSerializedSize(payload, BookmarkPersistedBytes);
+        }
+
+        public static bool IsValidBookmarkId(string? value)
+            => !string.IsNullOrWhiteSpace(value) && value.Length <= MaximumBookmarkIdLength;
+
+        public static bool IsValidBookmarkItem(BookmarkItem? bookmark)
+            => bookmark != null
+            && !string.IsNullOrWhiteSpace(bookmark.ItemId)
+            && bookmark.ItemId.Length <= MaximumBookmarkItemIdLength
+            && (bookmark.IdentityVersion == 0 || bookmark.IdentityVersion == 1)
+            && (bookmark.IdentityVersion == 0 || !string.IsNullOrWhiteSpace(bookmark.ItemType))
+            && IsBoundedString(bookmark.ItemType, MaximumBookmarkTypeLength)
+            && IsBoundedString(bookmark.TmdbId, MaximumBookmarkProviderIdLength)
+            && IsBoundedString(bookmark.TvdbId, MaximumBookmarkProviderIdLength)
+            && IsBoundedString(bookmark.SeriesTmdbId, MaximumBookmarkProviderIdLength)
+            && IsBoundedString(bookmark.SeriesTvdbId, MaximumBookmarkProviderIdLength)
+            && IsBoundedString(bookmark.MediaType, MaximumBookmarkTypeLength)
+            && IsOptionalNonNegativeRange(bookmark.SeasonNumber, 100_000)
+            && IsOptionalNonNegativeRange(bookmark.EpisodeNumber, 100_000)
+            && IsOptionalNonNegativeRange(bookmark.EpisodeEndNumber, 100_000)
+            && (!bookmark.EpisodeNumber.HasValue || !bookmark.EpisodeEndNumber.HasValue
+                || bookmark.EpisodeEndNumber.Value >= bookmark.EpisodeNumber.Value)
+            && IsBoundedString(bookmark.Name, MaximumBookmarkTextLength)
+            && IsBoundedString(bookmark.Label, MaximumBookmarkTextLength)
+            && IsBoundedString(bookmark.CreatedAt, MaximumBookmarkTimestampLength)
+            && IsBoundedString(bookmark.UpdatedAt, MaximumBookmarkTimestampLength)
+            && IsBoundedString(bookmark.SyncedFrom, MaximumBookmarkItemIdLength)
+            && double.IsFinite(bookmark.Timestamp)
+            && bookmark.Timestamp >= 0;
 
         public static PersistedPayloadValidation Validate(UserHiddenContent? payload)
         {

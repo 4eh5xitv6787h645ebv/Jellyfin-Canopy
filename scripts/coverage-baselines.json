@@ -27,17 +27,17 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 29247,
-        "totalLines": 37827
+        "coveredLines": 30221,
+        "totalLines": 38901
       },
       "observations": {
         "cleanRuns": 4,
-        "minimumCoveredLines": 29245,
-        "maximumCoveredLines": 29247
+        "minimumCoveredLines": 30221,
+        "maximumCoveredLines": 30221
       },
       "tolerance": {
-        "missingCoveredLines": 2,
-        "rationale": "Fixing #555 replaces the per-candidate linear duplicate scan in provider-pair mapping with bounded hash membership and adds an instrumented 4,096-edition regression proving one membership operation per matching item/provider incidence while preserving deterministic ordering, repeated-ID deduplication, media typing, and the fail-closed candidate ceiling. Four clean .NET 10.0.9/Coverlet runs on 2026-08-02 each passed all 2,548 server tests at the identical 37,827-line scope and measured 29,246, 29,247, 29,245, and 29,246 covered lines. Relative to the #154 main baseline of 29,245/37,825, the implementation adds two instrumented lines, advances the reviewed high-water to 29,247/37,827 (77.318%), and sets the exact observed floor at 29,245/37,827 (77.313%), still above the prior 29,243/37,825 (77.311%) floor. The two-line tolerance admits only the directly observed identical-scope spread. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
+        "missingCoveredLines": 0,
+        "rationale": "The final #88 review fixes add a worst-case escaping-bounded full-quota move request envelope, compact rich-episode duplicate indexing, whitespace-normalized legacy media aliases, deferred/coalesced backups for imports and ordinary mutations, final-file-only snapshot discovery, and owned-schema plus metadata-invariant recovery validation. Four clean Coverlet runs on 2026-08-02 each passed all 2,583 server tests at the identical 38,901-line scope and reproduced exactly 30,221 covered lines. Relative to the preceding #88 review baseline, the reviewed implementation adds 25 instrumented lines and 23 covered lines while increasing the enforced floor to 30,221/38,901 (77.687%). The exact observed envelope needs no instrumentation tolerance. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
       }
     }
   }

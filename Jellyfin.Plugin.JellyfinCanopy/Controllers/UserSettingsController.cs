@@ -1104,26 +1104,251 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 return authorizationResult;
             }
 
-            var read = _userConfigurationManager.ReadUserConfiguration<UserBookmark>(authorizedUserId, BookmarkFileName);
-            if (!read.HasUsableValue || read.Value == null || !IsValidBookmarkState(read.Value))
+            try
             {
-                _logger.LogWarning(
-                    $"Refusing to publish unavailable bookmark state for {ResolveUserDisplay(authorizedUserId)} " +
-                    $"(status={read.Status}, detail={read.FaultDetail ?? "invalid-state"}).");
-                return StatusCode(StatusCodes.Status503ServiceUnavailable, new BookmarkMutationResponse
+                var state = _userConfigurationManager.GetBookmarks(authorizedUserId);
+                SetBookmarkEtag(state.Revision);
+                return Ok(state);
+            }
+            catch (Exception ex)
+            {
+                return BookmarkWriteFailure(authorizedUserId, "read bookmarks", ex);
+            }
+        }
+
+        public sealed class BookmarkPageResponse
+        {
+            public long Revision { get; set; }
+            public int Total { get; set; }
+            public int AllTotal { get; set; }
+            public int Movie { get; set; }
+            public int Tv { get; set; }
+            public int Other { get; set; }
+            public int StartIndex { get; set; }
+            public int Limit { get; set; }
+            public bool HasMore { get; set; }
+            public Dictionary<string, BookmarkItem> Bookmarks { get; set; } = new Dictionary<string, BookmarkItem>();
+        }
+
+        public sealed class BookmarkItemResolutionPayload
+        {
+            public List<string> ItemIds { get; set; } = new();
+        }
+
+        public sealed class BookmarkItemResolution
+        {
+            public string ItemId { get; set; } = string.Empty;
+            public string Status { get; set; } = string.Empty;
+            public string Id { get; set; } = string.Empty;
+            public string Type { get; set; } = string.Empty;
+            public string Name { get; set; } = string.Empty;
+            public string SeriesName { get; set; } = string.Empty;
+            public int? ParentIndexNumber { get; set; }
+            public int? IndexNumber { get; set; }
+        }
+
+        public sealed class BookmarkItemResolutionResponse
+        {
+            public List<BookmarkItemResolution> Items { get; set; } = new();
+        }
+
+        /// <summary>
+        /// Returns one deterministic, hard-capped bookmark page. ItemId is an
+        /// exact optional search key so playback and management clients do not
+        /// need to transfer the complete supported collection for one item.
+        /// </summary>
+        [HttpGet("user-settings/{userId}/bookmark.json/page")]
+        [Authorize]
+        [Produces("application/json")]
+        public IActionResult GetUserBookmarkPage(
+            string userId,
+            [FromQuery] int startIndex = 0,
+            [FromQuery] int limit = 50,
+            [FromQuery] string? itemId = null,
+            [FromQuery] string? mediaType = null)
+        {
+            var authorizationResult = AuthorizeUserConfigAccess(userId, out var authorizedUserId);
+            if (authorizationResult != null)
+            {
+                return authorizationResult;
+            }
+
+            if (startIndex < 0 || limit < 1 || limit > PersistedPayloadPolicy.MaximumBookmarkPageSize)
+            {
+                return BadRequest(new BookmarkMutationResponse
                 {
                     Success = false,
-                    Message = "Bookmark state is unavailable. No empty replacement state was published."
+                    Message = $"startIndex must be non-negative and limit must be 1-{PersistedPayloadPolicy.MaximumBookmarkPageSize}."
                 });
             }
 
-            SetBookmarkEtag(read.Value.Revision);
-            return Ok(read.Value);
+            if (itemId != null && (string.IsNullOrWhiteSpace(itemId)
+                || itemId.Length > PersistedPayloadPolicy.MaximumBookmarkItemIdLength))
+            {
+                return BadRequest(new BookmarkMutationResponse
+                {
+                    Success = false,
+                    Message = $"itemId must be 1-{PersistedPayloadPolicy.MaximumBookmarkItemIdLength} characters when supplied."
+                });
+            }
+
+            if (mediaType != null && mediaType != "movie" && mediaType != "tv" && mediaType != "other")
+            {
+                return BadRequest(new BookmarkMutationResponse
+                {
+                    Success = false,
+                    Message = "mediaType must be movie, tv, or other when supplied."
+                });
+            }
+
+            try
+            {
+                var page = _userConfigurationManager.GetBookmarkPage(
+                    authorizedUserId,
+                    startIndex,
+                    limit,
+                    itemId,
+                    mediaType);
+                SetBookmarkEtag(page.Revision);
+                return Ok(new BookmarkPageResponse
+                {
+                    Revision = page.Revision,
+                    Total = page.Total,
+                    AllTotal = page.AllTotal,
+                    Movie = page.Movie,
+                    Tv = page.Tv,
+                    Other = page.Other,
+                    StartIndex = page.StartIndex,
+                    Limit = page.Limit,
+                    HasMore = page.StartIndex < page.Total && page.Total - page.StartIndex > page.Bookmarks.Count,
+                    Bookmarks = page.Bookmarks
+                });
+            }
+            catch (Exception ex)
+            {
+                return BookmarkWriteFailure(authorizedUserId, "list bookmarks", ex);
+            }
+        }
+
+        [HttpGet("user-settings/{userId}/bookmark.json/counts")]
+        [Authorize]
+        [Produces("application/json")]
+        public IActionResult GetUserBookmarkCounts(string userId)
+        {
+            var authorizationResult = AuthorizeUserConfigAccess(userId, out var authorizedUserId);
+            if (authorizationResult != null) return authorizationResult;
+            try
+            {
+                var counts = _userConfigurationManager.GetBookmarkCounts(authorizedUserId);
+                SetBookmarkEtag(counts.Revision);
+                return Ok(counts);
+            }
+            catch (Exception ex)
+            {
+                return BookmarkWriteFailure(authorizedUserId, "read bookmark counts", ex);
+            }
+        }
+
+        /// <summary>
+        /// Resolves one bounded set of Jellyfin item ids in a single client
+        /// request. Per-id status keeps global absence distinct from visibility
+        /// or transient failures, so destructive orphan UI remains fail closed.
+        /// </summary>
+        [HttpPost("user-settings/{userId}/bookmark.json/items/resolve")]
+        [Authorize]
+        [Produces("application/json")]
+        [PersistedPayloadLimit(PersistedPayloadPolicy.BookmarkRequestBytes)]
+        public IActionResult ResolveBookmarkItems(
+            string userId,
+            [FromBody] BookmarkItemResolutionPayload payload,
+            CancellationToken cancellationToken)
+        {
+            var authorizationResult = AuthorizeUserConfigAccess(userId, out var authorizedUserId);
+            if (authorizationResult != null) return authorizationResult;
+            if (payload?.ItemIds == null || payload.ItemIds.Count == 0
+                || payload.ItemIds.Count > PersistedPayloadPolicy.MaximumBookmarkPageSize
+                || payload.ItemIds.Distinct(StringComparer.Ordinal).Count() != payload.ItemIds.Count
+                || payload.ItemIds.Any(id => id == null
+                    || id.Length > PersistedPayloadPolicy.MaximumBookmarkItemIdLength))
+            {
+                return BadRequest(new BookmarkMutationResponse
+                {
+                    Success = false,
+                    Message = $"Supply 1-{PersistedPayloadPolicy.MaximumBookmarkPageSize} distinct bounded item ids."
+                });
+            }
+
+            if (!Guid.TryParseExact(authorizedUserId, "N", out var authorizedUserGuid))
+            {
+                return BadRequest(new BookmarkMutationResponse { Success = false, Message = "Invalid authorized user id." });
+            }
+            var user = _userManager.GetUserById(authorizedUserGuid);
+            if (user == null)
+            {
+                return NotFound(new BookmarkMutationResponse { Success = false, Message = "The authorized user no longer exists." });
+            }
+
+            var response = new BookmarkItemResolutionResponse();
+            foreach (var rawItemId in payload.ItemIds)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var resolution = new BookmarkItemResolution { ItemId = rawItemId };
+                if (!Guid.TryParse(rawItemId, out var itemId))
+                {
+                    resolution.Status = "invalid";
+                    response.Items.Add(resolution);
+                    continue;
+                }
+
+                try
+                {
+                    var global = _libraryManager.GetItemById<BaseItem>(itemId);
+                    if (global == null)
+                    {
+                        resolution.Status = "notFound";
+                    }
+                    else
+                    {
+                        var visible = _libraryManager.GetItemById<BaseItem>(itemId, user);
+                        if (visible == null)
+                        {
+                            resolution.Status = "forbidden";
+                        }
+                        else
+                        {
+                            resolution.Status = "exists";
+                            resolution.Id = visible.Id.ToString("N");
+                            resolution.Type = visible.GetType().Name;
+                            resolution.Name = visible.Name ?? string.Empty;
+                            if (visible is MediaBrowser.Controller.Entities.TV.Episode episode)
+                            {
+                                resolution.Type = "Episode";
+                                resolution.SeriesName = episode.SeriesName ?? string.Empty;
+                                resolution.ParentIndexNumber = episode.ParentIndexNumber;
+                                resolution.IndexNumber = episode.IndexNumber;
+                            }
+                        }
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    resolution.Status = "transient";
+                    _logger.LogWarning(
+                        $"Bookmark item batch resolution retained {rawItemId}; lookup failed with {ex.GetType().Name}.");
+                }
+                response.Items.Add(resolution);
+            }
+            return Ok(response);
         }
 
         [HttpPost("user-settings/{userId}/bookmark.json")]
         [Authorize]
         [Produces("application/json")]
+        [PersistedPayloadLimit(PersistedPayloadPolicy.BookmarkRequestBytes)]
         public IActionResult SaveUserBookmark(string userId, [FromBody] UserBookmark userConfiguration)
         {
             var authorizationResult = AuthorizeUserConfigAccess(userId, out var authorizedUserId);
@@ -1157,22 +1382,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
 
             try
             {
-                var result = CommitBookmarkMutation(authorizedUserId, expectedRevision, current =>
-                {
-                    var replacement = new Dictionary<string, BookmarkItem>(StringComparer.Ordinal);
-                    foreach (var pair in userConfiguration.Bookmarks)
-                    {
-                        if (!IsValidBookmarkId(pair.Key) || !IsValidBookmarkItem(pair.Value))
-                        {
-                            return BookmarkMutationPlan.Invalid(BookmarkInputMessage);
-                        }
-
-                        replacement[pair.Key] = CloneBookmark(pair.Value);
-                    }
-
-                    current.Bookmarks = replacement;
-                    return BookmarkMutationPlan.Change();
-                });
+                var result = FromBookmarkStore(_userConfigurationManager.ReplaceBookmarks(
+                    authorizedUserId,
+                    expectedRevision,
+                    userConfiguration.Bookmarks));
                 if (result.Status == BookmarkCommitStatus.Success)
                 {
                     _logger.LogInformation($"Replaced enhanced bookmarks for {ResolveUserDisplay(authorizedUserId)} at revision {result.State!.Revision}");
@@ -1209,6 +1422,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         [HttpPost("user-settings/{userId}/bookmark.json/add")]
         [Authorize]
         [Produces("application/json")]
+        [PersistedPayloadLimit(PersistedPayloadPolicy.BookmarkRequestBytes)]
         public IActionResult AddUserBookmark(string userId, [FromBody] AddBookmarkPayload payload)
         {
             var authorizationResult = AuthorizeUserConfigAccess(userId, out var authorizedUserId);
@@ -1263,11 +1477,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 {
                     return BadRequest(new BookmarkMutationResponse { Success = false, Message = BookmarkInputMessage });
                 }
-                var result = CommitBookmarkMutation(authorizedUserId, payload.Revision, current =>
-                    ApplyBookmarkOperations(current, new[]
-                    {
-                        new BookmarkOperationPayload { Type = "add", BookmarkId = bookmarkId, Bookmark = item }
-                    }));
+                var result = ApplyIndexedBookmarkOperations(
+                    authorizedUserId,
+                    payload.Revision,
+                    new[] { new BookmarkOperationPayload { Type = "add", BookmarkId = bookmarkId, Bookmark = item } },
+                    includeCompleteSuccess: true);
                 if (result.Status == BookmarkCommitStatus.Success)
                 {
                     result.ResponseId = bookmarkId;
@@ -1290,6 +1504,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         [HttpPut("user-settings/{userId}/bookmark.json/{bookmarkId}")]
         [Authorize]
         [Produces("application/json")]
+        [PersistedPayloadLimit(PersistedPayloadPolicy.BookmarkRequestBytes)]
         public IActionResult UpdateUserBookmark(string userId, string bookmarkId, [FromBody] UpdateBookmarkPayload payload)
         {
             var authorizationResult = AuthorizeUserConfigAccess(userId, out var authorizedUserId);
@@ -1310,11 +1525,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
 
             try
             {
-                var result = CommitBookmarkMutation(authorizedUserId, payload.Revision, current =>
-                    ApplyBookmarkOperations(current, new[]
-                    {
-                        new BookmarkOperationPayload { Type = "update", BookmarkId = bookmarkId, Bookmark = payload.Bookmark }
-                    }));
+                var result = ApplyIndexedBookmarkOperations(
+                    authorizedUserId,
+                    payload.Revision,
+                    new[] { new BookmarkOperationPayload { Type = "update", BookmarkId = bookmarkId, Bookmark = payload.Bookmark } },
+                    includeCompleteSuccess: true);
                 if (result.Status == BookmarkCommitStatus.Success)
                 {
                     result.ResponseId = bookmarkId;
@@ -1351,17 +1566,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
 
             try
             {
-                var result = CommitBookmarkMutation(authorizedUserId, revision, current =>
-                {
-                    if (!current.Bookmarks.ContainsKey(bookmarkId))
-                    {
-                        return BookmarkMutationPlan.Missing("No matching bookmark to remove.");
-                    }
-                    return ApplyBookmarkOperations(current, new[]
-                    {
-                        new BookmarkOperationPayload { Type = "delete", BookmarkId = bookmarkId }
-                    });
-                });
+                var result = ApplyIndexedBookmarkOperations(
+                    authorizedUserId,
+                    revision,
+                    new[] { new BookmarkOperationPayload { Type = "delete-strict", BookmarkId = bookmarkId } },
+                    includeCompleteSuccess: true);
                 if (result.Status == BookmarkCommitStatus.Success)
                 {
                     result.Removed = true;
@@ -1378,6 +1587,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         public sealed class BookmarkBatchPayload
         {
             public long? Revision { get; set; }
+            public bool CompactResponse { get; set; }
             public List<BookmarkOperationPayload> Operations { get; set; } = new List<BookmarkOperationPayload>();
         }
 
@@ -1385,7 +1595,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         {
             public string Type { get; set; } = string.Empty;
             public string BookmarkId { get; set; } = string.Empty;
+            public string SourceBookmarkId { get; set; } = string.Empty;
             public BookmarkItem? Bookmark { get; set; }
+            public double? Timestamp { get; set; }
+            public string UpdatedAt { get; set; } = string.Empty;
         }
 
         public sealed class BookmarkMutationResponse
@@ -1396,15 +1609,21 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             public string Id { get; set; } = string.Empty;
             public bool? Removed { get; set; }
             public long Revision { get; set; }
+            public bool CompleteState { get; set; } = true;
             public Dictionary<string, BookmarkItem> Bookmarks { get; set; } = new Dictionary<string, BookmarkItem>();
+            public List<string> DeletedBookmarkIds { get; set; } = new List<string>();
             public int Deleted { get; set; }
             public int RetainedUncertain { get; set; }
             public int Errors { get; set; }
+            public int ScannedItems { get; set; }
+            public bool HasMore { get; set; }
+            public string? NextCursor { get; set; }
         }
 
         [HttpPost("user-settings/{userId}/bookmark.json/batch")]
         [Authorize]
         [Produces("application/json")]
+        [PersistedPayloadLimit(PersistedPayloadPolicy.BookmarkRequestBytes)]
         public IActionResult BatchUserBookmarks(string userId, [FromBody] BookmarkBatchPayload payload)
         {
             var authorizationResult = AuthorizeUserConfigAccess(userId, out var authorizedUserId);
@@ -1418,12 +1637,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 return BadRequest(new BookmarkMutationResponse { Success = false, Message = "At least one operation is required." });
             }
 
-            if (payload.Operations.Count > 1000)
+            if (payload.Operations.Count > PersistedPayloadPolicy.MaximumBookmarks)
             {
                 return StatusCode(StatusCodes.Status413PayloadTooLarge, new BookmarkMutationResponse
                 {
                     Success = false,
-                    Message = "A bookmark batch may contain at most 1000 operations."
+                    Message = $"A bookmark batch may contain at most {PersistedPayloadPolicy.MaximumBookmarks:N0} operations."
                 });
             }
 
@@ -1434,14 +1653,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
 
             try
             {
-                var result = CommitBookmarkMutation(authorizedUserId, payload.Revision, current =>
-                    ApplyBookmarkOperations(current, payload.Operations));
+                var result = ApplyIndexedBookmarkOperations(
+                    authorizedUserId,
+                    payload.Revision,
+                    payload.Operations,
+                    includeCompleteSuccess: !payload.CompactResponse);
                 if (result.Status == BookmarkCommitStatus.Success)
                 {
                     _logger.LogInformation(
                         $"Committed {payload.Operations.Count} bookmark operations for {ResolveUserDisplay(authorizedUserId)} at revision {result.State!.Revision}");
                 }
-                return ToBookmarkActionResult(result);
+                return ToBookmarkActionResult(result, compactSuccess: payload.CompactResponse);
             }
             catch (Exception ex)
             {
@@ -1452,6 +1674,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         public sealed class BookmarkCleanupPayload
         {
             public long? Revision { get; set; }
+            public bool CompactResponse { get; set; }
+            public string? Cursor { get; set; }
+            public int Limit { get; set; } = PersistedPayloadPolicy.MaximumBookmarkPageSize;
         }
 
         /// <summary>
@@ -1463,6 +1688,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         [HttpPost("user-settings/{userId}/bookmark.json/cleanup")]
         [Authorize]
         [Produces("application/json")]
+        [PersistedPayloadLimit(PersistedPayloadPolicy.BookmarkRequestBytes)]
         public IActionResult CleanupUserBookmarks(
             string userId,
             [FromBody] BookmarkCleanupPayload payload,
@@ -1479,6 +1705,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 return PreconditionRequired();
             }
 
+            if (payload.Limit < 1 || payload.Limit > PersistedPayloadPolicy.MaximumBookmarkPageSize
+                || (payload.Cursor != null && payload.Cursor.Length > PersistedPayloadPolicy.MaximumBookmarkCursorLength))
+            {
+                return BadRequest(new BookmarkMutationResponse
+                {
+                    Success = false,
+                    Message = $"Cleanup limit must be 1-{PersistedPayloadPolicy.MaximumBookmarkPageSize}; cursor is capped at {PersistedPayloadPolicy.MaximumBookmarkCursorLength} characters."
+                });
+            }
+
             if (!Guid.TryParseExact(authorizedUserId, "N", out var authorizedUserGuid))
             {
                 return BadRequest(new BookmarkMutationResponse { Success = false, Message = "Invalid authorized user id." });
@@ -1493,16 +1729,90 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             var counts = new BookmarkCleanupCounts();
             try
             {
-                var result = CommitBookmarkMutation(
+                var storeCounts = _userConfigurationManager.GetBookmarkCounts(authorizedUserId);
+                if (storeCounts.Total > PersistedPayloadPolicy.MaximumBookmarks)
+                {
+                    counts.RetainedUncertain = storeCounts.Total;
+                    counts.Errors = 1;
+                    return StatusCode(StatusCodes.Status413PayloadTooLarge, new BookmarkMutationResponse
+                    {
+                        Success = false,
+                        Revision = storeCounts.Revision,
+                        Message = $"Bookmark cleanup is bounded to {PersistedPayloadPolicy.MaximumBookmarks:N0} entries; repair or reset the legacy store first.",
+                        RetainedUncertain = counts.RetainedUncertain,
+                        Errors = counts.Errors
+                    });
+                }
+                var page = _userConfigurationManager.GetBookmarkItemGroups(
+                    authorizedUserId,
+                    payload.Cursor,
+                    payload.Limit);
+                if (page.Revision != payload.Revision.Value)
+                {
+                    var conflict = FromBookmarkStore(_userConfigurationManager.ApplyBookmarkOperations(
+                        authorizedUserId,
+                        payload.Revision,
+                        Array.Empty<BookmarkStoreOperation>()));
+                    return ToBookmarkActionResult(conflict, counts, compactSuccess: false);
+                }
+
+                var deleteIds = new List<string>();
+                foreach (var group in page.Groups)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (!Guid.TryParse(group.ItemId, out var itemId))
+                    {
+                        counts.RetainedUncertain += group.BookmarkIds.Count;
+                        counts.Errors++;
+                        continue;
+                    }
+
+                    var existence = ClassifyBookmarkItem(itemId, user, cancellationToken);
+                    switch (existence.Kind)
+                    {
+                        case BookmarkItemExistenceKind.NotFound:
+                            deleteIds.AddRange(group.BookmarkIds);
+                            break;
+                        case BookmarkItemExistenceKind.ForbiddenOrNotVisible:
+                            counts.RetainedUncertain += group.BookmarkIds.Count;
+                            break;
+                        case BookmarkItemExistenceKind.TransientFailure:
+                            counts.RetainedUncertain += group.BookmarkIds.Count;
+                            counts.Errors++;
+                            _logger.LogWarning(
+                                $"Retaining {group.BookmarkIds.Count} bookmark(s) for item {itemId:N}; existence classification failed: {existence.ErrorType}");
+                            break;
+                        case BookmarkItemExistenceKind.Cancelled:
+                            throw new OperationCanceledException(cancellationToken);
+                    }
+                }
+
+                cancellationToken.ThrowIfCancellationRequested();
+                var result = ApplyIndexedBookmarkOperations(
                     authorizedUserId,
                     payload.Revision,
-                    current => PlanBookmarkCleanup(current, user, cancellationToken, counts));
+                    deleteIds.Select(id => new BookmarkOperationPayload
+                    {
+                        Type = "delete",
+                        BookmarkId = id
+                    }).ToList(),
+                    includeCompleteSuccess: !payload.CompactResponse);
+                counts.Deleted = result.Status == BookmarkCommitStatus.Success ? deleteIds.Count : 0;
+                counts.DeletedBookmarkIds.AddRange(
+                    result.Status == BookmarkCommitStatus.Success
+                        ? deleteIds.OrderBy(id => id, StringComparer.Ordinal)
+                        : Array.Empty<string>());
                 if (result.Status == BookmarkCommitStatus.Success)
                 {
                     _logger.LogInformation(
-                        $"Bookmark cleanup for {ResolveUserDisplay(authorizedUserId)} deleted {counts.Deleted}, retained {counts.RetainedUncertain} uncertain, and observed {counts.Errors} lookup errors at revision {result.State!.Revision}");
+                        $"Bookmark cleanup batch for {ResolveUserDisplay(authorizedUserId)} scanned {page.Groups.Count} items, deleted {counts.Deleted}, retained {counts.RetainedUncertain} uncertain, and observed {counts.Errors} lookup errors at revision {result.State!.Revision}");
                 }
-                return ToBookmarkActionResult(result, counts);
+                return ToBookmarkActionResult(
+                    result,
+                    counts,
+                    payload.CompactResponse,
+                    scannedItems: page.Groups.Count,
+                    nextCursor: page.NextCursor);
             }
             catch (OperationCanceledException)
             {
@@ -1514,6 +1824,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                     Errors = counts.Errors
                 });
             }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(new BookmarkMutationResponse { Success = false, Message = ex.Message });
+            }
             catch (Exception ex)
             {
                 return BookmarkWriteFailure(authorizedUserId, "clean up bookmarks", ex);
@@ -1521,10 +1835,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         }
 
         private const string BookmarkFileName = "bookmark.json";
-        private const int MaxBookmarkIdLength = 256;
-        private const int MaxBookmarkStringLength = 4096;
-        private const int MaxBookmarkCleanupEntries = 1000;
-        private const string BookmarkInputMessage = "Bookmark ids must be 1-256 characters; ItemId is required; bookmark strings are capped at 4096 characters; Timestamp must be finite and non-negative.";
+        private const string BookmarkInputMessage = "Bookmark ids and item ids must be 1-256 characters; provider ids are capped at 128, type fields at 64, names and labels at 512, timestamps at 64; Timestamp must be finite and non-negative.";
+        private static readonly string BookmarkQuotaMessage = $"A user may store at most {PersistedPayloadPolicy.MaximumBookmarks:N0} bookmarks and {PersistedPayloadPolicy.BookmarkPersistedBytes:N0} indexed payload bytes.";
 
         private enum BookmarkCommitStatus
         {
@@ -1545,25 +1857,51 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             public bool? Removed { get; set; }
         }
 
-        private sealed class BookmarkMutationPlan
-        {
-            public BookmarkCommitStatus Status { get; private set; } = BookmarkCommitStatus.Success;
-            public bool Changed { get; private set; }
-            public string Message { get; private set; } = string.Empty;
+        private BookmarkCommitResult ApplyIndexedBookmarkOperations(
+            string userId,
+            long? expectedRevision,
+            IReadOnlyList<BookmarkOperationPayload> operations,
+            bool includeCompleteSuccess)
+            => FromBookmarkStore(_userConfigurationManager.ApplyBookmarkOperations(
+                userId,
+                expectedRevision,
+                operations.Select(operation => new BookmarkStoreOperation
+                {
+                    Type = operation.Type,
+                    BookmarkId = operation.BookmarkId,
+                    SourceBookmarkId = operation.SourceBookmarkId,
+                    Bookmark = operation.Bookmark,
+                    Timestamp = operation.Timestamp,
+                    UpdatedAt = operation.UpdatedAt
+                }).ToList(),
+                includeCompleteSuccess));
 
-            public static BookmarkMutationPlan Change() => new BookmarkMutationPlan { Changed = true };
-            public static BookmarkMutationPlan NoChange() => new BookmarkMutationPlan();
-            public static BookmarkMutationPlan Invalid(string message) => new BookmarkMutationPlan { Status = BookmarkCommitStatus.Invalid, Message = message };
-            public static BookmarkMutationPlan Missing(string message) => new BookmarkMutationPlan { Status = BookmarkCommitStatus.NotFound, Message = message };
-            public static BookmarkMutationPlan Conflict(string message) => new BookmarkMutationPlan { Status = BookmarkCommitStatus.Conflict, Message = message };
-            public static BookmarkMutationPlan TooLarge(string message) => new BookmarkMutationPlan { Status = BookmarkCommitStatus.TooLarge, Message = message };
-        }
+        private static BookmarkCommitResult FromBookmarkStore(BookmarkStoreMutationResult result)
+            => new BookmarkCommitResult
+            {
+                Status = result.Status switch
+                {
+                    BookmarkStoreStatus.Success => BookmarkCommitStatus.Success,
+                    BookmarkStoreStatus.Conflict => BookmarkCommitStatus.Conflict,
+                    BookmarkStoreStatus.Invalid => BookmarkCommitStatus.Invalid,
+                    BookmarkStoreStatus.NotFound => BookmarkCommitStatus.NotFound,
+                    BookmarkStoreStatus.TooLarge => BookmarkCommitStatus.TooLarge,
+                    _ => BookmarkCommitStatus.Invalid
+                },
+                State = result.State ?? new UserBookmark
+                {
+                    Revision = result.Revision,
+                    Bookmarks = new Dictionary<string, BookmarkItem>(StringComparer.Ordinal)
+                },
+                Message = result.Message
+            };
 
         private sealed class BookmarkCleanupCounts
         {
             public int Deleted { get; set; }
             public int RetainedUncertain { get; set; }
             public int Errors { get; set; }
+            public List<string> DeletedBookmarkIds { get; } = new List<string>();
         }
 
         private enum BookmarkItemExistenceKind
@@ -1628,269 +1966,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             }
         }
 
-        private BookmarkMutationPlan PlanBookmarkCleanup(
-            UserBookmark current,
-            JUser user,
-            CancellationToken cancellationToken,
-            BookmarkCleanupCounts counts)
-        {
-            if (current.Bookmarks.Count > MaxBookmarkCleanupEntries)
-            {
-                counts.RetainedUncertain = current.Bookmarks.Count;
-                counts.Errors = 1;
-                return BookmarkMutationPlan.TooLarge(
-                    $"Bookmark cleanup is bounded to {MaxBookmarkCleanupEntries} entries per request; no entries were removed.");
-            }
-
-            var deleteIds = new List<string>();
-            foreach (var itemGroup in current.Bookmarks.GroupBy(
-                pair => pair.Value?.ItemId ?? string.Empty,
-                StringComparer.Ordinal))
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                var entries = itemGroup.ToList();
-                if (!Guid.TryParse(itemGroup.Key, out var itemId))
-                {
-                    counts.RetainedUncertain += entries.Count;
-                    counts.Errors++;
-                    continue;
-                }
-
-                var existence = ClassifyBookmarkItem(itemId, user, cancellationToken);
-                switch (existence.Kind)
-                {
-                    case BookmarkItemExistenceKind.NotFound:
-                        deleteIds.AddRange(entries.Select(entry => entry.Key));
-                        break;
-                    case BookmarkItemExistenceKind.ForbiddenOrNotVisible:
-                        counts.RetainedUncertain += entries.Count;
-                        break;
-                    case BookmarkItemExistenceKind.TransientFailure:
-                        counts.RetainedUncertain += entries.Count;
-                        counts.Errors++;
-                        _logger.LogWarning(
-                            $"Retaining {entries.Count} bookmark(s) for item {itemId:N}; existence classification failed: {existence.ErrorType}");
-                        break;
-                    case BookmarkItemExistenceKind.Cancelled:
-                        throw new OperationCanceledException(cancellationToken);
-                    case BookmarkItemExistenceKind.Exists:
-                    default:
-                        break;
-                }
-            }
-
-            // Cancellation before this point cannot mutate the bookmark map.
-            // Once the deletion set is complete, commit it as one revision.
-            cancellationToken.ThrowIfCancellationRequested();
-            foreach (var bookmarkId in deleteIds)
-            {
-                current.Bookmarks.Remove(bookmarkId);
-            }
-            counts.Deleted = deleteIds.Count;
-            return deleteIds.Count == 0
-                ? BookmarkMutationPlan.NoChange()
-                : BookmarkMutationPlan.Change();
-        }
-
-        private BookmarkCommitResult CommitBookmarkMutation(
-            string authorizedUserId,
-            long? expectedRevision,
-            Func<UserBookmark, BookmarkMutationPlan> mutate)
-        {
-            lock (_userConfigurationManager.GetUserFileLock(authorizedUserId, BookmarkFileName))
-            {
-                var current = _userConfigurationManager.GetUserConfigurationStrict<UserBookmark>(authorizedUserId, BookmarkFileName);
-                if (!IsValidBookmarkState(current))
-                {
-                    throw new InvalidDataException("Bookmark state has an invalid revision or bookmark map.");
-                }
-
-                if (!expectedRevision.HasValue)
-                {
-                    return new BookmarkCommitResult
-                    {
-                        Status = BookmarkCommitStatus.PreconditionRequired,
-                        State = current,
-                        Message = "A bookmark revision precondition is required."
-                    };
-                }
-
-                if (expectedRevision.Value != current.Revision)
-                {
-                    return new BookmarkCommitResult
-                    {
-                        Status = BookmarkCommitStatus.Conflict,
-                        State = current,
-                        Message = "Bookmark state changed. Rebase the operation on the returned revision/state and retry."
-                    };
-                }
-
-                var plan = mutate(current);
-                if (plan.Status != BookmarkCommitStatus.Success)
-                {
-                    return new BookmarkCommitResult { Status = plan.Status, State = current, Message = plan.Message };
-                }
-
-                if (plan.Changed)
-                {
-                    current.Revision = checked(current.Revision + 1);
-                    _userConfigurationManager.SaveUserConfiguration(authorizedUserId, BookmarkFileName, current);
-                }
-
-                return new BookmarkCommitResult { Status = BookmarkCommitStatus.Success, State = current };
-            }
-        }
-
-        private static BookmarkMutationPlan ApplyBookmarkOperations(
-            UserBookmark current,
-            IReadOnlyCollection<BookmarkOperationPayload> operations)
-        {
-            var working = current.Bookmarks.ToDictionary(
-                pair => pair.Key,
-                pair => CloneBookmark(pair.Value),
-                StringComparer.Ordinal);
-            var changed = false;
-
-            foreach (var operation in operations)
-            {
-                if (operation == null || !IsValidBookmarkId(operation.BookmarkId))
-                {
-                    return BookmarkMutationPlan.Invalid(BookmarkInputMessage);
-                }
-
-                switch ((operation.Type ?? string.Empty).Trim().ToLowerInvariant())
-                {
-                    case "add":
-                        if (!IsValidBookmarkItem(operation.Bookmark))
-                        {
-                            return BookmarkMutationPlan.Invalid(BookmarkInputMessage);
-                        }
-
-                        var added = CloneBookmark(operation.Bookmark!);
-                        if (working.TryGetValue(operation.BookmarkId, out var existing))
-                        {
-                            if (!BookmarkEquals(existing, added))
-                            {
-                                return BookmarkMutationPlan.Conflict($"Bookmark id '{operation.BookmarkId}' already exists with different data.");
-                            }
-                            break;
-                        }
-
-                        working[operation.BookmarkId] = added;
-                        changed = true;
-                        break;
-
-                    case "update":
-                        if (!IsValidBookmarkItem(operation.Bookmark))
-                        {
-                            return BookmarkMutationPlan.Invalid(BookmarkInputMessage);
-                        }
-                        if (!working.TryGetValue(operation.BookmarkId, out var oldBookmark))
-                        {
-                            return BookmarkMutationPlan.Missing($"Bookmark id '{operation.BookmarkId}' does not exist.");
-                        }
-
-                        var updated = CloneBookmark(operation.Bookmark!);
-                        if (string.IsNullOrWhiteSpace(updated.CreatedAt)) updated.CreatedAt = oldBookmark.CreatedAt;
-                        if (!BookmarkEquals(oldBookmark, updated))
-                        {
-                            working[operation.BookmarkId] = updated;
-                            changed = true;
-                        }
-                        break;
-
-                    case "delete":
-                        changed |= working.Remove(operation.BookmarkId);
-                        break;
-
-                    default:
-                        return BookmarkMutationPlan.Invalid($"Unsupported bookmark operation type '{operation.Type}'.");
-                }
-            }
-
-            if (!changed)
-            {
-                return BookmarkMutationPlan.NoChange();
-            }
-
-            current.Bookmarks = working;
-            return BookmarkMutationPlan.Change();
-        }
-
-        private static BookmarkItem CloneBookmark(BookmarkItem source)
-            => new BookmarkItem
-            {
-                ItemId = source.ItemId ?? string.Empty,
-                IdentityVersion = source.IdentityVersion,
-                ItemType = source.ItemType ?? string.Empty,
-                TmdbId = source.TmdbId ?? string.Empty,
-                TvdbId = source.TvdbId ?? string.Empty,
-                SeriesTmdbId = source.SeriesTmdbId ?? string.Empty,
-                SeriesTvdbId = source.SeriesTvdbId ?? string.Empty,
-                MediaType = source.MediaType ?? string.Empty,
-                SeasonNumber = source.SeasonNumber,
-                EpisodeNumber = source.EpisodeNumber,
-                EpisodeEndNumber = source.EpisodeEndNumber,
-                Name = source.Name ?? string.Empty,
-                Timestamp = source.Timestamp,
-                Label = source.Label ?? string.Empty,
-                CreatedAt = source.CreatedAt ?? string.Empty,
-                UpdatedAt = source.UpdatedAt ?? string.Empty,
-                SyncedFrom = source.SyncedFrom ?? string.Empty
-            };
-
-        private static bool BookmarkEquals(BookmarkItem left, BookmarkItem right)
-            => string.Equals(left.ItemId, right.ItemId, StringComparison.Ordinal)
-            && left.IdentityVersion == right.IdentityVersion
-            && string.Equals(left.ItemType, right.ItemType, StringComparison.Ordinal)
-            && string.Equals(left.TmdbId, right.TmdbId, StringComparison.Ordinal)
-            && string.Equals(left.TvdbId, right.TvdbId, StringComparison.Ordinal)
-            && string.Equals(left.SeriesTmdbId, right.SeriesTmdbId, StringComparison.Ordinal)
-            && string.Equals(left.SeriesTvdbId, right.SeriesTvdbId, StringComparison.Ordinal)
-            && string.Equals(left.MediaType, right.MediaType, StringComparison.Ordinal)
-            && left.SeasonNumber == right.SeasonNumber
-            && left.EpisodeNumber == right.EpisodeNumber
-            && left.EpisodeEndNumber == right.EpisodeEndNumber
-            && string.Equals(left.Name, right.Name, StringComparison.Ordinal)
-            && left.Timestamp.Equals(right.Timestamp)
-            && string.Equals(left.Label, right.Label, StringComparison.Ordinal)
-            && string.Equals(left.CreatedAt, right.CreatedAt, StringComparison.Ordinal)
-            && string.Equals(left.UpdatedAt, right.UpdatedAt, StringComparison.Ordinal)
-            && string.Equals(left.SyncedFrom, right.SyncedFrom, StringComparison.Ordinal);
-
-        private static bool IsValidBookmarkState(UserBookmark state)
-            => state.Revision >= 0 && state.Bookmarks != null;
 
         private static bool IsValidBookmarkId(string? bookmarkId)
-            => !string.IsNullOrWhiteSpace(bookmarkId) && bookmarkId.Length <= MaxBookmarkIdLength;
+            => PersistedPayloadPolicy.IsValidBookmarkId(bookmarkId);
 
         private static bool IsValidBookmarkItem(BookmarkItem? bookmark)
-            => bookmark != null
-            && !string.IsNullOrWhiteSpace(bookmark.ItemId)
-            && bookmark.ItemId.Length <= MaxBookmarkStringLength
-            && (bookmark.IdentityVersion == 0 || bookmark.IdentityVersion == 1)
-            && (bookmark.IdentityVersion == 0 || !string.IsNullOrWhiteSpace(bookmark.ItemType))
-            && (bookmark.ItemType?.Length ?? 0) <= MaxBookmarkStringLength
-            && (bookmark.TmdbId?.Length ?? 0) <= MaxBookmarkStringLength
-            && (bookmark.TvdbId?.Length ?? 0) <= MaxBookmarkStringLength
-            && (bookmark.SeriesTmdbId?.Length ?? 0) <= MaxBookmarkStringLength
-            && (bookmark.SeriesTvdbId?.Length ?? 0) <= MaxBookmarkStringLength
-            && (bookmark.MediaType?.Length ?? 0) <= MaxBookmarkStringLength
-            && IsValidBookmarkIndex(bookmark.SeasonNumber)
-            && IsValidBookmarkIndex(bookmark.EpisodeNumber)
-            && IsValidBookmarkIndex(bookmark.EpisodeEndNumber)
-            && (!bookmark.EpisodeNumber.HasValue || !bookmark.EpisodeEndNumber.HasValue
-                || bookmark.EpisodeEndNumber.Value >= bookmark.EpisodeNumber.Value)
-            && (bookmark.Name?.Length ?? 0) <= MaxBookmarkStringLength
-            && (bookmark.Label?.Length ?? 0) <= MaxBookmarkStringLength
-            && (bookmark.CreatedAt?.Length ?? 0) <= MaxBookmarkStringLength
-            && (bookmark.UpdatedAt?.Length ?? 0) <= MaxBookmarkStringLength
-            && (bookmark.SyncedFrom?.Length ?? 0) <= MaxBookmarkStringLength
-            && double.IsFinite(bookmark.Timestamp)
-            && bookmark.Timestamp >= 0;
-
-        private static bool IsValidBookmarkIndex(int? value)
-            => !value.HasValue || (value.Value >= 0 && value.Value <= 100000);
+            => PersistedPayloadPolicy.IsValidBookmarkItem(bookmark);
 
         private bool TryParseIfMatchRevision(out long revision)
         {
@@ -1920,9 +2001,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
 
         private IActionResult ToBookmarkActionResult(
             BookmarkCommitResult result,
-            BookmarkCleanupCounts? cleanup = null)
+            BookmarkCleanupCounts? cleanup = null,
+            bool compactSuccess = false,
+            int scannedItems = 0,
+            string? nextCursor = null)
         {
             if (result.State != null) SetBookmarkEtag(result.State.Revision);
+            // Conflicts always carry the complete authoritative state so the
+            // caller can rebase. A compact successful receipt carries only the
+            // revision and cleanup delta, avoiding an O(total) response for an
+            // ordinary one-bookmark mutation.
+            var includeCompleteState = !compactSuccess || result.Status == BookmarkCommitStatus.Conflict;
             var response = new BookmarkMutationResponse
             {
                 Success = result.Status == BookmarkCommitStatus.Success,
@@ -1931,10 +2020,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 Id = result.ResponseId,
                 Removed = result.Removed,
                 Revision = result.State?.Revision ?? 0,
-                Bookmarks = result.State?.Bookmarks ?? new Dictionary<string, BookmarkItem>(),
+                CompleteState = includeCompleteState,
+                Bookmarks = includeCompleteState
+                    ? result.State?.Bookmarks ?? new Dictionary<string, BookmarkItem>()
+                    : new Dictionary<string, BookmarkItem>(),
+                DeletedBookmarkIds = cleanup?.DeletedBookmarkIds ?? new List<string>(),
                 Deleted = cleanup?.Deleted ?? 0,
                 RetainedUncertain = cleanup?.RetainedUncertain ?? 0,
-                Errors = cleanup?.Errors ?? 0
+                Errors = cleanup?.Errors ?? 0,
+                ScannedItems = scannedItems,
+                HasMore = nextCursor != null,
+                NextCursor = nextCursor
             };
 
             return result.Status switch

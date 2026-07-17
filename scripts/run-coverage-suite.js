@@ -19,6 +19,7 @@ function getCoveragePlan(suite, root = ROOT) {
                 label: 'client tests with V8 coverage',
                 command: process.execPath,
                 args: [path.join(root, 'node_modules', 'vitest', 'vitest.mjs'), 'run', '--coverage'],
+                env: { VITE_JC_V8_COVERAGE: '1' },
             },
             {
                 label: 'client coverage ratchet',
@@ -70,7 +71,7 @@ function runCoverageSuite(suite, options = {}) {
     for (const step of getCoveragePlan(suite, root)) {
         const result = spawn(step.command, step.args, {
             cwd: root,
-            env: process.env,
+            env: { ...process.env, ...(step.env || {}) },
             stdio: 'inherit',
         });
         if (result.error) {

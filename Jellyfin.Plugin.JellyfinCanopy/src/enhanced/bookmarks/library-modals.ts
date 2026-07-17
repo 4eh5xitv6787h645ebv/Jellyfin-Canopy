@@ -10,11 +10,16 @@ import { escapeHtml, toast } from '../../core/ui-kit';
 import { formatTimestamp, renderActiveBookmarks } from './library-render';
 import type { IdentityContext } from '../../types/jc';
 import { normalizeBookmarkMediaType } from './media-types';
-import { bookmarkIdentityLabel, compareBookmarkIdentity } from './bookmark-identity';
+import { bookmarkIdentityLabel } from './bookmark-identity';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 const modalTimers = new Set<number>();
+export const BOOKMARK_DUPLICATE_GROUP_PAGE_SIZE = 10;
+export const BOOKMARK_DUPLICATE_VERSION_PAGE_SIZE = 10;
+export const BOOKMARK_DUPLICATE_TIMESTAMP_PREVIEW_SIZE = 10;
+export const BOOKMARK_OFFSET_PREVIEW_SIZE = 50;
+export const BOOKMARK_DUPLICATE_SCAN_MAX_BOOKMARKS = 1000;
 
 function scheduleModalTask(context: IdentityContext, callback: () => void, delay: number): void {
   const timer = window.setTimeout(() => {
@@ -62,6 +67,8 @@ export function showOffsetAdjustmentModal(
     toast(JC.t!('bookmark_no_synced'), 2000);
     return;
   }
+  const previewBookmarks = syncedBookmarks.slice(0, BOOKMARK_OFFSET_PREVIEW_SIZE);
+  const previewRemainder = syncedBookmarks.length - previewBookmarks.length;
 
   const modal = document.createElement('div');
   modal.className = 'jc-bm-library-modal-overlay';
@@ -91,12 +98,13 @@ export function showOffsetAdjustmentModal(
 
         <div class="jc-modal-list-container">
           <div class="jc-modal-list-title">${JC.t!('bookmark_offset_affected')}</div>
-          ${syncedBookmarks.map((bm: any) => `
+          ${previewBookmarks.map((bm: any) => `
             <div class="jc-modal-list-item">
               <div class="jc-modal-list-item-title">${escapeHtml(bm.label || JC.t!('bookmark_unlabeled'))}</div>
               <div class="jc-modal-list-item-meta">${formatTimestamp(bm.timestamp)} • ${JC.t!('bookmark_from').replace('{source}', escapeHtml(bm.syncedFrom))}</div>
             </div>
           `).join('')}
+          ${previewRemainder > 0 ? `<div class="jc-modal-list-item jc-offset-preview-remainder">+${previewRemainder}</div>` : ''}
         </div>
       </div>
 
@@ -136,24 +144,14 @@ export function showOffsetAdjustmentModal(
     btn.querySelector('span:last-child')!.innerHTML = '<span class="material-icons" style="animation: spin 1s linear infinite; font-size: 18px;">refresh</span>';
 
     try {
-      let updatedCount = 0;
+      const updatedCount = await JC.bookmarks!.adjustOffsets(syncedBookmarks, offset);
+      if (!JC.identity.isCurrent(context)) return;
+      const safeUpdatedCount = Number(updatedCount) || 0;
 
-      // Update each synced bookmark
-      for (const bm of syncedBookmarks) {
-        if (!JC.identity.isCurrent(context)) return;
-        const newTimestamp = Math.max(0, bm.timestamp + offset);
-        const ok = await JC.bookmarks!.update(bm.id, {
-          timestamp: newTimestamp,
-          syncedFrom: '' // Clear syncedFrom to remove the icon
-        });
-        if (!JC.identity.isCurrent(context)) return;
-        if (ok) updatedCount++;
-      }
-
-      if (updatedCount > 0) {
+      if (safeUpdatedCount > 0) {
         const message = offset === 0
-          ? JC.t!('bookmark_offset_cleared').replace('{count}', String(updatedCount))
-          : JC.t!('bookmark_offset_applied').replace('{count}', String(updatedCount)).replace('{offset}', `${offset > 0 ? '+' : ''}${offset}s`);
+          ? JC.t!('bookmark_offset_cleared').replace('{count}', String(safeUpdatedCount))
+          : JC.t!('bookmark_offset_applied').replace('{count}', String(safeUpdatedCount)).replace('{offset}', `${offset > 0 ? '+' : ''}${offset}s`);
         toast(message, 3000);
         closeDialog();
 
@@ -189,7 +187,80 @@ export function showOffsetAdjustmentModal(
  * made later in the modal.
  */
 export function findDuplicateBookmarks(bookmarks: Record<string, any>): any[] {
-  const duplicateGroups: any[] = [];
+  const identityText = (value: unknown): string => typeof value === 'string' ? value.trim() : '';
+  const identityInteger = (value: unknown): number | null => {
+    if (typeof value === 'number' && Number.isSafeInteger(value)) return value;
+    if (typeof value === 'string' && /^\d+$/.test(value.trim())) return Number(value);
+    return null;
+  };
+  const comparableType = (identity: any): string => {
+    const type = identityText(identity.itemType).toLowerCase();
+    if (identity.identityVersion === 1 && type) return type;
+    return normalizeBookmarkMediaType(identity.mediaType) === 'movie' ? 'movie' : '';
+  };
+  const describe = (identity: any): {
+    type: string;
+    tokens: string[];
+    constraints: Array<[string, string]>;
+  } | null => {
+    const type = comparableType(identity);
+    if (!type) return null;
+    const constraints: Array<[string, string]> = [];
+    const tokens: string[] = [];
+    const addText = (field: string, value: unknown, tokenPrefix?: string): string => {
+      const normalized = identityText(value);
+      if (normalized) {
+        constraints.push([field, normalized]);
+        if (tokenPrefix) tokens.push(`${type}:${tokenPrefix}:${normalized}`);
+      }
+      return normalized;
+    };
+    addText('tmdbId', identity.tmdbId, 'tmdb');
+    addText('tvdbId', identity.tvdbId, 'tvdb');
+    if (type === 'episode' || type === 'season') {
+      const seriesTmdb = addText('seriesTmdbId', identity.seriesTmdbId);
+      const seriesTvdb = addText('seriesTvdbId', identity.seriesTvdbId);
+      const season = identityInteger(identity.seasonNumber);
+      if (season !== null) constraints.push(['seasonNumber', String(season)]);
+      if (type === 'episode') {
+        const start = identityInteger(identity.episodeNumber);
+        const explicitEnd = identityInteger(identity.episodeEndNumber);
+        if (start !== null) constraints.push(['episodeNumber', String(start)]);
+        if (explicitEnd !== null) constraints.push(['episodeEndNumber', String(explicitEnd)]);
+        const end = explicitEnd ?? start;
+        if (season !== null && start !== null && end !== null) {
+          if (seriesTmdb) tokens.push(`${type}:series-tmdb:${seriesTmdb}:${season}:${start}:${end}`);
+          if (seriesTvdb) tokens.push(`${type}:series-tvdb:${seriesTvdb}:${season}:${start}:${end}`);
+        }
+      } else if (season !== null) {
+        if (seriesTmdb) tokens.push(`${type}:series-tmdb:${seriesTmdb}:${season}`);
+        if (seriesTvdb) tokens.push(`${type}:series-tvdb:${seriesTvdb}:${season}`);
+      }
+    }
+    constraints.sort(([left], [right]) => left.localeCompare(right));
+    const uniqueTokens = [...new Set(tokens)].sort();
+    return uniqueTokens.length > 0 ? { type, tokens: uniqueTokens, constraints } : null;
+  };
+  const compatible = (
+    descriptor: NonNullable<ReturnType<typeof describe>>,
+    group: {
+      type: string;
+      constraints: Map<string, string>;
+      memberTokenSets: string[][];
+    }
+  ): boolean => descriptor.type === group.type
+    && descriptor.constraints.every(([field, value]) => {
+      const fixed = group.constraints.get(field);
+      return fixed === undefined || fixed === value;
+    })
+    && group.memberTokenSets.every(member => member.some(token => descriptor.tokens.includes(token)));
+  const identitySignature = (identity: any): string => JSON.stringify([
+    identity.identityVersion ?? 0, String(identity.itemType ?? '').trim().toLowerCase(),
+    String(identity.tmdbId ?? '').trim(), String(identity.tvdbId ?? '').trim(),
+    String(identity.seriesTmdbId ?? '').trim(), String(identity.seriesTvdbId ?? '').trim(),
+    normalizeBookmarkMediaType(identity.mediaType), identity.seasonNumber ?? null,
+    identity.episodeNumber ?? null, identity.episodeEndNumber ?? null
+  ]);
   const versions = new Map<string, any[]>();
   for (const [id, bookmark] of Object.entries<any>(bookmarks)) {
     if (!bookmark || typeof bookmark !== 'object' || !bookmark.itemId) continue;
@@ -215,51 +286,118 @@ export function findDuplicateBookmarks(bookmarks: Record<string, any>): any[] {
         return completeness || JSON.stringify(leftFields).localeCompare(JSON.stringify(rightFields));
       });
       const identity = ranked[0];
-      const consistent = records.every((left, leftIndex) => records.every((right, rightIndex) =>
-        leftIndex === rightIndex || (
-          left.identityVersion === right.identityVersion
-          && compareBookmarkIdentity(
-            { ...left, itemId: `__identity-left-${leftIndex}__` },
-            { ...right, itemId: `__identity-right-${rightIndex}__` }
-          ) === 'logical'
-        )));
+      // Collapse rows with the same identity before the pairwise ambiguity
+      // check. This keeps 1,000 timestamps for one version linear while still
+      // comparing every distinct identity combination and failing closed when
+      // an adversarial store would exceed the explicit responsiveness budget.
+      const recordIdentityClasses = new Map<string, any>();
+      for (const record of records) {
+        const rawVersion = record.identityVersion === undefined ? '__missing__' : record.identityVersion;
+        const signature = JSON.stringify([rawVersion, identitySignature(record)]);
+        if (!recordIdentityClasses.has(signature)) recordIdentityClasses.set(signature, record);
+      }
+      const distinctRecordIdentities = [...recordIdentityClasses.values()];
+      const descriptors = distinctRecordIdentities.map(describe);
+      const firstDescriptor = descriptors[0];
+      const consistencyGroup = firstDescriptor ? {
+        type: firstDescriptor.type,
+        constraints: new Map(firstDescriptor.constraints),
+        memberTokenSets: [firstDescriptor.tokens]
+      } : null;
+      const consistent = !!consistencyGroup && descriptors.every((descriptor, index) => {
+        if (!descriptor
+          || distinctRecordIdentities[index].identityVersion !== distinctRecordIdentities[0].identityVersion
+          || !compatible(descriptor, consistencyGroup)) return false;
+        for (const [field, value] of descriptor.constraints) consistencyGroup.constraints.set(field, value);
+        if (!consistencyGroup.memberTokenSets.some(tokens => tokens.join('\0') === descriptor.tokens.join('\0'))) {
+          consistencyGroup.memberTokenSets.push(descriptor.tokens);
+        }
+        return true;
+      });
       // Multiple timestamps for one Jellyfin item should carry the same logical
       // identity. Mixed legacy/v1 or conflicting metadata is retained visibly,
       // but cannot nominate a merge identity based on insertion order.
       const orderedRecords = [...records].sort((left, right) => String(left.id).localeCompare(String(right.id)));
-      return consistent ? [{ itemId, records: orderedRecords, identity }] : [];
+      const descriptor = describe(identity);
+      return consistent && descriptor ? [{ itemId, records: orderedRecords, identity, descriptor }] : [];
     });
-  const assigned = new Set<number>();
-  for (let index = 0; index < candidates.length; index++) {
-    if (assigned.has(index)) continue;
-    const members = [index];
-    for (let candidate = index + 1; candidate < candidates.length; candidate++) {
-      if (assigned.has(candidate)) continue;
-      // Requiring a match against every member avoids a transitive merge when
-      // partially populated provider metadata forms an ambiguous bridge.
-      if (members.every(member => compareBookmarkIdentity(
-        candidates[member].identity,
-        candidates[candidate].identity
-      ) === 'logical')) {
-        members.push(candidate);
-      }
+  type Candidate = (typeof candidates)[number];
+  const groups: Array<{
+    members: Candidate[];
+    type: string;
+    constraints: Map<string, string>;
+    memberTokenSets: string[][];
+  }> = [];
+  // Provider tokens nominate only groups that share actual identity evidence.
+  // Compatibility is then checked directly against the group's at-most-seven
+  // fixed fields. This avoids materializing every constraint subset (up to 128
+  // routes per token for a rich episode) while preserving fail-closed conflict
+  // and non-transitive bridge handling.
+  const routes = new Map<string, Set<number>>();
+  const register = (groupId: number): void => {
+    const group = groups[groupId];
+    const tokens = [...new Set(group.memberTokenSets.flat())];
+    for (const token of tokens) {
+      const key = `${group.type}\0${token}`;
+      const groupIds = routes.get(key) || new Set<number>();
+      groupIds.add(groupId);
+      routes.set(key, groupIds);
     }
-    if (members.length < 2) continue;
-    members.forEach(member => assigned.add(member));
-    const itemGroups = Object.fromEntries(members.map(member => [
-      candidates[member].itemId,
-      candidates[member].records
+  };
+  for (const candidate of candidates) {
+    const possible = new Set<number>();
+    for (const token of candidate.descriptor.tokens) {
+      const groupIds = routes.get(`${candidate.descriptor.type}\0${token}`);
+      if (groupIds) for (const groupId of groupIds) possible.add(groupId);
+    }
+    // Discard fixed-field conflicts before the more detailed member-token
+    // check. Popular provider ids therefore remain bounded by the compact
+    // seven-field descriptors instead of allocating route projections.
+    for (const groupId of possible) {
+      if (candidate.descriptor.constraints.some(([field, value]) => {
+        const fixed = groups[groupId].constraints.get(field);
+        return fixed !== undefined && fixed !== value;
+      })) possible.delete(groupId);
+    }
+    const groupId = [...possible].sort((left, right) => left - right)
+      .find(id => compatible(candidate.descriptor, groups[id]));
+    if (groupId === undefined) {
+      groups.push({
+        members: [candidate],
+        type: candidate.descriptor.type,
+        constraints: new Map(candidate.descriptor.constraints),
+        memberTokenSets: [candidate.descriptor.tokens]
+      });
+      register(groups.length - 1);
+      continue;
+    }
+    const group = groups[groupId];
+    group.members.push(candidate);
+    for (const [field, value] of candidate.descriptor.constraints) group.constraints.set(field, value);
+    if (!group.memberTokenSets.some(tokens => tokens.join('\0') === candidate.descriptor.tokens.join('\0'))) {
+      group.memberTokenSets.push(candidate.descriptor.tokens);
+    }
+    register(groupId);
+  }
+
+  const duplicateGroups: any[] = [];
+  for (const group of groups) {
+    const memberCandidates = group.members;
+    if (memberCandidates.length < 2) continue;
+    const itemGroups = Object.fromEntries(memberCandidates.map(member => [
+      member.itemId,
+      member.records
     ]));
-    const canonicalIdentities = Object.fromEntries(members.map(member => [
-      candidates[member].itemId,
-      candidates[member].identity
+    const canonicalIdentities = Object.fromEntries(memberCandidates.map(member => [
+      member.itemId,
+      member.identity
     ]));
     duplicateGroups.push({
-      providerKey: bookmarkIdentityLabel(candidates[index].identity),
+      providerKey: bookmarkIdentityLabel(memberCandidates[0].identity),
       itemGroups,
       canonicalIdentities,
       totalBookmarks: Object.values<any>(itemGroups).flat().length,
-      name: candidates[index].identity.name || 'Unknown'
+      name: memberCandidates[0].identity.name || 'Unknown'
     });
   }
 
@@ -304,7 +442,19 @@ export function showDuplicatesSyncModal(
   context: IdentityContext | null = JC.identity.capture()
 ): void {
   if (!context || !JC.identity.isCurrent(context)) return;
-  const duplicates = findDuplicateBookmarks(bookmarks);
+  if (Object.keys(bookmarks).length > BOOKMARK_DUPLICATE_SCAN_MAX_BOOKMARKS) {
+    console.warn(`Duplicate scan refused an over-limit legacy store (${Object.keys(bookmarks).length})`);
+    toast(JC.t!('bookmark_merge_failed'), 3000, 'error');
+    return;
+  }
+  let duplicates: any[];
+  try {
+    duplicates = findDuplicateBookmarks(bookmarks);
+  } catch (error) {
+    console.warn('Duplicate scan stopped at its comparison budget', error);
+    toast(JC.t!('bookmark_merge_failed'), 3000, 'error');
+    return;
+  }
 
   if (duplicates.length === 0) {
     toast(JC.t!('bookmark_no_duplicates'), 3000);
@@ -326,48 +476,11 @@ export function showDuplicatesSyncModal(
             <p style="margin: 0; font-size: 13px; color: #aaa;">${JC.t!('bookmark_duplicate_subtitle').replace('{count}', String(duplicates.length))}</p>
           </div>
         </div>
-        <div style="margin-top: 20px;">
-          ${duplicates.map((dup, idx) => {
-            const itemIds = Object.keys(dup.itemGroups);
-            return `
-              <div style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 16px; margin-bottom: 16px;">
-                <div style="font-weight: 600; margin-bottom: 12px; color: #ff9800;">${escapeHtml(dup.name)}</div>
-                <div style="font-size: 12px; color: #888; margin-bottom: 12px;">
-                  ${JC.t!('bookmark_split_versions')
-                    .replace('{count}', dup.totalBookmarks)
-                    .replace('{versions}', String(itemIds.length))}
-                </div>
-                ${itemIds.map((itemId) => {
-                  const bms = dup.itemGroups[itemId];
-                  return `
-                    <div class="jc-merge-version" data-dup-index="${idx}" data-version-item-id="${escapeHtml(itemId)}" style="background: rgba(255,255,255,0.02); border-left: 3px solid rgba(255,255,255,0.25); padding: 8px 12px; margin-bottom: 8px; border-radius: 4px;">
-                      <div class="jc-merge-version-role" style="font-size: 11px; color: #aaa; font-weight: 600; margin-bottom: 4px;">
-                        ${JC.t!('bookmark_version_neutral')}
-                      </div>
-                      <div style="font-size: 12px; color: #ccc; margin-bottom: 6px;">
-                        ${JC.t!('bookmark_item_id')}: <code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 3px; font-size: 11px;">${escapeHtml(itemId.substring(0, 16))}...</code>
-                      </div>
-                      <div style="font-size: 12px; color: #aaa; margin-bottom: 8px;">
-                        ${JC.t!('bookmark_bookmark_count').replace('{count}', bms.length)} ${bms.map((b: any) => formatTimestamp(b.timestamp)).join(', ')}
-                      </div>
-                      <label style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: #ccc; margin-bottom: 8px; cursor: pointer;">
-                        <input type="radio" class="jc-merge-target-choice" name="jc-merge-target-${idx}" value="${escapeHtml(itemId)}" data-dup-index="${idx}">
-                        <span>${JC.t!('bookmark_select_target')}</span>
-                      </label>
-                      <button class="jc-btn" data-offset-item-id="${escapeHtml(itemId)}" data-dup-index="${idx}" style="background: rgba(33, 150, 243, 0.15); border-color: #2196f3; color: #2196f3; font-size: 11px;">
-                        <span class="material-icons" aria-hidden="true" style="font-size: 14px;">schedule</span>
-                        <span>${JC.t!('bookmark_adjust_offset')}</span>
-                      </button>
-                    </div>
-                  `;
-                }).join('')}
-                <button class="jc-btn jc-merge-execute" data-dup-index="${idx}" disabled style="margin-top: 8px; background: rgba(255, 152, 0, 0.15); border-color: #ff9800; color: #ff9800;">
-                  <span class="material-icons" aria-hidden="true" style="font-size: 16px;">merge</span>
-                  <span>${JC.t!('bookmark_merge_primary')}</span>
-                </button>
-              </div>
-            `;
-          }).join('')}
+        <div class="jc-duplicate-groups-page" style="margin-top: 20px;"></div>
+        <div class="jc-duplicate-group-pagination" style="display:flex;align-items:center;justify-content:center;gap:12px;">
+          <button class="jc-btn jc-duplicate-groups-prev" aria-label="${escapeHtml(JC.t!('calendar_prev'))}"><span class="material-icons">chevron_left</span></button>
+          <span class="jc-duplicate-groups-status"></span>
+          <button class="jc-btn jc-duplicate-groups-next" aria-label="${escapeHtml(JC.t!('calendar_next'))}"><span class="material-icons">chevron_right</span></button>
         </div>
       </div>
       <div class="jc-bookmark-modal-actions">
@@ -392,102 +505,138 @@ export function showDuplicatesSyncModal(
     if (e.target === modal) closeDialog();
   });
 
-  // Explicit target selection: the merge target is exclusively the version the
-  // user chooses here, keyed by its full item ID. Until a choice exists the
-  // merge stays disabled — there is no positional or insertion-order fallback.
-  modal.querySelectorAll<HTMLInputElement>('.jc-merge-target-choice').forEach(radio => {
-    radio.addEventListener('change', () => {
-      if (!JC.identity.isCurrent(context)) return;
-      const dupIndex = radio.dataset.dupIndex!;
-      const selectedItemId = radio.value;
-      modal.querySelectorAll<HTMLElement>(`.jc-merge-version[data-dup-index="${dupIndex}"]`).forEach(version => {
-        const isTarget = version.dataset.versionItemId === selectedItemId;
-        version.style.borderLeftColor = isTarget ? '#4caf50' : '#ff9800';
-        const role = version.querySelector<HTMLElement>('.jc-merge-version-role');
-        if (role) {
-          // Locale strings are plugin-owned resources (they carry {{icon:}}
-          // markup); no user data is interpolated here.
-          role.innerHTML = isTarget ? JC.t!('bookmark_primary_version') : JC.t!('bookmark_old_version');
-          role.style.color = isTarget ? '#4caf50' : '#ff9800';
-        }
-      });
-      const mergeBtn = modal.querySelector<HTMLButtonElement>(`.jc-merge-execute[data-dup-index="${dupIndex}"]`);
-      if (mergeBtn) mergeBtn.disabled = false;
-    });
-  });
+  let groupPage = 0;
+  const versionPages = new Map<number, number>();
+  const selectedTargets = new Map<number, string>();
+  let mergePending = false;
+  const groupsContainer = modal.querySelector<HTMLElement>('.jc-duplicate-groups-page')!;
+  const previousGroups = modal.querySelector<HTMLButtonElement>('.jc-duplicate-groups-prev')!;
+  const nextGroups = modal.querySelector<HTMLButtonElement>('.jc-duplicate-groups-next')!;
+  const groupsStatus = modal.querySelector<HTMLElement>('.jc-duplicate-groups-status')!;
+  const groupPageCount = Math.ceil(duplicates.length / BOOKMARK_DUPLICATE_GROUP_PAGE_SIZE);
 
-  // Adjust Offset button handlers (keyed by the version's stable item ID)
-  modal.querySelectorAll<HTMLElement>('[data-offset-item-id]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      if (!JC.identity.isCurrent(context)) return;
-      const dup = duplicates[parseInt(btn.dataset.dupIndex!)];
-      const bookmarksForItem = dup?.itemGroups?.[btn.dataset.offsetItemId!];
-      if (!bookmarksForItem) return;
-
-      closeDialog();
-
-      // Show offset adjustment modal for these bookmarks
-      const groupObj = {
-        bookmarks: bookmarksForItem,
-        details: { name: dup.name }
-      };
-      showOffsetAdjustmentModal(groupObj, context);
-    });
-  });
-
-  // Merge button handlers
-  modal.querySelectorAll<HTMLButtonElement>('.jc-merge-execute').forEach(btn => {
-    btn.addEventListener('click', () => { void (async () => {
-      if (!JC.identity.isCurrent(context)) return;
-      const dupIndex = parseInt(btn.dataset.dupIndex!);
-      const dup = duplicates[dupIndex];
+  const renderDuplicateModalPage = (): void => {
+    if (!JC.identity.isCurrent(context) || mergePending) return;
+    const groupStart = groupPage * BOOKMARK_DUPLICATE_GROUP_PAGE_SIZE;
+    const visibleGroups = duplicates.slice(groupStart, groupStart + BOOKMARK_DUPLICATE_GROUP_PAGE_SIZE);
+    groupsContainer.innerHTML = visibleGroups.map((dup, localIndex) => {
+      const dupIndex = groupStart + localIndex;
       const itemIds = Object.keys(dup.itemGroups);
+      const versionPageCount = Math.ceil(itemIds.length / BOOKMARK_DUPLICATE_VERSION_PAGE_SIZE);
+      const versionPage = Math.min(versionPages.get(dupIndex) || 0, versionPageCount - 1);
+      versionPages.set(dupIndex, versionPage);
+      const versionStart = versionPage * BOOKMARK_DUPLICATE_VERSION_PAGE_SIZE;
+      const selected = selectedTargets.get(dupIndex) || '';
+      const versions = itemIds.slice(versionStart, versionStart + BOOKMARK_DUPLICATE_VERSION_PAGE_SIZE)
+        .map(itemId => {
+          const bms = dup.itemGroups[itemId] as any[];
+          const isTarget = selected === itemId;
+          const role = !selected
+            ? JC.t!('bookmark_version_neutral')
+            : isTarget ? JC.t!('bookmark_primary_version') : JC.t!('bookmark_old_version');
+          const timestamps = bms.slice(0, BOOKMARK_DUPLICATE_TIMESTAMP_PREVIEW_SIZE)
+            .map(bookmark => formatTimestamp(bookmark.timestamp));
+          if (bms.length > timestamps.length) timestamps.push(`+${bms.length - timestamps.length}`);
+          return `
+            <div class="jc-merge-version" data-dup-index="${dupIndex}" data-version-item-id="${escapeHtml(itemId)}" style="background:rgba(255,255,255,.02);border-left:3px solid ${!selected ? 'rgba(255,255,255,.25)' : isTarget ? '#4caf50' : '#ff9800'};padding:8px 12px;margin-bottom:8px;border-radius:4px;">
+              <div class="jc-merge-version-role" style="font-size:11px;color:${!selected ? '#aaa' : isTarget ? '#4caf50' : '#ff9800'};font-weight:600;margin-bottom:4px;">${role}</div>
+              <div style="font-size:12px;color:#ccc;margin-bottom:6px;">${JC.t!('bookmark_item_id')}: <code>${escapeHtml(itemId.substring(0, 16))}...</code></div>
+              <div style="font-size:12px;color:#aaa;margin-bottom:8px;">${JC.t!('bookmark_bookmark_count').replace('{count}', String(bms.length))} ${escapeHtml(timestamps.join(', '))}</div>
+              <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:#ccc;margin-bottom:8px;cursor:pointer;">
+                <input type="radio" class="jc-merge-target-choice" name="jc-merge-target-${dupIndex}" value="${escapeHtml(itemId)}" data-dup-index="${dupIndex}" ${isTarget ? 'checked' : ''}>
+                <span>${JC.t!('bookmark_select_target')}</span>
+              </label>
+              <button class="jc-btn" data-offset-item-id="${escapeHtml(itemId)}" data-dup-index="${dupIndex}"><span class="material-icons">schedule</span><span>${JC.t!('bookmark_adjust_offset')}</span></button>
+            </div>`;
+        }).join('');
+      return `
+        <div class="jc-duplicate-group" data-dup-index="${dupIndex}" style="background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:16px;margin-bottom:16px;">
+          <div style="font-weight:600;margin-bottom:12px;color:#ff9800;">${escapeHtml(dup.name)}</div>
+          <div style="font-size:12px;color:#888;margin-bottom:12px;">${JC.t!('bookmark_split_versions').replace('{count}', String(Number(dup.totalBookmarks) || 0)).replace('{versions}', String(itemIds.length))}</div>
+          ${versions}
+          <div class="jc-duplicate-version-pagination" style="display:flex;align-items:center;gap:8px;">
+            <button class="jc-btn jc-duplicate-versions-prev" data-dup-index="${dupIndex}" ${versionPage === 0 ? 'disabled' : ''}><span class="material-icons">chevron_left</span></button>
+            <span class="jc-duplicate-versions-status">${versionStart + 1}-${Math.min(versionStart + BOOKMARK_DUPLICATE_VERSION_PAGE_SIZE, itemIds.length)} / ${itemIds.length}</span>
+            <button class="jc-btn jc-duplicate-versions-next" data-dup-index="${dupIndex}" ${versionPage >= versionPageCount - 1 ? 'disabled' : ''}><span class="material-icons">chevron_right</span></button>
+          </div>
+          <button class="jc-btn jc-merge-execute" data-dup-index="${dupIndex}" ${selected ? '' : 'disabled'}><span class="material-icons">merge</span><span>${JC.t!('bookmark_merge_primary')}</span></button>
+        </div>`;
+    }).join('');
 
-      if (itemIds.length < 2) return;
+    previousGroups.disabled = groupPage === 0;
+    nextGroups.disabled = groupPage >= groupPageCount - 1;
+    groupsStatus.textContent = `${groupStart + 1}-${Math.min(groupStart + BOOKMARK_DUPLICATE_GROUP_PAGE_SIZE, duplicates.length)} / ${duplicates.length}`;
 
-      const choice = modal.querySelector<HTMLInputElement>(`input[name="jc-merge-target-${dupIndex}"]:checked`);
-      const targetItemId = choice?.value || '';
-      if (!targetItemId || !itemIds.includes(targetItemId)) return;
-      const sourceItemIds = itemIds.filter(itemId => itemId !== targetItemId);
-
-      const sourceBookmarks = duplicateMergeSources(dup, sourceItemIds);
-      const removeOldIds = sourceBookmarks.map((bookmark: any) => String(bookmark.id));
-
-      if (!confirm(JC.t!('bookmark_merge_confirm').replace('{count}', String(sourceBookmarks.length)))) {
-        return;
-      }
-      if (!JC.identity.isCurrent(context)) return;
-
-      btn.disabled = true;
-      btn.querySelector('span:last-child')!.innerHTML = '<span class="material-icons" style="animation: spin 1s linear infinite; font-size: 18px;">refresh</span>';
-
-      try {
-        const targetDetails = duplicateMergeTarget(dup, targetItemId);
-        if (!targetDetails) throw new Error('Duplicate group has no canonical identity for the selected target');
-
-        // MOVE: equivalent bookmarks are created on the target only when
-        // missing, and every source row is deleted in the same atomic batch.
-        // The awaited result contains only the durably created new records,
-        // so the success toast reports a truthful (possibly zero) add count
-        // and appears only after committed state.
-        const synced = await JC.bookmarks!.syncBookmarks(sourceBookmarks, targetDetails, 0, removeOldIds);
+    groupsContainer.querySelectorAll<HTMLInputElement>('.jc-merge-target-choice').forEach(radio => {
+      radio.addEventListener('change', () => {
         if (!JC.identity.isCurrent(context)) return;
-        toast(JC.t!('bookmark_merge_success').replace('{count}', String(synced.length)), 3000);
-
+        selectedTargets.set(Number(radio.dataset.dupIndex), radio.value);
+        renderDuplicateModalPage();
+      });
+    });
+    groupsContainer.querySelectorAll<HTMLButtonElement>('.jc-duplicate-versions-prev, .jc-duplicate-versions-next').forEach(button => {
+      button.addEventListener('click', () => {
+        const index = Number(button.dataset.dupIndex);
+        const delta = button.classList.contains('jc-duplicate-versions-next') ? 1 : -1;
+        versionPages.set(index, Math.max(0, (versionPages.get(index) || 0) + delta));
+        renderDuplicateModalPage();
+      });
+    });
+    groupsContainer.querySelectorAll<HTMLButtonElement>('[data-offset-item-id]').forEach(button => {
+      button.addEventListener('click', () => {
+        if (!JC.identity.isCurrent(context)) return;
+        const dup = duplicates[Number(button.dataset.dupIndex)];
+        const bookmarksForItem = dup?.itemGroups?.[button.dataset.offsetItemId!];
+        if (!bookmarksForItem) return;
         closeDialog();
-
-        // Refresh the adopted host (syncBookmarks already resolved — no blind
-        // setTimeout needed).
-        renderActiveBookmarks(context);
-      } catch (e) {
+        showOffsetAdjustmentModal({ bookmarks: bookmarksForItem, details: { name: dup.name } }, context);
+      });
+    });
+    groupsContainer.querySelectorAll<HTMLButtonElement>('.jc-merge-execute').forEach(button => {
+      button.addEventListener('click', () => { void (async () => {
+        if (!JC.identity.isCurrent(context) || mergePending) return;
+        const dupIndex = Number(button.dataset.dupIndex);
+        const dup = duplicates[dupIndex];
+        const itemIds = Object.keys(dup.itemGroups);
+        const targetItemId = selectedTargets.get(dupIndex) || '';
+        if (!targetItemId || !itemIds.includes(targetItemId)) return;
+        const sourceBookmarks = duplicateMergeSources(dup, itemIds.filter(id => id !== targetItemId));
+        const removeOldIds = sourceBookmarks.map((bookmark: any) => String(bookmark.id));
+        if (!confirm(JC.t!('bookmark_merge_confirm').replace('{count}', String(sourceBookmarks.length)))) return;
         if (!JC.identity.isCurrent(context)) return;
-        console.error('Merge failed:', e);
-        toast(JC.t!('bookmark_merge_failed'), 3000, 'error');
-        btn.disabled = false;
-        btn.querySelector('span:last-child')!.textContent = JC.t!('bookmark_merge_primary');
-      }
-    })(); });
+        mergePending = true;
+        modal.querySelectorAll<HTMLButtonElement | HTMLInputElement>('button,input').forEach(control => { control.disabled = true; });
+        button.querySelector('span:last-child')!.innerHTML = '<span class="material-icons" style="animation:spin 1s linear infinite;">refresh</span>';
+        try {
+          const targetDetails = duplicateMergeTarget(dup, targetItemId);
+          if (!targetDetails) throw new Error('Duplicate group has no canonical selected target');
+          const synced = await JC.bookmarks!.syncBookmarks(sourceBookmarks, targetDetails, 0, removeOldIds);
+          if (!JC.identity.isCurrent(context)) return;
+          toast(JC.t!('bookmark_merge_success').replace('{count}', String(synced.length)), 3000);
+          closeDialog();
+          renderActiveBookmarks(context);
+        } catch (error) {
+          if (!JC.identity.isCurrent(context)) return;
+          console.error('Merge failed:', error);
+          toast(JC.t!('bookmark_merge_failed'), 3000, 'error');
+          mergePending = false;
+          renderDuplicateModalPage();
+        }
+      })(); });
+    });
+  };
+
+  previousGroups.addEventListener('click', () => {
+    if (mergePending || groupPage === 0) return;
+    groupPage--;
+    renderDuplicateModalPage();
   });
+  nextGroups.addEventListener('click', () => {
+    if (mergePending || groupPage >= groupPageCount - 1) return;
+    groupPage++;
+    renderDuplicateModalPage();
+  });
+  renderDuplicateModalPage();
 
   scheduleModalTask(context, () => { if (modal.isConnected) modal.style.opacity = '1'; }, 10);
 }

@@ -35,6 +35,8 @@ function bookmark(itemId = 'item-a', label = 'A'): AnyRecord {
 }
 
 describe('bookmark player identity ownership', () => {
+  const coverageRun = (import.meta as unknown as { env?: Record<string, string> }).env?.VITE_JC_V8_COVERAGE === '1';
+  const renderBudgetMs = coverageRun ? 10_000 : 500;
   let JC: AnyRecord;
   let save: ReturnType<typeof vi.fn>;
   let ajax: ReturnType<typeof vi.fn>;
@@ -68,7 +70,10 @@ describe('bookmark player identity ownership', () => {
       const next = structuredClone(current.bookmarks);
       for (const operation of payload.operations) {
         if (operation.type === 'delete') delete next[operation.bookmarkId];
-        else next[operation.bookmarkId] = structuredClone(operation.bookmark);
+        else {
+          if (operation.type === 'move') delete next[operation.sourceBookmarkId];
+          next[operation.bookmarkId] = structuredClone(operation.bookmark);
+        }
       }
       return Promise.resolve({ revision: payload.revision + 1, bookmarks: next });
     });
@@ -118,6 +123,35 @@ describe('bookmark player identity ownership', () => {
     disposeBookmarks = undefined;
     vi.useRealTimers();
     document.body.innerHTML = '';
+  });
+
+  it('windows 1,000 playback bookmarks to bounded marker and modal DOM budgets', async () => {
+    const initial = Object.fromEntries(Array.from({ length: 1000 }, (_, index) => [
+      `bookmark-${String(index).padStart(4, '0')}`,
+      { ...bookmark(), timestamp: index, label: `Bookmark ${index}` }
+    ]));
+    const api = await loadModule(initial);
+    Object.defineProperty(video, 'duration', { configurable: true, value: 1000 });
+    video.currentTime = 500;
+    const markerStarted = performance.now();
+
+    await api.updateMarkers();
+    const markerElapsed = performance.now() - markerStarted;
+    const modalStarted = performance.now();
+    await api.showModal('view');
+
+    const modalElapsed = performance.now() - modalStarted;
+    const modal = document.querySelector<HTMLElement>('.jc-bm-player-modal-overlay')!;
+    expect(document.querySelectorAll('.jc-bookmark-marker[data-jc-identity-owned="true"]')).toHaveLength(100);
+    expect(modal.querySelectorAll('.jc-bookmark-item')).toHaveLength(50);
+    expect(modal.querySelectorAll('*').length).toBeLessThan(1000);
+    expect(markerElapsed).toBeLessThan(renderBudgetMs);
+    expect(modalElapsed).toBeLessThan(renderBudgetMs);
+    expect(modal.textContent).toContain('501-550 / 1000');
+
+    modal.querySelector<HTMLButtonElement>('.jc-bookmark-items-next')!.click();
+    expect(modal.querySelectorAll('.jc-bookmark-item')).toHaveLength(50);
+    expect(modal.textContent).toContain('551-600 / 1000');
   });
 
   it('makes retained A markers, OSD buttons, and every modal control inert after a server switch', async () => {

@@ -259,6 +259,83 @@ public sealed class PersistedPayloadPolicyTests
         Assert.Equal(PersistedPayloadStatus.Invalid, PersistedPayloadPolicy.Validate(largeLibrary).Status);
     }
 
+    [Theory]
+    [InlineData(1)]
+    [InlineData(100)]
+    [InlineData(1000)]
+    public void Bookmarks_RealisticSupportedScaleFitsCountAndPayloadBudgets(int count)
+    {
+        var payload = new UserBookmark
+        {
+            Revision = 7,
+            Bookmarks = Enumerable.Range(0, count).ToDictionary(
+                index => $"bookmark-{index:D4}",
+                index => new BookmarkItem
+                {
+                    ItemId = $"0123456789abcdef01234567{index:D8}",
+                    IdentityVersion = 1,
+                    ItemType = index % 2 == 0 ? "movie" : "episode",
+                    TmdbId = (100_000 + index).ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    SeriesTmdbId = index % 2 == 0 ? string.Empty : "5000",
+                    MediaType = index % 2 == 0 ? "movie" : "tv",
+                    Name = $"A realistic bookmark title {index}",
+                    Timestamp = index * 12.5,
+                    Label = $"Saved moment {index}",
+                    CreatedAt = "2026-07-17T00:00:00.000Z",
+                    UpdatedAt = "2026-07-17T00:00:00.000Z"
+                },
+                StringComparer.Ordinal)
+        };
+
+        var validation = PersistedPayloadPolicy.Validate(payload);
+        Assert.True(validation.IsValid,
+            $"{count} realistic bookmarks serialized to {validation.SerializedBytes} bytes");
+        Assert.InRange(validation.SerializedBytes, 1, PersistedPayloadPolicy.BookmarkPersistedBytes);
+    }
+
+    [Fact]
+    public void Bookmarks_RejectCountTextAndPayloadAtExactBoundaries()
+    {
+        var exact = new BookmarkItem
+        {
+            ItemId = new string('i', PersistedPayloadPolicy.MaximumBookmarkItemIdLength),
+            Name = new string('n', PersistedPayloadPolicy.MaximumBookmarkTextLength),
+            Label = new string('l', PersistedPayloadPolicy.MaximumBookmarkTextLength),
+            Timestamp = 1
+        };
+        Assert.True(PersistedPayloadPolicy.IsValidBookmarkItem(exact));
+        Assert.False(PersistedPayloadPolicy.IsValidBookmarkId("   "));
+        Assert.False(PersistedPayloadPolicy.IsValidBookmarkItem(new BookmarkItem { ItemId = "   ", Timestamp = 1 }));
+
+        exact.Label += "x";
+        Assert.False(PersistedPayloadPolicy.IsValidBookmarkItem(exact));
+
+        var overCount = new UserBookmark
+        {
+            Bookmarks = Enumerable.Range(0, PersistedPayloadPolicy.MaximumBookmarks + 1)
+                .ToDictionary(index => index.ToString(), _ => new BookmarkItem { ItemId = "item", Timestamp = 1 })
+        };
+        Assert.Equal(PersistedPayloadStatus.TooLarge, PersistedPayloadPolicy.Validate(overCount).Status);
+
+        var overBytes = new UserBookmark
+        {
+            Bookmarks = Enumerable.Range(0, PersistedPayloadPolicy.MaximumBookmarks)
+                .ToDictionary(
+                    index => $"bookmark-{index:D4}",
+                    index => new BookmarkItem
+                    {
+                        ItemId = $"item-{index:D4}",
+                        Name = new string('n', PersistedPayloadPolicy.MaximumBookmarkTextLength),
+                        Label = new string('l', PersistedPayloadPolicy.MaximumBookmarkTextLength),
+                        Timestamp = 1
+                    },
+                    StringComparer.Ordinal)
+        };
+        var byteValidation = PersistedPayloadPolicy.Validate(overBytes);
+        Assert.Equal(PersistedPayloadStatus.TooLarge, byteValidation.Status);
+        Assert.True(byteValidation.SerializedBytes > PersistedPayloadPolicy.BookmarkPersistedBytes);
+    }
+
     [Fact]
     public void HiddenContent_LegacyNullStrings_AreAcceptedAndNormalizedOnlyInTheWriteCopy()
     {

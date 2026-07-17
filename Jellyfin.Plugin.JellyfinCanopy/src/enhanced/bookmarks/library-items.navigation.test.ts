@@ -19,11 +19,23 @@ describe('bookmark details navigation', () => {
 
     beforeEach(() => {
         history.replaceState({}, '', '/jellyfin/web/index.html#/bookmarks');
+        JC.identity.transition('navigation-server', 'navigation-user', 'bookmark-navigation-test');
         JC.t = (key: string) => key === 'bookmark_count' ? '{count} bookmarks' : key;
         (window.ApiClient as unknown as { getImageUrl: (id: string) => string }).getImageUrl =
             (id: string) => `https://media.example/jellyfin/Items/${encodeURIComponent(id)}/Images/Primary`;
         show = vi.fn();
         window.Emby = { Page: { show } };
+        JC.core.api = {
+            plugin: vi.fn((_path: string, options: { body: { itemIds: string[] } }) => Promise.resolve({
+                Items: options.body.itemIds.map(itemId => ({
+                    ItemId: itemId,
+                    Status: 'exists',
+                    Id: itemId,
+                    Type: 'Movie',
+                    Name: 'Base URL fixture'
+                }))
+            }))
+        } as any;
     });
 
     it('renders an encoded, document-relative link that retains the configured base URL', async () => {

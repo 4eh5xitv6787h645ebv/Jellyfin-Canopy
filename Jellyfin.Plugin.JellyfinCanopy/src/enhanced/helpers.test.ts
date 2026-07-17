@@ -497,6 +497,30 @@ describe('shared item DTO cache bounds', () => {
         expect(getItem).toHaveBeenCalledTimes(2);
     });
 
+    it('uses the abortable item route for page-scoped bulk lookups', async () => {
+        const ajax = vi.spyOn(ApiClient, 'ajax').mockImplementation((options: { signal?: AbortSignal }) => (
+            new Promise((_resolve, reject) => {
+                options.signal?.addEventListener('abort', () => {
+                    const error = new Error('aborted');
+                    error.name = 'AbortError';
+                    reject(error);
+                }, { once: true });
+            })
+        ));
+        const getItem = vi.spyOn(ApiClient, 'getItem');
+        const controller = new AbortController();
+
+        const request = getItemCached('abortable-item', {
+            userId: 'abortable-user',
+            signal: controller.signal
+        });
+        controller.abort();
+
+        await expect(request).rejects.toMatchObject({ name: 'AbortError' });
+        expect(ajax).toHaveBeenCalledTimes(1);
+        expect(getItem).not.toHaveBeenCalled();
+    });
+
     it('evicts the least-recently-used DTO at one over the hard cap', async () => {
         const getItem = vi.spyOn(ApiClient, 'getItem')
             .mockImplementation((_userId, itemId) => Promise.resolve({ itemId }));

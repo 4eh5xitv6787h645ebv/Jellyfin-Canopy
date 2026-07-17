@@ -30,6 +30,7 @@ interface ItemCacheEntry {
     item: unknown;
     ts: number;
     promise: Promise<unknown> | null;
+    signal?: AbortSignal;
     owner: IdentityContext;
     userId: string;
     itemId: string;
@@ -82,6 +83,8 @@ export interface GetItemCachedOptions {
     userId?: string;
     ttlMs?: number;
     forceRefresh?: boolean;
+    /** Cancels the transport for page-scoped bulk item resolution. */
+    signal?: AbortSignal;
 }
 
 /**
@@ -90,6 +93,11 @@ export interface GetItemCachedOptions {
  */
 export async function getItemCached(itemId: string, options: GetItemCachedOptions = {}): Promise<unknown> {
     if (!itemId) return null;
+    if (options.signal?.aborted) {
+        const error = new Error('Item lookup aborted');
+        error.name = 'AbortError';
+        throw error;
+    }
 
     const context = JC.identity.capture();
     if (!context) return null;
@@ -114,8 +122,13 @@ export async function getItemCached(itemId: string, options: GetItemCachedOption
     // full DTO retained until the next identity reset.
     if (entry) itemCache.delete(key);
 
-    const active = inFlightItems.get(key);
-    if (!options.forceRefresh && active && JC.identity.isCurrent(active.owner) && active.promise) {
+    let active = inFlightItems.get(key);
+    if (active?.signal?.aborted) {
+        inFlightItems.delete(key);
+        active = undefined;
+    }
+    if (!options.forceRefresh && active && JC.identity.isCurrent(active.owner) && active.promise
+        && (!options.signal || active.signal === options.signal)) {
         return active.promise;
     }
     if (inFlightItems.size >= ITEM_CACHE_MAX_IN_FLIGHT) {
@@ -125,34 +138,51 @@ export async function getItemCached(itemId: string, options: GetItemCachedOption
     const token: ItemCacheEntry = {
         item: null,
         ts: now,
-        promise: ApiClient.getItem(userId, itemId)
-            .then((item) => {
-                if (!JC.identity.isCurrent(context)) return null;
-                // A privacy reset or newer forced fetch may retire this request while
-                // it is in flight. Only the promise that still owns the key may publish.
-                if (inFlightItems.get(key) === token) {
-                    setItemCache(key, {
-                        item,
-                        ts: Date.now(),
-                        promise: null,
-                        owner: context,
-                        userId: normalizedUserId,
-                        itemId: normalizedItemId
-                    });
-                    inFlightItems.delete(key);
-                }
-                return item;
-            })
-            .catch((err: unknown) => {
-                // Likewise, an older rejection must not delete a newer request/value.
-                if (inFlightItems.get(key) === token) inFlightItems.delete(key);
-                if (!JC.identity.isCurrent(context)) return null;
-                throw err;
-            }),
+        promise: null,
+        signal: options.signal,
         owner: context,
         userId: normalizedUserId,
         itemId: normalizedItemId
     };
+    // ApiClient.getItem has no cancellation argument. Page-scoped bulk work
+    // uses the equivalent authenticated item route through ajax so aborting a
+    // render/account stops transport rather than only discarding its result.
+    const request = options.signal && typeof ApiClient.ajax === 'function'
+        ? ApiClient.ajax({
+            type: 'GET',
+            url: ApiClient.getUrl(
+                `/Users/${encodeURIComponent(String(userId))}/Items/${encodeURIComponent(itemId)}`
+            ),
+            dataType: 'json',
+            signal: options.signal
+        })
+        : ApiClient.getItem(userId, itemId);
+    const promise = Promise.resolve(request)
+        .then((item) => {
+            if (!JC.identity.isCurrent(context)) return null;
+            // A privacy reset or newer forced fetch may retire this request while
+            // it is in flight. Only the promise that still owns the key may publish.
+            if (inFlightItems.get(key) === token) {
+                setItemCache(key, {
+                    item,
+                    ts: Date.now(),
+                    promise: null,
+                    owner: context,
+                    userId: normalizedUserId,
+                    itemId: normalizedItemId
+                });
+                inFlightItems.delete(key);
+            }
+            return item;
+        })
+        .catch((err: unknown) => {
+            // Likewise, an older rejection must not delete a newer request/value.
+            if (inFlightItems.get(key) === token) inFlightItems.delete(key);
+            if (!JC.identity.isCurrent(context)) return null;
+            throw err;
+        });
+
+    token.promise = promise;
     inFlightItems.set(key, token);
     return token.promise;
 }

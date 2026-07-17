@@ -7,7 +7,6 @@
 import { JC } from '../../globals';
 import { routeHref, routePath } from '../../core/navigation';
 import { escapeHtml, toast } from '../../core/ui-kit';
-import { getItemCached } from '../helpers';
 import { formatTimestamp, parseTimestampInput, renderActiveBookmarks } from './library-render';
 import { findAndOfferReplacement } from './library-replacements';
 import { showOffsetAdjustmentModal } from './library-modals';
@@ -17,6 +16,8 @@ import type { BookmarkMediaType } from './media-types';
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 const logPrefix = '🪼 Jellyfin Canopy: Bookmarks Library:';
+export const BOOKMARK_LIBRARY_DETAIL_CONCURRENCY = 1;
+export const BOOKMARK_LIBRARY_RESOLUTION_BATCH_SIZE = 50;
 
 const playbackTimers = new Set<number>();
 
@@ -32,9 +33,10 @@ export async function renderBookmarkItems(
   container: HTMLElement,
   groupedByItem: Record<string, any>,
   currentTab: BookmarkMediaType,
-  context: IdentityContext | null = JC.identity.capture()
+  context: IdentityContext | null = JC.identity.capture(),
+  signal?: AbortSignal
 ): Promise<void> {
-  if (!context || !JC.identity.isCurrent(context)) return;
+  if (!context || !JC.identity.isCurrent(context) || signal?.aborted) return;
   container.innerHTML = '';
   const apiClient: any = window.ApiClient || (window as any).ConnectionManager?.currentApiClient();
   if (!apiClient) {
@@ -42,40 +44,67 @@ export async function renderBookmarkItems(
     return;
   }
 
-  const userId = context.userId;
-  const itemPromises: Promise<any>[] = [];
-
-  // Fetch all items
-  for (const [key, group] of Object.entries<any>(groupedByItem)) {
-    const itemId = group.details.itemId;
-    if (itemId) {
-      itemPromises.push(
-        getItemCached(itemId, { userId })
-          .then((item: any) => ({ key, group, item, orphaned: false }))
-          .catch((err: unknown) => {
-            // DATA-SAFETY: only an explicit 404 means the item is truly gone —
-            // mark it orphaned (which surfaces destructive delete/replace UI).
-            // Any other failure (network blip, 5xx, timeout) is transient: keep
-            // the item un-orphaned so it is never mislabeled or offered for
-            // deletion; it still renders from the stored bookmark metadata.
-            const status = (err as { status?: number } | null)?.status;
-            const orphaned = status === 404;
-            if (!orphaned) {
-              console.warn(`Item ${itemId} fetch failed (status=${status ?? 'n/a'}), not a 404 — keeping, not orphaning:`, err);
-            }
-            return { key, group, item: null, orphaned };
-          })
-      );
-    } else {
-      itemPromises.push(Promise.resolve({ key, group, item: null, orphaned: true }));
-    }
+  // Filter before transport. One plugin request resolves the complete visible
+  // page; the server hard-caps the batch and distinguishes authoritative 404s
+  // from visibility and transient failures.
+  const selected = Object.entries<any>(groupedByItem)
+    .filter(([, group]) => group.type === currentTab);
+  if (selected.length > BOOKMARK_LIBRARY_RESOLUTION_BATCH_SIZE) {
+    throw new Error(`Bookmark library page exceeds the ${BOOKMARK_LIBRARY_RESOLUTION_BATCH_SIZE}-item resolution cap`);
   }
-
-  const results = await Promise.all(itemPromises);
-  if (!JC.identity.isCurrent(context)) return;
-
-  // Apply tab filter
-  const filtered = results.filter(({ group }) => group.type === currentTab);
+  const requestedIds = selected
+    .map(([, group]) => group.details.itemId)
+    .filter((itemId): itemId is string => typeof itemId === 'string' && itemId.length > 0);
+  const plugin = JC.core.api?.plugin?.bind(JC.core.api);
+  if (typeof plugin !== 'function') throw new Error('Bookmark item resolution transport is unavailable');
+  const response = requestedIds.length > 0
+    ? await plugin(`/user-settings/${encodeURIComponent(context.userId)}/bookmark.json/items/resolve`, {
+      method: 'POST',
+      body: { itemIds: requestedIds },
+      signal,
+      skipRetry: true
+    }) as Record<string, unknown>
+    : { Items: [] };
+  if (signal?.aborted || !JC.identity.isCurrent(context)) return;
+  const rawItems = response.Items ?? response.items;
+  if (!Array.isArray(rawItems) || rawItems.length !== requestedIds.length) {
+    throw new Error('Bookmark item resolution returned an invalid bounded result');
+  }
+  const resolutions = new Map<string, Record<string, unknown>>();
+  for (const raw of rawItems) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue;
+    const record = raw as Record<string, unknown>;
+    const rawItemId = record.ItemId ?? record.itemId;
+    const itemId = typeof rawItemId === 'string' ? rawItemId : '';
+    if (itemId) resolutions.set(itemId, record);
+  }
+  const filtered = selected.map(([key, group]) => {
+    const itemId = group.details.itemId;
+    if (!itemId) return { key, group, item: null, orphaned: false };
+    const resolution = resolutions.get(itemId);
+    const rawStatus = resolution?.Status ?? resolution?.status;
+    const status = typeof rawStatus === 'string' ? rawStatus : 'transient';
+    if (status === 'exists' && resolution) {
+      return {
+        key,
+        group,
+        orphaned: false,
+        item: {
+          Id: resolution.Id ?? resolution.id,
+          Type: resolution.Type ?? resolution.type,
+          Name: resolution.Name ?? resolution.name,
+          SeriesName: resolution.SeriesName ?? resolution.seriesName,
+          ParentIndexNumber: resolution.ParentIndexNumber ?? resolution.parentIndexNumber,
+          IndexNumber: resolution.IndexNumber ?? resolution.indexNumber,
+          ImageTags: { Primary: undefined }
+        }
+      };
+    }
+    if (status !== 'notFound') {
+      console.warn(`Item ${itemId} batch resolution returned ${status}; keeping it out of destructive orphan state`);
+    }
+    return { key, group, item: null, orphaned: status === 'notFound' };
+  });
 
   if (filtered.length === 0) {
     const emptyTitle = currentTab === 'tv'

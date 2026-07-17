@@ -29,6 +29,7 @@ test('plans one coverage-producing test execution followed by one ratchet', () =
 
     assert.equal(client.length, 2);
     assert.match(client[0].args.join(' '), /vitest\.mjs run --coverage$/);
+    assert.deepEqual(client[0].env, { VITE_JC_V8_COVERAGE: '1' });
     assert.match(client[1].args.join(' '), /check-client-coverage\.js$/);
 
     assert.equal(server.length, 2);
@@ -47,6 +48,7 @@ test('a deliberately failing client test fixture blocks its ratchet immediately'
     assert.equal(result.status, 17);
     assert.equal(result.calls.length, 1);
     assert.match(result.calls[0].args.join(' '), /vitest\.mjs run --coverage$/);
+    assert.equal(result.calls[0].options.env.VITE_JC_V8_COVERAGE, '1');
     assert.match(result.messages.join('\n'), /client tests with V8 coverage failed with exit 17/);
 });
 

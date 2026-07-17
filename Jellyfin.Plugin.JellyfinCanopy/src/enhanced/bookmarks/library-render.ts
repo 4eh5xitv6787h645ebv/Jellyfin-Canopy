@@ -17,6 +17,7 @@ import {
 } from './media-types';
 
 const logPrefix = '🪼 Jellyfin Canopy: Bookmarks Library:';
+export const BOOKMARK_LIBRARY_PAGE_SIZE = 50;
 
 interface StoredBookmark {
   itemId?: string;
@@ -28,6 +29,19 @@ interface StoredBookmark {
 }
 
 interface BookmarkConfig {
+  bookmarks: Record<string, StoredBookmark>;
+}
+
+interface BookmarkPageResponse {
+  revision: number;
+  total: number;
+  allTotal: number;
+  movie: number;
+  tv: number;
+  other: number;
+  startIndex: number;
+  limit: number;
+  hasMore: boolean;
   bookmarks: Record<string, StoredBookmark>;
 }
 
@@ -46,6 +60,39 @@ function bookmarkConfigOrEmpty(value: unknown): BookmarkConfig {
   return { bookmarks: {} };
 }
 
+function numericField(record: Record<string, unknown>, camel: string, pascal: string): number {
+  return Number(record[camel] ?? record[pascal]);
+}
+
+function parseBookmarkPage(value: unknown): BookmarkPageResponse | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const transformed = typeof JC.transformUserFileCase === 'function'
+    ? JC.transformUserFileCase('bookmark.json', value, 'load')
+    : value;
+  if (!transformed || typeof transformed !== 'object' || Array.isArray(transformed)) return null;
+  const record = transformed as Record<string, unknown>;
+  const bookmarks = record.bookmarks ?? record.Bookmarks;
+  const page = {
+    revision: numericField(record, 'revision', 'Revision'),
+    total: numericField(record, 'total', 'Total'),
+    allTotal: numericField(record, 'allTotal', 'AllTotal'),
+    movie: numericField(record, 'movie', 'Movie'),
+    tv: numericField(record, 'tv', 'Tv'),
+    other: numericField(record, 'other', 'Other'),
+    startIndex: numericField(record, 'startIndex', 'StartIndex'),
+    limit: numericField(record, 'limit', 'Limit'),
+    hasMore: Boolean(record.hasMore ?? record.HasMore),
+    bookmarks: bookmarks as Record<string, StoredBookmark>
+  };
+  return [page.revision, page.total, page.allTotal, page.movie, page.tv, page.other]
+    .every(count => Number.isSafeInteger(count) && count >= 0)
+    && Number.isSafeInteger(page.startIndex) && page.startIndex >= 0
+    && Number.isSafeInteger(page.limit) && page.limit >= 1
+    && !!bookmarks && typeof bookmarks === 'object' && !Array.isArray(bookmarks)
+    ? page
+    : null;
+}
+
 // The container the bookmarks library renders into, set by the pages-framework
 // descriptor (bookmarks/page.ts) for the lifetime of one adoption and cleared
 // on drain. DOM-as-truth: a disconnected container makes every render a no-op
@@ -54,6 +101,7 @@ function bookmarkConfigOrEmpty(value: unknown): BookmarkConfig {
 // defect that mis-targeted stale/duplicate nodes.
 let activeContainer: HTMLElement | null = null;
 let activeContainerIdentity: IdentityContext | null = null;
+let activeRenderController: AbortController | null = null;
 
 /** Set (or clear) the render target for the current page adoption. */
 export function setActiveContainer(container: HTMLElement | null): void {
@@ -68,6 +116,8 @@ let renderQueueGeneration = 0;
 let queuedIdentity: IdentityContext | null = null;
 
 export function resetBookmarksLibraryRender(): void {
+  activeRenderController?.abort();
+  activeRenderController = null;
   renderQueueGeneration += 1;
   queuedIdentity = null;
   activeContainer = null;
@@ -106,67 +156,100 @@ export async function renderBookmarksLibrary(
   context: IdentityContext | null = JC.identity.capture()
 ): Promise<void> {
   if (!context || !JC.identity.isCurrent(context)) return;
+  activeRenderController?.abort();
+  const renderController = new AbortController();
+  activeRenderController = renderController;
+  const { signal } = renderController;
   console.log(`${logPrefix} Rendering bookmarks library...`);
 
   const bookmarkConfig = bookmarkConfigOrEmpty(JC.userConfig?.bookmark);
   const bookmarks = bookmarkConfig.bookmarks;
-  const bookmarkEntries = Object.entries(bookmarks);
-
-  // Group by item
-  const groupedByItem: Record<string, BookmarkGroup> = {};
-  const typeCounts: Record<BookmarkMediaType, { items: number; bookmarks: number }> = {
-    tv: { items: 0, bookmarks: 0 },
-    movie: { items: 0, bookmarks: 0 },
-    other: { items: 0, bookmarks: 0 }
-  };
-
-  for (const [id, bm] of bookmarkEntries) {
-    const normalizedType = normalizeBookmarkMediaType(bm.mediaType);
-    // Include the canonical category in the group identity. Provider ids can
-    // overlap across media classes, and conflicting legacy values for one item
-    // must remain visible in their own fallback category rather than inheriting
-    // whichever record happened to be enumerated first.
-    const itemKey = bm.itemId || bm.tmdbId || bm.tvdbId || 'unknown';
-    const key = `${normalizedType}:${itemKey}`;
-    if (!groupedByItem[key]) {
-      groupedByItem[key] = {
-        details: bm,
-        bookmarks: [],
-        type: normalizedType
-      };
-      typeCounts[normalizedType].items += 1;
-    }
-    groupedByItem[key].bookmarks.push({ id, ...bm });
-    typeCounts[groupedByItem[key].type].bookmarks += 1;
-  }
-
-  // Sort bookmarks within each group by timestamp
-  Object.values(groupedByItem).forEach(group => {
-    group.bookmarks.sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
-  });
-
-  const totalBookmarks = bookmarkEntries.length;
+  const plugin = JC.core.api?.plugin?.bind(JC.core.api);
+  if (typeof plugin !== 'function') throw new Error('Bookmark listing transport is unavailable');
   const requestedTab = BOOKMARK_MEDIA_TYPES.includes(container.dataset.currentTab as BookmarkMediaType)
     ? container.dataset.currentTab as BookmarkMediaType
     : 'movie';
+  const requestedDatasetKey = `bookmarkPage${requestedTab[0].toUpperCase()}${requestedTab.slice(1)}`;
+  const requestedPageValue = Number.parseInt(container.dataset[requestedDatasetKey] || '0', 10);
+  let currentTab = requestedTab;
+  let currentPage = Math.max(Number.isSafeInteger(requestedPageValue) ? requestedPageValue : 0, 0);
+  const fetchPage = async (tab: BookmarkMediaType, pageIndex: number): Promise<BookmarkPageResponse> => {
+    const startIndex = pageIndex * BOOKMARK_LIBRARY_PAGE_SIZE;
+    const raw = await plugin(
+      `/user-settings/${encodeURIComponent(context.userId)}/bookmark.json/page?startIndex=${startIndex}&limit=${BOOKMARK_LIBRARY_PAGE_SIZE}&mediaType=${encodeURIComponent(tab)}`,
+      { method: 'GET', signal, skipRetry: true }
+    );
+    if (signal.aborted || !JC.identity.isCurrent(context)) throw new DOMException('Aborted', 'AbortError');
+    const parsed = parseBookmarkPage(raw);
+    if (!parsed || parsed.startIndex !== startIndex || parsed.limit !== BOOKMARK_LIBRARY_PAGE_SIZE) {
+      throw new Error('Bookmark page response is invalid');
+    }
+    return parsed;
+  };
+  let page = await fetchPage(currentTab, currentPage);
+  let typeCounts: Record<BookmarkMediaType, { items: number; bookmarks: number }> = {
+    tv: { items: page.tv, bookmarks: page.tv },
+    movie: { items: page.movie, bookmarks: page.movie },
+    other: { items: page.other, bookmarks: page.other }
+  };
+  let totalBookmarks = page.allTotal;
   const firstPopulatedTab = BOOKMARK_MEDIA_TYPES.find(type => typeCounts[type].items > 0);
-  const currentTab = typeCounts[requestedTab].items > 0 || !firstPopulatedTab
-    ? requestedTab
-    : firstPopulatedTab;
+  if (typeCounts[currentTab].items === 0 && firstPopulatedTab) {
+    currentTab = firstPopulatedTab;
+    const nextDatasetKey = `bookmarkPage${currentTab[0].toUpperCase()}${currentTab.slice(1)}`;
+    const nextRequestedPage = Number.parseInt(container.dataset[nextDatasetKey] || '0', 10);
+    currentPage = Math.max(Number.isSafeInteger(nextRequestedPage) ? nextRequestedPage : 0, 0);
+    page = await fetchPage(currentTab, currentPage);
+    typeCounts = {
+      tv: { items: page.tv, bookmarks: page.tv },
+      movie: { items: page.movie, bookmarks: page.movie },
+      other: { items: page.other, bookmarks: page.other }
+    };
+    totalBookmarks = page.allTotal;
+  }
   container.dataset.currentTab = currentTab;
+
+  const pageDatasetKey = `bookmarkPage${currentTab[0].toUpperCase()}${currentTab.slice(1)}`;
+  const currentTotal = Number(typeCounts[currentTab].bookmarks) || 0;
+  const pageCount = Math.max(1, Math.ceil(currentTotal / BOOKMARK_LIBRARY_PAGE_SIZE));
+  const clampedPage = Math.min(currentPage, pageCount - 1);
+  if (clampedPage !== currentPage) {
+    currentPage = clampedPage;
+    page = await fetchPage(currentTab, currentPage);
+  }
+  container.dataset[pageDatasetKey] = String(currentPage);
+  const pageStart = currentPage * BOOKMARK_LIBRARY_PAGE_SIZE;
+  if (page.total !== currentTotal || page.allTotal !== totalBookmarks
+      || page.startIndex !== pageStart || page.movie !== typeCounts.movie.bookmarks
+      || page.tv !== typeCounts.tv.bookmarks || page.other !== typeCounts.other.bookmarks) {
+    throw new Error('Bookmark page response is internally inconsistent');
+  }
+  const pageEntries = Object.entries(page.bookmarks)
+    .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0);
+  const pageEnd = pageStart + pageEntries.length;
+  const groupedByItem: Record<string, BookmarkGroup> = {};
+  for (const [id, bm] of pageEntries) {
+    const itemKey = bm.itemId || bm.tmdbId || bm.tvdbId || 'unknown';
+    const key = `${currentTab}:${itemKey}`;
+    groupedByItem[key] ??= { details: bm, bookmarks: [], type: currentTab };
+    groupedByItem[key].bookmarks.push({ id, ...bm });
+  }
+  Object.values(groupedByItem).forEach(group => {
+    group.bookmarks.sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
+  });
 
   // Create UI
   container.innerHTML = `
     <div class="jc-bookmarks-wrapper">
       <div class="jc-bookmark-tabs">
         <button class="jc-tab ${currentTab === 'movie' ? 'active' : ''}" data-tab="movie">
-          ${JC.t!('bookmarks_library_tab_movies')} <span class="jc-tab-count">${typeCounts.movie.bookmarks}</span>
+          ${JC.t!('bookmarks_library_tab_movies')} <span class="jc-tab-count">${Number(typeCounts.movie.bookmarks) || 0}</span>
         </button>
         <button class="jc-tab ${currentTab === 'tv' ? 'active' : ''}" data-tab="tv">
-          ${JC.t!('bookmarks_library_tab_series')} <span class="jc-tab-count">${typeCounts.tv.bookmarks}</span>
+          ${JC.t!('bookmarks_library_tab_series')} <span class="jc-tab-count">${Number(typeCounts.tv.bookmarks) || 0}</span>
         </button>
         <button class="jc-tab ${currentTab === 'other' ? 'active' : ''}" data-tab="other">
-          ${JC.t!('bookmarks_library_tab_other')} <span class="jc-tab-count">${typeCounts.other.bookmarks}</span>
+          ${JC.t!('bookmarks_library_tab_other')} <span class="jc-tab-count">${Number(typeCounts.other.bookmarks) || 0}</span>
         </button>
       </div>
 
@@ -179,6 +262,21 @@ export async function renderBookmarksLibrary(
           </div>
         ` : `
           <div class="jc-bookmarks-grid" id="bookmarks-items-container"></div>
+          <div class="jc-bookmark-pagination">
+            <button class="jc-bookmark-page-prev jc-btn"
+                    title="${escapeHtml(JC.t!('calendar_prev'))}"
+                    aria-label="${escapeHtml(JC.t!('calendar_prev'))}"
+                    ${currentPage === 0 ? 'disabled' : ''}>
+              <span class="material-icons" aria-hidden="true">chevron_left</span>
+            </button>
+            <span class="jc-bookmark-page-status">${pageStart + 1}-${pageEnd} / ${currentTotal}</span>
+            <button class="jc-bookmark-page-next jc-btn"
+                    title="${escapeHtml(JC.t!('calendar_next'))}"
+                    aria-label="${escapeHtml(JC.t!('calendar_next'))}"
+                    ${currentPage >= pageCount - 1 ? 'disabled' : ''}>
+              <span class="material-icons" aria-hidden="true">chevron_right</span>
+            </button>
+          </div>
           <div class="jc-bookmark-actions-footer">
             <button class="btnFindDuplicates jc-btn-footer">
               <span class="material-icons" aria-hidden="true">merge</span>
@@ -202,6 +300,16 @@ export async function renderBookmarksLibrary(
   const findDuplicatesBtn = container.querySelector<HTMLButtonElement>('.btnFindDuplicates');
   const cleanupBtn = container.querySelector<HTMLButtonElement>('.btnCleanupBookmarks');
   const deleteAllBtn = container.querySelector<HTMLButtonElement>('.btnDeleteAllBookmarks');
+  const previousPageBtn = container.querySelector<HTMLButtonElement>('.jc-bookmark-page-prev');
+  const nextPageBtn = container.querySelector<HTMLButtonElement>('.jc-bookmark-page-next');
+
+  const selectPage = (page: number): void => {
+    if (signal.aborted || !JC.identity.isCurrent(context)) return;
+    container.dataset[pageDatasetKey] = String(page);
+    void renderBookmarksLibrary(container, context);
+  };
+  previousPageBtn?.addEventListener('click', () => selectPage(currentPage - 1));
+  nextPageBtn?.addEventListener('click', () => selectPage(currentPage + 1));
 
   findDuplicatesBtn?.addEventListener('click', () => {
     if (!JC.identity.isCurrent(context)) return;
@@ -286,20 +394,24 @@ export async function renderBookmarksLibrary(
   if (totalBookmarks > 0) {
     const itemsContainer = container.querySelector<HTMLElement>('#bookmarks-items-container');
     if (itemsContainer) {
-      await renderBookmarkItems(itemsContainer, groupedByItem, currentTab, context);
-      if (!JC.identity.isCurrent(context)) return;
+      try {
+        await renderBookmarkItems(itemsContainer, groupedByItem, currentTab, context, signal);
+      } catch (error) {
+        if (signal.aborted || !JC.identity.isCurrent(context)) return;
+        throw error;
+      }
+      if (signal.aborted || !JC.identity.isCurrent(context)) return;
 
       // Tab click handlers
       container.querySelectorAll<HTMLElement>('.jc-tab').forEach(btn => {
-        btn.addEventListener('click', () => { void (async () => {
-          if (!JC.identity.isCurrent(context)) return;
+        btn.addEventListener('click', () => {
+          if (signal.aborted || !JC.identity.isCurrent(context)) return;
           const tab = btn.dataset.tab as BookmarkMediaType;
           container.dataset.currentTab = tab;
-          container.querySelectorAll<HTMLElement>('.jc-tab').forEach(b => {
-            b.classList.toggle('active', b.dataset.tab === tab);
-          });
-          await renderBookmarkItems(itemsContainer, groupedByItem, tab, context);
-        })(); });
+          const nextPageDatasetKey = `bookmarkPage${tab[0].toUpperCase()}${tab.slice(1)}`;
+          container.dataset[nextPageDatasetKey] = '0';
+          void renderBookmarksLibrary(container, context);
+        });
       });
     }
   }

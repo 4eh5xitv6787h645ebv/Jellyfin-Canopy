@@ -303,13 +303,14 @@ curl -X GET \
 
 ### User configuration payload budgets
 
-Complete replacements for `settings.json`, `shortcuts.json`, `elsewhere.json`, and `hidden-content.json`, plus the elevated combined `spoiler-guard-overrides.json` resource, use one server-side payload-policy system. The request body is bounded **before JSON model binding** for both `Content-Length` and chunked uploads; an oversized body returns HTTP `413` and is never deserialized, logged, cached, or written. Field/count/range failures return HTTP `400` with a non-value-bearing reason. A rejection leaves the existing persisted state and related caches untouched.
+Complete replacements for `settings.json`, `shortcuts.json`, `elsewhere.json`, `bookmark.json`, and `hidden-content.json`, plus the elevated combined `spoiler-guard-overrides.json` resource, use one server-side payload-policy system. The request body is bounded **before JSON model binding** for both `Content-Length` and chunked uploads; an oversized body returns HTTP `413` and is never deserialized, logged, cached, or written. Field/count/range failures return HTTP `400` with a non-value-bearing reason. A rejection leaves the existing persisted state and related caches untouched.
 
-| Payload | HTTP body | Persisted JSON | Collection limits |
+| Payload | HTTP body | Persisted state | Collection limits |
 | --- | ---: | ---: | --- |
 | `settings.json` | 1 MiB | 1 MiB | Up to 1,000 extension properties |
 | `shortcuts.json` | 1 MiB | 1 MiB | Up to 1,000 shortcuts and 1,000 extension properties |
 | `elsewhere.json` | 1 MiB | 1 MiB | Up to 500 regions, 500 services, and 1,000 extension properties |
+| `bookmark.json` | 20 MiB | 1 MiB indexed payload | Up to **1,000 bookmarks**; mutation batches up to 1,000 operations, including worst-case JSON escaping across a full-quota atomic move batch |
 | `hidden-content.json` | 8 MiB | 7 MiB | Up to **10,000 hidden items** (intentionally sized and tested with realistic populated records for large supported libraries) |
 | `spoiler-guard-overrides.json` | 2 MiB | 2 MiB | Up to **1,000 entries in each** of `Series`, `Movies`, `Collections`, and `PendingTmdb` |
 
@@ -380,11 +381,33 @@ The exception is intentionally narrow: browser-local actions are omitted or disa
 
 ### Bookmark API
 
-Bookmarks are stored **per user** under the plugin's configurations directory. The user id is normalized (dashes stripped, lowercased) to form the folder name, and the file is named `bookmark.json` (singular):
+Bookmarks are stored **per user** in the plugin's indexed SQLite database:
 
 ```
-<plugins>/configurations/Jellyfin.Plugin.JellyfinCanopy/{userId-no-dashes-lowercase}/bookmark.json
+<plugins>/configurations/Jellyfin.Plugin.JellyfinCanopy/bookmarks.db
 ```
+
+The user id is normalized (dashes stripped and lowercased) as the indexed
+partition key. On first bookmark access after an upgrade, a legacy per-user
+`{userId}/bookmark.json` is imported transactionally and archived beside the
+old file. A malformed legacy file is quarantined and fails closed instead of
+being replaced by an empty store. The HTTP resource remains named
+`bookmark.json` for API compatibility; that name no longer describes the
+authoritative storage representation. Startup, lazy imports, and every changed
+ordinary commit only mark the shared recovery snapshot dirty; a debounced
+background worker coalesces that work and creates at most one whole-database
+backup per 15 minutes, so neither startup nor a user request copies the shared
+database synchronously. A write racing the snapshot advances its generation
+and receives one rate-limited follow-up.
+Canopy retains five verified SQLite backups and caps both the source database
+group and each snapshot at 1 GiB. Every primary and backup must carry Canopy's
+bookmark-store identity/schema marker, pass SQLite integrity checks, and have
+exact row-count and payload-byte metadata before it is accepted; temporary WAL
+or shared-memory sidecars are never eligible as snapshots. A corrupt,
+truncated, semantically unrelated, or metadata-inconsistent primary database,
+including its WAL and shared-memory sidecars, is quarantined as one group and
+restored from the newest valid backup; a missing primary with existing backups
+is treated as an interrupted recovery rather than a first-run empty store.
 
 The data structure is (property names are persisted as-is, in PascalCase):
 
@@ -429,7 +452,7 @@ season/start/end range. Pre-v1 movie records retain their unambiguous provider
 fallback, while ambiguous legacy TV/other records remain unmatched until an
 authoritative item edit can enrich them.
 
-External applications read and write bookmarks through the endpoints below. `{userId}` is the 32-character hex (`"N"` format) Jellyfin user id. Bookmark state is server-authoritative and revisioned: retain the `Revision` returned by every GET/mutation, submit it with the next operation, and rebase on the authoritative state returned with HTTP `409 Conflict`. Missing preconditions return `428 Precondition Required`. A successful mutation increments the revision once and returns the complete committed state.
+External applications read and write bookmarks through the endpoints below. `{userId}` is the 32-character hex (`"N"` format) Jellyfin user id. Bookmark state is server-authoritative and revisioned: retain the `Revision` returned by every GET/mutation, submit it with the next operation, and rebase on the authoritative state returned with HTTP `409 Conflict`. Missing preconditions return `428 Precondition Required`. A successful mutation increments the revision once. Responses contain the complete committed state by default; Canopy's built-in client requests the compact receipt described below.
 
 !!! warning "Concurrency-contract upgrade"
     Clients written for the older unversioned bookmark API must be updated before upgrading: unversioned full replacements and operation requests now return `428 Precondition Required` instead of writing. This intentional compatibility break prevents an older/stale client from silently erasing writes acknowledged to another tab or device.
@@ -443,7 +466,38 @@ Authorization: MediaBrowser Token="{your-api-key}"
 
 The response body is the complete `{ "Revision": n, "Bookmarks": { ... } }` state and the same revision is returned as a strong `ETag` (for example, `ETag: "7"`). A persistence read fault returns `503`; it is never converted to an empty state.
 
-**Atomic batch (recommended).** Adds, updates, and deletes in one request commit as one transaction or not at all. `BookmarkId` is caller-generated and must be stable across retries so a lost acknowledgement cannot duplicate an add:
+For bounded listing or exact item lookup, use the paginated endpoint. `limit`
+must be `1` through `100`; results are ordered by exact bookmark id and never
+silently exceed the requested page:
+
+```http
+GET /JellyfinCanopy/user-settings/{userId}/bookmark.json/page?startIndex=0&limit=50
+GET /JellyfinCanopy/user-settings/{userId}/bookmark.json/page?startIndex=0&limit=50&itemId={exact-item-id}
+```
+
+The response contains `Revision`, the filtered `Total`, `AllTotal`, `Movie`,
+`Tv`, `Other`, `StartIndex`, `Limit`, `HasMore`, and the page's `Bookmarks`
+map. Add `mediaType=movie|tv|other` to filter in the indexed query. Counts and
+rows come from one SQLite read transaction.
+
+Resolve the Jellyfin item cards for one page with one bounded request. Supply
+1–100 distinct item ids (the built-in client supplies at most 50):
+
+```http
+POST /JellyfinCanopy/user-settings/{userId}/bookmark.json/items/resolve
+
+{ "ItemIds": ["item-a", "item-b"] }
+```
+
+Every id receives a distinct `exists`, `notFound`, `forbidden`, `invalid`, or
+`transient` result. Only `notFound` is destructive evidence; authorization and
+transient failures remain visible and retained.
+
+**Atomic batch (recommended).** Adds, updates, compact timestamp offsets,
+source-to-target moves, and deletes in one request commit as one SQLite
+transaction or not at all.
+`BookmarkId` is caller-generated and must be stable across retries so a lost
+acknowledgement cannot duplicate an add:
 
 ```http
 POST /JellyfinCanopy/user-settings/{userId}/bookmark.json/batch
@@ -452,15 +506,62 @@ Content-Type: application/json
 
 {
   "Revision": 7,
+  "CompactResponse": true,
   "Operations": [
     { "Type": "add", "BookmarkId": "client-stable-id", "Bookmark": { "ItemId": "item-a", "Timestamp": 12.5 } },
     { "Type": "update", "BookmarkId": "existing-id", "Bookmark": { "ItemId": "item-b", "Timestamp": 30, "Label": "New label" } },
+    { "Type": "offset", "BookmarkId": "synced-id", "Timestamp": 35.5, "UpdatedAt": "2026-08-02T12:00:00.000Z" },
+    { "Type": "move", "SourceBookmarkId": "source-id", "BookmarkId": "target-id", "Bookmark": { "ItemId": "item-c", "Timestamp": 42 } },
     { "Type": "delete", "BookmarkId": "old-id" }
   ]
 }
 ```
 
-The operation list is validated before saving and is capped at 1,000 operations. Bookmark ids are capped at 256 characters and individual bookmark string fields at 4,096 characters. A stale `Revision` returns `409` with `Revision` and `Bookmarks` containing the current server state; rebuild the intended operations against that state and retry.
+The operation list is validated before saving and is capped at 1,000 operations. A user may store at most 1,000 bookmarks in at most 1 MiB of indexed payload. Bookmark and item ids are capped at 256 characters, provider ids at 128, type fields at 64, names and labels at 512, and stored timestamp strings at 64. An `offset` operation sends only its id, absolute non-negative timestamp, and bounded update time; the transaction preserves the other indexed columns and clears `SyncedFrom`. A stale `Revision` returns `409` with `CompleteState: true`, `Revision`, and `Bookmarks` containing the current server state; rebuild the intended operations against that state and retry.
+
+With `CompactResponse: true`, a successful batch returns
+`CompleteState: false`, the new `Revision`, and no complete bookmark map. The
+caller applies its already-known atomic operation set locally. Errors and
+especially conflicts remain authoritative; a conflict always returns the full
+state. This keeps ordinary one-bookmark reads, serialization, allocations, and
+response work independent of total collection size without breaking external
+callers that rely on full responses.
+
+A `move` is one idempotent operation: when the source exists, the target add
+and source delete share the same transaction; when the source is already gone,
+the server does not resurrect request-body content. This lets a complete
+1,000-bookmark duplicate merge remain within the 1,000-operation batch cap.
+
+Cleanup advances through bounded batches of at most 100 distinct item ids using
+an opaque `NextCursor` that callers must return unchanged. Each
+batch performs at most one global existence classification per item and commits
+its proven deletion set atomically. Continue with `NextCursor` while `HasMore`
+is true; every request must carry the latest returned revision:
+
+```http
+POST /JellyfinCanopy/user-settings/{userId}/bookmark.json/cleanup
+
+{ "Revision": 7, "CompactResponse": true, "Cursor": null, "Limit": 100 }
+```
+
+A compact cleanup receipt adds `DeletedBookmarkIds`, `Deleted`,
+`RetainedUncertain`, `Errors`, `ScannedItems`, `HasMore`, and `NextCursor`,
+allowing the client to update its local state without retransferring every
+retained bookmark. The built-in client caps one cleanup invocation at ten
+batches, covering the supported maximum without an unbounded loop.
+
+The supported-scale regression budgets are executable tests, not advisory
+logs. At 1, 100, and 1,000 bookmarks, a steady-state one-row mutation is capped
+at 128 KiB allocation and 250 ms; a 100-row page and exact-item search at 1 MiB
+allocation, 64 KiB response, and 250 ms; a 100-item maximum cleanup batch at
+4 MiB allocation and 500 ms; and one-time legacy migration at 16 MiB and 2 s.
+The 1,000-row compact offset batch is capped at a 192 KiB request, 16 MiB
+allocation, and 2 s. Client scale tests cap the library and player render at 50
+rows per page, timeline markers at 100, duplicate groups/versions at 10 each,
+offset preview rows at 50, and duplicate identity work at 1,000 rich seven-field
+episode identities using a compact provider-key index (under 64 MiB observed
+heap growth and 500 ms CPU). DOM is capped at 2,000 nodes (stricter per-modal
+assertions also apply), and mock render time at 500 ms.
 
 Dedicated operation endpoints expose the same revision contract:
 

@@ -38,6 +38,26 @@ public sealed class PersistedPayloadLimitAttributeTests
             nameof(UserSettingsController.SaveUserSettingsElsewhere),
             PersistedPayloadPolicy.StandardRequestBytes);
         AssertLimit(
+            typeof(UserSettingsController),
+            nameof(UserSettingsController.SaveUserBookmark),
+            PersistedPayloadPolicy.BookmarkRequestBytes);
+        AssertLimit(
+            typeof(UserSettingsController),
+            nameof(UserSettingsController.AddUserBookmark),
+            PersistedPayloadPolicy.BookmarkRequestBytes);
+        AssertLimit(
+            typeof(UserSettingsController),
+            nameof(UserSettingsController.UpdateUserBookmark),
+            PersistedPayloadPolicy.BookmarkRequestBytes);
+        AssertLimit(
+            typeof(UserSettingsController),
+            nameof(UserSettingsController.BatchUserBookmarks),
+            PersistedPayloadPolicy.BookmarkRequestBytes);
+        AssertLimit(
+            typeof(UserSettingsController),
+            nameof(UserSettingsController.CleanupUserBookmarks),
+            PersistedPayloadPolicy.BookmarkRequestBytes);
+        AssertLimit(
             typeof(HiddenContentController),
             nameof(HiddenContentController.SaveUserHiddenContent),
             PersistedPayloadPolicy.HiddenContentRequestBytes);
