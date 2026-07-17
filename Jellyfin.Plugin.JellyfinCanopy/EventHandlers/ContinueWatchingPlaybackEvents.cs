@@ -1,9 +1,9 @@
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading;
+using System.Threading.Channels;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
 using MediaBrowser.Controller.Entities.TV;
@@ -220,116 +220,420 @@ namespace Jellyfin.Plugin.JellyfinCanopy.EventHandlers
     public sealed class ContinueWatchingLibraryHook : IHostedService, IDisposable
     {
         private static readonly TimeSpan DrainDebounce = TimeSpan.FromSeconds(2);
+        private static readonly TimeSpan DrainRetryDelay = TimeSpan.FromSeconds(2);
+        private const int PendingRemovalCapacity = 4096;
 
         private readonly ILibraryManager _libraryManager;
         private readonly UserConfigurationManager _configManager;
         private readonly IUserManager _userManager;
         private readonly ILogger<ContinueWatchingLibraryHook> _logger;
+        private readonly object _lifecycleGate = new();
+        private readonly HashSet<string> _pendingRemovals = new(StringComparer.OrdinalIgnoreCase);
+        private readonly int _pendingRemovalCapacity;
+        private readonly TimeSpan _drainDebounce;
+        private readonly TimeSpan _drainRetryDelay;
+        private readonly Func<Guid, CwRemovedIdIndex, bool>? _pruneUserForTest;
+        private readonly TaskCompletionSource<bool> _disposeCompletion = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        // Coalesce a bulk delete (many ItemRemoved events in one burst) into a single debounced
-        // drain: without this, each removed item started its own Task.Run that enumerated every user
-        // and did a locked per-user disk RMW — O(items × users) file reads on a bulk delete.
-        private readonly ConcurrentDictionary<string, byte> _pendingRemovals = new(StringComparer.OrdinalIgnoreCase);
-        private readonly Timer _drainTimer;
-        // Interlocked flush guard so a StopAsync flush and a concurrent timer tick don't double-drain
-        // (mirrors TagCacheService.FlushPending).
-        private int _draining;
-        private int _drainRearms; // count of times the finally re-armed the timer (test seam)
+        private Channel<byte>? _drainSignals;
+        private CancellationTokenSource? _flushNow;
+        private CancellationTokenSource? _abortWorker;
+        private Task? _workerTask;
+        private bool _started;
+        private bool _subscribed;
+        private bool _accepting;
+        private bool _stopInitiated;
+        private bool _disposed;
+        private bool _disposeStarted;
+        private string? _terminalFailure;
+        private long _rejectedRemovalCount;
+        private long _reportedRejectedRemovalCount;
 
-        // Test seams (Tests has InternalsVisibleTo).
-        internal void EnqueueRemovalForTest(Guid id) => _pendingRemovals.TryAdd(id.ToString(), 0);
+        // Test seams (Tests has InternalsVisibleTo). Both enqueue paths use the production intake
+        // fence, so lifecycle races exercise the same acceptance boundary as ItemRemoved.
+        internal bool EnqueueRemovalForTest(Guid id) => TryAcceptRemoval(id);
 
-        internal void DrainForTest() => Drain();
+        internal Action? OnBeforeRemovalAcceptanceForTest;
 
         internal Action? OnDrainProcessingForTest;
 
-        internal int DrainRearmCountForTest => _drainRearms;
+        internal Action? OnDrainDebounceStartedForTest;
 
-        internal bool PendingIsEmptyForTest => _pendingRemovals.IsEmpty;
+        internal Action? OnDisposeWaitingForTest;
+
+        internal bool PendingIsEmptyForTest
+        {
+            get
+            {
+                lock (_lifecycleGate)
+                {
+                    return _pendingRemovals.Count == 0;
+                }
+            }
+        }
+
+        internal long RejectedRemovalCountForTest => Interlocked.Read(ref _rejectedRemovalCount);
+
+        internal bool WorkerIsCompletedForTest
+        {
+            get
+            {
+                lock (_lifecycleGate)
+                {
+                    return _workerTask?.IsCompleted != false;
+                }
+            }
+        }
 
         public ContinueWatchingLibraryHook(
             ILibraryManager libraryManager,
             UserConfigurationManager configManager,
             IUserManager userManager,
             ILogger<ContinueWatchingLibraryHook> logger)
+            : this(
+                libraryManager,
+                configManager,
+                userManager,
+                logger,
+                PendingRemovalCapacity,
+                DrainDebounce,
+                DrainRetryDelay,
+                null)
         {
+        }
+
+        internal ContinueWatchingLibraryHook(
+            ILibraryManager libraryManager,
+            UserConfigurationManager configManager,
+            IUserManager userManager,
+            ILogger<ContinueWatchingLibraryHook> logger,
+            int pendingRemovalCapacity,
+            TimeSpan drainDebounce,
+            TimeSpan drainRetryDelay,
+            Func<Guid, CwRemovedIdIndex, bool>? pruneUserForTest)
+        {
+            if (pendingRemovalCapacity <= 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(pendingRemovalCapacity));
+            }
+
             _libraryManager = libraryManager;
             _configManager = configManager;
             _userManager = userManager;
             _logger = logger;
-            _drainTimer = new Timer(_ => Drain(), null, Timeout.Infinite, Timeout.Infinite);
+            _pendingRemovalCapacity = pendingRemovalCapacity;
+            _drainDebounce = drainDebounce;
+            _drainRetryDelay = drainRetryDelay;
+            _pruneUserForTest = pruneUserForTest;
         }
 
         public Task StartAsync(CancellationToken cancellationToken)
         {
-            _libraryManager.ItemRemoved += OnItemRemoved;
+            cancellationToken.ThrowIfCancellationRequested();
+            lock (_lifecycleGate)
+            {
+                // A hosted-service instance has a single terminal lifecycle. Duplicate starts are
+                // harmless, while a start after Stop/Dispose must not reopen closed intake.
+                if (_started || _stopInitiated || _disposed) return Task.CompletedTask;
+
+                _drainSignals = Channel.CreateBounded<byte>(new BoundedChannelOptions(1)
+                {
+                    SingleReader = true,
+                    SingleWriter = false,
+                    FullMode = BoundedChannelFullMode.DropWrite
+                });
+                _flushNow = new CancellationTokenSource();
+                _abortWorker = new CancellationTokenSource();
+                _accepting = true;
+                _started = true;
+                _subscribed = true;
+                _libraryManager.ItemRemoved += OnItemRemoved;
+
+                var signals = _drainSignals;
+                var flushNow = _flushNow;
+                var abortWorker = _abortWorker;
+                _workerTask = Task.Run(() => RunDrainWorkerAsync(signals, flushNow.Token, abortWorker.Token));
+            }
+
             return Task.CompletedTask;
         }
 
-        public Task StopAsync(CancellationToken cancellationToken)
+        public async Task StopAsync(CancellationToken cancellationToken)
         {
-            _libraryManager.ItemRemoved -= OnItemRemoved;
-            // Flush anything queued mid-window so a shutdown doesn't drop pending prunes.
-            _drainTimer.Change(Timeout.Infinite, Timeout.Infinite);
-            Drain();
-            _drainTimer.Dispose();
-            return Task.CompletedTask;
+            Task? worker;
+            lock (_lifecycleGate)
+            {
+                CloseIntakeLocked();
+                worker = _workerTask;
+            }
+
+            if (worker == null) return;
+
+            try
+            {
+                // Cancellation only cancels this caller's wait. It does not abandon accepted work:
+                // the owned worker remains live, and a later StopAsync can deterministically join it.
+                await worker.WaitAsync(cancellationToken).ConfigureAwait(false);
+
+                string? terminalFailure;
+                lock (_lifecycleGate)
+                {
+                    terminalFailure = _terminalFailure;
+                }
+
+                if (terminalFailure != null)
+                {
+                    throw new InvalidOperationException(terminalFailure);
+                }
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                _logger.LogWarning("CW: shutdown canceled before accepted orphan-cleanup work was drained; the worker remains active for a later join.");
+                throw;
+            }
         }
 
         public void Dispose()
         {
-            _drainTimer.Dispose();
-            GC.SuppressFinalize(this);
+            var ownsDisposal = false;
+            Task completion;
+            Task? worker = null;
+            CancellationTokenSource? abortWorker = null;
+            lock (_lifecycleGate)
+            {
+                if (!_disposeStarted)
+                {
+                    _disposeStarted = true;
+                    _disposed = true;
+                    CloseIntakeLocked();
+                    abortWorker = _abortWorker;
+                    worker = _workerTask;
+                    ownsDisposal = true;
+                }
+
+                completion = _disposeCompletion.Task;
+            }
+
+            if (ownsDisposal)
+            {
+                Exception? disposalFailure = null;
+                try
+                {
+                    // StopAsync is the normal drain/join path. Dispose is the final safety fence: if
+                    // host shutdown skipped or canceled StopAsync, abort retries and join any in-flight
+                    // write so no worker can write after any Dispose caller returns.
+                    abortWorker?.Cancel();
+                    OnDisposeWaitingForTest?.Invoke();
+                    worker?.GetAwaiter().GetResult();
+                }
+                catch (OperationCanceledException)
+                {
+                    // RunDrainWorkerAsync observes the abort and publishes the shared terminal result.
+                }
+                catch (Exception ex)
+                {
+                    disposalFailure = ex;
+                }
+                finally
+                {
+                    _flushNow?.Dispose();
+                    _abortWorker?.Dispose();
+                    if (disposalFailure == null)
+                    {
+                        _disposeCompletion.TrySetResult(true);
+                    }
+                    else
+                    {
+                        _disposeCompletion.TrySetException(disposalFailure);
+                    }
+
+                    GC.SuppressFinalize(this);
+                }
+            }
+            else
+            {
+                OnDisposeWaitingForTest?.Invoke();
+            }
+
+            // Every caller, including callers that arrive while the owner is still joining the
+            // worker, observes the same terminal completion before returning.
+            completion.GetAwaiter().GetResult();
         }
 
         private void OnItemRemoved(object? sender, ItemChangeEventArgs e)
         {
             // PERF(S1): ItemRemoved fires synchronously on Jellyfin's library-scan thread. Record only
-            // the id here (O(1)) and (re)arm the debounce timer; the user enumeration and the per-user
-            // hidden-content prune (file I/O) run once, off the scan thread, on the timer thread. See
+            // the id here (bounded O(1)) and signal the worker; user enumeration and the per-user
+            // hidden-content prune (file I/O) run once, off the scan thread, on the owned worker. See
             // docs/developers.md#performance-rules (S1).
             var id = e?.Item?.Id ?? Guid.Empty;
             if (id == Guid.Empty) return;
-            _pendingRemovals.TryAdd(id.ToString(), 0);
-            _drainTimer.Change(DrainDebounce, Timeout.InfiniteTimeSpan);
+            OnBeforeRemovalAcceptanceForTest?.Invoke();
+            TryAcceptRemoval(id);
         }
 
-        // Snapshot + clear the pending removals, then prune each user ONCE for the whole batch.
-        private void Drain()
+        private bool TryAcceptRemoval(Guid id)
         {
-            if (Interlocked.Exchange(ref _draining, 1) == 1) return;
+            if (id == Guid.Empty) return false;
+            lock (_lifecycleGate)
+            {
+                if (!_accepting || _drainSignals == null) return false;
+
+                var identifier = id.ToString();
+                if (_pendingRemovals.Count >= _pendingRemovalCapacity
+                    && !_pendingRemovals.Contains(identifier))
+                {
+                    // Keep every already-accepted exact identity. Broad point-in-time library
+                    // negatives are unsafe during scans, so a new distinct id beyond the hard
+                    // intake bound is explicitly rejected and counted rather than replacing exact
+                    // work with an unrelated full reconciliation.
+                    Interlocked.Increment(ref _rejectedRemovalCount);
+                    return false;
+                }
+
+                _pendingRemovals.Add(identifier);
+                _drainSignals.Writer.TryWrite(0);
+                return true;
+            }
+        }
+
+        private void CloseIntakeLocked()
+        {
+            if (_stopInitiated) return;
+            _stopInitiated = true;
+            _accepting = false;
+            if (_subscribed)
+            {
+                _libraryManager.ItemRemoved -= OnItemRemoved;
+                _subscribed = false;
+            }
+
+            _flushNow?.Cancel();
+            _drainSignals?.Writer.TryComplete();
+        }
+
+        private async Task RunDrainWorkerAsync(
+            Channel<byte> signals,
+            CancellationToken flushNow,
+            CancellationToken abortWorker)
+        {
+            RemovalBatch? activeBatch = null;
             try
             {
-                if (_pendingRemovals.IsEmpty) return;
-                var ids = _pendingRemovals.Keys.ToArray();
-                foreach (var k in ids) _pendingRemovals.TryRemove(k, out _);
+                while (await signals.Reader.WaitToReadAsync(abortWorker).ConfigureAwait(false))
+                {
+                    signals.Reader.TryRead(out _);
+                    OnDrainDebounceStartedForTest?.Invoke();
+                    try
+                    {
+                        await Task.Delay(_drainDebounce, flushNow).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException) when (flushNow.IsCancellationRequested)
+                    {
+                        // Stop closes intake before canceling this debounce, making the final
+                        // snapshot complete. The worker itself is not canceled and drains it below.
+                    }
 
-                OnDrainProcessingForTest?.Invoke();
+                    abortWorker.ThrowIfCancellationRequested();
+                    while (signals.Reader.TryRead(out _)) { }
+                    activeBatch = TakePendingBatch();
+                    if (activeBatch.Value.IsEmpty) continue;
 
-                var userIds = _userManager.GetUsers().Select(u => u.Id);
-                DrainBatch(ids, userIds, PruneOrphans);
+                    OnDrainProcessingForTest?.Invoke();
+                    while (!ProcessBatch(activeBatch.Value))
+                    {
+                        await Task.Delay(_drainRetryDelay, abortWorker).ConfigureAwait(false);
+                    }
+
+                    activeBatch = null;
+                }
             }
-            catch (Exception ex)
+            catch (OperationCanceledException) when (abortWorker.IsCancellationRequested)
             {
-                _logger.LogWarning($"CW: orphan-prune drain failed: {ex.Message}");
+                if (activeBatch.HasValue) RestorePendingBatch(activeBatch.Value);
+                int pendingCount;
+                lock (_lifecycleGate)
+                {
+                    pendingCount = _pendingRemovals.Count;
+                }
+
+                if (pendingCount > 0)
+                {
+                    var failure = $"CW: TERMINAL shutdown failure: disposal aborted with {pendingCount} accepted orphan-cleanup id(s) undrained.";
+                    lock (_lifecycleGate)
+                    {
+                        _terminalFailure ??= failure;
+                    }
+
+                    _logger.LogError(failure);
+                }
             }
             finally
             {
-                Interlocked.Exchange(ref _draining, 0);
-                // Re-arm if work arrived while we were draining (a concurrent ItemRemoved, or a timer
-                // tick that bailed on the _draining guard): those ids weren't in this drain's snapshot,
-                // so without a re-arm they'd sit in _pendingRemovals until the next unrelated event.
-                // Fixed delay, no busy-spin. Guard against ObjectDisposedException: StopAsync may have
-                // disposed the timer (it drains once more itself), so a late re-arm is a harmless no-op.
-                if (!_pendingRemovals.IsEmpty)
+                // Rejections happen on the synchronous event path, where logging would add
+                // unbounded host work. Publish one aggregated delta from the owned worker even if
+                // Dispose aborts before ProcessBatch is reached; a normal batch report makes this
+                // final call a no-op, so each rejected event is reported exactly once.
+                ReportRejectedRemovals();
+            }
+        }
+
+        private RemovalBatch TakePendingBatch()
+        {
+            lock (_lifecycleGate)
+            {
+                if (_pendingRemovals.Count == 0) return default;
+                var ids = _pendingRemovals.ToArray();
+                _pendingRemovals.Clear();
+                return new RemovalBatch(ids);
+            }
+        }
+
+        private void RestorePendingBatch(RemovalBatch batch)
+        {
+            lock (_lifecycleGate)
+            {
+                // Intake is already closed on this terminal path. Restoring the active exact batch
+                // beside a final pending batch remains bounded at twice the fixed intake capacity.
+                foreach (var id in batch.RemovedIds)
                 {
-                    try
-                    {
-                        _drainTimer.Change(DrainDebounce, Timeout.InfiniteTimeSpan);
-                        Interlocked.Increment(ref _drainRearms);
-                    }
-                    catch (ObjectDisposedException) { /* shutting down; StopAsync already drained/stopped */ }
+                    _pendingRemovals.Add(id);
                 }
+            }
+        }
+
+        private bool ProcessBatch(RemovalBatch batch)
+        {
+            ReportRejectedRemovals();
+            Guid[] userIds;
+            try
+            {
+                userIds = _userManager.GetUsers().Select(user => user.Id).ToArray();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning($"CW: orphan-prune user enumeration failed; batch retained for retry: {ex.Message}");
+                return false;
+            }
+
+            var targetIds = CwRemovedIdIndex.Create(batch.RemovedIds);
+            var allSucceeded = true;
+            foreach (var userId in userIds)
+            {
+                allSucceeded &= PruneOrphans(userId, targetIds);
+            }
+
+            return allSucceeded;
+        }
+
+        private void ReportRejectedRemovals()
+        {
+            var total = Interlocked.Read(ref _rejectedRemovalCount);
+            var previouslyReported = Interlocked.Exchange(ref _reportedRejectedRemovalCount, total);
+            if (total > previouslyReported)
+            {
+                _logger.LogWarning(
+                    $"CW: bounded orphan-cleanup intake rejected {total - previouslyReported} distinct removal(s); {total} total rejection(s) since startup.");
             }
         }
 
@@ -353,8 +657,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.EventHandlers
 
         // One locked RMW per user that removes every batched orphan id, then invalidates the response
         // filter's HideContext cache for that user if anything changed.
-        private void PruneOrphans(Guid userId, CwRemovedIdIndex targetIds)
+        private bool PruneOrphans(Guid userId, CwRemovedIdIndex targetIds)
         {
+            if (_pruneUserForTest != null) return _pruneUserForTest(userId, targetIds);
+
             try
             {
                 var removed = _configManager.RmwUserConfiguration<UserHiddenContent>(
@@ -365,19 +671,24 @@ namespace Jellyfin.Plugin.JellyfinCanopy.EventHandlers
                 {
                     HiddenContentResponseFilter.InvalidateUser(userId.ToString("N"));
                 }
+
+                return true;
             }
             catch (UserStoreUnhealthyException)
             {
                 // The marker transition is already logged centrally. Repeated
-                // library events must remain silent until explicit recovery.
+                // library events remain silent, but the accepted batch stays owned for retry.
+                return false;
             }
             catch (InvalidDataException ex)
             {
-                _logger.LogWarning($"CW: skipping orphan-prune for user {userId} due to corrupt hidden-content.json: {ex.Message}");
+                _logger.LogWarning($"CW: retaining orphan-prune for user {userId} due to corrupt hidden-content.json: {ex.Message}");
+                return false;
             }
             catch (Exception ex)
             {
-                _logger.LogWarning($"CW: orphan-prune failed for user {userId}: {ex.Message}");
+                _logger.LogWarning($"CW: orphan-prune failed for user {userId}; batch retained for retry: {ex.Message}");
+                return false;
             }
         }
 
@@ -398,6 +709,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.EventHandlers
 
             foreach (var key in keysToDrop) hidden.Items.Remove(key);
             return keysToDrop.Count;
+        }
+
+        private readonly record struct RemovalBatch(string[] RemovedIds)
+        {
+            internal bool IsEmpty => RemovedIds == null || RemovedIds.Length == 0;
         }
     }
 }

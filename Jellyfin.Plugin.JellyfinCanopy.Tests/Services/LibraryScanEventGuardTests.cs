@@ -54,7 +54,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             "TagCacheMonitor.cs",             // record id -> TagCacheService debounced flush worker
             "SeerrScanTriggerService.cs",     // cheap config/kind check -> counter + debounce timer
             "WatchlistMonitor.cs",            // constant-time gates -> bounded coalescing channel worker
-            "ContinueWatchingPlaybackEvents.cs", // record id -> debounced timer drain (GetUsers + per-user prune off-thread, coalesced)
+            "ContinueWatchingPlaybackEvents.cs", // bounded id intake -> lifecycle-owned drain worker (GetUsers + per-user prune off-thread)
             "SpoilerSeerrPendingPromoter.cs", // cheap gate ContainsKey -> coalesced Task.Run sweep (GetItemById + RMW off-thread)
         };
 
@@ -69,9 +69,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             // ScheduleWatchlistCheck (sync handler) performs a non-blocking bounded enqueue;
             // ProcessQueuedItemAsync / ProcessItemForWatchlist run on the owned channel worker.
             ["WatchlistMonitor.cs"] = new[] { "ProcessQueuedItemAsync", "ProcessItemForWatchlist" },
-            // OnItemRemoved (sync handler) only records ids + arms a debounce Timer; Drain is the
-            // timer callback and DrainBatch/PruneOrphans are its per-user workers (GetUsers + prune).
-            ["ContinueWatchingPlaybackEvents.cs"] = new[] { "Drain", "DrainBatch", "PruneOrphans" },
+            // OnItemRemoved (sync handler) only records an id + signals a bounded channel;
+            // RunDrainWorkerAsync/ProcessBatch and their prune paths own all heavy work off-thread.
+            ["ContinueWatchingPlaybackEvents.cs"] = new[]
+            {
+                "RunDrainWorkerAsync", "ProcessBatch", "DrainBatch", "PruneOrphans"
+            },
             // OnItemAdded (sync handler) bumps a counter + arms a debounce Timer; OnDebounceElapsed
             // is the timer callback dispatching the scan HTTP POSTs off-thread.
             ["SeerrScanTriggerService.cs"] = new[] { "OnDebounceElapsed", "DispatchAsync", "PostScanTrigger", "TriggerNowAsync" },
