@@ -63,7 +63,11 @@ const SOL_MODEL = a.solModel || 'gpt-5.6-sol'
 const SOL_EFFORT = a.solEffort || 'high' // low|medium|high|xhigh|max|ultra
 const SOL_REVIEWERS = a.solReviewers == null ? 1 : Math.max(0, a.solReviewers)
 const SOL_VIA = a.solVia || 'agent' // 'agent' | 'codex-cli'
-const CODEX_SCHEMA = '.agents/skills/jellyfin-canopy-agentic-loop/references/codex-review-schema.json'
+// Path to the codex --output-schema. Defaults inside the target worktree, but
+// can be overridden (e.g. an absolute path) when the skill files are not yet in
+// the worktree — such as running the loop before this skill is merged to main.
+const CODEX_SCHEMA_PATH =
+  a.codexSchema || `${WORKTREE}/.agents/skills/jellyfin-canopy-agentic-loop/references/codex-review-schema.json`
 
 // ── shared prompt preamble ──────────────────────────────────────────────────
 const CONTRACTS = `You are working on the Jellyfin Canopy plugin repository in the worktree at:
@@ -370,7 +374,7 @@ ${solPrompt}
 SOL_PROMPT
   codex -a never -s read-only exec -C "${WORKTREE}" --ephemeral --ignore-user-config \\
     --color never --json -m "${SOL_MODEL}" -c model_reasoning_effort="${SOL_EFFORT}" \\
-    --output-schema "${WORKTREE}/${CODEX_SCHEMA}" -o "$R" - < "$P" > "$EV" 2> "$ER"
+    --output-schema "${CODEX_SCHEMA_PATH}" -o "$R" - < "$P" > "$EV" 2> "$ER"
 Then read "$R" (JSON conforming to the schema) and RETURN its findings mapped to
 THIS tool's schema (lens="gpt-5.6-sol", file, line, severity, summary,
 failureScenario). If \`codex\` is missing or exits non-zero, RETURN
