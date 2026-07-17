@@ -118,14 +118,19 @@ describe('seerr quota reset unavailable-vs-absent distinction', () => {
     });
 
     it('prefers a resolved timestamp over the unavailable hint', () => {
+        // Incomplete projection (flag === false) AND a resolvable timestamp:
+        // the resolved reset must win over the unavailable hint. This exercises
+        // the `!resetText` short-circuit in the guard — dropping that clause
+        // would clobber the resolved timestamp with the unavailable copy.
         const future = new Date(Date.now() + 3_600_000).toISOString();
         const line = internal.formatQuotaLine(
             { ...restrictedSide(), nextResetAt: future },
             'movie',
-            true
+            false
         );
 
         expect(line.resetText).toContain('seerr_quota_reset_in_');
+        expect(line.resetText).not.toContain('seerr_quota_reset_unavailable');
     });
 
     it('does not show the unavailable hint on an unrestricted side', () => {
