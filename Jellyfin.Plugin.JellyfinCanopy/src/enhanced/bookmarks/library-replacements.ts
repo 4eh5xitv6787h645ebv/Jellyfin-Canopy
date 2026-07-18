@@ -282,7 +282,10 @@ async function enrichSeriesProviders(
  * match resolves `match` immediately, so a present replacement is never gated
  * behind a whole-library download or the item safety cap. Only a negative needs
  * a complete scan — `no-match` is published solely after every advertised item
- * has been examined (the running count reaches the reported TotalRecordCount).
+ * has been examined (the count of DISTINCT ids seen reaches the reported
+ * TotalRecordCount, so a repeated boundary row can never fake exhaustion).
+ * Continuation offsets advance by the rows a page actually returned, so a server
+ * that trims a page below the requested Limit leaves no unscanned gap.
  * Anything that prevents a complete negative scan — a malformed or shifting
  * envelope, an empty or non-advancing page before the end, more rows than
  * advertised, or a page/item safety cap reached before exhaustion — rejects and
@@ -307,16 +310,24 @@ export async function searchForReplacementItem(
     const baseUrl = `/Users/${userId}/Items?Recursive=true${typeFilter}&Fields=ProviderIds,Type,SeriesId,ParentIndexNumber,IndexNumber,IndexNumberEnd&EnableUserData=false&SortBy=DateCreated&SortOrder=Descending`;
 
     let expectedTotal: number | null = null;
-    let itemsExamined = 0;
+    // Offset the next request must ask for. It advances by the rows a page
+    // actually returned, never by the requested page size: a server that caps a
+    // page below the requested Limit must not leave an unscanned gap.
+    let startIndex = 0;
+    // Distinct ids carry exhaustion, not raw row counts. An overlapping or
+    // shifting DateCreated window can repeat a boundary row, and counting raw
+    // rows would then reach the advertised total while a displaced replacement
+    // was never examined — a false no-match on a flow gating a DESTRUCTIVE
+    // migration.
+    const seenIds = new Set<string>();
 
     for (let pageIndex = 0; pageIndex < REPLACEMENT_MAX_PAGES; pageIndex += 1) {
       if (!JC.identity.isCurrent(context)) return { status: 'cancelled' };
-      const skip = pageIndex * REPLACEMENT_PAGE_SIZE;
-      const url = `${baseUrl}&Limit=${REPLACEMENT_PAGE_SIZE}&StartIndex=${skip}`;
+      const url = `${baseUrl}&Limit=${REPLACEMENT_PAGE_SIZE}&StartIndex=${startIndex}`;
       const response: unknown = await JC.core.api!.jf(url, { skipCache: true });
       if (!JC.identity.isCurrent(context)) return { status: 'cancelled' };
 
-      const page = readReplacementPage(response, skip);
+      const page = readReplacementPage(response, startIndex);
       if (expectedTotal === null) {
         expectedTotal = page.totalRecordCount;
       } else if (page.totalRecordCount !== expectedTotal) {
@@ -324,6 +335,18 @@ export async function searchForReplacementItem(
         // no longer be proven, so fail closed rather than risk a false no-match.
         incompleteReplacementSearch(
           `replacement total changed mid-scan from ${expectedTotal} to ${page.totalRecordCount}`
+        );
+      }
+
+      // Validate the running row count against the advertised total BEFORE
+      // trusting anything on this page. An envelope that carries more rows than
+      // it advertises (e.g. two items with TotalRecordCount=1) is internally
+      // inconsistent: fail closed rather than publish a match — or a no-match —
+      // from a response the scan classifies as incomplete.
+      const rowsThroughThisPage = startIndex + page.items.length;
+      if (rowsThroughThisPage > expectedTotal) {
+        incompleteReplacementSearch(
+          `replacement scan read ${rowsThroughThisPage} rows beyond the advertised ${expectedTotal}`
         );
       }
 
@@ -338,13 +361,8 @@ export async function searchForReplacementItem(
       );
       if (matches.length > 0) return { status: 'match', items: matches };
 
-      itemsExamined += page.items.length;
-      if (itemsExamined > expectedTotal) {
-        incompleteReplacementSearch(
-          `replacement scan read ${itemsExamined} rows beyond the advertised ${expectedTotal}`
-        );
-      }
-      if (itemsExamined >= expectedTotal) return { status: 'no-match' };
+      for (const item of page.items) seenIds.add(item.Id);
+      if (seenIds.size >= expectedTotal) return { status: 'no-match' };
 
       // Not yet exhausted: the scan must be able to make progress and stay
       // within the safety bound, otherwise a negative cannot be trusted.
@@ -356,6 +374,11 @@ export async function searchForReplacementItem(
           `replacement collection of ${expectedTotal} exceeds the ${REPLACEMENT_MAX_ITEMS} item safety bound`
         );
       }
+
+      // Advance by the rows actually returned. page.items.length is > 0 here
+      // (guarded above), so the offset strictly increases and the scan cannot
+      // spin on a stalled offset.
+      startIndex = rowsThroughThisPage;
     }
 
     // Ran out of pages before reaching the advertised total: an incomplete
@@ -383,6 +406,9 @@ export async function findAndOfferReplacement(
 
   try {
     const result = await searchForReplacementItem(group.details, context);
+    // The await can straddle an account transition; a stale continuation must
+    // not paint this user's toast (or modal) over the next account's UI.
+    if (!JC.identity.isCurrent(context)) return;
     switch (result.status) {
       case 'match':
         showReplacementSelectionModal(group, result.items, context);
@@ -642,6 +668,10 @@ export async function findAllOrphanedAndOfferMigration(
         return;
     }
   }
+
+  // The final search's await can resolve after an account transition; re-fence
+  // before publishing any batch outcome toast or the summary modal.
+  if (!JC.identity.isCurrent(context)) return;
 
   if (failedSearchCount > 0) {
     toast(JC.t!('bookmark_orphaned_search_failed').replace('{count}', String(failedSearchCount)), 4000);

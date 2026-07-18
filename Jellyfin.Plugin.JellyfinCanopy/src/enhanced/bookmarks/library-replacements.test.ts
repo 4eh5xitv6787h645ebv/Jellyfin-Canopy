@@ -106,7 +106,8 @@ function captureIdentity(userId = 'replacement-user'): IdentityContext {
 function expectMainRequest(
   call: unknown[],
   expectedUserId: string,
-  expectedStartIndex: number
+  expectedStartIndex: number,
+  expectedItemTypes = 'Movie,MusicVideo'
 ): void {
   const url = new URL(`http://jellyfin.test${String(call[0])}`);
   expect(url.pathname).toBe(`/Users/${expectedUserId.replace(/-/g, '').toLowerCase()}/Items`);
@@ -115,6 +116,15 @@ function expectMainRequest(
   // Replacement identity never reads mutable playback state; the payload must
   // exclude it so a progress update mid-scan cannot perturb the result.
   expect(url.searchParams.get('EnableUserData')).toBe('false');
+  // These params are what make a negative scan sound: a recursive search of the
+  // right item types, deterministically ordered so StartIndex pagination is
+  // stable. Dropping Recursive collapses TotalRecordCount to top-level items and
+  // manufactures a false no-match; narrowing IncludeItemTypes or the sort has
+  // the same effect. Assert them so such a regression fails here.
+  expect(url.searchParams.get('Recursive')).toBe('true');
+  expect(url.searchParams.get('IncludeItemTypes')).toBe(expectedItemTypes);
+  expect(url.searchParams.get('SortBy')).toBe('DateCreated');
+  expect(url.searchParams.get('SortOrder')).toBe('Descending');
   expect(call[1]).toEqual({ skipCache: true });
 }
 
@@ -156,6 +166,64 @@ describe('bookmark replacement library search', () => {
     expect(jf).toHaveBeenCalledTimes(2);
     expectMainRequest(jf.mock.calls[0], 'regular-user', 0);
     expectMainRequest(jf.mock.calls[1], 'regular-user', 500);
+  });
+
+  // AC1: a server that trims a page below the requested Limit must not leave a
+  // gap — the next request starts at the rows actually returned, not at +500, so
+  // a replacement in the skipped range is still found.
+  it('advances the offset by rows returned when a page is shorter than the limit', async () => {
+    const shortPage = Array.from({ length: 100 }, (_, index) => item(`short-${index}`));
+    const jf = vi.fn()
+      .mockResolvedValueOnce(page(shortPage, 600, 0))
+      .mockResolvedValueOnce(page([item('gap-match', 'target-tmdb')], 600, 100));
+    installApi(jf);
+    const context = captureIdentity('regular-user');
+
+    await expect(searchForReplacementItem(bookmark(), context)).resolves.toEqual({
+      status: 'match',
+      items: [expect.objectContaining({ Id: 'gap-match' })]
+    });
+
+    expect(jf).toHaveBeenCalledTimes(2);
+    // Second request continues at 100 (rows returned), never jumping to 500 and
+    // skipping rows 100-499.
+    expectMainRequest(jf.mock.calls[0], 'regular-user', 0);
+    expectMainRequest(jf.mock.calls[1], 'regular-user', 100);
+  });
+
+  // AC3/AC4: a repeated boundary row cannot pass a truncated scan off as a proven
+  // absence — exhaustion is decided by DISTINCT ids, so a duplicate leaves the
+  // scan short and it fails closed rather than reporting a false no-match.
+  it('fails closed when a repeated row would otherwise fake exhaustion', async () => {
+    const firstPage = Array.from({ length: 500 }, (_, index) => item(`dup-${index}`));
+    const jf = vi.fn()
+      // Page two repeats a page-one id (shifted DateCreated window) instead of
+      // the genuine 501st item. Raw rows would total 501 == advertised, but only
+      // 500 distinct ids were ever examined.
+      .mockResolvedValueOnce(page(firstPage, 501, 0))
+      .mockResolvedValueOnce(page([item('dup-0')], 501, 500))
+      .mockResolvedValueOnce(page([], 501, 501));
+    installApi(jf);
+    const context = captureIdentity();
+
+    const result = await searchForReplacementItem(bookmark(), context);
+    expect(result.status).toBe('failed');
+  });
+
+  // A page that carries a logical match but advertises fewer rows than it
+  // returns is internally inconsistent; the bounds check runs BEFORE the match is
+  // published, so it fails closed rather than seeding a migration from a bad
+  // envelope.
+  it('fails closed on a matching row that arrives on an over-full page', async () => {
+    const jf = vi.fn().mockResolvedValueOnce(
+      page([item('over-match', 'target-tmdb'), item('extra')], 1, 0)
+    );
+    installApi(jf);
+    const context = captureIdentity();
+
+    const result = await searchForReplacementItem(bookmark(), context);
+    expect(result.status).toBe('failed');
+    expect(jf).toHaveBeenCalledTimes(1);
   });
 
   // AC4: a match on the first page short-circuits without downloading the rest
