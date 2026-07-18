@@ -21,6 +21,17 @@ const replacementModalTimers = new Set<number>();
 export const SERIES_ENRICHMENT_CHUNK_SIZE = 50;
 export const SERIES_ENRICHMENT_MAX_URL_LENGTH = 2048;
 
+/**
+ * How many source bookmarks a MOVE-style migration durably relocated: every
+ * original id no longer present in the committed store. syncBookmarks returns
+ * only the newly created target rows, so a source that deduplicated into an
+ * existing target equivalent (creating no new row) is still migrated and must
+ * be counted here; using the add count alone would under-report the migration.
+ */
+export function migratedSourceCount(oldIds: string[], store: Record<string, unknown>): number {
+  return oldIds.filter((id) => !Object.prototype.hasOwnProperty.call(store, id)).length;
+}
+
 interface StoredBookmark {
   itemId: string;
   tmdbId: string;
@@ -404,10 +415,16 @@ function showReplacementSelectionModal(
       // new copies are durably persisted, so a mid-flight failure keeps the
       // originals intact (the old pre-delete lost data if syncing failed).
       const oldIds = oldGroup.bookmarks.map((bookmark) => bookmark.id);
-      const synced = await JC.bookmarks!.syncBookmarks(oldGroup.bookmarks, newDetails, 0, oldIds);
+      await JC.bookmarks!.syncBookmarks(oldGroup.bookmarks, newDetails, 0, oldIds);
       if (!JC.identity.isCurrent(context)) return;
 
-      toast(JC.t!('bookmark_migrated').replace('{count}', String(synced.length)).replace('{name}', JC.escapeHtml(fullItem.Name)), 4000);
+      // syncBookmarks returns only the newly created target rows, but a MOVE
+      // migrates every source — including any that deduplicated into an existing
+      // equivalent (no new row). Report the sources actually relocated, i.e. the
+      // originals no longer present in the durable state, not the add count.
+      const store = (JC.userConfig as { bookmark?: { bookmarks?: Record<string, unknown> } } | undefined)?.bookmark?.bookmarks || {};
+      const migratedCount = migratedSourceCount(oldIds, store);
+      toast(JC.t!('bookmark_migrated').replace('{count}', String(migratedCount)).replace('{name}', JC.escapeHtml(fullItem.Name)), 4000);
 
       closeDialog();
 

@@ -4,8 +4,29 @@ import type { ApiApi } from '../../types/jc';
 import {
   SERIES_ENRICHMENT_CHUNK_SIZE,
   SERIES_ENRICHMENT_MAX_URL_LENGTH,
+  migratedSourceCount,
   searchForReplacementItem
 } from './library-replacements';
+
+describe('migrated source count', () => {
+  it('counts every source no longer in the store, including deduplicated ones', () => {
+    // A MOVE migrating two orphans where one deduplicated into an existing
+    // target equivalent creates one new row but relocates both sources; the
+    // durable store keeps only the target row, so both originals are gone.
+    const store = { targetRow: { itemId: 'new-item', timestamp: 10 } };
+    expect(migratedSourceCount(['old1', 'old2'], store)).toBe(2);
+  });
+
+  it('does not count a source that survives in the store (move not durable)', () => {
+    const store = { old1: { itemId: 'old-item', timestamp: 10 }, targetRow: { itemId: 'new-item', timestamp: 25 } };
+    expect(migratedSourceCount(['old1', 'old2'], store)).toBe(1);
+  });
+
+  it('ignores prototype-named keys via an own-property check', () => {
+    expect(migratedSourceCount(['toString'], {})).toBe(1);
+    expect(migratedSourceCount(['toString'], { toString: { itemId: 'x', timestamp: 1 } })).toBe(0);
+  });
+});
 
 describe('bookmark replacement logical identity', () => {
   beforeEach(() => {
