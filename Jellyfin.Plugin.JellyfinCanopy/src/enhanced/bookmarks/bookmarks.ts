@@ -774,6 +774,12 @@ import {
    * relationship because only the target item's rows survive. Without
    * `removeOldIds` the originals are retained (copy semantics).
    *
+   * Every move candidate is bound to the source snapshot it was selected from.
+   * Each attempt (including after a 409 rebase) re-checks that binding against
+   * the authoritative source row: an unchanged source moves, a source deleted
+   * meanwhile is left alone (never resurrected), and a source edited meanwhile
+   * fails the move closed rather than overwriting the concurrent edit.
+   *
    * Resolves only after the committed state is durable, with exactly the new
    * records this invocation created; candidates skipped because an equivalent
    * already existed (or appeared concurrently) are excluded, so the count is
@@ -799,7 +805,18 @@ import {
     // replay after a lost response) reuses the same id instead of minting a
     // second copy. Idempotency across invocations comes from the equivalence
     // check against each authoritative state, never from deterministic ids.
-    const candidates: Array<{ id: string; bookmark: Record<string, any> }> = [];
+    //
+    // Each move candidate also binds the exact source snapshot it was derived
+    // from (id + owning item + equivalence key). The batch builder re-checks
+    // that binding against the authoritative state, so a source concurrently
+    // edited or deleted between selection and commit fails the move closed
+    // instead of overwriting the edit or resurrecting the deletion.
+    const removalIds = new Set((removeOldIds || []).map(id => String(id)));
+    const candidates: Array<{
+      id: string;
+      bookmark: Record<string, any>;
+      removeSource: { id: string; itemId: unknown; key: string } | null;
+    }> = [];
     for (const oldBookmark of oldBookmarks) {
       if (compareBookmarkIdentity(oldBookmark, newItemDetails) === 'none') {
         throw new Error('Refusing to sync bookmarks across different or ambiguous logical media');
@@ -808,6 +825,7 @@ import {
         throw new Error('Refusing to sync a bookmark with a non-finite timestamp');
       }
       const newTimestamp = Math.max(0, oldBookmark.timestamp + timeOffset);
+      const sourceId = oldBookmark?.id != null ? String(oldBookmark.id) : '';
 
       candidates.push({
         id: generateBookmarkId(),
@@ -823,7 +841,10 @@ import {
           createdAt: oldBookmark.createdAt || now,
           updatedAt: now,
           syncedFrom: oldBookmark.itemId // Track where it came from
-        }
+        },
+        removeSource: sourceId && removalIds.has(sourceId)
+          ? { id: sourceId, itemId: oldBookmark.itemId, key: bookmarkEquivalenceKey(oldBookmark.timestamp, oldBookmark.label) }
+          : null
       });
     }
 
@@ -843,24 +864,44 @@ import {
           if (!Number.isFinite(existingTimestamp)) continue;
           seen.add(bookmarkEquivalenceKey(existingTimestamp, existing.label));
         }
-        for (const { id, bookmark } of candidates) {
+        for (const { id, bookmark, removeSource } of candidates) {
+          // Rebase each move against the current source row. The source delete
+          // rides the same batch as its required target add, so a committed
+          // batch is the complete MOVE and a failure leaves every source intact.
+          let deleteSource = false;
+          if (removeSource) {
+            if (!hasOwnBookmark(state.bookmarks, removeSource.id)) {
+              // The source is already gone: either this invocation's own move
+              // completed (idempotent replay) or another session deleted it.
+              // Re-adding would resurrect deleted content, so skip entirely.
+              continue;
+            }
+            const current = state.bookmarks[removeSource.id];
+            const currentTimestamp = Number(current.timestamp);
+            if (current.itemId !== removeSource.itemId
+              || !Number.isFinite(currentTimestamp)
+              || bookmarkEquivalenceKey(currentTimestamp, current.label) !== removeSource.key) {
+              // The source changed after it was selected. Moving stale content
+              // would overwrite the concurrent edit, so fail the move closed.
+              throw new Error('Refusing to move a bookmark whose source changed after it was selected');
+            }
+            deleteSource = true;
+          }
           if (hasOwnBookmark(state.bookmarks, id)) {
             // Already durably applied by this invocation (lost-response retry).
             if (!sameBookmark(state.bookmarks[id], bookmark)) {
               throw new Error(`Bookmark id collision for ${id}`);
             }
+            // The add landed already; still finish the MOVE by deleting the source.
+            if (deleteSource) operations.push({ type: 'delete', bookmarkId: removeSource!.id });
             continue;
           }
           const key = bookmarkEquivalenceKey(bookmark.timestamp as number, bookmark.label);
-          if (seen.has(key)) continue;
-          seen.add(key);
-          operations.push({ type: 'add', bookmarkId: id, bookmark });
-        }
-        // Deletes ride the same batch as the required additions: a failure
-        // leaves every source intact, and a committed batch is the complete
-        // MOVE (all missing target adds plus all applicable source deletes).
-        for (const id of removeOldIds || []) {
-          if (hasOwnBookmark(state.bookmarks, id)) operations.push({ type: 'delete', bookmarkId: id });
+          if (!seen.has(key)) {
+            seen.add(key);
+            operations.push({ type: 'add', bookmarkId: id, bookmark });
+          }
+          if (deleteSource) operations.push({ type: 'delete', bookmarkId: removeSource!.id });
         }
         return operations;
       });

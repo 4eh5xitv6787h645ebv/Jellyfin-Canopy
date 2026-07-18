@@ -523,6 +523,44 @@ describe('bookmarks data-safety', () => {
             expect(JC.userConfig.bookmark.bookmarks).toEqual({ concurrent });
         });
 
+        it('fails a rebased move closed when a 409 reveals the source was edited after selection', async () => {
+            const api = await loadModule({ src1: stored(10) });
+            const updated = vi.fn();
+            document.addEventListener('jc-bookmarks-updated', updated);
+            // The authoritative state advances src1 to a new timestamp (a
+            // concurrent edit). Moving the stale timestamp-10 content and
+            // deleting the edited row would silently lose that edit.
+            plugin.mockRejectedValueOnce(Object.assign(httpError(409), {
+                responseJSON: { revision: 1, bookmarks: { src1: stored(20) } }
+            }));
+
+            await expect(api.syncBookmarks([source('src1', 10)], target, 0, ['src1']))
+                .rejects.toThrow('source changed');
+
+            // The concurrent edit survives and no target row was created.
+            expect(JC.userConfig.bookmark.bookmarks).toEqual({ src1: stored(20) });
+            expect(targetRows()).toHaveLength(0);
+            expect(updated).not.toHaveBeenCalled();
+            document.removeEventListener('jc-bookmarks-updated', updated);
+        });
+
+        it('never resurrects a source that a 409 reveals was deleted after selection', async () => {
+            const api = await loadModule({ src1: stored(10) });
+            const concurrent = stored(5, 'X', 'other-item');
+            // The authoritative state no longer contains src1 (a concurrent
+            // delete). Re-adding its captured content on the target would
+            // resurrect deleted content, so the move must skip it.
+            plugin.mockRejectedValueOnce(Object.assign(httpError(409), {
+                responseJSON: { revision: 1, bookmarks: { other: concurrent } }
+            }));
+
+            const synced = await api.syncBookmarks([source('src1', 10)], target, 0, ['src1']);
+
+            expect(synced).toEqual([]);
+            expect(targetRows()).toHaveLength(0);
+            expect(JC.userConfig.bookmark.bookmarks).toEqual({ other: concurrent });
+        });
+
         it('fails closed before writing on non-finite timestamps, offsets, and a missing target id', async () => {
             const initial = { src1: stored(10) };
             const api = await loadModule(structuredClone(initial));
