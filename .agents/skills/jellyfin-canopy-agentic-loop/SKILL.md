@@ -81,7 +81,7 @@ Workflow({
 
     // Model routing (see "Model routing" below):
     modelSplit:  true,           // ~50/50 Claude/Sol on read-only steps to spare Opus budget
-    solVia:      "agent",        // "agent" (subagent model param, needs router) | "codex-cli"
+    solVia:      "codex-cli",    // default; or "agent" (subagent model param, needs a Sol-capable router)
     solModel:    "gpt-5.6-sol",
     solEffort:   "high",
     solReviewers: 1,             // Sol whole-diff reviewers when modelSplit is off
@@ -96,20 +96,32 @@ Workflow({
 To keep a run from burning all of Claude's budget, the loop deliberately spreads
 models by role:
 
-- **Implementation** — the single writer runs on **Fable (high)**, falling back
-  to **Opus (high)** if Fable is exhausted/unavailable. Never split mid-change.
-- **Everything read-only except implementation** — with `modelSplit: true`,
-  explore, plan, the review lenses, finding-verification, and the gate runner
-  alternate **~50/50 Claude / `gpt-5.6-sol` (high)**. A Sol slot that can't be
-  routed falls back to Claude, so no slot is lost.
+- **~50/50 Claude / `gpt-5.6-sol` — the whole way, except two roles.** With
+  `modelSplit: true`, explore, plan (incl. synthesis), the review lenses, and the
+  review's finding-verification alternate roughly half-and-half between Claude and
+  `gpt-5.6-sol`. Under `solVia: "codex-cli"` (default) the Sol slots run through a
+  generalized `codex` harness (`gpt-5.6-sol`, `solLightEffort` = medium for
+  explore/plan/verify-findings, high for review); under `solVia: "agent"` they use
+  the subagent model param via a router. Any Sol slot that can't be routed **falls
+  back to Claude**, so no slot is lost.
+- **Implementation (excepted)** — the single writer runs on **Fable (high)**,
+  falling back to **Opus (high)** if Fable is exhausted/unavailable. Never split
+  mid-change, never gpt.
+- **Final verify / gate run (excepted)** — stays on **Claude**: one authoritative
+  model runs the repo gates. Never split to Sol.
 - **Fixers** (review fixer, verify fixer) — stay on Claude/Opus. They write code,
   so they follow the one-writer, single-model rule.
 
-Sol slots run on Sol only when `solVia: "agent"` (the model param) is backed by a
-Sol-capable route — e.g. the CLIProxyAPI router that exposes `gpt-5.6-sol` to
-Claude Code. With `solVia: "codex-cli"`, only the review round uses Sol (via the
-`codex` CLI harness); the other split steps run on Claude. Set `modelSplit: false`
-to run everything on Claude (implementer still uses Fable→Opus).
+Set `modelSplit: false` to run all read-only phases on Claude (implementer still
+Fable→Opus; review still gets ≥1 whole-diff `gpt-5.6-sol` reviewer).
+
+### Incidental bugs → the bug inventory
+
+While exploring, agents surface **unrelated pre-existing bugs** they notice (they
+do **not** fix them — no scope creep). The loop returns them as
+`result.incidentalBugs`; the main thread dedupes against open issues and files the
+genuinely-new ones to the **Jellyfin Elevate Bug Inventory (Project 4)** with the
+`bug-inventory` + `no-stale` labels.
 
 The script fans out agents per phase, loops the review until a clean round, runs
 the repo-native gates, and returns a structured result (diff stat, findings
