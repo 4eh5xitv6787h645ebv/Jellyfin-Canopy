@@ -233,6 +233,7 @@
   "seerr_quota_reset_in_minutes": "Ďalšiu požiadavku môžete podať za cca {minutes} min",
   "seerr_quota_reset_in_hours": "Ďalšiu požiadavku môžete podať za cca {hours} hod",
   "seerr_quota_reset_in_days": "Ďalšiu požiadavku môžete podať za cca {days} dní",
+  "seerr_quota_reset_unavailable": "Čas obnovenia momentálne nie je k dispozícii.",
   "seerr_toast_collection_failed_count": "{count} failed",
   "seerr_seasons_available": "{count} dostupných sérií",
   "seerr_all_seasons": "Všetky {count} série",

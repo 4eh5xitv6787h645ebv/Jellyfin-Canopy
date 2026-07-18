@@ -233,6 +233,7 @@
   "seerr_quota_reset_in_minutes": "Sie können in ca. {minutes} Min eine weitere Anfrage stellen",
   "seerr_quota_reset_in_hours": "Sie können in ca. {hours} Std eine weitere Anfrage stellen",
   "seerr_quota_reset_in_days": "Sie können in ca. {days} Tagen eine weitere Anfrage stellen",
+  "seerr_quota_reset_unavailable": "Die Zurücksetzungszeit ist derzeit nicht verfügbar.",
   "seerr_toast_collection_failed_count": "{count} failed",
   "seerr_seasons_available": "{count} Staffeln verfügbar",
   "seerr_all_seasons": "Alle {count} Staffeln",

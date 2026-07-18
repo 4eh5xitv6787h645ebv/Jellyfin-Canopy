@@ -233,6 +233,7 @@
   "seerr_quota_reset_in_minutes": "Możesz złożyć kolejną prośbę za ok. {minutes} min",
   "seerr_quota_reset_in_hours": "Możesz złożyć kolejną prośbę za ok. {hours} godz",
   "seerr_quota_reset_in_days": "Możesz złożyć kolejną prośbę za ok. {days} dni",
+  "seerr_quota_reset_unavailable": "Czas resetu jest obecnie niedostępny.",
   "seerr_toast_collection_failed_count": "{count} failed",
   "seerr_seasons_available": "{count} sezonów dostępnych",
   "seerr_all_seasons": "Wszystkie {count} sezonów",

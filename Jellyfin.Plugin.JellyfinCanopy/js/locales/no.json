@@ -233,6 +233,7 @@
   "seerr_quota_reset_in_minutes": "Du kan sende en ny forespørsel om ca. {minutes} min",
   "seerr_quota_reset_in_hours": "Du kan sende en ny forespørsel om ca. {hours} t",
   "seerr_quota_reset_in_days": "Du kan sende en ny forespørsel om ca. {days} dager",
+  "seerr_quota_reset_unavailable": "Tilbakestillingstidspunktet er ikke tilgjengelig for øyeblikket.",
   "seerr_toast_collection_failed_count": "{count} failed",
   "seerr_seasons_available": "{count} sesonger tilgjengelig",
   "seerr_all_seasons": "Alle {count} sesonger",

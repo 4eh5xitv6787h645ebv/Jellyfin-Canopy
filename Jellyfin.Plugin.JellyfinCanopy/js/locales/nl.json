@@ -233,6 +233,7 @@
   "seerr_quota_reset_in_minutes": "Je kunt over ca. {minutes} min een nieuwe aanvraag doen",
   "seerr_quota_reset_in_hours": "Je kunt over ca. {hours} uur een nieuwe aanvraag doen",
   "seerr_quota_reset_in_days": "Je kunt over ca. {days} dagen een nieuwe aanvraag doen",
+  "seerr_quota_reset_unavailable": "De resettijd is momenteel niet beschikbaar.",
   "seerr_toast_collection_failed_count": "{count} failed",
   "seerr_seasons_available": "{count} seizoenen beschikbaar",
   "seerr_all_seasons": "Alle {count} seizoenen",

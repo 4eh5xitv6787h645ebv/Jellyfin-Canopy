@@ -233,6 +233,7 @@
   "seerr_quota_reset_in_minutes": "Du kan göra en ny begäran om ca {minutes} min",
   "seerr_quota_reset_in_hours": "Du kan göra en ny begäran om ca {hours} tim",
   "seerr_quota_reset_in_days": "Du kan göra en ny begäran om ca {days} dagar",
+  "seerr_quota_reset_unavailable": "Återställningstiden är inte tillgänglig just nu.",
   "seerr_toast_collection_failed_count": "{count} failed",
   "seerr_seasons_available": "{count} säsonger tillgängliga",
   "seerr_all_seasons": "Alla {count} säsonger",

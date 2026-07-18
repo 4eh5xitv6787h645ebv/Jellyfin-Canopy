@@ -43,7 +43,13 @@ function formatNextReset(resetAt: any) {
     return JC.t!('seerr_quota_reset_in_days', { days });
 }
 
-function formatQuotaLine(q: any, type: any) {
+// resetProjectionComplete is the TOP-LEVEL quota flag published by the server:
+// true = the reset projection covered the complete request history (a missing
+// nextResetAt is proven absent), false = the paginated scan was incomplete or
+// failed (the reset time is unavailable, not absent). Callers with the whole
+// quota object (buildQuotaChip / showQuotaErrorDialog) thread it through;
+// legacy two-argument calls (undefined) keep the historical behavior.
+function formatQuotaLine(q: any, type: any, resetProjectionComplete?: boolean) {
     if (!q) return { text: '', restricted: false, unlimited: true, resetText: '' };
     const limit = Number(q.limit) || 0;
     const used = Number(q.used) || 0;
@@ -66,14 +72,24 @@ function formatQuotaLine(q: any, type: any) {
         ? JC.t!('seerr_quota_usage_window', { label, used, limit, days })
         : JC.t!('seerr_quota_usage', { label, used, limit });
 
+    // The reset copy promises request eligibility. If remaining capacity
+    // exists, the user can request now and a future roll-off timestamp
+    // would be actively misleading even if an older server supplied one.
+    let resetText = restricted ? formatNextReset(q.nextResetAt) : '';
+    if (restricted && !resetText && resetProjectionComplete === false) {
+        // Restricted with no resolvable timestamp AND the server marked the
+        // projection incomplete: say the reset time is unavailable instead of
+        // silently rendering nothing (which would read as "no reset info").
+        // flag === true (proven absent) or undefined (legacy callers /
+        // older servers) intentionally keeps the historical empty output.
+        resetText = JC.t!('seerr_quota_reset_unavailable');
+    }
+
     return {
         text: usagePart,
         restricted,
         unlimited: false,
-        // The reset copy promises request eligibility. If remaining capacity
-        // exists, the user can request now and a future roll-off timestamp
-        // would be actively misleading even if an older server supplied one.
-        resetText: restricted ? formatNextReset(q.nextResetAt) : ''
+        resetText
     };
 }
 
@@ -82,7 +98,7 @@ function buildQuotaChip(quota: any, mediaType: any) {
     if (!quota) return null;
 
     const side = mediaType === 'tv' ? quota.tv : quota.movie;
-    const line = formatQuotaLine(side, mediaType === 'tv' ? 'tv' : 'movie');
+    const line = formatQuotaLine(side, mediaType === 'tv' ? 'tv' : 'movie', quota.resetProjectionComplete);
     if (!line.text || line.unlimited) return null;
 
     const chip = document.createElement('div');
@@ -119,8 +135,8 @@ async function showQuotaErrorDialog(error: any, mediaType: any) {
     if (upstreamMessage) lines.push(upstreamMessage);
 
     if (quota) {
-        const movieLine = formatQuotaLine(quota.movie, 'movie');
-        const tvLine = formatQuotaLine(quota.tv, 'tv');
+        const movieLine = formatQuotaLine(quota.movie, 'movie', quota.resetProjectionComplete);
+        const tvLine = formatQuotaLine(quota.tv, 'tv', quota.resetProjectionComplete);
         // Lead with the rejected side; the other side is informational.
         if (mediaType === 'tv') {
             if (tvLine.text) lines.push(tvLine.text);

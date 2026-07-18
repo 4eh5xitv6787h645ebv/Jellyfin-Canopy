@@ -233,6 +233,7 @@
   "seerr_quota_reset_in_minutes": "Вы сможете сделать ещё один запрос примерно через {minutes} мин",
   "seerr_quota_reset_in_hours": "Вы сможете сделать ещё один запрос примерно через {hours} ч",
   "seerr_quota_reset_in_days": "Вы сможете сделать ещё один запрос примерно через {days} дней",
+  "seerr_quota_reset_unavailable": "Время сброса сейчас недоступно.",
   "seerr_toast_collection_failed_count": "{count} не удалось",
   "seerr_seasons_available": "{count} сезонов доступно",
   "seerr_all_seasons": "Все {count} сезонов",

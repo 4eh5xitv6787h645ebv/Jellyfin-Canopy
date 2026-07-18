@@ -233,6 +233,7 @@
   "seerr_quota_reset_in_minutes": "Pots fer una altra sol·licitud en uns {minutes} min",
   "seerr_quota_reset_in_hours": "Pots fer una altra sol·licitud en unes {hours} h",
   "seerr_quota_reset_in_days": "Pots fer una altra sol·licitud en uns {days} dies",
+  "seerr_quota_reset_unavailable": "El temps de restabliment no està disponible ara mateix.",
   "seerr_toast_collection_failed_count": "{count} failed",
   "seerr_seasons_available": "{count} temporades disponibles",
   "seerr_all_seasons": "Totes les {count} temporades",

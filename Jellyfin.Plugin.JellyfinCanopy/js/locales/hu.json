@@ -233,6 +233,7 @@
   "seerr_quota_reset_in_minutes": "Kb. {minutes} perc múlva tehet újabb kérést",
   "seerr_quota_reset_in_hours": "Kb. {hours} óra múlva tehet újabb kérést",
   "seerr_quota_reset_in_days": "Kb. {days} nap múlva tehet újabb kérést",
+  "seerr_quota_reset_unavailable": "A visszaállítás ideje jelenleg nem érhető el.",
   "seerr_toast_collection_failed_count": "{count} failed",
   "seerr_seasons_available": "{count} évad elérhető",
   "seerr_all_seasons": "Mind a {count} évad",
