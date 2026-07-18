@@ -48,7 +48,7 @@ oracle.
        surface:  "client" | "server" | "cross" | "docs",
        runtime:  true,
        depth:    "quick" | "standard" | "deep",
-       solVia:   "agent",          // or "codex-cli"
+       solVia:   "codex-cli",      // default; or "agent" (needs a Sol-capable router)
        solEffort: "high",
        solReviewers: 1
      }
@@ -87,18 +87,19 @@ The loop spreads models by role to spare Claude/Opus budget:
 Every review round still runs **both** Claude and **≥1 `gpt-5.6-sol` (high)**
 reviewer. The Sol side is obtained one of two ways, chosen with `solVia`:
 
-- `"agent"` (default) — requests `gpt-5.6-sol` directly on the subagent. Needs a
+- `"codex-cli"` (default) — a harness subagent shells out to the local `codex`
+  CLI (`-a never -s read-only exec -m gpt-5.6-sol`) with
+  `references/codex-review-schema.json`. Works without any router setup.
+- `"agent"` — requests `gpt-5.6-sol` directly on the subagent. Needs a
   Sol-capable route for Claude Code, e.g. the CLIProxyAPI router that exposes
   `gpt-5.6-sol`
   ([how-to](https://vallettasoftware.com/blog/post/run-gpt-5-6-in-claude-code)).
   No `codex` dependency.
-- `"codex-cli"` — a harness subagent shells out to the local `codex` CLI
-  (`-a never -s read-only exec -m gpt-5.6-sol`) with
-  `references/codex-review-schema.json`. Use where the router isn't configured.
 
-The Sol pass is best-effort: if the route/CLI is unavailable it degrades to the
-Claude reviewers rather than failing the loop, so treat a missing Sol pass as a
-signal to fix the route, not as a clean review.
+Each Sol slot is fail-closed: if the route/CLI is unavailable, that slot's scope
+(its lens, or the whole diff) is reviewed by Claude instead — the slot is never
+dropped and a round is never certified clean with a lens left unreviewed. Treat a
+missing Sol pass as a signal to fix the route, not as a clean review.
 
 ## Non–Claude-Code runtimes
 

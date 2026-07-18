@@ -10,7 +10,7 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["file", "summary", "failureScenario"],
+        "required": ["lens", "file", "line", "severity", "summary", "failureScenario"],
         "properties": {
           "lens": { "type": "string" },
           "file": { "type": "string" },
