@@ -86,6 +86,20 @@ public sealed class CountingLibraryManager : ILibraryManager
     /// <summary>When set, backs Jellyfin's query access-scope configurator.</summary>
     public Action<InternalItemsQuery, User>? ConfigureUserAccessHook { get; set; }
 
+    // ---- Exact call counters for the BI-PERF-037 manager-call budgets. ----
+
+    /// <summary>Scalar <see cref="GetItemById{T}(Guid)"/> invocation count.</summary>
+    public int GetItemByIdCallCount { get; private set; }
+
+    /// <summary>User-scoped <see cref="GetItemById{T}(Guid, User?)"/> invocation count.</summary>
+    public int GetItemByIdUserCallCount { get; private set; }
+
+    /// <summary>Single-arg <see cref="GetItemList(InternalItemsQuery)"/> invocation count.</summary>
+    public int GetItemListCallCount { get; private set; }
+
+    /// <summary><see cref="GetItemIds(InternalItemsQuery)"/> invocation count.</summary>
+    public int GetItemIdsCallCount { get; private set; }
+
     // ---- Everything below is an unused NotImplemented stub (per the repo convention). ----
 
     public AggregateFolder RootFolder => throw new NotImplementedException();
@@ -139,13 +153,21 @@ public sealed class CountingLibraryManager : ILibraryManager
         => GetItemByIdNonGenericHook is null ? throw new NotImplementedException() : GetItemByIdNonGenericHook(id);
 
     public T? GetItemById<T>(Guid id)
-        where T : BaseItem => GetItemByIdHook is null ? throw new NotImplementedException() : GetItemByIdHook(id) as T;
+        where T : BaseItem
+    {
+        GetItemByIdCallCount++;
+        return GetItemByIdHook is null ? throw new NotImplementedException() : GetItemByIdHook(id) as T;
+    }
 
     public T? GetItemById<T>(Guid id, Guid userId)
         where T : BaseItem => throw new NotImplementedException();
 
     public T? GetItemById<T>(Guid id, User? user)
-        where T : BaseItem => GetItemByIdUserHook is null ? throw new NotImplementedException() : GetItemByIdUserHook(id, user) as T;
+        where T : BaseItem
+    {
+        GetItemByIdUserCallCount++;
+        return GetItemByIdUserHook is null ? throw new NotImplementedException() : GetItemByIdUserHook(id, user) as T;
+    }
 
     public Task<IEnumerable<Video>> GetIntros(BaseItem item, User user) => throw new NotImplementedException();
 
@@ -232,7 +254,10 @@ public sealed class CountingLibraryManager : ILibraryManager
     public Task UpdatePeopleAsync(BaseItem item, IReadOnlyList<PersonInfo> people, CancellationToken cancellationToken) => throw new NotImplementedException();
 
     public IReadOnlyList<Guid> GetItemIds(InternalItemsQuery query)
-        => GetItemIdsHook is null ? throw new NotImplementedException() : GetItemIdsHook(query);
+    {
+        GetItemIdsCallCount++;
+        return GetItemIdsHook is null ? throw new NotImplementedException() : GetItemIdsHook(query);
+    }
 
     public IReadOnlyList<string> GetPeopleNames(InternalPeopleQuery query) => throw new NotImplementedException();
 
@@ -244,7 +269,11 @@ public sealed class CountingLibraryManager : ILibraryManager
 
     public Task<ItemImageInfo> ConvertImageToLocal(BaseItem item, ItemImageInfo image, int imageIndex, bool removeOnFailure = true) => throw new NotImplementedException();
 
-    public IReadOnlyList<BaseItem> GetItemList(InternalItemsQuery query) => GetItemListHook is null ? throw new NotImplementedException() : GetItemListHook(query);
+    public IReadOnlyList<BaseItem> GetItemList(InternalItemsQuery query)
+    {
+        GetItemListCallCount++;
+        return GetItemListHook is null ? throw new NotImplementedException() : GetItemListHook(query);
+    }
 
     public IReadOnlyList<BaseItem> GetItemList(InternalItemsQuery query, bool allowExternalContent) => throw new NotImplementedException();
 

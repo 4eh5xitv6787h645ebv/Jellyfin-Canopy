@@ -76,6 +76,24 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         private bool _subscribed;
         private bool _disposed;
 
+        // NOTE (BI-PERF-037 / #98): this service intentionally holds NO cross-request
+        // "any episode watched" season aggregate. An earlier revision cached that
+        // aggregate keyed on (user, season, content revision) and reused it across
+        // requests, but the content revision is advanced only by the DEBOUNCED
+        // maintenance flush (TagCacheService.RecordContentChangeLocked) and the key
+        // omits JF12's user-policy generation (User.RowVersion) — so a watched
+        // episode deleted/reparented, or a policy change, could serve a stale
+        // anyWatched=true during the debounce window and keep an exempt season's
+        // metadata (a strip→keep privacy leak vs. recompute-every-request). Making it
+        // byte-identical would require stacking a policy-generation key, a
+        // single-flight lock, PlaybackProgress invalidation and bounded eviction onto
+        // an already three-gate cache. The fail-closed privacy contract dominates AC2's
+        // cross-request optimization, so the season aggregate is now owned per REQUEST
+        // by TagStripProjectionResolver: single-threaded, snapshot-consistent, walked
+        // at most once per response (including across stabilization passes, with
+        // targeted per-pass invalidation), and recomputed fresh on every request so no
+        // stale value can ever leak. The journal below stays: it feeds the #92 delta.
+
         public TagCacheProjectionRevisionService(
             IUserDataManager userDataManager,
             ILogger<TagCacheProjectionRevisionService> logger)
@@ -247,6 +265,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 return;
             }
 
+            // Advance the per-user projection journal (feeds the #92 delta). The
+            // affected season/episode/series ids the delta carries are also what
+            // TagStripProjectionResolver uses to targeted-invalidate its
+            // request-scoped season memo between stabilization passes (AC5), so no
+            // separate cross-request invalidation is needed here.
             var journal = _journals.GetOrAdd(e.UserId, static _ => new UserJournal());
             lock (journal.Gate)
             {
