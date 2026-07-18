@@ -234,6 +234,85 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
         }
 
 
+        // ── BI-PERF-037 (#98): cross-request season aggregate cache (AC2/AC5) ──
+
+        [Fact]
+        public void SeasonAggregate_ReusedAtSameContentRevision_MissAtNewContentRevision()
+        {
+            var userData = new StubUserDataManager();
+            using var tracker = NewTracker(userData);
+            var userId = Guid.NewGuid();
+            var seasonId = Guid.NewGuid();
+
+            // Nothing cached yet.
+            Assert.False(tracker.TryGetSeasonAnyWatched(userId, seasonId, contentRevision: 5, out _));
+
+            var version = tracker.BeginSeasonAggregate(userId, seasonId);
+            tracker.CommitSeasonAggregate(userId, seasonId, anyWatched: true, contentRevision: 5, capturedVersion: version);
+
+            // Reused at the SAME content revision (the daily double-fetch / any
+            // full/delta at an unchanged relevant revision — AC2).
+            Assert.True(tracker.TryGetSeasonAnyWatched(userId, seasonId, contentRevision: 5, out var anyWatched));
+            Assert.True(anyWatched);
+
+            // A library add/update/remove bumps the content revision → miss → the
+            // caller recomputes, so a journal-invisible deletion can never keep a
+            // stale anyWatched=true (byte-identical to recompute-every-request).
+            Assert.False(tracker.TryGetSeasonAnyWatched(userId, seasonId, contentRevision: 6, out _));
+        }
+
+        [Fact]
+        public void SeasonAggregate_UserDataSave_InvalidatesOnlyTheAffectedSeason()
+        {
+            var userData = new StubUserDataManager();
+            using var tracker = NewTracker(userData);
+            var userId = Guid.NewGuid();
+            var seriesId = Guid.NewGuid();
+            var changedSeason = Guid.NewGuid();
+            var otherSeason = Guid.NewGuid();
+
+            tracker.CommitSeasonAggregate(
+                userId, changedSeason, anyWatched: true, contentRevision: 1,
+                capturedVersion: tracker.BeginSeasonAggregate(userId, changedSeason));
+            tracker.CommitSeasonAggregate(
+                userId, otherSeason, anyWatched: true, contentRevision: 1,
+                capturedVersion: tracker.BeginSeasonAggregate(userId, otherSeason));
+
+            // A play/unplay of an episode in changedSeason only.
+            userData.RaiseUserDataSaved(
+                userId,
+                new StubEpisode { Id = Guid.NewGuid(), SeasonId = changedSeason, SeriesId = seriesId },
+                UserDataSaveReason.TogglePlayed);
+
+            // Targeted (AC5): changedSeason invalidated, otherSeason still reused.
+            Assert.False(tracker.TryGetSeasonAnyWatched(userId, changedSeason, contentRevision: 1, out _));
+            Assert.True(tracker.TryGetSeasonAnyWatched(userId, otherSeason, contentRevision: 1, out var otherWatched));
+            Assert.True(otherWatched);
+        }
+
+        [Fact]
+        public void SeasonAggregate_CommitRacingAnInvalidation_IsDiscarded()
+        {
+            var userData = new StubUserDataManager();
+            using var tracker = NewTracker(userData);
+            var userId = Guid.NewGuid();
+            var seriesId = Guid.NewGuid();
+            var seasonId = Guid.NewGuid();
+
+            // Capture the version BEFORE the walk, then a save for this season lands
+            // mid-walk (bumping the version), then the walk's result is committed.
+            var captured = tracker.BeginSeasonAggregate(userId, seasonId);
+            userData.RaiseUserDataSaved(
+                userId,
+                new StubEpisode { Id = Guid.NewGuid(), SeasonId = seasonId, SeriesId = seriesId },
+                UserDataSaveReason.TogglePlayed);
+            tracker.CommitSeasonAggregate(userId, seasonId, anyWatched: true, contentRevision: 1, capturedVersion: captured);
+
+            // The commit is discarded (its captured version is stale), so a value
+            // computed across the change is never served: the next lookup misses.
+            Assert.False(tracker.TryGetSeasonAnyWatched(userId, seasonId, contentRevision: 1, out _));
+        }
+
         private static string[] SortedKeys(params Guid[] ids)
             => ids.Select(Key).OrderBy(static id => id, StringComparer.Ordinal).ToArray();
 
