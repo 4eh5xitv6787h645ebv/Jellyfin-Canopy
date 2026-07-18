@@ -7,6 +7,7 @@ using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Collections.Generic;
 using System.Collections.Concurrent;
@@ -90,7 +91,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             [FromQuery] long? contentRevision = null,
             [FromQuery] string? projectionEpoch = null,
             [FromQuery] long? projectionRevision = null,
-            [FromQuery] bool projectionOnly = false)
+            [FromQuery] bool projectionOnly = false,
+            CancellationToken cancellationToken = default)
         {
             if (_configProvider.ConfigurationOrNull?.TagCacheServerMode != true)
             {
@@ -189,6 +191,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             var projectionIds = new HashSet<string>(projection.ItemIds, StringComparer.Ordinal);
             ReplaceProjectionEntries(items, user, projection.ItemIds);
 
+            // One request-scoped resolver outlives every stabilization pass below:
+            // it memoizes each guid's item resolution (including misses) for the
+            // whole request, so a re-strip after a projection-revision advance
+            // refreshes only per-pass watched facts, never re-resolving items.
+            var stripResolver = new TagStripProjectionResolver(this, user);
+
             // UserDataSaved can race the live strip below. Stabilize against the
             // journal revision after each strip: when it advanced, replace every
             // newly affected row from the shared cache and strip the whole response
@@ -198,11 +206,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             var projectionStable = false;
             for (var pass = 0; pass < MaxProjectionStabilizationPasses; pass++)
             {
+                // A cancelled request must never fall through to a partially
+                // unstripped 200: OperationCanceledException propagates out of the
+                // action instead of publishing the payload (fail closed).
+                cancellationToken.ThrowIfCancellationRequested();
+
                 // Spoiler Guard tag-strip: when SpoilerBlur is on with any tag-relevant
                 // strip toggle, walk the cache and zero out matching fields for unwatched
                 // episodes/movies/seasons/series that are in the user's spoiler list.
                 // Strips a per-request CLONE only; the shared entry is never mutated.
-                ApplyTagCacheSpoilerStrip(items, effectiveUserId, user);
+                ApplyTagCacheSpoilerStrip(items, effectiveUserId, user, stripResolver, cancellationToken);
 
                 var afterStrip = _projectionRevisionService.GetDelta(
                     effectiveUserId,
@@ -371,16 +384,28 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             }
         }
 
+        // Test seam (Tests has InternalsVisibleTo): Season.GetEpisodes is not
+        // virtual and resolves its parent Series through static host state, so
+        // unit tests substitute a deterministic enumeration here. Production
+        // always takes the real GetEpisodes path (seam left null).
+        internal Func<MediaBrowser.Controller.Entities.TV.Season, JUser, IReadOnlyList<BaseItem>>? SeasonEpisodeEnumeratorForTest;
+
         // Per-user strip for the server-mode tag-cache response. The gating logic
         // lives in TagCacheService.ResolveTagStripDecision (pure/unit-tested); this
-        // wires the runtime facts (played-state, season index / any-watched) to the
-        // live library + user-data managers. All per-entry work is in-memory
-        // (IUserDataManager.GetUserData / GetItemById), with a season-episode walk
-        // ONLY for guarded, non-S1, unwatched seasons — matching the reference.
+        // wires the runtime facts (played-state, season index / any-watched) through
+        // the request-scoped TagStripProjectionResolver, which batch-resolves the
+        // guarded returned-ID set (one user-scoped GetItemList per pass for unseen
+        // ids), batch-loads played state (one IUserDataManager.GetUserDataBatch per
+        // pass), and walks each uncached season's episodes at most once — instead
+        // of the former per-entry GetItemById×(1..3) + GetUserData N+1
+        // (BI-PERF-037 / #98). Decision output is unchanged: every resolution
+        // failure still assumes unwatched and strips (fail closed).
         private void ApplyTagCacheSpoilerStrip(
             Dictionary<string, Model.TagCacheEntry> items,
             Guid userId,
-            JUser user)
+            JUser user,
+            TagStripProjectionResolver resolver,
+            CancellationToken cancellationToken)
         {
             var spCfg = _configProvider.ConfigurationOrNull;
             if (spCfg == null || !spCfg.SpoilerBlurEnabled) return;
@@ -418,46 +443,20 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 || (spCfg.SpoilerStripOverview && (spPrefs?.HideEpisodeDescriptions ?? true));
             if (!stripGenresEnabled && !stripRatingsEnabled && !sanitizeTitleStreams) return;
 
-            // Hoist the runtime-fact delegates once (not per entry) so the strip loop
-            // allocates nothing per item. All per-entry work is in-memory
-            // (GetItemById + GetUserData); the season-episode walk runs ONLY for a
-            // guarded, non-S1, unwatched season.
-            Func<Guid, bool> isMovieInScope = mGuid => _spoilerResolver.IsMovieInSpoilerScope(spState, mGuid);
-            Func<Guid, bool> isPlayed = guid =>
+            // Batch-prepare this pass's runtime facts — unless the fail-closed
+            // sentinel makes them moot (ResolveTagStripDecision strips every
+            // recognized entry before consulting any fact delegate).
+            if (!spState.FailClosed)
             {
-                var it = _libraryManager.GetItemById<BaseItem>(guid);
-                if (it == null) return false;
-                var ud = _userDataManager.GetUserData(user, it);
-                return ud?.Played == true;
-            };
-            Func<Guid, int?> seasonIndexNumber = guid =>
-                _libraryManager.GetItemById<BaseItem>(guid) is MediaBrowser.Controller.Entities.TV.Season s
-                    ? s.IndexNumber
-                    : (int?)null;
-            Func<Guid, bool> seasonAnyWatched = guid =>
-            {
-                if (_libraryManager.GetItemById<BaseItem>(guid) is not MediaBrowser.Controller.Entities.TV.Season seasonItem)
-                {
-                    return false;
-                }
-                try
-                {
-                    foreach (var ep in seasonItem.GetEpisodes(user, new MediaBrowser.Controller.Dto.DtoOptions(false), shouldIncludeMissingEpisodes: false))
-                    {
-                        if (ep == null) continue;
-                        var ud = _userDataManager.GetUserData(user, ep);
-                        if (ud?.Played == true) return true;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _spoilerResolver.WarnRateLimited(
-                        "tagcache-season-probe:" + ex.GetType().FullName,
-                        $"Spoiler Guard tag-cache strip: season any-watched probe failed for {seasonItem.Id}: {ex.Message}");
-                    // Fail-CLOSED: assume not watched, proceed to strip.
-                }
-                return false;
-            };
+                resolver.PreparePass(items, spState, user, cancellationToken);
+            }
+
+            // Hoist the fact delegates once (not per entry); each is now a pure
+            // in-memory dictionary lookup against the prepared batch results.
+            Func<Guid, bool> isMovieInScope = mGuid => resolver.IsMovieInScope(spState, mGuid);
+            Func<Guid, bool> isPlayed = resolver.IsPlayed;
+            Func<Guid, int?> seasonIndexNumber = resolver.SeasonIndexNumber;
+            Func<Guid, bool> seasonAnyWatched = resolver.SeasonAnyWatched;
             Action<string> onKeyNotGuid = key => _spoilerResolver.WarnRateLimited(
                 "tagcache-key-not-guid",
                 $"Spoiler Guard tag-cache strip: TagCacheService key '{key}' did not parse as Guid; played-state check skipped. Possible cache-key format change.");
@@ -468,7 +467,357 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 stripRatingsEnabled,
                 sanitizeTitleStreams,
                 (key, entry) => Services.TagCacheService.ResolveTagStripDecision(
-                    key, entry, spState, isMovieInScope, isPlayed, seasonIndexNumber, seasonAnyWatched, onKeyNotGuid));
+                    key, entry, spState, isMovieInScope, isPlayed, seasonIndexNumber, seasonAnyWatched, onKeyNotGuid),
+                cancellationToken);
+        }
+
+        /// <summary>
+        /// Request-scoped resolver for the Spoiler Guard tag-strip runtime facts
+        /// (BI-PERF-037 / #98). The pure decision in
+        /// <see cref="Services.TagCacheService.ResolveTagStripDecision"/> is
+        /// unchanged; this class only changes HOW its injected facts are acquired:
+        /// guarded rows are classified from the authoritative cached entry metadata
+        /// (Type/SeriesId), item resolution is ONE user-scoped batch per
+        /// stabilization pass covering only ids this request has not seen (misses
+        /// memoized too), played state is ONE deduplicated
+        /// <see cref="IUserDataManager.GetUserDataBatch"/> per pass, and each
+        /// uncached season's episode walk runs at most once — its any-watched
+        /// aggregate is then cached per (user, season) in
+        /// <see cref="Services.TagCacheProjectionRevisionService"/> and reused
+        /// across passes AND across full/delta requests at an unchanged projection
+        /// revision, with targeted invalidation on user-state change. Every
+        /// resolution failure keeps the existing fail-closed posture (assume
+        /// unwatched → strip), and cancellation always propagates.
+        /// </summary>
+        private sealed class TagStripProjectionResolver
+        {
+            private readonly TagCacheController _owner;
+
+            // Request-lifetime memos: item resolution (including misses, so a
+            // transient failure can never trigger repeated lookups) and movie
+            // spoiler scope (pure per request: policy + library structure).
+            private readonly Dictionary<Guid, BaseItem?> _resolvedItems = new();
+            private readonly Dictionary<Guid, bool> _movieScope = new();
+
+            // Per-pass fact maps: watched state may advance between stabilization
+            // passes, so these are rebuilt from a fresh batch each pass.
+            private readonly Dictionary<Guid, bool> _played = new();
+            private readonly Dictionary<Guid, int?> _seasonIndex = new();
+            private readonly Dictionary<Guid, bool> _seasonAnyWatched = new();
+
+            internal TagStripProjectionResolver(TagCacheController owner, JUser user)
+            {
+                _owner = owner;
+                User = user;
+            }
+
+            private JUser User { get; }
+
+            internal bool IsMovieInScope(Configuration.UserSpoilerBlur spState, Guid movieId)
+            {
+                if (_movieScope.TryGetValue(movieId, out var inScope))
+                {
+                    return inScope;
+                }
+
+                inScope = _owner._spoilerResolver.IsMovieInSpoilerScope(spState, movieId);
+                _movieScope[movieId] = inScope;
+                return inScope;
+            }
+
+            internal bool IsPlayed(Guid id) => _played.TryGetValue(id, out var played) && played;
+
+            internal int? SeasonIndexNumber(Guid id)
+                => _seasonIndex.TryGetValue(id, out var index) ? index : null;
+
+            internal bool SeasonAnyWatched(Guid id)
+                => _seasonAnyWatched.TryGetValue(id, out var anyWatched) && anyWatched;
+
+            internal void PreparePass(
+                IReadOnlyDictionary<string, Model.TagCacheEntry> items,
+                Configuration.UserSpoilerBlur spState,
+                JUser user,
+                CancellationToken cancellationToken)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                _played.Clear();
+                _seasonIndex.Clear();
+                _seasonAnyWatched.Clear();
+
+                // 1. Classify guarded rows from cached entry metadata. This mirrors
+                //    ResolveTagStripDecision's scope gate exactly, so every row
+                //    whose watched gate will consult a fact delegate is prepared
+                //    here — and nothing else pays a manager round-trip. Series
+                //    entries and non-guid keys need no runtime fact at all.
+                var directIds = new List<Guid>();
+                var seasonIds = new List<Guid>();
+                foreach (var (key, entry) in items)
+                {
+                    if (entry == null)
+                    {
+                        continue;
+                    }
+
+                    var isEpisode = string.Equals(entry.Type, "Episode", StringComparison.Ordinal);
+                    var isSeason = string.Equals(entry.Type, "Season", StringComparison.Ordinal);
+                    var isMovie = string.Equals(entry.Type, "Movie", StringComparison.Ordinal);
+                    if (!isEpisode && !isSeason && !isMovie)
+                    {
+                        continue;
+                    }
+
+                    if (!Guid.TryParse(key, out var id))
+                    {
+                        continue;
+                    }
+
+                    if (isMovie)
+                    {
+                        if (!IsMovieInScope(spState, id))
+                        {
+                            continue;
+                        }
+
+                        directIds.Add(id);
+                    }
+                    else
+                    {
+                        if (string.IsNullOrEmpty(entry.SeriesId) || !spState.Series.ContainsKey(entry.SeriesId))
+                        {
+                            continue;
+                        }
+
+                        if (isEpisode)
+                        {
+                            directIds.Add(id);
+                        }
+                        else
+                        {
+                            seasonIds.Add(id);
+                        }
+                    }
+                }
+
+                // 2. Batch-resolve only previously unseen ids (request memo).
+                ResolveNewItems(directIds, seasonIds, user, cancellationToken);
+
+                // 3. Season facts: the live index comes from the batch-resolved
+                //    Season (an unresolved/type-mismatched id yields null and
+                //    strips fail-closed); the any-watched aggregate is served from
+                //    the revision-service cache, or computed with ONE episode walk.
+                var userDataItems = new List<BaseItem>();
+                var seenUserDataIds = new HashSet<Guid>();
+                foreach (var id in directIds)
+                {
+                    if (_resolvedItems.TryGetValue(id, out var item)
+                        && item != null
+                        && seenUserDataIds.Add(item.Id))
+                    {
+                        userDataItems.Add(item);
+                    }
+                }
+
+                var pendingSeasons = new List<(Guid SeasonId, long ObservedRevision, List<BaseItem> Episodes)>();
+                foreach (var id in seasonIds)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    _resolvedItems.TryGetValue(id, out var resolved);
+                    if (resolved is not MediaBrowser.Controller.Entities.TV.Season seasonItem)
+                    {
+                        _seasonIndex[id] = null;
+                        continue;
+                    }
+
+                    _seasonIndex[id] = seasonItem.IndexNumber;
+                    if (seasonItem.IndexNumber is not > 1)
+                    {
+                        // S0/S1 never consults the any-watched aggregate.
+                        continue;
+                    }
+
+                    if (_seasonAnyWatched.ContainsKey(id))
+                    {
+                        continue;
+                    }
+
+                    if (_owner._projectionRevisionService.TryGetSeasonAggregate(User.Id, id, out var cachedAggregate))
+                    {
+                        _seasonAnyWatched[id] = cachedAggregate;
+                        continue;
+                    }
+
+                    // Snapshot the journal revision BEFORE the walk so publication
+                    // can refuse a value whose season changed mid-compute.
+                    var observedRevision = _owner._projectionRevisionService.GetJournalRevision(User.Id);
+                    IReadOnlyList<BaseItem> episodes;
+                    try
+                    {
+                        episodes = _owner.SeasonEpisodeEnumeratorForTest != null
+                            ? _owner.SeasonEpisodeEnumeratorForTest(seasonItem, user)
+                            : seasonItem.GetEpisodes(user, new MediaBrowser.Controller.Dto.DtoOptions(false), shouldIncludeMissingEpisodes: false);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        _owner._spoilerResolver.WarnRateLimited(
+                            "tagcache-season-probe:" + ex.GetType().FullName,
+                            $"Spoiler Guard tag-cache strip: season any-watched probe failed for {seasonItem.Id}: {ex.Message}");
+                        // Fail-CLOSED: assume not watched, proceed to strip. A
+                        // failed probe is never cached.
+                        _seasonAnyWatched[id] = false;
+                        continue;
+                    }
+
+                    var seasonEpisodes = new List<BaseItem>(episodes.Count);
+                    foreach (var episode in episodes)
+                    {
+                        if (episode == null)
+                        {
+                            continue;
+                        }
+
+                        seasonEpisodes.Add(episode);
+                        if (seenUserDataIds.Add(episode.Id))
+                        {
+                            userDataItems.Add(episode);
+                        }
+                    }
+
+                    pendingSeasons.Add((id, observedRevision, seasonEpisodes));
+                }
+
+                // 4. One deduplicated user-data batch per pass covers every direct
+                //    Episode/Movie AND every walked season's episodes. A batch
+                //    fault resolves everything to unwatched → strip (fail closed),
+                //    and season aggregates from a failed batch are not published.
+                Dictionary<Guid, UserItemData>? userData = null;
+                if (userDataItems.Count > 0)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    try
+                    {
+                        userData = _owner._userDataManager.GetUserDataBatch(userDataItems, user);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        _owner._spoilerResolver.WarnRateLimited(
+                            "tagcache-userdata-batch:" + ex.GetType().FullName,
+                            $"Spoiler Guard tag-cache strip: user-data batch failed for {userDataItems.Count} items: {ex.Message}");
+                        userData = null;
+                    }
+
+                    cancellationToken.ThrowIfCancellationRequested();
+                }
+
+                foreach (var id in directIds)
+                {
+                    _played[id] = userData != null
+                        && _resolvedItems.TryGetValue(id, out var item)
+                        && item != null
+                        && userData.TryGetValue(item.Id, out var itemUserData)
+                        && itemUserData?.Played == true;
+                }
+
+                foreach (var (seasonId, observedRevision, episodes) in pendingSeasons)
+                {
+                    var anyWatched = false;
+                    if (userData != null)
+                    {
+                        foreach (var episode in episodes)
+                        {
+                            if (userData.TryGetValue(episode.Id, out var episodeUserData)
+                                && episodeUserData?.Played == true)
+                            {
+                                anyWatched = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    _seasonAnyWatched[seasonId] = anyWatched;
+                    if (userData != null)
+                    {
+                        // Publish only successful determinations, fenced against
+                        // the user's journal so a racing invalidation wins.
+                        _owner._projectionRevisionService.PublishSeasonAggregate(
+                            User.Id,
+                            seasonId,
+                            observedRevision,
+                            anyWatched);
+                    }
+                }
+            }
+
+            private void ResolveNewItems(
+                List<Guid> directIds,
+                List<Guid> seasonIds,
+                JUser user,
+                CancellationToken cancellationToken)
+            {
+                List<Guid>? unseen = null;
+                CollectUnseen(directIds, ref unseen);
+                CollectUnseen(seasonIds, ref unseen);
+                if (unseen == null)
+                {
+                    return;
+                }
+
+                cancellationToken.ThrowIfCancellationRequested();
+
+                // Mark every requested id BEFORE the query: an id the batch does
+                // not return (deleted/inaccessible) — or a whole-batch fault —
+                // memoizes as a miss, which strips fail-closed and prevents any
+                // repeated lookup later in the request.
+                foreach (var id in unseen)
+                {
+                    _resolvedItems[id] = null;
+                }
+
+                IReadOnlyList<BaseItem> resolved;
+                try
+                {
+                    resolved = _owner._libraryManager.GetItemList(
+                        Data.UserAccessQuery.BuildItemIds(_owner._libraryManager, user, unseen));
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    _owner._spoilerResolver.WarnRateLimited(
+                        "tagcache-item-batch:" + ex.GetType().FullName,
+                        $"Spoiler Guard tag-cache strip: batch item resolution failed for {unseen.Count} ids: {ex.Message}");
+                    return;
+                }
+
+                cancellationToken.ThrowIfCancellationRequested();
+                foreach (var item in resolved)
+                {
+                    if (item != null && _resolvedItems.ContainsKey(item.Id))
+                    {
+                        _resolvedItems[item.Id] = item;
+                    }
+                }
+            }
+
+            private void CollectUnseen(List<Guid> ids, ref List<Guid>? unseen)
+            {
+                foreach (var id in ids)
+                {
+                    if (!_resolvedItems.ContainsKey(id))
+                    {
+                        (unseen ??= new List<Guid>()).Add(id);
+                    }
+                }
+            }
         }
 
         [HttpPost("tag-data/{userId}")]
