@@ -644,6 +644,80 @@ describe('bookmarks data-safety', () => {
             expect(JC.userConfig.bookmark.bookmarks).toEqual({ other: concurrent });
         });
 
+        it('fails closed when the live root already holds an edit made after the modal selected the source', async () => {
+            // The modal selected src1 at timestamp 10, but a concurrent mutation
+            // advanced the live root to timestamp 20 before the user confirmed the
+            // merge. The stale modal payload still carries timestamp 10, so the
+            // move must key its drift check off the selection — not off a fresh
+            // read of the already-edited live row — or it silently deletes the
+            // timestamp-20 edit and writes the stale timestamp-10 content.
+            const api = await loadModule({ src1: stored(20) });
+            const updated = vi.fn();
+            document.addEventListener('jc-bookmarks-updated', updated);
+
+            await expect(api.syncBookmarks([source('src1', 10)], target, 0, ['src1']))
+                .rejects.toThrow('source changed');
+
+            expect(JC.userConfig.bookmark.bookmarks).toEqual({ src1: stored(20) });
+            expect(targetRows()).toHaveLength(0);
+            expect(plugin).not.toHaveBeenCalled();
+            expect(updated).not.toHaveBeenCalled();
+            document.removeEventListener('jc-bookmarks-updated', updated);
+        });
+
+        it('keeps failing closed when a stale merge is retried against a root that already adopted the edit', async () => {
+            const api = await loadModule({ src1: stored(10) });
+            // First attempt: the server reveals src1 was concurrently edited to
+            // timestamp 20; the 409 adopts that authoritative row and fails closed.
+            plugin.mockRejectedValueOnce(Object.assign(httpError(409), {
+                responseJSON: { revision: 1, bookmarks: { src1: stored(20) } }
+            }));
+
+            await expect(api.syncBookmarks([source('src1', 10)], target, 0, ['src1']))
+                .rejects.toThrow('source changed');
+            expect(JC.userConfig.bookmark.bookmarks).toEqual({ src1: stored(20) });
+
+            // Retry with the same stale modal payload: the live root now already
+            // holds the edited row, so a snapshot re-read at invocation would match
+            // it and let the move proceed. The selection-bound key still detects the
+            // drift, so the retry also fails closed instead of losing the edit.
+            const callsAfterFirst = plugin.mock.calls.length;
+            await expect(api.syncBookmarks([source('src1', 10)], target, 0, ['src1']))
+                .rejects.toThrow('source changed');
+            expect(JC.userConfig.bookmark.bookmarks).toEqual({ src1: stored(20) });
+            expect(targetRows()).toHaveLength(0);
+            // The retry fails during operation planning, before any transport call.
+            expect(plugin.mock.calls.length).toBe(callsAfterFirst);
+        });
+
+        it('never rolls the local root backward when a delayed commit carries a superseded revision', async () => {
+            const api = await loadModule({ src1: stored(10) });
+            const superseded = stored(99, 'B', 'other-item');
+            // A concurrent mutation lands first locally and advances the live root
+            // to a newer revision while this commit's response is still in flight;
+            // the response then arrives carrying the older revision it committed at.
+            const supersedePlugin = vi.fn((_path: string, options: AnyRec) => {
+                const next = structuredClone(JC.userConfig.bookmark.bookmarks);
+                for (const op of options.body.operations as AnyRec[]) {
+                    if (op.type === 'delete') delete next[op.bookmarkId];
+                    else next[op.bookmarkId] = structuredClone(op.bookmark);
+                }
+                JC.userConfig.bookmark.revision = 5;
+                JC.userConfig.bookmark.bookmarks = { superseded };
+                return Promise.resolve({ revision: 1, bookmarks: next });
+            });
+            plugin = supersedePlugin;
+            JC.core.api.plugin = supersedePlugin;
+
+            const synced = await api.syncBookmarks([source('src1', 10)], target, 0, ['src1']);
+
+            // The stale revision-1 response is rejected, so B's newer root survives
+            // and no false success is reported from the superseded state.
+            expect(synced).toEqual([]);
+            expect(JC.userConfig.bookmark.revision).toBe(5);
+            expect(JC.userConfig.bookmark.bookmarks).toEqual({ superseded });
+        });
+
         it('fails closed before writing on non-finite timestamps, offsets, and a missing target id', async () => {
             const initial = { src1: stored(10) };
             const api = await loadModule(structuredClone(initial));

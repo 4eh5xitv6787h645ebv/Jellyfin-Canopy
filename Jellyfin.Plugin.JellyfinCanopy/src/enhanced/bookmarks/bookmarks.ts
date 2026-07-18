@@ -199,6 +199,13 @@ import {
     state: BookmarkCommittedState
   ): boolean {
     if (!isBookmarkRootCurrent(captured, root)) return false;
+    // Never roll the local root backward. Server revisions are monotonic across
+    // serialized mutations, so a response carrying an older revision than the
+    // root already holds is a reordered echo of a state a newer commit already
+    // superseded. Adopting it would resurrect stale content and then let this
+    // invocation report success from it; refuse instead so the caller treats
+    // its own commit as not durable rather than clobbering the newer state.
+    if (state.revision < root.revision) return false;
     root.revision = state.revision;
     root.bookmarks = state.bookmarks;
     return isBookmarkRootCurrent(captured, root);
@@ -851,11 +858,14 @@ import {
               id: sourceId,
               itemId: oldBookmark.itemId,
               key: bookmarkEquivalenceKey(oldBookmark.timestamp, oldBookmark.label),
-              // Bind the move to the source row exactly as it stands now, not to
-              // the enriched selection payload: the raw persisted row is the only
-              // faithful before-image, so a later concurrent edit to any field
-              // (identity, provider ids, name, timestamps) is detected and the
-              // move fails closed instead of writing stale cross-content.
+              // The equivalence key and owning item above are bound to the modal
+              // selection and are the primary drift guard: they catch a source
+              // whose content changed after selection even if the live root had
+              // already adopted the edit before this ran. This snapshot is a raw
+              // read of the live row (the enriched selection payload cannot be
+              // compared field-for-field against the persisted row); it serves
+              // only as a secondary guard against an identity re-classification
+              // that leaves the equivalence key untouched.
               snapshot: hasOwnBookmark(root.bookmarks, sourceId)
                 ? { ...root.bookmarks[sourceId] }
                 : null
@@ -915,14 +925,19 @@ import {
             }
             const current = state.bookmarks[removeSource.id];
             const currentTimestamp = Number(current.timestamp);
-            const changed = removeSource.snapshot
-              // Any persisted-field drift (identity, provider ids, name, or
-              // timestamps) means the row was edited after selection; moving the
-              // captured before-image would overwrite that edit, so fail closed.
-              ? !sameBookmark(current, removeSource.snapshot)
-              : (current.itemId !== removeSource.itemId
-                || !Number.isFinite(currentTimestamp)
-                || bookmarkEquivalenceKey(currentTimestamp, current.label) !== removeSource.key);
+            // The equivalence key and owning item are bound to the modal's
+            // selection, so they detect a source that drifted between selection
+            // and this commit even when the local root had already adopted the
+            // edited row before the merge ran — a case the full-row snapshot,
+            // read from the live root at invocation, would miss because it would
+            // already match the edited row. The snapshot is an additional guard
+            // that also rejects an identity re-classification leaving the
+            // equivalence key untouched; any drift fails the move closed rather
+            // than overwriting the concurrent edit.
+            const changed = current.itemId !== removeSource.itemId
+              || !Number.isFinite(currentTimestamp)
+              || bookmarkEquivalenceKey(currentTimestamp, current.label) !== removeSource.key
+              || (removeSource.snapshot ? !sameBookmark(current, removeSource.snapshot) : false);
             if (changed) {
               throw new Error('Refusing to move a bookmark whose source changed after it was selected');
             }
