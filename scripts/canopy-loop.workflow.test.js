@@ -169,7 +169,10 @@ test('a throwing review fixer exhausts the round cap and is never ready-for-PR',
     // property. (Also proves a throwing fixer resolves the workflow, never aborts.)
     const { agent } = makeAgent((_p, opts) => {
         const l = opts.label || '';
-        if (/^review-r\d+:1$/.test(l)) return finding('needs a fix'); // every round
+        // Mixed rounds surface the finding on the Claude lens-0 reviewer; gpt-only
+        // rounds (past the mixed cap) surface it on the Sol lens-0 reviewer.
+        if (/^review-r\d+:1$/.test(l)) return finding('needs a fix'); // mixed rounds
+        if (/^sol-r\d+:1$/.test(l)) return finding('needs a fix'); // gpt-only rounds (lens 0 on Sol)
         if (/^verify-r\d+:1$/.test(l)) return { real: true, reason: 'confirmed' }; // every round
         if (l.startsWith('fix-r')) return { __throw: 'StructuredOutput retry cap' };
         return undefined;
@@ -212,6 +215,56 @@ test('every split review round still runs a whole-diff Sol reviewer', async () =
             /across correctness, security\/privacy \(fail-closed\)/.test(c.prompt),
     );
     assert.ok(wholeDiffSol, 'a whole-diff (unscoped) Sol reviewer runs under modelSplit');
+});
+
+test('explore runs 8 agents weighted 2 Claude/Opus + 6 gpt-5.6-sol at xhigh', async () => {
+    const { agent, calls } = makeAgent(null);
+    await runWorkflow(baseArgs({ depth: 'standard' }), agent, parallel, phase, () => {});
+    const explore = calls.filter((c) => /^explore:\d+/.test(c.opts.label || ''));
+    assert.equal(explore.length, 8, '8 explorers at standard depth');
+    const claude = explore.filter((c) => !c.opts.model);
+    const sol = explore.filter((c) => c.opts.model === 'gpt-5.6-sol');
+    assert.equal(claude.length, 2, 'first 2 explorers run on Claude/Opus');
+    assert.equal(sol.length, 6, 'remaining 6 explorers run on gpt-5.6-sol');
+    assert.ok(sol.every((c) => c.opts.effort === 'xhigh'), 'explore Sol slots run at xhigh');
+});
+
+test('plan Sol slots (incl. synthesis) run at xhigh', async () => {
+    const { agent, calls } = makeAgent(null);
+    await runWorkflow(baseArgs({ depth: 'standard' }), agent, parallel, phase, () => {});
+    const planSol = calls.filter((c) => /^plan:/.test(c.opts.label || '') && c.opts.model === 'gpt-5.6-sol');
+    assert.ok(planSol.length >= 1, 'at least one plan slot runs on Sol');
+    assert.ok(planSol.every((c) => c.opts.effort === 'xhigh'), 'plan Sol slots run at xhigh');
+});
+
+test('review escalates to gpt-5.6-sol-only after the mixed round cap', async () => {
+    // A confirmed finding every round whose fixer throws → the loop runs to
+    // hardRoundCap. Mixed rounds (≤ roundCap) use Claude lens reviewers; every
+    // later round is gpt-only (no Claude lens reviewer runs past the mixed cap).
+    const { agent, calls } = makeAgent((_p, opts) => {
+        const l = opts.label || '';
+        if (/^review-r\d+:1$/.test(l)) return finding('x'); // mixed rounds
+        if (/^sol-r\d+:1$/.test(l)) return finding('x'); // gpt-only rounds
+        if (/^verify-r\d+:1$/.test(l)) return { real: true, reason: 'c' };
+        if (l.startsWith('fix-r')) return { __throw: 'cap' };
+        return undefined;
+    });
+    // quick depth → mixed roundCap 2; cap the hard ceiling at 5 to keep it short.
+    const r = await runWorkflow(baseArgs({ depth: 'quick', hardRoundCap: 5 }), agent, parallel, phase, () => {});
+    const roundsWith = (re) =>
+        new Set(
+            calls
+                .map((c) => c.opts.label || '')
+                .map((l) => l.match(re))
+                .filter(Boolean)
+                .map((m) => Number(m[1])),
+        );
+    const claudeReviewRounds = roundsWith(/^review-r(\d+):/);
+    const solReviewRounds = roundsWith(/^sol-r(\d+):/);
+    assert.ok(![...claudeReviewRounds].some((n) => n > 2), 'no Claude lens reviewer past the mixed cap (2)');
+    assert.ok(solReviewRounds.has(3) && solReviewRounds.has(5), 'gpt-5.6-sol reviewers run the gpt-only rounds');
+    assert.equal(r.readyForPR, false, 'unresolved confirmed findings across the escalation block PR');
+    assert.equal(r.reviewRounds, 5, 'the loop ran to the hard round cap');
 });
 
 test('verify enforces a committed, clean handoff as a blocking gate', async () => {
