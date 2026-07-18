@@ -156,6 +156,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     if (result.HasValue) break;
                 }
             }
+            catch (OperationCanceledException)
+            {
+                // Fail closed: never swallow a cancellation into a scope result. The
+                // batched projection falls back here on a non-cancellation fault, so
+                // a cancel arriving during that degraded per-movie walk must still
+                // propagate (AC6) rather than be absorbed as "not in scope".
+                throw;
+            }
             catch (Exception ex)
             {
                 WarnRateLimited(
@@ -193,10 +201,23 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         // must classify a large returned movie set — the tag-cache projection —
         // use this instead of FindOptedInCollectionForMovie per movie, turning an
         // O(movies × collections × collection-size) walk into O(collections ×
-        // collection-size). A per-collection resolution/walk failure is skipped
-        // (matching FindOptedInCollectionForMovie's catch → not-in-scope), so the
-        // returned set is byte-identical to the per-movie predicate's membership.
-        public HashSet<Guid> BuildOptedInCollectionMembers(UserSpoilerBlur userState)
+        // collection-size).
+        //
+        // Fault semantics are deliberately ALL-OR-NOTHING so the caller stays
+        // byte-identical to the per-movie FindOptedInCollectionForMovie predicate:
+        //   • OperationCanceledException PROPAGATES (fail closed — a cancel must
+        //     never resolve into a partial success). The token is also observed
+        //     inside both loops so a cancelled request stops the collection walk
+        //     promptly instead of allocating the whole union first (AC6).
+        //   • ANY other fault returns null (NOT a partial set). A partial set would
+        //     diverge from the per-movie predicate, whose ordered whole-loop catch
+        //     returns null the instant any collection faults — and would also
+        //     bypass FindOptedInCollectionForMovie's cross-request fail-safe cache.
+        //     On null the caller falls back to the per-movie predicate for every
+        //     movie, so the served scope decision is identical to the pre-#98 path.
+        public HashSet<Guid>? BuildOptedInCollectionMembers(
+            UserSpoilerBlur userState,
+            System.Threading.CancellationToken cancellationToken)
         {
             var members = new HashSet<Guid>();
             if (userState.Collections.Count == 0)
@@ -204,28 +225,36 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 return members;
             }
 
-            foreach (var collKeyN in userState.Collections.Keys)
+            try
             {
-                if (!Guid.TryParse(collKeyN, out var collGuid)) continue;
-                try
+                foreach (var collKeyN in userState.Collections.Keys)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (!Guid.TryParse(collKeyN, out var collGuid)) continue;
                     if (_libraryManager.GetItemById(collGuid) is not MediaBrowser.Controller.Entities.Movies.BoxSet bs) continue;
                     foreach (var child in bs.GetLinkedChildren())
                     {
+                        cancellationToken.ThrowIfCancellationRequested();
                         if (child != null && child.Id != Guid.Empty)
                         {
                             members.Add(child.Id);
                         }
                     }
                 }
-                catch (Exception ex)
-                {
-                    WarnRateLimited(
-                        "collection-members:" + ex.GetType().FullName,
-                        $"Spoiler Guard: opted-in collection member walk failed for {collGuid}: {ex.Message}");
-                    // Skip this collection: movies known only through it fall out of
-                    // scope, exactly as the per-movie walk's catch would return null.
-                }
+            }
+            catch (OperationCanceledException)
+            {
+                // Fail closed: a cancellation is never swallowed into a scope result.
+                throw;
+            }
+            catch (Exception ex)
+            {
+                WarnRateLimited(
+                    "collection-members:" + ex.GetType().FullName,
+                    $"Spoiler Guard: opted-in collection member walk failed: {ex.Message}");
+                // Signal fault: the caller reverts to the per-movie predicate (whose
+                // fail-safe cache + ordered whole-loop catch keep scope byte-identical).
+                return null;
             }
 
             return members;

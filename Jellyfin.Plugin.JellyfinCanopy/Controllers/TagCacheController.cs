@@ -215,7 +215,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 // strip toggle, walk the cache and zero out matching fields for unwatched
                 // episodes/movies/seasons/series that are in the user's spoiler list.
                 // Strips a per-request CLONE only; the shared entry is never mutated.
-                ApplyTagCacheSpoilerStrip(items, effectiveUserId, user, stripResolver, cancellationToken);
+                ApplyTagCacheSpoilerStrip(items, effectiveUserId, user, stripResolver, content.Revision, cancellationToken);
 
                 var afterStrip = _projectionRevisionService.GetDelta(
                     effectiveUserId,
@@ -245,10 +245,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 }
 
                 ReplaceProjectionEntries(items, user, afterStrip.ItemIds);
-                // Evict only the season any-watched memos whose watched state may
-                // have changed in this delta; unaffected seasons stay memoized and
-                // are not re-walked on the next pass (AC2 within-response reuse).
-                stripResolver.InvalidateChangedSeasons(afterStrip.ItemIds);
+                // No manual per-pass eviction: the revision advance we just observed
+                // was produced by the SAME UserDataSaved that already invalidated the
+                // affected season's cross-request aggregate (targeted, AC5). So the
+                // next pass recomputes only the changed seasons and reuses the rest
+                // (AC2 within-response reuse) without a second eviction mechanism.
                 projection = afterStrip;
             }
 
@@ -409,6 +410,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             Guid userId,
             JUser user,
             TagStripProjectionResolver resolver,
+            long contentRevision,
             CancellationToken cancellationToken)
         {
             var spCfg = _configProvider.ConfigurationOrNull;
@@ -452,7 +454,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             // recognized entry before consulting any fact delegate).
             if (!spState.FailClosed)
             {
-                resolver.PreparePass(items, spState, user, cancellationToken);
+                resolver.PreparePass(items, spState, user, contentRevision, cancellationToken);
             }
 
             // Hoist the fact delegates once (not per entry); each is now a pure
@@ -487,14 +489,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         /// <see cref="IUserDataManager.GetUserDataBatch"/> per pass, opted-in
         /// collection membership is resolved once per request (one walk per
         /// collection, never per movie), and each season's episode walk runs at
-        /// most once — its any-watched value is memoized for the whole request and
-        /// reused across stabilization passes, with the controller evicting only
-        /// the seasons named in a new projection delta between passes. The memo is
-        /// deliberately request-scoped, never shared across requests, so the served
-        /// decision stays byte-identical to the original recompute-every-request
-        /// behaviour (see TagCacheProjectionRevisionService's byte-identical note).
-        /// Every resolution failure keeps the existing fail-closed posture (assume
-        /// unwatched → strip), and cancellation always propagates.
+        /// most once — its any-watched value comes from the content-revision-gated
+        /// cross-request aggregate cache in
+        /// <see cref="Services.TagCacheProjectionRevisionService"/>, so an unchanged
+        /// season is not re-walked within one response OR across the daily
+        /// double-fetch, while a user-state save invalidates only that season (AC2 /
+        /// AC5). The content-revision gate keeps every reuse byte-identical to
+        /// recompute-every-request (a library add/update/remove of a cache entry
+        /// bumps the revision and forces a fresh walk). Every resolution failure
+        /// keeps the existing fail-closed posture (assume unwatched → strip), and
+        /// cancellation always propagates.
         /// </summary>
         private sealed class TagStripProjectionResolver
         {
@@ -508,23 +512,21 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
 
             // Opted-in-collection membership, resolved ONCE per request (each
             // opted collection walked a single time) instead of a per-movie
-            // collection walk. Null until first built; empty when the user opts
-            // in no collections.
+            // collection walk. Empty when the user opts in no collections.
+            // _collectionScopeResolved flips true once the single build ran (even
+            // if it faulted); _collectionScopeBatchFaulted records a non-cancel
+            // fault so IsMovieInScope reverts to the per-movie fail-safe predicate.
             private HashSet<Guid>? _collectionScopeMembers;
+            private bool _collectionScopeResolved;
+            private bool _collectionScopeBatchFaulted;
 
-            // Per-pass watched facts for direct Episode/Movie rows: watched state
-            // may advance between stabilization passes, so these are rebuilt from a
-            // fresh user-data batch each pass.
+            // Per-pass resolved facts feeding THIS pass's pure decision. Watched
+            // state may advance between stabilization passes, so all three are
+            // rebuilt each pass. _seasonAnyWatched holds the value resolved for the
+            // pass (a cross-request cache hit or a fresh walk); the reuse itself
+            // lives in TagCacheProjectionRevisionService's aggregate cache, not here.
             private readonly Dictionary<Guid, bool> _played = new();
             private readonly Dictionary<Guid, int?> _seasonIndex = new();
-
-            // Request-lifetime season any-watched memo. It SURVIVES stabilization
-            // passes so a season is walked at most once per response; between
-            // passes the controller evicts only the seasons named in the new
-            // projection delta (InvalidateChangedSeasons), so a season whose
-            // watched state actually changed is recomputed while unaffected
-            // seasons are reused. Never shared across requests (see
-            // TagCacheProjectionRevisionService's byte-identical note).
             private readonly Dictionary<Guid, bool> _seasonAnyWatched = new();
 
             internal TagStripProjectionResolver(TagCacheController owner)
@@ -544,30 +546,54 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                     return inScope;
                 }
 
-                // Direct opt-in, then opted-in-collection membership resolved from
-                // the request-scoped set built with one walk per collection —
-                // NOT a per-movie collection walk (BI-PERF-037 / #98). Byte-for-byte
-                // the same predicate as SpoilerUserResolver.IsMovieInSpoilerScope.
+                // Direct opt-in, then opted-in-collection membership. In the common
+                // case this reads the request-scoped union built with one walk per
+                // collection — NOT a per-movie collection walk (BI-PERF-037 / #98).
+                // If that batch build faulted (non-cancellation), fall back to the
+                // per-movie fail-safe predicate so the decision stays byte-for-byte
+                // identical to SpoilerUserResolver.IsMovieInSpoilerScope.
                 inScope = spState.Movies.ContainsKey(movieId.ToString("N"))
-                    || CollectionScopeMembers(spState).Contains(movieId);
+                    || IsMovieInCollectionScope(spState, movieId);
                 _movieScope[movieId] = inScope;
                 return inScope;
             }
 
-            // Materialize the union of every opted-in collection's linked-child
-            // ids exactly once per request. Each collection is resolved/walked a
-            // single time; a per-collection failure is skipped (matching the
-            // original FindOptedInCollectionForMovie catch → not-in-scope), so the
-            // set stays bounded by collection membership, not by returned movies.
-            private HashSet<Guid> CollectionScopeMembers(Configuration.UserSpoilerBlur spState)
+            private bool IsMovieInCollectionScope(Configuration.UserSpoilerBlur spState, Guid movieId)
             {
-                if (_collectionScopeMembers != null)
+                // Fast path: the whole-request union built without fault.
+                if (_collectionScopeResolved
+                    && !_collectionScopeBatchFaulted
+                    && _collectionScopeMembers != null)
                 {
-                    return _collectionScopeMembers;
+                    return _collectionScopeMembers.Contains(movieId);
                 }
 
-                _collectionScopeMembers = _owner._spoilerResolver.BuildOptedInCollectionMembers(spState);
-                return _collectionScopeMembers;
+                // Degraded / not-yet-built path: the ORIGINAL per-movie predicate,
+                // whose cross-request fail-safe cache and ordered whole-loop catch
+                // keep the scope decision byte-identical to the pre-#98 behaviour on
+                // a transient collection-lookup fault (never a strip→keep leak).
+                return _owner._spoilerResolver.FindOptedInCollectionForMovie(spState, movieId).HasValue;
+            }
+
+            // Materialize the union of every opted-in collection's linked-child ids
+            // exactly once per request, each collection resolved/walked a single
+            // time. A non-cancellation fault returns null: the resolver then reverts
+            // to the per-movie fail-safe predicate (see IsMovieInCollectionScope) so
+            // no returned movie is served with a decision that diverges from — or is
+            // less protective than — the pre-#98 path. Cancellation propagates.
+            internal void EnsureCollectionScope(
+                Configuration.UserSpoilerBlur spState,
+                CancellationToken cancellationToken)
+            {
+                if (_collectionScopeResolved)
+                {
+                    return;
+                }
+
+                var built = _owner._spoilerResolver.BuildOptedInCollectionMembers(spState, cancellationToken);
+                _collectionScopeBatchFaulted = built == null;
+                _collectionScopeMembers = built;
+                _collectionScopeResolved = true;
             }
 
             internal bool IsPlayed(Guid id) => _played.TryGetValue(id, out var played) && played;
@@ -578,41 +604,30 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             internal bool SeasonAnyWatched(Guid id)
                 => _seasonAnyWatched.TryGetValue(id, out var anyWatched) && anyWatched;
 
-            // Between stabilization passes, drop only the season any-watched memos
-            // whose season is named in the new projection delta (episode/season
-            // user-state change). Everything else is reused, so an unaffected
-            // season is never re-walked within one response (AC2).
-            internal void InvalidateChangedSeasons(IEnumerable<string> changedIdsN)
-            {
-                if (_seasonAnyWatched.Count == 0)
-                {
-                    return;
-                }
-
-                foreach (var idN in changedIdsN)
-                {
-                    if (Guid.TryParseExact(idN, "N", out var id))
-                    {
-                        _seasonAnyWatched.Remove(id);
-                    }
-                }
-            }
-
             internal void PreparePass(
                 IReadOnlyDictionary<string, Model.TagCacheEntry> items,
                 Configuration.UserSpoilerBlur spState,
                 JUser user,
+                long contentRevision,
                 CancellationToken cancellationToken)
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
+                // Build opted-in collection membership ONCE per request under the
+                // token, BEFORE classifying movies — so a cancel stops the (possibly
+                // long) collection walk here instead of after it (AC6), and a
+                // non-cancel fault flips the resolver to the per-movie fail-safe
+                // predicate before any movie is classified.
+                EnsureCollectionScope(spState, cancellationToken);
+
                 // Direct-item watched facts are per-pass (they may advance between
-                // stabilization passes and are cheap to re-batch). The season
-                // any-watched memo is request-lifetime and only the seasons named
-                // in a new delta are evicted (InvalidateChangedSeasons), so an
-                // unaffected season is walked at most once per response.
+                // stabilization passes and are cheap to re-batch). Season index and
+                // the per-pass any-watched value feeding this pass's decision are
+                // rebuilt too; the expensive per-season episode aggregate itself is
+                // reused from the content-revision-gated cross-request cache below.
                 _played.Clear();
                 _seasonIndex.Clear();
+                _seasonAnyWatched.Clear();
 
                 // 1. Classify guarded rows from cached entry metadata. This mirrors
                 //    ResolveTagStripDecision's scope gate exactly, so every row
@@ -674,7 +689,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 // 3. Season facts: the live index comes from the batch-resolved
                 //    Season (an unresolved/type-mismatched id yields null and
                 //    strips fail-closed); the any-watched aggregate is reused from
-                //    the request-lifetime memo, or computed with ONE episode walk.
+                //    the content-revision-gated cross-request cache, or computed
+                //    with ONE episode walk and committed there for later reuse.
                 var userDataItems = new List<BaseItem>();
                 var seenUserDataIds = new HashSet<Guid>();
                 foreach (var id in directIds)
@@ -687,7 +703,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                     }
                 }
 
-                var pendingSeasons = new List<(Guid SeasonId, List<BaseItem> Episodes)>();
+                var pendingSeasons = new List<(Guid SeasonId, List<BaseItem> Episodes, long CapturedVersion)>();
                 foreach (var id in seasonIds)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
@@ -705,13 +721,21 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                         continue;
                     }
 
-                    // Reuse the request-lifetime memo: a season already resolved in
-                    // an earlier pass (and not evicted by InvalidateChangedSeasons)
-                    // is never re-walked.
-                    if (_seasonAnyWatched.ContainsKey(id))
+                    // Reuse the cross-request aggregate when it was computed at the
+                    // current content revision and no user-state save invalidated
+                    // this season since — so an unchanged season is never re-walked
+                    // within one response OR across the daily double-fetch (AC2).
+                    if (_owner._projectionRevisionService.TryGetSeasonAnyWatched(
+                            user.Id, id, contentRevision, out var cachedAnyWatched))
                     {
+                        _seasonAnyWatched[id] = cachedAnyWatched;
                         continue;
                     }
+
+                    // Capture the season's invalidation version BEFORE the walk: a
+                    // save landing mid-walk bumps it, and the commit below is then
+                    // discarded so a stale aggregate is never persisted.
+                    var capturedVersion = _owner._projectionRevisionService.BeginSeasonAggregate(user.Id, id);
 
                     IReadOnlyList<BaseItem> episodes;
                     try
@@ -754,7 +778,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                         }
                     }
 
-                    pendingSeasons.Add((id, seasonEpisodes));
+                    pendingSeasons.Add((id, seasonEpisodes, capturedVersion));
                 }
 
                 // 4. One deduplicated user-data batch per pass covers every direct
@@ -792,7 +816,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                         && itemUserData?.Played == true;
                 }
 
-                foreach (var (seasonId, episodes) in pendingSeasons)
+                foreach (var (seasonId, episodes, capturedVersion) in pendingSeasons)
                 {
                     var anyWatched = false;
                     if (userData != null)
@@ -808,11 +832,22 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                         }
                     }
 
-                    // A batch fault (userData == null) memoizes false → strip
-                    // (fail closed); a genuine "no episode watched" also memoizes
-                    // false. Either way the season is not walked again this
-                    // response unless its watched state changes (delta eviction).
+                    // Feed THIS pass's decision.
                     _seasonAnyWatched[seasonId] = anyWatched;
+
+                    // Persist for cross-request reuse ONLY on a clean batch. A batch
+                    // fault (userData == null) strips fail-closed for this pass but
+                    // must not poison the cache with a spurious false, and the commit
+                    // is dropped anyway if a save invalidated the season mid-walk.
+                    if (userData != null)
+                    {
+                        _owner._projectionRevisionService.CommitSeasonAggregate(
+                            user.Id,
+                            seasonId,
+                            anyWatched,
+                            contentRevision,
+                            capturedVersion);
+                    }
                 }
             }
 
