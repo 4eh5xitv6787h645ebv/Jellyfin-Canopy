@@ -774,11 +774,15 @@ import {
    * relationship because only the target item's rows survive. Without
    * `removeOldIds` the originals are retained (copy semantics).
    *
-   * Every move candidate is bound to the source snapshot it was selected from.
-   * Each attempt (including after a 409 rebase) re-checks that binding against
-   * the authoritative source row: an unchanged source moves, a source deleted
-   * meanwhile is left alone (never resurrected), and a source edited meanwhile
-   * fails the move closed rather than overwriting the concurrent edit.
+   * Every move candidate is bound to the raw source row as it stood at
+   * selection. Each attempt (including after a 409 rebase) re-checks that
+   * before-image against the authoritative source row: an unchanged source
+   * moves, a source deleted meanwhile is left alone (never resurrected), and a
+   * source whose any persisted field changed meanwhile fails the move closed
+   * rather than overwriting the concurrent edit or a re-classified identity. A
+   * MOVE additionally requires every source item to end empty of its selected
+   * content, so a source-version bookmark that appeared after selection fails
+   * the whole transaction closed instead of leaving a residual duplicate.
    *
    * Resolves only after the committed state is durable, with exactly the new
    * records this invocation created; candidates skipped because an equivalent
@@ -815,7 +819,7 @@ import {
     const candidates: Array<{
       id: string;
       bookmark: Record<string, any>;
-      removeSource: { id: string; itemId: unknown; key: string } | null;
+      removeSource: { id: string; itemId: unknown; key: string; snapshot: Record<string, any> | null } | null;
     }> = [];
     for (const oldBookmark of oldBookmarks) {
       if (compareBookmarkIdentity(oldBookmark, newItemDetails) === 'none') {
@@ -843,9 +847,33 @@ import {
           syncedFrom: oldBookmark.itemId // Track where it came from
         },
         removeSource: sourceId && removalIds.has(sourceId)
-          ? { id: sourceId, itemId: oldBookmark.itemId, key: bookmarkEquivalenceKey(oldBookmark.timestamp, oldBookmark.label) }
+          ? {
+              id: sourceId,
+              itemId: oldBookmark.itemId,
+              key: bookmarkEquivalenceKey(oldBookmark.timestamp, oldBookmark.label),
+              // Bind the move to the source row exactly as it stands now, not to
+              // the enriched selection payload: the raw persisted row is the only
+              // faithful before-image, so a later concurrent edit to any field
+              // (identity, provider ids, name, timestamps) is detected and the
+              // move fails closed instead of writing stale cross-content.
+              snapshot: hasOwnBookmark(root.bookmarks, sourceId)
+                ? { ...root.bookmarks[sourceId] }
+                : null
+            }
           : null
       });
+    }
+
+    // Every source item distinct from the target must end empty of its selected
+    // content once the MOVE commits. Track those items so the atomic builder can
+    // fail closed if the authoritative state still carries an unhandled row on
+    // one — a source-version bookmark added after selection — rather than
+    // reporting a partial move that leaves the pair a duplicate.
+    const moveSourceItemIds = new Set<unknown>();
+    for (const candidate of candidates) {
+      if (candidate.removeSource && candidate.removeSource.itemId !== targetItemId) {
+        moveSourceItemIds.add(candidate.removeSource.itemId);
+      }
     }
 
     const startingRevision = root.revision;
@@ -865,6 +893,15 @@ import {
           seen.add(bookmarkEquivalenceKey(existingTimestamp, existing.label));
         }
         for (const { id, bookmark, removeSource } of candidates) {
+          const candidateKey = bookmarkEquivalenceKey(bookmark.timestamp as number, bookmark.label);
+          // A MOVE whose source already resides on the target item under the
+          // same equivalence key is already in its final position. The seeded
+          // seen-set counts that very row as the pre-existing equivalent, so
+          // proceeding would suppress the add and then delete the only copy;
+          // leave both the add and the delete unplanned (idempotent no-op).
+          if (removeSource && removeSource.itemId === targetItemId && candidateKey === removeSource.key) {
+            continue;
+          }
           // Rebase each move against the current source row. The source delete
           // rides the same batch as its required target add, so a committed
           // batch is the complete MOVE and a failure leaves every source intact.
@@ -878,11 +915,15 @@ import {
             }
             const current = state.bookmarks[removeSource.id];
             const currentTimestamp = Number(current.timestamp);
-            if (current.itemId !== removeSource.itemId
-              || !Number.isFinite(currentTimestamp)
-              || bookmarkEquivalenceKey(currentTimestamp, current.label) !== removeSource.key) {
-              // The source changed after it was selected. Moving stale content
-              // would overwrite the concurrent edit, so fail the move closed.
+            const changed = removeSource.snapshot
+              // Any persisted-field drift (identity, provider ids, name, or
+              // timestamps) means the row was edited after selection; moving the
+              // captured before-image would overwrite that edit, so fail closed.
+              ? !sameBookmark(current, removeSource.snapshot)
+              : (current.itemId !== removeSource.itemId
+                || !Number.isFinite(currentTimestamp)
+                || bookmarkEquivalenceKey(currentTimestamp, current.label) !== removeSource.key);
+            if (changed) {
               throw new Error('Refusing to move a bookmark whose source changed after it was selected');
             }
             deleteSource = true;
@@ -896,17 +937,40 @@ import {
             if (deleteSource) operations.push({ type: 'delete', bookmarkId: removeSource!.id });
             continue;
           }
-          const key = bookmarkEquivalenceKey(bookmark.timestamp as number, bookmark.label);
-          if (!seen.has(key)) {
-            seen.add(key);
+          if (!seen.has(candidateKey)) {
+            seen.add(candidateKey);
             operations.push({ type: 'add', bookmarkId: id, bookmark });
           }
           if (deleteSource) operations.push({ type: 'delete', bookmarkId: removeSource!.id });
+        }
+        // Fail a MOVE closed if any source item still carries an unhandled row
+        // in the authoritative state (a source-version bookmark added after the
+        // selection snapshot). Reporting success here would leave the pair a
+        // duplicate the finder immediately re-derives, so require the whole
+        // source-version set to travel in this transaction or none of it.
+        if (moveSourceItemIds.size > 0) {
+          const deleting = new Set(
+            operations.filter(operation => operation.type === 'delete').map(operation => operation.bookmarkId)
+          );
+          for (const [bookmarkId, existing] of Object.entries<any>(state.bookmarks)) {
+            if (existing && typeof existing === 'object'
+              && moveSourceItemIds.has(existing.itemId)
+              && !deleting.has(bookmarkId)) {
+              throw new Error('Refusing to report a partial merge: a source item changed after it was selected');
+            }
+          }
         }
         return operations;
       });
     } catch (e) {
       if (!isBookmarkRootCurrent(captured, root)) return [];
+      // A 409 can advance the local root to an authoritative server snapshot
+      // before the rebased retry fails (e.g. a source changed under us). Publish
+      // that retained snapshot so every view reconciles instead of re-rendering
+      // the pre-conflict state and retrying against a stale local modal.
+      if (root.revision !== startingRevision) {
+        emitBookmarksUpdated(captured, 'authoritative-reconcile');
+      }
       console.error(`${logPrefix} Failed to sync bookmarks:`, e);
       throw e;
     }

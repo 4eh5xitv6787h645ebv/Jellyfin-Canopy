@@ -540,6 +540,89 @@ describe('bookmarks data-safety', () => {
             // The concurrent edit survives and no target row was created.
             expect(JC.userConfig.bookmark.bookmarks).toEqual({ src1: stored(20) });
             expect(targetRows()).toHaveLength(0);
+            // The 409 advanced the local root to the authoritative snapshot
+            // before the rebase failed, so that retained state is published for
+            // views to reconcile rather than leaving the pre-conflict render.
+            expect(updated).toHaveBeenCalledTimes(1);
+            expect(updated.mock.calls[0][0].detail.reason).toBe('authoritative-reconcile');
+            document.removeEventListener('jc-bookmarks-updated', updated);
+        });
+
+        it('moves the identity-corrected source closed when a 409 reveals a concurrent identity change', async () => {
+            // src1 is a legacy row that carries TMDB 10 at selection.
+            const api = await loadModule({
+                src1: { itemId: 'source-item', tmdbId: '10', mediaType: 'movie', timestamp: 10, label: 'L', createdAt: 't0' }
+            });
+            const updated = vi.fn();
+            document.addEventListener('jc-bookmarks-updated', updated);
+            const identityTarget = { itemId: 'target-item', tmdbId: '10', tvdbId: '', mediaType: 'movie', name: 'Target' };
+            // Concurrently the same row is upgraded to identityVersion 1 / TMDB 99
+            // (a re-classification) while its item id, timestamp, and label stay
+            // identical, so the old key-only binding would have accepted the move.
+            plugin.mockRejectedValueOnce(Object.assign(httpError(409), {
+                responseJSON: {
+                    revision: 1,
+                    bookmarks: {
+                        src1: {
+                            itemId: 'source-item', identityVersion: 1, itemType: 'movie',
+                            tmdbId: '99', mediaType: 'movie', timestamp: 10, label: 'L', createdAt: 't0'
+                        }
+                    }
+                }
+            }));
+
+            await expect(api.syncBookmarks(
+                [{ id: 'src1', itemId: 'source-item', tmdbId: '10', mediaType: 'movie', timestamp: 10, label: 'L', createdAt: 't0' }],
+                identityTarget, 0, ['src1']
+            )).rejects.toThrow('source changed');
+
+            // The concurrent identity correction survives; nothing was moved.
+            expect(JC.userConfig.bookmark.bookmarks.src1.tmdbId).toBe('99');
+            expect(JC.userConfig.bookmark.bookmarks.src1.identityVersion).toBe(1);
+            expect(targetRows()).toHaveLength(0);
+            expect(updated.mock.calls[0][0].detail.reason).toBe('authoritative-reconcile');
+            document.removeEventListener('jc-bookmarks-updated', updated);
+        });
+
+        it('fails closed when a 409 reveals the source item gained a bookmark after selection', async () => {
+            const api = await loadModule({ src1: stored(10) });
+            const updated = vi.fn();
+            document.addEventListener('jc-bookmarks-updated', updated);
+            // A second equivalent-scope source row appears on the same source item
+            // after the modal captured only src1; a completed move of src1 alone
+            // would leave src2 behind and the pair a duplicate the finder re-derives.
+            plugin.mockRejectedValueOnce(Object.assign(httpError(409), {
+                responseJSON: { revision: 1, bookmarks: { src1: stored(10), src2: stored(15, 'M') } }
+            }));
+
+            await expect(api.syncBookmarks([source('src1', 10)], target, 0, ['src1']))
+                .rejects.toThrow('partial merge');
+
+            // Neither source row moved; both remain on the source item, no target row.
+            expect(JC.userConfig.bookmark.bookmarks.src1).toBeDefined();
+            expect(JC.userConfig.bookmark.bookmarks.src2).toBeDefined();
+            expect(targetRows()).toHaveLength(0);
+            expect(updated.mock.calls[0][0].detail.reason).toBe('authoritative-reconcile');
+            document.removeEventListener('jc-bookmarks-updated', updated);
+        });
+
+        it('treats a self-target move as a durable no-op instead of deleting the only copy', async () => {
+            const api = await loadModule({ src1: stored(10, 'L', 'target-item') });
+            const updated = vi.fn();
+            document.addEventListener('jc-bookmarks-updated', updated);
+
+            // Move src1 onto the very item it already lives on: the row is already
+            // in its final position, so nothing is added and nothing is deleted.
+            const synced = await api.syncBookmarks(
+                [{ id: 'src1', itemId: 'target-item', tmdbId: 'x', tvdbId: '', mediaType: 'movie', name: 'Target', timestamp: 10, label: 'L', createdAt: 't0' }],
+                target, 0, ['src1']
+            );
+
+            expect(synced).toEqual([]);
+            expect(JC.userConfig.bookmark.bookmarks.src1).toBeDefined();
+            expect(JC.userConfig.bookmark.bookmarks.src1.timestamp).toBe(10);
+            expect(Object.keys(JC.userConfig.bookmark.bookmarks)).toEqual(['src1']);
+            expect(plugin).not.toHaveBeenCalled();
             expect(updated).not.toHaveBeenCalled();
             document.removeEventListener('jc-bookmarks-updated', updated);
         });
