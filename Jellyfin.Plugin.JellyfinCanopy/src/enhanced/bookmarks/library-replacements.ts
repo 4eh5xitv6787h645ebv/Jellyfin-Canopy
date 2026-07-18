@@ -20,6 +20,9 @@ import {
 const replacementModalTimers = new Set<number>();
 export const SERIES_ENRICHMENT_CHUNK_SIZE = 50;
 export const SERIES_ENRICHMENT_MAX_URL_LENGTH = 2048;
+const REPLACEMENT_PAGE_SIZE = 500;
+const REPLACEMENT_MAX_PAGES = 1000;
+const REPLACEMENT_MAX_ITEMS = REPLACEMENT_PAGE_SIZE * REPLACEMENT_MAX_PAGES;
 
 /**
  * How many source bookmarks a MOVE-style migration durably relocated: every
@@ -53,7 +56,7 @@ interface BookmarkGroup {
   bookmarks: Array<StoredBookmark & { id: string }>;
 }
 
-interface JellyfinReplacementItem {
+export interface JellyfinReplacementItem {
   Id: string;
   Name: string;
   Type?: string;
@@ -68,6 +71,12 @@ interface JellyfinReplacementItem {
   UserData?: { Key?: string };
 }
 
+export type ReplacementSearchOutcome =
+  | { status: 'match'; items: JellyfinReplacementItem[] }
+  | { status: 'no-match' }
+  | { status: 'failed'; error: unknown }
+  | { status: 'cancelled' };
+
 interface ImageApiClient {
   getImageUrl(itemId: string, options: { type: string; maxWidth: number; tag?: string }): string;
 }
@@ -79,8 +88,57 @@ interface ReplacementResult {
 
 function isJellyfinReplacementItem(value: unknown): value is JellyfinReplacementItem {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
-    && 'Id' in value && typeof value.Id === 'string'
+    && 'Id' in value && typeof value.Id === 'string' && value.Id.length > 0
     && 'Name' in value && typeof value.Name === 'string';
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function incompleteReplacementSearch(message: string): never {
+  const error = new Error(message);
+  error.name = 'IncompleteCollectionError';
+  throw error;
+}
+
+function isAbortError(error: unknown): boolean {
+  return (error as { name?: string } | null)?.name === 'AbortError';
+}
+
+function readReplacementPage(
+  response: unknown,
+  requestedStartIndex: number
+): { items: JellyfinReplacementItem[]; totalRecordCount: number } {
+  if (!isRecord(response)) incompleteReplacementSearch('replacement response was not an object');
+  if (!Array.isArray(response.Items)) {
+    incompleteReplacementSearch('replacement response did not contain an Items array');
+  }
+  if (!Number.isSafeInteger(response.TotalRecordCount) || (response.TotalRecordCount as number) < 0) {
+    incompleteReplacementSearch('replacement response TotalRecordCount was not a non-negative safe integer');
+  }
+  if (Object.prototype.hasOwnProperty.call(response, 'StartIndex')) {
+    if (!Number.isSafeInteger(response.StartIndex) || (response.StartIndex as number) < 0) {
+      incompleteReplacementSearch('replacement response StartIndex was not a non-negative safe integer');
+    }
+    if (response.StartIndex !== requestedStartIndex) {
+      incompleteReplacementSearch(
+        `replacement response StartIndex ${String(response.StartIndex)} did not match requested ${requestedStartIndex}`
+      );
+    }
+  }
+  if (response.Items.length > REPLACEMENT_PAGE_SIZE) {
+    incompleteReplacementSearch(`replacement page exceeded requested size ${REPLACEMENT_PAGE_SIZE}`);
+  }
+
+  const items: JellyfinReplacementItem[] = [];
+  for (const value of response.Items) {
+    if (!isJellyfinReplacementItem(value)) {
+      incompleteReplacementSearch('replacement response contained an invalid item');
+    }
+    items.push(value);
+  }
+  return { items, totalRecordCount: response.TotalRecordCount as number };
 }
 
 function replacementIdentity(item: JellyfinReplacementItem): BookmarkIdentityRecord {
@@ -169,89 +227,169 @@ export function resetBookmarksLibraryReplacementModals(): void {
   document.querySelectorAll('[data-jc-bookmark-library-modal="true"]').forEach((modal) => modal.remove());
 }
 
+function throwReplacementCancelled(): never {
+  const error = new Error('replacement search identity changed mid-flight');
+  error.name = 'AbortError';
+  throw error;
+}
+
 /**
- * Search Jellyfin for items matching a TMDB/TVDB ID
+ * Fill each candidate's parent-series ProviderIds so episode identity can match
+ * on the series' namespaced ids. Enrichment is best-effort: a failed chunk
+ * degrades to item-level provider matching only (per-chunk catch), but an abort
+ * or account switch propagates so the whole search resolves as cancelled.
+ */
+async function enrichSeriesProviders(
+  userId: string,
+  items: JellyfinReplacementItem[],
+  context: IdentityContext
+): Promise<JellyfinReplacementItem[]> {
+  const seriesIds = [...new Set(items.map(item => item.SeriesId).filter((id): id is string => !!id))];
+  if (seriesIds.length === 0) return items;
+
+  const seriesProviders = new Map<string, { Tmdb?: string; Tvdb?: string }>();
+  for (const chunk of chunkSeriesIds(userId, seriesIds)) {
+    if (!JC.identity.isCurrent(context)) throwReplacementCancelled();
+    try {
+      const seriesResponse: unknown = await JC.core.api!.jf(
+        seriesEnrichmentUrl(userId, chunk),
+        { skipCache: true }
+      );
+      if (!JC.identity.isCurrent(context)) throwReplacementCancelled();
+      const seriesItems = isRecord(seriesResponse) && Array.isArray(seriesResponse.Items)
+        ? seriesResponse.Items.filter(isJellyfinReplacementItem)
+        : [];
+      for (const seriesItem of seriesItems) {
+        seriesProviders.set(seriesItem.Id, seriesItem.ProviderIds || {});
+      }
+    } catch (error) {
+      if (isAbortError(error) || !JC.identity.isCurrent(context)) throw error;
+      console.warn(`🪼 Jellyfin Canopy: Bookmarks Library: Parent-series enrichment chunk failed; retaining item-provider matches`, error);
+    }
+  }
+
+  return items.map(item => ({
+    ...item,
+    SeriesProviderIds: item.SeriesId ? seriesProviders.get(item.SeriesId) : undefined
+  }));
+}
+
+/**
+ * Search Jellyfin for a logical replacement, paging DateCreated-descending by
+ * StartIndex and evaluating each page as it arrives.
+ *
+ * Matching is page-by-page with early-exit: the first page carrying a logical
+ * match resolves `match` immediately, so a present replacement is never gated
+ * behind a whole-library download or the item safety cap. Only a negative needs
+ * a complete scan — `no-match` is published solely after every advertised item
+ * has been examined (the count of DISTINCT ids seen reaches the reported
+ * TotalRecordCount, so a repeated boundary row can never fake exhaustion).
+ * Continuation offsets advance by the rows a page actually returned, so a server
+ * that trims a page below the requested Limit leaves no unscanned gap.
+ * Anything that prevents a complete negative scan — a malformed or shifting
+ * envelope, an empty or non-advancing page before the end, more rows than
+ * advertised, or a page/item safety cap reached before exhaustion — rejects and
+ * surfaces as `failed`, never as a confident `no-match`, because this flow gates
+ * a DESTRUCTIVE migration. An account switch or abort at any point resolves
+ * `cancelled`.
  */
 export async function searchForReplacementItem(
   bookmark: StoredBookmark,
   context: IdentityContext
-): Promise<JellyfinReplacementItem[] | null> {
-  if (!JC.identity.isCurrent(context)) return null;
+): Promise<ReplacementSearchOutcome> {
+  if (!JC.identity.isCurrent(context)) return { status: 'cancelled' };
   const userId = context.userId;
 
   try {
-    // Search using Jellyfin's provider ID filtering
     const normalizedMediaType = normalizeBookmarkMediaType(bookmark.mediaType);
     const itemTypes = replacementItemTypes(normalizedMediaType);
-
-    // Fetch all items of this type and filter by provider ID client-side
-    // This is more reliable than relying on AnyProviderIdEquals
     const typeFilter = itemTypes ? `&IncludeItemTypes=${itemTypes}` : '';
-    const url = `/Users/${userId}/Items?Recursive=true${typeFilter}&Fields=ProviderIds,Type,SeriesId,ParentIndexNumber,IndexNumber,IndexNumberEnd&SortBy=DateCreated&SortOrder=Descending&Limit=500`;
+    // EnableUserData=false: replacement identity never reads mutable playback
+    // state, so excluding it keeps the payload smaller and immune to progress
+    // updates arriving mid-scan.
+    const baseUrl = `/Users/${userId}/Items?Recursive=true${typeFilter}&Fields=ProviderIds,Type,SeriesId,ParentIndexNumber,IndexNumber,IndexNumberEnd&EnableUserData=false&SortBy=DateCreated&SortOrder=Descending`;
 
-    // Routed through the core fetch layer (auth + JSON parse identical to the
-    // former ApiClient.ajax call; failures still land in the catch below).
-    let response: unknown = await JC.core.api!.jf(url, { skipCache: true });
-    if (!JC.identity.isCurrent(context)) return null;
+    let expectedTotal: number | null = null;
+    // Offset the next request must ask for. It advances by the rows a page
+    // actually returned, never by the requested page size: a server that caps a
+    // page below the requested Limit must not leave an unscanned gap.
+    let startIndex = 0;
+    // Distinct ids carry exhaustion, not raw row counts. An overlapping or
+    // shifting DateCreated window can repeat a boundary row, and counting raw
+    // rows would then reach the advertised total while a displaced replacement
+    // was never examined — a false no-match on a flow gating a DESTRUCTIVE
+    // migration.
+    const seenIds = new Set<string>();
 
-    // Handle if response is a string (shouldn't happen but be safe)
-    if (typeof response === 'string') {
-      response = JSON.parse(response) as unknown;
-      if (!JC.identity.isCurrent(context)) return null;
-    }
+    for (let pageIndex = 0; pageIndex < REPLACEMENT_MAX_PAGES; pageIndex += 1) {
+      if (!JC.identity.isCurrent(context)) return { status: 'cancelled' };
+      const url = `${baseUrl}&Limit=${REPLACEMENT_PAGE_SIZE}&StartIndex=${startIndex}`;
+      const response: unknown = await JC.core.api!.jf(url, { skipCache: true });
+      if (!JC.identity.isCurrent(context)) return { status: 'cancelled' };
 
-    console.log(`🪼 Jellyfin Canopy: Bookmarks Library: API Response:`, response);
-
-    let items = response !== null && typeof response === 'object' && !Array.isArray(response)
-      && 'Items' in response && Array.isArray(response.Items)
-      ? response.Items.filter(isJellyfinReplacementItem)
-      : [];
-    console.log(`🪼 Jellyfin Canopy: Bookmarks Library: Fetched ${items.length} total items of type ${itemTypes || 'other/legacy'}`);
-
-    if (!Array.isArray(items) || items.length === 0) {
-      console.warn(`🪼 Jellyfin Canopy: Bookmarks Library: No items found or items is not an array`);
-      return null;
-    }
-
-    const seriesIds = [...new Set(items.map(item => item.SeriesId).filter((id): id is string => !!id))];
-    if (seriesIds.length > 0) {
-      const seriesProviders = new Map<string, { Tmdb?: string; Tvdb?: string }>();
-      for (const chunk of chunkSeriesIds(userId, seriesIds)) {
-        try {
-          let seriesResponse: unknown = await JC.core.api!.jf(
-            seriesEnrichmentUrl(userId, chunk),
-            { skipCache: true }
-          );
-          if (!JC.identity.isCurrent(context)) return null;
-          if (typeof seriesResponse === 'string') seriesResponse = JSON.parse(seriesResponse) as unknown;
-          const seriesItems = seriesResponse !== null && typeof seriesResponse === 'object'
-            && !Array.isArray(seriesResponse) && 'Items' in seriesResponse && Array.isArray(seriesResponse.Items)
-            ? seriesResponse.Items.filter(isJellyfinReplacementItem)
-            : [];
-          for (const seriesItem of seriesItems) {
-            seriesProviders.set(seriesItem.Id, seriesItem.ProviderIds || {});
-          }
-        } catch (error) {
-          if (!JC.identity.isCurrent(context)) return null;
-          console.warn(`🪼 Jellyfin Canopy: Bookmarks Library: Parent-series enrichment chunk failed; retaining item-provider matches`, error);
-        }
+      const page = readReplacementPage(response, startIndex);
+      if (expectedTotal === null) {
+        expectedTotal = page.totalRecordCount;
+      } else if (page.totalRecordCount !== expectedTotal) {
+        // A shifting total means the collection churned mid-scan; a negative can
+        // no longer be proven, so fail closed rather than risk a false no-match.
+        incompleteReplacementSearch(
+          `replacement total changed mid-scan from ${expectedTotal} to ${page.totalRecordCount}`
+        );
       }
-      items = items.map(item => ({
-        ...item,
-        SeriesProviderIds: item.SeriesId ? seriesProviders.get(item.SeriesId) : undefined
-      }));
+
+      // Validate the running row count against the advertised total BEFORE
+      // trusting anything on this page. An envelope that carries more rows than
+      // it advertises (e.g. two items with TotalRecordCount=1) is internally
+      // inconsistent: fail closed rather than publish a match — or a no-match —
+      // from a response the scan classifies as incomplete.
+      const rowsThroughThisPage = startIndex + page.items.length;
+      if (rowsThroughThisPage > expectedTotal) {
+        incompleteReplacementSearch(
+          `replacement scan read ${rowsThroughThisPage} rows beyond the advertised ${expectedTotal}`
+        );
+      }
+
+      // Evaluate this page before any completeness bookkeeping so a present
+      // match short-circuits regardless of library size or the safety cap.
+      // UserData.Key is deliberately never consulted: unlike ProviderIds it
+      // carries no namespace and cannot safely identify an episode.
+      const enriched = await enrichSeriesProviders(userId, page.items, context);
+      if (!JC.identity.isCurrent(context)) return { status: 'cancelled' };
+      const matches = enriched.filter(
+        item => compareBookmarkIdentity(bookmark, replacementIdentity(item)) === 'logical'
+      );
+      if (matches.length > 0) return { status: 'match', items: matches };
+
+      for (const item of page.items) seenIds.add(item.Id);
+      if (seenIds.size >= expectedTotal) return { status: 'no-match' };
+
+      // Not yet exhausted: the scan must be able to make progress and stay
+      // within the safety bound, otherwise a negative cannot be trusted.
+      if (page.items.length === 0) {
+        incompleteReplacementSearch('replacement scan hit an empty page before exhausting the collection');
+      }
+      if (expectedTotal > REPLACEMENT_MAX_ITEMS) {
+        incompleteReplacementSearch(
+          `replacement collection of ${expectedTotal} exceeds the ${REPLACEMENT_MAX_ITEMS} item safety bound`
+        );
+      }
+
+      // Advance by the rows actually returned. page.items.length is > 0 here
+      // (guarded above), so the offset strictly increases and the scan cannot
+      // spin on a stalled offset.
+      startIndex = rowsThroughThisPage;
     }
 
-    // UserData.Key is deliberately excluded: unlike ProviderIds it does not
-    // carry a namespace and cannot safely identify an episode.
-    const matches = items.filter(item => compareBookmarkIdentity(bookmark, replacementIdentity(item)) === 'logical');
-
-    console.log(`🪼 Jellyfin Canopy: Bookmarks Library: Found ${matches.length} logical replacement matches`, matches);
-    return matches.length > 0 ? matches : null;
-  } catch (e) {
-    if (!JC.identity.isCurrent(context)) return null;
-    console.error('Failed to search for replacement:', e);
-    return null;
+    // Ran out of pages before reaching the advertised total: an incomplete
+    // scan, never a confident no-match.
+    return incompleteReplacementSearch(
+      `replacement scan exceeded the ${REPLACEMENT_MAX_PAGES} page safety bound before exhausting the collection`
+    );
+  } catch (error) {
+    if (isAbortError(error) || !JC.identity.isCurrent(context)) return { status: 'cancelled' };
+    console.error('Failed to search for replacement:', error);
+    return { status: 'failed', error };
   }
 }
 
@@ -266,20 +404,27 @@ export async function findAndOfferReplacement(
   if (!context || !JC.identity.isCurrent(context)) return;
   triggerBtn.disabled = true;
 
-  const matches = await searchForReplacementItem(
-    group.details,
-    context
-  );
-  if (!JC.identity.isCurrent(context)) return;
-
-  if (!matches || matches.length === 0) {
-    toast(JC.t!('bookmark_no_replacement'), 3000);
+  try {
+    const result = await searchForReplacementItem(group.details, context);
+    // The await can straddle an account transition; a stale continuation must
+    // not paint this user's toast (or modal) over the next account's UI.
+    if (!JC.identity.isCurrent(context)) return;
+    switch (result.status) {
+      case 'match':
+        showReplacementSelectionModal(group, result.items, context);
+        return;
+      case 'no-match':
+        toast(JC.t!('bookmark_no_replacement'), 3000);
+        return;
+      case 'failed':
+        toast(JC.t!('bookmark_search_failed'), 3000);
+        return;
+      case 'cancelled':
+        return;
+    }
+  } finally {
     triggerBtn.disabled = false;
-    return;
   }
-
-  showReplacementSelectionModal(group, matches, context);
-  triggerBtn.disabled = false;
 }
 
 /**
@@ -503,18 +648,34 @@ export async function findAllOrphanedAndOfferMigration(
     return;
   }
 
-  // Search for replacements for all orphaned items
+  // Search for replacements for all orphaned items. A partial result set is
+  // never safe enough to gate destructive migrations.
   const replacementResults: ReplacementResult[] = [];
+  let failedSearchCount = 0;
   for (const group of orphanedGroups) {
     if (!JC.identity.isCurrent(context)) return;
-    const matches = await searchForReplacementItem(
-      group.details,
-      context
-    );
-    if (!JC.identity.isCurrent(context)) return;
-    if (matches && matches.length > 0) {
-      replacementResults.push({ group, matches });
+    const result = await searchForReplacementItem(group.details, context);
+    switch (result.status) {
+      case 'match':
+        replacementResults.push({ group, matches: result.items });
+        break;
+      case 'no-match':
+        break;
+      case 'failed':
+        failedSearchCount += 1;
+        break;
+      case 'cancelled':
+        return;
     }
+  }
+
+  // The final search's await can resolve after an account transition; re-fence
+  // before publishing any batch outcome toast or the summary modal.
+  if (!JC.identity.isCurrent(context)) return;
+
+  if (failedSearchCount > 0) {
+    toast(JC.t!('bookmark_orphaned_search_failed').replace('{count}', String(failedSearchCount)), 4000);
+    return;
   }
 
   if (replacementResults.length === 0) {

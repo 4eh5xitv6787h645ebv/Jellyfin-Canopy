@@ -34,17 +34,19 @@ describe('bookmark replacement logical identity', () => {
   });
 
   it('uses the same inclusive episode-range decision as playback and duplicates', async () => {
+    const episodePage = { Items: [
+      {
+        Id: 'alternate-s0e2-e3', Name: 'Special 2-3', Type: 'Episode', SeriesId: 'series-item',
+        ParentIndexNumber: 0, IndexNumber: 2, IndexNumberEnd: 3, ProviderIds: {}
+      },
+      {
+        Id: 'different-s0e2', Name: 'Special 2', Type: 'Episode', SeriesId: 'series-item',
+        ParentIndexNumber: 0, IndexNumber: 2, IndexNumberEnd: 2, ProviderIds: {}
+      }
+    ], TotalRecordCount: 2, StartIndex: 0 };
+    // One forward page, then one parent-series enrichment call.
     const jf = vi.fn()
-      .mockResolvedValueOnce({ Items: [
-        {
-          Id: 'alternate-s0e2-e3', Name: 'Special 2-3', Type: 'Episode', SeriesId: 'series-item',
-          ParentIndexNumber: 0, IndexNumber: 2, IndexNumberEnd: 3, ProviderIds: {}
-        },
-        {
-          Id: 'different-s0e2', Name: 'Special 2', Type: 'Episode', SeriesId: 'series-item',
-          ParentIndexNumber: 0, IndexNumber: 2, IndexNumberEnd: 2, ProviderIds: {}
-        }
-      ] })
+      .mockResolvedValueOnce(episodePage)
       .mockResolvedValueOnce({ Items: [{
         Id: 'series-item', Name: 'Series', Type: 'Series', ProviderIds: { Tmdb: 'series-55' }
       }] });
@@ -57,15 +59,19 @@ describe('bookmark replacement logical identity', () => {
       seasonNumber: 0, episodeNumber: 2, episodeEndNumber: 3, name: 'Special 2-3'
     }, context);
 
-    expect(matches?.map(item => item.Id)).toEqual(['alternate-s0e2-e3']);
+    expect(matches).toEqual({
+      status: 'match',
+      items: [expect.objectContaining({ Id: 'alternate-s0e2-e3' })]
+    });
   });
 
   it('never treats unnamespaced UserData.Key as an episode provider id', async () => {
-    const jf = vi.fn().mockResolvedValueOnce({ Items: [{
+    const page = { Items: [{
       Id: 'wrong', Name: 'Wrong episode', Type: 'Episode',
       ParentIndexNumber: 1, IndexNumber: 1, IndexNumberEnd: 1,
       ProviderIds: {}, UserData: { Key: 'episode-900' }
-    }] });
+    }], TotalRecordCount: 1, StartIndex: 0 };
+    const jf = vi.fn().mockResolvedValueOnce(page);
     JC.core.api = { jf } as unknown as ApiApi;
     const context = JC.identity.capture()!;
 
@@ -73,7 +79,7 @@ describe('bookmark replacement logical identity', () => {
       itemId: 'gone', identityVersion: 1, itemType: 'episode', mediaType: 'tv',
       tmdbId: 'episode-900', tvdbId: '', seriesTmdbId: '', seriesTvdbId: '',
       seasonNumber: 1, episodeNumber: 1, episodeEndNumber: 1, name: 'Episode'
-    }, context)).resolves.toBeNull();
+    }, context)).resolves.toEqual({ status: 'no-match' });
   });
 
   it('bounds parent enrichment chunks and isolates one failed chunk from valid matches', async () => {
@@ -91,8 +97,9 @@ describe('bookmark replacement logical identity', () => {
         ? { Tmdb: 'episode-900' }
         : (index === SERIES_ENRICHMENT_CHUNK_SIZE ? {} : { Tmdb: `other-${index}` })
     }));
+    const candidatePage = { Items: candidates, TotalRecordCount: candidates.length, StartIndex: 0 };
     const jf = vi.fn()
-      .mockResolvedValueOnce({ Items: candidates })
+      .mockResolvedValueOnce(candidatePage)
       .mockRejectedValueOnce(new Error('first parent chunk unavailable'))
       .mockResolvedValueOnce({ Items: [{
         Id: `series-${String(SERIES_ENRICHMENT_CHUNK_SIZE).padStart(3, '0')}`,
@@ -109,7 +116,13 @@ describe('bookmark replacement logical identity', () => {
       seasonNumber: 1, episodeNumber: 1, episodeEndNumber: 1, name: 'Episode'
     }, context);
 
-    expect(matches?.map(item => item.Id)).toEqual(['item-provider-match', 'series-range-match']);
+    expect(matches).toEqual({
+      status: 'match',
+      items: [
+        expect.objectContaining({ Id: 'item-provider-match' }),
+        expect.objectContaining({ Id: 'series-range-match' })
+      ]
+    });
     const enrichmentUrls = jf.mock.calls.slice(1).map(call => String(call[0]));
     expect(enrichmentUrls).toHaveLength(2);
     for (const url of enrichmentUrls) {
@@ -132,8 +145,9 @@ describe('bookmark replacement logical identity', () => {
       IndexNumber: 1,
       ProviderIds: { Tmdb: `other-${index}` }
     }));
+    const candidatePage = { Items: candidates, TotalRecordCount: candidates.length, StartIndex: 0 };
     const jf = vi.fn()
-      .mockResolvedValueOnce({ Items: candidates })
+      .mockResolvedValueOnce(candidatePage)
       .mockResolvedValue({ Items: [] });
     JC.core.api = { jf } as unknown as ApiApi;
     const context = JC.identity.capture()!;
@@ -142,7 +156,7 @@ describe('bookmark replacement logical identity', () => {
       itemId: 'gone', identityVersion: 1, itemType: 'episode', mediaType: 'tv',
       tmdbId: 'missing', tvdbId: '', seriesTmdbId: '', seriesTvdbId: '',
       seasonNumber: 1, episodeNumber: 1, episodeEndNumber: 1, name: 'Episode'
-    }, context)).resolves.toBeNull();
+    }, context)).resolves.toEqual({ status: 'no-match' });
 
     const enrichmentUrls = jf.mock.calls.slice(1).map(call => String(call[0]));
     expect(longSeriesIds.length).toBeLessThan(SERIES_ENRICHMENT_CHUNK_SIZE);
