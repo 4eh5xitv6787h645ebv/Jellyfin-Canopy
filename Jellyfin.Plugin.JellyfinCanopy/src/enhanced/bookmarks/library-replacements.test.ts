@@ -94,6 +94,18 @@ function installApi(jf: ReturnType<typeof vi.fn>): void {
   JC.core.api = { jf } as unknown as ApiApi;
 }
 
+// A proven-complete scan requires two consecutive full passes that agree, so
+// each stable main-page sequence must be answered twice before enrichment.
+function mockStablePasses(
+  jf: ReturnType<typeof vi.fn>,
+  pages: Array<Record<string, unknown>>
+): ReturnType<typeof vi.fn> {
+  for (let pass = 0; pass < 2; pass += 1) {
+    for (const page of pages) jf.mockResolvedValueOnce(page);
+  }
+  return jf;
+}
+
 function captureIdentity(userId = 'replacement-user'): IdentityContext {
   JC.identity.transition('replacement-server', '', 'replacement-test-reset');
   return JC.identity.transition('replacement-server', userId, 'replacement-test-user')!;
@@ -132,13 +144,10 @@ describe('bookmark replacement library search', () => {
 
   it('finds a logical replacement on page two without treating 500 as a hard cap', async () => {
     const firstPage = Array.from({ length: 500 }, (_, index) => item(`page-one-${index}`));
-    const jf = vi.fn()
-      .mockResolvedValueOnce({ Items: firstPage, TotalRecordCount: 501, StartIndex: 0 })
-      .mockResolvedValueOnce({
-        Items: [item('page-two-match', 'target-tmdb')],
-        TotalRecordCount: 501,
-        StartIndex: 500
-      });
+    const jf = mockStablePasses(vi.fn(), [
+      { Items: firstPage, TotalRecordCount: 501, StartIndex: 0 },
+      { Items: [item('page-two-match', 'target-tmdb')], TotalRecordCount: 501, StartIndex: 500 }
+    ]);
     installApi(jf);
     const context = captureIdentity('regular-user');
 
@@ -147,9 +156,12 @@ describe('bookmark replacement library search', () => {
       items: [expect.objectContaining({ Id: 'page-two-match' })]
     });
 
-    expect(jf).toHaveBeenCalledTimes(2);
+    // Two proving passes over the two-page collection, offset advancing past 500.
+    expect(jf).toHaveBeenCalledTimes(4);
     expectMainRequest(jf.mock.calls[0], 'regular-user', 0);
     expectMainRequest(jf.mock.calls[1], 'regular-user', 500);
+    expectMainRequest(jf.mock.calls[2], 'regular-user', 0);
+    expectMainRequest(jf.mock.calls[3], 'regular-user', 500);
   });
 
   it.each(['admin-user', 'regular-user'])('keeps the captured %s identity in every item request', async (userId) => {
@@ -159,8 +171,32 @@ describe('bookmark replacement library search', () => {
 
     await expect(searchForReplacementItem(bookmark(), context)).resolves.toEqual({ status: 'no-match' });
 
-    expect(jf).toHaveBeenCalledTimes(1);
+    expect(jf).toHaveBeenCalledTimes(2);
     expectMainRequest(jf.mock.calls[0], userId, 0);
+    expectMainRequest(jf.mock.calls[1], userId, 0);
+  });
+
+  it('never publishes a confident no-match from a scan two passes disagree on', async () => {
+    // Same-count library churn shifts an unread replacement behind the offset:
+    // one pass misses it, the other sees it. The prover must reject the
+    // disagreement as failed/incomplete rather than emit a false no-match that
+    // would gate a destructive migration.
+    const firstPage = Array.from({ length: 500 }, (_, index) => item(`churn-${index}`));
+    const jf = vi.fn()
+      .mockResolvedValueOnce({ Items: firstPage, TotalRecordCount: 501, StartIndex: 0 })
+      .mockResolvedValueOnce({ Items: [item('churn-tail')], TotalRecordCount: 501, StartIndex: 500 })
+      .mockResolvedValueOnce({ Items: firstPage, TotalRecordCount: 501, StartIndex: 0 })
+      .mockResolvedValueOnce({
+        Items: [item('surfaced-replacement', 'target-tmdb')],
+        TotalRecordCount: 501,
+        StartIndex: 500
+      });
+    installApi(jf);
+    const context = captureIdentity();
+
+    const result = await searchForReplacementItem(bookmark(), context);
+    expect(result.status).toBe('failed');
+    expect(result.status).not.toBe('no-match');
   });
 
   it.each([401, 403, 429, 500, 503])('classifies HTTP %s as failed and retains the status', async (status) => {
@@ -183,11 +219,17 @@ describe('bookmark replacement library search', () => {
       error: transport
     });
 
-    installApi(vi.fn().mockResolvedValueOnce('{not-json'));
+    // jf parses the body internally and REJECTS with a SyntaxError on malformed
+    // JSON (it never resolves a raw string), so a rejected SyntaxError is the
+    // real production parse path: it must reach the outer catch as failed with
+    // the SyntaxError preserved, not be misread as a no-match.
+    const parseError = new SyntaxError('Unexpected token < in JSON at position 0');
+    installApi(vi.fn().mockRejectedValueOnce(parseError));
     const parseContext = captureIdentity('parse-user');
     const result = await searchForReplacementItem(bookmark(), parseContext);
     expect(result.status).toBe('failed');
     if (result.status !== 'failed') throw new Error('expected failed parse outcome');
+    expect(result.error).toBe(parseError);
     expect(result.error).toBeInstanceOf(SyntaxError);
   });
 
@@ -228,16 +270,16 @@ describe('bookmark replacement library search', () => {
   it('cancels rather than degrading an aborted parent-series enrichment chunk', async () => {
     const abort = new Error('enrichment aborted');
     abort.name = 'AbortError';
-    const jf = vi.fn()
-      .mockResolvedValueOnce({
-        Items: [{
-          Id: 'episode', Name: 'Episode', Type: 'Episode', SeriesId: 'series',
-          ParentIndexNumber: 1, IndexNumber: 1, ProviderIds: {}
-        }],
-        TotalRecordCount: 1,
-        StartIndex: 0
-      })
-      .mockRejectedValueOnce(abort);
+    const episodePage = {
+      Items: [{
+        Id: 'episode', Name: 'Episode', Type: 'Episode', SeriesId: 'series',
+        ParentIndexNumber: 1, IndexNumber: 1, ProviderIds: {}
+      }],
+      TotalRecordCount: 1,
+      StartIndex: 0
+    };
+    // Both proving passes complete, then the enrichment chunk aborts.
+    const jf = mockStablePasses(vi.fn(), [episodePage]).mockRejectedValueOnce(abort);
     installApi(jf);
     const context = captureIdentity();
 
@@ -249,14 +291,16 @@ describe('bookmark replacement library search', () => {
 
   it('returns no-match only after a complete stable multi-page scan', async () => {
     const firstPage = Array.from({ length: 500 }, (_, index) => item(`absent-${index}`));
-    const jf = vi.fn()
-      .mockResolvedValueOnce({ Items: firstPage, TotalRecordCount: 501, StartIndex: 0 })
-      .mockResolvedValueOnce({ Items: [item('absent-last')], TotalRecordCount: 501, StartIndex: 500 });
+    const jf = mockStablePasses(vi.fn(), [
+      { Items: firstPage, TotalRecordCount: 501, StartIndex: 0 },
+      { Items: [item('absent-last')], TotalRecordCount: 501, StartIndex: 500 }
+    ]);
     installApi(jf);
     const context = captureIdentity();
 
     await expect(searchForReplacementItem(bookmark(), context)).resolves.toEqual({ status: 'no-match' });
-    expect(jf).toHaveBeenCalledTimes(2);
+    // Two full passes agreed before the negative was published.
+    expect(jf).toHaveBeenCalledTimes(4);
   });
 
   it.each([
@@ -334,7 +378,7 @@ describe('bookmark replacement library search', () => {
 
     mocks.toast.mockClear();
     const absentButton = document.createElement('button');
-    installApi(vi.fn().mockResolvedValueOnce({ Items: [], TotalRecordCount: 0, StartIndex: 0 }));
+    installApi(vi.fn().mockResolvedValue({ Items: [], TotalRecordCount: 0, StartIndex: 0 }));
     const absentContext = captureIdentity('absent-user');
 
     await findAndOfferReplacement(group(), absentButton, absentContext);
@@ -362,7 +406,7 @@ describe('bookmark replacement library search', () => {
   });
 
   it('offers the selection modal only for a proven match', async () => {
-    installApi(vi.fn().mockResolvedValueOnce({
+    installApi(vi.fn().mockResolvedValue({
       Items: [item('replacement', 'target-tmdb')],
       TotalRecordCount: 1,
       StartIndex: 0
@@ -382,15 +426,18 @@ describe('bookmark replacement library search', () => {
     const second = bookmark({ itemId: 'missing-two', tmdbId: 'second-tmdb', name: 'Second' });
     mocks.getItemCached.mockRejectedValue(Object.assign(new Error('not found'), { status: 404 }));
     const failure = Object.assign(new Error('search unavailable'), { status: 503 });
+    // First orphan's search fails on its first request; the second orphan's
+    // search is a proven two-pass match. A single failed search still gates the
+    // whole batch: no migration modal, distinct failure toast.
     const jf = vi.fn()
       .mockRejectedValueOnce(failure)
-      .mockResolvedValueOnce({ Items: [item('second-replacement', 'second-tmdb')], TotalRecordCount: 1, StartIndex: 0 });
+      .mockResolvedValue({ Items: [item('second-replacement', 'second-tmdb')], TotalRecordCount: 1, StartIndex: 0 });
     installApi(jf);
     const context = captureIdentity('orphan-user');
 
     await findAllOrphanedAndOfferMigration({ first, second }, context);
 
-    expect(jf).toHaveBeenCalledTimes(2);
+    expect(jf).toHaveBeenCalledTimes(3);
     expect(mocks.toast.mock.calls).toEqual([['bookmark_orphaned_search_failed:1', 4000]]);
     expect(document.querySelector('[data-jc-bookmark-library-modal="true"]')).toBeNull();
   });
@@ -398,7 +445,7 @@ describe('bookmark replacement library search', () => {
   it('reports a failure-free orphan scan with no replacements as a proven absence', async () => {
     const orphan = bookmark({ itemId: 'missing-orphan' });
     mocks.getItemCached.mockRejectedValue(Object.assign(new Error('not found'), { status: 404 }));
-    installApi(vi.fn().mockResolvedValueOnce({ Items: [], TotalRecordCount: 0, StartIndex: 0 }));
+    installApi(vi.fn().mockResolvedValue({ Items: [], TotalRecordCount: 0, StartIndex: 0 }));
     const context = captureIdentity('orphan-absent-user');
 
     await findAllOrphanedAndOfferMigration({ orphan }, context);

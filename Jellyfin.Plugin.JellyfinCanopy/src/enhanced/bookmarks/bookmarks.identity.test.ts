@@ -765,7 +765,8 @@ describe('bookmark player identity ownership', () => {
     // Versions surface in stable item-ID order, independent of store insertion.
     expect(Object.keys(duplicates[0].itemGroups)).toEqual(['alternate', 'original']);
 
-    const jf = vi.fn().mockResolvedValueOnce({ Items: [
+    // Answered on both proving passes (no SeriesId → no enrichment call).
+    const jf = vi.fn().mockResolvedValue({ Items: [
       {
         Id: 'alternate', Name: 'S1E1 alternate', Type: 'Episode',
         ParentIndexNumber: 1, IndexNumber: 1, IndexNumberEnd: 1,
