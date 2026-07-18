@@ -233,6 +233,149 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             Assert.All(lookups, lookup => Assert.Same(user, lookup.User));
         }
 
+        // ── BI-PERF-037 (#98): per-(user, season) watched-aggregate cache ─────
+
+        [Fact]
+        public void SeasonAggregate_UserStateChange_EvictsOnlyTheAffectedUserSeasonPair()
+        {
+            var userData = new StubUserDataManager();
+            using var tracker = NewTracker(userData);
+            var userA = Guid.NewGuid();
+            var userB = Guid.NewGuid();
+            var seriesId = Guid.NewGuid();
+            var seasonOne = Guid.NewGuid();
+            var seasonTwo = Guid.NewGuid();
+
+            tracker.PublishSeasonAggregate(userA, seasonOne, observedRevision: 0, anyWatched: true);
+            tracker.PublishSeasonAggregate(userA, seasonTwo, observedRevision: 0, anyWatched: false);
+            tracker.PublishSeasonAggregate(userB, seasonOne, observedRevision: 0, anyWatched: true);
+
+            userData.RaiseUserDataSaved(
+                userA,
+                new StubEpisode { Id = Guid.NewGuid(), SeasonId = seasonOne, SeriesId = seriesId },
+                UserDataSaveReason.TogglePlayed);
+
+            // ONLY (userA, seasonOne) is evicted — targeted, not a global flush.
+            Assert.False(tracker.TryGetSeasonAggregate(userA, seasonOne, out _));
+            Assert.True(tracker.TryGetSeasonAggregate(userA, seasonTwo, out var unaffected));
+            Assert.False(unaffected);
+            Assert.True(tracker.TryGetSeasonAggregate(userB, seasonOne, out var otherUser));
+            Assert.True(otherUser);
+        }
+
+        [Fact]
+        public void SeasonAggregate_MovieAndSeriesEvents_DoNotFlushSeasonAggregates()
+        {
+            var userData = new StubUserDataManager();
+            using var tracker = NewTracker(userData);
+            var userId = Guid.NewGuid();
+            var seasonId = Guid.NewGuid();
+            tracker.PublishSeasonAggregate(userId, seasonId, observedRevision: 0, anyWatched: true);
+
+            userData.RaiseUserDataSaved(
+                userId, new StubMovie { Id = Guid.NewGuid() }, UserDataSaveReason.TogglePlayed);
+            userData.RaiseUserDataSaved(
+                userId, new StubSeries { Id = Guid.NewGuid() }, UserDataSaveReason.TogglePlayed);
+
+            Assert.True(tracker.TryGetSeasonAggregate(userId, seasonId, out var anyWatched));
+            Assert.True(anyWatched);
+            // The existing revision/dependency journal is unchanged by aggregate
+            // bookkeeping: both saves advanced the projection revision normally.
+            Assert.Equal(2, tracker.GetDelta(userId, null, null, requireCursor: false).Revision);
+        }
+
+        [Fact]
+        public void SeasonAggregate_SeasonEvent_EvictsThatSeasonsOwnAggregate()
+        {
+            var userData = new StubUserDataManager();
+            using var tracker = NewTracker(userData);
+            var userId = Guid.NewGuid();
+            var seasonId = Guid.NewGuid();
+            tracker.PublishSeasonAggregate(userId, seasonId, observedRevision: 0, anyWatched: false);
+
+            userData.RaiseUserDataSaved(
+                userId,
+                new StubSeason { Id = seasonId, SeriesId = Guid.NewGuid() },
+                UserDataSaveReason.TogglePlayed);
+
+            Assert.False(tracker.TryGetSeasonAggregate(userId, seasonId, out _));
+        }
+
+        [Fact]
+        public void SeasonAggregate_PublishFencedAgainstRacingInvalidation()
+        {
+            var userData = new StubUserDataManager();
+            using var tracker = NewTracker(userData);
+            var userId = Guid.NewGuid();
+            var seriesId = Guid.NewGuid();
+            var seasonId = Guid.NewGuid();
+
+            // Compute observed revision 0; the season's own state then changes
+            // BEFORE publication → the stale value must not be published.
+            var observed = tracker.GetJournalRevision(userId);
+            userData.RaiseUserDataSaved(
+                userId,
+                new StubEpisode { Id = Guid.NewGuid(), SeasonId = seasonId, SeriesId = seriesId },
+                UserDataSaveReason.TogglePlayed);
+            tracker.PublishSeasonAggregate(userId, seasonId, observed, anyWatched: false);
+            Assert.False(tracker.TryGetSeasonAggregate(userId, seasonId, out _));
+
+            // An UNRELATED change after the observation does not block publication.
+            var observedAfter = tracker.GetJournalRevision(userId);
+            userData.RaiseUserDataSaved(
+                userId, new StubMovie { Id = Guid.NewGuid() }, UserDataSaveReason.TogglePlayed);
+            tracker.PublishSeasonAggregate(userId, seasonId, observedAfter, anyWatched: true);
+            Assert.True(tracker.TryGetSeasonAggregate(userId, seasonId, out var published));
+            Assert.True(published);
+        }
+
+        [Fact]
+        public void SeasonAggregate_JournalGapAfterObservation_RefusesPublication()
+        {
+            var userData = new StubUserDataManager();
+            using var tracker = NewTracker(userData, capacity: 2);
+            var userId = Guid.NewGuid();
+            var seasonId = Guid.NewGuid();
+
+            var observed = tracker.GetJournalRevision(userId);
+            // Three unrelated saves overflow the capacity-2 journal: the rows
+            // covering observed+1 are gone, so the season's unchanged-ness is
+            // unprovable — publication must fail safe (recompute next request).
+            for (var i = 0; i < 3; i++)
+            {
+                userData.RaiseUserDataSaved(
+                    userId, new StubMovie { Id = Guid.NewGuid() }, UserDataSaveReason.TogglePlayed);
+            }
+
+            tracker.PublishSeasonAggregate(userId, seasonId, observed, anyWatched: true);
+            Assert.False(tracker.TryGetSeasonAggregate(userId, seasonId, out _));
+        }
+
+        [Fact]
+        public void SeasonAggregate_CapRetainsTheFull15kAcceptanceWorkload()
+        {
+            // The documented hard cap must hold the complete 15k-entry acceptance
+            // workload (every entry a distinct season) with headroom; eviction
+            // beyond the cap only ever forces a safe recompute.
+            Assert.True(
+                TagCacheProjectionRevisionService.SeasonAggregateMaximumEntries >= 15_000,
+                "Season-aggregate cap must retain the 15k acceptance workload.");
+
+            var userData = new StubUserDataManager();
+            using var tracker = NewTracker(userData);
+            var userId = Guid.NewGuid();
+            var first = Guid.NewGuid();
+            tracker.PublishSeasonAggregate(userId, first, observedRevision: 0, anyWatched: true);
+            for (var i = 0; i < 15_000; i++)
+            {
+                tracker.PublishSeasonAggregate(userId, Guid.NewGuid(), observedRevision: 0, anyWatched: false);
+            }
+
+            // Under the cap nothing is evicted; the store stays bounded.
+            Assert.True(tracker.TryGetSeasonAggregate(userId, first, out _));
+            Assert.Equal(15_001, tracker.SeasonAggregateCountForTest);
+        }
+
         private static string[] SortedKeys(params Guid[] ids)
             => ids.Select(Key).OrderBy(static id => id, StringComparer.Ordinal).ToArray();
 
