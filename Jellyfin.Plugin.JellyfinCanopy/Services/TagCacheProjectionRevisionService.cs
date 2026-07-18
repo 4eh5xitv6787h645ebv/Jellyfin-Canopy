@@ -76,45 +76,23 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         private bool _subscribed;
         private bool _disposed;
 
-        // Cross-request guarded-Season "any episode watched" aggregate cache
-        // (BI-PERF-037 / #98, AC2/AC5). Each season's episode walk is the most
-        // expensive projection fact; computing it once and reusing it across the
-        // known daily double-fetch (and every full/delta at an unchanged relevant
-        // revision) is the point of the fix. Correctness is kept byte-identical to
-        // recompute-every-request by TWO gates:
-        //   • Content gate — every stored aggregate carries the content revision it
-        //     was computed at. A library add/update/remove of a cache entry bumps
-        //     that revision (TagCacheService.RecordContentChangeLocked), so a
-        //     watched episode deleted or reparented invalidates the reuse: a stale
-        //     anyWatched=true can never keep an exempt season's metadata after the
-        //     user's watched count actually dropped (the only strip→keep hazard).
-        //   • User-state gate — OnUserDataSaved (the authoritative watched-state
-        //     signal) invalidates ONLY the affected season's aggregate (AC5
-        //     targeted, never a global flush), so a play/unplay recomputes just that
-        //     season while every other season is reused.
-        // A per-season invalidation version, captured before the walk and rechecked
-        // at commit, discards any aggregate computed across a concurrent
-        // invalidation, so a save landing mid-walk never persists a stale value.
-        private const int MaxSeasonAggregatesPerUser = 8192;
-
-        private sealed class SeasonAggregateSlot
-        {
-            // Bumped on every user-state invalidation of this season. Survives the
-            // cleared value so a commit racing an invalidation is rejected.
-            public long Version;
-            public bool HasValue;
-            public bool AnyWatched;
-            public long ContentRevision;
-        }
-
-        private sealed class SeasonAggregateStore
-        {
-            public object Gate { get; } = new();
-
-            public Dictionary<Guid, SeasonAggregateSlot> Slots { get; } = new();
-        }
-
-        private readonly ConcurrentDictionary<Guid, SeasonAggregateStore> _seasonAggregates = new();
+        // NOTE (BI-PERF-037 / #98): this service intentionally holds NO cross-request
+        // "any episode watched" season aggregate. An earlier revision cached that
+        // aggregate keyed on (user, season, content revision) and reused it across
+        // requests, but the content revision is advanced only by the DEBOUNCED
+        // maintenance flush (TagCacheService.RecordContentChangeLocked) and the key
+        // omits JF12's user-policy generation (User.RowVersion) — so a watched
+        // episode deleted/reparented, or a policy change, could serve a stale
+        // anyWatched=true during the debounce window and keep an exempt season's
+        // metadata (a strip→keep privacy leak vs. recompute-every-request). Making it
+        // byte-identical would require stacking a policy-generation key, a
+        // single-flight lock, PlaybackProgress invalidation and bounded eviction onto
+        // an already three-gate cache. The fail-closed privacy contract dominates AC2's
+        // cross-request optimization, so the season aggregate is now owned per REQUEST
+        // by TagStripProjectionResolver: single-threaded, snapshot-consistent, walked
+        // at most once per response (including across stabilization passes, with
+        // targeted per-pass invalidation), and recomputed fresh on every request so no
+        // stale value can ever leak. The journal below stays: it feeds the #92 delta.
 
         public TagCacheProjectionRevisionService(
             IUserDataManager userDataManager,
@@ -267,124 +245,6 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             }
         }
 
-        /// <summary>
-        /// Reuse a season's cached any-watched aggregate when it was computed at the
-        /// current content revision and has not been invalidated by a later
-        /// user-state save. A content-revision mismatch (library add/update/remove)
-        /// or a targeted invalidation misses, forcing a byte-identical recompute.
-        /// </summary>
-        internal bool TryGetSeasonAnyWatched(Guid userId, Guid seasonId, long contentRevision, out bool anyWatched)
-        {
-            anyWatched = false;
-            if (userId == Guid.Empty || seasonId == Guid.Empty
-                || !_seasonAggregates.TryGetValue(userId, out var store))
-            {
-                return false;
-            }
-
-            lock (store.Gate)
-            {
-                if (store.Slots.TryGetValue(seasonId, out var slot)
-                    && slot.HasValue
-                    && slot.ContentRevision == contentRevision)
-                {
-                    anyWatched = slot.AnyWatched;
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
-        /// <summary>
-        /// Capture a season's current invalidation version before its episode walk.
-        /// The value is passed back to <see cref="CommitSeasonAggregate"/> so a
-        /// user-state save that invalidates the season DURING the walk causes the
-        /// computed aggregate to be discarded rather than persisted stale.
-        /// </summary>
-        internal long BeginSeasonAggregate(Guid userId, Guid seasonId)
-        {
-            if (userId == Guid.Empty || seasonId == Guid.Empty)
-            {
-                return 0;
-            }
-
-            var store = _seasonAggregates.GetOrAdd(userId, static _ => new SeasonAggregateStore());
-            lock (store.Gate)
-            {
-                // Bounded safety valve: guarded seasons per user are bounded by the
-                // guard list, but clear on overflow rather than grow unbounded. A
-                // clear only forces recomputation; it never serves stale data.
-                if (store.Slots.Count > MaxSeasonAggregatesPerUser && !store.Slots.ContainsKey(seasonId))
-                {
-                    store.Slots.Clear();
-                }
-
-                if (!store.Slots.TryGetValue(seasonId, out var slot))
-                {
-                    slot = new SeasonAggregateSlot();
-                    store.Slots[seasonId] = slot;
-                }
-
-                return slot.Version;
-            }
-        }
-
-        /// <summary>
-        /// Persist a freshly computed season aggregate, but only if the season was
-        /// not invalidated since <paramref name="capturedVersion"/> was taken.
-        /// </summary>
-        internal void CommitSeasonAggregate(
-            Guid userId,
-            Guid seasonId,
-            bool anyWatched,
-            long contentRevision,
-            long capturedVersion)
-        {
-            if (userId == Guid.Empty || seasonId == Guid.Empty
-                || !_seasonAggregates.TryGetValue(userId, out var store))
-            {
-                return;
-            }
-
-            lock (store.Gate)
-            {
-                if (store.Slots.TryGetValue(seasonId, out var slot) && slot.Version == capturedVersion)
-                {
-                    slot.HasValue = true;
-                    slot.AnyWatched = anyWatched;
-                    slot.ContentRevision = contentRevision;
-                }
-            }
-        }
-
-        // Invalidate ONLY the season(s) whose watched aggregate a save can change:
-        // an episode names its own season; a season names itself. Movies/series
-        // carry no season aggregate. Targeted — never a global flush (AC5).
-        private void InvalidateSeasonAggregate(Guid userId, BaseItem item)
-        {
-            Guid seasonId = item switch
-            {
-                Episode episode => episode.SeasonId,
-                Season season => season.Id,
-                _ => Guid.Empty,
-            };
-
-            if (seasonId == Guid.Empty || !_seasonAggregates.TryGetValue(userId, out var store))
-            {
-                return;
-            }
-
-            lock (store.Gate)
-            {
-                if (store.Slots.TryGetValue(seasonId, out var slot))
-                {
-                    slot.Version++;
-                    slot.HasValue = false;
-                }
-            }
-        }
-
         private void OnUserDataSaved(object? sender, UserDataSaveEventArgs e)
         {
             // Match Jellyfin's native UserDataChanged publisher: progress check-ins
@@ -405,13 +265,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 return;
             }
 
-            // Targeted cross-request aggregate invalidation (AC5): drop only the
-            // affected season's cached any-watched value so the next request
-            // recomputes it while every other season is reused. Done in the same
-            // synchronous handler that advances the journal revision, so a request
-            // that observes the revision advance also sees the invalidation.
-            InvalidateSeasonAggregate(e.UserId, e.Item);
-
+            // Advance the per-user projection journal (feeds the #92 delta). The
+            // affected season/episode/series ids the delta carries are also what
+            // TagStripProjectionResolver uses to targeted-invalidate its
+            // request-scoped season memo between stabilization passes (AC5), so no
+            // separate cross-request invalidation is needed here.
             var journal = _journals.GetOrAdd(e.UserId, static _ => new UserJournal());
             lock (journal.Gate)
             {
