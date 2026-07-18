@@ -198,6 +198,31 @@ describe('bookmarks library identity ownership', () => {
     })).toEqual([]);
   });
 
+  it('never bridges two provider-disjoint items through an intermediate that shares an id with each', () => {
+    // a shares only TMDB with b; c shares only TVDB with b; a and c share no
+    // populated provider, so they are not proven equivalent. The finder must
+    // require a match against every group member (not merely some member),
+    // otherwise b bridges a and c into one relationship and a merge would move
+    // bookmarks across content that was never shown to be the same title.
+    const a = {
+      itemId: 'item-a', identityVersion: 1, itemType: 'movie', mediaType: 'movie',
+      tmdbId: '10', tvdbId: '', name: 'Movie', timestamp: 1
+    };
+    const b = { ...a, itemId: 'item-b', tvdbId: '20', timestamp: 2 };
+    const c = { ...a, itemId: 'item-c', tmdbId: '', tvdbId: '20', timestamp: 3 };
+
+    expect(compareBookmarkIdentity(a, c)).toBe('none');
+    for (const records of [{ a, b, c }, { c, b, a }, { b, a, c }]) {
+      const duplicates = findDuplicateBookmarks(records);
+      // Candidates are id-sorted, so item-a anchors the only relationship and
+      // pairs with item-b. item-c shares no provider with item-a, so it must be
+      // excluded — a `some` (transitive) match would instead pull it in.
+      expect(duplicates).toHaveLength(1);
+      expect(Object.keys(duplicates[0].itemGroups)).toEqual(['item-a', 'item-b']);
+      expect(Object.keys(duplicates[0].itemGroups)).not.toContain('item-c');
+    }
+  });
+
   it('carries one canonical representative from detection through merge in either record order', () => {
     const tmdbOnly = {
       itemId: 'item-a', identityVersion: 1, itemType: 'movie', mediaType: 'movie',
