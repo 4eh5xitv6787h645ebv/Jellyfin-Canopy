@@ -174,7 +174,14 @@ export function showOffsetAdjustmentModal(
 }
 
 /**
- * Find duplicate bookmarks (same TMDB/TVDB but different item IDs)
+ * Find duplicate bookmarks: distinct Jellyfin item IDs that carry the same
+ * logical content identity (media type plus provider IDs within their named
+ * namespaces). Each item ID contributes exactly one canonical candidate, so a
+ * record carrying both a TMDB and a TVDB ID yields one relationship — never
+ * one group per provider key. Output order (groups, versions, and records) is
+ * a stable item-ID/bookmark-ID sort: store insertion order carries no meaning
+ * and no primary is designated — the merge target is an explicit selection
+ * made later in the modal.
  */
 export function findDuplicateBookmarks(bookmarks: Record<string, any>): any[] {
   const duplicateGroups: any[] = [];
@@ -186,34 +193,37 @@ export function findDuplicateBookmarks(bookmarks: Record<string, any>): any[] {
     versions.set(bookmark.itemId, current);
   }
 
-  const candidates = [...versions.entries()].flatMap(([itemId, records]) => {
-    const identityFields = (record: any): unknown[] => [
-      record.identityVersion ?? 0, record.itemType ?? '', record.mediaType ?? '',
-      record.tmdbId ?? '', record.tvdbId ?? '', record.seriesTmdbId ?? '', record.seriesTvdbId ?? '',
-      record.seasonNumber ?? '', record.episodeNumber ?? '', record.episodeEndNumber ?? ''
-    ];
-    const ranked = [...records].sort((left, right) => {
-      const leftFields = identityFields(left);
-      const rightFields = identityFields(right);
-      const isPresent = (value: unknown): boolean => value !== null && value !== undefined
-        && (typeof value !== 'string' || value.trim() !== '');
-      const completeness = rightFields.filter(isPresent).length - leftFields.filter(isPresent).length;
-      return completeness || JSON.stringify(leftFields).localeCompare(JSON.stringify(rightFields));
+  const candidates = [...versions.entries()]
+    .sort(([leftItemId], [rightItemId]) => leftItemId.localeCompare(rightItemId))
+    .flatMap(([itemId, records]) => {
+      const identityFields = (record: any): unknown[] => [
+        record.identityVersion ?? 0, record.itemType ?? '', record.mediaType ?? '',
+        record.tmdbId ?? '', record.tvdbId ?? '', record.seriesTmdbId ?? '', record.seriesTvdbId ?? '',
+        record.seasonNumber ?? '', record.episodeNumber ?? '', record.episodeEndNumber ?? ''
+      ];
+      const ranked = [...records].sort((left, right) => {
+        const leftFields = identityFields(left);
+        const rightFields = identityFields(right);
+        const isPresent = (value: unknown): boolean => value !== null && value !== undefined
+          && (typeof value !== 'string' || value.trim() !== '');
+        const completeness = rightFields.filter(isPresent).length - leftFields.filter(isPresent).length;
+        return completeness || JSON.stringify(leftFields).localeCompare(JSON.stringify(rightFields));
+      });
+      const identity = ranked[0];
+      const consistent = records.every((left, leftIndex) => records.every((right, rightIndex) =>
+        leftIndex === rightIndex || (
+          left.identityVersion === right.identityVersion
+          && compareBookmarkIdentity(
+            { ...left, itemId: `__identity-left-${leftIndex}__` },
+            { ...right, itemId: `__identity-right-${rightIndex}__` }
+          ) === 'logical'
+        )));
+      // Multiple timestamps for one Jellyfin item should carry the same logical
+      // identity. Mixed legacy/v1 or conflicting metadata is retained visibly,
+      // but cannot nominate a merge identity based on insertion order.
+      const orderedRecords = [...records].sort((left, right) => String(left.id).localeCompare(String(right.id)));
+      return consistent ? [{ itemId, records: orderedRecords, identity }] : [];
     });
-    const identity = ranked[0];
-    const consistent = records.every((left, leftIndex) => records.every((right, rightIndex) =>
-      leftIndex === rightIndex || (
-        left.identityVersion === right.identityVersion
-        && compareBookmarkIdentity(
-          { ...left, itemId: `__identity-left-${leftIndex}__` },
-          { ...right, itemId: `__identity-right-${rightIndex}__` }
-        ) === 'logical'
-      )));
-    // Multiple timestamps for one Jellyfin item should carry the same logical
-    // identity. Mixed legacy/v1 or conflicting metadata is retained visibly,
-    // but cannot nominate a merge identity based on insertion order.
-    return consistent ? [{ itemId, records, identity }] : [];
-  });
   const assigned = new Set<number>();
   for (let index = 0; index < candidates.length; index++) {
     if (assigned.has(index)) continue;
@@ -322,12 +332,12 @@ export function showDuplicatesSyncModal(
                     .replace('{count}', dup.totalBookmarks)
                     .replace('{versions}', String(itemIds.length))}
                 </div>
-                ${itemIds.map((itemId, versionIdx) => {
+                ${itemIds.map((itemId) => {
                   const bms = dup.itemGroups[itemId];
                   return `
-                    <div style="background: rgba(255,255,255,0.02); border-left: 3px solid ${versionIdx === 0 ? '#4caf50' : '#ff9800'}; padding: 8px 12px; margin-bottom: 8px; border-radius: 4px;">
-                      <div style="font-size: 11px; color: ${versionIdx === 0 ? '#4caf50' : '#ff9800'}; font-weight: 600; margin-bottom: 4px;">
-                        ${versionIdx === 0 ? JC.t!('bookmark_primary_version') : JC.t!('bookmark_old_version')}
+                    <div class="jc-merge-version" data-dup-index="${idx}" data-version-item-id="${escapeHtml(itemId)}" style="background: rgba(255,255,255,0.02); border-left: 3px solid rgba(255,255,255,0.25); padding: 8px 12px; margin-bottom: 8px; border-radius: 4px;">
+                      <div class="jc-merge-version-role" style="font-size: 11px; color: #aaa; font-weight: 600; margin-bottom: 4px;">
+                        ${JC.t!('bookmark_version_neutral')}
                       </div>
                       <div style="font-size: 12px; color: #ccc; margin-bottom: 6px;">
                         ${JC.t!('bookmark_item_id')}: <code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 3px; font-size: 11px;">${escapeHtml(itemId.substring(0, 16))}...</code>
@@ -335,14 +345,18 @@ export function showDuplicatesSyncModal(
                       <div style="font-size: 12px; color: #aaa; margin-bottom: 8px;">
                         ${JC.t!('bookmark_bookmark_count').replace('{count}', bms.length)} ${bms.map((b: any) => formatTimestamp(b.timestamp)).join(', ')}
                       </div>
-                      <button class="jc-btn" data-sync-from="${versionIdx}" data-dup-index="${idx}" style="background: rgba(33, 150, 243, 0.15); border-color: #2196f3; color: #2196f3; font-size: 11px;">
+                      <label style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: #ccc; margin-bottom: 8px; cursor: pointer;">
+                        <input type="radio" class="jc-merge-target-choice" name="jc-merge-target-${idx}" value="${escapeHtml(itemId)}" data-dup-index="${idx}">
+                        <span>${JC.t!('bookmark_select_target')}</span>
+                      </label>
+                      <button class="jc-btn" data-offset-item-id="${escapeHtml(itemId)}" data-dup-index="${idx}" style="background: rgba(33, 150, 243, 0.15); border-color: #2196f3; color: #2196f3; font-size: 11px;">
                         <span class="material-icons" aria-hidden="true" style="font-size: 14px;">schedule</span>
                         <span>${JC.t!('bookmark_adjust_offset')}</span>
                       </button>
                     </div>
                   `;
                 }).join('')}
-                <button class="jc-btn" data-dup-index="${idx}" style="margin-top: 8px; background: rgba(255, 152, 0, 0.15); border-color: #ff9800; color: #ff9800;">
+                <button class="jc-btn jc-merge-execute" data-dup-index="${idx}" disabled style="margin-top: 8px; background: rgba(255, 152, 0, 0.15); border-color: #ff9800; color: #ff9800;">
                   <span class="material-icons" aria-hidden="true" style="font-size: 16px;">merge</span>
                   <span>${JC.t!('bookmark_merge_primary')}</span>
                 </button>
@@ -372,16 +386,37 @@ export function showDuplicatesSyncModal(
     if (e.target === modal) closeDialog();
   });
 
-  // Adjust Offset button handlers
-  modal.querySelectorAll<HTMLElement>('[data-sync-from]').forEach(btn => {
+  // Explicit target selection: the merge target is exclusively the version the
+  // user chooses here, keyed by its full item ID. Until a choice exists the
+  // merge stays disabled — there is no positional or insertion-order fallback.
+  modal.querySelectorAll<HTMLInputElement>('.jc-merge-target-choice').forEach(radio => {
+    radio.addEventListener('change', () => {
+      if (!JC.identity.isCurrent(context)) return;
+      const dupIndex = radio.dataset.dupIndex!;
+      const selectedItemId = radio.value;
+      modal.querySelectorAll<HTMLElement>(`.jc-merge-version[data-dup-index="${dupIndex}"]`).forEach(version => {
+        const isTarget = version.dataset.versionItemId === selectedItemId;
+        version.style.borderLeftColor = isTarget ? '#4caf50' : '#ff9800';
+        const role = version.querySelector<HTMLElement>('.jc-merge-version-role');
+        if (role) {
+          // Locale strings are plugin-owned resources (they carry {{icon:}}
+          // markup); no user data is interpolated here.
+          role.innerHTML = isTarget ? JC.t!('bookmark_primary_version') : JC.t!('bookmark_old_version');
+          role.style.color = isTarget ? '#4caf50' : '#ff9800';
+        }
+      });
+      const mergeBtn = modal.querySelector<HTMLButtonElement>(`.jc-merge-execute[data-dup-index="${dupIndex}"]`);
+      if (mergeBtn) mergeBtn.disabled = false;
+    });
+  });
+
+  // Adjust Offset button handlers (keyed by the version's stable item ID)
+  modal.querySelectorAll<HTMLElement>('[data-offset-item-id]').forEach(btn => {
     btn.addEventListener('click', () => {
       if (!JC.identity.isCurrent(context)) return;
-      const dupIndex = parseInt(btn.dataset.dupIndex!);
-      const versionIndex = parseInt(btn.dataset.syncFrom!);
-      const dup = duplicates[dupIndex];
-      const itemIds = Object.keys(dup.itemGroups);
-      const targetItemId = itemIds[versionIndex];
-      const bookmarksForItem = dup.itemGroups[targetItemId];
+      const dup = duplicates[parseInt(btn.dataset.dupIndex!)];
+      const bookmarksForItem = dup?.itemGroups?.[btn.dataset.offsetItemId!];
+      if (!bookmarksForItem) return;
 
       closeDialog();
 
@@ -395,9 +430,7 @@ export function showDuplicatesSyncModal(
   });
 
   // Merge button handlers
-  modal.querySelectorAll<HTMLButtonElement>('button.jc-btn:not([data-sync-from])').forEach(btn => {
-    if (!btn.dataset.dupIndex) return;
-
+  modal.querySelectorAll<HTMLButtonElement>('.jc-merge-execute').forEach(btn => {
     btn.addEventListener('click', () => { void (async () => {
       if (!JC.identity.isCurrent(context)) return;
       const dupIndex = parseInt(btn.dataset.dupIndex!);
@@ -406,12 +439,15 @@ export function showDuplicatesSyncModal(
 
       if (itemIds.length < 2) return;
 
-      const primaryItemId = itemIds[0]; // First one is primary
-      const oldItemIds = itemIds.slice(1);
+      const choice = modal.querySelector<HTMLInputElement>(`input[name="jc-merge-target-${dupIndex}"]:checked`);
+      const targetItemId = choice?.value || '';
+      if (!targetItemId || !itemIds.includes(targetItemId)) return;
+      const sourceItemIds = itemIds.filter(itemId => itemId !== targetItemId);
 
-      const oldBookmarks = duplicateMergeSources(dup, oldItemIds);
+      const sourceBookmarks = duplicateMergeSources(dup, sourceItemIds);
+      const removeOldIds = sourceBookmarks.map((bookmark: any) => String(bookmark.id));
 
-      if (!confirm(JC.t!('bookmark_merge_confirm').replace('{count}', String(oldBookmarks.length)))) {
+      if (!confirm(JC.t!('bookmark_merge_confirm').replace('{count}', String(sourceBookmarks.length)))) {
         return;
       }
       if (!JC.identity.isCurrent(context)) return;
@@ -420,11 +456,15 @@ export function showDuplicatesSyncModal(
       btn.querySelector('span:last-child')!.innerHTML = '<span class="material-icons" style="animation: spin 1s linear infinite; font-size: 18px;">refresh</span>';
 
       try {
-        const primaryDetails = duplicateMergeTarget(dup, primaryItemId);
-        if (!primaryDetails) throw new Error('Duplicate group has no canonical primary identity');
+        const targetDetails = duplicateMergeTarget(dup, targetItemId);
+        if (!targetDetails) throw new Error('Duplicate group has no canonical identity for the selected target');
 
-        // Sync old bookmarks to primary
-        const synced = await JC.bookmarks!.syncBookmarks(oldBookmarks, primaryDetails, 0);
+        // MOVE: equivalent bookmarks are created on the target only when
+        // missing, and every source row is deleted in the same atomic batch.
+        // The awaited result contains only the durably created new records,
+        // so the success toast reports a truthful (possibly zero) add count
+        // and appears only after committed state.
+        const synced = await JC.bookmarks!.syncBookmarks(sourceBookmarks, targetDetails, 0, removeOldIds);
         if (!JC.identity.isCurrent(context)) return;
         toast(JC.t!('bookmark_merge_success').replace('{count}', String(synced.length)), 3000);
 
