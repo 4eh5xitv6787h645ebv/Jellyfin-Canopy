@@ -444,4 +444,82 @@ describe('people tags bounded-concurrency batch (BI-PERF-137)', () => {
         const persisted = JSON.parse(localStorage.getItem(CACHE_KEY)!) as Record<string, unknown>;
         expect(Object.keys(persisted)).toEqual(['person-owned-item-owner']);
     });
+
+    it('modern layout: resolves the item id from location.search when the hash is empty', async () => {
+        const { plugin } = instrumentedPlugin(() => ({ currentAge: 30, birthPlace: 'Perth, Australia' }));
+        JC.core.api = { plugin } as unknown as typeof JC.core.api;
+        // Modern/MUI layout keeps the hash empty and carries the id in
+        // location.search — a hash-only read would find nothing and leave
+        // People Tags permanently disabled there.
+        window.history.replaceState(null, '', '/web/details?id=item-modern');
+        expect(window.location.hash).toBe('');
+        document.body.innerHTML = `
+            <div id="itemDetailPage">
+                <div id="castCollapsible">${['person-mod-0', 'person-mod-1'].map(personCardHtml).join('')}</div>
+                <div id="guestCastCollapsible"></div>
+            </div>`;
+
+        await startProcessing();
+        await vi.advanceTimersByTimeAsync(5);
+
+        expect(plugin).toHaveBeenCalledTimes(2);
+        expect(document.querySelectorAll('.jc-people-age-container')).toHaveLength(2);
+
+        window.history.replaceState(null, '', '/web/index.html');
+    });
+
+    it('AC4: a guest-cast section that mounts mid-batch is drained after the cast batch settles', async () => {
+        const { plugin, pending } = instrumentedPlugin();
+        JC.core.api = { plugin } as unknown as typeof JC.core.api;
+        const castIds = Array.from({ length: 8 }, (_, index) => `person-late-cast-${index}`);
+        mountCastPage('item-late-guest', castIds); // guest section empty at snapshot time
+
+        await startProcessing();
+        // The cast batch is in flight (deferred) and owns isProcessing.
+        const castRequests = plugin.mock.calls.length;
+        expect(castRequests).toBeGreaterThan(0);
+        expect(castRequests).toBeLessThanOrEqual(CONCURRENCY_CAP);
+
+        // Guest cards mount now, while the cast requests are still open. The
+        // observer-driven run must be REMEMBERED (not dropped behind
+        // isProcessing) and drained once the cast batch settles.
+        document.querySelector('#guestCastCollapsible')!.innerHTML = personCardHtml('person-late-guest');
+        fireObserver(observerCallbacks[observerCallbacks.length - 1]);
+        await vi.advanceTimersByTimeAsync(100);
+
+        await drainPool(pending, { currentAge: 42 });
+
+        expect(cardFor('person-late-guest').querySelector('.jc-people-age-container')).not.toBeNull();
+        // Every cast member plus the late guest fetched exactly once and tagged.
+        expect(plugin).toHaveBeenCalledTimes(9);
+        expect(document.querySelectorAll('.jc-people-age-container')).toHaveLength(9);
+    });
+
+    it('AC4: navigating to a new item mid-batch recovers and tags the new page after the stale batch exits', async () => {
+        const { plugin, pending } = instrumentedPlugin();
+        JC.core.api = { plugin } as unknown as typeof JC.core.api;
+        const castA = Array.from({ length: 8 }, (_, index) => `person-a-${index}`);
+        mountCastPage('item-a', castA);
+
+        await startProcessing();
+        const staleRequests = plugin.mock.calls.length; // all for item A, <= cap
+        expect(staleRequests).toBeGreaterThan(0);
+        expect(staleRequests).toBeLessThanOrEqual(CONCURRENCY_CAP);
+
+        // Navigate to a fully-mounted item B while A's requests are still open.
+        mountCastPage('item-b', ['person-b-0', 'person-b-1']);
+        fireObserver(observerCallbacks[observerCallbacks.length - 1]);
+        await vi.advanceTimersByTimeAsync(100);
+
+        // Settling A's stale requests must abort A's overlays AND, via the
+        // remembered rerun, drain item B's live cast — not leave it untagged.
+        await drainPool(pending, { currentAge: 33 });
+
+        expect(cardFor('person-b-0').querySelector('.jc-people-age-container')).not.toBeNull();
+        expect(cardFor('person-b-1').querySelector('.jc-people-age-container')).not.toBeNull();
+        // Only B's two overlays land; A's cards are gone from the DOM.
+        expect(document.querySelectorAll('.jc-people-age-container')).toHaveLength(2);
+        // A's stale first wave, then B's two recovered requests.
+        expect(plugin).toHaveBeenCalledTimes(staleRequests + 2);
+    });
 });
