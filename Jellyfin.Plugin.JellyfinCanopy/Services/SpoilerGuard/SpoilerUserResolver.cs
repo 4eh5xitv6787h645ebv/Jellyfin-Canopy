@@ -188,6 +188,49 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             return movieId.ToString("N") + "|" + string.Join(",", keys);
         }
 
+        // Materialize the union of every opted-in collection's member movie ids,
+        // walking each collection EXACTLY ONCE (BI-PERF-037 / #98). Callers that
+        // must classify a large returned movie set — the tag-cache projection —
+        // use this instead of FindOptedInCollectionForMovie per movie, turning an
+        // O(movies × collections × collection-size) walk into O(collections ×
+        // collection-size). A per-collection resolution/walk failure is skipped
+        // (matching FindOptedInCollectionForMovie's catch → not-in-scope), so the
+        // returned set is byte-identical to the per-movie predicate's membership.
+        public HashSet<Guid> BuildOptedInCollectionMembers(UserSpoilerBlur userState)
+        {
+            var members = new HashSet<Guid>();
+            if (userState.Collections.Count == 0)
+            {
+                return members;
+            }
+
+            foreach (var collKeyN in userState.Collections.Keys)
+            {
+                if (!Guid.TryParse(collKeyN, out var collGuid)) continue;
+                try
+                {
+                    if (_libraryManager.GetItemById(collGuid) is not MediaBrowser.Controller.Entities.Movies.BoxSet bs) continue;
+                    foreach (var child in bs.GetLinkedChildren())
+                    {
+                        if (child != null && child.Id != Guid.Empty)
+                        {
+                            members.Add(child.Id);
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    WarnRateLimited(
+                        "collection-members:" + ex.GetType().FullName,
+                        $"Spoiler Guard: opted-in collection member walk failed for {collGuid}: {ex.Message}");
+                    // Skip this collection: movies known only through it fall out of
+                    // scope, exactly as the per-movie walk's catch would return null.
+                }
+            }
+
+            return members;
+        }
+
         // True when the movie is opted in directly OR is a member of an opted-in
         // collection. The single source of truth for movie spoiler scope.
         public bool IsMovieInSpoilerScope(UserSpoilerBlur userState, Guid movieId)
