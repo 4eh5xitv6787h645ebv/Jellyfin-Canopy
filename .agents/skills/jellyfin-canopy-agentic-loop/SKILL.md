@@ -54,9 +54,10 @@ need authority, judgement, or an outward-facing action:
    describes. Write the task brief (acceptance criteria, non-goals, owning
    layer, reuse decisions, risks, reviewer questions).
 2. **Publish and prove** — after the loop returns clean, verify the push target,
-   push the branch, open the PR, watch CI, and report. Never deploy to `:8099`
-   or mutate an external service as an implicit step; those need separate
-   explicit authorization.
+   push the branch, open the PR (put `Closes #<N>` in the body so the merge
+   auto-closes the issue and moves its Project 4 item to Done), watch CI, and
+   report. Never deploy to `:8099` or mutate an external service as an implicit
+   step; those need separate explicit authorization.
 
 Everything between — explore, plan, implement, adversarial review loop, and
 repo-native verification — runs inside the **Workflow engine**.
@@ -157,8 +158,8 @@ The engine ([`workflows/canopy-loop.js`](workflows/canopy-loop.js)) runs:
    affected consumer, add tests that fail before the fix (admin and non-admin,
    negative/fallback paths, concurrency/cache invalidation where relevant), add
    every locale key with real translations, and update affected docs. Commit
-   coherent conventional units. No `Co-Authored-By` trailers; keep issue `#N`
-   out of messages.
+   coherent conventional units. No `Co-Authored-By` trailers; **include the issue
+   number `#N`** in each commit subject (e.g. end it with ` (#123)`).
 4. **Review loop** (parallel adversarial, loop-until-clean) — see
    [`references/adversarial-review.md`](references/adversarial-review.md). Each
    round mixes models on purpose: the Claude lens reviewers **and** at least one

@@ -44,6 +44,18 @@ const SURFACE_COERCED = SURFACE !== SURFACE_INPUT
 const RUNTIME = a.runtime !== false && SURFACE !== 'docs'
 const DEPTH = a.depth || 'standard' // quick | standard | deep
 const BASE = a.base || 'origin/main'
+// User policy: INCLUDE the issue number in commit messages (traceability). Derived
+// from the branch (fix/issue-<N>) or args.issue. The main thread additionally puts
+// "Closes #<N>" in the PR body so a merge auto-closes the issue + moves the board item.
+const ISSUE_REF = (() => {
+  const raw = a.issue != null ? String(a.issue) : ((/issue[-/]?(\d+)/i.exec(BRANCH) || [])[1] || '')
+  const n = String(raw).replace(/[^0-9]/g, '')
+  return n ? '#' + n : ''
+})()
+const COMMIT_RULE =
+  'Commit hygiene: NO `Co-Authored-By` trailers' +
+  (ISSUE_REF ? `, and INCLUDE the issue number ${ISSUE_REF} in each commit subject (end the subject with " (${ISSUE_REF})")` : '') +
+  '.'
 
 const SIZING = {
   quick: { explorers: 2, planners: 2, roundCap: 2, verifyFixCap: 1 },
@@ -562,11 +574,7 @@ Rules:
   bundles/manifests/snapshots from source if the repo expects it.
 - Do NOT add live activation, polling, retries, migrations, config, or startup
   work unless the plan requires it. Give each side effect exactly one owner.
-- Commit coherent conventional units (feat/fix/chore/docs). Commit hygiene: NO
-  \`Co-Authored-By\` trailers, and NEVER reference a GitHub issue number anywhere
-  in a commit (subject, body, or trailer) or in a code comment — no #N, no bare
-  #123, no "issue #N", not even inside a rationale or a coverage-baseline note.
-  Describe the change itself.
+- Commit coherent conventional units (feat/fix/chore/docs). ${COMMIT_RULE}
 - Run the directly-affected focused tests as you go. Do not run the full gate.
 Report the changed files, commits, tests added, a diff stat, and an honest
 self-confidence (high/medium/low) with any open TODOs.`
@@ -820,9 +828,7 @@ unrelated consistency cleanups, mass locale edits, or refactors that no confirme
 finding demands. Before adding any new state flag/retry/lock/publisher/lifecycle
 path — or making a second fix to the same state machine/owner — STOP and try
 deletion, reuse, or single ownership first; simpler is required over another
-guard. Do not fix anything not listed. Commit hygiene: NO \`Co-Authored-By\`
-trailers, and NEVER reference a GitHub issue number in a commit (subject, body, or
-trailer) or in a code comment — no #N, no bare #123, no "issue #N".
+guard. Do not fix anything not listed. ${COMMIT_RULE}
 
 CONFIRMED FINDINGS:
 ${JSON.stringify(confirmed, null, 1).slice(0, 10000)}`,
@@ -863,8 +869,7 @@ locale's language, placeholder tokens ({name}, %s, {count}, etc.) kept
 byte-identical, and follow the repo's existing English-fallback convention for any
 locale file that already uses it. Touch ONLY js/locales/*.json — never code, tests,
 docs, or any other file. Then run \`npm run validate-translations\` until green and
-commit ONE \`chore(i18n): …\` unit (no \`Co-Authored-By\` trailer, no issue #N in the
-message or comments). If en.json has NO new or changed keys versus the other
+commit ONE \`chore(i18n): …\` unit. ${COMMIT_RULE} If en.json has NO new or changed keys versus the other
 locales, do NOTHING and report "no locale work needed".`,
         { agentType: 'general-purpose', effort: LOCALIZE_EFFORT, phase: 'Localize', label: 'localize' }
       ),
@@ -948,9 +953,7 @@ ALL BLOCKING gates passed, the e2e result if run, and a list of failures.`,
 PHASE: VERIFY-FIX. You are the SOLE writer. Fix ONLY the real regressions behind
 these gate/e2e failures at their owner — never weaken coverage, timeouts,
 assertions, security policy, or E2E scope to go green, and never lower a ratchet.
-Commit the fix — NO \`Co-Authored-By\` trailers, and NEVER reference a GitHub issue
-number (no #N, no bare #123, no "issue #N") in the commit message or a code
-comment. FAILURES:
+Commit the fix. ${COMMIT_RULE} FAILURES:
 ${JSON.stringify((verify && verify.failures) || [], null, 1).slice(0, 8000)}`,
         { schema: FIX_SCHEMA, agentType: 'general-purpose', effort: 'high', phase: 'Verify', label: `verify-fix-${vround}` }
       ),
