@@ -71,6 +71,10 @@ function item(id: string, tmdbId = `other-${id}`): Record<string, unknown> {
   };
 }
 
+function page(items: Array<Record<string, unknown>>, total: number, startIndex: number): Record<string, unknown> {
+  return { Items: items, TotalRecordCount: total, StartIndex: startIndex };
+}
+
 function group(details = bookmark()): {
   details: TestBookmark;
   bookmarks: Array<TestBookmark & { id: string }>;
@@ -94,18 +98,6 @@ function installApi(jf: ReturnType<typeof vi.fn>): void {
   JC.core.api = { jf } as unknown as ApiApi;
 }
 
-// A proven-complete scan requires two consecutive full passes that agree, so
-// each stable main-page sequence must be answered twice before enrichment.
-function mockStablePasses(
-  jf: ReturnType<typeof vi.fn>,
-  pages: Array<Record<string, unknown>>
-): ReturnType<typeof vi.fn> {
-  for (let pass = 0; pass < 2; pass += 1) {
-    for (const page of pages) jf.mockResolvedValueOnce(page);
-  }
-  return jf;
-}
-
 function captureIdentity(userId = 'replacement-user'): IdentityContext {
   JC.identity.transition('replacement-server', '', 'replacement-test-reset');
   return JC.identity.transition('replacement-server', userId, 'replacement-test-user')!;
@@ -120,6 +112,9 @@ function expectMainRequest(
   expect(url.pathname).toBe(`/Users/${expectedUserId.replace(/-/g, '').toLowerCase()}/Items`);
   expect(url.searchParams.get('Limit')).toBe('500');
   expect(url.searchParams.get('StartIndex')).toBe(String(expectedStartIndex));
+  // Replacement identity never reads mutable playback state; the payload must
+  // exclude it so a progress update mid-scan cannot perturb the result.
+  expect(url.searchParams.get('EnableUserData')).toBe('false');
   expect(call[1]).toEqual({ skipCache: true });
 }
 
@@ -142,12 +137,13 @@ describe('bookmark replacement library search', () => {
     document.body.innerHTML = '';
   });
 
+  // AC1: a replacement sorting after item 500 is found on page two — 500 is a
+  // page size, not a hard truncation cap.
   it('finds a logical replacement on page two without treating 500 as a hard cap', async () => {
     const firstPage = Array.from({ length: 500 }, (_, index) => item(`page-one-${index}`));
-    const jf = mockStablePasses(vi.fn(), [
-      { Items: firstPage, TotalRecordCount: 501, StartIndex: 0 },
-      { Items: [item('page-two-match', 'target-tmdb')], TotalRecordCount: 501, StartIndex: 500 }
-    ]);
+    const jf = vi.fn()
+      .mockResolvedValueOnce(page(firstPage, 501, 0))
+      .mockResolvedValueOnce(page([item('page-two-match', 'target-tmdb')], 501, 500));
     installApi(jf);
     const context = captureIdentity('regular-user');
 
@@ -156,49 +152,38 @@ describe('bookmark replacement library search', () => {
       items: [expect.objectContaining({ Id: 'page-two-match' })]
     });
 
-    // Two proving passes over the two-page collection, offset advancing past 500.
-    expect(jf).toHaveBeenCalledTimes(4);
+    // One forward pass, offset advancing past 500 — no whole-library re-scan.
+    expect(jf).toHaveBeenCalledTimes(2);
     expectMainRequest(jf.mock.calls[0], 'regular-user', 0);
     expectMainRequest(jf.mock.calls[1], 'regular-user', 500);
-    expectMainRequest(jf.mock.calls[2], 'regular-user', 0);
-    expectMainRequest(jf.mock.calls[3], 'regular-user', 500);
+  });
+
+  // AC4: a match on the first page short-circuits without downloading the rest
+  // of a huge library.
+  it('returns a first-page match without scanning the advertised remainder', async () => {
+    const jf = vi.fn().mockResolvedValueOnce(page([item('early', 'target-tmdb')], 50_000, 0));
+    installApi(jf);
+    const context = captureIdentity();
+
+    await expect(searchForReplacementItem(bookmark(), context)).resolves.toEqual({
+      status: 'match',
+      items: [expect.objectContaining({ Id: 'early' })]
+    });
+    expect(jf).toHaveBeenCalledTimes(1);
   });
 
   it.each(['admin-user', 'regular-user'])('keeps the captured %s identity in every item request', async (userId) => {
-    const jf = vi.fn().mockResolvedValue({ Items: [], TotalRecordCount: 0, StartIndex: 0 });
+    const jf = vi.fn().mockResolvedValue(page([], 0, 0));
     installApi(jf);
     const context = captureIdentity(userId);
 
     await expect(searchForReplacementItem(bookmark(), context)).resolves.toEqual({ status: 'no-match' });
 
-    expect(jf).toHaveBeenCalledTimes(2);
+    expect(jf).toHaveBeenCalledTimes(1);
     expectMainRequest(jf.mock.calls[0], userId, 0);
-    expectMainRequest(jf.mock.calls[1], userId, 0);
   });
 
-  it('never publishes a confident no-match from a scan two passes disagree on', async () => {
-    // Same-count library churn shifts an unread replacement behind the offset:
-    // one pass misses it, the other sees it. The prover must reject the
-    // disagreement as failed/incomplete rather than emit a false no-match that
-    // would gate a destructive migration.
-    const firstPage = Array.from({ length: 500 }, (_, index) => item(`churn-${index}`));
-    const jf = vi.fn()
-      .mockResolvedValueOnce({ Items: firstPage, TotalRecordCount: 501, StartIndex: 0 })
-      .mockResolvedValueOnce({ Items: [item('churn-tail')], TotalRecordCount: 501, StartIndex: 500 })
-      .mockResolvedValueOnce({ Items: firstPage, TotalRecordCount: 501, StartIndex: 0 })
-      .mockResolvedValueOnce({
-        Items: [item('surfaced-replacement', 'target-tmdb')],
-        TotalRecordCount: 501,
-        StartIndex: 500
-      });
-    installApi(jf);
-    const context = captureIdentity();
-
-    const result = await searchForReplacementItem(bookmark(), context);
-    expect(result.status).toBe('failed');
-    expect(result.status).not.toBe('no-match');
-  });
-
+  // AC2: transport/HTTP failures must be distinguishable from a proven absence.
   it.each([401, 403, 429, 500, 503])('classifies HTTP %s as failed and retains the status', async (status) => {
     const error = Object.assign(new Error(`HTTP ${status}`), { status });
     installApi(vi.fn().mockRejectedValue(error));
@@ -233,6 +218,8 @@ describe('bookmark replacement library search', () => {
     expect(result.error).toBeInstanceOf(SyntaxError);
   });
 
+  // AC2/AC4: aborts and stale identity are cancellations, never failures or a
+  // false no-match.
   it('classifies aborts and stale identities as cancelled', async () => {
     const abort = new Error('aborted');
     abort.name = 'AbortError';
@@ -248,11 +235,13 @@ describe('bookmark replacement library search', () => {
     expect(jf).not.toHaveBeenCalled();
   });
 
+  // AC4: an account switch mid-pagination cancels and never adopts a match from
+  // the new account's page.
   it('cancels after an account transition while a continuation page is in flight', async () => {
     const continuation = deferred<unknown>();
     const firstPage = Array.from({ length: 500 }, (_, index) => item(`first-${index}`));
     const jf = vi.fn()
-      .mockResolvedValueOnce({ Items: firstPage, TotalRecordCount: 501, StartIndex: 0 })
+      .mockResolvedValueOnce(page(firstPage, 501, 0))
       .mockReturnValueOnce(continuation.promise);
     installApi(jf);
     const context = captureIdentity('first-user');
@@ -260,7 +249,7 @@ describe('bookmark replacement library search', () => {
     const pending = searchForReplacementItem(bookmark(), context);
     await vi.waitFor(() => expect(jf).toHaveBeenCalledTimes(2));
     JC.identity.transition('replacement-server', 'second-user', 'replacement-test-mid-page-switch');
-    continuation.resolve({ Items: [item('late-match', 'target-tmdb')], TotalRecordCount: 501, StartIndex: 500 });
+    continuation.resolve(page([item('late-match', 'target-tmdb')], 501, 500));
 
     await expect(pending).resolves.toEqual({ status: 'cancelled' });
     expectMainRequest(jf.mock.calls[0], 'first-user', 0);
@@ -270,16 +259,12 @@ describe('bookmark replacement library search', () => {
   it('cancels rather than degrading an aborted parent-series enrichment chunk', async () => {
     const abort = new Error('enrichment aborted');
     abort.name = 'AbortError';
-    const episodePage = {
-      Items: [{
-        Id: 'episode', Name: 'Episode', Type: 'Episode', SeriesId: 'series',
-        ParentIndexNumber: 1, IndexNumber: 1, ProviderIds: {}
-      }],
-      TotalRecordCount: 1,
-      StartIndex: 0
-    };
-    // Both proving passes complete, then the enrichment chunk aborts.
-    const jf = mockStablePasses(vi.fn(), [episodePage]).mockRejectedValueOnce(abort);
+    const episodePage = page([{
+      Id: 'episode', Name: 'Episode', Type: 'Episode', SeriesId: 'series',
+      ParentIndexNumber: 1, IndexNumber: 1, ProviderIds: {}
+    }], 1, 0);
+    // Main page resolves, then the per-page enrichment chunk aborts.
+    const jf = vi.fn().mockResolvedValueOnce(episodePage).mockRejectedValueOnce(abort);
     installApi(jf);
     const context = captureIdentity();
 
@@ -289,58 +274,81 @@ describe('bookmark replacement library search', () => {
     }), context)).resolves.toEqual({ status: 'cancelled' });
   });
 
-  it('returns no-match only after a complete stable multi-page scan', async () => {
+  // AC5: episode identity is matched by series provider + season/episode number
+  // via parent-series enrichment (reusing compareBookmarkIdentity).
+  it('matches an episode by enriched series provider and episode range', async () => {
+    const episodePage = page([{
+      Id: 'replacement-episode', Name: 'S1E1', Type: 'Episode', SeriesId: 'series-x',
+      ParentIndexNumber: 1, IndexNumber: 1, IndexNumberEnd: 1, ProviderIds: {}
+    }], 1, 0);
+    const jf = vi.fn()
+      .mockResolvedValueOnce(episodePage)
+      .mockResolvedValueOnce({ Items: [{
+        Id: 'series-x', Name: 'Series', Type: 'Series', ProviderIds: { Tmdb: 'series-tmdb' }
+      }] });
+    installApi(jf);
+    const context = captureIdentity();
+
+    await expect(searchForReplacementItem(bookmark({
+      mediaType: 'tv', itemType: 'episode', tmdbId: '', seriesTmdbId: 'series-tmdb',
+      seasonNumber: 1, episodeNumber: 1, episodeEndNumber: 1
+    }), context)).resolves.toEqual({
+      status: 'match',
+      items: [expect.objectContaining({ Id: 'replacement-episode' })]
+    });
+  });
+
+  // AC3: a full, failure-free scan that finds nothing is the only path to a
+  // confident no-match.
+  it('returns no-match only after examining every advertised item', async () => {
     const firstPage = Array.from({ length: 500 }, (_, index) => item(`absent-${index}`));
-    const jf = mockStablePasses(vi.fn(), [
-      { Items: firstPage, TotalRecordCount: 501, StartIndex: 0 },
-      { Items: [item('absent-last')], TotalRecordCount: 501, StartIndex: 500 }
-    ]);
+    const jf = vi.fn()
+      .mockResolvedValueOnce(page(firstPage, 501, 0))
+      .mockResolvedValueOnce(page([item('absent-last')], 501, 500));
     installApi(jf);
     const context = captureIdentity();
 
     await expect(searchForReplacementItem(bookmark(), context)).resolves.toEqual({ status: 'no-match' });
-    // Two full passes agreed before the negative was published.
-    expect(jf).toHaveBeenCalledTimes(4);
+    expect(jf).toHaveBeenCalledTimes(2);
   });
 
+  // AC4: fail-closed on any pagination that cannot prove exhaustion — never a
+  // confident no-match from a truncated or inconsistent scan.
   it.each([
     {
-      name: 'empty continuation',
+      name: 'empty page before exhaustion',
       pages: [
-        { Items: [item('one')], TotalRecordCount: 2, StartIndex: 0 },
-        { Items: [], TotalRecordCount: 2, StartIndex: 1 }
+        page(Array.from({ length: 500 }, (_, i) => item(`a-${i}`)), 501, 0),
+        page([], 501, 500)
       ]
     },
     {
       name: 'non-advancing reported offset',
       pages: [
-        { Items: [item('one')], TotalRecordCount: 2, StartIndex: 0 },
-        { Items: [item('two')], TotalRecordCount: 2, StartIndex: 0 }
+        page(Array.from({ length: 500 }, (_, i) => item(`b-${i}`)), 501, 0),
+        page([item('b-tail')], 501, 0)
       ]
     },
     {
-      name: 'repeated source identity',
-      pages: [
-        { Items: [item('one')], TotalRecordCount: 2, StartIndex: 0 },
-        { Items: [item('one')], TotalRecordCount: 2, StartIndex: 1 }
-      ]
+      name: 'more rows than advertised',
+      pages: [page([item('one'), item('two')], 1, 0)]
     },
     {
-      name: 'changing total metadata',
+      name: 'shifting total metadata',
       pages: [
-        { Items: [item('one')], TotalRecordCount: 2, StartIndex: 0 },
-        { Items: [item('two')], TotalRecordCount: 3, StartIndex: 1 }
+        page(Array.from({ length: 500 }, (_, i) => item(`c-${i}`)), 501, 0),
+        page([item('c-tail')], 502, 500)
       ]
     }
-  ])('fails closed on $name pagination', async ({ pages }) => {
+  ])('fails closed on $name', async ({ pages }) => {
     const jf = vi.fn();
-    for (const page of pages) jf.mockResolvedValueOnce(page);
+    for (const p of pages) jf.mockResolvedValueOnce(p);
     installApi(jf);
     const context = captureIdentity();
 
     const result = await searchForReplacementItem(bookmark(), context);
     expect(result.status).toBe('failed');
-    expect(jf).toHaveBeenCalledTimes(2);
+    expect(jf).toHaveBeenCalledTimes(pages.length);
   });
 
   it('fails on malformed pagination metadata instead of reporting absence', async () => {
@@ -350,12 +358,11 @@ describe('bookmark replacement library search', () => {
     await expect(searchForReplacementItem(bookmark(), context)).resolves.toMatchObject({ status: 'failed' });
   });
 
-  it('fails before attempting an advertised collection beyond the explicit safety bound', async () => {
-    const jf = vi.fn().mockResolvedValueOnce({
-      Items: [item('one')],
-      TotalRecordCount: 500_001,
-      StartIndex: 0
-    });
+  // AC4: a negative that would require scanning past the item safety bound is a
+  // failure, not a confident no-match — and the bound is not re-imposed as a
+  // truncation of a present match (covered above by the first-page-match test).
+  it('fails a negative that exceeds the explicit item safety bound rather than reporting absence', async () => {
+    const jf = vi.fn().mockResolvedValueOnce(page([item('one')], 500_001, 0));
     installApi(jf);
     const context = captureIdentity();
 
@@ -378,7 +385,7 @@ describe('bookmark replacement library search', () => {
 
     mocks.toast.mockClear();
     const absentButton = document.createElement('button');
-    installApi(vi.fn().mockResolvedValue({ Items: [], TotalRecordCount: 0, StartIndex: 0 }));
+    installApi(vi.fn().mockResolvedValue(page([], 0, 0)));
     const absentContext = captureIdentity('absent-user');
 
     await findAndOfferReplacement(group(), absentButton, absentContext);
@@ -397,7 +404,7 @@ describe('bookmark replacement library search', () => {
     const pending = findAndOfferReplacement(group(), button, context);
     expect(button.disabled).toBe(true);
     JC.identity.transition('replacement-server', 'next-user', 'replacement-caller-switch');
-    held.resolve({ Items: [], TotalRecordCount: 0, StartIndex: 0 });
+    held.resolve(page([], 0, 0));
     await pending;
 
     expect(mocks.toast).not.toHaveBeenCalled();
@@ -406,11 +413,7 @@ describe('bookmark replacement library search', () => {
   });
 
   it('offers the selection modal only for a proven match', async () => {
-    installApi(vi.fn().mockResolvedValue({
-      Items: [item('replacement', 'target-tmdb')],
-      TotalRecordCount: 1,
-      StartIndex: 0
-    }));
+    installApi(vi.fn().mockResolvedValue(page([item('replacement', 'target-tmdb')], 1, 0)));
     const context = captureIdentity('match-user');
     const button = document.createElement('button');
 
@@ -421,23 +424,23 @@ describe('bookmark replacement library search', () => {
     expect(button.disabled).toBe(false);
   });
 
+  // AC6: a single failed search gates the whole batch — no migration modal, a
+  // distinct failure toast rather than a false 'no replacement found'.
   it('never offers an orphan migration from failed partial search results', async () => {
     const first = bookmark({ itemId: 'missing-one', tmdbId: 'first-tmdb', name: 'First' });
     const second = bookmark({ itemId: 'missing-two', tmdbId: 'second-tmdb', name: 'Second' });
     mocks.getItemCached.mockRejectedValue(Object.assign(new Error('not found'), { status: 404 }));
     const failure = Object.assign(new Error('search unavailable'), { status: 503 });
-    // First orphan's search fails on its first request; the second orphan's
-    // search is a proven two-pass match. A single failed search still gates the
-    // whole batch: no migration modal, distinct failure toast.
+    // First orphan's search fails; the second orphan's search is a clean match.
+    // A single failed search still gates the whole batch.
     const jf = vi.fn()
       .mockRejectedValueOnce(failure)
-      .mockResolvedValue({ Items: [item('second-replacement', 'second-tmdb')], TotalRecordCount: 1, StartIndex: 0 });
+      .mockResolvedValue(page([item('second-replacement', 'second-tmdb')], 1, 0));
     installApi(jf);
     const context = captureIdentity('orphan-user');
 
     await findAllOrphanedAndOfferMigration({ first, second }, context);
 
-    expect(jf).toHaveBeenCalledTimes(3);
     expect(mocks.toast.mock.calls).toEqual([['bookmark_orphaned_search_failed:1', 4000]]);
     expect(document.querySelector('[data-jc-bookmark-library-modal="true"]')).toBeNull();
   });
@@ -445,7 +448,7 @@ describe('bookmark replacement library search', () => {
   it('reports a failure-free orphan scan with no replacements as a proven absence', async () => {
     const orphan = bookmark({ itemId: 'missing-orphan' });
     mocks.getItemCached.mockRejectedValue(Object.assign(new Error('not found'), { status: 404 }));
-    installApi(vi.fn().mockResolvedValue({ Items: [], TotalRecordCount: 0, StartIndex: 0 }));
+    installApi(vi.fn().mockResolvedValue(page([], 0, 0)));
     const context = captureIdentity('orphan-absent-user');
 
     await findAllOrphanedAndOfferMigration({ orphan }, context);

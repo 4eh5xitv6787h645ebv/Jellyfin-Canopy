@@ -44,9 +44,8 @@ describe('bookmark replacement logical identity', () => {
         ParentIndexNumber: 0, IndexNumber: 2, IndexNumberEnd: 2, ProviderIds: {}
       }
     ], TotalRecordCount: 2, StartIndex: 0 };
-    // Two proving passes over the candidate page, then one enrichment call.
+    // One forward page, then one parent-series enrichment call.
     const jf = vi.fn()
-      .mockResolvedValueOnce(episodePage)
       .mockResolvedValueOnce(episodePage)
       .mockResolvedValueOnce({ Items: [{
         Id: 'series-item', Name: 'Series', Type: 'Series', ProviderIds: { Tmdb: 'series-55' }
@@ -72,7 +71,7 @@ describe('bookmark replacement logical identity', () => {
       ParentIndexNumber: 1, IndexNumber: 1, IndexNumberEnd: 1,
       ProviderIds: {}, UserData: { Key: 'episode-900' }
     }], TotalRecordCount: 1, StartIndex: 0 };
-    const jf = vi.fn().mockResolvedValueOnce(page).mockResolvedValueOnce(page);
+    const jf = vi.fn().mockResolvedValueOnce(page);
     JC.core.api = { jf } as unknown as ApiApi;
     const context = JC.identity.capture()!;
 
@@ -101,7 +100,6 @@ describe('bookmark replacement logical identity', () => {
     const candidatePage = { Items: candidates, TotalRecordCount: candidates.length, StartIndex: 0 };
     const jf = vi.fn()
       .mockResolvedValueOnce(candidatePage)
-      .mockResolvedValueOnce(candidatePage)
       .mockRejectedValueOnce(new Error('first parent chunk unavailable'))
       .mockResolvedValueOnce({ Items: [{
         Id: `series-${String(SERIES_ENRICHMENT_CHUNK_SIZE).padStart(3, '0')}`,
@@ -125,7 +123,7 @@ describe('bookmark replacement logical identity', () => {
         expect.objectContaining({ Id: 'series-range-match' })
       ]
     });
-    const enrichmentUrls = jf.mock.calls.slice(2).map(call => String(call[0]));
+    const enrichmentUrls = jf.mock.calls.slice(1).map(call => String(call[0]));
     expect(enrichmentUrls).toHaveLength(2);
     for (const url of enrichmentUrls) {
       expect(url.length).toBeLessThanOrEqual(SERIES_ENRICHMENT_MAX_URL_LENGTH);
@@ -150,7 +148,6 @@ describe('bookmark replacement logical identity', () => {
     const candidatePage = { Items: candidates, TotalRecordCount: candidates.length, StartIndex: 0 };
     const jf = vi.fn()
       .mockResolvedValueOnce(candidatePage)
-      .mockResolvedValueOnce(candidatePage)
       .mockResolvedValue({ Items: [] });
     JC.core.api = { jf } as unknown as ApiApi;
     const context = JC.identity.capture()!;
@@ -161,7 +158,7 @@ describe('bookmark replacement logical identity', () => {
       seasonNumber: 1, episodeNumber: 1, episodeEndNumber: 1, name: 'Episode'
     }, context)).resolves.toEqual({ status: 'no-match' });
 
-    const enrichmentUrls = jf.mock.calls.slice(2).map(call => String(call[0]));
+    const enrichmentUrls = jf.mock.calls.slice(1).map(call => String(call[0]));
     expect(longSeriesIds.length).toBeLessThan(SERIES_ENRICHMENT_CHUNK_SIZE);
     expect(enrichmentUrls.length).toBeGreaterThan(1);
     for (const url of enrichmentUrls) {

@@ -11,7 +11,6 @@ import { getItemCached } from '../helpers';
 import { renderActiveBookmarks } from './library-render';
 import type { IdentityContext } from '../../types/jc';
 import { normalizeBookmarkMediaType, replacementItemTypes } from './media-types';
-import { fetchCompleteOffsetCollection } from '../../core/paged-collection';
 import {
   BOOKMARK_IDENTITY_VERSION,
   compareBookmarkIdentity,
@@ -276,17 +275,20 @@ async function enrichSeriesProviders(
 }
 
 /**
- * Search Jellyfin for logical replacements without publishing an incomplete scan.
+ * Search Jellyfin for a logical replacement, paging DateCreated-descending by
+ * StartIndex and evaluating each page as it arrives.
  *
- * A single offset scan (StartIndex paging over DateCreated) cannot prove a
- * negative: same-count library churn can shift an as-yet-unread replacement
- * behind the advancing offset, so it is silently skipped and a real match is
- * reported absent — a false negative on a flow that gates a DESTRUCTIVE
- * migration. Completeness is delegated to the shared offset collector, which
- * publishes only a snapshot two consecutive full passes agree on; anything it
- * cannot prove complete (changing totals, repeated/skipped identities, empty
- * pages before the end, or a safety cap) rejects and surfaces here as `failed`,
- * never as a confident `no-match`.
+ * Matching is page-by-page with early-exit: the first page carrying a logical
+ * match resolves `match` immediately, so a present replacement is never gated
+ * behind a whole-library download or the item safety cap. Only a negative needs
+ * a complete scan — `no-match` is published solely after every advertised item
+ * has been examined (the running count reaches the reported TotalRecordCount).
+ * Anything that prevents a complete negative scan — a malformed or shifting
+ * envelope, an empty or non-advancing page before the end, more rows than
+ * advertised, or a page/item safety cap reached before exhaustion — rejects and
+ * surfaces as `failed`, never as a confident `no-match`, because this flow gates
+ * a DESTRUCTIVE migration. An account switch or abort at any point resolves
+ * `cancelled`.
  */
 export async function searchForReplacementItem(
   bookmark: StoredBookmark,
@@ -299,32 +301,68 @@ export async function searchForReplacementItem(
     const normalizedMediaType = normalizeBookmarkMediaType(bookmark.mediaType);
     const itemTypes = replacementItemTypes(normalizedMediaType);
     const typeFilter = itemTypes ? `&IncludeItemTypes=${itemTypes}` : '';
-    const baseUrl = `/Users/${userId}/Items?Recursive=true${typeFilter}&Fields=ProviderIds,Type,SeriesId,ParentIndexNumber,IndexNumber,IndexNumberEnd&SortBy=DateCreated&SortOrder=Descending`;
+    // EnableUserData=false: replacement identity never reads mutable playback
+    // state, so excluding it keeps the payload smaller and immune to progress
+    // updates arriving mid-scan.
+    const baseUrl = `/Users/${userId}/Items?Recursive=true${typeFilter}&Fields=ProviderIds,Type,SeriesId,ParentIndexNumber,IndexNumber,IndexNumberEnd&EnableUserData=false&SortBy=DateCreated&SortOrder=Descending`;
 
-    const candidates = await fetchCompleteOffsetCollection<JellyfinReplacementItem>({
-      pageSize: REPLACEMENT_PAGE_SIZE,
-      maximumPages: REPLACEMENT_MAX_PAGES,
-      maximumItems: REPLACEMENT_MAX_ITEMS,
-      identity: (item) => item.Id,
-      fetchPage: async ({ skip }) => {
-        if (!JC.identity.isCurrent(context)) throwReplacementCancelled();
-        const url = `${baseUrl}&Limit=${REPLACEMENT_PAGE_SIZE}&StartIndex=${skip}`;
-        const response: unknown = await JC.core.api!.jf(url, { skipCache: true });
-        if (!JC.identity.isCurrent(context)) throwReplacementCancelled();
-        const page = readReplacementPage(response, skip);
-        return { items: page.items, totalResults: page.totalRecordCount };
+    let expectedTotal: number | null = null;
+    let itemsExamined = 0;
+
+    for (let pageIndex = 0; pageIndex < REPLACEMENT_MAX_PAGES; pageIndex += 1) {
+      if (!JC.identity.isCurrent(context)) return { status: 'cancelled' };
+      const skip = pageIndex * REPLACEMENT_PAGE_SIZE;
+      const url = `${baseUrl}&Limit=${REPLACEMENT_PAGE_SIZE}&StartIndex=${skip}`;
+      const response: unknown = await JC.core.api!.jf(url, { skipCache: true });
+      if (!JC.identity.isCurrent(context)) return { status: 'cancelled' };
+
+      const page = readReplacementPage(response, skip);
+      if (expectedTotal === null) {
+        expectedTotal = page.totalRecordCount;
+      } else if (page.totalRecordCount !== expectedTotal) {
+        // A shifting total means the collection churned mid-scan; a negative can
+        // no longer be proven, so fail closed rather than risk a false no-match.
+        incompleteReplacementSearch(
+          `replacement total changed mid-scan from ${expectedTotal} to ${page.totalRecordCount}`
+        );
       }
-    });
-    if (!JC.identity.isCurrent(context)) return { status: 'cancelled' };
 
-    // Enrichment runs once over the proven-complete candidate set.
-    const enriched = await enrichSeriesProviders(userId, candidates, context);
-    if (!JC.identity.isCurrent(context)) return { status: 'cancelled' };
+      // Evaluate this page before any completeness bookkeeping so a present
+      // match short-circuits regardless of library size or the safety cap.
+      // UserData.Key is deliberately never consulted: unlike ProviderIds it
+      // carries no namespace and cannot safely identify an episode.
+      const enriched = await enrichSeriesProviders(userId, page.items, context);
+      if (!JC.identity.isCurrent(context)) return { status: 'cancelled' };
+      const matches = enriched.filter(
+        item => compareBookmarkIdentity(bookmark, replacementIdentity(item)) === 'logical'
+      );
+      if (matches.length > 0) return { status: 'match', items: matches };
 
-    // UserData.Key is deliberately excluded: unlike ProviderIds it does not
-    // carry a namespace and cannot safely identify an episode.
-    const matches = enriched.filter(item => compareBookmarkIdentity(bookmark, replacementIdentity(item)) === 'logical');
-    return matches.length > 0 ? { status: 'match', items: matches } : { status: 'no-match' };
+      itemsExamined += page.items.length;
+      if (itemsExamined > expectedTotal) {
+        incompleteReplacementSearch(
+          `replacement scan read ${itemsExamined} rows beyond the advertised ${expectedTotal}`
+        );
+      }
+      if (itemsExamined >= expectedTotal) return { status: 'no-match' };
+
+      // Not yet exhausted: the scan must be able to make progress and stay
+      // within the safety bound, otherwise a negative cannot be trusted.
+      if (page.items.length === 0) {
+        incompleteReplacementSearch('replacement scan hit an empty page before exhausting the collection');
+      }
+      if (expectedTotal > REPLACEMENT_MAX_ITEMS) {
+        incompleteReplacementSearch(
+          `replacement collection of ${expectedTotal} exceeds the ${REPLACEMENT_MAX_ITEMS} item safety bound`
+        );
+      }
+    }
+
+    // Ran out of pages before reaching the advertised total: an incomplete
+    // scan, never a confident no-match.
+    return incompleteReplacementSearch(
+      `replacement scan exceeded the ${REPLACEMENT_MAX_PAGES} page safety bound before exhausting the collection`
+    );
   } catch (error) {
     if (isAbortError(error) || !JC.identity.isCurrent(context)) return { status: 'cancelled' };
     console.error('Failed to search for replacement:', error);
