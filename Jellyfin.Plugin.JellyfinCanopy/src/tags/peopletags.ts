@@ -9,6 +9,7 @@
 import { JC as JEBase } from '../globals';
 import { flagPngUrl } from '../core/asset-urls';
 import { createBoundedCache, type BoundedCache } from '../core/bounded-cache';
+import { getItemIdFromUrl } from '../core/details-view';
 import { createStableMethodFacade } from '../core/feature-loader';
 import { ensureMaterialSymbolsFont, injectCss, removeCss } from '../core/ui-kit';
 import type { ApiApi, JELegacyHelpers, PluginConfig, UserSettings } from '../types/jc';
@@ -208,6 +209,12 @@ function initializePeopleTags(): void {
     let lastProcessedItemId: string | null = null;
     let peopleTagsComplete = false; // Set true after all cast members tagged for current item
     let isProcessing = false;
+    // PERF(#359): a run requested while a batch is in flight (a late guest-cast
+    // mount, or a navigation to a new item) must not be silently dropped — it is
+    // remembered here and drained once the active batch settles. Without it the
+    // one-shot snapshot starves cards that mount mid-batch and the current page
+    // stays untagged after a stale batch exits.
+    let rerunRequested = false;
 
     activePeopleTagsCleanup = (clearPersistent) => {
         for (const timer of timers) clearTimeout(timer);
@@ -560,8 +567,7 @@ function initializePeopleTags(): void {
      */
     async function processPersonCard(task: PersonCardTask, currentItemId: string): Promise<boolean> {
         const { card, personId } = task;
-        const batchIsCurrent = (): boolean => isCurrent()
-            && new URLSearchParams(window.location.hash.split('?')[1]).get('id') === currentItemId;
+        const batchIsCurrent = (): boolean => isCurrent() && getItemIdFromUrl() === currentItemId;
         try {
             const { data: personData, cacheChanged } = await getPersonInfo(personId, currentItemId);
             if (!batchIsCurrent() || !card.isConnected) return cacheChanged;
@@ -621,10 +627,11 @@ function initializePeopleTags(): void {
         isProcessing = true;
 
         try {
-            // Get current item ID from URL
-            const hash = window.location.hash;
-            const params = new URLSearchParams(hash.split('?')[1]);
-            const currentItemId = params.get('id');
+            // Get current item ID from URL. Resolve through the shared
+            // details-view helper: the modern/MUI layout keeps the hash empty
+            // and carries the id in location.search, so a hash-only read would
+            // find nothing and disable People Tags there.
+            const currentItemId = getItemIdFromUrl();
 
             if (!currentItemId) {
                 console.debug(`${logPrefix} No item ID found in URL`);
@@ -640,8 +647,7 @@ function initializePeopleTags(): void {
             );
             if (tasks.length === 0) return;
 
-            const batchIsCurrent = (): boolean => isCurrent()
-                && new URLSearchParams(window.location.hash.split('?')[1]).get('id') === currentItemId;
+            const batchIsCurrent = (): boolean => isCurrent() && getItemIdFromUrl() === currentItemId;
 
             let cacheChanged = false;
             let nextIndex = 0;
@@ -684,7 +690,7 @@ function initializePeopleTags(): void {
             if (!castSection && !guestCastSection) return;
 
             try {
-                const itemId = new URLSearchParams(window.location.hash.split('?')[1]).get('id');
+                const itemId = getItemIdFromUrl();
                 if (!itemId) return;
 
                 // Reset cache when navigating to a new item
@@ -696,18 +702,34 @@ function initializePeopleTags(): void {
                     console.debug(`${logPrefix} New item detected: ${itemId}`);
                 }
 
-                // Skip if already fully processed for this item
-                if (peopleTagsComplete || isProcessing) {
+                // Skip if already fully processed for this item.
+                if (peopleTagsComplete) return;
+                // A batch is already draining: remember that another pass is
+                // owed (a late guest-cast mount, or a navigation to a new item)
+                // and let the settling batch pick it up. Dropping it here is
+                // what starved late sections and left the current page untagged.
+                if (isProcessing) {
+                    rerunRequested = true;
                     return;
                 }
 
-                // Process cast members for this item, then mark complete
-                // after a short delay to allow late-arriving DOM updates.
-                // Capture the itemId so stale completions from previous
-                // navigations don't mark the wrong item as done.
+                // Process cast members for this item, then either drain a
+                // pending rerun or mark complete after a short delay to allow
+                // late-arriving DOM updates. Capture the itemId so stale
+                // completions from previous navigations don't mark the wrong
+                // item as done.
                 const processingItemId = itemId;
                 void processCastMembers().then(() => {
                     if (!isCurrent()) return;
+                    // A rerun was requested while this batch ran (guest cards
+                    // mounted, or the URL moved to a new item). Drain it now
+                    // instead of scheduling completion, so both sections and
+                    // the current page are always tagged.
+                    if (rerunRequested) {
+                        rerunRequested = false;
+                        runPeopleTags();
+                        return;
+                    }
                     schedule(() => {
                         if (isCurrent() && lastProcessedItemId === processingItemId) {
                             peopleTagsComplete = true;
@@ -741,7 +763,7 @@ function initializePeopleTags(): void {
                 // Reset completion flag when navigating to a different item
                 // (must happen BEFORE the peopleTagsComplete check)
                 try {
-                    const currentId = new URLSearchParams(window.location.hash.split('?')[1]).get('id');
+                    const currentId = getItemIdFromUrl();
                     if (currentId && currentId !== lastProcessedItemId) {
                         peopleTagsComplete = false;
                     }
