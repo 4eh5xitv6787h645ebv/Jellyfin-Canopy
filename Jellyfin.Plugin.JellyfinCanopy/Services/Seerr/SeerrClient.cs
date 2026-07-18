@@ -1880,17 +1880,34 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                                 return new ObjectResult(new { code = "no_issue_permission", message = "You do not have permission to report issues in Seerr." }) { StatusCode = 403 };
                         }
 
-                        // GET /api/v1/issue — view issues list (any of: ?query, exact, /id)
-                        // The /api/v1/issue/{id} path was previously not gated by this
-                        // check.— non-admin without VIEW_ISSUES could
-                        // fetch any issue by id by guessing.
-                        if (method == HttpMethod.Get && (requireIssueViewPermission
-                            || apiPath.StartsWith("/api/v1/issue?", StringComparison.OrdinalIgnoreCase)
+                        // GET media detail carries an UNFILTERED issue relation
+                        // (every reporter's issue for the title), so it keeps the
+                        // stricter see-others gate: only VIEW_ISSUES / MANAGE_ISSUES
+                        // may consume that relation.
+                        if (method == HttpMethod.Get && requireIssueViewPermission)
+                        {
+                            if (!SeerrPermissionHelper.HasAnyPermission(perms,
+                                SeerrPermission.VIEW_ISSUES | SeerrPermission.MANAGE_ISSUES))
+                                return new ObjectResult(new { code = "no_issue_view_permission", message = "You do not have permission to view issues in Seerr." }) { StatusCode = 403 };
+                        }
+
+                        // GET /api/v1/issue — issue list (any of: ?query, exact) and
+                        // /api/v1/issue/{id} detail. Seerr enforces per-issue
+                        // ownership on these routes (issue.ts: a caller without
+                        // VIEW_ISSUES/MANAGE_ISSUES is scoped to createdBy = self on
+                        // the list and 403'd on a foreign detail). So a CREATE_ISSUES
+                        // reporter may reach them to read THEIR OWN issues; admitting
+                        // them here does not become a global view because Seerr still
+                        // filters/denies by owner. The /api/v1/issue/{id} path was
+                        // previously not gated, so a non-admin could fetch any issue
+                        // by guessing its id — the mask below still closes that.
+                        else if (method == HttpMethod.Get && (
+                            apiPath.StartsWith("/api/v1/issue?", StringComparison.OrdinalIgnoreCase)
                             || apiPath.StartsWith("/api/v1/issue/", StringComparison.OrdinalIgnoreCase)
                             || string.Equals(apiPath, "/api/v1/issue", StringComparison.OrdinalIgnoreCase)))
                         {
                             if (!SeerrPermissionHelper.HasAnyPermission(perms,
-                                SeerrPermission.VIEW_ISSUES | SeerrPermission.MANAGE_ISSUES))
+                                SeerrPermission.CREATE_ISSUES | SeerrPermission.VIEW_ISSUES | SeerrPermission.MANAGE_ISSUES))
                                 return new ObjectResult(new { code = "no_issue_view_permission", message = "You do not have permission to view issues in Seerr." }) { StatusCode = 403 };
                         }
 

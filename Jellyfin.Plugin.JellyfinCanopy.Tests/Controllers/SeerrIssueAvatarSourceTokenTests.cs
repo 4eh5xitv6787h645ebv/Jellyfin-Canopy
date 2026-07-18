@@ -335,15 +335,165 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
         }
 
         [Fact]
-        public async Task TargetedIssueEndpoint_RequiresIssueViewPermissionBeforeDetailDispatch()
+        public async Task TargetedIssueEndpoint_NoIssuePermissionRejectedBeforeAnyDispatch()
         {
+            // REQUEST_MOVIE only — a real permission, none of the issue bits.
             var seerr = new IssueSeerrClient(new SeerrUser
             {
                 Id = 42,
-                Permissions = SeerrPermission.CREATE_ISSUES,
+                Permissions = SeerrPermission.REQUEST_MOVIE,
                 SourceUrl = Source,
             });
             var controller = CreateController(seerr, new PassthroughParentalFilter());
+
+            var result = Assert.IsType<ObjectResult>(await controller.GetSeerrIssues(
+                tmdbId: 42,
+                mediaType: "movie"));
+
+            Assert.Equal(403, result.StatusCode);
+            Assert.Contains("no_issue_view_permission", JsonSerializer.Serialize(result.Value), StringComparison.Ordinal);
+            Assert.Equal(string.Empty, seerr.LastApiPath);
+            Assert.Equal(0, seerr.FreshDetailReads);
+        }
+
+        [Fact]
+        public async Task TargetedIssueEndpoint_CreateOnlyReaderReadsOwnIssuesViaOwnershipScopedListNotMediaDetail()
+        {
+            // The create-refresh case: a CREATE_ISSUES-only reporter opens their
+            // just-created issue. Seerr returns their OWN issues (ownership already
+            // enforced); the requested title is projected and the unrelated owned
+            // title is excluded — without ever touching the unfiltered media detail.
+            var owned = OwnedListBody(2,
+                (7, 42, "movie", 1),
+                (8, 99, "movie", 1));
+            var seerr = new IssueSeerrClient(CreateOnlyUser(), owned);
+            var controller = CreateController(seerr, new PassthroughParentalFilter());
+
+            var result = Assert.IsType<ContentResult>(await controller.GetSeerrIssues(
+                tmdbId: 42,
+                mediaType: "movie",
+                filter: "all"));
+            var body = JsonNode.Parse(result.Content!)!.AsObject();
+            var rows = body["results"]!.AsArray();
+
+            Assert.Single(rows);
+            Assert.Equal(7, (int)rows[0]!["id"]!);
+            Assert.Equal(1, (int)body["pageInfo"]!["results"]!);
+            Assert.True((bool)body["jellyfinCanopyPagination"]!["totalExact"]!);
+            Assert.Equal(0, seerr.FreshDetailReads);
+            Assert.Contains("/api/v1/issue?", seerr.LastApiPath, StringComparison.Ordinal);
+            Assert.Contains("createdBy=42", seerr.LastApiPath, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public async Task TargetedIssueEndpoint_CreateOnlyEmptyOwnedListPublishesAnExactEmptyTitle()
+        {
+            var seerr = new IssueSeerrClient(CreateOnlyUser(), OwnedListBody(0));
+            var controller = CreateController(seerr, new PassthroughParentalFilter());
+
+            var result = Assert.IsType<ContentResult>(await controller.GetSeerrIssues(
+                tmdbId: 42,
+                mediaType: "movie"));
+            var body = JsonNode.Parse(result.Content!)!.AsObject();
+
+            Assert.Empty(body["results"]!.AsArray());
+            Assert.Equal(0, (int)body["pageInfo"]!["results"]!);
+            Assert.Equal(0, seerr.FreshDetailReads);
+        }
+
+        [Fact]
+        public async Task TargetedIssueEndpoint_CreateOnlyIncompletePageFailsClosedNotFalseEmpty()
+        {
+            // pageInfo.results (total) disagrees with the returned page length: the
+            // complete owned set was not seen, so the title projection is unsafe.
+            var owned = @"{ ""pageInfo"": { ""pages"": 2, ""pageSize"": 1000, ""results"": 2, ""page"": 1 },
+                ""results"": [{
+                    ""id"": 7, ""status"": 1,
+                    ""createdAt"": ""2026-01-01T00:00:00Z"", ""updatedAt"": ""2026-01-01T00:00:00Z"",
+                    ""media"": { ""tmdbId"": 42, ""mediaType"": ""movie"" }
+                }] }";
+            var seerr = new IssueSeerrClient(CreateOnlyUser(), owned);
+            var controller = CreateController(seerr, new PassthroughParentalFilter());
+
+            var result = Assert.IsType<ObjectResult>(await controller.GetSeerrIssues(
+                tmdbId: 42,
+                mediaType: "movie"));
+
+            Assert.Equal(502, result.StatusCode);
+            Assert.Contains("issue_relation_incomplete", JsonSerializer.Serialize(result.Value), StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public async Task TargetedIssueEndpoint_CreateOnlyOwnedListBeyondHardBoundFailsClosed()
+        {
+            var results = new JsonArray();
+            for (var id = 1; id <= 1001; id++)
+            {
+                results.Add(new JsonObject
+                {
+                    ["id"] = id,
+                    ["status"] = 1,
+                    ["createdAt"] = "2026-01-01T00:00:00Z",
+                    ["updatedAt"] = "2026-01-01T00:00:00Z",
+                    ["media"] = new JsonObject { ["tmdbId"] = 42, ["mediaType"] = "movie" },
+                });
+            }
+            var owned = new JsonObject
+            {
+                ["pageInfo"] = new JsonObject { ["results"] = 1001, ["page"] = 1 },
+                ["results"] = results,
+            }.ToJsonString();
+            var seerr = new IssueSeerrClient(CreateOnlyUser(), owned);
+            var controller = CreateController(seerr, new PassthroughParentalFilter());
+
+            var result = Assert.IsType<ObjectResult>(await controller.GetSeerrIssues(
+                tmdbId: 42,
+                mediaType: "movie",
+                take: 1000));
+
+            Assert.Equal(502, result.StatusCode);
+            Assert.Contains("issue_relation_incomplete", JsonSerializer.Serialize(result.Value), StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public async Task TargetedIssueEndpoint_CreateOnlyMalformedOwnedRowFailsClosed()
+        {
+            var owned = @"{ ""pageInfo"": { ""results"": 1, ""page"": 1 },
+                ""results"": [{
+                    ""id"": 7, ""status"": 1,
+                    ""createdAt"": ""2026-01-01T00:00:00Z"", ""updatedAt"": ""2026-01-01T00:00:00Z""
+                }] }";
+            var seerr = new IssueSeerrClient(CreateOnlyUser(), owned);
+            var controller = CreateController(seerr, new PassthroughParentalFilter());
+
+            var result = Assert.IsType<ObjectResult>(await controller.GetSeerrIssues(
+                tmdbId: 42,
+                mediaType: "movie"));
+
+            Assert.Equal(502, result.StatusCode);
+            Assert.Contains("issue_relation_incomplete", JsonSerializer.Serialize(result.Value), StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public async Task TargetedIssueEndpoint_CreateOnlyPreservesUpstreamFailureWithoutFalseEmpty()
+        {
+            var upstream = new ObjectResult(new { error = true, code = "seerr_unavailable" }) { StatusCode = 503 };
+            var seerr = new IssueSeerrClient(CreateOnlyUser(), resultOverride: upstream);
+            var controller = CreateController(seerr, new PassthroughParentalFilter());
+
+            var result = await controller.GetSeerrIssues(tmdbId: 42, mediaType: "movie");
+
+            Assert.Same(upstream, result);
+            Assert.Equal(0, seerr.FreshDetailReads);
+            Assert.Contains("/api/v1/issue?", seerr.LastApiPath, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public async Task TargetedIssueEndpoint_CreateOnlyBlockedTitleNeverDispatches()
+        {
+            var seerr = new IssueSeerrClient(CreateOnlyUser(), OwnedListBody(0));
+            var parental = new PassthroughParentalFilter { BlockTarget = true };
+            var controller = CreateController(seerr, parental);
 
             var result = Assert.IsType<ObjectResult>(await controller.GetSeerrIssues(
                 tmdbId: 42,
@@ -359,6 +509,53 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             Permissions = SeerrPermission.VIEW_ISSUES,
             SourceUrl = Source,
         };
+
+        private static SeerrUser CreateOnlyUser() => new()
+        {
+            Id = 42,
+            Permissions = SeerrPermission.CREATE_ISSUES,
+            SourceUrl = Source,
+        };
+
+        // Shapes Seerr's ownership-scoped /api/v1/issue list response: each row is
+        // an owned issue carrying its media identity, exactly as Seerr returns for
+        // a createdBy = self query.
+        private static string OwnedListBody(int total, params (int Id, int TmdbId, string MediaType, int Status)[] rows)
+        {
+            var results = new JsonArray();
+            foreach (var (id, tmdbId, mediaType, status) in rows)
+            {
+                results.Add(new JsonObject
+                {
+                    ["id"] = id,
+                    ["status"] = status,
+                    ["createdAt"] = "2026-01-01T00:00:00Z",
+                    ["updatedAt"] = "2026-01-01T00:00:00Z",
+                    ["media"] = new JsonObject
+                    {
+                        ["tmdbId"] = tmdbId,
+                        ["mediaType"] = mediaType,
+                    },
+                    ["createdBy"] = new JsonObject
+                    {
+                        ["username"] = "reporter",
+                        ["avatar"] = "/avatar/reporter.png",
+                    },
+                });
+            }
+
+            return new JsonObject
+            {
+                ["pageInfo"] = new JsonObject
+                {
+                    ["pages"] = 1,
+                    ["pageSize"] = 1000,
+                    ["results"] = total,
+                    ["page"] = 1,
+                },
+                ["results"] = results,
+            }.ToJsonString();
+        }
 
         private static string DetailBody(int ownerId, int tmdbId, string mediaType, JsonArray issues)
             => new JsonObject
