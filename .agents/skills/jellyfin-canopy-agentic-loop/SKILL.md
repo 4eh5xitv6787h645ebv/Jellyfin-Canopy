@@ -97,14 +97,21 @@ Workflow({
 To keep a run from burning all of Claude's budget, the loop deliberately spreads
 models by role:
 
-- **~50/50 Claude / `gpt-5.6-sol` — the whole way, except two roles.** With
+- **Weighted Claude / `gpt-5.6-sol` split — the whole way, except two roles.** With
   `modelSplit: true`, explore, plan (incl. synthesis), the review lenses, and the
-  review's finding-verification alternate roughly half-and-half between Claude and
-  `gpt-5.6-sol`. Under `solVia: "codex-cli"` (default) the Sol slots run through a
-  generalized `codex` harness (`gpt-5.6-sol`, `solLightEffort` = medium for
-  explore/plan/verify-findings, high for review); under `solVia: "agent"` they use
-  the subagent model param via a router. Any Sol slot that can't be routed **falls
-  back to Claude**, so no slot is lost.
+  review's finding-verification are spread across Claude and `gpt-5.6-sol`:
+  - **Explore** runs 8 explorers (standard/deep depth); the first 2 on Claude/Opus
+    and the remaining 6 on `gpt-5.6-sol` (override with `exploreClaudeCount`).
+  - **Explore + plan** (incl. synthesis) run their Sol slots at **`xhigh`** reasoning
+    effort (`solExplorePlanEffort`, default `xhigh`); plan keeps a ~50/50 split.
+  - **Review** runs the mixed panel (Claude lenses + `gpt-5.6-sol`) for the first
+    `roundCap` rounds (standard = 4); if still not clean it CONTINUES with
+    `gpt-5.6-sol` as the ONLY reviewer up to `hardRoundCap` (default 10). Review Sol
+    stays at `solEffort` (high).
+  Under `solVia: "codex-cli"` (default) the Sol slots run through a generalized
+  `codex` harness; under `solVia: "agent"` they use the subagent model param via a
+  router. Any Sol slot that can't be routed **falls back to Claude**, so no slot is
+  lost (even in a gpt-only round).
 - **Implementation (excepted)** — the single writer runs on **Fable (high)**,
   falling back to **Opus (high)** if Fable is exhausted/unavailable. Never split
   mid-change, never gpt.

@@ -57,11 +57,16 @@ const COMMIT_RULE =
   (ISSUE_REF ? `, and INCLUDE the issue number ${ISSUE_REF} in each commit subject (end the subject with " (${ISSUE_REF})")` : '') +
   '.'
 
+// roundCap here is the MIXED-panel review cap (Claude lenses + gpt-5.6-sol). If
+// the loop still isn't clean after it, review CONTINUES with gpt-5.6-sol as the
+// ONLY reviewer up to HARD_ROUND_CAP (see the review loop). explorers is the
+// TOTAL explorer count; the first EXPLORE_CLAUDE_COUNT run on Claude/Opus and the
+// rest on gpt-5.6-sol (see exploreSol).
 const SIZING = {
   quick: { explorers: 2, planners: 2, roundCap: 2, verifyFixCap: 1 },
-  standard: { explorers: 4, planners: 3, roundCap: 3, verifyFixCap: 2 },
-  deep: { explorers: 6, planners: 3, roundCap: 4, verifyFixCap: 3 },
-}[DEPTH] || { explorers: 4, planners: 3, roundCap: 3, verifyFixCap: 2 }
+  standard: { explorers: 8, planners: 3, roundCap: 4, verifyFixCap: 2 },
+  deep: { explorers: 8, planners: 3, roundCap: 4, verifyFixCap: 3 },
+}[DEPTH] || { explorers: 8, planners: 3, roundCap: 4, verifyFixCap: 2 }
 
 // Review lenses (see references/adversarial-review.md). Docs surface uses a
 // narrower set; everything else gets the full standing panel.
@@ -145,10 +150,24 @@ const MODEL_SPLIT = a.modelSplit !== false
 const SOL_AGENT_OK = SOL_VIA === 'agent'
 const solSlot = (i) => MODEL_SPLIT && i % 2 === 1 // odd indices → Sol (~50/50)
 
+// Explorers are weighted toward gpt-5.6-sol (user policy): the first
+// EXPLORE_CLAUDE_COUNT explorers run on Claude/Opus, every remaining explorer on
+// Sol. With the standard 8 explorers that is 2 Opus + 6 Sol. Override the Opus
+// count with args.exploreClaudeCount.
+const EXPLORE_CLAUDE_COUNT = a.exploreClaudeCount == null ? 2 : Math.max(0, a.exploreClaudeCount)
+const exploreSol = (i) => MODEL_SPLIT && i >= EXPLORE_CLAUDE_COUNT
+// The hard review-round ceiling: after the mixed roundCap, gpt-5.6-sol-only
+// review rounds continue up to here (user policy). Override with args.hardRoundCap.
+const HARD_ROUND_CAP = Math.max(1, a.hardRoundCap == null ? 10 : a.hardRoundCap)
+
 // Effort for the non-review Sol phases (explore/plan/finding-verification). High
 // codex effort × many calls gets very slow, so these default to medium; the
 // review round keeps SOL_EFFORT (high). Override with args.solLightEffort.
 const SOL_LIGHT_EFFORT = a.solLightEffort || 'medium'
+// The EXPLORE and PLAN phases run their gpt-5.6-sol slots at a HIGHER reasoning
+// effort than the review rounds (user policy): default xhigh. Review Sol stays at
+// SOL_EFFORT. Override with args.solExplorePlanEffort.
+const SOL_EXPLORE_PLAN_EFFORT = a.solExplorePlanEffort || 'xhigh'
 // Effort for the LOCALIZE phase — mechanical translation busywork kept cheap/fast
 // (gpt or opus on low, inheriting the session model). Override with args.localizeEffort.
 const LOCALIZE_EFFORT = a.localizeEffort || 'low'
@@ -224,13 +243,17 @@ ${prompt}
 // param ('agent' route) or the codex CLI ('codex-cli') — else Claude. Any Sol
 // failure (unroutable / null / throw) FALLS BACK to Claude so the slot is never
 // lost. opts carries schema/agentType/effort/phase/label.
-async function splitAgent(i, prompt, opts) {
-  if (solSlot(i)) {
+// ctl (optional): { slot?: (i)=>bool overrides solSlot for this call; solEffort?:
+// gpt-5.6-sol reasoning effort for the 'agent' route (default SOL_EFFORT);
+// solLightEffort?: codex-cli effort (default SOL_LIGHT_EFFORT) }.
+async function splitAgent(i, prompt, opts, ctl) {
+  const useSol = ctl && typeof ctl.slot === 'function' ? ctl.slot(i) : solSlot(i)
+  if (useSol) {
     try {
       let r = null
-      if (SOL_AGENT_OK) r = await agent(prompt, { ...opts, model: SOL_MODEL, effort: SOL_EFFORT })
+      if (SOL_AGENT_OK) r = await agent(prompt, { ...opts, model: SOL_MODEL, effort: (ctl && ctl.solEffort) || SOL_EFFORT })
       else if (opts && opts.schema)
-        r = await codexAgent(prompt, opts.schema, { effort: SOL_LIGHT_EFFORT, phase: opts.phase, label: (opts.label || '') + ':sol' })
+        r = await codexAgent(prompt, opts.schema, { effort: (ctl && ctl.solLightEffort) || SOL_LIGHT_EFFORT, phase: opts.phase, label: (opts.label || '') + ':sol' })
       if (r != null) return r
     } catch (_) {
       /* Sol failed → Claude fallback below */
@@ -240,13 +263,13 @@ async function splitAgent(i, prompt, opts) {
 }
 // A singleton read-only step we offload to Sol (plan synthesis) to spare Claude
 // tokens; falls back to Claude when Sol isn't routable/available.
-async function soloSolAgent(prompt, opts) {
+async function soloSolAgent(prompt, opts, solEffort) {
   if (MODEL_SPLIT) {
     try {
       let r = null
-      if (SOL_AGENT_OK) r = await agent(prompt, { ...opts, model: SOL_MODEL, effort: SOL_EFFORT })
+      if (SOL_AGENT_OK) r = await agent(prompt, { ...opts, model: SOL_MODEL, effort: solEffort || SOL_EFFORT })
       else if (opts && opts.schema)
-        r = await codexAgent(prompt, opts.schema, { effort: SOL_LIGHT_EFFORT, phase: opts.phase, label: (opts.label || '') + ':sol' })
+        r = await codexAgent(prompt, opts.schema, { effort: solEffort || SOL_LIGHT_EFFORT, phase: opts.phase, label: (opts.label || '') + ':sol' })
       if (r != null) return r
     } catch (_) {
       /* fall through to Claude */
@@ -465,6 +488,8 @@ const exploreAngles = [
   'the CONTRACTS at risk (auth/isolation/escaping/disposal/bounded-work/live-config) and the TEST SEAMS',
   'the CLIENT surface: MUI + legacy layouts, native markup, locale keys, docs impacted',
   'the SERVER surface: controllers/services/scheduled tasks, .NET tests, generated artifacts',
+  'the DATA/STATE/CONCURRENCY surface: persistence, caches, revisions, invalidation, and the races the change can introduce',
+  'the PERFORMANCE/BOUNDS surface: allocations, N+1 / manager-call counts, unbounded work, and the measurable budgets to assert',
 ].slice(0, SIZING.explorers)
 
 const explorations = (
@@ -483,7 +508,8 @@ Also, while reading, note (do NOT fix, do NOT scope-creep) any UNRELATED
 pre-existing bug you notice in the code you traverse — a genuine defect outside
 this task — in incidentalBugs with a title, severity, area, and file:line
 evidence. Only real defects; leave it empty if you see none.`,
-        { schema: EXPLORE_SCHEMA, agentType: 'Explore', effort: 'medium', phase: 'Explore', label: `explore:${i + 1}${solSlot(i) && SOL_AGENT_OK ? ':sol' : ''}` }
+        { schema: EXPLORE_SCHEMA, agentType: 'Explore', effort: 'medium', phase: 'Explore', label: `explore:${i + 1}${exploreSol(i) && SOL_AGENT_OK ? ':sol' : ''}` },
+        { slot: exploreSol, solEffort: SOL_EXPLORE_PLAN_EFFORT }
       )
     )
   )
@@ -519,7 +545,8 @@ model (and explicitly what NOT to add — no speculative flag/retry/lock/observe
 polling/migration), the failing-first tests (admin AND non-admin, negative/
 fallback, concurrency/cache invalidation where relevant), and the locale keys +
 docs to update.`,
-        { schema: PLAN_SCHEMA, effort: 'high', phase: 'Plan', label: `plan:${i + 1}${solSlot(i) && SOL_AGENT_OK ? ':sol' : ''}` }
+        { schema: PLAN_SCHEMA, effort: 'high', phase: 'Plan', label: `plan:${i + 1}${solSlot(i) && SOL_AGENT_OK ? ':sol' : ''}` },
+        { solEffort: SOL_EXPLORE_PLAN_EFFORT }
       )
     )
   )
@@ -543,7 +570,8 @@ best ideas from the others. Reject scope creep and any avoidable new state.
 Output ONE canonical plan (matching the schema fields only) the implementer will
 follow exactly — it MUST address the real defect and every acceptance criterion,
 and add the least while reusing the most.`,
-      { schema: PLAN_SCHEMA, effort: 'high', phase: 'Plan', label: 'plan:synthesis' }
+      { schema: PLAN_SCHEMA, effort: 'high', phase: 'Plan', label: 'plan:synthesis' },
+      SOL_EXPLORE_PLAN_EFFORT
     ),
   plans[0] || null,
   'Plan synthesis'
@@ -726,18 +754,31 @@ let cleanRound = false
 // Set only when a round TERMINATES the loop with incomplete coverage — a reviewer
 // or a finding-verifier failed to return — so we never certify such a round clean.
 let reviewIncomplete = false
+const MIXED_ROUND_CAP = SIZING.roundCap
 let round = 0
-while (round < SIZING.roundCap && !cleanRound) {
+while (round < HARD_ROUND_CAP && !cleanRound) {
   round++
+
+  // Rounds 1..MIXED_ROUND_CAP run the mixed panel (Claude lenses + gpt-5.6-sol).
+  // If still not clean after that, review CONTINUES with gpt-5.6-sol as the ONLY
+  // reviewer (user policy) for every remaining round up to HARD_ROUND_CAP: all
+  // lenses run on Sol plus the whole-diff Sol reviewer(s), no Claude lens
+  // reviewers. (A Sol slot still falls back to Claude for its scope ONLY if Sol
+  // can't be routed at all — fail closed so no lens is left unreviewed.)
+  const gptOnly = round > MIXED_ROUND_CAP
 
   // Split the lenses ~50/50 across models when modelSplit is on (Sol takes the
   // odd slots, lens-scoped) and ALWAYS add ≥1 whole-diff Sol reviewer so the
   // documented "≥1 gpt-5.6-sol whole-diff reviewer per round" contract holds even
   // under the split. With modelSplit off: all Claude lenses + the whole-diff Sol
-  // reviewers. Either way ≥1 Claude and ≥1 whole-diff Sol reviewer run, and every
-  // Sol slot falls back to Claude for its scope if Sol can't be routed.
+  // reviewers. In a gpt-only round every lens runs on Sol.
   let roundThunks
-  if (MODEL_SPLIT) {
+  if (gptOnly) {
+    roundThunks = [
+      ...LENSES.map((lens, i) => solThunk(round, i, lens)),
+      ...Array.from({ length: Math.max(1, SOL_REVIEWERS) }, (_, i) => solThunk(round, LENSES.length + i)),
+    ]
+  } else if (MODEL_SPLIT) {
     roundThunks = [
       ...LENSES.map((lens, i) => (solSlot(i) ? solThunk(round, i, lens) : () => claudeReview(round, i, lens))),
       ...Array.from({ length: Math.max(1, SOL_REVIEWERS) }, (_, i) => solThunk(round, LENSES.length + i)),
@@ -748,9 +789,9 @@ while (round < SIZING.roundCap && !cleanRound) {
       ...Array.from({ length: Math.max(1, SOL_REVIEWERS) }, (_, i) => solThunk(round, LENSES.length + i)),
     ]
   }
-  const claudeLensCount = MODEL_SPLIT ? LENSES.filter((_, i) => !solSlot(i)).length : LENSES.length
+  const claudeLensCount = gptOnly ? 0 : (MODEL_SPLIT ? LENSES.filter((_, i) => !solSlot(i)).length : LENSES.length)
   const solCount = roundThunks.length - claudeLensCount
-  log(`Review round ${round}/${SIZING.roundCap} — ${claudeLensCount} Claude lens + ${solCount}× ${SOL_MODEL} (${SOL_VIA}, ${SOL_EFFORT})${MODEL_SPLIT ? ' [50/50 + whole-diff]' : ''}`)
+  log(`Review round ${round}/${HARD_ROUND_CAP}${gptOnly ? ' [gpt-only]' : ''} — ${claudeLensCount} Claude lens + ${solCount}× ${SOL_MODEL} (${SOL_VIA}, ${SOL_EFFORT})${MODEL_SPLIT && !gptOnly ? ' [50/50 + whole-diff]' : ''}`)
 
   const results = await parallel(roundThunks)
   const failedWorkers = results.filter((r) => r == null).length
@@ -783,7 +824,11 @@ real=false when uncertain — only real=true if it genuinely reproduces or truly
 violates a repository contract on a reachable path.
 FINDING (${f.lens || '?'}) ${f.file}:${f.line || '?'} — ${f.summary}
 SCENARIO: ${f.failureScenario}`,
-        { schema: VERDICT_SCHEMA, agentType: 'code-reviewer', effort: 'medium', phase: 'Review', label: `verify-r${round}:${i + 1}` }
+        { schema: VERDICT_SCHEMA, agentType: 'code-reviewer', effort: 'medium', phase: 'Review', label: `verify-r${round}:${i + 1}` },
+        // In a gpt-only round, finding-verification runs on Sol too (gpt is the
+        // sole reviewer once past the mixed cap); Sol still falls back to Claude
+        // per finding if unroutable. The code-writing fixer stays Claude/Opus.
+        gptOnly ? { slot: () => MODEL_SPLIT } : undefined
       )
     )
   )
@@ -842,7 +887,7 @@ if (!cleanRound)
   log(
     reviewIncomplete
       ? `Review: ended without a certified-clean round — coverage incomplete (reviewer/verifier failure); will report as residual risk`
-      : `Review: hit round cap (${SIZING.roundCap}) with unresolved findings — will report as residual risk`
+      : `Review: hit round cap (${HARD_ROUND_CAP}) with unresolved findings — will report as residual risk`
   )
 
 // ═══════════════════════════════════════════════════════════════════════════
