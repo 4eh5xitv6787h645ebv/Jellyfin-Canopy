@@ -56,6 +56,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         private readonly ILiveSessionRegistry _liveSessionRegistry;
         private readonly ISeerrCache _seerrCache;
         private readonly WatchlistMonitor _watchlistMonitor;
+        private readonly AutoMovieRequestMonitor _autoMovieRequestMonitor;
+        private readonly AutoSeasonRequestMonitor _autoSeasonRequestMonitor;
         private readonly ILogger<LiveNotifierService> _logger;
 
         private BasePlugin<PluginConfiguration>? _plugin;
@@ -67,6 +69,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             ILiveSessionRegistry liveSessionRegistry,
             ISeerrCache seerrCache,
             WatchlistMonitor watchlistMonitor,
+            AutoMovieRequestMonitor autoMovieRequestMonitor,
+            AutoSeasonRequestMonitor autoSeasonRequestMonitor,
             ILogger<LiveNotifierService> logger)
         {
             _pluginManager = pluginManager;
@@ -74,6 +78,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             _liveSessionRegistry = liveSessionRegistry;
             _seerrCache = seerrCache;
             _watchlistMonitor = watchlistMonitor;
+            _autoMovieRequestMonitor = autoMovieRequestMonitor;
+            _autoSeasonRequestMonitor = autoSeasonRequestMonitor;
             _logger = logger;
         }
 
@@ -132,9 +138,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         /// </summary>
         internal async Task HandleConfigurationChangedAsync(CancellationToken cancellationToken)
         {
+            // Reconcile monitor subscriptions + invalidate cached Seerr state BEFORE
+            // the first await, so the fire-and-forget ConfigurationChanged callback
+            // applies subscription ownership synchronously and cannot be delayed by
+            // session push I/O.
             foreach (var failure in SeerrIntegrationPolicy.InvalidateCachedActiveState(
                 _seerrCache,
-                _watchlistMonitor))
+                _watchlistMonitor,
+                _autoMovieRequestMonitor,
+                _autoSeasonRequestMonitor))
             {
                 _logger.LogWarning(
                     failure.Error,
