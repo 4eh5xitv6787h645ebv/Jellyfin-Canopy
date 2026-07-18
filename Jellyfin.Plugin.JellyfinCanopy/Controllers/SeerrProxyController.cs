@@ -1543,11 +1543,20 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             }
 
             var seerrUser = resolution.User!;
-            if (!caller.IsAdmin
-                && !SeerrPermissionHelper.HasPermission(seerrUser.Permissions, SeerrPermission.ADMIN)
-                && !SeerrPermissionHelper.HasAnyPermission(
+
+            // A caller allowed to see OTHERS' issues (Jellyfin admin, Seerr ADMIN,
+            // or VIEW_ISSUES/MANAGE_ISSUES) may consume Seerr's unfiltered relations.
+            // A CREATE_ISSUES-only reporter is admitted too, but only ever reads
+            // their OWN issues through Seerr's ownership-enforced list/detail routes.
+            var canViewOthersIssues = caller.IsAdmin
+                || SeerrPermissionHelper.HasPermission(seerrUser.Permissions, SeerrPermission.ADMIN)
+                || SeerrPermissionHelper.HasAnyPermission(
                     seerrUser.Permissions,
-                    SeerrPermission.VIEW_ISSUES | SeerrPermission.MANAGE_ISSUES))
+                    SeerrPermission.VIEW_ISSUES | SeerrPermission.MANAGE_ISSUES);
+            if (!canViewOthersIssues
+                && !SeerrPermissionHelper.HasPermission(
+                    seerrUser.Permissions,
+                    SeerrPermission.CREATE_ISSUES))
             {
                 return StatusCode(403, new
                 {
@@ -1636,6 +1645,113 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 });
             }
 
+            // A CREATE_ISSUES-only reporter must NOT consume the media detail's
+            // unfiltered issue relation (that would expose other reporters' issues).
+            // Read their OWN issues through Seerr's ownership-enforced list route,
+            // scoped to createdBy = their pinned id, then project just this title.
+            // Seerr stays the ownership authority: it filters the list to the caller
+            // and 403s a foreign createdBy, so admitting them here is not a global
+            // view. The projection is exact only if the caller's complete owned set
+            // fit in one bounded page; anything else fails closed, never false-empty.
+            if (!canViewOthersIssues)
+            {
+                var ownedPath = "/api/v1/issue?"
+                    + $"createdBy={pinnedUser.Id}"
+                    + $"&take={MaximumTitleIssueRows}"
+                    + "&skip=0"
+                    + $"&filter={Uri.EscapeDataString(filterValue)}"
+                    + $"&sort={Uri.EscapeDataString(sortValue)}";
+                var ownedResult = await _seerr.ProxyRequestAsync(
+                    ownedPath,
+                    HttpMethod.Get,
+                    null,
+                    caller,
+                    pinnedUser,
+                    HttpContext.RequestAborted).ConfigureAwait(false);
+                if (!IsConfigurationCurrent())
+                {
+                    return ConfigurationChanged();
+                }
+
+                if (ownedResult is not ContentResult ownedContent
+                    || ownedContent.StatusCode is < 200 or >= 300
+                    || string.IsNullOrWhiteSpace(ownedContent.Content))
+                {
+                    return ownedResult;
+                }
+
+                JsonObject? ownedList;
+                try
+                {
+                    ownedList = JsonNode.Parse(ownedContent.Content) as JsonObject;
+                }
+                catch (JsonException ex)
+                {
+                    _logger.LogWarning(ex, "Seerr owned-issue list was not valid JSON; no issue projection was published.");
+                    return InvalidIssueRelation();
+                }
+
+                if (ownedList == null
+                    || ownedList["pageInfo"] is not JsonObject ownedPageInfo
+                    || !TryReadInt(ownedPageInfo["results"], out var ownedTotal)
+                    || ownedTotal < 0
+                    || ownedTotal > MaximumTitleIssueRows
+                    || ownedList["results"] is not JsonArray ownedResults
+                    || ownedResults.Count != ownedTotal)
+                {
+                    return InvalidIssueRelation();
+                }
+
+                var ownedSeenIds = new HashSet<int>();
+                var ownedRows = new List<(JsonObject Row, int Id, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt)>();
+                foreach (var node in ownedResults)
+                {
+                    if (node is not JsonObject row
+                        || !TryReadPositiveInt(row["id"], out var issueId)
+                        || !ownedSeenIds.Add(issueId)
+                        || !TryReadInt(row["status"], out var status)
+                        || status is not (1 or 2)
+                        || !TryReadTimestamp(row["createdAt"], out var createdAt)
+                        || !TryReadTimestamp(row["updatedAt"], out var updatedAt)
+                        || row["media"] is not JsonObject rowMedia
+                        || !TryReadPositiveInt(rowMedia["tmdbId"], out var rowTmdbId)
+                        || string.IsNullOrWhiteSpace((string?)rowMedia["mediaType"]))
+                    {
+                        return InvalidIssueRelation();
+                    }
+
+                    // Project only the requested title. Seerr already scoped
+                    // ownership; this is a title filter, not an ownership decision.
+                    if (rowTmdbId != tmdbId.Value
+                        || !string.Equals(
+                            (string?)rowMedia["mediaType"],
+                            normalizedMediaType,
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    if ((filterValue == "open" && status != 1)
+                        || (filterValue == "resolved" && status != 2))
+                    {
+                        continue;
+                    }
+
+                    ownedRows.Add((row, issueId, createdAt, updatedAt));
+                }
+
+                var ownedProjection = OrderAndPublishTitleRows(
+                    ownedRows,
+                    sortValue,
+                    take,
+                    skip,
+                    apiKey,
+                    caller.JellyfinUserId,
+                    configuredSource);
+                BeforeIssueProjectionPublishForTest?.Invoke();
+                return IsConfigurationCurrent() ? ownedProjection : ConfigurationChanged();
+            }
+
             var detailResult = await _seerr.ProxyFreshMediaDetailAsync(
                 tmdbId.Value,
                 normalizedMediaType!,
@@ -1717,12 +1833,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 rows.Add((row, issueId, createdAt, updatedAt));
             }
 
-            var orderedRows = sortValue == "modified"
-                ? rows.OrderByDescending(row => row.UpdatedAt).ThenByDescending(row => row.Id)
-                : rows.OrderByDescending(row => row.CreatedAt).ThenByDescending(row => row.Id);
-            var matchingRows = orderedRows.Select(row => row.Row).ToArray();
-            var projected = BuildExactTitleIssueResult(
-                matchingRows,
+            var projected = OrderAndPublishTitleRows(
+                rows,
+                sortValue,
                 take,
                 skip,
                 apiKey,
@@ -1737,6 +1850,33 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 code = "issue_relation_incomplete",
                 message = "Seerr did not return a complete title issue relation. No partial result was published."
             });
+        }
+
+        // Orders the validated, title-matched issue rows exactly as the client
+        // contract expects and hands them to the exact-title pagination and
+        // avatar-decoration builder. Shared by the media-detail relation path
+        // (VIEW_ISSUES/MANAGE_ISSUES/admin) and the ownership-scoped owned-issue
+        // list path (CREATE_ISSUES-only) so both publish an identical contract.
+        private IActionResult OrderAndPublishTitleRows(
+            List<(JsonObject Row, int Id, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt)> rows,
+            string sortValue,
+            int take,
+            int skip,
+            string apiKey,
+            string callerId,
+            string configuredSource)
+        {
+            var orderedRows = sortValue == "modified"
+                ? rows.OrderByDescending(row => row.UpdatedAt).ThenByDescending(row => row.Id)
+                : rows.OrderByDescending(row => row.CreatedAt).ThenByDescending(row => row.Id);
+            var matchingRows = orderedRows.Select(row => row.Row).ToArray();
+            return BuildExactTitleIssueResult(
+                matchingRows,
+                take,
+                skip,
+                apiKey,
+                callerId,
+                configuredSource);
         }
 
         private IActionResult BuildExactTitleIssueResult(
