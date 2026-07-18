@@ -69,6 +69,53 @@ const JC = JEBase as typeof JEBase & {
  */
 export const PEOPLE_TAGS_CONCURRENCY = 6;
 
+/**
+ * PERF(#359) GLOBAL request budget. The per-batch worker pool caps concurrency
+ * WITHIN one generation, but a same-identity reinitialization (a supported
+ * settings restart) starts a fresh pool while the retired generation's requests
+ * are still in flight — teardown retires those workers but cannot cancel a
+ * request already handed to the core API, so two per-generation pools would run
+ * up to 2× the cap concurrently. This module-level semaphore is the SINGLE
+ * owner of the /person concurrency budget: every worker of every generation
+ * acquires a permit before issuing a request and releases it when the request
+ * settles, so People Tags never exceeds PEOPLE_TAGS_CONCURRENCY globally.
+ */
+interface Semaphore {
+    acquire(): Promise<void>;
+    release(): void;
+    reset(): void;
+}
+
+function createSemaphore(maxPermits: number): Semaphore {
+    let available = maxPermits;
+    let waiters: Array<() => void> = [];
+    return {
+        acquire(): Promise<void> {
+            if (available > 0) {
+                available -= 1;
+                return Promise.resolve();
+            }
+            return new Promise<void>((resolve) => { waiters.push(resolve); });
+        },
+        release(): void {
+            const next = waiters.shift();
+            if (next) next();
+            // Never let a late release from a retired/aborted generation push
+            // the budget above its ceiling (which would admit >cap later).
+            else if (available < maxPermits) available += 1;
+        },
+        reset(): void {
+            // Only on a true identity reset: a new user's budget starts fresh.
+            // A stale in-flight release afterwards is bounded by the ceiling
+            // clamp above, so it can never over-credit.
+            available = maxPermits;
+            waiters = [];
+        },
+    };
+}
+
+const peopleTagsRequestGate = createSemaphore(PEOPLE_TAGS_CONCURRENCY);
+
 let activePeopleTagsCleanup: ((clearPersistent: boolean) => void) | null = null;
 
 /**
@@ -94,6 +141,10 @@ function teardownPeopleTags(clearPersistent: boolean): void {
 
 export function resetPeopleTagsIdentity(): void {
     teardownPeopleTags(true);
+    // A different Jellyfin identity starts with a fresh concurrency budget.
+    // (A same-identity settings restart goes through initializePeopleTags and
+    // must NOT reset the gate — its retired requests still hold their permits.)
+    peopleTagsRequestGate.reset();
     removeCss('jc-people-tags-styles');
 }
 
@@ -336,15 +387,18 @@ function initializePeopleTags(): void {
      * the hot cache per person but no longer serializes the WHOLE persistent
      * map per person (that was O(N^2) main-thread JSON work across a cast).
      * `cacheChanged` tells the batch owner (processCastMembers) that one
-     * settled-batch flush is required.
+     * settled-batch flush is required. `failed` distinguishes a TRANSIENT
+     * backend/network error (retryable — the id must NOT be finalized) from a
+     * genuine empty response (definitive — safe to finalize); only the fetch
+     * itself is gated by the global request budget so cache hits stay free.
      * @param personId
      * @param itemId (optional, for calculating age at release)
      */
     async function getPersonInfo(
         personId: string,
         itemId: string | null = null,
-    ): Promise<{ data: PersonData | null; cacheChanged: boolean }> {
-        if (!isCurrent()) return { data: null, cacheChanged: false };
+    ): Promise<{ data: PersonData | null; cacheChanged: boolean; failed: boolean }> {
+        if (!isCurrent()) return { data: null, cacheChanged: false, failed: false };
         const cacheKey = itemId ? `${personId}-${itemId}` : personId;
         const now = Date.now();
 
@@ -352,28 +406,33 @@ function initializePeopleTags(): void {
         if (hotPeopleTags.has(cacheKey)) {
             const cached = hotPeopleTags.get(cacheKey)!;
             if (isCurrent() && now - cached.timestamp < CACHE_TTL) {
-                return { data: cached.data, cacheChanged: false };
+                return { data: cached.data, cacheChanged: false, failed: false };
             }
         }
 
         // Check localStorage cache
         if (peopleCache[cacheKey] && peopleCacheTimestamp[cacheKey]) {
             if (now - peopleCacheTimestamp[cacheKey] < CACHE_TTL) {
-                if (!isCurrent()) return { data: null, cacheChanged: false };
+                if (!isCurrent()) return { data: null, cacheChanged: false, failed: false };
                 const data = JC.identity.own(peopleCache[cacheKey], context);
                 peopleCache[cacheKey] = data;
                 hotPeopleTags.set(cacheKey, { data, timestamp: now });
-                return { data, cacheChanged: false };
+                return { data, cacheChanged: false, failed: false };
             }
         }
 
-        // Fetch from backend
+        // Fetch from backend under the GLOBAL request budget so the total
+        // number of concurrent /person calls across all generations stays
+        // within PEOPLE_TAGS_CONCURRENCY. Only the network round-trip holds a
+        // permit; the finally guarantees the permit is returned even when the
+        // batch has been retired mid-flight.
+        await peopleTagsRequestGate.acquire();
         try {
             const queryString = itemId ? `?itemId=${encodeURIComponent(itemId)}` : '';
             const data = await JC.core.api.plugin(`/person/${encodeURIComponent(personId)}${queryString}`, {
                 cacheKey: `people-tags:${cacheKey}`,
             });
-            if (!isCurrent()) return { data: null, cacheChanged: false };
+            if (!isCurrent()) return { data: null, cacheChanged: false, failed: false };
 
             if (isPersonData(data)) {
                 // Cache it (hot + in-memory now; persisted once per settled batch)
@@ -382,13 +441,18 @@ function initializePeopleTags(): void {
                 peopleCacheTimestamp[cacheKey] = now;
                 hotPeopleTags.set(cacheKey, { data: ownedData, timestamp: now });
 
-                return { data: ownedData, cacheChanged: true };
+                return { data: ownedData, cacheChanged: true, failed: false };
             }
+            // Well-formed but empty/non-person response: genuine no-data.
+            return { data: null, cacheChanged: false, failed: false };
         } catch (error) {
             if (isCurrent()) console.warn(`${logPrefix} Failed to fetch person info for ${personId}:`, error);
+            // Transient failure — leave the id un-finalized so a later pass can
+            // recover it once the backend is healthy.
+            return { data: null, cacheChanged: false, failed: true };
+        } finally {
+            peopleTagsRequestGate.release();
         }
-
-        return { data: null, cacheChanged: false };
     }
 
     /**
@@ -602,9 +666,10 @@ function initializePeopleTags(): void {
          * Whether the person id may be finalized in `processedPersonIds`. True
          * once a definitive attempt reached a LIVE card under the current batch
          * (rendered, or the person genuinely had no data). False when the
-         * result was DROPPED because the target card disconnected or the page
-         * moved on — releasing the id so a remembered rerun requeues the
-         * replacement card instead of skipping it forever.
+         * result was DROPPED because the target card disconnected, the page
+         * moved on, OR the fetch failed transiently — releasing the id so a
+         * remembered rerun (or a replacement card) re-attempts it instead of
+         * skipping it forever.
          */
         committed: boolean;
     }
@@ -622,8 +687,12 @@ function initializePeopleTags(): void {
     ): Promise<PersonCardOutcome> {
         const { card, personId } = task;
         try {
-            const { data: personData, cacheChanged } = await getPersonInfo(personId, currentItemId);
+            const { data: personData, cacheChanged, failed } = await getPersonInfo(personId, currentItemId);
             if (!batchIsCurrent() || !card.isConnected) return { cacheChanged, committed: false };
+            // A transient fetch failure is NOT a definitive no-data result:
+            // release the id (committed:false) so a remembered rerun or a
+            // replacement card re-attempts it once the backend recovers.
+            if (failed) return { cacheChanged, committed: false };
             if (!personData) return { cacheChanged, committed: true };
 
             // Apply deceased styling to poster if applicable
@@ -805,8 +874,13 @@ function initializePeopleTags(): void {
                         // owed. A completion timer scheduled by an earlier batch
                         // must not fire while a newer batch drains (or a rerun
                         // is pending) — doing so wedges the peopleTagsComplete
-                        // gate and starves cards that mount mid-batch.
+                        // gate and starves cards that mount mid-batch. A pending
+                        // debounce (a freshly observed cast/guest update not yet
+                        // dispatched) counts as owed work too: completing over it
+                        // would make that queued run return early and leave the
+                        // newly mounted section untagged.
                         if (isCurrent() && !isProcessing && !rerunRequested
+                            && debounceTimer === null
                             && lastProcessedItemId === processingItemId) {
                             peopleTagsComplete = true;
                         }

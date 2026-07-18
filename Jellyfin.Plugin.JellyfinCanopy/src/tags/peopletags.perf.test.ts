@@ -648,13 +648,15 @@ describe('people tags bounded-concurrency batch (BI-PERF-137)', () => {
         expect(cardFor('person-t2').querySelector('.jc-people-age-container')).not.toBeNull();
     });
 
-    it('AC1/AC5: a same-identity reinitialization retires the old pool (cap held) and cannot overwrite the new cache', async () => {
+    it('AC1/AC5: a same-identity reinitialization never exceeds the GLOBAL request cap and cannot overwrite the new cache', async () => {
         // Start a 12-person batch on item A (6 in flight), then trigger the
-        // supported same-user reinitialization and process item B. The retired
-        // A pool must claim no further /person work (so global concurrency
-        // stays within the cap) and its late-settling, teardown-emptied cache
-        // map must not overwrite B's freshly persisted entries.
-        const { plugin, pending } = instrumentedPlugin();
+        // supported same-user reinitialization and process item B while A's
+        // requests are still open. The concurrency cap is GLOBAL across
+        // generations: B's requests must be held behind A's six in-flight
+        // permits (total in flight never exceeds the cap), the retired A pool
+        // must claim no further /person work, and its late-settling,
+        // teardown-emptied cache map must not overwrite B's persisted entries.
+        const { plugin, pending, inFlightNow, maxInFlight } = instrumentedPlugin();
         JC.core.api = { plugin } as unknown as typeof JC.core.api;
         const castA = Array.from({ length: 12 }, (_, index) => `person-a-${index}`);
         mountCastPage('item-reinit-a', castA);
@@ -662,6 +664,7 @@ describe('people tags bounded-concurrency batch (BI-PERF-137)', () => {
         await startProcessing();
         const aInFlight = plugin.mock.calls.filter((call) => String(call[0]).includes('/person/person-a-')).length;
         expect(aInFlight).toBe(CONCURRENCY_CAP); // 6 of 12 claimed, rest queued
+        expect(inFlightNow()).toBe(CONCURRENCY_CAP);
 
         // Same-identity reinitialization (e.g. a settings restart): a new
         // initializer + observer takes over.
@@ -670,27 +673,35 @@ describe('people tags bounded-concurrency batch (BI-PERF-137)', () => {
         fireObserver(observerCallbacks[observerCallbacks.length - 1]);
         await vi.advanceTimersByTimeAsync(100);
 
-        // Settle B first (it persists), then the retired A batch late.
-        for (const request of pending.filter((req) => req.path.includes('person-b'))) {
-            request.resolve({ currentAge: 20 });
-        }
-        await vi.advanceTimersByTimeAsync(5);
-        const persistedAfterB = JSON.parse(localStorage.getItem(CACHE_KEY)!) as Record<string, unknown>;
+        // GLOBAL cap: A still owns all six permits, so the new pool's B
+        // requests have NOT been issued yet and total in-flight is still six.
+        expect(plugin.mock.calls.every((call) => String(call[0]).includes('/person/person-a-'))).toBe(true);
+        expect(inFlightNow()).toBe(CONCURRENCY_CAP);
+        expect(maxInFlight()).toBeLessThanOrEqual(CONCURRENCY_CAP);
 
+        // Settle A's six in-flight requests. The retired A workers exit without
+        // claiming A's remaining six, and the freed permits admit B's requests.
         for (const request of pending.filter((req) => req.path.includes('person-a'))) {
             request.resolve({ currentAge: 99 });
         }
         await vi.advanceTimersByTimeAsync(5);
 
-        // The retired A pool never claimed beyond its 6 in-flight requests.
+        // Now B's two requests have been admitted; settle them.
+        for (const request of pending.filter((req) => req.path.includes('person-b'))) {
+            request.resolve({ currentAge: 20 });
+        }
+        await vi.advanceTimersByTimeAsync(5);
+
+        // The global cap was honored across the whole reinitialization…
+        expect(maxInFlight()).toBeLessThanOrEqual(CONCURRENCY_CAP);
+        // …the retired A pool never claimed beyond its six in-flight requests…
         const aCalls = plugin.mock.calls.filter((call) => String(call[0]).includes('/person/person-a-'));
         expect(aCalls).toHaveLength(CONCURRENCY_CAP);
-        // B's cast was fetched and tagged under the new pool.
+        // …B's cast was fetched and tagged under the new pool…
         expect(cardFor('person-b-0').querySelector('.jc-people-age-container')).not.toBeNull();
         expect(cardFor('person-b-1').querySelector('.jc-people-age-container')).not.toBeNull();
-        // The late A settle did not overwrite B's persisted cache.
+        // …and the retired A generation's stale data never reached the cache.
         const persistedFinal = JSON.parse(localStorage.getItem(CACHE_KEY)!) as Record<string, unknown>;
-        expect(Object.keys(persistedFinal).sort()).toEqual(Object.keys(persistedAfterB).sort());
         expect(Object.keys(persistedFinal)).toEqual(
             ['person-b-0-item-reinit-b', 'person-b-1-item-reinit-b'],
         );
@@ -724,5 +735,75 @@ describe('people tags bounded-concurrency batch (BI-PERF-137)', () => {
         expect(Object.keys(persisted)).toContain('person-f0-item-agg');
         expect(Object.keys(persisted)).toContain('person-hit-item-agg');
         expect(document.querySelectorAll('.jc-people-age-container')).toHaveLength(7);
+    });
+
+    it('AC3: a transient fetch failure does not finalize the id — a later pass re-fetches and tags', async () => {
+        // Fail-open contract: when /person rejects (backend/TMDB blip) the id
+        // must NOT be finalized in processedPersonIds. If it were, a later pass
+        // after the backend recovers — or a card re-render — would skip it and
+        // its overlays would be absent until a full item-state reset. The first
+        // attempt is deferred (rejected); a later attempt resolves with data.
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        seedOwnedCache({});
+        const attempts = new Map<string, number>();
+        const { plugin, pending } = instrumentedPlugin((path) => {
+            const n = (attempts.get(path) ?? 0) + 1;
+            attempts.set(path, n);
+            return n === 1 ? undefined : { currentAge: 40, birthPlace: 'Perth, Australia' };
+        });
+        JC.core.api = { plugin } as unknown as typeof JC.core.api;
+        const castIds = ['person-retry-a', 'person-retry-b'];
+        mountCastPage('item-retry', castIds);
+
+        await startProcessing();
+        // Fail every in-flight first attempt (a transient backend outage).
+        for (const request of pending.splice(0, pending.length)) {
+            request.reject(new Error('backend down'));
+        }
+        await vi.advanceTimersByTimeAsync(5);
+        expect(document.querySelectorAll('.jc-people-age-container')).toHaveLength(0);
+
+        // The backend recovers and the cast re-renders (fresh elements, same
+        // ids) on the SAME item. Because the ids were released, not finalized,
+        // the replacement cards re-fetch and tag.
+        document.querySelector('#castCollapsible')!.innerHTML = castIds.map(personCardHtml).join('');
+        fireObserver(observerCallbacks[observerCallbacks.length - 1]);
+        await vi.advanceTimersByTimeAsync(100);
+        await vi.advanceTimersByTimeAsync(5);
+
+        for (const id of castIds) {
+            expect(cardFor(id).querySelector('.jc-people-age-container')).not.toBeNull();
+        }
+        // Two failed first attempts + two successful re-fetches.
+        expect(plugin).toHaveBeenCalledTimes(4);
+    });
+
+    it('AC4: a completion timer does not preempt a guest section still queued in the debounce', async () => {
+        // Batch 1 (cast) settles and arms its ~2s completion timer. Just before
+        // it fires, a guest section mounts and the observer queues a debounced
+        // run (not yet dispatched). The completion timer must treat that pending
+        // debounce as owed work and NOT mark the page complete — otherwise the
+        // queued run returns early at the peopleTagsComplete gate and the guest
+        // section is never fetched or tagged (AC4 violation).
+        const { plugin } = instrumentedPlugin(() => ({ currentAge: 30 }));
+        JC.core.api = { plugin } as unknown as typeof JC.core.api;
+        mountCastPage('item-debounce', ['person-cast-0']);
+
+        await startProcessing();
+        expect(cardFor('person-cast-0').querySelector('.jc-people-age-container')).not.toBeNull();
+
+        // Advance to just before the completion deadline, then mount the guest
+        // section and queue its debounce (fires ~100ms later, AFTER completion).
+        await vi.advanceTimersByTimeAsync(1950);
+        document.querySelector('#guestCastCollapsible')!.innerHTML = personCardHtml('person-guest-0');
+        fireObserver(observerCallbacks[observerCallbacks.length - 1]);
+
+        // Cross the completion timer (fires first — must skip while the debounce
+        // is pending) then the debounce (fires next — tags the guest section).
+        await vi.advanceTimersByTimeAsync(300);
+        await vi.advanceTimersByTimeAsync(5);
+
+        expect(cardFor('person-guest-0').querySelector('.jc-people-age-container')).not.toBeNull();
+        expect(plugin).toHaveBeenCalledTimes(2); // cast + guest, each fetched once
     });
 });
