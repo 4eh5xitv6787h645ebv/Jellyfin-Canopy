@@ -63,9 +63,11 @@ describe('bookmarks duplicate merge modal', () => {
 
   beforeEach(() => {
     document.body.innerHTML = '';
-    context = JC.identity.transition('server-a', 'user-a', 'merge-modal-test')!;
+    const transitioned = JC.identity.transition('server-a', 'user-a', 'merge-modal-test');
+    if (!transitioned) throw new Error('expected an identity context for the merge-modal test');
+    context = transitioned;
     JC.t = (key: string) => key === 'bookmark_merge_success' ? 'merged {count} new' : key;
-    JC.userConfig = { bookmark: { bookmarks: {} } } as any;
+    JC.userConfig = { bookmark: { bookmarks: {} } };
     syncBookmarks = vi.fn().mockResolvedValue([]);
     JC.bookmarks = { syncBookmarks } as any;
     vi.spyOn(window, 'confirm').mockReturnValue(true);
@@ -99,7 +101,7 @@ describe('bookmarks duplicate merge modal', () => {
     const roles = () => [...modal.querySelectorAll<HTMLElement>('.jc-merge-version')]
       .map(version => [
         version.dataset.versionItemId,
-        version.querySelector('.jc-merge-version-role')!.textContent!.trim()
+        version.querySelector('.jc-merge-version-role')?.textContent?.trim() ?? ''
       ]);
 
     expect(roles()).toEqual([
