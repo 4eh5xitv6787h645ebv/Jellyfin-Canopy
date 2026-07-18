@@ -9,6 +9,7 @@
 // closure and are reached through the frozen JC.bookmarks facade, so each test
 // configures the globals then imports the module fresh.
 import { afterEach, describe, expect, it, beforeEach, vi } from 'vitest';
+import { findDuplicateBookmarks } from './library-modals';
 
 // This test deliberately manipulates the untyped window.JellyfinCanopy global
 // and its mock surface, so the no-unsafe-* family is disabled file-wide (as the
@@ -403,6 +404,9 @@ describe('bookmarks data-safety', () => {
             expect(JC.userConfig.bookmark.bookmarks.src1).toBeUndefined();
             expect(targetRows()).toHaveLength(1);
             expect(updated).toHaveBeenCalledTimes(1);
+            // The MOVE disposition leaves only the target item's rows, so the
+            // duplicate finder can no longer re-derive the merged relationship.
+            expect(findDuplicateBookmarks(JC.userConfig.bookmark.bookmarks)).toEqual([]);
             const callsAfterFirst = plugin.mock.calls.length;
 
             const replay = await api.syncBookmarks(staleInput, target, 0, ['src1']);
