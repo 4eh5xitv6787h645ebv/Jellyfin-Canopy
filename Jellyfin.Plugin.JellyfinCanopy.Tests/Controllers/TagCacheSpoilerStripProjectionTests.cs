@@ -96,22 +96,89 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             Assert.Equal(3_000, harness.UserData.GetUserDataBatchItemCount);
             Assert.Equal(0, harness.UserData.GetUserDataCallCount);
 
-            // A second identical request reuses every cached (user, season)
-            // aggregate: no walk and no user-data batch at all.
+            // A second request recomputes each season exactly once again — the
+            // aggregate is REQUEST-scoped, never cached across requests, so the
+            // served decision stays byte-identical to recompute-every-request (a
+            // cross-request cache could keep an exempt season's metadata after a
+            // journal-invisible library deletion). Still exactly one walk PER
+            // season PER response: 30 more walks and one more batch, not N+1.
             Harness.Payload(harness.Controller.GetTagCache(harness.User.Id));
-            Assert.Equal(30, harness.TotalSeasonWalks);
+            Assert.Equal(60, harness.TotalSeasonWalks);
+            Assert.All(harness.SeasonWalkCounts.Values, static walks => Assert.Equal(2, walks));
+            Assert.Equal(2, harness.UserData.GetUserDataBatchCallCount);
+            Assert.Equal(2, harness.Library.GetItemListCallCount);
+        }
+
+        [Fact]
+        public void CollectionScopedMovies_ResolveMembershipInBoundedCalls_NotPerMovie()
+        {
+            using var harness = new Harness();
+            const int movieCount = 500;
+            var movieIds = new Guid[movieCount];
+            var keys = new List<string>(movieCount);
+            for (var i = 0; i < movieCount; i++)
+            {
+                // Guarded ONLY through the collection (never a direct opt-in) —
+                // exactly the finding's scenario.
+                var key = harness.SeedMovie(played: false);
+                keys.Add(key);
+                movieIds[i] = Guid.ParseExact(key, "N");
+            }
+
+            var collectionId = harness.SeedCollection(movieIds);
+            harness.SeedAccess(keys);
+            var state = new UserSpoilerBlur();
+            state.Collections[collectionId.ToString("N")] = new SpoilerBlurCollectionEntry
+            {
+                CollectionId = collectionId.ToString("N"),
+            };
+            harness.SaveSpoilerState(state);
+
+            var previousLibraryManager = BaseItem.LibraryManager;
+            BaseItem.LibraryManager = harness.Library;
+            try
+            {
+                var payload = Harness.Payload(harness.Controller.GetTagCache(harness.User.Id));
+                Assert.Equal(movieCount, payload.GetProperty("count").GetInt32());
+                // Every movie is unwatched AND in the opted-in collection → all stripped.
+                foreach (var key in keys)
+                {
+                    Assert.Empty(payload.GetProperty("items").GetProperty(key)
+                        .GetProperty("Genres").EnumerateArray());
+                }
+            }
+            finally
+            {
+                BaseItem.LibraryManager = previousLibraryManager;
+            }
+
+            // One deduplicated user-data batch, as for direct opt-ins.
             Assert.Equal(1, harness.UserData.GetUserDataBatchCallCount);
+            // The opted-in collection is resolved and its linked children walked
+            // EXACTLY ONCE for the whole request: the projection's own movie batch
+            // plus a SINGLE collection-membership walk (GetLinkedChildren resolves
+            // its children through one GetItemList). The former per-movie path ran
+            // FindOptedInCollectionForMovie for every returned movie — one
+            // GetItemById(collection) + one GetLinkedChildren walk EACH — i.e.
+            // ≈ movieCount GetItemList calls and ≈ movieCount scalar collection
+            // resolves. These bounded constants are what excludes that O(movies ×
+            // collection) behaviour.
+            Assert.Equal(2, harness.Library.GetItemListCallCount);
+            Assert.True(
+                harness.NonGenericGetItemByIdCallCount <= 4,
+                $"collection membership used {harness.NonGenericGetItemByIdCallCount} scalar collection "
+                    + $"resolves for {movieCount} movies; expected ≈ opted-in-collection count (1), "
+                    + "NOT one per movie.");
         }
 
         // ── AC2: season aggregate computed at most once per relevant revision ──
 
         [Fact]
-        public void SeasonAggregate_ReusedAcrossStabilizationPassesAndAcrossRequestsAtSameRevision()
+        public void SeasonAggregate_ReusedAcrossStabilizationPassesWithinOneResponse()
         {
             using var harness = new Harness();
             var seriesId = Guid.NewGuid();
             var seasonKey = harness.SeedGuardedSeason(seriesId, seasonNumber: 2, episodeCount: 5);
-            var seasonId = Guid.ParseExact(seasonKey, "N");
             harness.SeedAccess(new[] { seasonKey });
             harness.SaveSpoilerState(Harness.StateWithSeries(seriesId));
 
@@ -133,33 +200,73 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
 
             var full = Harness.Payload(harness.Controller.GetTagCache(harness.User.Id));
             Assert.False(full.GetProperty("reset").GetBoolean());
-            // Two strips ran (revision advanced mid-request), but the episode
-            // enumeration executed exactly once — the aggregate was reused.
+            // Two strips ran (revision advanced mid-request via an UNRELATED item),
+            // but the season enumeration executed exactly once — the request-scoped
+            // memo was reused across the stabilization pass because the delta did
+            // not name this season (InvalidateChangedSeasons left it intact).
             Assert.Equal(1, harness.TotalSeasonWalks);
             Assert.Equal(1, harness.Library.GetItemListCallCount);
+        }
 
-            // A content delta returning the same Season at the same projection
-            // revision reuses the aggregate across requests: still one walk total.
-            harness.OnSeasonWalk = null;
-            harness.Cache.PublishUpsertForTest(seasonKey, harness.Cache.GetEntryForTest(seasonKey)!.Clone());
-            var delta = Harness.Payload(harness.Controller.GetTagCache(
-                harness.User.Id,
-                contentEpoch: full.GetProperty("contentEpoch").GetString(),
-                contentRevision: full.GetProperty("contentRevision").GetInt64(),
-                projectionEpoch: full.GetProperty("projectionEpoch").GetString(),
-                projectionRevision: full.GetProperty("projectionRevision").GetInt64()));
-            Assert.False(delta.GetProperty("reset").GetBoolean());
-            Assert.True(delta.GetProperty("items").TryGetProperty(seasonKey, out _));
+        [Fact]
+        public void SeasonAggregate_IsRequestScoped_RecomputedOncePerResponse_ByteIdentical()
+        {
+            using var harness = new Harness();
+            var seriesId = Guid.NewGuid();
+            var seasonKey = harness.SeedGuardedSeason(seriesId, seasonNumber: 2, episodeCount: 5, watchedEpisodes: 1);
+            harness.SeedAccess(new[] { seasonKey });
+            harness.SaveSpoilerState(Harness.StateWithSeries(seriesId));
+
+            // First response: one walk. A cross-request cache is deliberately NOT
+            // kept (it could not stay byte-identical to recompute-every-request
+            // across journal-invisible library changes), so each subsequent request
+            // walks the season again — but still AT MOST ONCE per response.
+            Harness.Payload(harness.Controller.GetTagCache(harness.User.Id));
             Assert.Equal(1, harness.TotalSeasonWalks);
 
-            // An episode change IN that season invalidates the aggregate: the next
-            // request recomputes exactly once at the new relevant revision.
-            harness.UserData.RaiseUserDataSaved(
-                harness.User.Id,
-                new StubEpisode { Id = Guid.NewGuid(), SeasonId = seasonId, SeriesId = seriesId },
-                MediaBrowser.Model.Entities.UserDataSaveReason.TogglePlayed);
             Harness.Payload(harness.Controller.GetTagCache(harness.User.Id));
             Assert.Equal(2, harness.TotalSeasonWalks);
+
+            Harness.Payload(harness.Controller.GetTagCache(harness.User.Id));
+            Assert.Equal(3, harness.TotalSeasonWalks);
+            // One season → exactly one walk on every response, never 2-3× (which a
+            // per-pass clear without a request memo would have caused).
+            Assert.All(harness.SeasonWalkCounts.Values, walks => Assert.Equal(3, walks));
+        }
+
+        [Fact]
+        public void SeasonAggregate_DeltaNamingTheSeason_RewalksOnlyThatSeasonNextPass()
+        {
+            using var harness = new Harness();
+            var seriesId = Guid.NewGuid();
+            var changedKey = harness.SeedGuardedSeason(seriesId, seasonNumber: 2, episodeCount: 5);
+            var changedId = Guid.ParseExact(changedKey, "N");
+            var untouchedKey = harness.SeedGuardedSeason(seriesId, seasonNumber: 3, episodeCount: 5);
+            harness.SeedAccess(new[] { changedKey, untouchedKey });
+            harness.SaveSpoilerState(Harness.StateWithSeries(seriesId));
+
+            // During the first pass's walk, toggle an episode IN the S2 season so
+            // the new delta names S2 (and its series) but not S3.
+            var raised = false;
+            harness.OnSeasonWalk = _ =>
+            {
+                if (!raised)
+                {
+                    raised = true;
+                    harness.UserData.RaiseUserDataSaved(
+                        harness.User.Id,
+                        new StubEpisode { Id = Guid.NewGuid(), SeasonId = changedId, SeriesId = seriesId },
+                        MediaBrowser.Model.Entities.UserDataSaveReason.TogglePlayed);
+                }
+            };
+
+            var full = Harness.Payload(harness.Controller.GetTagCache(harness.User.Id));
+            Assert.False(full.GetProperty("reset").GetBoolean());
+            // S2 is evicted by the delta and re-walked on pass 2; S3 is untouched
+            // and reused. So S2 walked twice, S3 once — targeted, not a global
+            // re-walk of every season each pass.
+            Assert.Equal(2, harness.SeasonWalkCounts[changedId]);
+            Assert.Equal(1, harness.SeasonWalkCounts[Guid.ParseExact(untouchedKey, "N")]);
         }
 
         // ── AC3: explicit call/allocation/time budgets at 15k scale ────────────
@@ -492,6 +599,47 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             Assert.Equal(0, harness.UserData.GetUserDataBatchCallCount);
         }
 
+        [Fact]
+        public void OperationCanceledFromItemBatch_IsNeverSwallowedIntoAStripSuccess()
+        {
+            using var harness = new Harness();
+            var seriesId = Guid.NewGuid();
+            var keys = new List<string> { harness.SeedGuardedEpisode(seriesId, played: false) };
+            harness.SeedAccess(keys);
+            harness.SaveSpoilerState(Harness.StateWithSeries(seriesId));
+
+            // The item batch itself throws OperationCanceledException (e.g. the
+            // manager observed the token). The general catch (Exception) on that
+            // path memoizes misses → strip; the OCE rethrow must win instead, or a
+            // fully-stripped 200 would be served on a cancelled request (AC6).
+            harness.Library.GetItemListHook = query =>
+                (query.ItemIds != null && query.ItemIds.Length > 0)
+                    ? throw new OperationCanceledException()
+                    : new List<BaseItem>();
+
+            Assert.Throws<OperationCanceledException>(
+                () => harness.Controller.GetTagCache(harness.User.Id));
+        }
+
+        [Fact]
+        public void OperationCanceledFromUserDataBatch_IsNeverSwallowedIntoAStripSuccess()
+        {
+            using var harness = new Harness();
+            var seriesId = Guid.NewGuid();
+            var keys = new List<string> { harness.SeedGuardedEpisode(seriesId, played: false) };
+            harness.SeedAccess(keys);
+            harness.SaveSpoilerState(Harness.StateWithSeries(seriesId));
+
+            // The user-data batch throws OperationCanceledException. The general
+            // catch (Exception) on that path sets userData=null → every entry
+            // resolves unwatched → strip; the OCE rethrow must win instead so the
+            // cancel propagates rather than serving a fully-stripped 200 (AC6).
+            harness.UserData.GetUserDataBatchHook = (_, _) => throw new OperationCanceledException();
+
+            Assert.Throws<OperationCanceledException>(
+                () => harness.Controller.GetTagCache(harness.User.Id));
+        }
+
         // ── Harness ────────────────────────────────────────────────────────────
 
         private sealed class Harness : IDisposable
@@ -516,7 +664,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                     .Where(static item => item != null)
                     .Select(static item => item!)
                     .ToList();
-                Library.GetItemByIdNonGenericHook = id => LiveItems.TryGetValue(id, out var item) ? item : null;
+                Library.GetItemByIdNonGenericHook = id =>
+                {
+                    // Counts BOTH the collection resolve in BuildOptedInCollectionMembers
+                    // AND every LinkedChild resolution inside BoxSet.GetLinkedChildren,
+                    // so a per-movie collection walk (O(movies × collection)) is
+                    // distinguishable from the batched one-walk-per-collection path.
+                    NonGenericGetItemByIdCallCount++;
+                    return LiveItems.TryGetValue(id, out var item) ? item : null;
+                };
                 Library.GetItemByIdUserHook = (id, _) => LiveItems.TryGetValue(id, out var item) ? item : null;
                 UserData = new StubUserDataManager
                 {
@@ -633,6 +789,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             public HashSet<Guid> ProbeFailureSeasons { get; } = new();
 
             public Dictionary<Guid, int> SeasonWalkCounts { get; } = new();
+
+            public int NonGenericGetItemByIdCallCount { get; set; }
 
             public List<Guid> GuardedMovieIds { get; } = new();
 
