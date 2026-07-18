@@ -112,9 +112,26 @@ public class SeerrCacheTests
             null!,
             NullLogger<WatchlistMonitor>.Instance,
             provider);
+        // Disabled auto monitors with null event sources: reconciliation must not
+        // dereference session-manager events when no subscription exists or is desired.
+        var autoMovie = new AutoMovieRequestMonitor(
+            null!,
+            null!,
+            null!,
+            null!,
+            NullLogger<AutoMovieRequestMonitor>.Instance,
+            provider);
+        var autoSeason = new AutoSeasonRequestMonitor(
+            null!,
+            null!,
+            null!,
+            null!,
+            NullLogger<AutoSeasonRequestMonitor>.Instance,
+            provider);
         var generation = watchlist.ConfigurationGenerationNumber;
 
-        var failures = SeerrIntegrationPolicy.InvalidateCachedActiveState(cache, watchlist);
+        var failures = SeerrIntegrationPolicy.InvalidateCachedActiveState(
+            cache, watchlist, autoMovie, autoSeason);
 
         Assert.Empty(failures);
         Assert.Equal(generation + 1, watchlist.ConfigurationGenerationNumber);

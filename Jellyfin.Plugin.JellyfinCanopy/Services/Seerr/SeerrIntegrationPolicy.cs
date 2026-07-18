@@ -268,16 +268,22 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             => SeerrIntegrationSnapshot.Capture(provider);
 
         /// <summary>
-        /// Invalidates both cache domains that can retain active Seerr state.
-        /// Each owner is attempted independently so a cancellation callback
-        /// failure in the watchlist generation cannot preserve the shared
-        /// response/capability caches (or vice versa).
+        /// Configuration-change fan-out: invalidates every cache domain that can
+        /// retain active Seerr state AND reconciles the background monitors'
+        /// event subscriptions to the new configuration (a feature toggled on
+        /// after startup acquires its subscription without a restart; a toggled-
+        /// off feature releases it). Each owner is attempted independently so a
+        /// cancellation callback failure in the watchlist generation cannot
+        /// preserve the shared response/capability caches (or vice versa), and
+        /// one monitor's failure cannot block the others.
         /// </summary>
         public static IReadOnlyList<(string Owner, Exception Error)> InvalidateCachedActiveState(
             ISeerrCache cache,
-            WatchlistMonitor watchlistMonitor)
+            WatchlistMonitor watchlistMonitor,
+            AutoMovieRequestMonitor autoMovieRequestMonitor,
+            AutoSeasonRequestMonitor autoSeasonRequestMonitor)
         {
-            var failures = new List<(string Owner, Exception Error)>(2);
+            var failures = new List<(string Owner, Exception Error)>(4);
             try
             {
                 watchlistMonitor.NotifyConfigurationChanged();
@@ -285,6 +291,24 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             catch (Exception ex)
             {
                 failures.Add(("watchlist", ex));
+            }
+
+            try
+            {
+                autoMovieRequestMonitor.NotifyConfigurationChanged();
+            }
+            catch (Exception ex)
+            {
+                failures.Add(("auto-movie", ex));
+            }
+
+            try
+            {
+                autoSeasonRequestMonitor.NotifyConfigurationChanged();
+            }
+            catch (Exception ex)
+            {
+                failures.Add(("auto-season", ex));
             }
 
             try

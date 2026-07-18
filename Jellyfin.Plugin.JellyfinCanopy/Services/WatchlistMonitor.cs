@@ -82,35 +82,53 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             return TimeSpan.FromSeconds(30);
         }
 
-        // Initialize and start monitoring library events.
+        // Initialize (and on later calls reconcile) the library-event subscription
+        // against the LIVE configuration. Idempotent by design: it is invoked from
+        // the startup scheduled task (whose dashboard "Run" button can re-run it at
+        // any time) AND from NotifyConfigurationChanged, so the watchlist feature
+        // toggled on after startup acquires its subscription without a restart and
+        // a toggled-off feature releases it. The config is read INSIDE the lock so
+        // a stale concurrent callback cannot apply a pre-lock decision after a
+        // newer admin save.
         public void Initialize()
         {
-            // Only initialize if the watchlist feature is enabled in plugin configuration.
-            var config = _configProvider.ConfigurationOrNull as Configuration.PluginConfiguration;
-            if (config == null)
-            {
-                _logger.LogWarning("[Watchlist] Configuration is null - skipping watchlist monitoring initialization");
-                return;
-            }
-
-            if (!config.AddRequestedMediaToWatchlist
-                || !SeerrIntegrationPolicy.AllowsDeferredScheduling(config))
-            {
-                _logger.LogInformation("[Watchlist] Watchlist monitoring is disabled in configuration - not subscribing to library events");
-                return;
-            }
-
-            // Guard against a second startup-task run double-subscribing (a dashboard "Run" button
-            // always exists). The disabled-feature early-return stays ahead of the lock so re-running
-            // the task after enabling the feature still subscribes.
             lock (_lifecycleLock)
             {
-                if (_disposed || _subscribed) return;
-                _libraryManager.ItemAdded += OnItemAdded;
-                _libraryManager.ItemUpdated += OnItemUpdated;
-                _subscribed = true;
+                // Terminal: plugin disposal must win over any in-flight config callback.
+                if (_disposed) return;
+
+                var config = _configProvider.ConfigurationOrNull;
+                if (config == null && !_subscribed)
+                {
+                    _logger.LogWarning("[Watchlist] Configuration is null - skipping watchlist monitoring initialization");
+                    return;
+                }
+
+                var desiredSubscribed = config != null
+                    && config.AddRequestedMediaToWatchlist
+                    && SeerrIntegrationPolicy.AllowsDeferredScheduling(config);
+                if (desiredSubscribed == _subscribed)
+                {
+                    return;
+                }
+
+                if (desiredSubscribed)
+                {
+                    _libraryManager.ItemAdded += OnItemAdded;
+                    _libraryManager.ItemUpdated += OnItemUpdated;
+                    _subscribed = true;
+                    _logger.LogInformation("[Watchlist] Successfully subscribed to library ItemAdded and ItemUpdated events");
+                }
+                else
+                {
+                    // Feature (or the Seerr master switch) was turned off, or the
+                    // configuration became unavailable: release the subscription.
+                    _libraryManager.ItemAdded -= OnItemAdded;
+                    _libraryManager.ItemUpdated -= OnItemUpdated;
+                    _subscribed = false;
+                    _logger.LogInformation("[Watchlist] Watchlist monitoring is disabled in configuration - unsubscribed from library events");
+                }
             }
-            _logger.LogInformation("[Watchlist] Successfully subscribed to library ItemAdded and ItemUpdated events");
         }
 
         // Handle library item added events to check if they match pending watchlist items.
@@ -258,8 +276,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 _logger.LogError(ex, "[Watchlist] Failed to clear the owned request cache during configuration invalidation.");
             }
 
+            // After the generation fence and cache invalidation, reconcile the
+            // library-event subscription to the new configuration: a feature enabled
+            // after startup acquires its subscription here (without a restart), and a
+            // disabled one releases it. Initialize() is idempotent and disposal-safe.
+            Initialize();
+
             _logger.LogInformation(
-                "[Watchlist] Configuration changed; cancelled the active generation and invalidated queued work and cached Seerr requests.");
+                "[Watchlist] Configuration changed; cancelled the active generation, invalidated queued work and cached Seerr requests, and reconciled the library-event subscription.");
         }
 
         private void CancelWithoutThrow(CancellationTokenSource cancellation, string operation)
