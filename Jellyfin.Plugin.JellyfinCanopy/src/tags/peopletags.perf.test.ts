@@ -36,7 +36,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 interface PendingRequest {
     path: string;
     resolve: (value: unknown) => void;
-    reject: (error: unknown) => void;
+    reject: (error: Error) => void;
 }
 
 /**
