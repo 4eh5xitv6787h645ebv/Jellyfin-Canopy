@@ -20,6 +20,9 @@ import {
 const replacementModalTimers = new Set<number>();
 export const SERIES_ENRICHMENT_CHUNK_SIZE = 50;
 export const SERIES_ENRICHMENT_MAX_URL_LENGTH = 2048;
+const REPLACEMENT_PAGE_SIZE = 500;
+const REPLACEMENT_MAX_PAGES = 1000;
+const REPLACEMENT_MAX_ITEMS = REPLACEMENT_PAGE_SIZE * REPLACEMENT_MAX_PAGES;
 
 /**
  * How many source bookmarks a MOVE-style migration durably relocated: every
@@ -53,7 +56,7 @@ interface BookmarkGroup {
   bookmarks: Array<StoredBookmark & { id: string }>;
 }
 
-interface JellyfinReplacementItem {
+export interface JellyfinReplacementItem {
   Id: string;
   Name: string;
   Type?: string;
@@ -68,6 +71,12 @@ interface JellyfinReplacementItem {
   UserData?: { Key?: string };
 }
 
+export type ReplacementSearchOutcome =
+  | { status: 'match'; items: JellyfinReplacementItem[] }
+  | { status: 'no-match' }
+  | { status: 'failed'; error: unknown }
+  | { status: 'cancelled' };
+
 interface ImageApiClient {
   getImageUrl(itemId: string, options: { type: string; maxWidth: number; tag?: string }): string;
 }
@@ -79,8 +88,57 @@ interface ReplacementResult {
 
 function isJellyfinReplacementItem(value: unknown): value is JellyfinReplacementItem {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
-    && 'Id' in value && typeof value.Id === 'string'
+    && 'Id' in value && typeof value.Id === 'string' && value.Id.length > 0
     && 'Name' in value && typeof value.Name === 'string';
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function incompleteReplacementSearch(message: string): never {
+  const error = new Error(message);
+  error.name = 'IncompleteCollectionError';
+  throw error;
+}
+
+function isAbortError(error: unknown): boolean {
+  return (error as { name?: string } | null)?.name === 'AbortError';
+}
+
+function readReplacementPage(
+  response: unknown,
+  requestedStartIndex: number
+): { items: JellyfinReplacementItem[]; totalRecordCount: number } {
+  if (!isRecord(response)) incompleteReplacementSearch('replacement response was not an object');
+  if (!Array.isArray(response.Items)) {
+    incompleteReplacementSearch('replacement response did not contain an Items array');
+  }
+  if (!Number.isSafeInteger(response.TotalRecordCount) || (response.TotalRecordCount as number) < 0) {
+    incompleteReplacementSearch('replacement response TotalRecordCount was not a non-negative safe integer');
+  }
+  if (Object.prototype.hasOwnProperty.call(response, 'StartIndex')) {
+    if (!Number.isSafeInteger(response.StartIndex) || (response.StartIndex as number) < 0) {
+      incompleteReplacementSearch('replacement response StartIndex was not a non-negative safe integer');
+    }
+    if (response.StartIndex !== requestedStartIndex) {
+      incompleteReplacementSearch(
+        `replacement response StartIndex ${String(response.StartIndex)} did not match requested ${requestedStartIndex}`
+      );
+    }
+  }
+  if (response.Items.length > REPLACEMENT_PAGE_SIZE) {
+    incompleteReplacementSearch(`replacement page exceeded requested size ${REPLACEMENT_PAGE_SIZE}`);
+  }
+
+  const items: JellyfinReplacementItem[] = [];
+  for (const value of response.Items) {
+    if (!isJellyfinReplacementItem(value)) {
+      incompleteReplacementSearch('replacement response contained an invalid item');
+    }
+    items.push(value);
+  }
+  return { items, totalRecordCount: response.TotalRecordCount as number };
 }
 
 function replacementIdentity(item: JellyfinReplacementItem): BookmarkIdentityRecord {
@@ -170,88 +228,138 @@ export function resetBookmarksLibraryReplacementModals(): void {
 }
 
 /**
- * Search Jellyfin for items matching a TMDB/TVDB ID
+ * Search Jellyfin for logical replacements without publishing an incomplete scan.
  */
 export async function searchForReplacementItem(
   bookmark: StoredBookmark,
   context: IdentityContext
-): Promise<JellyfinReplacementItem[] | null> {
-  if (!JC.identity.isCurrent(context)) return null;
+): Promise<ReplacementSearchOutcome> {
+  if (!JC.identity.isCurrent(context)) return { status: 'cancelled' };
   const userId = context.userId;
 
   try {
-    // Search using Jellyfin's provider ID filtering
     const normalizedMediaType = normalizeBookmarkMediaType(bookmark.mediaType);
     const itemTypes = replacementItemTypes(normalizedMediaType);
-
-    // Fetch all items of this type and filter by provider ID client-side
-    // This is more reliable than relying on AnyProviderIdEquals
     const typeFilter = itemTypes ? `&IncludeItemTypes=${itemTypes}` : '';
-    const url = `/Users/${userId}/Items?Recursive=true${typeFilter}&Fields=ProviderIds,Type,SeriesId,ParentIndexNumber,IndexNumber,IndexNumberEnd&SortBy=DateCreated&SortOrder=Descending&Limit=500`;
+    const baseUrl = `/Users/${userId}/Items?Recursive=true${typeFilter}&Fields=ProviderIds,Type,SeriesId,ParentIndexNumber,IndexNumber,IndexNumberEnd&SortBy=DateCreated&SortOrder=Descending`;
+    const seenItemIds = new Set<string>();
+    let startIndex = 0;
+    let rawItemsRead = 0;
+    let pageCount = 0;
+    let expectedTotalRecordCount: number | undefined;
 
-    // Routed through the core fetch layer (auth + JSON parse identical to the
-    // former ApiClient.ajax call; failures still land in the catch below).
-    let response: unknown = await JC.core.api!.jf(url, { skipCache: true });
-    if (!JC.identity.isCurrent(context)) return null;
+    while (pageCount < REPLACEMENT_MAX_PAGES) {
+      if (!JC.identity.isCurrent(context)) return { status: 'cancelled' };
+      const requestedStartIndex = startIndex;
+      const url = `${baseUrl}&Limit=${REPLACEMENT_PAGE_SIZE}&StartIndex=${requestedStartIndex}`;
+      let response: unknown = await JC.core.api!.jf(url, { skipCache: true });
+      if (!JC.identity.isCurrent(context)) return { status: 'cancelled' };
 
-    // Handle if response is a string (shouldn't happen but be safe)
-    if (typeof response === 'string') {
-      response = JSON.parse(response) as unknown;
-      if (!JC.identity.isCurrent(context)) return null;
-    }
-
-    console.log(`🪼 Jellyfin Canopy: Bookmarks Library: API Response:`, response);
-
-    let items = response !== null && typeof response === 'object' && !Array.isArray(response)
-      && 'Items' in response && Array.isArray(response.Items)
-      ? response.Items.filter(isJellyfinReplacementItem)
-      : [];
-    console.log(`🪼 Jellyfin Canopy: Bookmarks Library: Fetched ${items.length} total items of type ${itemTypes || 'other/legacy'}`);
-
-    if (!Array.isArray(items) || items.length === 0) {
-      console.warn(`🪼 Jellyfin Canopy: Bookmarks Library: No items found or items is not an array`);
-      return null;
-    }
-
-    const seriesIds = [...new Set(items.map(item => item.SeriesId).filter((id): id is string => !!id))];
-    if (seriesIds.length > 0) {
-      const seriesProviders = new Map<string, { Tmdb?: string; Tvdb?: string }>();
-      for (const chunk of chunkSeriesIds(userId, seriesIds)) {
-        try {
-          let seriesResponse: unknown = await JC.core.api!.jf(
-            seriesEnrichmentUrl(userId, chunk),
-            { skipCache: true }
-          );
-          if (!JC.identity.isCurrent(context)) return null;
-          if (typeof seriesResponse === 'string') seriesResponse = JSON.parse(seriesResponse) as unknown;
-          const seriesItems = seriesResponse !== null && typeof seriesResponse === 'object'
-            && !Array.isArray(seriesResponse) && 'Items' in seriesResponse && Array.isArray(seriesResponse.Items)
-            ? seriesResponse.Items.filter(isJellyfinReplacementItem)
-            : [];
-          for (const seriesItem of seriesItems) {
-            seriesProviders.set(seriesItem.Id, seriesItem.ProviderIds || {});
-          }
-        } catch (error) {
-          if (!JC.identity.isCurrent(context)) return null;
-          console.warn(`🪼 Jellyfin Canopy: Bookmarks Library: Parent-series enrichment chunk failed; retaining item-provider matches`, error);
-        }
+      if (typeof response === 'string') {
+        response = JSON.parse(response) as unknown;
+        if (!JC.identity.isCurrent(context)) return { status: 'cancelled' };
       }
-      items = items.map(item => ({
-        ...item,
-        SeriesProviderIds: item.SeriesId ? seriesProviders.get(item.SeriesId) : undefined
-      }));
+
+      const page = readReplacementPage(response, requestedStartIndex);
+      pageCount += 1;
+      if (expectedTotalRecordCount === undefined) {
+        expectedTotalRecordCount = page.totalRecordCount;
+      } else if (expectedTotalRecordCount !== page.totalRecordCount) {
+        incompleteReplacementSearch('replacement TotalRecordCount changed during the scan');
+      }
+
+      if (page.items.length === 0) {
+        if (rawItemsRead === 0 && expectedTotalRecordCount === 0) {
+          if (!JC.identity.isCurrent(context)) return { status: 'cancelled' };
+          return { status: 'no-match' };
+        }
+        incompleteReplacementSearch('replacement pagination returned an empty page before the reported end');
+      }
+
+      if (expectedTotalRecordCount === 0) {
+        incompleteReplacementSearch('replacement pagination reported zero items but returned rows');
+      }
+      if (rawItemsRead + page.items.length > expectedTotalRecordCount) {
+        incompleteReplacementSearch('replacement pagination returned more rows than TotalRecordCount');
+      }
+      if (rawItemsRead + page.items.length > REPLACEMENT_MAX_ITEMS) {
+        incompleteReplacementSearch(`replacement pagination exceeded the ${REPLACEMENT_MAX_ITEMS} item safety bound`);
+      }
+      for (const item of page.items) {
+        if (seenItemIds.has(item.Id)) {
+          incompleteReplacementSearch(`replacement pagination repeated item identity '${item.Id}'`);
+        }
+        seenItemIds.add(item.Id);
+      }
+
+      rawItemsRead += page.items.length;
+      const nextStartIndex = requestedStartIndex + page.items.length;
+      if (!Number.isSafeInteger(nextStartIndex) || nextStartIndex <= requestedStartIndex) {
+        incompleteReplacementSearch('replacement pagination did not advance');
+      }
+
+      let items = page.items;
+      const seriesIds = [...new Set(items.map(item => item.SeriesId).filter((id): id is string => !!id))];
+      if (seriesIds.length > 0) {
+        const seriesProviders = new Map<string, { Tmdb?: string; Tvdb?: string }>();
+        for (const chunk of chunkSeriesIds(userId, seriesIds)) {
+          if (!JC.identity.isCurrent(context)) return { status: 'cancelled' };
+          try {
+            let seriesResponse: unknown = await JC.core.api!.jf(
+              seriesEnrichmentUrl(userId, chunk),
+              { skipCache: true }
+            );
+            if (!JC.identity.isCurrent(context)) return { status: 'cancelled' };
+            if (typeof seriesResponse === 'string') {
+              seriesResponse = JSON.parse(seriesResponse) as unknown;
+              if (!JC.identity.isCurrent(context)) return { status: 'cancelled' };
+            }
+            const seriesItems = isRecord(seriesResponse) && Array.isArray(seriesResponse.Items)
+              ? seriesResponse.Items.filter(isJellyfinReplacementItem)
+              : [];
+            for (const seriesItem of seriesItems) {
+              seriesProviders.set(seriesItem.Id, seriesItem.ProviderIds || {});
+            }
+          } catch (error) {
+            if (isAbortError(error) || !JC.identity.isCurrent(context)) throw error;
+            console.warn(`🪼 Jellyfin Canopy: Bookmarks Library: Parent-series enrichment chunk failed; retaining item-provider matches`, error);
+          }
+          if (!JC.identity.isCurrent(context)) return { status: 'cancelled' };
+        }
+        items = items.map(item => ({
+          ...item,
+          SeriesProviderIds: item.SeriesId ? seriesProviders.get(item.SeriesId) : undefined
+        }));
+      }
+
+      // UserData.Key is deliberately excluded: unlike ProviderIds it does not
+      // carry a namespace and cannot safely identify an episode.
+      const matches = items.filter(item => compareBookmarkIdentity(bookmark, replacementIdentity(item)) === 'logical');
+      if (matches.length > 0) {
+        if (!JC.identity.isCurrent(context)) return { status: 'cancelled' };
+        return { status: 'match', items: matches };
+      }
+
+      if (rawItemsRead === expectedTotalRecordCount) {
+        if (!JC.identity.isCurrent(context)) return { status: 'cancelled' };
+        return { status: 'no-match' };
+      }
+
+      const remainingItems = expectedTotalRecordCount - rawItemsRead;
+      const minimumRemainingPages = Math.ceil(remainingItems / REPLACEMENT_PAGE_SIZE);
+      if (pageCount + minimumRemainingPages > REPLACEMENT_MAX_PAGES
+        || rawItemsRead + remainingItems > REPLACEMENT_MAX_ITEMS) {
+        incompleteReplacementSearch('replacement pagination cannot complete within its safety bounds');
+      }
+
+      startIndex = nextStartIndex;
     }
 
-    // UserData.Key is deliberately excluded: unlike ProviderIds it does not
-    // carry a namespace and cannot safely identify an episode.
-    const matches = items.filter(item => compareBookmarkIdentity(bookmark, replacementIdentity(item)) === 'logical');
-
-    console.log(`🪼 Jellyfin Canopy: Bookmarks Library: Found ${matches.length} logical replacement matches`, matches);
-    return matches.length > 0 ? matches : null;
-  } catch (e) {
-    if (!JC.identity.isCurrent(context)) return null;
-    console.error('Failed to search for replacement:', e);
-    return null;
+    incompleteReplacementSearch(`replacement pagination exceeded the ${REPLACEMENT_MAX_PAGES} page safety bound`);
+  } catch (error) {
+    if (isAbortError(error) || !JC.identity.isCurrent(context)) return { status: 'cancelled' };
+    console.error('Failed to search for replacement:', error);
+    return { status: 'failed', error };
   }
 }
 
@@ -266,20 +374,24 @@ export async function findAndOfferReplacement(
   if (!context || !JC.identity.isCurrent(context)) return;
   triggerBtn.disabled = true;
 
-  const matches = await searchForReplacementItem(
-    group.details,
-    context
-  );
-  if (!JC.identity.isCurrent(context)) return;
-
-  if (!matches || matches.length === 0) {
-    toast(JC.t!('bookmark_no_replacement'), 3000);
+  try {
+    const result = await searchForReplacementItem(group.details, context);
+    switch (result.status) {
+      case 'match':
+        showReplacementSelectionModal(group, result.items, context);
+        return;
+      case 'no-match':
+        toast(JC.t!('bookmark_no_replacement'), 3000);
+        return;
+      case 'failed':
+        toast(JC.t!('bookmark_search_failed'), 3000);
+        return;
+      case 'cancelled':
+        return;
+    }
+  } finally {
     triggerBtn.disabled = false;
-    return;
   }
-
-  showReplacementSelectionModal(group, matches, context);
-  triggerBtn.disabled = false;
 }
 
 /**
@@ -503,18 +615,30 @@ export async function findAllOrphanedAndOfferMigration(
     return;
   }
 
-  // Search for replacements for all orphaned items
+  // Search for replacements for all orphaned items. A partial result set is
+  // never safe enough to gate destructive migrations.
   const replacementResults: ReplacementResult[] = [];
+  let failedSearchCount = 0;
   for (const group of orphanedGroups) {
     if (!JC.identity.isCurrent(context)) return;
-    const matches = await searchForReplacementItem(
-      group.details,
-      context
-    );
-    if (!JC.identity.isCurrent(context)) return;
-    if (matches && matches.length > 0) {
-      replacementResults.push({ group, matches });
+    const result = await searchForReplacementItem(group.details, context);
+    switch (result.status) {
+      case 'match':
+        replacementResults.push({ group, matches: result.items });
+        break;
+      case 'no-match':
+        break;
+      case 'failed':
+        failedSearchCount += 1;
+        break;
+      case 'cancelled':
+        return;
     }
+  }
+
+  if (failedSearchCount > 0) {
+    toast(JC.t!('bookmark_orphaned_search_failed').replace('{count}', String(failedSearchCount)), 4000);
+    return;
   }
 
   if (replacementResults.length === 0) {

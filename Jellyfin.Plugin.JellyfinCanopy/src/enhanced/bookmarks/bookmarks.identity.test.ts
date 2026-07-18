@@ -776,10 +776,13 @@ describe('bookmark player identity ownership', () => {
         ParentIndexNumber: 1, IndexNumber: 2, IndexNumberEnd: 2,
         ProviderIds: { Tmdb: 'episode-900' }
       }
-    ] });
+    ], TotalRecordCount: 2, StartIndex: 0 });
     JC.core.api.jf = jf;
     await expect(searchForReplacementItem(base, JC.identity.capture()))
-      .resolves.toEqual([expect.objectContaining({ Id: 'alternate' })]);
+      .resolves.toEqual({
+        status: 'match',
+        items: [expect.objectContaining({ Id: 'alternate' })]
+      });
   });
 
   it('keeps only unambiguous legacy movie provider fallback matching', async () => {

@@ -44,7 +44,7 @@ describe('bookmark replacement logical identity', () => {
           Id: 'different-s0e2', Name: 'Special 2', Type: 'Episode', SeriesId: 'series-item',
           ParentIndexNumber: 0, IndexNumber: 2, IndexNumberEnd: 2, ProviderIds: {}
         }
-      ] })
+      ], TotalRecordCount: 2, StartIndex: 0 })
       .mockResolvedValueOnce({ Items: [{
         Id: 'series-item', Name: 'Series', Type: 'Series', ProviderIds: { Tmdb: 'series-55' }
       }] });
@@ -57,7 +57,10 @@ describe('bookmark replacement logical identity', () => {
       seasonNumber: 0, episodeNumber: 2, episodeEndNumber: 3, name: 'Special 2-3'
     }, context);
 
-    expect(matches?.map(item => item.Id)).toEqual(['alternate-s0e2-e3']);
+    expect(matches).toEqual({
+      status: 'match',
+      items: [expect.objectContaining({ Id: 'alternate-s0e2-e3' })]
+    });
   });
 
   it('never treats unnamespaced UserData.Key as an episode provider id', async () => {
@@ -65,7 +68,7 @@ describe('bookmark replacement logical identity', () => {
       Id: 'wrong', Name: 'Wrong episode', Type: 'Episode',
       ParentIndexNumber: 1, IndexNumber: 1, IndexNumberEnd: 1,
       ProviderIds: {}, UserData: { Key: 'episode-900' }
-    }] });
+    }], TotalRecordCount: 1, StartIndex: 0 });
     JC.core.api = { jf } as unknown as ApiApi;
     const context = JC.identity.capture()!;
 
@@ -73,7 +76,7 @@ describe('bookmark replacement logical identity', () => {
       itemId: 'gone', identityVersion: 1, itemType: 'episode', mediaType: 'tv',
       tmdbId: 'episode-900', tvdbId: '', seriesTmdbId: '', seriesTvdbId: '',
       seasonNumber: 1, episodeNumber: 1, episodeEndNumber: 1, name: 'Episode'
-    }, context)).resolves.toBeNull();
+    }, context)).resolves.toEqual({ status: 'no-match' });
   });
 
   it('bounds parent enrichment chunks and isolates one failed chunk from valid matches', async () => {
@@ -92,7 +95,7 @@ describe('bookmark replacement logical identity', () => {
         : (index === SERIES_ENRICHMENT_CHUNK_SIZE ? {} : { Tmdb: `other-${index}` })
     }));
     const jf = vi.fn()
-      .mockResolvedValueOnce({ Items: candidates })
+      .mockResolvedValueOnce({ Items: candidates, TotalRecordCount: candidates.length, StartIndex: 0 })
       .mockRejectedValueOnce(new Error('first parent chunk unavailable'))
       .mockResolvedValueOnce({ Items: [{
         Id: `series-${String(SERIES_ENRICHMENT_CHUNK_SIZE).padStart(3, '0')}`,
@@ -109,7 +112,13 @@ describe('bookmark replacement logical identity', () => {
       seasonNumber: 1, episodeNumber: 1, episodeEndNumber: 1, name: 'Episode'
     }, context);
 
-    expect(matches?.map(item => item.Id)).toEqual(['item-provider-match', 'series-range-match']);
+    expect(matches).toEqual({
+      status: 'match',
+      items: [
+        expect.objectContaining({ Id: 'item-provider-match' }),
+        expect.objectContaining({ Id: 'series-range-match' })
+      ]
+    });
     const enrichmentUrls = jf.mock.calls.slice(1).map(call => String(call[0]));
     expect(enrichmentUrls).toHaveLength(2);
     for (const url of enrichmentUrls) {
@@ -133,7 +142,7 @@ describe('bookmark replacement logical identity', () => {
       ProviderIds: { Tmdb: `other-${index}` }
     }));
     const jf = vi.fn()
-      .mockResolvedValueOnce({ Items: candidates })
+      .mockResolvedValueOnce({ Items: candidates, TotalRecordCount: candidates.length, StartIndex: 0 })
       .mockResolvedValue({ Items: [] });
     JC.core.api = { jf } as unknown as ApiApi;
     const context = JC.identity.capture()!;
@@ -142,7 +151,7 @@ describe('bookmark replacement logical identity', () => {
       itemId: 'gone', identityVersion: 1, itemType: 'episode', mediaType: 'tv',
       tmdbId: 'missing', tvdbId: '', seriesTmdbId: '', seriesTvdbId: '',
       seasonNumber: 1, episodeNumber: 1, episodeEndNumber: 1, name: 'Episode'
-    }, context)).resolves.toBeNull();
+    }, context)).resolves.toEqual({ status: 'no-match' });
 
     const enrichmentUrls = jf.mock.calls.slice(1).map(call => String(call[0]));
     expect(longSeriesIds.length).toBeLessThan(SERIES_ENRICHMENT_CHUNK_SIZE);
