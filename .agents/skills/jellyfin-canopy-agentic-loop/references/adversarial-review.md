@@ -70,8 +70,11 @@ are:
   useful; no scope creep beyond the brief; shared parity gaps fixed once at the
   owner, not by making the new consumer uniquely sophisticated.
 - **Docs, locale & generated artifacts** — every affected user/admin/architecture/
-  security doc updated; every locale key present in all locale files with real
-  translations; bundles/manifests/snapshots rebuilt from source and committed.
+  security doc updated; new i18n keys present in the base `en.json` and referenced
+  in code; bundles/manifests/snapshots rebuilt from source and committed. Do NOT
+  deep-review the other 25 locale translations — those are fanned out afterward by
+  the cheap Localize phase and enforced by the `validate-translations` gate, so
+  reviewing them here is wasted effort.
 
 ## Watch for semantically-different-but-syntactically-similar code
 

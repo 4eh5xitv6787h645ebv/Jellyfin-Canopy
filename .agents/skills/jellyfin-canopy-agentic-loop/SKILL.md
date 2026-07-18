@@ -168,7 +168,16 @@ The engine ([`workflows/canopy-loop.js`](workflows/canopy-loop.js)) runs:
    confirmed findings; re-review until a clean round. Challenge the design before
    a second fix to the same owner/state model. If a workaround needs a
    paragraph-long comment to justify it, the code is wrong — fix the code.
-5. **Verify** (single runner) — run the repo-native gates for the surface, and
+5. **Localize** (single cheap agent, low effort) — translation busywork, kept off
+   the expensive path. The implementer adds new i18n keys only to the base
+   `en.json`; this step runs **after** the review loop (so the other 25 locale
+   files never consume adversarial review) and **before** verify (so
+   `validate-translations` passes at parity). It fans the base keys out to every
+   locale on a low-effort model (gpt/opus on `low`, `localizeEffort`), commits one
+   `chore(i18n)` unit, and no-ops when no keys changed. Skipped for `server`
+   surfaces. Not adversarially reviewed — translations are mechanical and the
+   `validate-translations` gate enforces parity.
+6. **Verify** (single runner) — run the repo-native gates for the surface, and
    for runtime-relevant work build the Release DLL and run `npm run e2e:local`
    (exercise admin and non-admin, assert real DOM/server state, zero
    non-whitelisted console errors, zero unexpected plugin 4xx). Lint is advisory
