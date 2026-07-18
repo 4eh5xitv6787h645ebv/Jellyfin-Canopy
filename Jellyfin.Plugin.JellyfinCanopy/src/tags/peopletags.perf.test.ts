@@ -10,6 +10,7 @@
 // identical rendered output (age chips / place banner / deceased poster).
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JC } from '../globals';
+import { recordDetailsViewShown, resetDetailsViewTrackingForTests } from '../core/details-view';
 import { installPeopleTagsFacade, resetPeopleTagsIdentity } from './peopletags';
 
 const uninstallPeopleTags = installPeopleTagsFacade();
@@ -85,6 +86,12 @@ function mountCastPage(itemId: string, castIds: string[], guestIds: string[] = [
             <div id="castCollapsible">${castIds.map(personCardHtml).join('')}</div>
             <div id="guestCastCollapsible">${guestIds.map(personCardHtml).join('')}</div>
         </div>`;
+    // People Tags resolves its target through the details-view helper, which
+    // records the item a view was shown for on `viewshow`. Mirror that here so
+    // getVisibleDetailsPage() hands out this page for the current URL item
+    // (and, on a navigation test, so the OUTGOING page is not adopted for the
+    // incoming item mid-transition).
+    recordDetailsViewShown(document.querySelector('#itemDetailPage'));
 }
 
 function cardFor(personId: string): HTMLElement {
@@ -152,6 +159,7 @@ describe('people tags bounded-concurrency batch (BI-PERF-137)', () => {
         vi.useFakeTimers();
         document.body.innerHTML = '';
         localStorage.clear();
+        resetDetailsViewTrackingForTests();
         observerCallbacks = [];
         userSequence += 1;
         JC.identity.transition('people-perf-server', `people-perf-user-${userSequence}`, 'people-perf-test');
@@ -169,6 +177,7 @@ describe('people tags bounded-concurrency batch (BI-PERF-137)', () => {
         JC.pluginConfig = {};
         document.body.innerHTML = '';
         localStorage.clear();
+        resetDetailsViewTrackingForTests();
         vi.useRealTimers();
     });
 
@@ -322,6 +331,7 @@ describe('people tags bounded-concurrency batch (BI-PERF-137)', () => {
                 <div id="castCollapsible">${personCardHtml('person-dup')}${personCardHtml('person-dup')}</div>
                 <div id="guestCastCollapsible">${personCardHtml('person-dup')}</div>
             </div>`;
+        recordDetailsViewShown(document.querySelector('#itemDetailPage'));
 
         await startProcessing();
         // A second observer pass must not re-process anything.
@@ -458,6 +468,7 @@ describe('people tags bounded-concurrency batch (BI-PERF-137)', () => {
                 <div id="castCollapsible">${['person-mod-0', 'person-mod-1'].map(personCardHtml).join('')}</div>
                 <div id="guestCastCollapsible"></div>
             </div>`;
+        recordDetailsViewShown(document.querySelector('#itemDetailPage'));
 
         await startProcessing();
         await vi.advanceTimersByTimeAsync(5);
@@ -521,5 +532,197 @@ describe('people tags bounded-concurrency batch (BI-PERF-137)', () => {
         expect(document.querySelectorAll('.jc-people-age-container')).toHaveLength(2);
         // A's stale first wave, then B's two recovered requests.
         expect(plugin).toHaveBeenCalledTimes(staleRequests + 2);
+    });
+
+    it('AC3: cards replaced mid-batch on the SAME item are re-tagged, not permanently dropped', async () => {
+        // Adversarial lifecycle case: React re-renders the cast cards for the
+        // SAME item while the bounded batch is in flight. Person ids were
+        // eagerly finalized at collection time, so the results for the old
+        // (now disconnected) cards were correctly dropped BUT the remembered
+        // rerun skipped every replacement card as "already processed",
+        // finishing with zero overlays. Ids must only finalize once an overlay
+        // lands on a LIVE card.
+        const { plugin, pending } = instrumentedPlugin();
+        JC.core.api = { plugin } as unknown as typeof JC.core.api;
+        const castIds = Array.from({ length: 8 }, (_, index) => `person-repl-${index}`);
+        mountCastPage('item-repl', castIds);
+
+        await startProcessing();
+        const firstWave = plugin.mock.calls.length;
+        expect(firstWave).toBeGreaterThan(0);
+        expect(firstWave).toBeLessThanOrEqual(CONCURRENCY_CAP);
+
+        // Replace every cast card with a fresh element (new identity, same
+        // data-id) on the same page while the first wave is still open.
+        document.querySelector('#castCollapsible')!.innerHTML = castIds.map(personCardHtml).join('');
+        const replacementCards = castIds.map((id) => cardFor(id));
+        fireObserver(observerCallbacks[observerCallbacks.length - 1]);
+        await vi.advanceTimersByTimeAsync(100);
+
+        // Settle the stale batch (its cards are gone) then let the rerun drain
+        // the replacement cards from the now-warm cache.
+        await drainPool(pending, { currentAge: 30 });
+        await vi.advanceTimersByTimeAsync(5);
+
+        // Every replacement card is tagged, and no person was fetched twice
+        // (the rerun is served from the hot cache the stale batch populated).
+        for (const card of replacementCards) {
+            expect(card.isConnected).toBe(true);
+            expect(card.querySelector('.jc-people-age-container')).not.toBeNull();
+        }
+        expect(document.querySelectorAll('.jc-people-age-container')).toHaveLength(8);
+        expect(plugin).toHaveBeenCalledTimes(8);
+    });
+
+    it('AC3/AC4: a details→details transition never processes the outgoing view under the incoming item id', async () => {
+        // During Jellyfin's details→details push the URL flips to item B while
+        // item A's view is still the visible one and B is not mounted yet. A
+        // shared actor must NOT be fetched/marked-processed under itemId=B off
+        // the outgoing A view, or B's real card is skipped by processedPersonIds
+        // and never tagged. getVisibleDetailsPage() reports the transition
+        // (null) so the batch/rerun defers.
+        const { plugin, pending } = instrumentedPlugin();
+        JC.core.api = { plugin } as unknown as typeof JC.core.api;
+        mountCastPage('item-trans-a', ['person-shared', 'person-a-only']);
+
+        await startProcessing();
+        expect(plugin.mock.calls.length).toBeGreaterThan(0);
+
+        // Transition: the URL now names item B, but A's view is still visible
+        // and B has not mounted. Any probe here must defer.
+        window.location.hash = '#/details?id=item-trans-b';
+        fireObserver(observerCallbacks[observerCallbacks.length - 1]);
+        await vi.advanceTimersByTimeAsync(100);
+        // Settle A's in-flight requests — they must apply nothing and, crucially,
+        // must not finalize the shared actor's id under item B.
+        for (const request of pending.splice(0, pending.length)) {
+            request.resolve({ currentAge: 30 });
+        }
+        await vi.advanceTimersByTimeAsync(5);
+
+        // B's view now mounts for real (records itself for item B).
+        mountCastPage('item-trans-b', ['person-shared', 'person-b-only']);
+        fireObserver(observerCallbacks[observerCallbacks.length - 1]);
+        await vi.advanceTimersByTimeAsync(100);
+        await drainPool(pending, { currentAge: 42 });
+
+        // The shared actor is tagged on B — proof it was not consumed under B
+        // off the outgoing A view.
+        expect(cardFor('person-shared').querySelector('.jc-people-age-container')).not.toBeNull();
+        expect(cardFor('person-b-only').querySelector('.jc-people-age-container')).not.toBeNull();
+    });
+
+    it('AC3/AC4: a completion timer from an earlier batch does not wedge the complete gate while a newer batch runs', async () => {
+        // person-t0 resolves immediately (batch 1 completes and schedules its
+        // 2s completion timer); person-t1/2 are deferred so batch 2 stays in
+        // flight while that stale timer fires. If completion is marked while a
+        // newer batch is running, the peopleTagsComplete gate wedges and a card
+        // mounting afterwards is never tagged.
+        const { plugin, pending } = instrumentedPlugin(
+            (path) => (path.includes('person-t0') ? { currentAge: 30 } : undefined),
+        );
+        JC.core.api = { plugin } as unknown as typeof JC.core.api;
+        mountCastPage('item-timer', ['person-t0']);
+
+        await startProcessing();
+        expect(cardFor('person-t0').querySelector('.jc-people-age-container')).not.toBeNull();
+
+        // Batch 1's completion timer is pending (~2s out). Start a slow batch 2
+        // one second in.
+        await vi.advanceTimersByTimeAsync(1000);
+        document.querySelector('#castCollapsible')!.insertAdjacentHTML('beforeend', personCardHtml('person-t1'));
+        fireObserver(observerCallbacks[observerCallbacks.length - 1]);
+        await vi.advanceTimersByTimeAsync(100);
+        expect(plugin.mock.calls.some((call) => String(call[0]).includes('person-t1'))).toBe(true);
+
+        // Fire the stale completion timer while batch 2 is still in flight.
+        await vi.advanceTimersByTimeAsync(2000);
+
+        // A third card mounts; it must still be picked up (gate not wedged).
+        document.querySelector('#castCollapsible')!.insertAdjacentHTML('beforeend', personCardHtml('person-t2'));
+        fireObserver(observerCallbacks[observerCallbacks.length - 1]);
+        await vi.advanceTimersByTimeAsync(100);
+
+        await drainPool(pending, { currentAge: 44 });
+        expect(cardFor('person-t1').querySelector('.jc-people-age-container')).not.toBeNull();
+        expect(cardFor('person-t2').querySelector('.jc-people-age-container')).not.toBeNull();
+    });
+
+    it('AC1/AC5: a same-identity reinitialization retires the old pool (cap held) and cannot overwrite the new cache', async () => {
+        // Start a 12-person batch on item A (6 in flight), then trigger the
+        // supported same-user reinitialization and process item B. The retired
+        // A pool must claim no further /person work (so global concurrency
+        // stays within the cap) and its late-settling, teardown-emptied cache
+        // map must not overwrite B's freshly persisted entries.
+        const { plugin, pending } = instrumentedPlugin();
+        JC.core.api = { plugin } as unknown as typeof JC.core.api;
+        const castA = Array.from({ length: 12 }, (_, index) => `person-a-${index}`);
+        mountCastPage('item-reinit-a', castA);
+
+        await startProcessing();
+        const aInFlight = plugin.mock.calls.filter((call) => String(call[0]).includes('/person/person-a-')).length;
+        expect(aInFlight).toBe(CONCURRENCY_CAP); // 6 of 12 claimed, rest queued
+
+        // Same-identity reinitialization (e.g. a settings restart): a new
+        // initializer + observer takes over.
+        surface.initializePeopleTags!();
+        mountCastPage('item-reinit-b', ['person-b-0', 'person-b-1']);
+        fireObserver(observerCallbacks[observerCallbacks.length - 1]);
+        await vi.advanceTimersByTimeAsync(100);
+
+        // Settle B first (it persists), then the retired A batch late.
+        for (const request of pending.filter((req) => req.path.includes('person-b'))) {
+            request.resolve({ currentAge: 20 });
+        }
+        await vi.advanceTimersByTimeAsync(5);
+        const persistedAfterB = JSON.parse(localStorage.getItem(CACHE_KEY)!) as Record<string, unknown>;
+
+        for (const request of pending.filter((req) => req.path.includes('person-a'))) {
+            request.resolve({ currentAge: 99 });
+        }
+        await vi.advanceTimersByTimeAsync(5);
+
+        // The retired A pool never claimed beyond its 6 in-flight requests.
+        const aCalls = plugin.mock.calls.filter((call) => String(call[0]).includes('/person/person-a-'));
+        expect(aCalls).toHaveLength(CONCURRENCY_CAP);
+        // B's cast was fetched and tagged under the new pool.
+        expect(cardFor('person-b-0').querySelector('.jc-people-age-container')).not.toBeNull();
+        expect(cardFor('person-b-1').querySelector('.jc-people-age-container')).not.toBeNull();
+        // The late A settle did not overwrite B's persisted cache.
+        const persistedFinal = JSON.parse(localStorage.getItem(CACHE_KEY)!) as Record<string, unknown>;
+        expect(Object.keys(persistedFinal).sort()).toEqual(Object.keys(persistedAfterB).sort());
+        expect(Object.keys(persistedFinal)).toEqual(
+            ['person-b-0-item-reinit-b', 'person-b-1-item-reinit-b'],
+        );
+    });
+
+    it('AC2: persists when an earlier fetch precedes a LAST-resolving cache hit (aggregate-any, not last-write-wins)', async () => {
+        // Pins the batch-persist aggregation: persist if ANY task changed the
+        // cache. Six uncached people (deferred fetches) fill the pool; a
+        // seventh, fresh same-owner cache HIT is claimed only after a worker
+        // frees, so its cacheChanged=false is the LAST value folded in. A
+        // last-write-wins mutation (`cacheChanged = await ...`) would drop the
+        // whole flush and silently reintroduce refetch-every-visit.
+        const now = Date.now();
+        seedOwnedCache({ 'person-hit-item-agg': { data: { currentAge: 50 }, timestamp: now - 1000 } });
+        const writeSpy = vi.spyOn(JC.storage.local, 'write');
+        const { plugin, pending } = instrumentedPlugin();
+        JC.core.api = { plugin } as unknown as typeof JC.core.api;
+        const fetchIds = Array.from({ length: 6 }, (_, index) => `person-f${index}`);
+        // The cache-hit person is LAST in DOM order so it is drained in wave 2.
+        mountCastPage('item-agg', [...fetchIds, 'person-hit']);
+
+        await startProcessing();
+        // Only the six uncached people hit the endpoint; the seeded one is a hit.
+        expect(plugin).toHaveBeenCalledTimes(6);
+        await drainPool(pending, { currentAge: 30 });
+
+        // Exactly one batch flush, and it includes the freshly fetched people.
+        const payloadWrites = writeSpy.mock.calls.filter((call) => call[3] === 'cache-payload');
+        expect(payloadWrites).toHaveLength(1);
+        const persisted = JSON.parse(localStorage.getItem(CACHE_KEY)!) as Record<string, unknown>;
+        expect(Object.keys(persisted)).toContain('person-f0-item-agg');
+        expect(Object.keys(persisted)).toContain('person-hit-item-agg');
+        expect(document.querySelectorAll('.jc-people-age-container')).toHaveLength(7);
     });
 });

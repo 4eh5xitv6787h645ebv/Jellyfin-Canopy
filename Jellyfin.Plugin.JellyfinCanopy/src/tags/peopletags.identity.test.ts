@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JC } from '../globals';
+import { recordDetailsViewShown, resetDetailsViewTrackingForTests } from '../core/details-view';
 import { installPeopleTagsFacade, resetPeopleTagsIdentity } from './peopletags';
 
 const uninstallPeopleTags = installPeopleTagsFacade();
@@ -26,6 +27,9 @@ function mountPersonCard(personId: string): HTMLElement {
                 </div>
             </div>
         </div>`;
+    // Record the view for the current URL item so getVisibleDetailsPage()
+    // (People Tags' owned-page resolver) hands out this page.
+    recordDetailsViewShown(document.querySelector('#itemDetailPage'));
     return document.querySelector<HTMLElement>('.personCard')!;
 }
 
@@ -39,6 +43,7 @@ describe('people tags identity lifecycle', () => {
         vi.useFakeTimers();
         document.body.innerHTML = '';
         localStorage.clear();
+        resetDetailsViewTrackingForTests();
         JC.identity.transition('people-server-a', `people-user-a-${Date.now()}`, 'people-test-a');
         JC.currentSettings = { peopleTagsEnabled: true };
         JC.pluginConfig = { TagsCacheTtlDays: 7 };
@@ -52,6 +57,7 @@ describe('people tags identity lifecycle', () => {
         JC.pluginConfig = {};
         document.body.innerHTML = '';
         localStorage.clear();
+        resetDetailsViewTrackingForTests();
         vi.useRealTimers();
     });
 
