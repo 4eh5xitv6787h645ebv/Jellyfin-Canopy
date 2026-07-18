@@ -233,6 +233,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             Assert.All(lookups, lookup => Assert.Same(user, lookup.User));
         }
 
+
+        // NOTE: the former cross-request season aggregate cache (TryGetSeasonAnyWatched
+        // / BeginSeasonAggregate / CommitSeasonAggregate) was deleted for #98 — it
+        // could not be kept byte-identical to recompute-every-request under the
+        // debounced content revision, JF12 policy generation, or PlaybackProgress. The
+        // season aggregate is now owned per REQUEST by TagStripProjectionResolver and
+        // covered by TagCacheSpoilerStripProjectionTests (request-scoped reuse across
+        // stabilization passes, targeted per-pass invalidation, byte-identical output).
+
         private static string[] SortedKeys(params Guid[] ids)
             => ids.Select(Key).OrderBy(static id => id, StringComparer.Ordinal).ToArray();
 

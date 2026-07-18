@@ -22,6 +22,18 @@ public sealed class StubUserDataManager : IUserDataManager
     /// <summary>When set, backs <see cref="GetUserData(User, BaseItem)"/>.</summary>
     public Func<User, BaseItem, UserItemData?>? GetUserDataHook { get; set; }
 
+    /// <summary>When set, backs <see cref="GetUserDataBatch(IReadOnlyList{BaseItem}, User)"/>.</summary>
+    public Func<IReadOnlyList<BaseItem>, User, Dictionary<Guid, UserItemData>>? GetUserDataBatchHook { get; set; }
+
+    /// <summary>Scalar <see cref="GetUserData(User, BaseItem)"/> invocation count (BI-PERF-037 budgets).</summary>
+    public int GetUserDataCallCount { get; private set; }
+
+    /// <summary>Number of <see cref="GetUserDataBatch(IReadOnlyList{BaseItem}, User)"/> invocations.</summary>
+    public int GetUserDataBatchCallCount { get; private set; }
+
+    /// <summary>Total items passed across all <see cref="GetUserDataBatch(IReadOnlyList{BaseItem}, User)"/> calls.</summary>
+    public int GetUserDataBatchItemCount { get; private set; }
+
     /// <summary>When set, backs the token-aware <see cref="SaveUserData(User, BaseItem, UserItemData, UserDataSaveReason, CancellationToken)"/>.</summary>
     public Action<User, BaseItem, UserItemData, UserDataSaveReason, CancellationToken>? SaveUserDataHook { get; set; }
 
@@ -52,7 +64,10 @@ public sealed class StubUserDataManager : IUserDataManager
     }
 
     public UserItemData? GetUserData(User user, BaseItem item)
-        => GetUserDataHook?.Invoke(user, item);
+    {
+        GetUserDataCallCount++;
+        return GetUserDataHook?.Invoke(user, item);
+    }
 
     // ---- Everything below is an unused NotImplemented stub (per the repo convention). ----
 
@@ -66,7 +81,13 @@ public sealed class StubUserDataManager : IUserDataManager
 
     public UserItemDataDto? GetUserDataDto(BaseItem item, User user) => throw new NotImplementedException();
 
-    public Dictionary<Guid, UserItemData> GetUserDataBatch(IReadOnlyList<BaseItem> items, User user) => throw new NotImplementedException();
+    public Dictionary<Guid, UserItemData> GetUserDataBatch(IReadOnlyList<BaseItem> items, User user)
+    {
+        GetUserDataBatchCallCount++;
+        GetUserDataBatchItemCount += items.Count;
+        if (GetUserDataBatchHook == null) throw new NotImplementedException();
+        return GetUserDataBatchHook(items, user);
+    }
 
     public UserItemDataDto? GetUserDataDto(BaseItem item, BaseItemDto? itemDto, User user, DtoOptions options) => throw new NotImplementedException();
 

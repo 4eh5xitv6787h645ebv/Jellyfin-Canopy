@@ -1336,16 +1336,20 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         /// Walk a per-user cache response and replace each guarded entry with its
         /// stripped clone. Mutates the supplied dictionary (a per-request result), not
         /// the shared cache. <paramref name="resolve"/> yields the per-entry decision.
+        /// Cancellation propagates (BI-PERF-037): the caller must treat it as a
+        /// failed request, never serve the partially stripped dictionary.
         /// </summary>
         internal static void StripCacheForUser(
             IDictionary<string, TagCacheEntry> items,
             bool stripGenres,
             bool stripRatings,
             bool sanitizeTitleStreams,
-            Func<string, TagCacheEntry, TagStripDecision> resolve)
+            Func<string, TagCacheEntry, TagStripDecision> resolve,
+            CancellationToken cancellationToken = default)
         {
             foreach (var key in items.Keys.ToList())
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 var entry = items[key];
                 if (entry == null) continue;
                 var decision = resolve(key, entry);
