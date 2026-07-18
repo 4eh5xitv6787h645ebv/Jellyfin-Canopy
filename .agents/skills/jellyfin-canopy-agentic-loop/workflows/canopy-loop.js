@@ -7,6 +7,7 @@ export const meta = {
     { title: 'Plan', detail: 'independent plans judged and synthesised into one canonical plan' },
     { title: 'Implement', detail: 'single writer builds the change at its owner with failing-first tests' },
     { title: 'Review', detail: 'adversarial reviewers (split context) → verify findings → single fixer → repeat until clean' },
+    { title: 'Localize', detail: 'cheap low-effort agent fans base-locale keys out to all locales — not reviewed' },
     { title: 'Verify', detail: 'repo-native gates for the surface; e2e:local for runtime-relevant work' },
   ],
 }
@@ -136,6 +137,9 @@ const solSlot = (i) => MODEL_SPLIT && i % 2 === 1 // odd indices → Sol (~50/50
 // codex effort × many calls gets very slow, so these default to medium; the
 // review round keeps SOL_EFFORT (high). Override with args.solLightEffort.
 const SOL_LIGHT_EFFORT = a.solLightEffort || 'medium'
+// Effort for the LOCALIZE phase — mechanical translation busywork kept cheap/fast
+// (gpt or opus on low, inheriting the session model). Override with args.localizeEffort.
+const LOCALIZE_EFFORT = a.localizeEffort || 'low'
 
 // codex forwards --output-schema to OpenAI Structured Outputs in STRICT mode,
 // which requires every object to set additionalProperties:false and list EVERY
@@ -551,8 +555,10 @@ Rules:
 - Add tests that FAIL before the change and pass after: admin AND non-admin,
   negative/fallback, concurrency/cache invalidation where relevant, non-vacuous
   assertions that prove the intended lower tier ran.
-- Add every new locale key to ALL locale files with real translations. Update
-  affected user/admin/architecture/security docs. Rebuild generated
+- Add any NEW i18n key ONLY to the base English locale (js/locales/en.json) and
+  reference it in code. Do NOT translate the other locale files — a dedicated
+  low-cost Localize phase fans them out afterward, so spend no effort there.
+  Update affected user/admin/architecture/security docs. Rebuild generated
   bundles/manifests/snapshots from source if the repo expects it.
 - Do NOT add live activation, polling, retries, migrations, config, or startup
   work unless the plan requires it. Give each side effect exactly one owner.
@@ -832,6 +838,40 @@ if (!cleanRound)
       ? `Review: ended without a certified-clean round — coverage incomplete (reviewer/verifier failure); will report as residual risk`
       : `Review: hit round cap (${SIZING.roundCap}) with unresolved findings — will report as residual risk`
   )
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PHASE 4.5 — LOCALIZE (cheap, low-effort translation busywork; NOT reviewed)
+// Runs AFTER the review loop, so the 25 non-base locale files never consume
+// adversarial review, and BEFORE verify, so validate-translations passes at
+// parity. Implementer/fixers add new i18n keys only to the base en.json; one
+// low-effort agent (gpt/opus on low) fans them out to every locale.
+// ═══════════════════════════════════════════════════════════════════════════
+if (SURFACE !== 'server') {
+  phase('Localize')
+  log(`Localize: fanning base-locale keys out to all locales (effort=${LOCALIZE_EFFORT})`)
+  await safely(
+    () =>
+      agent(
+        `${CONTRACTS}
+
+PHASE: LOCALIZE — cheap, low-effort TRANSLATION BUSYWORK ONLY. No logic, no code,
+no tests. Work from ${WORKTREE}. The implementer/fixers added any NEW i18n keys
+ONLY to the base English locale (js/locales/en.json). Propagate every key that is
+new or changed in en.json to ALL other locale files so
+\`npm run validate-translations\` passes at full parity — REAL translations per each
+locale's language, placeholder tokens ({name}, %s, {count}, etc.) kept
+byte-identical, and follow the repo's existing English-fallback convention for any
+locale file that already uses it. Touch ONLY js/locales/*.json — never code, tests,
+docs, or any other file. Then run \`npm run validate-translations\` until green and
+commit ONE \`chore(i18n): …\` unit (no \`Co-Authored-By\` trailer, no issue #N in the
+message or comments). If en.json has NO new or changed keys versus the other
+locales, do NOTHING and report "no locale work needed".`,
+        { agentType: 'general-purpose', effort: LOCALIZE_EFFORT, phase: 'Localize', label: 'localize' }
+      ),
+    null,
+    'Localize'
+  )
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // PHASE 5 — VERIFY (single runner; bounded fix-and-reverify)
