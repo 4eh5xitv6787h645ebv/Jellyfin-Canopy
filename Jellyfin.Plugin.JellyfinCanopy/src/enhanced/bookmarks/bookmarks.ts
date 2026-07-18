@@ -744,74 +744,145 @@ import {
   }
 
   /**
-   * Sync bookmarks from old item ID to new item ID.
+   * The merge/sync bookmark-equivalence key. Two bookmarks on the same target
+   * item are equivalent exactly when their adjusted finite playback timestamp
+   * and their label (absent normalized to the empty string) both match.
+   * Bookmark id, source item id, `syncedFrom`, `createdAt`, `updatedAt`, and
+   * display name are deliberately excluded: they describe provenance, not
+   * content, and including them would defeat prior-sync detection.
+   */
+  function bookmarkEquivalenceKey(timestamp: number, label: unknown): string {
+    const normalizedLabel = typeof label === 'string' ? label : '';
+    return `${timestamp} ${normalizedLabel}`;
+  }
+
+  /**
+   * Sync bookmarks from source item versions onto one target item version.
    *
-   * Creates duplicate copies under the new item ID. When `removeOldIds` is
-   * supplied, the copies and removals are committed in one server-side atomic
-   * batch: either the complete migration lands or the prior state remains.
+   * Idempotency contract: for every source bookmark a candidate is built once
+   * per invocation, and the atomic batch adds it only when no equivalent
+   * target bookmark (see {@link bookmarkEquivalenceKey}) already exists in the
+   * authoritative state or is planned earlier in the same batch. Repeating an
+   * identical merge therefore adds nothing, and a 409 rebase re-evaluates
+   * equivalence against the server's authoritative state, so a concurrent
+   * equivalent add suppresses this invocation's own add.
+   *
+   * Disposition: with `removeOldIds` the operation is a MOVE — the missing
+   * additions and every still-present source row commit in one server-side
+   * atomic batch, so either the complete migration lands or the prior state
+   * remains, and the duplicate finder can no longer re-derive the merged
+   * relationship because only the target item's rows survive. Without
+   * `removeOldIds` the originals are retained (copy semantics).
+   *
+   * Resolves only after the committed state is durable, with exactly the new
+   * records this invocation created; candidates skipped because an equivalent
+   * already existed (or appeared concurrently) are excluded, so the count is
+   * truthful for success reporting. The update event fires only when the
+   * committed revision actually changed.
    */
   async function syncBookmarks(oldBookmarks: any[], newItemDetails: any, timeOffset = 0, removeOldIds?: string[]): Promise<any[]> {
     const captured = captureIdentity();
     if (!captured.context) return [];
-    const synced: any[] = [];
-    const now = new Date().toISOString();
     const root = bookmarkRootFor(captured);
     if (!root) return [];
-    // Stable ids make a conflict retry (or a replay after a lost response)
-    // idempotent rather than creating a second copy.
+    const targetItemId = typeof newItemDetails?.itemId === 'string' ? newItemDetails.itemId.trim() : '';
+    if (!targetItemId) {
+      throw new Error('Refusing to sync bookmarks without a target item id');
+    }
+    if (!Number.isFinite(timeOffset)) {
+      throw new Error('Refusing to sync bookmarks with a non-finite time offset');
+    }
+
+    const now = new Date().toISOString();
+    // Candidate ids are generated once per invocation: unique ids keep add
+    // attribution per caller under concurrency, while a conflict retry (or a
+    // replay after a lost response) reuses the same id instead of minting a
+    // second copy. Idempotency across invocations comes from the equivalence
+    // check against each authoritative state, never from deterministic ids.
+    const candidates: Array<{ id: string; bookmark: Record<string, any> }> = [];
     for (const oldBookmark of oldBookmarks) {
       if (compareBookmarkIdentity(oldBookmark, newItemDetails) === 'none') {
         throw new Error('Refusing to sync bookmarks across different or ambiguous logical media');
       }
-      const newBookmarkId = generateBookmarkId();
+      if (typeof oldBookmark?.timestamp !== 'number' || !Number.isFinite(oldBookmark.timestamp)) {
+        throw new Error('Refusing to sync a bookmark with a non-finite timestamp');
+      }
       const newTimestamp = Math.max(0, oldBookmark.timestamp + timeOffset);
 
-      const newBookmark = {
-        itemId: newItemDetails.itemId,
-        ...(newItemDetails.itemType
-          ? persistedBookmarkIdentity(newItemDetails)
-          : { tmdbId: newItemDetails.tmdbId || '', tvdbId: newItemDetails.tvdbId || '' }),
-        mediaType: normalizeBookmarkMediaType(newItemDetails.mediaType),
-        name: newItemDetails.name,
-        timestamp: newTimestamp,
-        label: oldBookmark.label || '',
-        createdAt: oldBookmark.createdAt || now,
-        updatedAt: now,
-        syncedFrom: oldBookmark.itemId // Track where it came from
-      };
-
-      synced.push({ id: newBookmarkId, ...newBookmark });
+      candidates.push({
+        id: generateBookmarkId(),
+        bookmark: {
+          itemId: targetItemId,
+          ...(newItemDetails.itemType
+            ? persistedBookmarkIdentity(newItemDetails)
+            : { tmdbId: newItemDetails.tmdbId || '', tvdbId: newItemDetails.tvdbId || '' }),
+          mediaType: normalizeBookmarkMediaType(newItemDetails.mediaType),
+          name: newItemDetails.name,
+          timestamp: newTimestamp,
+          label: oldBookmark.label || '',
+          createdAt: oldBookmark.createdAt || now,
+          updatedAt: now,
+          syncedFrom: oldBookmark.itemId // Track where it came from
+        }
+      });
     }
 
+    const startingRevision = root.revision;
+    let committed: BookmarkCommittedState | null = null;
     try {
-      const committed = await commitBookmarkBatch(captured, root, state => {
+      committed = await commitBookmarkBatch(captured, root, state => {
         const operations: BookmarkOperation[] = [];
-        for (const next of synced) {
-          const { id, ...bookmark } = next;
+        // Seed with every equivalence key already durable on the target item,
+        // then extend with planned additions: pre-existing equivalents,
+        // partial prior syncs, duplicate sources, and concurrent equivalent
+        // adds (via 409 rebase) all suppress another add.
+        const seen = new Set<string>();
+        for (const existing of Object.values<any>(state.bookmarks)) {
+          if (!existing || typeof existing !== 'object' || existing.itemId !== targetItemId) continue;
+          const existingTimestamp = Number(existing.timestamp);
+          if (!Number.isFinite(existingTimestamp)) continue;
+          seen.add(bookmarkEquivalenceKey(existingTimestamp, existing.label));
+        }
+        for (const { id, bookmark } of candidates) {
           if (hasOwnBookmark(state.bookmarks, id)) {
+            // Already durably applied by this invocation (lost-response retry).
             if (!sameBookmark(state.bookmarks[id], bookmark)) {
               throw new Error(`Bookmark id collision for ${id}`);
             }
-          } else {
-            operations.push({ type: 'add', bookmarkId: id, bookmark });
+            continue;
           }
+          const key = bookmarkEquivalenceKey(bookmark.timestamp as number, bookmark.label);
+          if (seen.has(key)) continue;
+          seen.add(key);
+          operations.push({ type: 'add', bookmarkId: id, bookmark });
         }
+        // Deletes ride the same batch as the required additions: a failure
+        // leaves every source intact, and a committed batch is the complete
+        // MOVE (all missing target adds plus all applicable source deletes).
         for (const id of removeOldIds || []) {
           if (hasOwnBookmark(state.bookmarks, id)) operations.push({ type: 'delete', bookmarkId: id });
         }
         return operations;
       });
-      if (!committed) return [];
-      console.log(`${logPrefix} Atomically synced ${synced.length} bookmarks to new item ID`);
     } catch (e) {
       if (!isBookmarkRootCurrent(captured, root)) return [];
       console.error(`${logPrefix} Failed to sync bookmarks:`, e);
       throw e;
     }
+    if (!committed) return [];
 
     if (!isBookmarkRootCurrent(captured, root)) return [];
-    if (!emitBookmarksUpdated(captured, 'sync')) return [];
-    return synced;
+    // Candidate ids are unique to this invocation, so presence in the
+    // committed state proves this invocation's add was durably applied.
+    const finalState = committed;
+    const durable = candidates
+      .filter(({ id }) => hasOwnBookmark(finalState.bookmarks, id))
+      .map(({ id }) => ({ id, ...finalState.bookmarks[id] }));
+    console.log(`${logPrefix} Atomically synced bookmarks to ${targetItemId}: ${durable.length} added`);
+    if (committed.revision !== startingRevision) {
+      if (!emitBookmarksUpdated(captured, 'sync')) return [];
+    }
+    return durable;
   }
 
   /**

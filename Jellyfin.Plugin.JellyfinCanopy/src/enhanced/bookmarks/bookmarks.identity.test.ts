@@ -762,7 +762,8 @@ describe('bookmark player identity ownership', () => {
 
     const duplicates = findDuplicateBookmarks({ original: base, alternate, sibling });
     expect(duplicates).toHaveLength(1);
-    expect(Object.keys(duplicates[0].itemGroups)).toEqual(['original', 'alternate']);
+    // Versions surface in stable item-ID order, independent of store insertion.
+    expect(Object.keys(duplicates[0].itemGroups)).toEqual(['alternate', 'original']);
 
     const jf = vi.fn().mockResolvedValueOnce({ Items: [
       {

@@ -35,8 +35,14 @@ export interface BookmarksApi {
     showModal(mode?: string, existingBookmark?: any): Promise<void> | void;
     updateMarkers(): Promise<void> | void;
     formatTimestamp(seconds: number): string;
-    // `removeOldIds` migrates (deletes the originals) rather than merely
-    // duplicating; copies and removals share one revisioned server transaction.
+    // Idempotent for the bookmark-equivalence key (target itemId + adjusted
+    // finite timestamp + label, absent label = ''): equivalents already on the
+    // target are never added again. `removeOldIds` selects the MOVE
+    // disposition (deletes the originals) rather than merely duplicating;
+    // required additions and removals share one revisioned server transaction.
+    // Resolves, only after durable committed state, with exactly the new
+    // records this invocation created (equivalence-skipped candidates are
+    // excluded, so the length is a truthful add count).
     syncBookmarks(oldBookmarks: any[], newItemDetails: any, timeOffset?: number, removeOldIds?: string[]): Promise<any[]>;
     cleanupOrphaned(): Promise<BookmarkCleanupResult>;
     /** Delete the loaded bookmark set in one revisioned server transaction. */

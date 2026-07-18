@@ -227,6 +227,44 @@ describe('bookmarks library identity ownership', () => {
     expect(compareBookmarkIdentity(wrongTvdb, both)).toBe('none');
   });
 
+  it('emits one relationship for a pair carrying both TMDB and TVDB ids, never one per provider key', () => {
+    const first = {
+      itemId: 'item-a', identityVersion: 1, itemType: 'movie', mediaType: 'movie',
+      tmdbId: '10', tvdbId: '20', name: 'Movie'
+    };
+    const second = { ...first, itemId: 'item-b' };
+
+    const duplicates = findDuplicateBookmarks({ first, second });
+
+    expect(duplicates).toHaveLength(1);
+    expect(Object.keys(duplicates[0].itemGroups)).toEqual(['item-a', 'item-b']);
+    expect(Object.keys(duplicates[0].canonicalIdentities)).toEqual(['item-a', 'item-b']);
+    expect(duplicates[0].totalBookmarks).toBe(2);
+  });
+
+  it('produces the identical sorted relationship with no primary regardless of insertion order', () => {
+    const later = {
+      itemId: 'item-zzz', identityVersion: 1, itemType: 'movie', mediaType: 'movie',
+      tmdbId: '10', tvdbId: '', name: 'Movie Z', timestamp: 3
+    };
+    const earlier = { ...later, itemId: 'item-aaa', name: 'Movie A', timestamp: 9 };
+
+    const forward = findDuplicateBookmarks({ one: later, two: earlier });
+    const reversed = findDuplicateBookmarks({ two: earlier, one: later });
+
+    for (const duplicates of [forward, reversed]) {
+      expect(duplicates).toHaveLength(1);
+      expect(Object.keys(duplicates[0].itemGroups)).toEqual(['item-aaa', 'item-zzz']);
+      expect(duplicates[0].name).toBe('Movie A');
+      expect(duplicates[0].providerKey).toBe('movie:tmdb:10');
+      // The finder designates no primary: consumers must not derive one from
+      // object-key position, and none is present in the emitted shape.
+      expect(Object.keys(duplicates[0])).not.toContain('primary');
+      expect(Object.keys(duplicates[0])).not.toContain('primaryItemId');
+    }
+    expect(forward).toEqual(reversed);
+  });
+
   it('selects a season-zero rich representative for series-provider-only duplicates in either order', () => {
     const sparse = {
       itemId: 'special-a', identityVersion: 1, itemType: 'episode', mediaType: 'tv',

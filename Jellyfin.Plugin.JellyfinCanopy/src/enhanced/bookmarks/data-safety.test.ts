@@ -380,6 +380,161 @@ describe('bookmarks data-safety', () => {
         });
     });
 
+    describe('syncBookmarks: merge equivalence and idempotent MOVE', () => {
+        const target = { itemId: 'target-item', tmdbId: 'x', tvdbId: '', mediaType: 'movie', name: 'Target' };
+        const source = (id: string, timestamp: number, label = 'L'): AnyRec => ({
+            id, itemId: 'source-item', tmdbId: 'x', tvdbId: '', mediaType: 'movie', name: 'Source',
+            timestamp, label, createdAt: 't0'
+        });
+        const stored = (timestamp: number, label = 'L', itemId = 'source-item'): AnyRec => ({
+            itemId, tmdbId: 'x', mediaType: 'movie', timestamp, label, createdAt: 't0'
+        });
+        const targetRows = (): AnyRec[] =>
+            Object.values<AnyRec>(JC.userConfig.bookmark.bookmarks).filter(row => row.itemId === 'target-item');
+
+        it('repeating an identical merge is a durable no-op with no extra event', async () => {
+            const api = await loadModule({ src1: stored(10) });
+            const updated = vi.fn();
+            document.addEventListener('jc-bookmarks-updated', updated);
+            const staleInput = [source('src1', 10)];
+
+            const first = await api.syncBookmarks(staleInput, target, 0, ['src1']);
+            expect(first).toHaveLength(1);
+            expect(JC.userConfig.bookmark.bookmarks.src1).toBeUndefined();
+            expect(targetRows()).toHaveLength(1);
+            expect(updated).toHaveBeenCalledTimes(1);
+            const callsAfterFirst = plugin.mock.calls.length;
+
+            const replay = await api.syncBookmarks(staleInput, target, 0, ['src1']);
+
+            expect(replay).toEqual([]);
+            expect(plugin.mock.calls.length).toBe(callsAfterFirst);
+            expect(targetRows()).toHaveLength(1);
+            expect(Object.keys(JC.userConfig.bookmark.bookmarks)).toHaveLength(1);
+            expect(updated).toHaveBeenCalledTimes(1);
+            document.removeEventListener('jc-bookmarks-updated', updated);
+        });
+
+        it('keeps equal-timestamp different-label and distinct-timestamp bookmarks apart', async () => {
+            const api = await loadModule({
+                a: stored(10, 'Intro'),
+                b: stored(10, 'Outro'),
+                c: stored(20, 'Intro')
+            });
+
+            const synced = await api.syncBookmarks(
+                [source('a', 10, 'Intro'), source('b', 10, 'Outro'), source('c', 20, 'Intro')],
+                target, 0, ['a', 'b', 'c']
+            );
+
+            expect(synced).toHaveLength(3);
+            expect(targetRows().map(row => [row.timestamp, row.label]).sort())
+                .toEqual([[10, 'Intro'], [10, 'Outro'], [20, 'Intro']]);
+            expect(Object.keys(JC.userConfig.bookmark.bookmarks)).toHaveLength(3);
+        });
+
+        it('collapses an equal target/timestamp/label pair even when incidental fields differ', async () => {
+            const preexisting = {
+                itemId: 'target-item', tmdbId: 'x', mediaType: 'movie', timestamp: 10, label: 'L',
+                name: 'Different display name', createdAt: 'earlier', updatedAt: 'earlier', syncedFrom: 'elsewhere'
+            };
+            const api = await loadModule({ kept: preexisting, src1: stored(10) });
+
+            const synced = await api.syncBookmarks([source('src1', 10)], target, 0, ['src1']);
+
+            expect(synced).toEqual([]);
+            expect(plugin).toHaveBeenCalledTimes(1);
+            expect(plugin.mock.calls[0][1].body.operations).toEqual([{ type: 'delete', bookmarkId: 'src1' }]);
+            expect(JC.userConfig.bookmark.bookmarks).toEqual({ kept: preexisting });
+        });
+
+        it('plans one target row for duplicate source equivalents and removes every source row', async () => {
+            const api = await loadModule({ src1: stored(10), src2: stored(10) });
+
+            const synced = await api.syncBookmarks(
+                [source('src1', 10), source('src2', 10)], target, 0, ['src1', 'src2']
+            );
+
+            expect(synced).toHaveLength(1);
+            const operations = plugin.mock.calls[0][1].body.operations as AnyRec[];
+            expect(operations.filter(op => op.type === 'add')).toHaveLength(1);
+            expect(operations.filter(op => op.type === 'delete').map(op => op.bookmarkId).sort())
+                .toEqual(['src1', 'src2']);
+            expect(targetRows()).toHaveLength(1);
+            expect(Object.keys(JC.userConfig.bookmark.bookmarks)).toHaveLength(1);
+        });
+
+        it('reuses existing equivalents in a partial prior sync and adds only the missing keys', async () => {
+            const api = await loadModule({
+                already: stored(10, 'L', 'target-item'),
+                src1: stored(10),
+                src2: stored(25, 'M')
+            });
+
+            const synced = await api.syncBookmarks(
+                [source('src1', 10), source('src2', 25, 'M')], target, 0, ['src1', 'src2']
+            );
+
+            expect(synced).toHaveLength(1);
+            expect(synced[0]).toMatchObject({ timestamp: 25, label: 'M' });
+            expect(targetRows().map(row => [row.timestamp, row.label]).sort())
+                .toEqual([[10, 'L'], [25, 'M']]);
+            expect(JC.userConfig.bookmark.bookmarks.src1).toBeUndefined();
+            expect(JC.userConfig.bookmark.bookmarks.src2).toBeUndefined();
+        });
+
+        it('completes the move exactly once when retried after a persistence failure', async () => {
+            const api = await loadModule({ src1: stored(10) });
+            const updated = vi.fn();
+            document.addEventListener('jc-bookmarks-updated', updated);
+            plugin.mockRejectedValueOnce(new Error('disk full'));
+
+            await expect(api.syncBookmarks([source('src1', 10)], target, 0, ['src1']))
+                .rejects.toThrow('disk full');
+            expect(JC.userConfig.bookmark.bookmarks).toEqual({ src1: stored(10) });
+            expect(updated).not.toHaveBeenCalled();
+
+            const retried = await api.syncBookmarks([source('src1', 10)], target, 0, ['src1']);
+
+            expect(retried).toHaveLength(1);
+            expect(targetRows()).toHaveLength(1);
+            expect(JC.userConfig.bookmark.bookmarks.src1).toBeUndefined();
+            expect(Object.keys(JC.userConfig.bookmark.bookmarks)).toHaveLength(1);
+            expect(updated).toHaveBeenCalledTimes(1);
+            document.removeEventListener('jc-bookmarks-updated', updated);
+        });
+
+        it('suppresses its own add when a 409 reveals a concurrent equivalent target bookmark', async () => {
+            const api = await loadModule({ src1: stored(10) });
+            const concurrent = stored(10, 'L', 'target-item');
+            plugin.mockRejectedValueOnce(Object.assign(httpError(409), {
+                responseJSON: { revision: 1, bookmarks: { src1: stored(10), concurrent } }
+            }));
+
+            const synced = await api.syncBookmarks([source('src1', 10)], target, 0, ['src1']);
+
+            expect(synced).toEqual([]);
+            expect(plugin).toHaveBeenCalledTimes(2);
+            expect(plugin.mock.calls[1][1].body.operations).toEqual([{ type: 'delete', bookmarkId: 'src1' }]);
+            expect(JC.userConfig.bookmark.bookmarks).toEqual({ concurrent });
+        });
+
+        it('fails closed before writing on non-finite timestamps, offsets, and a missing target id', async () => {
+            const initial = { src1: stored(10) };
+            const api = await loadModule(structuredClone(initial));
+
+            await expect(api.syncBookmarks([source('src1', Number.NaN)], target, 0, ['src1']))
+                .rejects.toThrow('non-finite timestamp');
+            await expect(api.syncBookmarks([source('src1', 10)], target, Number.POSITIVE_INFINITY, ['src1']))
+                .rejects.toThrow('non-finite time offset');
+            await expect(api.syncBookmarks([source('src1', 10)], { ...target, itemId: '' }, 0, ['src1']))
+                .rejects.toThrow('target item id');
+
+            expect(plugin).not.toHaveBeenCalled();
+            expect(JC.userConfig.bookmark.bookmarks).toEqual(initial);
+        });
+    });
+
     it('owns prototype-named IDs across create, update, delete, post-delete, and delete-all', async () => {
         const initial = Object.fromEntries([
             ['toString', { itemId: 'item-string', identityVersion: 1, mediaType: 'movie', timestamp: 10 }],
