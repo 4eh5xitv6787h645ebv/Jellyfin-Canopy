@@ -4,134 +4,105 @@
             /* jc-config-page-lifecycle:start */
             // Install-once page lifecycle (BI-CLIENT-106 / #167). The dashboard
             // re-fetches configPage.html and re-executes this whole script on
-            // EVERY visit, and Jellyfin's legacy view cache can keep several
-            // config views in the DOM at once — a cached one restored on Back is
-            // NOT re-scripted. So the window/document/MediaQueryList listeners,
-            // MutationObservers and delegated click handlers installed below must
-            // never MULTIPLY across visits: before the fix N visits left N handler
-            // sets and one click on a category Down arrow moved the row N places.
+            // EVERY fresh visit, and Jellyfin's viewContainer keeps up to THREE
+            // routed views cached in the DOM at once (inactive ones hidden with a
+            // `.hide` class) and restores a cached one on Back by simply
+            // un-hiding it — WITHOUT re-running this script. Two facts hold at once:
+            //   * the window/document/MediaQueryList listeners and the injected
+            //     stylesheet must never MULTIPLY across visits — before the fix N
+            //     visits left N handler sets and one click on a category Down
+            //     arrow moved the row N places; and
+            //   * whichever config view is VISIBLE is NOT necessarily the one that
+            //     most recently ran this script: it can be an older cached view
+            //     restored on Back, or — when two fresh views' external scripts
+            //     finish loading out of order — the earlier one.
             //
-            // We deliberately NEVER tear anything down. A teardown-on-revisit was
-            // the previous approach and is unfixable here: tearing down a still-
-            // cached view's handlers strands that view when Jellyfin later restores
-            // it from cache without re-running this script (it would come back with
-            // inert tabs / save controls). Instead:
-            //   * per-VIEW element listeners (buttons/inputs inside the resolved
-            //     page) are attached with addListener — every visit renders a fresh
-            //     view, so re-wiring its own fresh elements is correct, not a leak,
-            //     and a restored cached view keeps the listeners we never removed;
-            //   * every GLOBAL registration (window/document/matchMedia listener,
-            //     persistent-ancestor listener, MutationObserver, injected timer)
-            //     goes through a window-scoped SINGLE-SLOT install (own / ownNode /
-            //     ownObserver / ownTimer) that removes the previous visit's copy
-            //     before installing this visit's, so at most ONE is ever live and
-            //     it always holds the freshest closure.
+            // A "newest run wins the global slot" model is therefore wrong: it
+            // binds the single window/document handler to whichever view's script
+            // finished last, which may be a HIDDEN view, stranding the visible one
+            // (Escape acting on a hidden drawer, theme/sticky/observer bound
+            // off-screen). So GLOBAL handlers are installed EXACTLY ONCE per SPA
+            // session and are VIEW-INDEPENDENT: each resolves the currently
+            // visible config view live at fire time (jcVisibleConfigPage) instead
+            // of closing over one captured view. Per-VIEW element listeners
+            // (buttons/inputs inside the resolved page) are simply attached to
+            // each fresh view — re-wiring a fresh view's own fresh elements is
+            // correct, not a leak, and a restored cached view keeps the listeners
+            // we never removed. This is the enhanced client's install-once /
+            // single-ownership shape, re-expressed inline because this file is a
+            // separately served classic script outside the TypeScript bundle.
             //
-            // This is the install-once / single-ownership shape from the enhanced
-            // client's lifecycle helpers, re-expressed inline: this file is a
-            // separately served classic script outside the TypeScript bundle and
-            // config-page correctness must not depend on bundle load timing.
+            // Nothing about the owner is stored on `window`: the duplicate-run
+            // guard is a per-ELEMENT dataset flag, so no admin config DOM (TMDB /
+            // Seerr API keys) is retained through a global across a logout /
+            // account switch (#167 fail-closed identity isolation).
             function jcCreateConfigPageLifecycle(pageEl, win) {
-                function registry() {
+                function globals() {
                     if (!win) return null;
                     return win.__jcConfigGlobalInstalls ||
-                        (win.__jcConfigGlobalInstalls = { listeners: {}, observers: {}, timers: {}, nodes: null });
+                        (win.__jcConfigGlobalInstalls = { installed: {}, nodes: null });
                 }
-                var reg = registry();
+                var g = globals();
                 var owner = {
                     // Constant sentinel. The per-element dataset.jcWired guards use
-                    // it to wire an element AT MOST ONCE: a fresh view's elements
-                    // never carry it (so they wire once), and a re-run against the
-                    // very same element is skipped. No per-visit token is needed
-                    // because we never tear down and rebind.
+                    // it to wire an element AT MOST ONCE.
                     id: 'jc-config-wired',
                     page: pageEl,
-                    // Retained as an always-true flag so the existing defensive
-                    // `if (!lifecycle.active) return` continuation guards remain
-                    // valid no-ops; nothing ever retires an owner now.
+                    // Retained as an always-true flag so existing defensive
+                    // `if (!lifecycle.active) return` continuations stay valid.
                     active: true,
-                    tracked: [],
-                    track: function (resource) { owner.tracked.push(resource); return resource; },
-                    untrack: function (resource) {
-                        owner.tracked = owner.tracked.filter(function (r) { return r !== resource; });
-                    },
-                    // Per-view element listener: just attach. The element is GC'd
-                    // with its view; a cached view restored on Back keeps it.
+                    // Per-view element listener: attach to this fresh view's own
+                    // element. It dies with the view (bounded by JF's 3-view
+                    // cache), and a restored cached view keeps it.
                     addListener: function (el, type, fn, opts) {
                         if (!el) return;
                         el.addEventListener(type, fn, opts);
                     },
-                    // Single global-listener slot keyed by `key`: remove the prior
-                    // visit's listener for this key (if any), then install this
-                    // visit's. Net: exactly one live listener per key, freshest
-                    // closure. Used for window / document / MediaQueryList targets.
-                    own: function (key, target, type, fn, opts) {
+                    // Install a GLOBAL (window / document / MediaQueryList) listener
+                    // EXACTLY ONCE per SPA session, keyed by `key`. `fn` MUST be
+                    // view-independent (resolve the visible view live), so the one
+                    // install stays correct whichever cached view is shown. Later
+                    // visits find the slot filled and REUSE it — they never rebind
+                    // to their own view, so a stale/hidden view can never steal the
+                    // handler from the visible one, and the handler never
+                    // multiplies.
+                    installGlobalOnce: function (key, target, type, fn, opts) {
                         if (!target) return;
-                        if (reg) {
-                            var prev = reg.listeners[key];
-                            if (prev) { try { prev.target.removeEventListener(prev.type, prev.fn, prev.opts); } catch (e) { /* target gone */ } }
-                            reg.listeners[key] = { target: target, type: type, fn: fn, opts: opts };
+                        if (g) {
+                            if (g.installed[key]) return;
+                            g.installed[key] = true;
                         }
                         target.addEventListener(type, fn, opts);
                     },
-                    // Single listener slot per (persistent node, type). The sticky
-                    // header listens on PERSISTENT dashboard-chrome ancestors that
-                    // survive across visits, so a raw attach would stack across
-                    // visits. A WeakMap keyed by the node replaces the prior copy.
-                    ownNode: function (node, type, fn, opts) {
+                    // Install a listener on a PERSISTENT node (shared dashboard
+                    // chrome that survives across visits, e.g. a scroll-owning
+                    // ancestor) at most once per node. `fn` is view-independent as
+                    // above; a WeakSet keyed by the node dedupes so revisits reusing
+                    // the same chrome node don't stack a second copy.
+                    installNodeOnce: function (node, type, fn, opts) {
                         if (!node) return;
-                        if (reg) {
-                            if (!reg.nodes) reg.nodes = new WeakMap();
-                            var byType = reg.nodes.get(node);
-                            if (!byType) { byType = {}; reg.nodes.set(node, byType); }
-                            var prev = byType[type];
-                            if (prev) { try { node.removeEventListener(type, prev.fn, prev.opts); } catch (e) { /* node gone */ } }
-                            byType[type] = { fn: fn, opts: opts };
+                        if (g) {
+                            if (!g.nodes) g.nodes = new WeakSet();
+                            if (g.nodes.has(node)) return;
+                            g.nodes.add(node);
                         }
                         node.addEventListener(type, fn, opts);
-                    },
-                    // Single MutationObserver slot keyed by `key`: disconnect the
-                    // prior visit's observer, connect this visit's.
-                    ownObserver: function (key, node, options, cb) {
-                        if (!node) return null;
-                        var obs = new MutationObserver(cb);
-                        if (reg) {
-                            var prev = reg.observers[key];
-                            if (prev) { try { prev.disconnect(); } catch (e) { /* already gone */ } }
-                            reg.observers[key] = obs;
-                        }
-                        obs.observe(node, options);
-                        return obs;
-                    },
-                    // Single timer slot keyed by `key`: clear the prior visit's
-                    // pending timer before storing this visit's handle.
-                    ownTimer: function (key, id) {
-                        if (reg) {
-                            var prev = reg.timers[key];
-                            if (prev !== undefined) { try { clearTimeout(prev); } catch (e) { /* already fired */ } }
-                            reg.timers[key] = id;
-                        }
-                        return id;
                     }
                 };
                 return owner;
             }
 
             function jcAcquireConfigPageLifecycle(win, pageEl) {
-                var current = win.__jcConfigPageLifecycle;
-                // Duplicate execution against the SAME live view (e.g. the loader
-                // ran twice against one cached view): keep the existing wiring,
-                // install nothing.
-                if (current && current.page === pageEl && pageEl && pageEl.isConnected !== false) {
-                    return null;
+                // Duplicate execution against the SAME view (belt-and-suspenders:
+                // the HTML loader already appends this script at most once per
+                // view): if this view is already wired, install nothing. The mark
+                // lives on the ELEMENT, never on `window`, so no admin config DOM
+                // is retained through a global across an identity change (#167).
+                if (pageEl && pageEl.dataset) {
+                    if (pageEl.dataset.jcConfigWired === '1') return null;
+                    pageEl.dataset.jcConfigWired = '1';
                 }
-                // A fresh view (or the first run): create a new owner. We do NOT
-                // tear down `current` — its view may be cached and later restored
-                // by Jellyfin without re-running this script, and its GLOBAL
-                // registrations are already single-slotted, so nothing multiplies.
-                var owner = jcCreateConfigPageLifecycle(pageEl, win);
-                win.__jcConfigPageLifecycle = owner;
-                return owner;
+                return jcCreateConfigPageLifecycle(pageEl, win);
             }
 
             // Resolve THIS script's own config-page view (BI-CLIENT-106 / #167).
@@ -160,6 +131,25 @@
                 } catch (e) { /* detached/foreign node — fall through to query */ }
                 var matches = doc.querySelectorAll(selector);
                 return matches.length ? matches[matches.length - 1] : null;
+            }
+
+            // The VISIBLE config view (BI-CLIENT-106 / #167). Jellyfin caches up
+            // to three routed views in the DOM, hiding inactive ones with a `.hide`
+            // class; the install-once GLOBAL handlers must act on whichever view is
+            // visible right now, not on whichever view last ran this script. Prefer
+            // the LAST match: JF keeps stale cached views earlier in document order
+            // and appends the freshest view last. Skips detached and `.hide`
+            // (or `.hide`-ancestor) views.
+            function jcVisibleConfigPage() {
+                var all = document.querySelectorAll('#JellyfinCanopyPage');
+                for (var i = all.length - 1; i >= 0; i--) {
+                    var el = all[i];
+                    if (el.isConnected === false) continue;
+                    if (el.classList && el.classList.contains('hide')) continue;
+                    if (typeof el.closest === 'function' && el.closest('.hide')) continue;
+                    return el;
+                }
+                return all.length ? all[all.length - 1] : null;
             }
             /* jc-config-page-lifecycle:end */
 
@@ -205,7 +195,12 @@
             // We also re-run on `load` in case the theme sheet hadn't applied
             // by the time our initial check ran, and once more after ~600 ms
             // to catch late Jellyfin theme swaps during dashboard navigation.
-            function _jeDetectTheme() {
+            // `targetPage` defaults to the script's own view for the immediate
+            // run; the install-once window 'load'/timer re-checks pass the VISIBLE
+            // view (jcDetectThemeVisible) so a re-check never repaints a hidden
+            // cached view instead of the one on screen (#167).
+            function _jeDetectTheme(targetPage) {
+                var page = arguments.length ? targetPage : jcVisibleConfigPage();
                 if (!page) return;
                 // Wrap the read in try/catch — during SPA detach getComputedStyle
                 // can throw InvalidAccessError. If anything goes wrong we fall
@@ -261,12 +256,17 @@
                     page.classList.add('jc-dark-theme');
                 }
             }
-            _jeDetectTheme();
-            // Single-slot global installs (#167): a fresh visit replaces the prior
-            // visit's window 'load' handler and pending re-check timer instead of
-            // stacking another copy.
-            jcPageLifecycle.own('themeLoad', window, 'load', _jeDetectTheme);
-            jcPageLifecycle.ownTimer('themeTimer', setTimeout(_jeDetectTheme, 600));
+            // View-independent re-check: repaints whichever config view is
+            // visible, so the single install-once window 'load' handler stays
+            // correct across cached-view restores (#167).
+            function jcDetectThemeVisible() { _jeDetectTheme(jcVisibleConfigPage()); }
+            _jeDetectTheme(page);
+            // The window 'load' handler outlives the view, so it is install-once
+            // (#167) to avoid stacking one per visit. The ~600 ms late re-check is
+            // a one-shot self-clearing timer — harmless to (re)schedule per visit
+            // and idempotent since it repaints the VISIBLE view.
+            jcPageLifecycle.installGlobalOnce('themeLoad', window, 'load', jcDetectThemeVisible);
+            setTimeout(jcDetectThemeVisible, 600);
             const resetAllUserSettingsBtn = jcSel('#resetAllUserSettingsBtn');
             const clearTagsCacheBtn = jcSel('#clearTagsCacheBtn');
 
@@ -340,60 +340,89 @@
                 }, true);
             })();
 
-            // Mobile section drawer: the sidebar slides in off-canvas below
-            // 900px. The toggle/scrim only exist in the new shell layout, so
-            // everything here no-ops gracefully if the markup changes.
+            /* jc-config-drawer-globals:start */
+            // Mobile section drawer (#167): the sidebar slides in off-canvas below
+            // 900px. The MediaQueryList `change` and the document Escape keydown
+            // outlive any one view, so they are installed install-once and are
+            // VIEW-INDEPENDENT — each resolves the VISIBLE shell live (never a
+            // hidden cached view). All the drawer logic below takes an explicit
+            // `shell`, so the per-view toggle/scrim/tab clicks act on their own
+            // view's shell while the global handlers act on the visible one.
+            function jcDrawerIsMobile() {
+                try { return !!(window.matchMedia && window.matchMedia('(max-width: 900px)').matches); }
+                catch (e) { return false; }
+            }
+            function jcDrawerParts(shell) {
+                if (!shell || typeof shell.querySelector !== 'function') return null;
+                var toggle = shell.querySelector('.jc-nav-toggle');
+                var scrim = shell.querySelector('.jc-nav-scrim');
+                var sidebar = shell.querySelector('.jc-sidebar');
+                var main = shell.querySelector('.jc-main');
+                if (!toggle || !scrim || !sidebar || !main) return null;
+                return { shell: shell, toggle: toggle, scrim: scrim, sidebar: sidebar, main: main };
+            }
+            function jcDrawerSetOpen(shell, open) {
+                var p = jcDrawerParts(shell);
+                if (!p) return;
+                var wasOpen = shell.classList.contains('jc-nav-open');
+                shell.classList.toggle('jc-nav-open', open);
+                p.toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+                // Off-canvas focus ownership (drawer mode only): while the drawer
+                // overlays the page the covered main column must not hold focus or
+                // be reachable; while it is closed off-canvas the sidebar must not
+                // be tabbable behind the viewport edge.
+                if (jcDrawerIsMobile()) {
+                    p.main.inert = open;
+                    p.sidebar.inert = !open;
+                    if (open) {
+                        var focusEl = p.sidebar.querySelector('#settingsSearchInput, .jc-group-btn');
+                        if (focusEl) focusEl.focus();
+                    } else if (wasOpen) {
+                        p.toggle.focus();
+                    }
+                }
+            }
+            function jcDrawerSyncLayout(shell) {
+                var p = jcDrawerParts(shell);
+                if (!p) return;
+                if (jcDrawerIsMobile()) {
+                    p.sidebar.inert = !shell.classList.contains('jc-nav-open');
+                    p.main.inert = shell.classList.contains('jc-nav-open');
+                } else {
+                    // Desktop rail: both columns are visible and interactive.
+                    p.sidebar.inert = false;
+                    p.main.inert = false;
+                    shell.classList.remove('jc-nav-open');
+                    p.toggle.setAttribute('aria-expanded', 'false');
+                }
+            }
+            // Install-once global callbacks: resolve the visible view's shell live.
+            function jcDrawerSyncVisible() {
+                var page = jcVisibleConfigPage();
+                jcDrawerSyncLayout(page && page.querySelector ? page.querySelector('.jc-shell') : null);
+            }
+            function jcDrawerEscapeVisible(e) {
+                if (!e || e.key !== 'Escape') return;
+                var page = jcVisibleConfigPage();
+                var shell = page && page.querySelector ? page.querySelector('.jc-shell') : null;
+                if (shell && shell.classList.contains('jc-nav-open')) jcDrawerSetOpen(shell, false);
+            }
+            /* jc-config-drawer-globals:end */
             (function wireSectionDrawer() {
                 const shell = jcSel('.jc-shell');
-                const toggle = jcById('jcNavToggle');
-                const scrim = jcById('jcNavScrim');
-                const sidebar = shell?.querySelector('.jc-sidebar');
-                const main = shell?.querySelector('.jc-main');
-                if (!shell || !toggle || !scrim || !sidebar || !main) return;
-                const drawerMedia = window.matchMedia('(max-width: 900px)');
-                const setOpen = (open) => {
-                    const wasOpen = shell.classList.contains('jc-nav-open');
-                    shell.classList.toggle('jc-nav-open', open);
-                    toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
-                    // Off-canvas focus ownership (drawer mode only): while the
-                    // drawer overlays the page, the covered main column must not
-                    // hold focus or be reachable; while it is closed off-canvas,
-                    // the sidebar must not be tabbable behind the viewport edge.
-                    if (drawerMedia.matches) {
-                        main.inert = open;
-                        sidebar.inert = !open;
-                        if (open) {
-                            sidebar.querySelector('#settingsSearchInput, .jc-group-btn')?.focus();
-                        } else if (wasOpen) {
-                            toggle.focus();
-                        }
-                    }
-                };
-                const syncLayoutMode = () => {
-                    if (drawerMedia.matches) {
-                        sidebar.inert = !shell.classList.contains('jc-nav-open');
-                        main.inert = shell.classList.contains('jc-nav-open');
-                    } else {
-                        // Desktop rail: both columns are visible and interactive.
-                        sidebar.inert = false;
-                        main.inert = false;
-                        shell.classList.remove('jc-nav-open');
-                        toggle.setAttribute('aria-expanded', 'false');
-                    }
-                };
-                // The MediaQueryList and the document keydown outlive the page:
-                // single-slotted (#167) so a fresh visit replaces the prior
-                // visit's handler instead of stacking one that fires against
-                // stale DOM.
-                jcPageLifecycle.own('drawerMedia', drawerMedia, 'change', syncLayoutMode);
-                syncLayoutMode();
-                jcPageLifecycle.addListener(toggle, 'click', () => setOpen(!shell.classList.contains('jc-nav-open')));
-                jcPageLifecycle.addListener(scrim, 'click', () => setOpen(false));
+                const parts = jcDrawerParts(shell);
+                if (!parts) return;
+                const { toggle, scrim } = parts;
+                // Per-view element listeners act on THIS view's shell.
+                jcDrawerSyncLayout(shell);
+                jcPageLifecycle.addListener(toggle, 'click', () => jcDrawerSetOpen(shell, !shell.classList.contains('jc-nav-open')));
+                jcPageLifecycle.addListener(scrim, 'click', () => jcDrawerSetOpen(shell, false));
                 // Selecting a section (or focusing search results) dismisses the drawer.
-                tabs.forEach((t) => jcPageLifecycle.addListener(t, 'click', () => setOpen(false)));
-                jcPageLifecycle.own('drawerEsc', document, 'keydown', (e) => {
-                    if (e.key === 'Escape' && shell.classList.contains('jc-nav-open')) setOpen(false);
-                });
+                tabs.forEach((t) => jcPageLifecycle.addListener(t, 'click', () => jcDrawerSetOpen(shell, false)));
+                // Global, view-independent, install-once (#167).
+                const drawerMedia = (window.matchMedia && window.matchMedia('(max-width: 900px)')) || null;
+                jcPageLifecycle.installGlobalOnce('drawerMedia', drawerMedia, 'change', jcDrawerSyncVisible);
+                jcPageLifecycle.installGlobalOnce('drawerEsc', document, 'keydown', jcDrawerEscapeVisible);
             })();
 
             // Grouped shell (handoff IA): the rail chooses a product area; its
@@ -2108,10 +2137,12 @@
         // handler — the #167 defect was N retained copies of this delegate
         // each moving the row one position per click.
         function jcWireQualityCatAdminReorder(doc, lifecycle, refreshArrows, markDirty) {
-            // Delegated on the document via a single global slot (#167 AC3): a
-            // fresh visit REPLACES the previous visit's handler, so one click on a
-            // category Down arrow moves the row exactly one position, never N.
-            lifecycle.own('qualityCatReorder', doc, 'click', function (e) {
+            // Delegated on the document, installed EXACTLY ONCE per session (#167
+            // AC3). The handler is view-independent — it acts on whichever row the
+            // event actually targeted (e.target.closest) — so one live delegate is
+            // both correct for any visible view AND moves a Down-clicked row
+            // exactly one position, never N (the pre-fix defect stacked N copies).
+            lifecycle.installGlobalOnce('qualityCatReorder', doc, 'click', function (e) {
                 var btn = e.target.closest && e.target.closest('#qualityCategoriesAdmin .jc-cat-up, #qualityCategoriesAdmin .jc-cat-down');
                 if (!btn || btn.disabled) return;
                 e.preventDefault();
@@ -2195,10 +2226,11 @@
         }
 
         // Wire up/down arrow clicks for the admin page-order list.
-        // Delegated on the document via a single global slot so a fresh visit
-        // replaces (never stacks on) the previous visit's handler (#167).
+        // Delegated on the document, installed EXACTLY ONCE per session and
+        // view-independent (acts on the event's own row), so it never stacks
+        // across visits (#167).
         (function () {
-            jcPageLifecycle.own('pagesOrderReorder', document, 'click', function (e) {
+            jcPageLifecycle.installGlobalOnce('pagesOrderReorder', document, 'click', function (e) {
                 var btn = e.target.closest && e.target.closest('#pagesOrderAdmin .jc-page-up, #pagesOrderAdmin .jc-page-down');
                 if (!btn || btn.disabled) return;
                 e.preventDefault();
@@ -3212,10 +3244,15 @@
             ['sonarrInstancesList', 'radarrInstancesList'].forEach(function(id) {
                 var root = jcById(id);
                 if (!root) return;
-                // Single-slot observer (#167): a fresh visit disconnects the
-                // previous visit's observer for this list before connecting its
-                // own, so at most one observer is ever live per list.
-                jcPageLifecycle.ownObserver('arrInstances:' + id, root, { childList: true, subtree: true }, refresh);
+                // Per-VIEW observer (#167): each observes the node INSIDE its own
+                // view and drives that view's page-scoped banner, so a hidden
+                // cached view can never steal the observer from the visible one.
+                // It is not registered globally, so it dies with its view when
+                // Jellyfin evicts it (bounded by JF's 3-view cache) — no unbounded
+                // multiplication and no cross-view interference. The duplicate-run
+                // guard in jcAcquireConfigPageLifecycle means one view wires once.
+                var obs = new MutationObserver(refresh);
+                obs.observe(root, { childList: true, subtree: true });
             });
         })();
 
@@ -3228,73 +3265,73 @@
         // utility class decorates some non-scrolling nodes), so we attach
         // scroll listeners to every reasonable candidate (matching ancestor
         // + window) and read whichever reports a non-zero scroll position.
-        // All listeners are page-lifecycle-owned (#167): they persist while
-        // Jellyfin keeps this page's DOM alive, and a fresh dashboard visit
-        // removes them before installing its own set.
+        // window scroll outlives the view and the mid-tree scroll ancestors are
+        // PERSISTENT dashboard chrome shared across views, so both are installed
+        // install-once and VIEW-INDEPENDENT (#167): the handler resolves the
+        // VISIBLE header live and drives whichever view is on screen, instead of a
+        // hidden cached view's header.
+        /* jc-config-sticky-globals:start */
+        var _jcStickyTicking = false;
+        // Collect all overflow-y:auto|scroll ancestors as scroll-candidate nodes.
+        // We don't trust scrollHeight>clientHeight at bind time (async content
+        // hasn't landed yet); we don't pick just the first match (Jellyfin's
+        // .scrollY utility flags decorative containers that don't actually
+        // scroll). Listening on all matches plus window means whichever actually
+        // scrolls drives the class toggle.
+        function jcStickyScrollCandidates(el) {
+            var nodes = [];
+            var node = el && el.parentNode;
+            while (node && node !== document.body && node.nodeType === 1) {
+                var oy = getComputedStyle(node).overflowY;
+                if (oy === 'auto' || oy === 'scroll') nodes.push(node);
+                node = node.parentNode;
+            }
+            return nodes;
+        }
+        function jcStickyScrollTop(candidates) {
+            var winTop = window.pageYOffset || document.documentElement.scrollTop || document.body.scrollTop || 0;
+            var contTop = 0;
+            for (var i = 0; i < candidates.length; i++) {
+                var n = candidates[i];
+                // Skip detached nodes: their scrollTop freezes at the last value,
+                // which would incorrectly pin `.jc-is-scrolled` on after the live
+                // scroller returns to top.
+                if (!n.isConnected) continue;
+                var t = n.scrollTop || 0;
+                if (t > contTop) contTop = t;
+            }
+            return winTop > contTop ? winTop : contTop;
+        }
+        function jcStickyScrollRead() {
+            try {
+                var page = jcVisibleConfigPage();
+                var header = page && page.querySelector ? page.querySelector('.jc-sticky-header') : null;
+                if (header) header.classList.toggle('jc-is-scrolled', jcStickyScrollTop(jcStickyScrollCandidates(header)) > 4);
+            } catch (e) {
+                console.warn('[JC] sticky-header read failed:', e);
+            } finally {
+                // Guarantees the rAF pipeline doesn't wedge on the tick flag if the read throws.
+                _jcStickyTicking = false;
+            }
+        }
+        function jcStickyScrollOnScroll() {
+            if (_jcStickyTicking) return;
+            _jcStickyTicking = true;
+            requestAnimationFrame(jcStickyScrollRead);
+        }
+        /* jc-config-sticky-globals:end */
         (function wireStickyHeaderScroll() {
             var header = jcSel('.jc-sticky-header');
             if (!header) return;
-            // Collect all overflow-y:auto|scroll ancestors as scroll-candidate
-            // nodes. We don't trust scrollHeight>clientHeight at bind time
-            // (async content hasn't landed yet); we don't pick just the
-            // first match (Jellyfin's .scrollY utility flags decorative
-            // containers that don't actually scroll). Listening on all
-            // matches plus window means whichever actually scrolls drives
-            // the class toggle.
-            function findScrollCandidates(el) {
-                var nodes = [];
-                var node = el && el.parentNode;
-                while (node && node !== document.body && node.nodeType === 1) {
-                    var oy = getComputedStyle(node).overflowY;
-                    if (oy === 'auto' || oy === 'scroll') nodes.push(node);
-                    node = node.parentNode;
-                }
-                return nodes;
-            }
-            var candidates = findScrollCandidates(header);
-            var ticking = false;
-            function currentScrollTop() {
-                var winTop = window.pageYOffset || document.documentElement.scrollTop || document.body.scrollTop || 0;
-                var contTop = 0;
-                for (var i = 0; i < candidates.length; i++) {
-                    var n = candidates[i];
-                    // Skip detached nodes: their scrollTop freezes at the last
-                    // value, which would incorrectly pin `.jc-is-scrolled` on
-                    // after the live scroller returns to top.
-                    if (!n.isConnected) continue;
-                    var t = n.scrollTop || 0;
-                    if (t > contTop) contTop = t;
-                }
-                return winTop > contTop ? winTop : contTop;
-            }
-            function read() {
-                try {
-                    header.classList.toggle('jc-is-scrolled', currentScrollTop() > 4);
-                } catch (e) {
-                    console.warn('[JC] sticky-header read failed:', e);
-                } finally {
-                    // Guarantees the rAF pipeline doesn't wedge on `ticking` if read() throws.
-                    ticking = false;
-                }
-            }
-            function onScroll() {
-                if (ticking) return;
-                ticking = true;
-                requestAnimationFrame(read);
-            }
-            // Always listen on window (document-scrolling layouts) and on each
-            // overflow-declared ancestor (mid-tree scrollers). window is a single
-            // global slot; the ancestors are PERSISTENT dashboard chrome that
-            // survives across visits, so each is a per-node single slot — a fresh
-            // visit replaces its prior handler instead of stacking one (#167).
-            jcPageLifecycle.own('stickyScrollWindow', window, 'scroll', onScroll, { passive: true });
+            jcPageLifecycle.installGlobalOnce('stickyScrollWindow', window, 'scroll', jcStickyScrollOnScroll, { passive: true });
+            var candidates = jcStickyScrollCandidates(header);
             if (candidates.length === 0) {
                 console.warn('[JC] sticky-header: no overflow:auto|scroll ancestors found; relying on window scroll only.');
             }
             candidates.forEach(function(n) {
-                jcPageLifecycle.ownNode(n, 'scroll', onScroll, { passive: true });
+                jcPageLifecycle.installNodeOnce(n, 'scroll', jcStickyScrollOnScroll, { passive: true });
             });
-            read();
+            jcStickyScrollRead();
         })();
 
         // ================================
@@ -5877,8 +5914,6 @@
                         if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay);
                         document.removeEventListener('keydown', onKey);
                         if (_activePanelPreviewCleanup === cleanup) _activePanelPreviewCleanup = null;
-                        // Normal close: stop the page owner from re-running us.
-                        jcPageLifecycle.untrack(cleanup);
                     }
                     function onKey(e) {
                         if (e.key === 'Escape') {
@@ -5892,18 +5927,14 @@
                     });
                     document.addEventListener('keydown', onKey);
                     _activePanelPreviewCleanup = cleanup;
-                    // Bookkept on the owner so the open-preview cleanup is
-                    // discoverable (untracked on normal close). The overlay is
-                    // self-closing (interval + hard timeout), so a page swap does
-                    // not strand it.
-                    jcPageLifecycle.track(cleanup);
+                    // The overlay is self-closing (interval + hard timeout), so a
+                    // page swap does not strand it — no owner bookkeeping needed.
                 });
             }
 
             if (toastBtn && toastInput && toastBtn.dataset.jcWired !== jcPageLifecycle.id) {
                 toastBtn.dataset.jcWired = jcPageLifecycle.id;
-                // Owner-routed (#167 findings 2/7): teardown reclaims this click
-                // so a fresh owner rebinds one live handler instead of stacking.
+                // Per-view element listener guarded once by dataset.jcWired (#167).
                 jcPageLifecycle.addListener(toastBtn, 'click', function() {
                     // Clear any prior preview toasts AND their still-pending timers
                     // (otherwise rapid-fire clicks leave detached toasts with pending
@@ -5926,11 +5957,10 @@
                     toast.setAttribute('aria-live', 'polite');
                     toast.textContent = 'Example toast — disappears in ' + fmtSeconds(ms);
                     document.body.appendChild(toast);
-                    // Bookkept cleanup (#167): the toast is a body-level node with
-                    // up to three pending timers. The disposer is idempotent and
-                    // self-scheduled (it fires on the hide/remove timeout), so the
-                    // toast tears itself down on its own timeline; untrack once it
-                    // finishes.
+                    // The toast is a body-level node with up to three pending
+                    // timers. The disposer is idempotent and self-scheduled (it
+                    // fires on the hide/remove timeout), so the toast tears itself
+                    // down on its own timeline — no owner bookkeeping needed.
                     function toastCleanup() {
                         if (toast._jcCleanupDone) return;
                         toast._jcCleanupDone = true;
@@ -5938,10 +5968,8 @@
                         if (toast._jeHideTimer)   clearTimeout(toast._jeHideTimer);
                         if (toast._jeRemoveTimer) clearTimeout(toast._jeRemoveTimer);
                         if (toast.parentNode) toast.parentNode.removeChild(toast);
-                        jcPageLifecycle.untrack(toastCleanup);
                     }
                     toast._jcCleanup = toastCleanup;
-                    jcPageLifecycle.track(toastCleanup);
                     // Mirror real JC.toast(): slide in from the right after a tick,
                     // stay for `ms`, then slide back out by removing the .jc-shown class.
                     toast._jeShowTimer = setTimeout(function() { toast.classList.add('jc-shown'); }, 10);
@@ -6123,15 +6151,17 @@
             });
 
             // Outside-click closes every open banner. Clicks inside an open
-            // banner (e.g. code copy button, links) don't close it.
-            // Single global slot so repeated visits keep exactly one (#167).
-            jcPageLifecycle.own('bannerOutsideClick', document, 'click', function(e) {
+            // banner (e.g. code copy button, links) don't close it. Installed
+            // EXACTLY ONCE per session and view-independent (#167): it resets any
+            // open banner across all config views via a document-wide query, so a
+            // hidden cached view can't leave the single handler bound off-screen.
+            jcPageLifecycle.installGlobalOnce('bannerOutsideClick', document, 'click', function(e) {
                 if (!e.target) return;
                 if (e.target.closest('.jc-banner-trigger, .jc-banner-managed')) return;
-                jcSelAll('.jc-banner-trigger[aria-expanded="true"]').forEach(function(t) {
+                document.querySelectorAll('.jc-banner-trigger[aria-expanded="true"]').forEach(function(t) {
                     t.setAttribute('aria-expanded', 'false');
                 });
-                jcSelAll('.jc-banner-managed.jc-banner-open').forEach(function(b) {
+                document.querySelectorAll('.jc-banner-managed.jc-banner-open').forEach(function(b) {
                     b.classList.remove('jc-banner-open');
                 });
             });
