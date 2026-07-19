@@ -67,6 +67,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
                 current = current.SchemaVersion switch
                 {
                     0 => MigrateV0ToV1(current),
+                    1 => MigrateV1ToV2(current),
                     _ => throw new InvalidOperationException(
                         $"No Theme Studio migration is registered for schema {current.SchemaVersion}.")
                 };
@@ -92,6 +93,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
             var result = UserThemeConfiguration.CreateDefault(
                 "canopy",
                 "jellyfish-" + canonical.ToLowerInvariant());
+            result.Profiles[0].Accent = "palette";
             result.LegacyMigration = new ThemeLegacyMigration
             {
                 JellyfishTheme = canonical,
@@ -128,10 +130,51 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
                 if (migrated.Profiles.Count > 0)
                 {
                     migrated.Profiles[0].Palette = "jellyfish-" + canonical.ToLowerInvariant();
+                    migrated.Profiles[0].Accent = "palette";
                 }
             }
 
             return migrated;
         }
+
+        private static UserThemeConfiguration MigrateV1ToV2(UserThemeConfiguration source)
+        {
+            var migrated = ThemeConfigurationClone.Configuration(source);
+            migrated.SchemaVersion = 2;
+
+            foreach (var profile in migrated.Profiles)
+            {
+                var hasGeneratedLegacyJellyfishAccent = IsBundledJellyfishPalette(profile.Palette)
+                    && string.Equals(profile.Accent, "violet", StringComparison.Ordinal);
+
+                if (!ThemeConfigurationPolicy.IsPalette(profile.Palette))
+                {
+                    profile.Palette = "canopy-night";
+                }
+
+                if (hasGeneratedLegacyJellyfishAccent
+                    || !ThemeConfigurationPolicy.IsAccent(profile.Accent))
+                {
+                    profile.Accent = "palette";
+                }
+            }
+
+            return migrated;
+        }
+
+        private static bool IsBundledJellyfishPalette(string? value)
+        {
+            const string prefix = "jellyfish-";
+            if (value == null || !value.StartsWith(prefix, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            return TryCanonicalizeJellyfishTheme(value.Substring(prefix.Length), out var canonical)
+                && string.Equals(value, prefix + canonical.ToLowerInvariant(), StringComparison.Ordinal);
+        }
+
+        public static string NormalizeAdministratorPalette(string? value)
+            => ThemeConfigurationPolicy.IsPalette(value) ? value! : "canopy-night";
     }
 }

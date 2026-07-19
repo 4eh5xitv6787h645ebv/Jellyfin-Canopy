@@ -63,6 +63,10 @@
     <!-- Canonical locale inventory consumed by the server endpoints and CI. -->
     <EmbeddedResource Include="locale-manifest.json"
                       LogicalName="Jellyfin.Plugin.JellyfinCanopy.locale-manifest.json" />
+    <!-- Machine-readable preset/palette/icon provenance. The same source JSON is
+         compiled into the Theme Studio catalog and embedded for offline audit. -->
+    <EmbeddedResource Include="src\theme-studio\provenance.json"
+                      LogicalName="Jellyfin.Plugin.JellyfinCanopy.ThemeStudio.provenance.json" />
     <!-- Ship-safe assets served by AssetsController (guaranteed-available tier of the
          third-party asset cache; see Services/AssetCacheManifest.cs). -->
     <None Remove="Assets\poster-fallback.svg"/>

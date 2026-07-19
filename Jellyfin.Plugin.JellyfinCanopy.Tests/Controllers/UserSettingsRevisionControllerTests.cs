@@ -127,7 +127,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             _provider.Current = new PluginConfiguration
             {
                 ThemeStudioDefaultPreset = "glass",
-                ThemeStudioDefaultPalette = "canopy-night"
+                ThemeStudioDefaultPalette = "catppuccin"
             };
 
             var controller = Controller();
@@ -136,10 +136,31 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
 
             Assert.Equal(ThemeConfigurationPolicy.CurrentSchemaVersion, theme.SchemaVersion);
             Assert.Equal("glass", Assert.Single(theme.Profiles).BasePreset);
-            Assert.Equal("canopy-night", theme.Profiles[0].Palette);
+            Assert.Equal("catppuccin", theme.Profiles[0].Palette);
+            Assert.Equal("palette", theme.Profiles[0].Accent);
             Assert.Equal("\"0\"", controller.Response.Headers.ETag.ToString());
             Assert.Matches("^[0-9a-f]{64}$", controller.Response.Headers["X-JC-Content-Hash"].ToString());
             Assert.True(File.Exists(FilePath("theme.json")));
+        }
+
+        [Fact]
+        public void ThemeGet_NormalizesLegacyFreeTextAdministratorPaletteDefault()
+        {
+            _provider.Current = new PluginConfiguration
+            {
+                ThemeStudioDefaultPreset = "glass",
+                ThemeStudioDefaultPalette = "former-custom-palette"
+            };
+
+            var theme = Assert.IsType<UserThemeConfiguration>(
+                Assert.IsType<OkObjectResult>(Controller().GetUserSettingsTheme(UserId)).Value);
+
+            Assert.Equal(ThemeConfigurationPolicy.CurrentSchemaVersion, theme.SchemaVersion);
+            Assert.Equal("glass", Assert.Single(theme.Profiles).BasePreset);
+            Assert.Equal("canopy-night", theme.Profiles[0].Palette);
+            Assert.Equal("canopy-night", _manager
+                .GetUserConfigurationStrict<UserThemeConfiguration>(UserId, "theme.json")
+                .Profiles[0].Palette);
         }
 
         [Fact]
@@ -231,10 +252,34 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             var validated = Assert.IsType<OkObjectResult>(
                 Controller().ValidateUserSettingsThemeImport(UserId, import));
             var json = JsonSerializer.Serialize(validated.Value);
-            Assert.Contains("\"schemaVersion\":1", json, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains(
+                $"\"schemaVersion\":{ThemeConfigurationPolicy.CurrentSchemaVersion}",
+                json,
+                StringComparison.OrdinalIgnoreCase);
             Assert.False(File.Exists(FilePath("theme.json")));
             Assert.Equal(0, import.SchemaVersion);
             Assert.Same(profile, import.Profiles[0]);
+        }
+
+        [Fact]
+        public void ThemeImportValidation_PreservesSchemaOneJellyfishPaletteWithoutLegacyMetadata()
+        {
+            var profile = ThemeProfile.CreateDefault("canopy", "jellyfish-ocean");
+            profile.Accent = "violet";
+            var import = new ThemeExportDocument
+            {
+                SchemaVersion = 1,
+                ActiveProfileId = ThemeProfile.DefaultId,
+                Profiles = new List<ThemeProfile> { profile }
+            };
+
+            var validated = Assert.IsType<OkObjectResult>(
+                Controller().ValidateUserSettingsThemeImport(UserId, import));
+            var json = JsonSerializer.Serialize(validated.Value);
+            Assert.Contains("\"Palette\":\"jellyfish-ocean\"", json, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("\"Accent\":\"palette\"", json, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal("violet", profile.Accent);
+            Assert.False(File.Exists(FilePath("theme.json")));
         }
 
         [Fact]

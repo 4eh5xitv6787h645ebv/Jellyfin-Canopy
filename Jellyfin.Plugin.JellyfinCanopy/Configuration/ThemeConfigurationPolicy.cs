@@ -9,7 +9,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
 {
     internal static class ThemeConfigurationPolicy
     {
-        public const int CurrentSchemaVersion = 1;
+        public const int CurrentSchemaVersion = 2;
         public const int MaximumPersistedBytes = 128 * 1024;
         public const int MaximumProfiles = 24;
         public const int MaximumScheduleEntries = 32;
@@ -25,6 +25,23 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         {
             "canopy", "minimal", "cinematic", "glass", "material", "studio",
             "tv-focus", "oled", "high-contrast"
+        };
+
+        private static readonly HashSet<string> Palettes = new(StringComparer.Ordinal)
+        {
+            "canopy-night", "neutral", "vivid", "catppuccin", "dracula",
+            "spring", "summer", "autumn", "winter",
+            "jellyfish-aurora", "jellyfish-banana", "jellyfish-coal",
+            "jellyfish-coral", "jellyfish-forest", "jellyfish-grass",
+            "jellyfish-jellyblue", "jellyfish-jellyflix", "jellyfish-jellypurple",
+            "jellyfish-lavender", "jellyfish-midnight", "jellyfish-mint",
+            "jellyfish-ocean", "jellyfish-peach", "jellyfish-watermelon"
+        };
+
+        private static readonly HashSet<string> Accents = new(StringComparer.Ordinal)
+        {
+            "palette", "violet", "blue", "cyan", "teal", "green",
+            "amber", "orange", "red", "pink", "neutral"
         };
 
         private static readonly HashSet<string> SystemChoices = new(StringComparer.Ordinal)
@@ -89,13 +106,19 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         public static bool IsJellyfishTheme(string? value)
             => ThemeConfigurationMigration.TryCanonicalizeJellyfishTheme(value, out _);
 
+        public static bool IsPalette(string? value)
+            => value != null && Palettes.Contains(value);
+
+        public static bool IsAccent(string? value)
+            => value != null && Accents.Contains(value);
+
         private static bool ValidateProfile(ThemeProfile? profile)
             => profile != null
                 && IsIdentifier(profile.Id)
                 && IsDisplayName(profile.Name)
                 && BasePresets.Contains(profile.BasePreset)
-                && IsIdentifier(profile.Palette)
-                && IsIdentifier(profile.Accent)
+                && IsPalette(profile.Palette)
+                && IsAccent(profile.Accent)
                 && Modes.Contains(profile.Mode)
                 && (!profile.FreezePresetVersion || profile.PresetVersion is > 0)
                 && (profile.PresetVersion == null || profile.PresetVersion is > 0 and <= 10_000)

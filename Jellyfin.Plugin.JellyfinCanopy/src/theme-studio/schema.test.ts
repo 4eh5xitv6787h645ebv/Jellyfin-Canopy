@@ -61,6 +61,13 @@ describe('Theme Studio browser schema boundary', () => {
         expect(parseUserThemeConfiguration(migrated)).not.toBeNull();
     });
 
+    it('requires the migrated schema-two browser contract', () => {
+        const obsolete = themeConfiguration() as unknown as Record<string, unknown>;
+        obsolete.SchemaVersion = 1;
+        expect(parseUserThemeConfiguration(obsolete)).toBeNull();
+        expect(parseUserThemeConfiguration(themeConfiguration())?.SchemaVersion).toBe(2);
+    });
+
     it('enforces identifiers, references, capacities, finite numbers, and the byte ceiling', () => {
         const duplicate = themeConfiguration();
         duplicate.Profiles.push(structuredClone(duplicate.Profiles[0]));
@@ -73,6 +80,19 @@ describe('Theme Studio browser schema boundary', () => {
         const invalidNumber = themeConfiguration();
         invalidNumber.Profiles[0].Tokens = { 'effects.blur': Number.NaN };
         expect(parseUserThemeConfiguration(invalidNumber)).toBeNull();
+
+        const invalidPalette = themeConfiguration();
+        invalidPalette.Profiles[0].Palette = 'remote-gallery-theme';
+        expect(parseUserThemeConfiguration(invalidPalette)).toBeNull();
+
+        const invalidAccent = themeConfiguration();
+        invalidAccent.Profiles[0].Accent = 'javascript';
+        expect(parseUserThemeConfiguration(invalidAccent)).toBeNull();
+
+        const curated = themeConfiguration();
+        curated.Profiles[0].Palette = 'catppuccin';
+        curated.Profiles[0].Accent = 'palette';
+        expect(parseUserThemeConfiguration(curated)).not.toBeNull();
 
         const tooMany = themeConfiguration();
         tooMany.Profiles = Array.from({ length: 25 }, (_, index) => ({

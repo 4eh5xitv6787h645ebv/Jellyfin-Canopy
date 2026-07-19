@@ -11,6 +11,61 @@ interface Target {
     canonId: string;
 }
 
+interface HorizontalOverflowEvidence {
+    innerWidth: number;
+    scrollWidth: number;
+    themeActive: string | null;
+    themeBreakpoint: string | null;
+    offenders: Array<{
+        selector: string;
+        left: number;
+        right: number;
+        width: number;
+    }>;
+}
+
+async function horizontalOverflowEvidence(page: Page): Promise<HorizontalOverflowEvidence> {
+    return page.evaluate(() => {
+        const innerWidth = window.innerWidth;
+        const selectorFor = (element: Element): string => {
+            const id = element.id ? `#${element.id}` : '';
+            const classes = [...element.classList].slice(0, 4).map(value => `.${value}`).join('');
+            return `${element.tagName.toLowerCase()}${id}${classes}`;
+        };
+        const offenders = [...document.body.querySelectorAll('*')]
+            .map(element => {
+                const rect = element.getBoundingClientRect();
+                return {
+                    element,
+                    rect,
+                    style: getComputedStyle(element),
+                };
+            })
+            .filter(({ rect, style }) => rect.width > 0
+                && rect.height > 0
+                && rect.bottom > 0
+                && rect.top < window.innerHeight
+                && style.display !== 'none'
+                && style.visibility !== 'hidden'
+                && (rect.left < -1 || rect.right > innerWidth + 1))
+            .sort((left, right) => right.rect.right - left.rect.right)
+            .slice(0, 12)
+            .map(({ element, rect }) => ({
+                selector: selectorFor(element),
+                left: Math.round(rect.left * 100) / 100,
+                right: Math.round(rect.right * 100) / 100,
+                width: Math.round(rect.width * 100) / 100,
+            }));
+        return {
+            innerWidth,
+            scrollWidth: document.documentElement.scrollWidth,
+            themeActive: document.documentElement.getAttribute('data-jc-theme-active'),
+            themeBreakpoint: document.documentElement.getAttribute('data-jc-theme-breakpoint'),
+            offenders,
+        };
+    });
+}
+
 async function seedLayout(page: Page, layout: 'experimental' | 'desktop'): Promise<void> {
     await page.addInitScript((value) => localStorage.setItem('layout', value), layout);
 }
@@ -174,7 +229,11 @@ test.describe.serial('anime filler warnings', () => {
         expect(box, 'mobile badge bounding box').not.toBeNull();
         expect(box!.x).toBeGreaterThanOrEqual(0);
         expect(box!.x + box!.width).toBeLessThanOrEqual(390);
-        expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+        const overflow = await horizontalOverflowEvidence(page);
+        expect(
+            overflow.scrollWidth - overflow.innerWidth,
+            `mobile document overflow evidence: ${JSON.stringify(overflow)}`,
+        ).toBeLessThanOrEqual(1);
         assertNoRuntimeErrors(consoleErrors);
     });
 

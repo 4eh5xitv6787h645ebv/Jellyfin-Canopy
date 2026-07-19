@@ -244,12 +244,12 @@ POST /JellyfinCanopy/user-settings/{userId}/theme.json/migrate-jellyfish
 
 The first GET atomically creates the administrator-selected defaults. Existing older schemas are migrated through pure ordered transformations under the same per-user file lock; a migration advances `Revision`. Reads return `ETag: "<revision>"` and `X-JC-Content-Hash`. A complete POST must send that strong revision as both `If-Match: "<revision>"` and body `Revision`; missing evidence returns `428`, stale evidence returns `409` with authoritative state, and a successful mutation advances the revision exactly once.
 
-Schema 1 persists PascalCase names exactly as represented by the TypeScript interfaces. Each profile contains a curated base preset, palette/accent/mode, a strict token map, accessibility preferences, and independent phone, tablet, desktop, wide, and TV override maps. Token keys and JSON value types are allowlisted; colors are `#RRGGBB` or `#RRGGBBAA`, enumerations are exact strings, and numeric values have explicit ranges.
+Schema 2 persists PascalCase names exactly as represented by the TypeScript interfaces. Each profile contains a curated base preset, palette/accent/mode, a strict token map, accessibility preferences, and independent phone, tablet, desktop, wide, and TV override maps. Token keys and JSON value types are allowlisted; colors are `#RRGGBB` or `#RRGGBBAA`, enumerations are exact strings, and numeric values have explicit ranges. The schema-1-to-2 migration preserves curated values, normalizes a formerly open palette identifier to `canopy-night`, and normalizes a formerly open accent identifier to `palette`; it never imports external CSS.
 
 ```json
 {
   "Revision": 3,
-  "SchemaVersion": 1,
+  "SchemaVersion": 2,
   "ActiveProfileId": "default",
   "Profiles": [{
     "Id": "default",
@@ -283,9 +283,19 @@ Schema 1 persists PascalCase names exactly as represented by the TypeScript inte
 
 Export omits the revision and legacy-migration evidence and deep-clones the shareable data. Both `/validate` and `/migrate-jellyfish` are non-mutating staging operations; callers must show the result and explicitly save it through the revisioned POST. Jellyfish migration accepts only a bundled canonical theme name such as `Ocean`, never a CSS import, filename, or URL.
 
+### Theme Studio curated catalog
+
+The client catalog in `src/theme-studio/catalog.ts` is immutable, schema-validated data rather than executable third-party CSS. It ships nine version-1 base presets: Canopy, Minimal, Cinematic, Glass, Material, Studio, TV Focus, OLED, and High Contrast. Presets stay orthogonal to 24 palettes and 11 accents, so choosing a layout/effects character does not silently replace a user's color choice. Every preset declares dark, light, and system-mode support, phone/tablet/desktop/wide/TV fallbacks, complete Jellyfin/Canopy surface coverage, an accessibility fallback, a performance tier, and a verified-live-capture thumbnail identifier.
+
+Profiles normally resolve the latest catalog version. Setting `FreezePresetVersion` requires an exact positive `PresetVersion`; an unavailable frozen version fails closed to Canopy version 1 and publishes `data-jc-theme-preset-fallback="true"`. User token maps remain sparse override diffs and are applied after the palette, preset, responsive preset fallback, and accent. This preserves user intent across compatible catalog updates without copying a mutable preset snapshot into every profile.
+
+The palette inventory includes neutral, vivid, attributed Catppuccin/Dracula adaptations, four seasonal palettes, and Canopy-authored semantic equivalents for all 15 Jellyfish selector names. Jellyfish staging sets `Accent` to `palette`, retaining the selected palette's recognizable primary color without importing Jellyfish CSS or contacting its repository. The icon contract offers Jellyfin system icons, the server-local Material Symbols cache, and bundled `currentColor` Lucide SVGs; visible labels remain required and status is never icon-only.
+
+`src/theme-studio/provenance.json` is the machine-readable source/license/reuse graph. Catalog tests require every preset, palette, and icon family to have a valid forward and reverse provenance link. Sources whose reuse or license could not be established are recorded as inspiration-only and contribute no copied bytes. The same JSON is embedded as `Jellyfin.Plugin.JellyfinCanopy.ThemeStudio.provenance.json`, keeping the audit evidence available offline in the built plugin. Gallery images may use only the declared `verified-live-capture` IDs and are added to the documentation from tested Jellyfin builds; mockups are not accepted as release evidence.
+
 ### Theme Studio client runtime
 
-Theme Studio is an import-pure, identity-scoped lazy feature. When the administrator enables it, one feature generation performs one authenticated `theme.json` read, validates the complete response against the browser copy of schema 1, and then resolves one active profile. An oversized response, unknown field, unsupported token, read failure, obsolete identity, or activation failure removes the Theme Studio presentation and leaves Jellyfin's selected base theme in control. The runtime never stores CSS, walks components for computed styles, or creates a style element per component.
+Theme Studio is an import-pure, identity-scoped lazy feature. When the administrator enables it, one feature generation performs one authenticated `theme.json` read, validates the complete response against the browser copy of schema 2, and then resolves one active profile. An oversized response, unknown field, unsupported token, read failure, obsolete identity, or activation failure removes the Theme Studio presentation and leaves Jellyfin's selected base theme in control. The runtime never stores CSS, walks components for computed styles, or creates a style element per component.
 
 The integration boundary is pinned to Jellyfin Web commit `3d7adb53480f02164041fdd983b3f7abc28d0fd9`: `src/themes/index.ts` configures MUI CSS variables with prefix `jf` and selector `[data-theme="%s"]`, while `src/themes/_base/_theme.scss` exposes the classic-layout bridge. Jellyfin alone owns root `data-theme` and the document `THEME_CHANGE` event. Canopy observes both and recomputes its bounded layer without writing `data-theme` or reloading the page.
 

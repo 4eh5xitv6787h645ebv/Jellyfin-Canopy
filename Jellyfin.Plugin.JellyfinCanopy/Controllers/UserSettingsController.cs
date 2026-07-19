@@ -814,9 +814,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             };
 
         private static UserThemeConfiguration BuildDefaultUserTheme(PluginConfiguration defaultConfig)
-            => UserThemeConfiguration.CreateDefault(
+        {
+            var theme = UserThemeConfiguration.CreateDefault(
                 defaultConfig.ThemeStudioDefaultPreset,
-                defaultConfig.ThemeStudioDefaultPalette);
+                ThemeConfigurationMigration.NormalizeAdministratorPalette(
+                    defaultConfig.ThemeStudioDefaultPalette));
+            theme.Profiles[0].Accent = "palette";
+            return theme;
+        }
 
         private UserConfigReadResult<UserThemeConfiguration> GetOrCreateUserTheme(string authorizedUserId)
         {

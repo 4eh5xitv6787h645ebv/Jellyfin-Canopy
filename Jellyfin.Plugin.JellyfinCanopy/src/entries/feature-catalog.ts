@@ -75,6 +75,13 @@ function arrSearchEnabled(): boolean {
  * absent from the boot graph.
  */
 export const builtInFeatureDescriptors: readonly ClientFeatureDescriptor[] = Object.freeze([
+    {
+        id: 'details-layout',
+        entry: 'details-layout',
+        scope: 'navigation',
+        isEnabled: (state) => Boolean(state.identity),
+        isApplicable: (state) => detailsRoute(state.routeKey),
+    },
     ...seerrFeatureDescriptors,
     {
         id: 'settings-launcher',
@@ -288,6 +295,7 @@ export const builtInFeatureDescriptors: readonly ClientFeatureDescriptor[] = Obj
         id: 'details-enhancements',
         entry: 'details-enhancements',
         scope: 'navigation',
+        dependsOn: ['details-layout'],
         restartOnConfigChange: true,
         isEnabled: (state) => Boolean(state.identity) && (
             JC.currentSettings?.showWatchProgress === true

@@ -351,6 +351,17 @@ public sealed class PersistedPayloadPolicyTests
     [Fact]
     public void Theme_TokenNamesTypesAndValues_AreAllowlisted()
     {
+        var curated = UserThemeConfiguration.CreateDefault("material", "catppuccin");
+        curated.Profiles[0].Accent = "palette";
+        AssertValid(curated);
+
+        var unknownPalette = UserThemeConfiguration.CreateDefault("canopy", "remote-gallery-theme");
+        AssertInvalid(unknownPalette);
+
+        var unknownAccent = UserThemeConfiguration.CreateDefault("canopy", "canopy-night");
+        unknownAccent.Profiles[0].Accent = "javascript";
+        AssertInvalid(unknownAccent);
+
         var unknown = UserThemeConfiguration.CreateDefault("canopy", "canopy-night");
         unknown.Profiles[0].Tokens["css.selector"] = JsonValue("body{}");
         AssertInvalid(unknown);

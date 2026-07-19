@@ -1,0 +1,192 @@
+{
+  "schemaVersion": 1,
+  "snapshotDate": "2026-07-19",
+  "policy": "Theme Studio catalog data is authored for Canopy. Sources marked inspiration-only contribute product ideas, never copied CSS or assets.",
+  "sources": [
+    {
+      "id": "jellyfin-web",
+      "name": "Jellyfin Web",
+      "url": "https://github.com/jellyfin/jellyfin-web/tree/3d7adb53480f02164041fdd983b3f7abc28d0fd9/src/themes",
+      "license": "GPL-2.0-only",
+      "reuse": "compatible-contract",
+      "usedBy": [
+        "preset:canopy", "preset:high-contrast", "palette:canopy-night",
+        "palette:vivid", "icon:system"
+      ]
+    },
+    {
+      "id": "better-styles",
+      "name": "Jellyfin Better Styles",
+      "url": "https://github.com/Tetrax-10/jellyfin-better-styles",
+      "license": "MIT",
+      "reuse": "inspiration-only",
+      "usedBy": ["preset:canopy", "preset:minimal"]
+    },
+    {
+      "id": "elegantfin",
+      "name": "ElegantFin",
+      "url": "https://github.com/lscambo13/ElegantFin",
+      "license": "GPL-2.0-only",
+      "reuse": "inspiration-only",
+      "usedBy": ["preset:canopy", "preset:studio"]
+    },
+    {
+      "id": "finimalism",
+      "name": "finimalism",
+      "url": "https://github.com/tedhinklater/finimalism",
+      "license": "GPL-3.0-only",
+      "reuse": "inspiration-only",
+      "usedBy": ["preset:minimal"]
+    },
+    {
+      "id": "netfin",
+      "name": "NetFin",
+      "url": "https://github.com/ya0903/NetFin",
+      "license": "MIT",
+      "reuse": "inspiration-only",
+      "usedBy": ["preset:cinematic"]
+    },
+    {
+      "id": "flow",
+      "name": "Flow",
+      "url": "https://github.com/LitCastVlog/Flow",
+      "license": "GPL-3.0-only",
+      "reuse": "inspiration-only",
+      "usedBy": ["preset:cinematic"]
+    },
+    {
+      "id": "ijelly",
+      "name": "ijelly",
+      "url": "https://github.com/safiyu/ijelly",
+      "license": "NOASSERTION",
+      "reuse": "inspiration-only",
+      "usedBy": ["preset:cinematic", "preset:tv-focus"]
+    },
+    {
+      "id": "abyss",
+      "name": "Abyss",
+      "url": "https://github.com/AumGupta/abyss-jellyfin",
+      "license": "MIT",
+      "reuse": "inspiration-only",
+      "usedBy": ["preset:glass"]
+    },
+    {
+      "id": "jamfin",
+      "name": "Jamfin",
+      "url": "https://github.com/JamsRepos/Jamfin",
+      "license": "MIT",
+      "reuse": "inspiration-only",
+      "usedBy": ["preset:glass"]
+    },
+    {
+      "id": "glassfin",
+      "name": "GlassFin",
+      "url": "https://github.com/KBH-Reeper/GlassFin",
+      "license": "NOASSERTION",
+      "reuse": "inspiration-only",
+      "usedBy": ["preset:glass"]
+    },
+    {
+      "id": "gnat",
+      "name": "GNAT / SethStyle",
+      "url": "https://github.com/JSethCreates/jellyfin-theme-sethstyle",
+      "license": "MIT",
+      "reuse": "inspiration-only",
+      "usedBy": ["preset:material"]
+    },
+    {
+      "id": "spookyfin",
+      "name": "SpookyFin",
+      "url": "https://github.com/endoflineservice/SpookyFin---Material-Theme-for-JellyFin",
+      "license": "MIT",
+      "reuse": "inspiration-only",
+      "usedBy": ["preset:material"]
+    },
+    {
+      "id": "neutralfin",
+      "name": "NeutralFin",
+      "url": "https://github.com/KartoffelChipss/NeutralFin",
+      "license": "GPL-2.0-only",
+      "reuse": "inspiration-only",
+      "usedBy": ["preset:studio", "palette:neutral"]
+    },
+    {
+      "id": "jellygray",
+      "name": "jellygray",
+      "url": "https://github.com/pratimes/jellygray",
+      "license": "MIT",
+      "reuse": "inspiration-only",
+      "usedBy": ["preset:studio", "palette:neutral"]
+    },
+    {
+      "id": "infinitv",
+      "name": "infinitv",
+      "url": "https://github.com/buesche87/infinitv",
+      "license": "GPL-3.0-only",
+      "reuse": "inspiration-only",
+      "usedBy": ["preset:tv-focus"]
+    },
+    {
+      "id": "scyfin",
+      "name": "scyfin",
+      "url": "https://github.com/loof2736/scyfin",
+      "license": "GPL-3.0-only",
+      "reuse": "inspiration-only",
+      "usedBy": ["preset:oled"]
+    },
+    {
+      "id": "catppuccin",
+      "name": "Catppuccin for Jellyfin",
+      "url": "https://github.com/catppuccin/jellyfin",
+      "license": "MIT",
+      "reuse": "attributed-palette-adaptation",
+      "usedBy": ["palette:catppuccin"]
+    },
+    {
+      "id": "dracula",
+      "name": "Dracula for Jellyfin",
+      "url": "https://github.com/dracula/jellyfin",
+      "license": "MIT",
+      "reuse": "attributed-palette-adaptation",
+      "usedBy": ["palette:dracula"]
+    },
+    {
+      "id": "evergarden",
+      "name": "Evergarden for Jellyfin",
+      "url": "https://github.com/everviolet/jellyfin",
+      "license": "EUPL-1.2",
+      "reuse": "inspiration-only",
+      "usedBy": ["palette:spring", "palette:summer", "palette:autumn", "palette:winter"]
+    },
+    {
+      "id": "jellyfish",
+      "name": "Jellyfish",
+      "url": "https://github.com/n00bcodr/Jellyfish",
+      "license": "NOASSERTION",
+      "reuse": "migration-name-and-character-only",
+      "usedBy": [
+        "palette:jellyfish-aurora", "palette:jellyfish-banana", "palette:jellyfish-coal",
+        "palette:jellyfish-coral", "palette:jellyfish-forest", "palette:jellyfish-grass",
+        "palette:jellyfish-jellyblue", "palette:jellyfish-jellyflix", "palette:jellyfish-jellypurple",
+        "palette:jellyfish-lavender", "palette:jellyfish-midnight", "palette:jellyfish-mint",
+        "palette:jellyfish-ocean", "palette:jellyfish-peach", "palette:jellyfish-watermelon"
+      ]
+    },
+    {
+      "id": "lucide",
+      "name": "Lucide",
+      "url": "https://github.com/lucide-icons/lucide",
+      "license": "ISC",
+      "reuse": "existing-local-icon-provider",
+      "usedBy": ["icon:lucide"]
+    },
+    {
+      "id": "material-symbols",
+      "name": "Material Symbols",
+      "url": "https://github.com/google/material-design-icons",
+      "license": "Apache-2.0",
+      "reuse": "existing-local-icon-provider",
+      "usedBy": ["icon:material"]
+    }
+  ]
+}

@@ -3,7 +3,7 @@ import type { UserThemeConfiguration } from '../types/jc';
 export function themeConfiguration(): UserThemeConfiguration {
     return {
         Revision: 3,
-        SchemaVersion: 1,
+        SchemaVersion: 2,
         ActiveProfileId: 'default',
         Profiles: [{
             Id: 'default',
