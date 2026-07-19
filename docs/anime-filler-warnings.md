@@ -49,6 +49,8 @@ A series mapping and all automatically resolved mappings use an absolute episode
 
 Before returning Filler or Canon, Canopy also verifies that the calculated episode actually exists in Jikan's episode response. Out-of-range or unprovable numbering never becomes an assumed Canon result.
 
+If earlier seasons are completely absent, Canopy cannot calculate an absolute number from the local library. It then compares the local episode title against the titles already present in the resolved Jikan episode response. The fallback is accepted only when normalized titles match exactly and identify one unique provider episode; ambiguity or a title mismatch remains unknown. The local episode title is not sent in a separate provider request.
+
 ## Manual mappings
 
 Enter one mapping per line in **Manual MyAnimeList mappings**:
@@ -81,6 +83,7 @@ Both endpoints require administrator elevation. Diagnostics expose no credential
 - Successful results are cached for 24 hours by default (configurable from 1–168 hours). Negative matches last 30 minutes, transient failures back off for 30 seconds, and a last-good episode map can be used for at most seven days during an outage.
 - Both caches are hard-limited to 256 entries. Provider errors are never converted into an authoritative empty or Canon classification.
 - The browser receives no remote assets and contacts only the same-origin Canopy API.
+- Classification data remains subject to the upstream MyAnimeList, Jikan, and AniList terms. Canopy does not redistribute a static classification database; it retains only bounded operational caches.
 
 ## Troubleshooting
 

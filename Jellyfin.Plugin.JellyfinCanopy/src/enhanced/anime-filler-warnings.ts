@@ -59,8 +59,16 @@ function collectTargets(page: HTMLElement): Map<string, Set<HTMLElement>> {
     return targets;
 }
 
+function ownedMarkers(target: HTMLElement): HTMLElement[] {
+    return [...target.querySelectorAll<HTMLElement>(`.${MARKER_CLASS}`)].filter(marker => {
+        const card = marker.closest<HTMLElement>('.card, .listItem');
+        if (target.matches('.card, .listItem')) return card === target;
+        return card === null && marker.closest('[id="itemDetailPage"]') === target;
+    });
+}
+
 function removeMarker(target: HTMLElement): void {
-    target.querySelectorAll<HTMLElement>(`.${MARKER_CLASS}`).forEach(marker => {
+    ownedMarkers(target).forEach(marker => {
         marker.parentElement?.classList.remove(ANCHOR_CLASS);
         marker.remove();
     });
@@ -79,24 +87,21 @@ function marker(): HTMLSpanElement {
 function applyMarker(target: HTMLElement, filler: boolean, itemId: string): void {
     const visible = target.matches('[id="itemDetailPage"]') ? getVisibleDetailsPage() : null;
     const currentItemId = visible?.page === target ? visible.itemId : itemIdFor(target);
-    const existing = target.querySelector<HTMLElement>(`.${MARKER_CLASS}`);
+    const existing = ownedMarkers(target)[0];
     if (!filler || currentItemId && currentItemId !== itemId) {
         if (existing) removeMarker(target);
         return;
     }
-    if (existing?.dataset.itemId === itemId) return;
+    const anchor = target.matches('[id="itemDetailPage"]')
+        ? target.querySelector<HTMLElement>('.itemName')
+            || target.querySelector<HTMLElement>('.detailPagePrimaryContainer')
+            || target.querySelector<HTMLElement>('.detailRibbon')
+        : target.querySelector<HTMLElement>('.cardScalable, .cardImageContainer, .listItemImage') || target;
+    if (!anchor) return;
+    if (existing?.dataset.itemId === itemId && existing.parentElement === anchor) return;
     if (existing) removeMarker(target);
     const badge = marker();
     badge.dataset.itemId = itemId;
-    if (target.matches('[id="itemDetailPage"]')) {
-        const anchor = target.querySelector<HTMLElement>('.itemName, .detailPagePrimaryContainer, .detailRibbon');
-        if (anchor) {
-            anchor.classList.add(ANCHOR_CLASS);
-            anchor.appendChild(badge);
-        }
-        return;
-    }
-    const anchor = target.querySelector<HTMLElement>('.cardScalable, .cardImageContainer, .listItemImage') || target;
     anchor.classList.add(ANCHOR_CLASS);
     anchor.appendChild(badge);
 }
@@ -178,7 +183,7 @@ export function installAnimeFillerWarnings(signal: AbortSignal, isCurrent: () =>
         if (targets.size === 0) return;
         for (const [id, elements] of targets) {
             elements.forEach((element) => {
-                const existing = element.querySelector<HTMLElement>(`.${MARKER_CLASS}`);
+                const existing = ownedMarkers(element)[0];
                 if (existing && existing.dataset.itemId !== id) removeMarker(element);
             });
             const known = readClassification(id);

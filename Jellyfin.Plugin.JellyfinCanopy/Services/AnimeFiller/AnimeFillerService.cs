@@ -62,10 +62,19 @@ public sealed class AnimeFillerService
         AnimeSeriesIdentity identity,
         int providerEpisodeNumber,
         CancellationToken cancellationToken)
+        => await ClassifyAsync(identity, providerEpisodeNumber, null, cancellationToken).ConfigureAwait(false);
+
+    public async Task<AnimeFillerClassification> ClassifyAsync(
+        AnimeSeriesIdentity identity,
+        int? providerEpisodeNumber,
+        string? episodeTitle,
+        CancellationToken cancellationToken)
     {
         var config = _configProvider.ConfigurationOrNull;
         if (config?.AnimeFillerWarningsEnabled != true) return Unknown("disabled");
-        if (providerEpisodeNumber <= 0) return Unknown("episode-number-unavailable");
+        var normalizedEpisodeTitle = AnimeFillerMappingParser.NormalizeTitle(episodeTitle);
+        var hasExplicitEpisodeNumber = providerEpisodeNumber is > 0;
+        if (!hasExplicitEpisodeNumber && normalizedEpisodeTitle.Length == 0) return Unknown("episode-number-unavailable");
 
         var mapping = GetMappings();
         int? malId;
@@ -106,10 +115,16 @@ public sealed class AnimeFillerService
         }
         var episodes = await GetEpisodesAsync(malId.Value, config.AnimeFillerCacheHours, cancellationToken).ConfigureAwait(false);
         if (episodes is null) return Unknown("provider-unavailable");
-        if (!episodes.FillerByEpisode.TryGetValue(providerEpisodeNumber, out var filler)) return Unknown("episode-not-in-provider");
+        var resolvedEpisodeNumber = hasExplicitEpisodeNumber
+            ? providerEpisodeNumber
+            : episodes.EpisodeNumberByNormalizedTitle.TryGetValue(normalizedEpisodeTitle, out var titleMatchedEpisode)
+                ? titleMatchedEpisode
+                : (int?)null;
+        if (!resolvedEpisodeNumber.HasValue) return Unknown("episode-number-unavailable");
+        if (!episodes.FillerByEpisode.TryGetValue(resolvedEpisodeNumber.Value, out var filler)) return Unknown("episode-not-in-provider");
         return new AnimeFillerClassification(
             filler ? AnimeEpisodeClassification.Filler : AnimeEpisodeClassification.Canon,
-            resolutionReason,
+            hasExplicitEpisodeNumber ? resolutionReason : resolutionReason + "+episode-title-match",
             malId,
             $"https://myanimelist.net/anime/{malId}/");
     }

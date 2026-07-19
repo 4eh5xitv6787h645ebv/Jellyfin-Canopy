@@ -108,6 +108,50 @@ public sealed class AnimeFillerControllerContractTests
     }
 
     [Fact]
+    public async Task Classification_PartialLibrary_UsesUniqueExactProviderEpisodeTitle()
+    {
+        var user = new User("anime-user", "provider", "password-provider");
+        var seriesId = Guid.NewGuid();
+        var episodeId = Guid.NewGuid();
+        var series = new Series
+        {
+            Id = seriesId,
+            Name = "Naruto Shippuden",
+            ProductionYear = 2007,
+            Genres = ["Anime"],
+        };
+        series.ProviderIds["MyAnimeList"] = "1735";
+        var episode = new Episode
+        {
+            Id = episodeId,
+            SeriesId = seriesId,
+            ParentIndexNumber = 9,
+            IndexNumber = 1,
+            Name = "Rookie Instructor Iruka",
+        };
+        var library = new CountingLibraryManager
+        {
+            GetItemByIdUserHook = (id, _) => id == episodeId ? episode : id == seriesId ? series : null,
+            GetItemListHook = _ => [episode],
+        };
+        var provider = new FakeProvider
+        {
+            Episodes = AnimeProviderEpisodes.Create(
+                1735,
+                new Dictionary<int, bool> { [176] = true },
+                new Dictionary<string, int> { ["rookie instructor iruka"] = 176 }),
+        };
+        var controller = BuildController(EnabledConfig(), provider, library, user);
+
+        var result = await controller.Classify(new AnimeFillerBatchRequest([episodeId.ToString()]));
+
+        var item = Assert.Single(Assert.IsType<AnimeFillerBatchResponse>(Assert.IsType<OkObjectResult>(result).Value).Items);
+        Assert.Equal("Filler", item.Classification);
+        Assert.Equal("mal-provider-id+episode-title-match", item.Reason);
+        Assert.Equal(1, provider.EpisodeCalls);
+    }
+
+    [Fact]
     public async Task Classification_RejectsEmptyAndOverBoundPayloads_BeforeLibraryWork()
     {
         var user = new User("anime-user", "provider", "password-provider");
