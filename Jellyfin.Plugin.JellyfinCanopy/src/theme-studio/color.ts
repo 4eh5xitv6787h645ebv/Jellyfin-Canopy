@@ -42,9 +42,15 @@ function luminance(color: Rgba): number {
     return 0.2126 * linear(color.red) + 0.7152 * linear(color.green) + 0.0722 * linear(color.blue);
 }
 
-/** WCAG contrast after alpha-compositing both colors over the supplied surface. */
-export function contrastRatio(foreground: string, background: string, surface = '#000000'): number {
-    const surfaceColor = opaque(surface, BLACK);
+/** WCAG contrast after alpha-compositing foreground, background, surface, then canvas. */
+export function contrastRatio(
+    foreground: string,
+    background: string,
+    surface = '#000000',
+    canvas = '#000000',
+): number {
+    const canvasColor = opaque(canvas, BLACK);
+    const surfaceColor = opaque(surface, canvasColor);
     const backgroundColor = opaque(background, surfaceColor);
     const foregroundColor = opaque(foreground, backgroundColor);
     const foregroundLuminance = luminance(foregroundColor);
@@ -58,10 +64,12 @@ export function readableForeground(
     background: string,
     preferred: string,
     surface = '#000000',
+    canvas = '#000000',
     minimumRatio = 4.5,
 ): string {
-    if (contrastRatio(preferred, background, surface) >= minimumRatio) return preferred;
-    return contrastRatio('#000000', background, surface) >= contrastRatio('#FFFFFF', background, surface)
+    if (contrastRatio(preferred, background, surface, canvas) >= minimumRatio) return preferred;
+    return contrastRatio('#000000', background, surface, canvas)
+        >= contrastRatio('#FFFFFF', background, surface, canvas)
         ? '#000000'
         : '#FFFFFF';
 }

@@ -117,7 +117,7 @@ function jellyfinDeclarations(theme: ResolvedTheme): Record<string, string> {
         '--jf-palette-error-main': negative,
         '--jf-palette-error-light': negative,
         '--jf-palette-error-dark': negative,
-        '--jf-palette-error-contrastText': readableForeground(negative, '#FFFFFF', surface),
+        '--jf-palette-error-contrastText': readableForeground(negative, '#FFFFFF', surface, canvas),
         '--jf-palette-divider': divider,
         '--jf-palette-action-active': rgba(text, 0.56),
         '--jf-palette-action-hover': rgba(text, 0.08),
@@ -199,7 +199,11 @@ export type ThemeStyleLayer = 'committed' | 'preview';
 /** Serializes only values produced by the validated resolver. */
 export function serializeThemeStyles(theme: ResolvedTheme, layer: ThemeStyleLayer): string {
     const attribute = layer === 'committed' ? 'data-jc-theme-active' : 'data-jc-theme-preview';
-    const selector = `:root[${attribute}="true"]`;
+    // Preview is a complete resolved theme. Suspend the committed layer while
+    // it is active so omitted adapters (for example full motion) cannot leak
+    // stricter committed behavior into the preview.
+    const previewGate = layer === 'committed' ? ':not([data-jc-theme-preview="true"])' : '';
+    const selector = `:root[${attribute}="true"]${previewGate}`;
     const declarations = { ...customDeclarations(theme), ...jellyfinDeclarations(theme) };
     // Jellyfin's own MUI variables are unlayered. An @layer declaration here
     // would always lose to them; the two owner style elements instead use

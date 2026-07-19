@@ -235,6 +235,34 @@ describe('Theme Studio identity-owned runtime', () => {
         expect(currentApi).toBe(JC.core.themeStudio);
     });
 
+    it('suspends committed reduced-motion adapters while a full-motion preview is active', async () => {
+        const committed = themeConfiguration();
+        committed.Profiles[0].Accessibility.Motion = 'off';
+        apiReturning(committed);
+        const { runtime } = createRuntime();
+        await runtime.load();
+
+        const committedCss = document.getElementById(COMMITTED_STYLE_ID)?.textContent ?? '';
+        expect(committedCss).toContain('animation-duration: 0.01ms !important');
+        expect(committedCss).toContain(':not([data-jc-theme-preview="true"])');
+
+        const preview = themeConfiguration();
+        preview.Profiles[0].Accessibility.Motion = 'on';
+        expect(JC.core.themeStudio?.preview(preview)).toBe(true);
+        expectRootThemeState({ motion: 'full' });
+        expect(document.getElementById(PREVIEW_STYLE_ID)?.textContent)
+            .not.toContain('animation-duration: 0.01ms !important');
+        expect(document.documentElement.matches(
+            ':root[data-jc-theme-active="true"]:not([data-jc-theme-preview="true"])',
+        )).toBe(false);
+
+        JC.core.themeStudio?.cancelPreview();
+        expectRootThemeState({ motion: 'reduced' });
+        expect(document.documentElement.matches(
+            ':root[data-jc-theme-active="true"]:not([data-jc-theme-preview="true"])',
+        )).toBe(true);
+    });
+
     it('keeps the dashboard as an unthemed recovery space unless explicitly enabled', async () => {
         history.replaceState({}, '', '/web/#/dashboard');
         apiReturning(themeConfiguration());

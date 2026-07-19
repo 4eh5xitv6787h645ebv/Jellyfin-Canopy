@@ -112,6 +112,7 @@ describe('Theme Studio resolver', () => {
                     String(resolved.tokens['color.on-primary']),
                     String(resolved.tokens['color.primary']),
                     String(resolved.tokens['color.surface']),
+                    String(resolved.tokens['color.canvas']),
                 ), `${accent}/${mode}`).toBeGreaterThanOrEqual(4.5);
             }
         }
@@ -129,6 +130,25 @@ describe('Theme Studio resolver', () => {
             String(resolved.tokens['color.on-primary']),
             String(resolved.tokens['color.primary']),
             String(resolved.tokens['color.surface']),
+            String(resolved.tokens['color.canvas']),
+        )).toBeGreaterThanOrEqual(4.5);
+    });
+
+    it('composites translucent custom surfaces over the canvas before choosing a foreground', () => {
+        const configuration = themeConfiguration();
+        configuration.Profiles[0].Tokens = {
+            'color.canvas': '#FFFFFF',
+            'color.surface': '#FFFFFF00',
+            'color.primary': '#00000080',
+            'color.on-primary': '#FFFFFF',
+        };
+        const resolved = resolveTheme(configuration, media());
+        expect(resolved.tokens['color.on-primary']).toBe('#000000');
+        expect(contrastRatio(
+            String(resolved.tokens['color.on-primary']),
+            String(resolved.tokens['color.primary']),
+            String(resolved.tokens['color.surface']),
+            String(resolved.tokens['color.canvas']),
         )).toBeGreaterThanOrEqual(4.5);
     });
 

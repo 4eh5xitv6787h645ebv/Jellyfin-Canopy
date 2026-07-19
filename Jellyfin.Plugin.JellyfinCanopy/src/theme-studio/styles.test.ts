@@ -35,6 +35,7 @@ describe('Theme Studio CSS serialization', () => {
             '--jf-card-borderRadius',
         ]) expect(first, role).toContain(`${role}:`);
         expect(first).toContain(':root[data-jc-theme-active="true"]');
+        expect(first).toContain(':not([data-jc-theme-preview="true"])');
         expect(first).not.toContain('@layer');
         expect(first).toContain('Adapter legacy-v12-base-surfaces');
         expect(first).toContain('.jc-legacy-layout[data-jc-theme-route]');
@@ -55,11 +56,24 @@ describe('Theme Studio CSS serialization', () => {
         expect(css).toContain('text-decoration: underline');
         expect(css).toContain('@media (forced-colors: active)');
         expect(css).toContain('--jf-palette-primary-main: Highlight');
+        expect(css).not.toContain(':not([data-jc-theme-preview="true"])');
     });
 
     it('keeps a readable white error foreground for the darker light-mode negative color', () => {
         const theme = resolveTheme(themeConfiguration(), { ...media, jellyfinTheme: 'light' });
         expect(serializeThemeStyles(theme, 'committed'))
             .toContain('--jf-palette-error-contrastText: #FFFFFF');
+    });
+
+    it('composites translucent error surfaces over the canvas before choosing its foreground', () => {
+        const configuration = themeConfiguration();
+        configuration.Profiles[0].Tokens = {
+            'color.canvas': '#FFFFFF',
+            'color.surface': '#FFFFFF00',
+            'color.negative': '#00000080',
+        };
+        const theme = resolveTheme(configuration, media);
+        expect(serializeThemeStyles(theme, 'committed'))
+            .toContain('--jf-palette-error-contrastText: #000000');
     });
 });

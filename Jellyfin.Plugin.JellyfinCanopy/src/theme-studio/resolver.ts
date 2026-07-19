@@ -256,6 +256,7 @@ export function resolveTheme(
         String(tokens['color.primary']),
         String(tokens['color.on-primary']),
         String(tokens['color.surface']),
+        String(tokens['color.canvas']),
     );
 
     const reducedMotion = media.reducedMotion || profile.Accessibility.Motion === 'off';
