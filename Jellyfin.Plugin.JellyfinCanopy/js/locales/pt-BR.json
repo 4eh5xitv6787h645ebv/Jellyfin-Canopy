@@ -712,5 +712,9 @@
   "discovery_customize_reset": "Restaurar padrões",
   "discovery_customize_cancel": "Cancelar",
   "discovery_customize_save": "Salvar",
-  "pages_signin_required": "Entre para ver esta página."
+  "pages_signin_required": "Entre para ver esta página.",
+  "anime_filler_badge": "Filler",
+  "anime_filler_setting": "Avisos de episódios filler de anime",
+  "anime_filler_setting_desc": "Mostra um selo nos episódios classificados com confiança como filler.",
+  "feature_anime_filler_warnings": "{{icon:warning}} Avisos de episódios filler de anime"
 }

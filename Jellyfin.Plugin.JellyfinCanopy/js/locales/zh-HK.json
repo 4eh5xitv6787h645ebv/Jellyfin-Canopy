@@ -712,5 +712,9 @@
   "discovery_customize_reset": "重設為預設值",
   "discovery_customize_cancel": "取消",
   "discovery_customize_save": "儲存",
-  "pages_signin_required": "登入以查看此頁面。"
+  "pages_signin_required": "登入以查看此頁面。",
+  "anime_filler_badge": "原創集",
+  "anime_filler_setting": "動畫原創集警告",
+  "anime_filler_setting_desc": "在可靠判定為原創內容的集數上顯示徽章。",
+  "feature_anime_filler_warnings": "{{icon:warning}} 動畫原創集警告"
 }

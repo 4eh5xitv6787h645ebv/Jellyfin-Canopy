@@ -56,6 +56,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         public bool LanguageTagsEnabled { get; set; }
         public bool RatingTagsEnabled { get; set; }
         public bool PeopleTagsEnabled { get; set; }
+        public bool AnimeFillerWarningsEnabled { get; set; } = true;
         public bool TagsHideOnHover { get; set; }
         public string QualityTagsPosition { get; set; } = "top-left";
         public string GenreTagsPosition { get; set; } = "top-right";

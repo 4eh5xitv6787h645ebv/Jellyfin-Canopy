@@ -2,6 +2,8 @@
   "ActiveStreamsAllUsers": false,
   "ActiveStreamsEnabled": false,
   "AddRequestedMediaToWatchlist": false,
+  "AnimeFillerWarningsDefaultEnabled": true,
+  "AnimeFillerWarningsEnabled": false,
   "ArrLinksEnabled": false,
   "ArrLinksShowStatusSingle": false,
   "ArrSearchEnabled": true,

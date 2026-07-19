@@ -712,5 +712,9 @@
   "discovery_customize_reset": "Réinitialiser par défaut",
   "discovery_customize_cancel": "Annuler",
   "discovery_customize_save": "Enregistrer",
-  "pages_signin_required": "Connectez-vous pour voir cette page."
+  "pages_signin_required": "Connectez-vous pour voir cette page.",
+  "anime_filler_badge": "Hors-série",
+  "anime_filler_setting": "Avertissements de hors-série d’anime",
+  "anime_filler_setting_desc": "Affiche un badge sur les épisodes identifiés avec certitude comme hors-série.",
+  "feature_anime_filler_warnings": "{{icon:warning}} Avertissements de hors-série d’anime"
 }

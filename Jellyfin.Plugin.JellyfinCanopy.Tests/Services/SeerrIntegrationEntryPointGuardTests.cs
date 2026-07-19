@@ -144,6 +144,8 @@ public sealed class SeerrIntegrationEntryPointGuardTests
         ["Services/Arr/ArrTagService.cs:FetchTagsAndItemsAsync"] = new(2, "CreateArrClient", "httpClient.SendAsync(tagsRequest, ct)", "httpClient.SendAsync(mediaRequest, ct)"),
         ["Services/AssetCacheService.cs:FetchAssetAsync"] = new(1, "CreateAssetsClient", "new HttpRequestMessage(HttpMethod.Get, asset.UpstreamUrl)", "client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct)"),
         ["Services/AutoMovieRequestService.cs:GetTmdbCollectionIdAsync"] = new(1, "CreateTmdbClient", "https://api.themoviedb.org", "httpClient.GetAsync(requestUrl)"),
+        ["Services/AnimeFiller/JikanAnimeFillerProvider.cs:ResolveAniListIdAsync"] = new(1, "PluginHttpClients.AniListClient", "type: ANIME", "client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, requestDeadline.Token)"),
+        ["Services/AnimeFiller/JikanAnimeFillerProvider.cs:GetJikanJsonAsync"] = new(1, "PluginHttpClients.JikanClient", "client.GetAsync(relativePath, HttpCompletionOption.ResponseHeadersRead, requestDeadline.Token)"),
         ["Services/Seerr/SeerrParentalFilter.cs:FetchCertFromTmdbAsync"] = new(1, "CreateTmdbClient", "https://api.themoviedb.org", "httpClient.GetAsync(requestUri, ct)"),
     };
 

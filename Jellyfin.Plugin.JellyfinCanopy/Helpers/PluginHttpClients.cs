@@ -36,6 +36,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Helpers
         /// </summary>
         public const string AssetsClient = "JellyfinCanopyAssets";
 
+        /// <summary>Fixed-origin, credential-free Jikan REST API client.</summary>
+        public const string JikanClient = "JellyfinCanopyJikan";
+
+        /// <summary>Fixed-origin, credential-free AniList GraphQL client.</summary>
+        public const string AniListClient = "JellyfinCanopyAniList";
+
         public static HttpClient CreateArrClient(IHttpClientFactory factory)
         {
             // Same fallback pattern as SeerrHttpHelper.CreateClient: if the named

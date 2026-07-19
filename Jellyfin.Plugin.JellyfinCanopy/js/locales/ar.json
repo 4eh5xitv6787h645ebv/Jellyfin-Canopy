@@ -712,5 +712,9 @@
   "discovery_customize_reset": "إعادة التعيين إلى الافتراضي",
   "discovery_customize_cancel": "إلغاء",
   "discovery_customize_save": "حفظ",
-  "pages_signin_required": "سجّل الدخول لعرض هذه الصفحة."
+  "pages_signin_required": "سجّل الدخول لعرض هذه الصفحة.",
+  "anime_filler_badge": "حشو",
+  "anime_filler_setting": "تحذيرات حلقات الأنمي الحشو",
+  "anime_filler_setting_desc": "إظهار شارة على الحلقات المصنفة بثقة على أنها حشو.",
+  "feature_anime_filler_warnings": "{{icon:warning}} تحذيرات حلقات الأنمي الحشو"
 }

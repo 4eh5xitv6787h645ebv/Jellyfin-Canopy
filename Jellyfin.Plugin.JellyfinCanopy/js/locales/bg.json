@@ -712,5 +712,9 @@
   "discovery_customize_reset": "Връщане към стандартните",
   "discovery_customize_cancel": "Отказ",
   "discovery_customize_save": "Запазване",
-  "pages_signin_required": "Влезте, за да видите тази страница."
+  "pages_signin_required": "Влезте, за да видите тази страница.",
+  "anime_filler_badge": "Пълнеж",
+  "anime_filler_setting": "Предупреждения за пълнеж в аниме",
+  "anime_filler_setting_desc": "Показва значка на епизодите, надеждно класифицирани като пълнеж.",
+  "feature_anime_filler_warnings": "{{icon:warning}} Предупреждения за пълнеж в аниме"
 }

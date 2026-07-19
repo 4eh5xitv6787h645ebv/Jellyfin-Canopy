@@ -2,6 +2,7 @@
   "version": 1,
   "tests": [
     "e2e/account-switch.spec.ts › no-reload account identity switching › A → logout → B and repeated B → A → B isolate every owner epoch",
+    "e2e/anime-filler-warnings.spec.ts › anime filler warnings › batches a season view and marks only filler episode cards",
     "e2e/admin-theme-contrast.spec.ts › admin theme contrast › owned surfaces, controls and focus remain legible across themes and viewports",
     "e2e/admin.spec.ts › admin authorization › authz matrix: 200 admin / 403 empty non-admin / 401 anonymous",
     "e2e/admin.spec.ts › admin authorization › hidden-content page: admin gets the cross-user filter",

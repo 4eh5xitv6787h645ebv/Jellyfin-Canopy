@@ -712,5 +712,9 @@
   "discovery_customize_reset": "Standaardwaarden herstellen",
   "discovery_customize_cancel": "Annuleren",
   "discovery_customize_save": "Opslaan",
-  "pages_signin_required": "Meld je aan om deze pagina te bekijken."
+  "pages_signin_required": "Meld je aan om deze pagina te bekijken.",
+  "anime_filler_badge": "Filler",
+  "anime_filler_setting": "Waarschuwingen voor anime-filler",
+  "anime_filler_setting_desc": "Toont een badge bij afleveringen die met zekerheid als filler zijn geclassificeerd.",
+  "feature_anime_filler_warnings": "{{icon:warning}} Waarschuwingen voor anime-filler"
 }

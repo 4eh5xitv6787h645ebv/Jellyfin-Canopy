@@ -712,5 +712,9 @@
   "discovery_customize_reset": "Nulstil til standard",
   "discovery_customize_cancel": "Annuller",
   "discovery_customize_save": "Gem",
-  "pages_signin_required": "Log ind for at se denne side."
+  "pages_signin_required": "Log ind for at se denne side.",
+  "anime_filler_badge": "Fyldepisode",
+  "anime_filler_setting": "Advarsler om fyldepisoder i anime",
+  "anime_filler_setting_desc": "Viser et mærke på episoder, der med sikkerhed er klassificeret som fyldepisoder.",
+  "feature_anime_filler_warnings": "{{icon:warning}} Advarsler om fyldepisoder i anime"
 }

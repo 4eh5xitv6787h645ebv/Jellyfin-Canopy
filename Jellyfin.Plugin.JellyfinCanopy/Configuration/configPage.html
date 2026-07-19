@@ -791,6 +791,43 @@
                     </fieldset>
 
                     <fieldset>
+                        <legend class="sectionTitle">Anime Filler Warnings</legend>
+                        <div class="configSection">
+                            <div class="jc-info-banner-inline-center" style="margin-bottom: 15px;">
+                                <div class="jc-info-banner-row">
+                                    <i class="material-icons jc-info-icon">warning_amber</i>
+                                    <div><strong>Anime Filler Warnings</strong> adds an accessible Filler badge to matched episode cards and details pages. It uses Jikan's documented API and never rewrites Jellyfin metadata.</div>
+                                </div>
+                            </div>
+                            <div class="checkboxContainer jc-main-feature"><label><input id="animeFillerWarningsEnabled" data-config-key="AnimeFillerWarningsEnabled" is="emby-checkbox" type="checkbox"/><span>Enable anime filler warnings</span></label></div>
+                            <div class="jc-setting-description" data-desc-for="animeFillerWarningsEnabled"><div class="fieldDescription jc-field-desc-xl">Opt-in server-wide master switch. When off, no provider requests are made and no client markers are shown.</div></div>
+                            <details class="jc-details-section" data-gated-by="animeFillerWarningsEnabled">
+                                <summary>Matching and cache settings</summary>
+                                <div class="jc-details-body">
+                                    <div class="checkboxContainer"><label><input id="animeFillerWarningsDefaultEnabled" data-config-key="AnimeFillerWarningsDefaultEnabled" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Warnings enabled by default for new users</span></label></div>
+                                    <div class="inputContainer">
+                                        <label class="inputLabel inputLabelUnfocused" for="animeFillerDetectionMode">Anime detection</label>
+                                        <select is="emby-select" id="animeFillerDetectionMode" data-config-key="AnimeFillerDetectionMode" data-config-fallback="GenreOrProviderId" class="emby-select">
+                                            <option value="GenreOrProviderId">Matching genre/tag or provider ID</option>
+                                            <option value="GenreOnly">Matching genre/tag only</option>
+                                            <option value="ProviderIdOnly">AniList/MyAnimeList provider ID only</option>
+                                        </select>
+                                    </div>
+                                    <div class="inputContainer"><label class="inputLabel inputLabelUnfocused" for="animeFillerGenre">Anime genre</label><input id="animeFillerGenre" data-config-key="AnimeFillerGenre" data-config-fallback="Anime" is="emby-input" type="text" maxlength="100"/></div>
+                                    <div class="inputContainer"><label class="inputLabel inputLabelUnfocused" for="animeFillerTag">Anime tag</label><input id="animeFillerTag" data-config-key="AnimeFillerTag" data-config-fallback="Anime" is="emby-input" type="text" maxlength="100"/></div>
+                                    <div class="inputContainer"><label class="inputLabel inputLabelUnfocused" for="animeFillerCacheHours">Successful cache lifetime (hours)</label><input id="animeFillerCacheHours" data-config-key="AnimeFillerCacheHours" data-config-int="" data-config-fallback="24" is="emby-input" type="number" min="1" max="168" value="24"/></div>
+                                    <div class="inputContainer">
+                                        <label class="inputLabel inputLabelUnfocused" for="animeFillerMappings">Manual MyAnimeList mappings</label>
+                                        <textarea id="animeFillerMappings" data-config-key="AnimeFillerMappings" is="emby-input" rows="7" spellcheck="false" placeholder="series-guid=20&#10;series-guid:S2=1735"></textarea>
+                                        <div class="fieldDescription">One mapping per line. Series mappings use absolute episode numbering; <code>:S&lt;number&gt;</code> overrides use season-relative numbering. Manual mappings take precedence over provider IDs and exact title matching.</div>
+                                    </div>
+                                    <div class="fieldDescription">Diagnostics: <code>GET /JellyfinCanopy/anime-filler/diagnostics</code>. Title preview: <code>GET /JellyfinCanopy/anime-filler/search?title=...</code>. Both require an administrator.</div>
+                                </div>
+                            </details>
+                        </div>
+                    </fieldset>
+
+                    <fieldset>
                         <legend class="sectionTitle">Spoiler Guard</legend>
                         <div class="configSection">
                             <div class="jc-info-banner-inline-center" style="margin-bottom: 15px;">

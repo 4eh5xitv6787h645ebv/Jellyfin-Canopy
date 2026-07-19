@@ -43,6 +43,7 @@
   "LanguageTagsEnabled": false,
   "RatingTagsEnabled": false,
   "PeopleTagsEnabled": false,
+  "AnimeFillerWarningsEnabled": true,
   "TagsHideOnHover": false,
   "QualityTagsPosition": "bottom-right",
   "GenreTagsPosition": "top-right",

@@ -712,5 +712,9 @@
   "discovery_customize_reset": "Restableix els valors predeterminats",
   "discovery_customize_cancel": "Cancel·lar",
   "discovery_customize_save": "Desar",
-  "pages_signin_required": "Inicieu la sessió per veure aquesta pàgina."
+  "pages_signin_required": "Inicieu la sessió per veure aquesta pàgina.",
+  "anime_filler_badge": "Farciment",
+  "anime_filler_setting": "Avisos de farciment d’anime",
+  "anime_filler_setting_desc": "Mostra una insígnia als episodis classificats amb confiança com a farciment.",
+  "feature_anime_filler_warnings": "{{icon:warning}} Avisos de farciment d’anime"
 }
