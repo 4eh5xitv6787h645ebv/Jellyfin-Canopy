@@ -50,6 +50,10 @@ interface StyleHelpers {
     jcEnsureCanopyConfigStylesheet(doc: Document, href: string): HTMLLinkElement;
 }
 
+interface StaticControlHelpers {
+    jcWireStaticControlListeners(doc: Document, lifecycle: PageLifecycleOwner): void;
+}
+
 const TEST_FILE_PATH = decodeURIComponent(new URL(import.meta.url).pathname);
 const SRC_ROOT = TEST_FILE_PATH.replace(/\/core\/[^/]+$/, '/');
 const CONFIG_PAGE_JS = SRC_ROOT.replace(/src\/$/, 'Configuration/config-page.js');
@@ -111,6 +115,17 @@ function loadStyleHelpers(): StyleHelpers {
     // SAFETY: only the marker-bounded stylesheet-loader function from the local
     // inline script is evaluated; the document is injected.
     return eval(`(() => {${slice}; return { jcEnsureCanopyConfigStylesheet }; })()`) as StyleHelpers;
+}
+
+function loadStaticControlHelpers(): StaticControlHelpers {
+    const slice = markerSlice(
+        readSource(CONFIG_PAGE_JS),
+        '/* jc-static-control-listeners:start */',
+        '/* jc-static-control-listeners:end */',
+    );
+    // SAFETY: only the marker-bounded production wiring function is evaluated;
+    // its document and lifecycle owner are injected.
+    return eval(`(() => {${slice}; return { jcWireStaticControlListeners }; })()`) as StaticControlHelpers;
 }
 
 function makePage(): HTMLElement {
@@ -423,10 +438,17 @@ describe('config-page quality-category reorder wiring (#167)', () => {
         expect(order()).toEqual(['b', 'a', 'c']);
 
         // Disabled controls are ignored (matches refreshQualityCatAdminArrows
-        // pinning the extremes).
-        const lastDown = Array.from(container.querySelectorAll<HTMLButtonElement>('.jc-cat-down')).pop()!;
-        lastDown.disabled = true;
-        lastDown.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+        // pinning the extremes). Target a MIDDLE row's Down arrow: order is now
+        // b,a,c, so row 'a' HAS a valid next sibling ('c'). Only the btn.disabled
+        // guard — not a missing sibling — can stop this move, so the assertion
+        // actually exercises that guard. (Mutation check: dropping `|| btn.disabled`
+        // from the reorder handler reorders to ['b','c','a'] and fails here.)
+        const middleDown = container.querySelector<HTMLButtonElement>('[data-cat-id="a"] .jc-cat-down')!;
+        expect(middleDown.nextElementSibling).toBeNull(); // it is the row's last child…
+        expect(middleDown.closest('.jc-quality-cat-admin-row')!.nextElementSibling)
+            .not.toBeNull(); // …but its ROW has a following sibling to swap with.
+        middleDown.disabled = true;
+        middleDown.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
         expect(order()).toEqual(['b', 'a', 'c']);
         expect(markDirty).toHaveBeenCalledTimes(1);
     });
@@ -513,9 +535,18 @@ describe('config-page owning-view resolution under JF12 duplicate cached views (
         expect(helpers.jcResolveOwnConfigPage(document, script, '#JellyfinCanopyPage')).toBe(fresh);
     });
 
-    it('falls back to querySelector when the script anchor is unavailable', () => {
-        const { stale } = buildDuplicateSlots();
-        expect(helpers.jcResolveOwnConfigPage(document, null, '#JellyfinCanopyPage')).toBe(stale);
+    it('anchor-less fallback picks the LAST (freshest) match, not the stale first copy', () => {
+        // When document.currentScript is unavailable (jQuery may execute the
+        // bootstrap through a detached temporary <script>), the resolver must not
+        // regress to querySelector's FIRST match — that is the stale hidden copy.
+        // JF12 appends the fresh visible view last, so the last match is chosen.
+        const { stale, fresh } = buildDuplicateSlots();
+        expect(document.querySelector('#JellyfinCanopyPage')).toBe(stale);
+        expect(helpers.jcResolveOwnConfigPage(document, null, '#JellyfinCanopyPage')).toBe(fresh);
+    });
+
+    it('returns null when no config-page view is present', () => {
+        expect(helpers.jcResolveOwnConfigPage(document, null, '#JellyfinCanopyPage')).toBeNull();
     });
 
     it('does NOT abort the fresh visible view as a duplicate of the stale cached one', () => {
@@ -635,6 +666,129 @@ describe('config-page retest-all timers are lifecycle-owned (#167 finding 2)', (
         const trackIdx = source.indexOf('jcPageLifecycle.track(function() {\n                clearInterval(_jeRetestAllPollTimer);');
         expect(trackIdx).toBeGreaterThanOrEqual(0);
         expect(source.slice(trackIdx, trackIdx + 200)).toContain('clearTimeout(_jeRetestAllReenableTimer);');
+    });
+});
+
+describe('config-page static control listeners are lifecycle-owned (#167 finding 3)', () => {
+    const lifecycle = loadLifecycleHelpers();
+    const staticControls = loadStaticControlHelpers();
+
+    interface Controls {
+        page: HTMLElement;
+        tmdb: HTMLInputElement;
+        seerrTmdb: HTMLInputElement;
+        activeStreams: HTMLInputElement;
+        activeContainer: HTMLElement;
+        prevent: HTMLInputElement;
+        retentionContainer: HTMLElement;
+    }
+
+    function buildControls(): Controls {
+        const page = makePage();
+        page.innerHTML = `
+            <input id="TMDB_API_KEY" />
+            <input id="seerr_TMDB_API_KEY" />
+            <input id="activeStreamsEnabled" type="checkbox" />
+            <div id="activeStreamsAllUsersContainer"></div>
+            <div class="inputContainer"><input id="watchlistMemoryRetentionDays" /></div>
+            <input id="preventWatchlistReAddition" type="checkbox" />
+        `;
+        document.body.appendChild(page);
+        return {
+            page,
+            tmdb: page.querySelector<HTMLInputElement>('#TMDB_API_KEY')!,
+            seerrTmdb: page.querySelector<HTMLInputElement>('#seerr_TMDB_API_KEY')!,
+            activeStreams: page.querySelector<HTMLInputElement>('#activeStreamsEnabled')!,
+            activeContainer: page.querySelector<HTMLElement>('#activeStreamsAllUsersContainer')!,
+            prevent: page.querySelector<HTMLInputElement>('#preventWatchlistReAddition')!,
+            retentionContainer: page.querySelector<HTMLElement>('.inputContainer')!,
+        };
+    }
+
+    it('AC4: a single install wires TMDB sync, active-streams and watchlist toggles', () => {
+        const win: Record<string, unknown> = {};
+        const c = buildControls();
+        const owner = remember(lifecycle.jcAcquireConfigPageLifecycle(win, c.page));
+        staticControls.jcWireStaticControlListeners(document, owner!);
+
+        // TMDB key fields stay in sync in BOTH directions.
+        c.tmdb.value = 'key-1';
+        c.tmdb.dispatchEvent(new Event('input'));
+        expect(c.seerrTmdb.value).toBe('key-1');
+        c.seerrTmdb.value = 'key-2';
+        c.seerrTmdb.dispatchEvent(new Event('input'));
+        expect(c.tmdb.value).toBe('key-2');
+
+        // Active-streams container visibility follows the checkbox.
+        c.activeStreams.checked = true;
+        c.activeStreams.dispatchEvent(new Event('change'));
+        expect(c.activeContainer.style.display).toBe('');
+        c.activeStreams.checked = false;
+        c.activeStreams.dispatchEvent(new Event('change'));
+        expect(c.activeContainer.style.display).toBe('none');
+
+        // Watchlist retention container follows the prevention checkbox.
+        c.prevent.checked = true;
+        c.prevent.dispatchEvent(new Event('change'));
+        expect(c.retentionContainer.style.display).toBe('block');
+        c.prevent.checked = false;
+        c.prevent.dispatchEvent(new Event('change'));
+        expect(c.retentionContainer.style.display).toBe('none');
+    });
+
+    it('AC1/AC5: repeated visits (teardown→reinstall) keep exactly ONE listener per control', () => {
+        // The #167 leak: these persistent controls were wired with raw
+        // addEventListener inside loadConfig, which the dashboard re-runs on every
+        // pageshow — so listeners accumulated and could not be reclaimed. Routed
+        // through the owner and installed once per owner, a teardown reclaims the
+        // prior visit's copy before the next installs, so the net count is one.
+        const win: Record<string, unknown> = {};
+        const c = buildControls();
+        const tmdbAdd = vi.spyOn(c.tmdb, 'addEventListener');
+        const tmdbRemove = vi.spyOn(c.tmdb, 'removeEventListener');
+        const streamAdd = vi.spyOn(c.activeStreams, 'addEventListener');
+        const streamRemove = vi.spyOn(c.activeStreams, 'removeEventListener');
+
+        // Four dashboard visits reusing the SAME cached controls: acquire → wire →
+        // teardown, leaving only the final owner live.
+        for (let i = 0; i < 4; i++) {
+            const owner = remember(lifecycle.jcAcquireConfigPageLifecycle(win, c.page));
+            expect(owner).not.toBeNull();
+            staticControls.jcWireStaticControlListeners(document, owner!);
+            if (i < 3) owner!.teardown();
+        }
+
+        const inputAdds = tmdbAdd.mock.calls.filter((x) => x[0] === 'input').length;
+        const inputRemoves = tmdbRemove.mock.calls.filter((x) => x[0] === 'input').length;
+        expect(inputAdds).toBe(4);
+        expect(inputAdds - inputRemoves).toBe(1);
+
+        const changeAdds = streamAdd.mock.calls.filter((x) => x[0] === 'change').length;
+        const changeRemoves = streamRemove.mock.calls.filter((x) => x[0] === 'change').length;
+        expect(changeAdds).toBe(4);
+        expect(changeAdds - changeRemoves).toBe(1);
+
+        // Exactly ONE live listener set still works after all the visits.
+        c.tmdb.value = 'final';
+        c.tmdb.dispatchEvent(new Event('input'));
+        expect(c.seerrTmdb.value).toBe('final');
+    });
+
+    it('source: the TMDB-sync / active-streams / watchlist listeners are not re-attached in loadConfig', () => {
+        const source = readSource(CONFIG_PAGE_JS);
+        // The raw per-load registrations were the leak (loadConfig runs on every
+        // pageshow); none may remain.
+        expect(source).not.toContain('tmdbKeyField.addEventListener(');
+        expect(source).not.toContain('seerrTmdbKeyField.addEventListener(');
+        expect(source).not.toContain("document.querySelector('#activeStreamsEnabled').addEventListener(");
+        expect(source).not.toContain("document.querySelector('#preventWatchlistReAddition').addEventListener(");
+        // They now live in the once-per-owner installer, routed through the owner.
+        expect(source).toContain("lifecycle.addListener(tmdbKeyField, 'input'");
+        expect(source).toContain("lifecycle.addListener(seerrTmdbKeyField, 'input'");
+        expect(source).toContain("lifecycle.addListener(activeStreamsEnabled, 'change'");
+        expect(source).toContain("lifecycle.addListener(preventWatchlist, 'change'");
+        // Installed from exactly ONE synchronous call site (not inside loadConfig).
+        expect(countOccurrences(source, 'jcWireStaticControlListeners(document, jcPageLifecycle)')).toBe(1);
     });
 });
 
