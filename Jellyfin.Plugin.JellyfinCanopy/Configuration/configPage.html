@@ -2366,7 +2366,18 @@
         // script with a *synchronous* XHR eval, and a static src attribute can neither
         // resolve the server base path on subpath installs nor carry a cache-busting
         // version. So we build the tag here with ApiClient.getUrl instead.
-        var page = document.querySelector('#JellyfinCanopyPage');
+        //
+        // Resolve OUR OWN view (BI-CLIENT-106 / #167): Jellyfin 12 caches
+        // several routed views in the DOM at once, so a hidden stale copy can
+        // share id="JellyfinCanopyPage" with this freshly-injected one. A bare
+        // querySelector returns the FIRST match (often the stale copy); the
+        // external config-page.js we append must land in THIS view or the
+        // visible page is left unwired. Climb from this bootstrap script to its
+        // owning view, falling back to querySelector when the anchor is absent.
+        var bootstrapScript = document.currentScript;
+        var page = (bootstrapScript && typeof bootstrapScript.closest === 'function'
+                    && bootstrapScript.closest('#JellyfinCanopyPage'))
+                || document.querySelector('#JellyfinCanopyPage');
 
         // viewManager fires 'pageshow' on the view element right after the HTML is
         // injected - usually before the external script has finished loading. The

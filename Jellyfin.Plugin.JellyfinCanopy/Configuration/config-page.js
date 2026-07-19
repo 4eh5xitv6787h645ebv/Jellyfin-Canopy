@@ -1,9 +1,6 @@
         (() => {
             const pluginId = '9ffa12bc-f4b5-406c-ab1d-d575acbeea7b';
 
-            const page = document.querySelector('#JellyfinCanopyPage');
-            const form = document.querySelector('#JellyfinCanopyForm');
-
             /* jc-config-page-lifecycle:start */
             // Page-lifecycle owner (BI-CLIENT-106 / #167). The dashboard
             // re-fetches configPage.html and re-executes this whole script on
@@ -84,7 +81,34 @@
                 win.__jcConfigPageLifecycle = owner;
                 return owner;
             }
+
+            // Resolve THIS script's own config-page view (BI-CLIENT-106 / #167).
+            // Jellyfin 12 keeps several routed views cached in the DOM at once,
+            // so more than one element can carry id="JellyfinCanopyPage" (a
+            // hidden stale copy plus the fresh visible one). A bare
+            // document.querySelector('#JellyfinCanopyPage') returns the FIRST in
+            // document order — frequently the earlier hidden copy — which would
+            // equal the previous visit's owner.page and make the sentinel treat
+            // the fresh page as a duplicate load and abort ALL wiring, leaving
+            // the visible page dead. This IIFE is served as an external script
+            // the bootstrap appended INTO its own view, so climb from the
+            // executing script element to the view that owns it; fall back to
+            // querySelector when the script anchor is unavailable (e.g. tests).
+            function jcResolveOwnConfigPage(doc, scriptEl, selector) {
+                try {
+                    if (scriptEl && typeof scriptEl.closest === 'function') {
+                        var owned = scriptEl.closest(selector);
+                        if (owned) return owned;
+                    }
+                } catch (e) { /* detached/foreign node — fall through to query */ }
+                return doc.querySelector(selector);
+            }
             /* jc-config-page-lifecycle:end */
+
+            const page = jcResolveOwnConfigPage(document, document.currentScript, '#JellyfinCanopyPage');
+            // Scope the form to the resolved view so a stale cached view's form
+            // is never wired in place of the live one.
+            const form = page ? page.querySelector('#JellyfinCanopyForm') : document.querySelector('#JellyfinCanopyForm');
 
             var jcPageLifecycle = jcAcquireConfigPageLifecycle(window, page);
             if (!jcPageLifecycle) return;
@@ -191,14 +215,14 @@
                 let startScroll = 0;
                 let dragged = false;
 
-                bar.addEventListener('mousedown', (e) => {
+                jcPageLifecycle.addListener(bar, 'mousedown', (e) => {
                     if (e.button !== 0) return;
                     isDown = true;
                     dragged = false;
                     startX = e.pageX;
                     startScroll = bar.scrollLeft;
                 });
-                bar.addEventListener('mousemove', (e) => {
+                jcPageLifecycle.addListener(bar, 'mousemove', (e) => {
                     if (!isDown) return;
                     const dx = e.pageX - startX;
                     if (!dragged && Math.abs(dx) > 5) {
@@ -218,13 +242,13 @@
                     // click listener below. Cleared on next mousedown.
                     bar.classList.remove('jc-dragging');
                 };
-                bar.addEventListener('mouseup', end);
-                bar.addEventListener('mouseleave', end);
+                jcPageLifecycle.addListener(bar, 'mouseup', end);
+                jcPageLifecycle.addListener(bar, 'mouseleave', end);
 
                 // Capture-phase click listener cancels the click that mouseup
                 // would otherwise fire on the tab button at the cursor's final
                 // position — prevents accidental tab activation at drag-end.
-                bar.addEventListener('click', (e) => {
+                jcPageLifecycle.addListener(bar, 'click', (e) => {
                     if (dragged) {
                         e.preventDefault();
                         e.stopPropagation();
@@ -278,10 +302,10 @@
                 // replaced visit's syncLayoutMode can't fire against stale DOM.
                 jcPageLifecycle.addListener(drawerMedia, 'change', syncLayoutMode);
                 syncLayoutMode();
-                toggle.addEventListener('click', () => setOpen(!shell.classList.contains('jc-nav-open')));
-                scrim.addEventListener('click', () => setOpen(false));
+                jcPageLifecycle.addListener(toggle, 'click', () => setOpen(!shell.classList.contains('jc-nav-open')));
+                jcPageLifecycle.addListener(scrim, 'click', () => setOpen(false));
                 // Selecting a section (or focusing search results) dismisses the drawer.
-                tabs.forEach((t) => t.addEventListener('click', () => setOpen(false)));
+                tabs.forEach((t) => jcPageLifecycle.addListener(t, 'click', () => setOpen(false)));
                 jcPageLifecycle.addListener(document, 'keydown', (e) => {
                     if (e.key === 'Escape' && shell.classList.contains('jc-nav-open')) setOpen(false);
                 });
@@ -336,7 +360,7 @@
                         if (target) target.click();
                     }
                 };
-                railBtns.forEach(b => b.addEventListener('click', () => setGroup(b.dataset.group, true)));
+                railBtns.forEach(b => jcPageLifecycle.addListener(b, 'click', () => setGroup(b.dataset.group, true)));
                 jcSyncGroupForTab = (tabId) => {
                     const btn = strip.querySelector('.jellyfin-tab-button[data-tab="' + tabId + '"]');
                     if (btn && btn.dataset.group) setGroup(btn.dataset.group, false);
@@ -362,8 +386,8 @@
             }
             (function wireDirtyState() {
                 if (!form) return;
-                form.addEventListener('input', jcMarkConfigDirty, true);
-                form.addEventListener('change', jcMarkConfigDirty, true);
+                jcPageLifecycle.addListener(form, 'input', jcMarkConfigDirty, true);
+                jcPageLifecycle.addListener(form, 'change', jcMarkConfigDirty, true);
             })();
 
             // Docs iframe URL — kept in JS rather than hardcoded in the
@@ -466,7 +490,7 @@
             }
 
             tabs.forEach(tab => {
-                tab.addEventListener('click', () => {
+                jcPageLifecycle.addListener(tab, 'click', () => {
                     const tabId = tab.dataset.tab;
                     if (isSearchMode) {
                         // Jump from search results into the section: leave search
@@ -543,7 +567,7 @@
                 applyDescriptionVisibility(show);
             })();
             if (descToggleBtn) {
-                descToggleBtn.addEventListener('click', function() {
+                jcPageLifecycle.addListener(descToggleBtn, 'click', function() {
                     const currentlyShown = !document.body.classList.contains('jc-hide-descriptions');
                     const nextShown = !currentlyShown;
                     applyDescriptionVisibility(nextShown);
@@ -565,12 +589,12 @@
             let allMatches = [];
 
             let searchDebounce;
-            searchInput.addEventListener('input', () => {
+            jcPageLifecycle.addListener(searchInput, 'input', () => {
                 clearTimeout(searchDebounce);
                 searchDebounce = setTimeout(() => performSearch(searchInput.value), 150);
             });
 
-            searchInput.addEventListener('keydown', (e) => {
+            jcPageLifecycle.addListener(searchInput, 'keydown', (e) => {
                 if (e.key === 'Escape') {
                     clearTimeout(searchDebounce);  // kill the debounce so a stale non-empty query can't re-enter search mode after we exit
                     searchInput.value = '';
@@ -584,7 +608,7 @@
                 }
             });
 
-            searchClear.addEventListener('click', () => {
+            jcPageLifecycle.addListener(searchClear, 'click', () => {
                 clearTimeout(searchDebounce);  // kill the debounce — see Escape handler
                 searchInput.value = '';
                 performSearch('');
@@ -1040,7 +1064,7 @@
             }, 8000);
         }
 
-        addShortcutBtn.addEventListener('click', () => {
+        jcPageLifecycle.addListener(addShortcutBtn, 'click', () => {
             const selectedName = addShortcutSelect.value;
             let newKey = addShortcutKeyInput.value.trim();
 
@@ -1392,7 +1416,7 @@
             var customSettingsDiv = document.querySelector('#autoMovieRequestCustomSettings');
             if (!qualityModeSelect || !customSettingsDiv) return;
 
-            qualityModeSelect.addEventListener('change', function() {
+            jcPageLifecycle.addListener(qualityModeSelect, 'change', function() {
                 customSettingsDiv.style.display = (qualityModeSelect.value === 'custom') ? 'block' : 'none';
                 if (qualityModeSelect.value === 'custom') {
                     loadAutoMovieRadarrServers();
@@ -1434,7 +1458,7 @@
 
             if (!_autoMovieServerListenerAdded) {
                 _autoMovieServerListenerAdded = true;
-                serverSelect.addEventListener('change', function() {
+                jcPageLifecycle.addListener(serverSelect, 'change', function() {
                     var serverId = parseInt(serverSelect.value);
                     if (!isNaN(serverId) && serverId >= 0) {
                         loadAutoMovieServerDetails(serverId);
@@ -1920,13 +1944,13 @@
         }
 
         // Bind add-instance buttons
-        document.querySelector('#addSonarrInstance').addEventListener('click', function() {
+        jcPageLifecycle.addListener(document.querySelector('#addSonarrInstance'), 'click', function() {
             document.querySelector('#sonarrInstancesList').appendChild(
                 createInstanceCard('sonarr', { Name: '', Url: '', ExternalUrl: '', ApiKey: '', UrlMappings: '' }, true)
             );
             updateAllDependencies();
         });
-        document.querySelector('#addRadarrInstance').addEventListener('click', function() {
+        jcPageLifecycle.addListener(document.querySelector('#addRadarrInstance'), 'click', function() {
             document.querySelector('#radarrInstancesList').appendChild(
                 createInstanceCard('radarr', { Name: '', Url: '', ExternalUrl: '', ApiKey: '', UrlMappings: '' }, true)
             );
@@ -2702,7 +2726,7 @@
         function setupMaintenanceModeControls() {
             // Show/hide user checklist based on radio selection
             document.querySelectorAll('input[name="maintenanceModeUsers"]').forEach(function(radio) {
-                radio.addEventListener('change', function() {
+                jcPageLifecycle.addListener(radio, 'change', function() {
                     const listEl = document.getElementById('jc-mm-user-list');
                     if (this.value === 'select') {
                         listEl.style.display = '';
@@ -2714,10 +2738,10 @@
             });
 
             // Select All / Deselect All buttons
-            document.getElementById('jc-mm-select-all').addEventListener('click', function() {
+            jcPageLifecycle.addListener(document.getElementById('jc-mm-select-all'), 'click', function() {
                 document.querySelectorAll('.jc-mm-user-cb').forEach(function(cb) { cb.checked = true; });
             });
-            document.getElementById('jc-mm-deselect-all').addEventListener('click', function() {
+            jcPageLifecycle.addListener(document.getElementById('jc-mm-deselect-all'), 'click', function() {
                 document.querySelectorAll('.jc-mm-user-cb').forEach(function(cb) { cb.checked = false; });
             });
         }
@@ -2741,26 +2765,26 @@
                 if (!input || !dropZone || !statusDiv) return;
 
                 // Handle file selection
-                input.addEventListener('change', (e) => {
+                jcPageLifecycle.addListener(input, 'change', (e) => {
                     if (e.target.files.length > 0) {
                         uploadBrandingImage(e.target.files[0], config, statusDiv);
                     }
                 });
 
                 // Drag and drop
-                dropZone.addEventListener('dragover', (e) => {
+                jcPageLifecycle.addListener(dropZone, 'dragover', (e) => {
                     e.preventDefault();
                     dropZone.style.borderColor = 'var(--primary-accent-color, #00a4dc)';
                     dropZone.style.backgroundColor = 'color-mix(in srgb, var(--primary-accent-color, #00a4dc) 10%, transparent)';
                 });
 
-                dropZone.addEventListener('dragleave', (e) => {
+                jcPageLifecycle.addListener(dropZone, 'dragleave', (e) => {
                     e.preventDefault();
                     dropZone.style.borderColor = 'color-mix(in srgb, var(--primary-accent-color, #00a4dc) 50%, transparent)';
                     dropZone.style.backgroundColor = 'rgba(255,255,255,0.05)';
                 });
 
-                dropZone.addEventListener('drop', (e) => {
+                jcPageLifecycle.addListener(dropZone, 'drop', (e) => {
                     e.preventDefault();
                     dropZone.style.borderColor = 'color-mix(in srgb, var(--primary-accent-color, #00a4dc) 50%, transparent)';
                     dropZone.style.backgroundColor = 'rgba(255,255,255,0.05)';
@@ -2770,7 +2794,7 @@
                 });
 
                 if (deleteButton) {
-                    deleteButton.addEventListener('click', (e) => {
+                    jcPageLifecycle.addListener(deleteButton, 'click', (e) => {
                         e.preventDefault();
                         e.stopPropagation();
                         deleteBrandingImage(config, statusDiv);
@@ -3013,7 +3037,11 @@
         // ever live (AC5).
         jcPageLifecycle.addListener(page, 'pageshow', loadConfig);
         jcPageLifecycle.addListener(form, 'submit', saveConfig);
-        resetAllUserSettingsBtn.addEventListener('click', resetAllUserSettings);
+        // Page-lifecycle owned (#167 finding 1): this static Overview button
+        // lives on the long-lived page, so a teardown→same-page reinstall would
+        // otherwise STACK the handler — one click then opens two confirmations
+        // and performs two configuration writes + two reset-all-users POSTs.
+        jcPageLifecycle.addListener(resetAllUserSettingsBtn, 'click', resetAllUserSettings);
         initAutoMovieQualityMode();
 
         // Live-update the Requests Page requirements banner AND the dependency
@@ -3053,7 +3081,7 @@
             // would double-fire refresh() (debouncedUpdateDeps collapses it,
             // but the synchronous updateRequestsRequirementsBanner pass would
             // run twice).
-            formEl.addEventListener('input', function(e) {
+            jcPageLifecycle.addListener(formEl, 'input', function(e) {
                 if (relevant(e.target)) refresh();
             });
             // Instance add/remove happens via button clicks that mutate
@@ -4049,7 +4077,7 @@
                     return;
                 }
                 _jeGatedHelpState[id] = !!parent.checked;
-                parent.addEventListener('change', function() {
+                jcPageLifecycle.addListener(parent, 'change', function() {
                     try { applyGatedHelp(true); } catch (e) {
                         console.warn('[JC] applyGatedHelp threw in change handler:', e);
                     }
@@ -4397,12 +4425,12 @@
             depDebounce = setTimeout(updateAllDependencies, 150);
         }
         ['#TMDB_API_KEY', '#seerr_TMDB_API_KEY'].forEach(function(sel) {
-            document.querySelector(sel).addEventListener('input', debouncedUpdateDeps);
+            jcPageLifecycle.addListener(document.querySelector(sel), 'input', debouncedUpdateDeps);
         });
-        document.querySelector('#seerrEnabled').addEventListener('change', updateAllDependencies);
-        document.querySelector('#tagCacheServerMode').addEventListener('change', updateAllDependencies);
+        jcPageLifecycle.addListener(document.querySelector('#seerrEnabled'), 'change', updateAllDependencies);
+        jcPageLifecycle.addListener(document.querySelector('#tagCacheServerMode'), 'change', updateAllDependencies);
         ['#seerrUrls', '#SeerrApiKey'].forEach(function(sel) {
-            document.querySelector(sel).addEventListener('input', debouncedUpdateDeps);
+            jcPageLifecycle.addListener(document.querySelector(sel), 'input', debouncedUpdateDeps);
         });
 
         // Drop persisted "Last tested <date>" entries when the inputs that produced
@@ -4418,7 +4446,7 @@
             // service-status grid 30+ times during a TMDB key rotation, causing
             // visible lag on slower machines. Change-on-commit gets the same
             // correctness outcome without the churn.
-            el.addEventListener('change', function() {
+            jcPageLifecycle.addListener(el, 'change', function() {
                 if (el.value !== lastValue) {
                     invalidatePersistedTest(key);
                     lastValue = el.value;
@@ -4435,7 +4463,7 @@
         PARENT_DEPS.forEach(function(dep) { parentIds[dep.parent] = true; });
         Object.keys(parentIds).forEach(function(id) {
             var el = document.getElementById(id);
-            if (el) el.addEventListener('change', updateAllDependencies);
+            if (el) jcPageLifecycle.addListener(el, 'change', updateAllDependencies);
         });
 
         var originalTestTmdb = testTmdbConnection;
@@ -4765,13 +4793,13 @@
 
         var validateSonarrMappingsBtn = document.getElementById('validateSonarrMappingsBtn');
         if (validateSonarrMappingsBtn) {
-            validateSonarrMappingsBtn.addEventListener('click', function() {
+            jcPageLifecycle.addListener(validateSonarrMappingsBtn, 'click', function() {
                 _jeValidateInstanceMappings('sonarr', 'validateSonarrMappingsBtn', 'sonarrMappingsValidationResult', 'Sonarr');
             });
         }
         var validateRadarrMappingsBtn = document.getElementById('validateRadarrMappingsBtn');
         if (validateRadarrMappingsBtn) {
-            validateRadarrMappingsBtn.addEventListener('click', function() {
+            jcPageLifecycle.addListener(validateRadarrMappingsBtn, 'click', function() {
                 _jeValidateInstanceMappings('radarr', 'validateRadarrMappingsBtn', 'radarrMappingsValidationResult', 'Radarr');
             });
         }
@@ -4801,7 +4829,7 @@
 
         var validateBazarrMappingsBtn = document.getElementById('validateBazarrMappingsBtn');
         if (validateBazarrMappingsBtn) {
-            validateBazarrMappingsBtn.addEventListener('click', function() {
+            jcPageLifecycle.addListener(validateBazarrMappingsBtn, 'click', function() {
                 var mappings = document.getElementById('bazarrUrlMappings');
                 if (!mappings || !mappings.value.trim()) {
                     Dashboard.alert({ title: 'No Mappings', message: 'No Bazarr URL mappings configured. Fill in the Bazarr URL Mappings field above to validate.' });
@@ -4816,7 +4844,7 @@
 
         var validateSeerrMappingsBtn = document.getElementById('validateSeerrMappingsBtn');
         if (validateSeerrMappingsBtn) {
-            validateSeerrMappingsBtn.addEventListener('click', function() {
+            jcPageLifecycle.addListener(validateSeerrMappingsBtn, 'click', function() {
                 _jeRunMappingValidation(
                     [{ id: 'seerrUrlMappings', service: 'Seerr' }],
                     'validateSeerrMappingsBtn', 'seerrMappingsValidationResult'
@@ -4824,7 +4852,7 @@
             });
         }
 
-        clearTagsCacheBtn.addEventListener('click', async () => {
+        jcPageLifecycle.addListener(clearTagsCacheBtn, 'click', async () => {
             if (confirm("Clear all client caches?\n\nThis will force all clients to clear their quality and genre tag caches on next page load.")) {
                 Dashboard.showLoadingMsg();
                 try {
@@ -4846,7 +4874,7 @@
                 }
             }
         });
-        testSeerrBtn.addEventListener('click', testSeerrConnection);
+        jcPageLifecycle.addListener(testSeerrBtn, 'click', testSeerrConnection);
 
         /* jc-seerr-scan-helpers:start */
         function jcNormalizeSeerrIdentityDomain(value) {
@@ -5064,7 +5092,7 @@
             }
         }
 
-        document.querySelector('#triggerSeerrScanNowBtn').addEventListener('click', triggerSeerrScanNow);
+        jcPageLifecycle.addListener(document.querySelector('#triggerSeerrScanNowBtn'), 'click', triggerSeerrScanNow);
 
         /**
          * Quick Action: re-test every external-service connection by proxying
@@ -5113,7 +5141,21 @@
             var _retestAllOriginalLabel = retestAllConnectionsBtn.querySelector('.jc-quick-action-title');
             _retestAllOriginalLabel = _retestAllOriginalLabel ? _retestAllOriginalLabel.textContent : 'Re-test all service connections';
 
-            retestAllConnectionsBtn.addEventListener('click', function() {
+            // Page-lifecycle owned (#167 finding 2): the batch poll interval and
+            // the hard-stop re-enable timeout below outlive a single click and
+            // are NOT attached to any DOM node, so a dashboard page swap while a
+            // re-test is mid-flight would otherwise leave visit A's interval
+            // polling visit B's `.status-check` nodes and firing A's stale
+            // renderChecklist() against B's document. Register ONE cancel
+            // closure with the owner (reads the current timer handles at
+            // teardown) so a replaced visit stops both timers. clearInterval/
+            // clearTimeout tolerate null and already-cleared handles.
+            jcPageLifecycle.track(function() {
+                clearInterval(_jeRetestAllPollTimer);
+                clearTimeout(_jeRetestAllReenableTimer);
+            });
+
+            jcPageLifecycle.addListener(retestAllConnectionsBtn, 'click', function() {
                 // Throttle: block rapid re-clicks within the cooldown window.
                 var now = Date.now();
                 if (now < _jeRetestAllCooldownUntil) {
@@ -5247,7 +5289,7 @@
          */
         var clearTagCachesQuickBtn = document.getElementById('clearTagCachesQuickBtn');
         if (clearTagCachesQuickBtn && clearTagsCacheBtn) {
-            clearTagCachesQuickBtn.addEventListener('click', function() {
+            jcPageLifecycle.addListener(clearTagCachesQuickBtn, 'click', function() {
                 clearTagsCacheBtn.click();
             });
         }
@@ -5354,7 +5396,7 @@
             document.querySelector('#seerrImportBlockedUsers').value = ids.join(',');
         }
 
-        document.getElementById('btnImportSeerrUsers').addEventListener('click', async () => {
+        jcPageLifecycle.addListener(document.getElementById('btnImportSeerrUsers'), 'click', async () => {
             const btn = document.getElementById('btnImportSeerrUsers');
             const resultDiv = document.getElementById('importUsersResult');
             btn.disabled = true;
@@ -5467,7 +5509,7 @@
                 if (span) span.textContent = text;
                 else btn.textContent = text;
             }
-            btn.addEventListener('click', async function() {
+            jcPageLifecycle.addListener(btn, 'click', async function() {
                 var resultDiv = document.getElementById('permissionAuditResult');
                 btn.disabled = true;
                 setBtnLabel('Running…');
@@ -5964,7 +6006,7 @@
         const customPluginLinksTextarea = document.getElementById('customPluginLinks');
 
         if (testCustomPluginLinksBtn) {
-            testCustomPluginLinksBtn.addEventListener('click', async () => {
+            jcPageLifecycle.addListener(testCustomPluginLinksBtn, 'click', async () => {
                 const linksText = customPluginLinksTextarea.value.trim();
                 if (!linksText) {
                     Dashboard.alert({
@@ -6019,12 +6061,12 @@
 
         // click handlers to all TMDB test buttons
         document.querySelectorAll('.testTmdbBtn').forEach(btn => {
-            btn.addEventListener('click', testTmdbConnection);
+            jcPageLifecycle.addListener(btn, 'click', testTmdbConnection);
         });
 
         // Copy button handler for HTML code snippets
         document.querySelectorAll('.jc-copy-html-btn').forEach(function(btn) {
-            btn.addEventListener('click', function(e) {
+            jcPageLifecycle.addListener(btn, 'click', function(e) {
                 e.preventDefault();
                 e.stopPropagation();
 
