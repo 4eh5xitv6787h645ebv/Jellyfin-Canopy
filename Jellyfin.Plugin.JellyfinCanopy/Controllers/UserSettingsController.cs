@@ -278,13 +278,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             }
 
             if (_configProvider.ConfigurationOrNull?.ThemeStudioAllowSeasonalScheduling == false
-                && userConfiguration?.Schedule?.Count > 0)
+                && userConfiguration?.Schedule?.Count > 0
+                && !MatchesPersistedThemeSchedule(authorizedUserId, userConfiguration.Schedule))
             {
                 return BadRequest(new UserFileMutationResponse<UserThemeConfiguration>
                 {
                     Code = "theme_schedule_disabled",
                     File = "theme.json",
-                    Message = "Theme scheduling is disabled by the administrator."
+                    Message = "Theme scheduling is disabled by the administrator; new or modified schedules are not accepted."
                 });
             }
 
@@ -337,6 +338,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                     });
             }
 
+            if (_configProvider.ConfigurationOrNull?.ThemeStudioAllowSeasonalScheduling == false
+                && candidate.Schedule.Count > 0)
+            {
+                return BadRequest(new
+                {
+                    valid = false,
+                    code = "theme_schedule_disabled",
+                    message = "Theme scheduling is disabled by the administrator."
+                });
+            }
+
             return Ok(new
             {
                 valid = true,
@@ -345,6 +357,22 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 activeProfileId = candidate.ActiveProfileId,
                 data = ThemeExportDocument.FromConfiguration(candidate)
             });
+        }
+
+        private bool MatchesPersistedThemeSchedule(
+            string authorizedUserId,
+            IReadOnlyList<ThemeScheduleEntry> candidate)
+        {
+            lock (_userConfigurationManager.GetUserFileLock(authorizedUserId, "theme.json"))
+            {
+                var read = _userConfigurationManager.ReadUserConfiguration<UserThemeConfiguration>(
+                    authorizedUserId,
+                    "theme.json");
+                return read.Status == UserConfigReadStatus.Valid
+                    && read.Value?.Schedule != null
+                    && JsonSerializer.Serialize(read.Value.Schedule, PersistedJson.WriteOptions)
+                        == JsonSerializer.Serialize(candidate, PersistedJson.WriteOptions);
+            }
         }
 
         [HttpPost("user-settings/{userId}/theme.json/migrate-jellyfish")]

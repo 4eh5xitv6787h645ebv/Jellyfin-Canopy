@@ -349,6 +349,23 @@ describe('Theme Studio identity-owned runtime', () => {
         expect(document.documentElement.getAttribute('data-jc-theme-active')).toBe('true');
     });
 
+    it('forgets a cancelled dashboard preview before later navigation', async () => {
+        history.replaceState({}, '', '/web/#/dashboard');
+        apiReturning(themeConfiguration());
+        const { runtime } = createRuntime();
+        await runtime.load();
+        const preview = themeConfiguration();
+        preview.Profiles[0].BasePreset = 'glass';
+
+        expect(runtime.preview(preview)).toBe(false);
+        runtime.cancelPreview();
+        history.replaceState({}, '', '/web/#/home');
+        runtime.refresh();
+
+        expect(document.documentElement.getAttribute('data-jc-theme-preset')).toBe('canopy');
+        expect(document.documentElement.getAttribute('data-jc-theme-preview')).toBeNull();
+    });
+
     it('removes presentation synchronously on identity reset and read/validation failure', async () => {
         apiReturning(themeConfiguration());
         const first = createRuntime();

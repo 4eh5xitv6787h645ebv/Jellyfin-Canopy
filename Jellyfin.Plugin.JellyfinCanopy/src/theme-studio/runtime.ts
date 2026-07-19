@@ -243,7 +243,7 @@ export class ThemeStudioRuntime {
 
     async reload(): Promise<boolean> {
         if (this.#disposed || !this.#scope.isCurrent()) return false;
-        this.#previewConfiguration = null;
+        this.cancelPreview();
         await this.load();
         return this.#configuration !== null && this.#scope.isCurrent() && !this.#disposed;
     }
@@ -275,8 +275,9 @@ export class ThemeStudioRuntime {
     }
 
     cancelPreview(): void {
-        if (this.#disposed || !this.#scope.isCurrent() || presentationOwner !== this) return;
+        if (this.#disposed || !this.#scope.isCurrent()) return;
         this.#previewConfiguration = null;
+        if (presentationOwner !== this) return;
         removeStyle(PREVIEW_STYLE_ID);
         document.documentElement.removeAttribute('data-jc-theme-preview');
         if (!this.#disposed && this.#configuration && this.#scope.isCurrent() && !this.#dashboardBlocked()) {

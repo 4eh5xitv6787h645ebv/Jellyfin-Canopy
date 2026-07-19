@@ -13,6 +13,7 @@ let preview: ReturnType<typeof vi.fn<(value: unknown) => boolean>>;
 let cancelPreview: ReturnType<typeof vi.fn<() => void>>;
 let adoptAcknowledged: ReturnType<typeof vi.fn<(value: unknown) => boolean>>;
 let reload: ReturnType<typeof vi.fn<() => Promise<boolean>>>;
+let resetAutoCloseTimer: ReturnType<typeof vi.fn<() => void>>;
 let configuration: UserThemeConfiguration;
 let frames: Map<number, FrameRequestCallback>;
 let nextFrame: number;
@@ -29,7 +30,7 @@ function context(): PanelContext {
         registerCleanup(cleanup) { cleanups.push(cleanup); },
         trackTimer: () => undefined,
         pluginShortcuts: [],
-        resetAutoCloseTimer: () => undefined,
+        resetAutoCloseTimer,
         panelBgColor: '#181818',
         headerFooterBg: '#202020',
         detailsBackground: '#202020',
@@ -73,6 +74,7 @@ beforeEach(() => {
     cancelPreview = vi.fn<() => void>();
     adoptAcknowledged = vi.fn(() => true);
     reload = vi.fn().mockResolvedValue(true);
+    resetAutoCloseTimer = vi.fn<() => void>();
     JC.core.themeStudio = {
         preview,
         cancelPreview,
@@ -245,6 +247,38 @@ describe('Theme Studio responsive settings editor', () => {
         );
     });
 
+    it('flushes pending Expert JSON before another draft mutation', () => {
+        wireThemeStudioEditor(context());
+        button('editor-mode', 'expert').click();
+        const editor = panel.querySelector<HTMLTextAreaElement>('[data-field="expert-json"]')!;
+        const pending = JSON.parse(editor.value) as UserThemeConfiguration;
+        pending.Profiles[0].Palette = 'neutral';
+        editor.value = JSON.stringify(pending, null, 2);
+        editor.dispatchEvent(new Event('input', { bubbles: true }));
+
+        button('add-profile').click();
+        flushFrames();
+
+        expect(preview).toHaveBeenLastCalledWith(expect.objectContaining({
+            Profiles: [
+                expect.objectContaining({ Palette: 'neutral' }),
+                expect.objectContaining({ Palette: 'neutral' }),
+            ],
+        }));
+    });
+
+    it('keeps keyboard draft activity alive by resetting panel auto-close', () => {
+        wireThemeStudioEditor(context());
+        button('editor-mode', 'expert').click();
+        resetAutoCloseTimer.mockClear();
+        const editor = panel.querySelector<HTMLTextAreaElement>('[data-field="expert-json"]')!;
+        editor.value = editor.value.replace('canopy-night', 'neutral');
+        editor.dispatchEvent(new Event('input', { bubbles: true }));
+        editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'n', bubbles: true }));
+
+        expect(resetAutoCloseTimer).toHaveBeenCalledTimes(2);
+    });
+
     it('validates portable imports on the server and includes schedule differences', async () => {
         const imported = themeConfiguration();
         imported.Profiles[0].Palette = 'neutral';
@@ -370,6 +404,42 @@ describe('Theme Studio responsive settings editor', () => {
         // preserved draft before accepting authoritative server state.
         button('reload').click();
         await vi.waitFor(() => expect(reload).toHaveBeenCalledOnce());
+    });
+
+    it('freezes draft mutations while an authoritative Reload is in flight', async () => {
+        let resolveReload: (loaded: boolean) => void = () => undefined;
+        reload.mockImplementation(() => new Promise<boolean>((resolve) => { resolveReload = resolve; }));
+        JC.saveUserSettings = vi.fn().mockRejectedValue(Object.assign(new Error('conflict'), { kind: 'conflict' }));
+        wireThemeStudioEditor(context());
+        button('preset', 'cinematic').click();
+        button('apply').click();
+        await vi.waitFor(() => expect(panel.textContent).toContain('theme_studio_error_conflict'));
+
+        button('reload').click();
+        expect(panel.querySelector<HTMLFieldSetElement>('.jc-theme-workspace')?.disabled).toBe(true);
+        button('preset', 'oled').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        resolveReload(true);
+        await vi.waitFor(() => expect(panel.textContent).toContain('theme_studio_reloaded'));
+
+        expect(button('preset', 'canopy').getAttribute('aria-pressed')).toBe('true');
+        expect(button('apply').disabled).toBe(true);
+    });
+
+    it('adopts an acknowledged Apply even if the panel closes while saving', async () => {
+        let resolveSave: (result: UserSettingsSaveResult) => void = () => undefined;
+        JC.saveUserSettings = vi.fn(() => new Promise<UserSettingsSaveResult>((resolve) => {
+            resolveSave = resolve;
+        }));
+        wireThemeStudioEditor(context());
+        button('preset', 'studio').click();
+        button('apply').click();
+        cleanups[0]();
+        resolveSave({
+            acknowledged: true, deduplicated: false, file: 'theme.json', revision: 3,
+            contentHash: 'd'.repeat(64),
+        });
+
+        await vi.waitFor(() => expect(adoptAcknowledged).toHaveBeenCalledOnce());
     });
 
     it('never previews or enables Apply for invalid expert JSON', () => {

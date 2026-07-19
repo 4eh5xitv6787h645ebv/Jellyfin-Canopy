@@ -371,6 +371,58 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
         }
 
         [Fact]
+        public void Theme_DisabledSchedulingAllowsProfileEditsWithUnchangedDormantSchedule()
+        {
+            _provider.Current = new PluginConfiguration
+            {
+                ThemeStudioAllowProfileImport = true,
+                ThemeStudioAllowSeasonalScheduling = false
+            };
+            var stored = UserThemeConfiguration.CreateDefault("canopy", "canopy-night");
+            stored.Schedule.Add(new ThemeScheduleEntry
+            {
+                Id = "winter",
+                ProfileId = ThemeProfile.DefaultId,
+                StartMonthDay = "12-01",
+                EndMonthDay = "02-29"
+            });
+            _manager.SaveUserConfiguration(UserId, "theme.json", stored);
+            var candidate = _manager.GetUserConfigurationStrict<UserThemeConfiguration>(UserId, "theme.json");
+            candidate.Profiles[0].Name = "Edited while scheduling is disabled";
+
+            var result = Controller(0).SaveUserSettingsTheme(UserId, candidate);
+
+            Assert.IsType<OkObjectResult>(result);
+            var saved = _manager.GetUserConfigurationStrict<UserThemeConfiguration>(UserId, "theme.json");
+            Assert.Equal("Edited while scheduling is disabled", saved.Profiles[0].Name);
+            Assert.Equal("winter", Assert.Single(saved.Schedule).Id);
+        }
+
+        [Fact]
+        public void Theme_DisabledSchedulingRejectsScheduledImports()
+        {
+            _provider.Current = new PluginConfiguration
+            {
+                ThemeStudioAllowProfileImport = true,
+                ThemeStudioAllowSeasonalScheduling = false
+            };
+            var scheduled = UserThemeConfiguration.CreateDefault("canopy", "canopy-night");
+            scheduled.Schedule.Add(new ThemeScheduleEntry
+            {
+                Id = "winter",
+                ProfileId = ThemeProfile.DefaultId,
+                StartMonthDay = "12-01",
+                EndMonthDay = "02-29"
+            });
+
+            var result = Controller().ValidateUserSettingsThemeImport(
+                UserId,
+                ThemeExportDocument.FromConfiguration(scheduled));
+
+            Assert.IsType<BadRequestObjectResult>(result);
+        }
+
+        [Fact]
         public void StaleSettingsSave_ReturnsAuthoritativeStateAndDoesNotClobber()
         {
             SeedSettings();
