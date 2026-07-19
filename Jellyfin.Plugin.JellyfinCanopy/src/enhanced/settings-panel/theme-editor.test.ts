@@ -123,6 +123,8 @@ describe('Theme Studio responsive settings editor', () => {
         wireThemeStudioEditor(context());
         expect(panel.querySelector('.jc-theme-studio')).not.toBeNull();
         expect(panel.querySelectorAll('.jc-theme-preset')).toHaveLength(9);
+        expect(panel.querySelector('.jc-theme-preset-grid')?.getAttribute('role')).toBe('group');
+        expect(button('preset', 'canopy').getAttribute('role')).toBeNull();
         expect(button('apply').disabled).toBe(true);
         const search = panel.querySelector<HTMLInputElement>('[data-field="preset-search"]')!;
         search.focus();
@@ -346,12 +348,18 @@ describe('Theme Studio responsive settings editor', () => {
         JC.pluginConfig.ThemeStudioAllowProfileImport = false;
         wireThemeStudioEditor(context());
         expect(panel.querySelector('[data-field="import-file"]')).toBeNull();
+        expect(panel.querySelector('[data-action="import"]')).toBeNull();
 
         for (const cleanup of cleanups.reverse()) cleanup();
         cleanups = [];
         JC.pluginConfig.ThemeStudioAllowProfileImport = true;
         wireThemeStudioEditor(context());
         const input = panel.querySelector<HTMLInputElement>('[data-field="import-file"]')!;
+        const openPicker = vi.spyOn(input, 'click');
+        const importButton = button('import');
+        expect(importButton.tabIndex).toBe(0);
+        importButton.click();
+        expect(openPicker).toHaveBeenCalledOnce();
         const text = vi.fn().mockResolvedValue('{}');
         Object.defineProperty(input, 'files', {
             configurable: true,

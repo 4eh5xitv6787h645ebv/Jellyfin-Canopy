@@ -368,6 +368,13 @@ test.describe.serial('Theme Studio runtime bridge', () => {
         const preview = panel.locator('.jc-theme-preview-card');
         await expect(editor).toBeVisible();
         await expect(preview).toBeVisible();
+        const importButton = panel.getByRole('button', { name: 'Import JSON', exact: true });
+        await expect(importButton).toBeVisible();
+        await importButton.focus();
+        await expect(importButton).toBeFocused();
+        await expect(panel.locator('.jc-theme-preset[role="listitem"]')).toHaveCount(0);
+        await expect(panel.locator('[data-action="preset"][data-value="canopy"]'))
+            .toHaveAttribute('aria-pressed', /^(?:true|false)$/);
         const split = await page.evaluate(() => {
             const editorBox = document.querySelector('.jc-theme-editor')!.getBoundingClientRect();
             const previewBox = document.querySelector('.jc-theme-preview-card')!.getBoundingClientRect();

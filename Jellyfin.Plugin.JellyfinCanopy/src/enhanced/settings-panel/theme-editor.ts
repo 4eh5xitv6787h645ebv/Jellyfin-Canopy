@@ -297,10 +297,10 @@ function beginnerEditor(configuration: UserThemeConfiguration, active: ThemeProf
             <input class="jc-theme-control" type="search" data-field="preset-search" value="${escapeHtml(query)}" placeholder="${escapeHtml(t('theme_studio_search_placeholder'))}">
         </label>
         <div class="jc-theme-field"><span>${escapeHtml(t('theme_studio_presets'))}</span>
-            <div class="jc-theme-preset-grid" role="list">
+            <div class="jc-theme-preset-grid" role="group" aria-label="${escapeHtml(t('theme_studio_presets'))}">
                 ${THEME_PRESETS.map((preset) => {
                     const key = PRESET_KEYS[preset.id] ?? preset.id;
-                    return `<button class="jc-theme-preset" role="listitem" type="button" data-action="preset" data-value="${escapeHtml(preset.id)}" aria-pressed="${preset.id === active.BasePreset}"${presetMatches(preset) ? '' : ' hidden'}>
+                    return `<button class="jc-theme-preset" type="button" data-action="preset" data-value="${escapeHtml(preset.id)}" aria-pressed="${preset.id === active.BasePreset}"${presetMatches(preset) ? '' : ' hidden'}>
                         <strong>${escapeHtml(t(`${key}_name`))}</strong><small>${escapeHtml(t(`${key}_desc`))}</small>
                     </button>`;
                 }).join('')}
@@ -423,7 +423,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
                             <textarea class="jc-theme-control jc-theme-expert" data-field="expert-json" spellcheck="false" aria-invalid="${expertInvalid}">${escapeHtml(expertText)}</textarea>
                         </label>`}
                     <div class="jc-theme-row">
-                        ${JC.pluginConfig?.ThemeStudioAllowProfileImport === true ? `<label class="jc-theme-button" style="display:inline-flex;align-items:center"><input hidden type="file" accept="application/json,.json" data-field="import-file">${escapeHtml(t('theme_studio_import'))}</label>` : ''}
+                        ${JC.pluginConfig?.ThemeStudioAllowProfileImport === true ? `<input hidden type="file" accept="application/json,.json" data-field="import-file"><button class="jc-theme-button" type="button" data-action="import">${escapeHtml(t('theme_studio_import'))}</button>` : ''}
                         <button class="jc-theme-button" type="button" data-action="export">${escapeHtml(t('theme_studio_export'))}</button>
                     </div>
                     ${pendingImport ? `<div class="jc-theme-import-diff"><strong>${escapeHtml(t('theme_studio_import_review'))}</strong><ul>${pendingImportChanges.map((change) => `<li>${escapeHtml(change)}</li>`).join('')}</ul><div class="jc-theme-row"><button class="jc-theme-button primary" type="button" data-action="accept-import">${escapeHtml(t('theme_studio_import_accept'))}</button><button class="jc-theme-button" type="button" data-action="reject-import">${escapeHtml(t('theme_studio_import_reject'))}</button></div></div>` : ''}
@@ -723,6 +723,8 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
             pendingImportChanges = [];
             status = t('theme_studio_import_cancelled');
             render();
+        } else if (action === 'import') {
+            root.querySelector<HTMLInputElement>('[data-field="import-file"]')?.click();
         } else if (action === 'export') {
             if (!flushExpert(false)) {
                 render();
