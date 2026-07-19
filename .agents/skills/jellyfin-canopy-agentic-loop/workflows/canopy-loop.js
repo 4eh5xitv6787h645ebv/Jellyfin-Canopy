@@ -330,6 +330,25 @@ function dedupe(findings) {
   return out
 }
 
+// A STABLE, line-shift-resistant semantic identity for a finding, used to detect
+// the same defect being re-confirmed across review rounds (oscillation) even as
+// the fixer shifts line numbers. Prefers the structured design-lock fields
+// (kind/ownerSymbol/invariantId/decisionId — populated once Design Lock lands)
+// and falls back to file + normalized failure scenario / summary. NOT the same as
+// dedupeKey (which is within-round and line-sensitive).
+const _normalizeText = (s) =>
+  String(s || '')
+    .toLowerCase()
+    .replace(/[0-9]+/g, '#') // collapse line numbers / counts so a shifted repeat still matches
+    .replace(/[^a-z#]+/g, ' ')
+    .trim()
+    .slice(0, 120)
+const findingKey = (f) => {
+  const structured = [f.kind, f.ownerSymbol, f.invariantId, f.decisionId].filter(Boolean).join('|')
+  if (structured) return structured
+  return `${f.file || '?'}|${_normalizeText(f.failureScenario || f.summary)}`
+}
+
 // ── schemas ─────────────────────────────────────────────────────────────────
 const EXPLORE_SCHEMA = {
   type: 'object',
@@ -429,10 +448,14 @@ const FIX_SCHEMA = {
   additionalProperties: true,
   required: ['applied', 'commits'],
   properties: {
-    applied: { type: 'array', items: { type: 'string' } },
+    applied: { type: 'array', items: { type: 'string' }, description: 'confirmed findings actually fixed this pass (summaries)' },
     commits: { type: 'array', items: { type: 'string' } },
     designChange: { type: 'string', description: 'if a fix simplified/deleted state instead of adding a guard, say how' },
-    unresolved: { type: 'array', items: { type: 'string' } },
+    unresolved: { type: 'array', items: { type: 'string' }, description: 'confirmed findings you could NOT fix this pass' },
+    revertedPriorFix: { type: 'boolean', description: 'true if fixing these findings required undoing a previous rounds fix (an oscillation signal)' },
+    head: { type: 'string', description: 'git rev-parse --short HEAD after committing' },
+    addedLines: { type: 'integer', description: 'production lines added this pass (git diff --numstat, excluding tests/locales)' },
+    deletedLines: { type: 'integer', description: 'production lines deleted this pass' },
     notes: { type: 'string' },
   },
 }
@@ -754,9 +777,20 @@ let cleanRound = false
 // Set only when a round TERMINATES the loop with incomplete coverage — a reviewer
 // or a finding-verifier failed to return — so we never certify such a round clean.
 let reviewIncomplete = false
+// Stateful review (M1): detect design OSCILLATION so a non-converging change HALTS
+// instead of grinding to the hard cap. A confirmed finding's stable semantic key
+// re-appearing in a LATER round means its fixer's fix did not stick (or was
+// reverted) — the #167 install-once↔track-teardown thrash signal. Also keeps the
+// resolved-count HONEST: only findings a fixer actually applied are "resolved".
+const confirmedKeyRounds = new Map() // findingKey → [rounds it was confirmed in]
+let appliedFindingsResolved = 0 // HONEST: findings a fixer actually applied (not just confirmed)
+let fixerFailures = 0 // fixer threw / returned null → its confirmed findings are UNRESOLVED
+let designRevisions = 0 // times oscillation forced a design re-decision
+let haltReason = null // set when the loop stops early for non-convergence
+const MAX_DESIGN_REVISIONS = a.maxDesignRevisions == null ? 1 : Math.max(0, a.maxDesignRevisions)
 const MIXED_ROUND_CAP = SIZING.roundCap
 let round = 0
-while (round < HARD_ROUND_CAP && !cleanRound) {
+while (round < HARD_ROUND_CAP && !cleanRound && !haltReason) {
   round++
 
   // Rounds 1..MIXED_ROUND_CAP run the mixed panel (Claude lenses + gpt-5.6-sol).
@@ -848,6 +882,26 @@ SCENARIO: ${f.failureScenario}`,
     break
   }
   confirmedAll.push(...confirmed.map((f) => ({ ...f, round })))
+
+  // OSCILLATION DETECTION: a confirmed key already seen in a PRIOR round means an
+  // earlier fixer did not resolve it (or reverted it). Once repeats appear, allow
+  // MAX_DESIGN_REVISIONS re-decisions, then HALT with a truthful haltReason rather
+  // than grinding every remaining round to the hard cap (the #167 8-hour failure).
+  const repeats = confirmed.filter((f) => (confirmedKeyRounds.get(findingKey(f)) || []).length > 0)
+  for (const f of confirmed) {
+    const k = findingKey(f)
+    confirmedKeyRounds.set(k, [...(confirmedKeyRounds.get(k) || []), round])
+  }
+  if (repeats.length) {
+    designRevisions++
+    log(`Review round ${round}: ${repeats.length} finding(s) re-confirmed after a prior fix → design revision ${designRevisions}/${MAX_DESIGN_REVISIONS}`)
+    if (designRevisions > MAX_DESIGN_REVISIONS) {
+      haltReason = 'non-convergent-design'
+      log(`Review: oscillation persists after ${MAX_DESIGN_REVISIONS} design revision(s) — HALTING (non-convergent-design) for a design re-decision instead of grinding to round ${HARD_ROUND_CAP}`)
+      break
+    }
+  }
+
   // A finding whose verifier failed to return is neither confirmed nor refuted:
   // that scope is unresolved even though we DID confirm (and will fix) others in
   // the same batch. Don't let the fixed-confirmed path silently drop it — mark the
@@ -859,9 +913,12 @@ SCENARIO: ${f.failureScenario}`,
   }
   log(`Review round ${round}: ${confirmed.length} confirmed → fixing`)
 
-  // Wrap the code-writing fixer in safely(): a StructuredOutput retry-cap throw
-  // must NOT abort the whole workflow — verify still needs to run and report.
-  await safely(
+  // The fixer is a REQUIRED writer: capture its result so the resolved-count is
+  // HONEST and reverts/oscillation are visible. A throw/null means its confirmed
+  // findings are UNRESOLVED — never silently counted as resolved (fixes #167's
+  // "even a thrown fixer counts as resolved" telemetry lie). safely() still keeps a
+  // throw from aborting the whole workflow so verify can run and report.
+  const fixResult = await safely(
     () =>
       agent(
         `${CONTRACTS}
@@ -874,6 +931,10 @@ finding demands. Before adding any new state flag/retry/lock/publisher/lifecycle
 path — or making a second fix to the same state machine/owner — STOP and try
 deletion, reuse, or single ownership first; simpler is required over another
 guard. Do not fix anything not listed. ${COMMIT_RULE}
+REPORT which confirmed findings you actually applied vs left unresolved, whether
+fixing them required reverting a previous round's fix (revertedPriorFix), the new
+short HEAD, and production addedLines/deletedLines (git diff --numstat, excluding
+tests/locales).
 
 CONFIRMED FINDINGS:
 ${JSON.stringify(confirmed, null, 1).slice(0, 10000)}`,
@@ -882,10 +943,28 @@ ${JSON.stringify(confirmed, null, 1).slice(0, 10000)}`,
     null,
     `Review fixer (round ${round})`
   )
+  const fixerRan = !!(fixResult && Array.isArray(fixResult.commits) && (fixResult.commits.length || (Array.isArray(fixResult.applied) && fixResult.applied.length)))
+  if (fixerRan) {
+    appliedFindingsResolved += Array.isArray(fixResult.applied) && fixResult.applied.length ? fixResult.applied.length : confirmed.length
+    if (fixResult.revertedPriorFix) {
+      designRevisions++
+      log(`Review round ${round}: fixer reverted a prior fix → design revision ${designRevisions}/${MAX_DESIGN_REVISIONS}`)
+      if (designRevisions > MAX_DESIGN_REVISIONS) {
+        haltReason = 'non-convergent-design'
+        log(`Review: fixer reverts persist after ${MAX_DESIGN_REVISIONS} design revision(s) — HALTING (non-convergent-design)`)
+      }
+    }
+  } else {
+    fixerFailures++
+    reviewIncomplete = true
+    log(`Review round ${round}: fixer failed to return — ${confirmed.length} confirmed finding(s) UNRESOLVED (coverage incomplete)`)
+  }
 }
 if (!cleanRound)
   log(
-    reviewIncomplete
+    haltReason
+      ? `Review: HALTED (${haltReason}) after ${round} round(s) — needs a design re-decision; will report as residual risk`
+      : reviewIncomplete
       ? `Review: ended without a certified-clean round — coverage incomplete (reviewer/verifier failure); will report as residual risk`
       : `Review: hit round cap (${HARD_ROUND_CAP}) with unresolved findings — will report as residual risk`
   )
@@ -1039,24 +1118,31 @@ const result = {
   loopClean: cleanRound,
   reviewRounds: round,
   reviewIncomplete,
+  haltReason,
+  designRevisions,
   incidentalBugs,
-  confirmedFindingsResolved: confirmedAll.length,
+  // HONEST: findings a fixer actually applied (a thrown/absent fixer no longer
+  // inflates this). confirmedFindingsTotal keeps the raw confirmed count.
+  confirmedFindingsResolved: appliedFindingsResolved,
+  confirmedFindingsTotal: confirmedAll.length,
+  fixerFailures,
   implement: implemented || null,
   canonicalPlan: canonicalPlan || null,
   verify: verify || null,
   verifyFixCommitted,
-  readyForPR: implementationOk && cleanRound && !reviewIncomplete && !verifyFixCommitted && blockingGreen && e2eGreen,
+  readyForPR: implementationOk && cleanRound && !reviewIncomplete && !haltReason && !verifyFixCommitted && blockingGreen && e2eGreen,
   residualRisks: []
     .concat(implemented ? [] : ['implementation did not complete — both implementer models failed to return a result'])
     .concat(openTodos.length ? ['implementer left open acceptance-criteria TODOs — change is incomplete'] : [])
-    .concat(reviewIncomplete ? ['adversarial review ended with incomplete coverage (a reviewer or finding-verifier failed) — the round could not be certified clean'] : [])
-    .concat(cleanRound || reviewIncomplete ? [] : ['review loop hit its round cap with unresolved confirmed findings'])
+    .concat(haltReason ? [`review HALTED (${haltReason}): the same defect kept re-appearing after fixes (design oscillation) — needs a design re-decision, not more rounds, before a PR`] : [])
+    .concat(reviewIncomplete ? ['adversarial review ended with incomplete coverage (a reviewer, finding-verifier, or fixer failed) — the round could not be certified clean'] : [])
+    .concat(cleanRound || reviewIncomplete || haltReason ? [] : ['review loop hit its round cap with unresolved confirmed findings'])
     .concat(verifyFixCommitted ? ['verify-fix committed code AFTER the clean review round — those commits were never adversarially reviewed; re-run the review loop before opening a PR'] : [])
     .concat(blockingGreen ? [] : ['one or more BLOCKING gates are failing'])
     .concat(e2eGreen ? [] : ['e2e:local did not pass'])
     .concat(openTodos),
 }
 log(
-  `canopy-loop done: readyForPR=${result.readyForPR} · impl=${implementationOk} · rounds=${round} · findings resolved=${confirmedAll.length} · blockingGreen=${blockingGreen}${RUNTIME ? ` · e2e=${e2eGreen}` : ''}`
+  `canopy-loop done: readyForPR=${result.readyForPR} · impl=${implementationOk} · rounds=${round}${haltReason ? ` · HALTED=${haltReason}` : ''} · findings resolved=${appliedFindingsResolved}/${confirmedAll.length} · blockingGreen=${blockingGreen}${RUNTIME ? ` · e2e=${e2eGreen}` : ''}`
 )
 return result
