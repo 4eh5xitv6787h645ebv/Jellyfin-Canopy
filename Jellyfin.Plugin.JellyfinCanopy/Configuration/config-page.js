@@ -2,98 +2,116 @@
             const pluginId = '9ffa12bc-f4b5-406c-ab1d-d575acbeea7b';
 
             /* jc-config-page-lifecycle:start */
-            // Page-lifecycle owner (BI-CLIENT-106 / #167). The dashboard
+            // Install-once page lifecycle (BI-CLIENT-106 / #167). The dashboard
             // re-fetches configPage.html and re-executes this whole script on
-            // EVERY visit, but the window/document/MediaQueryList listeners,
-            // MutationObservers and delegated click handlers installed below
-            // outlive the page they were wired for. Without an owner, N visits
-            // leave N retained handler sets — one click on a category Down
-            // arrow then moved the row N positions.
+            // EVERY visit, and Jellyfin's legacy view cache can keep several
+            // config views in the DOM at once — a cached one restored on Back is
+            // NOT re-scripted. So the window/document/MediaQueryList listeners,
+            // MutationObservers and delegated click handlers installed below must
+            // never MULTIPLY across visits: before the fix N visits left N handler
+            // sets and one click on a category Down arrow moved the row N places.
             //
-            // Mirrors the dispose-bag semantics of src/core/lifecycle.ts
-            // (track / untrack / addListener / teardown). Not imported from
-            // there: this file is a separately served classic script outside
-            // the TypeScript bundle, and config-page correctness must not
-            // depend on bundle load timing.
+            // We deliberately NEVER tear anything down. A teardown-on-revisit was
+            // the previous approach and is unfixable here: tearing down a still-
+            // cached view's handlers strands that view when Jellyfin later restores
+            // it from cache without re-running this script (it would come back with
+            // inert tabs / save controls). Instead:
+            //   * per-VIEW element listeners (buttons/inputs inside the resolved
+            //     page) are attached with addListener — every visit renders a fresh
+            //     view, so re-wiring its own fresh elements is correct, not a leak,
+            //     and a restored cached view keeps the listeners we never removed;
+            //   * every GLOBAL registration (window/document/matchMedia listener,
+            //     persistent-ancestor listener, MutationObserver, injected timer)
+            //     goes through a window-scoped SINGLE-SLOT install (own / ownNode /
+            //     ownObserver / ownTimer) that removes the previous visit's copy
+            //     before installing this visit's, so at most ONE is ever live and
+            //     it always holds the freshest closure.
             //
-            // Ownership model: one window-scoped owner. Re-executing the
-            // script against the SAME live page element is a duplicate load
-            // (e.g. the loader ran twice) — acquisition returns null and the
-            // whole IIFE bails before any wiring repeats. A DIFFERENT page
-            // element means a fresh dashboard visit — the previous visit's
-            // owner is torn down (all its persistent listeners/observers
-            // removed) before the fresh set installs, so at most ONE set is
-            // ever live.
-            function jcDisposeLifecycleResource(resource) {
-                try {
-                    if (resource == null) return;
-                    if (typeof resource === 'function') { resource(); return; }
-                    if (typeof resource !== 'object') return;
-                    if (resource.el && typeof resource.type === 'string' && typeof resource.fn === 'function') {
-                        resource.el.removeEventListener(resource.type, resource.fn, resource.opts);
-                        return;
-                    }
-                    if (typeof resource.intervalId === 'number') { clearInterval(resource.intervalId); return; }
-                    if (resource.timeoutId !== undefined) { clearTimeout(resource.timeoutId); return; }
-                    if (typeof resource.disconnect === 'function') { resource.disconnect(); return; }
-                } catch (err) {
-                    console.warn('[JC] config-page lifecycle: error disposing resource:', err);
+            // This is the install-once / single-ownership shape from the enhanced
+            // client's lifecycle helpers, re-expressed inline: this file is a
+            // separately served classic script outside the TypeScript bundle and
+            // config-page correctness must not depend on bundle load timing.
+            function jcCreateConfigPageLifecycle(pageEl, win) {
+                function registry() {
+                    if (!win) return null;
+                    return win.__jcConfigGlobalInstalls ||
+                        (win.__jcConfigGlobalInstalls = { listeners: {}, observers: {}, timers: {}, nodes: null });
                 }
-            }
-
-            var jcLifecycleSeq = 0;
-            function jcCreateConfigPageLifecycle(pageEl, seq) {
-                // Stable per-owner token. Existing per-element dataset.jcWired
-                // guards compare against this so a fresh owner (after a
-                // teardown→reinstall on the SAME cached page) REBINDS the guarded
-                // handler instead of leaving it pointed at the retired owner
-                // (#167 findings 2/7). A boolean flag survived teardown and
-                // suppressed the rebind, stranding the handler on a dead owner.
-                //
-                // The token MUST stay unique across dashboard visits. Every visit
-                // re-executes this whole IIFE, which re-runs `var jcLifecycleSeq
-                // = 0` — so the IIFE-local counter alone would hand every visit
-                // the SAME id ('jc-owner-1') and a guarded element on the live
-                // page would then fail to rebind (its dataset already equals the
-                // new owner's colliding id). The caller therefore supplies a
-                // window-persisted `seq`; the local counter is only a fallback
-                // for direct construction (tests) where no window seq is passed.
+                var reg = registry();
                 var owner = {
-                    id: 'jc-owner-' + (seq !== undefined && seq !== null ? seq : (++jcLifecycleSeq)),
+                    // Constant sentinel. The per-element dataset.jcWired guards use
+                    // it to wire an element AT MOST ONCE: a fresh view's elements
+                    // never carry it (so they wire once), and a re-run against the
+                    // very same element is skipped. No per-visit token is needed
+                    // because we never tear down and rebind.
+                    id: 'jc-config-wired',
                     page: pageEl,
+                    // Retained as an always-true flag so the existing defensive
+                    // `if (!lifecycle.active) return` continuation guards remain
+                    // valid no-ops; nothing ever retires an owner now.
                     active: true,
                     tracked: [],
-                    track: function (resource) {
-                        // Reject registrations once the owner is retired. A later
-                        // visit may have torn this owner down while a slow async
-                        // load (e.g. loadBlockedUsersList's getUsers()) was still
-                        // in flight; its continuation must not push a resource into
-                        // an already-drained bag that will never be torn down
-                        // again. Dispose it immediately so it cannot leak past the
-                        // teardown→reinstall cycle (#167 findings 1/5/9, AC5).
-                        if (!owner.active) { jcDisposeLifecycleResource(resource); return resource; }
-                        owner.tracked.push(resource);
-                        return resource;
-                    },
+                    track: function (resource) { owner.tracked.push(resource); return resource; },
                     untrack: function (resource) {
                         owner.tracked = owner.tracked.filter(function (r) { return r !== resource; });
                     },
+                    // Per-view element listener: just attach. The element is GC'd
+                    // with its view; a cached view restored on Back keeps it.
                     addListener: function (el, type, fn, opts) {
-                        // Same retired-owner guard as track(): a stale continuation
-                        // must not attach a DOM listener onto a persistent element
-                        // through a torn-down owner, where it would never be
-                        // reclaimed (#167 findings 1/5/9, AC5).
-                        if (!owner.active) return;
+                        if (!el) return;
                         el.addEventListener(type, fn, opts);
-                        owner.tracked.push({ el: el, type: type, fn: fn, opts: opts });
                     },
-                    teardown: function () {
-                        owner.active = false;
-                        var resources = owner.tracked;
-                        owner.tracked = [];
-                        for (var i = 0; i < resources.length; i++) {
-                            jcDisposeLifecycleResource(resources[i]);
+                    // Single global-listener slot keyed by `key`: remove the prior
+                    // visit's listener for this key (if any), then install this
+                    // visit's. Net: exactly one live listener per key, freshest
+                    // closure. Used for window / document / MediaQueryList targets.
+                    own: function (key, target, type, fn, opts) {
+                        if (!target) return;
+                        if (reg) {
+                            var prev = reg.listeners[key];
+                            if (prev) { try { prev.target.removeEventListener(prev.type, prev.fn, prev.opts); } catch (e) { /* target gone */ } }
+                            reg.listeners[key] = { target: target, type: type, fn: fn, opts: opts };
                         }
+                        target.addEventListener(type, fn, opts);
+                    },
+                    // Single listener slot per (persistent node, type). The sticky
+                    // header listens on PERSISTENT dashboard-chrome ancestors that
+                    // survive across visits, so a raw attach would stack across
+                    // visits. A WeakMap keyed by the node replaces the prior copy.
+                    ownNode: function (node, type, fn, opts) {
+                        if (!node) return;
+                        if (reg) {
+                            if (!reg.nodes) reg.nodes = new WeakMap();
+                            var byType = reg.nodes.get(node);
+                            if (!byType) { byType = {}; reg.nodes.set(node, byType); }
+                            var prev = byType[type];
+                            if (prev) { try { node.removeEventListener(type, prev.fn, prev.opts); } catch (e) { /* node gone */ } }
+                            byType[type] = { fn: fn, opts: opts };
+                        }
+                        node.addEventListener(type, fn, opts);
+                    },
+                    // Single MutationObserver slot keyed by `key`: disconnect the
+                    // prior visit's observer, connect this visit's.
+                    ownObserver: function (key, node, options, cb) {
+                        if (!node) return null;
+                        var obs = new MutationObserver(cb);
+                        if (reg) {
+                            var prev = reg.observers[key];
+                            if (prev) { try { prev.disconnect(); } catch (e) { /* already gone */ } }
+                            reg.observers[key] = obs;
+                        }
+                        obs.observe(node, options);
+                        return obs;
+                    },
+                    // Single timer slot keyed by `key`: clear the prior visit's
+                    // pending timer before storing this visit's handle.
+                    ownTimer: function (key, id) {
+                        if (reg) {
+                            var prev = reg.timers[key];
+                            if (prev !== undefined) { try { clearTimeout(prev); } catch (e) { /* already fired */ } }
+                            reg.timers[key] = id;
+                        }
+                        return id;
                     }
                 };
                 return owner;
@@ -101,39 +119,17 @@
 
             function jcAcquireConfigPageLifecycle(win, pageEl) {
                 var current = win.__jcConfigPageLifecycle;
-                if (current && current.active && current.page === pageEl) {
-                    // Duplicate execution for the same live page: keep the
-                    // existing wiring, install nothing.
+                // Duplicate execution against the SAME live view (e.g. the loader
+                // ran twice against one cached view): keep the existing wiring,
+                // install nothing.
+                if (current && current.page === pageEl && pageEl && pageEl.isConnected !== false) {
                     return null;
                 }
-                // Freshness guard (#167 findings 6/10/11). The config-page.js
-                // script is created and appended asynchronously by the loader, so
-                // an OLDER visit's script can finish executing AFTER a newer visit
-                // already installed the live owner. An older/stale view must never
-                // tear down the newer visible page's owner. Only decide this when
-                // the current owner's view is still connected (a removed view is
-                // genuinely gone and the incoming view should take over). "Older"
-                // == the incoming view is detached, or it precedes the current
-                // owner's view in document order (JF12 appends the freshest view
-                // LAST — the same invariant the own-view resolver relies on).
-                if (current && current.active && current.page &&
-                    current.page !== pageEl && current.page.isConnected !== false) {
-                    if (!pageEl || pageEl.isConnected === false) {
-                        return null;
-                    }
-                    var rel = current.page.compareDocumentPosition(pageEl);
-                    if (rel & 2 /* Node.DOCUMENT_POSITION_PRECEDING */) {
-                        return null;
-                    }
-                }
-                if (current && current.active) current.teardown();
-                // Window-persisted sequence: survives the IIFE re-execution that
-                // resets the local jcLifecycleSeq, so every visit's owner gets a
-                // DISTINCT token even though the script re-runs from scratch
-                // (#167 finding 3).
-                var seq = (win.__jcConfigLifecycleSeq || 0) + 1;
-                win.__jcConfigLifecycleSeq = seq;
-                var owner = jcCreateConfigPageLifecycle(pageEl, seq);
+                // A fresh view (or the first run): create a new owner. We do NOT
+                // tear down `current` — its view may be cached and later restored
+                // by Jellyfin without re-running this script, and its GLOBAL
+                // registrations are already single-slotted, so nothing multiplies.
+                var owner = jcCreateConfigPageLifecycle(pageEl, win);
                 win.__jcConfigPageLifecycle = owner;
                 return owner;
             }
@@ -266,9 +262,11 @@
                 }
             }
             _jeDetectTheme();
-            jcPageLifecycle.addListener(window, 'load', _jeDetectTheme);
-            // Tracked so a replaced page never receives the late cosmetic re-check.
-            jcPageLifecycle.track({ timeoutId: setTimeout(_jeDetectTheme, 600) });
+            // Single-slot global installs (#167): a fresh visit replaces the prior
+            // visit's window 'load' handler and pending re-check timer instead of
+            // stacking another copy.
+            jcPageLifecycle.own('themeLoad', window, 'load', _jeDetectTheme);
+            jcPageLifecycle.ownTimer('themeTimer', setTimeout(_jeDetectTheme, 600));
             const resetAllUserSettingsBtn = jcSel('#resetAllUserSettingsBtn');
             const clearTagsCacheBtn = jcSel('#clearTagsCacheBtn');
 
@@ -383,15 +381,17 @@
                         toggle.setAttribute('aria-expanded', 'false');
                     }
                 };
-                // The MediaQueryList outlives the page — lifecycle-owned so a
-                // replaced visit's syncLayoutMode can't fire against stale DOM.
-                jcPageLifecycle.addListener(drawerMedia, 'change', syncLayoutMode);
+                // The MediaQueryList and the document keydown outlive the page:
+                // single-slotted (#167) so a fresh visit replaces the prior
+                // visit's handler instead of stacking one that fires against
+                // stale DOM.
+                jcPageLifecycle.own('drawerMedia', drawerMedia, 'change', syncLayoutMode);
                 syncLayoutMode();
                 jcPageLifecycle.addListener(toggle, 'click', () => setOpen(!shell.classList.contains('jc-nav-open')));
                 jcPageLifecycle.addListener(scrim, 'click', () => setOpen(false));
                 // Selecting a section (or focusing search results) dismisses the drawer.
                 tabs.forEach((t) => jcPageLifecycle.addListener(t, 'click', () => setOpen(false)));
-                jcPageLifecycle.addListener(document, 'keydown', (e) => {
+                jcPageLifecycle.own('drawerEsc', document, 'keydown', (e) => {
                     if (e.key === 'Escape' && shell.classList.contains('jc-nav-open')) setOpen(false);
                 });
             })();
@@ -2108,7 +2108,10 @@
         // handler — the #167 defect was N retained copies of this delegate
         // each moving the row one position per click.
         function jcWireQualityCatAdminReorder(doc, lifecycle, refreshArrows, markDirty) {
-            lifecycle.addListener(doc, 'click', function (e) {
+            // Delegated on the document via a single global slot (#167 AC3): a
+            // fresh visit REPLACES the previous visit's handler, so one click on a
+            // category Down arrow moves the row exactly one position, never N.
+            lifecycle.own('qualityCatReorder', doc, 'click', function (e) {
                 var btn = e.target.closest && e.target.closest('#qualityCategoriesAdmin .jc-cat-up, #qualityCategoriesAdmin .jc-cat-down');
                 if (!btn || btn.disabled) return;
                 e.preventDefault();
@@ -2192,10 +2195,10 @@
         }
 
         // Wire up/down arrow clicks for the admin page-order list.
-        // Delegated on the document via the page lifecycle so a fresh visit
+        // Delegated on the document via a single global slot so a fresh visit
         // replaces (never stacks on) the previous visit's handler (#167).
         (function () {
-            jcPageLifecycle.addListener(document, 'click', function (e) {
+            jcPageLifecycle.own('pagesOrderReorder', document, 'click', function (e) {
                 var btn = e.target.closest && e.target.closest('#pagesOrderAdmin .jc-page-up, #pagesOrderAdmin .jc-page-down');
                 if (!btn || btn.disabled) return;
                 e.preventDefault();
@@ -3209,9 +3212,10 @@
             ['sonarrInstancesList', 'radarrInstancesList'].forEach(function(id) {
                 var root = jcById(id);
                 if (!root) return;
-                // Lifecycle-tracked so a fresh visit disconnects the previous
-                // visit's observers instead of stacking new ones (#167).
-                jcPageLifecycle.track(new MutationObserver(refresh)).observe(root, { childList: true, subtree: true });
+                // Single-slot observer (#167): a fresh visit disconnects the
+                // previous visit's observer for this list before connecting its
+                // own, so at most one observer is ever live per list.
+                jcPageLifecycle.ownObserver('arrInstances:' + id, root, { childList: true, subtree: true }, refresh);
             });
         })();
 
@@ -3278,14 +3282,17 @@
                 ticking = true;
                 requestAnimationFrame(read);
             }
-            // Always listen on window (document-scrolling layouts) and on
-            // each overflow-declared ancestor (mid-tree scrollers).
-            jcPageLifecycle.addListener(window, 'scroll', onScroll, { passive: true });
+            // Always listen on window (document-scrolling layouts) and on each
+            // overflow-declared ancestor (mid-tree scrollers). window is a single
+            // global slot; the ancestors are PERSISTENT dashboard chrome that
+            // survives across visits, so each is a per-node single slot — a fresh
+            // visit replaces its prior handler instead of stacking one (#167).
+            jcPageLifecycle.own('stickyScrollWindow', window, 'scroll', onScroll, { passive: true });
             if (candidates.length === 0) {
                 console.warn('[JC] sticky-header: no overflow:auto|scroll ancestors found; relying on window scroll only.');
             }
             candidates.forEach(function(n) {
-                jcPageLifecycle.addListener(n, 'scroll', onScroll, { passive: true });
+                jcPageLifecycle.ownNode(n, 'scroll', onScroll, { passive: true });
             });
             read();
         })();
@@ -4869,7 +4876,12 @@
                     temp.value = textarea.value;
                     temp.style.display = 'none';
                     temp.setAttribute('data-arr-validate-temp-' + type, 'true');
-                    document.body.appendChild(temp);
+                    // Append inside the resolved page (#167): validateMappingSet and
+                    // cleanup resolve these scratch nodes via page-scoped jcById, so
+                    // a body-level temp would be invisible to the lookup — the pair
+                    // list would come back empty and the temps would never be
+                    // removed. jcSelAll's page-scoped orphan wipe above matches too.
+                    (page || document.body).appendChild(temp);
                     createdTempIds.push(tempId);
                     mappingDefs.push({ id: tempId, service: name });
                 }
@@ -5260,19 +5272,11 @@
             var _retestAllOriginalLabel = retestAllConnectionsBtn.querySelector('.jc-quick-action-title');
             _retestAllOriginalLabel = _retestAllOriginalLabel ? _retestAllOriginalLabel.textContent : 'Re-test all service connections';
 
-            // Page-lifecycle owned (#167 finding 2): the batch poll interval and
-            // the hard-stop re-enable timeout below outlive a single click and
-            // are NOT attached to any DOM node, so a dashboard page swap while a
-            // re-test is mid-flight would otherwise leave visit A's interval
-            // polling visit B's `.status-check` nodes and firing A's stale
-            // renderChecklist() against B's document. Register ONE cancel
-            // closure with the owner (reads the current timer handles at
-            // teardown) so a replaced visit stops both timers. clearInterval/
-            // clearTimeout tolerate null and already-cleared handles.
-            jcPageLifecycle.track(function() {
-                clearInterval(_jeRetestAllPollTimer);
-                clearTimeout(_jeRetestAllReenableTimer);
-            });
+            // The batch poll interval and hard-stop re-enable timeout below are
+            // self-terminating (releaseRetestBatch clears both, and the hard-stop
+            // timeout is a backstop), and each visit's handlers/lookups are scoped
+            // to its own view, so a mid-flight re-test on a replaced visit winds
+            // itself down without touching the live page. (#167.)
 
             jcPageLifecycle.addListener(retestAllConnectionsBtn, 'click', function() {
                 // Throttle: block rapid re-clicks within the cooldown window.
@@ -5888,10 +5892,10 @@
                     });
                     document.addEventListener('keydown', onKey);
                     _activePanelPreviewCleanup = cleanup;
-                    // Lifecycle-tracked (#167): if the dashboard swaps in a
-                    // fresh page while a preview is open, teardown invokes the
-                    // cleanup closure and reclaims the body overlay, the
-                    // interval/timeout pair, and this document keydown.
+                    // Bookkept on the owner so the open-preview cleanup is
+                    // discoverable (untracked on normal close). The overlay is
+                    // self-closing (interval + hard timeout), so a page swap does
+                    // not strand it.
                     jcPageLifecycle.track(cleanup);
                 });
             }
@@ -5922,12 +5926,11 @@
                     toast.setAttribute('aria-live', 'polite');
                     toast.textContent = 'Example toast — disappears in ' + fmtSeconds(ms);
                     document.body.appendChild(toast);
-                    // Lifecycle-tracked cleanup (#167): the toast is a body-level
-                    // node with up to three pending timers and can outlive the page
-                    // for its full (user-set) duration. Register an idempotent
-                    // disposer so a dashboard page swap mid-preview reclaims the
-                    // node and clears its timers instead of leaking them onto the
-                    // next page; untrack once it finishes or is replaced.
+                    // Bookkept cleanup (#167): the toast is a body-level node with
+                    // up to three pending timers. The disposer is idempotent and
+                    // self-scheduled (it fires on the hide/remove timeout), so the
+                    // toast tears itself down on its own timeline; untrack once it
+                    // finishes.
                     function toastCleanup() {
                         if (toast._jcCleanupDone) return;
                         toast._jcCleanupDone = true;
@@ -6121,8 +6124,8 @@
 
             // Outside-click closes every open banner. Clicks inside an open
             // banner (e.g. code copy button, links) don't close it.
-            // Page-lifecycle-owned so repeated visits keep exactly one (#167).
-            jcPageLifecycle.addListener(document, 'click', function(e) {
+            // Single global slot so repeated visits keep exactly one (#167).
+            jcPageLifecycle.own('bannerOutsideClick', document, 'click', function(e) {
                 if (!e.target) return;
                 if (e.target.closest('.jc-banner-trigger, .jc-banner-managed')) return;
                 jcSelAll('.jc-banner-trigger[aria-expanded="true"]').forEach(function(t) {

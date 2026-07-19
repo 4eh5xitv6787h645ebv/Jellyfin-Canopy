@@ -2385,47 +2385,41 @@
         var page = ownView || allViews[allViews.length - 1] || null;
 
         /* jc-config-bootstrap-guard:start */
-        // Install-once per view (BI-CLIENT-106 / #167 findings 3/8). The
+        // Install-once per view (BI-CLIENT-106 / #167 findings 3/4/6/8). The
         // dashboard can re-run this inline loader against the SAME cached view;
         // without a guard each run added ANOTHER raw 'pageshow' listener here AND
-        // appended ANOTHER external config-page.js <script>, neither owned by the
-        // page lifecycle (which lives inside config-page.js and cannot reach back
-        // to remove them). Claim the view once so at most one bootstrap listener
-        // and one script node exist per view.
-        //
-        // The claim is tied to a LIVE lifecycle owner, not a permanent flag
-        // (#167 findings 4/6): a re-run is a genuine duplicate only while this
-        // view still has a live, connected owner on the window. If the view's
-        // owner was torn down by a later visit that has since gone away — or its
-        // config-page.js never finished loading (transient onerror, which also
-        // clears the flag) — there is no live owner, so let the loader reinstall
-        // rather than leave the view permanently unwired.
-        function jcClaimConfigBootstrap(pageEl, win) {
+        // appended ANOTHER external config-page.js <script>. A view element is
+        // claimed exactly once, permanently: the flag lives on the view node, so
+        // when Jellyfin restores that cached view on Back (without re-running this
+        // loader) it keeps the wiring config-page.js installed the first time, and
+        // a duplicate loader run against an already-claimed view — including one
+        // that fires while the first script is still in flight — bails out. There
+        // is intentionally NO owner-liveness escape hatch: config-page.js never
+        // tears an owner down, so "claimed" is a stable, single-writer fact and a
+        // second run can never race the first over shared page state. The claim is
+        // rolled back ONLY on a genuine script LOAD FAILURE (onerror below), so a
+        // transient fetch error still lets a later visit retry cleanly.
+        function jcClaimConfigBootstrap(pageEl) {
             if (!pageEl) return false;
-            if (pageEl.dataset.jcConfigBootstrapped !== '1') {
-                pageEl.dataset.jcConfigBootstrapped = '1';
-                return true;
-            }
-            var owner = win && win.__jcConfigPageLifecycle;
-            var liveOwnerPresent = !!(owner && owner.active && owner.page && owner.page.isConnected !== false);
-            return !liveOwnerPresent;
+            if (pageEl.dataset.jcConfigBootstrapped === '1') return false;
+            pageEl.dataset.jcConfigBootstrapped = '1';
+            return true;
         }
         /* jc-config-bootstrap-guard:end */
-        if (!jcClaimConfigBootstrap(page, window)) return;
+        if (!jcClaimConfigBootstrap(page)) return;
 
         // viewManager fires 'pageshow' on the view element right after the HTML is
         // injected - usually before the external script has finished loading. The
         // script wires 'pageshow' -> loadConfig when it runs, so record any pageshow
-        // that happened while it was still loading and replay it once on load.
-        // Idempotent across a reinstall re-run: remove any prior bootstrap
-        // pageshow (stored on the view) before re-adding, so a self-healing
-        // reinstall never stacks a second lightweight listener (#167 findings 4/6).
+        // that happened while it was still loading and replay it once on load. Only
+        // one loader run reaches this point per view (the permanent claim above),
+        // so exactly one lightweight bootstrap listener is ever added; it is
+        // removed again once the external script has loaded (#167 finding 6).
         var shownBeforeLoad = false;
         var externalLoaded = false;
         var onBootstrapPageshow = function () {
             if (!externalLoaded) shownBeforeLoad = true;
         };
-        if (page._jcBootstrapPageshow) page.removeEventListener('pageshow', page._jcBootstrapPageshow);
         page._jcBootstrapPageshow = onBootstrapPageshow;
         page.addEventListener('pageshow', onBootstrapPageshow);
 
@@ -2447,6 +2441,15 @@
                     shownBeforeLoad = false;
                     page.dispatchEvent(new CustomEvent('pageshow'));
                 }
+                // The IIFE has run and installed its own pageshow -> loadConfig
+                // listener, so retire the one-shot bootstrap listener and drop the
+                // now-inert transient <script> node so neither is retained on the
+                // view across the session (#167 finding 6).
+                if (page._jcBootstrapPageshow) {
+                    page.removeEventListener('pageshow', page._jcBootstrapPageshow);
+                    page._jcBootstrapPageshow = null;
+                }
+                if (script.parentNode) script.parentNode.removeChild(script);
             };
             script.onerror = function () {
                 console.error('[JC] Failed to load config-page.js from ' + script.src);
