@@ -141,19 +141,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         {
             var migrated = ThemeConfigurationClone.Configuration(source);
             migrated.SchemaVersion = 2;
-            var legacyJellyfishPalette = migrated.LegacyMigration.Completed
-                && TryCanonicalizeJellyfishTheme(
-                    migrated.LegacyMigration.JellyfishTheme,
-                    out var canonical)
-                    ? "jellyfish-" + canonical.ToLowerInvariant()
-                    : null;
 
             for (var index = 0; index < migrated.Profiles.Count; index++)
             {
                 var profile = migrated.Profiles[index];
                 var hasGeneratedLegacyJellyfishAccent = index == 0
-                    && legacyJellyfishPalette != null
-                    && string.Equals(profile.Palette, legacyJellyfishPalette, StringComparison.Ordinal)
+                    && IsBundledJellyfishPalette(profile.Palette)
                     && string.Equals(profile.Accent, "violet", StringComparison.Ordinal);
 
                 if (!ThemeConfigurationPolicy.IsPalette(profile.Palette))
@@ -169,6 +162,18 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
             }
 
             return migrated;
+        }
+
+        private static bool IsBundledJellyfishPalette(string? value)
+        {
+            const string prefix = "jellyfish-";
+            if (value == null || !value.StartsWith(prefix, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            return TryCanonicalizeJellyfishTheme(value.Substring(prefix.Length), out var canonical)
+                && string.Equals(value, prefix + canonical.ToLowerInvariant(), StringComparison.Ordinal);
         }
 
         public static string NormalizeAdministratorPalette(string? value)

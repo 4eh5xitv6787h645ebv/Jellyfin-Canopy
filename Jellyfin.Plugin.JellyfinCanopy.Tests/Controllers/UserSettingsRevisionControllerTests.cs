@@ -261,6 +261,27 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
         }
 
         [Fact]
+        public void ThemeImportValidation_PreservesSchemaOneJellyfishPaletteWithoutLegacyMetadata()
+        {
+            var profile = ThemeProfile.CreateDefault("canopy", "jellyfish-ocean");
+            profile.Accent = "violet";
+            var import = new ThemeExportDocument
+            {
+                SchemaVersion = 1,
+                ActiveProfileId = ThemeProfile.DefaultId,
+                Profiles = new List<ThemeProfile> { profile }
+            };
+
+            var validated = Assert.IsType<OkObjectResult>(
+                Controller().ValidateUserSettingsThemeImport(UserId, import));
+            var json = JsonSerializer.Serialize(validated.Value);
+            Assert.Contains("\"Palette\":\"jellyfish-ocean\"", json, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("\"Accent\":\"palette\"", json, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal("violet", profile.Accent);
+            Assert.False(File.Exists(FilePath("theme.json")));
+        }
+
+        [Fact]
         public void ThemeJellyfishMigration_IsAllowlistedStagedAndNonMutating()
         {
             var accepted = Assert.IsType<OkObjectResult>(

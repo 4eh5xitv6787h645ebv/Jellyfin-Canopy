@@ -73,25 +73,17 @@ public sealed class ThemeConfigurationMigrationTests
     }
 
     [Fact]
-    public void SchemaOneMigrationRestoresTheGeneratedJellyfishPaletteAccent()
+    public void SchemaOneMigrationRestoresGeneratedJellyfishAccentWithoutLegacyMetadata()
     {
         var source = UserThemeConfiguration.CreateDefault("canopy", "jellyfish-ocean");
         source.SchemaVersion = 1;
         source.Profiles[0].Accent = "violet";
-        source.LegacyMigration.JellyfishTheme = "Ocean";
-        source.LegacyMigration.Completed = true;
 
         Assert.True(ThemeConfigurationMigration.TryMigrate(source, out var migrated));
         Assert.NotNull(migrated);
         Assert.Equal("jellyfish-ocean", migrated!.Profiles[0].Palette);
         Assert.Equal("palette", migrated.Profiles[0].Accent);
         Assert.Equal("violet", source.Profiles[0].Accent);
-
-        var intentional = UserThemeConfiguration.CreateDefault("canopy", "jellyfish-ocean");
-        intentional.SchemaVersion = 1;
-        intentional.Profiles[0].Accent = "violet";
-        Assert.True(ThemeConfigurationMigration.TryMigrate(intentional, out var preserved));
-        Assert.Equal("violet", preserved!.Profiles[0].Accent);
     }
 
     [Theory]
