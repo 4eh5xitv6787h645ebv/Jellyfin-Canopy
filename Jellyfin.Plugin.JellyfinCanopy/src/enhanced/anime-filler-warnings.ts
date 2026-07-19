@@ -128,6 +128,8 @@ export function installAnimeFillerWarnings(signal: AbortSignal, isCurrent: () =>
     let generation = 0;
     let requestInFlight = false;
     let failureUntil = 0;
+    let identityObserver: MutationObserver | null = null;
+    let identityRoot: HTMLElement | null = null;
     const classifications = new Map<string, CachedClassification>();
 
     const armRetryAt = (deadline: number): void => {
@@ -157,7 +159,21 @@ export function installAnimeFillerWarnings(signal: AbortSignal, isCurrent: () =>
     const scan = (): void => {
         if (signal.aborted || !isCurrent()) return;
         const visible = getVisibleDetailsPage();
-        if (!visible) return;
+        if (!visible) {
+            identityObserver?.disconnect();
+            identityRoot = null;
+            return;
+        }
+        if (identityRoot !== visible.page) {
+            identityObserver?.disconnect();
+            identityObserver = new MutationObserver(schedule);
+            identityObserver.observe(visible.page, {
+                attributes: true,
+                attributeFilter: [...ID_ATTRIBUTES],
+                subtree: true,
+            });
+            identityRoot = visible.page;
+        }
         const targets = collectTargets(visible.page);
         if (targets.size === 0) return;
         for (const [id, elements] of targets) {
@@ -237,12 +253,6 @@ export function installAnimeFillerWarnings(signal: AbortSignal, isCurrent: () =>
     };
     schedule();
     const observer = onBodyMutation('anime-filler-warnings', schedule);
-    const identityObserver = new MutationObserver(schedule);
-    identityObserver.observe(document.body, {
-        attributes: true,
-        attributeFilter: [...ID_ATTRIBUTES],
-        subtree: true,
-    });
     return () => {
         generation++;
         requestAbort.abort();
@@ -250,7 +260,8 @@ export function installAnimeFillerWarnings(signal: AbortSignal, isCurrent: () =>
         if (timer !== null) clearTimeout(timer);
         if (retryTimer !== null) clearTimeout(retryTimer);
         observer.unsubscribe();
-        identityObserver.disconnect();
+        identityObserver?.disconnect();
+        identityRoot = null;
         document.querySelectorAll(`.${MARKER_CLASS}`).forEach(element => {
             element.parentElement?.classList.remove(ANCHOR_CLASS);
             element.remove();

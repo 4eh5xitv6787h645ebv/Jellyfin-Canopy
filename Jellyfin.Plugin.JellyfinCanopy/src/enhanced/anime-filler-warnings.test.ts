@@ -38,6 +38,23 @@ afterEach(() => {
 });
 
 describe('anime filler warnings', () => {
+    it('scopes identity attribute observation to the active page instead of document.body', async () => {
+        const observe = vi.spyOn(MutationObserver.prototype, 'observe');
+        dispose = installAnimeFillerWarnings(new AbortController().signal, () => true);
+
+        await vi.advanceTimersByTimeAsync(80);
+
+        const attributeCalls = observe.mock.calls.filter(([, options]) => options?.attributes);
+        expect(attributeCalls).toHaveLength(1);
+        expect(attributeCalls[0][0]).toBe(document.querySelector('#itemDetailPage'));
+        expect(attributeCalls[0][1]).toMatchObject({
+            attributes: true,
+            attributeFilter: ['data-id', 'data-itemid'],
+            subtree: true,
+        });
+        expect(attributeCalls.some(([target]) => target === document.body)).toBe(false);
+    });
+
     it('batches visible IDs and renders only accessible Filler results', async () => {
         dispose = installAnimeFillerWarnings(new AbortController().signal, () => true);
 
