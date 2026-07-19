@@ -196,6 +196,7 @@ export function resolveTheme(
 
     const reducedMotion = media.reducedMotion || profile.Accessibility.Motion === 'off';
     const highContrast = preset.id === 'high-contrast'
+        || (presetResolution.fallback && presetResolution.fallbackAccessibility === 'strong')
         || systemChoice(profile.Accessibility.Contrast, media.moreContrast);
     const reducedTransparency = media.reducedTransparency
         || profile.Accessibility.Transparency === 'off';

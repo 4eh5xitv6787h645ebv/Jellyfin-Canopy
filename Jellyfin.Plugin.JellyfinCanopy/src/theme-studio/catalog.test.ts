@@ -53,10 +53,19 @@ describe('Theme Studio curated catalog', () => {
             fallback: false, definition: { id: 'glass', version: 1 },
         });
         expect(resolvePresetVersion('glass', 2, true)).toMatchObject({
-            fallback: true, definition: { id: 'canopy', version: 1 },
+            fallback: true,
+            fallbackAccessibility: 'system-first',
+            definition: { id: 'canopy', version: 1 },
+        });
+        expect(resolvePresetVersion('high-contrast', 2, true)).toMatchObject({
+            fallback: true,
+            fallbackAccessibility: 'strong',
+            definition: { id: 'canopy', version: 1 },
         });
         expect(resolvePresetVersion('unknown', null, false)).toMatchObject({
-            fallback: true, definition: { id: 'canopy', version: 1 },
+            fallback: true,
+            fallbackAccessibility: 'system-first',
+            definition: { id: 'canopy', version: 1 },
         });
     });
 

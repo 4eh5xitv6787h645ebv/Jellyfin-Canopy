@@ -79,17 +79,6 @@ describe('details-page identity dispatcher', () => {
         window.history.replaceState(null, '', '/web/index.html#/home');
     });
 
-    it('owns the phone action-row containment adapter for its activation', () => {
-        const style = document.getElementById('jc-details-page-responsive-styles');
-        expect(style?.textContent).toContain('@media (max-width: 600px)');
-        expect(style?.textContent).toContain('#itemDetailPage .detailRibbon > .mainDetailButtons');
-        expect(style?.textContent).toContain('flex-wrap: wrap');
-
-        disposeInstall?.();
-        disposeInstall = undefined;
-        expect(document.getElementById('jc-details-page-responsive-styles')).toBeNull();
-    });
-
     it('cancels A queued dispatch and starts the visible item under B ownership', async () => {
         mountDetailsPage('queued-item');
         const getItem = vi.spyOn(ApiClient, 'getItem').mockResolvedValue({ Type: 'Movie' });

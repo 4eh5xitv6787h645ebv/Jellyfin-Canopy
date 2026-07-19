@@ -37,7 +37,7 @@ export const seerrFeatureDescriptors: readonly ClientFeatureDescriptor[] = Objec
         id: 'seerr-details',
         entry: 'seerr-details',
         scope: 'navigation',
-        dependsOn: ['seerr-core'],
+        dependsOn: ['seerr-core', 'details-layout'],
         restartOnConfigChange: true,
         isEnabled: (state) => Boolean(state.identity) && enabled(),
         isApplicable: (state) => /#\/details(?:[/?#]|$)/i.test(state.routeKey),

@@ -100,6 +100,28 @@ describe('Theme Studio resolver', () => {
         });
     });
 
+    it('retains strong accessibility when a frozen preset version is unavailable', () => {
+        const configuration = themeConfiguration();
+        configuration.Profiles[0].BasePreset = 'high-contrast';
+        configuration.Profiles[0].PresetVersion = 2;
+        configuration.Profiles[0].FreezePresetVersion = true;
+
+        const resolved = resolveTheme(configuration, media());
+        expect(resolved).toMatchObject({
+            preset: 'canopy',
+            presetVersion: 1,
+            presetFallback: true,
+            highContrast: true,
+            focus: 'strong',
+        });
+        expect(resolved.tokens).toMatchObject({
+            'accessibility.contrast': 'on',
+            'accessibility.focus-emphasis': 'strong',
+            'elevation.focus-ring': 'strong',
+        });
+        expect(Number(resolved.tokens['shape.border-width'])).toBeGreaterThanOrEqual(2);
+    });
+
     it('keeps palette character when the orthogonal accent uses the palette default', () => {
         const primaries = new Set<string>();
         for (const palette of THEME_PALETTES) {

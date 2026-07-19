@@ -23,6 +23,17 @@ beforeEach(() => {
 });
 
 describe('built-in detail integration catalog', () => {
+    it('owns responsive details layout independently of optional integrations', () => {
+        const layout = descriptor('details-layout');
+        expect(layout.scope).toBe('navigation');
+        expect(layout.isEnabled(state)).toBe(true);
+        expect(layout.isEnabled({ ...state, identity: null })).toBe(false);
+        expect(layout.isApplicable(state)).toBe(true);
+        expect(layout.isApplicable({ ...state, routeKey: '/web/#/home' })).toBe(false);
+        expect(descriptor('details-enhancements').dependsOn).toEqual(['details-layout']);
+        expect(descriptor('seerr-details').dependsOn).toContain('details-layout');
+    });
+
     it('gives Theme Studio exclusive ownership over the legacy Jellyfish selector', () => {
         const studio = descriptor('theme-studio');
         const legacy = descriptor('theme-selector');

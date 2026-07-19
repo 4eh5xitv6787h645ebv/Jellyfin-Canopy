@@ -55,6 +55,8 @@ export interface ThemeIconFamilyDefinition {
 export interface ResolvedPresetVersion {
     readonly definition: ThemePresetVersionDefinition;
     readonly fallback: boolean;
+    /** Accessibility contract retained from the requested preset on fallback. */
+    readonly fallbackAccessibility: 'system-first' | 'strong';
 }
 
 interface ProvenanceSource {
@@ -451,10 +453,27 @@ export function resolvePresetVersion(
     freezeVersion: boolean,
 ): ResolvedPresetVersion {
     const versions = PRESETS_BY_ID.get(id);
-    if (versions && !freezeVersion) return { definition: versions.at(-1)!, fallback: false };
+    const requested = versions?.at(-1);
+    if (requested && !freezeVersion) {
+        return {
+            definition: requested,
+            fallback: false,
+            fallbackAccessibility: requested.accessibilityFallback,
+        };
+    }
     const exact = freezeVersion ? versions?.find((item) => item.version === requestedVersion) : undefined;
-    if (exact) return { definition: exact, fallback: false };
-    return { definition: SAFE_FALLBACK_PRESET, fallback: true };
+    if (exact) {
+        return {
+            definition: exact,
+            fallback: false,
+            fallbackAccessibility: exact.accessibilityFallback,
+        };
+    }
+    return {
+        definition: SAFE_FALLBACK_PRESET,
+        fallback: true,
+        fallbackAccessibility: requested?.accessibilityFallback ?? SAFE_FALLBACK_PRESET.accessibilityFallback,
+    };
 }
 
 export function resolvePalette(id: string): ThemePaletteDefinition {

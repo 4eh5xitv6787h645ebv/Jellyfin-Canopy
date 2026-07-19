@@ -26,7 +26,7 @@ describe('Seerr descriptor fragment', () => {
         expect(seerrFeatureDescriptors.map(({ id, dependsOn }) => ({ id, dependsOn }))).toEqual([
             { id: 'seerr-core', dependsOn: undefined },
             { id: 'seerr-search', dependsOn: ['seerr-core'] },
-            { id: 'seerr-details', dependsOn: ['seerr-core'] },
+            { id: 'seerr-details', dependsOn: ['seerr-core', 'details-layout'] },
             { id: 'seerr-discovery', dependsOn: ['seerr-core'] },
             { id: 'discovery-library', dependsOn: ['seerr-core'] },
         ]);

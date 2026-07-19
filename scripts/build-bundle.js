@@ -44,6 +44,7 @@ const ESM_ENTRIES = Object.freeze({
     'card-tags': path.join(SRC_ROOT, 'tags', 'feature.ts'),
     'colored-ratings': path.join(SRC_ROOT, 'extras', 'colored-ratings.feature.ts'),
     'details-enhancements': path.join(SRC_ROOT, 'enhanced', 'features', 'details.feature.ts'),
+    'details-layout': path.join(SRC_ROOT, 'entries', 'details-layout.ts'),
     'discovery-library': path.join(SRC_ROOT, 'entries', 'discovery-library.ts'),
     elsewhere: path.join(SRC_ROOT, 'elsewhere', 'elsewhere.feature.ts'),
     'enhanced-events': path.join(SRC_ROOT, 'entries', 'enhanced-events.ts'),
