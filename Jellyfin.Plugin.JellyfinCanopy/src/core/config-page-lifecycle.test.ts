@@ -21,6 +21,7 @@ interface ListenerRecord {
 }
 
 interface PageLifecycleOwner {
+    id: string;
     page: Element | null;
     active: boolean;
     tracked: unknown[];
@@ -734,6 +735,69 @@ describe('config-page retest-all timers are lifecycle-owned (#167 finding 2)', (
         const trackIdx = source.indexOf('jcPageLifecycle.track(function() {\n                clearInterval(_jeRetestAllPollTimer);');
         expect(trackIdx).toBeGreaterThanOrEqual(0);
         expect(source.slice(trackIdx, trackIdx + 200)).toContain('clearTimeout(_jeRetestAllReenableTimer);');
+    });
+});
+
+describe('config-page dataset-guarded controls rebind to the live owner (#167 findings 2/7)', () => {
+    const helpers = loadLifecycleHelpers();
+
+    it('gives each owner a distinct stable token', () => {
+        const win: Record<string, unknown> = {};
+        const a = remember(helpers.jcAcquireConfigPageLifecycle(win, makePage()));
+        const b = remember(helpers.jcAcquireConfigPageLifecycle(win, makePage()));
+        expect(typeof a!.id).toBe('string');
+        expect(a!.id).not.toBe(b!.id);
+    });
+
+    it('AC5: an owner-token guard rebinds a guarded handler after teardown→reinstall, without stacking', () => {
+        // Model the probe-retry / preview-button guards: dataset.jcWired holds
+        // the OWNING token, and the click is routed through that owner. A boolean
+        // flag survived teardown and suppressed the rebind, so after a same-page
+        // reinstall the click still called the retired owner (whose continuation
+        // no-ops) and — for the raw addEventListener preview buttons — stacked a
+        // second handler. Token-guarded + owner-routed: exactly ONE live handler,
+        // belonging to the current owner.
+        const win: Record<string, unknown> = {};
+        const page = makePage();
+        const btn = document.createElement('button');
+        page.appendChild(btn);
+        document.body.appendChild(page);
+
+        const fired: string[] = [];
+        function wire(owner: PageLifecycleOwner): void {
+            if (btn.dataset.jcWired !== owner.id) {
+                btn.dataset.jcWired = owner.id;
+                owner.addListener(btn, 'click', () => fired.push(owner.id));
+            }
+        }
+
+        const first = remember(helpers.jcAcquireConfigPageLifecycle(win, page));
+        wire(first!);
+        wire(first!); // same-owner re-run: token matches → no second handler
+        first!.teardown();
+
+        const second = remember(helpers.jcAcquireConfigPageLifecycle(win, page));
+        wire(second!); // token differs → rebind onto the live owner
+
+        btn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        expect(fired).toEqual([second!.id]);
+    });
+
+    it('source: guarded probe/preview controls key off the owner token and route clicks through the owner', () => {
+        const source = readSource(CONFIG_PAGE_JS);
+        expect(source).toContain("id: 'jc-owner-' + (++jcLifecycleSeq)");
+        expect(source).toContain('probeRetry.dataset.jcWired !== jcPageLifecycle.id');
+        expect(source).toContain('probeRetry.dataset.jcWired = jcPageLifecycle.id');
+        expect(source).toContain('panelBtn.dataset.jcWired !== jcPageLifecycle.id');
+        expect(source).toContain('toastBtn.dataset.jcWired !== jcPageLifecycle.id');
+        expect(source).toContain("jcPageLifecycle.addListener(panelBtn, 'click', function()");
+        expect(source).toContain("jcPageLifecycle.addListener(toastBtn, 'click', function()");
+        // No boolean flag or raw click binding remains on these guarded controls.
+        expect(source).not.toContain("panelBtn.addEventListener('click'");
+        expect(source).not.toContain("toastBtn.addEventListener('click'");
+        expect(source).not.toContain("panelBtn.dataset.jcWired = '1'");
+        expect(source).not.toContain("toastBtn.dataset.jcWired = '1'");
+        expect(source).not.toContain("probeRetry.dataset.jcWired = '1'");
     });
 });
 

@@ -41,8 +41,16 @@
                 }
             }
 
+            var jcLifecycleSeq = 0;
             function jcCreateConfigPageLifecycle(pageEl) {
+                // Stable per-owner token. Existing per-element dataset.jcWired
+                // guards compare against this so a fresh owner (after a
+                // teardown→reinstall on the SAME cached page) REBINDS the guarded
+                // handler instead of leaving it pointed at the retired owner
+                // (#167 findings 2/7). A boolean flag survived teardown and
+                // suppressed the rebind, stranding the handler on a dead owner.
                 var owner = {
+                    id: 'jc-owner-' + (++jcLifecycleSeq),
                     page: pageEl,
                     active: true,
                     tracked: [],
@@ -1411,8 +1419,14 @@
             // the Custom Tabs config probe inside its .then). One handler only;
             // checkInstalledPlugins is idempotent.
             var probeRetry = jcById('jc-probe-retry-btn');
-            if (probeRetry && !probeRetry.dataset.jcWired) {
-                probeRetry.dataset.jcWired = '1';
+            // Guard by the live owner's token (not a boolean): after a
+            // teardown→reinstall on the same cached page the old flag would
+            // survive and suppress rebinding, leaving onclick pointed at the
+            // retired owner whose checkInstalledPlugins continuation no-ops
+            // (#167 findings 2/7). A fresh owner reassigns onclick (replace
+            // semantics — no stacking).
+            if (probeRetry && probeRetry.dataset.jcWired !== jcPageLifecycle.id) {
+                probeRetry.dataset.jcWired = jcPageLifecycle.id;
                 probeRetry.onclick = function() {
                     setProbeWarning('plugins', null);
                     checkInstalledPlugins();
@@ -5748,9 +5762,12 @@
             // its enclosing cleanup() closure.
             var _activePanelPreviewCleanup = null;
 
-            if (panelBtn && panelInput && !panelBtn.dataset.jcWired) {
-                panelBtn.dataset.jcWired = '1';
-                panelBtn.addEventListener('click', function() {
+            if (panelBtn && panelInput && panelBtn.dataset.jcWired !== jcPageLifecycle.id) {
+                panelBtn.dataset.jcWired = jcPageLifecycle.id;
+                // Owner-routed (#167 findings 2/7): a teardown reclaims this
+                // click so a fresh owner rebinds a live handler instead of
+                // stacking a second one that tracks cleanup into a dead owner.
+                jcPageLifecycle.addListener(panelBtn, 'click', function() {
                     // Dismiss any previous preview FULLY — cleanup clears the
                     // interval/timeout/keydown handler in addition to removing
                     // the DOM node.
@@ -5842,9 +5859,11 @@
                 });
             }
 
-            if (toastBtn && toastInput && !toastBtn.dataset.jcWired) {
-                toastBtn.dataset.jcWired = '1';
-                toastBtn.addEventListener('click', function() {
+            if (toastBtn && toastInput && toastBtn.dataset.jcWired !== jcPageLifecycle.id) {
+                toastBtn.dataset.jcWired = jcPageLifecycle.id;
+                // Owner-routed (#167 findings 2/7): teardown reclaims this click
+                // so a fresh owner rebinds one live handler instead of stacking.
+                jcPageLifecycle.addListener(toastBtn, 'click', function() {
                     // Clear any prior preview toasts AND their still-pending timers
                     // (otherwise rapid-fire clicks leave detached toasts with pending
                     // slide-in/out/remove setTimeouts that would fire against removed
