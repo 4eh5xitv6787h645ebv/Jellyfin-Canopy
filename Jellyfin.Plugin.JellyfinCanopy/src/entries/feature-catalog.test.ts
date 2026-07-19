@@ -23,6 +23,23 @@ beforeEach(() => {
 });
 
 describe('built-in detail integration catalog', () => {
+    it('gives Theme Studio exclusive ownership over the legacy Jellyfish selector', () => {
+        const studio = descriptor('theme-studio');
+        const legacy = descriptor('theme-selector');
+        expect(studio.scope).toBe('identity');
+        expect(studio.restartOnConfigChange).toBe(true);
+        expect(studio.isApplicable(state)).toBe(true);
+
+        JC.pluginConfig = { ThemeStudioEnabled: true, ThemeSelectorEnabled: true };
+        expect(studio.isEnabled(state)).toBe(true);
+        expect(legacy.isEnabled(state)).toBe(false);
+        expect(studio.isEnabled({ ...state, identity: null })).toBe(false);
+
+        JC.pluginConfig.ThemeStudioEnabled = false;
+        expect(studio.isEnabled(state)).toBe(false);
+        expect(legacy.isEnabled(state)).toBe(true);
+    });
+
     it('activates the event shell after its settings-launcher dependency', () => {
         const settingsIndex = builtInFeatureDescriptors.findIndex((item) => item.id === 'settings-launcher');
         const eventsIndex = builtInFeatureDescriptors.findIndex((item) => item.id === 'enhanced-events');

@@ -283,6 +283,34 @@ Schema 1 persists PascalCase names exactly as represented by the TypeScript inte
 
 Export omits the revision and legacy-migration evidence and deep-clones the shareable data. Both `/validate` and `/migrate-jellyfish` are non-mutating staging operations; callers must show the result and explicitly save it through the revisioned POST. Jellyfish migration accepts only a bundled canonical theme name such as `Ocean`, never a CSS import, filename, or URL.
 
+### Theme Studio client runtime
+
+Theme Studio is an import-pure, identity-scoped lazy feature. When the administrator enables it, one feature generation performs one authenticated `theme.json` read, validates the complete response against the browser copy of schema 1, and then resolves one active profile. An oversized response, unknown field, unsupported token, read failure, obsolete identity, or activation failure removes the Theme Studio presentation and leaves Jellyfin's selected base theme in control. The runtime never stores CSS, walks components for computed styles, or creates a style element per component.
+
+The integration boundary is pinned to Jellyfin Web commit `3d7adb53480f02164041fdd983b3f7abc28d0fd9`: `src/themes/index.ts` configures MUI CSS variables with prefix `jf` and selector `[data-theme="%s"]`, while `src/themes/_base/_theme.scss` exposes the classic-layout bridge. Jellyfin alone owns root `data-theme` and the document `THEME_CHANGE` event. Canopy observes both and recomputes its bounded layer without writing `data-theme` or reloading the page.
+
+The committed and preview style layers have stable IDs `jc-theme-studio-committed` and `jc-theme-studio-preview`. Preview is appended later with equal selector specificity and can be removed independently. They deliberately do not use the CSS `@layer` at-rule: Jellyfin's own MUI variables are unlayered, and an author cascade layer would always lose to those declarations. The runtime publishes semantic `--jc-*` variables and bridges the pinned Jellyfin roles for background/default image/paper, text, primary/error, divider, action states and opacities, AppBar, filled inputs, buttons, snackbar, and `--jf-card-borderRadius`. Guard tests name those variables exactly so an upstream rename requires an explicit compatibility review.
+
+Two versioned adapters cover gaps not represented by official variables:
+
+- `legacy-v12-base-surfaces` targets only `.jc-legacy-layout` under an active `data-jc-theme-route` scope.
+- `focus-v12` supplies keyboard focus and optional link-underlining behavior under the same bounded route scope in both Jellyfin 12 layouts.
+
+Both adapters are serialized once into the generation-owned layer and are therefore idempotent. Route scope is one of `home`, `browse`, `details`, `player`, `dashboard`, or `other`. The administrator dashboard is a recovery space by default: the runtime removes committed and preview layers on dashboard/configuration routes unless `ThemeStudioDashboardEnabled` is explicitly enabled. Even when enabled, only the typed token bridge and the two bounded adapters apply.
+
+Responsive selection is capability-aware and uses the following tested boundaries:
+
+| Scope | Selection evidence |
+| --- | --- |
+| Phone portrait | Width below 600 px; tested at 390 × 844 |
+| Phone landscape | Coarse pointer, height below 600 px, width below 1000 px; tested at 844 × 390 |
+| Tablet | 600–1023 px, plus coarse-pointer landscape up to 1180 px; tested at 600/1023 and 1024 × 768 |
+| Desktop | 1024–1599 px outside the tablet/handset exception; a 1366 × 768 touch laptop remains desktop |
+| Wide | 1600 px and wider |
+| TV | Jellyfin's TV layout marker takes precedence over viewport width |
+
+The root capability attributes record the resolved breakpoint, pointer/hover state, light/dark mode, contrast, transparency, reduced motion, forced colors, profile, preset, palette, and route. Media-query listeners update those attributes and the same two style layers live. Reduced-motion and reduced-transparency preferences can only remove effects; coarse/no-hover input disables hover-only actions; high contrast strengthens focus. No Theme Studio runtime layout contains user text, so long localized labels and RTL do not introduce a runtime-owned layout direction or truncation surface in this slice.
+
 ### Bookmark API
 
 Bookmarks are stored **per user** under the plugin's configurations directory. The user id is normalized (dashes stripped, lowercased) to form the folder name, and the file is named `bookmark.json` (singular):

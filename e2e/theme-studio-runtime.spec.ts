@@ -1,0 +1,206 @@
+import type { Page } from 'playwright/test';
+import { assertNoRuntimeErrors, expect, loginAs, test, USERS } from './fixtures/auth';
+import { api, authenticate, PLUGIN_ID, type Session } from './fixtures/api';
+
+const CONFIG_PATH = `/Plugins/${PLUGIN_ID}/Configuration`;
+const COMMITTED_STYLE = '#jc-theme-studio-committed';
+const PREVIEW_STYLE = '#jc-theme-studio-preview';
+
+async function seedLayout(page: Page, layout: 'experimental' | 'desktop'): Promise<void> {
+    await page.addInitScript((value) => localStorage.setItem('layout', value), layout);
+}
+
+async function waitForThemeRuntime(page: Page, breakpoint: string): Promise<void> {
+    await page.waitForFunction((expected) => {
+        const root = document.documentElement;
+        return root.getAttribute('data-jc-theme-active') === 'true'
+            && root.getAttribute('data-jc-theme-breakpoint') === expected
+            && document.querySelectorAll('#jc-theme-studio-committed').length === 1;
+    }, breakpoint);
+}
+
+async function themeOverflowEvidence(page: Page): Promise<{ active: number; baseline: number }> {
+    return page.evaluate(async () => {
+        const style = document.querySelector<HTMLStyleElement>('#jc-theme-studio-committed');
+        if (!style) throw new Error('Theme Studio committed style is missing');
+        const overflow = () => document.documentElement.scrollWidth - window.innerWidth;
+        const active = overflow();
+        style.media = 'not all';
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+        const baseline = overflow();
+        style.removeAttribute('media');
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+        return { active, baseline };
+    });
+}
+
+test.describe.serial('Theme Studio runtime bridge', () => {
+    let admin: Session;
+    let original: Record<string, unknown>;
+
+    test.beforeAll(async ({ baseURL }) => {
+        admin = await authenticate(baseURL!, USERS.admin.username, USERS.admin.password);
+        const configuration = await api<Record<string, unknown>>(baseURL!, CONFIG_PATH, admin.token);
+        expect(configuration, 'plugin configuration must be readable').toBeTruthy();
+        original = configuration!;
+    });
+
+    test.beforeEach(async ({ baseURL }) => {
+        await api(baseURL!, CONFIG_PATH, admin.token, {
+            method: 'POST',
+            body: JSON.stringify({
+                ...original,
+                ThemeStudioEnabled: true,
+                ThemeStudioDashboardEnabled: false,
+                ThemeStudioAllowSeasonalScheduling: true,
+                ThemeSelectorEnabled: false,
+                LayoutEnforcement: 'None',
+            }),
+        });
+    });
+
+    test.afterEach(async ({ baseURL }) => {
+        await api(baseURL!, CONFIG_PATH, admin.token, {
+            method: 'POST',
+            body: JSON.stringify(original),
+        });
+    });
+
+    test.afterAll(async ({ baseURL }) => {
+        await api(baseURL!, CONFIG_PATH, admin.token, {
+            method: 'POST',
+            body: JSON.stringify(original),
+        });
+    });
+
+    test('modern desktop bridges official variables and follows Jellyfin theme changes live', async ({
+        page,
+        consoleErrors,
+    }) => {
+        await page.setViewportSize({ width: 1440, height: 900 });
+        await seedLayout(page, 'experimental');
+        await loginAs(page, 'admin', consoleErrors);
+        await waitForThemeRuntime(page, 'desktop');
+
+        const initial = await page.evaluate(() => {
+            const root = document.documentElement;
+            const styles = getComputedStyle(root);
+            return {
+                hostTheme: root.getAttribute('data-theme') || '',
+                mode: root.getAttribute('data-jc-theme-mode'),
+                route: root.getAttribute('data-jc-theme-route'),
+                canvas: styles.getPropertyValue('--jc-color-canvas').trim(),
+                officialCanvas: styles.getPropertyValue('--jf-palette-background-default').trim(),
+                officialPrimary: styles.getPropertyValue('--jf-palette-primary-main').trim(),
+                layers: document.querySelectorAll('#jc-theme-studio-committed').length,
+                previews: document.querySelectorAll('#jc-theme-studio-preview').length,
+            };
+        });
+        expect(initial).toMatchObject({ route: 'home', layers: 1, previews: 0 });
+        expect(initial.canvas).toMatch(/^#[0-9A-F]{6}$/i);
+        expect(initial.officialCanvas).toBe(initial.canvas);
+        expect(initial.officialPrimary).toMatch(/^#[0-9A-F]{6}$/i);
+
+        const changed = await page.evaluate(() => {
+            const root = document.documentElement;
+            const originalTheme = root.getAttribute('data-theme') || 'dark';
+            const target = originalTheme.toLowerCase().includes('light') ? 'dark' : 'light';
+            root.setAttribute('data-theme', target);
+            window.Events?.trigger(document, 'THEME_CHANGE');
+            return { originalTheme, target };
+        });
+        await expect.poll(() => page.evaluate(() =>
+            document.documentElement.getAttribute('data-jc-theme-mode'))).toBe(changed.target);
+        expect(await page.evaluate(() => document.documentElement.getAttribute('data-theme'))).toBe(changed.target);
+        await page.evaluate((value) => {
+            document.documentElement.setAttribute('data-theme', value);
+            window.Events?.trigger(document, 'THEME_CHANGE');
+        }, changed.originalTheme);
+        await expect.poll(() => page.evaluate(() =>
+            document.documentElement.getAttribute('data-jc-theme-mode'))).toBe(initial.mode);
+        assertNoRuntimeErrors(consoleErrors);
+    });
+
+    test('phone portrait and coarse-pointer landscape stay bounded without duplicate layers', async ({
+        page,
+        consoleErrors,
+    }) => {
+        await page.addInitScript(() => {
+            const nativeMatchMedia = window.matchMedia.bind(window);
+            window.matchMedia = ((query: string): MediaQueryList => {
+                const list = nativeMatchMedia(query);
+                if (query !== '(pointer: coarse)') return list;
+                return new Proxy(list, {
+                    get(target, property, receiver) {
+                        if (property === 'matches') return true;
+                        const value = Reflect.get(target, property, receiver) as unknown;
+                        return typeof value === 'function' ? value.bind(target) : value;
+                    },
+                });
+            }) as typeof window.matchMedia;
+        });
+        await page.setViewportSize({ width: 390, height: 844 });
+        await seedLayout(page, 'experimental');
+        await loginAs(page, 'admin', consoleErrors);
+        await waitForThemeRuntime(page, 'phone');
+        const portraitOverflow = await themeOverflowEvidence(page);
+        expect(portraitOverflow.active).toBeLessThanOrEqual(portraitOverflow.baseline + 1);
+
+        await page.setViewportSize({ width: 844, height: 390 });
+        await waitForThemeRuntime(page, 'phone');
+        const landscape = await page.evaluate(() => ({
+            layers: document.querySelectorAll('#jc-theme-studio-committed').length,
+            previews: document.querySelectorAll('#jc-theme-studio-preview').length,
+            pointer: document.documentElement.getAttribute('data-jc-theme-pointer'),
+            safeBottom: getComputedStyle(document.documentElement)
+                .getPropertyValue('--jc-safe-area-bottom').trim(),
+        }));
+        expect(landscape).toMatchObject({ layers: 1, previews: 0, pointer: 'coarse' });
+        expect(landscape.safeBottom).not.toBe('');
+        const landscapeOverflow = await themeOverflowEvidence(page);
+        expect(landscapeOverflow.active).toBeLessThanOrEqual(landscapeOverflow.baseline + 1);
+
+        await page.keyboard.press('Tab');
+        expect(await page.evaluate(() => document.activeElement !== document.body)).toBe(true);
+        assertNoRuntimeErrors(consoleErrors);
+    });
+
+    test('legacy adapter is version-scoped and dashboard navigation restores the base theme', async ({
+        page,
+        consoleErrors,
+    }) => {
+        await seedLayout(page, 'desktop');
+        await loginAs(page, 'admin', consoleErrors);
+        await waitForThemeRuntime(page, 'desktop');
+        const committedCss = await page.locator(COMMITTED_STYLE)
+            .evaluate((style) => style.textContent ?? '');
+        expect(committedCss).toContain('Adapter legacy-v12-base-surfaces');
+        expect(committedCss).toContain('.jc-legacy-layout[data-jc-theme-route]');
+        const adapterBackground = await page.evaluate(() => {
+            const root = document.documentElement;
+            const wasModern = root.classList.contains('jc-modern-layout');
+            root.classList.remove('jc-modern-layout');
+            root.classList.add('jc-legacy-layout');
+            const surface = document.createElement('div');
+            surface.className = 'backgroundContainer';
+            document.body.append(surface);
+            const background = getComputedStyle(surface).backgroundColor;
+            surface.remove();
+            root.classList.remove('jc-legacy-layout');
+            root.classList.toggle('jc-modern-layout', wasModern);
+            return background;
+        });
+        expect(adapterBackground).toBe('rgb(11, 11, 18)');
+        const hostTheme = await page.evaluate(() => document.documentElement.getAttribute('data-theme'));
+
+        await page.evaluate(() => { window.location.hash = '#/dashboard'; });
+        await page.waitForFunction(() => window.location.hash.startsWith('#/dashboard'));
+        await expect(page.locator(COMMITTED_STYLE)).toHaveCount(0);
+        await expect(page.locator(PREVIEW_STYLE)).toHaveCount(0);
+        expect(await page.evaluate(() => ({
+            active: document.documentElement.hasAttribute('data-jc-theme-active'),
+            hostTheme: document.documentElement.getAttribute('data-theme'),
+        }))).toEqual({ active: false, hostTheme });
+        assertNoRuntimeErrors(consoleErrors);
+    });
+});

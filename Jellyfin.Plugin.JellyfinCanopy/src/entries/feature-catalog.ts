@@ -254,12 +254,22 @@ export const builtInFeatureDescriptors: readonly ClientFeatureDescriptor[] = Obj
         isApplicable: isVideoPlaybackRoute,
     },
     {
+        id: 'theme-studio',
+        entry: 'theme-studio',
+        scope: 'identity',
+        restartOnConfigChange: true,
+        isEnabled: (state) => Boolean(state.identity)
+            && JC.pluginConfig?.ThemeStudioEnabled === true,
+        isApplicable: () => true,
+    },
+    {
         id: 'theme-selector',
         entry: 'theme-selector',
         scope: 'identity',
         restartOnConfigChange: true,
         isEnabled: (state) => Boolean(state.identity)
-            && JC.pluginConfig?.ThemeSelectorEnabled === true,
+            && JC.pluginConfig?.ThemeSelectorEnabled === true
+            && JC.pluginConfig?.ThemeStudioEnabled !== true,
         isApplicable: () => true,
     },
     {

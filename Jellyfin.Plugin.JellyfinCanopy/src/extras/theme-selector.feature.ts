@@ -8,7 +8,8 @@ import {
 
 /** Base-runtime descriptor gate. Keep equivalent logic outside this lazy chunk. */
 export function isThemeSelectorEnabled(): boolean {
-    return JC.pluginConfig?.ThemeSelectorEnabled === true;
+    return JC.pluginConfig?.ThemeSelectorEnabled === true
+        && JC.pluginConfig?.ThemeStudioEnabled !== true;
 }
 
 /**
