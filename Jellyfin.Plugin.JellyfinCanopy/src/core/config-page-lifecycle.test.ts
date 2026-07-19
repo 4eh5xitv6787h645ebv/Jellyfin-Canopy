@@ -55,6 +55,10 @@ interface StaticControlHelpers {
     jcWireStaticControlListeners(doc: Document, lifecycle: PageLifecycleOwner): void;
 }
 
+interface BootstrapHelpers {
+    jcClaimConfigBootstrap(pageEl: Element | null): boolean;
+}
+
 const TEST_FILE_PATH = decodeURIComponent(new URL(import.meta.url).pathname);
 const SRC_ROOT = TEST_FILE_PATH.replace(/\/core\/[^/]+$/, '/');
 const CONFIG_PAGE_JS = SRC_ROOT.replace(/src\/$/, 'Configuration/config-page.js');
@@ -127,6 +131,17 @@ function loadStaticControlHelpers(): StaticControlHelpers {
     // SAFETY: only the marker-bounded production wiring function is evaluated;
     // its document and lifecycle owner are injected.
     return eval(`(() => {${slice}; return { jcWireStaticControlListeners }; })()`) as StaticControlHelpers;
+}
+
+function loadBootstrapHelpers(): BootstrapHelpers {
+    const slice = markerSlice(
+        readSource(CONFIG_PAGE_HTML),
+        '/* jc-config-bootstrap-guard:start */',
+        '/* jc-config-bootstrap-guard:end */',
+    );
+    // SAFETY: only the marker-bounded install-once claim function from the local
+    // inline loader is evaluated; it touches only the passed element's dataset.
+    return eval(`(() => {${slice}; return { jcClaimConfigBootstrap }; })()`) as BootstrapHelpers;
 }
 
 function makePage(): HTMLElement {
@@ -502,6 +517,31 @@ describe('configPage.html stylesheet loader (#167)', () => {
         expect(configLinks[0].getAttribute('data-jc-canopy-config-style')).toBe('1');
         // The foreign stylesheet survives.
         expect(document.head.querySelector('link[href="/web/themes/dark/theme.css"]')).not.toBeNull();
+    });
+});
+
+describe('configPage.html bootstrap install-once guard (#167 findings 3/8)', () => {
+    const boot = loadBootstrapHelpers();
+    const html = readSource(CONFIG_PAGE_HTML);
+
+    it('claims a view exactly once so a re-run bails before re-listening / re-appending', () => {
+        const page = makePage();
+        expect(boot.jcClaimConfigBootstrap(page)).toBe(true);
+        expect(boot.jcClaimConfigBootstrap(page)).toBe(false);
+        expect(boot.jcClaimConfigBootstrap(page)).toBe(false);
+        // A different fresh view is bootstrapped independently.
+        expect(boot.jcClaimConfigBootstrap(makePage())).toBe(true);
+    });
+
+    it('returns false for a missing view without throwing', () => {
+        expect(boot.jcClaimConfigBootstrap(null)).toBe(false);
+    });
+
+    it('source: the claim gate precedes BOTH the pageshow listener and the script append', () => {
+        const gateIdx = html.indexOf('if (!jcClaimConfigBootstrap(page)) return;');
+        expect(gateIdx).toBeGreaterThanOrEqual(0);
+        expect(html.indexOf("page.addEventListener('pageshow'")).toBeGreaterThan(gateIdx);
+        expect(html.indexOf('page.appendChild(script)')).toBeGreaterThan(gateIdx);
     });
 });
 

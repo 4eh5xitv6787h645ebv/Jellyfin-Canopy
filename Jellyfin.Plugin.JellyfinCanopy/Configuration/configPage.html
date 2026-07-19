@@ -2384,6 +2384,22 @@
         var allViews = document.querySelectorAll('#JellyfinCanopyPage');
         var page = ownView || allViews[allViews.length - 1] || null;
 
+        /* jc-config-bootstrap-guard:start */
+        // Install-once per view (BI-CLIENT-106 / #167 findings 3/8). The
+        // dashboard can re-run this inline loader against the SAME cached view;
+        // without a guard each run added ANOTHER raw 'pageshow' listener here AND
+        // appended ANOTHER external config-page.js <script>, neither owned by the
+        // page lifecycle (which lives inside config-page.js and cannot reach back
+        // to remove them). Claim the view once and bail on any re-entry, so at
+        // most one bootstrap listener and one script node exist per view.
+        function jcClaimConfigBootstrap(pageEl) {
+            if (!pageEl || pageEl.dataset.jcConfigBootstrapped === '1') return false;
+            pageEl.dataset.jcConfigBootstrapped = '1';
+            return true;
+        }
+        /* jc-config-bootstrap-guard:end */
+        if (!jcClaimConfigBootstrap(page)) return;
+
         // viewManager fires 'pageshow' on the view element right after the HTML is
         // injected - usually before the external script has finished loading. The
         // script wires 'pageshow' -> loadConfig when it runs, so record any pageshow
