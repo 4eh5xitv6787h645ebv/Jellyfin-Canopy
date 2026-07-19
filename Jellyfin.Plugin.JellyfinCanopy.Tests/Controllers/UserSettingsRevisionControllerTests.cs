@@ -251,7 +251,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             var validated = Assert.IsType<OkObjectResult>(
                 Controller().ValidateUserSettingsThemeImport(UserId, import));
             var json = JsonSerializer.Serialize(validated.Value);
-            Assert.Contains("\"schemaVersion\":1", json, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains(
+                $"\"schemaVersion\":{ThemeConfigurationPolicy.CurrentSchemaVersion}",
+                json,
+                StringComparison.OrdinalIgnoreCase);
             Assert.False(File.Exists(FilePath("theme.json")));
             Assert.Equal(0, import.SchemaVersion);
             Assert.Same(profile, import.Profiles[0]);

@@ -141,14 +141,28 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         {
             var migrated = ThemeConfigurationClone.Configuration(source);
             migrated.SchemaVersion = 2;
-            foreach (var profile in migrated.Profiles)
+            var legacyJellyfishPalette = migrated.LegacyMigration.Completed
+                && TryCanonicalizeJellyfishTheme(
+                    migrated.LegacyMigration.JellyfishTheme,
+                    out var canonical)
+                    ? "jellyfish-" + canonical.ToLowerInvariant()
+                    : null;
+
+            for (var index = 0; index < migrated.Profiles.Count; index++)
             {
+                var profile = migrated.Profiles[index];
+                var hasGeneratedLegacyJellyfishAccent = index == 0
+                    && legacyJellyfishPalette != null
+                    && string.Equals(profile.Palette, legacyJellyfishPalette, StringComparison.Ordinal)
+                    && string.Equals(profile.Accent, "violet", StringComparison.Ordinal);
+
                 if (!ThemeConfigurationPolicy.IsPalette(profile.Palette))
                 {
                     profile.Palette = "canopy-night";
                 }
 
-                if (!ThemeConfigurationPolicy.IsAccent(profile.Accent))
+                if (hasGeneratedLegacyJellyfishAccent
+                    || !ThemeConfigurationPolicy.IsAccent(profile.Accent))
                 {
                     profile.Accent = "palette";
                 }
