@@ -442,6 +442,8 @@ for (const definition of THEME_PRESETS) {
 
 const PALETTES_BY_ID = new Map(THEME_PALETTES.map((item) => [item.id, item]));
 const ACCENTS_BY_ID = new Map(THEME_ACCENTS.map((item) => [item.id, item]));
+const SAFE_FALLBACK_PRESET = PRESETS_BY_ID.get('canopy')!
+    .find((item) => item.version === 1)!;
 
 export function resolvePresetVersion(
     id: string,
@@ -452,7 +454,7 @@ export function resolvePresetVersion(
     if (versions && !freezeVersion) return { definition: versions.at(-1)!, fallback: false };
     const exact = freezeVersion ? versions?.find((item) => item.version === requestedVersion) : undefined;
     if (exact) return { definition: exact, fallback: false };
-    return { definition: PRESETS_BY_ID.get('canopy')!.at(-1)!, fallback: true };
+    return { definition: SAFE_FALLBACK_PRESET, fallback: true };
 }
 
 export function resolvePalette(id: string): ThemePaletteDefinition {

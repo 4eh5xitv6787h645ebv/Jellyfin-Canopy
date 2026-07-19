@@ -142,11 +142,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
             var migrated = ThemeConfigurationClone.Configuration(source);
             migrated.SchemaVersion = 2;
 
-            for (var index = 0; index < migrated.Profiles.Count; index++)
+            foreach (var profile in migrated.Profiles)
             {
-                var profile = migrated.Profiles[index];
-                var hasGeneratedLegacyJellyfishAccent = index == 0
-                    && IsBundledJellyfishPalette(profile.Palette)
+                var hasGeneratedLegacyJellyfishAccent = IsBundledJellyfishPalette(profile.Palette)
                     && string.Equals(profile.Accent, "violet", StringComparison.Ordinal);
 
                 if (!ThemeConfigurationPolicy.IsPalette(profile.Palette))

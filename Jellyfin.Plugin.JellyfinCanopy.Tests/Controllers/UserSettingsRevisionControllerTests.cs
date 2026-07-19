@@ -127,7 +127,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             _provider.Current = new PluginConfiguration
             {
                 ThemeStudioDefaultPreset = "glass",
-                ThemeStudioDefaultPalette = "canopy-night"
+                ThemeStudioDefaultPalette = "catppuccin"
             };
 
             var controller = Controller();
@@ -136,7 +136,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
 
             Assert.Equal(ThemeConfigurationPolicy.CurrentSchemaVersion, theme.SchemaVersion);
             Assert.Equal("glass", Assert.Single(theme.Profiles).BasePreset);
-            Assert.Equal("canopy-night", theme.Profiles[0].Palette);
+            Assert.Equal("catppuccin", theme.Profiles[0].Palette);
+            Assert.Equal("palette", theme.Profiles[0].Accent);
             Assert.Equal("\"0\"", controller.Response.Headers.ETag.ToString());
             Assert.Matches("^[0-9a-f]{64}$", controller.Response.Headers["X-JC-Content-Hash"].ToString());
             Assert.True(File.Exists(FilePath("theme.json")));

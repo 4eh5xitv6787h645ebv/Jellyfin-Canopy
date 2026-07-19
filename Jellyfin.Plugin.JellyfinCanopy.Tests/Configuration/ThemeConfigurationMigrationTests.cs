@@ -78,12 +78,21 @@ public sealed class ThemeConfigurationMigrationTests
         var source = UserThemeConfiguration.CreateDefault("canopy", "jellyfish-ocean");
         source.SchemaVersion = 1;
         source.Profiles[0].Accent = "violet";
+        source.Profiles.Add(ThemeProfile.CreateDefault("glass", "jellyfish-mint"));
+        source.Profiles[1].Id = "scheduled";
+        source.Profiles[1].Name = "Scheduled";
+        source.Profiles[1].Accent = "violet";
+        source.ActiveProfileId = "scheduled";
 
         Assert.True(ThemeConfigurationMigration.TryMigrate(source, out var migrated));
         Assert.NotNull(migrated);
         Assert.Equal("jellyfish-ocean", migrated!.Profiles[0].Palette);
         Assert.Equal("palette", migrated.Profiles[0].Accent);
+        Assert.Equal("jellyfish-mint", migrated.Profiles[1].Palette);
+        Assert.Equal("palette", migrated.Profiles[1].Accent);
+        Assert.Equal("scheduled", migrated.ActiveProfileId);
         Assert.Equal("violet", source.Profiles[0].Accent);
+        Assert.Equal("violet", source.Profiles[1].Accent);
     }
 
     [Theory]
