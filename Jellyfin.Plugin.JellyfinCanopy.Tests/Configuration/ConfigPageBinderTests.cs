@@ -1,5 +1,6 @@
 using System.Reflection;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
 using Xunit;
 
@@ -91,6 +92,25 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Configuration
                 "<input[^>]*id=\"pauseScreenDelaySeconds\"[^>]*data-config-int[^>]*data-config-fallback=\"5\"",
                 html);
             Assert.Contains("PauseScreenDelaySeconds:", js, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void EmbyInputs_DoNotPreapplyTheUpgradeSentinelClass()
+        {
+            // Jellyfin 12's emby-input createdCallback assigns labelElement unless
+            // the element already carries the emby-input sentinel class. Its
+            // attachedCallback then dereferences labelElement unconditionally, so
+            // pre-applying that class produces a dashboard pageerror during upgrade.
+            var invalid = Regex.Matches(ConfigPageSource.Html, "<input\\b[^>]*>", RegexOptions.IgnoreCase)
+                .Select(match => match.Value)
+                .Where(tag => tag.Contains("is=\"emby-input\"", StringComparison.OrdinalIgnoreCase)
+                    && Regex.IsMatch(tag, "class=\"[^\"]*\\bemby-input\\b", RegexOptions.IgnoreCase))
+                .ToList();
+
+            Assert.True(
+                invalid.Count == 0,
+                "is=\"emby-input\" controls must let Jellyfin apply its sentinel class: "
+                + string.Join(", ", invalid));
         }
 
         private static HashSet<string> ReadPinnedKeys()
