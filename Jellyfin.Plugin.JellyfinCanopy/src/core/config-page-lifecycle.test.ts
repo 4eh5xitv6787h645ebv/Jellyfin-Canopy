@@ -118,7 +118,17 @@ function makePage(): HTMLElement {
     return page;
 }
 
+// Owners acquired during a test wire listeners onto the SHARED jsdom document;
+// tear them down between tests so one test's delegate cannot leak into the
+// next (which is precisely the production defect under test).
+const liveOwners: PageLifecycleOwner[] = [];
+function remember<T extends PageLifecycleOwner | null>(owner: T): T {
+    if (owner) liveOwners.push(owner);
+    return owner;
+}
+
 afterEach(() => {
+    liveOwners.splice(0).forEach((owner) => owner.teardown());
     document.body.innerHTML = '';
     document.head.querySelectorAll('link').forEach((link) => link.remove());
     vi.restoreAllMocks();
@@ -130,7 +140,7 @@ describe('config-page page-lifecycle owner (#167)', () => {
     it('AC4: first acquisition installs one working listener/observer set', () => {
         const win: Record<string, unknown> = {};
         const page = makePage();
-        const owner = helpers.jcAcquireConfigPageLifecycle(win, page);
+        const owner = remember(helpers.jcAcquireConfigPageLifecycle(win, page));
         expect(owner).not.toBeNull();
         expect(owner!.active).toBe(true);
         expect(owner!.page).toBe(page);
@@ -154,7 +164,7 @@ describe('config-page page-lifecycle owner (#167)', () => {
         const page = makePage();
         const addSpy = vi.spyOn(document, 'addEventListener');
 
-        const first = helpers.jcAcquireConfigPageLifecycle(win, page);
+        const first = remember(helpers.jcAcquireConfigPageLifecycle(win, page));
         expect(first).not.toBeNull();
         first!.addListener(document, 'click', vi.fn());
         const addsAfterFirst = addSpy.mock.calls.length;
@@ -176,7 +186,7 @@ describe('config-page page-lifecycle owner (#167)', () => {
         const visitHandlers: Array<ReturnType<typeof vi.fn>> = [];
         const visitObservers: Array<{ disconnect: ReturnType<typeof vi.fn> }> = [];
         function visit(): PageLifecycleOwner {
-            const owner = helpers.jcAcquireConfigPageLifecycle(win, makePage());
+            const owner = remember(helpers.jcAcquireConfigPageLifecycle(win, makePage()));
             expect(owner).not.toBeNull();
             const handler = vi.fn();
             visitHandlers.push(handler);
@@ -214,10 +224,10 @@ describe('config-page page-lifecycle owner (#167)', () => {
 
     it('AC5: teardown disposes every tracked resource even when one throws', () => {
         vi.spyOn(console, 'warn').mockImplementation(() => { /* silence expected dispose warning */ });
-        const owner = helpers.jcCreateConfigPageLifecycle(makePage());
+        const owner = remember(helpers.jcCreateConfigPageLifecycle(makePage()));
 
         const faulty: ListenerRecord = {
-            el: { addEventListener: vi.fn(), removeEventListener: vi.fn(() => { throw new Error('boom'); }), dispatchEvent: vi.fn() } as unknown as EventTarget,
+            el: { addEventListener: vi.fn(), removeEventListener: vi.fn(() => { throw new Error('boom'); }), dispatchEvent: vi.fn() },
             type: 'scroll',
             fn: vi.fn(),
         };
@@ -245,11 +255,11 @@ describe('config-page page-lifecycle owner (#167)', () => {
     it('AC5: a torn-down owner can be reacquired for the SAME page', () => {
         const win: Record<string, unknown> = {};
         const page = makePage();
-        const first = helpers.jcAcquireConfigPageLifecycle(win, page);
+        const first = remember(helpers.jcAcquireConfigPageLifecycle(win, page));
         expect(first).not.toBeNull();
         first!.teardown();
 
-        const second = helpers.jcAcquireConfigPageLifecycle(win, page);
+        const second = remember(helpers.jcAcquireConfigPageLifecycle(win, page));
         expect(second).not.toBeNull();
         expect(second).not.toBe(first);
         expect(second!.active).toBe(true);
@@ -261,7 +271,7 @@ describe('config-page page-lifecycle owner (#167)', () => {
     });
 
     it('untracked cleanup closures are NOT invoked on teardown (timing-preview normal close)', () => {
-        const owner = helpers.jcCreateConfigPageLifecycle(makePage());
+        const owner = remember(helpers.jcCreateConfigPageLifecycle(makePage()));
         const cleanup = vi.fn();
         owner.track(cleanup);
         owner.untrack(cleanup);
@@ -270,7 +280,7 @@ describe('config-page page-lifecycle owner (#167)', () => {
     });
 
     it('disposes a real MutationObserver via disconnect', async () => {
-        const owner = helpers.jcCreateConfigPageLifecycle(makePage());
+        const owner = remember(helpers.jcCreateConfigPageLifecycle(makePage()));
         const callback = vi.fn();
         const root = document.createElement('div');
         document.body.appendChild(root);
@@ -322,13 +332,13 @@ describe('config-page quality-category reorder wiring (#167)', () => {
         const markDirty = vi.fn();
 
         // Visit 1 installs the delegated document click handler.
-        const owner1 = lifecycle.jcAcquireConfigPageLifecycle(win, makePage());
+        const owner1 = remember(lifecycle.jcAcquireConfigPageLifecycle(win, makePage()));
         expect(owner1).not.toBeNull();
         reorder.jcWireQualityCatAdminReorder(document, owner1!, refreshArrows, markDirty);
 
         // Visit 2: fresh page element — the loader re-executes the script,
         // which re-wires against the replacement owner.
-        const owner2 = lifecycle.jcAcquireConfigPageLifecycle(win, makePage());
+        const owner2 = remember(lifecycle.jcAcquireConfigPageLifecycle(win, makePage()));
         expect(owner2).not.toBeNull();
         reorder.jcWireQualityCatAdminReorder(document, owner2!, refreshArrows, markDirty);
 
@@ -348,7 +358,7 @@ describe('config-page quality-category reorder wiring (#167)', () => {
         const win: Record<string, unknown> = {};
         const refreshArrows = vi.fn();
         const markDirty = vi.fn();
-        const owner = lifecycle.jcAcquireConfigPageLifecycle(win, makePage());
+        const owner = remember(lifecycle.jcAcquireConfigPageLifecycle(win, makePage()));
         reorder.jcWireQualityCatAdminReorder(document, owner!, refreshArrows, markDirty);
 
         const { container, order } = buildRows();

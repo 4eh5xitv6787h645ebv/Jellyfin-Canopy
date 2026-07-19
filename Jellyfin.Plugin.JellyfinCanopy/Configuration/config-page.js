@@ -4,6 +4,91 @@
             const page = document.querySelector('#JellyfinCanopyPage');
             const form = document.querySelector('#JellyfinCanopyForm');
 
+            /* jc-config-page-lifecycle:start */
+            // Page-lifecycle owner (BI-CLIENT-106 / #167). The dashboard
+            // re-fetches configPage.html and re-executes this whole script on
+            // EVERY visit, but the window/document/MediaQueryList listeners,
+            // MutationObservers and delegated click handlers installed below
+            // outlive the page they were wired for. Without an owner, N visits
+            // leave N retained handler sets — one click on a category Down
+            // arrow then moved the row N positions.
+            //
+            // Mirrors the dispose-bag semantics of src/core/lifecycle.ts
+            // (track / untrack / addListener / teardown). Not imported from
+            // there: this file is a separately served classic script outside
+            // the TypeScript bundle, and config-page correctness must not
+            // depend on bundle load timing.
+            //
+            // Ownership model: one window-scoped owner. Re-executing the
+            // script against the SAME live page element is a duplicate load
+            // (e.g. the loader ran twice) — acquisition returns null and the
+            // whole IIFE bails before any wiring repeats. A DIFFERENT page
+            // element means a fresh dashboard visit — the previous visit's
+            // owner is torn down (all its persistent listeners/observers
+            // removed) before the fresh set installs, so at most ONE set is
+            // ever live.
+            function jcDisposeLifecycleResource(resource) {
+                try {
+                    if (resource == null) return;
+                    if (typeof resource === 'function') { resource(); return; }
+                    if (typeof resource !== 'object') return;
+                    if (resource.el && typeof resource.type === 'string' && typeof resource.fn === 'function') {
+                        resource.el.removeEventListener(resource.type, resource.fn, resource.opts);
+                        return;
+                    }
+                    if (typeof resource.intervalId === 'number') { clearInterval(resource.intervalId); return; }
+                    if (resource.timeoutId !== undefined) { clearTimeout(resource.timeoutId); return; }
+                    if (typeof resource.disconnect === 'function') { resource.disconnect(); return; }
+                } catch (err) {
+                    console.warn('[JC] config-page lifecycle: error disposing resource:', err);
+                }
+            }
+
+            function jcCreateConfigPageLifecycle(pageEl) {
+                var owner = {
+                    page: pageEl,
+                    active: true,
+                    tracked: [],
+                    track: function (resource) {
+                        owner.tracked.push(resource);
+                        return resource;
+                    },
+                    untrack: function (resource) {
+                        owner.tracked = owner.tracked.filter(function (r) { return r !== resource; });
+                    },
+                    addListener: function (el, type, fn, opts) {
+                        el.addEventListener(type, fn, opts);
+                        owner.tracked.push({ el: el, type: type, fn: fn, opts: opts });
+                    },
+                    teardown: function () {
+                        owner.active = false;
+                        var resources = owner.tracked;
+                        owner.tracked = [];
+                        for (var i = 0; i < resources.length; i++) {
+                            jcDisposeLifecycleResource(resources[i]);
+                        }
+                    }
+                };
+                return owner;
+            }
+
+            function jcAcquireConfigPageLifecycle(win, pageEl) {
+                var current = win.__jcConfigPageLifecycle;
+                if (current && current.active && current.page === pageEl) {
+                    // Duplicate execution for the same live page: keep the
+                    // existing wiring, install nothing.
+                    return null;
+                }
+                if (current && current.active) current.teardown();
+                var owner = jcCreateConfigPageLifecycle(pageEl);
+                win.__jcConfigPageLifecycle = owner;
+                return owner;
+            }
+            /* jc-config-page-lifecycle:end */
+
+            var jcPageLifecycle = jcAcquireConfigPageLifecycle(window, page);
+            if (!jcPageLifecycle) return;
+
             // Theme detector: Jellyfin's themes hard-swap theme.css (no CSS
             // variable contract). Jellyfin 12 does expose the selected theme
             // through <html data-theme>, so trust its explicit Light identity
@@ -72,8 +157,9 @@
                 }
             }
             _jeDetectTheme();
-            window.addEventListener('load', _jeDetectTheme);
-            setTimeout(_jeDetectTheme, 600);
+            jcPageLifecycle.addListener(window, 'load', _jeDetectTheme);
+            // Tracked so a replaced page never receives the late cosmetic re-check.
+            jcPageLifecycle.track({ timeoutId: setTimeout(_jeDetectTheme, 600) });
             const resetAllUserSettingsBtn = document.querySelector('#resetAllUserSettingsBtn');
             const clearTagsCacheBtn = document.querySelector('#clearTagsCacheBtn');
 
@@ -188,13 +274,15 @@
                         toggle.setAttribute('aria-expanded', 'false');
                     }
                 };
-                drawerMedia.addEventListener('change', syncLayoutMode);
+                // The MediaQueryList outlives the page — lifecycle-owned so a
+                // replaced visit's syncLayoutMode can't fire against stale DOM.
+                jcPageLifecycle.addListener(drawerMedia, 'change', syncLayoutMode);
                 syncLayoutMode();
                 toggle.addEventListener('click', () => setOpen(!shell.classList.contains('jc-nav-open')));
                 scrim.addEventListener('click', () => setOpen(false));
                 // Selecting a section (or focusing search results) dismisses the drawer.
                 tabs.forEach((t) => t.addEventListener('click', () => setOpen(false)));
-                document.addEventListener('keydown', (e) => {
+                jcPageLifecycle.addListener(document, 'keydown', (e) => {
                     if (e.key === 'Escape' && shell.classList.contains('jc-nav-open')) setOpen(false);
                 });
             })();
@@ -1883,10 +1971,14 @@
             });
         }
 
+        /* jc-quality-cat-reorder:start */
         // Wire up/down arrow clicks for the admin quality-category list.
-        // Uses event delegation on the container so this only registers once.
-        (function () {
-            document.addEventListener('click', function (e) {
+        // Delegated on the document via the page lifecycle, so a fresh
+        // dashboard visit replaces (never stacks on) the previous visit's
+        // handler — the #167 defect was N retained copies of this delegate
+        // each moving the row one position per click.
+        function jcWireQualityCatAdminReorder(doc, lifecycle, refreshArrows, markDirty) {
+            lifecycle.addListener(doc, 'click', function (e) {
                 var btn = e.target.closest && e.target.closest('#qualityCategoriesAdmin .jc-cat-up, #qualityCategoriesAdmin .jc-cat-down');
                 if (!btn || btn.disabled) return;
                 e.preventDefault();
@@ -1902,10 +1994,12 @@
                 } else {
                     parent.insertBefore(sibling, row);
                 }
-                refreshQualityCatAdminArrows(parent);
-                jcMarkConfigDirty();
+                refreshArrows(parent);
+                markDirty();
             });
-        })();
+        }
+        /* jc-quality-cat-reorder:end */
+        jcWireQualityCatAdminReorder(document, jcPageLifecycle, refreshQualityCatAdminArrows, jcMarkConfigDirty);
 
         // Tracks whether the most recent `renderPagesOrderAdmin` call ran to
         // completion. If false at save time, we skip writing PagesOrder back to
@@ -1968,9 +2062,10 @@
         }
 
         // Wire up/down arrow clicks for the admin page-order list.
-        // Uses event delegation on the container so this only registers once.
+        // Delegated on the document via the page lifecycle so a fresh visit
+        // replaces (never stacks on) the previous visit's handler (#167).
         (function () {
-            document.addEventListener('click', function (e) {
+            jcPageLifecycle.addListener(document, 'click', function (e) {
                 var btn = e.target.closest && e.target.closest('#pagesOrderAdmin .jc-page-up, #pagesOrderAdmin .jc-page-down');
                 if (!btn || btn.disabled) return;
                 e.preventDefault();
@@ -2936,7 +3031,9 @@
             ['sonarrInstancesList', 'radarrInstancesList'].forEach(function(id) {
                 var root = document.getElementById(id);
                 if (!root) return;
-                new MutationObserver(refresh).observe(root, { childList: true, subtree: true });
+                // Lifecycle-tracked so a fresh visit disconnects the previous
+                // visit's observers instead of stacking new ones (#167).
+                jcPageLifecycle.track(new MutationObserver(refresh)).observe(root, { childList: true, subtree: true });
             });
         })();
 
@@ -2949,8 +3046,9 @@
         // utility class decorates some non-scrolling nodes), so we attach
         // scroll listeners to every reasonable candidate (matching ancestor
         // + window) and read whichever reports a non-zero scroll position.
-        // This IIFE runs once at script parse; the listeners persist across
-        // SPA navigation since Jellyfin keeps the config page DOM alive.
+        // All listeners are page-lifecycle-owned (#167): they persist while
+        // Jellyfin keeps this page's DOM alive, and a fresh dashboard visit
+        // removes them before installing its own set.
         (function wireStickyHeaderScroll() {
             var header = document.querySelector('.jc-sticky-header');
             if (!header) return;
@@ -3004,12 +3102,12 @@
             }
             // Always listen on window (document-scrolling layouts) and on
             // each overflow-declared ancestor (mid-tree scrollers).
-            window.addEventListener('scroll', onScroll, { passive: true });
+            jcPageLifecycle.addListener(window, 'scroll', onScroll, { passive: true });
             if (candidates.length === 0) {
                 console.warn('[JC] sticky-header: no overflow:auto|scroll ancestors found; relying on window scroll only.');
             }
             candidates.forEach(function(n) {
-                n.addEventListener('scroll', onScroll, { passive: true });
+                jcPageLifecycle.addListener(n, 'scroll', onScroll, { passive: true });
             });
             read();
         })();
@@ -5568,6 +5666,8 @@
                         if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay);
                         document.removeEventListener('keydown', onKey);
                         if (_activePanelPreviewCleanup === cleanup) _activePanelPreviewCleanup = null;
+                        // Normal close: stop the page owner from re-running us.
+                        jcPageLifecycle.untrack(cleanup);
                     }
                     function onKey(e) {
                         if (e.key === 'Escape') {
@@ -5581,6 +5681,11 @@
                     });
                     document.addEventListener('keydown', onKey);
                     _activePanelPreviewCleanup = cleanup;
+                    // Lifecycle-tracked (#167): if the dashboard swaps in a
+                    // fresh page while a preview is open, teardown invokes the
+                    // cleanup closure and reclaims the body overlay, the
+                    // interval/timeout pair, and this document keydown.
+                    jcPageLifecycle.track(cleanup);
                 });
             }
 
@@ -5788,7 +5893,8 @@
 
             // Outside-click closes every open banner. Clicks inside an open
             // banner (e.g. code copy button, links) don't close it.
-            document.addEventListener('click', function(e) {
+            // Page-lifecycle-owned so repeated visits keep exactly one (#167).
+            jcPageLifecycle.addListener(document, 'click', function(e) {
                 if (!e.target) return;
                 if (e.target.closest('.jc-banner-trigger, .jc-banner-managed')) return;
                 document.querySelectorAll('.jc-banner-trigger[aria-expanded="true"]').forEach(function(t) {

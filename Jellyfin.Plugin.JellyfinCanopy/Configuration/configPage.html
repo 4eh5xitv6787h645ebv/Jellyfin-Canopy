@@ -10,13 +10,32 @@
         // URL must carry the same baked per-build cache key the config-page.js
         // bootstrap uses — otherwise an upgrade pairs new HTML with stale CSS.
         (function () {
+            /* jc-config-style-loader:start */
+            // Single-link loader (BI-CLIENT-106 / #167): the dashboard re-runs
+            // this inline script on EVERY config-page visit, and appending a
+            // fresh <link> each time accumulated N stylesheet copies in
+            // document.head. Reuse one marked link and update its href in
+            // place — a plain "already present" bail-out would pin a stale
+            // stylesheet after an in-session plugin upgrade changes the key.
+            function jcEnsureCanopyConfigStylesheet(doc, href) {
+                var link = doc.head.querySelector('link[data-jc-canopy-config-style]');
+                if (!link) {
+                    link = doc.createElement('link');
+                    link.rel = 'stylesheet';
+                    link.setAttribute('data-jc-canopy-config-style', '1');
+                    link.href = href;
+                    doc.head.appendChild(link);
+                } else if (link.getAttribute('href') !== href) {
+                    link.href = href;
+                }
+                return link;
+            }
+            /* jc-config-style-loader:end */
             var pluginScript = document.querySelector('script[plugin="Jellyfin Canopy"]');
             var cacheKey = (pluginScript && pluginScript.getAttribute('version')) || '';
-            var link = document.createElement('link');
-            link.rel = 'stylesheet';
-            link.href = ApiClient.getUrl('/JellyfinCanopy/Configuration/configPage.css')
-                + (cacheKey ? ('?v=' + encodeURIComponent(cacheKey)) : '');
-            document.head.appendChild(link);
+            jcEnsureCanopyConfigStylesheet(document,
+                ApiClient.getUrl('/JellyfinCanopy/Configuration/configPage.css')
+                + (cacheKey ? ('?v=' + encodeURIComponent(cacheKey)) : ''));
         })();
     </script>
     <style>
