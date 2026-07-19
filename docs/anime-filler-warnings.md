@@ -8,6 +8,16 @@ The feature is deliberately conservative. A badge appears only when Canopy can p
 
     The badge is available in Jellyfin Web, Jellyfin Media Player, and other clients that embed the web interface. Native television and mobile interfaces do not render the badge in this first version. The authenticated API is reusable by future native clients.
 
+## What it looks like
+
+On a season page, only episodes classified as filler receive the red badge. Canon episodes remain unchanged.
+
+![A Jellyfin season page with a red Filler badge on one episode card and no badge on the canon episode](images/anime-filler-season.webp)
+
+The same warning appears beside the episode title on its detail page and on other cards for that episode.
+
+![A Jellyfin episode detail page with a red Filler badge beside the episode title and on its card](images/anime-filler-detail.webp)
+
 ## Turn it on
 
 1. As an administrator, open **Dashboard → Plugins → Jellyfin Canopy → Enhanced**.
@@ -30,6 +40,18 @@ Canopy resolves a Jellyfin series to a MyAnimeList ID in this order:
 There is no substring, edit-distance, or “closest title” matching. Punctuation, Unicode presentation, whitespace, and letter case are normalized, but the remaining title must be exact. Multiple valid candidates remain unknown unless one production year matches uniquely.
 
 Canopy uses the documented [Jikan REST API](https://docs.api.jikan.moe/) for MyAnimeList episode classifications and the [AniList GraphQL API](https://anilist.gitbook.io/anilist-apiv2-docs/) only to translate an existing AniList media ID. It does **not** scrape AnimeFillerList or MyAnimeList HTML. The upstreams require no API key.
+
+## Recommended Jellyfin metadata plugins
+
+Install the **AniList** metadata provider from the [official Jellyfin plugin catalog](https://jellyfin.org/docs/general/server/plugins/). This is the recommended companion plugin because it stores an `AniList` external ID on a matched series; Canopy recognizes that ID and asks AniList for the corresponding MyAnimeList ID. After installing or enabling the provider, refresh the series metadata in Jellyfin so the external ID is written to the existing library item.
+
+The official **AniSearch** plugin can still be useful for titles, descriptions, and artwork, but Canopy does not currently translate an `AniSearch` external ID into a filler-data ID. AniDB, Kitsu, and watch-state synchronization plugins are likewise optional metadata or scrobbling tools rather than filler-matching inputs. Keep AniList enabled for the strongest automatic match, or use a manual MyAnimeList mapping when a series remains unmatched.
+
+### Why there is no API-key field
+
+Canopy's Jikan requests are public, read-only, and authentication-free. Its AniList operation is also a public media lookup; it does not perform account mutations or use an AniList access token. An API-key box would therefore store a secret that neither request can use, so Canopy intentionally does not provide one.
+
+Provider origins are fixed rather than administrator-editable. If a future supported filler provider requires credentials, it should receive a provider-specific secret setting and redaction contract instead of a generic URL or header field. Never paste an AniList token, MyAnimeList client secret, or other credential into **Manual MyAnimeList mappings**; that field accepts only Jellyfin series GUIDs and positive MyAnimeList anime IDs.
 
 ### Which series count as anime?
 
