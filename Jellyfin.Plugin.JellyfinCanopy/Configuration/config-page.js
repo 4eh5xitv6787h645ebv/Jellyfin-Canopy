@@ -76,6 +76,26 @@
                     // existing wiring, install nothing.
                     return null;
                 }
+                // Freshness guard (#167 findings 6/10/11). The config-page.js
+                // script is created and appended asynchronously by the loader, so
+                // an OLDER visit's script can finish executing AFTER a newer visit
+                // already installed the live owner. An older/stale view must never
+                // tear down the newer visible page's owner. Only decide this when
+                // the current owner's view is still connected (a removed view is
+                // genuinely gone and the incoming view should take over). "Older"
+                // == the incoming view is detached, or it precedes the current
+                // owner's view in document order (JF12 appends the freshest view
+                // LAST — the same invariant the own-view resolver relies on).
+                if (current && current.active && current.page &&
+                    current.page !== pageEl && current.page.isConnected !== false) {
+                    if (!pageEl || pageEl.isConnected === false) {
+                        return null;
+                    }
+                    var rel = current.page.compareDocumentPosition(pageEl);
+                    if (rel & 2 /* Node.DOCUMENT_POSITION_PRECEDING */) {
+                        return null;
+                    }
+                }
                 if (current && current.active) current.teardown();
                 var owner = jcCreateConfigPageLifecycle(pageEl);
                 win.__jcConfigPageLifecycle = owner;

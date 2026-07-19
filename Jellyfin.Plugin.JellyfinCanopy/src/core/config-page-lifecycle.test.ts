@@ -576,6 +576,74 @@ describe('config-page owning-view resolution under JF12 duplicate cached views (
     });
 });
 
+describe('config-page owner freshness guard under async loader races (#167 findings 6/10/11)', () => {
+    const helpers = loadLifecycleHelpers();
+
+    function connectedPage(): HTMLElement {
+        const page = makePage();
+        document.body.appendChild(page);
+        return page;
+    }
+
+    it('a late OLDER script (earlier in document order) does NOT tear down the newer owner', () => {
+        // The loader creates config-page.js asynchronously, so visit A's script
+        // can execute AFTER visit B already installed the live owner. A resolves
+        // its OWN (stale) view, which JF12 keeps earlier in document order. It
+        // must not deactivate B and become the global owner.
+        const win: Record<string, unknown> = {};
+        const stale = connectedPage();
+        const fresh = connectedPage(); // appended LAST → the fresh visible view
+        const ownerB = remember(helpers.jcAcquireConfigPageLifecycle(win, fresh));
+        expect(ownerB).not.toBeNull();
+
+        expect(helpers.jcAcquireConfigPageLifecycle(win, stale)).toBeNull();
+        expect(ownerB!.active).toBe(true);
+        expect(win.__jcConfigPageLifecycle).toBe(ownerB);
+    });
+
+    it('a DISCONNECTED incoming view never steals ownership from the live owner', () => {
+        const win: Record<string, unknown> = {};
+        const fresh = connectedPage();
+        const ownerB = remember(helpers.jcAcquireConfigPageLifecycle(win, fresh));
+        // A's view was already torn out of the DOM when its delayed script ran.
+        const detached = makePage();
+        expect(helpers.jcAcquireConfigPageLifecycle(win, detached)).toBeNull();
+        expect(ownerB!.active).toBe(true);
+        expect(win.__jcConfigPageLifecycle).toBe(ownerB);
+    });
+
+    it('a genuine fresh visit (newer view later in order) still replaces the prior owner', () => {
+        const win: Record<string, unknown> = {};
+        const first = connectedPage();
+        const ownerA = remember(helpers.jcAcquireConfigPageLifecycle(win, first));
+        const second = connectedPage(); // follows `first` in document order
+        const ownerB = remember(helpers.jcAcquireConfigPageLifecycle(win, second));
+        expect(ownerB).not.toBeNull();
+        expect(ownerA!.active).toBe(false);
+        expect(ownerB!.active).toBe(true);
+        expect(ownerB!.page).toBe(second);
+    });
+
+    it('when the prior view was REMOVED (not cached), an incoming view takes over', () => {
+        const win: Record<string, unknown> = {};
+        const gone = connectedPage();
+        const ownerA = remember(helpers.jcAcquireConfigPageLifecycle(win, gone));
+        gone.remove(); // JF destroyed the old view rather than caching it
+        const fresh = connectedPage();
+        const ownerB = remember(helpers.jcAcquireConfigPageLifecycle(win, fresh));
+        expect(ownerB).not.toBeNull();
+        expect(ownerA!.active).toBe(false);
+        expect(ownerB!.active).toBe(true);
+    });
+
+    it('source: acquisition refuses an older/detached view instead of tearing down the live owner', () => {
+        const source = readSource(CONFIG_PAGE_JS);
+        expect(source).toContain('current.page.isConnected !== false');
+        expect(source).toContain('current.page.compareDocumentPosition(pageEl)');
+        expect(source).toContain('Node.DOCUMENT_POSITION_PRECEDING');
+    });
+});
+
 describe('config-page persistent element listeners are lifecycle-owned (#167 findings 1/4)', () => {
     const helpers = loadLifecycleHelpers();
 
