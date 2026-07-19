@@ -2193,6 +2193,14 @@
             Dashboard.showLoadingMsg();
             checkInstalledPlugins();
             ApiClient.getPluginConfiguration(pluginId).then((config) => {
+                // Lifecycle guard (#167): this fetch may have been started by a
+                // visit the admin has since left. If a later dashboard visit
+                // already tore down this owner, running the continuation would
+                // overwrite the CURRENT visit's controls, rebuild its instance
+                // rows, re-wire element listeners onto its DOM and hide its
+                // loading indicator. Bail before touching anything — the live
+                // visit owns its own load.
+                if (!jcPageLifecycle.active) return;
                 const savedShortcuts = (config.Shortcuts && config.Shortcuts.length > 0) ? config.Shortcuts : defaultShortcuts;
                 shortcutOverrides = savedShortcuts.filter(saved => {
                     const def = defaultShortcuts.find(d => d.Name === saved.Name);
@@ -5697,6 +5705,10 @@
                     // slide-in/out/remove setTimeouts that would fire against removed
                     // DOM — harmless but wasteful).
                     document.querySelectorAll('.jc-preview-toast').forEach(function(el) {
+                        // A lifecycle-owned toast disposes itself (timers + node +
+                        // untrack) through its own cleanup; fall back to the raw
+                        // teardown for any node without one.
+                        if (typeof el._jcCleanup === 'function') { el._jcCleanup(); return; }
                         if (el._jeShowTimer)   clearTimeout(el._jeShowTimer);
                         if (el._jeHideTimer)   clearTimeout(el._jeHideTimer);
                         if (el._jeRemoveTimer) clearTimeout(el._jeRemoveTimer);
@@ -5709,14 +5721,29 @@
                     toast.setAttribute('aria-live', 'polite');
                     toast.textContent = 'Example toast — disappears in ' + fmtSeconds(ms);
                     document.body.appendChild(toast);
+                    // Lifecycle-tracked cleanup (#167): the toast is a body-level
+                    // node with up to three pending timers and can outlive the page
+                    // for its full (user-set) duration. Register an idempotent
+                    // disposer so a dashboard page swap mid-preview reclaims the
+                    // node and clears its timers instead of leaking them onto the
+                    // next page; untrack once it finishes or is replaced.
+                    function toastCleanup() {
+                        if (toast._jcCleanupDone) return;
+                        toast._jcCleanupDone = true;
+                        if (toast._jeShowTimer)   clearTimeout(toast._jeShowTimer);
+                        if (toast._jeHideTimer)   clearTimeout(toast._jeHideTimer);
+                        if (toast._jeRemoveTimer) clearTimeout(toast._jeRemoveTimer);
+                        if (toast.parentNode) toast.parentNode.removeChild(toast);
+                        jcPageLifecycle.untrack(toastCleanup);
+                    }
+                    toast._jcCleanup = toastCleanup;
+                    jcPageLifecycle.track(toastCleanup);
                     // Mirror real JC.toast(): slide in from the right after a tick,
                     // stay for `ms`, then slide back out by removing the .jc-shown class.
                     toast._jeShowTimer = setTimeout(function() { toast.classList.add('jc-shown'); }, 10);
                     toast._jeHideTimer = setTimeout(function() {
                         toast.classList.remove('jc-shown');
-                        toast._jeRemoveTimer = setTimeout(function() {
-                            if (toast && toast.parentNode) toast.parentNode.removeChild(toast);
-                        }, 350);
+                        toast._jeRemoveTimer = setTimeout(toastCleanup, 350);
                     }, ms);
                 });
             }

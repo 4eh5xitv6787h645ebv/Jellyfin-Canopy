@@ -252,6 +252,27 @@ describe('config-page page-lifecycle owner (#167)', () => {
         expect(observer.disconnect).toHaveBeenCalledTimes(1);
     });
 
+    it('AC5: a replaced visit is inactive, so its pending config load no-ops', () => {
+        // Visit A fires loadConfig(); its getPluginConfiguration() promise is
+        // still pending when the admin re-enters. Visit B replaces A. When A's
+        // request finally resolves, production loadConfig guards its `.then` on
+        // `jcPageLifecycle.active` — A's owner is now inactive, so the stale
+        // continuation returns before overwriting B's controls/rows/listeners.
+        const win: Record<string, unknown> = {};
+        const ownerA = remember(helpers.jcAcquireConfigPageLifecycle(win, makePage()));
+        const ownerB = remember(helpers.jcAcquireConfigPageLifecycle(win, makePage()));
+        expect(ownerA!.active).toBe(false);
+        expect(ownerB!.active).toBe(true);
+
+        let mutatedCurrentPage = false;
+        const staleContinuation = () => {
+            if (!ownerA!.active) return;
+            mutatedCurrentPage = true;
+        };
+        staleContinuation();
+        expect(mutatedCurrentPage).toBe(false);
+    });
+
     it('AC5: a torn-down owner can be reacquired for the SAME page', () => {
         const win: Record<string, unknown> = {};
         const page = makePage();
@@ -396,6 +417,34 @@ describe('configPage.html stylesheet loader (#167)', () => {
         expect(links).toHaveLength(1);
         expect(links[0].getAttribute('href')).toBe('/JellyfinCanopy/Configuration/configPage.css?v=new');
     });
+
+    it('AC2 (in-session upgrade): adopts UNMARKED pre-fix links so no N+1 copy is appended', () => {
+        // Reproduce the persistent dashboard <head> after several visits on a
+        // pre-fix build: N config stylesheet links, none carrying the marker
+        // attribute the fixed loader stamps.
+        for (const v of ['a', 'b', 'c']) {
+            const legacy = document.createElement('link');
+            legacy.rel = 'stylesheet';
+            legacy.setAttribute('href', '/JellyfinCanopy/Configuration/configPage.css?v=' + v);
+            document.head.appendChild(legacy);
+        }
+        // An unrelated dashboard stylesheet must be left untouched.
+        const unrelated = document.createElement('link');
+        unrelated.rel = 'stylesheet';
+        unrelated.setAttribute('href', '/web/themes/dark/theme.css');
+        document.head.appendChild(unrelated);
+
+        // The upgraded loader runs with the new build key.
+        style.jcEnsureCanopyConfigStylesheet(document, '/JellyfinCanopy/Configuration/configPage.css?v=upgraded');
+
+        const configLinks = Array.from(document.head.querySelectorAll('link[rel="stylesheet"]'))
+            .filter((l) => (l.getAttribute('href') || '').split('?')[0] === '/JellyfinCanopy/Configuration/configPage.css');
+        expect(configLinks).toHaveLength(1);
+        expect(configLinks[0].getAttribute('href')).toBe('/JellyfinCanopy/Configuration/configPage.css?v=upgraded');
+        expect(configLinks[0].getAttribute('data-jc-canopy-config-style')).toBe('1');
+        // The foreign stylesheet survives.
+        expect(document.head.querySelector('link[href="/web/themes/dark/theme.css"]')).not.toBeNull();
+    });
 });
 
 describe('config-page persistent registrations stay lifecycle-owned (#167 drift guard)', () => {
@@ -440,6 +489,28 @@ describe('config-page persistent registrations stay lifecycle-owned (#167 drift 
         expect(source).toContain('_activePanelPreviewCleanup = cleanup;');
         expect(source).toContain('jcPageLifecycle.track(cleanup)');
         expect(source).toContain('jcPageLifecycle.untrack(cleanup)');
+    });
+
+    it('gates the config-load continuation on the live page owner (#167 finding 1)', () => {
+        // The getPluginConfiguration() continuation must bail when its owner was
+        // replaced by a later visit — otherwise stale work mutates the current
+        // page (overwrites controls, rebuilds rows, re-wires element listeners).
+        const marker = 'ApiClient.getPluginConfiguration(pluginId).then((config) => {';
+        const idx = source.indexOf(marker);
+        expect(idx).toBeGreaterThanOrEqual(0);
+        const continuationHead = source.slice(idx, idx + 900);
+        expect(continuationHead).toContain('if (!jcPageLifecycle.active) return;');
+    });
+
+    it('lifecycle-owns the preview toast node and its timers (#167 findings 2/3)', () => {
+        // The body-level preview toast and its show/hide/remove timers must be
+        // reclaimed if the dashboard swaps pages mid-preview, and released again
+        // when the toast finishes or is replaced by a rapid re-click.
+        expect(source).toContain('jcPageLifecycle.track(toastCleanup)');
+        expect(source).toContain('jcPageLifecycle.untrack(toastCleanup)');
+        expect(source).toContain('clearTimeout(toast._jeShowTimer)');
+        expect(source).toContain('clearTimeout(toast._jeHideTimer)');
+        expect(source).toContain('clearTimeout(toast._jeRemoveTimer)');
     });
 
     it('keeps the existing per-element wired guards intact', () => {
