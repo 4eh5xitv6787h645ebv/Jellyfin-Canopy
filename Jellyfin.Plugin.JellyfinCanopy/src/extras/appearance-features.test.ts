@@ -130,6 +130,9 @@ describe('appearance lazy-feature lifecycle', () => {
         JC.pluginConfig = { ThemeSelectorEnabled: true, ColoredRatingsEnabled: true };
         expect(isThemeSelectorEnabled()).toBe(true);
         expect(isColoredRatingsEnabled()).toBe(true);
+        JC.pluginConfig.ThemeStudioEnabled = true;
+        expect(isThemeSelectorEnabled()).toBe(false);
+        expect(isColoredRatingsEnabled()).toBe(true);
     });
 
     it('does nothing when stale scopes reach either entry', () => {

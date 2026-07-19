@@ -112,6 +112,22 @@ export interface ThemeLegacyJellyfishSelection {
     Theme: string;
 }
 
+export interface ThemeStudioDiagnostics {
+    readonly status: 'inactive' | 'loading' | 'active' | 'preview' | 'error';
+    readonly revision: number | null;
+    readonly profileId: string | null;
+    readonly breakpoint: 'phone' | 'tablet' | 'desktop' | 'wide' | 'tv' | null;
+    readonly mode: 'dark' | 'light' | null;
+}
+
+/** Identity-owned seam consumed by the later Theme Studio editor chunk. */
+export interface ThemeStudioRuntimeApi {
+    preview(configuration: unknown): boolean;
+    cancelPreview(): void;
+    refresh(): void;
+    getDiagnostics(): ThemeStudioDiagnostics;
+}
+
 /** The unified localStorage write scheduler created by js/plugin.js. */
 export interface CacheManager {
     register(saveCallback: () => void): void;
@@ -741,6 +757,8 @@ export interface JECore {
     clientRuntime?: {
         reconcileUserSettings(context: IdentityContext): Promise<readonly unknown[]>;
     };
+    /** Present only while the authenticated Theme Studio feature owns a scope. */
+    themeStudio?: ThemeStudioRuntimeApi;
 }
 
 /**
