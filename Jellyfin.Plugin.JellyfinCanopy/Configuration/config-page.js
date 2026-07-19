@@ -1224,6 +1224,15 @@
                 url: ApiClient.getUrl('/Plugins'),
                 dataType: 'json'
             }).then(function(plugins) {
+                // Lifecycle guard (#167 findings 2/3): this /Plugins probe is
+                // started synchronously by loadConfig, but a later dashboard
+                // visit may have torn down this owner while the request was in
+                // flight. Running the continuation would toggle document.body
+                // detection classes, reset this closure's detection flags and
+                // write dependency/probe state into the CURRENT visit's globally
+                // queried DOM. Bail before touching anything so at most the live
+                // visit's own probe owns the page.
+                if (!jcPageLifecycle.active) return;
                 setProbeWarning('plugins', null);
                 // Status-aware plugin lookup. Returns tri-state:
                 //   true  → installed AND active
@@ -1295,6 +1304,12 @@
                 // Re-run dependencies now that plugin info is available
                 updateAllDependencies();
             }).catch(function(err) {
+                // Lifecycle guard (#167 findings 2/3): a late failure from a
+                // torn-down visit must not clear a replacement visit's detected
+                // body classes or overwrite its dependency state with a false
+                // "couldn't reach /Plugins" warning. If this owner was replaced,
+                // its probe no longer owns the page — bail before any DOM/state work.
+                if (!jcPageLifecycle.active) return;
                 // Plugin list request failed (network, auth expiry, server offline, ...).
                 // Leave hasIntroSkipper at null so individual deps show
                 // "unknown" rather than incorrectly disabling toggles. Still refresh
@@ -2988,8 +3003,16 @@
             }
         })();
 
-        page.addEventListener('pageshow', loadConfig);
-        form.addEventListener('submit', saveConfig);
+        // Page-lifecycle owned (#167 finding 1): pageshow drives loadConfig and
+        // submit drives saveConfig. These live on the long-lived page/form, so a
+        // teardown→same-page reinstall (jcAcquireConfigPageLifecycle supports
+        // reacquiring the same element) would otherwise STACK them — one pageshow
+        // then starts two load paths and one submit fires two saveConfig handlers
+        // (double configuration writes). Tracking them means teardown removes the
+        // prior visit's copies before the fresh set installs, so at most one is
+        // ever live (AC5).
+        jcPageLifecycle.addListener(page, 'pageshow', loadConfig);
+        jcPageLifecycle.addListener(form, 'submit', saveConfig);
         resetAllUserSettingsBtn.addEventListener('click', resetAllUserSettings);
         initAutoMovieQualityMode();
 
@@ -4956,8 +4979,11 @@
         // Jellyfin dashboard builds have used both lifecycle event names. The
         // dispatch helper also checks the signal between domains, so leaving the
         // page cannot start another POST after the current request settles.
-        page.addEventListener('pagehide', cancelActiveSeerrScan);
-        page.addEventListener('viewhide', cancelActiveSeerrScan);
+        // Lifecycle owned (#167 finding 1): both cleanup hooks sit on the
+        // long-lived page element, so a teardown→same-page reinstall would stack
+        // duplicate abort handlers. Track them so teardown reclaims the prior set.
+        jcPageLifecycle.addListener(page, 'pagehide', cancelActiveSeerrScan);
+        jcPageLifecycle.addListener(page, 'viewhide', cancelActiveSeerrScan);
 
         async function triggerSeerrScanNow() {
             const rawUrls = document.querySelector('#seerrUrls').value || '';

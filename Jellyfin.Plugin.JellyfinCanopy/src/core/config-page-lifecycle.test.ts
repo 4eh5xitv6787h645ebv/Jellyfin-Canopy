@@ -273,6 +273,40 @@ describe('config-page page-lifecycle owner (#167)', () => {
         expect(mutatedCurrentPage).toBe(false);
     });
 
+    it('AC5: page-level pageshow/submit survive a teardown→same-page reinstall without stacking (#167 finding 1)', () => {
+        // Model the production wiring: each visit routes the page-local
+        // pageshow→loadConfig and form-local submit→saveConfig through the owner
+        // (jcPageLifecycle.addListener). A teardown→same-page reinstall must NOT
+        // leave two live handlers, or one pageshow would start two loads and one
+        // submit two saves.
+        const win: Record<string, unknown> = {};
+        const page = makePage();
+        const form = document.createElement('form');
+        page.appendChild(form);
+        document.body.appendChild(page);
+
+        const loadConfig = vi.fn();
+        const saveConfig = vi.fn();
+        function install(owner: PageLifecycleOwner): void {
+            owner.addListener(page, 'pageshow', loadConfig);
+            owner.addListener(form, 'submit', saveConfig);
+        }
+
+        const first = remember(helpers.jcAcquireConfigPageLifecycle(win, page));
+        install(first!);
+        first!.teardown();
+
+        // Same page element reacquired (dashboard kept the DOM alive): fresh
+        // owner, re-install.
+        const second = remember(helpers.jcAcquireConfigPageLifecycle(win, page));
+        install(second!);
+
+        page.dispatchEvent(new Event('pageshow'));
+        form.dispatchEvent(new Event('submit'));
+        expect(loadConfig).toHaveBeenCalledTimes(1);
+        expect(saveConfig).toHaveBeenCalledTimes(1);
+    });
+
     it('AC5: a torn-down owner can be reacquired for the SAME page', () => {
         const win: Record<string, unknown> = {};
         const page = makePage();
@@ -500,6 +534,41 @@ describe('config-page persistent registrations stay lifecycle-owned (#167 drift 
         expect(idx).toBeGreaterThanOrEqual(0);
         const continuationHead = source.slice(idx, idx + 900);
         expect(continuationHead).toContain('if (!jcPageLifecycle.active) return;');
+    });
+
+    it('owns the page-level pageshow/submit/cancel listeners so they cannot stack (#167 finding 1)', () => {
+        // pageshow→loadConfig and submit→saveConfig sit on the long-lived
+        // page/form. If they were attached raw, a teardown→same-page reinstall
+        // would stack them — one pageshow starting two load paths, one submit
+        // firing two saveConfig handlers (double config writes). Route through the
+        // owner so teardown reclaims the prior visit's copies (AC5).
+        expect(source).not.toContain("page.addEventListener('pageshow'");
+        expect(source).not.toContain("form.addEventListener('submit'");
+        expect(source).not.toContain("page.addEventListener('pagehide'");
+        expect(source).not.toContain("page.addEventListener('viewhide'");
+        expect(source).toContain("jcPageLifecycle.addListener(page, 'pageshow', loadConfig)");
+        expect(source).toContain("jcPageLifecycle.addListener(form, 'submit', saveConfig)");
+        expect(source).toContain("jcPageLifecycle.addListener(page, 'pagehide', cancelActiveSeerrScan)");
+        expect(source).toContain("jcPageLifecycle.addListener(page, 'viewhide', cancelActiveSeerrScan)");
+    });
+
+    it('gates BOTH plugin-probe continuations on the live owner (#167 findings 2/3)', () => {
+        // checkInstalledPlugins() is fired synchronously by loadConfig but its
+        // /Plugins request settles later. A stale visit's success continuation
+        // must not toggle body detection classes / write dependency state into a
+        // replacement visit's DOM, and its failure continuation must not clear a
+        // replacement's detected classes with a false "couldn't reach /Plugins"
+        // warning. Both .then and .catch must bail when the owner was replaced.
+        const start = source.indexOf('function checkInstalledPlugins()');
+        expect(start).toBeGreaterThanOrEqual(0);
+
+        const thenIdx = source.indexOf('}).then(function(plugins) {', start);
+        expect(thenIdx).toBeGreaterThan(start);
+        expect(source.slice(thenIdx, thenIdx + 800)).toContain('if (!jcPageLifecycle.active) return;');
+
+        const catchIdx = source.indexOf('}).catch(function(err) {', start);
+        expect(catchIdx).toBeGreaterThan(thenIdx);
+        expect(source.slice(catchIdx, catchIdx + 800)).toContain('if (!jcPageLifecycle.active) return;');
     });
 
     it('lifecycle-owns the preview toast node and its timers (#167 findings 2/3)', () => {
