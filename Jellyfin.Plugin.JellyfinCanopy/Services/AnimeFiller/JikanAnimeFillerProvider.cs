@@ -125,6 +125,7 @@ public sealed class JikanAnimeFillerProvider : IAnimeFillerProvider
         if (myAnimeListId <= 0) return null;
         using var operation = CreateOperation(cancellationToken);
         var episodes = new Dictionary<int, bool>();
+        var titleCandidates = new Dictionary<string, int?>(StringComparer.Ordinal);
         for (var page = 1; page <= MaximumEpisodePages; page++)
         {
             using var document = await GetJikanJsonAsync($"anime/{myAnimeListId}/episodes?page={page}", operation.Token).ConfigureAwait(false);
@@ -132,6 +133,9 @@ public sealed class JikanAnimeFillerProvider : IAnimeFillerProvider
             foreach (var item in data.EnumerateArray())
             {
                 if (!item.TryGetProperty("mal_id", out var idElement) || !idElement.TryGetInt32(out var episodeNumber) || episodeNumber <= 0) continue;
+                AddEpisodeTitle(item, "title", episodeNumber, titleCandidates);
+                AddEpisodeTitle(item, "title_romanji", episodeNumber, titleCandidates);
+                AddEpisodeTitle(item, "title_japanese", episodeNumber, titleCandidates);
                 if (!item.TryGetProperty("filler", out var fillerElement)
                     || fillerElement.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
                 {
@@ -144,7 +148,13 @@ public sealed class JikanAnimeFillerProvider : IAnimeFillerProvider
             var hasNext = document.RootElement.TryGetProperty("pagination", out var pagination)
                 && pagination.TryGetProperty("has_next_page", out var next)
                 && next.ValueKind == JsonValueKind.True;
-            if (!hasNext) return AnimeProviderEpisodes.Create(myAnimeListId, episodes);
+            if (!hasNext)
+            {
+                var uniqueTitles = titleCandidates
+                    .Where(candidate => candidate.Value.HasValue)
+                    .ToDictionary(candidate => candidate.Key, candidate => candidate.Value!.Value, StringComparer.Ordinal);
+                return AnimeProviderEpisodes.Create(myAnimeListId, episodes, uniqueTitles);
+            }
         }
 
         _logger.LogWarning("Jikan episode pagination exceeded the {MaximumPages}-page safety bound for MAL {MalId}.", MaximumEpisodePages, myAnimeListId);
@@ -200,6 +210,30 @@ public sealed class JikanAnimeFillerProvider : IAnimeFillerProvider
         {
             candidates.Add(new AnimeProviderCandidate(malId, title, year));
         }
+    }
+
+    private static void AddEpisodeTitle(
+        JsonElement item,
+        string property,
+        int episodeNumber,
+        IDictionary<string, int?> candidates)
+    {
+        if (!item.TryGetProperty(property, out var element)
+            || element.ValueKind != JsonValueKind.String
+            || element.GetString() is not { Length: > 0 } title)
+        {
+            return;
+        }
+
+        var normalized = AnimeFillerMappingParser.NormalizeTitle(title);
+        if (normalized.Length == 0) return;
+        if (candidates.TryGetValue(normalized, out var existing))
+        {
+            if (existing != episodeNumber) candidates[normalized] = null;
+            return;
+        }
+
+        candidates[normalized] = episodeNumber;
     }
 
     private sealed class CandidateTitleComparer : IEqualityComparer<(int MyAnimeListId, string Title)>

@@ -69,6 +69,52 @@ describe('anime filler warnings', () => {
         expect(document.querySelector('.card .jc-anime-filler-marker')).toBeNull();
     });
 
+    it('moves an early detail badge beside a title that renders later', async () => {
+        document.body.innerHTML = '<div id="itemDetailPage"><div class="detailPagePrimaryContainer"></div></div>';
+        recordDetailsViewShown(document.querySelector('#itemDetailPage'));
+        dispose = installAnimeFillerWarnings(new AbortController().signal, () => true);
+
+        await vi.advanceTimersByTimeAsync(80);
+        expect(document.querySelector('.detailPagePrimaryContainer > .jc-anime-filler-marker')).not.toBeNull();
+
+        document.querySelector('.detailPagePrimaryContainer')!
+            .insertAdjacentHTML('afterbegin', '<h1 class="itemName">Episode</h1>');
+        await Promise.resolve();
+        await vi.advanceTimersByTimeAsync(80);
+
+        expect(document.querySelectorAll('.jc-anime-filler-marker')).toHaveLength(1);
+        expect(document.querySelector('.itemName > .jc-anime-filler-marker')?.textContent).toBe('Filler');
+        expect(document.querySelector('.detailPagePrimaryContainer')?.classList.contains('jc-anime-filler-anchor')).toBe(false);
+    });
+
+    it('does not let an Unknown season target churn a descendant filler-card badge', async () => {
+        window.history.replaceState({}, '', '/web/index.html#/details?id=season-1');
+        document.body.innerHTML = `
+            <div id="itemDetailPage">
+                <h1 class="itemName">Season</h1>
+                <div class="card" data-id="episode-2"><div class="cardScalable"></div></div>
+            </div>`;
+        recordDetailsViewShown(document.querySelector('#itemDetailPage'));
+        ajax.mockResolvedValue({
+            items: [
+                { itemId: 'season-1', classification: 'Unknown' },
+                { itemId: 'episode-2', classification: 'Filler' },
+            ],
+        });
+        dispose = installAnimeFillerWarnings(new AbortController().signal, () => true);
+
+        await vi.advanceTimersByTimeAsync(80);
+        const settled = document.querySelector('.card .jc-anime-filler-marker');
+        expect(settled).not.toBeNull();
+        await Promise.resolve();
+        await Promise.resolve();
+        await vi.advanceTimersByTimeAsync(800);
+
+        expect(ajax).toHaveBeenCalledTimes(1);
+        expect(document.querySelectorAll('.card .jc-anime-filler-marker')).toHaveLength(1);
+        expect(document.querySelector('.card .jc-anime-filler-marker')).toBe(settled);
+    });
+
     it('fences a recycled card before an async response lands', async () => {
         let resolve!: (value: AjaxResult) => void;
         const pending = new Promise<AjaxResult>((done) => { resolve = done; });

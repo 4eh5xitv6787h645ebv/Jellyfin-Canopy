@@ -24,10 +24,21 @@ public sealed record AnimeSeriesIdentity(
 
 public sealed record AnimeProviderCandidate(int MyAnimeListId, string Title, int? Year);
 
-public sealed record AnimeProviderEpisodes(int MyAnimeListId, IReadOnlyDictionary<int, bool> FillerByEpisode)
+public sealed record AnimeProviderEpisodes(
+    int MyAnimeListId,
+    IReadOnlyDictionary<int, bool> FillerByEpisode,
+    IReadOnlyDictionary<string, int> EpisodeNumberByNormalizedTitle)
 {
-    public static AnimeProviderEpisodes Create(int myAnimeListId, IDictionary<int, bool> episodes)
-        => new(myAnimeListId, new ReadOnlyDictionary<int, bool>(episodes));
+    public static AnimeProviderEpisodes Create(
+        int myAnimeListId,
+        IDictionary<int, bool> episodes,
+        IDictionary<string, int>? episodeNumberByNormalizedTitle = null)
+        => new(
+            myAnimeListId,
+            new ReadOnlyDictionary<int, bool>(new Dictionary<int, bool>(episodes)),
+            new ReadOnlyDictionary<string, int>(new Dictionary<string, int>(
+                episodeNumberByNormalizedTitle ?? new Dictionary<string, int>(),
+                StringComparer.Ordinal)));
 }
 
 public interface IAnimeFillerProvider

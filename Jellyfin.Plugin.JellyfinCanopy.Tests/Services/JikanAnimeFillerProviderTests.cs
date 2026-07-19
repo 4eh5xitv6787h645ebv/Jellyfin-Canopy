@@ -54,6 +54,9 @@ public sealed class JikanAnimeFillerProviderTests
         Assert.False(episodes.FillerByEpisode[2]);
         Assert.False(episodes.FillerByEpisode.ContainsKey(3));
         Assert.False(episodes.FillerByEpisode.ContainsKey(4));
+        Assert.Equal(1, episodes.EpisodeNumberByNormalizedTitle["shinmai kyoushi iruka"]);
+        Assert.Equal(2, episodes.EpisodeNumberByNormalizedTitle["canon episode"]);
+        Assert.False(episodes.EpisodeNumberByNormalizedTitle.ContainsKey("rookie instructor iruka"));
     }
 
     [Fact]
@@ -96,6 +99,7 @@ public sealed class JikanAnimeFillerProviderTests
         Assert.NotNull(episodes);
         Assert.True(episodes.FillerByEpisode[1]);
         Assert.True(episodes.FillerByEpisode[5]);
+        Assert.False(episodes.EpisodeNumberByNormalizedTitle.ContainsKey("repeated title"));
         Assert.Equal(2, handler.Requests.Count);
     }
 
@@ -195,15 +199,15 @@ public sealed class JikanAnimeFillerProviderTests
 
                 if (PaginatedEpisodes && request.RequestUri.Query.Contains("page=1", StringComparison.Ordinal))
                 {
-                    return Json("{\"data\":[{\"mal_id\":1,\"filler\":true}],\"pagination\":{\"has_next_page\":true}}");
+                    return Json("{\"data\":[{\"mal_id\":1,\"title\":\"Repeated title\",\"filler\":true}],\"pagination\":{\"has_next_page\":true}}");
                 }
 
                 if (PaginatedEpisodes)
                 {
-                    return Json("{\"data\":[{\"mal_id\":5,\"filler\":true}],\"pagination\":{\"has_next_page\":false}}");
+                    return Json("{\"data\":[{\"mal_id\":5,\"title\":\"repeated-title\",\"filler\":true}],\"pagination\":{\"has_next_page\":false}}");
                 }
 
-                return Json("{\"data\":[{\"mal_id\":1,\"filler\":true},{\"mal_id\":2,\"filler\":false},{\"mal_id\":3,\"filler\":null},{\"mal_id\":4}],\"pagination\":{\"has_next_page\":false}}");
+                return Json("{\"data\":[{\"mal_id\":1,\"title\":\"Rookie Instructor Iruka\",\"title_romanji\":\"Shinmai Kyoushi Iruka\",\"filler\":true},{\"mal_id\":2,\"title\":\"Canon Episode\",\"filler\":false},{\"mal_id\":3,\"title\":\"Rookie Instructor Iruka\",\"filler\":null},{\"mal_id\":4,\"title\":\"Missing Boolean\"}],\"pagination\":{\"has_next_page\":false}}");
             }
 
             return Json("{\"data\":[{\"mal_id\":20,\"title\":\"Naruto\",\"title_english\":\"Naruto\",\"title_japanese\":\"ナルト\",\"title_synonyms\":[],\"year\":2002}]}");

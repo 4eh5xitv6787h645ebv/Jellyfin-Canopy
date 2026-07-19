@@ -105,19 +105,17 @@ public sealed class AnimeFillerWarningsController : JellyfinCanopyControllerBase
             var providerEpisode = usesSeasonMapping
                 ? episode.IndexNumber.Value
                 : CalculateAbsoluteEpisodeNumber(series, episode, user);
-            if (providerEpisode is null)
-            {
-                byId[requestedId] = Unknown(requestedId, "episode-number-unavailable");
-                continue;
-            }
-
             var identity = new AnimeSeriesIdentity(
                 series.Id,
                 seasonNumber,
                 series.Name ?? string.Empty,
                 series.ProductionYear,
                 new Dictionary<string, string>(series.ProviderIds, StringComparer.OrdinalIgnoreCase));
-            var classification = await _animeFillerService.ClassifyAsync(identity, providerEpisode.Value, HttpContext.RequestAborted).ConfigureAwait(false);
+            var classification = await _animeFillerService.ClassifyAsync(
+                identity,
+                providerEpisode,
+                episode.Name,
+                HttpContext.RequestAborted).ConfigureAwait(false);
             byId[requestedId] = new AnimeFillerItemResponse(
                 requestedId,
                 classification.Classification.ToString(),

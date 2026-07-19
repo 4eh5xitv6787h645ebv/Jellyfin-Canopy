@@ -245,6 +245,10 @@
       "reason": "Reviewed public third-party documentation or asset."
     },
     {
+      "url": "https://jellyfin.org/docs/general/server/plugins/",
+      "reason": "Official Jellyfin plugin catalog for the recommended AniList metadata provider and the optional AniSearch provider."
+    },
+    {
       "url": "https://ko-fi.com/G2G51TIZF0",
       "reason": "Original upstream author support link."
     },

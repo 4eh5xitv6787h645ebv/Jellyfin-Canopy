@@ -72,6 +72,28 @@ public sealed class AnimeFillerServiceTests
     }
 
     [Fact]
+    public async Task ClassifyAsync_UsesOnlyAUniqueExactEpisodeTitle_WhenPriorSeasonsAreUnavailable()
+    {
+        var provider = new FakeProvider
+        {
+            Episodes = AnimeProviderEpisodes.Create(
+                1735,
+                new Dictionary<int, bool> { [176] = true },
+                new Dictionary<string, int> { ["rookie instructor iruka"] = 176 }),
+        };
+        var service = CreateService(provider);
+        var identity = Identity(new Dictionary<string, string> { ["MAL"] = "1735" });
+
+        var matched = await service.ClassifyAsync(identity, null, "Rookie Instructor—Iruka", CancellationToken.None);
+        var unavailable = await service.ClassifyAsync(identity, null, "Different episode", CancellationToken.None);
+
+        Assert.Equal(AnimeEpisodeClassification.Filler, matched.Classification);
+        Assert.Equal("mal-provider-id+episode-title-match", matched.Reason);
+        Assert.Equal("episode-number-unavailable", unavailable.Reason);
+        Assert.Equal(1, provider.EpisodeCalls);
+    }
+
+    [Fact]
     public async Task ClassifyAsync_ManualSeasonMapping_PrecedesProviderIds()
     {
         var seriesId = Guid.NewGuid();
