@@ -42,19 +42,36 @@
             }
 
             var jcLifecycleSeq = 0;
-            function jcCreateConfigPageLifecycle(pageEl) {
+            function jcCreateConfigPageLifecycle(pageEl, seq) {
                 // Stable per-owner token. Existing per-element dataset.jcWired
                 // guards compare against this so a fresh owner (after a
                 // teardown→reinstall on the SAME cached page) REBINDS the guarded
                 // handler instead of leaving it pointed at the retired owner
                 // (#167 findings 2/7). A boolean flag survived teardown and
                 // suppressed the rebind, stranding the handler on a dead owner.
+                //
+                // The token MUST stay unique across dashboard visits. Every visit
+                // re-executes this whole IIFE, which re-runs `var jcLifecycleSeq
+                // = 0` — so the IIFE-local counter alone would hand every visit
+                // the SAME id ('jc-owner-1') and a guarded element on the live
+                // page would then fail to rebind (its dataset already equals the
+                // new owner's colliding id). The caller therefore supplies a
+                // window-persisted `seq`; the local counter is only a fallback
+                // for direct construction (tests) where no window seq is passed.
                 var owner = {
-                    id: 'jc-owner-' + (++jcLifecycleSeq),
+                    id: 'jc-owner-' + (seq !== undefined && seq !== null ? seq : (++jcLifecycleSeq)),
                     page: pageEl,
                     active: true,
                     tracked: [],
                     track: function (resource) {
+                        // Reject registrations once the owner is retired. A later
+                        // visit may have torn this owner down while a slow async
+                        // load (e.g. loadBlockedUsersList's getUsers()) was still
+                        // in flight; its continuation must not push a resource into
+                        // an already-drained bag that will never be torn down
+                        // again. Dispose it immediately so it cannot leak past the
+                        // teardown→reinstall cycle (#167 findings 1/5/9, AC5).
+                        if (!owner.active) { jcDisposeLifecycleResource(resource); return resource; }
                         owner.tracked.push(resource);
                         return resource;
                     },
@@ -62,6 +79,11 @@
                         owner.tracked = owner.tracked.filter(function (r) { return r !== resource; });
                     },
                     addListener: function (el, type, fn, opts) {
+                        // Same retired-owner guard as track(): a stale continuation
+                        // must not attach a DOM listener onto a persistent element
+                        // through a torn-down owner, where it would never be
+                        // reclaimed (#167 findings 1/5/9, AC5).
+                        if (!owner.active) return;
                         el.addEventListener(type, fn, opts);
                         owner.tracked.push({ el: el, type: type, fn: fn, opts: opts });
                     },
@@ -105,7 +127,13 @@
                     }
                 }
                 if (current && current.active) current.teardown();
-                var owner = jcCreateConfigPageLifecycle(pageEl);
+                // Window-persisted sequence: survives the IIFE re-execution that
+                // resets the local jcLifecycleSeq, so every visit's owner gets a
+                // DISTINCT token even though the script re-runs from scratch
+                // (#167 finding 3).
+                var seq = (win.__jcConfigLifecycleSeq || 0) + 1;
+                win.__jcConfigLifecycleSeq = seq;
+                var owner = jcCreateConfigPageLifecycle(pageEl, seq);
                 win.__jcConfigPageLifecycle = owner;
                 return owner;
             }
