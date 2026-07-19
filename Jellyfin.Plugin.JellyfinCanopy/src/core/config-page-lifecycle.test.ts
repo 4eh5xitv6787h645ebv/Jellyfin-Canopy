@@ -34,6 +34,7 @@ interface LifecycleHelpers {
     jcCreateConfigPageLifecycle(pageEl: Element | null): PageLifecycleOwner;
     jcAcquireConfigPageLifecycle(win: Record<string, unknown>, pageEl: Element | null): PageLifecycleOwner | null;
     jcDisposeLifecycleResource(resource: unknown): void;
+    jcResolveOwnConfigPage(doc: Document, scriptEl: Element | null, selector: string): Element | null;
 }
 
 interface ReorderHelpers {
@@ -87,7 +88,7 @@ function loadLifecycleHelpers(): LifecycleHelpers {
     // SAFETY: only the marker-bounded lifecycle factory from our local source is
     // evaluated. It declares plain functions with no DOM/network access at
     // declaration time.
-    return eval(`(() => {${slice}; return { jcCreateConfigPageLifecycle, jcAcquireConfigPageLifecycle, jcDisposeLifecycleResource }; })()`) as LifecycleHelpers;
+    return eval(`(() => {${slice}; return { jcCreateConfigPageLifecycle, jcAcquireConfigPageLifecycle, jcDisposeLifecycleResource, jcResolveOwnConfigPage }; })()`) as LifecycleHelpers;
 }
 
 function loadReorderHelpers(): ReorderHelpers {
@@ -478,6 +479,162 @@ describe('configPage.html stylesheet loader (#167)', () => {
         expect(configLinks[0].getAttribute('data-jc-canopy-config-style')).toBe('1');
         // The foreign stylesheet survives.
         expect(document.head.querySelector('link[href="/web/themes/dark/theme.css"]')).not.toBeNull();
+    });
+});
+
+describe('config-page owning-view resolution under JF12 duplicate cached views (#167 finding 3)', () => {
+    const helpers = loadLifecycleHelpers();
+
+    // Jellyfin 12 keeps several routed views cached in fixed DOM slots, so a
+    // hidden stale copy and the fresh visible copy can BOTH carry
+    // id="JellyfinCanopyPage" at once. The prior tests only ever built a single
+    // uniquely-identified page, so they never exercised this shape.
+    function buildDuplicateSlots(): { stale: HTMLElement; fresh: HTMLElement; script: HTMLScriptElement } {
+        // Stale hidden view comes FIRST in document order (what querySelector
+        // returns); the fresh visible view is appended in a later slot with the
+        // external config-page.js script inside it (as the bootstrap appends it).
+        const stale = document.createElement('div');
+        stale.id = 'JellyfinCanopyPage';
+        stale.setAttribute('data-slot', 'cached');
+        const fresh = document.createElement('div');
+        fresh.id = 'JellyfinCanopyPage';
+        fresh.setAttribute('data-slot', 'visible');
+        const script = document.createElement('script');
+        fresh.appendChild(script);
+        document.body.appendChild(stale);
+        document.body.appendChild(fresh);
+        return { stale, fresh, script };
+    }
+
+    it('resolves the view that OWNS the executing script, not the first duplicate', () => {
+        const { stale, fresh, script } = buildDuplicateSlots();
+        // Bare querySelector returns the stale copy — the trap the fix avoids.
+        expect(document.querySelector('#JellyfinCanopyPage')).toBe(stale);
+        expect(helpers.jcResolveOwnConfigPage(document, script, '#JellyfinCanopyPage')).toBe(fresh);
+    });
+
+    it('falls back to querySelector when the script anchor is unavailable', () => {
+        const { stale } = buildDuplicateSlots();
+        expect(helpers.jcResolveOwnConfigPage(document, null, '#JellyfinCanopyPage')).toBe(stale);
+    });
+
+    it('does NOT abort the fresh visible view as a duplicate of the stale cached one', () => {
+        // Visit 1 wired the (now stale) cached view.
+        const { stale, fresh, script } = buildDuplicateSlots();
+        const win: Record<string, unknown> = {};
+        const first = remember(helpers.jcAcquireConfigPageLifecycle(win, stale));
+        expect(first).not.toBeNull();
+
+        // Visit 2: the fresh view re-runs the IIFE. With the fix, the page it
+        // resolves is its OWN view (fresh), so acquisition tears down the stale
+        // owner and returns a LIVE owner for the fresh page — it must NOT return
+        // null (which would abort all wiring and leave the visible page dead).
+        const resolved = helpers.jcResolveOwnConfigPage(document, script, '#JellyfinCanopyPage');
+        expect(resolved).toBe(fresh);
+        const second = remember(helpers.jcAcquireConfigPageLifecycle(win, resolved));
+        expect(second).not.toBeNull();
+        expect(second!.active).toBe(true);
+        expect(second!.page).toBe(fresh);
+        expect(first!.active).toBe(false);
+
+        // The freshly-acquired owner wires a WORKING listener on the visible page.
+        const handler = vi.fn();
+        second!.addListener(fresh, 'pageshow', handler);
+        fresh.dispatchEvent(new Event('pageshow'));
+        expect(handler).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('config-page persistent element listeners are lifecycle-owned (#167 findings 1/4)', () => {
+    const helpers = loadLifecycleHelpers();
+
+    it('AC5: a static action button survives teardown→reinstall without stacking', () => {
+        // Model the resetAllUserSettings button: a static Overview control on the
+        // long-lived page wired at IIFE scope. Before the fix it was attached
+        // with a raw addEventListener, so a teardown→same-page reinstall STACKED
+        // it — one click then ran resetAllUserSettings twice (two confirms, two
+        // reset-all-users POSTs). Routed through the owner, teardown reclaims the
+        // prior visit's copy so exactly one handler is ever live.
+        const win: Record<string, unknown> = {};
+        const page = makePage();
+        const resetBtn = document.createElement('button');
+        page.appendChild(resetBtn);
+        document.body.appendChild(page);
+
+        const resetAllUserSettings = vi.fn();
+        function install(owner: PageLifecycleOwner): void {
+            owner.addListener(resetBtn, 'click', resetAllUserSettings);
+        }
+
+        const first = remember(helpers.jcAcquireConfigPageLifecycle(win, page));
+        install(first!);
+        first!.teardown();
+
+        const second = remember(helpers.jcAcquireConfigPageLifecycle(win, page));
+        install(second!);
+
+        resetBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        expect(resetAllUserSettings).toHaveBeenCalledTimes(1);
+    });
+
+    it('routes the named static action/form listeners through the owner, not raw addEventListener', () => {
+        const source = readSource(CONFIG_PAGE_JS);
+        // The reset-all button is the finding's concrete instance.
+        expect(source).toContain("jcPageLifecycle.addListener(resetAllUserSettingsBtn, 'click', resetAllUserSettings)");
+        expect(source).not.toContain('resetAllUserSettingsBtn.addEventListener(');
+        // Other config-mutating / network action buttons the finding generalizes to.
+        for (const raw of [
+            "clearTagsCacheBtn.addEventListener(",
+            "testSeerrBtn.addEventListener(",
+            "descToggleBtn.addEventListener(",
+            "searchInput.addEventListener(",
+            "searchClear.addEventListener(",
+            "addShortcutBtn.addEventListener(",
+            "form.addEventListener('input'",
+            "form.addEventListener('change'",
+        ]) {
+            expect(source, `still raw: ${raw}`).not.toContain(raw);
+        }
+    });
+});
+
+describe('config-page retest-all timers are lifecycle-owned (#167 finding 2)', () => {
+    const helpers = loadLifecycleHelpers();
+
+    it('AC5: a tracked cancel closure stops an interval + timeout on teardown', () => {
+        // Mirrors the production retest-all wiring: the batch poll interval and
+        // hard-stop timeout are NOT on any DOM node, so a mid-flight page swap
+        // would leave them running against the replacement page. A single
+        // owner-tracked cancel closure clears whichever handles are live.
+        vi.useFakeTimers();
+        try {
+            const owner = remember(helpers.jcCreateConfigPageLifecycle(makePage()));
+            let poll: ReturnType<typeof setInterval> | null = null;
+            let reenable: ReturnType<typeof setTimeout> | null = null;
+            owner.track(() => { if (poll) clearInterval(poll); if (reenable) clearTimeout(reenable); });
+
+            const pollTick = vi.fn();
+            const reenableFire = vi.fn();
+            poll = setInterval(pollTick, 300);
+            reenable = setTimeout(reenableFire, 25000);
+
+            owner.teardown();
+            vi.advanceTimersByTime(60000);
+            expect(pollTick).not.toHaveBeenCalled();
+            expect(reenableFire).not.toHaveBeenCalled();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('source: the retest button and its timers route through the page lifecycle', () => {
+        const source = readSource(CONFIG_PAGE_JS);
+        expect(source).toContain("jcPageLifecycle.addListener(retestAllConnectionsBtn, 'click', function()");
+        expect(source).not.toContain('retestAllConnectionsBtn.addEventListener(');
+        // The cancel closure clears BOTH timer handles and is owner-tracked.
+        const trackIdx = source.indexOf('jcPageLifecycle.track(function() {\n                clearInterval(_jeRetestAllPollTimer);');
+        expect(trackIdx).toBeGreaterThanOrEqual(0);
+        expect(source.slice(trackIdx, trackIdx + 200)).toContain('clearTimeout(_jeRetestAllReenableTimer);');
     });
 });
 
