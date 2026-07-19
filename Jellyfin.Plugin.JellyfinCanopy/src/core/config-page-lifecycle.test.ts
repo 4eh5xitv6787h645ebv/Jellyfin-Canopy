@@ -4,25 +4,31 @@
 // and stylesheet links — so after N visits one click on a category Down arrow
 // moved the row N positions.
 //
-// The fix is install-once / single-ownership, NOT teardown-on-revisit: Jellyfin's
-// legacy view cache can keep several config views alive at once and restores a
-// cached one on Back WITHOUT re-running the script, so tearing a still-cached
-// view's wiring down would strand it. Instead every GLOBAL registration
-// (window/document/matchMedia listener, persistent-ancestor listener,
-// MutationObserver, injected timer) goes through a window-scoped single-slot
-// install (own / ownNode / ownObserver / ownTimer) that replaces the previous
-// visit's copy, and per-view element listeners are simply attached to each fresh
-// view. At most ONE global set is ever live and a cached view keeps its own
-// wiring.
+// The fix is install-once + VIEW-INDEPENDENT globals. Jellyfin's viewContainer
+// caches up to three routed views in the DOM at once (inactive ones hidden with
+// a `.hide` class) and restores a cached one on Back by simply un-hiding it —
+// WITHOUT re-running the script. So the view that is VISIBLE is not necessarily
+// the one that last ran the script (a restored cached view, or — with two fresh
+// views whose external scripts finish out of order — the earlier one). A
+// "newest run wins the global slot" model therefore binds the single
+// window/document handler to a possibly HIDDEN view. Instead every GLOBAL
+// registration (window/document/MediaQueryList listener, persistent-ancestor
+// scroll listener) is installed EXACTLY ONCE per SPA session (installGlobalOnce /
+// installNodeOnce) with a VIEW-INDEPENDENT callback that resolves the visible
+// view live (jcVisibleConfigPage); the arr-instances MutationObserver is a plain
+// PER-VIEW observer that dies with its view; and per-view element listeners are
+// simply attached to each fresh view. Nothing about the owner is stored on
+// `window`, so no admin config DOM (TMDB/Seerr keys) is retained across an
+// identity change.
 //
 // config-page.js is one large page-wiring IIFE served as a classic script and
 // cannot be imported as a module, so — like config-page-seerr-scan.test.ts —
-// this test evaluates marker-bounded production slices (the page-lifecycle
-// owner, the quality-category reorder wiring, the static-control installer and
-// the configPage.html stylesheet loader + bootstrap), evaluates the COMPLETE
-// configPage.html loader for the repeated-load race, and pins the persistent
-// registrations in the full file to the single-slot installers via source drift
-// assertions.
+// this test evaluates marker-bounded production slices (the page-lifecycle owner
+// + visible-view resolver, the quality-category reorder wiring, the drawer
+// globals, the static-control installer and the configPage.html stylesheet
+// loader + bootstrap), evaluates the COMPLETE configPage.html loader for the
+// repeated-load race, and pins the persistent registrations in the full file to
+// the install-once installers via source drift assertions.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as ts from 'typescript';
 
@@ -30,20 +36,16 @@ interface PageLifecycleOwner {
     id: string;
     page: Element | null;
     active: boolean;
-    tracked: unknown[];
-    track<T>(resource: T): T;
-    untrack(resource: unknown): void;
     addListener(el: EventTarget, type: string, fn: EventListener, opts?: boolean | AddEventListenerOptions): void;
-    own(key: string, target: EventTarget, type: string, fn: EventListener, opts?: boolean | AddEventListenerOptions): void;
-    ownNode(node: EventTarget, type: string, fn: EventListener, opts?: boolean | AddEventListenerOptions): void;
-    ownObserver(key: string, node: Node, options: MutationObserverInit, cb: MutationCallback): MutationObserver | null;
-    ownTimer(key: string, id: unknown): unknown;
+    installGlobalOnce(key: string, target: EventTarget, type: string, fn: EventListener, opts?: boolean | AddEventListenerOptions): void;
+    installNodeOnce(node: EventTarget, type: string, fn: EventListener, opts?: boolean | AddEventListenerOptions): void;
 }
 
 interface LifecycleHelpers {
     jcCreateConfigPageLifecycle(pageEl: Element | null, win: Record<string, unknown>): PageLifecycleOwner;
     jcAcquireConfigPageLifecycle(win: Record<string, unknown>, pageEl: Element | null): PageLifecycleOwner | null;
     jcResolveOwnConfigPage(doc: Document, scriptEl: Element | null, selector: string): Element | null;
+    jcVisibleConfigPage(): Element | null;
 }
 
 interface ReorderHelpers {
@@ -53,6 +55,15 @@ interface ReorderHelpers {
         refreshArrows: (container: ParentNode) => void,
         markDirty: () => void,
     ): void;
+}
+
+interface DrawerHelpers {
+    jcDrawerIsMobile(): boolean;
+    jcDrawerParts(shell: Element | null): { shell: Element; toggle: HTMLElement; scrim: HTMLElement; sidebar: HTMLElement; main: HTMLElement } | null;
+    jcDrawerSetOpen(shell: Element | null, open: boolean): void;
+    jcDrawerSyncLayout(shell: Element | null): void;
+    jcDrawerSyncVisible(): void;
+    jcDrawerEscapeVisible(e: KeyboardEvent): void;
 }
 
 interface StyleHelpers {
@@ -102,10 +113,10 @@ function loadLifecycleHelpers(): LifecycleHelpers {
         '/* jc-config-page-lifecycle:start */',
         '/* jc-config-page-lifecycle:end */',
     );
-    // SAFETY: only the marker-bounded lifecycle factory from our local source is
-    // evaluated. It declares plain functions with no DOM/network access at
-    // declaration time.
-    return eval(`(() => {${slice}; return { jcCreateConfigPageLifecycle, jcAcquireConfigPageLifecycle, jcResolveOwnConfigPage }; })()`) as LifecycleHelpers;
+    // SAFETY: only the marker-bounded lifecycle factory + visible-view resolver
+    // from our local source is evaluated. It declares plain functions with no
+    // DOM/network access at declaration time.
+    return eval(`(() => {${slice}; return { jcCreateConfigPageLifecycle, jcAcquireConfigPageLifecycle, jcResolveOwnConfigPage, jcVisibleConfigPage }; })()`) as LifecycleHelpers;
 }
 
 function loadReorderHelpers(): ReorderHelpers {
@@ -117,6 +128,18 @@ function loadReorderHelpers(): ReorderHelpers {
     // SAFETY: only the marker-bounded production wiring function is evaluated;
     // its document, lifecycle owner and callbacks are all injected.
     return eval(`(() => {${slice}; return { jcWireQualityCatAdminReorder }; })()`) as ReorderHelpers;
+}
+
+function loadDrawerHelpers(): DrawerHelpers {
+    const source = readSource(CONFIG_PAGE_JS);
+    // The drawer globals call jcVisibleConfigPage (from the lifecycle slice), so
+    // evaluate both slices together.
+    const lifecycle = markerSlice(source, '/* jc-config-page-lifecycle:start */', '/* jc-config-page-lifecycle:end */');
+    const drawer = markerSlice(source, '/* jc-config-drawer-globals:start */', '/* jc-config-drawer-globals:end */');
+    // SAFETY: only the marker-bounded, view-independent drawer helpers plus the
+    // lifecycle resolver they depend on are evaluated; document/window are jsdom
+    // globals and every element is injected by the test.
+    return eval(`(() => {${lifecycle}\n${drawer}; return { jcDrawerIsMobile, jcDrawerParts, jcDrawerSetOpen, jcDrawerSyncLayout, jcDrawerSyncVisible, jcDrawerEscapeVisible }; })()`) as DrawerHelpers;
 }
 
 function loadStyleHelpers(): StyleHelpers {
@@ -161,6 +184,7 @@ function loadFullBootstrapBody(): string {
     return blocks[blocks.length - 1];
 }
 
+// Appends a visible config view (id="JellyfinCanopyPage") to the body.
 function attachedPage(): HTMLElement {
     const page = document.createElement('div');
     page.id = 'JellyfinCanopyPage';
@@ -168,33 +192,50 @@ function attachedPage(): HTMLElement {
     return page;
 }
 
-// Each test uses a fresh window object so its global-install registry is
-// isolated; the actual listeners land on the SHARED jsdom document/window, so we
-// drain each registry after the test (removing listeners, disconnecting
-// observers, clearing timers) to keep one test's single-slot install from
-// leaking into the next.
+// Appends a HIDDEN cached config view: JF marks inactive views with `.hide`.
+function hiddenPage(): HTMLElement {
+    const page = attachedPage();
+    page.classList.add('hide');
+    return page;
+}
+
+// Every global listener installed via installGlobalOnce lands on the SHARED
+// jsdom document/window/node; the new registry does NOT retain the fn/target
+// (it only records a boolean per key), so tests record what they install and
+// drain it here to keep one test's install from leaking into the next.
 const usedWins: Array<Record<string, unknown>> = [];
+const trackedGlobals: Array<{ target: EventTarget; type: string; fn: EventListener; opts?: unknown }> = [];
+const trackedObservers: MutationObserver[] = [];
+
 function useWin(): Record<string, unknown> {
     const win: Record<string, unknown> = {};
     usedWins.push(win);
     return win;
 }
 
+// Install a global listener through the owner AND record it for teardown.
+function installGlobal(
+    owner: PageLifecycleOwner,
+    key: string,
+    target: EventTarget,
+    type: string,
+    fn: EventListener,
+    opts?: boolean | AddEventListenerOptions,
+): void {
+    owner.installGlobalOnce(key, target, type, fn, opts);
+    trackedGlobals.push({ target, type, fn, opts });
+}
+
 afterEach(() => {
-    usedWins.splice(0).forEach((win) => {
-        const g = win.__jcConfigGlobalInstalls as
-            | { listeners?: Record<string, { target: EventTarget; type: string; fn: EventListener; opts?: unknown }>; observers?: Record<string, MutationObserver>; timers?: Record<string, unknown> }
-            | undefined;
-        if (!g) return;
-        Object.values(g.listeners || {}).forEach((r) => {
-            try { r.target.removeEventListener(r.type, r.fn, r.opts as EventListenerOptions); } catch { /* gone */ }
-        });
-        Object.values(g.observers || {}).forEach((o) => { try { o.disconnect(); } catch { /* gone */ } });
-        Object.values(g.timers || {}).forEach((id) => { try { clearTimeout(id as ReturnType<typeof setTimeout>); } catch { /* gone */ } });
+    trackedGlobals.splice(0).forEach((r) => {
+        try { r.target.removeEventListener(r.type, r.fn, r.opts as EventListenerOptions); } catch { /* gone */ }
     });
+    trackedObservers.splice(0).forEach((o) => { try { o.disconnect(); } catch { /* gone */ } });
+    usedWins.splice(0);
     document.body.innerHTML = '';
     document.head.querySelectorAll('link').forEach((link) => link.remove());
     document.head.querySelectorAll('script').forEach((s) => s.remove());
+    document.documentElement.removeAttribute('data-theme');
     vi.restoreAllMocks();
 });
 
@@ -214,21 +255,35 @@ describe('config-page install-once lifecycle owner (#167)', () => {
         owner.addListener(page, 'pageshow', fn);
         page.dispatchEvent(new Event('pageshow'));
         expect(fn).toHaveBeenCalledTimes(1);
-        expect(win.__jcConfigPageLifecycle).toBe(owner);
     });
 
-    it('AC1: a duplicate execution against the SAME connected view installs nothing', () => {
+    it('security (#167): the owner is NEVER stored on window, so admin config DOM is not retained across an identity change', () => {
+        const win = useWin();
+        const page = attachedPage();
+        helpers.jcAcquireConfigPageLifecycle(win, page);
+        // No global handle to the admin page (which would carry TMDB/Seerr keys).
+        expect(win.__jcConfigPageLifecycle).toBeUndefined();
+        // The only global state is an install-once bookkeeping registry: a
+        // boolean-keyed map + a WeakSet of persistent nodes — no page reference.
+        const reg = win.__jcConfigGlobalInstalls as { installed: Record<string, unknown>; nodes: unknown } | undefined;
+        expect(reg).toBeDefined();
+        expect(Object.keys(reg!).sort()).toEqual(['installed', 'nodes']);
+        Object.values(reg!.installed).forEach((v) => expect(typeof v).toBe('boolean'));
+        // The duplicate-run guard lives on the ELEMENT, not on window.
+        expect(page.dataset.jcConfigWired).toBe('1');
+    });
+
+    it('AC1: a duplicate execution against the SAME view installs nothing (per-element dataset guard)', () => {
         const win = useWin();
         const page = attachedPage();
         const first = helpers.jcAcquireConfigPageLifecycle(win, page)!;
         expect(first).not.toBeNull();
-        // Second script execution for the SAME live view: acquisition refuses, so
-        // the IIFE bails before any wiring.
+        // Second script execution for the SAME view: acquisition refuses, so the
+        // IIFE bails before any wiring.
         expect(helpers.jcAcquireConfigPageLifecycle(win, page)).toBeNull();
-        expect(win.__jcConfigPageLifecycle).toBe(first);
     });
 
-    it('AC1: N visits keep exactly ONE live global document listener (single-slot own)', () => {
+    it('AC1/AC5: N visits install exactly ONE global document listener and never rebind (install-once, no teardown churn)', () => {
         const win = useWin();
         const addSpy = vi.spyOn(document, 'addEventListener');
         const removeSpy = vi.spyOn(document, 'removeEventListener');
@@ -239,78 +294,45 @@ describe('config-page install-once lifecycle owner (#167)', () => {
             expect(owner).not.toBeNull();
             const h = vi.fn();
             handlers.push(h);
-            owner.own('demoClick', document, 'click', h);
+            installGlobal(owner, 'demoClick', document, 'click', h);
         }
 
         const adds = addSpy.mock.calls.filter((c) => c[0] === 'click').length;
         const removes = removeSpy.mock.calls.filter((c) => c[0] === 'click').length;
-        expect(adds).toBe(4);
-        // Adds minus removes is exactly one regardless of visit count.
-        expect(adds - removes).toBe(1);
+        // Installed exactly once; the count NEVER grows and nothing is ever
+        // removed/rebound (the whole point vs. the old newest-wins single slot).
+        expect(adds).toBe(1);
+        expect(removes).toBe(0);
 
-        // Only the CURRENT visit's callback fires — retained handlers are gone.
+        // The one installed (first) handler serves every visit; no duplicate fires.
         document.body.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-        expect(handlers[0]).not.toHaveBeenCalled();
+        expect(handlers[0]).toHaveBeenCalledTimes(1);
         expect(handlers[1]).not.toHaveBeenCalled();
         expect(handlers[2]).not.toHaveBeenCalled();
-        expect(handlers[3]).toHaveBeenCalledTimes(1);
+        expect(handlers[3]).not.toHaveBeenCalled();
     });
 
-    it('AC1: N visits keep exactly ONE live MutationObserver (single-slot ownObserver)', () => {
-        const win = useWin();
-        const root = document.createElement('div');
-        document.body.appendChild(root);
-        const observers: Array<MutationObserver | null> = [];
-
-        for (let i = 0; i < 4; i++) {
-            const owner = helpers.jcAcquireConfigPageLifecycle(win, attachedPage())!;
-            observers.push(owner.ownObserver('demoObs', root, { childList: true }, vi.fn()));
-        }
-
-        root.appendChild(document.createElement('span'));
-        // Prior visits' observers were disconnected (a disconnected observer's
-        // takeRecords is empty); only the last is still observing.
-        expect(observers[0]!.takeRecords()).toHaveLength(0);
-        expect(observers[1]!.takeRecords()).toHaveLength(0);
-        expect(observers[2]!.takeRecords()).toHaveLength(0);
-        expect(observers[3]!.takeRecords()).toHaveLength(1);
-
-        const reg = win.__jcConfigGlobalInstalls as { observers: Record<string, unknown> };
-        expect(Object.keys(reg.observers)).toEqual(['demoObs']);
-    });
-
-    it('ownTimer keeps a single pending re-check timer across visits', () => {
-        vi.useFakeTimers();
-        try {
-            const win = useWin();
-            const fn = vi.fn();
-            helpers.jcAcquireConfigPageLifecycle(win, attachedPage())!.ownTimer('t', setTimeout(fn, 600));
-            helpers.jcAcquireConfigPageLifecycle(win, attachedPage())!.ownTimer('t', setTimeout(fn, 600));
-            vi.advanceTimersByTime(600);
-            // The first visit's timer was cleared when the second visit installed.
-            expect(fn).toHaveBeenCalledTimes(1);
-        } finally {
-            vi.useRealTimers();
-        }
-    });
-
-    it('ownNode replaces a persistent ancestor’s prior scroll handler across visits', () => {
+    it('installNodeOnce keeps a single scroll handler on a PERSISTENT chrome node across visits', () => {
         const win = useWin();
         const ancestor = document.createElement('div');
         document.body.appendChild(ancestor);
+        const addSpy = vi.spyOn(ancestor, 'addEventListener');
         const h1 = vi.fn();
         const h2 = vi.fn();
-        helpers.jcAcquireConfigPageLifecycle(win, attachedPage())!.ownNode(ancestor, 'scroll', h1);
-        helpers.jcAcquireConfigPageLifecycle(win, attachedPage())!.ownNode(ancestor, 'scroll', h2);
+        // Two visits reuse the same persistent ancestor node.
+        helpers.jcAcquireConfigPageLifecycle(win, attachedPage())!.installNodeOnce(ancestor, 'scroll', h1);
+        helpers.jcAcquireConfigPageLifecycle(win, attachedPage())!.installNodeOnce(ancestor, 'scroll', h2);
+        trackedGlobals.push({ target: ancestor, type: 'scroll', fn: h1 });
+        trackedGlobals.push({ target: ancestor, type: 'scroll', fn: h2 });
+        expect(addSpy.mock.calls.filter((c) => c[0] === 'scroll')).toHaveLength(1);
         ancestor.dispatchEvent(new Event('scroll'));
-        expect(h1).not.toHaveBeenCalled();
-        expect(h2).toHaveBeenCalledTimes(1);
+        expect(h1).toHaveBeenCalledTimes(1);
+        expect(h2).not.toHaveBeenCalled();
     });
 
-    it('finding 1: a fresh visit NEVER tears the prior (cached) view down — its own element listeners keep working', () => {
-        // The whole reason teardown-on-revisit is wrong: Jellyfin can restore the
-        // cached prior view on Back without re-running the script, so its wiring
-        // must survive a later visit.
+    it('a fresh visit NEVER tears the prior (cached) view down — its own element listeners keep working', () => {
+        // Jellyfin can restore the cached prior view on Back without re-running
+        // the script, so its wiring must survive a later visit.
         const win = useWin();
         const pageA = attachedPage();
         const ownerA = helpers.jcAcquireConfigPageLifecycle(win, pageA)!;
@@ -324,7 +346,6 @@ describe('config-page install-once lifecycle owner (#167)', () => {
         const ownerB = helpers.jcAcquireConfigPageLifecycle(win, pageB)!;
         expect(ownerB).not.toBe(ownerA);
         expect(ownerA.active).toBe(true); // never retired
-        expect(win.__jcConfigPageLifecycle).toBe(ownerB);
 
         // A's button still works after visit B installed.
         btnA.dispatchEvent(new MouseEvent('click', { bubbles: true }));
@@ -332,17 +353,46 @@ describe('config-page install-once lifecycle owner (#167)', () => {
     });
 });
 
+describe('config-page visible-view resolver (#167)', () => {
+    const helpers = loadLifecycleHelpers();
+
+    it('returns the VISIBLE view, skipping hidden cached ones and preferring the freshest', () => {
+        const stale = hiddenPage();
+        const visible = attachedPage();
+        stale.setAttribute('data-slot', 'cached');
+        visible.setAttribute('data-slot', 'visible');
+        // querySelector returns the FIRST (stale, hidden) match; the resolver must not.
+        expect(document.querySelector('#JellyfinCanopyPage')).toBe(stale);
+        expect(helpers.jcVisibleConfigPage()).toBe(visible);
+    });
+
+    it('skips a view hidden via a `.hide` ANCESTOR', () => {
+        const wrapper = document.createElement('div');
+        wrapper.classList.add('hide');
+        const nested = document.createElement('div');
+        nested.id = 'JellyfinCanopyPage';
+        wrapper.appendChild(nested);
+        document.body.appendChild(wrapper);
+        const visible = attachedPage();
+        expect(helpers.jcVisibleConfigPage()).toBe(visible);
+    });
+
+    it('returns null when no config view is present', () => {
+        expect(helpers.jcVisibleConfigPage()).toBeNull();
+    });
+});
+
 describe('config-page quality-category reorder wiring (#167 AC3)', () => {
     const lifecycle = loadLifecycleHelpers();
     const reorder = loadReorderHelpers();
 
-    function buildRows(): { container: HTMLElement; order: () => string[] } {
+    function buildRows(parent: HTMLElement): () => string[] {
         const container = document.createElement('div');
         container.id = 'qualityCategoriesAdmin';
         // THREE rows, deliberately: with only two rows a duplicated retained
         // handler would find no next sibling after the first move and the old
         // defect would falsely pass. With three rows the pre-fix behavior after
-        // two visits produces B,C,A instead of B,A,C.
+        // two visits produced b,c,a instead of b,a,c.
         ['a', 'b', 'c'].forEach((id) => {
             const row = document.createElement('div');
             row.className = 'jc-quality-cat-admin-row';
@@ -355,36 +405,44 @@ describe('config-page quality-category reorder wiring (#167 AC3)', () => {
             row.appendChild(down);
             container.appendChild(row);
         });
-        document.body.appendChild(container);
-        return {
-            container,
-            order: () => Array.from(container.querySelectorAll('.jc-quality-cat-admin-row'))
-                .map((row) => (row as HTMLElement).dataset.catId!),
-        };
+        parent.appendChild(container);
+        return () => Array.from(container.querySelectorAll('.jc-quality-cat-admin-row'))
+            .map((row) => (row as HTMLElement).dataset.catId!);
     }
 
-    it('AC3: after repeated dashboard visits, ONE Down click moves the row EXACTLY ONE position', () => {
+    it('AC3 + finding 1/2: repeated visits keep ONE delegate that acts on the VISIBLE view, moving its Down-clicked row EXACTLY ONE position', () => {
         const win = useWin();
         const refreshArrows = vi.fn();
         const markDirty = vi.fn();
+        const addSpy = vi.spyOn(document, 'addEventListener');
 
-        // Four visits, each a fresh view re-running the IIFE. Because every visit
-        // shares the window registry, the delegated document handler is single-
-        // slotted: the newest replaces the prior, so exactly one is ever live.
+        // Four visits, each a fresh view re-running the reorder wiring. The FIRST
+        // installs the single document delegate; the rest are install-once no-ops.
+        const owners: PageLifecycleOwner[] = [];
         for (let i = 0; i < 4; i++) {
-            const owner = lifecycle.jcAcquireConfigPageLifecycle(win, attachedPage())!;
-            expect(owner).not.toBeNull();
+            const owner = lifecycle.jcAcquireConfigPageLifecycle(win, i === 0 ? hiddenPage() : attachedPage())!;
+            owners.push(owner);
             reorder.jcWireQualityCatAdminReorder(document, owner, refreshArrows, markDirty);
         }
+        // Record the single installed delegate for teardown.
+        const clickAdds = addSpy.mock.calls.filter((c) => c[0] === 'click');
+        expect(clickAdds).toHaveLength(1);
+        trackedGlobals.push({ target: document, type: 'click', fn: clickAdds[0][1] as EventListener });
 
-        const { container, order } = buildRows();
-        expect(order()).toEqual(['a', 'b', 'c']);
-        container.querySelector<HTMLButtonElement>('.jc-quality-cat-admin-row .jc-cat-down')!
+        // The delegate was installed by visit 0 (a HIDDEN view), yet it must serve
+        // whichever view is visible. Build rows in BOTH a hidden and the visible view.
+        const hidden = document.querySelector('#JellyfinCanopyPage')!; // first = the hidden one
+        const visible = lifecycle.jcVisibleConfigPage() as HTMLElement;
+        const hiddenOrder = buildRows(hidden as HTMLElement);
+        const visibleOrder = buildRows(visible);
+        expect(visibleOrder()).toEqual(['a', 'b', 'c']);
+
+        // ONE click on the VISIBLE view's first Down arrow moves ONE position.
+        visible.querySelector<HTMLButtonElement>('.jc-quality-cat-admin-row .jc-cat-down')!
             .dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
 
-        // Exactly one move (a,b,c -> b,a,c) and exactly one dirty mark. The pre-fix
-        // retained handlers produced b,c,a and four dirty marks.
-        expect(order()).toEqual(['b', 'a', 'c']);
+        expect(visibleOrder()).toEqual(['b', 'a', 'c']); // exactly one move, not four
+        expect(hiddenOrder()).toEqual(['a', 'b', 'c']);   // the hidden view is untouched
         expect(markDirty).toHaveBeenCalledTimes(1);
         expect(refreshArrows).toHaveBeenCalledTimes(1);
     });
@@ -393,10 +451,14 @@ describe('config-page quality-category reorder wiring (#167 AC3)', () => {
         const win = useWin();
         const refreshArrows = vi.fn();
         const markDirty = vi.fn();
+        const addSpy = vi.spyOn(document, 'addEventListener');
         const owner = lifecycle.jcAcquireConfigPageLifecycle(win, attachedPage())!;
         reorder.jcWireQualityCatAdminReorder(document, owner, refreshArrows, markDirty);
+        const clickAdds = addSpy.mock.calls.filter((c) => c[0] === 'click');
+        trackedGlobals.push({ target: document, type: 'click', fn: clickAdds[0][1] as EventListener });
 
-        const { container, order } = buildRows();
+        const order = buildRows(document.body);
+        const container = document.querySelector('#qualityCategoriesAdmin')!;
         const firstDown = container.querySelector<HTMLButtonElement>('.jc-quality-cat-admin-row .jc-cat-down')!;
         firstDown.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
         expect(order()).toEqual(['b', 'a', 'c']);
@@ -413,47 +475,81 @@ describe('config-page quality-category reorder wiring (#167 AC3)', () => {
     });
 });
 
-describe('configPage.html stylesheet loader (#167 AC2)', () => {
-    const style = loadStyleHelpers();
+describe('config-page drawer globals act on the VISIBLE view (#167 findings 1/2/6/8)', () => {
+    const lifecycle = loadLifecycleHelpers();
+    const drawer = loadDrawerHelpers();
 
-    it('AC2: repeated loads with the same cache key keep exactly ONE stylesheet link', () => {
-        const href = '/JellyfinCanopy/Configuration/configPage.css?v=abc';
-        style.jcEnsureCanopyConfigStylesheet(document, href);
-        style.jcEnsureCanopyConfigStylesheet(document, href);
-        style.jcEnsureCanopyConfigStylesheet(document, href);
-        const links = document.head.querySelectorAll('link[rel="stylesheet"]');
-        expect(links).toHaveLength(1);
-        expect(links[0].getAttribute('href')).toBe(href);
+    function buildShell(parent: HTMLElement, open: boolean): HTMLElement {
+        const shell = document.createElement('div');
+        shell.className = 'content-primary jc-shell';
+        if (open) shell.classList.add('jc-nav-open');
+        shell.innerHTML = `
+            <button class="jc-nav-toggle" aria-expanded="${open ? 'true' : 'false'}"></button>
+            <div class="jc-nav-scrim"></div>
+            <aside class="jc-sidebar"></aside>
+            <div class="jc-main"></div>
+        `;
+        parent.appendChild(shell);
+        return shell;
+    }
+
+    it('Escape closes the drawer on the VISIBLE view, not on a hidden cached view — installed ONCE across visits', () => {
+        const win = useWin();
+        const addSpy = vi.spyOn(document, 'addEventListener');
+
+        // Visit A creates a HIDDEN cached view with an open drawer; visit B is the
+        // VISIBLE view, also with an open drawer.
+        const cachedPage = hiddenPage();
+        const cachedShell = buildShell(cachedPage, true);
+        const visiblePage = attachedPage();
+        const visibleShell = buildShell(visiblePage, true);
+
+        // Both visits install the Escape handler; install-once means exactly one lands.
+        const ownerA = lifecycle.jcAcquireConfigPageLifecycle(win, cachedPage)!;
+        const ownerB = lifecycle.jcAcquireConfigPageLifecycle(win, visiblePage)!;
+        const escHandler: EventListener = (e) => drawer.jcDrawerEscapeVisible(e as KeyboardEvent);
+        installGlobal(ownerA, 'drawerEsc', document, 'keydown', escHandler);
+        installGlobal(ownerB, 'drawerEsc', document, 'keydown', escHandler);
+        expect(addSpy.mock.calls.filter((c) => c[0] === 'keydown')).toHaveLength(1);
+
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+
+        // The single handler resolves the VISIBLE view live and closes ITS drawer.
+        expect(visibleShell.classList.contains('jc-nav-open')).toBe(false);
+        expect(visibleShell.querySelector('.jc-nav-toggle')!.getAttribute('aria-expanded')).toBe('false');
+        // The hidden cached view is untouched.
+        expect(cachedShell.classList.contains('jc-nav-open')).toBe(true);
     });
 
-    it('AC2: an in-session cache-key change updates the ONE link in place', () => {
-        style.jcEnsureCanopyConfigStylesheet(document, '/JellyfinCanopy/Configuration/configPage.css?v=old');
-        style.jcEnsureCanopyConfigStylesheet(document, '/JellyfinCanopy/Configuration/configPage.css?v=new');
-        const links = document.head.querySelectorAll('link[rel="stylesheet"]');
-        expect(links).toHaveLength(1);
-        expect(links[0].getAttribute('href')).toBe('/JellyfinCanopy/Configuration/configPage.css?v=new');
+    it('jcDrawerSyncVisible targets the visible shell', () => {
+        useWin();
+        const cachedPage = hiddenPage();
+        buildShell(cachedPage, true);
+        const visiblePage = attachedPage();
+        const visibleShell = buildShell(visiblePage, true);
+        // Desktop (matchMedia unstubbed -> jcDrawerIsMobile()===false): sync clears
+        // the open state and resets aria on the VISIBLE shell only.
+        drawer.jcDrawerSyncVisible();
+        expect(visibleShell.classList.contains('jc-nav-open')).toBe(false);
+        expect(visibleShell.querySelector('.jc-nav-toggle')!.getAttribute('aria-expanded')).toBe('false');
     });
 
-    it('AC2 (in-session upgrade): adopts UNMARKED pre-fix links so no N+1 copy is appended', () => {
-        for (const v of ['a', 'b', 'c']) {
-            const legacy = document.createElement('link');
-            legacy.rel = 'stylesheet';
-            legacy.setAttribute('href', '/JellyfinCanopy/Configuration/configPage.css?v=' + v);
-            document.head.appendChild(legacy);
-        }
-        const unrelated = document.createElement('link');
-        unrelated.rel = 'stylesheet';
-        unrelated.setAttribute('href', '/web/themes/dark/theme.css');
-        document.head.appendChild(unrelated);
+    it('AC4: jcDrawerSetOpen toggles a single view’s drawer (open/close), unchanged behavior', () => {
+        const shell = buildShell(document.body, false);
+        drawer.jcDrawerSetOpen(shell, true);
+        expect(shell.classList.contains('jc-nav-open')).toBe(true);
+        expect(shell.querySelector('.jc-nav-toggle')!.getAttribute('aria-expanded')).toBe('true');
+        drawer.jcDrawerSetOpen(shell, false);
+        expect(shell.classList.contains('jc-nav-open')).toBe(false);
+        expect(shell.querySelector('.jc-nav-toggle')!.getAttribute('aria-expanded')).toBe('false');
+    });
 
-        style.jcEnsureCanopyConfigStylesheet(document, '/JellyfinCanopy/Configuration/configPage.css?v=upgraded');
-
-        const configLinks = Array.from(document.head.querySelectorAll('link[rel="stylesheet"]'))
-            .filter((l) => (l.getAttribute('href') || '').split('?')[0] === '/JellyfinCanopy/Configuration/configPage.css');
-        expect(configLinks).toHaveLength(1);
-        expect(configLinks[0].getAttribute('href')).toBe('/JellyfinCanopy/Configuration/configPage.css?v=upgraded');
-        expect(configLinks[0].getAttribute('data-jc-canopy-config-style')).toBe('1');
-        expect(document.head.querySelector('link[href="/web/themes/dark/theme.css"]')).not.toBeNull();
+    it('jcDrawerParts returns null when the shell markup is incomplete', () => {
+        const bare = document.createElement('div');
+        bare.className = 'jc-shell';
+        document.body.appendChild(bare);
+        expect(drawer.jcDrawerParts(bare)).toBeNull();
+        expect(drawer.jcDrawerParts(null)).toBeNull();
     });
 });
 
@@ -496,10 +592,9 @@ describe('config-page owning-view resolution under JF12 duplicate cached views (
         const first = helpers.jcAcquireConfigPageLifecycle(win, stale)!;
         expect(first).not.toBeNull();
 
-        // Visit 2: the fresh view re-runs the IIFE and resolves its OWN view. It is
-        // a DIFFERENT element, so acquisition returns a LIVE owner (never null,
-        // which would leave the visible page dead) — without retiring the cached
-        // stale owner.
+        // Visit 2: the fresh view resolves its OWN view. It is a DIFFERENT element,
+        // so acquisition returns a LIVE owner (never null, which would leave the
+        // visible page dead) — without retiring the cached stale owner.
         const resolved = helpers.jcResolveOwnConfigPage(document, script, '#JellyfinCanopyPage');
         expect(resolved).toBe(fresh);
         const second = helpers.jcAcquireConfigPageLifecycle(win, resolved)!;
@@ -587,7 +682,7 @@ describe('config-page static control listeners are lifecycle-owned (#167)', () =
         staticControls.jcWireStaticControlListeners(c.page, first);
         expect(streamAdd.mock.calls.filter((x) => x[0] === 'change')).toHaveLength(1);
 
-        // The IIFE re-runs against the SAME live view — acquisition refuses, so the
+        // The IIFE re-runs against the SAME view — acquisition refuses, so the
         // installer never runs again; exactly one change listener remains.
         expect(lifecycle.jcAcquireConfigPageLifecycle(win, c.page)).toBeNull();
         expect(streamAdd.mock.calls.filter((x) => x[0] === 'change')).toHaveLength(1);
@@ -597,7 +692,7 @@ describe('config-page static control listeners are lifecycle-owned (#167)', () =
         expect(c.activeContainer.style.display).toBe('');
     });
 
-    it('findings 5/9: wires the PASSED own view, not a stale duplicate carrying the same ids', () => {
+    it('wires the PASSED own view, not a stale duplicate carrying the same ids', () => {
         const win = useWin();
         const stale = buildControls();
         const fresh = buildControls();
@@ -614,26 +709,64 @@ describe('config-page static control listeners are lifecycle-owned (#167)', () =
     });
 });
 
-describe('configPage.html bootstrap install-once claim (#167 findings 3/4/6/8)', () => {
+describe('configPage.html stylesheet loader (#167 AC2)', () => {
+    const style = loadStyleHelpers();
+
+    it('AC2: repeated loads with the same cache key keep exactly ONE stylesheet link', () => {
+        const href = '/JellyfinCanopy/Configuration/configPage.css?v=abc';
+        style.jcEnsureCanopyConfigStylesheet(document, href);
+        style.jcEnsureCanopyConfigStylesheet(document, href);
+        style.jcEnsureCanopyConfigStylesheet(document, href);
+        const links = document.head.querySelectorAll('link[rel="stylesheet"]');
+        expect(links).toHaveLength(1);
+        expect(links[0].getAttribute('href')).toBe(href);
+    });
+
+    it('AC2: an in-session cache-key change updates the ONE link in place', () => {
+        style.jcEnsureCanopyConfigStylesheet(document, '/JellyfinCanopy/Configuration/configPage.css?v=old');
+        style.jcEnsureCanopyConfigStylesheet(document, '/JellyfinCanopy/Configuration/configPage.css?v=new');
+        const links = document.head.querySelectorAll('link[rel="stylesheet"]');
+        expect(links).toHaveLength(1);
+        expect(links[0].getAttribute('href')).toBe('/JellyfinCanopy/Configuration/configPage.css?v=new');
+    });
+
+    it('AC2 (in-session upgrade): adopts UNMARKED pre-fix links so no N+1 copy is appended', () => {
+        for (const v of ['a', 'b', 'c']) {
+            const legacy = document.createElement('link');
+            legacy.rel = 'stylesheet';
+            legacy.setAttribute('href', '/JellyfinCanopy/Configuration/configPage.css?v=' + v);
+            document.head.appendChild(legacy);
+        }
+        const unrelated = document.createElement('link');
+        unrelated.rel = 'stylesheet';
+        unrelated.setAttribute('href', '/web/themes/dark/theme.css');
+        document.head.appendChild(unrelated);
+
+        style.jcEnsureCanopyConfigStylesheet(document, '/JellyfinCanopy/Configuration/configPage.css?v=upgraded');
+
+        const configLinks = Array.from(document.head.querySelectorAll('link[rel="stylesheet"]'))
+            .filter((l) => (l.getAttribute('href') || '').split('?')[0] === '/JellyfinCanopy/Configuration/configPage.css');
+        expect(configLinks).toHaveLength(1);
+        expect(configLinks[0].getAttribute('href')).toBe('/JellyfinCanopy/Configuration/configPage.css?v=upgraded');
+        expect(configLinks[0].getAttribute('data-jc-canopy-config-style')).toBe('1');
+        expect(document.head.querySelector('link[href="/web/themes/dark/theme.css"]')).not.toBeNull();
+    });
+});
+
+describe('configPage.html bootstrap install-once claim (#167)', () => {
     const boot = loadBootstrapHelpers();
 
     it('claims a fresh view exactly once; every later re-run on the same view bails', () => {
         const page = attachedPage();
-        // First run claims.
         expect(boot.jcClaimConfigBootstrap(page)).toBe(true);
-        // Every subsequent run on the same view — including while the first script
-        // is still in flight — is a permanent no-op. There is NO owner-liveness
-        // escape hatch, so two runs can never race over shared page state.
         expect(boot.jcClaimConfigBootstrap(page)).toBe(false);
         expect(boot.jcClaimConfigBootstrap(page)).toBe(false);
-        // A different fresh view is claimed independently.
         expect(boot.jcClaimConfigBootstrap(attachedPage())).toBe(true);
     });
 
     it('re-claims a view whose claim was rolled back (script load failure)', () => {
         const page = attachedPage();
         expect(boot.jcClaimConfigBootstrap(page)).toBe(true);
-        // onerror rolls the claim back so a later visit can retry.
         delete page.dataset.jcConfigBootstrapped;
         expect(boot.jcClaimConfigBootstrap(page)).toBe(true);
     });
@@ -643,7 +776,7 @@ describe('configPage.html bootstrap install-once claim (#167 findings 3/4/6/8)',
     });
 });
 
-describe('configPage.html FULL bootstrap loader — repeated runs (#167 finding test:666)', () => {
+describe('configPage.html FULL bootstrap loader — repeated runs (#167)', () => {
     const bootstrapBody = loadFullBootstrapBody();
     let priorApiClient: unknown;
 
@@ -664,8 +797,6 @@ describe('configPage.html FULL bootstrap loader — repeated runs (#167 finding 
         priorApiClient = (globalThis as Record<string, unknown>).ApiClient;
         document.body.innerHTML = '';
         document.head.innerHTML = '';
-        // The baked cache-key path (a plugin <script version>) keeps loadConfigScript
-        // synchronous — no fetch fallback in the test.
         const plugin = document.createElement('script');
         plugin.setAttribute('plugin', 'Jellyfin Canopy');
         plugin.setAttribute('version', 'k1');
@@ -679,23 +810,15 @@ describe('configPage.html FULL bootstrap loader — repeated runs (#167 finding 
     it('two loader runs on the SAME view keep ONE script + ONE bootstrap listener, replay pageshow once, and drop the node on load', () => {
         const page = attachedPage();
 
-        // Run 1: appends exactly one external script and claims the view.
         runFullLoader();
         expect(configScripts(page)).toHaveLength(1);
         expect(page.dataset.jcConfigBootstrapped).toBe('1');
 
-        // A pageshow fires before the external script finished loading (recorded by
-        // the one-shot bootstrap listener).
         page.dispatchEvent(new CustomEvent('pageshow'));
 
-        // Run 2 (duplicate loader against the already-claimed view): must bail — no
-        // second script node, no second bootstrap listener.
         runFullLoader();
         expect(configScripts(page)).toHaveLength(1);
 
-        // When the (single) external script "loads", the recorded pageshow is
-        // replayed EXACTLY once, the one-shot listener is retired and the now-inert
-        // <script> node is removed.
         const replay = vi.fn();
         page.addEventListener('pageshow', replay);
         const script = configScripts(page)[0] as HTMLScriptElement & { onload: () => void };
@@ -711,42 +834,42 @@ describe('configPage.html FULL bootstrap loader — repeated runs (#167 finding 
         runFullLoader();
         expect(configScripts(page)).toHaveLength(1);
 
-        // Transient fetch failure: node removed, claim released.
         const first = configScripts(page)[0] as HTMLScriptElement & { onerror: () => void };
         first.onerror();
         expect(configScripts(page)).toHaveLength(0);
         expect(page.dataset.jcConfigBootstrapped).toBeUndefined();
 
-        // A later visit retries and installs exactly one fresh script.
         runFullLoader();
         expect(configScripts(page)).toHaveLength(1);
     });
 });
 
-describe('config-page persistent registrations stay single-slotted (#167 drift guard)', () => {
+describe('config-page globals stay install-once + view-independent (#167 drift guard)', () => {
     const source = readSource(CONFIG_PAGE_JS);
     const html = readSource(CONFIG_PAGE_HTML);
 
-    it('routes every persistent window/document listener through a single-slot install', () => {
-        // No raw or plainly-attached persistent window/document listeners survive.
+    it('the old newest-wins single-slot machinery is GONE', () => {
+        // No teardown/handoff/single-slot own* API and no window-retained owner.
+        expect(source).not.toContain('__jcConfigPageLifecycle');
+        expect(source).not.toContain('.ownObserver(');
+        expect(source).not.toContain('.ownNode(');
+        expect(source).not.toContain('.ownTimer(');
+        expect(countOccurrences(source, 'jcPageLifecycle.own(')).toBe(0);
+        expect(countOccurrences(source, 'lifecycle.own(')).toBe(0);
+    });
+
+    it('routes every persistent window/document listener through installGlobalOnce with a view-independent callback', () => {
         expect(source).not.toContain('window.addEventListener(');
         expect(countOccurrences(source, 'jcPageLifecycle.addListener(window,')).toBe(0);
         expect(countOccurrences(source, 'jcPageLifecycle.addListener(document,')).toBe(0);
 
-        // window: theme load + sticky scroll are single-slotted.
-        expect(source).toContain("jcPageLifecycle.own('themeLoad', window, 'load', _jeDetectTheme)");
-        expect(source).toContain("jcPageLifecycle.own('stickyScrollWindow', window, 'scroll', onScroll, { passive: true })");
-        // The late theme re-check timer is single-slotted.
-        expect(source).toContain("jcPageLifecycle.ownTimer('themeTimer', setTimeout(_jeDetectTheme, 600))");
-        // MediaQueryList change is single-slotted.
-        expect(source).toContain("jcPageLifecycle.own('drawerMedia', drawerMedia, 'change', syncLayoutMode)");
-
-        // document delegates: drawer Escape + pages-order + banner outside-click in
-        // the main body, plus the quality-category reorder inside the injected fn.
-        expect(countOccurrences(source, "jcPageLifecycle.own('drawerEsc', document, 'keydown'")).toBe(1);
-        expect(countOccurrences(source, "jcPageLifecycle.own('pagesOrderReorder', document, 'click'")).toBe(1);
-        expect(countOccurrences(source, "jcPageLifecycle.own('bannerOutsideClick', document, 'click'")).toBe(1);
-        expect(countOccurrences(source, "lifecycle.own('qualityCatReorder', doc, 'click'")).toBe(1);
+        expect(source).toContain("jcPageLifecycle.installGlobalOnce('themeLoad', window, 'load', jcDetectThemeVisible)");
+        expect(source).toContain("jcPageLifecycle.installGlobalOnce('stickyScrollWindow', window, 'scroll', jcStickyScrollOnScroll, { passive: true })");
+        expect(source).toContain("jcPageLifecycle.installGlobalOnce('drawerMedia', drawerMedia, 'change', jcDrawerSyncVisible)");
+        expect(countOccurrences(source, "jcPageLifecycle.installGlobalOnce('drawerEsc', document, 'keydown', jcDrawerEscapeVisible)")).toBe(1);
+        expect(countOccurrences(source, "jcPageLifecycle.installGlobalOnce('pagesOrderReorder', document, 'click'")).toBe(1);
+        expect(countOccurrences(source, "jcPageLifecycle.installGlobalOnce('bannerOutsideClick', document, 'click'")).toBe(1);
+        expect(countOccurrences(source, "lifecycle.installGlobalOnce('qualityCatReorder', doc, 'click'")).toBe(1);
 
         // The ONLY raw document listener left is the self-cleaning preview-modal
         // keydown (added on open, removed on close — not a per-visit registration).
@@ -754,27 +877,40 @@ describe('config-page persistent registrations stay single-slotted (#167 drift g
         expect(source).toContain("document.addEventListener('keydown', onKey);");
     });
 
-    it('constructs MutationObservers only through the single-slot ownObserver', () => {
-        // Exactly one `new MutationObserver` in the whole file: inside ownObserver.
+    it('the global callbacks resolve the VISIBLE view live (never a captured page)', () => {
+        expect(source).toContain('function jcVisibleConfigPage()');
+        // Drawer / theme / sticky globals all funnel through jcVisibleConfigPage.
+        expect(source).toContain('function jcDrawerSyncVisible()');
+        expect(source).toContain('function jcDrawerEscapeVisible(e)');
+        expect(source).toContain('function jcDetectThemeVisible()');
+        expect(source).toContain('var page = jcVisibleConfigPage();');
+        expect(countOccurrences(source, 'jcVisibleConfigPage()')).toBeGreaterThanOrEqual(4);
+    });
+
+    it('the arr-instances observer is a plain PER-VIEW MutationObserver, not a global slot', () => {
+        // Exactly one `new MutationObserver` in the whole file, created inline in
+        // the arr wiring and observed on this view's node.
         expect(countOccurrences(source, 'new MutationObserver(')).toBe(1);
-        expect(source).toContain("jcPageLifecycle.ownObserver('arrInstances:' + id, root, { childList: true, subtree: true }, refresh)");
+        expect(source).toContain('var obs = new MutationObserver(refresh);');
+        expect(source).toContain('obs.observe(root, { childList: true, subtree: true });');
     });
 
-    it('single-slots persistent scroll-ancestor listeners per node', () => {
-        expect(source).toContain("jcPageLifecycle.ownNode(n, 'scroll', onScroll, { passive: true })");
+    it('single-slots persistent scroll-ancestor listeners per node via installNodeOnce', () => {
+        expect(source).toContain("jcPageLifecycle.installNodeOnce(n, 'scroll', jcStickyScrollOnScroll, { passive: true })");
     });
 
-    it('the lifecycle owner is install-once: no teardown/dispose machinery remains', () => {
+    it('the lifecycle owner is install-once with no teardown/dispose machinery', () => {
         const slice = markerSlice(source, '/* jc-config-page-lifecycle:start */', '/* jc-config-page-lifecycle:end */');
         expect(slice).toContain("id: 'jc-config-wired'");
-        expect(slice).toContain('own: function (key, target, type, fn, opts)');
-        expect(slice).toContain('ownObserver: function (key, node, options, cb)');
-        expect(slice).toContain('ownNode: function (node, type, fn, opts)');
-        expect(slice).toContain('ownTimer: function (key, id)');
+        expect(slice).toContain('installGlobalOnce: function (key, target, type, fn, opts)');
+        expect(slice).toContain('installNodeOnce: function (node, type, fn, opts)');
+        // Acquire guards on a per-element dataset flag, not a window sentinel.
+        expect(slice).toContain("pageEl.dataset.jcConfigWired === '1'");
         // The removed teardown-on-revisit machinery must be gone.
         expect(source).not.toContain('jcDisposeLifecycleResource');
         expect(source).not.toContain('.teardown(');
-        expect(source).not.toContain('compareDocumentPosition');
+        expect(source).not.toContain('.track(');
+        expect(source).not.toContain('.untrack(');
     });
 
     it('installs the static-control listeners from EXACTLY ONE call site, scoped to the own view', () => {
@@ -791,24 +927,12 @@ describe('config-page persistent registrations stay single-slotted (#167 drift g
         expect(source).toContain('dataset.jcScrollWired !== jcPageLifecycle.id');
     });
 
-    it('mapping-validation scratch textareas are appended inside the page so page-scoped lookups resolve them (#167 finding 4734)', () => {
-        expect(source).toContain('(page || document.body).appendChild(temp)');
-        expect(source).not.toContain('document.body.appendChild(temp)');
-        // validateMappingSet + cleanup resolve them via the page-scoped helper.
-        expect(source).toContain('var textarea = jcById(m.id);');
-        expect(source).toContain('var el = jcById(id);');
-    });
-
-    it('configPage.html bootstrap: permanent per-view claim, no owner-liveness coupling, rolled back only on load error', () => {
+    it('configPage.html bootstrap: permanent per-view claim, no window-retained owner', () => {
         expect(html).toContain('function jcClaimConfigBootstrap(pageEl)');
         expect(html).toContain("if (pageEl.dataset.jcConfigBootstrapped === '1') return false;");
         expect(html).toContain("pageEl.dataset.jcConfigBootstrapped = '1';");
-        // The removed owner-liveness escape hatch.
-        expect(html).not.toContain('liveOwnerPresent');
         expect(html).not.toContain('__jcConfigPageLifecycle');
-        // onerror rolls the claim back; both onerror and onload drop the transient node.
         expect(html).toContain('delete page.dataset.jcConfigBootstrapped;');
-        expect(html).toContain('if (script.parentNode) script.parentNode.removeChild(script);');
     });
 
     it('configPage.html stylesheet loader keeps a single link (AC2)', () => {
