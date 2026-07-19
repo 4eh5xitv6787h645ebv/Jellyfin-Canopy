@@ -2390,25 +2390,44 @@
         // without a guard each run added ANOTHER raw 'pageshow' listener here AND
         // appended ANOTHER external config-page.js <script>, neither owned by the
         // page lifecycle (which lives inside config-page.js and cannot reach back
-        // to remove them). Claim the view once and bail on any re-entry, so at
-        // most one bootstrap listener and one script node exist per view.
-        function jcClaimConfigBootstrap(pageEl) {
-            if (!pageEl || pageEl.dataset.jcConfigBootstrapped === '1') return false;
-            pageEl.dataset.jcConfigBootstrapped = '1';
-            return true;
+        // to remove them). Claim the view once so at most one bootstrap listener
+        // and one script node exist per view.
+        //
+        // The claim is tied to a LIVE lifecycle owner, not a permanent flag
+        // (#167 findings 4/6): a re-run is a genuine duplicate only while this
+        // view still has a live, connected owner on the window. If the view's
+        // owner was torn down by a later visit that has since gone away — or its
+        // config-page.js never finished loading (transient onerror, which also
+        // clears the flag) — there is no live owner, so let the loader reinstall
+        // rather than leave the view permanently unwired.
+        function jcClaimConfigBootstrap(pageEl, win) {
+            if (!pageEl) return false;
+            if (pageEl.dataset.jcConfigBootstrapped !== '1') {
+                pageEl.dataset.jcConfigBootstrapped = '1';
+                return true;
+            }
+            var owner = win && win.__jcConfigPageLifecycle;
+            var liveOwnerPresent = !!(owner && owner.active && owner.page && owner.page.isConnected !== false);
+            return !liveOwnerPresent;
         }
         /* jc-config-bootstrap-guard:end */
-        if (!jcClaimConfigBootstrap(page)) return;
+        if (!jcClaimConfigBootstrap(page, window)) return;
 
         // viewManager fires 'pageshow' on the view element right after the HTML is
         // injected - usually before the external script has finished loading. The
         // script wires 'pageshow' -> loadConfig when it runs, so record any pageshow
         // that happened while it was still loading and replay it once on load.
+        // Idempotent across a reinstall re-run: remove any prior bootstrap
+        // pageshow (stored on the view) before re-adding, so a self-healing
+        // reinstall never stacks a second lightweight listener (#167 findings 4/6).
         var shownBeforeLoad = false;
         var externalLoaded = false;
-        page.addEventListener('pageshow', function () {
+        var onBootstrapPageshow = function () {
             if (!externalLoaded) shownBeforeLoad = true;
-        });
+        };
+        if (page._jcBootstrapPageshow) page.removeEventListener('pageshow', page._jcBootstrapPageshow);
+        page._jcBootstrapPageshow = onBootstrapPageshow;
+        page.addEventListener('pageshow', onBootstrapPageshow);
 
         // Cache-buster: GetScriptResource serves with immutable caching outside
         // DevMode, so the URL must change when the plugin updates. The BARE
@@ -2431,6 +2450,18 @@
             };
             script.onerror = function () {
                 console.error('[JC] Failed to load config-page.js from ' + script.src);
+                // Fail open (#167 findings 2/4/8): a transient fetch failure must
+                // not permanently strand this view unwired. Roll the install-once
+                // claim fully back so a later loader re-run retries cleanly —
+                // remove the failed script node, drop the bootstrap pageshow
+                // listener, and release the sentinel. The previous loader retried
+                // on a later visit precisely because it left no sticky flag.
+                if (script.parentNode) script.parentNode.removeChild(script);
+                if (page._jcBootstrapPageshow) {
+                    page.removeEventListener('pageshow', page._jcBootstrapPageshow);
+                    page._jcBootstrapPageshow = null;
+                }
+                if (page.dataset) delete page.dataset.jcConfigBootstrapped;
             };
             page.appendChild(script);
         };
