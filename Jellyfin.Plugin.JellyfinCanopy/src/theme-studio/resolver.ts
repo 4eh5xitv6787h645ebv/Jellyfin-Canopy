@@ -1,4 +1,5 @@
 import type { ThemeProfile, ThemeTokenValue, UserThemeConfiguration } from '../types/jc';
+import { readableForeground } from './color';
 
 export type ThemeBreakpoint = 'phone' | 'tablet' | 'desktop' | 'wide' | 'tv';
 export type ResolvedThemeMode = 'dark' | 'light';
@@ -251,13 +252,17 @@ export function resolveTheme(
         ...profile.Tokens,
         ...responsiveTokens(profile, breakpoint),
     };
+    tokens['color.on-primary'] = readableForeground(
+        String(tokens['color.primary']),
+        String(tokens['color.on-primary']),
+        String(tokens['color.surface']),
+    );
 
-    const reducedMotion = systemChoice(profile.Accessibility.Motion === 'off' ? 'on'
-        : profile.Accessibility.Motion === 'on' ? 'off' : 'system', media.reducedMotion);
+    const reducedMotion = media.reducedMotion || profile.Accessibility.Motion === 'off';
     const highContrast = profile.BasePreset === 'high-contrast'
         || systemChoice(profile.Accessibility.Contrast, media.moreContrast);
-    const reducedTransparency = systemChoice(profile.Accessibility.Transparency === 'off' ? 'on'
-        : profile.Accessibility.Transparency === 'on' ? 'off' : 'system', media.reducedTransparency);
+    const reducedTransparency = media.reducedTransparency
+        || profile.Accessibility.Transparency === 'off';
     const focus = profile.Accessibility.FocusEmphasis === 'strong'
         || (profile.Accessibility.FocusEmphasis === 'system' && highContrast) ? 'strong' : 'standard';
     const underlineLinks = profile.Accessibility.UnderlineLinks

@@ -39,6 +39,7 @@ describe('Theme Studio CSS serialization', () => {
         expect(first).toContain('Adapter legacy-v12-base-surfaces');
         expect(first).toContain('.jc-legacy-layout[data-jc-theme-route]');
         expect(first).toContain('Adapter focus-v12');
+        expect(first).toContain('--jf-palette-error-contrastText: #000000');
         expect(first).not.toContain('url(');
         expect(first).not.toContain('@import');
     });
@@ -54,5 +55,11 @@ describe('Theme Studio CSS serialization', () => {
         expect(css).toContain('text-decoration: underline');
         expect(css).toContain('@media (forced-colors: active)');
         expect(css).toContain('--jf-palette-primary-main: Highlight');
+    });
+
+    it('keeps a readable white error foreground for the darker light-mode negative color', () => {
+        const theme = resolveTheme(themeConfiguration(), { ...media, jellyfinTheme: 'light' });
+        expect(serializeThemeStyles(theme, 'committed'))
+            .toContain('--jf-palette-error-contrastText: #FFFFFF');
     });
 });

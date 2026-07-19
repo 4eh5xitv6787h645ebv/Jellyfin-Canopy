@@ -1,4 +1,5 @@
 import type { ThemeTokenValue } from '../types/jc';
+import { readableForeground } from './color';
 import type { ResolvedTheme } from './resolver';
 
 export const COMMITTED_STYLE_ID = 'jc-theme-studio-committed';
@@ -116,7 +117,7 @@ function jellyfinDeclarations(theme: ResolvedTheme): Record<string, string> {
         '--jf-palette-error-main': negative,
         '--jf-palette-error-light': negative,
         '--jf-palette-error-dark': negative,
-        '--jf-palette-error-contrastText': '#FFFFFF',
+        '--jf-palette-error-contrastText': readableForeground(negative, '#FFFFFF', surface),
         '--jf-palette-divider': divider,
         '--jf-palette-action-active': rgba(text, 0.56),
         '--jf-palette-action-hover': rgba(text, 0.08),

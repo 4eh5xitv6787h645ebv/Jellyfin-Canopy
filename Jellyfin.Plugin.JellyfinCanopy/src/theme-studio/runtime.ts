@@ -303,6 +303,11 @@ export class ThemeStudioRuntime {
         const theme = this.#resolve(this.#configuration);
         claimPresentation(this);
         updateStyle('committed', theme);
+        this.#applyRootAttributes(theme);
+        this.#setDiagnostics('active', theme);
+    }
+
+    #applyRootAttributes(theme: ResolvedTheme): void {
         const root = document.documentElement;
         root.setAttribute('data-jc-theme-active', 'true');
         root.setAttribute('data-jc-theme-profile', theme.profileId);
@@ -317,7 +322,6 @@ export class ThemeStudioRuntime {
         root.setAttribute('data-jc-theme-hover', theme.hover ? 'hover' : 'none');
         root.setAttribute('data-jc-theme-forced-colors', theme.forcedColors ? 'active' : 'none');
         root.setAttribute('data-jc-theme-route', routeScope());
-        this.#setDiagnostics('active', theme);
     }
 
     #applyPreview(): void {
@@ -325,6 +329,7 @@ export class ThemeStudioRuntime {
         const theme = this.#resolve(this.#previewConfiguration);
         claimPresentation(this);
         updateStyle('preview', theme);
+        this.#applyRootAttributes(theme);
         document.documentElement.setAttribute('data-jc-theme-preview', 'true');
         this.#setDiagnostics('preview', theme);
     }

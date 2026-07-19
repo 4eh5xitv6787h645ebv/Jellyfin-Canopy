@@ -113,6 +113,12 @@ function apiReturning(value: unknown): ReturnType<typeof vi.fn> {
     return plugin;
 }
 
+function expectRootThemeState(expected: Readonly<Record<string, string>>): void {
+    for (const [name, value] of Object.entries(expected)) {
+        expect(document.documentElement.getAttribute(`data-jc-theme-${name}`), name).toBe(value);
+    }
+}
+
 function createRuntime(): { runtime: ThemeStudioRuntime; harness: TestFeatureScope } {
     const harness = createTestFeatureScope();
     scopes.push(harness);
@@ -180,18 +186,51 @@ describe('Theme Studio identity-owned runtime', () => {
         await runtime.load();
         const currentApi = JC.core.themeStudio;
         const preview = themeConfiguration();
-        preview.Profiles[0].Tokens = { 'shape.card-radius': 'pill' };
+        preview.Profiles.push({
+            ...structuredClone(preview.Profiles[0]),
+            Id: 'preview',
+            Name: 'Preview',
+            BasePreset: 'minimal',
+            Palette: 'preview-palette',
+            Mode: 'light',
+            Tokens: { 'shape.card-radius': 'pill' },
+            Accessibility: {
+                ...preview.Profiles[0].Accessibility,
+                Motion: 'off',
+                Contrast: 'on',
+                Transparency: 'off',
+            },
+        });
+        preview.ActiveProfileId = 'preview';
         expect(JC.core.themeStudio?.preview(preview)).toBe(true);
         expect(document.querySelectorAll(`#${PREVIEW_STYLE_ID}`)).toHaveLength(1);
         expect(document.documentElement.getAttribute('data-jc-theme-preview')).toBe('true');
         expect(document.getElementById(PREVIEW_STYLE_ID)?.textContent)
             .toContain('--jf-card-borderRadius: 999px');
+        expectRootThemeState({
+            profile: 'preview',
+            preset: 'minimal',
+            palette: 'preview-palette',
+            mode: 'light',
+            motion: 'reduced',
+            contrast: 'more',
+            transparency: 'reduced',
+        });
         expect(JC.core.themeStudio?.getDiagnostics().status).toBe('preview');
 
         JC.core.themeStudio?.cancelPreview();
         expect(document.getElementById(PREVIEW_STYLE_ID)).toBeNull();
         expect(document.documentElement.hasAttribute('data-jc-theme-preview')).toBe(false);
         expect(document.getElementById(COMMITTED_STYLE_ID)).not.toBeNull();
+        expectRootThemeState({
+            profile: 'default',
+            preset: 'canopy',
+            palette: 'canopy-night',
+            mode: 'dark',
+            motion: 'full',
+            contrast: 'standard',
+            transparency: 'full',
+        });
         expect(JC.core.themeStudio?.getDiagnostics().status).toBe('active');
         expect(currentApi).toBe(JC.core.themeStudio);
     });

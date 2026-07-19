@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { ThemeMediaState } from './resolver';
 import { resolveBreakpoint, resolveTheme } from './resolver';
 import { themeConfiguration } from '../test/theme-studio-fixture';
+import { contrastRatio } from './color';
 
 function media(overrides: Partial<ThemeMediaState> = {}): ThemeMediaState {
     return {
@@ -64,6 +65,8 @@ describe('Theme Studio resolver', () => {
 
     it('can only reduce motion/transparency and strengthens focus for system contrast', () => {
         const configuration = themeConfiguration();
+        configuration.Profiles[0].Accessibility.Motion = 'on';
+        configuration.Profiles[0].Accessibility.Transparency = 'on';
         const resolved = resolveTheme(configuration, media({
             reducedMotion: true,
             reducedTransparency: true,
@@ -86,6 +89,47 @@ describe('Theme Studio resolver', () => {
             'effects.blur': 0,
             'layout.card-actions': 'always',
         });
+    });
+
+    it('also reduces effects when the profile requests it without an OS preference', () => {
+        const configuration = themeConfiguration();
+        configuration.Profiles[0].Accessibility.Motion = 'off';
+        configuration.Profiles[0].Accessibility.Transparency = 'off';
+        const resolved = resolveTheme(configuration, media());
+        expect(resolved).toMatchObject({ reducedMotion: true, reducedTransparency: true });
+    });
+
+    it('pairs every bundled accent with a WCAG-readable primary foreground', () => {
+        for (const accent of [
+            'violet', 'blue', 'cyan', 'teal', 'green', 'amber', 'orange', 'red', 'pink', 'neutral',
+        ]) {
+            for (const mode of ['dark', 'light'] as const) {
+                const configuration = themeConfiguration();
+                configuration.Profiles[0].Accent = accent;
+                configuration.Profiles[0].Mode = mode;
+                const resolved = resolveTheme(configuration, media());
+                expect(contrastRatio(
+                    String(resolved.tokens['color.on-primary']),
+                    String(resolved.tokens['color.primary']),
+                    String(resolved.tokens['color.surface']),
+                ), `${accent}/${mode}`).toBeGreaterThanOrEqual(4.5);
+            }
+        }
+    });
+
+    it('corrects an unreadable custom primary foreground after alpha composition', () => {
+        const configuration = themeConfiguration();
+        configuration.Profiles[0].Tokens = {
+            'color.primary': '#FFFFFF80',
+            'color.on-primary': '#FFFFFF',
+        };
+        const resolved = resolveTheme(configuration, media({ jellyfinTheme: 'light' }));
+        expect(resolved.tokens['color.on-primary']).toBe('#000000');
+        expect(contrastRatio(
+            String(resolved.tokens['color.on-primary']),
+            String(resolved.tokens['color.primary']),
+            String(resolved.tokens['color.surface']),
+        )).toBeGreaterThanOrEqual(4.5);
     });
 
     it('selects the highest-priority seasonal profile across a year boundary', () => {
