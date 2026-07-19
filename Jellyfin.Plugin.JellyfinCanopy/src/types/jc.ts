@@ -42,6 +42,76 @@ export interface UserSettings {
     [key: string]: unknown;
 }
 
+export type ThemeTokenValue = boolean | number | string;
+
+export interface ThemeBreakpointOverrides {
+    Tokens: Record<string, ThemeTokenValue>;
+}
+
+export interface ThemeResponsiveSettings {
+    Phone?: ThemeBreakpointOverrides | null;
+    Tablet?: ThemeBreakpointOverrides | null;
+    Desktop?: ThemeBreakpointOverrides | null;
+    Wide?: ThemeBreakpointOverrides | null;
+    Tv?: ThemeBreakpointOverrides | null;
+}
+
+export interface ThemeAccessibilitySettings {
+    Motion: 'system' | 'on' | 'off';
+    Contrast: 'system' | 'on' | 'off';
+    Transparency: 'system' | 'on' | 'off';
+    FocusEmphasis: 'system' | 'standard' | 'strong';
+    UnderlineLinks: boolean;
+}
+
+export interface ThemeProfile {
+    Id: string;
+    Name: string;
+    BasePreset: string;
+    PresetVersion?: number | null;
+    FreezePresetVersion: boolean;
+    Palette: string;
+    Accent: string;
+    Mode: 'system' | 'dark' | 'light';
+    Tokens: Record<string, ThemeTokenValue>;
+    Responsive: ThemeResponsiveSettings;
+    Accessibility: ThemeAccessibilitySettings;
+}
+
+export interface ThemeScheduleEntry {
+    Id: string;
+    ProfileId: string;
+    StartMonthDay: string;
+    EndMonthDay: string;
+    Priority: number;
+    Enabled: boolean;
+}
+
+export interface ThemeLegacyMigration {
+    JellyfishTheme: string;
+    Completed: boolean;
+}
+
+export interface UserThemeConfiguration {
+    Revision: number;
+    SchemaVersion: 1;
+    ActiveProfileId: string;
+    Profiles: ThemeProfile[];
+    Schedule: ThemeScheduleEntry[];
+    LegacyMigration: ThemeLegacyMigration;
+}
+
+export interface ThemeExportDocument {
+    SchemaVersion: number;
+    ActiveProfileId: string;
+    Profiles: ThemeProfile[];
+    Schedule: ThemeScheduleEntry[];
+}
+
+export interface ThemeLegacyJellyfishSelection {
+    Theme: string;
+}
+
 /** The unified localStorage write scheduler created by js/plugin.js. */
 export interface CacheManager {
     register(saveCallback: () => void): void;

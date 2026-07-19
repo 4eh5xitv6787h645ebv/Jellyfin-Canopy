@@ -21,12 +21,12 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 20051,
-        "totalLines": 28438
+        "coveredLines": 20669,
+        "totalLines": 29111
       },
       "tolerance": {
         "missingCoveredLines": 4,
-        "rationale": "Anime filler warnings follow-up for partial-library exact-title matching and the explicit four-scenario browser matrix in issues #371 and #378. Three successful local .NET 10.0.9/Coverlet integration runs on 2026-07-19 and one clean GitHub Actions run each passed all 1777 tests over the identical complete 28438-line assembly scope. The local runs measured 20050, 20050, and 20047 covered lines; CI advanced the reviewed high-water to 20051 covered lines (70.508%). A separate local attempt that hit the pre-existing FileLogger shutdown-timeout flake is excluded from these successful measurements. The legitimate 37-line scope increase adds conservative provider-title indexing, ambiguity rejection, and episode-title fallback for libraries that omit earlier seasons; all 37 added lines are covered. The four-line low-side tolerance spans only the reproduced Coverlet concurrency variance and remains far below the policy maximum; coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, and broad-tolerance negative boundaries."
+        "rationale": "Theme Studio schema and persistence foundation in issue #384. Two clean final local .NET 10.0.9/Coverlet integration runs on 2026-07-19 each passed all 1814 tests over the identical complete 29111-line assembly scope and both measured 20669 covered lines. The reviewed high-water is 20669/29111 (71.001%). The legitimate 673-line scope increase adds the bounded typed theme model, pure ordered schema and all-selector Jellyfish migrations, revisioned per-user API, strict import/export staging, administrator policy, recovery integration, and supporting configuration projection; 618 of those net-new lines are covered, and total assembly coverage improves from 70.508% to 71.001%. The existing four-line low-side tolerance is unchanged, spans the already reproduced Coverlet concurrency variance, and remains far below the policy maximum; coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, and broad-tolerance negative boundaries."
       }
     }
   }

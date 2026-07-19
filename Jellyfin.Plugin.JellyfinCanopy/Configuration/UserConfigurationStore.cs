@@ -39,6 +39,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         private static readonly HashSet<string> RecoverableFileNames = new HashSet<string>(StringComparer.Ordinal)
         {
             "settings.json",
+            "theme.json",
             "shortcuts.json",
             "elsewhere.json",
             "bookmark.json",

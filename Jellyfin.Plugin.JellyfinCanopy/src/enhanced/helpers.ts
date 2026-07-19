@@ -120,7 +120,6 @@ export async function getItemCached(itemId: string, options: GetItemCachedOption
         throw new Error(`Shared item lookup capacity exceeded (${ITEM_CACHE_MAX_IN_FLIGHT} active requests)`);
     }
 
-    let token: ItemCacheEntry;
     const promise = ApiClient.getItem(userId, itemId)
         .then((item) => {
             if (!JC.identity.isCurrent(context)) return null;
@@ -146,7 +145,7 @@ export async function getItemCached(itemId: string, options: GetItemCachedOption
             throw err;
         });
 
-    token = {
+    const token: ItemCacheEntry = {
         item: null,
         ts: now,
         promise,

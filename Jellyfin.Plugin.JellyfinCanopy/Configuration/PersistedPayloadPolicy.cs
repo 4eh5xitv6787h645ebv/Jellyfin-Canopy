@@ -58,6 +58,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
                 UserSettings settings => ValidateSettings(settings),
                 UserShortcuts shortcuts => ValidateShortcuts(shortcuts),
                 ElsewhereSettings elsewhere => ValidateElsewhere(elsewhere),
+                UserThemeConfiguration theme => ValidateTheme(theme),
                 null => PersistedPayloadValidation.Invalid("payload_required"),
                 _ => PersistedPayloadValidation.Invalid("unsupported_payload")
             };
@@ -242,6 +243,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
             }
 
             return ValidateSerializedSize(elsewhere, StandardPersistedBytes);
+        }
+
+        private static PersistedPayloadValidation ValidateTheme(UserThemeConfiguration theme)
+        {
+            if (!ThemeConfigurationPolicy.Validate(theme))
+            {
+                return PersistedPayloadValidation.Invalid("invalid_theme_payload");
+            }
+
+            return ValidateSerializedSize(theme, ThemeConfigurationPolicy.MaximumPersistedBytes);
         }
 
         private static bool AreBoundedSettingsStrings(UserSettings settings)

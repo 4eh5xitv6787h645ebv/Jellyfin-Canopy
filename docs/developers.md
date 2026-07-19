@@ -213,11 +213,12 @@ curl -X GET \
 
 ### User configuration payload budgets
 
-Complete replacements for `settings.json`, `shortcuts.json`, `elsewhere.json`, and `hidden-content.json` share one server-side payload policy. The request body is bounded **before JSON model binding** for both `Content-Length` and chunked uploads; an oversized body returns HTTP `413` with `{"success":false,"code":"payload_too_large",...}` and is never deserialized, logged, cached, or written. Field/count/range failures return HTTP `400` with a stable non-value-bearing reason code. A rejection leaves the existing file and Hidden Content cache untouched.
+Complete replacements for `settings.json`, `theme.json`, `shortcuts.json`, `elsewhere.json`, and `hidden-content.json` share one server-side payload policy. The request body is bounded **before JSON model binding** for both `Content-Length` and chunked uploads; an oversized body returns HTTP `413` with `{"success":false,"code":"payload_too_large",...}` and is never deserialized, logged, cached, or written. Field/count/range failures return HTTP `400` with a stable non-value-bearing reason code. A rejection leaves the existing file and Hidden Content cache untouched.
 
 | Payload | HTTP body | Persisted JSON | Collection limits |
 | --- | ---: | ---: | --- |
 | `settings.json` | 1 MiB | 1 MiB | Up to 1,000 extension properties |
+| `theme.json` | 1 MiB | 128 KiB | Up to 24 profiles, 32 schedules, and 128 typed overrides per token scope |
 | `shortcuts.json` | 1 MiB | 1 MiB | Up to 1,000 shortcuts and 1,000 extension properties |
 | `elsewhere.json` | 1 MiB | 1 MiB | Up to 500 regions, 500 services, and 1,000 extension properties |
 | `hidden-content.json` | 8 MiB | 7 MiB | Up to **10,000 hidden items** (intentionally sized and tested with realistic populated records for large supported libraries) |
@@ -225,6 +226,62 @@ Complete replacements for `settings.json`, `shortcuts.json`, `elsewhere.json`, a
 Known settings/shortcut/Elsewhere free-text fields are capped at 512 characters. Hidden Content keys are capped at 256 characters; display fields at 512; identifiers and type/timestamp fields use narrower 32–128 character limits. Season and episode numbers accept `0` through `100000`. Legacy `series` hide scope remains accepted alongside `global`, `continuewatching`, `nextup`, and `homesections`.
 
 Forward-compatible `[JsonExtensionData]` remains supported, but unknown JSON is recursively bounded across the complete extension map: property names 256 characters, string values 4,096 characters, depth 16, and 20,000 JSON nodes. Finally, the shared user-configuration store refuses every serialized file over 8 MiB as a caller-independent backstop. Successful logs contain metadata such as file, revision, hash, item count, and byte count—not old/new values or supplied secrets.
+
+`theme.json` is intentionally stricter than the older general-purpose files: unknown fields are captured so they cannot disappear silently, then rejected before persistence. This keeps raw CSS, selectors, HTML, scripts, `@import`, and URLs out of the typed theme contract. The separately gated advanced-CSS feature does not use `theme.json`.
+
+### Theme Studio profile API
+
+Theme Studio state is server-backed and isolated per Jellyfin user. Every route below is `[Authorize]` and applies the same caller-or-administrator ownership check as the other per-user files:
+
+```text
+GET  /JellyfinCanopy/user-settings/{userId}/theme.json
+GET  /JellyfinCanopy/user-settings/{userId}/theme.json/evidence
+GET  /JellyfinCanopy/user-settings/{userId}/theme.json/export
+POST /JellyfinCanopy/user-settings/{userId}/theme.json
+POST /JellyfinCanopy/user-settings/{userId}/theme.json/validate
+POST /JellyfinCanopy/user-settings/{userId}/theme.json/migrate-jellyfish
+```
+
+The first GET atomically creates the administrator-selected defaults. Existing older schemas are migrated through pure ordered transformations under the same per-user file lock; a migration advances `Revision`. Reads return `ETag: "<revision>"` and `X-JC-Content-Hash`. A complete POST must send that strong revision as both `If-Match: "<revision>"` and body `Revision`; missing evidence returns `428`, stale evidence returns `409` with authoritative state, and a successful mutation advances the revision exactly once.
+
+Schema 1 persists PascalCase names exactly as represented by the TypeScript interfaces. Each profile contains a curated base preset, palette/accent/mode, a strict token map, accessibility preferences, and independent phone, tablet, desktop, wide, and TV override maps. Token keys and JSON value types are allowlisted; colors are `#RRGGBB` or `#RRGGBBAA`, enumerations are exact strings, and numeric values have explicit ranges.
+
+```json
+{
+  "Revision": 3,
+  "SchemaVersion": 1,
+  "ActiveProfileId": "default",
+  "Profiles": [{
+    "Id": "default",
+    "Name": "Default",
+    "BasePreset": "canopy",
+    "PresetVersion": null,
+    "FreezePresetVersion": false,
+    "Palette": "canopy-night",
+    "Accent": "violet",
+    "Mode": "system",
+    "Tokens": { "color.primary": "#7c5cff", "effects.blur": 18 },
+    "Responsive": {
+      "Phone": { "Tokens": { "layout.navigation": "bottom" } },
+      "Tablet": null,
+      "Desktop": null,
+      "Wide": null,
+      "Tv": null
+    },
+    "Accessibility": {
+      "Motion": "system",
+      "Contrast": "system",
+      "Transparency": "system",
+      "FocusEmphasis": "system",
+      "UnderlineLinks": false
+    }
+  }],
+  "Schedule": [],
+  "LegacyMigration": { "JellyfishTheme": "", "Completed": false }
+}
+```
+
+Export omits the revision and legacy-migration evidence and deep-clones the shareable data. Both `/validate` and `/migrate-jellyfish` are non-mutating staging operations; callers must show the result and explicitly save it through the revisioned POST. Jellyfish migration accepts only a bundled canonical theme name such as `Ocean`, never a CSS import, filename, or URL.
 
 ### Bookmark API
 

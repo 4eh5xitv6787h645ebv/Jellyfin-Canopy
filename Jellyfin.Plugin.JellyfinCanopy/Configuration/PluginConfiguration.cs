@@ -246,6 +246,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
             // Extras Settings
             ColoredRatingsEnabled = false;
             ThemeSelectorEnabled = false;
+            ThemeStudioEnabled = false;
+            ThemeStudioDefaultPreset = "canopy";
+            ThemeStudioDefaultPalette = "canopy-night";
+            ThemeStudioDashboardEnabled = false;
+            ThemeStudioAllowProfileImport = true;
+            ThemeStudioAllowDynamicColor = true;
+            ThemeStudioAllowSeasonalScheduling = true;
+            ThemeStudioAllowAdvancedCss = false;
             ColoredActivityIconsEnabled = false;
             PluginIconsEnabled = false;
             EnableLoginImage = false;
@@ -678,6 +686,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         // Extras Settings
         public bool ColoredRatingsEnabled { get; set; }
         public bool ThemeSelectorEnabled { get; set; }
+        public bool ThemeStudioEnabled { get; set; }
+        public string ThemeStudioDefaultPreset { get; set; }
+        public string ThemeStudioDefaultPalette { get; set; }
+        public bool ThemeStudioDashboardEnabled { get; set; }
+        public bool ThemeStudioAllowProfileImport { get; set; }
+        public bool ThemeStudioAllowDynamicColor { get; set; }
+        public bool ThemeStudioAllowSeasonalScheduling { get; set; }
+        public bool ThemeStudioAllowAdvancedCss { get; set; }
         public bool ColoredActivityIconsEnabled { get; set; }
         public bool PluginIconsEnabled { get; set; }
         public bool EnableLoginImage { get; set; }

@@ -70,6 +70,21 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
         }
 
         [Fact]
+        public void ThemeStore_IsIncludedInTheElevationGatedRecoveryContract()
+        {
+            Directory.CreateDirectory(UserDir);
+            File.WriteAllText(Path.Combine(UserDir, "theme.json"), "{{{ corrupt theme");
+            Assert.Throws<UserStoreUnhealthyException>(() =>
+                _manager.GetUserConfigurationStrict<UserThemeConfiguration>(_userId, "theme.json"));
+
+            var unhealthy = Assert.Single(_manager.GetUnhealthyUserStores());
+            Assert.Equal("theme.json", unhealthy.FileName);
+            Assert.IsType<OkObjectResult>(Controller().ResetUnhealthyStore(_userId, "theme.json"));
+            Assert.False(File.Exists(Path.Combine(UserDir, "theme.json.unhealthy")));
+            Assert.Single(Directory.GetFiles(UserDir, "theme.json.corrupt-*"));
+        }
+
+        [Fact]
         public void Reset_RejectsUnknownStoreAndInvalidUser()
         {
             Assert.IsType<BadRequestObjectResult>(

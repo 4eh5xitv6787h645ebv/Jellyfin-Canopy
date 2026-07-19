@@ -145,7 +145,7 @@ function currentPending(queue: SaveQueue): SaveIntent | null {
     return queue.pending;
 }
 
-const SUPPORTED_USER_FILES = new Set(['settings.json', 'shortcuts.json', 'elsewhere.json']);
+const SUPPORTED_USER_FILES = new Set(['settings.json', 'shortcuts.json', 'elsewhere.json', 'theme.json']);
 const _ackedWire = new Map<string, Record<string, unknown>>();
 const _ackedSerialized = new Map<string, string>();
 const _ackedHash = new Map<string, string>();

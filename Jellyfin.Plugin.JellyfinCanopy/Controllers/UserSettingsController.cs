@@ -126,6 +126,83 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             return Ok(userConfig);
         }
 
+        [HttpGet("user-settings/{userId}/theme.json")]
+        [Authorize]
+        public IActionResult GetUserSettingsTheme(string userId)
+        {
+            var authorizationResult = AuthorizeUserConfigAccess(userId, out var authorizedUserId);
+            if (authorizationResult != null)
+            {
+                return authorizationResult;
+            }
+
+            UserConfigReadResult<UserThemeConfiguration> read;
+            try
+            {
+                read = GetOrCreateUserTheme(authorizedUserId);
+            }
+            catch (Exception ex) when (ex is InvalidDataException || ex is JsonException || ex is IOException || ex is UnauthorizedAccessException)
+            {
+                _logger.LogError(
+                    $"Failed to initialize theme.json for {ResolveUserDisplay(authorizedUserId)} " +
+                    $"(exception={ex.GetType().Name}).");
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, new UserFileMutationResponse<UserThemeConfiguration>
+                {
+                    File = "theme.json",
+                    Message = "The theme store or configured defaults are unavailable; initialization was not acknowledged."
+                });
+            }
+
+            if (!read.HasUsableValue || read.Value == null || !IsValidUserFileState(read.Value))
+            {
+                return UserFileReadFailure<UserThemeConfiguration>("theme.json", read.Status, read.FaultDetail);
+            }
+
+            if (read.WasCreated)
+            {
+                _logger.LogInformation($"Saved default theme.json for new user {ResolveUserDisplay(authorizedUserId)} from plugin configuration.");
+            }
+
+            SetUserFileEvidence(read.Value);
+            return Ok(read.Value);
+        }
+
+        [HttpGet("user-settings/{userId}/theme.json/export")]
+        [Authorize]
+        public IActionResult ExportUserSettingsTheme(string userId)
+        {
+            var authorizationResult = AuthorizeUserConfigAccess(userId, out var authorizedUserId);
+            if (authorizationResult != null)
+            {
+                return authorizationResult;
+            }
+
+            UserConfigReadResult<UserThemeConfiguration> read;
+            try
+            {
+                read = GetOrCreateUserTheme(authorizedUserId);
+            }
+            catch (Exception ex) when (ex is InvalidDataException || ex is JsonException || ex is IOException || ex is UnauthorizedAccessException)
+            {
+                _logger.LogError(
+                    $"Failed to export theme.json for {ResolveUserDisplay(authorizedUserId)} " +
+                    $"(exception={ex.GetType().Name}).");
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, new UserFileMutationResponse<UserThemeConfiguration>
+                {
+                    File = "theme.json",
+                    Message = "The theme store or configured defaults are unavailable; export was not acknowledged."
+                });
+            }
+
+            if (!read.HasUsableValue || read.Value == null || !IsValidUserFileState(read.Value))
+            {
+                return UserFileReadFailure<UserThemeConfiguration>("theme.json", read.Status, read.FaultDetail);
+            }
+
+            SetUserFileEvidence(read.Value);
+            return Ok(ThemeExportDocument.FromConfiguration(read.Value));
+        }
+
         [HttpGet("user-settings/{userId}/shortcuts.json")]
         [Authorize]
         public IActionResult GetUserSettingsShortcuts(string userId)
@@ -168,6 +245,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 "settings.json" => ReadUserFileEvidence<UserSettings>(authorizedUserId, fileName),
                 "shortcuts.json" => ReadUserFileEvidence<UserShortcuts>(authorizedUserId, fileName),
                 "elsewhere.json" => ReadUserFileEvidence<ElsewhereSettings>(authorizedUserId, fileName),
+                "theme.json" => ReadUserThemeEvidence(authorizedUserId),
                 _ => NotFound(new { success = false, message = "Unsupported user settings file." })
             };
         }
@@ -185,6 +263,123 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             }
 
             return CommitUserFile(authorizedUserId, "settings.json", userConfiguration, "settings");
+        }
+
+        [HttpPost("user-settings/{userId}/theme.json")]
+        [Authorize]
+        [Produces("application/json")]
+        [PersistedPayloadLimit(PersistedPayloadPolicy.StandardRequestBytes)]
+        public IActionResult SaveUserSettingsTheme(string userId, [FromBody] UserThemeConfiguration userConfiguration)
+        {
+            var authorizationResult = AuthorizeUserConfigAccess(userId, out var authorizedUserId);
+            if (authorizationResult != null)
+            {
+                return authorizationResult;
+            }
+
+            if (_configProvider.ConfigurationOrNull?.ThemeStudioAllowSeasonalScheduling == false
+                && userConfiguration?.Schedule?.Count > 0)
+            {
+                return BadRequest(new UserFileMutationResponse<UserThemeConfiguration>
+                {
+                    Code = "theme_schedule_disabled",
+                    File = "theme.json",
+                    Message = "Theme scheduling is disabled by the administrator."
+                });
+            }
+
+            return CommitUserFile(authorizedUserId, "theme.json", userConfiguration, "theme");
+        }
+
+        [HttpPost("user-settings/{userId}/theme.json/validate")]
+        [Authorize]
+        [Produces("application/json")]
+        [PersistedPayloadLimit(PersistedPayloadPolicy.StandardRequestBytes)]
+        public IActionResult ValidateUserSettingsThemeImport(string userId, [FromBody] ThemeExportDocument? import)
+        {
+            var authorizationResult = AuthorizeUserConfigAccess(userId, out _);
+            if (authorizationResult != null)
+            {
+                return authorizationResult;
+            }
+
+            if (_configProvider.ConfigurationOrNull?.ThemeStudioAllowProfileImport != true)
+            {
+                return StatusCode(StatusCodes.Status403Forbidden, new
+                {
+                    valid = false,
+                    code = "theme_import_disabled",
+                    message = "Theme profile import is disabled by the administrator."
+                });
+            }
+
+            var imported = import?.ToConfiguration();
+            UserThemeConfiguration? candidate = null;
+            if (imported != null)
+            {
+                ThemeConfigurationMigration.TryMigrate(imported, out candidate);
+            }
+            var validation = PersistedPayloadPolicy.Validate(candidate);
+            if (candidate == null || !validation.IsValid)
+            {
+                return validation.Status == PersistedPayloadStatus.TooLarge
+                    ? StatusCode(StatusCodes.Status413PayloadTooLarge, new
+                    {
+                        valid = false,
+                        code = validation.Code,
+                        message = "The imported theme exceeds the supported size limit."
+                    })
+                    : BadRequest(new
+                    {
+                        valid = false,
+                        code = validation.Code,
+                        message = "The imported theme is invalid."
+                    });
+            }
+
+            return Ok(new
+            {
+                valid = true,
+                schemaVersion = candidate.SchemaVersion,
+                profileCount = candidate.Profiles.Count,
+                activeProfileId = candidate.ActiveProfileId,
+                data = ThemeExportDocument.FromConfiguration(candidate)
+            });
+        }
+
+        [HttpPost("user-settings/{userId}/theme.json/migrate-jellyfish")]
+        [Authorize]
+        [Produces("application/json")]
+        [PersistedPayloadLimit(PersistedPayloadPolicy.StandardRequestBytes)]
+        public IActionResult ValidateLegacyJellyfishThemeMigration(
+            string userId,
+            [FromBody] ThemeLegacyJellyfishSelection? selection)
+        {
+            var authorizationResult = AuthorizeUserConfigAccess(userId, out _);
+            if (authorizationResult != null)
+            {
+                return authorizationResult;
+            }
+
+            if (!ThemeConfigurationMigration.TryStageJellyfishSelection(selection, out var candidate)
+                || candidate == null
+                || !PersistedPayloadPolicy.Validate(candidate).IsValid)
+            {
+                return BadRequest(new
+                {
+                    valid = false,
+                    code = "invalid_jellyfish_theme",
+                    message = "The legacy Jellyfish selection is not a recognized bundled theme name."
+                });
+            }
+
+            return Ok(new
+            {
+                valid = true,
+                schemaVersion = candidate.SchemaVersion,
+                activeProfileId = candidate.ActiveProfileId,
+                data = candidate
+            });
         }
 
         [HttpPost("user-settings/{userId}/shortcuts.json")]
@@ -506,6 +701,41 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             }
         }
 
+        private IActionResult ReadUserThemeEvidence(string authorizedUserId)
+        {
+            UserConfigReadResult<UserThemeConfiguration> read;
+            try
+            {
+                read = GetOrCreateUserTheme(authorizedUserId);
+            }
+            catch (Exception ex) when (ex is InvalidDataException || ex is JsonException || ex is IOException || ex is UnauthorizedAccessException)
+            {
+                _logger.LogError(
+                    $"Failed to read theme.json evidence for {ResolveUserDisplay(authorizedUserId)} " +
+                    $"(exception={ex.GetType().Name}).");
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, new UserFileMutationResponse<UserThemeConfiguration>
+                {
+                    File = "theme.json",
+                    Message = "The theme store or configured defaults are unavailable; evidence was not acknowledged."
+                });
+            }
+
+            if (!read.HasUsableValue || read.Value == null || !IsValidUserFileState(read.Value))
+            {
+                return UserFileReadFailure<UserThemeConfiguration>("theme.json", read.Status, read.FaultDetail);
+            }
+
+            SetUserFileEvidence(read.Value);
+            return Ok(new UserFileMutationResponse<UserThemeConfiguration>
+            {
+                Success = true,
+                File = "theme.json",
+                Revision = read.Value.Revision,
+                ContentHash = ContentHash(read.Value),
+                Data = read.Value
+            });
+        }
+
         private IActionResult UserFileReadFailure<T>(
             string fileName,
             UserConfigReadStatus status,
@@ -582,6 +812,71 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 CalendarDefaultViewMode = "agenda",
                 LastOpenedTab = "shortcuts"
             };
+
+        private static UserThemeConfiguration BuildDefaultUserTheme(PluginConfiguration defaultConfig)
+            => UserThemeConfiguration.CreateDefault(
+                defaultConfig.ThemeStudioDefaultPreset,
+                defaultConfig.ThemeStudioDefaultPalette);
+
+        private UserConfigReadResult<UserThemeConfiguration> GetOrCreateUserTheme(string authorizedUserId)
+        {
+            const string fileName = "theme.json";
+            lock (_userConfigurationManager.GetUserFileLock(authorizedUserId, fileName))
+            {
+                var read = _userConfigurationManager.ReadUserConfiguration<UserThemeConfiguration>(
+                    authorizedUserId,
+                    fileName);
+                if (read.Status == UserConfigReadStatus.Missing)
+                {
+                    if (_configProvider.ConfigurationOrNull is not PluginConfiguration defaults)
+                    {
+                        throw new InvalidDataException("Theme Studio administrator defaults are unavailable.");
+                    }
+
+                    var initial = BuildDefaultUserTheme(defaults);
+                    if (!IsValidUserFileState(initial))
+                    {
+                        throw new InvalidDataException("Theme Studio administrator defaults are invalid.");
+                    }
+
+                    _userConfigurationManager.SaveUserConfiguration(authorizedUserId, fileName, initial);
+                    return new UserConfigReadResult<UserThemeConfiguration>(
+                        UserConfigReadStatus.Valid,
+                        initial,
+                        faultDetail: null,
+                        wasCreated: true);
+                }
+
+                if (read.Status != UserConfigReadStatus.Valid
+                    || read.Value == null
+                    || read.Value.SchemaVersion == ThemeConfigurationPolicy.CurrentSchemaVersion)
+                {
+                    return read;
+                }
+
+                if (!ThemeConfigurationMigration.TryMigrate(read.Value, out var migrated)
+                    || migrated == null
+                    || read.Value.Revision == long.MaxValue)
+                {
+                    return read;
+                }
+
+                migrated.Revision = read.Value.Revision + 1;
+                if (!IsValidUserFileState(migrated))
+                {
+                    return read;
+                }
+
+                _userConfigurationManager.SaveUserConfiguration(authorizedUserId, fileName, migrated);
+                _logger.LogInformation(
+                    $"Migrated theme.json for {ResolveUserDisplay(authorizedUserId)} " +
+                    $"from schema {read.Value.SchemaVersion} to {migrated.SchemaVersion} at revision {migrated.Revision}.");
+                return new UserConfigReadResult<UserThemeConfiguration>(
+                    UserConfigReadStatus.Valid,
+                    migrated,
+                    faultDetail: null);
+            }
+        }
 
         [HttpGet("user-settings/{userId}/bookmark.json")]
         [Authorize]
@@ -1488,17 +1783,20 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             }
 
             var defaultsValidation = BuildDefaultUserSettings(defaultConfig);
-            if (!IsValidUserFileState(defaultsValidation))
+            var themeDefaultsValidation = BuildDefaultUserTheme(defaultConfig);
+            if (!IsValidUserFileState(defaultsValidation)
+                || !IsValidUserFileState(themeDefaultsValidation))
             {
                 return BadRequest(new
                 {
                     success = false,
-                    message = "Default plugin settings are invalid; no user settings were reset."
+                    message = "Default plugin settings or theme are invalid; no user settings were reset."
                 });
             }
 
             var userCount = 0;
             var skippedSettings = new System.Collections.Generic.List<string>();
+            var skippedThemes = new System.Collections.Generic.List<string>();
             var skippedHc = new System.Collections.Generic.List<string>();
             // Get all user IDs from the UserConfigurationManager's known users
             var userIds = _userConfigurationManager.GetAllUserIds();
@@ -1520,6 +1818,28 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 {
                     _logger.LogWarning($"Skipping settings.json reset for {ResolveUserDisplay(userId)}: {ex.Message}");
                     skippedSettings.Add(userId);
+                }
+
+                // Theme state is independent from settings.json. Reset only users
+                // who already customized/initialized it; a missing theme file will
+                // inherit the current administrator default on first use.
+                if (_userConfigurationManager.UserConfigurationExists(userId, "theme.json"))
+                {
+                    try
+                    {
+                        lock (_userConfigurationManager.GetUserFileLock(userId, "theme.json"))
+                        {
+                            var current = _userConfigurationManager.GetUserConfigurationStrict<UserThemeConfiguration>(userId, "theme.json");
+                            var replacement = BuildDefaultUserTheme(defaultConfig);
+                            replacement.Revision = checked(current.Revision + 1);
+                            _userConfigurationManager.SaveUserConfiguration(userId, "theme.json", replacement);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning($"Skipping theme.json reset for {ResolveUserDisplay(userId)}: {ex.Message}");
+                        skippedThemes.Add(userId);
+                    }
                 }
 
                 // Push HC Settings only — user's Items dict is data, not a default. Per-user errors are skipped, not fatal.
@@ -1549,13 +1869,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 }
             }
 
-            _logger.LogInformation($"Reset settings for {userCount}/{userIds.Count()} users to plugin defaults. Skipped settings: {skippedSettings.Count}, skipped HC: {skippedHc.Count}.");
+            _logger.LogInformation($"Reset settings for {userCount}/{userIds.Count()} users to plugin defaults. Skipped settings: {skippedSettings.Count}, skipped themes: {skippedThemes.Count}, skipped HC: {skippedHc.Count}.");
             return Ok(new
             {
                 success = true,
                 userCount,
                 totalUsers = userIds.Count(),
                 skippedSettingsUserIds = skippedSettings,
+                skippedThemeUserIds = skippedThemes,
                 skippedHcUserIds = skippedHc,
             });
         }
