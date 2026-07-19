@@ -9,7 +9,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
 {
     internal static class ThemeConfigurationPolicy
     {
-        public const int CurrentSchemaVersion = 1;
+        public const int CurrentSchemaVersion = 2;
         public const int MaximumPersistedBytes = 128 * 1024;
         public const int MaximumProfiles = 24;
         public const int MaximumScheduleEntries = 32;
@@ -106,13 +106,19 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         public static bool IsJellyfishTheme(string? value)
             => ThemeConfigurationMigration.TryCanonicalizeJellyfishTheme(value, out _);
 
+        public static bool IsPalette(string? value)
+            => value != null && Palettes.Contains(value);
+
+        public static bool IsAccent(string? value)
+            => value != null && Accents.Contains(value);
+
         private static bool ValidateProfile(ThemeProfile? profile)
             => profile != null
                 && IsIdentifier(profile.Id)
                 && IsDisplayName(profile.Name)
                 && BasePresets.Contains(profile.BasePreset)
-                && Palettes.Contains(profile.Palette)
-                && Accents.Contains(profile.Accent)
+                && IsPalette(profile.Palette)
+                && IsAccent(profile.Accent)
                 && Modes.Contains(profile.Mode)
                 && (!profile.FreezePresetVersion || profile.PresetVersion is > 0)
                 && (profile.PresetVersion == null || profile.PresetVersion is > 0 and <= 10_000)

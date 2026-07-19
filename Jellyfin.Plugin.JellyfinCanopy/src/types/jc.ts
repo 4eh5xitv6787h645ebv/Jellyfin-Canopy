@@ -94,7 +94,7 @@ export interface ThemeLegacyMigration {
 
 export interface UserThemeConfiguration {
     Revision: number;
-    SchemaVersion: 1;
+    SchemaVersion: 2;
     ActiveProfileId: string;
     Profiles: ThemeProfile[];
     Schedule: ThemeScheduleEntry[];

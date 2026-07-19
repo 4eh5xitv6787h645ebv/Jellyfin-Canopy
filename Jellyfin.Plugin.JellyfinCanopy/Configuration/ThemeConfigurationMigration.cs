@@ -67,6 +67,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
                 current = current.SchemaVersion switch
                 {
                     0 => MigrateV0ToV1(current),
+                    1 => MigrateV1ToV2(current),
                     _ => throw new InvalidOperationException(
                         $"No Theme Studio migration is registered for schema {current.SchemaVersion}.")
                 };
@@ -135,5 +136,28 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
 
             return migrated;
         }
+
+        private static UserThemeConfiguration MigrateV1ToV2(UserThemeConfiguration source)
+        {
+            var migrated = ThemeConfigurationClone.Configuration(source);
+            migrated.SchemaVersion = 2;
+            foreach (var profile in migrated.Profiles)
+            {
+                if (!ThemeConfigurationPolicy.IsPalette(profile.Palette))
+                {
+                    profile.Palette = "canopy-night";
+                }
+
+                if (!ThemeConfigurationPolicy.IsAccent(profile.Accent))
+                {
+                    profile.Accent = "palette";
+                }
+            }
+
+            return migrated;
+        }
+
+        public static string NormalizeAdministratorPalette(string? value)
+            => ThemeConfigurationPolicy.IsPalette(value) ? value! : "canopy-night";
     }
 }

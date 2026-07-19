@@ -61,6 +61,13 @@ describe('Theme Studio browser schema boundary', () => {
         expect(parseUserThemeConfiguration(migrated)).not.toBeNull();
     });
 
+    it('requires the migrated schema-two browser contract', () => {
+        const obsolete = themeConfiguration() as unknown as Record<string, unknown>;
+        obsolete.SchemaVersion = 1;
+        expect(parseUserThemeConfiguration(obsolete)).toBeNull();
+        expect(parseUserThemeConfiguration(themeConfiguration())?.SchemaVersion).toBe(2);
+    });
+
     it('enforces identifiers, references, capacities, finite numbers, and the byte ceiling', () => {
         const duplicate = themeConfiguration();
         duplicate.Profiles.push(structuredClone(duplicate.Profiles[0]));

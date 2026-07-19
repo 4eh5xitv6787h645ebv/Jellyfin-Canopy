@@ -244,12 +244,12 @@ POST /JellyfinCanopy/user-settings/{userId}/theme.json/migrate-jellyfish
 
 The first GET atomically creates the administrator-selected defaults. Existing older schemas are migrated through pure ordered transformations under the same per-user file lock; a migration advances `Revision`. Reads return `ETag: "<revision>"` and `X-JC-Content-Hash`. A complete POST must send that strong revision as both `If-Match: "<revision>"` and body `Revision`; missing evidence returns `428`, stale evidence returns `409` with authoritative state, and a successful mutation advances the revision exactly once.
 
-Schema 1 persists PascalCase names exactly as represented by the TypeScript interfaces. Each profile contains a curated base preset, palette/accent/mode, a strict token map, accessibility preferences, and independent phone, tablet, desktop, wide, and TV override maps. Token keys and JSON value types are allowlisted; colors are `#RRGGBB` or `#RRGGBBAA`, enumerations are exact strings, and numeric values have explicit ranges.
+Schema 2 persists PascalCase names exactly as represented by the TypeScript interfaces. Each profile contains a curated base preset, palette/accent/mode, a strict token map, accessibility preferences, and independent phone, tablet, desktop, wide, and TV override maps. Token keys and JSON value types are allowlisted; colors are `#RRGGBB` or `#RRGGBBAA`, enumerations are exact strings, and numeric values have explicit ranges. The schema-1-to-2 migration preserves curated values, normalizes a formerly open palette identifier to `canopy-night`, and normalizes a formerly open accent identifier to `palette`; it never imports external CSS.
 
 ```json
 {
   "Revision": 3,
-  "SchemaVersion": 1,
+  "SchemaVersion": 2,
   "ActiveProfileId": "default",
   "Profiles": [{
     "Id": "default",
@@ -295,7 +295,7 @@ The palette inventory includes neutral, vivid, attributed Catppuccin/Dracula ada
 
 ### Theme Studio client runtime
 
-Theme Studio is an import-pure, identity-scoped lazy feature. When the administrator enables it, one feature generation performs one authenticated `theme.json` read, validates the complete response against the browser copy of schema 1, and then resolves one active profile. An oversized response, unknown field, unsupported token, read failure, obsolete identity, or activation failure removes the Theme Studio presentation and leaves Jellyfin's selected base theme in control. The runtime never stores CSS, walks components for computed styles, or creates a style element per component.
+Theme Studio is an import-pure, identity-scoped lazy feature. When the administrator enables it, one feature generation performs one authenticated `theme.json` read, validates the complete response against the browser copy of schema 2, and then resolves one active profile. An oversized response, unknown field, unsupported token, read failure, obsolete identity, or activation failure removes the Theme Studio presentation and leaves Jellyfin's selected base theme in control. The runtime never stores CSS, walks components for computed styles, or creates a style element per component.
 
 The integration boundary is pinned to Jellyfin Web commit `3d7adb53480f02164041fdd983b3f7abc28d0fd9`: `src/themes/index.ts` configures MUI CSS variables with prefix `jf` and selector `[data-theme="%s"]`, while `src/themes/_base/_theme.scss` exposes the classic-layout bridge. Jellyfin alone owns root `data-theme` and the document `THEME_CHANGE` event. Canopy observes both and recomputes its bounded layer without writing `data-theme` or reloading the page.
 

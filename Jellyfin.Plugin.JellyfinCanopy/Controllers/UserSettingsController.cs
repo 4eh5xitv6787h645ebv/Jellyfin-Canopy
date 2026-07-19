@@ -816,7 +816,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         private static UserThemeConfiguration BuildDefaultUserTheme(PluginConfiguration defaultConfig)
             => UserThemeConfiguration.CreateDefault(
                 defaultConfig.ThemeStudioDefaultPreset,
-                defaultConfig.ThemeStudioDefaultPalette);
+                ThemeConfigurationMigration.NormalizeAdministratorPalette(
+                    defaultConfig.ThemeStudioDefaultPalette));
 
         private UserConfigReadResult<UserThemeConfiguration> GetOrCreateUserTheme(string authorizedUserId)
         {

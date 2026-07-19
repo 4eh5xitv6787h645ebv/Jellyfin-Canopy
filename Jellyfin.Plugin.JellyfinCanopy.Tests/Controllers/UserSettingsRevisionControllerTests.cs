@@ -143,6 +143,26 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
         }
 
         [Fact]
+        public void ThemeGet_NormalizesLegacyFreeTextAdministratorPaletteDefault()
+        {
+            _provider.Current = new PluginConfiguration
+            {
+                ThemeStudioDefaultPreset = "glass",
+                ThemeStudioDefaultPalette = "former-custom-palette"
+            };
+
+            var theme = Assert.IsType<UserThemeConfiguration>(
+                Assert.IsType<OkObjectResult>(Controller().GetUserSettingsTheme(UserId)).Value);
+
+            Assert.Equal(ThemeConfigurationPolicy.CurrentSchemaVersion, theme.SchemaVersion);
+            Assert.Equal("glass", Assert.Single(theme.Profiles).BasePreset);
+            Assert.Equal("canopy-night", theme.Profiles[0].Palette);
+            Assert.Equal("canopy-night", _manager
+                .GetUserConfigurationStrict<UserThemeConfiguration>(UserId, "theme.json")
+                .Profiles[0].Palette);
+        }
+
+        [Fact]
         public void ThemeGet_AtomicallyMigratesOlderSchemaAndAdvancesEvidence()
         {
             var legacy = UserThemeConfiguration.CreateDefault("canopy", "canopy-night");

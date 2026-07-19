@@ -206,7 +206,7 @@ export function isUserThemeConfiguration(value: unknown): value is UserThemeConf
     if (!record(value) || !exactKeys(value, [
         'Revision', 'SchemaVersion', 'ActiveProfileId', 'Profiles', 'Schedule', 'LegacyMigration',
     ]) || !Number.isInteger(value.Revision) || Number(value.Revision) < 0
-        || value.SchemaVersion !== 1 || !identifier(value.ActiveProfileId)
+        || value.SchemaVersion !== 2 || !identifier(value.ActiveProfileId)
         || !Array.isArray(value.Profiles) || value.Profiles.length < 1
         || value.Profiles.length > MAXIMUM_PROFILES || !Array.isArray(value.Schedule)
         || value.Schedule.length > MAXIMUM_SCHEDULE_ENTRIES || !legacyMigration(value.LegacyMigration)) return false;

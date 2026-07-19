@@ -38,7 +38,7 @@ public sealed class ThemeConfigurationMigrationTests
 
         Assert.True(ThemeConfigurationMigration.TryMigrate(source, out var migrated));
         Assert.NotNull(migrated);
-        Assert.Equal(1, migrated!.SchemaVersion);
+        Assert.Equal(ThemeConfigurationPolicy.CurrentSchemaVersion, migrated!.SchemaVersion);
         Assert.Equal("Ocean", migrated.LegacyMigration.JellyfishTheme);
         Assert.True(migrated.LegacyMigration.Completed);
         Assert.Equal("jellyfish-ocean", migrated.Profiles[0].Palette);
@@ -48,9 +48,33 @@ public sealed class ThemeConfigurationMigrationTests
         Assert.Equal("canopy-night", source.Profiles[0].Palette);
     }
 
+    [Fact]
+    public void SchemaOneMigrationNormalizesFormerlyOpenPaletteAndAccentIdentifiers()
+    {
+        var source = UserThemeConfiguration.CreateDefault("canopy", "remote-gallery-theme");
+        source.SchemaVersion = 1;
+        source.Profiles[0].Accent = "custom-accent";
+
+        Assert.True(ThemeConfigurationMigration.TryMigrate(source, out var migrated));
+        Assert.NotNull(migrated);
+        Assert.Equal(ThemeConfigurationPolicy.CurrentSchemaVersion, migrated!.SchemaVersion);
+        Assert.Equal("canopy-night", migrated.Profiles[0].Palette);
+        Assert.Equal("palette", migrated.Profiles[0].Accent);
+        Assert.True(PersistedPayloadPolicy.Validate(migrated).IsValid);
+        Assert.Equal("remote-gallery-theme", source.Profiles[0].Palette);
+        Assert.Equal("custom-accent", source.Profiles[0].Accent);
+
+        var curated = UserThemeConfiguration.CreateDefault("glass", "catppuccin");
+        curated.SchemaVersion = 1;
+        curated.Profiles[0].Accent = "pink";
+        Assert.True(ThemeConfigurationMigration.TryMigrate(curated, out var preserved));
+        Assert.Equal("catppuccin", preserved!.Profiles[0].Palette);
+        Assert.Equal("pink", preserved.Profiles[0].Accent);
+    }
+
     [Theory]
     [InlineData(-1)]
-    [InlineData(2)]
+    [InlineData(3)]
     [InlineData(int.MaxValue)]
     public void UnsupportedSchemaVersionsAreRejected(int version)
     {
