@@ -5,6 +5,7 @@ export const meta = {
   phases: [
     { title: 'Explore', detail: 'parallel read-only map of the owning layer, consumers, analogue, helpers, contracts, test seams' },
     { title: 'Plan', detail: 'independent plans judged and synthesised into one canonical plan' },
+    { title: 'Design Lock', detail: 'bind the ONE architecture (reuse decisions, rejected alternatives, invariants) so no round reinterprets it' },
     { title: 'Implement', detail: 'single writer builds the change at its owner with failing-first tests' },
     { title: 'Review', detail: 'adversarial reviewers (split context) → verify findings → single fixer → repeat until clean' },
     { title: 'Localize', detail: 'cheap low-effort agent fans base-locale keys out to all locales — not reviewed' },
@@ -428,6 +429,13 @@ const FINDINGS_SCHEMA = {
           severity: { type: 'string', enum: ['blocker', 'major', 'minor'] },
           summary: { type: 'string' },
           failureScenario: { type: 'string', description: 'concrete inputs/state → wrong output/crash/leak/contract violation' },
+          // Structured identity (Design Lock, M2): a stable semantic key for
+          // oscillation detection, and the decision/invariant a finding relates to.
+          kind: { type: 'string', description: 'defect class, e.g. correctness / lifecycle / security / test-fidelity / design-conflict' },
+          ownerSymbol: { type: 'string', description: 'the function/type/symbol that owns the defect (line-independent)' },
+          invariantId: { type: 'string', description: 'id of the Design-Lock invariant this violates, if any' },
+          decisionId: { type: 'string', description: 'id of the Design-Lock decision this concerns, if any' },
+          newDesignEvidence: { type: 'string', description: 'NEW repository evidence (a missed helper/primitive or a proof the locked design violates an invariant) that would justify reopening a locked decision — else empty' },
         },
       },
     },
@@ -438,9 +446,32 @@ const VERDICT_SCHEMA = {
   additionalProperties: true,
   required: ['real', 'reason'],
   properties: {
-    real: { type: 'boolean', description: 'true only if the finding genuinely reproduces / violates a contract' },
+    real: { type: 'boolean', description: 'true only if the finding genuinely reproduces / violates a contract (equivalent to disposition==="confirm")' },
+    // M2: a finding that merely PREFERS a Design-Lock rejected alternative is
+    // "refute" (out of scope). "reopen-design" is reserved for a finding carrying
+    // NEW evidence that the locked design violates an invariant / missed a repo
+    // primitive — it triggers a design re-decision, not an ordinary fixer.
+    disposition: { type: 'string', enum: ['confirm', 'refute', 'reopen-design'], description: 'confirm = real defect within the locked design; refute = false or prefers a rejected alternative; reopen-design = new evidence invalidates a locked decision' },
     reason: { type: 'string' },
     severity: { type: 'string', enum: ['blocker', 'major', 'minor'] },
+  },
+}
+// M2 — the binding architecture decision, produced between Plan and Implement and
+// carried into implement / review / verify / fixer prompts so no round can silently
+// reinterpret the architecture (the #167 install-once↔teardown thrash).
+const DESIGN_LOCK_SCHEMA = {
+  type: 'object',
+  additionalProperties: true,
+  required: ['decisionId', 'approach', 'acceptanceCriteria'],
+  properties: {
+    decisionId: { type: 'string', description: 'short stable id for THIS locked approach' },
+    approach: { type: 'string', description: 'the ONE chosen architecture, concretely (which owner, which mechanism)' },
+    invariants: { type: 'array', items: { type: 'object', additionalProperties: true, properties: { id: { type: 'string' }, statement: { type: 'string' } } }, description: 'properties the change must preserve; reviewers cite these by id' },
+    helperDisposition: { type: 'array', items: { type: 'object', additionalProperties: true, properties: { path: { type: 'string' }, symbol: { type: 'string' }, disposition: { type: 'string', enum: ['reuse', 'not-applicable'] }, reason: { type: 'string' } } }, description: 'EVERY discovered relevant helper with an explicit reuse / not-applicable decision (so a repo primitive like lifecycle.ts cannot silently disappear)' },
+    rejectedAlternatives: { type: 'array', items: { type: 'object', additionalProperties: true, properties: { id: { type: 'string' }, description: { type: 'string' }, reason: { type: 'string' }, reopenWhen: { type: 'string' } } }, description: 'approaches explicitly NOT taken; a finding that merely prefers one is out of scope unless its reopenWhen condition is met with new evidence' },
+    acceptanceCriteria: { type: 'array', items: { type: 'object', additionalProperties: true, properties: { id: { type: 'string' }, text: { type: 'string' } } }, description: 'stable-id acceptance criteria the change must satisfy' },
+    testProofRequirements: { type: 'array', items: { type: 'string' }, description: 'what a regression must exercise (e.g. the REAL production entry point, not an extracted helper)' },
+    notes: { type: 'string' },
   },
 }
 const FIX_SCHEMA = {
@@ -602,6 +633,96 @@ and add the least while reusing the most.`,
 log(`Plan: ${plans.length} plans → 1 canonical (${(canonicalPlan && canonicalPlan.owningLayer) || 'n/a'})`)
 
 // ═══════════════════════════════════════════════════════════════════════════
+// PHASE 2.5 — DESIGN LOCK (bind the ONE architecture decision) — M2
+// Kills the #167 design-thrash: every later phase reads the same binding decision,
+// rejected alternatives, and helper dispositions, so no round can silently
+// reinterpret the architecture. Helper discovery is preserved PROGRAMMATICALLY so
+// a repo primitive can't vanish in the 12k-char truncation chain.
+// ═══════════════════════════════════════════════════════════════════════════
+phase('Design Lock')
+const discoveredHelpers = [...new Set(explorations.flatMap((e) => (e && e.helpers) || []).map(String).filter(Boolean))]
+const discoveredAnalogues = [...new Set(explorations.map((e) => e && e.analogue).filter(Boolean).map(String))]
+let designLock = await safely(
+  () =>
+    soloSolAgent(
+      `${CONTRACTS}
+
+PHASE: DESIGN LOCK (read-only). Commit to ONE architecture for this change and
+record it as a BINDING decision that implement, review, verify and every fixer will
+follow. Base it on the canonical plan and the brief; do NOT invent a different
+problem.
+
+CANONICAL PLAN (JSON):
+${JSON.stringify(canonicalPlan, null, 1).slice(0, 9000)}
+
+EXISTING HELPERS/PRIMITIVES discovered while exploring — you MUST give EACH an
+explicit reuse OR not-applicable disposition with a reason, so a repo primitive
+(shared lifecycle/dispose/pagination/transport helper) can NEVER silently
+disappear (that was a direct cause of #167's hand-rolled registry):
+${JSON.stringify(discoveredHelpers, null, 1).slice(0, 4000)}
+Nearest analogues: ${JSON.stringify(discoveredAnalogues).slice(0, 1500)}
+
+Output the design lock (schema fields only): a stable decisionId; the ONE chosen
+approach concretely (owner + mechanism, PREFERRING reuse of an existing helper over
+a hand-rolled parallel mechanism); invariants to preserve (id + statement);
+helperDisposition for EVERY discovered helper; rejectedAlternatives (each with a
+reason and a reopenWhen condition — the NEW evidence that would justify revisiting
+it); stable-id acceptanceCriteria; and testProofRequirements (a regression MUST
+exercise the REAL production entry point, not an extracted helper). Choose the
+SIMPLEST approach that reuses the most.`,
+      { schema: DESIGN_LOCK_SCHEMA, effort: 'high', phase: 'Design Lock', label: 'design-lock' },
+      SOL_EXPLORE_PLAN_EFFORT
+    ),
+  null,
+  'Design Lock'
+)
+// Independent challenge: a different read-only agent hunts for a repository
+// primitive the lock failed to dispose (the #167 lifecycle.ts miss) or a missing
+// invariant. It can only ADD reuse dispositions / invariants, never weaken the
+// decision.
+if (designLock) {
+  const challenge = await safely(
+    () =>
+      agent(
+        `${CONTRACTS}
+
+PHASE: DESIGN-LOCK CHALLENGE (read-only). Proposed binding design lock:
+${JSON.stringify(designLock, null, 1).slice(0, 8000)}
+
+Your ONE job: grep src/core and the owning area for any EXISTING repository
+primitive/helper the lock should reuse but did NOT dispose, or any invariant it
+omits. Return ONLY additional helperDisposition entries (disposition 'reuse') and/or
+additional invariants. If the lock is complete, return empty arrays.`,
+        { schema: DESIGN_LOCK_SCHEMA, agentType: 'general-purpose', effort: 'medium', phase: 'Design Lock', label: 'design-lock:challenge' }
+      ),
+    null,
+    'Design Lock challenge'
+  )
+  if (challenge) {
+    const extraHelpers = (challenge.helperDisposition || []).filter((h) => h && h.disposition === 'reuse')
+    const extraInv = challenge.invariants || []
+    if (extraHelpers.length || extraInv.length) {
+      designLock = {
+        ...designLock,
+        helperDisposition: [...(designLock.helperDisposition || []), ...extraHelpers],
+        invariants: [...(designLock.invariants || []), ...extraInv],
+      }
+      log(`Design Lock: challenge added ${extraHelpers.length} reuse disposition(s), ${extraInv.length} invariant(s)`)
+    }
+  }
+}
+log(
+  `Design Lock: ${(designLock && designLock.decisionId) || 'n/a'} — ${((designLock && designLock.helperDisposition) || []).length} helper dispositions, ${((designLock && designLock.rejectedAlternatives) || []).length} rejected alternatives`
+)
+// Compact binding block threaded into implement/review/verify/fixer so no phase can
+// silently reinterpret the architecture. A finding that merely PREFERS a
+// rejectedAlternative is out of scope (verdict 'refute') unless it carries NEW
+// evidence meeting that alternative's reopenWhen.
+const DESIGN_LOCK_BLOCK = designLock
+  ? `\n\nBINDING DESIGN LOCK (decision "${designLock.decisionId}") — you MUST respect this decision, its invariants, and its helper dispositions. Do NOT re-open a rejectedAlternative without NEW evidence meeting its reopenWhen:\n${JSON.stringify(designLock, null, 1).slice(0, 6000)}`
+  : ''
+
+// ═══════════════════════════════════════════════════════════════════════════
 // PHASE 3 — IMPLEMENT (single writer)
 // ═══════════════════════════════════════════════════════════════════════════
 phase('Implement')
@@ -611,6 +732,7 @@ const implementPrompt = `${CONTRACTS}
 PHASE: IMPLEMENT. You are the SOLE writer in this worktree. Follow this canonical
 plan exactly (JSON):
 ${JSON.stringify(canonicalPlan, null, 1).slice(0, 12000)}
+${DESIGN_LOCK_BLOCK}
 
 Rules:
 - Build the change at its owning layer and update EVERY affected consumer. Fix
@@ -672,7 +794,7 @@ The change is on branch ${BRANCH}. Inspect it with:
   git -C ${WORKTREE} status --porcelain   # MUST be empty — a non-empty result is a finding
 The reviewed diff is the COMMITTED range ${BASE}...HEAD; any uncommitted change is
 unreviewed and would be lost on push, so treat a dirty worktree as a real finding.
-You see ONLY the diff and this brief — never the implementer's reasoning.`
+You see ONLY the diff and this brief — never the implementer's reasoning.${DESIGN_LOCK_BLOCK}`
 
 // A Claude adversarial reviewer for a scope: lens set → that lens only; lens null
 // → a whole-diff pass. Used both as a first-class reviewer AND as the fallback
@@ -853,9 +975,16 @@ while (round < HARD_ROUND_CAP && !cleanRound && !haltReason) {
         i,
         `${reviewContext}
 
-PHASE: VERIFY FINDING. Try hard to REFUTE this claimed defect. Default to
-real=false when uncertain — only real=true if it genuinely reproduces or truly
-violates a repository contract on a reachable path.
+PHASE: VERIFY FINDING. Try hard to REFUTE this claimed defect. Return a disposition
+(and set real accordingly):
+- "confirm" (real=true): it genuinely reproduces or violates a repository contract /
+  a Design-Lock invariant on a reachable path, WITHIN the locked architecture.
+- "refute" (real=false): false, OR it merely PREFERS a Design-Lock rejectedAlternative
+  without new evidence (that is out of scope, not a defect).
+- "reopen-design" (real=false): it carries NEW repository evidence that the LOCKED
+  design is wrong (a missed primitive it should reuse, or a proof it violates an
+  invariant) — reserved for genuine architecture errors, not preference.
+Default to "refute" when uncertain.
 FINDING (${f.lens || '?'}) ${f.file}:${f.line || '?'} — ${f.summary}
 SCENARIO: ${f.failureScenario}`,
         { schema: VERDICT_SCHEMA, agentType: 'code-reviewer', effort: 'medium', phase: 'Review', label: `verify-r${round}:${i + 1}` },
@@ -868,9 +997,17 @@ SCENARIO: ${f.failureScenario}`,
   )
 
   // A missing verdict (verifier agent failed) is NOT a refutation — the finding
-  // is unresolved, not cleared. Only a returned real=false counts as refuted.
+  // is unresolved, not cleared. Only a returned refute/false clears it. (M2)
+  const dispositionOf = (v) => (v ? (v.disposition || (v.real ? 'confirm' : 'refute')) : null)
   const unverified = deduped.filter((_, i) => verdicts[i] == null).length
-  const confirmed = deduped.filter((f, i) => verdicts[i] && verdicts[i].real)
+  // reopen-design findings carry NEW evidence the LOCKED architecture is wrong;
+  // fold them into confirmed so the fixer addresses them, but count the round as a
+  // design revision so persistent reopens halt via the budget (not grind forever).
+  const reopened = deduped.filter((_, i) => dispositionOf(verdicts[i]) === 'reopen-design')
+  const confirmed = deduped.filter((_, i) => {
+    const d = dispositionOf(verdicts[i])
+    return d === 'confirm' || d === 'reopen-design'
+  })
   if (!confirmed.length) {
     if (unverified || failedWorkers) {
       reviewIncomplete = true
@@ -898,6 +1035,19 @@ SCENARIO: ${f.failureScenario}`,
     if (designRevisions > MAX_DESIGN_REVISIONS) {
       haltReason = 'non-convergent-design'
       log(`Review: oscillation persists after ${MAX_DESIGN_REVISIONS} design revision(s) — HALTING (non-convergent-design) for a design re-decision instead of grinding to round ${HARD_ROUND_CAP}`)
+      break
+    }
+  }
+  // A "reopen-design" verdict means a reviewer found NEW evidence the LOCKED design
+  // is wrong (a missed primitive / invariant violation). Count it as a design
+  // revision on the same budget as oscillation; persistent reopens halt for a real
+  // design re-decision rather than the fixer thrashing the architecture. (M2)
+  if (reopened.length) {
+    designRevisions++
+    log(`Review round ${round}: ${reopened.length} finding(s) REOPEN the design lock (new evidence) → design revision ${designRevisions}/${MAX_DESIGN_REVISIONS}`)
+    if (designRevisions > MAX_DESIGN_REVISIONS) {
+      haltReason = 'design-reopened'
+      log(`Review: design reopens persist after ${MAX_DESIGN_REVISIONS} revision(s) — HALTING (design-reopened) for a design re-decision`)
       break
     }
   }
@@ -930,11 +1080,12 @@ unrelated consistency cleanups, mass locale edits, or refactors that no confirme
 finding demands. Before adding any new state flag/retry/lock/publisher/lifecycle
 path — or making a second fix to the same state machine/owner — STOP and try
 deletion, reuse, or single ownership first; simpler is required over another
-guard. Do not fix anything not listed. ${COMMIT_RULE}
+guard. Do not fix anything not listed. Stay WITHIN the binding design lock — do NOT
+switch to a rejectedAlternative architecture. ${COMMIT_RULE}
 REPORT which confirmed findings you actually applied vs left unresolved, whether
 fixing them required reverting a previous round's fix (revertedPriorFix), the new
 short HEAD, and production addedLines/deletedLines (git diff --numstat, excluding
-tests/locales).
+tests/locales).${DESIGN_LOCK_BLOCK}
 
 CONFIRMED FINDINGS:
 ${JSON.stringify(confirmed, null, 1).slice(0, 10000)}`,
@@ -1128,6 +1279,7 @@ const result = {
   fixerFailures,
   implement: implemented || null,
   canonicalPlan: canonicalPlan || null,
+  designLock: designLock || null,
   verify: verify || null,
   verifyFixCommitted,
   readyForPR: implementationOk && cleanRound && !reviewIncomplete && !haltReason && !verifyFixCommitted && blockingGreen && e2eGreen,

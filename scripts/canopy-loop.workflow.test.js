@@ -50,7 +50,19 @@ function baseArgs(extra) {
 function happy(opts) {
     const label = (opts && opts.label) || '';
     const ph = (opts && opts.phase) || '';
-    if (label.startsWith('explore')) return { owningLayer: 'x', files: [{ path: 'a', role: 'r' }], consumers: [], contracts: [], testSeams: [] };
+    if (label.startsWith('explore')) return { owningLayer: 'x', files: [{ path: 'a', role: 'r' }], consumers: [], contracts: [], testSeams: [], helpers: ['src/core/lifecycle.ts:disposeBag'] };
+    if (label.startsWith('design-lock')) {
+        if (label.includes('challenge')) return { decisionId: 'd1', approach: 'a', acceptanceCriteria: [], helperDisposition: [], invariants: [] };
+        return {
+            decisionId: 'd1',
+            approach: 'reuse the existing lifecycle disposeBag',
+            invariants: [{ id: 'i1', statement: 'exactly one live handler set' }],
+            helperDisposition: [{ path: 'src/core/lifecycle.ts', symbol: 'disposeBag', disposition: 'reuse', reason: 'the repo primitive' }],
+            rejectedAlternatives: [{ id: 'r1', description: 'hand-rolled registry', reason: 'duplicates lifecycle.ts', reopenWhen: 'disposeBag proven unusable here' }],
+            acceptanceCriteria: [{ id: 'AC1', text: 'one handler set after N visits' }],
+            testProofRequirements: ['exercise the real production entry point'],
+        };
+    }
     if (label.startsWith('plan')) return { summary: 's', owningLayer: 'x', steps: ['s'], tests: ['t'], stateModel: 'm' };
     if (label.startsWith('implement')) return { changedFiles: ['f'], commits: ['c'], selfConfidence: 'high', openTodos: [] };
     if (ph === 'Review') {
@@ -308,6 +320,45 @@ test('confirmedFindingsResolved counts only what a fixer actually applied', asyn
     assert.equal(r.confirmedFindingsTotal, 1, 'one finding was confirmed total');
     assert.equal(r.haltReason, null);
     assert.equal(r.fixerFailures, 0);
+});
+
+test('design lock is bound, preserves discovered helpers, and is threaded into implement + review', async () => {
+    const { agent, calls } = makeAgent(null);
+    const r = await runWorkflow(baseArgs(), agent, parallel, phase, () => {});
+    assert.ok(r.designLock && r.designLock.decisionId, 'a binding design lock is returned in the result');
+    // the design-lock agent RECEIVED the programmatically-preserved discovered helper
+    const lockCall = calls.find((c) => c.opts.label === 'design-lock');
+    assert.ok(lockCall, 'design-lock phase ran');
+    assert.match(lockCall.prompt, /lifecycle\.ts/, 'discovered helper preserved into the lock prompt (not lost to truncation)');
+    // the lock is threaded into the implementer and the reviewers
+    const implCall = calls.find((c) => (c.opts.label || '').startsWith('implement'));
+    assert.match(implCall.prompt, /BINDING DESIGN LOCK/, 'implementer sees the lock');
+    assert.ok(
+        calls.some((c) => c.opts.phase === 'Review' && /BINDING DESIGN LOCK/.test(c.prompt)),
+        'reviewers see the lock (they previously never received the plan/decision)',
+    );
+});
+
+test('a persistent reopen-design verdict halts for a design re-decision', async () => {
+    // A fresh reviewer finding each round, each VERIFIED as reopen-design (new
+    // evidence the locked architecture is wrong). Distinct scenarios so it is the
+    // REOPEN budget — not oscillation — that halts.
+    const WORDS = ['alpha', 'bravo', 'charlie', 'delta', 'echo'];
+    const { agent } = makeAgent((_p, opts) => {
+        const l = opts.label || '';
+        const rm = l.match(/^(?:review|sol)-r(\d+):1$/);
+        if (rm) {
+            const w = WORDS[Number(rm[1]) - 1];
+            return { findings: [{ file: 'a.js', line: 1, severity: 'major', summary: 'wrong arch ' + w, failureScenario: 'scenario ' + w }] };
+        }
+        if (/^verify-r\d+:1$/.test(l)) return { real: false, disposition: 'reopen-design', reason: 'lock missed a repo primitive' };
+        return undefined; // fixer succeeds (happy) but the architecture keeps being wrong
+    });
+    const r = await runWorkflow(baseArgs({ depth: 'quick', hardRoundCap: 10 }), agent, parallel, phase, () => {});
+    assert.ok(['design-reopened', 'non-convergent-design'].includes(r.haltReason), 'reopen-design halts for a re-decision');
+    assert.ok(r.reviewRounds < 10, 'halted early, not ground to the hard cap');
+    assert.ok(r.designRevisions >= 1);
+    assert.equal(r.readyForPR, false);
 });
 
 test('verify enforces a committed, clean handoff as a blocking gate', async () => {

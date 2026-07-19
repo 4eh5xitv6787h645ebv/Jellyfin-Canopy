@@ -123,6 +123,25 @@ models by role:
 Set `modelSplit: false` to run all read-only phases on Claude (implementer still
 Fable→Opus; review still gets ≥1 whole-diff `gpt-5.6-sol` reviewer).
 
+### Design Lock & convergence (large-change handling)
+
+Between **Plan** and **Implement** a **Design Lock** phase binds the ONE chosen
+architecture: a `decisionId`, `invariants`, an explicit **reuse/not-applicable
+disposition for every discovered helper** (so a repo primitive can't silently
+disappear into truncation), a list of **rejected alternatives** (each with a
+`reopenWhen`), and stable-id acceptance criteria. The lock is carried into the
+implement, review, verify, and fixer prompts, so **no round can silently
+reinterpret the architecture**. A review finding that merely *prefers* a rejected
+alternative is out of scope (verdict `refute`); only NEW evidence that the locked
+design is wrong is a `reopen-design`.
+
+The **review loop is stateful**: it keys findings by a line-shift-resistant
+semantic identity and **detects oscillation** — a confirmed defect re-appearing
+after its fix, a reverted fix, or a `reopen-design` counts as a *design revision*.
+After `maxDesignRevisions` (default 1) it **halts** with a truthful `haltReason`
+(rather than grinding to `hardRoundCap`), and `confirmedFindingsResolved` counts
+only what a fixer **actually applied** (a thrown fixer never inflates it).
+
 ### Incidental bugs → the bug inventory
 
 While exploring, agents surface **unrelated pre-existing bugs** they notice (they

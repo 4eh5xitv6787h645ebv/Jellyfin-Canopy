@@ -10,14 +10,16 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["lens", "file", "line", "severity", "summary", "failureScenario"],
+        "required": ["lens", "file", "line", "severity", "summary", "failureScenario", "kind", "ownerSymbol"],
         "properties": {
           "lens": { "type": "string" },
           "file": { "type": "string" },
           "line": { "type": "integer" },
           "severity": { "type": "string", "enum": ["blocker", "major", "minor"] },
           "summary": { "type": "string" },
-          "failureScenario": { "type": "string" }
+          "failureScenario": { "type": "string" },
+          "kind": { "type": "string", "description": "defect class (correctness/lifecycle/security/test-fidelity/design-conflict) — feeds the stable oscillation key" },
+          "ownerSymbol": { "type": "string", "description": "the function/type/symbol that owns the defect (line-independent)" }
         }
       }
     }
