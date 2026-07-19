@@ -87,6 +87,52 @@
                             g.nodes.add(node);
                         }
                         node.addEventListener(type, fn, opts);
+                    },
+                    // Observe per-view nodes through ONE session-shared
+                    // MutationObserver (#167 AC1). A fresh dashboard visit used to
+                    // construct its OWN pair of observers for its arr-instance lists,
+                    // so the live observer count grew 2→4→6 across cached views. Now
+                    // the FIRST visit constructs the single observer (stored in the
+                    // global slot); every visit merely calls `.observe()` on ITS OWN
+                    // list nodes with that same instance, so the observer count never
+                    // grows with visits. The one observer is VIEW-INDEPENDENT: it
+                    // dispatches each mutation to the refresh registered for the view
+                    // that actually owns the mutated node (resolved via closest),
+                    // reproducing the per-view observer's behaviour exactly without
+                    // multiplying instances. Refreshers live in a WeakMap keyed by
+                    // the page element, so an evicted view's refresh (and the config
+                    // DOM it closes over) is GC'd with the view — nothing is retained
+                    // across a visit or an identity change. `pageEl`/`refresh` bind a
+                    // view to its refresh; `nodes` are the list roots to watch.
+                    observeView: function (pageEl, nodes, refresh) {
+                        if (!nodes || !nodes.length) return;
+                        if (!g || !pageEl) {
+                            // No global slot to dedupe against (no window / unresolved
+                            // page): fall back to a plain per-view observer so the
+                            // banner still reacts. Bounded by JF's 3-view cache.
+                            var solo = new MutationObserver(refresh);
+                            nodes.forEach(function (n) { if (n) solo.observe(n, { childList: true, subtree: true }); });
+                            return;
+                        }
+                        if (!g.viewRefreshers) g.viewRefreshers = new WeakMap();
+                        g.viewRefreshers.set(pageEl, refresh);
+                        if (!g.arrObserver) {
+                            g.arrObserver = new MutationObserver(function (mutations) {
+                                var done = new Set();
+                                for (var i = 0; i < mutations.length; i++) {
+                                    var t = mutations[i].target;
+                                    var ownerPage = t && typeof t.closest === 'function'
+                                        ? t.closest('[id="JellyfinCanopyPage"]') : null;
+                                    if (!ownerPage || done.has(ownerPage)) continue;
+                                    done.add(ownerPage);
+                                    var fn = g.viewRefreshers.get(ownerPage);
+                                    if (typeof fn === 'function') {
+                                        try { fn(); } catch (e) { console.error('[JC] arr-instances refresh failed', e); }
+                                    }
+                                }
+                            });
+                        }
+                        nodes.forEach(function (n) { if (n) g.arrObserver.observe(n, { childList: true, subtree: true }); });
                     }
                 };
                 return owner;
@@ -139,7 +185,11 @@
             // visible right now, not on whichever view last ran this script. Prefer
             // the LAST match: JF keeps stale cached views earlier in document order
             // and appends the freshest view last. Skips detached and `.hide`
-            // (or `.hide`-ancestor) views.
+            // (or `.hide`-ancestor) views. When EVERY cached view is hidden (the
+            // dashboard has navigated away but JF still holds config views in its
+            // view cache) returns null — never a hidden page — so the session-long
+            // Escape/theme/media-query/scroll globals stay inert instead of mutating
+            // an off-screen view while another dashboard page is on screen (#167).
             function jcVisibleConfigPage() {
                 var all = document.querySelectorAll('#JellyfinCanopyPage');
                 for (var i = all.length - 1; i >= 0; i--) {
@@ -149,7 +199,7 @@
                     if (typeof el.closest === 'function' && el.closest('.hide')) continue;
                     return el;
                 }
-                return all.length ? all[all.length - 1] : null;
+                return null;
             }
             /* jc-config-page-lifecycle:end */
 
@@ -2132,17 +2182,22 @@
 
         /* jc-quality-cat-reorder:start */
         // Wire up/down arrow clicks for the admin quality-category list.
-        // Delegated on the document via the page lifecycle, so a fresh
-        // dashboard visit replaces (never stacks on) the previous visit's
-        // handler — the #167 defect was N retained copies of this delegate
-        // each moving the row one position per click.
-        function jcWireQualityCatAdminReorder(doc, lifecycle, refreshArrows, markDirty) {
-            // Delegated on the document, installed EXACTLY ONCE per session (#167
-            // AC3). The handler is view-independent — it acts on whichever row the
-            // event actually targeted (e.target.closest) — so one live delegate is
-            // both correct for any visible view AND moves a Down-clicked row
-            // exactly one position, never N (the pre-fix defect stacked N copies).
-            lifecycle.installGlobalOnce('qualityCatReorder', doc, 'click', function (e) {
+        // Delegated on THIS view's own page root (a per-view element listener),
+        // NOT on the document. The #167 defect was N retained document delegates,
+        // each firing on one click so a Down arrow moved the row N positions.
+        function jcWireQualityCatAdminReorder(root, lifecycle, refreshArrows, markDirty) {
+            // A per-VIEW delegate on the resolved page root. A fresh dashboard
+            // visit wires its OWN delegate that calls its OWN markDirty/refreshArrows
+            // (never the first view's) — the install-once-on-document shape marked
+            // the wrong (first) view's save dock dirty and retained its
+            // credential-bearing DOM through document → handler (#167). Because a
+            // click bubbles through exactly ONE page root, only the owning view's
+            // single delegate fires, so a Down-clicked row moves EXACTLY one
+            // position, never N (AC3). The delegate dies with its view when
+            // Jellyfin evicts it (bounded by JF's 3-view cache) — nothing lands on
+            // the document, so no cross-view retention. The handler still resolves
+            // the acted-on row from the event target, so it is correct for any row.
+            lifecycle.addListener(root, 'click', function (e) {
                 var btn = e.target.closest && e.target.closest('#qualityCategoriesAdmin .jc-cat-up, #qualityCategoriesAdmin .jc-cat-down');
                 if (!btn || btn.disabled) return;
                 e.preventDefault();
@@ -2163,7 +2218,7 @@
             });
         }
         /* jc-quality-cat-reorder:end */
-        jcWireQualityCatAdminReorder(document, jcPageLifecycle, refreshQualityCatAdminArrows, jcMarkConfigDirty);
+        jcWireQualityCatAdminReorder(page || document, jcPageLifecycle, refreshQualityCatAdminArrows, jcMarkConfigDirty);
 
         // Tracks whether the most recent `renderPagesOrderAdmin` call ran to
         // completion. If false at save time, we skip writing PagesOrder back to
@@ -2226,11 +2281,13 @@
         }
 
         // Wire up/down arrow clicks for the admin page-order list.
-        // Delegated on the document, installed EXACTLY ONCE per session and
-        // view-independent (acts on the event's own row), so it never stacks
-        // across visits (#167).
+        // A per-VIEW delegate on this view's own page root (not the document), so
+        // a fresh visit wires its OWN delegate calling its OWN jcMarkConfigDirty
+        // and a click bubbles through exactly one page root — the row moves EXACTLY
+        // one position, never N, and no delegate is retained on the document across
+        // views (#167).
         (function () {
-            jcPageLifecycle.installGlobalOnce('pagesOrderReorder', document, 'click', function (e) {
+            jcPageLifecycle.addListener(page || document, 'click', function (e) {
                 var btn = e.target.closest && e.target.closest('#pagesOrderAdmin .jc-page-up, #pagesOrderAdmin .jc-page-down');
                 if (!btn || btn.disabled) return;
                 e.preventDefault();
@@ -3241,19 +3298,17 @@
             // Instance add/remove happens via button clicks that mutate
             // #sonarrInstancesList / #radarrInstancesList. Observe both so the
             // banner updates immediately on remove (no input event fires).
-            ['sonarrInstancesList', 'radarrInstancesList'].forEach(function(id) {
-                var root = jcById(id);
-                if (!root) return;
-                // Per-VIEW observer (#167): each observes the node INSIDE its own
-                // view and drives that view's page-scoped banner, so a hidden
-                // cached view can never steal the observer from the visible one.
-                // It is not registered globally, so it dies with its view when
-                // Jellyfin evicts it (bounded by JF's 3-view cache) — no unbounded
-                // multiplication and no cross-view interference. The duplicate-run
-                // guard in jcAcquireConfigPageLifecycle means one view wires once.
-                var obs = new MutationObserver(refresh);
-                obs.observe(root, { childList: true, subtree: true });
-            });
+            // Routed through the owner's ONE session-shared observer (#167 AC1):
+            // this view's list nodes + this view's `refresh` are registered, and
+            // the single observer dispatches mutations back to the owning view's
+            // refresh. The observer count therefore stays at one across visits
+            // instead of growing per fresh cached view.
+            /* jc-arr-instances-observer:start */
+            var arrRoots = ['sonarrInstancesList', 'radarrInstancesList']
+                .map(function(id) { return jcById(id); })
+                .filter(Boolean);
+            jcPageLifecycle.observeView(page, arrRoots, refresh);
+            /* jc-arr-instances-observer:end */
         })();
 
         // Apply the blurred background to .jc-sticky-header only when the
