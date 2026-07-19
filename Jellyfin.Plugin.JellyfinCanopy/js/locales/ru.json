@@ -712,5 +712,9 @@
   "discovery_customize_reset": "Сбросить по умолчанию",
   "discovery_customize_cancel": "Отмена",
   "discovery_customize_save": "Сохранить",
-  "pages_signin_required": "Войдите, чтобы просмотреть эту страницу."
+  "pages_signin_required": "Войдите, чтобы просмотреть эту страницу.",
+  "anime_filler_badge": "Филлер",
+  "anime_filler_setting": "Предупреждения о филлерах в аниме",
+  "anime_filler_setting_desc": "Показывает значок у эпизодов, надёжно классифицированных как филлеры.",
+  "feature_anime_filler_warnings": "{{icon:warning}} Предупреждения о филлерах в аниме"
 }

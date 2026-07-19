@@ -567,6 +567,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 LanguageTagsEnabled = defaultConfig.LanguageTagsEnabled,
                 RatingTagsEnabled = defaultConfig.RatingTagsEnabled,
                 PeopleTagsEnabled = defaultConfig.PeopleTagsEnabled,
+                AnimeFillerWarningsEnabled = defaultConfig.AnimeFillerWarningsDefaultEnabled,
                 TagsHideOnHover = defaultConfig.TagsHideOnHover,
                 QualityTagsPosition = defaultConfig.QualityTagsPosition,
                 GenreTagsPosition = defaultConfig.GenreTagsPosition,

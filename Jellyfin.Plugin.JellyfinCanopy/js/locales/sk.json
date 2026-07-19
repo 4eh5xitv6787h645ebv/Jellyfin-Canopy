@@ -712,5 +712,9 @@
   "discovery_customize_reset": "Obnoviť predvolené",
   "discovery_customize_cancel": "Zrušiť",
   "discovery_customize_save": "Uložiť",
-  "pages_signin_required": "Pre zobrazenie tejto stránky sa prihláste."
+  "pages_signin_required": "Pre zobrazenie tejto stránky sa prihláste.",
+  "anime_filler_badge": "Výplň",
+  "anime_filler_setting": "Upozornenia na výplňové diely anime",
+  "anime_filler_setting_desc": "Zobrazí odznak pri epizódach spoľahlivo označených ako výplňové.",
+  "feature_anime_filler_warnings": "{{icon:warning}} Upozornenia na výplňové diely anime"
 }

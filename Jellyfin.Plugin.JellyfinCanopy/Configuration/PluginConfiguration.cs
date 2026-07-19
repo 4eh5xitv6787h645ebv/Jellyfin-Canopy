@@ -318,6 +318,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
             SpoilerAutoEnableOnFirstPlay = false;
             SpoilerAutoEnableOnSeerrRequest = false;
             SpoilerBlurStrictRefresh = false;
+
+            // Anime filler warnings are deliberately opt-in at server level.
+            AnimeFillerWarningsEnabled = false;
+            AnimeFillerWarningsDefaultEnabled = true;
+            AnimeFillerDetectionMode = "GenreOrProviderId";
+            AnimeFillerGenre = "Anime";
+            AnimeFillerTag = "Anime";
+            AnimeFillerMappings = string.Empty;
+            AnimeFillerCacheHours = 24;
             SpoilerKeepMoviePosters = true;
             SpoilerIdentityTags = true;
             SpoilerOverviewPlaceholder = "Spoiler Guard activated";
@@ -735,6 +744,27 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         // (sigma=Intensity, tile-mode Clamp) on the wire, so every client gets
         // the blurred bytes natively.
         public bool SpoilerBlurEnabled { get; set; } = false;
+
+        /// <summary>Master switch for caller-scoped anime filler classifications.</summary>
+        public bool AnimeFillerWarningsEnabled { get; set; }
+
+        /// <summary>Default value seeded into each user's settings file.</summary>
+        public bool AnimeFillerWarningsDefaultEnabled { get; set; }
+
+        /// <summary>Anime eligibility policy: GenreOrProviderId, GenreOnly, or ProviderIdOnly.</summary>
+        public string AnimeFillerDetectionMode { get; set; } = "GenreOrProviderId";
+
+        /// <summary>Case-insensitive genre used by anime eligibility detection.</summary>
+        public string AnimeFillerGenre { get; set; } = "Anime";
+
+        /// <summary>Case-insensitive tag used by anime eligibility detection.</summary>
+        public string AnimeFillerTag { get; set; } = "Anime";
+
+        /// <summary>Newline-separated series/season to MyAnimeList ID overrides.</summary>
+        public string AnimeFillerMappings { get; set; } = string.Empty;
+
+        /// <summary>Successful upstream cache lifetime, clamped to 1–168 hours by consumers.</summary>
+        public int AnimeFillerCacheHours { get; set; }
         // Gaussian sigma passed to Skia. 1 = barely blurred, 100 = heavily
         // blurred. Default 40 hides scene content while keeping silhouettes and
         // dominant colours visible.

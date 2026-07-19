@@ -712,5 +712,9 @@
   "discovery_customize_reset": "Reset to defaults",
   "discovery_customize_cancel": "Cancel",
   "discovery_customize_save": "Save",
-  "pages_signin_required": "Sign in to view this page."
+  "pages_signin_required": "Sign in to view this page.",
+  "anime_filler_badge": "Filler",
+  "anime_filler_setting": "Anime filler warnings",
+  "anime_filler_setting_desc": "Show a badge on episodes confidently classified as filler.",
+  "feature_anime_filler_warnings": "{{icon:warning}} Anime Filler Warnings"
 }

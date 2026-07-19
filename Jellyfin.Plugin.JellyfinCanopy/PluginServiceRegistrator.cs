@@ -50,6 +50,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy
                 .ConfigurePrimaryHttpMessageHandler(() => Helpers.ArrUrlGuard.CreateGuardedHandler(allowAutoRedirect: true));
             serviceCollection.AddHttpClient(Helpers.PluginHttpClients.TmdbClient);
             serviceCollection.AddHttpClient(Helpers.PluginHttpClients.AssetsClient);
+            serviceCollection.AddHttpClient(Helpers.PluginHttpClients.JikanClient, client =>
+            {
+                client.BaseAddress = new Uri("https://api.jikan.moe/v4/");
+                client.Timeout = TimeSpan.FromSeconds(10);
+            }).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
+            serviceCollection.AddHttpClient(Helpers.PluginHttpClients.AniListClient, client =>
+            {
+                client.BaseAddress = new Uri("https://graphql.anilist.co/");
+                client.Timeout = TimeSpan.FromSeconds(10);
+            }).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
             // Dedicated JellyfinCanopy_*.log sink (a documented product feature)
             // plus a closed-generic ILogger<T> registration for every plugin type.
             // Each FileForwardingLogger<T> writes the file AND forwards to the host
@@ -74,6 +84,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy
             // Live view over the plugin configuration (re-read per access, never
             // snapshotted) so admin saves take effect immediately in consumers.
             serviceCollection.AddSingleton<Services.IPluginConfigProvider, Services.PluginConfigProvider>();
+            serviceCollection.AddSingleton<Services.AnimeFiller.IAnimeFillerProvider, Services.AnimeFiller.JikanAnimeFillerProvider>();
+            serviceCollection.AddSingleton<Services.AnimeFiller.AnimeFillerService>();
             // Provider-id → item lookups via the supported ILibraryManager query
             // surface (replaces the former raw EF access to Jellyfin's internal DB).
             serviceCollection.AddSingleton<Data.IItemLookupService, Data.ItemLookupService>();

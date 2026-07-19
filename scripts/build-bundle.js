@@ -70,6 +70,7 @@ const ESM_ENTRIES = Object.freeze({
     'subtitle-styles': path.join(SRC_ROOT, 'entries', 'subtitle-styles.ts'),
     'spoiler-guard': path.join(SRC_ROOT, 'enhanced', 'spoiler-guard', 'feature.ts'),
     'theme-selector': path.join(SRC_ROOT, 'extras', 'theme-selector.feature.ts'),
+    'anime-filler-warnings': path.join(SRC_ROOT, 'entries', 'anime-filler-warnings.ts'),
 });
 
 // These entries activate for every authenticated identity on a cold Home load.

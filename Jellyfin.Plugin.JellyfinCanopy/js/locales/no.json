@@ -712,5 +712,9 @@
   "discovery_customize_reset": "Tilbakestill til standard",
   "discovery_customize_cancel": "Avbryt",
   "discovery_customize_save": "Lagre",
-  "pages_signin_required": "Logg inn for å se denne siden."
+  "pages_signin_required": "Logg inn for å se denne siden.",
+  "anime_filler_badge": "Fyllstoff",
+  "anime_filler_setting": "Advarsler om fyllstoff i anime",
+  "anime_filler_setting_desc": "Viser et merke på episoder som med sikkerhet er klassifisert som fyllstoff.",
+  "feature_anime_filler_warnings": "{{icon:warning}} Advarsler om fyllstoff i anime"
 }

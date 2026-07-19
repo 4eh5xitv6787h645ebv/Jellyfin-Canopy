@@ -712,5 +712,9 @@
   "discovery_customize_reset": "Restablecer valores predeterminados",
   "discovery_customize_cancel": "Cancelar",
   "discovery_customize_save": "Guardar",
-  "pages_signin_required": "Inicia sesión para ver esta página."
+  "pages_signin_required": "Inicia sesión para ver esta página.",
+  "anime_filler_badge": "Relleno",
+  "anime_filler_setting": "Avisos de relleno de anime",
+  "anime_filler_setting_desc": "Muestra una insignia en los episodios clasificados con seguridad como relleno.",
+  "feature_anime_filler_warnings": "{{icon:warning}} Avisos de relleno de anime"
 }

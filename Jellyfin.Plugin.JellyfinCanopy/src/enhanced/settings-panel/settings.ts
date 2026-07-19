@@ -139,7 +139,13 @@ export function wireSettingsListeners(ctx: PanelContext): void {
             if (requiresRefresh) {
                 toastMessage += ".<br> Refresh page to apply.";
             }
-            void save.then(saved => { if (saved) toast(toastMessage); });
+            void save.then(async saved => {
+                if (!saved) return;
+                if (id === 'animeFillerWarningsToggle' && identityContext) {
+                    await JC.core.clientRuntime?.reconcileUserSettings(identityContext);
+                }
+                toast(toastMessage);
+            });
             if (id === 'randomButtonToggle') (JC as any).addRandomButton();
             if (id === 'hideFavoritesTabToggle') (JC as any).applyHideFavoritesTab?.();
             if (id === 'showWatchProgressToggle' && !(e.target as HTMLInputElement).checked) document.querySelectorAll('.mediaInfoItem-watchProgress').forEach(el => el.remove());
@@ -178,6 +184,9 @@ export function wireSettingsListeners(ctx: PanelContext): void {
     addSettingToggleListener('showAudioLanguagesToggle', 'showAudioLanguages', 'feature_audio_language_display');
     addSettingToggleListener('removeContinueWatchingToggle', 'removeContinueWatchingEnabled', 'feature_remove_continue_watching');
     addSettingToggleListener('hideFavoritesTabToggle', 'hideFavoritesTab', 'feature_hide_favorites_tab');
+    if (document.getElementById('animeFillerWarningsToggle')) {
+        addSettingToggleListener('animeFillerWarningsToggle', 'animeFillerWarningsEnabled', 'feature_anime_filler_warnings');
+    }
     addSettingToggleListener('qualityTagsToggle', 'qualityTagsEnabled', 'feature_quality_tags', true);
     // Show or hide the nested category section when the master quality-tags toggle changes
     const qualityMasterToggle = document.getElementById('qualityTagsToggle') as HTMLInputElement | null;

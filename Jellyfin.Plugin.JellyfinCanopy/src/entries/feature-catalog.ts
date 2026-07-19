@@ -338,4 +338,14 @@ export const builtInFeatureDescriptors: readonly ClientFeatureDescriptor[] = Obj
             && JC.pluginConfig?.LetterboxdEnabled === true,
         isApplicable: (state) => detailsRoute(state.routeKey),
     },
+    {
+        id: 'anime-filler-warnings',
+        entry: 'anime-filler-warnings',
+        scope: 'navigation',
+        restartOnConfigChange: true,
+        isEnabled: (state) => Boolean(state.identity)
+            && JC.pluginConfig?.AnimeFillerWarningsEnabled === true
+            && JC.currentSettings?.animeFillerWarningsEnabled !== false,
+        isApplicable: (state) => detailsRoute(state.routeKey),
+    },
 ]);

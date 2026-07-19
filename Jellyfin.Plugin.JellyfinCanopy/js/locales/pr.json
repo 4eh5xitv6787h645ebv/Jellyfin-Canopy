@@ -712,5 +712,9 @@
   "discovery_customize_reset": "Repor predefinições",
   "discovery_customize_cancel": "Belay That",
   "discovery_customize_save": "Set Sail",
-  "pages_signin_required": "Sign in to view this page, matey."
+  "pages_signin_required": "Sign in to view this page, matey.",
+  "anime_filler_badge": "Filler",
+  "anime_filler_setting": "Anime Filler Warnings",
+  "anime_filler_setting_desc": "Mark episodes the charts call filler, matey.",
+  "feature_anime_filler_warnings": "{{icon:warning}} Anime Filler Warnings"
 }

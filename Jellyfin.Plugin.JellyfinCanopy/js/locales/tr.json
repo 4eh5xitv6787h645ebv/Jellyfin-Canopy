@@ -712,5 +712,9 @@
   "discovery_customize_reset": "Varsayılanlara sıfırla",
   "discovery_customize_cancel": "İptal",
   "discovery_customize_save": "Kaydet",
-  "pages_signin_required": "Bu sayfayı görüntülemek için oturum açın."
+  "pages_signin_required": "Bu sayfayı görüntülemek için oturum açın.",
+  "anime_filler_badge": "Dolgu",
+  "anime_filler_setting": "Anime dolgu bölümü uyarıları",
+  "anime_filler_setting_desc": "Güvenilir biçimde dolgu olarak sınıflandırılan bölümlerde bir rozet gösterir.",
+  "feature_anime_filler_warnings": "{{icon:warning}} Anime dolgu bölümü uyarıları"
 }

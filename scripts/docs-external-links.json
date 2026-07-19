@@ -7,6 +7,10 @@
       "reason": "Canonical Jellyfin Canopy project link."
     },
     {
+      "url": "https://4eh5xitv6787h645ebv.github.io/Jellyfin-Canopy/anime-filler-warnings/",
+      "reason": "Canonical Jellyfin Canopy project link."
+    },
+    {
       "url": "https://4eh5xitv6787h645ebv.github.io/Jellyfin-Canopy/customization/",
       "reason": "Canonical Jellyfin Canopy project link."
     },
@@ -47,6 +51,10 @@
       "reason": "Canonical Jellyfin Canopy project link."
     },
     {
+      "url": "https://anilist.gitbook.io/anilist-apiv2-docs/",
+      "reason": "Official AniList API documentation for the fixed-origin ID translation provider."
+    },
+    {
       "url": "https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png",
       "reason": "Original upstream author support link."
     },
@@ -69,6 +77,10 @@
     {
       "url": "https://discord.gg/EYNFf7y4CG",
       "reason": "Reviewed public third-party documentation or asset."
+    },
+    {
+      "url": "https://docs.api.jikan.moe/",
+      "reason": "Official Jikan v4 API documentation for anime episode classifications."
     },
     {
       "url": "https://docs.seerr.dev/",

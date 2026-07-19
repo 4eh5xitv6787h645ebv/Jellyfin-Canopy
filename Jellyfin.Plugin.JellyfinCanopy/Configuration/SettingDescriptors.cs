@@ -193,6 +193,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
                 PublicUser("LanguageTagsEnabled", c => c.LanguageTagsEnabled, nameof(UserSettings.LanguageTagsEnabled)),
                 PublicUser("RatingTagsEnabled", c => c.RatingTagsEnabled, nameof(UserSettings.RatingTagsEnabled)),
                 PublicUser("PeopleTagsEnabled", c => c.PeopleTagsEnabled, nameof(UserSettings.PeopleTagsEnabled)),
+                Public("AnimeFillerWarningsEnabled", c => c.AnimeFillerWarningsEnabled),
+                PublicUser("AnimeFillerWarningsDefaultEnabled", c => c.AnimeFillerWarningsDefaultEnabled, nameof(UserSettings.AnimeFillerWarningsEnabled)),
                 Public("DisableAllShortcuts", c => c.DisableAllShortcuts),
                 // Historical renames: the admin defaults kept their configPage names while the
                 // per-user properties got UI-oriented names.

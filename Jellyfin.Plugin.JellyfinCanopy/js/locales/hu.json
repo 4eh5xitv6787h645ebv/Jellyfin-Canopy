@@ -712,5 +712,9 @@
   "discovery_customize_reset": "Alapértelmezettek visszaállítása",
   "discovery_customize_cancel": "Mégsem",
   "discovery_customize_save": "Mentés",
-  "pages_signin_required": "Jelentkezz be az oldal megtekintéséhez."
+  "pages_signin_required": "Jelentkezz be az oldal megtekintéséhez.",
+  "anime_filler_badge": "Töltelék",
+  "anime_filler_setting": "Anime töltelékepizód-figyelmeztetések",
+  "anime_filler_setting_desc": "Jelvényt jelenít meg a biztosan tölteléknek minősített epizódokon.",
+  "feature_anime_filler_warnings": "{{icon:warning}} Anime töltelékepizód-figyelmeztetések"
 }

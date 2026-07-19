@@ -712,5 +712,9 @@
   "discovery_customize_reset": "恢复默认",
   "discovery_customize_cancel": "取消",
   "discovery_customize_save": "储存",
-  "pages_signin_required": "登录以查看此页面。"
+  "pages_signin_required": "登录以查看此页面。",
+  "anime_filler_badge": "填充集",
+  "anime_filler_setting": "动漫填充集警告",
+  "anime_filler_setting_desc": "在可靠判定为填充内容的剧集上显示徽章。",
+  "feature_anime_filler_warnings": "{{icon:warning}} 动漫填充集警告"
 }

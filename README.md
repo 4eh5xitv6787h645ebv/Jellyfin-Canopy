@@ -68,6 +68,7 @@ Connect [Seerr](https://github.com/seerr-team/seerr) once, and Jellyfin's own se
 
 - **Parental controls that follow the user everywhere** — Jellyfin's age ratings *and* tag-based block/allow rules are enforced on every discovery and request surface too, server-side, so restricted accounts never even see what they shouldn't request.
 - **Spoiler Guard** — opt-in, per-user protection that blurs images and hides episode titles and descriptions for anything you haven't watched yet — enforced by the server on every device, including TV apps.
+- **Anime Filler Warnings** — optional, per-user Filler badges on confidently matched anime episodes, with strict matching and no library metadata changes.
 - **Hidden content** — any user can hide titles from their own library views, search, and discovery; a management panel handles search, unhide, and bulk actions, and admins can review any user's hidden list.
 
 → Details: [Spoiler Guard](https://4eh5xitv6787h645ebv.github.io/Jellyfin-Canopy/spoiler-guard/) · [The Enhanced Experience](https://4eh5xitv6787h645ebv.github.io/Jellyfin-Canopy/enhanced/)
@@ -176,6 +177,7 @@ Everything above, in depth — every setting explained, with screenshots:
 | [Discover & Request](https://4eh5xitv6787h645ebv.github.io/Jellyfin-Canopy/discover/) | Seerr setup, discovery feed, requests, reviews |
 | [Sonarr & Radarr](https://4eh5xitv6787h645ebv.github.io/Jellyfin-Canopy/sonarr-radarr/) | Calendar, requests page, item-menu search |
 | [Spoiler Guard](https://4eh5xitv6787h645ebv.github.io/Jellyfin-Canopy/spoiler-guard/) | Per-user unwatched-content protection |
+| [Anime Filler Warnings](https://4eh5xitv6787h645ebv.github.io/Jellyfin-Canopy/anime-filler-warnings/) | Conservative anime episode filler badges |
 | [Customization](https://4eh5xitv6787h645ebv.github.io/Jellyfin-Canopy/customization/) | Branding, themes, CSS, login image |
 | [Reference](https://4eh5xitv6787h645ebv.github.io/Jellyfin-Canopy/reference/) | Every admin & user setting, catalogued |
 | [Help & Community](https://4eh5xitv6787h645ebv.github.io/Jellyfin-Canopy/help/) | Troubleshooting and FAQs |

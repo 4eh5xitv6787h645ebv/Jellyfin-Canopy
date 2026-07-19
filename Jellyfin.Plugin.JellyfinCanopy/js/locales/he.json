@@ -712,5 +712,9 @@
   "discovery_customize_reset": "איפוס לברירת מחדל",
   "discovery_customize_cancel": "Cancel",
   "discovery_customize_save": "Save",
-  "pages_signin_required": "התחבר כדי להציג דף זה."
+  "pages_signin_required": "התחבר כדי להציג דף זה.",
+  "anime_filler_badge": "פילר",
+  "anime_filler_setting": "אזהרות פילר באנימה",
+  "anime_filler_setting_desc": "מציג תג בפרקים שסווגו בוודאות כפילר.",
+  "feature_anime_filler_warnings": "{{icon:warning}} אזהרות פילר באנימה"
 }

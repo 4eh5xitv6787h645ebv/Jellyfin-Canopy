@@ -38,6 +38,7 @@ export interface PluginConfig {
  * Tag modules address position/enable keys dynamically by name.
  */
 export interface UserSettings {
+    animeFillerWarningsEnabled?: boolean;
     [key: string]: unknown;
 }
 

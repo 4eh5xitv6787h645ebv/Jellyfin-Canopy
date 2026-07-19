@@ -712,5 +712,9 @@
   "discovery_customize_reset": "Auf Standard zurücksetzen",
   "discovery_customize_cancel": "Abbrechen",
   "discovery_customize_save": "Speichern",
-  "pages_signin_required": "Melde dich an, um diese Seite zu sehen."
+  "pages_signin_required": "Melde dich an, um diese Seite zu sehen.",
+  "anime_filler_badge": "Filler",
+  "anime_filler_setting": "Anime-Filler-Warnungen",
+  "anime_filler_setting_desc": "Zeigt ein Abzeichen bei Episoden, die zuverlässig als Filler eingestuft wurden.",
+  "feature_anime_filler_warnings": "{{icon:warning}} Anime-Filler-Warnungen"
 }

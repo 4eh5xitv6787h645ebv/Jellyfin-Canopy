@@ -712,5 +712,9 @@
   "discovery_customize_reset": "Przywróć domyślne",
   "discovery_customize_cancel": "Anuluj",
   "discovery_customize_save": "Zapisz",
-  "pages_signin_required": "Zaloguj się, aby wyświetlić tę stronę."
+  "pages_signin_required": "Zaloguj się, aby wyświetlić tę stronę.",
+  "anime_filler_badge": "Wypełniacz",
+  "anime_filler_setting": "Ostrzeżenia o wypełniaczach anime",
+  "anime_filler_setting_desc": "Pokazuje plakietkę przy odcinkach pewnie sklasyfikowanych jako wypełniacze.",
+  "feature_anime_filler_warnings": "{{icon:warning}} Ostrzeżenia o wypełniaczach anime"
 }
