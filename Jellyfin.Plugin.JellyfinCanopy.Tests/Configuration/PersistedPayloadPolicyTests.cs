@@ -291,6 +291,192 @@ public sealed class PersistedPayloadPolicyTests
     }
 
     [Fact]
+    public void Theme_DefaultAndTypedOverrides_AreValid()
+    {
+        var theme = UserThemeConfiguration.CreateDefault("canopy", "canopy-night");
+        var profile = Assert.Single(theme.Profiles);
+        profile.Tokens["color.primary"] = JsonValue("#7c5cff");
+        profile.Tokens["layout.density"] = JsonValue("cozy");
+        profile.Tokens["effects.blur"] = JsonValue(18);
+        profile.Responsive.Phone = new ThemeBreakpointOverrides();
+        profile.Responsive.Phone.Tokens["layout.navigation"] = JsonValue("bottom");
+        profile.Accessibility.Motion = "off";
+        theme.Schedule.Add(new ThemeScheduleEntry
+        {
+            Id = "winter",
+            ProfileId = ThemeProfile.DefaultId,
+            StartMonthDay = "12-01",
+            EndMonthDay = "02-29",
+            Priority = 10
+        });
+        theme.LegacyMigration.JellyfishTheme = "Ocean";
+        theme.LegacyMigration.Completed = true;
+
+        AssertValid(theme);
+    }
+
+    [Fact]
+    public void Theme_ProfileIdentityNamesAndCapacity_AreBounded()
+    {
+        var emoji80 = string.Concat(Enumerable.Repeat("🪼", ThemeConfigurationPolicy.MaximumProfileNameRunes));
+        var exact = UserThemeConfiguration.CreateDefault("canopy", "canopy-night");
+        exact.Profiles[0].Name = emoji80;
+        AssertValid(exact);
+
+        exact.Profiles[0].Name += "🪼";
+        AssertInvalid(exact);
+
+        var tooMany = new UserThemeConfiguration
+        {
+            Profiles = Enumerable.Range(0, ThemeConfigurationPolicy.MaximumProfiles + 1)
+                .Select(index => new ThemeProfile { Id = $"profile-{index}", Name = $"Profile {index}" })
+                .ToList()
+        };
+        AssertInvalid(tooMany);
+
+        var duplicate = UserThemeConfiguration.CreateDefault("canopy", "canopy-night");
+        duplicate.Profiles.Add(new ThemeProfile());
+        AssertInvalid(duplicate);
+
+        var missingActive = UserThemeConfiguration.CreateDefault("canopy", "canopy-night");
+        missingActive.ActiveProfileId = "absent";
+        AssertInvalid(missingActive);
+
+        var invalidId = UserThemeConfiguration.CreateDefault("canopy", "canopy-night");
+        invalidId.Profiles[0].Id = "has spaces";
+        invalidId.ActiveProfileId = "has spaces";
+        AssertInvalid(invalidId);
+    }
+
+    [Fact]
+    public void Theme_TokenNamesTypesAndValues_AreAllowlisted()
+    {
+        var unknown = UserThemeConfiguration.CreateDefault("canopy", "canopy-night");
+        unknown.Profiles[0].Tokens["css.selector"] = JsonValue("body{}");
+        AssertInvalid(unknown);
+
+        var remote = UserThemeConfiguration.CreateDefault("canopy", "canopy-night");
+        remote.Profiles[0].Tokens["color.primary"] = JsonValue("url(https://example.invalid/a.png)");
+        AssertInvalid(remote);
+
+        var wrongType = UserThemeConfiguration.CreateDefault("canopy", "canopy-night");
+        wrongType.Profiles[0].Tokens["effects.blur"] = JsonValue("48px");
+        AssertInvalid(wrongType);
+
+        var outOfRange = UserThemeConfiguration.CreateDefault("canopy", "canopy-night");
+        outOfRange.Profiles[0].Tokens["effects.blur"] = JsonValue(49);
+        AssertInvalid(outOfRange);
+
+        var invalidResponsive = UserThemeConfiguration.CreateDefault("canopy", "canopy-night");
+        var tvOverrides = new ThemeBreakpointOverrides();
+        tvOverrides.Tokens["layout.navigation"] = JsonValue("touch-only");
+        invalidResponsive.Profiles[0].Responsive.Tv = tvOverrides;
+        AssertInvalid(invalidResponsive);
+    }
+
+    [Fact]
+    public void Theme_SchemaScheduleAccessibilityAndLegacyMigration_AreStrict()
+    {
+        var future = UserThemeConfiguration.CreateDefault("canopy", "canopy-night");
+        future.SchemaVersion = ThemeConfigurationPolicy.CurrentSchemaVersion + 1;
+        AssertInvalid(future);
+
+        var invalidSchedule = UserThemeConfiguration.CreateDefault("canopy", "canopy-night");
+        invalidSchedule.Schedule.Add(new ThemeScheduleEntry
+        {
+            Id = "bad",
+            ProfileId = "absent",
+            StartMonthDay = "02-30",
+            EndMonthDay = "03-01"
+        });
+        AssertInvalid(invalidSchedule);
+
+        var invalidAccessibility = UserThemeConfiguration.CreateDefault("canopy", "canopy-night");
+        invalidAccessibility.Profiles[0].Accessibility.Motion = "force-motion";
+        AssertInvalid(invalidAccessibility);
+
+        var invalidLegacy = UserThemeConfiguration.CreateDefault("canopy", "canopy-night");
+        invalidLegacy.LegacyMigration.JellyfishTheme = "https://example.invalid/theme.css";
+        AssertInvalid(invalidLegacy);
+
+        var incompleteLegacy = UserThemeConfiguration.CreateDefault("canopy", "canopy-night");
+        incompleteLegacy.LegacyMigration.JellyfishTheme = "Ocean";
+        AssertInvalid(incompleteLegacy);
+
+        var missingLegacyEvidence = UserThemeConfiguration.CreateDefault("canopy", "canopy-night");
+        missingLegacyEvidence.LegacyMigration.Completed = true;
+        AssertInvalid(missingLegacyEvidence);
+    }
+
+    [Fact]
+    public void Theme_UnknownFieldsArePreservedForDiagnosisAndRejectedBeforePersistence()
+    {
+        using var css = JsonDocument.Parse("\"body { display: none }\"");
+        var topLevel = UserThemeConfiguration.CreateDefault("canopy", "canopy-night");
+        topLevel.ExtensionData["CustomCss"] = css.RootElement.Clone();
+        AssertInvalid(topLevel);
+
+        var nested = UserThemeConfiguration.CreateDefault("canopy", "canopy-night");
+        nested.Profiles[0].ExtensionData["BackgroundUrl"] = css.RootElement.Clone();
+        AssertInvalid(nested);
+
+        const string json = """
+            {
+              "SchemaVersion": 1,
+              "ActiveProfileId": "default",
+              "Profiles": [{ "Id": "default", "Name": "Default", "UnknownCss": "@import url(https://example.invalid/x.css)" }],
+              "Schedule": [],
+              "LegacyMigration": {}
+            }
+            """;
+        var parsed = JsonSerializer.Deserialize<UserThemeConfiguration>(json, PersistedJson.ReadOptions);
+        Assert.NotNull(parsed);
+        Assert.True(parsed!.Profiles[0].ExtensionData.ContainsKey("UnknownCss"));
+        Assert.Contains("UnknownCss", JsonSerializer.Serialize(parsed, PersistedJson.WriteOptions), StringComparison.Ordinal);
+        AssertInvalid(parsed);
+    }
+
+    [Fact]
+    public void Theme_HasAnIndependent128KiBSerializedLimit()
+    {
+        var theme = new UserThemeConfiguration
+        {
+            ActiveProfileId = "profile-0",
+            Profiles = new List<ThemeProfile>()
+        };
+        for (var index = 0; index < ThemeConfigurationPolicy.MaximumProfiles; index++)
+        {
+            var profile = new ThemeProfile
+            {
+                Id = $"profile-{index}",
+                Name = new string('x', ThemeConfigurationPolicy.MaximumProfileNameRunes)
+            };
+            PopulateColorTokens(profile.Tokens);
+            profile.Responsive.Phone = ColorBreakpoint();
+            profile.Responsive.Tablet = ColorBreakpoint();
+            profile.Responsive.Desktop = ColorBreakpoint();
+            profile.Responsive.Wide = ColorBreakpoint();
+            profile.Responsive.Tv = ColorBreakpoint();
+            theme.Profiles.Add(profile);
+        }
+        for (var index = 0; index < ThemeConfigurationPolicy.MaximumScheduleEntries; index++)
+        {
+            theme.Schedule.Add(new ThemeScheduleEntry
+            {
+                Id = $"schedule-{index}",
+                ProfileId = $"profile-{index % ThemeConfigurationPolicy.MaximumProfiles}",
+                StartMonthDay = "01-01",
+                EndMonthDay = "12-31",
+                Priority = index
+            });
+        }
+
+        var validation = PersistedPayloadPolicy.Validate(theme);
+        Assert.Equal(PersistedPayloadStatus.TooLarge, validation.Status);
+        Assert.True(validation.SerializedBytes > ThemeConfigurationPolicy.MaximumPersistedBytes);
+    }
+
+    [Fact]
     public void AggregateByteBudget_AcceptsExactBoundaryAndRejectsNPlusOne()
     {
         Assert.True(PersistedPayloadPolicy.ValidateByteCount(1024, 1024).IsValid);
@@ -306,6 +492,97 @@ public sealed class PersistedPayloadPolicyTests
 
     private static string NestedArrayJson(int containers)
         => new string('[', containers) + "0" + new string(']', containers);
+
+    private static JsonElement JsonValue<T>(T value)
+    {
+        using var document = JsonDocument.Parse(JsonSerializer.Serialize(value));
+        return document.RootElement.Clone();
+    }
+
+    private static ThemeBreakpointOverrides ColorBreakpoint()
+    {
+        var breakpoint = new ThemeBreakpointOverrides();
+        PopulateColorTokens(breakpoint.Tokens);
+        return breakpoint;
+    }
+
+    private static void PopulateColorTokens(Dictionary<string, JsonElement> tokens)
+    {
+        foreach (var name in new[]
+        {
+            "color.canvas", "color.surface", "color.elevated", "color.overlay",
+            "color.text", "color.text-muted", "color.primary", "color.on-primary",
+            "color.secondary", "color.positive", "color.caution", "color.negative",
+            "color.info", "color.divider", "color.focus"
+        })
+        {
+            tokens[name] = JsonValue("#7c5cffff");
+        }
+
+        tokens["type.family-ui"] = JsonValue("inter");
+        tokens["type.family-display"] = JsonValue("rounded");
+        tokens["type.family-reading"] = JsonValue("serif");
+        tokens["type.scale"] = JsonValue(1.25);
+        tokens["type.line-height"] = JsonValue(1.5);
+        tokens["type.tracking"] = JsonValue(0);
+        tokens["type.max-reading-width"] = JsonValue(70);
+        tokens["shape.radius-scale"] = JsonValue("rounded");
+        tokens["shape.card-radius"] = JsonValue("subtle");
+        tokens["shape.control-radius"] = JsonValue("pill");
+        tokens["shape.dialog-radius"] = JsonValue("rounded");
+        tokens["shape.avatar-shape"] = JsonValue("circle");
+        tokens["shape.border-width"] = JsonValue(1);
+        tokens["elevation.glow-intensity"] = JsonValue(0.5);
+        tokens["elevation.surface-shadow"] = JsonValue("soft");
+        tokens["elevation.card-shadow"] = JsonValue("medium");
+        tokens["elevation.dialog-shadow"] = JsonValue("strong");
+        tokens["elevation.focus-ring"] = JsonValue("medium");
+        tokens["space.scale"] = JsonValue("cozy");
+        tokens["space.page-gutter"] = JsonValue(1.5);
+        tokens["space.section-gap"] = JsonValue(2);
+        tokens["space.card-gap"] = JsonValue(1);
+        tokens["space.control-gap"] = JsonValue(1);
+        tokens["layout.density"] = JsonValue("cozy");
+        tokens["layout.navigation"] = JsonValue("auto");
+        tokens["layout.home-hero"] = JsonValue("cinematic");
+        tokens["layout.details"] = JsonValue("cinematic");
+        tokens["layout.seasons"] = JsonValue("auto");
+        tokens["layout.card-actions"] = JsonValue("hover");
+        tokens["layout.poster-ratio"] = JsonValue("auto");
+        tokens["layout.cast-shape"] = JsonValue("circle");
+        tokens["effects.level"] = JsonValue("balanced");
+        tokens["effects.material"] = JsonValue("glass");
+        tokens["effects.blur"] = JsonValue(24);
+        tokens["effects.saturation"] = JsonValue(1.25);
+        tokens["effects.backdrop-opacity"] = JsonValue(0.75);
+        tokens["effects.glow"] = JsonValue(0.5);
+        tokens["effects.image-treatment"] = JsonValue("gradient");
+        tokens["motion.profile"] = JsonValue("system");
+        tokens["motion.duration-scale"] = JsonValue(1);
+        tokens["motion.easing"] = JsonValue("smooth");
+        tokens["motion.hover-lift"] = JsonValue(4);
+        tokens["motion.page-transition"] = JsonValue(true);
+        tokens["motion.stagger"] = JsonValue(false);
+        tokens["progress.position"] = JsonValue("overlay");
+        tokens["progress.thickness"] = JsonValue(4);
+        tokens["progress.watched-indicator"] = JsonValue("check");
+        tokens["progress.unwatched-indicator"] = JsonValue("corner");
+        tokens["player.osd-density"] = JsonValue("standard");
+        tokens["player.control-material"] = JsonValue("translucent");
+        tokens["player.pause-screen-material"] = JsonValue("glass");
+        tokens["player.subtitle-backdrop"] = JsonValue("box");
+        tokens["player.trickplay-shape"] = JsonValue("rounded");
+        tokens["icon.family"] = JsonValue("lucide");
+        tokens["icon.weight"] = JsonValue("regular");
+        tokens["icon.size-scale"] = JsonValue(1);
+        tokens["icon.multicolor-metadata"] = JsonValue(true);
+        tokens["accessibility.underline-links"] = JsonValue(true);
+        tokens["accessibility.contrast"] = JsonValue("system");
+        tokens["accessibility.motion"] = JsonValue("system");
+        tokens["accessibility.transparency"] = JsonValue("system");
+        tokens["accessibility.focus-emphasis"] = JsonValue("strong");
+        tokens["accessibility.text-scale"] = JsonValue(1.25);
+    }
 
     private static void AssertRange(Action<UserSettings, int> set, int minimum, int maximum)
     {

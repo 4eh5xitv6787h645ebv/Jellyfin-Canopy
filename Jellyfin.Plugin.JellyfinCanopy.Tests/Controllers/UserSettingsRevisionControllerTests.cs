@@ -93,6 +93,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                 WatchProgressMode = mode
             });
 
+        private void SeedTheme(long revision = 0, string preset = "canopy")
+        {
+            var theme = UserThemeConfiguration.CreateDefault(preset, "canopy-night");
+            theme.Revision = revision;
+            _manager.SaveUserConfiguration(UserId, "theme.json", theme);
+        }
+
         [Fact]
         public void SettingsSave_RequiresMatchingStrongRevision()
         {
@@ -112,6 +119,210 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                 new UserSettings { Revision = 1, WatchProgressMode = "time" });
             Assert.IsType<BadRequestObjectResult>(mismatch);
             Assert.Equal("percentage", _manager.GetUserConfigurationStrict<UserSettings>(UserId, "settings.json").WatchProgressMode);
+        }
+
+        [Fact]
+        public void ThemeGet_SeedsValidatedAdministratorDefaultsWithEvidence()
+        {
+            _provider.Current = new PluginConfiguration
+            {
+                ThemeStudioDefaultPreset = "glass",
+                ThemeStudioDefaultPalette = "canopy-night"
+            };
+
+            var controller = Controller();
+            var result = Assert.IsType<OkObjectResult>(controller.GetUserSettingsTheme(UserId));
+            var theme = Assert.IsType<UserThemeConfiguration>(result.Value);
+
+            Assert.Equal(ThemeConfigurationPolicy.CurrentSchemaVersion, theme.SchemaVersion);
+            Assert.Equal("glass", Assert.Single(theme.Profiles).BasePreset);
+            Assert.Equal("canopy-night", theme.Profiles[0].Palette);
+            Assert.Equal("\"0\"", controller.Response.Headers.ETag.ToString());
+            Assert.Matches("^[0-9a-f]{64}$", controller.Response.Headers["X-JC-Content-Hash"].ToString());
+            Assert.True(File.Exists(FilePath("theme.json")));
+        }
+
+        [Fact]
+        public void ThemeGet_AtomicallyMigratesOlderSchemaAndAdvancesEvidence()
+        {
+            var legacy = UserThemeConfiguration.CreateDefault("canopy", "canopy-night");
+            legacy.SchemaVersion = 0;
+            legacy.Revision = 4;
+            legacy.LegacyMigration.JellyfishTheme = "Ocean";
+            _manager.SaveUserConfiguration(UserId, "theme.json", legacy);
+
+            var controller = Controller();
+            var theme = Assert.IsType<UserThemeConfiguration>(
+                Assert.IsType<OkObjectResult>(controller.GetUserSettingsTheme(UserId)).Value);
+
+            Assert.Equal(ThemeConfigurationPolicy.CurrentSchemaVersion, theme.SchemaVersion);
+            Assert.Equal(5, theme.Revision);
+            Assert.Equal("jellyfish-ocean", theme.Profiles[0].Palette);
+            Assert.True(theme.LegacyMigration.Completed);
+            Assert.Equal("\"5\"", controller.Response.Headers.ETag.ToString());
+
+            var durable = _manager.GetUserConfigurationStrict<UserThemeConfiguration>(UserId, "theme.json");
+            Assert.Equal(5, durable.Revision);
+            Assert.Equal("jellyfish-ocean", durable.Profiles[0].Palette);
+        }
+
+        [Fact]
+        public void ThemeSave_UsesRevisionContractAndEvidenceRead()
+        {
+            SeedTheme(revision: 2);
+            var candidate = UserThemeConfiguration.CreateDefault("material", "canopy-night");
+            candidate.Revision = 2;
+
+            var saved = Controller(2).SaveUserSettingsTheme(UserId, candidate);
+            var acknowledgement = Assert.IsType<UserSettingsController.UserFileMutationResponse<UserThemeConfiguration>>(
+                Assert.IsType<OkObjectResult>(saved).Value);
+            Assert.True(acknowledgement.Success);
+            Assert.Equal(3, acknowledgement.Revision);
+            Assert.Equal("material", acknowledgement.Data!.Profiles[0].BasePreset);
+
+            var evidenceController = Controller();
+            var evidence = Assert.IsType<UserSettingsController.UserFileMutationResponse<UserThemeConfiguration>>(
+                Assert.IsType<OkObjectResult>(evidenceController.GetUserFileEvidence(UserId, "theme.json")).Value);
+            Assert.Equal(3, evidence.Revision);
+            Assert.Equal(acknowledgement.ContentHash, evidence.ContentHash);
+
+            var staleCandidate = UserThemeConfiguration.CreateDefault("minimal", "canopy-night");
+            staleCandidate.Revision = 2;
+            var stale = Controller(2).SaveUserSettingsTheme(UserId, staleCandidate);
+            Assert.IsType<ConflictObjectResult>(stale);
+            Assert.Equal("material", _manager.GetUserConfigurationStrict<UserThemeConfiguration>(UserId, "theme.json").Profiles[0].BasePreset);
+        }
+
+        [Fact]
+        public void ThemeImportValidation_IsNonMutatingAndExportOmitsRevisionAndMigration()
+        {
+            var import = new ThemeExportDocument
+            {
+                SchemaVersion = ThemeConfigurationPolicy.CurrentSchemaVersion,
+                ActiveProfileId = ThemeProfile.DefaultId,
+                Profiles = new List<ThemeProfile> { ThemeProfile.CreateDefault("cinematic", "canopy-night") }
+            };
+
+            var validated = Assert.IsType<OkObjectResult>(
+                Controller().ValidateUserSettingsThemeImport(UserId, import));
+            Assert.Contains("\"valid\":true", JsonSerializer.Serialize(validated.Value), StringComparison.OrdinalIgnoreCase);
+            Assert.False(File.Exists(FilePath("theme.json")));
+
+            SeedTheme(revision: 9, preset: "cinematic");
+            var exported = Assert.IsType<ThemeExportDocument>(
+                Assert.IsType<OkObjectResult>(Controller().ExportUserSettingsTheme(UserId)).Value);
+            var json = JsonSerializer.Serialize(exported);
+            Assert.DoesNotContain("Revision", json, StringComparison.Ordinal);
+            Assert.DoesNotContain("LegacyMigration", json, StringComparison.Ordinal);
+            Assert.Equal("cinematic", Assert.Single(exported.Profiles).BasePreset);
+        }
+
+        [Fact]
+        public void ThemeImportValidation_MigratesOlderSchemaWithoutAliasingOrWriting()
+        {
+            var profile = ThemeProfile.CreateDefault("canopy", "canopy-night");
+            var import = new ThemeExportDocument
+            {
+                SchemaVersion = 0,
+                ActiveProfileId = ThemeProfile.DefaultId,
+                Profiles = new List<ThemeProfile> { profile }
+            };
+
+            var validated = Assert.IsType<OkObjectResult>(
+                Controller().ValidateUserSettingsThemeImport(UserId, import));
+            var json = JsonSerializer.Serialize(validated.Value);
+            Assert.Contains("\"schemaVersion\":1", json, StringComparison.OrdinalIgnoreCase);
+            Assert.False(File.Exists(FilePath("theme.json")));
+            Assert.Equal(0, import.SchemaVersion);
+            Assert.Same(profile, import.Profiles[0]);
+        }
+
+        [Fact]
+        public void ThemeJellyfishMigration_IsAllowlistedStagedAndNonMutating()
+        {
+            var accepted = Assert.IsType<OkObjectResult>(
+                Controller().ValidateLegacyJellyfishThemeMigration(
+                    UserId,
+                    new ThemeLegacyJellyfishSelection { Theme = "ocean" }));
+            var json = JsonSerializer.Serialize(accepted.Value);
+            Assert.Contains("jellyfish-ocean", json, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("Ocean", json, StringComparison.Ordinal);
+            Assert.False(File.Exists(FilePath("theme.json")));
+
+            Assert.IsType<BadRequestObjectResult>(
+                Controller().ValidateLegacyJellyfishThemeMigration(
+                    UserId,
+                    new ThemeLegacyJellyfishSelection { Theme = "@import url(ocean.css)" }));
+            Assert.False(File.Exists(FilePath("theme.json")));
+        }
+
+        [Fact]
+        public void Theme_InvalidTypedValuesAndInvalidAdministratorDefaultsAreRejected()
+        {
+            SeedTheme(revision: 4);
+            var invalid = UserThemeConfiguration.CreateDefault("canopy", "canopy-night");
+            invalid.Revision = 4;
+            using var css = JsonDocument.Parse("\"url(https://example.invalid/theme.css)\"");
+            invalid.Profiles[0].Tokens["color.primary"] = css.RootElement.Clone();
+
+            Assert.IsType<BadRequestObjectResult>(Controller(4).SaveUserSettingsTheme(UserId, invalid));
+            Assert.Equal(4, _manager.GetUserConfigurationStrict<UserThemeConfiguration>(UserId, "theme.json").Revision);
+
+            var otherUser = new User("other", "Provider", "PasswordProvider");
+            var invalidProvider = new FakePluginConfigProvider(new PluginConfiguration
+            {
+                ThemeStudioDefaultPreset = "unknown-preset",
+                ThemeStudioDefaultPalette = "canopy-night"
+            });
+            var controller = new UserSettingsController(
+                new RecordingHttpClientFactory(new HttpClientHandler()),
+                NullLogger<UserSettingsController>.Instance,
+                new StubUserManager(otherUser),
+                new SeerrCache(invalidProvider),
+                invalidProvider,
+                _manager,
+                new CountingLibraryManager());
+            controller.ControllerContext = new ControllerContext
+            {
+                HttpContext = new DefaultHttpContext
+                {
+                    User = new ClaimsPrincipal(new ClaimsIdentity(
+                        new[] { new Claim("Jellyfin-UserId", otherUser.Id.ToString()) },
+                        "TestAuth"))
+                }
+            };
+
+            var result = controller.GetUserSettingsTheme(otherUser.Id.ToString("N"));
+            Assert.Equal(StatusCodes.Status503ServiceUnavailable, Assert.IsType<ObjectResult>(result).StatusCode);
+        }
+
+        [Fact]
+        public void Theme_AdministratorCapabilityPolicyRejectsImportAndSchedules()
+        {
+            _provider.Current = new PluginConfiguration
+            {
+                ThemeStudioAllowProfileImport = false,
+                ThemeStudioAllowSeasonalScheduling = false
+            };
+
+            var import = new ThemeExportDocument
+            {
+                Profiles = new List<ThemeProfile> { ThemeProfile.CreateDefault("canopy", "canopy-night") }
+            };
+            var importResult = Controller().ValidateUserSettingsThemeImport(UserId, import);
+            Assert.Equal(StatusCodes.Status403Forbidden, Assert.IsType<ObjectResult>(importResult).StatusCode);
+
+            SeedTheme();
+            var scheduled = UserThemeConfiguration.CreateDefault("canopy", "canopy-night");
+            scheduled.Schedule.Add(new ThemeScheduleEntry
+            {
+                Id = "winter",
+                ProfileId = ThemeProfile.DefaultId,
+                StartMonthDay = "12-01",
+                EndMonthDay = "02-29"
+            });
+            Assert.IsType<BadRequestObjectResult>(Controller(0).SaveUserSettingsTheme(UserId, scheduled));
+            Assert.Empty(_manager.GetUserConfigurationStrict<UserThemeConfiguration>(UserId, "theme.json").Schedule);
         }
 
         [Fact]
@@ -470,9 +681,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
         public void AdminReset_IncrementsRevisionSoStaleClientsConflict()
         {
             SeedSettings(revision: 8, mode: "time");
+            SeedTheme(revision: 5, preset: "glass");
             var reset = Controller().ResetAllUsersSettings();
             Assert.IsType<OkObjectResult>(reset);
             Assert.Equal(9, _manager.GetUserConfigurationStrict<UserSettings>(UserId, "settings.json").Revision);
+            var resetTheme = _manager.GetUserConfigurationStrict<UserThemeConfiguration>(UserId, "theme.json");
+            Assert.Equal(6, resetTheme.Revision);
+            Assert.Equal("canopy", Assert.Single(resetTheme.Profiles).BasePreset);
 
             var stale = Controller(8).SaveUserSettingsSettings(
                 UserId,

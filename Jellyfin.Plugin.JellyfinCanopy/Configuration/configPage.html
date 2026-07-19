@@ -1935,6 +1935,46 @@
 
                 <div id="extras" class="jellyfin-tab-content">
                     <fieldset>
+                        <legend class="sectionTitle">Theme Studio</legend>
+                        <div class="configSection">
+                            <div class="checkboxContainer"><label><input id="themeStudioEnabled" data-config-key="ThemeStudioEnabled" is="emby-checkbox" type="checkbox"/><span>Enable Theme Studio</span></label></div>
+                            <div class="jc-setting-description" data-desc-for="themeStudioEnabled">
+                                <div class="fieldDescription jc-field-desc-xl">Enables the versioned per-user Theme Studio foundation. The responsive editor and curated presets are delivered by the linked Theme Studio roadmap. Default: OFF.</div>
+                            </div>
+                            <div class="selectContainer">
+                                <label class="selectLabel" for="themeStudioDefaultPreset">Default preset for new users</label>
+                                <select is="emby-select" id="themeStudioDefaultPreset" data-config-key="ThemeStudioDefaultPreset" data-config-fallback="canopy" name="themeStudioDefaultPreset" class="emby-select">
+                                    <option value="canopy">Canopy</option>
+                                    <option value="minimal">Minimal</option>
+                                    <option value="cinematic">Cinematic</option>
+                                    <option value="glass">Glass</option>
+                                    <option value="material">Material</option>
+                                    <option value="studio">Studio</option>
+                                    <option value="tv-focus">TV Focus</option>
+                                    <option value="oled">OLED</option>
+                                    <option value="high-contrast">High Contrast</option>
+                                </select>
+                                <div class="fieldDescription">Seeds a new user's first profile. Existing profiles are not overwritten by later default changes.</div>
+                            </div>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="themeStudioDefaultPalette">Default palette ID</label>
+                                <input id="themeStudioDefaultPalette" data-config-key="ThemeStudioDefaultPalette" data-config-fallback="canopy-night" type="text" is="emby-input" class="emby-input" maxlength="64"/>
+                                <div class="fieldDescription">A lowercase built-in palette identifier such as <code>canopy-night</code>.</div>
+                            </div>
+                            <div class="checkboxContainer"><label><input id="themeStudioDashboardEnabled" data-config-key="ThemeStudioDashboardEnabled" is="emby-checkbox" type="checkbox"/><span>Apply curated Theme Studio tokens to the administrator dashboard</span></label></div>
+                            <div class="jc-setting-description" data-desc-for="themeStudioDashboardEnabled">
+                                <div class="fieldDescription">Default: OFF. Only bounded curated tokens may enter the dashboard; user raw CSS remains excluded so administrators retain a safe recovery space.</div>
+                            </div>
+                            <div class="checkboxContainer"><label><input id="themeStudioAllowProfileImport" data-config-key="ThemeStudioAllowProfileImport" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Allow users to validate and import typed theme profiles</span></label></div>
+                            <div class="checkboxContainer"><label><input id="themeStudioAllowDynamicColor" data-config-key="ThemeStudioAllowDynamicColor" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Allow local media-derived dynamic color</span></label></div>
+                            <div class="checkboxContainer"><label><input id="themeStudioAllowSeasonalScheduling" data-config-key="ThemeStudioAllowSeasonalScheduling" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Allow per-user seasonal schedules</span></label></div>
+                            <div class="checkboxContainer"><label><input id="themeStudioAllowAdvancedCss" data-config-key="ThemeStudioAllowAdvancedCss" is="emby-checkbox" type="checkbox"/><span>Allow the separately gated advanced CSS module</span></label></div>
+                            <div class="jc-setting-description" data-desc-for="themeStudioAllowAdvancedCss">
+                                <div class="fieldDescription">Default: OFF. This policy does not place CSS in <code>theme.json</code>; that file accepts typed values only. Advanced CSS remains local, size-bounded, risk-labelled, and outside dashboard recovery surfaces.</div>
+                            </div>
+                        </div>
+                    </fieldset>
+                    <fieldset>
                         <legend class="sectionTitle">UI Tweaks</legend>
                         <div class="configSection">
                             <div class="checkboxContainer"><label><input id="coloredRatingsEnabled" data-config-key="ColoredRatingsEnabled" is="emby-checkbox" type="checkbox"/><span>Colored Ratings Backgrounds</span></label></div>

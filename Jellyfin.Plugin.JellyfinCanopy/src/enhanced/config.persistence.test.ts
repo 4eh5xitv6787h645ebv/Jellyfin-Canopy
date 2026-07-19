@@ -200,7 +200,9 @@ describe('acknowledged user-settings persistence', () => {
     it.each([
         ['settings.json', { Revision: 0, Mode: 'old' }, (v: any) => { v.Mode = 'new'; }],
         ['shortcuts.json', { Revision: 0, Shortcuts: [] }, (v: any) => { v.Shortcuts.push({ Name: 'Open', Key: 'O' }); }],
-        ['elsewhere.json', { Revision: 0, Region: 'AU', Regions: [], Services: [] }, (v: any) => { v.Region = 'NZ'; }]
+        ['elsewhere.json', { Revision: 0, Region: 'AU', Regions: [], Services: [] }, (v: any) => { v.Region = 'NZ'; }],
+        ['theme.json', { Revision: 0, SchemaVersion: 1, ActiveProfileId: 'default', Profiles: [] },
+            (v: any) => { v.ActiveProfileId = 'cinema'; }]
     ])('classifies every HTTP failure and restores %s exactly', async (file, initial, mutate) => {
         for (const status of [400, 401, 409, 429, 500, 503]) {
             startSession();
@@ -212,6 +214,7 @@ describe('acknowledged user-settings persistence', () => {
                 if (file === 'settings.json') authoritative.Mode = 'remote';
                 if (file === 'shortcuts.json') authoritative.Shortcuts = [{ Name: 'Other', Key: 'X' }];
                 if (file === 'elsewhere.json') authoritative.Region = 'US';
+                if (file === 'theme.json') authoritative.ActiveProfileId = 'remote';
                 authoritative.Revision = 1;
             }
             vi.spyOn(ApiClient, 'ajax').mockRejectedValueOnce(httpError(status, authoritative ? {
@@ -317,7 +320,9 @@ describe('acknowledged user-settings persistence', () => {
         ['shortcuts.json', 'network', { Revision: 0, Shortcuts: [] }, { Shortcuts: [{ Name: 'Open', Key: 'O' }] }],
         ['shortcuts.json', 'abort', { Revision: 0, Shortcuts: [] }, { Shortcuts: [{ Name: 'Open', Key: 'O' }] }],
         ['elsewhere.json', 'network', { Revision: 0, Region: 'AU', Regions: [], Services: [] }, { Region: 'NZ', Regions: [], Services: [] }],
-        ['elsewhere.json', 'abort', { Revision: 0, Region: 'AU', Regions: [], Services: [] }, { Region: 'NZ', Regions: [], Services: [] }]
+        ['elsewhere.json', 'abort', { Revision: 0, Region: 'AU', Regions: [], Services: [] }, { Region: 'NZ', Regions: [], Services: [] }],
+        ['theme.json', 'network', { Revision: 0, SchemaVersion: 1, ActiveProfileId: 'default', Profiles: [] }, { SchemaVersion: 1, ActiveProfileId: 'cinema', Profiles: [] }],
+        ['theme.json', 'abort', { Revision: 0, SchemaVersion: 1, ActiveProfileId: 'default', Profiles: [] }, { SchemaVersion: 1, ActiveProfileId: 'cinema', Profiles: [] }]
     ])('resolves an ambiguous %s %s after evidence proves the exact content committed', async (file, kind, initial, desired) => {
         const value = own(structuredClone(initial));
         JC.rememberUserSettingsSnapshot!(file, value);

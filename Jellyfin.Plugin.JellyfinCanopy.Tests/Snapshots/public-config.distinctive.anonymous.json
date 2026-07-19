@@ -276,8 +276,16 @@
   "TagsCacheTtlDays": 1239,
   "TagsHideOnHover": true,
   "ThemeSelectorEnabled": true,
+  "ThemeStudioAllowAdvancedCss": true,
+  "ThemeStudioAllowDynamicColor": false,
+  "ThemeStudioAllowProfileImport": false,
+  "ThemeStudioAllowSeasonalScheduling": false,
+  "ThemeStudioDashboardEnabled": true,
+  "ThemeStudioDefaultPalette": "cfg-ThemeStudioDefaultPalette",
+  "ThemeStudioDefaultPreset": "cfg-ThemeStudioDefaultPreset",
+  "ThemeStudioEnabled": true,
   "TmdbEnabled": true,
-  "ToastDuration": 1242,
+  "ToastDuration": 1250,
   "UseIcons": false,
-  "VideoCodecTagOrder": 1245
+  "VideoCodecTagOrder": 1253
 }
