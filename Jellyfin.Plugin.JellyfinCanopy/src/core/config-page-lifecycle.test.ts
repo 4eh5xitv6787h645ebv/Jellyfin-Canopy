@@ -52,7 +52,9 @@ interface StyleHelpers {
 }
 
 interface StaticControlHelpers {
-    jcWireStaticControlListeners(doc: Document, lifecycle: PageLifecycleOwner): void;
+    // Production now scopes this to the resolved own view (an Element), falling
+    // back to document; ParentNode covers both.
+    jcWireStaticControlListeners(doc: ParentNode, lifecycle: PageLifecycleOwner): void;
 }
 
 interface BootstrapHelpers {
