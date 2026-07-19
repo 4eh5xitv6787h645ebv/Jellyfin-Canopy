@@ -15,11 +15,16 @@
 // registration (window/document/MediaQueryList listener, persistent-ancestor
 // scroll listener) is installed EXACTLY ONCE per SPA session (installGlobalOnce /
 // installNodeOnce) with a VIEW-INDEPENDENT callback that resolves the visible
-// view live (jcVisibleConfigPage); the arr-instances MutationObserver is a plain
-// PER-VIEW observer that dies with its view; and per-view element listeners are
-// simply attached to each fresh view. Nothing about the owner is stored on
-// `window`, so no admin config DOM (TMDB/Seerr keys) is retained across an
-// identity change.
+// view live (jcVisibleConfigPage); the arr-instances MutationObserver is ONE
+// session-shared observer (observeView) that each visit reuses, dispatching every
+// mutation to the refresh of the view that owns the mutated node — so the observer
+// count never grows with visits (AC1). Handlers whose side effects are view-scoped
+// (the quality-category and page-order reorder delegates that mark THIS view's
+// save dock dirty) are per-VIEW listeners on the resolved page root, never a
+// document global, so each visit's delegate calls its OWN markDirty and a click
+// bubbles through exactly one page root — no stale first-view owner, no N-position
+// multiplication. Nothing about the owner is stored on `window`, so no admin
+// config DOM (TMDB/Seerr keys) is retained across an identity change.
 //
 // config-page.js is one large page-wiring IIFE served as a classic script and
 // cannot be imported as a module, so — like config-page-seerr-scan.test.ts —
@@ -39,6 +44,7 @@ interface PageLifecycleOwner {
     addListener(el: EventTarget, type: string, fn: EventListener, opts?: boolean | AddEventListenerOptions): void;
     installGlobalOnce(key: string, target: EventTarget, type: string, fn: EventListener, opts?: boolean | AddEventListenerOptions): void;
     installNodeOnce(node: EventTarget, type: string, fn: EventListener, opts?: boolean | AddEventListenerOptions): void;
+    observeView(pageEl: Element | null, nodes: Node[], refresh: () => void): void;
 }
 
 interface LifecycleHelpers {
@@ -50,7 +56,7 @@ interface LifecycleHelpers {
 
 interface ReorderHelpers {
     jcWireQualityCatAdminReorder(
-        doc: Document,
+        root: Element | Document,
         lifecycle: PageLifecycleOwner,
         refreshArrows: (container: ParentNode) => void,
         markDirty: () => void,
@@ -380,6 +386,16 @@ describe('config-page visible-view resolver (#167)', () => {
     it('returns null when no config view is present', () => {
         expect(helpers.jcVisibleConfigPage()).toBeNull();
     });
+
+    it('finding (#167 line 152): returns null when every cached view is hidden — never a hidden page', () => {
+        // The dashboard navigated away but JF still holds config views in its view
+        // cache, all `.hide`. The session-long Escape/theme/scroll globals must be
+        // inert; before the fix this fell through to the last HIDDEN page.
+        hiddenPage();
+        hiddenPage();
+        expect(document.querySelectorAll('#JellyfinCanopyPage')).toHaveLength(2);
+        expect(helpers.jcVisibleConfigPage()).toBeNull();
+    });
 });
 
 describe('config-page quality-category reorder wiring (#167 AC3)', () => {
@@ -410,55 +426,61 @@ describe('config-page quality-category reorder wiring (#167 AC3)', () => {
             .map((row) => (row as HTMLElement).dataset.catId!);
     }
 
-    it('AC3 + finding 1/2: repeated visits keep ONE delegate that acts on the VISIBLE view, moving its Down-clicked row EXACTLY ONE position', () => {
+    it('AC3 + findings 2/6/10: each fresh visit wires its OWN per-view delegate that marks ITS OWN view dirty, moving the Down-clicked row EXACTLY ONE position', () => {
         const win = useWin();
-        const refreshArrows = vi.fn();
-        const markDirty = vi.fn();
         const addSpy = vi.spyOn(document, 'addEventListener');
 
-        // Four visits, each a fresh view re-running the reorder wiring. The FIRST
-        // installs the single document delegate; the rest are install-once no-ops.
-        const owners: PageLifecycleOwner[] = [];
+        // Four fresh views (JF caches up to three; four proves non-multiplication).
+        // Each carries its OWN markDirty/refreshArrows because jcMarkConfigDirty is
+        // a page-scoped closure in production. Only the LAST view is visible.
+        const views: Array<{ page: HTMLElement; markDirty: ReturnType<typeof vi.fn>; refreshArrows: ReturnType<typeof vi.fn>; order: () => string[] }> = [];
         for (let i = 0; i < 4; i++) {
-            const owner = lifecycle.jcAcquireConfigPageLifecycle(win, i === 0 ? hiddenPage() : attachedPage())!;
-            owners.push(owner);
-            reorder.jcWireQualityCatAdminReorder(document, owner, refreshArrows, markDirty);
+            const page = i === 3 ? attachedPage() : hiddenPage();
+            const markDirty = vi.fn();
+            const refreshArrows = vi.fn();
+            const owner = lifecycle.jcAcquireConfigPageLifecycle(win, page)!;
+            // Delegated on the per-view page root — the production call site passes
+            // `page || document`.
+            reorder.jcWireQualityCatAdminReorder(page, owner, refreshArrows, markDirty);
+            views.push({ page, markDirty, refreshArrows, order: buildRows(page) });
         }
-        // Record the single installed delegate for teardown.
-        const clickAdds = addSpy.mock.calls.filter((c) => c[0] === 'click');
-        expect(clickAdds).toHaveLength(1);
-        trackedGlobals.push({ target: document, type: 'click', fn: clickAdds[0][1] as EventListener });
 
-        // The delegate was installed by visit 0 (a HIDDEN view), yet it must serve
-        // whichever view is visible. Build rows in BOTH a hidden and the visible view.
-        const hidden = document.querySelector('#JellyfinCanopyPage')!; // first = the hidden one
-        const visible = lifecycle.jcVisibleConfigPage() as HTMLElement;
-        const hiddenOrder = buildRows(hidden as HTMLElement);
-        const visibleOrder = buildRows(visible);
-        expect(visibleOrder()).toEqual(['a', 'b', 'c']);
+        // NOTHING was installed on the document: the delegates live on the per-view
+        // page roots, so no handler is retained on the document across views.
+        expect(addSpy.mock.calls.filter((c) => c[0] === 'click')).toHaveLength(0);
 
-        // ONE click on the VISIBLE view's first Down arrow moves ONE position.
-        visible.querySelector<HTMLButtonElement>('.jc-quality-cat-admin-row .jc-cat-down')!
+        const visible = views[3];
+        expect(visible.order()).toEqual(['a', 'b', 'c']);
+
+        // ONE click on the VISIBLE view's first Down arrow.
+        visible.page.querySelector<HTMLButtonElement>('.jc-quality-cat-admin-row .jc-cat-down')!
             .dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
 
-        expect(visibleOrder()).toEqual(['b', 'a', 'c']); // exactly one move, not four
-        expect(hiddenOrder()).toEqual(['a', 'b', 'c']);   // the hidden view is untouched
-        expect(markDirty).toHaveBeenCalledTimes(1);
-        expect(refreshArrows).toHaveBeenCalledTimes(1);
+        // Exactly one move, driven by the VISIBLE view's OWN owner.
+        expect(visible.order()).toEqual(['b', 'a', 'c']);
+        expect(visible.markDirty).toHaveBeenCalledTimes(1);
+        expect(visible.refreshArrows).toHaveBeenCalledTimes(1);
+
+        // The hidden views' OWN dirty owners were NEVER touched — the pre-fix
+        // install-once document delegate would have marked the FIRST view's save
+        // dock dirty and left its DOM (and rows) reachable through the document.
+        views.slice(0, 3).forEach((v) => {
+            expect(v.markDirty).not.toHaveBeenCalled();
+            expect(v.refreshArrows).not.toHaveBeenCalled();
+            expect(v.order()).toEqual(['a', 'b', 'c']);
+        });
     });
 
     it('AC4: single-visit wiring moves one position per click and respects disabled buttons', () => {
         const win = useWin();
         const refreshArrows = vi.fn();
         const markDirty = vi.fn();
-        const addSpy = vi.spyOn(document, 'addEventListener');
-        const owner = lifecycle.jcAcquireConfigPageLifecycle(win, attachedPage())!;
-        reorder.jcWireQualityCatAdminReorder(document, owner, refreshArrows, markDirty);
-        const clickAdds = addSpy.mock.calls.filter((c) => c[0] === 'click');
-        trackedGlobals.push({ target: document, type: 'click', fn: clickAdds[0][1] as EventListener });
+        const page = attachedPage();
+        const owner = lifecycle.jcAcquireConfigPageLifecycle(win, page)!;
+        reorder.jcWireQualityCatAdminReorder(page, owner, refreshArrows, markDirty);
 
-        const order = buildRows(document.body);
-        const container = document.querySelector('#qualityCategoriesAdmin')!;
+        const order = buildRows(page);
+        const container = page.querySelector('#qualityCategoriesAdmin')!;
         const firstDown = container.querySelector<HTMLButtonElement>('.jc-quality-cat-admin-row .jc-cat-down')!;
         firstDown.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
         expect(order()).toEqual(['b', 'a', 'c']);
@@ -472,6 +494,93 @@ describe('config-page quality-category reorder wiring (#167 AC3)', () => {
         middleDown.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
         expect(order()).toEqual(['b', 'a', 'c']);
         expect(markDirty).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('config-page arr-instances observer is a single shared, view-independent instance (#167 AC1)', () => {
+    const lifecycle = loadLifecycleHelpers();
+
+    // Build a config view carrying a Sonarr + Radarr instance list; returns the
+    // observed list nodes.
+    function buildArrView(): { page: HTMLElement; nodes: HTMLElement[] } {
+        const page = attachedPage();
+        const nodes = ['sonarrInstancesList', 'radarrInstancesList'].map((id) => {
+            const list = document.createElement('div');
+            list.id = id;
+            page.appendChild(list);
+            return list;
+        });
+        return { page, nodes };
+    }
+
+    // Count MutationObserver constructions while still handing back REAL observers
+    // (so observe()/dispatch work). Constructed observers are drained in afterEach.
+    function countObserverConstructions(): MutationObserver[] {
+        const created: MutationObserver[] = [];
+        const Real = globalThis.MutationObserver;
+        // A regular function so it is usable as a constructor (`new MutationObserver`);
+        // returning a real observer makes observe()/dispatch work while we count.
+        vi.spyOn(globalThis, 'MutationObserver').mockImplementation(function (cb: MutationCallback) {
+            const o = new Real(cb);
+            created.push(o);
+            trackedObservers.push(o);
+            return o;
+        });
+        return created;
+    }
+
+    it('AC1: four fresh visits construct EXACTLY ONE MutationObserver, reused across every view', () => {
+        const win = useWin();
+        const created = countObserverConstructions();
+        for (let i = 0; i < 4; i++) {
+            const { page, nodes } = buildArrView();
+            const owner = lifecycle.jcAcquireConfigPageLifecycle(win, page)!;
+            owner.observeView(page, nodes, vi.fn());
+        }
+        // One observer instance for the whole SPA session — NOT one pair per visit
+        // (the pre-fix per-view observer grew the live count 2→4→6→8).
+        expect(created).toHaveLength(1);
+    });
+
+    it('the single observer dispatches a mutation to the OWNING view\'s refresh, never the first view\'s', async () => {
+        const win = useWin();
+        countObserverConstructions();
+
+        const a = buildArrView();
+        const refreshA = vi.fn();
+        lifecycle.jcAcquireConfigPageLifecycle(win, a.page)!.observeView(a.page, a.nodes, refreshA);
+
+        const b = buildArrView();
+        const refreshB = vi.fn();
+        lifecycle.jcAcquireConfigPageLifecycle(win, b.page)!.observeView(b.page, b.nodes, refreshB);
+
+        // An instance card added to VISIBLE view B's Sonarr list.
+        b.nodes[0].appendChild(document.createElement('div'));
+        await new Promise((r) => setTimeout(r, 0));
+
+        expect(refreshB).toHaveBeenCalledTimes(1);
+        expect(refreshA).not.toHaveBeenCalled();
+    });
+
+    it('AC5: an evicted view is not retained — the live view keeps refreshing, the gone one never fires', async () => {
+        const win = useWin();
+        countObserverConstructions();
+
+        const a = buildArrView();
+        const refreshA = vi.fn();
+        lifecycle.jcAcquireConfigPageLifecycle(win, a.page)!.observeView(a.page, a.nodes, refreshA);
+
+        const b = buildArrView();
+        const refreshB = vi.fn();
+        lifecycle.jcAcquireConfigPageLifecycle(win, b.page)!.observeView(b.page, b.nodes, refreshB);
+
+        // JF evicts view A; a later mutation lands in the still-live view B.
+        a.page.remove();
+        b.nodes[1].appendChild(document.createElement('div'));
+        await new Promise((r) => setTimeout(r, 0));
+
+        expect(refreshB).toHaveBeenCalledTimes(1);
+        expect(refreshA).not.toHaveBeenCalled();
     });
 });
 
@@ -867,9 +976,17 @@ describe('config-page globals stay install-once + view-independent (#167 drift g
         expect(source).toContain("jcPageLifecycle.installGlobalOnce('stickyScrollWindow', window, 'scroll', jcStickyScrollOnScroll, { passive: true })");
         expect(source).toContain("jcPageLifecycle.installGlobalOnce('drawerMedia', drawerMedia, 'change', jcDrawerSyncVisible)");
         expect(countOccurrences(source, "jcPageLifecycle.installGlobalOnce('drawerEsc', document, 'keydown', jcDrawerEscapeVisible)")).toBe(1);
-        expect(countOccurrences(source, "jcPageLifecycle.installGlobalOnce('pagesOrderReorder', document, 'click'")).toBe(1);
         expect(countOccurrences(source, "jcPageLifecycle.installGlobalOnce('bannerOutsideClick', document, 'click'")).toBe(1);
-        expect(countOccurrences(source, "lifecycle.installGlobalOnce('qualityCatReorder', doc, 'click'")).toBe(1);
+
+        // The reorder delegates have VIEW-SCOPED side effects (they mark THIS
+        // view's save dock dirty), so they are per-VIEW page listeners, NOT document
+        // globals. The pre-fix install-once-on-document shape retained the FIRST
+        // view's markDirty and its credential-bearing DOM (#167 findings 2/6/10).
+        expect(source).not.toContain("installGlobalOnce('pagesOrderReorder'");
+        expect(source).not.toContain("installGlobalOnce('qualityCatReorder'");
+        expect(countOccurrences(source, "jcPageLifecycle.addListener(page || document, 'click'")).toBe(1);
+        expect(countOccurrences(source, "lifecycle.addListener(root, 'click'")).toBe(1);
+        expect(countOccurrences(source, "jcWireQualityCatAdminReorder(page || document, jcPageLifecycle")).toBe(1);
 
         // The ONLY raw document listener left is the self-cleaning preview-modal
         // keydown (added on open, removed on close — not a per-visit registration).
@@ -887,12 +1004,24 @@ describe('config-page globals stay install-once + view-independent (#167 drift g
         expect(countOccurrences(source, 'jcVisibleConfigPage()')).toBeGreaterThanOrEqual(4);
     });
 
-    it('the arr-instances observer is a plain PER-VIEW MutationObserver, not a global slot', () => {
-        // Exactly one `new MutationObserver` in the whole file, created inline in
-        // the arr wiring and observed on this view's node.
-        expect(countOccurrences(source, 'new MutationObserver(')).toBe(1);
-        expect(source).toContain('var obs = new MutationObserver(refresh);');
-        expect(source).toContain('obs.observe(root, { childList: true, subtree: true });');
+    it('the arr-instances observer is ONE session-shared MutationObserver, dispatched per view (#167 AC1)', () => {
+        // The call site no longer constructs its own observer; it registers THIS
+        // view's list nodes + refresh with the owner's single shared observer.
+        const wiring = markerSlice(source, '/* jc-arr-instances-observer:start */', '/* jc-arr-instances-observer:end */');
+        expect(wiring).not.toContain('new MutationObserver');
+        expect(wiring).toContain('jcPageLifecycle.observeView(page, arrRoots, refresh);');
+
+        // The owner keeps exactly one observer in the global slot, reused by every
+        // visit's observe() call, so the observer count never grows with visits.
+        const owner = markerSlice(source, '/* jc-config-page-lifecycle:start */', '/* jc-config-page-lifecycle:end */');
+        expect(owner).toContain('observeView: function (pageEl, nodes, refresh)');
+        expect(owner).toContain('if (!g.arrObserver)');
+        expect(owner).toContain('g.arrObserver = new MutationObserver(');
+        expect(owner).toContain('g.arrObserver.observe(n, { childList: true, subtree: true });');
+        // Dispatch is keyed to the view that owns the mutated node, so refreshers
+        // are GC'd with their view (no cross-visit retention).
+        expect(owner).toContain("t.closest('[id=\"JellyfinCanopyPage\"]')");
+        expect(owner).toContain('g.viewRefreshers');
     });
 
     it('single-slots persistent scroll-ancestor listeners per node via installNodeOnce', () => {
