@@ -116,6 +116,29 @@
             // is never wired in place of the live one.
             const form = page ? page.querySelector('#JellyfinCanopyForm') : document.querySelector('#JellyfinCanopyForm');
 
+            // Page-scoped element lookups (BI-CLIENT-106 / #167). Jellyfin 12 can
+            // keep a stale HIDDEN #JellyfinCanopyPage cached in the DOM alongside
+            // this freshly-injected VISIBLE one, so bare
+            // document.getElementById/querySelector — which return the FIRST match
+            // in document order — resolve controls inside the stale copy. That
+            // silently loads/saves the wrong form (e.g. a rotated Seerr API key
+            // read back from the hidden view) and wires listeners onto invisible
+            // controls. Route every IN-PAGE lookup through the resolved `page` so
+            // load/save/wiring always target THIS view. `page` is the config
+            // page's own root (id="JellyfinCanopyPage" wraps the whole form), so
+            // every config id/class is a descendant. The few genuinely GLOBAL
+            // lookups (theme host containers, foreign-plugin <script> probes,
+            // body-level preview overlays/toasts) keep using `document` directly.
+            // A lone `#id` selector is descendant-scoped and correct in real
+            // browsers, but engines that resolve `#id` through a document-wide id
+            // map (and would therefore return a match OUTSIDE `page`) exist; the
+            // equivalent [id="…"] is always matched within the element subtree,
+            // so a stale duplicate view earlier in the document can never win.
+            function jcScopeSelector(sel) { return typeof sel === 'string' ? sel.replace(/^#([A-Za-z][\w-]*)$/, '[id="$1"]') : sel; }
+            function jcById(id) { return page ? page.querySelector('[id="' + id + '"]') : document.getElementById(id); }
+            function jcSel(sel) { return page ? page.querySelector(jcScopeSelector(sel)) : document.querySelector(sel); }
+            function jcSelAll(sel) { return page ? page.querySelectorAll(jcScopeSelector(sel)) : document.querySelectorAll(sel); }
+
             var jcPageLifecycle = jcAcquireConfigPageLifecycle(window, page);
             if (!jcPageLifecycle) return;
 
@@ -190,31 +213,31 @@
             jcPageLifecycle.addListener(window, 'load', _jeDetectTheme);
             // Tracked so a replaced page never receives the late cosmetic re-check.
             jcPageLifecycle.track({ timeoutId: setTimeout(_jeDetectTheme, 600) });
-            const resetAllUserSettingsBtn = document.querySelector('#resetAllUserSettingsBtn');
-            const clearTagsCacheBtn = document.querySelector('#clearTagsCacheBtn');
+            const resetAllUserSettingsBtn = jcSel('#resetAllUserSettingsBtn');
+            const clearTagsCacheBtn = jcSel('#clearTagsCacheBtn');
 
-            const shortcutListContainer = document.getElementById('shortcut-list-container');
-            const addShortcutSelect = document.getElementById('add-shortcut-select');
-            const addShortcutKeyInput = document.getElementById('add-shortcut-key');
-            const addShortcutBtn = document.getElementById('add-shortcut-btn');
-            const shortcutErrorComment = document.getElementById('shortcut-error-comment');
+            const shortcutListContainer = jcById('shortcut-list-container');
+            const addShortcutSelect = jcById('add-shortcut-select');
+            const addShortcutKeyInput = jcById('add-shortcut-key');
+            const addShortcutBtn = jcById('add-shortcut-btn');
+            const shortcutErrorComment = jcById('shortcut-error-comment');
 
-            const testSeerrBtn = document.getElementById('testSeerrBtn');
-            const seerrStatusIndicator = document.getElementById('seerrStatusIndicator');
+            const testSeerrBtn = jcById('testSeerrBtn');
+            const seerrStatusIndicator = jcById('seerrStatusIndicator');
 
-            const tmdbStatusIndicator = document.getElementById('tmdbStatusIndicator');
+            const tmdbStatusIndicator = jcById('tmdbStatusIndicator');
 
             let shortcutOverrides = [];
 
-            const tabs = document.querySelectorAll('.jellyfin-tab-button');
-            const tabContents = document.querySelectorAll('.jellyfin-tab-content');
+            const tabs = jcSelAll('.jellyfin-tab-button');
+            const tabContents = jcSelAll('.jellyfin-tab-content');
 
             // Drag-to-scroll on the tab bar so mouse users can pan the tab strip
             // the same way touch users do on mobile (the overflow-x auto strip
             // has no visible scrollbar). Threshold at 5 px before we consider it
             // a drag, so a normal click through to a tab still registers.
             (function wireTabBarDrag() {
-                const bar = document.querySelector('.jc-tab-bar');
+                const bar = jcSel('.jc-tab-bar');
                 if (!bar) return;
                 let isDown = false;
                 let startX = 0;
@@ -267,9 +290,9 @@
             // 900px. The toggle/scrim only exist in the new shell layout, so
             // everything here no-ops gracefully if the markup changes.
             (function wireSectionDrawer() {
-                const shell = document.querySelector('#JellyfinCanopyPage .jc-shell');
-                const toggle = document.getElementById('jcNavToggle');
-                const scrim = document.getElementById('jcNavScrim');
+                const shell = jcSel('.jc-shell');
+                const toggle = jcById('jcNavToggle');
+                const scrim = jcById('jcNavScrim');
                 const sidebar = shell?.querySelector('.jc-sidebar');
                 const main = shell?.querySelector('.jc-main');
                 if (!shell || !toggle || !scrim || !sidebar || !main) return;
@@ -330,11 +353,11 @@
                     'governance':     { title: 'Governance', purpose: 'Spoiler policy, user defaults, permissions and maintenance.' },
                     'system':         { title: 'System', purpose: 'Assets, diagnostics, developer settings and documentation.' },
                 };
-                const railBtns = Array.from(document.querySelectorAll('#JellyfinCanopyPage .jc-group-btn'));
-                const strip = document.getElementById('jcSectionStrip');
-                const store = document.querySelector('#JellyfinCanopyPage .jc-section-strip-store');
-                const titleEl = document.getElementById('jcPageTitle');
-                const purposeEl = document.getElementById('jcPagePurpose');
+                const railBtns = Array.from(jcSelAll('.jc-group-btn'));
+                const strip = jcById('jcSectionStrip');
+                const store = jcSel('.jc-section-strip-store');
+                const titleEl = jcById('jcPageTitle');
+                const purposeEl = jcById('jcPagePurpose');
                 if (!railBtns.length || !strip || !store) return;
                 // Relocate the section buttons from the hidden store into the strip.
                 Array.from(store.querySelectorAll('.jellyfin-tab-button')).forEach(b => strip.appendChild(b));
@@ -382,12 +405,12 @@
             let jcDirtyRevision = 0;
             function jcMarkConfigDirty() {
                 jcDirtyRevision++;
-                document.querySelector('.jc-save-dock')?.classList.add('jc-dirty');
+                jcSel('.jc-save-dock')?.classList.add('jc-dirty');
             }
             function jcDirtyRevisionNow() { return jcDirtyRevision; }
             function jcClearDirtyIfUnchanged(revision) {
                 if (jcDirtyRevision === revision) {
-                    document.querySelector('.jc-save-dock')?.classList.remove('jc-dirty');
+                    jcSel('.jc-save-dock')?.classList.remove('jc-dirty');
                 }
             }
             (function wireDirtyState() {
@@ -456,7 +479,7 @@
                 // and any in-page nav state).
                 if (tabId === 'docs') {
                     try {
-                        var f = document.getElementById('docsFrame');
+                        var f = jcById('docsFrame');
                         if (f && (!f.src || f.src === 'about:blank' || /about:blank/.test(f.src))) {
                             // Set up a load-timeout fallback before assigning src so
                             // a silently-blank iframe (DNS/CSP/X-Frame-Options/CDN
@@ -501,7 +524,7 @@
                     if (isSearchMode) {
                         // Jump from search results into the section: leave search
                         // mode, open the section, and scroll to its first match.
-                        const target = document.querySelector('#' + tabId + ' > fieldset:not(.jc-search-hidden)');
+                        const target = jcSel('#' + tabId + ' > fieldset:not(.jc-search-hidden)');
                         clearTimeout(searchDebounce);
                         searchInput.value = '';
                         exitSearchMode();
@@ -534,7 +557,7 @@
                     savedTab = LEGACY_TAB_MAP[savedTab];
                     sessionStorage.setItem('jellyfinCanopyActiveTab', savedTab);
                 }
-                if (savedTab && document.getElementById(savedTab)) {
+                if (savedTab && jcById(savedTab)) {
                     activateTab(savedTab);
                 } else if (savedTab) {
                     // Saved tab doesn't match any current tab and isn't a legacy key —
@@ -553,7 +576,7 @@
             // preference in localStorage, default visible, expose a header
             // button to flip state. Visibility is driven by CSS on the body
             // class — toggling is instant and costs nothing per render.
-            const descToggleBtn = document.getElementById('toggleDescriptionsBtn');
+            const descToggleBtn = jcById('toggleDescriptionsBtn');
             const DESC_PREF_KEY = 'jc-settings-descriptions-visible';
             function applyDescriptionVisibility(show) {
                 try { document.body.classList.toggle('jc-hide-descriptions', !show); } catch (e) {}
@@ -583,9 +606,9 @@
             }
 
             // === Settings Search ===
-            const searchInput = document.getElementById('settingsSearchInput');
-            const searchClear = document.getElementById('settingsSearchClear');
-            const searchCount = document.getElementById('settingsSearchCount');
+            const searchInput = jcById('settingsSearchInput');
+            const searchClear = jcById('settingsSearchClear');
+            const searchCount = jcById('settingsSearchCount');
 
             const tabButtonsContainer = tabs[0] ? tabs[0].parentElement : null;
             let isSearchMode = false;
@@ -772,7 +795,7 @@
                     savedDetailsStates.set(d, d.open);
                 });
                 tabContents.forEach(tc => {
-                    const btn = document.querySelector('.jellyfin-tab-button[data-tab="' + tc.id + '"]');
+                    const btn = jcSel('.jellyfin-tab-button[data-tab="' + tc.id + '"]');
                     // btn.textContent would include Material Icons font
                     // ligature names ("dashboard", "view_list", …) which
                     // render as glyphs but read as raw strings in
@@ -801,9 +824,9 @@
                 form.querySelectorAll('.jc-tab-name-match').forEach(tc => tc.classList.remove('jc-tab-name-match'));
                 clearHighlights();
                 form.querySelectorAll('.jc-search-tab-label').forEach(el => el.remove());
-                document.querySelectorAll('.jellyfin-tab-button').forEach(btn => { btn.style.display = ''; btn.classList.remove('jc-search-reveal'); });
-                document.querySelectorAll('#JellyfinCanopyPage .jc-group-btn').forEach(btn => { btn.style.display = ''; });
-                document.querySelectorAll('.jc-nav-count').forEach(el => el.remove());
+                jcSelAll('.jellyfin-tab-button').forEach(btn => { btn.style.display = ''; btn.classList.remove('jc-search-reveal'); });
+                jcSelAll('.jc-group-btn').forEach(btn => { btn.style.display = ''; });
+                jcSelAll('.jc-nav-count').forEach(el => el.remove());
                 // Clear inline display from every tab content. performSearch sets
                 // `style.display = 'block'|'none'` per tab; without this reset the
                 // inline value wins over `.jellyfin-tab-content.active { display: grid }`,
@@ -820,7 +843,7 @@
                 try {
                     savedTab = sessionStorage.getItem('jellyfinCanopyActiveTab') || 'overview';
                     if (LEGACY_TAB_MAP[savedTab]) savedTab = LEGACY_TAB_MAP[savedTab];
-                    if (!document.getElementById(savedTab)) savedTab = 'overview';
+                    if (!jcById(savedTab)) savedTab = 'overview';
                 } catch (e) {
                     // Ignore if sessionStorage is not available
                 }
@@ -898,7 +921,7 @@
                     // The shell nav stays usable during search: matching sections
                     // get a count badge (and stay clickable to jump), zero-match
                     // sections are revealed-off; the rail aggregates per group.
-                    const navBtn = document.querySelector('.jellyfin-tab-button[data-tab="' + tabContent.id + '"]');
+                    const navBtn = jcSel('.jellyfin-tab-button[data-tab="' + tabContent.id + '"]');
                     if (navBtn) {
                         navBtn.style.display = tabHasMatch ? '' : 'none';
                         navBtn.classList.toggle('jc-search-reveal', tabHasMatch);
@@ -925,7 +948,7 @@
                     // (Overview service-status, Seerr) reference it too.
                     // The CSS .jc-tab-name-match rule (flex order: -1)
                     // does the actual reordering in the form container.
-                    const btn = document.querySelector('.jellyfin-tab-button[data-tab="' + tabContent.id + '"]');
+                    const btn = jcSel('.jellyfin-tab-button[data-tab="' + tabContent.id + '"]');
                     let tabLabel = tabContent.id.toLowerCase();
                     if (btn) {
                         const clone = btn.cloneNode(true);
@@ -936,7 +959,7 @@
                 });
 
                 // Rail groups: badge aggregate counts, dim zero-match groups.
-                document.querySelectorAll('#JellyfinCanopyPage .jc-group-btn').forEach(gb => {
+                jcSelAll('.jc-group-btn').forEach(gb => {
                     const count = groupMatchCounts.get(gb.dataset.group) || 0;
                     gb.style.display = count > 0 ? '' : 'none';
                     let badge = gb.querySelector('.jc-nav-count');
@@ -1113,8 +1136,8 @@
         });
 
         async function testSeerrConnection() {
-            const urls = (document.querySelector('#seerrUrls').value || '').split('\n').map(u => u.trim()).filter(Boolean);
-            const apiKey = (document.querySelector('#SeerrApiKey').value || '').trim();
+            const urls = (jcSel('#seerrUrls').value || '').split('\n').map(u => u.trim()).filter(Boolean);
+            const apiKey = (jcSel('#SeerrApiKey').value || '').trim();
 
             if (!urls.length || !apiKey) {
                 Dashboard.alert({ title: 'Missing Information', message: 'Please provide at least one Seerr URL and an API key to test the connection.' });
@@ -1171,7 +1194,7 @@
         }
 
         async function testTmdbConnection(event) {
-            const apiKey = (document.querySelector('#TMDB_API_KEY').value || '').trim();
+            const apiKey = (jcSel('#TMDB_API_KEY').value || '').trim();
 
             if (!apiKey) {
                 Dashboard.alert({ title: 'Missing Information', message: 'Please provide a TMDB API key to test the connection.' });
@@ -1185,7 +1208,7 @@
             const statusIndicator = button.parentElement.querySelector('.material-icons') || tmdbStatusIndicator;
 
             // Disable all test buttons during the test
-            const allTestButtons = document.querySelectorAll('.testTmdbBtn');
+            const allTestButtons = jcSelAll('.testTmdbBtn');
             allTestButtons.forEach(btn => btn.disabled = true);
 
             statusIndicator.textContent = 'sync';
@@ -1367,7 +1390,7 @@
             // Probe-warning retry — re-runs plugin detection (which also re-runs
             // the Custom Tabs config probe inside its .then). One handler only;
             // checkInstalledPlugins is idempotent.
-            var probeRetry = document.getElementById('jc-probe-retry-btn');
+            var probeRetry = jcById('jc-probe-retry-btn');
             if (probeRetry && !probeRetry.dataset.jcWired) {
                 probeRetry.dataset.jcWired = '1';
                 probeRetry.onclick = function() {
@@ -1385,8 +1408,8 @@
         function setProbeWarning(source, msg) {
             if (msg) _jeProbeWarnings[source] = msg;
             else delete _jeProbeWarnings[source];
-            var banner = document.getElementById('jc-probe-warning');
-            var msgEl = document.getElementById('jc-probe-warning-msg');
+            var banner = jcById('jc-probe-warning');
+            var msgEl = jcById('jc-probe-warning-msg');
             if (!banner || !msgEl) return;
             var keys = Object.keys(_jeProbeWarnings);
             if (keys.length === 0) {
@@ -1418,8 +1441,8 @@
         }
 
         function initAutoMovieQualityMode() {
-            var qualityModeSelect = document.querySelector('#autoMovieRequestQualityMode');
-            var customSettingsDiv = document.querySelector('#autoMovieRequestCustomSettings');
+            var qualityModeSelect = jcSel('#autoMovieRequestQualityMode');
+            var customSettingsDiv = jcSel('#autoMovieRequestCustomSettings');
             if (!qualityModeSelect || !customSettingsDiv) return;
 
             jcPageLifecycle.addListener(qualityModeSelect, 'change', function() {
@@ -1432,9 +1455,9 @@
 
         var _autoMovieServerListenerAdded = false;
         function loadAutoMovieRadarrServers(savedConfig) {
-            var serverSelect = document.querySelector('#autoMovieRequestServer');
-            var profileSelect = document.querySelector('#autoMovieRequestProfile');
-            var folderSelect = document.querySelector('#autoMovieRequestRootFolder');
+            var serverSelect = jcSel('#autoMovieRequestServer');
+            var profileSelect = jcSel('#autoMovieRequestProfile');
+            var folderSelect = jcSel('#autoMovieRequestRootFolder');
             if (!serverSelect) return;
 
             resetSelectWithMessage(serverSelect, '-1', 'Loading...');
@@ -1477,8 +1500,8 @@
         }
 
         function loadAutoMovieServerDetails(serverId, savedConfig) {
-            var profileSelect = document.querySelector('#autoMovieRequestProfile');
-            var folderSelect = document.querySelector('#autoMovieRequestRootFolder');
+            var profileSelect = jcSel('#autoMovieRequestProfile');
+            var folderSelect = jcSel('#autoMovieRequestRootFolder');
             if (!profileSelect || !folderSelect) return;
 
             resetSelectWithMessage(profileSelect, '0', 'Loading...');
@@ -1736,8 +1759,8 @@
         }
 
         function loadArrInstances(config) {
-            var sonarrList = document.querySelector('#sonarrInstancesList');
-            var radarrList = document.querySelector('#radarrInstancesList');
+            var sonarrList = jcSel('#sonarrInstancesList');
+            var radarrList = jcSel('#radarrInstancesList');
             sonarrList.textContent = '';
             radarrList.textContent = '';
             _arrParseOK = { sonarr: true, radarr: true };
@@ -1788,9 +1811,9 @@
         // off the live DOM so typing a URL/API key updates immediately without a
         // save-and-reload.
         function updateRequestsRequirementsBanner() {
-            var line = document.getElementById('requestsPageRequirementsLine');
+            var line = jcById('requestsPageRequirementsLine');
             if (!line) return;
-            var list = document.getElementById('requestsPageRequirementsList');
+            var list = jcById('requestsPageRequirementsList');
 
             // At least one enabled Sonarr/Radarr instance with URL + API key.
             // Reuses the shared arr check so disabled-only instances don't count
@@ -1843,7 +1866,7 @@
             // instance by Name). Two enabled instances with the same Name make those actions
             // ambiguous — worst case a grab/monitor hits the wrong box — so disambiguate on save.
             var seen = Object.create(null);
-            document.querySelectorAll(selector).forEach(function(card) {
+            jcSelAll(selector).forEach(function(card) {
                 var url = card.querySelector('.arr-instance-url').value.trim();
                 var apiKey = card.querySelector('.arr-instance-apikey').value.trim();
                 if (url && apiKey) {
@@ -1950,14 +1973,14 @@
         }
 
         // Bind add-instance buttons
-        jcPageLifecycle.addListener(document.querySelector('#addSonarrInstance'), 'click', function() {
-            document.querySelector('#sonarrInstancesList').appendChild(
+        jcPageLifecycle.addListener(jcSel('#addSonarrInstance'), 'click', function() {
+            jcSel('#sonarrInstancesList').appendChild(
                 createInstanceCard('sonarr', { Name: '', Url: '', ExternalUrl: '', ApiKey: '', UrlMappings: '' }, true)
             );
             updateAllDependencies();
         });
-        jcPageLifecycle.addListener(document.querySelector('#addRadarrInstance'), 'click', function() {
-            document.querySelector('#radarrInstancesList').appendChild(
+        jcPageLifecycle.addListener(jcSel('#addRadarrInstance'), 'click', function() {
+            jcSel('#radarrInstancesList').appendChild(
                 createInstanceCard('radarr', { Name: '', Url: '', ExternalUrl: '', ApiKey: '', UrlMappings: '' }, true)
             );
             updateAllDependencies();
@@ -1975,7 +1998,7 @@
         function renderQualityCatOrderAdmin(config) {
             _qualityCatRenderOK = false;
             try {
-                var container = document.getElementById('qualityCategoriesAdmin');
+                var container = jcById('qualityCategoriesAdmin');
                 if (!container) return;
                 var rows = Array.from(container.querySelectorAll('.jc-quality-cat-admin-row'));
                 rows.sort(function (a, b) {
@@ -2057,7 +2080,7 @@
         function renderPagesOrderAdmin(config) {
             _pagesOrderRenderOK = false;
             try {
-                var container = document.getElementById('pagesOrderAdmin');
+                var container = jcById('pagesOrderAdmin');
                 if (!container) return;
                 var rows = Array.from(container.querySelectorAll('.jc-pages-order-row'));
                 var defaultIdx = new Map();
@@ -2191,7 +2214,7 @@
         };
 
         function configBoundFields() {
-            return Array.from(document.querySelectorAll('[data-config-key]'));
+            return Array.from(jcSelAll('[data-config-key]'));
         }
 
         /** load: config -> DOM for every [data-config-key] field. */
@@ -2262,18 +2285,18 @@
 
                 // Restore action checkboxes
                 const savedAction = config.MaintenanceModeAction || 'disable_accounts';
-                document.getElementById('mmAction_accounts').checked = savedAction === 'disable_accounts' || savedAction === 'both';
-                document.getElementById('mmAction_remote').checked   = savedAction === 'disable_remote'   || savedAction === 'both';
+                jcById('mmAction_accounts').checked = savedAction === 'disable_accounts' || savedAction === 'both';
+                jcById('mmAction_remote').checked   = savedAction === 'disable_remote'   || savedAction === 'both';
                 // Restore user selection radio + checkboxes
                 const savedUsers = config.MaintenanceModeAffectedUsers || 'all';
                 if (savedUsers === 'all') {
-                    document.querySelector('#mmUsers_all').checked = true;
-                    document.getElementById('jc-mm-user-list').style.display = 'none';
+                    jcSel('#mmUsers_all').checked = true;
+                    jcById('jc-mm-user-list').style.display = 'none';
                 } else {
-                    document.querySelector('#mmUsers_select').checked = true;
-                    document.getElementById('jc-mm-user-list').style.display = '';
+                    jcSel('#mmUsers_select').checked = true;
+                    jcById('jc-mm-user-list').style.display = '';
                     // Preselected IDs will be applied after the user list loads
-                    document.getElementById('jc-mm-user-list').dataset.preselect = savedUsers;
+                    jcById('jc-mm-user-list').dataset.preselect = savedUsers;
                 }
                 loadMaintenanceUsers();
 
@@ -2282,8 +2305,8 @@
                 // installed ONCE per page owner in jcWireStaticControlListeners
                 // (#167 finding 3) — attaching them here re-ran on every
                 // pageshow-driven loadConfig and leaked an untracked pair per visit.
-                document.querySelector('#TMDB_API_KEY').value = config.TMDB_API_KEY;
-                document.querySelector('#seerr_TMDB_API_KEY').value = config.TMDB_API_KEY;
+                jcSel('#TMDB_API_KEY').value = config.TMDB_API_KEY;
+                jcSel('#seerr_TMDB_API_KEY').value = config.TMDB_API_KEY;
 
                 // Restore stack order: rows are visually reordered to match
                 // current saved order values (ties broken by default order).
@@ -2291,25 +2314,25 @@
                 if (typeof renderPagesOrderAdmin === 'function') renderPagesOrderAdmin(config);
 
                 // Not bound: the save side is conditional on TagCacheServerMode.
-                document.querySelector('#enableTagsLocalStorageFallback').checked = config.EnableTagsLocalStorageFallback === true;
+                jcSel('#enableTagsLocalStorageFallback').checked = config.EnableTagsLocalStorageFallback === true;
 
                 // Not bound: these fields are validated/normalized by hand on save.
-                document.querySelector('#seerrUrls').value = config.SeerrUrls;
-                document.querySelector('#seerrExternalUrl').value = config.SeerrExternalUrl || '';
-                document.querySelector('#SeerrApiKey').value = config.SeerrApiKey;
-                document.querySelector('#seerrUrlMappings').value = config.SeerrUrlMappings || '';
+                jcSel('#seerrUrls').value = config.SeerrUrls;
+                jcSel('#seerrExternalUrl').value = config.SeerrExternalUrl || '';
+                jcSel('#SeerrApiKey').value = config.SeerrApiKey;
+                jcSel('#seerrUrlMappings').value = config.SeerrUrlMappings || '';
 
                 // One enum expanded into two trigger checkboxes.
                 const triggerType = config.AutoMovieRequestTriggerType || 'OnMinutesWatched';
-                document.querySelector('#autoMovieRequestTriggerOnStart').checked = (triggerType === 'OnStart' || triggerType === 'Both');
-                document.querySelector('#autoMovieRequestTriggerOnMinutesWatched').checked = (triggerType === 'OnMinutesWatched' || triggerType === 'Both');
+                jcSel('#autoMovieRequestTriggerOnStart').checked = (triggerType === 'OnStart' || triggerType === 'Both');
+                jcSel('#autoMovieRequestTriggerOnMinutesWatched').checked = (triggerType === 'OnMinutesWatched' || triggerType === 'Both');
                 if ((config.AutoMovieRequestQualityMode || 'default') === 'custom') {
-                    document.querySelector('#autoMovieRequestCustomSettings').style.display = 'block';
+                    jcSel('#autoMovieRequestCustomSettings').style.display = 'block';
                     loadAutoMovieRadarrServers(config);
                 }
 
                 // Not bound: hidden input kept in sync by the blocked-users list builder.
-                document.querySelector('#seerrImportBlockedUsers').value = config.SeerrImportBlockedUsers || '';
+                jcSel('#seerrImportBlockedUsers').value = config.SeerrImportBlockedUsers || '';
                 loadBlockedUsersList(config.SeerrImportBlockedUsers || '');
 
                 // Load multi-instance Sonarr/Radarr
@@ -2318,8 +2341,8 @@
                 // Tie icon display settings
                 if (config.MetadataIconsEnabled) {
                     // Force icon display where applicable
-                    const showLbText = document.querySelector('#showLetterboxdLinkAsText');
-                    const showArrText = document.querySelector('#showArrLinksAsText');
+                    const showLbText = jcSel('#showLetterboxdLinkAsText');
+                    const showArrText = jcSel('#showArrLinksAsText');
                     if (showLbText) showLbText.checked = false;
                     if (showArrText) showArrText.checked = false;
                 }
@@ -2329,9 +2352,9 @@
                 // jcWireStaticControlListeners (#167 finding 3). Attaching them
                 // here re-ran on every pageshow-driven loadConfig and stacked an
                 // untracked handler per dashboard visit.
-                document.getElementById('activeStreamsAllUsersContainer').style.display = config.ActiveStreamsEnabled ? '' : 'none';
-                const preventionEnabled = document.querySelector('#preventWatchlistReAddition').checked;
-                const retentionContainer = document.querySelector('#watchlistMemoryRetentionDays').closest('.inputContainer');
+                jcById('activeStreamsAllUsersContainer').style.display = config.ActiveStreamsEnabled ? '' : 'none';
+                const preventionEnabled = jcSel('#preventWatchlistReAddition').checked;
+                const retentionContainer = jcSel('#watchlistMemoryRetentionDays').closest('.inputContainer');
                 if (retentionContainer) {
                     retentionContainer.style.display = preventionEnabled ? 'block' : 'none';
                 }
@@ -2363,16 +2386,16 @@
             // conditional values and the complex editors.
             readBoundFieldsIntoConfig(config);
 
-            const mmAccounts = document.getElementById('mmAction_accounts').checked;
-            const mmRemote   = document.getElementById('mmAction_remote').checked;
+            const mmAccounts = jcById('mmAction_accounts').checked;
+            const mmRemote   = jcById('mmAction_remote').checked;
             config.MaintenanceModeAction = (mmAccounts && mmRemote) ? 'both'
                                          : mmRemote                 ? 'disable_remote'
                                          :                            'disable_accounts';
-            const mmUsersMode = (document.querySelector('input[name="maintenanceModeUsers"]:checked') || {}).value || 'all';
+            const mmUsersMode = (jcSel('input[name="maintenanceModeUsers"]:checked') || {}).value || 'all';
             if (mmUsersMode === 'all') {
                 config.MaintenanceModeAffectedUsers = 'all';
             } else {
-                const checked = Array.from(document.querySelectorAll('.jc-mm-user-cb:checked')).map(cb => cb.value);
+                const checked = Array.from(jcSelAll('.jc-mm-user-cb:checked')).map(cb => cb.value);
                 config.MaintenanceModeAffectedUsers = JSON.stringify(checked);
             }
 
@@ -2381,7 +2404,7 @@
             // Skipped if the load-time render failed — otherwise we'd clobber the
             // user's saved order with default DOM positions.
             if (_qualityCatRenderOK) {
-                const adminCatRows = document.querySelectorAll('#qualityCategoriesAdmin .jc-quality-cat-admin-row');
+                const adminCatRows = jcSelAll('#qualityCategoriesAdmin .jc-quality-cat-admin-row');
                 adminCatRows.forEach((row, idx) => {
                     const orderKey = row.dataset.orderKey;
                     if (orderKey) config[orderKey] = idx + 1;
@@ -2391,12 +2414,12 @@
             // Persist page order from the reorder control (validated: only the known page
             // ids, in current DOM order). Skipped if the load-time render failed.
             if (_pagesOrderRenderOK) {
-                var pageOrderRows = document.querySelectorAll('#pagesOrderAdmin .jc-pages-order-row');
+                var pageOrderRows = jcSelAll('#pagesOrderAdmin .jc-pages-order-row');
                 config.PagesOrder = Array.from(pageOrderRows).map(function (r) { return r.dataset.pageId; }).filter(Boolean).join(',');
             }
 
             config.EnableTagsLocalStorageFallback = config.TagCacheServerMode
-                ? document.querySelector('#enableTagsLocalStorageFallback').checked
+                ? jcSel('#enableTagsLocalStorageFallback').checked
                 : true;
 
             // validate scheme on save. Lines that don't parse as
@@ -2405,7 +2428,7 @@
             // produce malformed URIs and a confusing UriFormatException buried
             // in logs. Empty textarea remains valid (Seerr can be disabled).
             (function () {
-                const raw = (document.querySelector('#seerrUrls').value || '').split('\n').map(u => u.trim()).filter(Boolean);
+                const raw = (jcSel('#seerrUrls').value || '').split('\n').map(u => u.trim()).filter(Boolean);
                 const valid = [];
                 const invalid = [];
                 for (const line of raw) {
@@ -2435,7 +2458,7 @@
             // clear warning otherwise so it never reaches browser link building. Empty = the client
             // falls back to the first internal URL above (unchanged behaviour).
             (function () {
-                var raw = (document.querySelector('#seerrExternalUrl').value || '').trim();
+                var raw = (jcSel('#seerrExternalUrl').value || '').trim();
                 if (raw && !jcIsHttpUrl(raw)) {
                     console.warn('Jellyfin Canopy: dropping invalid Seerr External URL on save (must be an http(s) URL without credentials or query/fragment):', raw);
                     if (typeof Dashboard !== 'undefined' && Dashboard.alert) {
@@ -2449,8 +2472,8 @@
                     config.SeerrExternalUrl = raw;
                 }
             })();
-            config.SeerrApiKey = (document.querySelector('#SeerrApiKey').value || '').replace(/\s/g, '');
-            config.SeerrUrlMappings = (document.querySelector('#seerrUrlMappings').value || '').split('\n').map(u => u.trim()).filter(Boolean).join('\n');
+            config.SeerrApiKey = (jcSel('#SeerrApiKey').value || '').replace(/\s/g, '');
+            config.SeerrUrlMappings = (jcSel('#seerrUrlMappings').value || '').split('\n').map(u => u.trim()).filter(Boolean).join('\n');
             // Bazarr External URL rides the generic data-config-key binder, so validate it here after
             // the bound fields are read: blank a malformed value with a clear warning.
             (function () {
@@ -2469,10 +2492,10 @@
                 }
             })();
             // Two synced inputs, one config value; the Seerr-tab field wins (as before).
-            config.TMDB_API_KEY = document.querySelector('#seerr_TMDB_API_KEY').value;
+            config.TMDB_API_KEY = jcSel('#seerr_TMDB_API_KEY').value;
 
-            const onStart = document.querySelector('#autoMovieRequestTriggerOnStart').checked;
-            const onMinutes = document.querySelector('#autoMovieRequestTriggerOnMinutesWatched').checked;
+            const onStart = jcSel('#autoMovieRequestTriggerOnStart').checked;
+            const onMinutes = jcSel('#autoMovieRequestTriggerOnMinutesWatched').checked;
             if (onStart && onMinutes) {
                 config.AutoMovieRequestTriggerType = 'Both';
             } else if (onStart) {
@@ -2482,14 +2505,14 @@
             } else {
                 config.AutoMovieRequestTriggerType = 'OnMinutesWatched'; // Default to minutes watched if nothing selected
             }
-            var serverVal = parseInt(document.querySelector('#autoMovieRequestServer').value);
+            var serverVal = parseInt(jcSel('#autoMovieRequestServer').value);
             config.AutoMovieRequestCustomServerId = (!isNaN(serverVal) && serverVal >= 0) ? serverVal : -1;
-            var profileVal = parseInt(document.querySelector('#autoMovieRequestProfile').value);
+            var profileVal = parseInt(jcSel('#autoMovieRequestProfile').value);
             config.AutoMovieRequestCustomProfileId = (!isNaN(profileVal) && profileVal > 0) ? profileVal : 0;
-            config.AutoMovieRequestCustomRootFolder = document.querySelector('#autoMovieRequestRootFolder').value || '';
+            config.AutoMovieRequestCustomRootFolder = jcSel('#autoMovieRequestRootFolder').value || '';
 
             syncBlockedUsersToHiddenInput();
-            config.SeerrImportBlockedUsers = document.querySelector('#seerrImportBlockedUsers').value || '';
+            config.SeerrImportBlockedUsers = jcSel('#seerrImportBlockedUsers').value || '';
 
             // Save multi-instance Sonarr/Radarr
             var arrIncompleteWarnings = saveArrInstances(config);
@@ -2524,7 +2547,7 @@
             if (_jeSaveInFlight) return false;
             _jeSaveInFlight = true;
             Dashboard.showLoadingMsg();
-            var saveBtns = document.querySelectorAll('.jc-save-dock-btn');
+            var saveBtns = jcSelAll('.jc-save-dock-btn');
             saveBtns.forEach(function(b) { b.disabled = true; });
 
             try {
@@ -2636,7 +2659,7 @@
                 url: ApiClient.getUrl('/JellyfinCanopy/MaintenanceMode/Users'),
                 dataType: 'json'
             }).then(function(users) {
-                const inner = document.getElementById('jc-mm-users-inner');
+                const inner = jcById('jc-mm-users-inner');
                 if (!inner) return;
                 inner.innerHTML = '';
 
@@ -2649,7 +2672,7 @@
                 }
 
                 // Collect any pre-selected IDs stored on the container by loadConfig
-                const listEl = document.getElementById('jc-mm-user-list');
+                const listEl = jcById('jc-mm-user-list');
                 let preselect = [];
                 try { preselect = JSON.parse(listEl.dataset.preselect || '[]'); } catch (e) {}
                 const preselectAll = preselect.length === 0;
@@ -2703,7 +2726,7 @@
 
                 inner.appendChild(grid);
             }).catch(function() {
-                const inner = document.getElementById('jc-mm-users-inner');
+                const inner = jcById('jc-mm-users-inner');
                 if (!inner) return;
                 inner.innerHTML = '';
                 const msg = document.createElement('div');
@@ -2715,9 +2738,9 @@
 
         function setupMaintenanceModeControls() {
             // Show/hide user checklist based on radio selection
-            document.querySelectorAll('input[name="maintenanceModeUsers"]').forEach(function(radio) {
+            jcSelAll('input[name="maintenanceModeUsers"]').forEach(function(radio) {
                 jcPageLifecycle.addListener(radio, 'change', function() {
-                    const listEl = document.getElementById('jc-mm-user-list');
+                    const listEl = jcById('jc-mm-user-list');
                     if (this.value === 'select') {
                         listEl.style.display = '';
                         loadMaintenanceUsers();
@@ -2728,11 +2751,11 @@
             });
 
             // Select All / Deselect All buttons
-            jcPageLifecycle.addListener(document.getElementById('jc-mm-select-all'), 'click', function() {
-                document.querySelectorAll('.jc-mm-user-cb').forEach(function(cb) { cb.checked = true; });
+            jcPageLifecycle.addListener(jcById('jc-mm-select-all'), 'click', function() {
+                jcSelAll('.jc-mm-user-cb').forEach(function(cb) { cb.checked = true; });
             });
-            jcPageLifecycle.addListener(document.getElementById('jc-mm-deselect-all'), 'click', function() {
-                document.querySelectorAll('.jc-mm-user-cb').forEach(function(cb) { cb.checked = false; });
+            jcPageLifecycle.addListener(jcById('jc-mm-deselect-all'), 'click', function() {
+                jcSelAll('.jc-mm-user-cb').forEach(function(cb) { cb.checked = false; });
             });
         }
 
@@ -2747,10 +2770,10 @@
             ];
 
             uploadConfigs.forEach(config => {
-                const input = document.getElementById(config.inputId);
-                const dropZone = document.getElementById(config.dropZoneId);
-                const statusDiv = document.getElementById(config.statusId);
-                const deleteButton = document.getElementById(config.deleteId);
+                const input = jcById(config.inputId);
+                const dropZone = jcById(config.dropZoneId);
+                const statusDiv = jcById(config.statusId);
+                const deleteButton = jcById(config.deleteId);
 
                 if (!input || !dropZone || !statusDiv) return;
 
@@ -2812,9 +2835,9 @@
             }
 
             // Show image preview and dimensions
-            const previewImg = document.getElementById(config.previewId);
-            const dimensionsDiv = document.getElementById(config.dimensionsId);
-            const placeholder = document.getElementById(config.placeholderId);
+            const previewImg = jcById(config.previewId);
+            const dimensionsDiv = jcById(config.dimensionsId);
+            const placeholder = jcById(config.placeholderId);
 
             if (previewImg) {
                 const objectUrl = URL.createObjectURL(file);
@@ -2875,10 +2898,10 @@
         }
 
         async function refreshBrandingPreview(config) {
-            const previewImg = document.getElementById(config.previewId);
-            const placeholder = document.getElementById(config.placeholderId);
-            const deleteButton = document.getElementById(config.deleteId);
-            const dimensionsDiv = document.getElementById(config.dimensionsId);
+            const previewImg = jcById(config.previewId);
+            const placeholder = jcById(config.placeholderId);
+            const deleteButton = jcById(config.deleteId);
+            const dimensionsDiv = jcById(config.dimensionsId);
             if (!previewImg) return;
 
             const token = ApiClient.accessToken ? ApiClient.accessToken() : '';
@@ -2941,7 +2964,7 @@
                     statusDiv.style.color = '#51cf66';
 
                     // Hide dimensions when image is deleted
-                    const dimensionsDiv = document.getElementById(config.dimensionsId);
+                    const dimensionsDiv = jcById(config.dimensionsId);
                     if (dimensionsDiv) dimensionsDiv.style.display = 'none';
 
                     await refreshBrandingPreview(config);
@@ -2962,7 +2985,7 @@
 
         // Populate language options dynamically
         (async () => {
-            const defaultLanguageSelect = document.getElementById('DefaultLanguage');
+            const defaultLanguageSelect = jcById('DefaultLanguage');
             if (!defaultLanguageSelect) return;
 
             const CUSTOM_DISPLAY_NAMES = {
@@ -3044,8 +3067,11 @@
         // owner so a fresh visit's teardown reclaims the prior copy (AC5).
         // loadConfig keeps only the config-driven INITIAL value/visibility.
         function jcWireStaticControlListeners(doc, lifecycle) {
-            var tmdbKeyField = doc.querySelector('#TMDB_API_KEY');
-            var seerrTmdbKeyField = doc.querySelector('#seerr_TMDB_API_KEY');
+            // `doc` is the resolved own view (or document). Use [id="…"] rather
+            // than #id so a stale duplicate view earlier in the document can
+            // never be matched instead of THIS view's control (#167 findings 5/9).
+            var tmdbKeyField = doc.querySelector('[id="TMDB_API_KEY"]');
+            var seerrTmdbKeyField = doc.querySelector('[id="seerr_TMDB_API_KEY"]');
             if (tmdbKeyField && seerrTmdbKeyField) {
                 lifecycle.addListener(tmdbKeyField, 'input', function() {
                     seerrTmdbKeyField.value = tmdbKeyField.value;
@@ -3054,24 +3080,24 @@
                     tmdbKeyField.value = seerrTmdbKeyField.value;
                 });
             }
-            var activeStreamsEnabled = doc.querySelector('#activeStreamsEnabled');
+            var activeStreamsEnabled = doc.querySelector('[id="activeStreamsEnabled"]');
             if (activeStreamsEnabled) {
                 lifecycle.addListener(activeStreamsEnabled, 'change', function() {
-                    var container = doc.getElementById('activeStreamsAllUsersContainer');
+                    var container = doc.querySelector('[id="activeStreamsAllUsersContainer"]');
                     if (container) container.style.display = activeStreamsEnabled.checked ? '' : 'none';
                 });
             }
-            var preventWatchlist = doc.querySelector('#preventWatchlistReAddition');
+            var preventWatchlist = doc.querySelector('[id="preventWatchlistReAddition"]');
             if (preventWatchlist) {
                 lifecycle.addListener(preventWatchlist, 'change', function() {
-                    var retentionInput = doc.querySelector('#watchlistMemoryRetentionDays');
+                    var retentionInput = doc.querySelector('[id="watchlistMemoryRetentionDays"]');
                     var container = retentionInput && retentionInput.closest('.inputContainer');
                     if (container) container.style.display = preventWatchlist.checked ? 'block' : 'none';
                 });
             }
         }
         /* jc-static-control-listeners:end */
-        jcWireStaticControlListeners(document, jcPageLifecycle);
+        jcWireStaticControlListeners(page || document, jcPageLifecycle);
 
         initAutoMovieQualityMode();
 
@@ -3081,7 +3107,7 @@
         // gate banners would stay up until the next form save + reload even
         // though hasAnyArrService() is already true.
         (function wireRequestsBannerReactive() {
-            var formEl = document.getElementById('JellyfinCanopyForm');
+            var formEl = jcById('JellyfinCanopyForm');
             if (!formEl) {
                 console.error('[JC] #JellyfinCanopyForm missing — reactive dep updates disabled');
                 return;
@@ -3119,7 +3145,7 @@
             // #sonarrInstancesList / #radarrInstancesList. Observe both so the
             // banner updates immediately on remove (no input event fires).
             ['sonarrInstancesList', 'radarrInstancesList'].forEach(function(id) {
-                var root = document.getElementById(id);
+                var root = jcById(id);
                 if (!root) return;
                 // Lifecycle-tracked so a fresh visit disconnects the previous
                 // visit's observers instead of stacking new ones (#167).
@@ -3140,7 +3166,7 @@
         // Jellyfin keeps this page's DOM alive, and a fresh dashboard visit
         // removes them before installing its own set.
         (function wireStickyHeaderScroll() {
-            var header = document.querySelector('.jc-sticky-header');
+            var header = jcSel('.jc-sticky-header');
             if (!header) return;
             // Collect all overflow-y:auto|scroll ancestors as scroll-candidate
             // nodes. We don't trust scrollHeight>clientHeight at bind time
@@ -3211,8 +3237,8 @@
          * @returns {boolean} True if a non-empty TMDB key exists
          */
         function hasTmdbKey() {
-            return document.querySelector('#TMDB_API_KEY').value.trim().length > 0
-                || document.querySelector('#seerr_TMDB_API_KEY').value.trim().length > 0;
+            return jcSel('#TMDB_API_KEY').value.trim().length > 0
+                || jcSel('#seerr_TMDB_API_KEY').value.trim().length > 0;
         }
 
         /**
@@ -3242,9 +3268,9 @@
          * @returns {boolean} True if Seerr is fully configured
          */
         function hasSeerrConfigured() {
-            return document.querySelector('#seerrEnabled').checked
-                && hasAtLeastOneValidSeerrUrl(document.querySelector('#seerrUrls').value)
-                && document.querySelector('#SeerrApiKey').value.trim().length > 0;
+            return jcSel('#seerrEnabled').checked
+                && hasAtLeastOneValidSeerrUrl(jcSel('#seerrUrls').value)
+                && jcSel('#SeerrApiKey').value.trim().length > 0;
         }
 
         /**
@@ -3255,7 +3281,7 @@
          * @returns {boolean} True if any enabled arr service is fully configured
          */
         function hasAnyArrService() {
-            var cards = document.querySelectorAll('#sonarrInstancesList .arr-instance-card, #radarrInstancesList .arr-instance-card');
+            var cards = jcSelAll('#sonarrInstancesList .arr-instance-card, #radarrInstancesList .arr-instance-card');
             for (var i = 0; i < cards.length; i++) {
                 var url = cards[i].querySelector('.arr-instance-url');
                 var key = cards[i].querySelector('.arr-instance-apikey');
@@ -3362,7 +3388,7 @@
          */
         function updateSectionDep(dep) {
             var isMet = dep.checkFn();
-            var tab = document.querySelector(dep.tabSelector);
+            var tab = jcSel(dep.tabSelector);
             if (!tab) return;
             var fieldsets = tab.querySelectorAll(':scope > fieldset');
             var targets = [];
@@ -3376,7 +3402,7 @@
 
             targets.forEach(function(fieldset) {
                 var bannerId = dep.bannerId + '-' + Array.prototype.indexOf.call(fieldsets, fieldset);
-                var banner = document.getElementById(bannerId);
+                var banner = jcById(bannerId);
                 if (!isMet) {
                     if (!banner) {
                         var b = createDepBanner(dep);
@@ -3422,7 +3448,7 @@
          * @param {Object} dep - Individual dependency rule with id, checkFn, hint, and icon
          */
         function updateIndividualDep(dep) {
-            var checkbox = document.getElementById(dep.id);
+            var checkbox = jcById(dep.id);
             if (!checkbox) return;
             var label = checkbox.closest('label');
             if (!label) return;
@@ -3516,14 +3542,14 @@
          * @param {Object} dep - Parent dependency rule with parent id, label, and children ids
          */
         function updateParentDep(dep) {
-            var parent = document.getElementById(dep.parent);
+            var parent = jcById(dep.parent);
             if (!parent) return;
             var isEnabled = parent.checked;
             var tag = 'parent-' + dep.parent;
             var hintClass = 'parent-hint-' + dep.parent;
 
             dep.children.forEach(function(childId) {
-                var child = document.getElementById(childId);
+                var child = jcById(childId);
                 if (!child) return;
                 var container = child.closest('.checkboxContainer, .inputContainer, .selectContainer')
                              || child.closest('label');
@@ -3805,7 +3831,7 @@
             { key: 'kefinTweaks',        name: 'KefinTweaks',         icon: 'bookmark_border', url: 'https://github.com/ranaldsgift/KefinTweaks',                          purpose: 'Renders the Watchlist UI in Jellyfin. Required to view watchlisted items from the Seerr Watchlist features. Installs as a web-mod (not a normal plugin), detected via its injected scripts.', getFlag: function(){ return hasKefinTweaks; } }
         ];
         function renderOptionalPluginsDashboard() {
-            var root = document.getElementById('jc-optional-plugins');
+            var root = jcById('jc-optional-plugins');
             if (!root) return;
             root.textContent = '';
             OPTIONAL_PLUGINS.forEach(function(dep) {
@@ -3884,19 +3910,19 @@
          * updates correctly after every dependency re-evaluation.
          */
         function renderFeaturesDashboard() {
-            var root = document.getElementById('jc-features-dashboard');
+            var root = jcById('jc-features-dashboard');
             if (!root) return;
 
             function bool(id) {
-                var el = document.getElementById(id);
+                var el = jcById(id);
                 return !!(el && el.checked);
             }
             function val(id) {
-                var el = document.getElementById(id);
+                var el = jcById(id);
                 return el ? (el.value || '').trim() : '';
             }
             function anyArrConfigured() {
-                var cards = document.querySelectorAll('#sonarrInstancesList .arr-instance-card, #radarrInstancesList .arr-instance-card');
+                var cards = jcSelAll('#sonarrInstancesList .arr-instance-card, #radarrInstancesList .arr-instance-card');
                 for (var i = 0; i < cards.length; i++) {
                     var url = cards[i].querySelector('.arr-instance-url');
                     var key = cards[i].querySelector('.arr-instance-apikey');
@@ -4021,7 +4047,7 @@
                 row.appendChild(body);
                 row.addEventListener('click', function() {
                     var targetTab = f.tab;
-                    var tabBtn = document.querySelector('.jellyfin-tab-button[data-tab="' + targetTab + '"]');
+                    var tabBtn = jcSel('.jellyfin-tab-button[data-tab="' + targetTab + '"]');
                     if (tabBtn) tabBtn.click();
                 });
                 root.appendChild(row);
@@ -4053,7 +4079,7 @@
          * `<details>` is auto-opened.
          */
         function applyGatedHelp(autoExpandOnRise) {
-            var gated = document.querySelectorAll('[data-gated-by]');
+            var gated = jcSelAll('[data-gated-by]');
             gated.forEach(function(el) {
                 var parentAttr = el.getAttribute('data-gated-by');
                 if (!parentAttr) return;
@@ -4063,7 +4089,7 @@
                 var allOn = true;
                 var anyRise = false;
                 parentIds.forEach(function(parentId) {
-                    var parent = document.getElementById(parentId);
+                    var parent = jcById(parentId);
                     if (!parent) { allOn = false; return; }
                     var thisOn = !!parent.checked;
                     if (!thisOn) allOn = false;
@@ -4092,7 +4118,7 @@
         // set programmatically (programmatic `.checked = true` does NOT
         // fire a change event, so the listener wouldn't see it).
         (function wireGatedHelp() {
-            var gated = document.querySelectorAll('[data-gated-by]');
+            var gated = jcSelAll('[data-gated-by]');
             var uniqueParents = Object.create(null);
             gated.forEach(function(el) {
                 var attr = el.getAttribute('data-gated-by');
@@ -4102,7 +4128,7 @@
                 });
             });
             Object.keys(uniqueParents).forEach(function(id) {
-                var parent = document.getElementById(id);
+                var parent = jcById(id);
                 if (!parent) {
                     console.warn('[JC] gated-help: parent checkbox #' + id + ' not found — help will stay hidden');
                     return;
@@ -4186,7 +4212,7 @@
          */
         var _jeMissingSelectorsWarned = Object.create(null);
         function readFieldValue(sel) {
-            var el = document.querySelector(sel);
+            var el = jcSel(sel);
             if (!el) {
                 if (!_jeMissingSelectorsWarned[sel]) {
                     _jeMissingSelectorsWarned[sel] = true;
@@ -4208,7 +4234,7 @@
         var _jeMissingListWarned = Object.create(null);
         function countArrInstances(type) {
             var listId = type === 'sonarr' ? 'sonarrInstancesList' : 'radarrInstancesList';
-            var list = document.getElementById(listId);
+            var list = jcById(listId);
             if (!list) {
                 if (!_jeMissingListWarned[listId]) {
                     _jeMissingListWarned[listId] = true;
@@ -4249,7 +4275,7 @@
          * Each card is a <button> that jumps to the relevant settings tab.
          */
         function renderServiceStatusDashboard() {
-            var root = document.getElementById('jc-service-dashboard');
+            var root = jcById('jc-service-dashboard');
             if (!root) return;
 
             var cards = [];
@@ -4268,7 +4294,7 @@
             });
 
             // Seerr
-            var seerrEnabled = document.getElementById('seerrEnabled');
+            var seerrEnabled = jcById('seerrEnabled');
             var seerrUrls = readFieldValue('#seerrUrls');
             var seerrKey = readFieldValue('#SeerrApiKey');
             if (seerrEnabled && seerrEnabled.checked) {
@@ -4296,7 +4322,7 @@
 
             // Sonarr / Radarr — one card per instance, reusing test-cache keys
             ['sonarr', 'radarr'].forEach(function(type) {
-                var list = document.getElementById(type + 'InstancesList');
+                var list = jcById(type + 'InstancesList');
                 if (!list) return;
                 var arrCards = list.querySelectorAll('.arr-instance-card');
                 arrCards.forEach(function(card) {
@@ -4393,7 +4419,7 @@
                 body.appendChild(detail);
                 btn.appendChild(body);
                 btn.addEventListener('click', function() {
-                    var tabBtn = document.querySelector('.jellyfin-tab-button[data-tab="' + c.tab + '"]');
+                    var tabBtn = jcSel('.jellyfin-tab-button[data-tab="' + c.tab + '"]');
                     if (tabBtn) tabBtn.click();
                     // Optional deep-link: after the tab activates AND
                     // activateTab's own per-tab scroll-memory rAF has run
@@ -4405,7 +4431,7 @@
                     if (c.scrollTo) {
                         requestAnimationFrame(function() {
                             requestAnimationFrame(function() {
-                                var target = document.querySelector(c.scrollTo);
+                                var target = jcSel(c.scrollTo);
                                 if (target) {
                                     target.scrollIntoView({ behavior: 'smooth', block: 'center' });
                                 } else {
@@ -4427,16 +4453,16 @@
          * Shows clear-client-cache controls only when server-side tag cache is disabled.
          */
         function updateClientTagCacheControlsVisibility() {
-            var serverModeCheckbox = document.getElementById('tagCacheServerMode');
-            var controls = document.getElementById('clientTagCacheControls');
-            var localStorageFallbackContainer = document.getElementById('tagsLocalStorageFallbackContainer');
-            var localStorageFallbackCheckbox = document.getElementById('enableTagsLocalStorageFallback');
+            var serverModeCheckbox = jcById('tagCacheServerMode');
+            var controls = jcById('clientTagCacheControls');
+            var localStorageFallbackContainer = jcById('tagsLocalStorageFallbackContainer');
+            var localStorageFallbackCheckbox = jcById('enableTagsLocalStorageFallback');
             if (!serverModeCheckbox || !controls) return;
 
             if (localStorageFallbackContainer) {
                 var hide = serverModeCheckbox.checked ? 'none' : '';
                 localStorageFallbackContainer.style.display = hide;
-                var localStorageFallbackDesc = document.querySelector('[data-desc-for="enableTagsLocalStorageFallback"]');
+                var localStorageFallbackDesc = jcSel('[data-desc-for="enableTagsLocalStorageFallback"]');
                 if (localStorageFallbackDesc) localStorageFallbackDesc.style.display = hide;
             }
 
@@ -4456,12 +4482,12 @@
             depDebounce = setTimeout(updateAllDependencies, 150);
         }
         ['#TMDB_API_KEY', '#seerr_TMDB_API_KEY'].forEach(function(sel) {
-            jcPageLifecycle.addListener(document.querySelector(sel), 'input', debouncedUpdateDeps);
+            jcPageLifecycle.addListener(jcSel(sel), 'input', debouncedUpdateDeps);
         });
-        jcPageLifecycle.addListener(document.querySelector('#seerrEnabled'), 'change', updateAllDependencies);
-        jcPageLifecycle.addListener(document.querySelector('#tagCacheServerMode'), 'change', updateAllDependencies);
+        jcPageLifecycle.addListener(jcSel('#seerrEnabled'), 'change', updateAllDependencies);
+        jcPageLifecycle.addListener(jcSel('#tagCacheServerMode'), 'change', updateAllDependencies);
         ['#seerrUrls', '#SeerrApiKey'].forEach(function(sel) {
-            jcPageLifecycle.addListener(document.querySelector(sel), 'input', debouncedUpdateDeps);
+            jcPageLifecycle.addListener(jcSel(sel), 'input', debouncedUpdateDeps);
         });
 
         // Drop persisted "Last tested <date>" entries when the inputs that produced
@@ -4469,7 +4495,7 @@
         // changed Seerr URLs would keep seeing a green checkmark from the previous
         // credentials. The next test (or page render) re-establishes the row.
         function _wireInvalidate(sel, key) {
-            var el = document.querySelector(sel);
+            var el = jcSel(sel);
             if (!el) return;
             var lastValue = el.value;
             // Use 'change' (fires on blur/commit) rather than 'input' (fires per
@@ -4493,7 +4519,7 @@
         var parentIds = {};
         PARENT_DEPS.forEach(function(dep) { parentIds[dep.parent] = true; });
         Object.keys(parentIds).forEach(function(id) {
-            var el = document.getElementById(id);
+            var el = jcById(id);
             if (el) jcPageLifecycle.addListener(el, 'change', updateAllDependencies);
         });
 
@@ -4617,8 +4643,8 @@
          * @param {string} resultDivId - DOM id of the results container
          */
         async function validateMappingSet(mappingDefs, btnId, resultDivId) {
-            var btn = document.getElementById(btnId);
-            var resultDiv = document.getElementById(resultDivId);
+            var btn = jcById(btnId);
+            var resultDiv = jcById(resultDivId);
             // Update button label safely whether the markup wraps the text
             // in a <span> (legacy emby-button pattern) or has bare text content.
             // The previous implementation assumed a <span> always existed and
@@ -4643,7 +4669,7 @@
             var formatIssues = [];
 
             mappingDefs.forEach(function(m) {
-                var textarea = document.getElementById(m.id);
+                var textarea = jcById(m.id);
                 if (!textarea) return;
                 textarea.value.split('\n').forEach(function(line, idx) {
                     var trimmed = line.trim();
@@ -4768,10 +4794,10 @@
             // Wipe orphan temp textareas from a prior run (lets us also accept
             // those leftover from a previous failed validation with the same
             // prefix).
-            document.querySelectorAll('textarea[data-arr-validate-temp-' + type + '="true"]').forEach(function(el) { el.remove(); });
+            jcSelAll('textarea[data-arr-validate-temp-' + type + '="true"]').forEach(function(el) { el.remove(); });
 
             var listId = type + 'InstancesList';
-            document.querySelectorAll('#' + listId + ' .arr-instance-card').forEach(function(card, idx) {
+            jcSelAll('#' + listId + ' .arr-instance-card').forEach(function(card, idx) {
                 var name = card.querySelector('.arr-instance-name').value.trim() || (displayName + ' ' + (idx + 1));
                 var textarea = card.querySelector('.arr-instance-urlmappings');
                 if (textarea && textarea.value.trim()) {
@@ -4793,7 +4819,7 @@
             }
             var cleanup = function() {
                 createdTempIds.forEach(function(id) {
-                    var el = document.getElementById(id);
+                    var el = jcById(id);
                     if (el) el.remove();
                 });
             };
@@ -4806,7 +4832,7 @@
                     // disabled/"Validating..." state and the admin with no visible
                     // signal beyond an Uncaught (in promise) message in devtools.
                     console.error('[JC] mapping validation crashed:', err);
-                    var btn = document.getElementById(btnId);
+                    var btn = jcById(btnId);
                     if (btn) {
                         btn.disabled = false;
                         var span = btn.querySelector('span');
@@ -4822,13 +4848,13 @@
                 });
         }
 
-        var validateSonarrMappingsBtn = document.getElementById('validateSonarrMappingsBtn');
+        var validateSonarrMappingsBtn = jcById('validateSonarrMappingsBtn');
         if (validateSonarrMappingsBtn) {
             jcPageLifecycle.addListener(validateSonarrMappingsBtn, 'click', function() {
                 _jeValidateInstanceMappings('sonarr', 'validateSonarrMappingsBtn', 'sonarrMappingsValidationResult', 'Sonarr');
             });
         }
-        var validateRadarrMappingsBtn = document.getElementById('validateRadarrMappingsBtn');
+        var validateRadarrMappingsBtn = jcById('validateRadarrMappingsBtn');
         if (validateRadarrMappingsBtn) {
             jcPageLifecycle.addListener(validateRadarrMappingsBtn, 'click', function() {
                 _jeValidateInstanceMappings('radarr', 'validateRadarrMappingsBtn', 'radarrMappingsValidationResult', 'Radarr');
@@ -4842,7 +4868,7 @@
         function _jeRunMappingValidation(mappingDefs, btnId, resultId) {
             validateMappingSet(mappingDefs, btnId, resultId).catch(function(err) {
                 console.error('[JC] mapping validation crashed:', err);
-                var b = document.getElementById(btnId);
+                var b = jcById(btnId);
                 if (b) {
                     b.disabled = false;
                     var span = b.querySelector('span');
@@ -4858,10 +4884,10 @@
             });
         }
 
-        var validateBazarrMappingsBtn = document.getElementById('validateBazarrMappingsBtn');
+        var validateBazarrMappingsBtn = jcById('validateBazarrMappingsBtn');
         if (validateBazarrMappingsBtn) {
             jcPageLifecycle.addListener(validateBazarrMappingsBtn, 'click', function() {
-                var mappings = document.getElementById('bazarrUrlMappings');
+                var mappings = jcById('bazarrUrlMappings');
                 if (!mappings || !mappings.value.trim()) {
                     Dashboard.alert({ title: 'No Mappings', message: 'No Bazarr URL mappings configured. Fill in the Bazarr URL Mappings field above to validate.' });
                     return;
@@ -4873,7 +4899,7 @@
             });
         }
 
-        var validateSeerrMappingsBtn = document.getElementById('validateSeerrMappingsBtn');
+        var validateSeerrMappingsBtn = jcById('validateSeerrMappingsBtn');
         if (validateSeerrMappingsBtn) {
             jcPageLifecycle.addListener(validateSeerrMappingsBtn, 'click', function() {
                 _jeRunMappingValidation(
@@ -5045,11 +5071,11 @@
         jcPageLifecycle.addListener(page, 'viewhide', cancelActiveSeerrScan);
 
         async function triggerSeerrScanNow() {
-            const rawUrls = document.querySelector('#seerrUrls').value || '';
+            const rawUrls = jcSel('#seerrUrls').value || '';
             const domains = jcParseSeerrIdentityDomains(rawUrls);
-            const apiKey = (document.querySelector('#SeerrApiKey').value || '').trim();
-            const btn = document.querySelector('#triggerSeerrScanNowBtn');
-            const status = document.querySelector('#triggerSeerrScanNowStatus');
+            const apiKey = (jcSel('#SeerrApiKey').value || '').trim();
+            const btn = jcSel('#triggerSeerrScanNowBtn');
+            const status = jcSel('#triggerSeerrScanNowStatus');
 
             if (!domains.length || !apiKey) {
                 Dashboard.alert({ title: 'Missing Information', message: 'Please provide at least one Seerr URL and an API key in the Setup section above.' });
@@ -5123,7 +5149,7 @@
             }
         }
 
-        jcPageLifecycle.addListener(document.querySelector('#triggerSeerrScanNowBtn'), 'click', triggerSeerrScanNow);
+        jcPageLifecycle.addListener(jcSel('#triggerSeerrScanNowBtn'), 'click', triggerSeerrScanNow);
 
         /**
          * Quick Action: re-test every external-service connection by proxying
@@ -5167,7 +5193,7 @@
             if (labelEl) labelEl.textContent = text;
         }
 
-        var retestAllConnectionsBtn = document.getElementById('retestAllConnectionsBtn');
+        var retestAllConnectionsBtn = jcById('retestAllConnectionsBtn');
         if (retestAllConnectionsBtn) {
             var _retestAllOriginalLabel = retestAllConnectionsBtn.querySelector('.jc-quick-action-title');
             _retestAllOriginalLabel = _retestAllOriginalLabel ? _retestAllOriginalLabel.textContent : 'Re-test all service connections';
@@ -5216,15 +5242,15 @@
                 var tested = 0;
 
                 // TMDB — one click is enough; pages share the same backing key
-                var tmdbBtn = document.querySelector('.testTmdbBtn');
+                var tmdbBtn = jcSel('.testTmdbBtn');
                 if (tmdbBtn && !tmdbBtn.disabled) { tmdbBtn.click(); tested++; }
 
                 // Seerr — only if enabled with a URL + key (otherwise button
                 // would show a "missing info" toast, which is noisy for a
                 // batch re-test action).
-                var seerrEnabled = document.querySelector('#seerrEnabled');
-                var seerrUrls = document.querySelector('#seerrUrls');
-                var seerrKey = document.querySelector('#SeerrApiKey');
+                var seerrEnabled = jcSel('#seerrEnabled');
+                var seerrUrls = jcSel('#seerrUrls');
+                var seerrKey = jcSel('#SeerrApiKey');
                 if (seerrEnabled && seerrEnabled.checked
                     && seerrUrls && seerrUrls.value.trim()
                     && seerrKey && seerrKey.value.trim()
@@ -5237,7 +5263,7 @@
                 // function itself guards against empty URL/API-key, so we
                 // don't need to re-check here; we just skip already-disabled
                 // buttons (mid-flight tests).
-                var arrBtns = document.querySelectorAll('.arr-instance-test');
+                var arrBtns = jcSelAll('.arr-instance-test');
                 arrBtns.forEach(function(btn) {
                     var card = btn.closest('.arr-instance-card');
                     if (!card) return;
@@ -5292,7 +5318,7 @@
                     // `.status-check` is applied on test START and removed on
                     // test RESOLVE (success or failure), so it's an accurate
                     // "in-flight" signal for the three test functions.
-                    var inFlight = document.querySelectorAll('.status-check').length;
+                    var inFlight = jcSelAll('.status-check').length;
                     // Release when BOTH:
                     //  - no tests still in flight (UI has caught up), and
                     //  - the min-cooldown floor has elapsed (rate limit).
@@ -5318,7 +5344,7 @@
          * Display tab. Keeps the canonical clear-flow in one place while
          * giving the action a home on Overview.
          */
-        var clearTagCachesQuickBtn = document.getElementById('clearTagCachesQuickBtn');
+        var clearTagCachesQuickBtn = jcById('clearTagCachesQuickBtn');
         if (clearTagCachesQuickBtn && clearTagsCacheBtn) {
             jcPageLifecycle.addListener(clearTagCachesQuickBtn, 'click', function() {
                 clearTagsCacheBtn.click();
@@ -5331,7 +5357,7 @@
          * is disabled.
          */
         function updateClearTagCachesQuickBtnVisibility() {
-            var serverModeCheckbox = document.getElementById('tagCacheServerMode');
+            var serverModeCheckbox = jcById('tagCacheServerMode');
             if (!clearTagCachesQuickBtn || !serverModeCheckbox) return;
             clearTagCachesQuickBtn.style.display = serverModeCheckbox.checked ? 'none' : '';
         }
@@ -5340,8 +5366,8 @@
          * Updates the blocked users count badge in the collapsible summary.
          */
         function updateBlockedUsersCount() {
-            const total = document.querySelectorAll('.blockedUserCheckbox:checked').length;
-            const countEl = document.getElementById('blockedUsersCount');
+            const total = jcSelAll('.blockedUserCheckbox:checked').length;
+            const countEl = jcById('blockedUsersCount');
             if (countEl) {
                 countEl.textContent = total > 0 ? '(' + total + ' blocked)' : '(none)';
             }
@@ -5358,7 +5384,7 @@
         let _blockedUsersLoaded = false;
 
         async function loadBlockedUsersList(blockedIdsString) {
-            const container = document.getElementById('blockedUsersContainer');
+            const container = jcById('blockedUsersContainer');
             const blockedSet = new Set(
                 (blockedIdsString || '').split(/[,\r\n]+/).map(id => id.trim().replace(/-/g, '').toLowerCase()).filter(Boolean)
             );
@@ -5395,7 +5421,7 @@
                 _blockedUsersLoaded = true;
 
                 // Show scroll hint if content overflows, hide it once user scrolls to bottom
-                const scrollHint = document.getElementById('blockedUsersScrollHint');
+                const scrollHint = jcById('blockedUsersScrollHint');
                 if (scrollHint) {
                     const updateHint = () => {
                         const atBottom = container.scrollHeight - container.scrollTop <= container.clientHeight + 4;
@@ -5422,14 +5448,14 @@
                 console.warn('Jellyfin Canopy: skipping blocklist sync — user list failed to load. Existing config preserved.');
                 return;
             }
-            const checkboxes = document.querySelectorAll('.blockedUserCheckbox:checked');
+            const checkboxes = jcSelAll('.blockedUserCheckbox:checked');
             const ids = Array.from(checkboxes).map(cb => cb.dataset.userid);
-            document.querySelector('#seerrImportBlockedUsers').value = ids.join(',');
+            jcSel('#seerrImportBlockedUsers').value = ids.join(',');
         }
 
-        jcPageLifecycle.addListener(document.getElementById('btnImportSeerrUsers'), 'click', async () => {
-            const btn = document.getElementById('btnImportSeerrUsers');
-            const resultDiv = document.getElementById('importUsersResult');
+        jcPageLifecycle.addListener(jcById('btnImportSeerrUsers'), 'click', async () => {
+            const btn = jcById('btnImportSeerrUsers');
+            const resultDiv = jcById('importUsersResult');
             btn.disabled = true;
             btn.textContent = 'Saving config...';
             resultDiv.style.display = 'none';
@@ -5531,7 +5557,7 @@
         // a collapsed "OK" group). Errors surface inline in the result div
         // and are also logged to console.error so the admin can debug.
         (function wirePermissionAudit() {
-            var btn = document.getElementById('btnPermissionAudit');
+            var btn = jcById('btnPermissionAudit');
             if (!btn) return;
             // Resilient label setter (mirrors the validate-mapping fix): some
             // emby-button markup wraps text in a <span>, some places it bare.
@@ -5541,7 +5567,7 @@
                 else btn.textContent = text;
             }
             jcPageLifecycle.addListener(btn, 'click', async function() {
-                var resultDiv = document.getElementById('permissionAuditResult');
+                var resultDiv = jcById('permissionAuditResult');
                 btn.disabled = true;
                 setBtnLabel('Running…');
                 resultDiv.style.display = 'none';
@@ -5678,10 +5704,10 @@
         //   - Toast preview: replicates the in-app toast styling at bottom-center
         //     and fades out at the configured duration.
         (function wireTimingPreviews() {
-            var panelBtn = document.getElementById('jcTestShortcutsPanel');
-            var toastBtn = document.getElementById('jcTestToast');
-            var panelInput = document.getElementById('HelpPanelAutocloseDelay');
-            var toastInput = document.getElementById('ToastDuration');
+            var panelBtn = jcById('jcTestShortcutsPanel');
+            var toastBtn = jcById('jcTestToast');
+            var panelInput = jcById('HelpPanelAutocloseDelay');
+            var toastInput = jcById('ToastDuration');
 
             // Clamp to a sane window: at least 200 ms (anything shorter is a flash
             // that the user can't see), at most 120 s (prevents stuck overlays
@@ -5897,7 +5923,7 @@
         }
 
         (function wireCollapsibleBanners() {
-            var banners = document.querySelectorAll('.jc-info-banner-inline, .jc-info-banner-inline-center');
+            var banners = jcSelAll('.jc-info-banner-inline, .jc-info-banner-inline-center');
             if (!banners.length) return;
 
             function findAnchor(banner) {
@@ -5914,14 +5940,14 @@
                         if (legendOverride) return legendOverride;
                     }
                 } else if (override && override.charAt(0) === '#') {
-                    var el = document.querySelector(override);
+                    var el = jcSel(override);
                     if (el) return el;
                 }
 
                 var descWrapper = banner.closest('.jc-setting-description[data-desc-for]');
                 if (descWrapper) {
                     var targetId = descWrapper.getAttribute('data-desc-for');
-                    var target = document.getElementById(targetId);
+                    var target = jcById(targetId);
                     if (target) {
                         var container = target.closest('.checkboxContainer, .inputContainer');
                         if (container) return container;
@@ -5944,7 +5970,7 @@
                 var descWrapper = banner.closest('.jc-setting-description[data-desc-for]');
                 if (!descWrapper) return null;
                 var targetId = descWrapper.getAttribute('data-desc-for');
-                var target = document.getElementById(targetId);
+                var target = jcById(targetId);
                 if (target && target.type === 'checkbox') return target;
                 return null;
             }
@@ -6023,18 +6049,18 @@
             jcPageLifecycle.addListener(document, 'click', function(e) {
                 if (!e.target) return;
                 if (e.target.closest('.jc-banner-trigger, .jc-banner-managed')) return;
-                document.querySelectorAll('.jc-banner-trigger[aria-expanded="true"]').forEach(function(t) {
+                jcSelAll('.jc-banner-trigger[aria-expanded="true"]').forEach(function(t) {
                     t.setAttribute('aria-expanded', 'false');
                 });
-                document.querySelectorAll('.jc-banner-managed.jc-banner-open').forEach(function(b) {
+                jcSelAll('.jc-banner-managed.jc-banner-open').forEach(function(b) {
                     b.classList.remove('jc-banner-open');
                 });
             });
         })();
 
         // Custom Plugin Links functionality
-        const testCustomPluginLinksBtn = document.getElementById('testCustomPluginLinksBtn');
-        const customPluginLinksTextarea = document.getElementById('customPluginLinks');
+        const testCustomPluginLinksBtn = jcById('testCustomPluginLinksBtn');
+        const customPluginLinksTextarea = jcById('customPluginLinks');
 
         if (testCustomPluginLinksBtn) {
             jcPageLifecycle.addListener(testCustomPluginLinksBtn, 'click', async () => {
@@ -6091,12 +6117,12 @@
         }
 
         // click handlers to all TMDB test buttons
-        document.querySelectorAll('.testTmdbBtn').forEach(btn => {
+        jcSelAll('.testTmdbBtn').forEach(btn => {
             jcPageLifecycle.addListener(btn, 'click', testTmdbConnection);
         });
 
         // Copy button handler for HTML code snippets
-        document.querySelectorAll('.jc-copy-html-btn').forEach(function(btn) {
+        jcSelAll('.jc-copy-html-btn').forEach(function(btn) {
             jcPageLifecycle.addListener(btn, 'click', function(e) {
                 e.preventDefault();
                 e.stopPropagation();

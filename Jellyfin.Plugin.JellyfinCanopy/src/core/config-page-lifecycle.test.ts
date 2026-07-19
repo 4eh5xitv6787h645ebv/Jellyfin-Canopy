@@ -694,13 +694,17 @@ describe('config-page static control listeners are lifecycle-owned (#167 finding
             <input id="preventWatchlistReAddition" type="checkbox" />
         `;
         document.body.appendChild(page);
+        // Resolve via [id="…"] (not #id): jsdom's #id fast path is a document
+        // id-map lookup, so with a duplicate-view page present it would return
+        // the OTHER view's control (or null). [id="…"] is descendant-scoped —
+        // the same reason production scopes its lookups this way (#167 5/9).
         return {
             page,
-            tmdb: page.querySelector<HTMLInputElement>('#TMDB_API_KEY')!,
-            seerrTmdb: page.querySelector<HTMLInputElement>('#seerr_TMDB_API_KEY')!,
-            activeStreams: page.querySelector<HTMLInputElement>('#activeStreamsEnabled')!,
-            activeContainer: page.querySelector<HTMLElement>('#activeStreamsAllUsersContainer')!,
-            prevent: page.querySelector<HTMLInputElement>('#preventWatchlistReAddition')!,
+            tmdb: page.querySelector<HTMLInputElement>('[id="TMDB_API_KEY"]')!,
+            seerrTmdb: page.querySelector<HTMLInputElement>('[id="seerr_TMDB_API_KEY"]')!,
+            activeStreams: page.querySelector<HTMLInputElement>('[id="activeStreamsEnabled"]')!,
+            activeContainer: page.querySelector<HTMLElement>('[id="activeStreamsAllUsersContainer"]')!,
+            prevent: page.querySelector<HTMLInputElement>('[id="preventWatchlistReAddition"]')!,
             retentionContainer: page.querySelector<HTMLElement>('.inputContainer')!,
         };
     }
@@ -774,6 +778,29 @@ describe('config-page static control listeners are lifecycle-owned (#167 finding
         expect(c.seerrTmdb.value).toBe('final');
     });
 
+    it('findings 5/9: wires the PASSED own view, not a stale duplicate carrying the same ids', () => {
+        // JF12 duplicate-view state: a stale hidden #JellyfinCanopyPage stays
+        // FIRST in document order while the fresh visible copy is appended LAST,
+        // so every control id (#TMDB_API_KEY, …) exists twice. Before the fix the
+        // installer used document-wide lookups and wired the stale (hidden) copy;
+        // the visible controls stayed dead. Scoped to the resolved own view, only
+        // the fresh controls are wired and the stale ones are left untouched.
+        const win: Record<string, unknown> = {};
+        const stale = buildControls();
+        const fresh = buildControls();
+        const owner = remember(lifecycle.jcAcquireConfigPageLifecycle(win, fresh.page));
+        staticControls.jcWireStaticControlListeners(fresh.page, owner!);
+
+        fresh.tmdb.value = 'fresh-key';
+        fresh.tmdb.dispatchEvent(new Event('input'));
+        expect(fresh.seerrTmdb.value).toBe('fresh-key');
+
+        // The stale duplicate never received listeners.
+        stale.tmdb.value = 'stale-key';
+        stale.tmdb.dispatchEvent(new Event('input'));
+        expect(stale.seerrTmdb.value).toBe('');
+    });
+
     it('source: the TMDB-sync / active-streams / watchlist listeners are not re-attached in loadConfig', () => {
         const source = readSource(CONFIG_PAGE_JS);
         // The raw per-load registrations were the leak (loadConfig runs on every
@@ -787,8 +814,11 @@ describe('config-page static control listeners are lifecycle-owned (#167 finding
         expect(source).toContain("lifecycle.addListener(seerrTmdbKeyField, 'input'");
         expect(source).toContain("lifecycle.addListener(activeStreamsEnabled, 'change'");
         expect(source).toContain("lifecycle.addListener(preventWatchlist, 'change'");
-        // Installed from exactly ONE synchronous call site (not inside loadConfig).
-        expect(countOccurrences(source, 'jcWireStaticControlListeners(document, jcPageLifecycle)')).toBe(1);
+        // Installed from exactly ONE synchronous call site (not inside
+        // loadConfig), scoped to the resolved own view (#167 findings 5/9) so a
+        // stale duplicate view's controls are never wired in place of the live
+        // ones.
+        expect(countOccurrences(source, 'jcWireStaticControlListeners(page || document, jcPageLifecycle)')).toBe(1);
     });
 });
 
@@ -891,6 +921,30 @@ describe('config-page persistent registrations stay lifecycle-owned (#167 drift 
         expect(source).toContain('clearTimeout(toast._jeShowTimer)');
         expect(source).toContain('clearTimeout(toast._jeHideTimer)');
         expect(source).toContain('clearTimeout(toast._jeRemoveTimer)');
+    });
+
+    it('routes in-page control lookups through the page-scoped helpers (#167 findings 1/5/9)', () => {
+        // The IIFE resolves its OWN view (`page`) but before the fix still read
+        // every control with document.getElementById / document.querySelector,
+        // which return the FIRST match in document order — the stale hidden
+        // duplicate view's control. That silently loaded/saved the wrong form
+        // (e.g. a rotated Seerr API key read back from the hidden view) and wired
+        // listeners onto invisible controls. All in-page lookups now go through
+        // the page-scoped helpers.
+        expect(source).toContain("function jcById(id) { return page ? page.querySelector('[id=\"' + id + '\"]') : document.getElementById(id); }");
+        expect(source).toContain("function jcSel(sel) { return page ? page.querySelector(jcScopeSelector(sel)) : document.querySelector(sel); }");
+        expect(source).toContain("function jcSelAll(sel) { return page ? page.querySelectorAll(jcScopeSelector(sel)) : document.querySelectorAll(sel); }");
+        // No bare in-page id lookup may bypass the resolver.
+        expect(source).not.toContain("document.getElementById('");
+        expect(source).not.toContain("document.querySelector('#SeerrApiKey')");
+        expect(source).not.toContain("document.querySelector('#resetAllUserSettingsBtn')");
+        // The security-sensitive secret field and the reset control are scoped.
+        expect(source).toContain("jcSel('#SeerrApiKey')");
+        expect(source).toContain("resetAllUserSettingsBtn = jcSel('#resetAllUserSettingsBtn')");
+        // The ONLY remaining bare document.querySelector('#…') are the form
+        // fallback (already view-scoped via its ternary) and one comment
+        // reference; any newly-added unscoped in-page id lookup trips this guard.
+        expect(countOccurrences(source, "document.querySelector('#")).toBe(2);
     });
 
     it('keeps the existing per-element wired guards intact', () => {
