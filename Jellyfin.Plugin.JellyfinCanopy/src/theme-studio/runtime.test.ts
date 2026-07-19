@@ -144,7 +144,11 @@ describe('Theme Studio identity-owned runtime', () => {
         expect(runtime.adoptAcknowledged({ invalid: true })).toBe(false);
         expect(runtime.getConfiguration()?.Profiles[0].BasePreset).toBe('canopy');
         editorCopy!.Revision = 4;
+        const changed = vi.fn();
+        window.addEventListener('jc:theme-studio-runtime-changed', changed);
         expect(runtime.adoptAcknowledged(editorCopy)).toBe(true);
+        expect(changed).toHaveBeenCalledOnce();
+        window.removeEventListener('jc:theme-studio-runtime-changed', changed);
         expect(runtime.getConfiguration()).toMatchObject({ Revision: 4, ActiveProfileId: 'default' });
         expect(document.documentElement.getAttribute('data-jc-theme-preset')).toBe('oled');
         expect(JC.rememberUserSettingsSnapshot).toHaveBeenLastCalledWith(

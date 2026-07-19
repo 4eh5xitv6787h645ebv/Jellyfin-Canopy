@@ -262,6 +262,10 @@ export class ThemeStudioRuntime {
         this.#previewConfiguration = null;
         JC.rememberUserSettingsSnapshot?.('theme.json', this.#configuration);
         this.refresh();
+        // Apply acknowledgements can outlive the editor that initiated them.
+        // Notify any replacement editor so it adopts this authoritative full
+        // document before it can stage a newer write from a stale snapshot.
+        this.#announceRuntimeChange();
         return true;
     }
 

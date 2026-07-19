@@ -374,6 +374,23 @@ describe('Theme Studio responsive settings editor', () => {
         expect(panel.textContent).toContain('theme_studio_ready');
     });
 
+    it('adopts a late acknowledgement that lands after this clean editor opens', async () => {
+        wireThemeStudioEditor(context());
+        expect(button('preset', 'canopy').getAttribute('aria-pressed')).toBe('true');
+
+        const acknowledged = themeConfiguration();
+        acknowledged.Revision = 8;
+        acknowledged.Profiles[0].BasePreset = 'studio';
+        configuration = JC.identity.own(acknowledged, identity);
+        window.dispatchEvent(new CustomEvent('jc:theme-studio-runtime-changed'));
+
+        await vi.waitFor(() => {
+            expect(button('preset', 'studio').getAttribute('aria-pressed')).toBe('true');
+        });
+        expect(button('apply').disabled).toBe(true);
+        expect(panel.textContent).toContain('theme_studio_ready');
+    });
+
     it('tracks the visual viewport so the mobile action bar stays above keyboards', () => {
         const viewport = Object.assign(new EventTarget(), { height: 412, offsetTop: 177 });
         vi.stubGlobal('visualViewport', viewport);
