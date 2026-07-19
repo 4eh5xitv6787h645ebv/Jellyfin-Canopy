@@ -986,6 +986,17 @@ describe('config-page persistent registrations stay lifecycle-owned (#167 drift 
         expect(source).toContain("jcPageLifecycle.addListener(n, 'scroll', onScroll, { passive: true })");
     });
 
+    it('owns the persistent blocked-users container scroll listener (#167 finding 4)', () => {
+        // loadBlockedUsersList runs on every loadConfig (every pageshow) against
+        // the long-lived #blockedUsersContainer, so a raw scroll listener stacked
+        // one updateHint per visit and leaked past teardown. It must be routed
+        // through the owner and token-guarded so repeated loads within one visit
+        // don't stack duplicates.
+        expect(source).not.toContain("container.addEventListener('scroll'");
+        expect(source).toContain("jcPageLifecycle.addListener(container, 'scroll', updateHint)");
+        expect(source).toContain('container.dataset.jcScrollWired !== jcPageLifecycle.id');
+    });
+
     it('tracks every MutationObserver it constructs', () => {
         const constructed = countOccurrences(source, 'new MutationObserver(');
         expect(constructed).toBeGreaterThan(0);

@@ -5463,7 +5463,16 @@
                     };
                     // Check after render
                     requestAnimationFrame(updateHint);
-                    container.addEventListener('scroll', updateHint);
+                    // The container is a PERSISTENT in-page element and
+                    // loadBlockedUsersList runs on every loadConfig (every
+                    // pageshow), so a raw listener stacked one updateHint per
+                    // visit and was never reclaimed (#167 finding 4). Route it
+                    // through the owner (teardown reclaims it) and guard by the
+                    // owner token so repeated loads within one visit don't stack.
+                    if (container.dataset.jcScrollWired !== jcPageLifecycle.id) {
+                        container.dataset.jcScrollWired = jcPageLifecycle.id;
+                        jcPageLifecycle.addListener(container, 'scroll', updateHint);
+                    }
                 }
             } catch (e) {
                 container.textContent = 'Could not load users.';
