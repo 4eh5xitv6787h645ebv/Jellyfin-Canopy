@@ -3,6 +3,7 @@ import type { ThemeMediaState } from './resolver';
 import { resolveBreakpoint, resolveTheme } from './resolver';
 import { themeConfiguration } from '../test/theme-studio-fixture';
 import { contrastRatio } from './color';
+import { THEME_PALETTES, THEME_PRESETS } from './catalog';
 
 function media(overrides: Partial<ThemeMediaState> = {}): ThemeMediaState {
     return {
@@ -54,6 +55,63 @@ describe('Theme Studio resolver', () => {
         expect(phone.tokens['layout.navigation']).toBe('bottom');
         expect(desktop.tokens['space.page-gutter']).toBe(2);
         expect(desktop.tokens['layout.navigation']).toBe('header');
+    });
+
+    it('resolves every curated preset across phone, tablet, desktop and TV capability profiles', () => {
+        for (const preset of THEME_PRESETS) {
+            for (const state of [
+                media({ viewportWidth: 390, viewportHeight: 844, coarsePointer: true, hover: false }),
+                media({ viewportWidth: 820, viewportHeight: 1180, coarsePointer: true }),
+                media({ viewportWidth: 1440, viewportHeight: 900 }),
+                media({ viewportWidth: 1920, viewportHeight: 1080, tv: true, hover: false }),
+            ]) {
+                const configuration = themeConfiguration();
+                configuration.Profiles[0].BasePreset = preset.id;
+                configuration.Profiles[0].PresetVersion = 1;
+                configuration.Profiles[0].FreezePresetVersion = true;
+                const resolved = resolveTheme(configuration, state);
+                expect(resolved, `${preset.id}/${resolved.breakpoint}`).toMatchObject({
+                    preset: preset.id,
+                    presetVersion: 1,
+                    presetFallback: false,
+                });
+                expect(resolved.tokens['layout.navigation']).toBeDefined();
+                expect(resolved.tokens['color.canvas']).toMatch(/^#[0-9A-F]{6}(?:[0-9A-F]{2})?$/i);
+            }
+        }
+    });
+
+    it('stores user choices as diffs after preset defaults and falls back safely for a missing frozen version', () => {
+        const customized = themeConfiguration();
+        customized.Profiles[0].BasePreset = 'glass';
+        customized.Profiles[0].PresetVersion = 1;
+        customized.Profiles[0].FreezePresetVersion = true;
+        customized.Profiles[0].Tokens = { 'effects.blur': 7 };
+        expect(resolveTheme(customized, media()).tokens).toMatchObject({
+            'effects.material': 'glass',
+            'effects.blur': 7,
+        });
+
+        customized.Profiles[0].PresetVersion = 2;
+        expect(resolveTheme(customized, media())).toMatchObject({
+            preset: 'canopy',
+            presetVersion: 1,
+            presetFallback: true,
+        });
+    });
+
+    it('keeps palette character when the orthogonal accent uses the palette default', () => {
+        const primaries = new Set<string>();
+        for (const palette of THEME_PALETTES) {
+            const configuration = themeConfiguration();
+            configuration.Profiles[0].Palette = palette.id;
+            configuration.Profiles[0].Accent = 'palette';
+            const resolved = resolveTheme(configuration, media());
+            expect(resolved.palette).toBe(palette.id);
+            expect(resolved.tokens['color.primary']).toBe(palette.colors.dark['color.primary']);
+            primaries.add(String(resolved.tokens['color.primary']));
+        }
+        expect(primaries.size).toBeGreaterThan(12);
     });
 
     it('follows Jellyfin data-theme for system mode without owning it', () => {

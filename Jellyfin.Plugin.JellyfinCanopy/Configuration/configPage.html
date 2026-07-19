@@ -1957,9 +1957,34 @@
                                 <div class="fieldDescription">Seeds a new user's first profile. Existing profiles are not overwritten by later default changes.</div>
                             </div>
                             <div class="inputContainer">
-                                <label class="inputLabel inputLabelUnfocused" for="themeStudioDefaultPalette">Default palette ID</label>
-                                <input id="themeStudioDefaultPalette" data-config-key="ThemeStudioDefaultPalette" data-config-fallback="canopy-night" type="text" is="emby-input" maxlength="64"/>
-                                <div class="fieldDescription">A lowercase built-in palette identifier such as <code>canopy-night</code>.</div>
+                                <label class="inputLabel inputLabelUnfocused" for="themeStudioDefaultPalette">Default palette for new users</label>
+                                <select is="emby-select" id="themeStudioDefaultPalette" data-config-key="ThemeStudioDefaultPalette" data-config-fallback="canopy-night" name="themeStudioDefaultPalette" class="emby-select">
+                                    <option value="canopy-night">Canopy Night</option>
+                                    <option value="neutral">Neutral</option>
+                                    <option value="vivid">Vivid</option>
+                                    <option value="catppuccin">Catppuccin-inspired</option>
+                                    <option value="dracula">Dracula-inspired</option>
+                                    <option value="spring">Spring</option>
+                                    <option value="summer">Summer</option>
+                                    <option value="autumn">Autumn</option>
+                                    <option value="winter">Winter</option>
+                                    <option value="jellyfish-aurora">Jellyfish Aurora</option>
+                                    <option value="jellyfish-banana">Jellyfish Banana</option>
+                                    <option value="jellyfish-coal">Jellyfish Coal</option>
+                                    <option value="jellyfish-coral">Jellyfish Coral</option>
+                                    <option value="jellyfish-forest">Jellyfish Forest</option>
+                                    <option value="jellyfish-grass">Jellyfish Grass</option>
+                                    <option value="jellyfish-jellyblue">Jellyfish Jellyblue</option>
+                                    <option value="jellyfish-jellyflix">Jellyfish Jellyflix</option>
+                                    <option value="jellyfish-jellypurple">Jellyfish Jellypurple</option>
+                                    <option value="jellyfish-lavender">Jellyfish Lavender</option>
+                                    <option value="jellyfish-midnight">Jellyfish Midnight</option>
+                                    <option value="jellyfish-mint">Jellyfish Mint</option>
+                                    <option value="jellyfish-ocean">Jellyfish Ocean</option>
+                                    <option value="jellyfish-peach">Jellyfish Peach</option>
+                                    <option value="jellyfish-watermelon">Jellyfish Watermelon</option>
+                                </select>
+                                <div class="fieldDescription">Seeds a curated palette for new profiles. Existing profiles are not overwritten by later default changes.</div>
                             </div>
                             <div class="checkboxContainer"><label><input id="themeStudioDashboardEnabled" data-config-key="ThemeStudioDashboardEnabled" is="emby-checkbox" type="checkbox"/><span>Apply curated Theme Studio tokens to the administrator dashboard</span></label></div>
                             <div class="jc-setting-description" data-desc-for="themeStudioDashboardEnabled">

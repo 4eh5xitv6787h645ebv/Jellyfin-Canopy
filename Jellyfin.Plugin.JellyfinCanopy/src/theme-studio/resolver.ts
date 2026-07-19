@@ -1,7 +1,13 @@
 import type { ThemeProfile, ThemeTokenValue, UserThemeConfiguration } from '../types/jc';
 import { readableForeground } from './color';
+import {
+    resolveAccent,
+    resolvePalette,
+    resolvePresetVersion,
+    type ThemeCatalogBreakpoint,
+} from './catalog';
 
-export type ThemeBreakpoint = 'phone' | 'tablet' | 'desktop' | 'wide' | 'tv';
+export type ThemeBreakpoint = ThemeCatalogBreakpoint;
 export type ResolvedThemeMode = 'dark' | 'light';
 
 export interface ThemeMediaState {
@@ -26,6 +32,8 @@ export interface ResolveThemeOptions {
 export interface ResolvedTheme {
     readonly profileId: string;
     readonly preset: string;
+    readonly presetVersion: number;
+    readonly presetFallback: boolean;
     readonly palette: string;
     readonly mode: ResolvedThemeMode;
     readonly breakpoint: ThemeBreakpoint;
@@ -39,42 +47,6 @@ export interface ResolvedTheme {
     readonly underlineLinks: boolean;
     readonly tokens: Readonly<Record<string, ThemeTokenValue>>;
 }
-
-const DARK_COLORS: Readonly<Record<string, ThemeTokenValue>> = Object.freeze({
-    'color.canvas': '#0B0B12',
-    'color.surface': '#171722',
-    'color.elevated': '#222232',
-    'color.overlay': '#0C0C12E6',
-    'color.text': '#F6F4FF',
-    'color.text-muted': '#B7B3C7',
-    'color.primary': '#8F76FF',
-    'color.on-primary': '#FFFFFF',
-    'color.secondary': '#45D6C2',
-    'color.positive': '#58D68D',
-    'color.caution': '#F6C85F',
-    'color.negative': '#FF6B79',
-    'color.info': '#62A9FF',
-    'color.divider': '#FFFFFF24',
-    'color.focus': '#C7B8FF',
-});
-
-const LIGHT_COLORS: Readonly<Record<string, ThemeTokenValue>> = Object.freeze({
-    'color.canvas': '#F6F5FA',
-    'color.surface': '#FFFFFF',
-    'color.elevated': '#ECEAF3',
-    'color.overlay': '#F8F7FBEF',
-    'color.text': '#1C1A24',
-    'color.text-muted': '#625E70',
-    'color.primary': '#6048D8',
-    'color.on-primary': '#FFFFFF',
-    'color.secondary': '#087F73',
-    'color.positive': '#147D45',
-    'color.caution': '#8A5A00',
-    'color.negative': '#B42335',
-    'color.info': '#145DA0',
-    'color.divider': '#1C1A2429',
-    'color.focus': '#4C32C3',
-});
 
 const BASE_TOKENS: Readonly<Record<string, ThemeTokenValue>> = Object.freeze({
     'type.family-ui': 'system',
@@ -142,53 +114,6 @@ const BASE_TOKENS: Readonly<Record<string, ThemeTokenValue>> = Object.freeze({
     'accessibility.text-scale': 1,
 });
 
-const ACCENTS: Readonly<Record<string, string>> = Object.freeze({
-    violet: '#8F76FF', blue: '#4B9DFF', cyan: '#35C5E8', teal: '#31BFAE',
-    green: '#58C878', amber: '#E4A93A', orange: '#F08043', red: '#EF6371',
-    pink: '#E76AAA', neutral: '#9290A0',
-});
-
-function presetTokens(name: string, mode: ResolvedThemeMode): Record<string, ThemeTokenValue> {
-    switch (name) {
-        case 'minimal': return {
-            'effects.level': 'minimal', 'effects.material': 'solid', 'effects.blur': 0,
-            'effects.glow': 0, 'elevation.card-shadow': 'none', 'motion.profile': 'calm',
-        };
-        case 'cinematic': return {
-            'layout.home-hero': 'cinematic', 'layout.details': 'cinematic',
-            'effects.level': 'full', 'effects.image-treatment': 'gradient',
-            'elevation.card-shadow': 'strong', 'motion.profile': 'expressive',
-        };
-        case 'glass': return {
-            'effects.level': 'full', 'effects.material': 'glass', 'effects.blur': 24,
-            'effects.saturation': 1.2, 'effects.backdrop-opacity': 0.66,
-        };
-        case 'material': return {
-            'shape.card-radius': 'subtle', 'shape.control-radius': 'subtle',
-            'effects.material': 'solid', 'elevation.card-shadow': 'medium',
-        };
-        case 'studio': return {
-            'layout.density': 'compact', 'space.scale': 'compact',
-            'effects.level': 'minimal', 'effects.material': 'solid', 'effects.blur': 0,
-        };
-        case 'tv-focus': return {
-            'layout.density': 'spacious', 'space.scale': 'spacious',
-            'layout.card-actions': 'always', 'elevation.focus-ring': 'strong',
-            'accessibility.focus-emphasis': 'strong', 'icon.size-scale': 1.2,
-        };
-        case 'oled': return mode === 'dark' ? {
-            'color.canvas': '#000000', 'color.surface': '#080808', 'color.elevated': '#121212',
-            'effects.material': 'solid', 'effects.blur': 0,
-        } : {};
-        case 'high-contrast': return {
-            'effects.material': 'solid', 'effects.blur': 0, 'effects.glow': 0,
-            'shape.border-width': 2, 'elevation.focus-ring': 'strong',
-            'accessibility.contrast': 'on', 'accessibility.focus-emphasis': 'strong',
-        };
-        default: return {};
-    }
-}
-
 export function resolveBreakpoint(media: Pick<ThemeMediaState,
     'viewportWidth' | 'viewportHeight' | 'tv' | 'coarsePointer'>): ThemeBreakpoint {
     if (media.tv) return 'tv';
@@ -244,11 +169,21 @@ export function resolveTheme(
             : media.jellyfinTheme.toLowerCase().includes('light') || (!media.jellyfinTheme && !media.darkScheme)
                 ? 'light' : 'dark';
     const breakpoint = resolveBreakpoint(media);
+    const presetResolution = resolvePresetVersion(
+        profile.BasePreset,
+        profile.PresetVersion ?? null,
+        profile.FreezePresetVersion,
+    );
+    const preset = presetResolution.definition;
+    const palette = resolvePalette(profile.Palette);
+    const accent = resolveAccent(profile.Accent, mode);
     const tokens: Record<string, ThemeTokenValue> = {
         ...BASE_TOKENS,
-        ...(mode === 'dark' ? DARK_COLORS : LIGHT_COLORS),
-        ...(ACCENTS[profile.Accent] ? { 'color.primary': ACCENTS[profile.Accent] } : {}),
-        ...presetTokens(profile.BasePreset, mode),
+        ...palette.colors[mode],
+        ...preset.tokens,
+        ...preset.modeTokens[mode],
+        ...preset.responsive[breakpoint],
+        ...(accent ? { 'color.primary': accent } : {}),
         ...profile.Tokens,
         ...responsiveTokens(profile, breakpoint),
     };
@@ -260,7 +195,7 @@ export function resolveTheme(
     );
 
     const reducedMotion = media.reducedMotion || profile.Accessibility.Motion === 'off';
-    const highContrast = profile.BasePreset === 'high-contrast'
+    const highContrast = preset.id === 'high-contrast'
         || systemChoice(profile.Accessibility.Contrast, media.moreContrast);
     const reducedTransparency = media.reducedTransparency
         || profile.Accessibility.Transparency === 'off';
@@ -298,8 +233,10 @@ export function resolveTheme(
 
     return Object.freeze({
         profileId: profile.Id,
-        preset: profile.BasePreset,
-        palette: profile.Palette,
+        preset: preset.id,
+        presetVersion: preset.version,
+        presetFallback: presetResolution.fallback,
+        palette: palette.id,
         mode,
         breakpoint,
         reducedMotion,

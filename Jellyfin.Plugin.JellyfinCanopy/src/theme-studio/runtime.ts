@@ -20,6 +20,8 @@ const ROOT_ATTRIBUTES = Object.freeze([
     'data-jc-theme-preview',
     'data-jc-theme-profile',
     'data-jc-theme-preset',
+    'data-jc-theme-preset-version',
+    'data-jc-theme-preset-fallback',
     'data-jc-theme-palette',
     'data-jc-theme-mode',
     'data-jc-theme-breakpoint',
@@ -312,6 +314,8 @@ export class ThemeStudioRuntime {
         root.setAttribute('data-jc-theme-active', 'true');
         root.setAttribute('data-jc-theme-profile', theme.profileId);
         root.setAttribute('data-jc-theme-preset', theme.preset);
+        root.setAttribute('data-jc-theme-preset-version', String(theme.presetVersion));
+        root.setAttribute('data-jc-theme-preset-fallback', theme.presetFallback ? 'true' : 'false');
         root.setAttribute('data-jc-theme-palette', theme.palette);
         root.setAttribute('data-jc-theme-mode', theme.mode);
         root.setAttribute('data-jc-theme-breakpoint', theme.breakpoint);

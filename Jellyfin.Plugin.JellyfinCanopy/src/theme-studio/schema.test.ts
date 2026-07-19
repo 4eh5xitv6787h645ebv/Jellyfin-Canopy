@@ -74,6 +74,19 @@ describe('Theme Studio browser schema boundary', () => {
         invalidNumber.Profiles[0].Tokens = { 'effects.blur': Number.NaN };
         expect(parseUserThemeConfiguration(invalidNumber)).toBeNull();
 
+        const invalidPalette = themeConfiguration();
+        invalidPalette.Profiles[0].Palette = 'remote-gallery-theme';
+        expect(parseUserThemeConfiguration(invalidPalette)).toBeNull();
+
+        const invalidAccent = themeConfiguration();
+        invalidAccent.Profiles[0].Accent = 'javascript';
+        expect(parseUserThemeConfiguration(invalidAccent)).toBeNull();
+
+        const curated = themeConfiguration();
+        curated.Profiles[0].Palette = 'catppuccin';
+        curated.Profiles[0].Accent = 'palette';
+        expect(parseUserThemeConfiguration(curated)).not.toBeNull();
+
         const tooMany = themeConfiguration();
         tooMany.Profiles = Array.from({ length: 25 }, (_, index) => ({
             ...structuredClone(tooMany.Profiles[0]),

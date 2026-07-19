@@ -92,6 +92,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
             var result = UserThemeConfiguration.CreateDefault(
                 "canopy",
                 "jellyfish-" + canonical.ToLowerInvariant());
+            result.Profiles[0].Accent = "palette";
             result.LegacyMigration = new ThemeLegacyMigration
             {
                 JellyfishTheme = canonical,
@@ -128,6 +129,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
                 if (migrated.Profiles.Count > 0)
                 {
                     migrated.Profiles[0].Palette = "jellyfish-" + canonical.ToLowerInvariant();
+                    migrated.Profiles[0].Accent = "palette";
                 }
             }
 

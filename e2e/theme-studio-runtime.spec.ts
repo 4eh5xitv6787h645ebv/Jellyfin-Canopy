@@ -5,9 +5,37 @@ import { api, authenticate, PLUGIN_ID, type Session } from './fixtures/api';
 const CONFIG_PATH = `/Plugins/${PLUGIN_ID}/Configuration`;
 const COMMITTED_STYLE = '#jc-theme-studio-committed';
 const PREVIEW_STYLE = '#jc-theme-studio-preview';
+const CURATED_PRESETS = [
+    ['canopy', 'canopy-night'],
+    ['minimal', 'neutral'],
+    ['cinematic', 'vivid'],
+    ['glass', 'catppuccin'],
+    ['material', 'dracula'],
+    ['studio', 'neutral'],
+    ['tv-focus', 'summer'],
+    ['oled', 'canopy-night'],
+    ['high-contrast', 'winter'],
+] as const;
 
 async function seedLayout(page: Page, layout: 'experimental' | 'desktop'): Promise<void> {
     await page.addInitScript((value) => localStorage.setItem('layout', value), layout);
+}
+
+async function forceCoarsePointer(page: Page): Promise<void> {
+    await page.addInitScript(() => {
+        const nativeMatchMedia = window.matchMedia.bind(window);
+        window.matchMedia = ((query: string): MediaQueryList => {
+            const list = nativeMatchMedia(query);
+            if (query !== '(pointer: coarse)') return list;
+            return new Proxy(list, {
+                get(target, property, receiver) {
+                    if (property === 'matches') return true;
+                    const value = Reflect.get(target, property, receiver) as unknown;
+                    return typeof value === 'function' ? value.bind(target) : value;
+                },
+            });
+        }) as typeof window.matchMedia;
+    });
 }
 
 async function waitForThemeRuntime(page: Page, breakpoint: string): Promise<void> {
@@ -19,10 +47,63 @@ async function waitForThemeRuntime(page: Page, breakpoint: string): Promise<void
     }, breakpoint);
 }
 
+async function refreshThemeRuntime(page: Page): Promise<void> {
+    await page.evaluate(() => window.JellyfinCanopy.core.themeStudio?.refresh());
+}
+
 async function themeOverflowEvidence(page: Page): Promise<{ active: number; baseline: number }> {
     return page.evaluate(async () => {
         const style = document.querySelector<HTMLStyleElement>('#jc-theme-studio-committed');
         if (!style) throw new Error('Theme Studio committed style is missing');
+        const overflow = () => document.documentElement.scrollWidth - window.innerWidth;
+        const active = overflow();
+        style.media = 'not all';
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+        const baseline = overflow();
+        style.removeAttribute('media');
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+        return { active, baseline };
+    });
+}
+
+async function previewPreset(
+    page: Page,
+    configuration: Record<string, unknown>,
+    preset: string,
+    palette: string,
+): Promise<boolean> {
+    return page.evaluate(({ source, presetId, paletteId }) => {
+        const preview = structuredClone(source) as {
+            ActiveProfileId: string;
+            Profiles: Array<{
+                Id: string;
+                BasePreset: string;
+                PresetVersion: number | null;
+                FreezePresetVersion: boolean;
+                Palette: string;
+                Accent: string;
+                Mode: string;
+                Tokens: Record<string, unknown>;
+            }>;
+        };
+        const profile = preview.Profiles.find((item) => item.Id === preview.ActiveProfileId)
+            ?? preview.Profiles[0];
+        if (!profile) throw new Error('Theme Studio preview profile is missing');
+        profile.BasePreset = presetId;
+        profile.PresetVersion = 1;
+        profile.FreezePresetVersion = true;
+        profile.Palette = paletteId;
+        profile.Accent = 'palette';
+        profile.Mode = 'dark';
+        profile.Tokens = {};
+        return window.JellyfinCanopy.core.themeStudio?.preview(preview) === true;
+    }, { source: configuration, presetId: preset, paletteId: palette });
+}
+
+async function previewOverflowEvidence(page: Page): Promise<{ active: number; baseline: number }> {
+    return page.evaluate(async () => {
+        const style = document.querySelector<HTMLStyleElement>('#jc-theme-studio-preview');
+        if (!style) throw new Error('Theme Studio preview style is missing');
         const overflow = () => document.documentElement.scrollWidth - window.innerWidth;
         const active = overflow();
         style.media = 'not all';
@@ -125,20 +206,7 @@ test.describe.serial('Theme Studio runtime bridge', () => {
         page,
         consoleErrors,
     }) => {
-        await page.addInitScript(() => {
-            const nativeMatchMedia = window.matchMedia.bind(window);
-            window.matchMedia = ((query: string): MediaQueryList => {
-                const list = nativeMatchMedia(query);
-                if (query !== '(pointer: coarse)') return list;
-                return new Proxy(list, {
-                    get(target, property, receiver) {
-                        if (property === 'matches') return true;
-                        const value = Reflect.get(target, property, receiver) as unknown;
-                        return typeof value === 'function' ? value.bind(target) : value;
-                    },
-                });
-            }) as typeof window.matchMedia;
-        });
+        await forceCoarsePointer(page);
         await page.setViewportSize({ width: 390, height: 844 });
         await seedLayout(page, 'experimental');
         await loginAs(page, 'admin', consoleErrors);
@@ -162,6 +230,82 @@ test.describe.serial('Theme Studio runtime bridge', () => {
 
         await page.keyboard.press('Tab');
         expect(await page.evaluate(() => document.activeElement !== document.body)).toBe(true);
+        assertNoRuntimeErrors(consoleErrors);
+    });
+
+    test('all nine curated presets preview on desktop and phone with versioned, bounded output', async ({
+        baseURL,
+        page,
+        consoleErrors,
+    }) => {
+        const configuration = await api<Record<string, unknown>>(
+            baseURL!,
+            `/JellyfinCanopy/user-settings/${admin.userId}/theme.json`,
+            admin.token,
+        );
+        expect(configuration, 'seeded Theme Studio profile must be readable').toBeTruthy();
+        await forceCoarsePointer(page);
+        await seedLayout(page, 'experimental');
+        await page.setViewportSize({ width: 1440, height: 900 });
+        await loginAs(page, 'admin', consoleErrors);
+        await waitForThemeRuntime(page, 'desktop');
+
+        for (const viewport of [
+            { name: 'desktop', width: 1440, height: 900, breakpoint: 'desktop' },
+            { name: 'phone portrait', width: 390, height: 844, breakpoint: 'phone' },
+            { name: 'phone landscape', width: 844, height: 390, breakpoint: 'phone' },
+        ] as const) {
+            await page.setViewportSize({ width: viewport.width, height: viewport.height });
+            await refreshThemeRuntime(page);
+            await expect.poll(() => page.evaluate(() =>
+                document.documentElement.getAttribute('data-jc-theme-breakpoint'))).toBe(viewport.breakpoint);
+            for (const [preset, palette] of CURATED_PRESETS) {
+                expect(await previewPreset(page, configuration!, preset, palette),
+                    `${preset} ${viewport.name} preview`).toBe(true);
+                await expect.poll(() => page.evaluate(() => ({
+                    preset: document.documentElement.getAttribute('data-jc-theme-preset'),
+                    palette: document.documentElement.getAttribute('data-jc-theme-palette'),
+                    version: document.documentElement.getAttribute('data-jc-theme-preset-version'),
+                    fallback: document.documentElement.getAttribute('data-jc-theme-preset-fallback'),
+                    breakpoint: document.documentElement.getAttribute('data-jc-theme-breakpoint'),
+                    previews: document.querySelectorAll('#jc-theme-studio-preview').length,
+                }))).toEqual({
+                    preset,
+                    palette,
+                    version: '1',
+                    fallback: 'false',
+                    breakpoint: viewport.breakpoint,
+                    previews: 1,
+                });
+                const variables = await page.evaluate(() => {
+                    const styles = getComputedStyle(document.documentElement);
+                    return {
+                        canvas: styles.getPropertyValue('--jc-color-canvas').trim(),
+                        primary: styles.getPropertyValue('--jc-color-primary').trim(),
+                        officialCanvas: styles.getPropertyValue('--jf-palette-background-default').trim(),
+                        safeBottom: styles.getPropertyValue('--jc-safe-area-bottom').trim(),
+                    };
+                });
+                expect(variables.canvas, `${preset} ${viewport.name} canvas`).toMatch(/^#[0-9A-F]{6}$/i);
+                expect(variables.primary, `${preset} ${viewport.name} primary`).toMatch(/^#[0-9A-F]{6}$/i);
+                expect(variables.officialCanvas).toBe(variables.canvas);
+                expect(variables.safeBottom).not.toBe('');
+                const overflow = await previewOverflowEvidence(page);
+                expect(overflow.active, `${preset} ${viewport.name} overflow`)
+                    .toBeLessThanOrEqual(overflow.baseline + 1);
+            }
+        }
+
+        await page.setViewportSize({ width: 820, height: 1180 });
+        await refreshThemeRuntime(page);
+        await expect.poll(() => page.evaluate(() =>
+            document.documentElement.getAttribute('data-jc-theme-breakpoint'))).toBe('tablet');
+        expect(await previewPreset(page, configuration!, 'glass', 'catppuccin')).toBe(true);
+        const tabletOverflow = await previewOverflowEvidence(page);
+        expect(tabletOverflow.active).toBeLessThanOrEqual(tabletOverflow.baseline + 1);
+
+        await page.evaluate(() => window.JellyfinCanopy.core.themeStudio?.cancelPreview());
+        await expect(page.locator(PREVIEW_STYLE)).toHaveCount(0);
         assertNoRuntimeErrors(consoleErrors);
     });
 

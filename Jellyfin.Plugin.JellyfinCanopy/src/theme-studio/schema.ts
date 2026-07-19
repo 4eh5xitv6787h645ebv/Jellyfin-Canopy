@@ -8,6 +8,7 @@ import type {
     ThemeTokenValue,
     UserThemeConfiguration,
 } from '../types/jc';
+import { THEME_ACCENT_IDS, THEME_PALETTE_IDS, THEME_PRESET_IDS } from './catalog';
 
 const MAXIMUM_PERSISTED_BYTES = 128 * 1024;
 const MAXIMUM_PROFILES = 24;
@@ -99,10 +100,9 @@ function buildTokenRules(): ReadonlyMap<string, TokenRule> {
 
 export const THEME_TOKEN_RULES = buildTokenRules();
 
-const BASE_PRESETS = new Set([
-    'canopy', 'minimal', 'cinematic', 'glass', 'material', 'studio',
-    'tv-focus', 'oled', 'high-contrast',
-]);
+const BASE_PRESETS = new Set(THEME_PRESET_IDS);
+const PALETTES = new Set(THEME_PALETTE_IDS);
+const ACCENTS = new Set(THEME_ACCENT_IDS);
 const MODES = new Set(['system', 'dark', 'light']);
 const SYSTEM_CHOICES = new Set(['system', 'on', 'off']);
 const FOCUS_CHOICES = new Set(['system', 'standard', 'strong']);
@@ -168,7 +168,8 @@ function profile(value: unknown): value is ThemeProfile {
         && (presetVersion === null || presetVersion === undefined
             || (Number.isInteger(presetVersion) && Number(presetVersion) > 0 && Number(presetVersion) <= 10_000))
         && (!value.FreezePresetVersion || (typeof presetVersion === 'number' && presetVersion > 0))
-        && identifier(value.Palette) && identifier(value.Accent)
+        && typeof value.Palette === 'string' && PALETTES.has(value.Palette)
+        && typeof value.Accent === 'string' && ACCENTS.has(value.Accent)
         && typeof value.Mode === 'string' && MODES.has(value.Mode)
         && tokenMap(value.Tokens) && responsive(value.Responsive) && accessibility(value.Accessibility);
 }

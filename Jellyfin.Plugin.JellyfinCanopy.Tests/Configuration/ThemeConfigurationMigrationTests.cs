@@ -42,6 +42,7 @@ public sealed class ThemeConfigurationMigrationTests
         Assert.Equal("Ocean", migrated.LegacyMigration.JellyfishTheme);
         Assert.True(migrated.LegacyMigration.Completed);
         Assert.Equal("jellyfish-ocean", migrated.Profiles[0].Palette);
+        Assert.Equal("palette", migrated.Profiles[0].Accent);
         Assert.Equal(0, source.SchemaVersion);
         Assert.False(source.LegacyMigration.Completed);
         Assert.Equal("canopy-night", source.Profiles[0].Palette);
@@ -69,6 +70,7 @@ public sealed class ThemeConfigurationMigrationTests
         Assert.True(PersistedPayloadPolicy.Validate(migrated).IsValid);
         Assert.Equal("Jellyblue", migrated!.LegacyMigration.JellyfishTheme);
         Assert.Equal("jellyfish-jellyblue", migrated.Profiles[0].Palette);
+        Assert.Equal("palette", migrated.Profiles[0].Accent);
         Assert.True(migrated.LegacyMigration.Completed);
 
         Assert.False(ThemeConfigurationMigration.TryStageJellyfishSelection(
@@ -102,6 +104,7 @@ public sealed class ThemeConfigurationMigrationTests
             out var migrated));
         Assert.NotNull(migrated);
         Assert.Equal(theme, migrated!.LegacyMigration.JellyfishTheme);
+        Assert.Equal("palette", migrated.Profiles[0].Accent);
         Assert.True(PersistedPayloadPolicy.Validate(migrated).IsValid);
     }
 

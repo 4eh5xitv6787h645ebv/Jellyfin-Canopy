@@ -149,6 +149,8 @@ describe('Theme Studio identity-owned runtime', () => {
         expect(document.documentElement.getAttribute('data-theme')).toBe('dark');
         expect(document.documentElement.getAttribute('data-jc-theme-active')).toBe('true');
         expect(document.documentElement.getAttribute('data-jc-theme-breakpoint')).toBe('phone');
+        expect(document.documentElement.getAttribute('data-jc-theme-preset-version')).toBe('1');
+        expect(document.documentElement.getAttribute('data-jc-theme-preset-fallback')).toBe('false');
         expect(document.documentElement.getAttribute('data-jc-theme-route')).toBe('home');
         expect(document.getElementById(COMMITTED_STYLE_ID)?.textContent)
             .toContain('--jf-palette-background-default: #0B0B12');
@@ -191,7 +193,7 @@ describe('Theme Studio identity-owned runtime', () => {
             Id: 'preview',
             Name: 'Preview',
             BasePreset: 'minimal',
-            Palette: 'preview-palette',
+            Palette: 'vivid',
             Mode: 'light',
             Tokens: { 'shape.card-radius': 'pill' },
             Accessibility: {
@@ -210,7 +212,7 @@ describe('Theme Studio identity-owned runtime', () => {
         expectRootThemeState({
             profile: 'preview',
             preset: 'minimal',
-            palette: 'preview-palette',
+            palette: 'vivid',
             mode: 'light',
             motion: 'reduced',
             contrast: 'more',

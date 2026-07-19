@@ -27,6 +27,23 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
             "tv-focus", "oled", "high-contrast"
         };
 
+        private static readonly HashSet<string> Palettes = new(StringComparer.Ordinal)
+        {
+            "canopy-night", "neutral", "vivid", "catppuccin", "dracula",
+            "spring", "summer", "autumn", "winter",
+            "jellyfish-aurora", "jellyfish-banana", "jellyfish-coal",
+            "jellyfish-coral", "jellyfish-forest", "jellyfish-grass",
+            "jellyfish-jellyblue", "jellyfish-jellyflix", "jellyfish-jellypurple",
+            "jellyfish-lavender", "jellyfish-midnight", "jellyfish-mint",
+            "jellyfish-ocean", "jellyfish-peach", "jellyfish-watermelon"
+        };
+
+        private static readonly HashSet<string> Accents = new(StringComparer.Ordinal)
+        {
+            "palette", "violet", "blue", "cyan", "teal", "green",
+            "amber", "orange", "red", "pink", "neutral"
+        };
+
         private static readonly HashSet<string> SystemChoices = new(StringComparer.Ordinal)
         {
             "system", "on", "off"
@@ -94,8 +111,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
                 && IsIdentifier(profile.Id)
                 && IsDisplayName(profile.Name)
                 && BasePresets.Contains(profile.BasePreset)
-                && IsIdentifier(profile.Palette)
-                && IsIdentifier(profile.Accent)
+                && Palettes.Contains(profile.Palette)
+                && Accents.Contains(profile.Accent)
                 && Modes.Contains(profile.Mode)
                 && (!profile.FreezePresetVersion || profile.PresetVersion is > 0)
                 && (profile.PresetVersion == null || profile.PresetVersion is > 0 and <= 10_000)
