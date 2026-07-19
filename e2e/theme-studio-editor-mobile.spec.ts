@@ -52,6 +52,7 @@ test.describe.serial('Theme Studio mobile editor', () => {
                 ThemeStudioEnabled: true,
                 ThemeStudioDashboardEnabled: false,
                 ThemeStudioAllowSeasonalScheduling: true,
+                ThemeStudioAllowProfileImport: true,
                 ThemeSelectorEnabled: false,
                 LayoutEnforcement: 'None',
             }),

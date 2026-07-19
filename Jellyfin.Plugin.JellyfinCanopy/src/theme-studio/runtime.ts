@@ -15,6 +15,7 @@ import {
 } from './styles';
 
 const THEME_CHANGE = 'THEME_CHANGE';
+const RUNTIME_CHANGE = 'jc:theme-studio-runtime-changed';
 const ROOT_ATTRIBUTES = Object.freeze([
     'data-jc-theme-active',
     'data-jc-theme-preview',
@@ -117,6 +118,8 @@ export class ThemeStudioRuntime {
     #previewConfiguration: UserThemeConfiguration | null = null;
     #disposed = false;
     #installed = false;
+    #loadGeneration = 0;
+    #loadPromise: Promise<void> | null = null;
     #diagnostics: ThemeStudioDiagnostics = Object.freeze({
         status: 'inactive', revision: null, profileId: null, breakpoint: null, mode: null,
     });
@@ -164,6 +167,7 @@ export class ThemeStudioRuntime {
             preview: (configuration: unknown) => this.preview(configuration),
             cancelPreview: () => this.cancelPreview(),
             getConfiguration: () => this.getConfiguration(),
+            whenReady: () => this.whenReady(),
             reload: () => this.reload(),
             adoptAcknowledged: (configuration: unknown) => this.adoptAcknowledged(configuration),
             refresh: () => this.refresh(),
@@ -171,10 +175,21 @@ export class ThemeStudioRuntime {
         });
         this.#api = api;
         JC.core.themeStudio = api;
+        this.#announceRuntimeChange();
     }
 
-    async load(): Promise<void> {
-        if (this.#disposed || !this.#scope.isCurrent()) return;
+    load(): Promise<void> {
+        if (this.#disposed || !this.#scope.isCurrent()) return Promise.resolve();
+        const generation = ++this.#loadGeneration;
+        const task = this.#loadOwned(generation);
+        const tracked = task.finally(() => {
+            if (this.#loadPromise === tracked) this.#loadPromise = null;
+        });
+        this.#loadPromise = tracked;
+        return tracked;
+    }
+
+    async #loadOwned(generation: number): Promise<void> {
         this.#setDiagnostics('loading', null);
         try {
             const api = JC.core.api;
@@ -183,7 +198,7 @@ export class ThemeStudioRuntime {
                 `/user-settings/${encodeURIComponent(this.#scope.userId)}/theme.json`,
                 { signal: this.#scope.signal, skipCache: true, timeoutMs: 10_000 },
             );
-            if (this.#disposed) return;
+            if (this.#disposed || generation !== this.#loadGeneration) return;
             if (!this.#scope.isCurrent()) {
                 this.dispose();
                 return;
@@ -194,7 +209,8 @@ export class ThemeStudioRuntime {
             JC.rememberUserSettingsSnapshot?.('theme.json', this.#configuration);
             this.refresh();
         } catch (error) {
-            if (this.#disposed || this.#scope.signal.aborted || !this.#scope.isCurrent()
+            if (this.#disposed || generation !== this.#loadGeneration
+                || this.#scope.signal.aborted || !this.#scope.isCurrent()
                 || (error as { name?: string } | null)?.name === 'AbortError') return;
             this.#configuration = null;
             this.#previewConfiguration = null;
@@ -218,6 +234,13 @@ export class ThemeStudioRuntime {
         return configuration && identity ? JC.identity.own(configuration, identity) : null;
     }
 
+    async whenReady(): Promise<boolean> {
+        if (this.#disposed || !this.#scope.isCurrent()) return false;
+        if (this.#loadPromise) await this.#loadPromise;
+        else if (!this.#configuration) await this.load();
+        return this.#configuration !== null && this.#scope.isCurrent() && !this.#disposed;
+    }
+
     async reload(): Promise<boolean> {
         if (this.#disposed || !this.#scope.isCurrent()) return false;
         this.#previewConfiguration = null;
@@ -231,6 +254,10 @@ export class ThemeStudioRuntime {
         if (!configuration) return false;
         const identity = JC.identity.capture();
         if (!identity) return false;
+        // A response already in flight must not overwrite this newer, exact
+        // acknowledgement after it eventually settles.
+        this.#loadGeneration += 1;
+        this.#loadPromise = null;
         this.#configuration = JC.identity.own(configuration, identity);
         this.#previewConfiguration = null;
         JC.rememberUserSettingsSnapshot?.('theme.json', this.#configuration);
@@ -287,6 +314,8 @@ export class ThemeStudioRuntime {
     dispose(): void {
         if (this.#disposed) return;
         this.#disposed = true;
+        this.#loadGeneration += 1;
+        this.#loadPromise = null;
         this.#configuration = null;
         this.#previewConfiguration = null;
         this.#clearPresentation();
@@ -295,9 +324,16 @@ export class ThemeStudioRuntime {
         }
         this.#cleanups.length = 0;
         this.#media.clear();
-        if (this.#api && JC.core.themeStudio === this.#api) delete JC.core.themeStudio;
+        if (this.#api && JC.core.themeStudio === this.#api) {
+            delete JC.core.themeStudio;
+            this.#announceRuntimeChange();
+        }
         this.#api = null;
         this.#setDiagnostics('inactive', null);
+    }
+
+    #announceRuntimeChange(): void {
+        try { window.dispatchEvent(new CustomEvent(RUNTIME_CHANGE)); } catch { /* legacy host */ }
     }
 
     #dashboardBlocked(): boolean {

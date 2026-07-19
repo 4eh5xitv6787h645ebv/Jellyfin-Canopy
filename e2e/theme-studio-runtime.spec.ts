@@ -146,6 +146,7 @@ test.describe.serial('Theme Studio runtime bridge', () => {
                 ThemeStudioEnabled: true,
                 ThemeStudioDashboardEnabled: false,
                 ThemeStudioAllowSeasonalScheduling: true,
+                ThemeStudioAllowProfileImport: true,
                 ThemeSelectorEnabled: false,
                 LayoutEnforcement: 'None',
             }),
@@ -377,6 +378,29 @@ test.describe.serial('Theme Studio runtime bridge', () => {
             };
         });
         expect(split).toEqual({ previewAfterEditor: true, mainOverflow: 0 });
+
+        const current = serverBefore as {
+            SchemaVersion: number;
+            ActiveProfileId: string;
+            Profiles: Array<Record<string, unknown>>;
+            Schedule: Array<Record<string, unknown>>;
+        };
+        const importedProfiles = structuredClone(current.Profiles);
+        importedProfiles[0].Name = 'Imported E2E Profile';
+        await panel.locator('[data-field="import-file"]').setInputFiles({
+            name: 'theme-portable.json',
+            mimeType: 'application/json',
+            buffer: Buffer.from(JSON.stringify({
+                SchemaVersion: current.SchemaVersion,
+                ActiveProfileId: current.ActiveProfileId,
+                Profiles: importedProfiles,
+                Schedule: current.Schedule,
+            })),
+        });
+        await expect(panel.locator('.jc-theme-import-diff')).toBeVisible();
+        await panel.locator('[data-action="accept-import"]').click();
+        await expect(panel.locator('[data-role="profile-name"]')).toHaveValue('Imported E2E Profile');
+        expect(writes, 'validated imports must remain a local draft').toEqual([]);
 
         await panel.locator('[data-action="preset"][data-value="oled"]').click();
         await expect.poll(() => page.evaluate(() =>

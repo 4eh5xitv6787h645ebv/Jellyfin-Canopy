@@ -172,6 +172,32 @@ describe('Theme Studio identity-owned runtime', () => {
         expect(document.documentElement.getAttribute('data-jc-theme-palette')).toBe('neutral');
     });
 
+    it('never lets an older overlapping load overwrite a newer reload', async () => {
+        let resolveOlder: (value: unknown) => void = () => undefined;
+        let resolveNewer: (value: unknown) => void = () => undefined;
+        const plugin = vi.fn()
+            .mockImplementationOnce(() => new Promise<unknown>((resolve) => { resolveOlder = resolve; }))
+            .mockImplementationOnce(() => new Promise<unknown>((resolve) => { resolveNewer = resolve; }));
+        JC.core.api = { plugin } as unknown as ApiApi;
+        const { runtime } = createRuntime();
+        const olderLoad = runtime.load();
+        const newerLoad = runtime.reload();
+        const newer = themeConfiguration();
+        newer.Revision = 12;
+        newer.Profiles[0].Palette = 'neutral';
+        resolveNewer(newer);
+        await expect(newerLoad).resolves.toBe(true);
+        expect(runtime.getConfiguration()).toMatchObject({ Revision: 12 });
+
+        const older = themeConfiguration();
+        older.Revision = 4;
+        older.Profiles[0].Palette = 'vivid';
+        resolveOlder(older);
+        await olderLoad;
+        expect(runtime.getConfiguration()).toMatchObject({ Revision: 12 });
+        expect(document.documentElement.getAttribute('data-jc-theme-palette')).toBe('neutral');
+    });
+
     it('loads once, applies one committed layer, and follows host theme/media changes live', async () => {
         const plugin = apiReturning(themeConfiguration());
         const { runtime } = createRuntime();

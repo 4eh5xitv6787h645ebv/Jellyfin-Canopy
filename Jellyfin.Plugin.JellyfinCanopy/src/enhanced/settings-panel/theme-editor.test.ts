@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JC } from '../../globals';
 import { themeConfiguration } from '../../test/theme-studio-fixture';
-import type { IdentityContext, ThemeStudioRuntimeApi, UserThemeConfiguration } from '../../types/jc';
+import type { ApiApi, IdentityContext, ThemeStudioRuntimeApi, UserThemeConfiguration } from '../../types/jc';
 import type { UserSettingsSaveResult } from '../config';
 import type { PanelContext } from './panel';
 import { wireThemeStudioEditor } from './theme-editor';
@@ -17,6 +17,8 @@ let configuration: UserThemeConfiguration;
 let frames: Map<number, FrameRequestCallback>;
 let nextFrame: number;
 const originalThemeStudio = JC.core.themeStudio;
+const originalApi = JC.core.api;
+const originalPluginConfig = JC.pluginConfig;
 const originalSave = JC.saveUserSettings;
 const originalT = JC.t;
 
@@ -65,6 +67,7 @@ beforeEach(() => {
     vi.stubGlobal('cancelAnimationFrame', vi.fn((id: number) => { frames.delete(id); }));
     JC.identity.transition('', '', 'theme-editor-test-logout');
     identity = JC.identity.transition('server-a', 'user-a', 'theme-editor-test-login')!;
+    JC.pluginConfig = { ...JC.pluginConfig, ThemeStudioAllowProfileImport: true };
     configuration = JC.identity.own(themeConfiguration(), identity);
     preview = vi.fn(() => true);
     cancelPreview = vi.fn<() => void>();
@@ -74,6 +77,7 @@ beforeEach(() => {
         preview,
         cancelPreview,
         getConfiguration: () => JC.identity.own(structuredClone(configuration), identity),
+        whenReady: vi.fn().mockResolvedValue(true),
         reload,
         adoptAcknowledged,
         refresh: vi.fn<() => void>(),
@@ -103,6 +107,8 @@ afterEach(() => {
     panel.remove();
     document.getElementById('jellyfin-canopy-panel-backdrop')?.remove();
     JC.core.themeStudio = originalThemeStudio;
+    JC.core.api = originalApi;
+    JC.pluginConfig = originalPluginConfig;
     JC.saveUserSettings = originalSave;
     JC.t = originalT;
     vi.unstubAllGlobals();
@@ -126,10 +132,14 @@ describe('Theme Studio responsive settings editor', () => {
         search.dispatchEvent(new Event('input', { bubbles: true }));
         expect(panel.querySelectorAll('.jc-theme-preset:not([hidden])')).toHaveLength(9);
 
+        button('preset', 'oled').focus();
         button('preset', 'oled').click();
+        expect(document.activeElement).toBe(button('preset', 'oled'));
         const palette = panel.querySelector<HTMLSelectElement>('[data-field="palette"]')!;
+        palette.focus();
         palette.value = 'neutral';
         palette.dispatchEvent(new Event('change', { bubbles: true }));
+        expect(document.activeElement).toBe(panel.querySelector('[data-field="palette"]'));
 
         expect(preview).not.toHaveBeenCalled();
         expect(frames).toHaveLength(1);
@@ -185,6 +195,167 @@ describe('Theme Studio responsive settings editor', () => {
         expect(button('apply').disabled).toBe(true);
     });
 
+    it('freezes every draft mutation while Apply is awaiting acknowledgement', async () => {
+        let resolveSave: (result: UserSettingsSaveResult) => void = () => undefined;
+        JC.saveUserSettings = vi.fn(() => new Promise<UserSettingsSaveResult>((resolve) => {
+            resolveSave = resolve;
+        }));
+        wireThemeStudioEditor(context());
+        button('preset', 'studio').click();
+        button('apply').click();
+
+        expect(panel.querySelector<HTMLFieldSetElement>('.jc-theme-workspace')?.disabled).toBe(true);
+        button('preset', 'oled').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        resolveSave({
+            acknowledged: true, deduplicated: false, file: 'theme.json', revision: 3,
+            contentHash: 'b'.repeat(64),
+        });
+        await vi.waitFor(() => expect(adoptAcknowledged).toHaveBeenCalledOnce());
+
+        expect(JC.saveUserSettings).toHaveBeenCalledWith(
+            'theme.json', expect.objectContaining({
+                Profiles: [expect.objectContaining({ BasePreset: 'studio' })],
+            }),
+        );
+        expect(panel.querySelector<HTMLFieldSetElement>('.jc-theme-workspace')?.disabled).toBe(false);
+    });
+
+    it('flushes the final expert edit synchronously when Apply is pressed', async () => {
+        JC.saveUserSettings = vi.fn((_file, payload): Promise<UserSettingsSaveResult> => Promise.resolve({
+            acknowledged: true, deduplicated: false, file: 'theme.json',
+            revision: (payload as UserThemeConfiguration).Revision,
+            contentHash: 'c'.repeat(64),
+        }));
+        wireThemeStudioEditor(context());
+        button('preset', 'studio').click();
+        button('editor-mode', 'expert').click();
+        const editor = panel.querySelector<HTMLTextAreaElement>('[data-field="expert-json"]')!;
+        const finalDraft = JSON.parse(editor.value) as UserThemeConfiguration;
+        finalDraft.Profiles[0].BasePreset = 'glass';
+        editor.value = JSON.stringify(finalDraft, null, 2);
+        editor.setSelectionRange(12, 12);
+        editor.dispatchEvent(new Event('input', { bubbles: true }));
+        button('apply').click();
+
+        await vi.waitFor(() => expect(JC.saveUserSettings).toHaveBeenCalledOnce());
+        expect(JC.saveUserSettings).toHaveBeenCalledWith(
+            'theme.json', expect.objectContaining({
+                Profiles: [expect.objectContaining({ BasePreset: 'glass' })],
+            }),
+        );
+    });
+
+    it('validates portable imports on the server and includes schedule differences', async () => {
+        const imported = themeConfiguration();
+        imported.Profiles[0].Palette = 'neutral';
+        imported.Schedule = [{
+            Id: 'summer', ProfileId: 'default', StartMonthDay: '12-01', EndMonthDay: '02-28',
+            Priority: 10, Enabled: true,
+        }];
+        const portable = {
+            SchemaVersion: imported.SchemaVersion,
+            ActiveProfileId: imported.ActiveProfileId,
+            Profiles: imported.Profiles,
+            Schedule: imported.Schedule,
+        };
+        const plugin = vi.fn().mockResolvedValue({ valid: true, data: portable });
+        JC.core.api = { plugin } as unknown as ApiApi;
+        wireThemeStudioEditor(context());
+        const input = panel.querySelector<HTMLInputElement>('[data-field="import-file"]')!;
+        const file = new File([JSON.stringify(portable)], 'portable-theme.json', { type: 'application/json' });
+        Object.defineProperty(input, 'files', { configurable: true, value: [file] });
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+
+        await vi.waitFor(() => expect(plugin).toHaveBeenCalledOnce());
+        expect(plugin).toHaveBeenCalledWith(
+            `/user-settings/${identity.userId}/theme.json/validate`,
+            expect.objectContaining({ method: 'POST', body: portable, skipCache: true, skipRetry: true }),
+        );
+        await vi.waitFor(() => expect(panel.textContent).toContain('theme_studio_import_schedule_added'));
+        expect(panel.textContent).toContain('summer');
+        button('accept-import').click();
+        flushFrames();
+        expect(preview).toHaveBeenLastCalledWith(expect.objectContaining({
+            Revision: 3,
+            LegacyMigration: { JellyfishTheme: '', Completed: false },
+            Schedule: [expect.objectContaining({ Id: 'summer' })],
+        }));
+    });
+
+    it('exports the portable document without revision or migration internals', async () => {
+        let exported: Blob | null = null;
+        vi.spyOn(URL, 'createObjectURL').mockImplementation((blob) => {
+            if (!(blob instanceof Blob)) throw new TypeError('Theme export must be a Blob');
+            exported = blob;
+            return 'blob:theme-export';
+        });
+        vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+        vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
+        wireThemeStudioEditor(context());
+        button('export').click();
+
+        expect(exported).not.toBeNull();
+        const parsed: unknown = JSON.parse(await exported!.text());
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+            throw new TypeError('Theme export must be an object');
+        }
+        const documentValue = parsed as Record<string, unknown>;
+        expect(documentValue.SchemaVersion).toBe(2);
+        expect(documentValue.ActiveProfileId).toBe('default');
+        expect(Array.isArray(documentValue.Profiles)).toBe(true);
+        expect(Array.isArray(documentValue.Schedule)).toBe(true);
+        expect(documentValue).not.toHaveProperty('Revision');
+        expect(documentValue).not.toHaveProperty('LegacyMigration');
+    });
+
+    it('hides disabled imports and rejects oversized files before reading them', () => {
+        JC.pluginConfig.ThemeStudioAllowProfileImport = false;
+        wireThemeStudioEditor(context());
+        expect(panel.querySelector('[data-field="import-file"]')).toBeNull();
+
+        for (const cleanup of cleanups.reverse()) cleanup();
+        cleanups = [];
+        JC.pluginConfig.ThemeStudioAllowProfileImport = true;
+        wireThemeStudioEditor(context());
+        const input = panel.querySelector<HTMLInputElement>('[data-field="import-file"]')!;
+        const text = vi.fn().mockResolvedValue('{}');
+        Object.defineProperty(input, 'files', {
+            configurable: true,
+            value: [{ size: 1024 * 1024 + 1, text }],
+        });
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+        expect(text).not.toHaveBeenCalled();
+        expect(panel.textContent).toContain('theme_studio_import_invalid');
+    });
+
+    it('hydrates after a runtime is installed after the editor opens', async () => {
+        const readyRuntime = JC.core.themeStudio!;
+        delete JC.core.themeStudio;
+        wireThemeStudioEditor(context());
+        expect(panel.textContent).toContain('theme_studio_unavailable');
+
+        JC.core.themeStudio = readyRuntime;
+        window.dispatchEvent(new CustomEvent('jc:theme-studio-runtime-changed'));
+        await vi.waitFor(() => expect(panel.querySelectorAll('.jc-theme-preset')).toHaveLength(9));
+        expect(panel.textContent).toContain('theme_studio_ready');
+    });
+
+    it('tracks the visual viewport so the mobile action bar stays above keyboards', () => {
+        const viewport = Object.assign(new EventTarget(), { height: 412, offsetTop: 177 });
+        vi.stubGlobal('visualViewport', viewport);
+        wireThemeStudioEditor(context());
+        expect(panel.style.getPropertyValue('--jc-panel-visual-height')).toBe('412px');
+        expect(panel.style.getPropertyValue('--jc-panel-visual-top')).toBe('177px');
+
+        viewport.height = 360;
+        viewport.offsetTop = 201;
+        viewport.dispatchEvent(new Event('resize'));
+        expect(panel.style.getPropertyValue('--jc-panel-visual-height')).toBe('360px');
+        expect(panel.style.getPropertyValue('--jc-panel-visual-top')).toBe('201px');
+        cleanups[0]();
+        expect(panel.style.getPropertyValue('--jc-panel-visual-height')).toBe('');
+    });
+
     it('preserves a conflicting draft and reloads only after an explicit recovery action', async () => {
         JC.saveUserSettings = vi.fn().mockRejectedValue(Object.assign(new Error('conflict'), { kind: 'conflict' }));
         wireThemeStudioEditor(context());
@@ -209,7 +380,7 @@ describe('Theme Studio responsive settings editor', () => {
         editor.dispatchEvent(new Event('input', { bubbles: true }));
         vi.advanceTimersByTime(250);
 
-        expect(editor.getAttribute('aria-invalid')).toBe('true');
+        expect(panel.querySelector('[data-field="expert-json"]')?.getAttribute('aria-invalid')).toBe('true');
         expect(preview).not.toHaveBeenCalled();
         expect(button('apply').disabled).toBe(true);
         expect(panel.textContent).toContain('theme_studio_invalid');
