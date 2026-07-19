@@ -58,7 +58,7 @@ interface StaticControlHelpers {
 }
 
 interface BootstrapHelpers {
-    jcClaimConfigBootstrap(pageEl: Element | null): boolean;
+    jcClaimConfigBootstrap(pageEl: Element | null, win?: Record<string, unknown>): boolean;
 }
 
 const TEST_FILE_PATH = decodeURIComponent(new URL(import.meta.url).pathname);
@@ -384,6 +384,138 @@ describe('config-page page-lifecycle owner (#167)', () => {
     });
 });
 
+describe('config-page owner rejects registrations after teardown (#167 findings 1/5/9)', () => {
+    const helpers = loadLifecycleHelpers();
+
+    it('AC5: addListener attaches NOTHING once the owner is torn down', () => {
+        const owner = remember(helpers.jcCreateConfigPageLifecycle(makePage()));
+        owner.teardown();
+
+        const el = document.createElement('div');
+        document.body.appendChild(el);
+        const addSpy = vi.spyOn(el, 'addEventListener');
+        const fn = vi.fn();
+        owner.addListener(el, 'scroll', fn);
+
+        // Not attached to the DOM node and not pushed into the drained bag.
+        expect(addSpy).not.toHaveBeenCalled();
+        expect(owner.tracked).toHaveLength(0);
+        el.dispatchEvent(new Event('scroll'));
+        expect(fn).not.toHaveBeenCalled();
+    });
+
+    it('AC5: track disposes a resource immediately once the owner is torn down', () => {
+        const owner = remember(helpers.jcCreateConfigPageLifecycle(makePage()));
+        owner.teardown();
+
+        const disconnect = vi.fn();
+        owner.track({ disconnect });
+        // Disposed on the spot (its owner already drained its bag), never retained.
+        expect(disconnect).toHaveBeenCalledTimes(1);
+        expect(owner.tracked).toHaveLength(0);
+
+        const cleanup = vi.fn();
+        owner.track(cleanup);
+        expect(cleanup).toHaveBeenCalledTimes(1);
+        expect(owner.tracked).toHaveLength(0);
+    });
+
+    it('AC5: a late blocked-users continuation cannot re-arm a replaced owner', async () => {
+        // Reproduce loadBlockedUsersList's race: visit A starts and pauses at
+        // `await ApiClient.getUsers()`; visit B replaces A; then A's continuation
+        // resolves and tries to wire the persistent scroll-hint listener through
+        // its (now retired) owner. The owner must refuse, so no listener survives
+        // the teardown→reinstall cycle.
+        const win: Record<string, unknown> = {};
+        const container = document.createElement('div');
+        document.body.appendChild(container);
+        const scrollAdd = vi.spyOn(container, 'addEventListener');
+
+        const ownerA = remember(helpers.jcAcquireConfigPageLifecycle(win, makePage()));
+        let resolveUsers: (v: unknown) => void = () => { /* set below */ };
+        const usersPromise = new Promise((resolve) => { resolveUsers = resolve; });
+
+        // A's async body reached its await; B takes over before it resolves.
+        const ownerB = remember(helpers.jcAcquireConfigPageLifecycle(win, makePage()));
+        expect(ownerA!.active).toBe(false);
+        expect(ownerB!.active).toBe(true);
+
+        const staleContinuation = usersPromise.then(() => {
+            // No per-call-site guard here on purpose: the OWNER itself rejects the
+            // registration, which is the single-ownership fix under test.
+            ownerA!.addListener(container, 'scroll', vi.fn());
+        });
+        resolveUsers(null);
+        await staleContinuation;
+
+        expect(scrollAdd).not.toHaveBeenCalled();
+        expect(ownerA!.tracked).toHaveLength(0);
+        // The live owner is untouched and still wires working listeners.
+        const live = vi.fn();
+        ownerB!.addListener(container, 'scroll', live);
+        container.dispatchEvent(new Event('scroll'));
+        expect(live).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('config-page owner tokens stay unique across IIFE re-execution (#167 finding 3)', () => {
+    // Each dashboard visit re-executes the WHOLE IIFE, which re-runs
+    // `var jcLifecycleSeq = 0`. loadLifecycleHelpers() re-evaluates the marker
+    // slice on every call, so calling it once per visit faithfully models that
+    // reset — the previous tests reuse ONE closure and therefore never exercise
+    // it. The owner token must still be distinct per visit (window-persisted
+    // sequence), or a dataset.jcWired guard on a persistent element would refuse
+    // to rebind after a teardown→reinstall because the ids collide.
+    function connectedPage(): HTMLElement {
+        const page = makePage();
+        document.body.appendChild(page);
+        return page;
+    }
+
+    it('a genuine fresh visit gets a DISTINCT id even though the IIFE counter reset', () => {
+        const win: Record<string, unknown> = {};
+        const p1 = connectedPage();
+        const o1 = remember(loadLifecycleHelpers().jcAcquireConfigPageLifecycle(win, p1));
+        const p2 = connectedPage(); // later in document order → genuine replacement
+        const o2 = remember(loadLifecycleHelpers().jcAcquireConfigPageLifecycle(win, p2));
+        expect(o1!.id).not.toBe(o2!.id);
+        // Proof the reset really happened: a fresh closure alone restarts at 1.
+        expect(o1!.id).toBe('jc-owner-1');
+        expect(o2!.id).toBe('jc-owner-2');
+    });
+
+    it('AC4: a dataset.jcWired-guarded persistent control rebinds after a same-page teardown→reinstall', () => {
+        const win: Record<string, unknown> = {};
+        const page = connectedPage();
+        const btn = document.createElement('button');
+        page.appendChild(btn);
+
+        const fired: string[] = [];
+        function wire(owner: PageLifecycleOwner): void {
+            if (btn.dataset.jcWired !== owner.id) {
+                btn.dataset.jcWired = owner.id;
+                owner.addListener(btn, 'click', () => fired.push(owner.id));
+            }
+        }
+
+        // Visit 1 (fresh closure): wire, then the owner is retired.
+        const o1 = remember(loadLifecycleHelpers().jcAcquireConfigPageLifecycle(win, page));
+        wire(o1!);
+        o1!.teardown();
+
+        // Visit 2 (fresh closure → jcLifecycleSeq reset to 0 again). Without the
+        // window-persisted sequence this owner's id would collide with o1's, the
+        // guard would treat the button as already wired, and it would be left
+        // dead. With the fix the id differs → rebind onto the live owner.
+        const o2 = remember(loadLifecycleHelpers().jcAcquireConfigPageLifecycle(win, page));
+        expect(o2!.id).not.toBe(o1!.id);
+        wire(o2!);
+
+        btn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        expect(fired).toEqual([o2!.id]); // exactly one live handler, on the current owner
+    });
+});
+
 describe('config-page quality-category reorder wiring (#167)', () => {
     const lifecycle = loadLifecycleHelpers();
     const reorder = loadReorderHelpers();
@@ -526,21 +658,61 @@ describe('configPage.html bootstrap install-once guard (#167 findings 3/8)', () 
     const boot = loadBootstrapHelpers();
     const html = readSource(CONFIG_PAGE_HTML);
 
-    it('claims a view exactly once so a re-run bails before re-listening / re-appending', () => {
+    function liveOwnerWin(page: Element): Record<string, unknown> {
+        // Model config-page.js after it installed a live owner for `page`.
+        return { __jcConfigPageLifecycle: { active: true, page } };
+    }
+
+    it('claims a fresh view once; a re-run bails ONLY while a live owner exists', () => {
         const page = makePage();
-        expect(boot.jcClaimConfigBootstrap(page)).toBe(true);
-        expect(boot.jcClaimConfigBootstrap(page)).toBe(false);
-        expect(boot.jcClaimConfigBootstrap(page)).toBe(false);
+        document.body.appendChild(page);
+        // First visit: no owner yet → claim.
+        expect(boot.jcClaimConfigBootstrap(page, {})).toBe(true);
+        // config-page.js has since installed a live owner for this view: a
+        // duplicate re-run is a genuine duplicate and must bail.
+        const win = liveOwnerWin(page);
+        expect(boot.jcClaimConfigBootstrap(page, win)).toBe(false);
+        expect(boot.jcClaimConfigBootstrap(page, win)).toBe(false);
         // A different fresh view is bootstrapped independently.
-        expect(boot.jcClaimConfigBootstrap(makePage())).toBe(true);
+        expect(boot.jcClaimConfigBootstrap(makePage(), {})).toBe(true);
+    });
+
+    it('findings 4/6: re-claims a view whose owner was torn down (or never loaded) so it can reinstall', () => {
+        const page = makePage();
+        document.body.appendChild(page);
+        expect(boot.jcClaimConfigBootstrap(page, {})).toBe(true);
+
+        // Owner exists but was torn down by a later visit that has since gone
+        // away → no LIVE owner → the loader must be allowed to reinstall rather
+        // than leave the re-shown view permanently unwired.
+        const tornDown = { __jcConfigPageLifecycle: { active: false, page } };
+        expect(boot.jcClaimConfigBootstrap(page, tornDown)).toBe(true);
+
+        // config-page.js never finished loading (no owner on the window at all):
+        // the sticky flag from the first attempt must not block a retry.
+        expect(boot.jcClaimConfigBootstrap(page, {})).toBe(true);
+
+        // The current window owner belongs to a DIFFERENT, now-disconnected view
+        // (the superseding visit was destroyed): this cached view can take over.
+        const gone = makePage(); // never connected
+        const otherOwner = { __jcConfigPageLifecycle: { active: true, page: gone } };
+        expect(boot.jcClaimConfigBootstrap(page, otherOwner)).toBe(true);
+    });
+
+    it('does NOT re-claim while the live owner is the CURRENT connected view (genuine duplicate)', () => {
+        const page = makePage();
+        document.body.appendChild(page);
+        expect(boot.jcClaimConfigBootstrap(page, {})).toBe(true);
+        // isConnected true + active + same page → duplicate re-run bails.
+        expect(boot.jcClaimConfigBootstrap(page, liveOwnerWin(page))).toBe(false);
     });
 
     it('returns false for a missing view without throwing', () => {
-        expect(boot.jcClaimConfigBootstrap(null)).toBe(false);
+        expect(boot.jcClaimConfigBootstrap(null, {})).toBe(false);
     });
 
     it('source: the claim gate precedes BOTH the pageshow listener and the script append', () => {
-        const gateIdx = html.indexOf('if (!jcClaimConfigBootstrap(page)) return;');
+        const gateIdx = html.indexOf('if (!jcClaimConfigBootstrap(page, window)) return;');
         expect(gateIdx).toBeGreaterThanOrEqual(0);
         expect(html.indexOf("page.addEventListener('pageshow'")).toBeGreaterThan(gateIdx);
         expect(html.indexOf('page.appendChild(script)')).toBeGreaterThan(gateIdx);
@@ -827,7 +999,12 @@ describe('config-page dataset-guarded controls rebind to the live owner (#167 fi
 
     it('source: guarded probe/preview controls key off the owner token and route clicks through the owner', () => {
         const source = readSource(CONFIG_PAGE_JS);
-        expect(source).toContain("id: 'jc-owner-' + (++jcLifecycleSeq)");
+        // The owner id is seeded from a window-persisted sequence (so a re-run of
+        // the IIFE, which resets the local counter, still yields a DISTINCT token
+        // — #167 finding 3). The local counter remains only as a fallback for
+        // direct construction in tests.
+        expect(source).toContain("win.__jcConfigLifecycleSeq = seq;");
+        expect(source).toContain("jcCreateConfigPageLifecycle(pageEl, seq)");
         expect(source).toContain('probeRetry.dataset.jcWired !== jcPageLifecycle.id');
         expect(source).toContain('probeRetry.dataset.jcWired = jcPageLifecycle.id');
         expect(source).toContain('panelBtn.dataset.jcWired !== jcPageLifecycle.id');
@@ -1021,6 +1198,22 @@ describe('config-page persistent registrations stay lifecycle-owned (#167 drift 
         expect(source).toContain('jcWireQualityCatAdminReorder(document, jcPageLifecycle, refreshQualityCatAdminArrows, jcMarkConfigDirty)');
     });
 
+    it('installs each page-level wiring from EXACTLY ONE call site (#167 finding 7)', () => {
+        // The AC3 defect is delegated-handler multiplication. The helper/slice
+        // tests invoke each installer once by construction, so an ACCIDENTALLY
+        // DUPLICATED production call site (e.g. two jcWireQualityCatAdminReorder
+        // calls → one visit installs two document delegates → a Down click moves
+        // the row twice) would not be caught by them. Pin every persistent
+        // installer to a single occurrence so any duplication trips here.
+        expect(countOccurrences(source, 'jcWireQualityCatAdminReorder(document, jcPageLifecycle,')).toBe(1);
+        expect(countOccurrences(source, 'jcWireStaticControlListeners(page || document, jcPageLifecycle)')).toBe(1);
+        expect(countOccurrences(source, "jcPageLifecycle.addListener(window, 'load', _jeDetectTheme)")).toBe(1);
+        expect(countOccurrences(source, "jcPageLifecycle.addListener(page, 'pageshow', loadConfig)")).toBe(1);
+        expect(countOccurrences(source, "jcPageLifecycle.addListener(form, 'submit', saveConfig)")).toBe(1);
+        // Ownership is acquired once; the IIFE bails if acquisition refuses.
+        expect(countOccurrences(source, 'jcAcquireConfigPageLifecycle(window, page)')).toBe(1);
+    });
+
     it('owns the MediaQueryList change listener and overflow-ancestor scroll listeners', () => {
         expect(source).not.toContain('drawerMedia.addEventListener(');
         expect(source).toContain("jcPageLifecycle.addListener(drawerMedia, 'change', syncLayoutMode)");
@@ -1148,5 +1341,30 @@ describe('config-page persistent registrations stay lifecycle-owned (#167 drift 
         expect(html).toContain('jcEnsureCanopyConfigStylesheet(document,');
         // No raw head append outside the marker-bounded loader function.
         expect(html).not.toContain('document.head.appendChild(');
+    });
+
+    it('configPage.html rolls the install-once claim back on a failed script load (#167 findings 2/8)', () => {
+        // A transient config-page.js load failure must fail OPEN: the sentinel is
+        // released, the failed <script> is removed, and the bootstrap pageshow
+        // listener is dropped, so a later loader re-run reinstalls the page
+        // instead of leaving it permanently unwired.
+        const onerrorIdx = html.indexOf('script.onerror = function () {');
+        expect(onerrorIdx).toBeGreaterThanOrEqual(0);
+        const onerrorBody = html.slice(onerrorIdx, onerrorIdx + 1200);
+        expect(onerrorBody).toContain('delete page.dataset.jcConfigBootstrapped');
+        expect(onerrorBody).toContain('script.parentNode.removeChild(script)');
+        expect(onerrorBody).toContain("page.removeEventListener('pageshow', page._jcBootstrapPageshow)");
+    });
+
+    it('configPage.html ties the install-once claim to a live owner and keeps the bootstrap pageshow idempotent (#167 findings 4/6)', () => {
+        // The claim self-heals: a re-run bails only while a live, connected owner
+        // exists; a torn-down / never-loaded view can reinstall.
+        expect(html).toContain('var liveOwnerPresent = !!(owner && owner.active && owner.page && owner.page.isConnected !== false);');
+        expect(html).toContain('return !liveOwnerPresent;');
+        expect(html).toContain('if (!jcClaimConfigBootstrap(page, window)) return;');
+        // The bootstrap pageshow is stored on the view and removed before re-add,
+        // so a self-healing reinstall never stacks a second copy.
+        expect(html).toContain("if (page._jcBootstrapPageshow) page.removeEventListener('pageshow', page._jcBootstrapPageshow);");
+        expect(html).toContain('page._jcBootstrapPageshow = onBootstrapPageshow;');
     });
 });
