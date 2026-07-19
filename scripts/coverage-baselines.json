@@ -21,12 +21,12 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 20669,
-        "totalLines": 29111
+        "coveredLines": 20707,
+        "totalLines": 29150
       },
       "tolerance": {
         "missingCoveredLines": 4,
-        "rationale": "Theme Studio schema and persistence foundation in issue #384. Two clean final local .NET 10.0.9/Coverlet integration runs on 2026-07-19 each passed all 1814 tests over the identical complete 29111-line assembly scope and both measured 20669 covered lines. The reviewed high-water is 20669/29111 (71.001%). The legitimate 673-line scope increase adds the bounded typed theme model, pure ordered schema and all-selector Jellyfish migrations, revisioned per-user API, strict import/export staging, administrator policy, recovery integration, and supporting configuration projection; 618 of those net-new lines are covered, and total assembly coverage improves from 70.508% to 71.001%. The existing four-line low-side tolerance is unchanged, spans the already reproduced Coverlet concurrency variance, and remains far below the policy maximum; coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, and broad-tolerance negative boundaries."
+        "rationale": "Theme Studio curated catalog and compatibility work in issue #387. The clean GitHub Actions .NET 10.0.10/Coverlet run on 2026-07-19 passed all 1820 tests over the complete 29150-line assembly scope and measured 20707 covered lines. The reviewed high-water is 20707/29150 (71.036%). Relative to issue #384's 20669/29111 baseline, the legitimate 39-line scope increase adds the curated catalog provenance, schema allowlists, Jellyfish import migrations, administrator palette defaults, and their server tests; 38 of those net-new lines are covered, and total assembly coverage improves from 71.001% to 71.036%. The existing four-line low-side tolerance is unchanged, spans the already reproduced Coverlet concurrency variance, and remains far below the policy maximum; coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, and broad-tolerance negative boundaries."
       }
     }
   }
