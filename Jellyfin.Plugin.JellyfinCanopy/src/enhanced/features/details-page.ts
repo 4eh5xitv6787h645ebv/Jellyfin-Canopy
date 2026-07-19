@@ -58,6 +58,25 @@ let spoilerReadinessGeneration = 0;
 let pendingSpoilerReadiness: SpoilerReadinessRetry | null = null;
 let completedSpoilerReadiness: SpoilerReadinessRetry | null = null;
 const SPOILER_GUARD_READY_EVENT = 'jc:spoiler-guard-ready';
+const RESPONSIVE_STYLE_ID = 'jc-details-page-responsive-styles';
+
+function ensureResponsiveStyles(): HTMLStyleElement {
+    const existing = document.getElementById(RESPONSIVE_STYLE_ID) as HTMLStyleElement | null;
+    if (existing) return existing;
+    const style = document.createElement('style');
+    style.id = RESPONSIVE_STYLE_ID;
+    style.textContent = `
+        @media (max-width: 600px) {
+            #itemDetailPage .detailRibbon > .mainDetailButtons {
+                min-width: 0;
+                flex: 1 1 auto;
+                flex-wrap: wrap;
+            }
+        }
+    `;
+    document.head.appendChild(style);
+    return style;
+}
 
 // Types that support file size and watch progress
 const FEATURES_SUPPORTED_TYPES = ['Episode', 'Season', 'Series', 'Movie', 'BoxSet', 'Playlist'];
@@ -546,6 +565,7 @@ export function resetDetailsPage(): void {
 /** Install detail-page observation for one lazy-feature activation. */
 export function installDetailsPage(isCurrent: () => boolean = () => true): () => void {
     const installation: DetailsPageInstallation = { isCurrent };
+    const responsiveStyle = ensureResponsiveStyles();
     activeInstallation = installation;
     const body = onBodyMutation('item-details-info', () => {
         if (!isDetailsPageVisible()) return;
@@ -564,6 +584,7 @@ export function installDetailsPage(isCurrent: () => boolean = () => true): () =>
         offView();
         window.removeEventListener(SPOILER_GUARD_READY_EVENT, handleSpoilerGuardReady);
         resetDetailsPage();
+        responsiveStyle.remove();
     };
 }
 
