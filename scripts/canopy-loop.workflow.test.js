@@ -162,15 +162,14 @@ test('readyForPR is false when the implementer leaves open acceptance-criteria T
     assert.ok(r.residualRisks.some((s) => /open acceptance-criteria TODOs/i.test(s)));
 });
 
-test('a throwing review fixer exhausts the round cap and is never ready-for-PR', async () => {
-    // EVERY round surfaces the same real, confirmed finding whose fixer throws
-    // (StructuredOutput retry cap). The loop must run to roundCap WITHOUT a clean
-    // round and report the branch as NOT ready — the sole guard of that safety
-    // property. (Also proves a throwing fixer resolves the workflow, never aborts.)
+test('a persistently-unfixable finding HALTS for a design re-decision, never ready-for-PR', async () => {
+    // EVERY round surfaces the SAME real, confirmed finding whose fixer throws
+    // (StructuredOutput retry cap). Under the stateful review the same defect
+    // re-appearing after a fix attempt is OSCILLATION: the loop must HALT with a
+    // truthful haltReason (non-convergent-design) EARLY — never grind to the hard
+    // cap — never count the thrown fixer as "resolved", and never be ready-for-PR.
     const { agent } = makeAgent((_p, opts) => {
         const l = opts.label || '';
-        // Mixed rounds surface the finding on the Claude lens-0 reviewer; gpt-only
-        // rounds (past the mixed cap) surface it on the Sol lens-0 reviewer.
         if (/^review-r\d+:1$/.test(l)) return finding('needs a fix'); // mixed rounds
         if (/^sol-r\d+:1$/.test(l)) return finding('needs a fix'); // gpt-only rounds (lens 0 on Sol)
         if (/^verify-r\d+:1$/.test(l)) return { real: true, reason: 'confirmed' }; // every round
@@ -178,15 +177,15 @@ test('a throwing review fixer exhausts the round cap and is never ready-for-PR',
         return undefined;
     });
     const r = await runWorkflow(baseArgs(), agent, parallel, phase, () => {});
-    // Workflow resolves with a structured result rather than throwing out.
-    assert.equal(typeof r, 'object');
-    assert.ok(r.confirmedFindingsResolved >= 1);
+    assert.equal(typeof r, 'object'); // resolves with a structured result, never aborts
     assert.equal(r.loopClean, false, 'a round with an unfixed confirmed finding is not clean');
-    assert.equal(r.reviewIncomplete, false, 'coverage was complete — the finding was confirmed, not lost');
+    assert.equal(r.haltReason, 'non-convergent-design', 'oscillation halts the loop for a design re-decision');
+    assert.ok(r.reviewRounds < 10, 'HALTED early — did not grind to the hard cap');
+    assert.equal(r.confirmedFindingsResolved, 0, 'a thrown fixer applied nothing — honest resolved count is 0');
     assert.equal(r.readyForPR, false, 'unresolved confirmed findings must block ready-for-PR');
     assert.ok(
-        r.residualRisks.some((s) => /round cap with unresolved confirmed findings/i.test(s)),
-        'the round-cap residual risk is reported',
+        r.residualRisks.some((s) => /design oscillation|design re-decision|HALTED/i.test(s)),
+        'the non-convergence residual risk is reported',
     );
 });
 
@@ -238,15 +237,23 @@ test('plan Sol slots (incl. synthesis) run at xhigh', async () => {
 });
 
 test('review escalates to gpt-5.6-sol-only after the mixed round cap', async () => {
-    // A confirmed finding every round whose fixer throws → the loop runs to
+    // A DISTINCT confirmed finding every round (a fresh defect, so no oscillation
+    // halt), fixer succeeds → the loop keeps finding new issues and runs to
     // hardRoundCap. Mixed rounds (≤ roundCap) use Claude lens reviewers; every
     // later round is gpt-only (no Claude lens reviewer runs past the mixed cap).
+    // Distinct WORDS (not round numbers) because findingKey collapses digits.
+    const WORDS = ['alpha', 'bravo', 'charlie', 'delta', 'echo', 'foxtrot'];
     const { agent, calls } = makeAgent((_p, opts) => {
         const l = opts.label || '';
-        if (/^review-r\d+:1$/.test(l)) return finding('x'); // mixed rounds
-        if (/^sol-r\d+:1$/.test(l)) return finding('x'); // gpt-only rounds
+        const rm = l.match(/^(?:review|sol)-r(\d+):1$/);
+        if (rm) {
+            const w = WORDS[Number(rm[1]) - 1];
+            // Distinct summary AND failureScenario so findingKey differs each round
+            // (no oscillation halt) — a genuinely fresh defect per round.
+            return { findings: [{ file: 'a.js', line: 1, severity: 'major', summary: 'defect ' + w, failureScenario: 'scenario ' + w }] };
+        }
         if (/^verify-r\d+:1$/.test(l)) return { real: true, reason: 'c' };
-        if (l.startsWith('fix-r')) return { __throw: 'cap' };
+        // fixer uses the happy default (succeeds) — no fixer failure, no oscillation
         return undefined;
     });
     // quick depth → mixed roundCap 2; cap the hard ceiling at 5 to keep it short.
@@ -265,6 +272,42 @@ test('review escalates to gpt-5.6-sol-only after the mixed round cap', async () 
     assert.ok(solReviewRounds.has(3) && solReviewRounds.has(5), 'gpt-5.6-sol reviewers run the gpt-only rounds');
     assert.equal(r.readyForPR, false, 'unresolved confirmed findings across the escalation block PR');
     assert.equal(r.reviewRounds, 5, 'the loop ran to the hard round cap');
+});
+
+test('oscillation: a fix that does not stick (finding persists) halts for a design re-decision', async () => {
+    // The fixer SUCCEEDS every round, but the SAME defect keeps being re-confirmed
+    // (the fix does not resolve it) — the #167 design-thrash shape. The stateful
+    // review must detect the repeat, allow one design revision, then HALT early.
+    const { agent } = makeAgent((_p, opts) => {
+        const l = opts.label || '';
+        if (/^(?:review|sol)-r\d+:1$/.test(l)) return finding('same unresolved defect'); // identical every round
+        if (/^verify-r\d+:1$/.test(l)) return { real: true, reason: 'c' };
+        // fix-r* uses the happy default → succeeds, yet the defect returns next round
+        return undefined;
+    });
+    const r = await runWorkflow(baseArgs({ depth: 'quick', hardRoundCap: 10 }), agent, parallel, phase, () => {});
+    assert.equal(r.haltReason, 'non-convergent-design', 'a persistent re-confirmed defect halts');
+    assert.ok(r.reviewRounds < 10, 'halted early, not ground to the hard cap');
+    assert.equal(r.loopClean, false);
+    assert.equal(r.readyForPR, false);
+    assert.equal(typeof r.designRevisions, 'number');
+    assert.ok(r.designRevisions >= 1, 'at least one design revision was recorded before halting');
+});
+
+test('confirmedFindingsResolved counts only what a fixer actually applied', async () => {
+    // One defect in round 1 only; fixer applies it; round 2 is clean.
+    const { agent } = makeAgent((_p, opts) => {
+        const l = opts.label || '';
+        if (/^(?:review|sol)-r1:1$/.test(l)) return finding('one real defect'); // round 1 only
+        if (/^verify-r1:1$/.test(l)) return { real: true, reason: 'c' };
+        return undefined; // round 2 reviewers → happy {findings:[]} → clean
+    });
+    const r = await runWorkflow(baseArgs(), agent, parallel, phase, () => {});
+    assert.equal(r.loopClean, true, 'clean once the single defect is fixed');
+    assert.equal(r.confirmedFindingsResolved, 1, 'honest count = the one applied fix');
+    assert.equal(r.confirmedFindingsTotal, 1, 'one finding was confirmed total');
+    assert.equal(r.haltReason, null);
+    assert.equal(r.fixerFailures, 0);
 });
 
 test('verify enforces a committed, clean handoff as a blocking gate', async () => {
