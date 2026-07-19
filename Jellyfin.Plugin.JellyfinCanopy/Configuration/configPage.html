@@ -2369,15 +2369,20 @@
         //
         // Resolve OUR OWN view (BI-CLIENT-106 / #167): Jellyfin 12 caches
         // several routed views in the DOM at once, so a hidden stale copy can
-        // share id="JellyfinCanopyPage" with this freshly-injected one. A bare
-        // querySelector returns the FIRST match (often the stale copy); the
+        // share id="JellyfinCanopyPage" with this freshly-injected one. The
         // external config-page.js we append must land in THIS view or the
         // visible page is left unwired. Climb from this bootstrap script to its
-        // owning view, falling back to querySelector when the anchor is absent.
+        // owning view. When the anchor is absent — jQuery may execute this inline
+        // body through a detached temporary <script> in <head>, so
+        // document.currentScript is null / outside the view — fall back to the
+        // LAST matching view, not the first: JF12 keeps stale cached views
+        // EARLIER in document order and appends the fresh visible view LAST, so
+        // the first match is frequently the stale hidden copy (#167 finding 4).
         var bootstrapScript = document.currentScript;
-        var page = (bootstrapScript && typeof bootstrapScript.closest === 'function'
-                    && bootstrapScript.closest('#JellyfinCanopyPage'))
-                || document.querySelector('#JellyfinCanopyPage');
+        var ownView = bootstrapScript && typeof bootstrapScript.closest === 'function'
+                    && bootstrapScript.closest('#JellyfinCanopyPage');
+        var allViews = document.querySelectorAll('#JellyfinCanopyPage');
+        var page = ownView || allViews[allViews.length - 1] || null;
 
         // viewManager fires 'pageshow' on the view element right after the HTML is
         // injected - usually before the external script has finished loading. The

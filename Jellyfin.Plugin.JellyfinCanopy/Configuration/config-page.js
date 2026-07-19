@@ -92,8 +92,13 @@
             // the fresh page as a duplicate load and abort ALL wiring, leaving
             // the visible page dead. This IIFE is served as an external script
             // the bootstrap appended INTO its own view, so climb from the
-            // executing script element to the view that owns it; fall back to
-            // querySelector when the script anchor is unavailable (e.g. tests).
+            // executing script element to the view that owns it; fall back to a
+            // query when the script anchor is unavailable (e.g. tests, or a
+            // detached temporary <script>). The fallback prefers the LAST match,
+            // not the first: JF12 keeps stale cached views EARLIER in document
+            // order and appends the freshly-injected visible view LAST, so
+            // querySelector's first match is frequently the stale hidden copy —
+            // exactly the trap this resolver exists to avoid (#167 findings 1/4).
             function jcResolveOwnConfigPage(doc, scriptEl, selector) {
                 try {
                     if (scriptEl && typeof scriptEl.closest === 'function') {
@@ -101,7 +106,8 @@
                         if (owned) return owned;
                     }
                 } catch (e) { /* detached/foreign node — fall through to query */ }
-                return doc.querySelector(selector);
+                var matches = doc.querySelectorAll(selector);
+                return matches.length ? matches[matches.length - 1] : null;
             }
             /* jc-config-page-lifecycle:end */
 
@@ -2272,20 +2278,12 @@
                 loadMaintenanceUsers();
 
                 // One config value behind two synced inputs (Elsewhere + Seerr tabs).
+                // Initial value only; the bidirectional input listeners are
+                // installed ONCE per page owner in jcWireStaticControlListeners
+                // (#167 finding 3) — attaching them here re-ran on every
+                // pageshow-driven loadConfig and leaked an untracked pair per visit.
                 document.querySelector('#TMDB_API_KEY').value = config.TMDB_API_KEY;
                 document.querySelector('#seerr_TMDB_API_KEY').value = config.TMDB_API_KEY;
-
-                // Set up bidirectional sync between TMDB API key fields
-                const tmdbKeyField = document.querySelector('#TMDB_API_KEY');
-                const seerrTmdbKeyField = document.querySelector('#seerr_TMDB_API_KEY');
-
-                tmdbKeyField.addEventListener('input', function() {
-                    seerrTmdbKeyField.value = this.value;
-                });
-
-                seerrTmdbKeyField.addEventListener('input', function() {
-                    tmdbKeyField.value = this.value;
-                });
 
                 // Restore stack order: rows are visually reordered to match
                 // current saved order values (ties broken by default order).
@@ -2326,25 +2324,17 @@
                     if (showArrText) showArrText.checked = false;
                 }
 
+                // Initial visibility only; the `change` listeners for these two
+                // static controls are installed ONCE per page owner in
+                // jcWireStaticControlListeners (#167 finding 3). Attaching them
+                // here re-ran on every pageshow-driven loadConfig and stacked an
+                // untracked handler per dashboard visit.
                 document.getElementById('activeStreamsAllUsersContainer').style.display = config.ActiveStreamsEnabled ? '' : 'none';
-                document.querySelector('#activeStreamsEnabled').addEventListener('change', function() {
-                    document.getElementById('activeStreamsAllUsersContainer').style.display = this.checked ? '' : 'none';
-                });
-
-                // Set up event handler for watchlist prevention checkbox
-                function toggleWatchlistRetentionVisibility() {
-                    const preventionEnabled = document.querySelector('#preventWatchlistReAddition').checked;
-                    const retentionContainer = document.querySelector('#watchlistMemoryRetentionDays').closest('.inputContainer');
-                    if (retentionContainer) {
-                        retentionContainer.style.display = preventionEnabled ? 'block' : 'none';
-                    }
+                const preventionEnabled = document.querySelector('#preventWatchlistReAddition').checked;
+                const retentionContainer = document.querySelector('#watchlistMemoryRetentionDays').closest('.inputContainer');
+                if (retentionContainer) {
+                    retentionContainer.style.display = preventionEnabled ? 'block' : 'none';
                 }
-
-                // Set initial visibility
-                toggleWatchlistRetentionVisibility();
-
-                // Add event listener
-                document.querySelector('#preventWatchlistReAddition').addEventListener('change', toggleWatchlistRetentionVisibility);
 
                 // Update TMDB-dependent settings after config is loaded
                 updateAllDependencies();
@@ -3042,6 +3032,47 @@
         // otherwise STACK the handler — one click then opens two confirmations
         // and performs two configuration writes + two reset-all-users POSTs.
         jcPageLifecycle.addListener(resetAllUserSettingsBtn, 'click', resetAllUserSettings);
+
+        /* jc-static-control-listeners:start */
+        // Static form-control listeners (#167 finding 3). These used to be
+        // attached with raw addEventListener INSIDE loadConfig, which the
+        // dashboard re-runs on every `pageshow` — so each visit stacked another
+        // TMDB-sync input pair plus activeStreams/preventWatchlist change handler,
+        // none tracked by the page owner and none reclaimable on teardown. They
+        // wire STATIC controls and depend only on live DOM state (not on config),
+        // so install them exactly ONCE per page owner here, routed through the
+        // owner so a fresh visit's teardown reclaims the prior copy (AC5).
+        // loadConfig keeps only the config-driven INITIAL value/visibility.
+        function jcWireStaticControlListeners(doc, lifecycle) {
+            var tmdbKeyField = doc.querySelector('#TMDB_API_KEY');
+            var seerrTmdbKeyField = doc.querySelector('#seerr_TMDB_API_KEY');
+            if (tmdbKeyField && seerrTmdbKeyField) {
+                lifecycle.addListener(tmdbKeyField, 'input', function() {
+                    seerrTmdbKeyField.value = tmdbKeyField.value;
+                });
+                lifecycle.addListener(seerrTmdbKeyField, 'input', function() {
+                    tmdbKeyField.value = seerrTmdbKeyField.value;
+                });
+            }
+            var activeStreamsEnabled = doc.querySelector('#activeStreamsEnabled');
+            if (activeStreamsEnabled) {
+                lifecycle.addListener(activeStreamsEnabled, 'change', function() {
+                    var container = doc.getElementById('activeStreamsAllUsersContainer');
+                    if (container) container.style.display = activeStreamsEnabled.checked ? '' : 'none';
+                });
+            }
+            var preventWatchlist = doc.querySelector('#preventWatchlistReAddition');
+            if (preventWatchlist) {
+                lifecycle.addListener(preventWatchlist, 'change', function() {
+                    var retentionInput = doc.querySelector('#watchlistMemoryRetentionDays');
+                    var container = retentionInput && retentionInput.closest('.inputContainer');
+                    if (container) container.style.display = preventWatchlist.checked ? 'block' : 'none';
+                });
+            }
+        }
+        /* jc-static-control-listeners:end */
+        jcWireStaticControlListeners(document, jcPageLifecycle);
+
         initAutoMovieQualityMode();
 
         // Live-update the Requests Page requirements banner AND the dependency
