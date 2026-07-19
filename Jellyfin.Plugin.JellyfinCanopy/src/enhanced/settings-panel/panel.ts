@@ -16,6 +16,7 @@ import { wireSpoilerGuardListeners } from '../spoiler-guard/settings-tab';
 import { wireLanguageControls } from './language';
 import { resetLanguageControls } from './language';
 import { resetReleaseNotes } from './release-notes';
+import { wireThemeStudioEditor } from './theme-editor';
 import type { IdentityContext } from '../../types/jc';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -404,6 +405,7 @@ async function openPanel(owner: PanelOwner): Promise<void> {
     document.body.append(backdrop, help);
 
     wireShortcutEditor(ctx);
+    wireThemeStudioEditor(ctx);
     resetAutoCloseTimer();
 
     // --- Section navigation (adaptive settings view) ---
@@ -425,7 +427,10 @@ async function openPanel(owner: PanelOwner): Promise<void> {
         // desktop shows both columns side by side, so neither is inert there.
         const navColumn = help.querySelector<HTMLElement>('.jc-panel-nav');
         const mainColumn = help.querySelector<HTMLElement>('.jc-panel-main');
-        const phoneMedia = window.matchMedia('(max-width: 760px)');
+        const phoneMedia = window.matchMedia(
+            '(max-width: 760px), (orientation: landscape) and (max-height: 599px) '
+            + 'and (max-width: 999px) and (pointer: coarse)'
+        );
         const syncLayerFocus = (moveFocus: boolean) => {
             if (!navColumn || !mainColumn) return;
             if (phoneMedia.matches) {
@@ -450,6 +455,7 @@ async function openPanel(owner: PanelOwner): Promise<void> {
         const activate = (pane: HTMLElement, persist: boolean) => {
             panes.forEach(p => p.classList.toggle('active', p === pane));
             items.forEach(b => b.classList.toggle('active', b.dataset.tab === pane.dataset.pane));
+            mainColumn?.classList.toggle('jc-theme-pane-active', pane.dataset.pane === 'theme-studio');
             body.classList.add('jc-pane-open');
             syncLayerFocus(persist);
             if (persist) {
@@ -483,6 +489,7 @@ async function openPanel(owner: PanelOwner): Promise<void> {
         // Mobile back button returns to the section list.
         help.querySelector('#jcPanelBack')?.addEventListener('click', () => {
             body.classList.remove('jc-pane-open');
+            mainColumn?.classList.remove('jc-theme-pane-active');
             syncLayerFocus(true);
             resetAutoCloseTimer();
         });

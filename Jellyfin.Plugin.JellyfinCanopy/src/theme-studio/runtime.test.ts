@@ -129,6 +129,49 @@ function createRuntime(): { runtime: ThemeStudioRuntime; harness: TestFeatureSco
 }
 
 describe('Theme Studio identity-owned runtime', () => {
+    it('exposes isolated editor state and adopts only validated acknowledged documents', async () => {
+        apiReturning(themeConfiguration());
+        const { runtime } = createRuntime();
+        await runtime.load();
+
+        const editorCopy = runtime.getConfiguration();
+        const identity = JC.identity.capture();
+        expect(editorCopy).not.toBeNull();
+        expect(JC.identity.isOwned(editorCopy, identity)).toBe(true);
+        editorCopy!.Profiles[0].BasePreset = 'oled';
+        expect(runtime.getConfiguration()?.Profiles[0].BasePreset).toBe('canopy');
+
+        expect(runtime.adoptAcknowledged({ invalid: true })).toBe(false);
+        expect(runtime.getConfiguration()?.Profiles[0].BasePreset).toBe('canopy');
+        editorCopy!.Revision = 4;
+        expect(runtime.adoptAcknowledged(editorCopy)).toBe(true);
+        expect(runtime.getConfiguration()).toMatchObject({ Revision: 4, ActiveProfileId: 'default' });
+        expect(document.documentElement.getAttribute('data-jc-theme-preset')).toBe('oled');
+        expect(JC.rememberUserSettingsSnapshot).toHaveBeenLastCalledWith(
+            'theme.json', expect.objectContaining({ Revision: 4 }),
+        );
+    });
+
+    it('reloads authoritative state through the existing abortable owner', async () => {
+        const first = themeConfiguration();
+        const second = themeConfiguration();
+        second.Revision = 9;
+        second.Profiles[0].Palette = 'neutral';
+        const plugin = vi.fn().mockResolvedValueOnce(first).mockResolvedValueOnce(second);
+        JC.core.api = { plugin } as unknown as ApiApi;
+        const { runtime } = createRuntime();
+        await runtime.load();
+        const preview = themeConfiguration();
+        preview.Profiles[0].BasePreset = 'glass';
+        expect(runtime.preview(preview)).toBe(true);
+
+        await expect(runtime.reload()).resolves.toBe(true);
+        expect(plugin).toHaveBeenCalledTimes(2);
+        expect(runtime.getConfiguration()).toMatchObject({ Revision: 9 });
+        expect(document.documentElement.getAttribute('data-jc-theme-preview')).toBeNull();
+        expect(document.documentElement.getAttribute('data-jc-theme-palette')).toBe('neutral');
+    });
+
     it('loads once, applies one committed layer, and follows host theme/media changes live', async () => {
         const plugin = apiReturning(themeConfiguration());
         const { runtime } = createRuntime();

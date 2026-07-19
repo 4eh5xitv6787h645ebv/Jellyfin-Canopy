@@ -163,6 +163,9 @@ export class ThemeStudioRuntime {
         const api: ThemeStudioRuntimeApi = Object.freeze({
             preview: (configuration: unknown) => this.preview(configuration),
             cancelPreview: () => this.cancelPreview(),
+            getConfiguration: () => this.getConfiguration(),
+            reload: () => this.reload(),
+            adoptAcknowledged: (configuration: unknown) => this.adoptAcknowledged(configuration),
             refresh: () => this.refresh(),
             getDiagnostics: () => this.getDiagnostics(),
         });
@@ -206,6 +209,33 @@ export class ThemeStudioRuntime {
                 key: 'theme.json',
             });
         }
+    }
+
+    getConfiguration(): UserThemeConfiguration | null {
+        if (this.#disposed || !this.#scope.isCurrent() || !this.#configuration) return null;
+        const configuration = parseUserThemeConfiguration(this.#configuration);
+        const identity = JC.identity.capture();
+        return configuration && identity ? JC.identity.own(configuration, identity) : null;
+    }
+
+    async reload(): Promise<boolean> {
+        if (this.#disposed || !this.#scope.isCurrent()) return false;
+        this.#previewConfiguration = null;
+        await this.load();
+        return this.#configuration !== null && this.#scope.isCurrent() && !this.#disposed;
+    }
+
+    adoptAcknowledged(value: unknown): boolean {
+        if (this.#disposed || !this.#scope.isCurrent()) return false;
+        const configuration = parseUserThemeConfiguration(value);
+        if (!configuration) return false;
+        const identity = JC.identity.capture();
+        if (!identity) return false;
+        this.#configuration = JC.identity.own(configuration, identity);
+        this.#previewConfiguration = null;
+        JC.rememberUserSettingsSnapshot?.('theme.json', this.#configuration);
+        this.refresh();
+        return true;
     }
 
     preview(value: unknown): boolean {

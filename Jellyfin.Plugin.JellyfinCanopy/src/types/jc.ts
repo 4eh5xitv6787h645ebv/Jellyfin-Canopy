@@ -124,6 +124,12 @@ export interface ThemeStudioDiagnostics {
 export interface ThemeStudioRuntimeApi {
     preview(configuration: unknown): boolean;
     cancelPreview(): void;
+    /** Returns an isolated, identity-owned copy for the current editor session. */
+    getConfiguration(): UserThemeConfiguration | null;
+    /** Reloads authoritative server state without replacing this runtime owner. */
+    reload(): Promise<boolean>;
+    /** Publishes a validated document only after its write was acknowledged. */
+    adoptAcknowledged(configuration: unknown): boolean;
     refresh(): void;
     getDiagnostics(): ThemeStudioDiagnostics;
 }

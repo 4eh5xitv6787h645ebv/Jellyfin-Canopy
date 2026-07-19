@@ -115,6 +115,18 @@ async function previewOverflowEvidence(page: Page): Promise<{ active: number; ba
     });
 }
 
+async function openThemeEditor(page: Page): Promise<ReturnType<Page['locator']>> {
+    await page.evaluate(() => window.JellyfinCanopy.showEnhancedPanel?.());
+    const panel = page.locator('#jellyfin-canopy-panel');
+    await expect(panel).toBeVisible({ timeout: 15_000 });
+    const themeTab = panel.locator('.tab-button[data-tab="theme-studio"]');
+    await expect(themeTab).toBeVisible();
+    await themeTab.click();
+    await expect(panel.locator('.jc-pane[data-pane="theme-studio"]')).toBeVisible();
+    await expect(panel.locator('[data-theme-editor-root]')).toBeVisible();
+    return panel;
+}
+
 test.describe.serial('Theme Studio runtime bridge', () => {
     let admin: Session;
     let original: Record<string, unknown>;
@@ -306,6 +318,98 @@ test.describe.serial('Theme Studio runtime bridge', () => {
 
         await page.evaluate(() => window.JellyfinCanopy.core.themeStudio?.cancelPreview());
         await expect(page.locator(PREVIEW_STYLE)).toHaveCount(0);
+        assertNoRuntimeErrors(consoleErrors);
+    });
+
+    test('desktop editor stages locally and adopts only the exact Apply acknowledgement', async ({
+        baseURL,
+        page,
+        consoleErrors,
+    }) => {
+        await page.setViewportSize({ width: 1440, height: 900 });
+        await seedLayout(page, 'experimental');
+        const writes: Array<{ revision: number; ifMatch: string | null; preset: string }> = [];
+        await page.route('**/JellyfinCanopy/user-settings/*/theme.json', async (route) => {
+            if (route.request().method() !== 'POST') {
+                await route.continue();
+                return;
+            }
+            const body = route.request().postDataJSON() as {
+                Revision: number;
+                Profiles: Array<{ BasePreset: string }>;
+            } & Record<string, unknown>;
+            const revision = body.Revision + 1;
+            writes.push({
+                revision,
+                ifMatch: route.request().headers()['if-match'] ?? null,
+                preset: body.Profiles[0]?.BasePreset ?? '',
+            });
+            await route.fulfill({
+                status: 200,
+                contentType: 'application/json',
+                body: JSON.stringify({
+                    success: true,
+                    conflict: false,
+                    file: 'theme.json',
+                    revision,
+                    contentHash: 'a'.repeat(64),
+                    data: { ...body, Revision: revision },
+                }),
+            });
+        });
+        await loginAs(page, 'admin', consoleErrors);
+        await waitForThemeRuntime(page, 'desktop');
+        const serverBefore = await api<Record<string, unknown>>(
+            baseURL!, `/JellyfinCanopy/user-settings/${admin.userId}/theme.json`, admin.token,
+        );
+        const panel = await openThemeEditor(page);
+        const editor = panel.locator('.jc-theme-editor');
+        const preview = panel.locator('.jc-theme-preview-card');
+        await expect(editor).toBeVisible();
+        await expect(preview).toBeVisible();
+        const split = await page.evaluate(() => {
+            const editorBox = document.querySelector('.jc-theme-editor')!.getBoundingClientRect();
+            const previewBox = document.querySelector('.jc-theme-preview-card')!.getBoundingClientRect();
+            const main = document.querySelector('#jellyfin-canopy-panel .jc-panel-main') as HTMLElement;
+            return {
+                previewAfterEditor: previewBox.left >= editorBox.right - 1,
+                mainOverflow: main.scrollWidth - main.clientWidth,
+            };
+        });
+        expect(split).toEqual({ previewAfterEditor: true, mainOverflow: 0 });
+
+        await panel.locator('[data-action="preset"][data-value="oled"]').click();
+        await expect.poll(() => page.evaluate(() =>
+            document.documentElement.getAttribute('data-jc-theme-preset'))).toBe('oled');
+        expect(writes, 'control changes must never save').toEqual([]);
+        await expect(panel.locator('[data-action="apply"]')).toBeEnabled();
+        await panel.locator('[data-action="undo"]').click();
+        await expect.poll(() => page.evaluate(() =>
+            document.documentElement.getAttribute('data-jc-theme-preset'))).not.toBe('oled');
+        await panel.locator('[data-action="redo"]').click();
+        await expect.poll(() => page.evaluate(() =>
+            document.documentElement.getAttribute('data-jc-theme-preset'))).toBe('oled');
+        expect(writes).toEqual([]);
+
+        await panel.locator('[data-action="apply"]').click();
+        await expect.poll(() => writes.length).toBe(1);
+        expect(writes[0]).toMatchObject({
+            preset: 'oled',
+            ifMatch: `"${writes[0].revision - 1}"`,
+        });
+        await expect(panel.locator('[data-action="apply"]')).toBeDisabled();
+        await expect.poll(() => page.evaluate(() =>
+            window.JellyfinCanopy.core.themeStudio?.getDiagnostics().revision)).toBe(writes[0].revision);
+        const serverAfter = await api<Record<string, unknown>>(
+            baseURL!, `/JellyfinCanopy/user-settings/${admin.userId}/theme.json`, admin.token,
+        );
+        expect(serverAfter, 'intercepted acknowledgement must not mutate the server fixture').toEqual(serverBefore);
+
+        await page.keyboard.press('Escape');
+        await expect(panel).toBeHidden();
+        await expect(page.locator(PREVIEW_STYLE)).toHaveCount(0);
+        expect(await page.evaluate(() =>
+            document.documentElement.getAttribute('data-jc-theme-preset'))).toBe('oled');
         assertNoRuntimeErrors(consoleErrors);
     });
 
