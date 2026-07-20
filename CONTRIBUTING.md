@@ -416,22 +416,35 @@ Measurement protocol requirements for the follow-up harness:
   entry construction (a quadratic entry-build regression would pass), while
   simply deleting the cache before startup folds the initial build into the
   startup measurement. The harness must therefore measure the two metric
-  groups in **separate server sessions with explicit, asserted cache state**:
-  1. **Warm session — startup metric.** Start the server with the baseline's
-     persisted tag cache (`tag-cache.json`) present in the instance-local
-     writable state. `maxPluginStartupMilliseconds` is recorded from this
-     session only; the harness asserts that startup loaded a nonzero entry
-     count from disk and that no full build ran during startup.
-  2. **Cold session — full-build metrics.** Stop the server, delete the
-     persisted tag cache from the instance-local writable state (the Volume
-     baseline itself is never modified), and start the server again. Startup
-     now performs the initial full build against an empty in-memory cache;
-     `maxTagCacheFullBuildMilliseconds` and
+  groups in **separate server sessions with explicit, asserted cache state**,
+  cold before warm:
+  1. **Cold session first — full-build metrics.** Start the server with no
+     persisted tag cache in the instance-local writable state. The Volume
+     baseline never contains plugin-persisted runtime state (see the Volume
+     lifecycle), and the run additionally deletes any `tag-cache.json` from
+     the instance-local copy before this first start (the Volume baseline
+     itself is never modified). Startup performs the initial full build
+     against an empty in-memory cache; `maxTagCacheFullBuildMilliseconds` and
      `maxTagCacheFullBuildPeakResidentDeltaBytes` are recorded from the named
      measurement markers bracketing the build itself — never from whole-startup
      timing — and startup duration is never recorded from this session. The
      harness asserts the cold precondition (no persisted cache on disk and
-     zero in-memory entries when the build starts).
+     zero in-memory entries when the build starts) and, after the build
+     completes, that the plugin persisted a `tag-cache.json` with a nonzero
+     entry count — that file is the warm session's input.
+  2. **Warm session — startup metric.** Restart the server with the cold
+     session's just-persisted `tag-cache.json` left in place.
+     `maxPluginStartupMilliseconds` is recorded from this session only; the
+     harness asserts that startup loaded a nonzero entry count from disk and
+     that no full build ran during startup.
+  Ordering cold-before-warm makes the warm cache's producer the **tested
+  commit itself, in the same run**: the persisted cache the warm session
+  loads was written by the exact plugin build under test, so a change to the
+  cache schema or `TagCacheEntry` serialization in that commit can never
+  leave the warm session loading — or rejecting — a stale cache, and no
+  persisted tag cache is ever stored on, versioned with, or restored from
+  the Volume. A cold session whose build did not persist a loadable
+  nonzero-entry cache is **no-evidence** for the startup metric.
   Each session's cache state (warm/cold) and the asserted preconditions are
   recorded in the result artifact; a run that cannot prove the cold
   precondition is **no-evidence** for the full-build metrics — a warm
@@ -693,6 +706,12 @@ Volume lifecycle:
   storage; the baseline is identified by a digest of its seed inputs and
   profile; it is refreshed only through an exclusive seed-refresh path, and
   only when a seed input changes.
+- A baseline never contains **plugin-persisted runtime state** (for example
+  `tag-cache.json` under the plugin configuration directory): the warm-start
+  input is produced in-run by the cold session of the tag-cache state
+  protocol above, never seeded, stored, or restored from the Volume — so a
+  plugin cache-schema or serialization change never invalidates a baseline
+  and is deliberately **not** a seed input.
 - **Seed inputs** — the canonical definition wherever this spec says "seed
   inputs" or "seed-input digest" — are every input that materially shapes the
   baseline library or its scanned database: the seed/generator scripts and the
