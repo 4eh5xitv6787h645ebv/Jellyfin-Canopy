@@ -144,6 +144,22 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
         }
 
         [Fact]
+        public void ThemeGet_SeedsPreviousFocusAdministratorDefault()
+        {
+            _provider.Current = new PluginConfiguration
+            {
+                ThemeStudioDefaultPreset = "tv-focus",
+                ThemeStudioDefaultPalette = "canopy-night"
+            };
+
+            var theme = Assert.IsType<UserThemeConfiguration>(
+                Assert.IsType<OkObjectResult>(Controller().GetUserSettingsTheme(UserId)).Value);
+
+            Assert.Equal("tv-focus", Assert.Single(theme.Profiles).BasePreset);
+            Assert.Equal("canopy-night", theme.Profiles[0].Palette);
+        }
+
+        [Fact]
         public void ThemeGet_NormalizesLegacyFreeTextAdministratorPaletteDefault()
         {
             _provider.Current = new PluginConfiguration

@@ -57,6 +57,68 @@ describe('Theme Studio resolver', () => {
         expect(desktop.tokens['layout.navigation']).toBe('header');
     });
 
+    it('resolves automatic presentation choices by capability without changing host structure', () => {
+        const configuration = themeConfiguration();
+        configuration.Profiles[0].Tokens = {
+            'layout.navigation': 'auto',
+            'layout.seasons': 'auto',
+        };
+
+        expect(resolveTheme(configuration, media({ viewportWidth: 390 })).presentation).toMatchObject({
+            navigation: 'bottom', seasons: 'list',
+        });
+        expect(resolveTheme(configuration, media({ viewportWidth: 820 })).presentation).toMatchObject({
+            navigation: 'pills', seasons: 'grid',
+        });
+        expect(resolveTheme(configuration, media({ viewportWidth: 1440 })).presentation).toMatchObject({
+            navigation: 'header', seasons: 'grid',
+        });
+        expect(resolveTheme(configuration, media({ viewportWidth: 1920, tv: true })).presentation).toMatchObject({
+            navigation: 'sidebar', seasons: 'grid',
+        });
+    });
+
+    it('publishes every explicit shell module choice and makes no-hover card actions reachable', () => {
+        const configuration = themeConfiguration();
+        configuration.Profiles[0].Tokens = {
+            'layout.density': 'spacious',
+            'layout.navigation': 'sidebar',
+            'layout.home-hero': 'cinematic',
+            'layout.details': 'compact',
+            'layout.seasons': 'list',
+            'layout.card-actions': 'menu',
+            'layout.poster-ratio': 'backdrop',
+            'layout.cast-shape': 'rounded',
+            'progress.position': 'floating',
+            'progress.watched-indicator': 'floating',
+            'progress.unwatched-indicator': 'none',
+        };
+        const fine = resolveTheme(configuration, media());
+        expect(fine.presentation).toEqual({
+            density: 'spacious',
+            navigation: 'sidebar',
+            homeHero: 'cinematic',
+            details: 'compact',
+            seasons: 'list',
+            cardActions: 'menu',
+            posterRatio: 'backdrop',
+            castShape: 'rounded',
+            progressPosition: 'floating',
+            watchedIndicator: 'floating',
+            unwatchedIndicator: 'none',
+        });
+
+        const touch = resolveTheme(configuration, media({ hover: false, coarsePointer: true }));
+        expect(touch.presentation.cardActions).toBe('always');
+    });
+
+    it('maps a persisted unwatched check value to the safe numeric corner badge', () => {
+        const configuration = themeConfiguration();
+        configuration.Profiles[0].Tokens = { 'progress.unwatched-indicator': 'check' };
+
+        expect(resolveTheme(configuration, media()).presentation.unwatchedIndicator).toBe('corner');
+    });
+
     it('resolves every curated preset across phone, tablet, desktop and TV capability profiles', () => {
         for (const preset of THEME_PRESETS) {
             for (const state of [

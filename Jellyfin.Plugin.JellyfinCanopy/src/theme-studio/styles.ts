@@ -1,5 +1,6 @@
 import type { ThemeTokenValue } from '../types/jc';
 import { readableForeground } from './color';
+import { serializePresentationAdapters } from './presentation';
 import type { ResolvedTheme } from './resolver';
 
 export const COMMITTED_STYLE_ID = 'jc-theme-studio-committed';
@@ -24,6 +25,11 @@ const SHADOW: Readonly<Record<string, string>> = Object.freeze({
 });
 const DENSITY: Readonly<Record<string, string>> = Object.freeze({
     compact: '0.875', cozy: '1', spacious: '1.18',
+});
+const EASING: Readonly<Record<string, string>> = Object.freeze({
+    standard: 'ease',
+    smooth: 'cubic-bezier(0.2, 0, 0, 1)',
+    spring: 'cubic-bezier(0.2, 0.8, 0.2, 1.15)',
 });
 
 function token(theme: ResolvedTheme, name: string): ThemeTokenValue {
@@ -77,16 +83,26 @@ function customDeclarations(theme: ResolvedTheme): Record<string, string> {
     for (const [name, value] of Object.entries(theme.tokens)) {
         declarations[`--jc-${name.replaceAll('.', '-')}`] = cssTokenValue(name, value);
     }
+    const densityFactor = Number(DENSITY[stringToken(theme, 'layout.density')] ?? '1');
+    const spaceFactor = Number(DENSITY[stringToken(theme, 'space.scale')] ?? '1');
+    const spacingFactor = densityFactor * spaceFactor;
+    const rem = (name: string): string => `${Number((numberToken(theme, name) * spacingFactor).toFixed(4))}rem`;
     declarations['--jc-safe-area-top'] = 'env(safe-area-inset-top, 0px)';
     declarations['--jc-safe-area-right'] = 'env(safe-area-inset-right, 0px)';
     declarations['--jc-safe-area-bottom'] = 'env(safe-area-inset-bottom, 0px)';
     declarations['--jc-safe-area-left'] = 'env(safe-area-inset-left, 0px)';
-    declarations['--jc-density-factor'] = DENSITY[stringToken(theme, 'layout.density')] ?? '1';
-    declarations['--jc-page-gutter'] = `calc(${numberToken(theme, 'space.page-gutter')}rem * var(--jc-density-factor))`;
-    declarations['--jc-section-gap'] = `calc(${numberToken(theme, 'space.section-gap')}rem * var(--jc-density-factor))`;
-    declarations['--jc-card-gap'] = `calc(${numberToken(theme, 'space.card-gap')}rem * var(--jc-density-factor))`;
-    declarations['--jc-control-gap'] = `calc(${numberToken(theme, 'space.control-gap')}rem * var(--jc-density-factor))`;
+    declarations['--jc-density-factor'] = String(densityFactor);
+    declarations['--jc-space-factor'] = String(spaceFactor);
+    declarations['--jc-effective-font-size'] = `${Number((
+        numberToken(theme, 'type.scale') * numberToken(theme, 'accessibility.text-scale')
+    ).toFixed(4))}rem`;
+    declarations['--jc-page-gutter'] = rem('space.page-gutter');
+    declarations['--jc-section-gap'] = rem('space.section-gap');
+    declarations['--jc-card-gap'] = rem('space.card-gap');
+    declarations['--jc-control-gap'] = rem('space.control-gap');
+    declarations['--jc-content-max-inline-size'] = '120rem';
     declarations['--jc-motion-duration'] = `${Math.round(180 * numberToken(theme, 'motion.duration-scale'))}ms`;
+    declarations['--jc-motion-easing'] = EASING[stringToken(theme, 'motion.easing')] ?? EASING.standard;
     return declarations;
 }
 
@@ -151,29 +167,15 @@ function adapters(selector: string, theme: ResolvedTheme): string {
     const focusWidth = cssTokenValue('elevation.focus-ring', token(theme, 'elevation.focus-ring'));
     const textDecoration = theme.underlineLinks ? 'underline' : 'none';
     const routeSelector = `${selector}[data-jc-theme-route]`;
-    const legacySelector = `${selector}.jc-legacy-layout[data-jc-theme-route]`;
     const motion = theme.reducedMotion ? `
 ${routeSelector} *, ${routeSelector} *::before, ${routeSelector} *::after {
   animation-duration: 0.01ms !important;
   animation-iteration-count: 1 !important;
   scroll-behavior: auto !important;
-  transition-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
 }` : '';
     return `
-/* Adapter legacy-v12-base-surfaces: Jellyfin 12 legacy layout, route-scoped. */
-${legacySelector} body,
-${legacySelector} .backgroundContainer,
-${legacySelector} .mainAnimatedPage {
-  background-color: var(--jc-color-canvas);
-  color: var(--jc-color-text);
-}
-${legacySelector} .skinHeader,
-${legacySelector} .dialog,
-${legacySelector} .cardContent,
-${legacySelector} .cardBox:not(.visualCardBox) {
-  background-color: var(--jc-color-surface);
-}
-/* Adapter focus-v12: keyboard focus across both Jellyfin 12 layouts. */
+/* Adapter focus-v12: keyboard focus in Jellyfin 12 modern layout. */
 ${routeSelector} :is(a, button, input, select, textarea, [tabindex]):focus-visible {
   outline: ${focusWidth} solid var(--jc-color-focus);
   outline-offset: 2px;
@@ -203,7 +205,7 @@ export function serializeThemeStyles(theme: ResolvedTheme, layer: ThemeStyleLaye
     // it is active so omitted adapters (for example full motion) cannot leak
     // stricter committed behavior into the preview.
     const previewGate = layer === 'committed' ? ':not([data-jc-theme-preview="true"])' : '';
-    const selector = `:root[${attribute}="true"]${previewGate}`;
+    const selector = `:root.jc-modern-layout[${attribute}="true"]${previewGate}`;
     const declarations = { ...customDeclarations(theme), ...jellyfinDeclarations(theme) };
     // Jellyfin's own MUI variables are unlayered. An @layer declaration here
     // would always lose to them; the two owner style elements instead use
@@ -211,5 +213,6 @@ export function serializeThemeStyles(theme: ResolvedTheme, layer: ThemeStyleLaye
     return `${selector} {
 ${declarationBlock(declarations)}
 }
-${adapters(selector, theme)}`;
+${adapters(selector, theme)}
+${serializePresentationAdapters(selector)}`;
 }

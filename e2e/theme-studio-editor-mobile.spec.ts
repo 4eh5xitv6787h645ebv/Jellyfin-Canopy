@@ -92,6 +92,16 @@ test.describe.serial('Theme Studio mobile editor', () => {
         await panel.locator('[data-action="preset"][data-value="glass"]').click();
         await expect.poll(() => page.evaluate(() =>
             document.documentElement.getAttribute('data-jc-theme-preset'))).toBe('glass');
+        await expect(panel.locator('[data-field="presentation-token"]')).toHaveCount(12);
+        await panel.locator('[data-field="presentation-token"][data-token="layout.navigation"]')
+            .selectOption('bottom');
+        await panel.locator('[data-field="presentation-token"][data-token="progress.thickness"]')
+            .selectOption('8');
+        await expect.poll(() => page.evaluate(() => ({
+            navigation: document.documentElement.getAttribute('data-jc-theme-navigation'),
+            progress: getComputedStyle(document.documentElement)
+                .getPropertyValue('--jc-progress-thickness').trim(),
+        }))).toEqual({ navigation: 'bottom', progress: '8px' });
 
         let profileName = panel.locator('[data-role="profile-name"]');
         await profileName.fill('');
@@ -148,6 +158,8 @@ test.describe.serial('Theme Studio mobile editor', () => {
                 actionBottom: Math.round(actions.bottom),
                 viewportHeight: innerHeight,
                 minimumTarget: Math.min(...interactive),
+                moduleColumns: getComputedStyle(root.querySelector<HTMLElement>('.jc-theme-module-grid')!)
+                    .gridTemplateColumns.split(' ').length,
             };
         });
         expect(portrait.documentOverflow).toBeLessThanOrEqual(baselineDocumentOverflow + 1);
@@ -156,6 +168,7 @@ test.describe.serial('Theme Studio mobile editor', () => {
         expect(portrait.panelRight).toBeLessThanOrEqual(portrait.viewportWidth + 1);
         expect(portrait.actionBottom).toBeLessThanOrEqual(portrait.viewportHeight + 1);
         expect(portrait.minimumTarget).toBeGreaterThanOrEqual(44);
+        expect(portrait.moduleColumns).toBe(1);
 
         await panel.locator('[data-action="preview-only"]').click();
         await expect(panel).toHaveClass(/jc-theme-preview-only/);

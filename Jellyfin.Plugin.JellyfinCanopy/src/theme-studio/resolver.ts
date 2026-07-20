@@ -29,6 +29,20 @@ export interface ResolveThemeOptions {
     readonly now?: Date;
 }
 
+export interface ResolvedThemePresentation {
+    readonly density: 'compact' | 'cozy' | 'spacious';
+    readonly navigation: 'header' | 'sidebar' | 'pills' | 'bottom';
+    readonly homeHero: 'off' | 'compact' | 'cinematic';
+    readonly details: 'classic' | 'compact' | 'cinematic';
+    readonly seasons: 'list' | 'grid';
+    readonly cardActions: 'hover' | 'always' | 'menu';
+    readonly posterRatio: 'poster' | 'backdrop' | 'square' | 'auto';
+    readonly castShape: 'circle' | 'rounded' | 'square';
+    readonly progressPosition: 'overlay' | 'bottom' | 'floating';
+    readonly watchedIndicator: 'corner' | 'floating' | 'check' | 'none';
+    readonly unwatchedIndicator: 'corner' | 'floating' | 'none';
+}
+
 export interface ResolvedTheme {
     readonly profileId: string;
     readonly preset: string;
@@ -45,6 +59,7 @@ export interface ResolvedTheme {
     readonly coarsePointer: boolean;
     readonly focus: 'standard' | 'strong';
     readonly underlineLinks: boolean;
+    readonly presentation: ResolvedThemePresentation;
     readonly tokens: Readonly<Record<string, ThemeTokenValue>>;
 }
 
@@ -157,6 +172,63 @@ function responsiveTokens(profile: ThemeProfile, breakpoint: ThemeBreakpoint): R
     return scope?.Tokens ?? {};
 }
 
+function choiceToken<const T extends string>(
+    tokens: Readonly<Record<string, ThemeTokenValue>>,
+    name: string,
+    allowed: readonly T[],
+    fallback: T,
+): T {
+    const value = tokens[name];
+    return typeof value === 'string' && (allowed as readonly string[]).includes(value)
+        ? value as T : fallback;
+}
+
+function resolvePresentation(
+    tokens: Readonly<Record<string, ThemeTokenValue>>,
+    breakpoint: ThemeBreakpoint,
+): ResolvedThemePresentation {
+    const requestedNavigation = choiceToken(
+        tokens,
+        'layout.navigation',
+        ['auto', 'header', 'sidebar', 'pills', 'bottom'] as const,
+        'auto',
+    );
+    const navigation = requestedNavigation === 'auto'
+        ? breakpoint === 'phone' ? 'bottom'
+            : breakpoint === 'tablet' ? 'pills'
+                : breakpoint === 'tv' ? 'sidebar' : 'header'
+        : requestedNavigation;
+    const requestedSeasons = choiceToken(
+        tokens,
+        'layout.seasons',
+        ['list', 'grid', 'auto'] as const,
+        'auto',
+    );
+    return Object.freeze({
+        density: choiceToken(tokens, 'layout.density', ['compact', 'cozy', 'spacious'] as const, 'cozy'),
+        navigation,
+        homeHero: choiceToken(tokens, 'layout.home-hero', ['off', 'compact', 'cinematic'] as const, 'compact'),
+        details: choiceToken(tokens, 'layout.details', ['classic', 'compact', 'cinematic'] as const, 'classic'),
+        seasons: requestedSeasons === 'auto' ? breakpoint === 'phone' ? 'list' : 'grid' : requestedSeasons,
+        cardActions: choiceToken(tokens, 'layout.card-actions', ['hover', 'always', 'menu'] as const, 'hover'),
+        posterRatio: choiceToken(tokens, 'layout.poster-ratio', ['poster', 'backdrop', 'square', 'auto'] as const, 'auto'),
+        castShape: choiceToken(tokens, 'layout.cast-shape', ['circle', 'rounded', 'square'] as const, 'circle'),
+        progressPosition: choiceToken(tokens, 'progress.position', ['overlay', 'bottom', 'floating'] as const, 'bottom'),
+        watchedIndicator: choiceToken(
+            tokens,
+            'progress.watched-indicator',
+            ['corner', 'floating', 'check', 'none'] as const,
+            'check',
+        ),
+        unwatchedIndicator: choiceToken(
+            tokens,
+            'progress.unwatched-indicator',
+            ['corner', 'floating', 'none'] as const,
+            'corner',
+        ),
+    });
+}
+
 /** Pure, deterministic profile + capability resolution. */
 export function resolveTheme(
     configuration: UserThemeConfiguration,
@@ -248,6 +320,7 @@ export function resolveTheme(
         coarsePointer: media.coarsePointer,
         focus,
         underlineLinks,
+        presentation: resolvePresentation(tokens, breakpoint),
         tokens: Object.freeze(tokens),
     });
 }

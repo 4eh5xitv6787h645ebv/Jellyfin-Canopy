@@ -135,7 +135,8 @@ beforeEach(() => {
     vi.stubGlobal('cancelAnimationFrame', vi.fn((id: number) => { frames.delete(id); }));
     document.documentElement.removeAttribute('data-theme');
     document.documentElement.removeAttribute('data-layout');
-    document.documentElement.classList.remove('layout-tv');
+    document.documentElement.classList.remove('jc-legacy-layout', 'layout-tv');
+    document.documentElement.classList.add('jc-modern-layout');
     document.body.classList.remove('layout-tv');
     JC.identity.transition('', '', 'theme-editor-test-logout');
     identity = JC.identity.transition('server-a', 'user-a', 'theme-editor-test-login')!;
@@ -186,6 +187,9 @@ afterEach(() => {
     JC.pluginConfig = originalPluginConfig;
     JC.saveUserSettings = originalSave;
     JC.t = originalT;
+    document.documentElement.classList.remove('jc-modern-layout', 'jc-legacy-layout', 'layout-tv');
+    document.documentElement.removeAttribute('data-layout');
+    document.body.classList.remove('layout-tv');
     vi.unstubAllGlobals();
     vi.useRealTimers();
     vi.restoreAllMocks();
@@ -254,6 +258,71 @@ describe('Theme Studio responsive settings editor', () => {
             Profiles: [expect.objectContaining({ BasePreset: 'oled', Palette: 'neutral' })],
         }), { allowScheduling: false });
         expect(button('apply').disabled).toBe(false);
+    });
+
+    it('previews presentation controls as sparse, reversible token overrides', () => {
+        wireThemeStudioEditor(context());
+        expect(panel.querySelectorAll('[data-field="presentation-token"]')).toHaveLength(12);
+        expect(panel.querySelectorAll('.jc-theme-module-group')).toHaveLength(3);
+
+        let navigation = panel.querySelector<HTMLSelectElement>(
+            '[data-field="presentation-token"][data-token="layout.navigation"]',
+        )!;
+        expect(navigation.value).toBe('__preset__');
+        navigation.value = 'sidebar';
+        navigation.dispatchEvent(new Event('change', { bubbles: true }));
+
+        const thickness = panel.querySelector<HTMLSelectElement>(
+            '[data-field="presentation-token"][data-token="progress.thickness"]',
+        )!;
+        thickness.value = '7';
+        thickness.dispatchEvent(new Event('change', { bubbles: true }));
+        flushFrames();
+
+        let draft = preview.mock.lastCall?.[0] as UserThemeConfiguration;
+        expect(draft.Profiles[0].Tokens).toMatchObject({
+            'layout.navigation': 'sidebar',
+            'progress.thickness': 7,
+        });
+        expect(button('apply').disabled).toBe(false);
+
+        navigation = panel.querySelector<HTMLSelectElement>(
+            '[data-field="presentation-token"][data-token="layout.navigation"]',
+        )!;
+        navigation.value = '__preset__';
+        navigation.dispatchEvent(new Event('change', { bubbles: true }));
+        flushFrames();
+
+        draft = preview.mock.lastCall?.[0] as UserThemeConfiguration;
+        expect(draft.Profiles[0].Tokens).not.toHaveProperty('layout.navigation');
+        expect(draft.Profiles[0].Tokens).toHaveProperty('progress.thickness', 7);
+    });
+
+    it('shows the resolved preset fallback and omits the unsupported unwatched check choice', () => {
+        vi.stubGlobal('innerWidth', 1200);
+        vi.stubGlobal('innerHeight', 800);
+        configuration.Profiles[0].Tokens = {
+            'layout.navigation': 'sidebar',
+            'progress.unwatched-indicator': 'check',
+        };
+        JC.t = (key: string, params?: Record<string, unknown>) => key === 'theme_studio_choice_preset'
+            ? `Default: ${String(params?.value)}`
+            : key;
+
+        wireThemeStudioEditor(context());
+
+        const navigation = panel.querySelector<HTMLSelectElement>(
+            '[data-field="presentation-token"][data-token="layout.navigation"]',
+        )!;
+        expect(navigation.querySelector<HTMLOptionElement>('option[value="__preset__"]')?.textContent)
+            .toBe('Default: theme_studio_value_header');
+
+        const unwatched = panel.querySelector<HTMLSelectElement>(
+            '[data-field="presentation-token"][data-token="progress.unwatched-indicator"]',
+        )!;
+        expect([...unwatched.options].map((entry) => entry.value)).toEqual([
+            '__preset__', 'corner', 'floating', 'none',
+        ]);
     });
 
     it('refreshes the preview card for responsive, system-scheme, and host-theme changes', async () => {
@@ -329,6 +398,43 @@ describe('Theme Studio responsive settings editor', () => {
         cleanups[0]();
         expect(cancelPreview).toHaveBeenCalledTimes(2);
         expect(panel.classList.contains('jc-theme-preview-only')).toBe(false);
+    });
+
+    it('disables page preview on legacy, tablet-only, and TV surfaces', async () => {
+        vi.stubGlobal('innerWidth', 390);
+        vi.stubGlobal('innerHeight', 844);
+        wireThemeStudioEditor(context());
+        expect(panel.querySelector('#jc-theme-modern-scope')?.textContent)
+            .toBe('theme_studio_modern_scope');
+        expect(button('preview-only').disabled).toBe(false);
+
+        document.documentElement.classList.remove('jc-modern-layout');
+        document.documentElement.classList.add('jc-legacy-layout');
+        await Promise.resolve();
+        flushFrames();
+        expect(button('preview-only').disabled).toBe(true);
+        button('preview-only').click();
+        expect(panel.classList.contains('jc-theme-preview-only')).toBe(false);
+
+        document.documentElement.classList.remove('jc-legacy-layout');
+        document.documentElement.classList.add('jc-modern-layout');
+        window.innerWidth = 800;
+        window.innerHeight = 900;
+        window.dispatchEvent(new Event('resize'));
+        flushFrames();
+        expect(button('preview-only').disabled).toBe(true);
+
+        window.innerWidth = 390;
+        window.innerHeight = 844;
+        document.documentElement.setAttribute('data-layout', 'tv');
+        await Promise.resolve();
+        flushFrames();
+        expect(button('preview-only').disabled).toBe(true);
+
+        document.documentElement.removeAttribute('data-layout');
+        await Promise.resolve();
+        flushFrames();
+        expect(button('preview-only').disabled).toBe(false);
     });
 
     it('cancels a queued preview frame before discarding the draft', () => {

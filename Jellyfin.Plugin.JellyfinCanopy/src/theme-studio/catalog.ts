@@ -248,7 +248,6 @@ const PRESET_DEFINITIONS = deepFreeze<readonly ThemePresetVersionDefinition[]>([
         modes: ALL_MODES, tokens: {}, modeTokens: {},
         responsive: {
             phone: { 'layout.navigation': 'bottom', 'layout.card-actions': 'always' },
-            tv: { 'layout.card-actions': 'always', 'elevation.focus-ring': 'strong' },
         },
         surfaceCoverage: THEME_SURFACE_COVERAGE, accessibilityFallback: 'system-first',
         performanceTier: 'balanced', provenance: ['jellyfin-web', 'better-styles', 'elegantfin'],
@@ -265,7 +264,6 @@ const PRESET_DEFINITIONS = deepFreeze<readonly ThemePresetVersionDefinition[]>([
         },
         modeTokens: {}, responsive: {
             phone: { 'layout.navigation': 'bottom', 'layout.card-actions': 'always' },
-            tv: { 'motion.profile': 'off', 'elevation.focus-ring': 'strong' },
         },
         surfaceCoverage: THEME_SURFACE_COVERAGE, accessibilityFallback: 'system-first',
         performanceTier: 'minimal', provenance: ['better-styles', 'finimalism'],
@@ -286,7 +284,6 @@ const PRESET_DEFINITIONS = deepFreeze<readonly ThemePresetVersionDefinition[]>([
                 'layout.home-hero': 'compact', 'layout.navigation': 'bottom',
                 'layout.card-actions': 'always', 'motion.profile': 'calm',
             },
-            tv: { 'layout.card-actions': 'always', 'elevation.focus-ring': 'strong' },
         },
         surfaceCoverage: THEME_SURFACE_COVERAGE, accessibilityFallback: 'system-first',
         performanceTier: 'full', provenance: ['netfin', 'flow', 'ijelly'],
@@ -294,7 +291,7 @@ const PRESET_DEFINITIONS = deepFreeze<readonly ThemePresetVersionDefinition[]>([
     },
     {
         id: 'glass', version: 1, name: 'Glass',
-        description: 'Layered translucent material with explicit phone and TV fallbacks.',
+        description: 'Layered translucent material with an explicit low-cost phone fallback.',
         modes: ALL_MODES,
         tokens: {
             'effects.level': 'full', 'effects.material': 'glass', 'effects.blur': 24,
@@ -305,10 +302,6 @@ const PRESET_DEFINITIONS = deepFreeze<readonly ThemePresetVersionDefinition[]>([
             phone: {
                 'effects.level': 'balanced', 'effects.blur': 10, 'layout.navigation': 'bottom',
                 'layout.card-actions': 'always',
-            },
-            tv: {
-                'effects.level': 'minimal', 'effects.material': 'solid', 'effects.blur': 0,
-                'player.control-material': 'solid', 'player.pause-screen-material': 'solid',
             },
         },
         surfaceCoverage: THEME_SURFACE_COVERAGE, accessibilityFallback: 'system-first',
@@ -326,7 +319,6 @@ const PRESET_DEFINITIONS = deepFreeze<readonly ThemePresetVersionDefinition[]>([
         },
         modeTokens: {}, responsive: {
             phone: { 'layout.navigation': 'bottom', 'layout.card-actions': 'always' },
-            tv: { 'layout.card-actions': 'always', 'elevation.focus-ring': 'strong' },
         },
         surfaceCoverage: THEME_SURFACE_COVERAGE, accessibilityFallback: 'system-first',
         performanceTier: 'balanced', provenance: ['gnat', 'spookyfin'],
@@ -346,15 +338,15 @@ const PRESET_DEFINITIONS = deepFreeze<readonly ThemePresetVersionDefinition[]>([
                 'layout.density': 'cozy', 'space.scale': 'cozy', 'layout.navigation': 'bottom',
                 'layout.card-actions': 'always',
             },
-            tv: { 'layout.density': 'cozy', 'space.scale': 'cozy', 'elevation.focus-ring': 'strong' },
         },
         surfaceCoverage: THEME_SURFACE_COVERAGE, accessibilityFallback: 'system-first',
         performanceTier: 'minimal', provenance: ['elegantfin', 'neutralfin', 'jellygray'],
         thumbnail: { kind: 'verified-live-capture', captureId: 'preset-studio-v1' },
     },
     {
-        id: 'tv-focus', version: 1, name: 'TV Focus',
-        description: 'Remote-first focus, always-visible actions, and overscan-conscious spacing.',
+        // The persisted identifier is frozen for compatibility; this preset has no TV-layout behavior.
+        id: 'tv-focus', version: 1, name: 'Focus',
+        description: 'Input-first focus, always-visible actions, and generous modern touch targets.',
         modes: ALL_MODES,
         tokens: {
             'layout.card-actions': 'always', 'elevation.focus-ring': 'strong',
@@ -364,10 +356,6 @@ const PRESET_DEFINITIONS = deepFreeze<readonly ThemePresetVersionDefinition[]>([
         },
         modeTokens: {}, responsive: {
             phone: { 'layout.navigation': 'bottom', 'icon.size-scale': 1 },
-            tv: {
-                'layout.density': 'spacious', 'space.scale': 'spacious',
-                'space.page-gutter': 2, 'icon.size-scale': 1.2,
-            },
         },
         surfaceCoverage: THEME_SURFACE_COVERAGE, accessibilityFallback: 'strong',
         performanceTier: 'minimal', provenance: ['infinitv', 'ijelly'],
@@ -386,7 +374,6 @@ const PRESET_DEFINITIONS = deepFreeze<readonly ThemePresetVersionDefinition[]>([
         },
         responsive: {
             phone: { 'layout.navigation': 'bottom', 'layout.card-actions': 'always' },
-            tv: { 'motion.profile': 'off', 'elevation.focus-ring': 'strong' },
         },
         surfaceCoverage: THEME_SURFACE_COVERAGE, accessibilityFallback: 'system-first',
         performanceTier: 'minimal', provenance: ['scyfin'],
@@ -404,7 +391,6 @@ const PRESET_DEFINITIONS = deepFreeze<readonly ThemePresetVersionDefinition[]>([
         },
         modeTokens: {}, responsive: {
             phone: { 'layout.navigation': 'bottom', 'shape.border-width': 3 },
-            tv: { 'shape.border-width': 3, 'icon.size-scale': 1.2 },
         },
         surfaceCoverage: THEME_SURFACE_COVERAGE, accessibilityFallback: 'strong',
         performanceTier: 'minimal', provenance: ['jellyfin-web'],

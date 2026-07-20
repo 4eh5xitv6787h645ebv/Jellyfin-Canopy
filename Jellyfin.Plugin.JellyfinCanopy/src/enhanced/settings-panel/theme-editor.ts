@@ -10,11 +10,17 @@ import {
     THEME_PROFILE_MAX_COUNT,
     ThemeEditorState,
 } from '../../theme-studio/editor-state';
-import { resolveTheme, type ThemeMediaState } from '../../theme-studio/resolver';
+import {
+    resolveBreakpoint,
+    resolveTheme,
+    type ResolvedThemePresentation,
+    type ThemeMediaState,
+} from '../../theme-studio/resolver';
 import { parseUserThemeConfiguration } from '../../theme-studio/schema';
 import type {
     ThemeExportDocument,
     ThemeProfile,
+    ThemeTokenValue,
     UserThemeConfiguration,
 } from '../../types/jc';
 import type { PanelContext } from './panel';
@@ -50,7 +56,7 @@ const PRESET_KEYS: Readonly<Record<string, string>> = Object.freeze({
     glass: 'theme_studio_preset_glass',
     material: 'theme_studio_preset_material',
     studio: 'theme_studio_preset_studio',
-    'tv-focus': 'theme_studio_preset_tv_focus',
+    'tv-focus': 'theme_studio_preset_focus',
     oled: 'theme_studio_preset_oled',
     'high-contrast': 'theme_studio_preset_high_contrast',
 });
@@ -96,6 +102,73 @@ const ACCENT_KEYS: Readonly<Record<string, string>> = Object.freeze({
     neutral: 'theme_studio_accent_neutral',
 });
 
+const PRESENTATION_DEFAULT = '__preset__';
+
+interface PresentationTokenControl {
+    readonly token: string;
+    readonly labelKey: string;
+    readonly group: 'layout' | 'media' | 'status';
+    readonly values: readonly ThemeTokenValue[];
+}
+
+const PRESENTATION_TOKEN_CONTROLS: readonly PresentationTokenControl[] = Object.freeze([
+    { token: 'layout.density', labelKey: 'theme_studio_density', group: 'layout', values: ['compact', 'cozy', 'spacious'] },
+    { token: 'layout.navigation', labelKey: 'theme_studio_navigation', group: 'layout', values: ['auto', 'header', 'sidebar', 'pills', 'bottom'] },
+    { token: 'layout.home-hero', labelKey: 'theme_studio_home_hero', group: 'layout', values: ['off', 'compact', 'cinematic'] },
+    { token: 'layout.details', labelKey: 'theme_studio_details_layout', group: 'layout', values: ['classic', 'compact', 'cinematic'] },
+    { token: 'layout.seasons', labelKey: 'theme_studio_seasons_layout', group: 'layout', values: ['auto', 'list', 'grid'] },
+    { token: 'layout.card-actions', labelKey: 'theme_studio_card_actions', group: 'media', values: ['hover', 'always', 'menu'] },
+    { token: 'layout.poster-ratio', labelKey: 'theme_studio_poster_ratio', group: 'media', values: ['auto', 'poster', 'backdrop', 'square'] },
+    { token: 'layout.cast-shape', labelKey: 'theme_studio_cast_shape', group: 'media', values: ['circle', 'rounded', 'square'] },
+    { token: 'progress.position', labelKey: 'theme_studio_progress_position', group: 'status', values: ['overlay', 'bottom', 'floating'] },
+    { token: 'progress.thickness', labelKey: 'theme_studio_progress_thickness', group: 'status', values: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] },
+    { token: 'progress.watched-indicator', labelKey: 'theme_studio_watched_indicator', group: 'status', values: ['corner', 'floating', 'check', 'none'] },
+    { token: 'progress.unwatched-indicator', labelKey: 'theme_studio_unwatched_indicator', group: 'status', values: ['corner', 'floating', 'none'] },
+]);
+
+const PRESENTATION_VALUE_KEYS: Readonly<Record<string, string>> = Object.freeze({
+    auto: 'theme_studio_value_auto',
+    compact: 'theme_studio_value_compact',
+    cozy: 'theme_studio_value_cozy',
+    spacious: 'theme_studio_value_spacious',
+    header: 'theme_studio_value_header',
+    sidebar: 'theme_studio_value_sidebar',
+    pills: 'theme_studio_value_pills',
+    bottom: 'theme_studio_value_bottom',
+    off: 'theme_studio_choice_off',
+    cinematic: 'theme_studio_value_cinematic',
+    classic: 'theme_studio_value_classic',
+    list: 'theme_studio_value_list',
+    grid: 'theme_studio_value_grid',
+    hover: 'theme_studio_value_hover',
+    always: 'theme_studio_value_always',
+    menu: 'theme_studio_value_menu',
+    poster: 'theme_studio_value_poster',
+    backdrop: 'theme_studio_value_backdrop',
+    square: 'theme_studio_value_square',
+    circle: 'theme_studio_value_circle',
+    rounded: 'theme_studio_value_rounded',
+    overlay: 'theme_studio_value_overlay',
+    floating: 'theme_studio_value_floating',
+    corner: 'theme_studio_value_corner',
+    check: 'theme_studio_value_check',
+    none: 'theme_studio_value_none',
+});
+
+const PRESENTATION_RESULT_KEYS: Readonly<Partial<Record<string, keyof ResolvedThemePresentation>>> = Object.freeze({
+    'layout.density': 'density',
+    'layout.navigation': 'navigation',
+    'layout.home-hero': 'homeHero',
+    'layout.details': 'details',
+    'layout.seasons': 'seasons',
+    'layout.card-actions': 'cardActions',
+    'layout.poster-ratio': 'posterRatio',
+    'layout.cast-shape': 'castShape',
+    'progress.position': 'progressPosition',
+    'progress.watched-indicator': 'watchedIndicator',
+    'progress.unwatched-indicator': 'unwatchedIndicator',
+});
+
 function t(key: string, params?: Record<string, unknown>): string {
     const value = JC.t?.(key, params);
     return value && value !== key ? value : key;
@@ -103,6 +176,64 @@ function t(key: string, params?: Record<string, unknown>): string {
 
 function option(value: string, label: string, selected: boolean): string {
     return `<option value="${escapeHtml(value)}"${selected ? ' selected' : ''}>${escapeHtml(label)}</option>`;
+}
+
+function presentationValueLabel(value: ThemeTokenValue): string {
+    if (typeof value === 'number') return t('theme_studio_value_pixels', { value });
+    if (typeof value === 'boolean') return t(`theme_studio_choice_${value ? 'on' : 'off'}`);
+    return t(PRESENTATION_VALUE_KEYS[value] ?? value);
+}
+
+function presentationTokenControl(
+    control: PresentationTokenControl,
+    active: ThemeProfile,
+    effectiveDefault: ThemeTokenValue,
+): string {
+    const overridden = Object.prototype.hasOwnProperty.call(active.Tokens, control.token);
+    const defaultLabel = t('theme_studio_choice_preset', {
+        value: presentationValueLabel(effectiveDefault),
+    });
+    return `<label class="jc-theme-field"><span>${escapeHtml(t(control.labelKey))}</span>
+        <select class="jc-theme-control" data-field="presentation-token" data-token="${escapeHtml(control.token)}">
+            ${option(PRESENTATION_DEFAULT, defaultLabel, !overridden)}
+            ${control.values.map((value) => option(String(value), presentationValueLabel(value), overridden && active.Tokens[control.token] === value)).join('')}
+        </select>
+    </label>`;
+}
+
+function presentationControls(configuration: UserThemeConfiguration, active: ThemeProfile): string {
+    const media = previewMedia();
+    const groups = [
+        { id: 'layout', title: 'theme_studio_group_layout', hint: 'theme_studio_group_layout_hint' },
+        { id: 'media', title: 'theme_studio_group_media', hint: 'theme_studio_group_media_hint' },
+        { id: 'status', title: 'theme_studio_group_status', hint: 'theme_studio_group_status_hint' },
+    ] as const;
+    return groups.map((group) => `<fieldset class="jc-theme-module-group">
+        <legend>${escapeHtml(t(group.title))}</legend>
+        <p class="jc-theme-hint">${escapeHtml(t(group.hint))}</p>
+        <div class="jc-theme-module-grid">
+            ${PRESENTATION_TOKEN_CONTROLS.filter((control) => control.group === group.id)
+                .map((control) => {
+                    const fallbackConfiguration = clone(configuration);
+                    const fallbackProfile = fallbackConfiguration.Profiles.find((profile) => profile.Id === active.Id);
+                    if (fallbackProfile) delete fallbackProfile.Tokens[control.token];
+                    const fallbackTheme = resolveTheme(
+                        fallbackConfiguration,
+                        media,
+                        { allowScheduling: false },
+                    );
+                    const presentationKey = PRESENTATION_RESULT_KEYS[control.token];
+                    const effectiveDefault = presentationKey
+                        ? fallbackTheme.presentation[presentationKey]
+                        : fallbackTheme.tokens[control.token] ?? control.values[0];
+                    return presentationTokenControl(
+                        control,
+                        active,
+                        effectiveDefault,
+                    );
+                }).join('')}
+        </div>
+    </fieldset>`).join('');
 }
 
 function clone(value: UserThemeConfiguration): UserThemeConfiguration {
@@ -152,6 +283,15 @@ function previewMedia(): ThemeMediaState {
         coarsePointer: mediaMatches('(pointer: coarse)'),
         jellyfinTheme: document.documentElement.getAttribute('data-theme') ?? '',
     };
+}
+
+function presentationSurfaceSupported(): boolean {
+    const root = document.documentElement;
+    if (!root.classList.contains('jc-modern-layout') || root.classList.contains('jc-legacy-layout')) return false;
+    const media = previewMedia();
+    if (media.tv) return false;
+    const breakpoint = resolveBreakpoint(media);
+    return breakpoint === 'phone' || breakpoint === 'desktop' || breakpoint === 'wide';
 }
 
 function resolvedColor(tokens: Readonly<Record<string, unknown>>, name: string, fallback: string): string {
@@ -343,6 +483,10 @@ function editorStyles(): string {
         #jellyfin-canopy-panel .jc-theme-field > span, #jellyfin-canopy-panel .jc-theme-label { font-weight:650; }
         #jellyfin-canopy-panel .jc-theme-hint { color:rgba(255,255,255,.7); font-size:12px; line-height:1.45; }
         #jellyfin-canopy-panel .jc-theme-validation { color:#ffb3b3; }
+        #jellyfin-canopy-panel .jc-theme-module-group { min-width:0; margin:16px 0; border:1px solid rgba(255,255,255,.16); border-radius:12px; padding:12px; }
+        #jellyfin-canopy-panel .jc-theme-module-group legend { padding-inline:6px; font-weight:750; }
+        #jellyfin-canopy-panel .jc-theme-module-group > .jc-theme-hint { margin:0 0 12px; }
+        #jellyfin-canopy-panel .jc-theme-module-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); column-gap:10px; min-width:0; }
         #jellyfin-canopy-panel .jc-theme-control { box-sizing:border-box; width:100%; min-height:44px; border:1px solid rgba(255,255,255,.22); border-radius:9px; background:#101218; color:#fff; padding:9px 11px; font:inherit; }
         #jellyfin-canopy-panel .jc-theme-control:focus-visible, #jellyfin-canopy-panel .jc-theme-button:focus-visible, #jellyfin-canopy-panel .jc-theme-preset:focus-visible { outline:3px solid #00d4ff; outline-offset:2px; }
         #jellyfin-canopy-panel .jc-theme-button { min-height:44px; border:1px solid rgba(255,255,255,.22); border-radius:9px; background:rgba(255,255,255,.08); color:#fff; padding:8px 12px; font:inherit; font-weight:650; cursor:pointer; }
@@ -389,6 +533,7 @@ function editorStyles(): string {
             #jellyfin-canopy-panel { top:var(--jc-panel-visual-top,0px)!important; height:var(--jc-panel-visual-height,100dvh)!important; max-height:var(--jc-panel-visual-height,100dvh)!important; }
             #jellyfin-canopy-panel .jc-pane[data-pane="theme-studio"] { min-width:0; }
             #jellyfin-canopy-panel .jc-theme-studio { grid-template-columns:minmax(0,1fr); }
+            #jellyfin-canopy-panel .jc-theme-module-grid { grid-template-columns:minmax(0,1fr); }
             #jellyfin-canopy-panel .jc-theme-preview-card { position:static; }
             #jellyfin-canopy-panel .jc-theme-mobile-preview { display:inline-flex; }
             #jellyfin-canopy-panel .jc-theme-actions { margin-inline:0; }
@@ -476,7 +621,8 @@ function beginnerEditor(
                 <select class="jc-theme-control" data-field="transparency">${(['system', 'on', 'off'] as const).map((value) => option(value, t(`theme_studio_choice_${value}`), value === active.Accessibility.Transparency)).join('')}</select>
             </label>
         </div>
-        <label class="jc-theme-row" style="min-height:44px"><input type="checkbox" data-field="underline-links"${active.Accessibility.UnderlineLinks ? ' checked' : ''}> <span>${escapeHtml(t('theme_studio_underline_links'))}</span></label>`;
+        <label class="jc-theme-row" style="min-height:44px"><input type="checkbox" data-field="underline-links"${active.Accessibility.UnderlineLinks ? ' checked' : ''}> <span>${escapeHtml(t('theme_studio_underline_links'))}</span></label>
+        ${presentationControls(configuration, active)}`;
 }
 
 function previewCard(configuration: UserThemeConfiguration, active: ThemeProfile): string {
@@ -706,9 +852,11 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         const hasLocalDraft = snapshot.dirty || profileNameDirty();
         const activeProfileName = profileNameProfileId === active.Id ? profileNameText : active.Name;
         const activeProfileNameInvalid = profileNameProfileId === active.Id && profileNameInvalid;
+        const surfaceSupported = presentationSurfaceSupported();
         root.innerHTML = `${editorStyles()}
             <button class="jc-theme-button jc-theme-return" type="button" data-action="return-editor">${escapeHtml(t('theme_studio_return_editor'))}</button>
             <fieldset class="jc-theme-workspace"${busy ? ' disabled' : ''}>
+            <p class="jc-theme-hint" id="jc-theme-modern-scope" role="note">${escapeHtml(t('theme_studio_modern_scope'))}</p>
             <div class="jc-theme-toolbar">
                 <div class="jc-theme-row" role="group" aria-label="${escapeHtml(t('theme_studio_editor_mode'))}">
                     <button class="jc-theme-button" type="button" data-action="editor-mode" data-value="beginner" aria-pressed="${mode === 'beginner'}">${escapeHtml(t('theme_studio_beginner'))}</button>
@@ -718,7 +866,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
                     <button class="jc-theme-button" type="button" data-action="undo"${snapshot.canUndo ? '' : ' disabled'} aria-label="${escapeHtml(t('theme_studio_undo'))}">↶ ${escapeHtml(t('theme_studio_undo'))}</button>
                     <button class="jc-theme-button" type="button" data-action="redo"${snapshot.canRedo ? '' : ' disabled'} aria-label="${escapeHtml(t('theme_studio_redo'))}">↷ ${escapeHtml(t('theme_studio_redo'))}</button>
                     <button class="jc-theme-button" type="button" data-action="reset-profile">↺ ${escapeHtml(t('theme_studio_reset'))}</button>
-                    <button class="jc-theme-button jc-theme-mobile-preview" type="button" data-action="preview-only">${escapeHtml(t('theme_studio_show_preview'))}</button>
+                    <button class="jc-theme-button jc-theme-mobile-preview" type="button" data-action="preview-only" aria-describedby="jc-theme-modern-scope"${surfaceSupported ? '' : ' disabled'}>${escapeHtml(t('theme_studio_show_preview'))}</button>
                 </div>
             </div>
             <div class="jc-theme-studio">
@@ -1326,7 +1474,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         if (!state || saving || loading) return;
         const value = target.value;
         const mutatesDraft = ['profile', 'palette', 'accent', 'motion', 'contrast', 'transparency',
-            'underline-links'].includes(target.dataset.field ?? '');
+            'underline-links', 'presentation-token'].includes(target.dataset.field ?? '');
         if (mutatesDraft && !flushExpert(false)) {
             render();
             return;
@@ -1343,6 +1491,22 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         else if (target.dataset.field === 'transparency') changed(state.updateActiveProfile((profile) => { profile.Accessibility.Transparency = value as ThemeProfile['Accessibility']['Transparency']; }));
         else if (target.dataset.field === 'underline-links' && target instanceof HTMLInputElement) {
             changed(state.updateActiveProfile((profile) => { profile.Accessibility.UnderlineLinks = target.checked; }));
+        } else if (target.dataset.field === 'presentation-token') {
+            const control = PRESENTATION_TOKEN_CONTROLS.find((candidate) => candidate.token === target.dataset.token);
+            if (!control) {
+                render();
+                return;
+            }
+            if (value === PRESENTATION_DEFAULT) {
+                changed(state.updateActiveProfile((profile) => { delete profile.Tokens[control.token]; }));
+                return;
+            }
+            const tokenValue = control.values.find((candidate) => String(candidate) === value);
+            if (tokenValue === undefined) {
+                render();
+                return;
+            }
+            changed(state.updateActiveProfile((profile) => { profile.Tokens[control.token] = tokenValue; }));
         } else if (target.dataset.field === 'import-file' && target instanceof HTMLInputElement && target.files?.[0]) {
             void stageImport(target.files[0]);
         }

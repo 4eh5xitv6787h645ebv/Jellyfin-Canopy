@@ -6,7 +6,7 @@ import type {
     ThemeStudioRuntimeApi,
     UserThemeConfiguration,
 } from '../types/jc';
-import { resolveTheme, type ResolvedTheme, type ThemeMediaState } from './resolver';
+import { resolveBreakpoint, resolveTheme, type ResolvedTheme, type ThemeMediaState } from './resolver';
 import { parseUserThemeConfiguration } from './schema';
 import {
     COMMITTED_STYLE_ID,
@@ -34,6 +34,17 @@ const ROOT_ATTRIBUTES = Object.freeze([
     'data-jc-theme-hover',
     'data-jc-theme-forced-colors',
     'data-jc-theme-route',
+    'data-jc-theme-density',
+    'data-jc-theme-navigation',
+    'data-jc-theme-home-hero',
+    'data-jc-theme-details',
+    'data-jc-theme-seasons',
+    'data-jc-theme-card-actions',
+    'data-jc-theme-poster-ratio',
+    'data-jc-theme-cast-shape',
+    'data-jc-theme-progress-position',
+    'data-jc-theme-watched-indicator',
+    'data-jc-theme-unwatched-indicator',
 ]);
 
 const MEDIA_QUERIES = Object.freeze({
@@ -111,6 +122,12 @@ function tvLayout(): boolean {
         || document.documentElement.getAttribute('data-layout') === 'tv';
 }
 
+function modernLayout(): boolean {
+    const root = document.documentElement;
+    return root.classList.contains('jc-modern-layout')
+        && !root.classList.contains('jc-legacy-layout');
+}
+
 export class ThemeStudioRuntime {
     readonly #scope: FeatureScope;
     readonly #media = new Map<MediaName, MediaQueryList>();
@@ -157,7 +174,10 @@ export class ThemeStudioRuntime {
         }
 
         const observer = new MutationObserver(refresh);
-        observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+        observer.observe(document.documentElement, {
+            attributes: true,
+            attributeFilter: ['class', 'data-theme'],
+        });
         this.#cleanups.push(() => observer.disconnect());
 
         const events = window.Events;
@@ -352,7 +372,7 @@ export class ThemeStudioRuntime {
     }
 
     preview(value: unknown, options: ThemeStudioPreviewOptions = {}): boolean {
-        if (this.#disposed || !this.#scope.isCurrent() || !this.#configuration) return false;
+        if (this.#disposed || !this.#scope.isCurrent() || !this.#configuration || !this.#surfaceSupported()) return false;
         const configuration = parseUserThemeConfiguration(value);
         if (!configuration) return false;
         this.#previewConfiguration = configuration;
@@ -368,7 +388,8 @@ export class ThemeStudioRuntime {
         if (presentationOwner !== this) return;
         removeStyle(PREVIEW_STYLE_ID);
         document.documentElement.removeAttribute('data-jc-theme-preview');
-        if (!this.#disposed && this.#configuration && this.#scope.isCurrent() && !this.#dashboardBlocked()) {
+        if (!this.#disposed && this.#configuration && this.#scope.isCurrent()
+            && this.#surfaceSupported() && !this.#dashboardBlocked()) {
             this.#applyCommitted();
         }
     }
@@ -381,6 +402,13 @@ export class ThemeStudioRuntime {
         }
         if (!this.#configuration) {
             this.#clearPresentation();
+            return;
+        }
+        if (!this.#surfaceSupported()) {
+            this.#previewConfiguration = null;
+            this.#previewAllowScheduling = true;
+            this.#clearPresentation();
+            this.#setDiagnostics('inactive', null);
             return;
         }
         if (this.#dashboardBlocked()) {
@@ -429,6 +457,12 @@ export class ThemeStudioRuntime {
 
     #dashboardBlocked(): boolean {
         return dashboardRoute() && JC.pluginConfig?.ThemeStudioDashboardEnabled !== true;
+    }
+
+    #surfaceSupported(): boolean {
+        if (!modernLayout() || tvLayout()) return false;
+        const breakpoint = resolveBreakpoint(this.#captureMedia());
+        return breakpoint === 'phone' || breakpoint === 'desktop' || breakpoint === 'wide';
     }
 
     #matches(name: MediaName): boolean {
@@ -486,6 +520,17 @@ export class ThemeStudioRuntime {
         root.setAttribute('data-jc-theme-hover', theme.hover ? 'hover' : 'none');
         root.setAttribute('data-jc-theme-forced-colors', theme.forcedColors ? 'active' : 'none');
         root.setAttribute('data-jc-theme-route', routeScope());
+        root.setAttribute('data-jc-theme-density', theme.presentation.density);
+        root.setAttribute('data-jc-theme-navigation', theme.presentation.navigation);
+        root.setAttribute('data-jc-theme-home-hero', theme.presentation.homeHero);
+        root.setAttribute('data-jc-theme-details', theme.presentation.details);
+        root.setAttribute('data-jc-theme-seasons', theme.presentation.seasons);
+        root.setAttribute('data-jc-theme-card-actions', theme.presentation.cardActions);
+        root.setAttribute('data-jc-theme-poster-ratio', theme.presentation.posterRatio);
+        root.setAttribute('data-jc-theme-cast-shape', theme.presentation.castShape);
+        root.setAttribute('data-jc-theme-progress-position', theme.presentation.progressPosition);
+        root.setAttribute('data-jc-theme-watched-indicator', theme.presentation.watchedIndicator);
+        root.setAttribute('data-jc-theme-unwatched-indicator', theme.presentation.unwatchedIndicator);
     }
 
     #applyPreview(): void {

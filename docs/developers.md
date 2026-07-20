@@ -244,7 +244,7 @@ POST /JellyfinCanopy/user-settings/{userId}/theme.json/migrate-jellyfish
 
 The first GET atomically creates the administrator-selected defaults. Existing older schemas are migrated through pure ordered transformations under the same per-user file lock; a migration advances `Revision`. Reads return `ETag: "<revision>"` and `X-JC-Content-Hash`. A complete POST must send that strong revision as both `If-Match: "<revision>"` and body `Revision`; missing evidence returns `428`, stale evidence returns `409` with authoritative state, and a successful mutation advances the revision exactly once.
 
-Schema 2 persists PascalCase names exactly as represented by the TypeScript interfaces. Each profile contains a curated base preset, palette/accent/mode, a strict token map, accessibility preferences, and independent phone, tablet, desktop, wide, and TV override maps. Token keys and JSON value types are allowlisted; colors are `#RRGGBB` or `#RRGGBBAA`, enumerations are exact strings, and numeric values have explicit ranges. The schema-1-to-2 migration preserves curated values, normalizes a formerly open palette identifier to `canopy-night`, and normalizes a formerly open accent identifier to `palette`; it never imports external CSS.
+Schema 2 persists PascalCase names exactly as represented by the TypeScript interfaces. Each profile contains a curated base preset, palette/accent/mode, a strict token map, accessibility preferences, and independent phone, tablet, desktop, wide, and TV override maps. The tablet and TV maps remain dormant compatibility data for possible future projects; the current runtime activates only on modern phone and desktop/wide browser surfaces. Token keys and JSON value types are allowlisted; colors are `#RRGGBB` or `#RRGGBBAA`, enumerations are exact strings, and numeric values have explicit ranges. The schema-1-to-2 migration preserves curated values, normalizes a formerly open palette identifier to `canopy-night`, and normalizes a formerly open accent identifier to `palette`; it never imports external CSS.
 
 ```json
 {
@@ -285,7 +285,7 @@ Export omits the revision and legacy-migration evidence and deep-clones the shar
 
 ### Theme Studio curated catalog
 
-The client catalog in `src/theme-studio/catalog.ts` is immutable, schema-validated data rather than executable third-party CSS. It ships nine version-1 base presets: Canopy, Minimal, Cinematic, Glass, Material, Studio, TV Focus, OLED, and High Contrast. Presets stay orthogonal to 24 palettes and 11 accents, so choosing a layout/effects character does not silently replace a user's color choice. Every preset declares dark, light, and system-mode support, phone/tablet/desktop/wide/TV fallbacks, complete Jellyfin/Canopy surface coverage, an accessibility fallback, a performance tier, and a verified-live-capture thumbnail identifier.
+The client catalog in `src/theme-studio/catalog.ts` is immutable, schema-validated data rather than executable third-party CSS. It ships nine version-1 base presets: Canopy, Minimal, Cinematic, Glass, Material, Studio, Focus, OLED, and High Contrast. Presets stay orthogonal to 24 palettes and 11 accents, so choosing a layout/effects character does not silently replace a user's color choice. Every preset declares dark, light, and system-mode support, modern phone and desktop/wide fallbacks, complete Jellyfin/Canopy surface coverage, an accessibility fallback, a performance tier, and a verified-live-capture thumbnail identifier.
 
 Profiles normally resolve the latest catalog version. Setting `FreezePresetVersion` requires an exact positive `PresetVersion`; an unavailable frozen version fails closed to Canopy version 1 and publishes `data-jc-theme-preset-fallback="true"`. User token maps remain sparse override diffs and are applied after the palette, preset, responsive preset fallback, and accent. This preserves user intent across compatible catalog updates without copying a mutable preset snapshot into every profile.
 
@@ -295,18 +295,29 @@ The palette inventory includes neutral, vivid, attributed Catppuccin/Dracula ada
 
 ### Theme Studio client runtime
 
-Theme Studio is an import-pure, identity-scoped lazy feature. When the administrator enables it, one feature generation performs one authenticated `theme.json` read, validates the complete response against the browser copy of schema 2, and then resolves one active profile. An oversized response, unknown field, unsupported token, read failure, obsolete identity, or activation failure removes the Theme Studio presentation and leaves Jellyfin's selected base theme in control. The runtime never stores CSS, walks components for computed styles, or creates a style element per component.
+Theme Studio is an import-pure, identity-scoped lazy feature. When the administrator enables it, one feature generation performs one authenticated `theme.json` read, validates the complete response against the browser copy of schema 2, and then resolves one active profile. Presentation is deliberately limited to Jellyfin's modern MUI layout on phone and desktop/wide browser breakpoints. Legacy, tablet-only, and TV layouts retain the stock Jellyfin theme: preview returns false and the runtime publishes no Theme Studio style layer or root attribute. An oversized response, unknown field, unsupported token, read failure, obsolete identity, unsupported layout, or activation failure removes the Theme Studio presentation and leaves Jellyfin's selected base theme in control. The runtime never stores CSS, walks components for computed styles, or creates a style element per component.
 
-The integration boundary is pinned to Jellyfin Web commit `3d7adb53480f02164041fdd983b3f7abc28d0fd9`: `src/themes/index.ts` configures MUI CSS variables with prefix `jf` and selector `[data-theme="%s"]`, while `src/themes/_base/_theme.scss` exposes the classic-layout bridge. Jellyfin alone owns root `data-theme` and the document `THEME_CHANGE` event. Canopy observes both and recomputes its bounded layer without writing `data-theme` or reloading the page.
+The integration boundary is pinned to Jellyfin Web commit `3d7adb53480f02164041fdd983b3f7abc28d0fd9`: `src/themes/index.ts` configures MUI CSS variables with prefix `jf` and selector `[data-theme="%s"]`. Jellyfin alone owns root `data-theme`, layout selection, and the document `THEME_CHANGE` event. Canopy observes them and recomputes its bounded modern-only layer without writing `data-theme`, changing layout, or reloading the page.
 
 The committed and preview style layers have stable IDs `jc-theme-studio-committed` and `jc-theme-studio-preview`. Preview is appended later with equal selector specificity and can be removed independently. They deliberately do not use the CSS `@layer` at-rule: Jellyfin's own MUI variables are unlayered, and an author cascade layer would always lose to those declarations. The runtime publishes semantic `--jc-*` variables and bridges the pinned Jellyfin roles for background/default image/paper, text, primary/error, divider, action states and opacities, AppBar, filled inputs, buttons, snackbar, and `--jf-card-borderRadius`. Guard tests name those variables exactly so an upstream rename requires an explicit compatibility review.
 
-Two versioned adapters cover gaps not represented by official variables:
+One base adapter covers gaps not represented by official variables: `focus-v12` supplies keyboard focus and optional link-underlining behavior under a bounded modern-layout route scope.
 
-- `legacy-v12-base-surfaces` targets only `.jc-legacy-layout` under an active `data-jc-theme-route` scope.
-- `focus-v12` supplies keyboard focus and optional link-underlining behavior under the same bounded route scope in both Jellyfin 12 layouts.
+Seven additional Jellyfin 12 presentation modules consume the same generated layer. Their selector inventory is machine-readable in `src/theme-studio/presentation.ts`, and each module declares its modern MUI or modern-page host roles:
 
-Both adapters are serialized once into the generation-owned layer and are therefore idempotent. Route scope is one of `home`, `browse`, `details`, `player`, `dashboard`, or `other`. The administrator dashboard is a recovery space by default: the runtime removes committed and preview layers on dashboard/configuration routes unless `ThemeStudioDashboardEnabled` is explicitly enabled. Even when enabled, only the typed token bridge and the two bounded adapters apply.
+| Adapter | Stable host roles | Theme choices |
+| --- | --- | --- |
+| `shell-navigation-v12` | MUI app bar, toolbar, drawer, buttons, and logical page padding | density; header, sidebar, pill, or bottom navigation |
+| `home-hero-v12` | Home section zero and its existing first card | off, compact, or cinematic hero |
+| `media-cards-v12` | Card box, image, footer, actions, rows, and grids | artwork ratio, action visibility, radius, gap, and lift |
+| `details-cast-v12` | Details backdrop/content/actions/metadata and cast cards | classic, compact, or cinematic details; cast shape |
+| `seasons-v12` | Existing season/episode containers and cards | responsive auto, list, or grid |
+| `progress-indicators-v12` | Progress bar, played indicator, and count indicator | position, thickness, watched, and unwatched cues |
+| `dialogs-forms-v12` | Dialogs, inputs, buttons, loading, empty, and error roles within modern layout | control/dialog shape, spacing, surface, and elevation |
+
+All adapters are serialized once into the generation-owned layer beneath `:root.jc-modern-layout` and are therefore idempotent and unable to match legacy layout. They do not inject, remove, move, or reorder Jellyfin DOM, so routes, navigation destinations, media queries, source order, focus order, and host behavior remain Jellyfin-owned. Route scope is one of `home`, `browse`, `details`, `player`, `dashboard`, or `other`. The administrator dashboard is a recovery space by default: the runtime removes committed and preview layers on dashboard/configuration routes unless `ThemeStudioDashboardEnabled` is explicitly enabled. Even when enabled, presentation modules exclude `dashboard`, leaving only the typed token bridge and focus recovery adapter.
+
+The visible **Focus** preset retains the internal `tv-focus` identifier solely so previously saved profiles and administrator defaults remain valid. It has no TV-layout adapter, responsive override, or activation path; Theme Studio still leaves TV surfaces unchanged.
 
 Responsive selection is capability-aware and uses the following tested boundaries:
 
@@ -314,12 +325,11 @@ Responsive selection is capability-aware and uses the following tested boundarie
 | --- | --- |
 | Phone portrait | Width below 600 px; tested at 390 × 844 |
 | Phone landscape | Coarse pointer, height below 600 px, width below 1000 px; tested at 844 × 390 |
-| Tablet | 600–1023 px, plus coarse-pointer landscape up to 1180 px; tested at 600/1023 and 1024 × 768 |
 | Desktop | 1024–1599 px outside the tablet/handset exception; a 1366 × 768 touch laptop remains desktop |
-| Wide | 1600 px and wider |
-| TV | Jellyfin's TV layout marker takes precedence over viewport width |
+| Desktop wide | 1600 px and wider; uses the same modern desktop contract |
+| Unsupported fallback | Tablet-only widths, Jellyfin legacy layout, and any TV layout marker publish no Theme Studio presentation |
 
-The root capability attributes record the resolved breakpoint, pointer/hover state, light/dark mode, contrast, transparency, reduced motion, forced colors, profile, preset, palette, and route. Media-query listeners update those attributes and the same two style layers live. Reduced-motion and reduced-transparency preferences can only remove effects; coarse/no-hover input disables hover-only actions; high contrast strengthens focus. No Theme Studio runtime layout contains user text, so long localized labels and RTL do not introduce a runtime-owned layout direction or truncation surface in this slice.
+On supported surfaces, root capability attributes record the resolved breakpoint, pointer/hover state, light/dark mode, contrast, transparency, reduced motion, forced colors, profile, preset, palette, and route. Presentation enums are published separately as `data-jc-theme-density`, `-navigation`, `-home-hero`, `-details`, `-seasons`, `-card-actions`, `-poster-ratio`, `-cast-shape`, `-progress-position`, `-watched-indicator`, and `-unwatched-indicator`. Media-query and layout-class listeners update those attributes and the same two style layers live. Auto navigation resolves to bottom on phones and header on desktop/wide; auto seasons resolve to list on phones and grid on desktop. Reduced-motion and reduced-transparency preferences can only remove effects; coarse/no-hover input converts hover-only card actions to always-visible; high contrast strengthens focus. Logical properties, safe-area variables, wrapping metadata and titles, and bounded dialog/card sizes cover RTL, long labels, zoom, missing artwork, and mixed media ratios without adding a runtime-owned content or focus-order surface.
 
 ### Bookmark API
 

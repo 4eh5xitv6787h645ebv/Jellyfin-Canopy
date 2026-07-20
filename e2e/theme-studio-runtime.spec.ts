@@ -100,6 +100,24 @@ async function previewPreset(
     }, { source: configuration, presetId: preset, paletteId: palette });
 }
 
+async function previewTokens(
+    page: Page,
+    configuration: Record<string, unknown>,
+    tokens: Record<string, string | number | boolean>,
+): Promise<boolean> {
+    return page.evaluate(({ source, overrides }) => {
+        const preview = structuredClone(source) as {
+            ActiveProfileId: string;
+            Profiles: Array<{ Id: string; Tokens: Record<string, string | number | boolean> }>;
+        };
+        const profile = preview.Profiles.find((item) => item.Id === preview.ActiveProfileId)
+            ?? preview.Profiles[0];
+        if (!profile) throw new Error('Theme Studio preview profile is missing');
+        profile.Tokens = { ...profile.Tokens, ...overrides };
+        return window.JellyfinCanopy.core.themeStudio?.preview(preview) === true;
+    }, { source: configuration, overrides: tokens });
+}
+
 async function previewOverflowEvidence(page: Page): Promise<{ active: number; baseline: number }> {
     return page.evaluate(async () => {
         const style = document.querySelector<HTMLStyleElement>('#jc-theme-studio-preview');
@@ -215,6 +233,162 @@ test.describe.serial('Theme Studio runtime bridge', () => {
         assertNoRuntimeErrors(consoleErrors);
     });
 
+    test('presentation modules compose on modern desktop and phone without changing host order', async ({
+        baseURL,
+        page,
+        consoleErrors,
+    }) => {
+        const configuration = await api<Record<string, unknown>>(
+            baseURL!,
+            `/JellyfinCanopy/user-settings/${admin.userId}/theme.json`,
+            admin.token,
+        );
+        expect(configuration, 'seeded Theme Studio profile must be readable').toBeTruthy();
+        await page.setViewportSize({ width: 1440, height: 900 });
+        await seedLayout(page, 'experimental');
+        await loginAs(page, 'admin', consoleErrors);
+        await waitForThemeRuntime(page, 'desktop');
+        expect(await previewTokens(page, configuration!, {
+            'layout.density': 'spacious',
+            'layout.navigation': 'sidebar',
+            'layout.home-hero': 'cinematic',
+            'layout.details': 'cinematic',
+            'layout.seasons': 'grid',
+            'layout.card-actions': 'always',
+            'layout.poster-ratio': 'backdrop',
+            'layout.cast-shape': 'circle',
+            'progress.position': 'floating',
+            'progress.thickness': 6,
+            'progress.watched-indicator': 'check',
+            'progress.unwatched-indicator': 'none',
+        })).toBe(true);
+        await expect.poll(() => page.evaluate(() => {
+            const root = document.documentElement;
+            return {
+                density: root.getAttribute('data-jc-theme-density'),
+                navigation: root.getAttribute('data-jc-theme-navigation'),
+                hero: root.getAttribute('data-jc-theme-home-hero'),
+                details: root.getAttribute('data-jc-theme-details'),
+                seasons: root.getAttribute('data-jc-theme-seasons'),
+                actions: root.getAttribute('data-jc-theme-card-actions'),
+                ratio: root.getAttribute('data-jc-theme-poster-ratio'),
+                cast: root.getAttribute('data-jc-theme-cast-shape'),
+                progress: root.getAttribute('data-jc-theme-progress-position'),
+                watched: root.getAttribute('data-jc-theme-watched-indicator'),
+                unwatched: root.getAttribute('data-jc-theme-unwatched-indicator'),
+            };
+        })).toEqual({
+            density: 'spacious', navigation: 'sidebar', hero: 'cinematic', details: 'cinematic',
+            seasons: 'grid', actions: 'always', ratio: 'backdrop', cast: 'circle',
+            progress: 'floating', watched: 'check', unwatched: 'none',
+        });
+
+        const desktop = await page.evaluate(() => {
+            const root = document.documentElement;
+            const originalRoute = root.getAttribute('data-jc-theme-route') ?? 'home';
+            const fixture = document.createElement('div');
+            fixture.setAttribute('data-jc-presentation-fixture', 'true');
+            fixture.innerHTML = `<div class="MuiDrawer-paper"><button id="jc-order-a" class="MuiButton-root">A</button><button id="jc-order-b" class="MuiButton-root">B</button></div>
+                <div id="indexPage"><div class="homeSectionsContainer"><section class="section0"><div class="itemsContainer"><button class="card card-hoverable"><span class="cardBox"><span class="cardScalable"><span class="cardPadder-backdrop"></span></span><span class="cardFooter"><span class="cardText">A deliberately very long localized media title that must wrap safely</span></span><span class="cardOverlayButton-hover"></span><span class="itemProgressBar"></span><span class="playedIndicator"></span><span class="countIndicator"></span></span></button></div></section></div></div>
+                <main class="itemDetailPage"><div class="itemBackdrop"></div><div class="itemMiscInfo">Long metadata label</div><div class="mainDetailButtons"><button class="detailButton">Play</button></div><section id="childrenCollapsible"><div class="itemsContainer"><button class="card"><span class="cardBox"><span class="cardScalable"><span class="cardPadder-episode"></span></span><span class="cardFooter">Episode</span></span></button></div></section><section id="castCollapsible"><div class="itemsContainer"><button class="card"><span class="cardScalable"><span class="cardPadder-cast"></span><span class="cardImageContainer"></span></span></button></div></section></main>
+                <div class="MuiDialog-paper" role="dialog"><label class="MuiFormControl-root"><span class="MuiInputBase-root">Input</span></label></div>`;
+            document.body.append(fixture);
+            const order = () => [...fixture.querySelectorAll<HTMLButtonElement>('#jc-order-a, #jc-order-b')]
+                .map((button) => button.id);
+            const beforeOrder = order();
+            root.setAttribute('data-jc-theme-route', 'home');
+            const hero = getComputedStyle(fixture.querySelector<HTMLElement>('.section0')!);
+            const heroMinHeight = Number.parseFloat(hero.minHeight);
+            root.setAttribute('data-jc-theme-route', 'details');
+            const drawer = getComputedStyle(fixture.querySelector<HTMLElement>('.MuiDrawer-paper')!);
+            const backdrop = getComputedStyle(fixture.querySelector<HTMLElement>('.itemBackdrop')!);
+            const seasons = getComputedStyle(fixture.querySelector<HTMLElement>('#childrenCollapsible .itemsContainer')!);
+            const padder = getComputedStyle(fixture.querySelector<HTMLElement>('.cardPadder-backdrop')!);
+            const cast = getComputedStyle(fixture.querySelector<HTMLElement>('#castCollapsible .cardImageContainer')!);
+            const progress = getComputedStyle(fixture.querySelector<HTMLElement>('.itemProgressBar')!);
+            const count = getComputedStyle(fixture.querySelector<HTMLElement>('.countIndicator')!);
+            const action = getComputedStyle(fixture.querySelector<HTMLElement>('.cardOverlayButton-hover')!);
+            const title = getComputedStyle(fixture.querySelector<HTMLElement>('.cardText')!);
+            const dialog = getComputedStyle(fixture.querySelector<HTMLElement>('.MuiDialog-paper')!);
+            const evidence = {
+                beforeOrder,
+                afterOrder: order(),
+                heroMinHeight,
+                drawerWidth: Number.parseFloat(drawer.width),
+                backdropHeight: Number.parseFloat(backdrop.height),
+                seasonsDisplay: seasons.display,
+                seasonsColumns: seasons.gridTemplateColumns,
+                artworkPadding: Number.parseFloat(padder.paddingBottom),
+                castRadius: cast.borderRadius,
+                progressPosition: progress.position,
+                progressHeight: progress.height,
+                countDisplay: count.display,
+                actionOpacity: action.opacity,
+                titleWhiteSpace: title.whiteSpace,
+                dialogMaxWidth: Number.parseFloat(dialog.maxWidth),
+                fixtureOverflow: fixture.scrollWidth - fixture.clientWidth,
+            };
+            fixture.remove();
+            root.setAttribute('data-jc-theme-route', originalRoute);
+            return evidence;
+        });
+        expect(desktop.beforeOrder).toEqual(['jc-order-a', 'jc-order-b']);
+        expect(desktop.afterOrder).toEqual(desktop.beforeOrder);
+        expect(desktop.heroMinHeight).toBeGreaterThanOrEqual(320);
+        expect(desktop.drawerWidth).toBeGreaterThanOrEqual(240);
+        expect(desktop.drawerWidth).toBeLessThanOrEqual(321);
+        expect(desktop.backdropHeight).toBeGreaterThanOrEqual(352);
+        expect(desktop.seasonsDisplay).toBe('grid');
+        expect(desktop.seasonsColumns).not.toBe('none');
+        expect(desktop.artworkPadding).toBeGreaterThan(0);
+        expect(desktop.castRadius).toBe('50%');
+        expect(desktop.progressPosition).toBe('absolute');
+        expect(desktop.progressHeight).toBe('6px');
+        expect(desktop.countDisplay).toBe('none');
+        expect(desktop.actionOpacity).toBe('1');
+        expect(desktop.titleWhiteSpace).toBe('normal');
+        expect(desktop.dialogMaxWidth).toBeLessThanOrEqual(672);
+        expect(desktop.fixtureOverflow).toBeLessThanOrEqual(1);
+
+        await page.evaluate(() => window.JellyfinCanopy.core.themeStudio?.cancelPreview());
+        await page.setViewportSize({ width: 390, height: 844 });
+        await refreshThemeRuntime(page);
+        await expect.poll(() => page.evaluate(() => {
+            const root = document.documentElement;
+            return {
+                breakpoint: root.getAttribute('data-jc-theme-breakpoint'),
+                navigation: root.getAttribute('data-jc-theme-navigation'),
+                seasons: root.getAttribute('data-jc-theme-seasons'),
+                actions: root.getAttribute('data-jc-theme-card-actions'),
+            };
+        })).toEqual({ breakpoint: 'phone', navigation: 'bottom', seasons: 'list', actions: 'always' });
+        const phone = await page.evaluate(() => {
+            const fixture = document.createElement('div');
+            fixture.innerHTML = '<header class="MuiAppBar-root"><nav class="MuiToolbar-root"><button class="MuiButton-root">Home</button><button class="MuiButton-root">Library</button></nav></header>';
+            document.body.append(fixture);
+            const appBarElement = fixture.querySelector<HTMLElement>('.MuiAppBar-root')!;
+            const appBar = getComputedStyle(appBarElement);
+            const appBarBox = appBarElement.getBoundingClientRect();
+            const button = fixture.querySelector<HTMLElement>('.MuiButton-root')!.getBoundingClientRect();
+            const evidence = {
+                position: appBar.position,
+                bottom: appBar.bottom,
+                barBottom: appBarBox.bottom,
+                viewportHeight: innerHeight,
+                targetHeight: button.height,
+            };
+            fixture.remove();
+            return evidence;
+        });
+        expect(phone.position).toBe('fixed');
+        expect(phone.bottom).toBe('0px');
+        expect(Math.abs(phone.barBottom - phone.viewportHeight)).toBeLessThanOrEqual(1);
+        expect(phone.targetHeight).toBeGreaterThanOrEqual(44);
+        const phoneOverflow = await themeOverflowEvidence(page);
+        expect(phoneOverflow.active).toBeLessThanOrEqual(phoneOverflow.baseline + 1);
+        assertNoRuntimeErrors(consoleErrors);
+    });
+
     test('phone portrait and coarse-pointer landscape stay bounded without duplicate layers', async ({
         page,
         consoleErrors,
@@ -311,11 +485,13 @@ test.describe.serial('Theme Studio runtime bridge', () => {
 
         await page.setViewportSize({ width: 820, height: 1180 });
         await refreshThemeRuntime(page);
-        await expect.poll(() => page.evaluate(() =>
-            document.documentElement.getAttribute('data-jc-theme-breakpoint'))).toBe('tablet');
-        expect(await previewPreset(page, configuration!, 'glass', 'catppuccin')).toBe(true);
-        const tabletOverflow = await previewOverflowEvidence(page);
-        expect(tabletOverflow.active).toBeLessThanOrEqual(tabletOverflow.baseline + 1);
+        await expect(page.locator(COMMITTED_STYLE)).toHaveCount(0);
+        await expect(page.locator(PREVIEW_STYLE)).toHaveCount(0);
+        expect(await previewPreset(page, configuration!, 'glass', 'catppuccin')).toBe(false);
+        expect(await page.evaluate(() => ({
+            active: document.documentElement.hasAttribute('data-jc-theme-active'),
+            breakpoint: document.documentElement.getAttribute('data-jc-theme-breakpoint'),
+        }))).toEqual({ active: false, breakpoint: null });
 
         await page.evaluate(() => window.JellyfinCanopy.core.themeStudio?.cancelPreview());
         await expect(page.locator(PREVIEW_STYLE)).toHaveCount(0);
@@ -477,33 +653,70 @@ test.describe.serial('Theme Studio runtime bridge', () => {
         assertNoRuntimeErrors(consoleErrors);
     });
 
-    test('legacy adapter is version-scoped and dashboard navigation restores the base theme', async ({
+    test('legacy, tablet, and TV markers stay untouched while modern dashboard remains a recovery space', async ({
         page,
         consoleErrors,
     }) => {
-        await seedLayout(page, 'desktop');
+        await seedLayout(page, 'experimental');
         await loginAs(page, 'admin', consoleErrors);
         await waitForThemeRuntime(page, 'desktop');
-        const committedCss = await page.locator(COMMITTED_STYLE)
-            .evaluate((style) => style.textContent ?? '');
-        expect(committedCss).toContain('Adapter legacy-v12-base-surfaces');
-        expect(committedCss).toContain('.jc-legacy-layout[data-jc-theme-route]');
-        const adapterBackground = await page.evaluate(() => {
-            const root = document.documentElement;
-            const wasModern = root.classList.contains('jc-modern-layout');
-            root.classList.remove('jc-modern-layout');
-            root.classList.add('jc-legacy-layout');
-            const surface = document.createElement('div');
-            surface.className = 'backgroundContainer';
-            document.body.append(surface);
-            const background = getComputedStyle(surface).backgroundColor;
-            surface.remove();
-            root.classList.remove('jc-legacy-layout');
-            root.classList.toggle('jc-modern-layout', wasModern);
-            return background;
-        });
-        expect(adapterBackground).toBe('rgb(11, 11, 18)');
         const hostTheme = await page.evaluate(() => document.documentElement.getAttribute('data-theme'));
+        expect(hostTheme).toBeTruthy();
+
+        await page.evaluate(() => {
+            document.documentElement.classList.remove('jc-modern-layout');
+            document.documentElement.classList.add('jc-legacy-layout');
+        });
+        await expect(page.locator(COMMITTED_STYLE)).toHaveCount(0);
+        const legacy = await page.evaluate(() => {
+            const root = document.documentElement;
+            const configuration = window.JellyfinCanopy.core.themeStudio?.getConfiguration();
+            return {
+                modern: root.classList.contains('jc-modern-layout'),
+                legacy: root.classList.contains('jc-legacy-layout'),
+                committed: document.querySelectorAll('#jc-theme-studio-committed').length,
+                preview: document.querySelectorAll('#jc-theme-studio-preview').length,
+                active: root.hasAttribute('data-jc-theme-active'),
+                previewAccepted: configuration
+                    ? window.JellyfinCanopy.core.themeStudio?.preview(configuration) === true : null,
+            };
+        });
+        expect(legacy).toMatchObject({
+            modern: false, legacy: true, committed: 0, preview: 0, active: false, previewAccepted: false,
+        });
+
+        await page.evaluate(() => {
+            document.documentElement.classList.remove('jc-legacy-layout');
+            document.documentElement.classList.add('jc-modern-layout');
+        });
+        await waitForThemeRuntime(page, 'desktop');
+
+        await page.setViewportSize({ width: 820, height: 1180 });
+        await refreshThemeRuntime(page);
+        await expect(page.locator(COMMITTED_STYLE)).toHaveCount(0);
+        expect(await page.evaluate(() => {
+            const configuration = window.JellyfinCanopy.core.themeStudio?.getConfiguration();
+            return configuration
+                ? window.JellyfinCanopy.core.themeStudio?.preview(configuration) === true : null;
+        })).toBe(false);
+
+        await page.setViewportSize({ width: 1440, height: 900 });
+        await refreshThemeRuntime(page);
+        await waitForThemeRuntime(page, 'desktop');
+        await page.evaluate(() => document.documentElement.classList.add('layout-tv'));
+        await expect(page.locator(COMMITTED_STYLE)).toHaveCount(0);
+        expect(await page.evaluate(() => {
+            const configuration = window.JellyfinCanopy.core.themeStudio?.getConfiguration();
+            return configuration
+                ? window.JellyfinCanopy.core.themeStudio?.preview(configuration) === true : null;
+        })).toBe(false);
+
+        await page.evaluate(() => document.documentElement.classList.remove('layout-tv'));
+        await waitForThemeRuntime(page, 'desktop');
+        const committedCss = await page.locator(COMMITTED_STYLE).evaluate((style) => style.textContent ?? '');
+        expect(committedCss).toContain(':root.jc-modern-layout');
+        expect(committedCss).not.toContain('.jc-legacy-layout');
+        expect(committedCss).not.toContain('.skinHeader');
 
         await page.evaluate(() => { window.location.hash = '#/dashboard'; });
         await page.waitForFunction(() => window.location.hash.startsWith('#/dashboard'));
