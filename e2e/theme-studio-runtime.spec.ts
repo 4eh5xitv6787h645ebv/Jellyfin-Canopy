@@ -385,6 +385,12 @@ test.describe.serial('Theme Studio runtime bridge', () => {
             };
         });
         expect(split).toEqual({ previewAfterEditor: true, mainOverflow: 0 });
+        const initialPreviewPrimary = await preview.evaluate((card) =>
+            (card as HTMLElement).style.getPropertyValue('--jc-preview-primary'));
+        await panel.locator('[data-field="accent"]').selectOption('red');
+        await expect.poll(() => preview.evaluate((card) =>
+            (card as HTMLElement).style.getPropertyValue('--jc-preview-primary')))
+            .not.toBe(initialPreviewPrimary);
 
         const current = serverBefore as {
             SchemaVersion: number;

@@ -126,6 +126,12 @@ describe('Theme Studio responsive settings editor', () => {
         expect(panel.querySelector('.jc-theme-preset-grid')?.getAttribute('role')).toBe('group');
         expect(button('preset', 'canopy').getAttribute('role')).toBeNull();
         expect(button('apply').disabled).toBe(true);
+        const initialPreview = panel.querySelector<HTMLElement>('.jc-theme-preview-card')!;
+        const initialColors = [
+            initialPreview.style.getPropertyValue('--jc-preview-canvas'),
+            initialPreview.style.getPropertyValue('--jc-preview-surface'),
+            initialPreview.style.getPropertyValue('--jc-preview-primary'),
+        ];
         const search = panel.querySelector<HTMLInputElement>('[data-field="preset-search"]')!;
         search.focus();
         search.value = 'oled';
@@ -144,6 +150,26 @@ describe('Theme Studio responsive settings editor', () => {
         palette.value = 'neutral';
         palette.dispatchEvent(new Event('change', { bubbles: true }));
         expect(document.activeElement).toBe(panel.querySelector('[data-field="palette"]'));
+        const stagedPreview = panel.querySelector<HTMLElement>('.jc-theme-preview-card')!;
+        const stagedColors = [
+            stagedPreview.style.getPropertyValue('--jc-preview-canvas'),
+            stagedPreview.style.getPropertyValue('--jc-preview-surface'),
+            stagedPreview.style.getPropertyValue('--jc-preview-primary'),
+        ];
+        expect(stagedColors).not.toEqual(initialColors);
+        expect(stagedColors.every((color) => /^#[0-9a-f]{6}(?:[0-9a-f]{2})?$/i.test(color))).toBe(true);
+        const accent = panel.querySelector<HTMLSelectElement>('[data-field="accent"]')!;
+        const palettePrimary = stagedPreview.style.getPropertyValue('--jc-preview-primary');
+        accent.value = 'red';
+        accent.dispatchEvent(new Event('change', { bubbles: true }));
+        expect(panel.querySelector<HTMLElement>('.jc-theme-preview-card')?.style
+            .getPropertyValue('--jc-preview-primary')).not.toBe(palettePrimary);
+        button('mode', 'dark').click();
+        const darkCanvas = panel.querySelector<HTMLElement>('.jc-theme-preview-card')?.style
+            .getPropertyValue('--jc-preview-canvas');
+        button('mode', 'light').click();
+        expect(panel.querySelector<HTMLElement>('.jc-theme-preview-card')?.style
+            .getPropertyValue('--jc-preview-canvas')).not.toBe(darkCanvas);
 
         expect(preview).not.toHaveBeenCalled();
         expect(frames).toHaveLength(1);
@@ -176,14 +202,41 @@ describe('Theme Studio responsive settings editor', () => {
         expect(panel.classList.contains('jc-theme-preview-only')).toBe(false);
     });
 
-    it('writes only on Apply and adopts the exact acknowledged revision', async () => {
-        JC.saveUserSettings = vi.fn((_file, payload): Promise<UserSettingsSaveResult> => {
-            (payload as UserThemeConfiguration).Revision = 4;
-            return Promise.resolve({
-                acknowledged: true, deduplicated: false, file: 'theme.json', revision: 4,
-                contentHash: 'a'.repeat(64),
-            });
-        });
+    it('cancels a queued preview frame before discarding the draft', () => {
+        wireThemeStudioEditor(context());
+        button('preset', 'glass').click();
+        expect(frames).toHaveLength(1);
+
+        button('cancel').click();
+        expect(frames).toHaveLength(0);
+        flushFrames();
+
+        expect(preview).not.toHaveBeenCalled();
+        expect(cancelPreview).toHaveBeenCalledOnce();
+        expect(button('apply').disabled).toBe(true);
+    });
+
+    it('clears staged preview state when Undo returns exactly to the baseline', () => {
+        wireThemeStudioEditor(context());
+        button('preset', 'studio').click();
+        flushFrames();
+        expect(preview).toHaveBeenCalledOnce();
+
+        button('undo').click();
+        flushFrames();
+
+        expect(preview).toHaveBeenCalledOnce();
+        expect(cancelPreview).toHaveBeenCalledOnce();
+        expect(button('apply').disabled).toBe(true);
+        expect(panel.textContent).toContain('theme_studio_ready');
+        expect(panel.textContent).not.toContain('theme_studio_unsaved');
+    });
+
+    it('adopts the exact acknowledgement when a joined saver leaves this target untouched', async () => {
+        JC.saveUserSettings = vi.fn((): Promise<UserSettingsSaveResult> => Promise.resolve({
+            acknowledged: true, deduplicated: false, file: 'theme.json', revision: 4,
+            contentHash: 'a'.repeat(64),
+        }));
         wireThemeStudioEditor(context());
         button('preset', 'studio').click();
         flushFrames();
@@ -193,7 +246,7 @@ describe('Theme Studio responsive settings editor', () => {
         await vi.waitFor(() => expect(adoptAcknowledged).toHaveBeenCalledOnce());
         expect(JC.saveUserSettings).toHaveBeenCalledOnce();
         expect(JC.saveUserSettings).toHaveBeenCalledWith(
-            'theme.json', expect.objectContaining({ Revision: 4, Profiles: [expect.objectContaining({ BasePreset: 'studio' })] }),
+            'theme.json', expect.objectContaining({ Revision: 3, Profiles: [expect.objectContaining({ BasePreset: 'studio' })] }),
         );
         expect(adoptAcknowledged).toHaveBeenCalledWith(expect.objectContaining({ Revision: 4 }));
         expect(button('apply').disabled).toBe(true);
@@ -377,7 +430,9 @@ describe('Theme Studio responsive settings editor', () => {
         expect(panel.textContent).toContain('theme_studio_unavailable');
 
         JC.core.themeStudio = readyRuntime;
-        window.dispatchEvent(new CustomEvent('jc:theme-studio-runtime-changed'));
+        window.dispatchEvent(new CustomEvent('jc:theme-studio-runtime-changed', {
+            detail: { reason: 'installed' },
+        }));
         await vi.waitFor(() => expect(panel.querySelectorAll('.jc-theme-preset')).toHaveLength(9));
         expect(panel.textContent).toContain('theme_studio_ready');
     });
@@ -390,7 +445,9 @@ describe('Theme Studio responsive settings editor', () => {
         acknowledged.Revision = 8;
         acknowledged.Profiles[0].BasePreset = 'studio';
         configuration = JC.identity.own(acknowledged, identity);
-        window.dispatchEvent(new CustomEvent('jc:theme-studio-runtime-changed'));
+        window.dispatchEvent(new CustomEvent('jc:theme-studio-runtime-changed', {
+            detail: { reason: 'acknowledged' },
+        }));
 
         await vi.waitFor(() => {
             expect(button('preset', 'studio').getAttribute('aria-pressed')).toBe('true');
@@ -479,5 +536,26 @@ describe('Theme Studio responsive settings editor', () => {
         expect(preview).not.toHaveBeenCalled();
         expect(button('apply').disabled).toBe(true);
         expect(panel.textContent).toContain('theme_studio_invalid');
+    });
+
+    it('clears an Expert validation error after a valid no-op correction', () => {
+        wireThemeStudioEditor(context());
+        button('editor-mode', 'expert').click();
+        let editor = panel.querySelector<HTMLTextAreaElement>('[data-field="expert-json"]')!;
+        const original = editor.value;
+        editor.value = '{ invalid';
+        editor.dispatchEvent(new Event('input', { bubbles: true }));
+        vi.advanceTimersByTime(250);
+        expect(panel.textContent).toContain('theme_studio_invalid');
+
+        editor = panel.querySelector<HTMLTextAreaElement>('[data-field="expert-json"]')!;
+        editor.value = original;
+        editor.dispatchEvent(new Event('input', { bubbles: true }));
+        vi.advanceTimersByTime(250);
+
+        expect(panel.querySelector('[data-field="expert-json"]')?.getAttribute('aria-invalid')).toBe('false');
+        expect(panel.textContent).toContain('theme_studio_ready');
+        expect(panel.textContent).not.toContain('theme_studio_invalid');
+        expect(button('apply').disabled).toBe(true);
     });
 });

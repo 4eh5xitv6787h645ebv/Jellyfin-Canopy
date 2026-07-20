@@ -165,6 +165,8 @@ describe('Theme Studio identity-owned runtime', () => {
         JC.core.api = { plugin } as unknown as ApiApi;
         const { runtime } = createRuntime();
         await runtime.load();
+        const changed = vi.fn();
+        window.addEventListener('jc:theme-studio-runtime-changed', changed);
         const preview = themeConfiguration();
         preview.Profiles[0].BasePreset = 'glass';
         expect(runtime.preview(preview)).toBe(true);
@@ -174,6 +176,9 @@ describe('Theme Studio identity-owned runtime', () => {
         expect(runtime.getConfiguration()).toMatchObject({ Revision: 9 });
         expect(document.documentElement.getAttribute('data-jc-theme-preview')).toBeNull();
         expect(document.documentElement.getAttribute('data-jc-theme-palette')).toBe('neutral');
+        expect(changed).toHaveBeenCalledOnce();
+        expect((changed.mock.calls[0]?.[0] as CustomEvent).detail).toEqual({ reason: 'reloaded' });
+        window.removeEventListener('jc:theme-studio-runtime-changed', changed);
     });
 
     it('never lets an older overlapping load overwrite a newer reload', async () => {

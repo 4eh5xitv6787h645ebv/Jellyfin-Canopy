@@ -6,6 +6,7 @@ import {
     THEME_PRESETS,
 } from '../../theme-studio/catalog';
 import { ThemeEditorState } from '../../theme-studio/editor-state';
+import { resolveTheme, type ThemeMediaState } from '../../theme-studio/resolver';
 import { parseUserThemeConfiguration } from '../../theme-studio/schema';
 import type {
     ThemeExportDocument,
@@ -85,6 +86,31 @@ function option(value: string, label: string, selected: boolean): string {
 
 function clone(value: UserThemeConfiguration): UserThemeConfiguration {
     return JSON.parse(JSON.stringify(value)) as UserThemeConfiguration;
+}
+
+function mediaMatches(query: string): boolean {
+    try { return window.matchMedia?.(query).matches === true; } catch { return false; }
+}
+
+function previewMedia(): ThemeMediaState {
+    return {
+        viewportWidth: Math.max(1, window.innerWidth || document.documentElement.clientWidth || 1280),
+        viewportHeight: Math.max(1, window.innerHeight || document.documentElement.clientHeight || 720),
+        tv: document.documentElement.classList.contains('layout-tv') || document.body.classList.contains('layout-tv'),
+        darkScheme: mediaMatches('(prefers-color-scheme: dark)'),
+        reducedMotion: mediaMatches('(prefers-reduced-motion: reduce)'),
+        moreContrast: mediaMatches('(prefers-contrast: more)'),
+        reducedTransparency: mediaMatches('(prefers-reduced-transparency: reduce)'),
+        forcedColors: mediaMatches('(forced-colors: active)'),
+        hover: mediaMatches('(hover: hover)'),
+        coarsePointer: mediaMatches('(pointer: coarse)'),
+        jellyfinTheme: document.documentElement.getAttribute('data-theme') ?? '',
+    };
+}
+
+function resolvedColor(tokens: Readonly<Record<string, unknown>>, name: string, fallback: string): string {
+    const value = tokens[name];
+    return typeof value === 'string' && /^#[0-9a-f]{6}(?:[0-9a-f]{2})?$/i.test(value) ? value : fallback;
 }
 
 function exportDocument(value: UserThemeConfiguration): ThemeExportDocument {
@@ -229,9 +255,11 @@ function editorStyles(): string {
         #jellyfin-canopy-panel .jc-theme-preset[aria-pressed="true"]::after { content:"✓"; position:absolute; inset-block-start:8px; inset-inline-end:9px; font-weight:900; }
         #jellyfin-canopy-panel .jc-theme-preset strong, #jellyfin-canopy-panel .jc-theme-preset small { display:block; padding-inline-end:16px; }
         #jellyfin-canopy-panel .jc-theme-preset small { margin-block-start:5px; color:rgba(255,255,255,.72); line-height:1.3; }
-        #jellyfin-canopy-panel .jc-theme-preview-card { position:sticky; inset-block-start:10px; align-self:start; border:1px solid rgba(255,255,255,.18); border-radius:14px; overflow:hidden; background:#101218; }
-        #jellyfin-canopy-panel .jc-theme-preview-art { min-height:180px; display:grid; align-content:end; padding:18px; background:linear-gradient(180deg,transparent 15%,rgba(4,5,9,.92)),linear-gradient(125deg,#2f80ff,#7b4cff 48%,#101218); }
-        #jellyfin-canopy-panel .jc-theme-preview-body { padding:14px; display:grid; gap:10px; }
+        #jellyfin-canopy-panel .jc-theme-preview-card { position:sticky; inset-block-start:10px; align-self:start; border:1px solid var(--jc-preview-divider); border-radius:14px; overflow:hidden; background:var(--jc-preview-surface); color:var(--jc-preview-text); }
+        #jellyfin-canopy-panel .jc-theme-preview-art { min-height:180px; display:grid; align-content:end; padding:18px; color:var(--jc-preview-text); background:linear-gradient(180deg,transparent 15%,var(--jc-preview-canvas) 96%),linear-gradient(125deg,var(--jc-preview-primary),var(--jc-preview-secondary) 48%,var(--jc-preview-elevated)); }
+        #jellyfin-canopy-panel .jc-theme-preview-body { padding:14px; display:grid; gap:10px; background:var(--jc-preview-surface); }
+        #jellyfin-canopy-panel .jc-theme-preview-card .jc-theme-hint { color:var(--jc-preview-muted); }
+        #jellyfin-canopy-panel .jc-theme-preview-card .jc-theme-button.primary { border-color:var(--jc-preview-primary); background:var(--jc-preview-primary); color:var(--jc-preview-on-primary); }
         #jellyfin-canopy-panel .jc-theme-preview-pills { display:flex; gap:7px; flex-wrap:wrap; }
         #jellyfin-canopy-panel .jc-theme-preview-pills span { border:1px solid currentColor; border-radius:999px; padding:4px 8px; font-size:11px; }
         #jellyfin-canopy-panel .jc-theme-expert { min-height:310px; resize:vertical; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; white-space:pre; overflow:auto; }
@@ -334,9 +362,26 @@ function beginnerEditor(configuration: UserThemeConfiguration, active: ThemeProf
         <label class="jc-theme-row" style="min-height:44px"><input type="checkbox" data-field="underline-links"${active.Accessibility.UnderlineLinks ? ' checked' : ''}> <span>${escapeHtml(t('theme_studio_underline_links'))}</span></label>`;
 }
 
-function previewCard(active: ThemeProfile): string {
+function previewCard(configuration: UserThemeConfiguration, active: ThemeProfile): string {
     const presetKey = PRESET_KEYS[active.BasePreset] ?? active.BasePreset;
-    return `<aside class="jc-theme-preview-card" aria-label="${escapeHtml(t('theme_studio_preview'))}">
+    const resolved = resolveTheme(configuration, previewMedia(), { allowScheduling: false });
+    const colors = {
+        canvas: resolvedColor(resolved.tokens, 'color.canvas', '#101218'),
+        surface: resolvedColor(resolved.tokens, 'color.surface', '#171722'),
+        elevated: resolvedColor(resolved.tokens, 'color.elevated', '#252a38'),
+        text: resolvedColor(resolved.tokens, 'color.text', '#ffffff'),
+        muted: resolvedColor(resolved.tokens, 'color.text-muted', '#b7b3c7'),
+        primary: resolvedColor(resolved.tokens, 'color.primary', '#2f80ff'),
+        onPrimary: resolvedColor(resolved.tokens, 'color.on-primary', '#ffffff'),
+        secondary: resolvedColor(resolved.tokens, 'color.secondary', '#7b4cff'),
+        divider: resolvedColor(resolved.tokens, 'color.divider', '#ffffff24'),
+    };
+    const style = `--jc-preview-canvas:${escapeHtml(colors.canvas)};--jc-preview-surface:${escapeHtml(colors.surface)};`
+        + `--jc-preview-elevated:${escapeHtml(colors.elevated)};--jc-preview-text:${escapeHtml(colors.text)};`
+        + `--jc-preview-muted:${escapeHtml(colors.muted)};--jc-preview-primary:${escapeHtml(colors.primary)};`
+        + `--jc-preview-on-primary:${escapeHtml(colors.onPrimary)};--jc-preview-secondary:${escapeHtml(colors.secondary)};`
+        + `--jc-preview-divider:${escapeHtml(colors.divider)}`;
+    return `<aside class="jc-theme-preview-card" style="${style}" aria-label="${escapeHtml(t('theme_studio_preview'))}">
         <div class="jc-theme-preview-art"><small>${escapeHtml(t('theme_studio_live_preview'))}</small><strong style="font-size:24px">${escapeHtml(active.Name)}</strong></div>
         <div class="jc-theme-preview-body"><strong>${escapeHtml(t(`${presetKey}_name`))}</strong>
             <span class="jc-theme-hint">${escapeHtml(t(`${presetKey}_desc`))}</span>
@@ -390,6 +435,18 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         });
     };
 
+    const cancelPreviewFrame = (): void => {
+        if (!frame) return;
+        cancelAnimationFrame(frame);
+        frame = 0;
+    };
+
+    const clearStagedPreview = (): void => {
+        cancelPreviewFrame();
+        runtime?.cancelPreview();
+        if (JC.core.themeStudio !== runtime) JC.core.themeStudio?.cancelPreview();
+    };
+
     const render = (): void => {
         if (disposed) return;
         const focused = captureFocus(root);
@@ -428,7 +485,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
                     </div>
                     ${pendingImport ? `<div class="jc-theme-import-diff"><strong>${escapeHtml(t('theme_studio_import_review'))}</strong><ul>${pendingImportChanges.map((change) => `<li>${escapeHtml(change)}</li>`).join('')}</ul><div class="jc-theme-row"><button class="jc-theme-button primary" type="button" data-action="accept-import">${escapeHtml(t('theme_studio_import_accept'))}</button><button class="jc-theme-button" type="button" data-action="reject-import">${escapeHtml(t('theme_studio_import_reject'))}</button></div></div>` : ''}
                 </div>
-                ${previewCard(active)}
+                ${previewCard(snapshot.configuration, active)}
             </div>
             </fieldset>
             <div class="jc-theme-actions">
@@ -443,10 +500,16 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
             render();
             return;
         }
-        status = t('theme_studio_unsaved');
-        if (synchronizeExpert) expertText = JSON.stringify(state!.snapshot().configuration, null, 2);
+        const snapshot = state!.snapshot();
+        if (synchronizeExpert) expertText = JSON.stringify(snapshot.configuration, null, 2);
         expertInvalid = false;
-        schedulePreview();
+        if (snapshot.dirty) {
+            status = t('theme_studio_unsaved');
+            schedulePreview();
+        } else {
+            clearStagedPreview();
+            if (!recoveryRequired) status = t('theme_studio_ready');
+        }
         render();
     };
 
@@ -458,6 +521,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         }
         let parsed: unknown;
         try { parsed = JSON.parse(expertText); } catch { parsed = null; }
+        const wasInvalid = expertInvalid;
         const valid = parseUserThemeConfiguration(parsed);
         expertInvalid = !valid;
         if (!valid) {
@@ -467,8 +531,16 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         }
         const didChange = state.replace(valid);
         if (didChange) {
-            status = t('theme_studio_unsaved');
-            schedulePreview();
+            const snapshot = state.snapshot();
+            if (snapshot.dirty) {
+                status = t('theme_studio_unsaved');
+                schedulePreview();
+            } else {
+                clearStagedPreview();
+                if (!recoveryRequired) status = t('theme_studio_ready');
+            }
+        } else if (wasInvalid && !recoveryRequired) {
+            status = t(state.snapshot().dirty ? 'theme_studio_unsaved' : 'theme_studio_ready');
         }
         if (rerender) render();
         return true;
@@ -587,13 +659,21 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
             const acknowledgement = await JC.saveUserSettings('theme.json', payload);
             const acknowledgementRuntime = JC.core.themeStudio;
             runtime = acknowledgementRuntime;
-            if (!JC.identity.isCurrent(ctx.identityContext) || acknowledgement.revision !== payload.Revision
-                || !acknowledgementRuntime?.adoptAcknowledged(payload)
-                || (!disposed && !applyingState.adoptCommitted(payload))) {
+            const acknowledged = parseUserThemeConfiguration({
+                ...payload,
+                Revision: acknowledgement.revision,
+            });
+            const ownedAcknowledged = acknowledged
+                ? JC.identity.own(acknowledged, ctx.identityContext)
+                : null;
+            cancelPreviewFrame();
+            if (!JC.identity.isCurrent(ctx.identityContext) || !ownedAcknowledged
+                || !acknowledgementRuntime?.adoptAcknowledged(ownedAcknowledged)
+                || (!disposed && !applyingState.adoptCommitted(ownedAcknowledged))) {
                 throw Object.assign(new Error('Acknowledged theme could not be adopted'), { kind: 'protocol' });
             }
             if (disposed) return;
-            expertText = JSON.stringify(payload, null, 2);
+            expertText = JSON.stringify(ownedAcknowledged, null, 2);
             status = t('theme_studio_saved');
             recoveryRequired = false;
         } catch (error) {
@@ -696,6 +776,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
                 clearTimeout(expertTimer);
                 expertTimer = 0;
             }
+            cancelPreviewFrame();
             state.discard();
             JC.core.themeStudio?.cancelPreview();
             expertText = JSON.stringify(state.snapshot().configuration, null, 2);
@@ -809,7 +890,13 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         }
     });
 
-    const onRuntimeChanged = (): void => { void hydrate(false); };
+    const onRuntimeChanged = (event: Event): void => {
+        const reason = (event as CustomEvent<{ reason?: string }>).detail?.reason;
+        // The initiating editor already owns these two continuations. A clean
+        // replacement editor does not, so it still consumes the same event.
+        if ((reason === 'reloaded' && loading) || (reason === 'acknowledged' && saving)) return;
+        void hydrate(false);
+    };
     const onConfigChanged = (): void => {
         if (JC.pluginConfig?.ThemeStudioAllowProfileImport !== true) {
             importGeneration += 1;
@@ -827,7 +914,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         disposed = true;
         runtimeGeneration += 1;
         importGeneration += 1;
-        if (frame) cancelAnimationFrame(frame);
+        cancelPreviewFrame();
         if (expertTimer) clearTimeout(expertTimer);
         window.removeEventListener(RUNTIME_CHANGE, onRuntimeChanged);
         window.removeEventListener(CONFIG_CHANGE, onConfigChanged);

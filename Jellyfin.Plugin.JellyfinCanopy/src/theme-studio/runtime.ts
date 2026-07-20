@@ -175,7 +175,7 @@ export class ThemeStudioRuntime {
         });
         this.#api = api;
         JC.core.themeStudio = api;
-        this.#announceRuntimeChange();
+        this.#announceRuntimeChange('installed');
     }
 
     load(): Promise<void> {
@@ -245,7 +245,9 @@ export class ThemeStudioRuntime {
         if (this.#disposed || !this.#scope.isCurrent()) return false;
         this.cancelPreview();
         await this.load();
-        return this.#configuration !== null && this.#scope.isCurrent() && !this.#disposed;
+        const loaded = this.#configuration !== null && this.#scope.isCurrent() && !this.#disposed;
+        if (loaded) this.#announceRuntimeChange('reloaded');
+        return loaded;
     }
 
     adoptAcknowledged(value: unknown): boolean {
@@ -265,7 +267,7 @@ export class ThemeStudioRuntime {
         // Apply acknowledgements can outlive the editor that initiated them.
         // Notify any replacement editor so it adopts this authoritative full
         // document before it can stage a newer write from a stale snapshot.
-        this.#announceRuntimeChange();
+        this.#announceRuntimeChange('acknowledged');
         return true;
     }
 
@@ -331,14 +333,14 @@ export class ThemeStudioRuntime {
         this.#media.clear();
         if (this.#api && JC.core.themeStudio === this.#api) {
             delete JC.core.themeStudio;
-            this.#announceRuntimeChange();
+            this.#announceRuntimeChange('disposed');
         }
         this.#api = null;
         this.#setDiagnostics('inactive', null);
     }
 
-    #announceRuntimeChange(): void {
-        try { window.dispatchEvent(new CustomEvent(RUNTIME_CHANGE)); } catch { /* legacy host */ }
+    #announceRuntimeChange(reason: 'installed' | 'reloaded' | 'acknowledged' | 'disposed'): void {
+        try { window.dispatchEvent(new CustomEvent(RUNTIME_CHANGE, { detail: { reason } })); } catch { /* legacy host */ }
     }
 
     #dashboardBlocked(): boolean {
