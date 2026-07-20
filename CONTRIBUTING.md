@@ -518,9 +518,11 @@ verifies the artifact ID and digest, that the producing run was a `main`-only
 schedule/`workflow_dispatch` run, that the artifact is retained through the
 freshness window, that its budget digest equals the tag commit's
 `scale-budgets.json` digest, and that its recorded seed-input digest equals
-the digest computed from the tag commit's seed inputs for that profile — a
-result measured against the wrong library shape is not evidence, no matter
-how fresh.
+the digest computed from the tag commit's seed inputs for that profile (seed
+inputs as canonically defined under Volume lifecycle below — including the
+pinned Jellyfin server image, so a database scanned by a different Jellyfin
+build can never satisfy this check) — a result measured against the wrong
+library shape or the wrong server build is not evidence, no matter how fresh.
 
 Retry policy (applied per profile): an infrastructure no-evidence failure
 (provisioning, SSH, collection, teardown) permits at most **two additional
@@ -567,13 +569,23 @@ Volume lifecycle:
   measurement runs**: writable Jellyfin state is copied to instance-local
   storage; the baseline is identified by a digest of its seed inputs and
   profile; it is refreshed only through an exclusive seed-refresh path, and
-  only when the seed script or profile definition changes.
+  only when a seed input changes.
+- **Seed inputs** — the canonical definition wherever this spec says "seed
+  inputs" or "seed-input digest" — are every input that materially shapes the
+  baseline library or its scanned database: the seed/generator scripts and the
+  `e2e/docker` machinery they invoke, the profile definition, and the
+  digest-pinned Jellyfin server image reference (`JF_IMAGE` in
+  `e2e/docker/seed.sh` and `e2e/docker/compose.yml`) under which the baseline
+  database was scanned. Bumping the pinned Jellyfin image digest alone
+  invalidates the baseline — the Volume's database was produced by the old
+  server build — even when the seed script and profile definition are
+  unchanged.
 - Every measurement run verifies **seed provenance before measuring**: the
   baseline digest recorded on the Volume must equal the digest computed from
-  the **tested commit's** seed inputs (seed script plus profile definition)
-  for the profile being run. A mismatch — stale seed, wrong profile — is a
-  configuration failure: the run is **no-evidence** (never a pass or a
-  breach) until the exclusive seed-refresh path rebuilds the baseline.
+  the **tested commit's** seed inputs for the profile being run. A mismatch —
+  stale seed, wrong profile, changed Jellyfin image pin — is a configuration
+  failure: the run is **no-evidence** (never a pass or a breach) until the
+  exclusive seed-refresh path rebuilds the baseline.
 
 Secrets and teardown:
 
