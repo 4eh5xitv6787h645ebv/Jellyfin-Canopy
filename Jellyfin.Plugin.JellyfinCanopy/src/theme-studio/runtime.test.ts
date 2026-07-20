@@ -541,7 +541,7 @@ describe('Theme Studio identity-owned runtime', () => {
             'player-osd-density': 'standard',
             'player-control-material': 'solid',
             'player-pause-screen-material': 'solid',
-            'player-subtitle-backdrop': 'shadow',
+            'player-subtitle-backdrop': 'solid',
             'player-trickplay-shape': 'rounded',
         });
         expect(document.getElementById(COMMITTED_STYLE_ID)?.textContent)
@@ -886,7 +886,7 @@ describe('Theme Studio identity-owned runtime', () => {
             'player-osd-density': 'cinematic',
             'player-control-material': 'solid',
             'player-pause-screen-material': 'solid',
-            'player-subtitle-backdrop': 'box',
+            'player-subtitle-backdrop': 'solid',
             'player-trickplay-shape': 'pill',
         });
         expect(JC.core.themeStudio?.getDiagnostics().status).toBe('preview');
@@ -914,7 +914,7 @@ describe('Theme Studio identity-owned runtime', () => {
             'player-osd-density': 'standard',
             'player-control-material': 'solid',
             'player-pause-screen-material': 'solid',
-            'player-subtitle-backdrop': 'shadow',
+            'player-subtitle-backdrop': 'solid',
             'player-trickplay-shape': 'rounded',
         });
         expect(JC.core.themeStudio?.getDiagnostics().status).toBe('active');

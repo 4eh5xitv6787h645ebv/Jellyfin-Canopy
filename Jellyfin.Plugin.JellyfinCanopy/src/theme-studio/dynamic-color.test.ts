@@ -61,6 +61,9 @@ describe('Theme Studio local dynamic color', () => {
             .toBe(`${window.location.origin}/Items/active/Images/Backdrop`);
 
         document.querySelector('.page:not(.hide)')?.remove();
+        document.querySelector<HTMLImageElement>('body > .backdropImage')!.src = '/Items/global/Images/Primary';
+        expect(findLocalMediaImage(document, 'backdrop', window.location.origin)).toBeNull();
+        document.querySelector<HTMLImageElement>('body > .backdropImage')!.src = '/Items/global/Images/Backdrop';
         expect(findLocalMediaImage(document, 'backdrop', window.location.origin)?.key)
             .toBe(`${window.location.origin}/Items/global/Images/Backdrop`);
         expect(findLocalMediaImage(document, 'poster', window.location.origin)).toBeNull();

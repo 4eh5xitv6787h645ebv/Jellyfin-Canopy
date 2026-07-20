@@ -543,41 +543,36 @@ export function serializeMediaSurfaceAdapters(rootSelector: string): string {
         + '[data-jc-theme-breakpoint="desktop"],'
         + '[data-jc-theme-breakpoint="wide"]'
         + ')';
-    return [
-        playerMedia(selector),
-        musicNowPlaying(selector),
-        liveGuide(selector),
-        bookReader(selector),
-        `
-${selector}[data-jc-theme-transparency="reduced"] :where(
+    const solidMaterialSurfaces = `:where(
   .videoOsdBottom,
   .sliderBubble,
   .chapterThumbContainer,
-  #pause-screen-content,
-  .nowPlayingInfoContainer,
-  .nowPlayingPlaylist,
-  .bookOsdRow
-) {
-  -webkit-backdrop-filter: none !important;
-  backdrop-filter: none !important;
-  background-image: none !important;
-  background-color: var(--jc-color-surface);
-}
-${selector}[data-jc-theme-effects-level="minimal"] :where(
-  .videoOsdBottom,
-  .sliderBubble,
-  .chapterThumbContainer,
+  .videoSubtitlesInner,
   #jc-osd-rating-container .jc-chip,
   [data-jc-frame-overlay="true"],
   #pause-screen-content,
   #pause-screen-close-btn,
   .nowPlayingInfoContainer,
   .nowPlayingPlaylist,
-  .nowPlayingPage [role="status"],
-  .tvguide [role="status"],
-  #bookPlayerContainer [role="status"],
+  .nowPlayingPage :where([role="status"], .noItemsMessage, .emptyMessage, .errorMessage, [role="alert"]),
+  .tvguide :where([role="status"], .noItemsMessage, .emptyMessage, .errorMessage, [role="alert"]),
+  #bookPlayerContainer :where([role="status"], .noItemsMessage, .emptyMessage, .errorMessage, [role="alert"]),
   .bookOsdRow
-) {
+)`;
+    return [
+        playerMedia(selector),
+        musicNowPlaying(selector),
+        liveGuide(selector),
+        bookReader(selector),
+        `
+${selector}[data-jc-theme-transparency="reduced"] ${solidMaterialSurfaces} {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  background-image: none !important;
+  background-color: var(--jc-color-surface) !important;
+  box-shadow: none !important;
+}
+${selector}[data-jc-theme-effects-level="minimal"] ${solidMaterialSurfaces} {
   -webkit-backdrop-filter: none !important;
   backdrop-filter: none !important;
   background-image: none !important;

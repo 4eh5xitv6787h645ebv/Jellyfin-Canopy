@@ -371,6 +371,7 @@ export function resolveTheme(
         tokens['elevation.dialog-shadow'] = 'none';
         tokens['player.control-material'] = 'solid';
         tokens['player.pause-screen-material'] = 'solid';
+        tokens['player.subtitle-backdrop'] = 'solid';
         tokens['color.dynamic-source'] = 'off';
         requestedMotion = 'off';
     }
@@ -389,6 +390,7 @@ export function resolveTheme(
         tokens['effects.backdrop-opacity'] = 1;
         tokens['player.control-material'] = 'solid';
         tokens['player.pause-screen-material'] = 'solid';
+        tokens['player.subtitle-backdrop'] = 'solid';
     }
     if (reducedMotion || requestedMotion === 'off') {
         requestedMotion = 'off';

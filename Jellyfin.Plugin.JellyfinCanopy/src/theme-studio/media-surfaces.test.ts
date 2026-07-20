@@ -49,7 +49,8 @@ describe('Theme Studio modern media surface modules', () => {
             '.jc-bookmark-marker[data-jc-identity-owned="true"]',
             '#pause-screen-content',
         ]) expect(css, role).toContain(role);
-        expect(css).not.toMatch(/\.videoSubtitlesInner[^}]*!important/s);
+        const playerOptions = css.slice(0, css.indexOf('/* Adapter music-now-playing-v12'));
+        expect(playerOptions).not.toMatch(/\.videoSubtitlesInner[^}]*!important/s);
         expect(css.match(/background-image: none/g)?.length).toBeGreaterThanOrEqual(2);
     });
 
@@ -85,6 +86,8 @@ describe('Theme Studio modern media surface modules', () => {
         for (const solidRole of [
             '.videoOsdBottom', '#pause-screen-content', '.nowPlayingInfoContainer',
             '.nowPlayingPlaylist', '.bookOsdRow', '[data-jc-frame-overlay="true"]',
+            '.videoSubtitlesInner', '#pause-screen-close-btn', '#jc-osd-rating-container .jc-chip',
+            '.noItemsMessage', '.emptyMessage', '.errorMessage', '[role="alert"]',
         ]) expect(css, `minimal/${solidRole}`).toContain(solidRole);
         expect(css).not.toContain('url(');
         expect(css).not.toContain('@import');

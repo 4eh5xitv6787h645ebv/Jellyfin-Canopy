@@ -237,8 +237,18 @@ describe('Theme Studio resolver', () => {
         const configuration = themeConfiguration();
         configuration.Profiles[0].Accessibility.Motion = 'off';
         configuration.Profiles[0].Accessibility.Transparency = 'off';
+        configuration.Profiles[0].Tokens = {
+            'player.control-material': 'glass',
+            'player.pause-screen-material': 'glass',
+            'player.subtitle-backdrop': 'box',
+        };
         const resolved = resolveTheme(configuration, media());
         expect(resolved).toMatchObject({ reducedMotion: true, reducedTransparency: true });
+        expect(resolved.tokens).toMatchObject({
+            'player.control-material': 'solid',
+            'player.pause-screen-material': 'solid',
+            'player.subtitle-backdrop': 'solid',
+        });
     });
 
     it('pairs every bundled accent with a WCAG-readable primary foreground', () => {
@@ -384,6 +394,7 @@ describe('Theme Studio resolver', () => {
                 'motion.duration-scale': 0,
                 'player.control-material': 'solid',
                 'player.pause-screen-material': 'solid',
+                'player.subtitle-backdrop': 'solid',
             });
         }
 

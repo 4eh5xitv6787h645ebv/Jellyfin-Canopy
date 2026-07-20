@@ -54,6 +54,15 @@ export function localMediaImage(value: string, origin: string): LocalMediaImage 
     }
 }
 
+function localMediaImageOfType(
+    value: string,
+    origin: string,
+    imageType: 'Primary' | 'Backdrop',
+): LocalMediaImage | null {
+    const image = localMediaImage(value, origin);
+    return image && new RegExp(`/Images/${imageType}(?:/|$)`, 'i').test(image.key) ? image : null;
+}
+
 function inlineBackgroundUrl(element: HTMLElement): string {
     const match = /url\((?:"|')?([^"')]+)(?:"|')?\)/.exec(element.style.backgroundImage);
     return match?.[1] ?? '';
@@ -69,12 +78,12 @@ function findMediaImageWithin(
         + `img[data-src*="/Items/"][data-src*="/Images/${imageType}"]`,
     );
     const imageValue = image?.currentSrc || image?.src || image?.dataset.src || '';
-    const direct = localMediaImage(imageValue, origin);
+    const direct = localMediaImageOfType(imageValue, origin, imageType);
     if (direct) return direct;
     const background = root.querySelector<HTMLElement>(
         `[style*="/Items/"][style*="/Images/${imageType}"]`,
     );
-    return localMediaImage(background ? inlineBackgroundUrl(background) : '', origin);
+    return localMediaImageOfType(background ? inlineBackgroundUrl(background) : '', origin, imageType);
 }
 
 /** Finds one local candidate with no layout reads or computed-style walk. */
@@ -96,12 +105,13 @@ export function findLocalMediaImage(
     for (const globalBackdrop of globalBackdrops) {
         if (!globalBackdrop || globalBackdrop.closest('.page')) continue;
         const candidate = globalBackdrop instanceof HTMLImageElement
-            ? localMediaImage(
+            ? localMediaImageOfType(
                 globalBackdrop.currentSrc || globalBackdrop.src || globalBackdrop.dataset.src || '',
                 origin,
+                imageType,
             )
             : findMediaImageWithin(globalBackdrop, imageType, origin)
-                ?? localMediaImage(inlineBackgroundUrl(globalBackdrop), origin);
+                ?? localMediaImageOfType(inlineBackgroundUrl(globalBackdrop), origin, imageType);
         if (candidate) return candidate;
     }
     return null;

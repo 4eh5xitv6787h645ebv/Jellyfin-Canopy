@@ -241,6 +241,9 @@ async function previewEffects(page: Page): Promise<{ accepted: boolean; serializ
             'motion.stagger': true,
             'color.dynamic-source': 'backdrop',
             'color.dynamic-strength': 1,
+            'player.control-material': 'glass',
+            'player.pause-screen-material': 'glass',
+            'player.subtitle-backdrop': 'box',
         };
         active.Tokens = effects;
         const holiday = structuredClone(active);
@@ -449,12 +452,48 @@ test.describe.serial('Theme Studio bounded effects', () => {
             const probe = document.createElement('div');
             probe.id = 'jc-minimal-material-probe';
             probe.style.cssText = 'position:fixed;inset-inline-start:-10000px;inline-size:10px;block-size:10px;overflow:hidden';
-            probe.innerHTML = '<div class="videoOsdBottom"></div>'
-                + '<div id="pause-screen-content"></div>'
-                + '<div class="nowPlayingInfoContainer"></div>'
-                + '<div class="bookOsdRow"></div>';
+            probe.innerHTML = '<div class="videoOsdBottom" data-jc-material-probe="player"></div>'
+                + '<div class="sliderBubble" data-jc-material-probe="slider"></div>'
+                + '<div class="chapterThumbContainer" data-jc-material-probe="chapter"></div>'
+                + '<div class="videoSubtitlesInner" data-jc-material-probe="subtitle"></div>'
+                + '<div id="jc-osd-rating-container"><span class="jc-chip" data-jc-material-probe="rating"></span></div>'
+                + '<div data-jc-frame-overlay="true" data-jc-material-probe="frame"></div>'
+                + '<div id="pause-screen-content" data-jc-material-probe="pause"></div>'
+                + '<button id="pause-screen-close-btn" data-jc-material-probe="pause-close"></button>'
+                + '<div class="nowPlayingInfoContainer" data-jc-material-probe="now-playing"></div>'
+                + '<div class="nowPlayingPlaylist" data-jc-material-probe="queue"></div>'
+                + '<div class="nowPlayingPage"><div class="emptyMessage" data-jc-material-probe="music-empty"></div></div>'
+                + '<div class="tvguide"><div role="status" data-jc-material-probe="guide-status"></div></div>'
+                + '<div id="bookPlayerContainer"><div role="alert" data-jc-material-probe="reader-alert"></div></div>'
+                + '<div class="bookOsdRow" data-jc-material-probe="reader-osd"></div>';
             document.body.append(probe);
         });
+        const readMaterialEffects = async () => page.locator('[data-jc-material-probe]').evaluateAll((elements) => {
+            const reference = document.createElement('div');
+            reference.style.backgroundColor = 'var(--jc-color-surface)';
+            document.body.append(reference);
+            const solid = getComputedStyle(reference).backgroundColor;
+            reference.remove();
+            return elements.map((element) => {
+                const styles = getComputedStyle(element);
+                return {
+                    role: element.getAttribute('data-jc-material-probe') ?? 'unknown',
+                    background: styles.backgroundColor,
+                    image: styles.backgroundImage,
+                    backdrop: styles.backdropFilter,
+                    shadow: styles.boxShadow,
+                    solid,
+                };
+            });
+        });
+        const expectSolidMaterialEffects = (materialEffects: Awaited<ReturnType<typeof readMaterialEffects>>): void => {
+            for (const effects of materialEffects) {
+                expect(effects.background, effects.role).toBe(effects.solid);
+                expect(effects.image, effects.role).toBe('none');
+                expect(effects.backdrop, effects.role).toBe('none');
+                expect(effects.shadow, effects.role).toBe('none');
+            }
+        };
         expect((await previewEffects(page)).accepted).toBe(true);
         await expect.poll(() => page.evaluate(() => ({
             breakpoint: document.documentElement.getAttribute('data-jc-theme-breakpoint'),
@@ -467,10 +506,11 @@ test.describe.serial('Theme Studio bounded effects', () => {
             accent: document.documentElement.getAttribute('data-jc-theme-dynamic-accent'),
             playerControl: document.documentElement.getAttribute('data-jc-theme-player-control-material'),
             playerPause: document.documentElement.getAttribute('data-jc-theme-player-pause-screen-material'),
+            playerSubtitle: document.documentElement.getAttribute('data-jc-theme-player-subtitle-backdrop'),
         }))).toEqual({
             breakpoint: 'phone', performance: 'reduced', level: 'minimal', material: 'solid',
             treatment: 'none', motion: 'off', source: 'off', accent: 'off',
-            playerControl: 'solid', playerPause: 'solid',
+            playerControl: 'solid', playerPause: 'solid', playerSubtitle: 'solid',
         });
         for (const viewport of [
             { name: 'portrait', width: 390, height: 844 },
@@ -490,30 +530,47 @@ test.describe.serial('Theme Studio bounded effects', () => {
             });
         expect(dialogEffects.backdrop).toBe('none');
         expect(dialogEffects.shadow).toBe('none');
-        const materialEffects = await page.locator('#jc-minimal-material-probe > *').evaluateAll((elements) => {
-            const reference = document.createElement('div');
-            reference.style.backgroundColor = 'var(--jc-color-surface)';
-            document.body.append(reference);
-            const solid = getComputedStyle(reference).backgroundColor;
-            reference.remove();
-            return elements.map((element) => {
-                const styles = getComputedStyle(element);
-                return {
-                    role: element.id || element.className,
-                    background: styles.backgroundColor,
-                    image: styles.backgroundImage,
-                    backdrop: styles.backdropFilter,
-                    shadow: styles.boxShadow,
-                    solid,
-                };
-            });
+        expectSolidMaterialEffects(await readMaterialEffects());
+
+        await page.evaluate(() => {
+            Object.defineProperty(navigator, 'deviceMemory', { configurable: true, value: 8 });
+            Object.defineProperty(navigator, 'hardwareConcurrency', { configurable: true, value: 8 });
+            const runtime = window.JellyfinCanopy.core.themeStudio;
+            const draft = runtime?.getConfiguration();
+            const active = draft?.Profiles.find((profile) => profile.Id === draft.ActiveProfileId)
+                ?? draft?.Profiles[0];
+            if (!runtime || !draft || !active) throw new Error('Theme Studio configuration is unavailable');
+            active.Accessibility = {
+                ...active.Accessibility,
+                Motion: 'on',
+                Contrast: 'off',
+                Transparency: 'off',
+            };
+            active.Tokens = {
+                ...active.Tokens,
+                'effects.level': 'full',
+                'effects.material': 'glass',
+                'player.control-material': 'glass',
+                'player.pause-screen-material': 'glass',
+                'player.subtitle-backdrop': 'box',
+            };
+            if (!runtime.preview(draft, { allowScheduling: false })) {
+                throw new Error('Theme Studio reduced-transparency preview was rejected');
+            }
         });
-        for (const effects of materialEffects) {
-            expect(effects.background, effects.role).toBe(effects.solid);
-            expect(effects.image, effects.role).toBe('none');
-            expect(effects.backdrop, effects.role).toBe('none');
-            expect(effects.shadow, effects.role).toBe('none');
-        }
+        await expect.poll(() => page.evaluate(() => ({
+            performance: document.documentElement.getAttribute('data-jc-theme-performance'),
+            level: document.documentElement.getAttribute('data-jc-theme-effects-level'),
+            transparency: document.documentElement.getAttribute('data-jc-theme-transparency'),
+            material: document.documentElement.getAttribute('data-jc-theme-effects-material'),
+            playerControl: document.documentElement.getAttribute('data-jc-theme-player-control-material'),
+            playerPause: document.documentElement.getAttribute('data-jc-theme-player-pause-screen-material'),
+            playerSubtitle: document.documentElement.getAttribute('data-jc-theme-player-subtitle-backdrop'),
+        }))).toEqual({
+            performance: 'reduced', level: 'full', transparency: 'reduced', material: 'solid',
+            playerControl: 'solid', playerPause: 'solid', playerSubtitle: 'solid',
+        });
+        expectSolidMaterialEffects(await readMaterialEffects());
         assertNoRuntimeErrors(consoleErrors);
     });
 });
