@@ -698,14 +698,24 @@ SSH keypair; the provision/attach/teardown lifecycle was proven working on
 
 Volume lifecycle:
 
-- The Volume holds the pre-seeded stub library plus the scanned Jellyfin
-  database so a run skips the multi-hour initial scan. Volumes attach to one
-  Linode at a time (same region), so **runs are serialized** on the Volume.
-- The Volume's media/database baseline is **immutable during ordinary
-  measurement runs**: writable Jellyfin state is copied to instance-local
-  storage; the baseline is identified by a digest of its seed inputs and
-  profile; it is refreshed only through an exclusive seed-refresh path, and
-  only when a seed input changes.
+- The Volume holds **one independent baseline per profile**, stored under
+  profile-namespaced paths (`baselines/L/`, `baselines/XL/`). Each baseline
+  is a pre-seeded stub library plus the scanned Jellyfin database, so a run
+  skips the multi-hour initial scan, and carries its own metadata record
+  (profile, seed version, seed-input digest). A run reads and verifies only
+  its own profile's baseline, so the nightly L schedule and the weekly XL
+  schedule never invalidate each other's baseline — alternating the two
+  required schedules must never trigger a rebuild. Stub files are
+  zero-byte/sparse, so both baselines coexist on the Volume and the `df -i`
+  inode-headroom check covers the combined baselines. Volumes attach to one
+  Linode at a time (same region), so **runs are serialized** on the Volume
+  regardless of profile.
+- The Volume's baselines are **immutable during ordinary measurement runs**:
+  writable Jellyfin state is copied to instance-local storage; each
+  profile's baseline is identified by the seed-input digest in its own
+  metadata record; a baseline is refreshed only through an exclusive
+  seed-refresh path that rebuilds **only the affected profile's baseline**,
+  and only when one of that profile's seed inputs changes.
 - A baseline never contains **plugin-persisted runtime state** (for example
   `tag-cache.json` under the plugin configuration directory): the warm-start
   input is produced in-run by the cold session of the tag-cache state
@@ -723,11 +733,12 @@ Volume lifecycle:
   server build — even when the seed script and profile definition are
   unchanged.
 - Every measurement run verifies **seed provenance before measuring**: the
-  baseline digest recorded on the Volume must equal the digest computed from
-  the **tested commit's** seed inputs for the profile being run. A mismatch —
-  stale seed, wrong profile, changed Jellyfin image pin — is a configuration
-  failure: the run is **no-evidence** (never a pass or a breach) until the
-  exclusive seed-refresh path rebuilds the baseline.
+  digest recorded in the Volume's metadata **for the profile being run** must
+  equal the digest computed from the **tested commit's** seed inputs for that
+  profile. A mismatch — stale seed, missing or wrong-profile baseline,
+  changed Jellyfin image pin — is a configuration failure: the run is
+  **no-evidence** (never a pass or a breach) until the exclusive seed-refresh
+  path rebuilds that profile's baseline.
 
 Secrets and teardown:
 
@@ -769,7 +780,7 @@ PR events.
 
 1. Sparse bulk-item generator extending `e2e/docker/seed.sh` (with the `df -i`
    headroom check).
-2. Seed refresh/versioning tooling for the Volume baseline.
+2. Seed refresh/versioning tooling for the per-profile Volume baselines.
 3. The `main`-only scheduled workflow: SSH provisioning, quota verification,
    `always()` teardown.
 4. Measurement harness and the immutable result-artifact schema.
