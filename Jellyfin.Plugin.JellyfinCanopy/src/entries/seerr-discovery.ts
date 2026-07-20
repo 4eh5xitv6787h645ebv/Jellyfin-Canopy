@@ -5,7 +5,8 @@ export const seerrDiscoveryDependencies = Object.freeze(['seerr-core'] as const)
 
 export function isSeerrDiscoveryEnabled(state: FeatureLoaderState): boolean {
     return Boolean(state.identity)
-        && window.JellyfinCanopy?.pluginConfig?.SeerrEnabled === true;
+        && window.JellyfinCanopy?.pluginConfig?.SeerrEnabled === true
+        && window.JellyfinCanopy?.pluginConfig?.SeerrConfigured === true;
 }
 
 export function isSeerrDiscoveryRoute(state: FeatureLoaderState): boolean {

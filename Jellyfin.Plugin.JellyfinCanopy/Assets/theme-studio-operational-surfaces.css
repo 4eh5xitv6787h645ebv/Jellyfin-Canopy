@@ -557,6 +557,7 @@
 }
 :root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) :where(
   .jc-download-badge,
+  .jc-request-status,
   .jc-requests-status-chip,
   .jc-release-date-chip,
   .jc-issue-status-chip,
@@ -569,15 +570,15 @@
   color: var(--jc-color-text) !important;
   line-height: 1.35;
 }
-:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) :where(.jc-chip-available, .jc-issue-status-resolved) {
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) :where(.jc-chip-available, .jc-chip-approved, .jc-issue-status-resolved) {
   border-color: var(--jc-color-positive) !important;
   background: color-mix(in srgb, var(--jc-color-positive) 18%, var(--jc-color-surface)) !important;
 }
-:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) :where(.jc-chip-pending, .jc-chip-processing, .jc-issue-status-open, .jc-release-date-chip) {
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) :where(.jc-chip-pending, .jc-chip-requested, .jc-chip-processing, .jc-issue-status-open, .jc-release-date-chip) {
   border-color: var(--jc-color-caution) !important;
   background: color-mix(in srgb, var(--jc-color-caution) 18%, var(--jc-color-surface)) !important;
 }
-:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) :where(.jc-chip-declined, .jc-chip-rejected, .jc-chip-deleted) {
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) :where(.jc-chip-declined, .jc-chip-failed, .jc-chip-rejected, .jc-chip-deleted) {
   border-color: var(--jc-color-negative) !important;
   background: color-mix(in srgb, var(--jc-color-negative) 18%, var(--jc-color-surface)) !important;
 }

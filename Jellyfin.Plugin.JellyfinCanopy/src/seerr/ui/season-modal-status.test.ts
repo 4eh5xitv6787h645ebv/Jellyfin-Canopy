@@ -75,6 +75,7 @@ describe('season modal status domains', () => {
             host,
             checkbox: host.querySelector<HTMLInputElement>('.seerr-season-checkbox')!,
             status: host.querySelector<HTMLElement>('.seerr-season-status')!,
+            requestState: host.querySelector<HTMLElement>('.seerr-request-state'),
         };
     }
 
@@ -84,16 +85,20 @@ describe('season modal status domains', () => {
         expect(row.checkbox.disabled).toBe(true);
         expect(row.status.textContent).toBe('seerr_season_status_requested');
         expect(row.status.classList).toContain('seerr-season-status-processing');
+        expect(row.requestState?.classList).toContain('seerr-request-state-pending');
+        expect(row.requestState?.textContent).toBe('◷seerr_btn_pending');
     });
 
     it.each([
-        { requestStatus: 3, name: 'declined' },
-        { requestStatus: 5, name: 'completed' },
-    ])('keeps $name request history requestable', ({ requestStatus }) => {
+        { requestStatus: 3, name: 'declined', stateClass: 'declined', label: '✕seerr_btn_declined' },
+        { requestStatus: 5, name: 'completed', stateClass: 'completed', label: '✓downloads_status_completed' },
+    ])('keeps $name request history requestable and visible', ({ requestStatus, stateClass, label }) => {
         const row = renderSeason({ requestStatus });
 
         expect(row.checkbox.disabled).toBe(false);
         expect(row.status.textContent).toBe('seerr_season_status_not_requested');
+        expect(row.requestState?.classList).toContain(`seerr-request-state-${stateClass}`);
+        expect(row.requestState?.textContent).toBe(label);
     });
 
     it('blocks a failed parent request without displaying request status 4 as partial media', () => {
@@ -102,6 +107,8 @@ describe('season modal status domains', () => {
         expect(row.checkbox.disabled).toBe(true);
         expect(row.status.textContent).toBe('seerr_season_status_requested');
         expect(row.status.classList).not.toContain('seerr-season-status-partially-available');
+        expect(row.requestState?.classList).toContain('seerr-request-state-failed');
+        expect(row.requestState?.textContent).toBe('!downloads_status_failed');
     });
 
     it('separates normal and 4K active requests', () => {
@@ -128,6 +135,8 @@ describe('season modal status domains', () => {
 
         expect(row.checkbox.disabled).toBe(true);
         expect(row.status.textContent).toBe('seerr_season_status_processing');
+        expect(row.requestState?.classList).toContain('seerr-request-state-approved');
+        expect(row.requestState?.textContent).toBe('✓requests_approved_toast');
     });
 
     it('keeps raw AVAILABLE fail-closed even when Jellyfin link metadata is missing', () => {

@@ -11,6 +11,11 @@
 let openModalCount = 0; // the single INT-1 chokepoint
 
 export interface ModalA11yOptions {
+    /**
+     * Element that owns role/aria dialog semantics when `root` is a full-screen
+     * backdrop. Focus trapping and dismissal still remain owned by `root`.
+     */
+    dialogElement?: HTMLElement;
     /** id of the title element → aria-labelledby. */
     labelledBy?: string;
     /** literal/translated aria-label (when there is no title node). */
@@ -39,11 +44,12 @@ const FOCUSABLE_SELECTOR =
  * open. Returns a handle whose release() MUST be called on close.
  */
 export function installModalA11y(root: HTMLElement, opts: ModalA11yOptions = {}): ModalA11yHandle {
-    root.setAttribute('role', 'dialog');
-    root.setAttribute('aria-modal', 'true');
-    if (!root.hasAttribute('tabindex')) root.setAttribute('tabindex', '-1');
-    if (opts.labelledBy) root.setAttribute('aria-labelledby', opts.labelledBy);
-    else if (opts.label) root.setAttribute('aria-label', opts.label);
+    const dialog = opts.dialogElement ?? root;
+    dialog.setAttribute('role', 'dialog');
+    dialog.setAttribute('aria-modal', 'true');
+    if (!dialog.hasAttribute('tabindex')) dialog.setAttribute('tabindex', '-1');
+    if (opts.labelledBy) dialog.setAttribute('aria-labelledby', opts.labelledBy);
+    else if (opts.label) dialog.setAttribute('aria-label', opts.label);
 
     const prevFocused = document.activeElement as HTMLElement | null;
 
@@ -61,10 +67,10 @@ export function installModalA11y(root: HTMLElement, opts: ModalA11yOptions = {})
         }
         if (e.key !== 'Tab') return;
         const f = focusables();
-        if (!f.length) { e.preventDefault(); root.focus(); return; }
+        if (!f.length) { e.preventDefault(); dialog.focus(); return; }
         const first = f[0];
         const last = f[f.length - 1];
-        if (e.shiftKey && (document.activeElement === first || document.activeElement === root)) {
+        if (e.shiftKey && (document.activeElement === first || document.activeElement === root || document.activeElement === dialog)) {
             e.preventDefault();
             last.focus();
         } else if (!e.shiftKey && document.activeElement === last) {
@@ -78,8 +84,8 @@ export function installModalA11y(root: HTMLElement, opts: ModalA11yOptions = {})
     // Initial focus.
     const target = typeof opts.initialFocus === 'function'
         ? opts.initialFocus()
-        : (opts.initialFocus ?? focusables()[0] ?? root);
-    (target ?? root).focus();
+        : (opts.initialFocus ?? focusables()[0] ?? dialog);
+    (target ?? dialog).focus();
 
     let released = false;
     return {

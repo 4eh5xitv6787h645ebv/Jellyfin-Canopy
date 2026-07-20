@@ -445,6 +445,7 @@ function updateSeasonList(seasonListElement: any, tvDetails: any, partialRequest
     // An active same-mode parent request blocks a duplicate, but its child
     // status integer must never overwrite or be interpreted as MediaStatus.
     const activeRequestSeasons = new Set<number>();
+    const latestRequestStateBySeason = new Map<number, { requestId: number; status: number }>();
     const mediaInfo = tvDetails.mediaInfo;
     if (mediaInfo !== undefined && mediaInfo !== null) {
         if (typeof mediaInfo !== 'object'
@@ -500,6 +501,15 @@ function updateSeasonList(seasonListElement: any, tvDetails: any, partialRequest
                         break;
                     }
                     seenRequestSeasons.add(seasonNumber);
+                    if (request.is4k === !!is4kMode) {
+                        const previous = latestRequestStateBySeason.get(seasonNumber);
+                        if (!previous || previous.requestId < requestId) {
+                            latestRequestStateBySeason.set(seasonNumber, {
+                                requestId,
+                                status: requestSeason.status,
+                            });
+                        }
+                    }
                     if (request.is4k === !!is4kMode
                         && request.status !== RequestStatus.DECLINED
                         && request.status !== RequestStatus.COMPLETED) {
@@ -585,6 +595,12 @@ function updateSeasonList(seasonListElement: any, tvDetails: any, partialRequest
             : effectiveMediaStatus;
         const { labelKey, cssClass: statusClass } = JC.seerrStatus!.getDisplayInfo(displayStatus, hasSeasonDownloads);
         const statusText = JC.t!(labelKey);
+        const requestState = relationStateValid
+            ? JC.seerrStatus!.getRequestStateInfo(latestRequestStateBySeason.get(seasonNumber)?.status)
+            : null;
+        const requestStateHtml = requestState
+            ? `<div class="seerr-request-state seerr-request-state-${escapeHtml(requestState.cssClass)}" role="status"><span aria-hidden="true">${escapeHtml(requestState.icon)}</span><span>${escapeHtml(JC.t!(requestState.labelKey))}</span></div>`
+            : '';
 
         // Preserve a selection only while the refreshed row remains
         // requestable. Polling can make a previously selected season active;
@@ -615,6 +631,7 @@ function updateSeasonList(seasonListElement: any, tvDetails: any, partialRequest
             </div>
             <div class="seerr-season-episodes">${escapeHtml(season.episodeCount || 0)} ep</div>
             <div class="seerr-season-status seerr-season-status-${escapeHtml(statusClass)}">${escapeHtml(statusText)}</div>
+            ${requestStateHtml}
         `;
 
         if(existingCheckbox && !checkboxDisabled) {

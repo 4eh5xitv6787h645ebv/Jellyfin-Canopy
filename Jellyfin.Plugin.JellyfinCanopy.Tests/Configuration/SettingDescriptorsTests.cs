@@ -70,5 +70,37 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Configuration
             // Authenticated callers still see the full value (unchanged behavior).
             Assert.Equal("guid1,guid2", authenticated["MaintenanceModeAffectedUsers"]);
         }
+
+        [Fact]
+        public void IntegrationCapabilityFlagsExposeConfigurationWithoutUrlsOrSecrets()
+        {
+            var config = new PluginConfiguration
+            {
+                SeerrUrls = "http://seerr.internal:5055",
+                SeerrApiKey = "seerr-secret",
+                SonarrInstances = """[{"Name":"Main","Url":"http://sonarr:8989","ApiKey":"sonarr-secret","Enabled":true}]""",
+                RadarrInstances = """[{"Name":"Disabled","Url":"http://radarr:7878","ApiKey":"radarr-secret","Enabled":false}]""",
+                BazarrUrl = "http://bazarr:6767",
+            };
+
+            var authenticated = SettingDescriptors.BuildPayload(
+                SettingExposure.Public, new SettingContext(config, IsAuthenticated: true));
+            Assert.Equal(true, authenticated["SeerrConfigured"]);
+            Assert.Equal(true, authenticated["SonarrConfigured"]);
+            Assert.Equal(false, authenticated["RadarrConfigured"]);
+            Assert.Equal(true, authenticated["BazarrConfigured"]);
+            Assert.DoesNotContain(nameof(PluginConfiguration.SeerrApiKey), authenticated.Keys);
+            Assert.DoesNotContain(nameof(PluginConfiguration.SonarrApiKey), authenticated.Keys);
+            Assert.DoesNotContain(nameof(PluginConfiguration.RadarrApiKey), authenticated.Keys);
+            Assert.DoesNotContain(nameof(PluginConfiguration.SonarrInstances), authenticated.Keys);
+            Assert.DoesNotContain(nameof(PluginConfiguration.RadarrInstances), authenticated.Keys);
+
+            var anonymous = SettingDescriptors.BuildPayload(
+                SettingExposure.Public, new SettingContext(config, IsAuthenticated: false));
+            Assert.Equal(false, anonymous["SeerrConfigured"]);
+            Assert.Equal(false, anonymous["SonarrConfigured"]);
+            Assert.Equal(false, anonymous["RadarrConfigured"]);
+            Assert.Equal(false, anonymous["BazarrConfigured"]);
+        }
     }
 }

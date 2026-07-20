@@ -20,6 +20,6 @@
     "maxSourceMapRawBytes": 6000000,
     "maxTotalRawBytes": 7000000,
     "maxClientManifestRawBytes": 262144,
-    "maxPublishedRawBytes": 7000000
+    "maxPublishedRawBytes": 7030000
   }
 }

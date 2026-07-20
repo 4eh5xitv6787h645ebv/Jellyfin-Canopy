@@ -137,6 +137,18 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 "theme-studio/operational-surfaces.css",
                 "Jellyfin.Plugin.JellyfinCanopy.Assets.theme-studio-operational-surfaces.css",
                 "text/css"),
+            new EmbeddedAssetDescriptor(
+                "theme-studio/seerr-surfaces.css",
+                "Jellyfin.Plugin.JellyfinCanopy.Assets.theme-studio-seerr-surfaces.css",
+                "text/css"),
+            new EmbeddedAssetDescriptor(
+                "theme-studio/arr-surfaces.css",
+                "Jellyfin.Plugin.JellyfinCanopy.Assets.theme-studio-arr-surfaces.css",
+                "text/css"),
+            new EmbeddedAssetDescriptor(
+                "theme-studio/external-surfaces.css",
+                "Jellyfin.Plugin.JellyfinCanopy.Assets.theme-studio-external-surfaces.css",
+                "text/css"),
         };
 
         /// <summary>Maps a derived asset's file extension to the Content-Type it is served with.</summary>

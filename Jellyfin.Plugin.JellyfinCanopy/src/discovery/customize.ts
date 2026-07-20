@@ -57,6 +57,7 @@ export function openCustomize(mt: DiscoveryMediaType, genres: Map<number, string
     overlay.style.cssText = 'position:fixed;inset:0;z-index:1000001;background:rgba(0,0,0,0.75);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:16px;';
 
     const dialog = document.createElement('div');
+    dialog.className = 'jc-discovery-customize-dialog';
     dialog.style.cssText = 'background:linear-gradient(135deg,rgba(30,30,35,0.98),rgba(20,20,25,0.98));border:1px solid rgba(255,255,255,0.12);border-radius:12px;padding:22px;max-width:480px;width:100%;color:#fff;max-height:82vh;display:flex;flex-direction:column;';
 
     const title = document.createElement('h3');

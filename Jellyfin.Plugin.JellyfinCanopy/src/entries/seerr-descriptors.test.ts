@@ -15,6 +15,7 @@ function state(routeKey: string, identity = true): FeatureLoaderState {
 beforeEach(() => {
     JC.pluginConfig = {
         SeerrEnabled: true,
+        SeerrConfigured: true,
         SeerrShowSearchResults: true,
         DiscoveryEnabled: true,
         DiscoveryLibraryTab: true,
@@ -48,10 +49,11 @@ describe('Seerr descriptor fragment', () => {
     });
 
     it.each([
-        [{ DiscoveryEnabled: false, DiscoveryLibraryTab: true, SeerrEnabled: true }, false],
-        [{ DiscoveryEnabled: true, DiscoveryLibraryTab: false, SeerrEnabled: true }, false],
-        [{ DiscoveryEnabled: true, DiscoveryLibraryTab: true, SeerrEnabled: false, TmdbEnabled: true }, false],
-        [{ SeerrEnabled: true }, true],
+        [{ DiscoveryEnabled: false, DiscoveryLibraryTab: true, SeerrEnabled: true, SeerrConfigured: true }, false],
+        [{ DiscoveryEnabled: true, DiscoveryLibraryTab: false, SeerrEnabled: true, SeerrConfigured: true }, false],
+        [{ DiscoveryEnabled: true, DiscoveryLibraryTab: true, SeerrEnabled: false, SeerrConfigured: true }, false],
+        [{ DiscoveryEnabled: true, DiscoveryLibraryTab: true, SeerrEnabled: true, SeerrConfigured: false }, false],
+        [{ SeerrEnabled: true, SeerrConfigured: true }, true],
     ])('owns the Discovery library configuration truth table %#', (config, expected) => {
         expect(isDiscoveryLibraryConfigured(config)).toBe(expected);
     });

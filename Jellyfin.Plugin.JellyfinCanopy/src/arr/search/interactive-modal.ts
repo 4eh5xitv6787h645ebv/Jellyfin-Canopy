@@ -200,7 +200,10 @@ class ReleaseView {
 
     private buildRow(release: ArrRelease): HTMLElement {
         const row = el('div', 'jc-arr-release');
-        if (release.rejections.length > 0) row.classList.add('jc-arr-rejected');
+        if (release.rejections.length > 0) {
+            row.classList.add('jc-arr-rejected');
+            row.setAttribute('aria-label', `Rejected release: ${release.title || '—'}`);
+        }
 
         const main = el('div', 'jc-arr-release-main');
         main.appendChild(el('div', 'jc-arr-release-title', release.title || '—'));
@@ -223,6 +226,7 @@ class ReleaseView {
 
         if (release.rejections.length > 0) {
             const rej = el('div', 'jc-arr-release-rejections');
+            rej.setAttribute('role', 'note');
             const icon = el('span', 'material-icons warning');
             icon.setAttribute('aria-hidden', 'true');
             rej.appendChild(icon);
@@ -233,6 +237,7 @@ class ReleaseView {
         const grab = el('button', 'jc-arr-grab');
         grab.type = 'button';
         grab.title = JC.t!('arr_search_grab');
+        grab.setAttribute('aria-label', JC.t!('arr_search_grab'));
         const grabIcon = el('span', 'material-icons download');
         grabIcon.setAttribute('aria-hidden', 'true');
         grab.appendChild(grabIcon);

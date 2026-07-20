@@ -2,7 +2,8 @@ import type { ClientFeatureDescriptor } from '../core/client-runtime';
 import { JC, isDiscoveryLibraryConfigured } from '../globals';
 
 function enabled(): boolean {
-    return JC.pluginConfig?.SeerrEnabled === true;
+    return JC.pluginConfig?.SeerrEnabled === true
+        && JC.pluginConfig?.SeerrConfigured === true;
 }
 
 function seerrRoute(routeKey: string): boolean {

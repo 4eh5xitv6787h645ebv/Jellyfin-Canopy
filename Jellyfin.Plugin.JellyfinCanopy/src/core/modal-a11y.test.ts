@@ -47,6 +47,23 @@ describe('installModalA11y', () => {
         handle.release();
     });
 
+    it('keeps backdrop geometry separate from dialog semantics when a content owner is supplied', () => {
+        const { root, first } = modalWithButtons();
+        const dialog = document.createElement('div');
+        root.insertBefore(dialog, first);
+        dialog.append(first);
+        const handle = installModalA11y(root, { dialogElement: dialog, labelledBy: 'content-title' });
+
+        expect(root.hasAttribute('role')).toBe(false);
+        expect(root.hasAttribute('aria-modal')).toBe(false);
+        expect(dialog.getAttribute('role')).toBe('dialog');
+        expect(dialog.getAttribute('aria-modal')).toBe('true');
+        expect(dialog.getAttribute('aria-labelledby')).toBe('content-title');
+        expect(document.activeElement).toBe(first);
+
+        handle.release();
+    });
+
     it('traps Tab focus from last→first and Shift+Tab from first→last', () => {
         const { root, first, last } = modalWithButtons();
         const handle = installModalA11y(root);

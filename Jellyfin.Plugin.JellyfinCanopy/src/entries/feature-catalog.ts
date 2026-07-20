@@ -54,19 +54,13 @@ function detailsRoute(routeKey: string): boolean {
 function arrSearchEnabled(): boolean {
     const config = JC.pluginConfig as undefined | {
         ArrSearchEnabled?: boolean;
-        RadarrInstances?: Array<{ Enabled?: boolean; Url?: string }>;
-        SonarrInstances?: Array<{ Enabled?: boolean; Url?: string }>;
-        RadarrUrl?: string;
-        SonarrUrl?: string;
+        RadarrConfigured?: boolean;
+        SonarrConfigured?: boolean;
     };
     if (config?.ArrSearchEnabled === false) return false;
-    const admin = JC.currentUser?.Policy?.IsAdministrator === true
-        || JC.currentSettings?.isAdmin === true;
+    const admin = JC.currentUser?.Policy?.IsAdministrator === true;
     if (!admin) return false;
-    const configured = [...(config?.RadarrInstances || []), ...(config?.SonarrInstances || [])]
-        .some((instance) => instance.Enabled !== false && typeof instance.Url === 'string'
-            && instance.Url.trim().length > 0);
-    return configured || Boolean(config?.RadarrUrl?.trim() || config?.SonarrUrl?.trim());
+    return config?.RadarrConfigured === true || config?.SonarrConfigured === true;
 }
 
 /**
@@ -333,10 +327,13 @@ export const builtInFeatureDescriptors: readonly ClientFeatureDescriptor[] = Obj
         entry: 'arr-detail-links',
         scope: 'navigation',
         restartOnConfigChange: true,
-        isEnabled: (state) => Boolean(state.identity) && (
-            JC.pluginConfig?.ArrLinksEnabled === true
-            || JC.pluginConfig?.ArrTagsShowAsLinks === true
-        ),
+        isEnabled: (state) => Boolean(state.identity)
+            && JC.currentUser?.Policy?.IsAdministrator === true
+            && (JC.pluginConfig?.SonarrConfigured === true
+                || JC.pluginConfig?.RadarrConfigured === true
+                || JC.pluginConfig?.BazarrConfigured === true)
+            && (JC.pluginConfig?.ArrLinksEnabled === true
+                || JC.pluginConfig?.ArrTagsShowAsLinks === true),
         isApplicable: (state) => detailsRoute(state.routeKey),
     },
     {

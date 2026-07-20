@@ -9,24 +9,24 @@
       "scope": "Jellyfin.Plugin.JellyfinCanopy/src/core/**",
       "report": "coverage/coverage-summary.json",
       "measured": {
-        "coveredLines": 1963,
-        "totalLines": 2288
+        "coveredLines": 1964,
+        "totalLines": 2289
       },
       "tolerance": {
         "missingCoveredLines": 1,
-        "rationale": "Theme Studio Canopy-surface integration in issue #393. Repeated clean local Node 22/V8 coverage runs on 2026-07-21 each passed all 1594 tests over the identical complete 2288-line core scope and measured 1963 covered lines (85.795%). Relative to the prior 1932/2253 baseline, the legitimate 35-line scope increase adds identity-owned tag-lane attachment and cleanup, semantic notification visibility states, and native-indicator compatibility through tag lanes. Focused tests cover same-corner reuse, stable position metadata, identity ownership, empty-lane cleanup, unknown-position fallback, stock RTL exits, visibility transitions, and the nested native-indicator selector. Covered lines advance by 31 and total core coverage improves from 85.752% to 85.795%. The existing one-line tolerance is unchanged and permits only the previously reproduced negligible instrumentation variance; coverage-baseline.test.js retains exact below-floor, above-baseline, scope-change, and broad-tolerance negative boundaries."
+        "rationale": "Theme Studio discovery and integration surfaces in issue #395. A clean local Node 22/V8 coverage run on 2026-07-21 passed all 1619 tests over the complete 2289-line core scope and measured 1964 covered lines (85.802%). Relative to the prior 1963/2288 baseline, the legitimate one-line scope increase lets modal accessibility semantics live on an inner dialog while the overlay retains focus-trap ownership; the new test covers that split backdrop/dialog contract. Covered lines advance by one and total core coverage improves from 85.795% to 85.802%. The existing one-line tolerance is unchanged and permits only the previously reproduced negligible instrumentation variance; coverage-baseline.test.js retains exact below-floor, above-baseline, scope-change, and broad-tolerance negative boundaries."
       }
     },
     "server": {
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 20777,
-        "totalLines": 29213
+        "coveredLines": 20802,
+        "totalLines": 29238
       },
       "tolerance": {
         "missingCoveredLines": 4,
-        "rationale": "Theme Studio operational surfaces in issue #394. Two clean local .NET 10.0.9/Coverlet runs on 2026-07-21 each passed all 1831 tests over the identical complete 29213-line assembly scope and measured 20777 covered lines. Relative to the prior 20771/29207 baseline, the legitimate six-line scope increase registers the same-origin embedded operational stylesheet and every new instrumented manifest line is covered by the asset-cache assembly test; total assembly coverage improves from 71.117% to 71.122%. The existing four-line low-side tolerance is unchanged and remains far below the policy maximum; coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, and broad-tolerance negative boundaries."
+        "rationale": "Theme Studio discovery and integration surfaces in issue #395. Two clean local .NET 10.0.9/Coverlet runs on 2026-07-21 each passed all 1835 tests over the identical complete 29238-line assembly scope and measured 20798 and 20802 covered lines. Relative to the prior 20777/29213 baseline, the legitimate 25-line scope increase adds authenticated Seerr/ARR/Bazarr capability projection and registers three same-origin embedded integration stylesheets; the new floor advances covered lines by 21 and improves required total assembly coverage from 71.109% to 71.134%. The existing four-line low-side tolerance exactly covers the reproduced instrumentation variance and remains far below the policy maximum; coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, and broad-tolerance negative boundaries."
       }
     }
   }

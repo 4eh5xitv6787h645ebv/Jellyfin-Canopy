@@ -64,9 +64,6 @@ modal.create = function({ title, subtitle, bodyHtml, backdropPath, backdropUrl, 
     modalElement.className = 'seerr-season-modal';
     modalElement.dataset.jcIdentityOwned = 'true';
     JC.identity.own(modalElement, identity);
-    modalElement.setAttribute('role', 'dialog');
-    modalElement.setAttribute('aria-modal', 'true');
-    modalElement.setAttribute('tabindex', '-1');
 
     // Support both backdropUrl (full URL) and backdropPath (TMDB path)
     let backdropImage;
@@ -81,8 +78,6 @@ modal.create = function({ title, subtitle, bodyHtml, backdropPath, backdropUrl, 
     // Build modal structure — bodyHtml is intentionally trusted HTML from internal callers
     const contentEl = document.createElement('div');
     contentEl.className = 'seerr-season-content';
-    contentEl.setAttribute('role', 'document');
-    contentEl.setAttribute('aria-labelledby', 'seerr-modal-title');
 
     const headerEl = document.createElement('div');
     headerEl.className = 'seerr-season-header';
@@ -147,6 +142,7 @@ modal.create = function({ title, subtitle, bodyHtml, backdropPath, backdropUrl, 
         history.pushState(null, '', location.href);
         window.addEventListener('popstate', close);
         a11y = installModalA11y(modalElement, {
+            dialogElement: contentEl,
             labelledBy: 'seerr-modal-title',
             initialFocus: () => modalElement.querySelector<HTMLElement>('button:not([disabled]), select, input'),
             onEscape: () => history.back(), // keep the history-based close mechanism

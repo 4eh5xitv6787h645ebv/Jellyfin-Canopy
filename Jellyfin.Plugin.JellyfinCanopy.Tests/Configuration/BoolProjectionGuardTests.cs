@@ -24,6 +24,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Configuration
         private static readonly HashSet<string> ComputedPublicBoolKeys = new(StringComparer.Ordinal)
         {
             "TmdbEnabled", // derived from TMDB_API_KEY (a string), not a bool property
+            "SeerrConfigured",
+            "SonarrConfigured",
+            "RadarrConfigured",
+            "BazarrConfigured",
         };
 
         [Fact]

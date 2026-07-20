@@ -58,6 +58,7 @@ beforeEach(() => {
         DiscoveryEnabled: true,
         DiscoveryLibraryTab: true,
         SeerrEnabled: true,
+        SeerrConfigured: true,
     };
     window.JellyfinCanopy.core.ui = {
         removeCss,
