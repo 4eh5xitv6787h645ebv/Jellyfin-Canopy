@@ -585,12 +585,21 @@ its `always()` teardown failed to destroy the instance or detach the Volume)
 fails its workflow run per the teardown contract below, and its artifacts,
 however green, are never reusable evidence — that the artifact is retained
 through the freshness window, that its budget digest equals the tag commit's
-`scale-budgets.json` digest, and that its recorded seed-input digest equals
+`scale-budgets.json` digest, that its recorded seed-input digest equals
 the digest computed from the tag commit's seed inputs for that profile (seed
 inputs as canonically defined under Volume lifecycle below — including the
 pinned Jellyfin server image, so a database scanned by a different Jellyfin
-build can never satisfy this check) — a result measured against the wrong
-library shape or the wrong server build is not evidence, no matter how fresh.
+build can never satisfy this check), and that its recorded topology metadata
+**exactly matches the profile's fixed topology contract** (see the runner
+topology section below): the profile's dedicated instance plan
+(`g6-dedicated-4` for L, `g6-dedicated-8` for XL), the `eu-central` region,
+and a recorded, verified `--cpus 2` Jellyfin-container quota. A provisioning
+regression can produce an exact-SHA, fresh, green artifact from a shared
+plan, the wrong region, or an unconstrained container — that artifact is
+non-parity evidence and is treated as **no-evidence**, exactly like a
+seed-digest mismatch: a result measured against the wrong library shape, the
+wrong server build, or the wrong hardware is not evidence, no matter how
+fresh.
 
 Retry policy (applied per profile): an infrastructure no-evidence failure
 (provisioning, SSH, collection, teardown) permits at most **two additional
@@ -617,6 +626,13 @@ verify → measure → compare → collect → destroy.
   repository's official parity profile — and the run verifies Docker applied
   that quota before measuring; spare host cores absorb Docker, harness, and
   metric overhead so measurements stay clean.
+- **Topology is verified, not assumed**: before measuring, the run queries the
+  provisioned instance's actual plan/type and region and confirms they match
+  the profile's contract above (alongside the container-quota check); any
+  mismatch aborts the run as **no-evidence**. The verified values — instance
+  plan, region, and applied container CPU quota — are what the result
+  artifact records as topology metadata, and release-time reuse re-checks
+  them independently (see the exact-tag-SHA section above).
 - **Estimated cost**: ~$15–20/month (nightly L + weekly XL + Volume + optional
   Object Storage).
 
