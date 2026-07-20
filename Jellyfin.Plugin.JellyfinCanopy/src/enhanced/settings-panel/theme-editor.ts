@@ -398,7 +398,10 @@ function profileControls(
     active: ThemeProfile,
     profileName: string,
     profileNameInvalid: boolean,
+    schedulingAllowed: boolean,
 ): string {
+    const deleteDisabled = configuration.Profiles.length <= 1
+        || (!schedulingAllowed && configuration.Schedule.some((entry) => entry.ProfileId === active.Id));
     return `<div class="jc-theme-field">
         <span>${escapeHtml(t('theme_studio_profile'))}</span>
         <select class="jc-theme-control" data-field="profile" aria-label="${escapeHtml(t('theme_studio_profile'))}">
@@ -408,7 +411,7 @@ function profileControls(
             <input class="jc-theme-control" style="flex:1 1 150px" data-role="profile-name" value="${escapeHtml(profileName)}" aria-label="${escapeHtml(t('theme_studio_profile_name'))}" aria-invalid="${profileNameInvalid}" aria-describedby="jc-theme-profile-name-error">
             <button class="jc-theme-button" type="button" data-action="rename-profile">${escapeHtml(t('theme_studio_rename'))}</button>
             <button class="jc-theme-button" type="button" data-action="add-profile">${escapeHtml(t('theme_studio_duplicate'))}</button>
-            <button class="jc-theme-button danger" type="button" data-action="delete-profile"${configuration.Profiles.length <= 1 ? ' disabled' : ''}>${escapeHtml(t('theme_studio_delete'))}</button>
+            <button class="jc-theme-button danger" type="button" data-action="delete-profile"${deleteDisabled ? ' disabled' : ''}>${escapeHtml(t('theme_studio_delete'))}</button>
         </div>
         <span class="jc-theme-hint jc-theme-validation" id="jc-theme-profile-name-error" data-role="profile-name-error"${profileNameInvalid ? '' : ' hidden'}>${escapeHtml(t('theme_studio_profile_name_invalid'))}</span>
     </div>`;
@@ -420,6 +423,7 @@ function beginnerEditor(
     query: string,
     profileName: string,
     profileNameInvalid: boolean,
+    schedulingAllowed: boolean,
 ): string {
     const presetMatches = (preset: (typeof THEME_PRESETS)[number]): boolean => {
         const key = PRESET_KEYS[preset.id] ?? preset.id;
@@ -427,7 +431,7 @@ function beginnerEditor(
         return !query || text.includes(query);
     };
     const visiblePresets = THEME_PRESETS.filter(presetMatches).length;
-    return `${profileControls(configuration, active, profileName, profileNameInvalid)}
+    return `${profileControls(configuration, active, profileName, profileNameInvalid, schedulingAllowed)}
         <label class="jc-theme-field"><span>${escapeHtml(t('theme_studio_search_presets'))}</span>
             <input class="jc-theme-control" type="search" data-field="preset-search" value="${escapeHtml(query)}" placeholder="${escapeHtml(t('theme_studio_search_placeholder'))}">
         </label>
@@ -690,8 +694,8 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
             </div>
             <div class="jc-theme-studio">
                 <div class="jc-theme-editor">
-                    ${mode === 'beginner' ? beginnerEditor(snapshot.configuration, active, query, activeProfileName, activeProfileNameInvalid) : `
-                        ${profileControls(snapshot.configuration, active, activeProfileName, activeProfileNameInvalid)}
+                    ${mode === 'beginner' ? beginnerEditor(snapshot.configuration, active, query, activeProfileName, activeProfileNameInvalid, schedulingAllowed) : `
+                        ${profileControls(snapshot.configuration, active, activeProfileName, activeProfileNameInvalid, schedulingAllowed)}
                         <label class="jc-theme-field"><span>${escapeHtml(t('theme_studio_expert_json'))}</span><span class="jc-theme-hint">${escapeHtml(t('theme_studio_expert_hint'))}</span>
                             <textarea class="jc-theme-control jc-theme-expert" data-field="expert-json" spellcheck="false" aria-invalid="${expertInvalid}">${escapeHtml(expertText)}</textarea>
                         </label>`}
@@ -741,7 +745,6 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         }
         let parsed: unknown;
         try { parsed = JSON.parse(expertText); } catch { parsed = null; }
-        const wasInvalid = expertInvalid;
         const valid = parseUserThemeConfiguration(parsed);
         expertInvalid = !valid;
         if (!valid) {
@@ -779,7 +782,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
                 clearStagedPreview();
                 if (!recoveryRequired) status = t('theme_studio_ready');
             }
-        } else if (wasInvalid && !recoveryRequired) {
+        } else if (!recoveryRequired) {
             status = t(state.snapshot().dirty ? 'theme_studio_unsaved' : 'theme_studio_ready');
         }
         if (rerender) render();
@@ -812,6 +815,8 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
                 clearStagedPreview();
                 if (!recoveryRequired) status = t('theme_studio_ready');
             }
+        } else if (!recoveryRequired) {
+            status = t(state.snapshot().dirty ? 'theme_studio_unsaved' : 'theme_studio_ready');
         }
         return true;
     };

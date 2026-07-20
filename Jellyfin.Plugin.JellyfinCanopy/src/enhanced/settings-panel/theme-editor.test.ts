@@ -487,6 +487,45 @@ describe('Theme Studio responsive settings editor', () => {
         expect(button('apply').disabled).toBe(false);
     });
 
+    it('normalizes a no-op profile rename without reporting a clean draft as unsaved', () => {
+        wireThemeStudioEditor(context());
+        const input = panel.querySelector<HTMLInputElement>('[data-role="profile-name"]')!;
+        input.value = `  ${configuration.Profiles[0].Name}  `;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        expect(panel.textContent).toContain('theme_studio_unsaved');
+
+        button('rename-profile').click();
+
+        expect(panel.querySelector<HTMLInputElement>('[data-role="profile-name"]')?.value)
+            .toBe(configuration.Profiles[0].Name);
+        expect(panel.textContent).toContain('theme_studio_ready');
+        expect(panel.textContent).not.toContain('theme_studio_unsaved');
+        expect(button('apply').disabled).toBe(true);
+        expect(preview).not.toHaveBeenCalled();
+    });
+
+    it('blocks deletion of profiles referenced by dormant schedules until scheduling is enabled', () => {
+        JC.pluginConfig.ThemeStudioAllowSeasonalScheduling = false;
+        configuration.Profiles.push({
+            ...structuredClone(configuration.Profiles[0]),
+            Id: 'spare',
+            Name: 'Spare',
+        });
+        configuration.Schedule = [{
+            Id: 'winter', ProfileId: configuration.ActiveProfileId,
+            StartMonthDay: '12-01', EndMonthDay: '02-28', Priority: 10, Enabled: true,
+        }];
+        wireThemeStudioEditor(context());
+
+        expect(button('delete-profile').disabled).toBe(true);
+        expect(panel.querySelectorAll('[data-field="profile"] option')).toHaveLength(2);
+
+        JC.pluginConfig.ThemeStudioAllowSeasonalScheduling = true;
+        window.dispatchEvent(new CustomEvent('jc:config-changed'));
+
+        expect(button('delete-profile').disabled).toBe(false);
+    });
+
     it('adopts the exact acknowledgement when a joined saver leaves this target untouched', async () => {
         const authoritative = themeConfiguration();
         authoritative.Profiles[0].BasePreset = 'studio';
@@ -1218,5 +1257,21 @@ describe('Theme Studio responsive settings editor', () => {
         expect(panel.textContent).toContain('theme_studio_ready');
         expect(panel.textContent).not.toContain('theme_studio_invalid');
         expect(button('apply').disabled).toBe(true);
+    });
+
+    it('accepts formatting-only Expert JSON without reporting a clean draft as unsaved', () => {
+        wireThemeStudioEditor(context());
+        button('editor-mode', 'expert').click();
+        const editor = panel.querySelector<HTMLTextAreaElement>('[data-field="expert-json"]')!;
+        editor.value = JSON.stringify(configuration);
+        editor.dispatchEvent(new Event('input', { bubbles: true }));
+        expect(panel.textContent).toContain('theme_studio_unsaved');
+
+        vi.advanceTimersByTime(250);
+
+        expect(panel.textContent).toContain('theme_studio_ready');
+        expect(panel.textContent).not.toContain('theme_studio_unsaved');
+        expect(button('apply').disabled).toBe(true);
+        expect(preview).not.toHaveBeenCalled();
     });
 });
