@@ -951,10 +951,29 @@ Secrets and teardown:
   there — an infrastructure **no-evidence** failure with no new spend — and
   the instance's recorded expiry guarantees a later run reclaims it. It is
   idempotent and safe to re-run; a reconciliation that cannot complete
-  fails the run before any new spend. Because profile L runs nightly, a
-  leaked instance survives at most about one schedule interval (~one day,
-  roughly $3 at the L plan) before the next run reclaims it — the leak
-  bound is a schedule interval, never "until a human notices".
+  fails the run before any new spend. Because profile L runs nightly, the
+  **automated** leak bound is about one schedule interval (~one day,
+  roughly $3 at the L plan): the next run that fires reclaims any expired
+  instance before spending anything new. That bound is explicitly
+  **conditional on a scale run actually starting** — the expiry tag is
+  inert metadata on the Linode account, and reconciliation is the only
+  automated process that acts on it. If the controller is lost right after
+  creating a tagged instance and no later run fires — an Actions outage,
+  the workflow manually disabled, or GitHub auto-disabling schedules in an
+  inactive repository — nothing on the GitHub side ever reclaims it.
+- **Actions-independent detection backstop.** Because both automated
+  layers (`always()` teardown and pre-run reconciliation) run on GitHub
+  Actions, the no-leak contract requires one detection layer that does
+  not: a **Linode account usage alert** with its threshold set just above
+  the tier's expected monthly spend (~$25 against the ~$15–20/month
+  estimate in the topology section). A leaked L-plan instance bills
+  roughly $80/month, so a leak that outlives the schedule crosses the
+  threshold and emails the maintainer within days regardless of the state
+  of GitHub Actions. The absolute cost exposure is therefore bounded by
+  alert-triggered manual teardown, not by hoping the schedule resumes;
+  configuring this alert is part of standing up the tier (see the
+  follow-up issue list) and the tier must not be ratcheted to blocking
+  without it.
 - A teardown failure — instance not confirmed destroyed or Volume not
   confirmed detached — **fails the workflow run**, even when every earlier
   step (including collection and artifact upload) succeeded. This makes the
@@ -1003,7 +1022,10 @@ PR events.
    blocking; must require a passing result for every budgeted profile, never a
    single profile's artifact; includes the watch-and-redispatch-on-displacement
    loop from the single-flight concurrency contract).
-7. SR-06 canonicalization of the L/XL profile definitions.
+7. Linode account usage alert (threshold ~$25/month) as the
+   Actions-independent leak-detection backstop required by the secrets and
+   teardown contract; must be in place before ratcheting to blocking.
+8. SR-06 canonicalization of the L/XL profile definitions.
 
 ### Docs
 
