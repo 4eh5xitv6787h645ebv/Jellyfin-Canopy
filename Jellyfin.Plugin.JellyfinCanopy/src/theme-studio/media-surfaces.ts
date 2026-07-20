@@ -196,9 +196,13 @@ ${selector} #jc-osd-rating-container {
   color: var(--jc-color-text);
 }
 ${selector} #jc-osd-rating-container .jc-chip {
-  border: var(--jc-shape-border-width) solid var(--jc-color-divider);
+  border: var(--jc-shape-border-width) solid currentColor;
   border-radius: var(--jc-shape-control-radius);
-  background-color: color-mix(in srgb, var(--jc-color-surface) 84%, transparent);
+  background-color: var(--jc-color-scrim);
+  color: var(--jc-color-on-scrim) !important;
+}
+${selector} #jc-osd-rating-container :where(.jc-chip.tmdb, .jc-chip.critic, .jc-star, .jc-text) {
+  color: var(--jc-color-on-scrim) !important;
 }
 ${selector} [data-jc-frame-overlay="true"] {
   max-inline-size: calc(100vw - var(--jc-page-gutter) - var(--jc-page-gutter));
@@ -421,15 +425,15 @@ ${selector} .guideProgramIndicator {
 }
 ${selector} .newTvProgram {
   background: var(--jc-color-info);
-  color: var(--jc-color-on-primary);
+  color: var(--jc-color-on-info);
 }
 ${selector} .liveTvProgram {
   background: var(--jc-color-negative);
-  color: var(--jc-color-on-primary);
+  color: var(--jc-color-on-negative);
 }
 ${selector} .premiereTvProgram {
   background: var(--jc-color-caution);
-  color: var(--jc-color-canvas);
+  color: var(--jc-color-on-caution);
 }
 ${selector} .guideRequiresUnlock {
   box-sizing: border-box;
@@ -578,6 +582,10 @@ ${selector}[data-jc-theme-effects-level="minimal"] ${solidMaterialSurfaces} {
   background-image: none !important;
   background-color: var(--jc-color-surface) !important;
   box-shadow: none !important;
+}
+${selector}[data-jc-theme-transparency="reduced"] #jc-osd-rating-container :where(.jc-chip, .jc-star, .jc-text),
+${selector}[data-jc-theme-effects-level="minimal"] #jc-osd-rating-container :where(.jc-chip, .jc-star, .jc-text) {
+  color: var(--jc-color-text) !important;
 }
 @media (orientation: landscape) and (max-height: 599px) {
   ${selector}[data-jc-theme-breakpoint="phone"] .videoOsdBottom {

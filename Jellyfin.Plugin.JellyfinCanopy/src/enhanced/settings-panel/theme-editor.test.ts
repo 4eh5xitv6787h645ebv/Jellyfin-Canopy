@@ -261,6 +261,43 @@ describe('Theme Studio responsive settings editor', () => {
         expect(button('apply').disabled).toBe(false);
     });
 
+    it('pairs decorative swatches and preset visuals with text and semantic errors', () => {
+        wireThemeStudioEditor(context());
+
+        const swatches = [...panel.querySelectorAll<HTMLElement>('.jc-theme-swatch')];
+        expect(swatches).toHaveLength(2);
+        expect(swatches.every((swatch) => swatch.getAttribute('aria-hidden') === 'true')).toBe(true);
+        expect(panel.querySelector('[data-field="palette"]')?.closest('label')?.textContent)
+            .toContain('theme_studio_palette');
+        expect(panel.querySelector('[data-field="accent"]')?.closest('label')?.textContent)
+            .toContain('theme_studio_accent');
+        for (const preset of panel.querySelectorAll<HTMLButtonElement>('.jc-theme-preset')) {
+            expect(preset.querySelector('strong')?.textContent).toMatch(/theme_studio_preset_.+_name/);
+            expect(preset.querySelector('small:not(.jc-theme-preset-meta)')?.textContent)
+                .toMatch(/theme_studio_preset_.+_desc/);
+            expect(preset.querySelector('.jc-theme-preset-meta')?.textContent)
+                .toContain('theme_studio_effects_level');
+            expect(preset.hasAttribute('aria-pressed')).toBe(true);
+        }
+        expect(panel.querySelector('.jc-theme-preview-card')?.getAttribute('aria-label'))
+            .toBe('theme_studio_preview');
+
+        const profileName = panel.querySelector<HTMLInputElement>('[data-role="profile-name"]')!;
+        profileName.value = '';
+        profileName.dispatchEvent(new Event('input', { bubbles: true }));
+        const profileError = panel.querySelector<HTMLElement>('[data-role="profile-name-error"]')!;
+        expect(profileName.getAttribute('aria-invalid')).toBe('true');
+        expect(profileName.getAttribute('aria-errormessage')).toBe(profileError.id);
+        expect(profileError.getAttribute('role')).toBe('alert');
+        expect(profileError.hidden).toBe(false);
+
+        const directionalIcons = [...panel.querySelectorAll('.jc-theme-directional-icon')];
+        expect(directionalIcons).toHaveLength(3);
+        expect(directionalIcons.every((icon) => icon.getAttribute('aria-hidden') === 'true')).toBe(true);
+        expect(panel.querySelector('style')?.textContent).toContain('[dir="rtl"]');
+        expect(panel.querySelector('style')?.textContent).toContain('transform:scaleX(-1)');
+    });
+
     it('previews presentation controls as sparse, reversible token overrides', () => {
         wireThemeStudioEditor(context());
         expect(panel.querySelectorAll('[data-field="presentation-token"]')).toHaveLength(12);

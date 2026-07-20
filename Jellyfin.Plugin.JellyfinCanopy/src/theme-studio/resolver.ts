@@ -1,5 +1,5 @@
 import type { ThemeProfile, ThemeTokenValue, UserThemeConfiguration } from '../types/jc';
-import { readableForeground } from './color';
+import { enforceAccessibleThemeTokens } from './accessibility';
 import {
     resolveAccent,
     resolvePalette,
@@ -112,6 +112,16 @@ const BASE_TOKENS: Readonly<Record<string, ThemeTokenValue>> = Object.freeze({
     'layout.cast-shape': 'circle',
     'color.dynamic-source': 'off',
     'color.dynamic-strength': 0.65,
+    'color.on-secondary': '#FFFFFF',
+    'color.on-positive': '#000000',
+    'color.on-caution': '#000000',
+    'color.on-negative': '#FFFFFF',
+    'color.on-info': '#FFFFFF',
+    'color.link': '#8F76FF',
+    'color.control-border': '#FFFFFF80',
+    'color.disabled': '#FFFFFF99',
+    'color.scrim': '#000000E6',
+    'color.on-scrim': '#FFFFFF',
     'effects.level': 'balanced',
     'effects.material': 'translucent',
     'effects.blur': 12,
@@ -300,13 +310,6 @@ export function resolveTheme(
         ...profile.Tokens,
         ...responsiveTokens(profile, breakpoint),
     };
-    tokens['color.on-primary'] = readableForeground(
-        String(tokens['color.primary']),
-        String(tokens['color.on-primary']),
-        String(tokens['color.surface']),
-        String(tokens['color.canvas']),
-    );
-
     const reducedMotion = media.reducedMotion || profile.Accessibility.Motion === 'off';
     const highContrast = preset.id === 'high-contrast'
         || (presetResolution.fallback && presetResolution.fallbackAccessibility === 'strong')
@@ -315,7 +318,7 @@ export function resolveTheme(
         || profile.Accessibility.Transparency === 'off';
     const focus = profile.Accessibility.FocusEmphasis === 'strong'
         || (profile.Accessibility.FocusEmphasis === 'system' && highContrast) ? 'strong' : 'standard';
-    const underlineLinks = profile.Accessibility.UnderlineLinks
+    let underlineLinks = profile.Accessibility.UnderlineLinks
         || tokens['accessibility.underline-links'] === true;
 
     tokens['accessibility.motion'] = reducedMotion ? 'off' : 'on';
@@ -408,6 +411,13 @@ export function resolveTheme(
         tokens['shape.border-width'] = Math.max(2, Number(tokens['shape.border-width']) || 0);
         tokens['elevation.focus-ring'] = 'strong';
     }
+
+    // Contrast enforcement must see the final material and transparency policy.
+    // Running it earlier can approve an opaque surface that is later rendered as
+    // translucent glass over the canvas.
+    Object.assign(tokens, enforceAccessibleThemeTokens(tokens, highContrast));
+    underlineLinks = underlineLinks || tokens['accessibility.underline-links'] === true;
+    tokens['accessibility.underline-links'] = underlineLinks;
 
     const effectsMaterial = choiceToken(
         tokens,

@@ -67,7 +67,7 @@ describe('Theme Studio CSS serialization', () => {
         expect(first).toContain('[data-jc-theme-poster-ratio="backdrop"]');
         expect(first).toContain('[data-jc-theme-progress-position="floating"]');
         expect(first).toContain(':not([data-jc-theme-route="dashboard"])');
-        expect(first).toContain('--jf-palette-error-contrastText: #000000');
+        expect(first).toContain(`--jf-palette-error-contrastText: ${String(theme.tokens['color.on-negative'])}`);
         expect(first).not.toContain('url(');
         expect(first).not.toContain('@import');
         expect(first).not.toMatch(/(?:^|[;{\n])\s*order\s*:/m);
@@ -87,10 +87,10 @@ describe('Theme Studio CSS serialization', () => {
         expect(css).not.toContain(':not([data-jc-theme-preview="true"])');
     });
 
-    it('keeps a readable white error foreground for the darker light-mode negative color', () => {
+    it('bridges the enforced light-mode error foreground', () => {
         const theme = resolveTheme(themeConfiguration(), { ...media, jellyfinTheme: 'light' });
         expect(serializeThemeStyles(theme, 'committed'))
-            .toContain('--jf-palette-error-contrastText: #FFFFFF');
+            .toContain(`--jf-palette-error-contrastText: ${String(theme.tokens['color.on-negative'])}`);
     });
 
     it('composites translucent error surfaces over the canvas before choosing its foreground', () => {
@@ -102,7 +102,7 @@ describe('Theme Studio CSS serialization', () => {
         };
         const theme = resolveTheme(configuration, media);
         expect(serializeThemeStyles(theme, 'committed'))
-            .toContain('--jf-palette-error-contrastText: #000000');
+            .toContain(`--jf-palette-error-contrastText: ${String(theme.tokens['color.on-negative'])}`);
     });
 
     it('precomputes density and text scaling into valid bounded dimensions', () => {

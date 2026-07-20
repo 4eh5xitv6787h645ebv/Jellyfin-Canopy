@@ -269,6 +269,30 @@
       "reason": "Historical upstream attribution or source reference."
     },
     {
+      "url": "https://www.w3.org/TR/css-color-adjust-1/",
+      "reason": "Official W3C CSS Color Adjustment specification supporting Theme Studio forced-colors behavior."
+    },
+    {
+      "url": "https://www.w3.org/TR/css-logical-1/",
+      "reason": "Official W3C CSS Logical Properties specification supporting Theme Studio RTL behavior."
+    },
+    {
+      "url": "https://www.w3.org/TR/WCAG22/",
+      "reason": "Official W3C WCAG 2.2 recommendation supporting Theme Studio accessibility requirements."
+    },
+    {
+      "url": "https://www.w3.org/WAI/ARIA/apg/practices/names-and-descriptions/",
+      "reason": "Official W3C ARIA guidance supporting Theme Studio text alternatives."
+    },
+    {
+      "url": "https://www.w3.org/WAI/tutorials/forms/notifications/",
+      "reason": "Official W3C forms guidance supporting Theme Studio semantic error notifications."
+    },
+    {
+      "url": "https://www.w3.org/WAI/WCAG22/Understanding/use-of-color.html",
+      "reason": "Official W3C WCAG guidance supporting Theme Studio non-color state cues."
+    },
+    {
       "url": "https://www.themoviedb.org/",
       "reason": "Reviewed public third-party documentation or asset."
     },

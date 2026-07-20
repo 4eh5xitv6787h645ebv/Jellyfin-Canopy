@@ -86,6 +86,22 @@ Profiles can select solid, translucent, or glass surfaces; none, dim, gradient, 
 
 Your selection can never exceed the administrator's maximum. A browser can reduce it further: a low-end modern phone uses Minimal; unsupported backdrop filtering removes glass blur; reduced transparency forces solid surfaces; reduced motion disables motion; and high contrast or forced colors use the minimal visual-cost path. Coarse/no-hover input also keeps card actions visible instead of hiding them behind hover.
 
+### Accessibility, high contrast, and RTL
+
+Theme Studio checks the final composed theme—not just the original preset—after the palette, accent, light/dark mode, and personal token overrides have been combined. Normal and muted text, links, semantic status text, and text over buttons or image scrims are corrected to at least 4.5:1 contrast. Focus rings, icons, control boundaries, and disabled-state cues are corrected to at least 3:1; High Contrast raises the focus and control-boundary target to 4.5:1. If one foreground cannot remain readable over a hostile mix of translucent surfaces, Canopy fails closed to the canvas surface instead of publishing a knowingly unreadable theme.
+
+The High Contrast preset is a maintained profile, not a color filter. It uses solid materials, strong dividers and focus, underlined links, single-color metadata icons, doubled selected/error boundaries, dashed disabled controls, and text labels alongside every state. The same non-color cues remain in other presets: no selected, invalid, disabled, live, new, or premiere state depends on hue, hover, an icon, animation, or position alone. Windows forced-colors mode switches to system colors such as `Canvas`, `CanvasText`, `Highlight`, `LinkText`, and `GrayText` instead of trying to preserve authored colors.
+
+Theme Studio also honors reduced motion and reduced transparency, supports an always-underline-links preference, and preserves 44 CSS-pixel phone controls. Logical inline/block properties, intentional mirroring of directional icons, `dir="auto"` text fields, and wrapping labels support Arabic, Hebrew, and mixed-direction content. The verified browser suite covers 200% text, a 320 CSS-pixel viewport equivalent to 400% zoom on a 1280-pixel desktop, phone portrait and landscape, desktop and wide desktop, keyboard and coarse-pointer focus, and exact no-op behavior on tablet-only, legacy, and TV layouts.
+
+![Theme Studio accessibility fixture on a modern desktop](images/theme-studio-accessibility-desktop.png)
+
+The desktop capture uses a maintained High Contrast profile with 200% text, Arabic RTL layout, Hebrew mixed-direction content, semantic status chips, an image scrim, and a form error connected through `aria-errormessage`.
+
+![Theme Studio accessibility fixture on a modern phone](images/theme-studio-accessibility-phone.png)
+
+The phone capture comes from the same real Jellyfin 12 browser test at 390 × 844 with coarse-pointer behavior. The focus ring, long labels, touch targets, content order, and single-column reflow are asserted separately from the screenshot.
+
 ### Dynamic color and privacy
 
 Dynamic color is optional and runs only after the usable theme has painted. Canopy reads one same-origin Jellyfin **Primary** or **Backdrop** image, reduces it to a small local color sample, and blends the result with the profile accent. Analysis is cancellable and bounded; it never contacts an artwork CDN, and a media URL, item identifier, image tag, or sampled pixels are never written to `theme.json`, profile exports, CSS logs, or documentation captures. When analysis is unavailable or fails, the curated palette remains active.
