@@ -46,7 +46,12 @@ export async function showReleaseNotesNotification(): Promise<void> {
     const notification = document.createElement('div');
     notification.id = notificationId;
     notification.setAttribute('data-jc-identity-owned', 'true');
+    notification.dataset.jcThemeSurface = 'notifications';
+    notification.dataset.jcThemeComponent = 'release-notes';
     JC.identity.own(notification, context);
+    const hiddenTransform = document.documentElement.dir === 'rtl'
+        ? 'translateY(-50%) translateX(-100%)'
+        : 'translateY(-50%) translateX(100%)';
 
     // --- Release notes autoclose ---
     let autoCloseTimer: number | null = null;
@@ -55,7 +60,7 @@ export async function showReleaseNotesNotification(): Promise<void> {
 
     const closePanel = () => {
         if (document.getElementById(notificationId)) {
-            notification.style.transform = 'translateY(-50%) translateX(100%)';
+            notification.style.transform = hiddenTransform;
             const timer = window.setTimeout(() => {
                 releaseTimers.delete(timer);
                 notification.remove();
@@ -105,7 +110,7 @@ export async function showReleaseNotesNotification(): Promise<void> {
         position: 'fixed',
         top: '50%',
         right: '20px',
-        transform: 'translateY(-50%) translateX(100%)',
+        transform: hiddenTransform,
         background: panelBg,
         color: textColor,
         padding: '0',

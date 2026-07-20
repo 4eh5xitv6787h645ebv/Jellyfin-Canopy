@@ -339,8 +339,11 @@ export function openAdminAddModal(): void {
     const overlay = document.createElement('div');
     overlay.className = 'jc-hidden-management-overlay jc-hidden-admin-add-overlay';
     overlay.dataset.jcIdentityOwned = 'true';
+    overlay.dataset.jcThemeSurface = 'hidden-content-admin';
+    overlay.dataset.jcThemeComponent = 'modal-backdrop';
     const panel = document.createElement('div');
     panel.className = 'jc-hidden-management-panel';
+    panel.dataset.jcThemeComponent = 'admin-add-panel';
 
     const header = document.createElement('div');
     header.className = 'jc-hidden-management-header';

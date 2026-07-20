@@ -157,11 +157,14 @@ export function showUnhideConfirmation(message: string, onConfirm: () => void, i
 
     const overlay = document.createElement('div');
     overlay.className = 'jc-hide-confirm-overlay';
+    overlay.dataset.jcThemeSurface = 'hidden-content-admin';
+    overlay.dataset.jcThemeComponent = 'modal-backdrop';
     overlay.dataset.jcIdentityOwned = 'true';
     const pageHandle = currentPageHandle();
 
     const dialog = document.createElement('div');
     dialog.className = 'jc-hide-confirm-dialog';
+    dialog.dataset.jcThemeComponent = 'confirmation-dialog';
 
     const title = document.createElement('h3');
     title.textContent = message;

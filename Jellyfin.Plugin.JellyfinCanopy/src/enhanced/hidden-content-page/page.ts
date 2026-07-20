@@ -31,6 +31,8 @@ function render({ host, handle }: PageContext): void {
     content.dataset.jcHiddenPageOwner = 'true';
     const primary = document.createElement('div');
     primary.className = 'content-primary jc-hidden-content-page';
+    primary.dataset.jcThemeSurface = 'hidden-content';
+    primary.dataset.jcThemeComponent = 'management-page';
     const container = document.createElement('div');
     container.id = 'jc-hidden-content-container';
     // Shared header-clearance offset (see JC.injectGlobalStyles

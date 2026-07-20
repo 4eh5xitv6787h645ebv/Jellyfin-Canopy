@@ -220,6 +220,9 @@ function applyRatingTag(ctx: TagRendererContext, el: HTMLElement, rating: { tmdb
 
     const container = document.createElement('div');
     container.className = containerClass;
+    container.dataset.jcTagPosition = resolvePosition(
+        'ratingTagsPosition', 'RatingTagsPosition', 'bottom-right',
+    ).pos;
 
     if (rating.critic !== null) {
         const criticTag = document.createElement('div');

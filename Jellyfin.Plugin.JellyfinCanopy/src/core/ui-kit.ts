@@ -126,15 +126,20 @@ export function toast(html: string, duration?: number): void {
     const toastBg = themeVars.secondaryBg || 'linear-gradient(135deg, rgba(0,0,0,0.9), rgba(40,40,40,0.9))';
     const toastBorder = `1px solid ${themeVars.primaryAccent || 'rgba(255,255,255,0.1)'}`;
     const blurValue = themeVars.blur || '30px';
+    const hiddenTransform = document.documentElement.dir === 'rtl'
+        ? 'translateX(-100%)'
+        : 'translateX(100%)';
 
     const t = document.createElement('div');
     t.className = 'jellyfin-canopy-toast';
+    t.dataset.jcThemeSurface = 'notifications';
+    t.dataset.jcThemeComponent = 'toast';
     if (identity) t.dataset.jcIdentityOwned = 'true';
     Object.assign(t.style, {
         position: 'fixed',
         bottom: '20px',
         right: '20px',
-        transform: 'translateX(100%)',
+        transform: hiddenTransform,
         background: toastBg,
         color: '#fff',
         padding: '10px 14px',
@@ -154,7 +159,7 @@ export function toast(html: string, duration?: number): void {
     scheduleToastTask(() => { if (t.isConnected) t.style.transform = 'translateX(0)'; }, 10);
     scheduleToastTask(() => {
         if (!t.isConnected) return;
-        t.style.transform = 'translateX(100%)';
+        t.style.transform = hiddenTransform;
         scheduleToastTask(() => t.remove(), 300);
     }, ms);
 }

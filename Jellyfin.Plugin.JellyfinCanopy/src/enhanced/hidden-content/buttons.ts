@@ -70,6 +70,8 @@ function createLibraryHideButton(cardBox: HTMLElement, card: HTMLElement, itemId
     cardBox.style.position = 'relative';
     const btn = document.createElement('button');
     btn.dataset.jcHidePreviousPosition = previousPosition;
+    btn.dataset.jcThemeSurface = 'media-card';
+    btn.dataset.jcThemeComponent = 'hide-action';
 
     const hideLabel = JC.t!('hidden_content_hide_button') !== 'hidden_content_hide_button' ? JC.t!('hidden_content_hide_button') : 'Hide';
     const hiddenLabel = JC.t!('hidden_content_already_hidden') !== 'hidden_content_already_hidden' ? JC.t!('hidden_content_already_hidden') : 'Hidden';

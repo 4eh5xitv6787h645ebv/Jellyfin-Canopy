@@ -62,10 +62,13 @@ function showConfirmDialog(context: IdentityContext): Promise<boolean> {
         const overlay = document.createElement('div');
         overlay.className = 'jc-spoiler-confirm-overlay';
         overlay.dataset.jcIdentityOwned = 'true';
+        overlay.dataset.jcThemeSurface = 'protection';
+        overlay.dataset.jcThemeComponent = 'modal-backdrop';
         JC.identity.own(overlay, context);
 
         const dialog = document.createElement('div');
         dialog.className = 'jc-spoiler-confirm-dialog';
+        dialog.dataset.jcThemeComponent = 'confirmation-dialog';
 
         const title = document.createElement('h3');
         title.id = 'jc-spoiler-confirm-title';

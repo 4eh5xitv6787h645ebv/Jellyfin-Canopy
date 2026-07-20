@@ -50,6 +50,8 @@ export function addPluginMenuButton(): void {
             jellyfinCanopyLink.className = 'lnkMediaFolder navMenuOption emby-button';
             jellyfinCanopyLink.href = '#';
             jellyfinCanopyLink.id = 'jellyfinCanopySettingsLink';
+            jellyfinCanopyLink.dataset.jcThemeSurface = 'shell';
+            jellyfinCanopyLink.dataset.jcThemeComponent = 'settings-launcher';
             jellyfinCanopyLink.innerHTML = `
                     <span class="material-icons navMenuOptionIcon" aria-hidden="true">tune</span>
                     <span class="sectionName navMenuOptionText">Enhanced Panel</span>
@@ -95,6 +97,8 @@ export function addOsdSettingsButton(): void {
     enhancedSettingsBtn.id = 'enhancedSettingsBtn';
     enhancedSettingsBtn.setAttribute('is', 'paper-icon-button-light');
     enhancedSettingsBtn.className = 'autoSize paper-icon-button-light';
+    enhancedSettingsBtn.dataset.jcThemeSurface = 'player';
+    enhancedSettingsBtn.dataset.jcThemeComponent = 'settings-launcher';
     enhancedSettingsBtn.title = 'Jellyfin Canopy';
     enhancedSettingsBtn.innerHTML = '<span class="largePaperIconButton material-icons" aria-hidden="true">tune</span>';
 
@@ -142,6 +146,8 @@ function addPrefsLinkIfOnPage(): boolean {
     enhancedLink.setAttribute('data-ripple', 'false');
     enhancedLink.href = '#';
     enhancedLink.className = 'listItem-border emby-button';
+    enhancedLink.dataset.jcThemeSurface = 'preferences';
+    enhancedLink.dataset.jcThemeComponent = 'settings-launcher';
     enhancedLink.style.display = 'block';
     enhancedLink.style.padding = '0';
     enhancedLink.style.margin = '0';

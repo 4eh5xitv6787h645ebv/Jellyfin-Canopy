@@ -53,6 +53,42 @@ const STANDARD_IGNORE_SELECTORS: string[] = [
     '#mediaLibraryPage',
 ];
 
+const TAG_LANE_CLASS = 'jc-tag-lane';
+const TAG_POSITIONS = new Set(['top-left', 'top-right', 'bottom-left', 'bottom-right']);
+
+function removeThemeOverlay(root: ParentNode, selector: string): void {
+    const existing = root.querySelector<HTMLElement>(selector);
+    if (!existing) return;
+    const lane = existing.parentElement;
+    existing.remove();
+    if (lane?.classList.contains(TAG_LANE_CLASS) && lane.childElementCount === 0) lane.remove();
+}
+
+/**
+ * Preserve the frozen overlay element while grouping same-corner tags into a
+ * semantic lane. Without Theme Studio CSS the extra wrapper is layout-neutral;
+ * the modern adapter turns it into the shared collision-free corner stack.
+ */
+export function attachThemeTagOverlay(root: HTMLElement, overlay: HTMLElement): void {
+    const position = overlay.dataset.jcTagPosition;
+    if (!position || !TAG_POSITIONS.has(position)) {
+        root.appendChild(overlay);
+        return;
+    }
+    let lane = root.querySelector<HTMLElement>(
+        `:scope > .${TAG_LANE_CLASS}[data-jc-tag-position="${position}"]`,
+    );
+    if (!lane) {
+        lane = document.createElement('div');
+        lane.className = TAG_LANE_CLASS;
+        lane.dataset.jcTagPosition = position;
+        lane.dataset.jcIdentityOwned = 'true';
+        lane.dataset.jcThemeComponent = 'card-tag-lane';
+        root.appendChild(lane);
+    }
+    lane.appendChild(overlay);
+}
+
 interface TagInstance {
     ctx: TagRendererContext;
     getContext(): TagRendererContext;
@@ -389,8 +425,7 @@ function createTag(name: string, spec: TagSpec): TagInstance {
          */
         removeExistingOverlay(el: HTMLElement): void {
             if (!isContextCurrent(state.context)) return;
-            const existing = el.querySelector(`.${containerClass}`);
-            if (existing) existing.remove();
+            removeThemeOverlay(el, `.${containerClass}`);
         },
         /**
          * Append the overlay if it has content and mark the card tagged.
@@ -400,7 +435,8 @@ function createTag(name: string, spec: TagSpec): TagInstance {
             if (!isContextCurrent(state.context)) return false;
             if (overlay.children.length === 0) return false;
             overlay.dataset.jcIdentityOwned = 'true';
-            el.appendChild(overlay);
+            overlay.dataset.jcThemeComponent = 'card-tag-stack';
+            attachThemeTagOverlay(el, overlay);
             markTagged(el);
             return true;
         },
@@ -427,12 +463,13 @@ function createTag(name: string, spec: TagSpec): TagInstance {
             injectCss: () => { if (isContextCurrent(context)) injectCss(); },
             removeExistingOverlay: (el) => {
                 if (!isContextCurrent(context)) return;
-                el.querySelector(`.${containerClass}`)?.remove();
+                removeThemeOverlay(el, `.${containerClass}`);
             },
             commitOverlay: (el, overlay) => {
                 if (!isContextCurrent(context) || overlay.children.length === 0) return false;
                 overlay.dataset.jcIdentityOwned = 'true';
-                el.appendChild(overlay);
+                overlay.dataset.jcThemeComponent = 'card-tag-stack';
+                attachThemeTagOverlay(el, overlay);
                 markTagged(el);
                 return true;
             },
@@ -521,7 +558,11 @@ function createTag(name: string, spec: TagSpec): TagInstance {
     function reinitialize(): void {
         console.log(`${logPrefix} Re-initializing...`);
 
-        document.querySelectorAll(`.${containerClass}`).forEach((el) => el.remove());
+        document.querySelectorAll<HTMLElement>(`.${containerClass}`).forEach((el) => {
+            const lane = el.parentElement;
+            el.remove();
+            if (lane?.classList.contains(TAG_LANE_CLASS) && lane.childElementCount === 0) lane.remove();
+        });
         document.querySelectorAll<HTMLElement>(`[data-${toKebab(TAGGED_ATTR)}]`).forEach((el) => {
             delete el.dataset[TAGGED_ATTR];
         });
@@ -551,7 +592,11 @@ function createTag(name: string, spec: TagSpec): TagInstance {
             JC.storage.local.remove(`${name}-tags`, spec.cache.key, 'cache-payload');
             JC.storage.local.remove(`${name}-tags`, ownerStorageKey, 'cache-owner');
         }
-        document.querySelectorAll(`.${containerClass}`).forEach((el) => el.remove());
+        document.querySelectorAll<HTMLElement>(`.${containerClass}`).forEach((el) => {
+            const lane = el.parentElement;
+            el.remove();
+            if (lane?.classList.contains(TAG_LANE_CLASS) && lane.childElementCount === 0) lane.remove();
+        });
         document.querySelectorAll<HTMLElement>(`[data-${toKebab(TAGGED_ATTR)}]`).forEach((el) => {
             delete el.dataset[TAGGED_ATTR];
         });

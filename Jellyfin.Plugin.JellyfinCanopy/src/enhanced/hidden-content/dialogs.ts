@@ -122,6 +122,8 @@ export function showUndoToast(itemName: string, itemId: string): void {
     const toast = document.createElement('div');
     toast.className = 'jc-undo-toast';
     toast.dataset.jcIdentityOwned = 'true';
+    toast.dataset.jcThemeSurface = 'hidden-content';
+    toast.dataset.jcThemeComponent = 'undo-notification';
     Object.assign(toast.style, {
         background: toastBg,
         border: toastBorder,
@@ -411,9 +413,12 @@ function showHideConfirmation(itemName: string, onConfirm: () => void, dialogOpt
     const overlay = document.createElement('div');
     overlay.className = 'jc-hide-confirm-overlay';
     overlay.dataset.jcIdentityOwned = 'true';
+    overlay.dataset.jcThemeSurface = 'hidden-content';
+    overlay.dataset.jcThemeComponent = 'modal-backdrop';
 
     const dialog = document.createElement('div');
     dialog.className = 'jc-hide-confirm-dialog';
+    dialog.dataset.jcThemeComponent = 'confirmation-dialog';
 
     const title = document.createElement('h3');
     const body = document.createElement('p');

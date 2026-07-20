@@ -113,6 +113,9 @@ function insertGenreTags(ctx: TagRendererContext, container: HTMLElement, genres
 
     const genreContainer = document.createElement('div');
     genreContainer.className = containerClass;
+    genreContainer.dataset.jcTagPosition = resolvePosition(
+        'genreTagsPosition', 'GenreTagsPosition', 'top-right',
+    ).pos;
 
     const hideOnHover = !!JC.currentSettings?.tagsHideOnHover;
     genres.forEach(function(genreName) {

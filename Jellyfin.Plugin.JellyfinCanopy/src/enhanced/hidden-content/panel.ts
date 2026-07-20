@@ -297,9 +297,12 @@ export function showManagementPanel(): void {
     const overlay = document.createElement('div');
     overlay.className = 'jc-hidden-management-overlay';
     overlay.dataset.jcIdentityOwned = 'true';
+    overlay.dataset.jcThemeSurface = 'hidden-content';
+    overlay.dataset.jcThemeComponent = 'modal-backdrop';
 
     const panel = document.createElement('div');
     panel.className = 'jc-hidden-management-panel';
+    panel.dataset.jcThemeComponent = 'management-panel';
 
     const header = createManagementHeader(items.length);
     const overlayTimers = new Set<number>();
