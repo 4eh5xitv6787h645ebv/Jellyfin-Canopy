@@ -855,9 +855,21 @@ Volume lifecycle:
 
 Secrets and teardown:
 
-- The Linode API token and SSH private key live as GitHub Actions secrets
-  scoped to the scheduled workflow's environment, reachable only from
-  `main`-only scheduled/manual dispatch. Raw run logs must never expose them.
+- The Linode API token and SSH private key live only as secrets of a
+  dedicated GitHub Actions environment (`canopy-scale`), and the binding
+  control is that environment's **deployment branch policy, restricted to
+  `main`** — enforced by GitHub itself, not by workflow convention.
+  `workflow_dispatch` executes whichever ref the caller selects, so a
+  `main`-only trigger convention alone cannot protect the secrets: with the
+  branch policy in place, a dispatch of any other ref — including an
+  upstream feature branch carrying modified workflow or harness code — is
+  refused the environment and never materializes the token or key. As
+  defense in depth, every job that references the environment asserts
+  `github.ref == 'refs/heads/main'` as its first step and aborts otherwise;
+  release-dispatched exact-SHA runs satisfy both controls because the
+  **workflow** always runs from `main` — the tag SHA is the separate
+  measurement checkout defined above, never the workflow ref. Raw run logs
+  must never expose the secrets.
 - **Bounded lifecycle.** Every Linode API call and SSH command runs under an
   explicit timeout, and every workflow job carries a hard `timeout-minutes`
   cap sized to the profile's expected duration plus a fixed margin — nothing
@@ -930,7 +942,8 @@ PR events.
    concurrency group (`cancel-in-progress: false`), pre-run reconciliation
    of expired tagged instances, SSH provisioning with creation-time
    ownership/expiry tags, bounded API/SSH/job timeouts, quota verification,
-   `always()` teardown.
+   `always()` teardown, and the `canopy-scale` environment configured with
+   its `main`-restricted deployment branch policy plus the in-job ref guard.
 4. Measurement harness and the immutable result-artifact schema.
 5. Budget comparator with fail-closed validation and its negative tests
    (unknown schema, missing/extra keys, `null` while blocking, over-budget,
