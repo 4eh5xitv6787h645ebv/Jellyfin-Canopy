@@ -139,25 +139,59 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
             {
                 var value = element.GetString() ?? string.Empty;
                 var lowered = value.ToLowerInvariant();
-                if (lowered.Contains("http://", StringComparison.Ordinal)
-                    || lowered.Contains("https://", StringComparison.Ordinal)
+                if (lowered.Contains("//", StringComparison.Ordinal)
                     || lowered.Contains("url(", StringComparison.Ordinal)
                     || lowered.Contains("@import", StringComparison.Ordinal))
                 {
                     add("remote_url", "Remote URLs and imported resources are not allowed in shared themes.");
                 }
 
-                if (lowered.Contains("<script", StringComparison.Ordinal)
-                    || lowered.Contains("<iframe", StringComparison.Ordinal)
-                    || lowered.Contains("<html", StringComparison.Ordinal)
-                    || lowered.Contains("<style", StringComparison.Ordinal)
+                if (ContainsMarkup(value)
                     || lowered.Contains("javascript:", StringComparison.Ordinal)
-                    || lowered.Contains("onload=", StringComparison.Ordinal)
-                    || lowered.Contains("onclick=", StringComparison.Ordinal))
+                    || lowered.Contains("vbscript:", StringComparison.Ordinal)
+                    || lowered.Contains("data:text/html", StringComparison.Ordinal)
+                    || ContainsEventHandler(lowered))
                 {
                     add("executable_markup", "Script, HTML, and executable markup are not allowed in shared themes.");
                 }
             }
+        }
+
+        private static bool ContainsMarkup(string value)
+        {
+            for (var index = 0; index < value.Length; index++)
+            {
+                if (value[index] != '<') continue;
+                var next = index + 1;
+                if (next < value.Length && value[next] == '/') next++;
+                if (next < value.Length
+                    && (char.IsLetter(value[next]) || value[next] == '!' || value[next] == '?'))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool ContainsEventHandler(string lowered)
+        {
+            for (var index = 0; index + 3 < lowered.Length; index++)
+            {
+                if (lowered[index] != 'o' || lowered[index + 1] != 'n'
+                    || (index > 0 && char.IsLetterOrDigit(lowered[index - 1])))
+                {
+                    continue;
+                }
+
+                var next = index + 2;
+                while (next < lowered.Length && char.IsLetter(lowered[next])) next++;
+                if (next == index + 2) continue;
+                while (next < lowered.Length && char.IsWhiteSpace(lowered[next])) next++;
+                if (next < lowered.Length && lowered[next] == '=') return true;
+            }
+
+            return false;
         }
 
         private static bool HasUnsupportedFields(ThemeExportDocument document)

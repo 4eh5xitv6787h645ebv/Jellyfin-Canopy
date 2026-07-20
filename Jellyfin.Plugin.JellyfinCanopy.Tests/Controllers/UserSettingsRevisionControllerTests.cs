@@ -291,6 +291,90 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             Assert.False(File.Exists(FilePath("theme.json")));
         }
 
+        [Theory]
+        [InlineData("<img src=x onerror=alert(1)>", "executable_markup")]
+        [InlineData("<b>markup</b>", "executable_markup")]
+        [InlineData("onerror = alert(1)", "executable_markup")]
+        [InlineData("Remote ftp://host/theme", "remote_url")]
+        public void ThemeImportValidation_RejectsMarkupAndGenericRemoteUrlsInTypedDisplayNames(
+            string profileName,
+            string expectedCode)
+        {
+            var profile = ThemeProfile.CreateDefault("canopy", "canopy-night");
+            profile.Name = profileName;
+            var import = new ThemeExportDocument
+            {
+                SchemaVersion = ThemeConfigurationPolicy.CurrentSchemaVersion,
+                ActiveProfileId = ThemeProfile.DefaultId,
+                Profiles = new List<ThemeProfile> { profile }
+            };
+
+            var result = Assert.IsType<BadRequestObjectResult>(
+                Controller().ValidateUserSettingsThemeImport(UserId, import));
+            var json = JsonSerializer.Serialize(result.Value);
+
+            Assert.Contains(expectedCode, json, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain(profileName, json, StringComparison.Ordinal);
+            Assert.False(File.Exists(FilePath("theme.json")));
+        }
+
+        [Fact]
+        public void ThemeImportValidation_AcceptsSafeExportRoundTripAtMarkupBoundary()
+        {
+            var stored = UserThemeConfiguration.CreateDefault("canopy", "canopy-night");
+            stored.Profiles[0].Name = "Rock < Pop > Film & TV";
+            _manager.SaveUserConfiguration(UserId, "theme.json", stored);
+            var before = File.ReadAllText(FilePath("theme.json"));
+            var exported = Assert.IsType<ThemeExportDocument>(
+                Assert.IsType<OkObjectResult>(Controller().ExportUserSettingsTheme(UserId)).Value);
+
+            var validated = Assert.IsType<OkObjectResult>(
+                Controller().ValidateUserSettingsThemeImport(UserId, exported));
+
+            var json = JsonSerializer.Serialize(validated.Value);
+            using var response = JsonDocument.Parse(json);
+            Assert.Contains("\"valid\":true", json, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(
+                "Rock < Pop > Film & TV",
+                response.RootElement.GetProperty("data").GetProperty("Profiles")[0].GetProperty("Name").GetString());
+            Assert.Equal(before, File.ReadAllText(FilePath("theme.json")));
+        }
+
+        [Fact]
+        public void ThemeImportValidation_DiagnosesUnsafeScheduleBeforeDisabledSchedulingPolicy()
+        {
+            _provider.Current = new PluginConfiguration
+            {
+                ThemeStudioAllowProfileImport = true,
+                ThemeStudioAllowSeasonalScheduling = false
+            };
+            var schedule = new ThemeScheduleEntry
+            {
+                Id = "winter",
+                ProfileId = ThemeProfile.DefaultId,
+                StartMonthDay = "12-01",
+                EndMonthDay = "02-28"
+            };
+            using var remote = JsonDocument.Parse("\"ftp://example.invalid/theme.css\"");
+            schedule.ExtensionData["RemoteStyle"] = remote.RootElement.Clone();
+            var import = new ThemeExportDocument
+            {
+                SchemaVersion = ThemeConfigurationPolicy.CurrentSchemaVersion,
+                ActiveProfileId = ThemeProfile.DefaultId,
+                Profiles = new List<ThemeProfile> { ThemeProfile.CreateDefault("canopy", "canopy-night") },
+                Schedule = new List<ThemeScheduleEntry> { schedule }
+            };
+
+            var result = Assert.IsType<BadRequestObjectResult>(
+                Controller().ValidateUserSettingsThemeImport(UserId, import));
+            var json = JsonSerializer.Serialize(result.Value);
+
+            Assert.Contains("remote_url", json, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("unsupported_field", json, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("theme_schedule_disabled", json, StringComparison.OrdinalIgnoreCase);
+            Assert.False(File.Exists(FilePath("theme.json")));
+        }
+
         [Fact]
         public void ThemeCss_IsAdministratorGatedRevisionSafeAndSeparatelyPersisted()
         {

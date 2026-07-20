@@ -5,6 +5,7 @@ import {
     CURATED_THEME_GALLERY,
     galleryIntegrityPayload,
     galleryProvenance,
+    sha256Hex,
     verifyCuratedGalleryEntry,
 } from './gallery';
 
@@ -39,5 +40,18 @@ describe('Theme Studio curated gallery', () => {
             Tokens: {},
         });
         expect(JSON.stringify(profile)).not.toMatch(/css|url|script|html/i);
+    });
+
+    it('verifies standard vectors and bundled entries without SubtleCrypto on HTTP LAN origins', async () => {
+        await expect(sha256Hex('', null)).resolves.toBe(
+            'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+        );
+        await expect(sha256Hex('abc', null)).resolves.toBe(
+            'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
+        );
+        for (const entry of CURATED_THEME_GALLERY) {
+            await expect(sha256Hex(galleryIntegrityPayload(entry), null), entry.id)
+                .resolves.toBe(entry.checksum);
+        }
     });
 });

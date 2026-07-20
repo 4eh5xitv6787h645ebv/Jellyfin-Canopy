@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import type { UserThemeCssConfiguration } from '../types/jc';
+import { JC } from '../globals';
+import { createTestFeatureScope } from '../test/feature-scope';
+import type { ApiApi, UserThemeCssConfiguration } from '../types/jc';
 import {
     emptyThemeCssConfiguration,
     parseUserThemeCssConfiguration,
     serializeThemeAdvancedCss,
+    THEME_ADVANCED_CSS_STYLE_ID,
+    ThemeAdvancedCssRuntime,
     validateThemeCssDeclarations,
 } from './advanced-css';
 
@@ -73,5 +77,76 @@ describe('Theme Studio advanced CSS boundary', () => {
         expect(serializeThemeAdvancedCss(emptyThemeCssConfiguration())).toBe('');
         expect(serializeThemeAdvancedCss({ ...configured(), Enabled: false })).toBe('');
         expect(serializeThemeAdvancedCss({ ...configured(), SchemaVersion: 9 })).toBeNull();
+    });
+
+    it('keeps delayed and refreshed style layers absent outside the exact modern presentation gate', async () => {
+        const originalApi = JC.core.api;
+        const originalConfig = JC.pluginConfig;
+        const harness = createTestFeatureScope();
+        const root = document.documentElement;
+        const setSupportedRoot = (): void => {
+            root.classList.remove('jc-legacy-layout', 'layout-tv');
+            root.classList.add('jc-modern-layout');
+            document.body.classList.remove('layout-tv');
+            root.removeAttribute('data-layout');
+            root.setAttribute('data-jc-theme-active', 'true');
+            root.setAttribute('data-jc-theme-breakpoint', 'phone');
+            root.setAttribute('data-jc-theme-route', 'home');
+            root.setAttribute('data-jc-theme-forced-colors', 'none');
+            root.setAttribute('data-jc-theme-contrast', 'standard');
+        };
+        let resolveLoad: (value: unknown) => void = () => undefined;
+        const plugin = () => new Promise<unknown>((resolve) => { resolveLoad = resolve; });
+        let runtime: ThemeAdvancedCssRuntime | null = null;
+        try {
+            JC.identity.transition('', '', 'advanced-css-test-logout');
+            JC.identity.transition('server-a', 'user-a', 'advanced-css-test-login');
+            JC.pluginConfig = { ...JC.pluginConfig, ThemeStudioAllowAdvancedCss: true };
+            JC.core.api = { plugin } as unknown as ApiApi;
+            setSupportedRoot();
+            root.setAttribute('data-jc-theme-breakpoint', 'tablet');
+            runtime = new ThemeAdvancedCssRuntime(harness.scope);
+            runtime.install();
+            const ready = runtime.whenReady();
+
+            resolveLoad(configured());
+            await expect(ready).resolves.toBe(true);
+            expect(document.getElementById(THEME_ADVANCED_CSS_STYLE_ID)).toBeNull();
+
+            setSupportedRoot();
+            runtime.refresh();
+            expect(document.getElementById(THEME_ADVANCED_CSS_STYLE_ID)).toBeInstanceOf(HTMLStyleElement);
+
+            const unsupported: Array<readonly [string, () => void]> = [
+                ['tablet', () => root.setAttribute('data-jc-theme-breakpoint', 'tablet')],
+                ['legacy', () => root.classList.add('jc-legacy-layout')],
+                ['root TV', () => root.classList.add('layout-tv')],
+                ['body TV', () => document.body.classList.add('layout-tv')],
+                ['TV attribute', () => root.setAttribute('data-layout', 'tv')],
+                ['dashboard', () => root.setAttribute('data-jc-theme-route', 'dashboard')],
+                ['forced colors', () => root.setAttribute('data-jc-theme-forced-colors', 'active')],
+                ['increased contrast', () => root.setAttribute('data-jc-theme-contrast', 'more')],
+            ];
+            for (const [name, makeUnsupported] of unsupported) {
+                setSupportedRoot();
+                runtime.refresh();
+                makeUnsupported();
+                runtime.refresh();
+                expect(document.getElementById(THEME_ADVANCED_CSS_STYLE_ID), name).toBeNull();
+            }
+        } finally {
+            runtime?.dispose();
+            await harness.dispose();
+            document.getElementById(THEME_ADVANCED_CSS_STYLE_ID)?.remove();
+            for (const name of [...root.attributes].map((attribute) => attribute.name)) {
+                if (name.startsWith('data-jc-theme-')) root.removeAttribute(name);
+            }
+            root.removeAttribute('data-layout');
+            root.classList.remove('jc-modern-layout', 'jc-legacy-layout', 'layout-tv');
+            document.body.classList.remove('layout-tv');
+            JC.core.api = originalApi;
+            JC.pluginConfig = originalConfig;
+            JC.identity.transition('', '', 'advanced-css-test-cleanup');
+        }
     });
 });

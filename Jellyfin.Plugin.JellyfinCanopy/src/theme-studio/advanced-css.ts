@@ -167,8 +167,20 @@ function styleElement(id: string): HTMLStyleElement {
     return style;
 }
 
-function cloneConfiguration(value: UserThemeCssConfiguration): UserThemeCssConfiguration {
-    return JSON.parse(JSON.stringify(value)) as UserThemeCssConfiguration;
+function presentationLayerActive(): boolean {
+    const root = document.documentElement;
+    const breakpoint = root.getAttribute('data-jc-theme-breakpoint');
+    const route = root.getAttribute('data-jc-theme-route');
+    return root.classList.contains('jc-modern-layout')
+        && !root.classList.contains('jc-legacy-layout')
+        && !root.classList.contains('layout-tv')
+        && document.body?.classList.contains('layout-tv') !== true
+        && root.getAttribute('data-layout') !== 'tv'
+        && root.getAttribute('data-jc-theme-active') === 'true'
+        && (breakpoint === 'phone' || breakpoint === 'desktop' || breakpoint === 'wide')
+        && route !== null && route !== 'dashboard'
+        && root.getAttribute('data-jc-theme-forced-colors') === 'none'
+        && root.getAttribute('data-jc-theme-contrast') === 'standard';
 }
 
 /** Identity-owned runtime for the separately persisted advanced declaration layer. */
@@ -278,7 +290,8 @@ export class ThemeAdvancedCssRuntime {
 
     refresh(): void {
         if (this.#disposed || !this.#scope.isCurrent()
-            || JC.pluginConfig?.ThemeStudioAllowAdvancedCss !== true) {
+            || JC.pluginConfig?.ThemeStudioAllowAdvancedCss !== true
+            || !presentationLayerActive()) {
             this.clear();
             return;
         }

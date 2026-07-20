@@ -609,6 +609,21 @@ function importDiagnosticsFromError(error: unknown): string[] {
     });
 }
 
+function isOnlyScheduleDisabledImportError(error: unknown): boolean {
+    const response = (error as HttpError | null)?.responseJSON;
+    if (!response || typeof response !== 'object' || Array.isArray(response)) return false;
+    const value = response as { code?: unknown; Code?: unknown; diagnostics?: unknown; Diagnostics?: unknown };
+    const code = value.code ?? value.Code;
+    const diagnostics = value.diagnostics ?? value.Diagnostics;
+    if (code !== 'theme_schedule_disabled' || !Array.isArray(diagnostics) || diagnostics.length !== 1) {
+        return false;
+    }
+    const diagnostic: unknown = diagnostics[0] as unknown;
+    return Boolean(diagnostic && typeof diagnostic === 'object' && !Array.isArray(diagnostic)
+        && ((diagnostic as { code?: unknown; Code?: unknown }).code
+            ?? (diagnostic as { Code?: unknown }).Code) === 'theme_schedule_disabled');
+}
+
 function importSummary(current: UserThemeConfiguration, candidate: UserThemeConfiguration): string[] {
     const currentById = new Map(current.Profiles.map((profile) => [profile.Id, profile]));
     const candidateById = new Map(candidate.Profiles.map((profile) => [profile.Id, profile]));
@@ -1078,6 +1093,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
     let expertTimer = 0;
     let importGeneration = 0;
     let galleryGeneration = 0;
+    let galleryPending = false;
     let importValidationController: AbortController | null = null;
     let runtimeGeneration = 0;
     let disposed = false;
@@ -1089,7 +1105,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
     let committedAdvancedCss = advancedCssConfiguration
         ? JSON.stringify(advancedCssConfiguration)
         : null;
-    let advancedCssInvalidIds = new Set<string>();
+    const advancedCssInvalidIds = new Set<string>();
     let advancedCssLoading = JC.pluginConfig?.ThemeStudioAllowAdvancedCss === true
         && advancedCssConfiguration === null;
     let advancedCssSaving = false;
@@ -1113,6 +1129,13 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         importValidationController?.abort();
         importValidationController = null;
         clearPendingImport();
+    };
+
+    const retireGalleryWork = (): boolean => {
+        const wasPending = galleryPending;
+        galleryGeneration += 1;
+        galleryPending = false;
+        return wasPending;
     };
 
     const invalidateImportForDraftChange = (): void => {
@@ -1286,14 +1309,14 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         }
         const snapshot = state.snapshot();
         const active = snapshot.configuration.Profiles.find((profile) => profile.Id === snapshot.configuration.ActiveProfileId)!;
-        const busy = saving || loading;
+        const busy = saving || loading || galleryPending;
         const hasLocalDraft = snapshot.dirty || profileNameDirty();
         const activeProfileName = profileNameProfileId === active.Id ? profileNameText : active.Name;
         const activeProfileNameInvalid = profileNameProfileId === active.Id && profileNameInvalid;
         const surfaceSupported = presentationSurfaceSupported();
         root.innerHTML = `${editorStyles()}
             <button class="jc-theme-button jc-theme-return" type="button" data-action="return-editor">${escapeHtml(t('theme_studio_return_editor'))}</button>
-            <fieldset class="jc-theme-workspace"${busy ? ' disabled' : ''}>
+            <fieldset class="jc-theme-workspace" aria-busy="${galleryPending}"${busy ? ' disabled' : ''}>
             <p class="jc-theme-hint" id="jc-theme-modern-scope" role="note">${escapeHtml(t('theme_studio_modern_scope'))}</p>
             <div class="jc-theme-studio">
             <div class="jc-theme-toolbar">
@@ -1342,11 +1365,17 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         restoreScroll(root, scrolled);
     };
 
-    const changed = (success: boolean, synchronizeExpert = true, successStatus?: string): void => {
+    const changed = (
+        success: boolean,
+        synchronizeExpert = true,
+        successStatus?: string,
+        retireGallery = true,
+    ): void => {
         if (!success) {
             render();
             return;
         }
+        if (retireGallery) retireGalleryWork();
         invalidateImportForDraftChange();
         syncProfileName(true);
         const snapshot = state!.snapshot();
@@ -1397,6 +1426,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         }
         const didChange = state.replace(valid);
         if (didChange) {
+            retireGalleryWork();
             invalidateImportForDraftChange();
             if (!preserveProfileName || activeProfileChanged) syncProfileName(true);
             const snapshot = state.snapshot();
@@ -1434,6 +1464,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         profileNameText = profile.Name;
         profileNameInvalid = false;
         if (renamed) {
+            retireGalleryWork();
             invalidateImportForDraftChange();
             expertText = JSON.stringify(state.snapshot().configuration, null, 2);
             if (state.snapshot().dirty) {
@@ -1561,7 +1592,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
     };
 
     const reload = async (): Promise<void> => {
-        if (saving || loading) return;
+        if (saving || loading || galleryPending) return;
         // Reload is an explicit authoritative discard. Retire validation that
         // began against the discarded draft before yielding to the runtime.
         retireImportWork();
@@ -1598,7 +1629,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
     };
 
     const apply = async (): Promise<void> => {
-        if (!state || saving || recoveryRequired || !JC.saveUserSettings) return;
+        if (!state || saving || loading || galleryPending || recoveryRequired || !JC.saveUserSettings) return;
         if (!flushExpert(false)) {
             render();
             return;
@@ -1733,7 +1764,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         }
         render();
         const preserveDormantSchedule = !schedulingAllowed;
-        if (saving || loading || file.size > MAXIMUM_IMPORT_FILE_BYTES
+        if (saving || loading || galleryPending || file.size > MAXIMUM_IMPORT_FILE_BYTES
             || JC.pluginConfig?.ThemeStudioAllowProfileImport !== true || !JC.core.api) {
             status = t('theme_studio_import_invalid');
             render();
@@ -1765,24 +1796,28 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         const validationController = new AbortController();
         importValidationController = validationController;
         try {
-            // Disabled scheduling makes imported schedule mutations invalid,
-            // including a user's own export of a dormant stored schedule.
-            // Validate only the portable profiles, then graft the unchanged
-            // authoritative schedule back below.
-            const validationDocument = preserveDormantSchedule
-                ? { ...(parsed as Record<string, unknown>), Schedule: [] }
-                : parsed;
-            const response = await JC.core.api.plugin(
-                `/user-settings/${encodeURIComponent(ctx.identityContext.userId)}/theme.json/validate`,
-                {
+            const validationApi = JC.core.api;
+            const validateDocument = (body: unknown): Promise<unknown> => validationApi.plugin(
+                `/user-settings/${encodeURIComponent(ctx.identityContext.userId)}/theme.json/validate`, {
                     method: 'POST',
-                    body: validationDocument,
+                    body,
                     signal: validationController.signal,
                     skipCache: true,
                     skipRetry: true,
                     timeoutMs: 10_000,
-                },
-            );
+                });
+            // Always diagnose the complete source first. A user's valid export
+            // can contain a dormant schedule that policy currently disallows;
+            // only that exact, sole diagnostic permits a second profiles-only
+            // validation before the unchanged authoritative schedule is grafted
+            // back during acceptance.
+            let response: unknown;
+            try {
+                response = await validateDocument(parsed);
+            } catch (error) {
+                if (!preserveDormantSchedule || !isOnlyScheduleDisabledImportError(error)) throw error;
+                response = await validateDocument({ ...(parsed as Record<string, unknown>), Schedule: [] });
+            }
             if (disposed || generation !== importGeneration || !state
                 || !JC.identity.isCurrent(ctx.identityContext)
                 || JC.pluginConfig?.ThemeStudioAllowProfileImport !== true) return;
@@ -1813,19 +1848,37 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
 
     const applyGallery = async (id: string): Promise<void> => {
         const entry = CURATED_THEME_GALLERY.find((candidate) => candidate.id === id);
-        if (!entry || !state || saving || loading) return;
+        if (!entry || !state || saving || loading || galleryPending) return;
+        const targetState = state;
+        const draftFingerprint = JSON.stringify(targetState.snapshot().configuration);
         const generation = ++galleryGeneration;
+        galleryPending = true;
         status = t('theme_studio_gallery_verifying');
         render();
         const verified = await verifyCuratedGalleryEntry(entry);
         if (disposed || generation !== galleryGeneration || !JC.identity.isCurrent(ctx.identityContext)) return;
-        if (!verified || !state) {
+        if (state !== targetState || saving || loading
+            || JSON.stringify(targetState.snapshot().configuration) !== draftFingerprint) {
+            galleryPending = false;
+            status = t(state?.snapshot().dirty || profileNameDirty()
+                ? 'theme_studio_unsaved'
+                : 'theme_studio_ready');
+            render();
+            return;
+        }
+        galleryPending = false;
+        if (!verified) {
             status = t('theme_studio_gallery_invalid');
             render();
             return;
         }
-        const applied = state.updateActiveProfile((profile) => applyCuratedGalleryEntry(profile, entry));
-        if (applied) changed(true, true, t('theme_studio_gallery_applied', { name: entry.name }));
+        const applied = targetState.updateActiveProfile((profile) => applyCuratedGalleryEntry(profile, entry));
+        if (applied) changed(
+            true,
+            true,
+            t('theme_studio_gallery_applied', { name: entry.name }),
+            false,
+        );
         else {
             status = t('theme_studio_gallery_unchanged');
             render();
@@ -1837,7 +1890,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         const button = (event.target as HTMLElement).closest<HTMLElement>('[data-action]');
         if (!button) return;
         const action = button.dataset.action;
-        if ((saving || loading) && action !== 'return-editor') return;
+        if ((saving || loading || galleryPending) && action !== 'return-editor') return;
         if ((advancedCssSaving || advancedCssLoading)
             && ['add-css-snippet', 'delete-css-snippet', 'reset-css', 'save-css'].includes(action ?? '')) return;
         if (button.hasAttribute('disabled') || !state) {
@@ -2029,7 +2082,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
     root.addEventListener('input', (event) => {
         ctx.resetAutoCloseTimer();
         const target = event.target as HTMLInputElement | HTMLTextAreaElement;
-        if (!state || saving || loading) return;
+        if (!state || saving || loading || galleryPending) return;
         if ((advancedCssSaving || advancedCssLoading)
             && target.dataset.field?.startsWith('advanced-css-')) return;
         if (target.dataset.role === 'profile-name') {
@@ -2051,7 +2104,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
             if (statusElement) statusElement.textContent = `${hasLocalDraft ? '● ' : ''}${visibleStatus()}`;
             const applyButton = root.querySelector<HTMLButtonElement>('[data-action="apply"]');
             if (applyButton) {
-                applyButton.disabled = !hasLocalDraft || saving || loading
+                applyButton.disabled = !hasLocalDraft || saving || loading || galleryPending
                     || expertInvalid || profileNameInvalid || recoveryRequired;
             }
             syncAutoCloseProtection();
@@ -2093,7 +2146,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
     root.addEventListener('change', (event) => {
         ctx.resetAutoCloseTimer();
         const target = event.target as HTMLInputElement | HTMLSelectElement;
-        if (!state || saving || loading) return;
+        if (!state || saving || loading || galleryPending) return;
         if ((advancedCssSaving || advancedCssLoading)
             && target.dataset.field?.startsWith('advanced-css-')) return;
         const value = target.value;
@@ -2215,7 +2268,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         ctx.resetAutoCloseTimer();
         const target = event.target as HTMLElement;
         if ((!event.ctrlKey && !event.metaKey) || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)
-            || !state || saving || loading) return;
+            || !state || saving || loading || galleryPending) return;
         if (!flushExpert(false)) {
             render();
             return;
@@ -2234,6 +2287,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
     });
 
     const onRuntimeChanged = (event: Event): void => {
+        retireGalleryWork();
         const reason = (event as CustomEvent<{ reason?: string }>).detail?.reason;
         const nextRuntime = JC.core.themeStudio;
         if (deferredAcknowledgement && nextRuntime) {
@@ -2255,6 +2309,12 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         void hydrateAdvancedCss(false);
     };
     const onConfigChanged = (): void => {
+        const discardedGallery = retireGalleryWork();
+        if (discardedGallery && !saving && !loading) {
+            status = t(state?.snapshot().dirty || profileNameDirty()
+                ? 'theme_studio_unsaved'
+                : 'theme_studio_ready');
+        }
         const nextSchedulingAllowed = JC.pluginConfig?.ThemeStudioAllowSeasonalScheduling !== false;
         const importPolicyChanged = nextSchedulingAllowed !== schedulingAllowed
             || JC.pluginConfig?.ThemeStudioAllowProfileImport !== true;
@@ -2294,7 +2354,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         disposed = true;
         runtimeGeneration += 1;
         advancedCssGeneration += 1;
-        galleryGeneration += 1;
+        retireGalleryWork();
         retireImportWork();
         cancelPreviewFrame();
         cancelPreviewCardFrame();

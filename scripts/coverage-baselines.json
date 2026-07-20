@@ -21,12 +21,12 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 21018,
-        "totalLines": 29449
+        "coveredLines": 21032,
+        "totalLines": 29463
       },
       "tolerance": {
         "missingCoveredLines": 4,
-        "rationale": "Theme Studio safe sharing, curated gallery, and advanced declaration foundations in issue #396. Two clean local .NET 10.0.9/Coverlet runs on 2026-07-21 each passed all 1847 tests over the identical complete 29449-line assembly scope and both measured 21018 covered lines (71.371%). Relative to the prior 20802/29238 baseline, the legitimate 211-line scope increase adds a separately persisted per-user theme-css document, bounded declaration validation, and non-value import diagnostics; focused policy and controller tests advance covered lines by 216. The unchanged four-line low-side tolerance retains the previously reproduced Coverlet variance without widening it, while the required floor improves from 71.133% to 71.357%; coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, and broad-tolerance negative boundaries."
+        "rationale": "Theme Studio safe sharing, curated gallery, and advanced declaration foundations in issue #396. Two clean local .NET 10.0.9/Coverlet runs on 2026-07-21 each passed all 1853 tests over the identical complete 29463-line assembly scope and both measured 21032 covered lines (71.384%). Relative to the prior 21018/29449 baseline, the legitimate 14-line scope increase broadens bounded import diagnostics to reject generic tag-like markup, executable event attributes, and remote URL schemes; focused controller tests cover all 14 new lines. The unchanged four-line low-side tolerance retains the previously reproduced Coverlet variance without widening it, while the required floor improves from 71.357% to 71.371%; coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, and broad-tolerance negative boundaries."
       }
     }
   }

@@ -1225,6 +1225,31 @@ describe('Theme Studio responsive settings editor', () => {
         expect(panel.textContent).toContain('theme_studio_gallery_applied');
     });
 
+    it('retires a pending gallery verification when runtime policy changes', async () => {
+        let resolveDigest: (value: ArrayBuffer) => void = () => undefined;
+        const digest = vi.fn(() => new Promise<ArrayBuffer>((resolve) => { resolveDigest = resolve; }));
+        vi.stubGlobal('crypto', { subtle: { digest } });
+        wireThemeStudioEditor(context());
+        const galleryButton = panel.querySelector<HTMLButtonElement>(
+            '[data-action="apply-gallery"][data-gallery-id="cinematic-dusk"]',
+        )!;
+
+        galleryButton.click();
+
+        await vi.waitFor(() => expect(digest).toHaveBeenCalledOnce());
+        expect(panel.querySelector<HTMLFieldSetElement>('.jc-theme-workspace')?.disabled).toBe(true);
+        expect(button('apply').disabled).toBe(true);
+        window.dispatchEvent(new Event('jc:config-changed'));
+        expect(panel.querySelector<HTMLFieldSetElement>('.jc-theme-workspace')?.disabled).toBe(false);
+        resolveDigest(new Uint8Array(32).buffer);
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(panel.textContent).not.toContain('theme_studio_gallery_applied');
+        expect(preview).not.toHaveBeenCalled();
+        expect(button('apply').disabled).toBe(true);
+    });
+
     it('previews, validates, and separately saves advanced local declarations', async () => {
         const advanced: UserThemeCssConfiguration = {
             Revision: 0,
@@ -1262,7 +1287,7 @@ describe('Theme Studio responsive settings editor', () => {
         await vi.waitFor(() => expect(panel.querySelector('[data-action="add-css-snippet"]')).not.toBeNull());
 
         button('add-css-snippet').click();
-        let enabled = panel.querySelector<HTMLInputElement>('[data-field="advanced-css-enabled"]')!;
+        const enabled = panel.querySelector<HTMLInputElement>('[data-field="advanced-css-enabled"]')!;
         enabled.checked = true;
         enabled.dispatchEvent(new Event('change', { bubbles: true }));
         let declarations = panel.querySelector<HTMLTextAreaElement>(
@@ -1460,10 +1485,19 @@ describe('Theme Studio responsive settings editor', () => {
             Profiles: imported.Profiles,
             Schedule: imported.Schedule,
         };
-        const plugin = vi.fn((_path: string, options: { body?: unknown }) => Promise.resolve({
-            valid: true,
-            data: options.body,
-        }));
+        const scheduleDisabled = Object.assign(new Error('HTTP 400'), {
+            responseJSON: {
+                code: 'theme_schedule_disabled',
+                diagnostics: [{ code: 'theme_schedule_disabled' }],
+            },
+        });
+        let validationCount = 0;
+        const plugin = vi.fn((_path: string, options: { body?: unknown }) => {
+            validationCount += 1;
+            return validationCount === 1
+                ? Promise.reject(scheduleDisabled)
+                : Promise.resolve({ valid: true, data: options.body });
+        });
         JC.core.api = { plugin } as unknown as ApiApi;
         wireThemeStudioEditor(context());
         const input = panel.querySelector<HTMLInputElement>('[data-field="import-file"]')!;
@@ -1474,7 +1508,13 @@ describe('Theme Studio responsive settings editor', () => {
         input.dispatchEvent(new Event('change', { bubbles: true }));
 
         await vi.waitFor(() => expect(panel.textContent).toContain('theme_studio_import_ready'));
-        expect(plugin).toHaveBeenCalledWith(
+        expect(plugin).toHaveBeenNthCalledWith(
+            1,
+            `/user-settings/${identity.userId}/theme.json/validate`,
+            expect.objectContaining({ body: portable }),
+        );
+        expect(plugin).toHaveBeenNthCalledWith(
+            2,
             `/user-settings/${identity.userId}/theme.json/validate`,
             expect.objectContaining({ body: { ...portable, Schedule: [] } }),
         );
@@ -1490,6 +1530,49 @@ describe('Theme Studio responsive settings editor', () => {
             Schedule: [expect.objectContaining({ Id: 'winter', ProfileId: 'default' })],
         }), { allowScheduling: false });
         expect(button('apply').disabled).toBe(false);
+    });
+
+    it('diagnoses the complete import before a disabled-schedule compatibility retry', async () => {
+        JC.pluginConfig.ThemeStudioAllowSeasonalScheduling = false;
+        configuration.Schedule = [{
+            Id: 'winter', ProfileId: 'default', StartMonthDay: '12-01', EndMonthDay: '02-28',
+            Priority: 10, Enabled: true,
+        }];
+        const portable = {
+            SchemaVersion: configuration.SchemaVersion,
+            ActiveProfileId: configuration.ActiveProfileId,
+            Profiles: configuration.Profiles,
+            Schedule: [{
+                ...configuration.Schedule[0],
+                RemoteStyle: 'ftp://example.invalid/theme.css',
+            }],
+        };
+        const responseJSON = {
+            code: 'remote_url',
+            diagnostics: [{ code: 'remote_url', message: 'must never be rendered' }],
+        };
+        const plugin = vi.fn().mockRejectedValue(Object.assign(new Error('HTTP 400'), { responseJSON }));
+        JC.core.api = { plugin } as unknown as ApiApi;
+        wireThemeStudioEditor(context());
+        const input = panel.querySelector<HTMLInputElement>('[data-field="import-file"]')!;
+        Object.defineProperty(input, 'files', {
+            configurable: true,
+            value: [new File([JSON.stringify(portable)], 'unsafe-schedule.json', { type: 'application/json' })],
+        });
+
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+
+        await vi.waitFor(() => expect(panel.textContent).toContain(
+            'theme_studio_import_diagnostic_remote_url',
+        ));
+        expect(plugin).toHaveBeenCalledOnce();
+        expect(plugin).toHaveBeenCalledWith(
+            `/user-settings/${identity.userId}/theme.json/validate`,
+            expect.objectContaining({ body: portable }),
+        );
+        expect(panel.textContent).not.toContain('theme_studio_import_ready');
+        expect(panel.textContent).not.toContain('must never be rendered');
+        expect(button('apply').disabled).toBe(true);
     });
 
     it.each(['validation', 'review'] as const)(
