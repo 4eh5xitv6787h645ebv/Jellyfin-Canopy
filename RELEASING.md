@@ -48,6 +48,17 @@ updates, and a malformed entry bricks in-app updates for all users.
    - regenerates `manifest.json` (new entry prepended, MD5 checksum computed
      from the real ZIP, timestamped) and opens a PR with the change.
 
+   The [nightly large-library scale
+   tier](CONTRIBUTING.md#nightly-large-library-scale-tier) is currently
+   **advisory** and is not part of these reused gates or of `release.yml`. Once
+   its budgets ratchet to blocking, the release will additionally require a
+   provenance-verified scale result for the exact tag SHA — freshly dispatched,
+   or reused as an immutable workflow artifact created within the preceding
+   seven days whose recorded budget digest matches the tag commit — with at
+   most two retries for infrastructure-only failures; a measured budget breach
+   is evidence, not a retryable error. That future gate joins the existing
+   no-bypass release contract; it does not change it.
+
 4. **Review and merge the manifest PR.** Merging it is the step that
    publishes the update to installed plugins. GitHub does not automatically
    trigger workflows for a PR opened by `GITHUB_TOKEN`, so the release job
