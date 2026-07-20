@@ -5,7 +5,11 @@ import {
     THEME_PALETTES,
     THEME_PRESETS,
 } from '../../theme-studio/catalog';
-import { ThemeEditorState } from '../../theme-studio/editor-state';
+import {
+    isValidThemeProfileName,
+    THEME_PROFILE_NAME_MAX_LENGTH,
+    ThemeEditorState,
+} from '../../theme-studio/editor-state';
 import { resolveTheme, type ThemeMediaState } from '../../theme-studio/resolver';
 import { parseUserThemeConfiguration } from '../../theme-studio/schema';
 import type {
@@ -101,6 +105,29 @@ function option(value: string, label: string, selected: boolean): string {
 
 function clone(value: UserThemeConfiguration): UserThemeConfiguration {
     return JSON.parse(JSON.stringify(value)) as UserThemeConfiguration;
+}
+
+function administratorThemeDefaults(): { preset: string; palette: string } {
+    const configuredPreset = JC.pluginConfig?.ThemeStudioDefaultPreset;
+    const configuredPalette = JC.pluginConfig?.ThemeStudioDefaultPalette;
+    return {
+        preset: typeof configuredPreset === 'string'
+            && THEME_PRESETS.some((preset) => preset.id === configuredPreset) ? configuredPreset : 'canopy',
+        palette: typeof configuredPalette === 'string'
+            && THEME_PALETTES.some((palette) => palette.id === configuredPalette)
+            ? configuredPalette : 'canopy-night',
+    };
+}
+
+function duplicateProfileName(name: string): string | null {
+    const cleanName = name.trim();
+    if (!isValidThemeProfileName(cleanName)) return null;
+    const points = [...cleanName];
+    for (let length = points.length; length >= 0; length -= 1) {
+        const candidate = t('theme_studio_copy_name', { name: points.slice(0, length).join('') }).trim();
+        if (isValidThemeProfileName(candidate)) return candidate;
+    }
+    return null;
 }
 
 function mediaMatches(query: string): boolean {
@@ -280,6 +307,7 @@ function editorStyles(): string {
         #jellyfin-canopy-panel .jc-theme-field { display:grid; gap:6px; min-width:0; margin-block-end:14px; }
         #jellyfin-canopy-panel .jc-theme-field > span, #jellyfin-canopy-panel .jc-theme-label { font-weight:650; }
         #jellyfin-canopy-panel .jc-theme-hint { color:rgba(255,255,255,.7); font-size:12px; line-height:1.45; }
+        #jellyfin-canopy-panel .jc-theme-validation { color:#ffb3b3; }
         #jellyfin-canopy-panel .jc-theme-control { box-sizing:border-box; width:100%; min-height:44px; border:1px solid rgba(255,255,255,.22); border-radius:9px; background:#101218; color:#fff; padding:9px 11px; font:inherit; }
         #jellyfin-canopy-panel .jc-theme-control:focus-visible, #jellyfin-canopy-panel .jc-theme-button:focus-visible, #jellyfin-canopy-panel .jc-theme-preset:focus-visible { outline:3px solid #00d4ff; outline-offset:2px; }
         #jellyfin-canopy-panel .jc-theme-button { min-height:44px; border:1px solid rgba(255,255,255,.22); border-radius:9px; background:rgba(255,255,255,.08); color:#fff; padding:8px 12px; font:inherit; font-weight:650; cursor:pointer; }
@@ -335,29 +363,41 @@ function editorStyles(): string {
     </style>`;
 }
 
-function profileControls(configuration: UserThemeConfiguration, active: ThemeProfile): string {
+function profileControls(
+    configuration: UserThemeConfiguration,
+    active: ThemeProfile,
+    profileName: string,
+    profileNameInvalid: boolean,
+): string {
     return `<div class="jc-theme-field">
         <span>${escapeHtml(t('theme_studio_profile'))}</span>
         <select class="jc-theme-control" data-field="profile" aria-label="${escapeHtml(t('theme_studio_profile'))}">
             ${configuration.Profiles.map((profile) => option(profile.Id, profile.Name, profile.Id === active.Id)).join('')}
         </select>
         <div class="jc-theme-row">
-            <input class="jc-theme-control" style="flex:1 1 150px" data-role="profile-name" maxlength="80" value="${escapeHtml(active.Name)}" aria-label="${escapeHtml(t('theme_studio_profile_name'))}">
+            <input class="jc-theme-control" style="flex:1 1 150px" data-role="profile-name" maxlength="${THEME_PROFILE_NAME_MAX_LENGTH}" value="${escapeHtml(profileName)}" aria-label="${escapeHtml(t('theme_studio_profile_name'))}" aria-invalid="${profileNameInvalid}" aria-describedby="jc-theme-profile-name-error">
             <button class="jc-theme-button" type="button" data-action="rename-profile">${escapeHtml(t('theme_studio_rename'))}</button>
             <button class="jc-theme-button" type="button" data-action="add-profile">${escapeHtml(t('theme_studio_duplicate'))}</button>
             <button class="jc-theme-button danger" type="button" data-action="delete-profile"${configuration.Profiles.length <= 1 ? ' disabled' : ''}>${escapeHtml(t('theme_studio_delete'))}</button>
         </div>
+        <span class="jc-theme-hint jc-theme-validation" id="jc-theme-profile-name-error" data-role="profile-name-error"${profileNameInvalid ? '' : ' hidden'}>${escapeHtml(t('theme_studio_profile_name_invalid'))}</span>
     </div>`;
 }
 
-function beginnerEditor(configuration: UserThemeConfiguration, active: ThemeProfile, query: string): string {
+function beginnerEditor(
+    configuration: UserThemeConfiguration,
+    active: ThemeProfile,
+    query: string,
+    profileName: string,
+    profileNameInvalid: boolean,
+): string {
     const presetMatches = (preset: (typeof THEME_PRESETS)[number]): boolean => {
         const key = PRESET_KEYS[preset.id] ?? preset.id;
         const text = `${t(`${key}_name`)} ${t(`${key}_desc`)}`.toLowerCase();
         return !query || text.includes(query);
     };
     const visiblePresets = THEME_PRESETS.filter(presetMatches).length;
-    return `${profileControls(configuration, active)}
+    return `${profileControls(configuration, active, profileName, profileNameInvalid)}
         <label class="jc-theme-field"><span>${escapeHtml(t('theme_studio_search_presets'))}</span>
             <input class="jc-theme-control" type="search" data-field="preset-search" value="${escapeHtml(query)}" placeholder="${escapeHtml(t('theme_studio_search_placeholder'))}">
         </label>
@@ -441,6 +481,9 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
     let pendingImportChanges: string[] = [];
     let expertText = configuration ? JSON.stringify(configuration, null, 2) : '';
     let expertInvalid = false;
+    let profileNameProfileId = state?.activeProfile().Id ?? '';
+    let profileNameText = state?.activeProfile().Name ?? '';
+    let profileNameInvalid = false;
     let saving = false;
     let loading = false;
     let recoveryRequired = false;
@@ -532,8 +575,32 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         if (JC.core.themeStudio !== runtime) JC.core.themeStudio?.cancelPreview();
     };
 
+    const profileNameDirty = (): boolean => {
+        if (!state || !profileNameProfileId) return false;
+        const profile = state.snapshot().configuration.Profiles
+            .find((candidate) => candidate.Id === profileNameProfileId);
+        return Boolean(profile) && profileNameText !== profile!.Name;
+    };
+
+    const syncProfileName = (force = false): void => {
+        const active = state?.activeProfile();
+        if (!active) {
+            profileNameProfileId = '';
+            profileNameText = '';
+            profileNameInvalid = false;
+            return;
+        }
+        if (force || !profileNameDirty() || profileNameProfileId !== active.Id) {
+            profileNameProfileId = active.Id;
+            profileNameText = active.Name;
+            profileNameInvalid = false;
+        }
+    };
+
     const syncAutoCloseProtection = (): void => {
         const protectedDraft = Boolean(state?.snapshot().dirty)
+            || profileNameDirty()
+            || profileNameInvalid
             || expertTimer !== 0
             || expertInvalid
             || pendingImport !== null;
@@ -554,6 +621,9 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         const snapshot = state.snapshot();
         const active = snapshot.configuration.Profiles.find((profile) => profile.Id === snapshot.configuration.ActiveProfileId)!;
         const busy = saving || loading;
+        const hasLocalDraft = snapshot.dirty || profileNameDirty();
+        const activeProfileName = profileNameProfileId === active.Id ? profileNameText : active.Name;
+        const activeProfileNameInvalid = profileNameProfileId === active.Id && profileNameInvalid;
         root.innerHTML = `${editorStyles()}
             <button class="jc-theme-button jc-theme-return" type="button" data-action="return-editor">${escapeHtml(t('theme_studio_return_editor'))}</button>
             <fieldset class="jc-theme-workspace"${busy ? ' disabled' : ''}>
@@ -565,13 +635,14 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
                 <div class="jc-theme-row">
                     <button class="jc-theme-button" type="button" data-action="undo"${snapshot.canUndo ? '' : ' disabled'} aria-label="${escapeHtml(t('theme_studio_undo'))}">↶ ${escapeHtml(t('theme_studio_undo'))}</button>
                     <button class="jc-theme-button" type="button" data-action="redo"${snapshot.canRedo ? '' : ' disabled'} aria-label="${escapeHtml(t('theme_studio_redo'))}">↷ ${escapeHtml(t('theme_studio_redo'))}</button>
+                    <button class="jc-theme-button" type="button" data-action="reset-profile">↺ ${escapeHtml(t('theme_studio_reset'))}</button>
                     <button class="jc-theme-button jc-theme-mobile-preview" type="button" data-action="preview-only">${escapeHtml(t('theme_studio_show_preview'))}</button>
                 </div>
             </div>
             <div class="jc-theme-studio">
                 <div class="jc-theme-editor">
-                    ${mode === 'beginner' ? beginnerEditor(snapshot.configuration, active, query) : `
-                        ${profileControls(snapshot.configuration, active)}
+                    ${mode === 'beginner' ? beginnerEditor(snapshot.configuration, active, query, activeProfileName, activeProfileNameInvalid) : `
+                        ${profileControls(snapshot.configuration, active, activeProfileName, activeProfileNameInvalid)}
                         <label class="jc-theme-field"><span>${escapeHtml(t('theme_studio_expert_json'))}</span><span class="jc-theme-hint">${escapeHtml(t('theme_studio_expert_hint'))}</span>
                             <textarea class="jc-theme-control jc-theme-expert" data-field="expert-json" spellcheck="false" aria-invalid="${expertInvalid}">${escapeHtml(expertText)}</textarea>
                         </label>`}
@@ -585,17 +656,18 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
             </div>
             </fieldset>
             <div class="jc-theme-actions">
-                <div class="jc-theme-status" role="status" aria-live="polite">${snapshot.dirty ? `● ${escapeHtml(status)}` : escapeHtml(status)}</div>
-                <div class="jc-theme-row">${recoveryRequired ? `<button class="jc-theme-button" type="button" data-action="reload"${busy ? ' disabled' : ''}>${escapeHtml(t('theme_studio_reload'))}</button>` : ''}<button class="jc-theme-button" type="button" data-action="cancel"${busy ? ' disabled' : ''}>${escapeHtml(t('theme_studio_cancel'))}</button><button class="jc-theme-button primary" type="button" data-action="apply"${!snapshot.dirty || busy || expertInvalid || recoveryRequired ? ' disabled' : ''}>${escapeHtml(saving ? t('theme_studio_saving') : t('theme_studio_apply'))}</button></div>
+                <div class="jc-theme-status" role="status" aria-live="polite">${hasLocalDraft ? `● ${escapeHtml(status)}` : escapeHtml(status)}</div>
+                <div class="jc-theme-row">${recoveryRequired ? `<button class="jc-theme-button" type="button" data-action="reload"${busy ? ' disabled' : ''}>${escapeHtml(t('theme_studio_reload'))}</button>` : ''}<button class="jc-theme-button" type="button" data-action="cancel"${busy ? ' disabled' : ''}>${escapeHtml(t('theme_studio_cancel'))}</button><button class="jc-theme-button primary" type="button" data-action="apply"${!hasLocalDraft || busy || expertInvalid || profileNameInvalid || recoveryRequired ? ' disabled' : ''}>${escapeHtml(saving ? t('theme_studio_saving') : t('theme_studio_apply'))}</button></div>
             </div>`;
         restoreFocus(root, focused);
     };
 
-    const changed = (success: boolean, synchronizeExpert = true): void => {
+    const changed = (success: boolean, synchronizeExpert = true, successStatus?: string): void => {
         if (!success) {
             render();
             return;
         }
+        syncProfileName(true);
         const snapshot = state!.snapshot();
         if (synchronizeExpert) expertText = JSON.stringify(snapshot.configuration, null, 2);
         expertInvalid = false;
@@ -606,6 +678,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
             clearStagedPreview();
             if (!recoveryRequired) status = t('theme_studio_ready');
         }
+        if (successStatus && !recoveryRequired) status = successStatus;
         render();
     };
 
@@ -625,8 +698,10 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
             if (rerender) render();
             return false;
         }
+        const preserveProfileName = profileNameDirty();
         const didChange = state.replace(valid);
         if (didChange) {
+            if (!preserveProfileName) syncProfileName(true);
             const snapshot = state.snapshot();
             if (snapshot.dirty) {
                 status = t('theme_studio_unsaved');
@@ -642,6 +717,35 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         return true;
     };
 
+    const flushProfileName = (): boolean => {
+        if (!state || !profileNameDirty()) return !profileNameInvalid;
+        if (!isValidThemeProfileName(profileNameText)) {
+            profileNameInvalid = true;
+            status = t('theme_studio_profile_name_invalid');
+            return false;
+        }
+        const profileId = profileNameProfileId;
+        const renamed = state.renameProfile(profileId, profileNameText);
+        const profile = state.snapshot().configuration.Profiles.find((candidate) => candidate.Id === profileId);
+        if (!profile) {
+            syncProfileName(true);
+            return true;
+        }
+        profileNameText = profile.Name;
+        profileNameInvalid = false;
+        if (renamed) {
+            expertText = JSON.stringify(state.snapshot().configuration, null, 2);
+            if (state.snapshot().dirty) {
+                status = t('theme_studio_unsaved');
+                schedulePreview();
+            } else {
+                clearStagedPreview();
+                if (!recoveryRequired) status = t('theme_studio_ready');
+            }
+        }
+        return true;
+    };
+
     const hydrate = async (force: boolean, reloaded = false): Promise<void> => {
         const generation = ++runtimeGeneration;
         const nextRuntime = JC.core.themeStudio;
@@ -651,6 +755,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
             if (!state || force) {
                 configuration = null;
                 state = null;
+                syncProfileName(true);
             } else {
                 recoveryRequired = true;
             }
@@ -684,13 +789,16 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
             flushExpert(false);
         }
         const localSnapshot = state?.snapshot();
-        const hasLocalWork = Boolean(localSnapshot?.dirty) || expertInvalid || pendingImport !== null;
+        const hasLocalWork = Boolean(localSnapshot?.dirty) || profileNameDirty()
+            || profileNameInvalid || expertInvalid || pendingImport !== null;
         if (!force && state && hasLocalWork) {
             if (state.matchesCommitted(nextConfiguration)) {
                 configuration = nextConfiguration;
                 loading = false;
                 recoveryRequired = false;
-                status = t(expertInvalid
+                status = t(profileNameInvalid
+                    ? 'theme_studio_profile_name_invalid'
+                    : expertInvalid
                     ? 'theme_studio_invalid'
                     : pendingImport ? 'theme_studio_import_ready' : 'theme_studio_unsaved');
                 if (state.snapshot().dirty) schedulePreview();
@@ -705,6 +813,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         }
         configuration = nextConfiguration;
         state = new ThemeEditorState(nextConfiguration);
+        syncProfileName(true);
         expertText = JSON.stringify(nextConfiguration, null, 2);
         pendingImport = null;
         pendingImportChanges = [];
@@ -734,6 +843,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         }
         configuration = nextRuntime.getConfiguration();
         state = configuration ? new ThemeEditorState(configuration) : null;
+        syncProfileName(true);
         expertText = configuration ? JSON.stringify(configuration, null, 2) : '';
         pendingImport = null;
         expertInvalid = false;
@@ -746,6 +856,14 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
     const apply = async (): Promise<void> => {
         if (!state || saving || recoveryRequired || !JC.saveUserSettings) return;
         if (!flushExpert(false)) {
+            render();
+            return;
+        }
+        if (!flushProfileName()) {
+            render();
+            return;
+        }
+        if (!state.snapshot().dirty) {
             render();
             return;
         }
@@ -812,6 +930,10 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
             render();
             return;
         }
+        if (!flushProfileName()) {
+            render();
+            return;
+        }
         let parsed: unknown;
         try {
             parsed = JSON.parse(await file.text());
@@ -864,8 +986,13 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
             return;
         }
         const mutatesDraft = ['undo', 'redo', 'preset', 'mode', 'rename-profile', 'add-profile',
-            'delete-profile', 'accept-import'].includes(action ?? '');
+            'delete-profile', 'reset-profile', 'accept-import'].includes(action ?? '');
         if (mutatesDraft && !flushExpert(false)) {
+            render();
+            return;
+        }
+        if (mutatesDraft && action !== 'add-profile' && action !== 'reset-profile'
+            && !flushProfileName()) {
             render();
             return;
         }
@@ -883,12 +1010,25 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
             render();
         }
         else if (action === 'rename-profile') {
-            const name = root.querySelector<HTMLInputElement>('[data-role="profile-name"]')?.value ?? '';
-            changed(state.renameActiveProfile(name));
+            render();
         } else if (action === 'add-profile') {
-            const name = root.querySelector<HTMLInputElement>('[data-role="profile-name"]')?.value ?? '';
-            changed(state.addProfile(t('theme_studio_copy_name', { name })));
+            const copyName = duplicateProfileName(profileNameText);
+            if (!copyName) {
+                profileNameInvalid = true;
+                status = t('theme_studio_profile_name_invalid');
+                render();
+            } else changed(state.addProfile(copyName));
         } else if (action === 'delete-profile') changed(state.deleteActiveProfile());
+        else if (action === 'reset-profile') {
+            syncProfileName(true);
+            const defaults = administratorThemeDefaults();
+            const reset = state.resetActiveProfile(defaults.preset, defaults.palette);
+            if (reset) changed(true, true, t('theme_studio_reset_done'));
+            else {
+                status = t('theme_studio_reset_unchanged');
+                render();
+            }
+        }
         else if (action === 'cancel') {
             if (expertTimer) {
                 clearTimeout(expertTimer);
@@ -896,6 +1036,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
             }
             cancelPreviewFrame();
             state.discard();
+            syncProfileName(true);
             JC.core.themeStudio?.cancelPreview();
             expertText = JSON.stringify(state.snapshot().configuration, null, 2);
             expertInvalid = false;
@@ -935,6 +1076,10 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
                 render();
                 return;
             }
+            if (!flushProfileName()) {
+                render();
+                return;
+            }
             const documentValue = exportDocument(state.snapshot().configuration);
             const blob = new Blob([JSON.stringify(documentValue, null, 2)], { type: 'application/json' });
             const url = URL.createObjectURL(blob);
@@ -952,7 +1097,26 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         ctx.resetAutoCloseTimer();
         const target = event.target as HTMLInputElement | HTMLTextAreaElement;
         if (!state || saving || loading) return;
-        if (target.dataset.field === 'preset-search') {
+        if (target.dataset.role === 'profile-name') {
+            profileNameProfileId = state.activeProfile().Id;
+            profileNameText = target.value;
+            profileNameInvalid = !isValidThemeProfileName(profileNameText);
+            target.setAttribute('aria-invalid', String(profileNameInvalid));
+            const error = root.querySelector<HTMLElement>('[data-role="profile-name-error"]');
+            if (error) error.hidden = !profileNameInvalid;
+            const snapshot = state.snapshot();
+            const hasLocalDraft = snapshot.dirty || profileNameDirty();
+            if (profileNameInvalid) status = t('theme_studio_profile_name_invalid');
+            else if (!recoveryRequired) status = t(hasLocalDraft ? 'theme_studio_unsaved' : 'theme_studio_ready');
+            const statusElement = root.querySelector<HTMLElement>('.jc-theme-status');
+            if (statusElement) statusElement.textContent = `${hasLocalDraft ? '● ' : ''}${status}`;
+            const applyButton = root.querySelector<HTMLButtonElement>('[data-action="apply"]');
+            if (applyButton) {
+                applyButton.disabled = !hasLocalDraft || saving || loading
+                    || expertInvalid || profileNameInvalid || recoveryRequired;
+            }
+            syncAutoCloseProtection();
+        } else if (target.dataset.field === 'preset-search') {
             query = target.value.trim().toLowerCase();
             let visible = 0;
             root.querySelectorAll<HTMLElement>('.jc-theme-preset').forEach((preset) => {
@@ -984,6 +1148,10 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
             render();
             return;
         }
+        if (mutatesDraft && !flushProfileName()) {
+            render();
+            return;
+        }
         if (target.dataset.field === 'profile') changed(state.switchProfile(value));
         else if (target.dataset.field === 'palette') changed(state.updateActiveProfile((profile) => { profile.Palette = value; }));
         else if (target.dataset.field === 'accent') changed(state.updateActiveProfile((profile) => { profile.Accent = value; }));
@@ -1003,6 +1171,10 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         if ((!event.ctrlKey && !event.metaKey) || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)
             || !state || saving || loading) return;
         if (!flushExpert(false)) {
+            render();
+            return;
+        }
+        if (!flushProfileName()) {
             render();
             return;
         }

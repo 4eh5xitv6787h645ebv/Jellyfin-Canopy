@@ -56,6 +56,44 @@ describe('ThemeEditorState', () => {
         expect(state.switchProfile('missing')).toBe(false);
     });
 
+    it('stages an undoable active-profile reset without changing identity, schedules, or other profiles', () => {
+        const source = themeConfiguration();
+        source.Profiles[0].Name = 'Living room';
+        source.Profiles[0].BasePreset = 'cinematic';
+        source.Profiles[0].Palette = 'vivid';
+        source.Profiles[0].Accent = 'red';
+        source.Profiles[0].Mode = 'dark';
+        source.Profiles[0].Tokens = { 'shape.border-width': 3 };
+        source.Profiles[0].Responsive.Phone = { Tokens: { 'space.page-gutter': 0.7 } };
+        source.Profiles[0].Accessibility.UnderlineLinks = true;
+        source.Profiles.push({ ...structuredClone(source.Profiles[0]), Id: 'bedroom', Name: 'Bedroom' });
+        source.Schedule.push({
+            Id: 'winter', ProfileId: 'bedroom', StartMonthDay: '12-01', EndMonthDay: '02-28',
+            Priority: 10, Enabled: true,
+        });
+        const state = new ThemeEditorState(source);
+
+        expect(state.resetActiveProfile('material', 'neutral')).toBe(true);
+        expect(state.activeProfile()).toEqual(expect.objectContaining({
+            Id: 'default', Name: 'Living room', BasePreset: 'material', PresetVersion: null,
+            FreezePresetVersion: false, Palette: 'neutral', Accent: 'palette', Mode: 'system',
+            Tokens: {}, Responsive: { Phone: null, Tablet: null, Desktop: null, Wide: null, Tv: null },
+            Accessibility: {
+                Motion: 'system', Contrast: 'system', Transparency: 'system',
+                FocusEmphasis: 'system', UnderlineLinks: false,
+            },
+        }));
+        expect(state.snapshot().configuration).toMatchObject({
+            Profiles: [expect.any(Object), { Id: 'bedroom', Name: 'Bedroom' }],
+            Schedule: [{ Id: 'winter', ProfileId: 'bedroom' }],
+        });
+        expect(state.undo()).toBe(true);
+        expect(state.activeProfile()).toMatchObject({
+            BasePreset: 'cinematic', Palette: 'vivid', Accent: 'red', Mode: 'dark',
+            Tokens: { 'shape.border-width': 3 },
+        });
+    });
+
     it('previews a validated import as one reversible change and adopts acknowledged state exactly', () => {
         const state = new ThemeEditorState(themeConfiguration());
         const imported = themeConfiguration();

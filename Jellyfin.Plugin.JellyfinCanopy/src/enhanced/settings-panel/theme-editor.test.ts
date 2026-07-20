@@ -314,6 +314,85 @@ describe('Theme Studio responsive settings editor', () => {
         expect(panel.textContent).not.toContain('theme_studio_unsaved');
     });
 
+    it('stages an undoable reset to validated administrator defaults without saving', () => {
+        JC.pluginConfig.ThemeStudioDefaultPreset = 'material';
+        JC.pluginConfig.ThemeStudioDefaultPalette = 'neutral';
+        JC.saveUserSettings = vi.fn().mockResolvedValue({});
+        wireThemeStudioEditor(context());
+
+        button('reset-profile').click();
+        flushFrames();
+
+        expect(preview).toHaveBeenLastCalledWith(expect.objectContaining({
+            Profiles: [expect.objectContaining({
+                Id: 'default', Name: 'Default', BasePreset: 'material', Palette: 'neutral',
+                Accent: 'palette', Mode: 'system', Tokens: {},
+            })],
+        }));
+        expect(panel.textContent).toContain('theme_studio_reset_done');
+        expect(button('apply').disabled).toBe(false);
+        expect(JC.saveUserSettings).not.toHaveBeenCalled();
+
+        button('undo').click();
+        flushFrames();
+        expect(button('preset', 'canopy').getAttribute('aria-pressed')).toBe('true');
+        expect(button('apply').disabled).toBe(true);
+        expect(cancelPreview).toHaveBeenCalledOnce();
+    });
+
+    it('preserves an in-progress profile name across mobile preview rerenders', () => {
+        const viewport = Object.assign(new EventTarget(), { height: 412, offsetTop: 177 });
+        vi.stubGlobal('visualViewport', viewport);
+        wireThemeStudioEditor(context());
+        let input = panel.querySelector<HTMLInputElement>('[data-role="profile-name"]')!;
+        input.focus();
+        input.value = 'Phone living room';
+        input.setSelectionRange(7, 7);
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+
+        viewport.height = 360;
+        viewport.offsetTop = 201;
+        viewport.dispatchEvent(new Event('resize'));
+        flushFrames();
+
+        input = panel.querySelector<HTMLInputElement>('[data-role="profile-name"]')!;
+        expect(input.value).toBe('Phone living room');
+        expect(document.activeElement).toBe(input);
+        expect(input.selectionStart).toBe(7);
+        expect(button('apply').disabled).toBe(false);
+        expect(setAutoCloseSuspended).toHaveBeenLastCalledWith(true);
+        expect(preview).not.toHaveBeenCalled();
+    });
+
+    it('surfaces invalid profile names and bounds localized duplicate names', () => {
+        JC.t = (key: string, params?: Record<string, unknown>) => {
+            const name = typeof params?.name === 'string' ? params.name : '';
+            return key === 'theme_studio_copy_name' ? `${name} copy` : key;
+        };
+        wireThemeStudioEditor(context());
+        let input = panel.querySelector<HTMLInputElement>('[data-role="profile-name"]')!;
+        input.value = '   ';
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        button('rename-profile').click();
+
+        input = panel.querySelector<HTMLInputElement>('[data-role="profile-name"]')!;
+        expect(input.getAttribute('aria-invalid')).toBe('true');
+        expect(panel.querySelector<HTMLElement>('[data-role="profile-name-error"]')?.hidden).toBe(false);
+        expect(panel.textContent).toContain('theme_studio_profile_name_invalid');
+        expect(button('apply').disabled).toBe(true);
+
+        input.value = 'N'.repeat(80);
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        button('add-profile').click();
+        flushFrames();
+
+        const duplicated = preview.mock.lastCall?.[0] as UserThemeConfiguration;
+        expect(duplicated.Profiles).toHaveLength(2);
+        expect([...duplicated.Profiles[1].Name]).toHaveLength(80);
+        expect(duplicated.Profiles[1].Name).toMatch(/ copy$/);
+        expect(panel.querySelector('[aria-invalid="true"]')).toBeNull();
+    });
+
     it('adopts the exact acknowledgement when a joined saver leaves this target untouched', async () => {
         JC.saveUserSettings = vi.fn((): Promise<UserSettingsSaveResult> => Promise.resolve({
             acknowledged: true, deduplicated: false, file: 'theme.json', revision: 4,

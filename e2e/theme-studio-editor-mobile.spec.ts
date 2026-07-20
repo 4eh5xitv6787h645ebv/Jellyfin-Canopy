@@ -50,6 +50,8 @@ test.describe.serial('Theme Studio mobile editor', () => {
             body: JSON.stringify({
                 ...original,
                 ThemeStudioEnabled: true,
+                ThemeStudioDefaultPreset: 'material',
+                ThemeStudioDefaultPalette: 'neutral',
                 ThemeStudioDashboardEnabled: false,
                 ThemeStudioAllowSeasonalScheduling: true,
                 ThemeStudioAllowProfileImport: true,
@@ -90,6 +92,24 @@ test.describe.serial('Theme Studio mobile editor', () => {
         await panel.locator('[data-action="preset"][data-value="glass"]').click();
         await expect.poll(() => page.evaluate(() =>
             document.documentElement.getAttribute('data-jc-theme-preset'))).toBe('glass');
+
+        let profileName = panel.locator('[data-role="profile-name"]');
+        await profileName.fill('');
+        await expect(profileName).toHaveAttribute('aria-invalid', 'true');
+        await expect(panel.locator('[data-role="profile-name-error"]')).toBeVisible();
+        await expect(panel.locator('[data-action="apply"]')).toBeDisabled();
+        await profileName.fill('Mobile living room');
+        await page.setViewportSize({ width: 320, height: 650 });
+        profileName = panel.locator('[data-role="profile-name"]');
+        await expect(profileName).toHaveValue('Mobile living room');
+        await panel.locator('[data-action="reset-profile"]').click();
+        await expect.poll(() => page.evaluate(() =>
+            document.documentElement.getAttribute('data-jc-theme-preset'))).toBe('material');
+        await expect(profileName).not.toHaveValue('Mobile living room');
+        await panel.locator('[data-action="undo"]').click();
+        await expect.poll(() => page.evaluate(() =>
+            document.documentElement.getAttribute('data-jc-theme-preset'))).toBe('glass');
+        await page.setViewportSize({ width: 320, height: 700 });
 
         const portrait = await page.evaluate(() => {
             const root = document.querySelector('[data-theme-editor-root]') as HTMLElement;

@@ -2,6 +2,12 @@ import type { ThemeProfile, UserThemeConfiguration } from '../types/jc';
 import { parseUserThemeConfiguration } from './schema';
 
 const HISTORY_LIMIT = 50;
+export const THEME_PROFILE_NAME_MAX_LENGTH = 80;
+
+export function isValidThemeProfileName(name: string): boolean {
+    const cleanName = name.trim();
+    return cleanName.length > 0 && [...cleanName].length <= THEME_PROFILE_NAME_MAX_LENGTH;
+}
 
 function cloneConfiguration(value: UserThemeConfiguration): UserThemeConfiguration {
     return JSON.parse(JSON.stringify(value)) as UserThemeConfiguration;
@@ -138,7 +144,7 @@ export class ThemeEditorState {
 
     addProfile(name: string): boolean {
         const cleanName = name.trim();
-        if (!cleanName || [...cleanName].length > 80 || this.#draft.Profiles.length >= 24) return false;
+        if (!isValidThemeProfileName(cleanName) || this.#draft.Profiles.length >= 24) return false;
         return this.mutate((draft) => {
             const source = draft.Profiles.find((profile) => profile.Id === draft.ActiveProfileId);
             const profile = JSON.parse(JSON.stringify(source)) as ThemeProfile;
@@ -150,9 +156,36 @@ export class ThemeEditorState {
     }
 
     renameActiveProfile(name: string): boolean {
+        return this.renameProfile(this.#draft.ActiveProfileId, name);
+    }
+
+    renameProfile(id: string, name: string): boolean {
         const cleanName = name.trim();
-        if (!cleanName || [...cleanName].length > 80) return false;
-        return this.updateActiveProfile((profile) => { profile.Name = cleanName; });
+        if (!isValidThemeProfileName(cleanName)) return false;
+        return this.mutate((draft) => {
+            const profile = draft.Profiles.find((item) => item.Id === id);
+            if (profile) profile.Name = cleanName;
+        });
+    }
+
+    resetActiveProfile(preset: string, palette: string): boolean {
+        return this.updateActiveProfile((profile) => {
+            profile.BasePreset = preset;
+            profile.PresetVersion = null;
+            profile.FreezePresetVersion = false;
+            profile.Palette = palette;
+            profile.Accent = 'palette';
+            profile.Mode = 'system';
+            profile.Tokens = {};
+            profile.Responsive = { Phone: null, Tablet: null, Desktop: null, Wide: null, Tv: null };
+            profile.Accessibility = {
+                Motion: 'system',
+                Contrast: 'system',
+                Transparency: 'system',
+                FocusEmphasis: 'system',
+                UnderlineLinks: false,
+            };
+        });
     }
 
     deleteActiveProfile(): boolean {
