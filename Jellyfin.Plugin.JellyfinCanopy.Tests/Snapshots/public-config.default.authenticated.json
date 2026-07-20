@@ -284,6 +284,7 @@
   "ThemeStudioDefaultPalette": "canopy-night",
   "ThemeStudioDefaultPreset": "canopy",
   "ThemeStudioEnabled": false,
+  "ThemeStudioMaximumEffectsLevel": "full",
   "TmdbEnabled": false,
   "ToastDuration": 1500,
   "UseIcons": true,

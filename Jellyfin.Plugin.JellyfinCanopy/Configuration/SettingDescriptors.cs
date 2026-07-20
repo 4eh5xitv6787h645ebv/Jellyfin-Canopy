@@ -333,6 +333,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
                 Public("ThemeStudioAllowProfileImport", c => c.ThemeStudioAllowProfileImport),
                 Public("ThemeStudioAllowDynamicColor", c => c.ThemeStudioAllowDynamicColor),
                 Public("ThemeStudioAllowSeasonalScheduling", c => c.ThemeStudioAllowSeasonalScheduling),
+                Public("ThemeStudioMaximumEffectsLevel", c => c.ThemeStudioMaximumEffectsLevel),
                 Public("ThemeStudioAllowAdvancedCss", c => c.ThemeStudioAllowAdvancedCss),
                 Public("ColoredActivityIconsEnabled", c => c.ColoredActivityIconsEnabled),
                 Public("PluginIconsEnabled", c => c.PluginIconsEnabled),

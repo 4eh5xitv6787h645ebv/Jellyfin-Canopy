@@ -14,6 +14,14 @@ import {
 } from './mobile';
 import { parseUserThemeConfiguration } from './schema';
 import {
+    analyzeLocalMediaImage,
+    DYNAMIC_ACCENT_STYLE_ID,
+    DynamicAccentCache,
+    findLocalMediaImage,
+    serializeDynamicAccentStyle,
+} from './dynamic-color';
+import { millisecondsUntilScheduleRefresh } from './schedule';
+import {
     COMMITTED_STYLE_ID,
     PREVIEW_STYLE_ID,
     serializeThemeStyles,
@@ -22,6 +30,9 @@ import {
 
 const THEME_CHANGE = 'THEME_CHANGE';
 const RUNTIME_CHANGE = 'jc:theme-studio-runtime-changed';
+const MAXIMUM_DYNAMIC_ANALYSIS_ATTEMPTS = 3;
+const MAXIMUM_DYNAMIC_FAILURE_ENTRIES = 16;
+const DYNAMIC_RETRY_DELAYS_MS = Object.freeze([1_000, 5_000] as const);
 const NON_EDITABLE_INPUT_TYPES = Object.freeze([
     'button', 'checkbox', 'color', 'file', 'hidden', 'image', 'radio', 'range', 'reset', 'submit',
 ]);
@@ -44,6 +55,17 @@ const ROOT_ATTRIBUTES = Object.freeze([
     'data-jc-theme-orientation',
     'data-jc-theme-keyboard',
     'data-jc-theme-performance',
+    'data-jc-theme-effects-level',
+    'data-jc-theme-effects-material',
+    'data-jc-theme-image-treatment',
+    'data-jc-theme-motion-profile',
+    'data-jc-theme-page-transition',
+    'data-jc-theme-stagger',
+    'data-jc-theme-dynamic-source',
+    'data-jc-theme-dynamic-accent',
+    'data-jc-theme-schedule',
+    'data-jc-theme-schedule-kind',
+    'data-jc-theme-schedule-time-zone',
     'data-jc-theme-route',
     'data-jc-theme-density',
     'data-jc-theme-navigation',
@@ -79,6 +101,11 @@ const MEDIA_QUERIES = Object.freeze({
 });
 
 type MediaName = keyof typeof MEDIA_QUERIES;
+
+interface DynamicAnalysisFailure {
+    readonly attempts: number;
+    readonly retryAt: number;
+}
 
 // Presentation is global DOM state, so teardown must be generation-aware.
 // A retained API from an obsolete feature generation must never clear the
@@ -140,6 +167,18 @@ function mobileEnvironmentStyle(): HTMLStyleElement {
     return style;
 }
 
+function dynamicAccentStyle(): HTMLStyleElement {
+    const existing = document.getElementById(DYNAMIC_ACCENT_STYLE_ID);
+    if (existing instanceof HTMLStyleElement) return existing;
+    existing?.remove();
+    const style = document.createElement('style');
+    style.id = DYNAMIC_ACCENT_STYLE_ID;
+    style.dataset.jcOwner = 'theme-studio';
+    style.dataset.jcLayer = 'dynamic-accent';
+    document.head.append(style);
+    return style;
+}
+
 function backdropFilterSupported(): boolean {
     if (typeof CSS === 'undefined' || typeof CSS.supports !== 'function') return false;
     return CSS.supports('backdrop-filter', 'blur(1px)')
@@ -181,6 +220,8 @@ export class ThemeStudioRuntime {
     readonly #scope: FeatureScope;
     readonly #media = new Map<MediaName, MediaQueryList>();
     readonly #cleanups: Array<() => void> = [];
+    readonly #dynamicAccentCache = new DynamicAccentCache();
+    readonly #dynamicFailures = new Map<string, DynamicAnalysisFailure>();
     #configuration: UserThemeConfiguration | null = null;
     #previewConfiguration: UserThemeConfiguration | null = null;
     #previewAllowScheduling = true;
@@ -195,6 +236,14 @@ export class ThemeStudioRuntime {
         status: 'inactive', revision: null, profileId: null, breakpoint: null, mode: null,
     });
     #api: ThemeStudioRuntimeApi | null = null;
+    #scheduleTimer = 0;
+    #dynamicFrame = 0;
+    #dynamicRetryTimer = 0;
+    #dynamicGeneration = 0;
+    #dynamicAbort: AbortController | null = null;
+    #dynamicCandidateKey: string | null = null;
+    #dynamicTheme: ResolvedTheme | null = null;
+    #dynamicSubscriberCleanup: (() => void) | null = null;
 
     constructor(scope: FeatureScope) {
         this.#scope = scope;
@@ -234,6 +283,11 @@ export class ThemeStudioRuntime {
         window.addEventListener('orientationchange', scheduleFullRefresh, { passive: true });
         document.addEventListener('focusin', scheduleEnvironmentRefresh);
         document.addEventListener('focusout', scheduleEnvironmentRefresh);
+        const refreshCalendar = (): void => {
+            if (document.visibilityState === 'visible') this.refresh();
+        };
+        window.addEventListener('focus', refreshCalendar);
+        document.addEventListener('visibilitychange', refreshCalendar);
         this.#cleanups.push(() => {
             visualViewport?.removeEventListener('resize', scheduleEnvironmentRefresh);
             visualViewport?.removeEventListener('scroll', scheduleEnvironmentRefresh);
@@ -241,6 +295,8 @@ export class ThemeStudioRuntime {
             window.removeEventListener('orientationchange', scheduleFullRefresh);
             document.removeEventListener('focusin', scheduleEnvironmentRefresh);
             document.removeEventListener('focusout', scheduleEnvironmentRefresh);
+            window.removeEventListener('focus', refreshCalendar);
+            document.removeEventListener('visibilitychange', refreshCalendar);
             if (environmentFrame !== 0) window.cancelAnimationFrame(environmentFrame);
             environmentFrame = 0;
         });
@@ -523,6 +579,8 @@ export class ThemeStudioRuntime {
         this.#previewConfiguration = null;
         this.#previewAllowScheduling = true;
         this.#clearPresentation();
+        this.#dynamicAccentCache.clear();
+        this.#dynamicFailures.clear();
         for (let index = this.#cleanups.length - 1; index >= 0; index -= 1) {
             try { this.#cleanups[index]?.(); } catch { /* exact teardown continues */ }
         }
@@ -555,9 +613,21 @@ export class ThemeStudioRuntime {
     }
 
     #captureMedia(): ThemeMediaState {
+        const viewportWidth = Math.max(0, window.innerWidth || document.documentElement.clientWidth || 0);
+        const viewportHeight = Math.max(0, window.innerHeight || document.documentElement.clientHeight || 0);
+        const coarsePointer = this.#matches('coarsePointer');
+        const backdropSupported = backdropFilterSupported();
+        const phone = resolveBreakpoint({
+            viewportWidth,
+            viewportHeight,
+            tv: tvLayout(),
+            coarsePointer,
+        }) === 'phone';
+        const memory = deviceCapability('deviceMemory');
+        const concurrency = deviceCapability('hardwareConcurrency');
         return {
-            viewportWidth: Math.max(0, window.innerWidth || document.documentElement.clientWidth || 0),
-            viewportHeight: Math.max(0, window.innerHeight || document.documentElement.clientHeight || 0),
+            viewportWidth,
+            viewportHeight,
             tv: tvLayout(),
             darkScheme: this.#matches('darkScheme'),
             reducedMotion: this.#matches('reducedMotion'),
@@ -565,8 +635,12 @@ export class ThemeStudioRuntime {
             reducedTransparency: this.#matches('reducedTransparency'),
             forcedColors: this.#matches('forcedColors'),
             hover: this.#matches('hover'),
-            coarsePointer: this.#matches('coarsePointer'),
+            coarsePointer,
             jellyfinTheme: rootThemeName(),
+            backdropFilterSupported: backdropSupported,
+            lowPower: phone && (!backdropSupported
+                || (memory !== null && memory <= 2)
+                || (concurrency !== null && concurrency <= 2)),
         };
     }
 
@@ -576,6 +650,8 @@ export class ThemeStudioRuntime {
     ): ResolvedTheme {
         return resolveTheme(configuration, this.#captureMedia(), {
             allowScheduling,
+            allowDynamicColor: JC.pluginConfig?.ThemeStudioAllowDynamicColor !== false,
+            maximumEffectsLevel: JC.pluginConfig?.ThemeStudioMaximumEffectsLevel,
         });
     }
 
@@ -585,6 +661,8 @@ export class ThemeStudioRuntime {
         claimPresentation(this);
         updateStyle('committed', theme);
         this.#applyRootAttributes(theme);
+        this.#scheduleCalendarRefresh(theme);
+        this.#configureDynamicAccent(theme);
         this.#setDiagnostics('active', theme);
     }
 
@@ -604,6 +682,16 @@ export class ThemeStudioRuntime {
         root.setAttribute('data-jc-theme-pointer', theme.coarsePointer ? 'coarse' : 'fine');
         root.setAttribute('data-jc-theme-hover', theme.hover ? 'hover' : 'none');
         root.setAttribute('data-jc-theme-forced-colors', theme.forcedColors ? 'active' : 'none');
+        root.setAttribute('data-jc-theme-effects-level', theme.effectsLevel);
+        root.setAttribute('data-jc-theme-effects-material', theme.effectsMaterial);
+        root.setAttribute('data-jc-theme-image-treatment', theme.imageTreatment);
+        root.setAttribute('data-jc-theme-motion-profile', theme.motionProfile);
+        root.setAttribute('data-jc-theme-page-transition', theme.tokens['motion.page-transition'] === true ? 'true' : 'false');
+        root.setAttribute('data-jc-theme-stagger', theme.tokens['motion.stagger'] === true ? 'true' : 'false');
+        root.setAttribute('data-jc-theme-dynamic-source', theme.dynamicColorSource);
+        root.setAttribute('data-jc-theme-schedule', theme.scheduleId ?? 'manual');
+        root.setAttribute('data-jc-theme-schedule-kind', theme.scheduleKind ?? 'manual');
+        root.setAttribute('data-jc-theme-schedule-time-zone', theme.scheduleTimeZone);
         root.setAttribute('data-jc-theme-route', routeScope());
         root.setAttribute('data-jc-theme-density', theme.presentation.density);
         root.setAttribute('data-jc-theme-navigation', theme.presentation.navigation);
@@ -680,12 +768,184 @@ export class ThemeStudioRuntime {
         claimPresentation(this);
         updateStyle('preview', theme);
         this.#applyRootAttributes(theme);
+        this.#configureDynamicAccent(theme);
         document.documentElement.setAttribute('data-jc-theme-preview', 'true');
         this.#setDiagnostics('preview', theme);
     }
 
+    #scheduleCalendarRefresh(theme: ResolvedTheme): void {
+        if (this.#scheduleTimer !== 0) window.clearTimeout(this.#scheduleTimer);
+        this.#scheduleTimer = 0;
+        if (!this.#configuration || this.#configuration.Schedule.length === 0
+            || JC.pluginConfig?.ThemeStudioAllowSeasonalScheduling === false) return;
+        const delay = millisecondsUntilScheduleRefresh(new Date(), theme.scheduleTimeZone);
+        this.#scheduleTimer = window.setTimeout(() => {
+            this.#scheduleTimer = 0;
+            if (!this.#disposed && this.#scope.isCurrent()) this.refresh();
+        }, delay);
+    }
+
+    #configureDynamicAccent(theme: ResolvedTheme): void {
+        const enabled = JC.pluginConfig?.ThemeStudioAllowDynamicColor !== false
+            && theme.dynamicColorSource !== 'off'
+            && theme.effectsLevel !== 'minimal'
+            && !theme.forcedColors;
+        if (!enabled) {
+            this.#clearDynamicAccent(true);
+            if (document.documentElement.getAttribute('data-jc-theme-active') === 'true') {
+                document.documentElement.setAttribute('data-jc-theme-dynamic-accent', 'off');
+            }
+            return;
+        }
+        this.#dynamicTheme = theme;
+        if (!this.#dynamicSubscriberCleanup && JC.core.dom) {
+            const handle = JC.core.dom.onBodyMutation(
+                `jc-theme-dynamic-accent-${this.#scope.identityEpoch}-${this.#scope.configGeneration}`,
+                () => this.#scheduleDynamicScan(),
+            );
+            this.#dynamicSubscriberCleanup = () => handle.unsubscribe();
+        }
+        if (document.documentElement.getAttribute('data-jc-theme-dynamic-accent') !== 'active') {
+            document.documentElement.setAttribute('data-jc-theme-dynamic-accent', 'pending');
+        }
+        this.#scheduleDynamicScan();
+    }
+
+    #scheduleDynamicScan(): void {
+        if (this.#disposed || this.#dynamicFrame !== 0 || !this.#dynamicTheme) return;
+        // rAF starts discovery only after the committed layer has painted; image
+        // fetch/decode never blocks the usable theme or navigation lifecycle.
+        this.#dynamicFrame = window.requestAnimationFrame(() => {
+            this.#dynamicFrame = 0;
+            void this.#scanDynamicAccent();
+        });
+    }
+
+    async #scanDynamicAccent(): Promise<void> {
+        const theme = this.#dynamicTheme;
+        if (!theme || theme.dynamicColorSource === 'off' || this.#disposed || !this.#scope.isCurrent()) return;
+        const candidate = findLocalMediaImage(document, theme.dynamicColorSource);
+        if (!candidate) {
+            if (this.#dynamicCandidateKey !== null) {
+                this.#dynamicFailures.delete(this.#dynamicCandidateKey);
+                this.#dynamicAbort?.abort();
+                this.#dynamicAbort = null;
+                this.#dynamicCandidateKey = null;
+                removeStyle(DYNAMIC_ACCENT_STYLE_ID);
+            }
+            document.documentElement.setAttribute('data-jc-theme-dynamic-accent', 'pending');
+            return;
+        }
+        const cached = this.#dynamicAccentCache.get(candidate.key);
+        if (cached) {
+            this.#dynamicFailures.delete(candidate.key);
+            this.#dynamicCandidateKey = candidate.key;
+            this.#applyDynamicAccent(theme, cached);
+            return;
+        }
+        const failure = this.#dynamicFailures.get(candidate.key);
+        if (failure?.attempts === MAXIMUM_DYNAMIC_ANALYSIS_ATTEMPTS) {
+            document.documentElement.setAttribute('data-jc-theme-dynamic-accent', 'fallback');
+            return;
+        }
+        if (failure && failure.retryAt > Date.now()) {
+            this.#scheduleDynamicRetry(failure.retryAt - Date.now());
+            return;
+        }
+        if (this.#dynamicCandidateKey === candidate.key && this.#dynamicAbort) return;
+        this.#dynamicAbort?.abort();
+        const controller = new AbortController();
+        const generation = ++this.#dynamicGeneration;
+        this.#dynamicAbort = controller;
+        this.#dynamicCandidateKey = candidate.key;
+        removeStyle(DYNAMIC_ACCENT_STYLE_ID);
+        document.documentElement.setAttribute('data-jc-theme-dynamic-accent', 'pending');
+        try {
+            const derived = await analyzeLocalMediaImage(candidate, controller.signal);
+            if (controller.signal.aborted || this.#disposed || generation !== this.#dynamicGeneration
+                || !this.#scope.isCurrent() || this.#dynamicCandidateKey !== candidate.key) return;
+            this.#dynamicAbort = null;
+            if (!derived) {
+                this.#recordDynamicFailure(candidate.key);
+                return;
+            }
+            this.#dynamicFailures.delete(candidate.key);
+            this.#dynamicAccentCache.set(candidate.key, derived);
+            if (this.#dynamicTheme) this.#applyDynamicAccent(this.#dynamicTheme, derived);
+        } catch (error) {
+            if (controller.signal.aborted || (error as { name?: string } | null)?.name === 'AbortError') return;
+            if (!this.#disposed && generation === this.#dynamicGeneration) {
+                this.#dynamicAbort = null;
+                this.#recordDynamicFailure(candidate.key);
+            }
+        }
+    }
+
+    #recordDynamicFailure(key: string): void {
+        const attempts = Math.min(
+            MAXIMUM_DYNAMIC_ANALYSIS_ATTEMPTS,
+            (this.#dynamicFailures.get(key)?.attempts ?? 0) + 1,
+        );
+        const delay = attempts < MAXIMUM_DYNAMIC_ANALYSIS_ATTEMPTS
+            ? DYNAMIC_RETRY_DELAYS_MS[attempts - 1] ?? DYNAMIC_RETRY_DELAYS_MS.at(-1)!
+            : 0;
+        this.#dynamicFailures.delete(key);
+        this.#dynamicFailures.set(key, Object.freeze({ attempts, retryAt: Date.now() + delay }));
+        while (this.#dynamicFailures.size > MAXIMUM_DYNAMIC_FAILURE_ENTRIES) {
+            const oldest = this.#dynamicFailures.keys().next().value;
+            if (oldest === undefined) break;
+            this.#dynamicFailures.delete(oldest);
+        }
+        document.documentElement.setAttribute('data-jc-theme-dynamic-accent', 'fallback');
+        if (delay > 0) this.#scheduleDynamicRetry(delay);
+    }
+
+    #scheduleDynamicRetry(delay: number): void {
+        if (this.#disposed || this.#dynamicRetryTimer !== 0 || !this.#dynamicTheme) return;
+        this.#dynamicRetryTimer = window.setTimeout(() => {
+            this.#dynamicRetryTimer = 0;
+            this.#scheduleDynamicScan();
+        }, Math.max(1, delay));
+    }
+
+    #applyDynamicAccent(theme: ResolvedTheme, derived: string): void {
+        if (this.#disposed || !this.#scope.isCurrent() || this.#dynamicTheme !== theme) return;
+        const css = serializeDynamicAccentStyle(theme, derived);
+        if (!css) return;
+        const style = dynamicAccentStyle();
+        if (style.textContent !== css) style.textContent = css;
+        document.documentElement.setAttribute('data-jc-theme-dynamic-accent', 'active');
+    }
+
+    #clearDynamicAccent(removeSubscriber: boolean, removePresentation = true): void {
+        this.#dynamicGeneration += 1;
+        this.#dynamicAbort?.abort();
+        this.#dynamicAbort = null;
+        if (this.#dynamicRetryTimer !== 0) window.clearTimeout(this.#dynamicRetryTimer);
+        this.#dynamicRetryTimer = 0;
+        this.#dynamicCandidateKey = null;
+        this.#dynamicTheme = null;
+        this.#dynamicFailures.clear();
+        if (this.#dynamicFrame !== 0) window.cancelAnimationFrame(this.#dynamicFrame);
+        this.#dynamicFrame = 0;
+        if (removePresentation) {
+            removeStyle(DYNAMIC_ACCENT_STYLE_ID);
+            document.documentElement.removeAttribute('data-jc-theme-dynamic-accent');
+        }
+        if (removeSubscriber && this.#dynamicSubscriberCleanup) {
+            this.#dynamicSubscriberCleanup();
+            this.#dynamicSubscriberCleanup = null;
+        }
+    }
+
     #clearPresentation(force = false): void {
-        if (!force && presentationOwner !== this) return;
+        if (this.#scheduleTimer !== 0) window.clearTimeout(this.#scheduleTimer);
+        this.#scheduleTimer = 0;
+        if (!force && presentationOwner !== this) {
+            this.#clearDynamicAccent(true, false);
+            return;
+        }
+        this.#clearDynamicAccent(true);
         removeStyle(COMMITTED_STYLE_ID);
         removeStyle(PREVIEW_STYLE_ID);
         removeStyle(MOBILE_ENVIRONMENT_STYLE_ID);

@@ -63,6 +63,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
                 || document.SchemaVersion != CurrentSchemaVersion
                 || document.Profiles == null
                 || document.Schedule == null
+                || (document.ScheduleTimeZone != "local" && document.ScheduleTimeZone != "utc")
                 || document.LegacyMigration == null
                 || !HasNoUnknownFields(document.ExtensionData)
                 || !HasNoUnknownFields(document.LegacyMigration.ExtensionData)
@@ -154,6 +155,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
                 && HasNoUnknownFields(entry.ExtensionData)
                 && IsIdentifier(entry.Id)
                 && profileIds.Contains(entry.ProfileId)
+                && (entry.Kind == "season" || entry.Kind == "holiday")
                 && IsMonthDay(entry.StartMonthDay)
                 && IsMonthDay(entry.EndMonthDay)
                 && entry.Priority is >= 0 and <= 100;
@@ -221,6 +223,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
                 "color.text", "color.text-muted", "color.primary", "color.on-primary",
                 "color.secondary", "color.positive", "color.caution", "color.negative",
                 "color.info", "color.divider", "color.focus");
+            Add(rules, TokenRule.Choice("off", "poster", "backdrop"), "color.dynamic-source");
+            Add(rules, TokenRule.Number(0, 1), "color.dynamic-strength");
             Add(rules, TokenRule.Choice("system", "inter", "serif", "rounded", "monospace"),
                 "type.family-ui", "type.family-display", "type.family-reading");
             Add(rules, TokenRule.Number(0.75, 1.5), "type.scale");

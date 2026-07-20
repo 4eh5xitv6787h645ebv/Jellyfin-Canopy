@@ -43,6 +43,8 @@ function buildTokenRules(): ReadonlyMap<string, TokenRule> {
         'color.text', 'color.text-muted', 'color.primary', 'color.on-primary',
         'color.secondary', 'color.positive', 'color.caution', 'color.negative',
         'color.info', 'color.divider', 'color.focus');
+    assign(rules, choice('off', 'poster', 'backdrop'), 'color.dynamic-source');
+    assign(rules, number(0, 1), 'color.dynamic-strength');
     assign(rules, choice('system', 'inter', 'serif', 'rounded', 'monospace'),
         'type.family-ui', 'type.family-display', 'type.family-reading');
     assign(rules, number(0.75, 1.5), 'type.scale');
@@ -186,8 +188,9 @@ function monthDay(value: unknown): value is string {
 
 function scheduleEntry(value: unknown, profileIds: ReadonlySet<string>): value is ThemeScheduleEntry {
     return record(value)
-        && exactKeys(value, ['Id', 'ProfileId', 'StartMonthDay', 'EndMonthDay', 'Priority', 'Enabled'])
+        && exactKeys(value, ['Id', 'ProfileId', 'StartMonthDay', 'EndMonthDay', 'Priority', 'Enabled'], ['Kind'])
         && identifier(value.Id) && typeof value.ProfileId === 'string' && profileIds.has(value.ProfileId)
+        && (value.Kind === undefined || value.Kind === 'season' || value.Kind === 'holiday')
         && monthDay(value.StartMonthDay) && monthDay(value.EndMonthDay)
         && Number.isInteger(value.Priority) && Number(value.Priority) >= 0 && Number(value.Priority) <= 100
         && typeof value.Enabled === 'boolean';
@@ -205,8 +208,10 @@ function legacyMigration(value: unknown): value is ThemeLegacyMigration {
 export function isUserThemeConfiguration(value: unknown): value is UserThemeConfiguration {
     if (!record(value) || !exactKeys(value, [
         'Revision', 'SchemaVersion', 'ActiveProfileId', 'Profiles', 'Schedule', 'LegacyMigration',
-    ]) || !Number.isInteger(value.Revision) || Number(value.Revision) < 0
+    ], ['ScheduleTimeZone']) || !Number.isInteger(value.Revision) || Number(value.Revision) < 0
         || value.SchemaVersion !== 2 || !identifier(value.ActiveProfileId)
+        || (value.ScheduleTimeZone !== undefined
+            && value.ScheduleTimeZone !== 'local' && value.ScheduleTimeZone !== 'utc')
         || !Array.isArray(value.Profiles) || value.Profiles.length < 1
         || value.Profiles.length > MAXIMUM_PROFILES || !Array.isArray(value.Schedule)
         || value.Schedule.length > MAXIMUM_SCHEDULE_ENTRIES || !legacyMigration(value.LegacyMigration)) return false;
@@ -227,6 +232,14 @@ export function parseUserThemeConfiguration(value: unknown): UserThemeConfigurat
         if (new TextEncoder().encode(serialized).byteLength > MAXIMUM_PERSISTED_BYTES
             || !isUserThemeConfiguration(value)) return null;
         const clone: unknown = JSON.parse(serialized);
+        if (record(clone)) {
+            clone.ScheduleTimeZone ??= 'local';
+            if (Array.isArray(clone.Schedule)) {
+                for (const entry of clone.Schedule) {
+                    if (record(entry)) entry.Kind ??= 'season';
+                }
+            }
+        }
         return isUserThemeConfiguration(clone) ? clone : null;
     } catch {
         return null;

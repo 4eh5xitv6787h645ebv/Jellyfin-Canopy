@@ -90,6 +90,8 @@
     "e2e/spoiler-identity-tags.spec.ts › spoiler guard identity tags (reverse-proxy-safe attribution) › authenticated DTO responses carry per-user markers (distinct per user, blurhashes re-keyed)",
     "e2e/spoiler-identity-tags.spec.ts › spoiler guard identity tags (reverse-proxy-safe attribution) › unknown or absent markers fail safe (legacy ladder, no errors)",
     "e2e/theme-studio-editor-mobile.spec.ts › Theme Studio mobile editor › fits 320 px portrait and coarse-pointer landscape with safe touch targets",
+    "e2e/theme-studio-effects.spec.ts › Theme Studio bounded effects › full effects, dynamic holiday accents, and keyboard/touch surfaces work across modern desktop, wide, and phone views",
+    "e2e/theme-studio-effects.spec.ts › Theme Studio bounded effects › low-end modern phone portrait and landscape reduce costly effects without overflow",
     "e2e/theme-studio-media-surfaces.spec.ts › Theme Studio modern media surfaces › phone portrait/landscape, desktop and wide media fixtures fit and remain touch/keyboard reachable",
     "e2e/theme-studio-media-surfaces.spec.ts › Theme Studio modern media surfaces › theme previews preserve the active media element, playback position, focus and lifecycle",
     "e2e/theme-studio-runtime.spec.ts › Theme Studio runtime bridge › all nine curated presets preview on desktop and phone with versioned, bounded output",

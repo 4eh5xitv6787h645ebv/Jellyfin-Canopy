@@ -315,4 +315,99 @@ describe('Theme Studio resolver', () => {
             now: new Date(2026, 0, 2), allowScheduling: false,
         }).profileId).toBe('default');
     });
+
+    it('applies monotonic administrator, capability, accessibility and low-power effects reductions', () => {
+        const configuration = themeConfiguration();
+        configuration.Profiles[0].Tokens = {
+            'effects.level': 'full',
+            'effects.material': 'glass',
+            'effects.blur': 32,
+            'effects.saturation': 2,
+            'effects.backdrop-opacity': 0.55,
+            'effects.glow': 1,
+            'effects.image-treatment': 'blur',
+            'elevation.card-shadow': 'strong',
+            'elevation.dialog-shadow': 'strong',
+            'motion.profile': 'expressive',
+            'motion.duration-scale': 2,
+            'motion.hover-lift': 12,
+            'motion.page-transition': true,
+            'motion.stagger': true,
+            'color.dynamic-source': 'poster',
+            'color.dynamic-strength': 0.75,
+        };
+
+        const full = resolveTheme(configuration, media({ backdropFilterSupported: true }), {
+            maximumEffectsLevel: 'full',
+        });
+        expect(full).toMatchObject({
+            effectsLevel: 'full', effectsMaterial: 'glass', imageTreatment: 'blur',
+            motionProfile: 'expressive', dynamicColorSource: 'poster', dynamicColorStrength: 0.75,
+        });
+
+        const balanced = resolveTheme(configuration, media({ backdropFilterSupported: true }), {
+            maximumEffectsLevel: 'balanced',
+        });
+        expect(balanced).toMatchObject({
+            effectsLevel: 'balanced', effectsMaterial: 'glass', imageTreatment: 'gradient',
+            motionProfile: 'calm', dynamicColorSource: 'poster',
+        });
+        expect(balanced.tokens).toMatchObject({
+            'effects.blur': 12,
+            'effects.saturation': 1.2,
+            'effects.backdrop-opacity': 0.78,
+            'effects.glow': 0.25,
+            'elevation.card-shadow': 'soft',
+            'elevation.dialog-shadow': 'medium',
+            'motion.duration-scale': 1,
+            'motion.hover-lift': 3,
+            'motion.stagger': false,
+        });
+
+        for (const [label, resolved] of [
+            ['administrator', resolveTheme(configuration, media(), { maximumEffectsLevel: 'minimal' })],
+            ['malformed-admin', resolveTheme(configuration, media(), { maximumEffectsLevel: 'unbounded' })],
+            ['low-power', resolveTheme(configuration, media({ lowPower: true }))],
+            ['forced-colors', resolveTheme(configuration, media({ forcedColors: true }))],
+            ['high-contrast', resolveTheme(configuration, media({ moreContrast: true }))],
+        ] as const) {
+            expect(resolved, label).toMatchObject({
+                effectsLevel: 'minimal', effectsMaterial: 'solid', imageTreatment: 'none',
+                motionProfile: 'off', dynamicColorSource: 'off',
+            });
+            expect(resolved.tokens, label).toMatchObject({
+                'effects.blur': 0,
+                'effects.glow': 0,
+                'elevation.card-shadow': 'none',
+                'motion.duration-scale': 0,
+            });
+        }
+
+        const unsupported = resolveTheme(configuration, media({ backdropFilterSupported: false }));
+        expect(unsupported).toMatchObject({ effectsLevel: 'balanced', effectsMaterial: 'translucent' });
+        expect(unsupported.tokens).toMatchObject({ 'effects.blur': 0, 'effects.saturation': 1 });
+
+        const privatePolicy = resolveTheme(configuration, media(), { allowDynamicColor: false });
+        expect(privatePolicy.dynamicColorSource).toBe('off');
+
+        configuration.Profiles[0].Tokens['effects.level'] = 'minimal';
+        expect(resolveTheme(configuration, media(), { maximumEffectsLevel: 'full' }).effectsLevel).toBe('minimal');
+    });
+
+    it('publishes deterministic holiday schedule metadata and honors UTC policy', () => {
+        const configuration = themeConfiguration();
+        configuration.ScheduleTimeZone = 'utc';
+        configuration.Profiles.push({
+            ...structuredClone(configuration.Profiles[0]), Id: 'seasonal', Name: 'Seasonal',
+        }, {
+            ...structuredClone(configuration.Profiles[0]), Id: 'holiday', Name: 'Holiday',
+        });
+        configuration.Schedule = [
+            { Id: 'winter', ProfileId: 'seasonal', Kind: 'season', StartMonthDay: '12-01', EndMonthDay: '02-28', Priority: 100, Enabled: true },
+            { Id: 'new-year', ProfileId: 'holiday', Kind: 'holiday', StartMonthDay: '01-01', EndMonthDay: '01-01', Priority: 0, Enabled: true },
+        ];
+        expect(resolveTheme(configuration, media(), { now: new Date('2027-01-01T00:30:00Z') })).toMatchObject({
+            profileId: 'holiday', scheduleId: 'new-year', scheduleKind: 'holiday', scheduleTimeZone: 'utc',
+        });
+    });
 });

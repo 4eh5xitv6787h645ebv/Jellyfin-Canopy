@@ -159,10 +159,12 @@ public sealed class ThemeConfigurationMigrationTests
     public void ExportAndImportModelsDoNotAliasPersistedState()
     {
         var source = UserThemeConfiguration.CreateDefault("cinematic", "canopy-night");
+        source.ScheduleTimeZone = "utc";
         source.Schedule.Add(new ThemeScheduleEntry
         {
             Id = "winter",
             ProfileId = "default",
+            Kind = "holiday",
             StartMonthDay = "12-01",
             EndMonthDay = "02-29"
         });
@@ -171,14 +173,18 @@ public sealed class ThemeConfigurationMigrationTests
         export.Profiles[0].BasePreset = "minimal";
         export.Schedule[0].Enabled = false;
         Assert.Equal("cinematic", source.Profiles[0].BasePreset);
+        Assert.Equal("utc", export.ScheduleTimeZone);
+        Assert.Equal("holiday", export.Schedule[0].Kind);
         Assert.True(source.Schedule[0].Enabled);
 
         var imported = export.ToConfiguration();
         Assert.NotNull(imported);
         imported!.Profiles[0].BasePreset = "glass";
         imported.Schedule[0].Priority = 42;
+        imported.Schedule[0].Kind = "season";
         Assert.Equal("minimal", export.Profiles[0].BasePreset);
         Assert.Equal(0, export.Schedule[0].Priority);
+        Assert.Equal("holiday", export.Schedule[0].Kind);
     }
 
     private static JsonElement JsonValue<T>(T value)

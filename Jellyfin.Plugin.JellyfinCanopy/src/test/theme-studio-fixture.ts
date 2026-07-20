@@ -24,6 +24,7 @@ export function themeConfiguration(): UserThemeConfiguration {
                 UnderlineLinks: false,
             },
         }],
+        ScheduleTimeZone: 'local',
         Schedule: [],
         LegacyMigration: { JellyfishTheme: '', Completed: false },
     };

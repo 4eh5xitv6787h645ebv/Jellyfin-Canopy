@@ -285,7 +285,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 (current, candidate) =>
                 {
                     if (_configProvider.ConfigurationOrNull?.ThemeStudioAllowSeasonalScheduling != false
-                        || ThemeSchedulesMatch(current.Schedule, candidate.Schedule))
+                        || ThemeSchedulesMatch(current, candidate))
                     {
                         return null;
                     }
@@ -366,10 +366,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         }
 
         private static bool ThemeSchedulesMatch(
-            IReadOnlyList<ThemeScheduleEntry> current,
-            IReadOnlyList<ThemeScheduleEntry> candidate)
-            => JsonSerializer.Serialize(current, PersistedJson.WriteOptions)
-                == JsonSerializer.Serialize(candidate, PersistedJson.WriteOptions);
+            UserThemeConfiguration current,
+            UserThemeConfiguration candidate)
+            => string.Equals(current.ScheduleTimeZone, candidate.ScheduleTimeZone, StringComparison.Ordinal)
+                && JsonSerializer.Serialize(current.Schedule, PersistedJson.WriteOptions)
+                    == JsonSerializer.Serialize(candidate.Schedule, PersistedJson.WriteOptions);
 
         [HttpPost("user-settings/{userId}/theme.json/migrate-jellyfish")]
         [Authorize]

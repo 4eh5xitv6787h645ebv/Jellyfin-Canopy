@@ -126,7 +126,35 @@ const PRESENTATION_TOKEN_CONTROLS: readonly PresentationTokenControl[] = Object.
     { token: 'progress.unwatched-indicator', labelKey: 'theme_studio_unwatched_indicator', group: 'status', values: ['corner', 'floating', 'none'] },
 ]);
 
+interface EffectsTokenControl {
+    readonly token: string;
+    readonly labelKey: string;
+    readonly group: 'materials' | 'motion' | 'dynamic';
+    readonly values: readonly ThemeTokenValue[];
+}
+
+const EFFECTS_TOKEN_CONTROLS: readonly EffectsTokenControl[] = Object.freeze([
+    { token: 'effects.level', labelKey: 'theme_studio_effects_level', group: 'materials', values: ['minimal', 'balanced', 'full'] },
+    { token: 'effects.material', labelKey: 'theme_studio_material', group: 'materials', values: ['solid', 'translucent', 'glass'] },
+    { token: 'effects.image-treatment', labelKey: 'theme_studio_image_treatment', group: 'materials', values: ['none', 'dim', 'gradient', 'blur'] },
+    { token: 'effects.blur', labelKey: 'theme_studio_blur', group: 'materials', values: [0, 4, 8, 12, 16, 24, 32, 48] },
+    { token: 'effects.saturation', labelKey: 'theme_studio_saturation', group: 'materials', values: [1, 1.1, 1.2, 1.5, 2] },
+    { token: 'effects.backdrop-opacity', labelKey: 'theme_studio_surface_opacity', group: 'materials', values: [0.55, 0.65, 0.75, 0.82, 0.9, 1] },
+    { token: 'effects.glow', labelKey: 'theme_studio_glow', group: 'materials', values: [0, 0.1, 0.15, 0.25, 0.5, 0.75, 1] },
+    { token: 'elevation.card-shadow', labelKey: 'theme_studio_card_shadow', group: 'materials', values: ['none', 'soft', 'medium', 'strong'] },
+    { token: 'elevation.dialog-shadow', labelKey: 'theme_studio_dialog_shadow', group: 'materials', values: ['none', 'soft', 'medium', 'strong'] },
+    { token: 'motion.profile', labelKey: 'theme_studio_motion_profile', group: 'motion', values: ['off', 'calm', 'expressive', 'system'] },
+    { token: 'motion.duration-scale', labelKey: 'theme_studio_motion_speed', group: 'motion', values: [0.5, 0.75, 1, 1.25, 1.5, 2] },
+    { token: 'motion.easing', labelKey: 'theme_studio_motion_easing', group: 'motion', values: ['standard', 'smooth', 'spring'] },
+    { token: 'motion.hover-lift', labelKey: 'theme_studio_hover_lift', group: 'motion', values: [0, 2, 3, 4, 6, 8, 12] },
+    { token: 'motion.page-transition', labelKey: 'theme_studio_page_transition', group: 'motion', values: [false, true] },
+    { token: 'motion.stagger', labelKey: 'theme_studio_stagger', group: 'motion', values: [false, true] },
+    { token: 'color.dynamic-source', labelKey: 'theme_studio_dynamic_source', group: 'dynamic', values: ['off', 'poster', 'backdrop'] },
+    { token: 'color.dynamic-strength', labelKey: 'theme_studio_dynamic_strength', group: 'dynamic', values: [0.25, 0.5, 0.65, 0.75, 1] },
+]);
+
 const PRESENTATION_VALUE_KEYS: Readonly<Record<string, string>> = Object.freeze({
+    system: 'theme_studio_choice_system',
     auto: 'theme_studio_value_auto',
     compact: 'theme_studio_value_compact',
     cozy: 'theme_studio_value_cozy',
@@ -153,6 +181,23 @@ const PRESENTATION_VALUE_KEYS: Readonly<Record<string, string>> = Object.freeze(
     corner: 'theme_studio_value_corner',
     check: 'theme_studio_value_check',
     none: 'theme_studio_value_none',
+    minimal: 'theme_studio_value_minimal',
+    balanced: 'theme_studio_value_balanced',
+    full: 'theme_studio_value_full',
+    solid: 'theme_studio_value_solid',
+    translucent: 'theme_studio_value_translucent',
+    glass: 'theme_studio_value_glass',
+    dim: 'theme_studio_value_dim',
+    gradient: 'theme_studio_value_gradient',
+    blur: 'theme_studio_value_blur',
+    soft: 'theme_studio_value_soft',
+    medium: 'theme_studio_value_medium',
+    strong: 'theme_studio_value_strong',
+    calm: 'theme_studio_value_calm',
+    expressive: 'theme_studio_value_expressive',
+    standard: 'theme_studio_value_standard',
+    smooth: 'theme_studio_value_smooth',
+    spring: 'theme_studio_value_spring',
 });
 
 const PRESENTATION_RESULT_KEYS: Readonly<Partial<Record<string, keyof ResolvedThemePresentation>>> = Object.freeze({
@@ -220,7 +265,11 @@ function presentationControls(configuration: UserThemeConfiguration, active: The
                     const fallbackTheme = resolveTheme(
                         fallbackConfiguration,
                         media,
-                        { allowScheduling: false },
+                        {
+                            allowScheduling: false,
+                            allowDynamicColor: JC.pluginConfig?.ThemeStudioAllowDynamicColor !== false,
+                            maximumEffectsLevel: JC.pluginConfig?.ThemeStudioMaximumEffectsLevel,
+                        },
                     );
                     const presentationKey = PRESENTATION_RESULT_KEYS[control.token];
                     const effectiveDefault = presentationKey
@@ -232,6 +281,64 @@ function presentationControls(configuration: UserThemeConfiguration, active: The
                         effectiveDefault,
                     );
                 }).join('')}
+        </div>
+    </fieldset>`).join('');
+}
+
+function effectsValueLabel(control: EffectsTokenControl, value: ThemeTokenValue): string {
+    if (typeof value !== 'number') return presentationValueLabel(value);
+    if (control.token === 'effects.blur' || control.token === 'motion.hover-lift') {
+        return t('theme_studio_value_pixels', { value });
+    }
+    if (control.token === 'effects.backdrop-opacity' || control.token === 'effects.glow'
+        || control.token === 'color.dynamic-strength') {
+        return t('theme_studio_value_percent', { value: Math.round(value * 100) });
+    }
+    return t('theme_studio_value_scale', { value });
+}
+
+function effectsControls(configuration: UserThemeConfiguration, active: ThemeProfile): string {
+    const media = previewMedia();
+    const maximum = JC.pluginConfig?.ThemeStudioMaximumEffectsLevel;
+    const maximumLabel = maximum === 'minimal' || maximum === 'balanced' || maximum === 'full'
+        ? maximum : 'full';
+    const controls = JC.pluginConfig?.ThemeStudioAllowDynamicColor === false
+        ? EFFECTS_TOKEN_CONTROLS.filter((control) => control.group !== 'dynamic')
+        : EFFECTS_TOKEN_CONTROLS;
+    const groups = [
+        { id: 'materials', title: 'theme_studio_group_effects', hint: 'theme_studio_group_effects_hint' },
+        { id: 'motion', title: 'theme_studio_group_motion', hint: 'theme_studio_group_motion_hint' },
+        { id: 'dynamic', title: 'theme_studio_group_dynamic', hint: 'theme_studio_group_dynamic_hint' },
+    ] as const;
+    return groups.filter((group) => controls.some((control) => control.group === group.id))
+        .map((group) => `<fieldset class="jc-theme-module-group" data-theme-effects-group="${escapeHtml(group.id)}">
+        <legend>${escapeHtml(t(group.title))}</legend>
+        <p class="jc-theme-hint">${escapeHtml(t(group.hint, group.id === 'materials' ? { level: maximumLabel } : undefined))}</p>
+        <div class="jc-theme-module-grid">
+            ${controls.filter((control) => control.group === group.id).map((control) => {
+                const fallbackConfiguration = clone(configuration);
+                const fallbackProfile = fallbackConfiguration.Profiles.find((profile) => profile.Id === active.Id);
+                if (fallbackProfile) delete fallbackProfile.Tokens[control.token];
+                const fallback = resolveTheme(fallbackConfiguration, media, {
+                    allowScheduling: false,
+                    allowDynamicColor: JC.pluginConfig?.ThemeStudioAllowDynamicColor !== false,
+                    maximumEffectsLevel: maximum,
+                }).tokens[control.token] ?? control.values[0];
+                const overridden = Object.prototype.hasOwnProperty.call(active.Tokens, control.token);
+                const defaultLabel = t('theme_studio_choice_preset', {
+                    value: effectsValueLabel(control, fallback),
+                });
+                return `<label class="jc-theme-field"><span>${escapeHtml(t(control.labelKey))}</span>
+                    <select class="jc-theme-control" data-field="effects-token" data-token="${escapeHtml(control.token)}" data-focus-key="effects:${escapeHtml(control.token)}">
+                        ${option(PRESENTATION_DEFAULT, defaultLabel, !overridden)}
+                        ${control.values.map((value) => option(
+                            String(value),
+                            effectsValueLabel(control, value),
+                            overridden && active.Tokens[control.token] === value,
+                        )).join('')}
+                    </select>
+                </label>`;
+            }).join('')}
         </div>
     </fieldset>`).join('');
 }
@@ -305,6 +412,7 @@ function exportDocument(value: UserThemeConfiguration): ThemeExportDocument {
         SchemaVersion: copy.SchemaVersion,
         ActiveProfileId: copy.ActiveProfileId,
         Profiles: copy.Profiles,
+        ScheduleTimeZone: copy.ScheduleTimeZone ?? 'local',
         Schedule: copy.Schedule,
     };
 }
@@ -322,6 +430,7 @@ function importedConfiguration(
         SchemaVersion: data.SchemaVersion,
         ActiveProfileId: data.ActiveProfileId,
         Profiles: data.Profiles,
+        ScheduleTimeZone: data.ScheduleTimeZone ?? 'local',
         Schedule: data.Schedule,
         LegacyMigration: clone(current).LegacyMigration,
     });
@@ -336,6 +445,7 @@ function configurationWithDormantSchedule(
 ): UserThemeConfiguration | null {
     const candidate = clone(imported);
     const currentCopy = clone(current);
+    candidate.ScheduleTimeZone = currentCopy.ScheduleTimeZone ?? 'local';
     candidate.Schedule = currentCopy.Schedule;
     const importedProfileIds = new Set(candidate.Profiles.map((profile) => profile.Id));
     const scheduledProfileIds = new Set(candidate.Schedule.map((entry) => entry.ProfileId));
@@ -350,7 +460,7 @@ function configurationWithDormantSchedule(
 
 interface FocusSnapshot {
     readonly tagName: string;
-    readonly attribute: 'data-field' | 'data-action' | 'data-role';
+    readonly attribute: 'data-focus-key' | 'data-field' | 'data-action' | 'data-role';
     readonly value: string;
     readonly dataValue: string;
     readonly selectionStart: number | null;
@@ -361,7 +471,7 @@ interface FocusSnapshot {
 function captureFocus(root: HTMLElement): FocusSnapshot | null {
     const active = document.activeElement;
     if (!(active instanceof HTMLElement) || !root.contains(active)) return null;
-    const attribute = (['data-field', 'data-action', 'data-role'] as const)
+    const attribute = (['data-focus-key', 'data-field', 'data-action', 'data-role'] as const)
         .find((name) => active.hasAttribute(name));
     if (!attribute) return null;
     const selectable = active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement;
@@ -452,6 +562,9 @@ function importSummary(current: UserThemeConfiguration, candidate: UserThemeConf
         const active = candidateById.get(candidate.ActiveProfileId)?.Name ?? candidate.ActiveProfileId;
         changes.push(t('theme_studio_import_active', { name: active }));
     }
+    if ((current.ScheduleTimeZone ?? 'local') !== (candidate.ScheduleTimeZone ?? 'local')) {
+        changes.push(t('theme_studio_import_schedule_time_zone'));
+    }
     const currentSchedule = new Map(current.Schedule.map((entry) => [entry.Id, entry]));
     const candidateSchedule = new Map(candidate.Schedule.map((entry) => [entry.Id, entry]));
     for (const entry of candidate.Schedule) {
@@ -487,6 +600,10 @@ function editorStyles(): string {
         #jellyfin-canopy-panel .jc-theme-module-group legend { padding-inline:6px; font-weight:750; }
         #jellyfin-canopy-panel .jc-theme-module-group > .jc-theme-hint { margin:0 0 12px; }
         #jellyfin-canopy-panel .jc-theme-module-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); column-gap:10px; min-width:0; }
+        #jellyfin-canopy-panel .jc-theme-schedule-list { display:grid; gap:10px; }
+        #jellyfin-canopy-panel .jc-theme-schedule-row { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px 10px; min-width:0; border:1px solid rgba(255,255,255,.13); border-radius:10px; padding:10px; }
+        #jellyfin-canopy-panel .jc-theme-schedule-row .jc-theme-field { margin:0; }
+        #jellyfin-canopy-panel .jc-theme-schedule-enabled { min-height:44px; align-self:end; }
         #jellyfin-canopy-panel .jc-theme-control { box-sizing:border-box; width:100%; min-height:44px; border:1px solid rgba(255,255,255,.22); border-radius:9px; background:#101218; color:#fff; padding:9px 11px; font:inherit; }
         #jellyfin-canopy-panel .jc-theme-control:focus-visible, #jellyfin-canopy-panel .jc-theme-button:focus-visible, #jellyfin-canopy-panel .jc-theme-preset:focus-visible { outline:3px solid #00d4ff; outline-offset:2px; }
         #jellyfin-canopy-panel .jc-theme-button { min-height:44px; border:1px solid rgba(255,255,255,.22); border-radius:9px; background:rgba(255,255,255,.08); color:#fff; padding:8px 12px; font:inherit; font-weight:650; cursor:pointer; }
@@ -534,6 +651,7 @@ function editorStyles(): string {
             #jellyfin-canopy-panel .jc-pane[data-pane="theme-studio"] { min-width:0; }
             #jellyfin-canopy-panel .jc-theme-studio { grid-template-columns:minmax(0,1fr); }
             #jellyfin-canopy-panel .jc-theme-module-grid { grid-template-columns:minmax(0,1fr); }
+            #jellyfin-canopy-panel .jc-theme-schedule-row { grid-template-columns:minmax(0,1fr); }
             #jellyfin-canopy-panel .jc-theme-preview-card { position:static; }
             #jellyfin-canopy-panel .jc-theme-mobile-preview { display:inline-flex; }
             #jellyfin-canopy-panel .jc-theme-actions { margin-inline:0; }
@@ -566,6 +684,60 @@ function profileControls(
         </div>
         <span class="jc-theme-hint jc-theme-validation" id="jc-theme-profile-name-error" data-role="profile-name-error"${profileNameInvalid ? '' : ' hidden'}>${escapeHtml(t('theme_studio_profile_name_invalid'))}</span>
     </div>`;
+}
+
+function nextScheduleId(configuration: UserThemeConfiguration, kind: 'season' | 'holiday'): string {
+    const existing = new Set(configuration.Schedule.map((entry) => entry.Id));
+    for (let index = 1; index <= 32; index += 1) {
+        const candidate = `${kind}-${index}`;
+        if (!existing.has(candidate)) return candidate;
+    }
+    return `${kind}-32`;
+}
+
+function scheduleControls(configuration: UserThemeConfiguration, schedulingAllowed: boolean): string {
+    if (!schedulingAllowed) return '';
+    const zone = configuration.ScheduleTimeZone === 'utc' ? 'utc' : 'local';
+    return `<fieldset class="jc-theme-module-group" data-theme-schedule-editor>
+        <legend>${escapeHtml(t('theme_studio_schedule'))}</legend>
+        <p class="jc-theme-hint">${escapeHtml(t('theme_studio_schedule_hint'))}</p>
+        <label class="jc-theme-field"><span>${escapeHtml(t('theme_studio_schedule_time_zone'))}</span>
+            <select class="jc-theme-control" data-field="schedule-time-zone" data-focus-key="schedule:time-zone">
+                ${option('local', t('theme_studio_schedule_local'), zone === 'local')}
+                ${option('utc', t('theme_studio_schedule_utc'), zone === 'utc')}
+            </select>
+        </label>
+        <div class="jc-theme-schedule-list">
+            ${configuration.Schedule.map((entry) => `<div class="jc-theme-schedule-row" role="group" aria-label="${escapeHtml(t('theme_studio_schedule_entry', { id: entry.Id }))}">
+                <label class="jc-theme-field"><span>${escapeHtml(t('theme_studio_schedule_kind'))}</span>
+                    <select class="jc-theme-control" data-field="schedule-field" data-schedule-field="Kind" data-schedule-id="${escapeHtml(entry.Id)}" data-focus-key="schedule:${escapeHtml(entry.Id)}:kind">
+                        ${option('season', t('theme_studio_schedule_season'), (entry.Kind ?? 'season') === 'season')}
+                        ${option('holiday', t('theme_studio_schedule_holiday'), entry.Kind === 'holiday')}
+                    </select>
+                </label>
+                <label class="jc-theme-field"><span>${escapeHtml(t('theme_studio_schedule_profile'))}</span>
+                    <select class="jc-theme-control" data-field="schedule-field" data-schedule-field="ProfileId" data-schedule-id="${escapeHtml(entry.Id)}" data-focus-key="schedule:${escapeHtml(entry.Id)}:profile">
+                        ${configuration.Profiles.map((profile) => option(profile.Id, profile.Name, entry.ProfileId === profile.Id)).join('')}
+                    </select>
+                </label>
+                <label class="jc-theme-field"><span>${escapeHtml(t('theme_studio_schedule_start'))}</span>
+                    <input class="jc-theme-control" inputmode="numeric" maxlength="5" pattern="\\d{2}-\\d{2}" placeholder="MM-DD" value="${escapeHtml(entry.StartMonthDay)}" data-field="schedule-field" data-schedule-field="StartMonthDay" data-schedule-id="${escapeHtml(entry.Id)}" data-focus-key="schedule:${escapeHtml(entry.Id)}:start">
+                </label>
+                <label class="jc-theme-field"><span>${escapeHtml(t('theme_studio_schedule_end'))}</span>
+                    <input class="jc-theme-control" inputmode="numeric" maxlength="5" pattern="\\d{2}-\\d{2}" placeholder="MM-DD" value="${escapeHtml(entry.EndMonthDay)}" data-field="schedule-field" data-schedule-field="EndMonthDay" data-schedule-id="${escapeHtml(entry.Id)}" data-focus-key="schedule:${escapeHtml(entry.Id)}:end">
+                </label>
+                <label class="jc-theme-field"><span>${escapeHtml(t('theme_studio_schedule_priority'))}</span>
+                    <input class="jc-theme-control" type="number" min="0" max="100" step="1" value="${Number(entry.Priority) || 0}" data-field="schedule-field" data-schedule-field="Priority" data-schedule-id="${escapeHtml(entry.Id)}" data-focus-key="schedule:${escapeHtml(entry.Id)}:priority">
+                </label>
+                <label class="jc-theme-row jc-theme-schedule-enabled"><input type="checkbox" data-field="schedule-field" data-schedule-field="Enabled" data-schedule-id="${escapeHtml(entry.Id)}" data-focus-key="schedule:${escapeHtml(entry.Id)}:enabled"${entry.Enabled ? ' checked' : ''}> <span>${escapeHtml(t('theme_studio_schedule_enabled'))}</span></label>
+                <button class="jc-theme-button danger" type="button" data-action="delete-schedule" data-schedule-id="${escapeHtml(entry.Id)}" data-focus-key="schedule:${escapeHtml(entry.Id)}:delete">${escapeHtml(t('theme_studio_schedule_delete'))}</button>
+            </div>`).join('') || `<p class="jc-theme-hint" role="status">${escapeHtml(t('theme_studio_schedule_empty'))}</p>`}
+        </div>
+        <div class="jc-theme-row">
+            <button class="jc-theme-button" type="button" data-action="add-season"${configuration.Schedule.length >= 32 ? ' disabled' : ''}>${escapeHtml(t('theme_studio_schedule_add_season'))}</button>
+            <button class="jc-theme-button" type="button" data-action="add-holiday"${configuration.Schedule.length >= 32 ? ' disabled' : ''}>${escapeHtml(t('theme_studio_schedule_add_holiday'))}</button>
+        </div>
+    </fieldset>`;
 }
 
 function beginnerEditor(
@@ -622,12 +794,18 @@ function beginnerEditor(
             </label>
         </div>
         <label class="jc-theme-row" style="min-height:44px"><input type="checkbox" data-field="underline-links"${active.Accessibility.UnderlineLinks ? ' checked' : ''}> <span>${escapeHtml(t('theme_studio_underline_links'))}</span></label>
-        ${presentationControls(configuration, active)}`;
+        ${presentationControls(configuration, active)}
+        ${effectsControls(configuration, active)}
+        ${scheduleControls(configuration, schedulingAllowed)}`;
 }
 
 function previewCard(configuration: UserThemeConfiguration, active: ThemeProfile): string {
     const presetKey = PRESET_KEYS[active.BasePreset] ?? active.BasePreset;
-    const resolved = resolveTheme(configuration, previewMedia(), { allowScheduling: false });
+    const resolved = resolveTheme(configuration, previewMedia(), {
+        allowScheduling: false,
+        allowDynamicColor: JC.pluginConfig?.ThemeStudioAllowDynamicColor !== false,
+        maximumEffectsLevel: JC.pluginConfig?.ThemeStudioMaximumEffectsLevel,
+    });
     const colors = {
         canvas: resolvedColor(resolved.tokens, 'color.canvas', '#101218'),
         surface: resolvedColor(resolved.tokens, 'color.surface', '#171722'),
@@ -1296,7 +1474,8 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
             return;
         }
         const mutatesDraft = ['undo', 'redo', 'preset', 'mode', 'rename-profile', 'add-profile',
-            'delete-profile', 'reset-profile', 'accept-import'].includes(action ?? '');
+            'delete-profile', 'reset-profile', 'accept-import', 'add-season', 'add-holiday',
+            'delete-schedule'].includes(action ?? '');
         if (mutatesDraft && !flushExpert(false)) {
             render();
             return;
@@ -1329,6 +1508,31 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
                 render();
             } else changed(state.addProfile(copyName));
         } else if (action === 'delete-profile') changed(state.deleteActiveProfile());
+        else if (action === 'add-season' || action === 'add-holiday') {
+            const kind = action === 'add-holiday' ? 'holiday' : 'season';
+            const snapshot = state.snapshot().configuration;
+            if (snapshot.Schedule.length >= 32) {
+                render();
+                return;
+            }
+            const id = nextScheduleId(snapshot, kind);
+            changed(state.mutate((draft) => {
+                draft.Schedule.push({
+                    Id: id,
+                    ProfileId: draft.ActiveProfileId,
+                    Kind: kind,
+                    StartMonthDay: '01-01',
+                    EndMonthDay: '12-31',
+                    Priority: kind === 'holiday' ? 80 : 20,
+                    Enabled: false,
+                });
+            }));
+        } else if (action === 'delete-schedule') {
+            const id = button.dataset.scheduleId;
+            changed(Boolean(id) && state.mutate((draft) => {
+                draft.Schedule = draft.Schedule.filter((entry) => entry.Id !== id);
+            }));
+        }
         else if (action === 'reset-profile') {
             const defaults = administratorThemeDefaults();
             const reset = state.resetActiveProfile(defaults.preset, defaults.palette);
@@ -1474,7 +1678,8 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         if (!state || saving || loading) return;
         const value = target.value;
         const mutatesDraft = ['profile', 'palette', 'accent', 'motion', 'contrast', 'transparency',
-            'underline-links', 'presentation-token'].includes(target.dataset.field ?? '');
+            'underline-links', 'presentation-token', 'effects-token', 'schedule-time-zone',
+            'schedule-field'].includes(target.dataset.field ?? '');
         if (mutatesDraft && !flushExpert(false)) {
             render();
             return;
@@ -1507,6 +1712,56 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
                 return;
             }
             changed(state.updateActiveProfile((profile) => { profile.Tokens[control.token] = tokenValue; }));
+        } else if (target.dataset.field === 'effects-token') {
+            const control = EFFECTS_TOKEN_CONTROLS.find((candidate) => candidate.token === target.dataset.token);
+            if (!control) {
+                render();
+                return;
+            }
+            if (value === PRESENTATION_DEFAULT) {
+                changed(state.updateActiveProfile((profile) => { delete profile.Tokens[control.token]; }));
+                return;
+            }
+            const tokenValue = control.values.find((candidate) => String(candidate) === value);
+            if (tokenValue === undefined) {
+                render();
+                return;
+            }
+            changed(state.updateActiveProfile((profile) => { profile.Tokens[control.token] = tokenValue; }));
+        } else if (target.dataset.field === 'schedule-time-zone') {
+            if (value !== 'local' && value !== 'utc') {
+                render();
+                return;
+            }
+            changed(state.mutate((draft) => { draft.ScheduleTimeZone = value; }));
+        } else if (target.dataset.field === 'schedule-field') {
+            const scheduleId = target.dataset.scheduleId;
+            const scheduleField = target.dataset.scheduleField;
+            const current = state.snapshot().configuration.Schedule.find((entry) => entry.Id === scheduleId);
+            if (!current || !scheduleField) {
+                render();
+                return;
+            }
+            let next: ThemeTokenValue = value;
+            if (scheduleField === 'Enabled' && target instanceof HTMLInputElement) next = target.checked;
+            else if (scheduleField === 'Priority') next = Number(value);
+            const previous = current[scheduleField as keyof typeof current];
+            if (previous === next) return;
+            const updated = state.mutate((draft) => {
+                const entry = draft.Schedule.find((candidate) => candidate.Id === scheduleId);
+                if (!entry) return;
+                if (scheduleField === 'Kind' && (next === 'season' || next === 'holiday')) entry.Kind = next;
+                else if (scheduleField === 'ProfileId' && typeof next === 'string') entry.ProfileId = next;
+                else if (scheduleField === 'StartMonthDay' && typeof next === 'string') entry.StartMonthDay = next;
+                else if (scheduleField === 'EndMonthDay' && typeof next === 'string') entry.EndMonthDay = next;
+                else if (scheduleField === 'Priority' && typeof next === 'number') entry.Priority = next;
+                else if (scheduleField === 'Enabled' && typeof next === 'boolean') entry.Enabled = next;
+            });
+            if (updated) changed(true);
+            else {
+                status = t('theme_studio_schedule_invalid');
+                render();
+            }
         } else if (target.dataset.field === 'import-file' && target instanceof HTMLInputElement && target.files?.[0]) {
             void stageImport(target.files[0]);
         }

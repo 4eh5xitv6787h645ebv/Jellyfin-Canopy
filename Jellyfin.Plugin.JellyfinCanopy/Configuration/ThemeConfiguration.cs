@@ -26,6 +26,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
 
         public List<ThemeProfile> Profiles { get; set; } = new List<ThemeProfile>();
 
+        public string ScheduleTimeZone { get; set; } = "local";
+
         public List<ThemeScheduleEntry> Schedule { get; set; } = new List<ThemeScheduleEntry>();
 
         public ThemeLegacyMigration LegacyMigration { get; set; } = new ThemeLegacyMigration();
@@ -144,6 +146,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
 
         public string ProfileId { get; set; } = string.Empty;
 
+        public string Kind { get; set; } = "season";
+
         public string StartMonthDay { get; set; } = string.Empty;
 
         public string EndMonthDay { get; set; } = string.Empty;
@@ -180,6 +184,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
 
         public List<ThemeProfile> Profiles { get; set; } = new List<ThemeProfile>();
 
+        public string ScheduleTimeZone { get; set; } = "local";
+
         public List<ThemeScheduleEntry> Schedule { get; set; } = new List<ThemeScheduleEntry>();
 
         [JsonExtensionData]
@@ -192,6 +198,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
                 SchemaVersion = source.SchemaVersion,
                 ActiveProfileId = source.ActiveProfileId,
                 Profiles = source.Profiles.Select(ThemeConfigurationClone.Profile).ToList(),
+                ScheduleTimeZone = source.ScheduleTimeZone,
                 Schedule = source.Schedule.Select(ThemeConfigurationClone.ScheduleEntry).ToList(),
                 ExtensionData = ThemeConfigurationClone.ExtensionData(source.ExtensionData)
             };
@@ -209,6 +216,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
                 SchemaVersion = SchemaVersion,
                 ActiveProfileId = ActiveProfileId,
                 Profiles = Profiles.Select(ThemeConfigurationClone.Profile).ToList(),
+                ScheduleTimeZone = ScheduleTimeZone,
                 Schedule = Schedule.Select(ThemeConfigurationClone.ScheduleEntry).ToList(),
                 LegacyMigration = new ThemeLegacyMigration(),
                 ExtensionData = ThemeConfigurationClone.ExtensionData(ExtensionData)
@@ -241,6 +249,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
                 SchemaVersion = source.SchemaVersion,
                 ActiveProfileId = source.ActiveProfileId,
                 Profiles = source.Profiles.Select(Profile).ToList(),
+                ScheduleTimeZone = source.ScheduleTimeZone,
                 Schedule = source.Schedule.Select(ScheduleEntry).ToList(),
                 LegacyMigration = LegacyMigration(source.LegacyMigration),
                 ExtensionData = ExtensionData(source.ExtensionData)
@@ -268,6 +277,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
             {
                 Id = source.Id,
                 ProfileId = source.ProfileId,
+                Kind = source.Kind,
                 StartMonthDay = source.StartMonthDay,
                 EndMonthDay = source.EndMonthDay,
                 Priority = source.Priority,

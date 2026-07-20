@@ -444,6 +444,37 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
         }
 
         [Fact]
+        public void Theme_DisabledSchedulingRejectsChangingDormantScheduleTimeZone()
+        {
+            _provider.Current = new PluginConfiguration
+            {
+                ThemeStudioAllowProfileImport = true,
+                ThemeStudioAllowSeasonalScheduling = false
+            };
+            var stored = UserThemeConfiguration.CreateDefault("canopy", "canopy-night");
+            stored.Schedule.Add(new ThemeScheduleEntry
+            {
+                Id = "winter",
+                ProfileId = ThemeProfile.DefaultId,
+                Kind = "season",
+                StartMonthDay = "12-01",
+                EndMonthDay = "02-29"
+            });
+            _manager.SaveUserConfiguration(UserId, "theme.json", stored);
+            var candidate = _manager.GetUserConfigurationStrict<UserThemeConfiguration>(UserId, "theme.json");
+            candidate.ScheduleTimeZone = "utc";
+
+            var result = Controller(0).SaveUserSettingsTheme(UserId, candidate);
+
+            var response = Assert.IsType<UserSettingsController.UserFileMutationResponse<UserThemeConfiguration>>(
+                Assert.IsType<BadRequestObjectResult>(result).Value);
+            Assert.Equal("theme_schedule_disabled", response.Code);
+            var durable = _manager.GetUserConfigurationStrict<UserThemeConfiguration>(UserId, "theme.json");
+            Assert.Equal("local", durable.ScheduleTimeZone);
+            Assert.Equal("winter", Assert.Single(durable.Schedule).Id);
+        }
+
+        [Fact]
         public void Theme_DisabledSchedulingChecksScheduleInsideTheCommitTransaction()
         {
             _provider.Current = new PluginConfiguration

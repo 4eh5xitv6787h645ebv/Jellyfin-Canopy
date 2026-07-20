@@ -284,8 +284,9 @@
   "ThemeStudioDefaultPalette": "cfg-ThemeStudioDefaultPalette",
   "ThemeStudioDefaultPreset": "cfg-ThemeStudioDefaultPreset",
   "ThemeStudioEnabled": true,
+  "ThemeStudioMaximumEffectsLevel": "cfg-ThemeStudioMaximumEffectsLevel",
   "TmdbEnabled": true,
-  "ToastDuration": 1250,
+  "ToastDuration": 1251,
   "UseIcons": false,
-  "VideoCodecTagOrder": 1253
+  "VideoCodecTagOrder": 1254
 }

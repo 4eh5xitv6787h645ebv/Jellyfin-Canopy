@@ -1,5 +1,6 @@
 import type { ThemeTokenValue } from '../types/jc';
 import { readableForeground } from './color';
+import { serializeEffectsAdapters } from './effects';
 import { serializeMediaSurfaceAdapters } from './media-surfaces';
 import { serializeMobileAdapters } from './mobile';
 import { serializePresentationAdapters } from './presentation';
@@ -108,6 +109,18 @@ function customDeclarations(theme: ResolvedTheme): Record<string, string> {
     declarations['--jc-content-max-inline-size'] = '120rem';
     declarations['--jc-motion-duration'] = `${Math.round(180 * numberToken(theme, 'motion.duration-scale'))}ms`;
     declarations['--jc-motion-easing'] = EASING[stringToken(theme, 'motion.easing')] ?? EASING.standard;
+    declarations['--jc-effects-surface-background'] = rgba(
+        stringToken(theme, 'color.surface'),
+        numberToken(theme, 'effects.backdrop-opacity'),
+    );
+    declarations['--jc-effects-elevated-background'] = rgba(
+        stringToken(theme, 'color.elevated'),
+        numberToken(theme, 'effects.backdrop-opacity'),
+    );
+    declarations['--jc-effects-glow-color'] = rgba(
+        stringToken(theme, 'color.primary'),
+        numberToken(theme, 'effects.glow'),
+    );
     return declarations;
 }
 
@@ -219,6 +232,7 @@ export function serializeThemeStyles(theme: ResolvedTheme, layer: ThemeStyleLaye
 ${declarationBlock(declarations)}
 }
 ${adapters(selector, theme)}
+${serializeEffectsAdapters(selector)}
 ${serializePresentationAdapters(selector)}
 ${serializeMediaSurfaceAdapters(selector)}
 ${serializeMobileAdapters(selector)}`;
