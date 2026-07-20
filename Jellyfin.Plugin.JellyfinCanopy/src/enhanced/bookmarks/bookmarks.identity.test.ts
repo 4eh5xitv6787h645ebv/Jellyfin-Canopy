@@ -118,6 +118,56 @@ describe('bookmark player identity ownership', () => {
     disposeBookmarks = undefined;
     vi.useRealTimers();
     document.body.innerHTML = '';
+    document.body.classList.remove('layout-tv');
+    document.documentElement.classList.remove('jc-modern-layout', 'jc-legacy-layout', 'layout-tv');
+    document.documentElement.removeAttribute('data-layout');
+  });
+
+  it('renders owned timeline markers as labeled native keyboard controls', async () => {
+    document.documentElement.classList.add('jc-modern-layout');
+    const api = await loadModule();
+    await api.updateMarkers();
+
+    const marker = document.querySelector<HTMLButtonElement>(
+      '.jc-bookmark-marker[data-jc-identity-owned="true"]'
+    );
+    expect(marker).toBeInstanceOf(HTMLButtonElement);
+    expect(marker?.type).toBe('button');
+    expect(marker?.tabIndex).toBe(0);
+    expect(marker?.getAttribute('aria-label')).toBe(marker?.title);
+    expect(marker?.getAttribute('aria-label')).toBeTruthy();
+    marker?.focus();
+    expect(document.activeElement).toBe(marker);
+  });
+
+  it('reconciles layout transitions without adding a focus stop to legacy or TV players', async () => {
+    const api = await loadModule();
+    const marker = () => document.querySelector<HTMLElement>(
+      '.jc-bookmark-marker[data-jc-identity-owned="true"]'
+    );
+
+    document.documentElement.classList.add('jc-modern-layout');
+    await api.updateMarkers();
+    expect(marker()).toBeInstanceOf(HTMLButtonElement);
+
+    document.documentElement.classList.remove('jc-modern-layout');
+    document.documentElement.classList.add('jc-legacy-layout');
+    await api.updateMarkers();
+    expect(marker()).toBeInstanceOf(HTMLDivElement);
+    expect(marker()?.tabIndex).toBe(-1);
+    expect(marker()?.hasAttribute('aria-label')).toBe(false);
+
+    document.documentElement.classList.remove('jc-legacy-layout');
+    document.documentElement.classList.add('jc-modern-layout');
+    document.body.classList.add('layout-tv');
+    await api.updateMarkers();
+    expect(marker()).toBeInstanceOf(HTMLDivElement);
+    expect(marker()?.tabIndex).toBe(-1);
+    expect(marker()?.hasAttribute('aria-label')).toBe(false);
+
+    document.body.classList.remove('layout-tv');
+    await api.updateMarkers();
+    expect(marker()).toBeInstanceOf(HTMLButtonElement);
   });
 
   it('makes retained A markers, OSD buttons, and every modal control inert after a server switch', async () => {

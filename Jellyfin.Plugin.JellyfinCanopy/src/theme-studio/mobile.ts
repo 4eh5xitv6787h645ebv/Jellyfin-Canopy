@@ -213,6 +213,9 @@ ${selector}[data-jc-theme-performance="reduced"] :where(
   .jc-calendar-card-status-top,
   .jc-calendar-event-status-top,
   #pause-screen-content,
+  .videoOsdBottom,
+  .sliderBubble,
+  .chapterThumbContainer,
   .seerr-media-badge,
   .seerr-collection-badge,
   .seerr-overview,
@@ -221,6 +224,14 @@ ${selector}[data-jc-theme-performance="reduced"] :where(
   -webkit-backdrop-filter: none !important;
   backdrop-filter: none !important;
   background-color: var(--jc-color-surface);
+}
+${selector}[data-jc-theme-performance="reduced"] :where(
+  .videoOsdBottom,
+  .sliderBubble,
+  .chapterThumbContainer,
+  #pause-screen-content
+) {
+  background-image: none !important;
 }
 ${selector}[data-jc-theme-performance="reduced"] .seerr-season-header::before {
   -webkit-backdrop-filter: none !important;

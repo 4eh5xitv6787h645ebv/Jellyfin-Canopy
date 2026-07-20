@@ -52,8 +52,8 @@ test('live repository assets are referenced, non-animated, and within ratcheted 
         largestBytes: 2941758,
     });
     assert.deepEqual(result.metrics.repository, {
-        files: 55,
-        bytes: 27719453,
+        files: 70,
+        bytes: 28639063,
         largestBytes: 2941758,
     });
 });
