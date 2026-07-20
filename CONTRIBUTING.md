@@ -355,6 +355,7 @@ synthetic libraries on a fixed schedule instead.
 
 A scheduled GitHub Actions workflow (nightly for profile L, weekly or
 `workflow_dispatch` for profile XL) runs from `main` only. Its steps, in order:
+reconcile expired leaked resources (see secrets and teardown below),
 provision an ephemeral Linode instance, attach the persistent seed Volume,
 prepare the instance (Docker, plugin build under test), verify the runtime
 quota, measure every metric below, compare measurements against
@@ -728,8 +729,8 @@ release; as with every other release gate, there is no bypass.
 The job runs on ephemeral Linode instances provisioned per run — never on
 GitHub-hosted runners (too small, too variable) and never as a registered
 self-hosted GitHub runner (fork-PR code-execution risk). The scheduled
-workflow drives the instance over plain SSH: provision → attach → prepare →
-verify → measure → compare → collect → destroy.
+workflow drives the instance over plain SSH: reconcile → provision → attach →
+prepare → verify → measure → compare → collect → destroy.
 
 - **Profile L (nightly)**: Dedicated 8 GB (`g6-dedicated-4`, 4 vCPU dedicated /
   8 GB / 160 GB) at ~$0.11/hr, ~2–3 h per run.
@@ -822,9 +823,36 @@ Secrets and teardown:
 - The Linode API token and SSH private key live as GitHub Actions secrets
   scoped to the scheduled workflow's environment, reachable only from
   `main`-only scheduled/manual dispatch. Raw run logs must never expose them.
-- Teardown runs under `always()` so a failed run cannot leak a paid instance;
-  it destroys the exact instance it provisioned and confirms the Volume is
-  detached. A collection failure must not suppress cleanup.
+- **Bounded lifecycle.** Every Linode API call and SSH command runs under an
+  explicit timeout, and every workflow job carries a hard `timeout-minutes`
+  cap sized to the profile's expected duration plus a fixed margin — nothing
+  in the run may wait unboundedly, so every run reaches a terminal state in
+  bounded time.
+- **Durable run ownership at creation time.** The instance is created — in
+  the same create API call, never a later step — with tags recording the
+  fixed tier tag (`canopy-scale`), the workflow run id and attempt, and an
+  expiry timestamp set to provision time plus the job's hard timeout plus a
+  fixed margin. Ownership and expiry therefore exist on the Linode account
+  itself even if the GitHub-hosted controller is lost immediately after
+  creation, before it persists or reports anything.
+- Teardown runs under `always()` as the first line of cleanup, so an
+  ordinary failed run cannot leak a paid instance: it destroys the exact
+  instance it provisioned and confirms the Volume is detached. A collection
+  failure must not suppress cleanup.
+- **Idempotent reconciliation.** The in-workflow `always()` step alone
+  cannot clean up after a lost or hard-timed-out controller, so it is not
+  the whole no-leak contract. The **first step of every scale run**, before
+  provisioning, reconciles leaked resources: list instances carrying the
+  tier tag, destroy any whose recorded expiry has passed, and detach the
+  Volume from any instance being destroyed (unblocking the serialized
+  Volume for the run about to start). Reconciliation acts only on recorded
+  tags — it never touches untagged instances, and never touches a tagged,
+  unexpired instance (that is the serialized in-flight run). It is
+  idempotent and safe to re-run; a reconciliation that cannot complete
+  fails the run before any new spend. Because profile L runs nightly, a
+  leaked instance survives at most about one schedule interval (~one day,
+  roughly $3 at the L plan) before the next run reclaims it — the leak
+  bound is a schedule interval, never "until a human notices".
 - A teardown failure — instance not confirmed destroyed or Volume not
   confirmed detached — **fails the workflow run**, even when every earlier
   step (including collection and artifact upload) succeeded. This makes the
@@ -858,8 +886,10 @@ PR events.
 1. Sparse bulk-item generator extending `e2e/docker/seed.sh` (with the `df -i`
    headroom check).
 2. Seed refresh/versioning tooling for the per-profile Volume baselines.
-3. The `main`-only scheduled workflow: SSH provisioning, quota verification,
-   `always()` teardown.
+3. The `main`-only scheduled workflow: pre-run reconciliation of expired
+   tagged instances, SSH provisioning with creation-time ownership/expiry
+   tags, bounded API/SSH/job timeouts, quota verification, `always()`
+   teardown.
 4. Measurement harness and the immutable result-artifact schema.
 5. Budget comparator with fail-closed validation and its negative tests
    (unknown schema, missing/extra keys, `null` while blocking, over-budget,
