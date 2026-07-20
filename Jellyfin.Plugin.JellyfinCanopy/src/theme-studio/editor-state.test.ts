@@ -15,6 +15,11 @@ describe('ThemeEditorState', () => {
         expect(state.updateActiveProfile((profile) => { profile.BasePreset = 'oled'; })).toBe(true);
         expect(state.activeProfile().BasePreset).toBe('oled');
         expect(state.snapshot()).toMatchObject({ dirty: true, canUndo: true, canRedo: false });
+        expect(state.matchesCommitted(themeConfiguration())).toBe(true);
+        const newer = themeConfiguration();
+        newer.Revision += 1;
+        expect(state.matchesCommitted(newer)).toBe(false);
+        expect(state.matchesCommitted({ invalid: true })).toBe(false);
     });
 
     it('keeps a bounded reversible history and clears redo on a divergent edit', () => {

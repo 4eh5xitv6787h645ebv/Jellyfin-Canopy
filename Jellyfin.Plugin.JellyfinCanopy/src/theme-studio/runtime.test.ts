@@ -181,6 +181,29 @@ describe('Theme Studio identity-owned runtime', () => {
         window.removeEventListener('jc:theme-studio-runtime-changed', changed);
     });
 
+    it('rejects a late acknowledgement older than the loaded authoritative revision', async () => {
+        const loaded = themeConfiguration();
+        loaded.Revision = 9;
+        loaded.Profiles[0].Palette = 'neutral';
+        apiReturning(loaded);
+        const { runtime } = createRuntime();
+        await runtime.load();
+        vi.mocked(JC.rememberUserSettingsSnapshot!).mockClear();
+        const changed = vi.fn();
+        window.addEventListener('jc:theme-studio-runtime-changed', changed);
+        const stale = themeConfiguration();
+        stale.Revision = 8;
+        stale.Profiles[0].Palette = 'vivid';
+
+        expect(runtime.adoptAcknowledged(stale)).toBe(false);
+
+        expect(runtime.getConfiguration()).toMatchObject({ Revision: 9 });
+        expect(document.documentElement.getAttribute('data-jc-theme-palette')).toBe('neutral');
+        expect(JC.rememberUserSettingsSnapshot).not.toHaveBeenCalled();
+        expect(changed).not.toHaveBeenCalled();
+        window.removeEventListener('jc:theme-studio-runtime-changed', changed);
+    });
+
     it('never lets an older overlapping load overwrite a newer reload', async () => {
         let resolveOlder: (value: unknown) => void = () => undefined;
         let resolveNewer: (value: unknown) => void = () => undefined;

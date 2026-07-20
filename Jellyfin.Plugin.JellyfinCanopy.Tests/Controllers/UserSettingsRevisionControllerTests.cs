@@ -399,6 +399,49 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
         }
 
         [Fact]
+        public void Theme_DisabledSchedulingRejectsClearingDormantSchedule()
+        {
+            _provider.Current = new PluginConfiguration
+            {
+                ThemeStudioAllowProfileImport = true,
+                ThemeStudioAllowSeasonalScheduling = false
+            };
+            var stored = UserThemeConfiguration.CreateDefault("canopy", "canopy-night");
+            stored.Schedule.Add(new ThemeScheduleEntry
+            {
+                Id = "winter",
+                ProfileId = ThemeProfile.DefaultId,
+                StartMonthDay = "12-01",
+                EndMonthDay = "02-29"
+            });
+            _manager.SaveUserConfiguration(UserId, "theme.json", stored);
+            var candidate = _manager.GetUserConfigurationStrict<UserThemeConfiguration>(UserId, "theme.json");
+            candidate.Schedule.Clear();
+
+            var result = Controller(0).SaveUserSettingsTheme(UserId, candidate);
+
+            Assert.IsType<BadRequestObjectResult>(result);
+            Assert.Equal("winter", Assert.Single(
+                _manager.GetUserConfigurationStrict<UserThemeConfiguration>(UserId, "theme.json").Schedule).Id);
+        }
+
+        [Fact]
+        public void Theme_DisabledSchedulingAllowsEmptyScheduleForFirstSave()
+        {
+            _provider.Current = new PluginConfiguration
+            {
+                ThemeStudioAllowProfileImport = true,
+                ThemeStudioAllowSeasonalScheduling = false
+            };
+            var candidate = UserThemeConfiguration.CreateDefault("canopy", "canopy-night");
+
+            var result = Controller(0).SaveUserSettingsTheme(UserId, candidate);
+
+            Assert.IsType<OkObjectResult>(result);
+            Assert.Empty(_manager.GetUserConfigurationStrict<UserThemeConfiguration>(UserId, "theme.json").Schedule);
+        }
+
+        [Fact]
         public void Theme_DisabledSchedulingRejectsScheduledImports()
         {
             _provider.Current = new PluginConfiguration

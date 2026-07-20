@@ -278,8 +278,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             }
 
             if (_configProvider.ConfigurationOrNull?.ThemeStudioAllowSeasonalScheduling == false
-                && userConfiguration?.Schedule?.Count > 0
-                && !MatchesPersistedThemeSchedule(authorizedUserId, userConfiguration.Schedule))
+                && !MatchesPersistedThemeSchedule(
+                    authorizedUserId,
+                    (IReadOnlyList<ThemeScheduleEntry>?)userConfiguration?.Schedule
+                        ?? Array.Empty<ThemeScheduleEntry>()))
             {
                 return BadRequest(new UserFileMutationResponse<UserThemeConfiguration>
                 {
@@ -368,6 +370,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 var read = _userConfigurationManager.ReadUserConfiguration<UserThemeConfiguration>(
                     authorizedUserId,
                     "theme.json");
+                if (read.Status == UserConfigReadStatus.Missing)
+                {
+                    return candidate.Count == 0;
+                }
+
                 return read.Status == UserConfigReadStatus.Valid
                     && read.Value?.Schedule != null
                     && JsonSerializer.Serialize(read.Value.Schedule, PersistedJson.WriteOptions)

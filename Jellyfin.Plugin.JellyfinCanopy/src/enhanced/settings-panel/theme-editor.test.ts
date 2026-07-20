@@ -56,6 +56,48 @@ function flushFrames(): void {
     for (const [, callback] of pending) callback(16);
 }
 
+interface MutableMediaQueryList extends MediaQueryList {
+    setMatches(value: boolean): void;
+}
+
+function editorMediaHarness(): {
+    matchMedia: (query: string) => MediaQueryList;
+    set(query: string, matches: boolean): void;
+} {
+    const lists = new Map<string, MutableMediaQueryList>();
+    const matchMedia = (query: string): MediaQueryList => {
+        const existing = lists.get(query);
+        if (existing) return existing;
+        let matches = false;
+        const listeners = new Set<(event: MediaQueryListEvent) => void>();
+        const list = {
+            media: query,
+            get matches() { return matches; },
+            onchange: null,
+            addEventListener: (_name: string, listener: EventListenerOrEventListenerObject) => {
+                listeners.add(listener as (event: MediaQueryListEvent) => void);
+            },
+            removeEventListener: (_name: string, listener: EventListenerOrEventListenerObject) => {
+                listeners.delete(listener as (event: MediaQueryListEvent) => void);
+            },
+            addListener: (listener: (event: MediaQueryListEvent) => void) => listeners.add(listener),
+            removeListener: (listener: (event: MediaQueryListEvent) => void) => listeners.delete(listener),
+            dispatchEvent: () => true,
+            setMatches(value: boolean) {
+                matches = value;
+                const event = { matches, media: query } as MediaQueryListEvent;
+                for (const listener of listeners) listener(event);
+            },
+        } as unknown as MutableMediaQueryList;
+        lists.set(query, list);
+        return list;
+    };
+    return {
+        matchMedia,
+        set(query, matches) { (matchMedia(query) as MutableMediaQueryList).setMatches(matches); },
+    };
+}
+
 beforeEach(() => {
     vi.useFakeTimers();
     frames = new Map();
@@ -66,6 +108,9 @@ beforeEach(() => {
         return id;
     }));
     vi.stubGlobal('cancelAnimationFrame', vi.fn((id: number) => { frames.delete(id); }));
+    document.documentElement.removeAttribute('data-theme');
+    document.documentElement.classList.remove('layout-tv');
+    document.body.classList.remove('layout-tv');
     JC.identity.transition('', '', 'theme-editor-test-logout');
     identity = JC.identity.transition('server-a', 'user-a', 'theme-editor-test-login')!;
     JC.pluginConfig = { ...JC.pluginConfig, ThemeStudioAllowProfileImport: true };
@@ -179,6 +224,40 @@ describe('Theme Studio responsive settings editor', () => {
             Profiles: [expect.objectContaining({ BasePreset: 'oled', Palette: 'neutral' })],
         }));
         expect(button('apply').disabled).toBe(false);
+    });
+
+    it('refreshes the preview card for responsive, system-scheme, and host-theme changes', async () => {
+        const media = editorMediaHarness();
+        vi.stubGlobal('matchMedia', media.matchMedia);
+        vi.stubGlobal('innerWidth', 1200);
+        vi.stubGlobal('innerHeight', 800);
+        document.documentElement.removeAttribute('data-theme');
+        configuration.Profiles[0].Accent = 'palette';
+        configuration.Profiles[0].Responsive.Desktop = { Tokens: { 'color.primary': '#222222' } };
+        configuration.Profiles[0].Responsive.Phone = { Tokens: { 'color.primary': '#111111' } };
+        wireThemeStudioEditor(context());
+        const color = (name: string): string => panel.querySelector<HTMLElement>('.jc-theme-preview-card')!
+            .style.getPropertyValue(name);
+        expect(color('--jc-preview-primary')).toBe('#222222');
+        const lightCanvas = color('--jc-preview-canvas');
+
+        window.innerWidth = 390;
+        window.innerHeight = 844;
+        window.dispatchEvent(new Event('resize'));
+        expect(frames).toHaveLength(1);
+        flushFrames();
+        expect(color('--jc-preview-primary')).toBe('#111111');
+
+        media.set('(prefers-color-scheme: dark)', true);
+        expect(frames).toHaveLength(1);
+        flushFrames();
+        expect(color('--jc-preview-canvas')).not.toBe(lightCanvas);
+
+        document.documentElement.setAttribute('data-theme', 'light');
+        await Promise.resolve();
+        expect(frames).toHaveLength(1);
+        flushFrames();
+        expect(color('--jc-preview-canvas')).toBe(lightCanvas);
     });
 
     it('keeps page preview reachable on phones and removes it on Cancel and teardown', () => {
@@ -454,6 +533,33 @@ describe('Theme Studio responsive settings editor', () => {
         });
         expect(button('apply').disabled).toBe(true);
         expect(panel.textContent).toContain('theme_studio_ready');
+    });
+
+    it('preserves and re-previews a draft when a replacement runtime has the same baseline', async () => {
+        wireThemeStudioEditor(context());
+        button('preset', 'cinematic').click();
+        flushFrames();
+        const previousRuntime = JC.core.themeStudio!;
+        const replacementPreview = vi.fn(() => true);
+        JC.core.themeStudio = {
+            ...previousRuntime,
+            preview: replacementPreview,
+            getConfiguration: () => JC.identity.own(structuredClone(configuration), identity),
+            whenReady: vi.fn().mockResolvedValue(true),
+        } satisfies ThemeStudioRuntimeApi;
+
+        window.dispatchEvent(new CustomEvent('jc:theme-studio-runtime-changed', {
+            detail: { reason: 'installed' },
+        }));
+
+        await vi.waitFor(() => expect(button('preset', 'cinematic').getAttribute('aria-pressed')).toBe('true'));
+        expect(button('apply').disabled).toBe(false);
+        expect(panel.textContent).toContain('theme_studio_unsaved');
+        expect(panel.textContent).not.toContain('theme_studio_error_conflict');
+        flushFrames();
+        expect(replacementPreview).toHaveBeenCalledWith(expect.objectContaining({
+            Profiles: [expect.objectContaining({ BasePreset: 'cinematic' })],
+        }));
     });
 
     it('tracks the visual viewport so the mobile action bar stays above keyboards', () => {

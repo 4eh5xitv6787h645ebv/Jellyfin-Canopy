@@ -21,6 +21,21 @@ type PersistenceKind = 'validation' | 'authorization' | 'conflict' | 'unavailabl
 const MAXIMUM_IMPORT_FILE_BYTES = 1024 * 1024;
 const RUNTIME_CHANGE = 'jc:theme-studio-runtime-changed';
 const CONFIG_CHANGE = 'jc:config-changed';
+const HOST_THEME_CHANGE = 'THEME_CHANGE';
+const PREVIEW_MEDIA_QUERIES = Object.freeze([
+    '(prefers-color-scheme: dark)',
+    '(prefers-reduced-motion: reduce)',
+    '(prefers-contrast: more)',
+    '(prefers-reduced-transparency: reduce)',
+    '(forced-colors: active)',
+    '(hover: hover)',
+    '(pointer: coarse)',
+    '(max-width: 599px)',
+    '(min-width: 600px) and (max-width: 1023px)',
+    '(min-width: 1600px)',
+    '(orientation: landscape) and (max-height: 599px) and (max-width: 999px) and (pointer: coarse)',
+    '(orientation: landscape) and (min-height: 600px) and (max-width: 1180px) and (pointer: coarse)',
+]);
 
 const PRESET_KEYS: Readonly<Record<string, string>> = Object.freeze({
     canopy: 'theme_studio_preset_canopy',
@@ -408,10 +423,12 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
     let loading = false;
     let recoveryRequired = false;
     let frame = 0;
+    let previewCardFrame = 0;
     let expertTimer = 0;
     let importGeneration = 0;
     let runtimeGeneration = 0;
     let disposed = false;
+    const previewEnvironmentCleanups: Array<() => void> = [];
 
     const updateVisualViewport = (): void => {
         const viewport = window.visualViewport;
@@ -419,9 +436,48 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         ctx.help.style.setProperty('--jc-panel-visual-height', `${Math.max(1, Math.floor(viewport.height))}px`);
         ctx.help.style.setProperty('--jc-panel-visual-top', `${Math.max(0, Math.floor(viewport.offsetTop))}px`);
     };
+    const schedulePreviewCardRefresh = (): void => {
+        if (disposed || previewCardFrame) return;
+        previewCardFrame = requestAnimationFrame(() => {
+            previewCardFrame = 0;
+            if (!disposed) render();
+        });
+    };
+
+    const updatePreviewViewport = (): void => {
+        updateVisualViewport();
+        schedulePreviewCardRefresh();
+    };
+
     updateVisualViewport();
-    window.visualViewport?.addEventListener('resize', updateVisualViewport);
-    window.visualViewport?.addEventListener('scroll', updateVisualViewport);
+    window.visualViewport?.addEventListener('resize', updatePreviewViewport);
+    window.visualViewport?.addEventListener('scroll', updatePreviewViewport);
+    window.addEventListener('resize', schedulePreviewCardRefresh);
+
+    if (typeof window.matchMedia === 'function') {
+        for (const query of PREVIEW_MEDIA_QUERIES) {
+            const media = window.matchMedia(query);
+            if (typeof media.addEventListener === 'function') {
+                media.addEventListener('change', schedulePreviewCardRefresh);
+                previewEnvironmentCleanups.push(() => media.removeEventListener('change', schedulePreviewCardRefresh));
+            } else {
+                media.addListener(schedulePreviewCardRefresh);
+                previewEnvironmentCleanups.push(() => media.removeListener(schedulePreviewCardRefresh));
+            }
+        }
+    }
+
+    const previewEnvironmentObserver = new MutationObserver(schedulePreviewCardRefresh);
+    previewEnvironmentObserver.observe(document.documentElement, {
+        attributes: true,
+        attributeFilter: ['data-theme', 'data-layout', 'class'],
+    });
+
+    const hostEvents = window.Events;
+    if (hostEvents) {
+        hostEvents.on(document, HOST_THEME_CHANGE, schedulePreviewCardRefresh);
+        previewEnvironmentCleanups.push(() => hostEvents.off(document, HOST_THEME_CHANGE, schedulePreviewCardRefresh));
+    }
 
     const schedulePreview = (): void => {
         if (!state || !runtime) return;
@@ -439,6 +495,12 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         if (!frame) return;
         cancelAnimationFrame(frame);
         frame = 0;
+    };
+
+    const cancelPreviewCardFrame = (): void => {
+        if (!previewCardFrame) return;
+        cancelAnimationFrame(previewCardFrame);
+        previewCardFrame = 0;
     };
 
     const clearStagedPreview = (): void => {
@@ -583,6 +645,15 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
             return;
         }
         if (!force && state?.snapshot().dirty) {
+            if (state.matchesCommitted(nextConfiguration)) {
+                configuration = nextConfiguration;
+                loading = false;
+                recoveryRequired = false;
+                status = t(expertInvalid ? 'theme_studio_invalid' : 'theme_studio_unsaved');
+                schedulePreview();
+                render();
+                return;
+            }
             loading = false;
             recoveryRequired = true;
             status = t('theme_studio_error_conflict');
@@ -915,11 +986,16 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         runtimeGeneration += 1;
         importGeneration += 1;
         cancelPreviewFrame();
+        cancelPreviewCardFrame();
         if (expertTimer) clearTimeout(expertTimer);
         window.removeEventListener(RUNTIME_CHANGE, onRuntimeChanged);
         window.removeEventListener(CONFIG_CHANGE, onConfigChanged);
-        window.visualViewport?.removeEventListener('resize', updateVisualViewport);
-        window.visualViewport?.removeEventListener('scroll', updateVisualViewport);
+        window.visualViewport?.removeEventListener('resize', updatePreviewViewport);
+        window.visualViewport?.removeEventListener('scroll', updatePreviewViewport);
+        window.removeEventListener('resize', schedulePreviewCardRefresh);
+        previewEnvironmentObserver.disconnect();
+        for (const cleanup of previewEnvironmentCleanups.reverse()) cleanup();
+        previewEnvironmentCleanups.length = 0;
         ctx.help.style.removeProperty('--jc-panel-visual-height');
         ctx.help.style.removeProperty('--jc-panel-visual-top');
         ctx.help.classList.remove('jc-theme-preview-only');

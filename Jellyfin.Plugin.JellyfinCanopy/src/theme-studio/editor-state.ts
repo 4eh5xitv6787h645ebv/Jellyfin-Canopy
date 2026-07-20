@@ -64,6 +64,11 @@ export class ThemeEditorState {
         });
     }
 
+    matchesCommitted(value: unknown): boolean {
+        const parsed = parseUserThemeConfiguration(value);
+        return parsed !== null && canonical(parsed) === canonical(this.#committed);
+    }
+
     activeProfile(): ThemeProfile {
         return cloneConfiguration(this.#draft).Profiles
             .find((profile) => profile.Id === this.#draft.ActiveProfileId)!;

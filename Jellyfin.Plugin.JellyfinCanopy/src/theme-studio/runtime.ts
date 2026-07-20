@@ -254,6 +254,7 @@ export class ThemeStudioRuntime {
         if (this.#disposed || !this.#scope.isCurrent()) return false;
         const configuration = parseUserThemeConfiguration(value);
         if (!configuration) return false;
+        if (this.#configuration && configuration.Revision < this.#configuration.Revision) return false;
         const identity = JC.identity.capture();
         if (!identity) return false;
         // A response already in flight must not overwrite this newer, exact
