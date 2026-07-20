@@ -289,6 +289,9 @@ describe('Theme Studio responsive settings editor', () => {
     });
 
     it('keeps page preview reachable on phones and removes it on Cancel and teardown', () => {
+        const media = editorMediaHarness();
+        vi.stubGlobal('matchMedia', media.matchMedia);
+        media.set('(max-width:760px), (orientation:landscape) and (max-height:599px) and (max-width:999px) and (pointer:coarse)', true);
         wireThemeStudioEditor(context());
         const styles = panel.querySelector('style')?.textContent ?? '';
         expect(styles.indexOf('#jellyfin-canopy-panel.jc-theme-preview-only .jc-theme-return'))
@@ -297,12 +300,15 @@ describe('Theme Studio responsive settings editor', () => {
             .toBeLessThan(styles.indexOf('@media'));
         button('preset', 'glass').click();
         flushFrames();
+        button('preview-only').focus();
         button('preview-only').click();
         expect(panel.classList.contains('jc-theme-preview-only')).toBe(true);
+        expect(document.activeElement).toBe(button('return-editor'));
         expect(document.getElementById('jellyfin-canopy-panel-backdrop')?.classList
             .contains('jc-theme-preview-backdrop-hidden')).toBe(true);
         button('return-editor').click();
         expect(panel.classList.contains('jc-theme-preview-only')).toBe(false);
+        expect(document.activeElement).toBe(button('preview-only'));
         expect(document.getElementById('jellyfin-canopy-panel-backdrop')?.classList
             .contains('jc-theme-preview-backdrop-hidden')).toBe(false);
 

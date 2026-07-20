@@ -180,6 +180,17 @@ export class ThemeStudioRuntime {
         this.#api = api;
         JC.core.themeStudio = api;
         this.#announceRuntimeChange('installed');
+        // The persistence owner resolves a save only after caching its exact
+        // structured acknowledgement. Import that evidence synchronously so a
+        // config-restart gap (including one outliving the editor) cannot lose a
+        // committed theme before this runtime's first server read settles.
+        const acknowledged = parseUserThemeConfiguration(
+            JC.getAcknowledgedUserSettingsSnapshot?.('theme.json'),
+        );
+        if (acknowledged
+            && (!this.#configuration || acknowledged.Revision > this.#configuration.Revision)) {
+            this.adoptAcknowledged(acknowledged);
+        }
     }
 
     load(): Promise<void> {

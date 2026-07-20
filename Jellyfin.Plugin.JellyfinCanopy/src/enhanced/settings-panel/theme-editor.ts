@@ -25,6 +25,8 @@ const MAXIMUM_IMPORT_FILE_BYTES = 1024 * 1024;
 const RUNTIME_CHANGE = 'jc:theme-studio-runtime-changed';
 const CONFIG_CHANGE = 'jc:config-changed';
 const HOST_THEME_CHANGE = 'THEME_CHANGE';
+const COMPACT_EDITOR_MEDIA = '(max-width:760px), (orientation:landscape) and (max-height:599px) '
+    + 'and (max-width:999px) and (pointer:coarse)';
 const PREVIEW_MEDIA_QUERIES = Object.freeze([
     '(prefers-color-scheme: dark)',
     '(prefers-reduced-motion: reduce)',
@@ -367,7 +369,7 @@ function editorStyles(): string {
         #jellyfin-canopy-panel-backdrop.jc-theme-preview-backdrop-hidden { display:none!important; }
         #jellyfin-canopy-panel.jc-theme-preview-only .jc-theme-return { display:inline-flex; position:fixed; z-index:1000001; inset-block-start:max(12px,env(safe-area-inset-top)); inset-inline-end:max(12px,env(safe-area-inset-right)); pointer-events:auto; }
         @media (min-width:761px) and (max-width:900px) { #jellyfin-canopy-panel .jc-theme-studio { grid-template-columns:minmax(0,1fr); } #jellyfin-canopy-panel .jc-theme-preview-card { position:static; } }
-        @media (max-width:760px), (orientation:landscape) and (max-height:599px) and (max-width:999px) and (pointer:coarse) {
+        @media ${COMPACT_EDITOR_MEDIA} {
             #jellyfin-canopy-panel { top:var(--jc-panel-visual-top,0px)!important; height:var(--jc-panel-visual-height,100dvh)!important; max-height:var(--jc-panel-visual-height,100dvh)!important; }
             #jellyfin-canopy-panel .jc-pane[data-pane="theme-studio"] { min-width:0; }
             #jellyfin-canopy-panel .jc-theme-studio { grid-template-columns:minmax(0,1fr); }
@@ -993,9 +995,10 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
             if (!acknowledgementRuntime) {
                 // A live configuration publication briefly removes the old
                 // runtime before its successor installs. The exact server
-                // acknowledgement still commits the editor immediately; its
-                // presentation is forwarded when that successor appears.
-                deferredAcknowledgement = ownedAcknowledged;
+                // acknowledgement still commits the editor immediately. A
+                // live editor forwards it; after teardown, the persistence
+                // cache is the durable handoff consumed by runtime.install().
+                if (!disposed) deferredAcknowledgement = ownedAcknowledged;
             } else if (!acknowledgementRuntime.adoptAcknowledged(ownedAcknowledged)) {
                 // A replacement may already own newer authoritative state.
                 // Hydration reconciles that state without misreporting this
@@ -1166,9 +1169,17 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         else if (action === 'preview-only') {
             ctx.help.classList.add('jc-theme-preview-only');
             document.getElementById('jellyfin-canopy-panel-backdrop')?.classList.add('jc-theme-preview-backdrop-hidden');
+            root.querySelector<HTMLElement>('[data-action="return-editor"]')?.focus();
         } else if (action === 'return-editor') {
             ctx.help.classList.remove('jc-theme-preview-only');
             document.getElementById('jellyfin-canopy-panel-backdrop')?.classList.remove('jc-theme-preview-backdrop-hidden');
+            const compact = typeof window.matchMedia === 'function'
+                ? window.matchMedia(COMPACT_EDITOR_MEDIA).matches
+                : window.innerWidth <= 760;
+            const returnTarget = compact
+                ? root.querySelector<HTMLElement>('[data-action="preview-only"]')
+                : root.querySelector<HTMLElement>('[data-action="editor-mode"][aria-pressed="true"]');
+            returnTarget?.focus();
         }
         else if (action === 'accept-import' && pendingImport
             && JC.pluginConfig?.ThemeStudioAllowProfileImport === true) {

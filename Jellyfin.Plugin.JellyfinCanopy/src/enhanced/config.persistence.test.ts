@@ -62,6 +62,7 @@ describe('acknowledged user-settings persistence', () => {
     it('does not treat a loaded baseline as write acknowledgement evidence', async () => {
         const settings = own({ Revision: 7, Mode: 'same' });
         JC.rememberUserSettingsSnapshot!('settings.json', settings);
+        expect(JC.getAcknowledgedUserSettingsSnapshot!('settings.json')).toBeNull();
         const ajax = vi.spyOn(ApiClient, 'ajax')
             .mockResolvedValue(acknowledged('settings.json', 7, { Mode: 'same' }));
 
@@ -72,6 +73,15 @@ describe('acknowledged user-settings persistence', () => {
             acknowledged: true, deduplicated: true, revision: 7, contentHash: HASH
         });
         expect(ajax).toHaveBeenCalledTimes(1);
+        const first = JC.getAcknowledgedUserSettingsSnapshot!('settings.json') as Record<string, unknown>;
+        expect(first).toEqual({ Revision: 7, Mode: 'same' });
+        expect(JC.identity.isOwned(first, JC.identity.capture())).toBe(true);
+        first.Mode = 'mutated copy';
+        expect(JC.getAcknowledgedUserSettingsSnapshot!('settings.json'))
+            .toEqual({ Revision: 7, Mode: 'same' });
+
+        JC.identity.transition('test-server-id', 'other-user-id', 'persistence-test-switch');
+        expect(JC.getAcknowledgedUserSettingsSnapshot!('settings.json')).toBeNull();
     });
 
     it('accepts the PascalCase acknowledgement envelope emitted by the live ASP.NET host', async () => {

@@ -675,6 +675,19 @@ JC.rememberUserSettingsSnapshot = (fileName: string, settings: unknown): void =>
     _conflictedKeys.delete(key);
 };
 
+JC.getAcknowledgedUserSettingsSnapshot = (fileName: string): Record<string, unknown> | null => {
+    if (!SUPPORTED_USER_FILES.has(fileName)) return null;
+    const owner = JC.identity.capture();
+    if (!owner) return null;
+    const key = cacheKeyFor(owner, fileName);
+    const wire = _ackedWire.get(key);
+    // A normal GET also populates _ackedWire. Only the hash exists after an
+    // exact structured save acknowledgement, so stale read snapshots can
+    // never masquerade as durable write evidence during a feature restart.
+    if (!wire || !_ackedHash.has(key)) return null;
+    return JC.identity.own(localValue(fileName, wire), owner);
+};
+
 JC.saveUserSettings = (fileName: string, settings: unknown): Promise<UserSettingsSaveResult> => {
     try {
         if (!SUPPORTED_USER_FILES.has(fileName) || !settings || typeof settings !== 'object' || Array.isArray(settings)) {

@@ -161,6 +161,7 @@ test.describe.serial('Theme Studio mobile editor', () => {
         await expect(panel).toHaveClass(/jc-theme-preview-only/);
         await expect(page.locator('#jellyfin-canopy-panel-backdrop')).toBeHidden();
         await expect(panel.locator('[data-action="return-editor"]')).toBeVisible();
+        await expect(panel.locator('[data-action="return-editor"]')).toBeFocused();
         expect(await page.evaluate(() =>
             document.documentElement.getAttribute('data-jc-theme-preview'))).toBe('true');
         await page.setViewportSize({ width: 1024, height: 768 });
@@ -169,6 +170,7 @@ test.describe.serial('Theme Studio mobile editor', () => {
         await panel.locator('[data-action="return-editor"]').click();
         await expect(panel).not.toHaveClass(/jc-theme-preview-only/);
         await expect(page.locator('#jellyfin-canopy-panel-backdrop')).toBeVisible();
+        await expect(panel.locator('[data-action="editor-mode"][aria-pressed="true"]')).toBeFocused();
 
         await page.setViewportSize({ width: 740, height: 360 });
         await expect(panel.locator('[data-action="preview-only"]')).toBeVisible();

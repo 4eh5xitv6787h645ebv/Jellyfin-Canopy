@@ -60,6 +60,7 @@ declare module '../types/jc' {
         };
         saveUserSettings?: (fileName: string, settings: unknown) => Promise<import('./config').UserSettingsSaveResult>;
         rememberUserSettingsSnapshot?: (fileName: string, settings: unknown) => void;
+        getAcknowledgedUserSettingsSnapshot?: (fileName: string) => unknown;
         loadSettings?: () => UserSettings;
         initializeShortcuts?: () => void;
         /** Provided by js/plugin.js for generic DTO property conversion. */

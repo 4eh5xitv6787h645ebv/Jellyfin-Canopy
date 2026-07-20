@@ -67,11 +67,14 @@ const scopes: TestFeatureScope[] = [];
 let originalApi: ApiApi | undefined;
 let originalEvents: JellyfinEvents | undefined;
 let originalRemember: typeof JC.rememberUserSettingsSnapshot;
+let originalAcknowledgedSnapshot: typeof JC.getAcknowledgedUserSettingsSnapshot;
 
 beforeEach(() => {
     originalApi = JC.core.api;
     originalEvents = window.Events;
     originalRemember = JC.rememberUserSettingsSnapshot;
+    originalAcknowledgedSnapshot = JC.getAcknowledgedUserSettingsSnapshot;
+    JC.getAcknowledgedUserSettingsSnapshot = undefined;
     window.Events = eventsHarness();
     const media = mediaHarness();
     vi.stubGlobal('matchMedia', media.matchMedia);
@@ -95,6 +98,7 @@ afterEach(async () => {
     JC.core.api = originalApi;
     window.Events = originalEvents;
     JC.rememberUserSettingsSnapshot = originalRemember;
+    JC.getAcknowledgedUserSettingsSnapshot = originalAcknowledgedSnapshot;
     delete (window as unknown as { __themeMedia?: unknown }).__themeMedia;
     delete JC.core.themeStudio;
     document.getElementById(COMMITTED_STYLE_ID)?.remove();
@@ -174,6 +178,27 @@ describe('Theme Studio identity-owned runtime', () => {
             Revision: 6,
             Profiles: [expect.objectContaining({ BasePreset: 'canopy', Palette: 'neutral' })],
         });
+    });
+
+    it('imports a cached save acknowledgement before a replacement runtime initial read fails', async () => {
+        const plugin = vi.fn().mockRejectedValue(new Error('server unavailable'));
+        JC.core.api = { plugin } as unknown as ApiApi;
+        const acknowledged = themeConfiguration();
+        acknowledged.Revision = 5;
+        acknowledged.Profiles[0].BasePreset = 'studio';
+        JC.getAcknowledgedUserSettingsSnapshot = vi.fn(() =>
+            JC.identity.own(structuredClone(acknowledged), JC.identity.capture()));
+
+        const { runtime } = createRuntime();
+        await expect(runtime.whenReady()).resolves.toBe(true);
+
+        expect(JC.getAcknowledgedUserSettingsSnapshot).toHaveBeenCalledWith('theme.json');
+        expect(plugin).toHaveBeenCalledOnce();
+        expect(runtime.getConfiguration()).toMatchObject({
+            Revision: 5,
+            Profiles: [expect.objectContaining({ BasePreset: 'studio' })],
+        });
+        expect(runtime.getDiagnostics()).toMatchObject({ status: 'active', revision: 5 });
     });
 
     it.each([
