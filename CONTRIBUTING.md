@@ -390,7 +390,7 @@ one-to-one with a budget key in `scripts/scale-budgets.json`:
 | `maxTagCacheFullBuildMilliseconds` | Wall-clock duration of a full tag-cache build over the seeded library. |
 | `maxTagCacheFullBuildPeakResidentDeltaBytes` | Peak server resident-memory (RSS) delta during that full build, relative to the pre-build baseline. |
 | `maxLibraryScanEventP95Milliseconds` | p95 latency of the synchronous scan-thread event handlers (the [S1 rule](#performance-rules)) during a controlled bulk add. |
-| `maxResponseFilterP95MicrosecondsPerItem` | p95 latency overhead added by the plugin's synchronous MVC response-filter chain — `HiddenContentResponseFilter` followed by the Spoiler Guard `SpoilerFieldStripFilter` (registration order in `PluginServiceRegistrator`) — on large item-list responses, normalized per returned item. |
+| `maxResponseFilterP95MicrosecondsPerItem` | p95 latency overhead added by the plugin's complete synchronous MVC item-response filter chain — all four action filters registered in `PluginServiceRegistrator`, in registration order: `HiddenContentResponseFilter`, `SpoilerIdentityTagFilter`, `SpoilerFieldStripFilter`, `SpoilerBlurImageFilter`; any filter later added to that chain joins this metric automatically — on large item-list responses, normalized per returned item. |
 | `maxPluginStartupMilliseconds` | Plugin startup duration on the seeded server. |
 | `maxTagCacheColdResponseBytes` | Size in bytes of the cold tag-cache response. |
 | `maxTagCacheSnapshotSerializationPeakAllocatedBytes` | Peak server allocation during tag-cache snapshot serialization. |
@@ -409,6 +409,11 @@ Measurement protocol requirements for the follow-up harness:
   for both profiles, not summaries alone.
 - Use fixed, named measurement markers in harness output so runs are comparable
   across time and instrumentation changes are explicit.
+- Measure `maxResponseFilterP95MicrosecondsPerItem` under an **active** filter
+  workload: Hidden Content entries present, and Spoiler Guard enabled with a
+  non-empty policy for the measured user, so every filter in the chain does its
+  real per-item work. Timing the disabled/empty-policy fast-path no-ops does
+  not satisfy this metric.
 - Record stable seed metadata (seed version/digest, profile) and topology
   metadata (instance type, region, CPU quota) with every result.
 - The numbers produced here feed the SR-10 scaling documentation's
