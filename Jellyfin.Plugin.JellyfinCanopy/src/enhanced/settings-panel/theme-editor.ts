@@ -7,6 +7,7 @@ import {
 } from '../../theme-studio/catalog';
 import {
     isValidThemeProfileName,
+    THEME_PROFILE_MAX_COUNT,
     ThemeEditorState,
 } from '../../theme-studio/editor-state';
 import { resolveTheme, type ThemeMediaState } from '../../theme-studio/resolver';
@@ -404,6 +405,7 @@ function profileControls(
     profileNameInvalid: boolean,
     schedulingAllowed: boolean,
 ): string {
+    const duplicateDisabled = configuration.Profiles.length >= THEME_PROFILE_MAX_COUNT;
     const deleteDisabled = configuration.Profiles.length <= 1
         || (!schedulingAllowed && configuration.Schedule.some((entry) => entry.ProfileId === active.Id));
     return `<div class="jc-theme-field">
@@ -414,7 +416,7 @@ function profileControls(
         <div class="jc-theme-row">
             <input class="jc-theme-control" style="flex:1 1 150px" data-role="profile-name" value="${escapeHtml(profileName)}" aria-label="${escapeHtml(t('theme_studio_profile_name'))}" aria-invalid="${profileNameInvalid}" aria-describedby="jc-theme-profile-name-error">
             <button class="jc-theme-button" type="button" data-action="rename-profile">${escapeHtml(t('theme_studio_rename'))}</button>
-            <button class="jc-theme-button" type="button" data-action="add-profile">${escapeHtml(t('theme_studio_duplicate'))}</button>
+            <button class="jc-theme-button" type="button" data-action="add-profile"${duplicateDisabled ? ' disabled' : ''}>${escapeHtml(t('theme_studio_duplicate'))}</button>
             <button class="jc-theme-button danger" type="button" data-action="delete-profile"${deleteDisabled ? ' disabled' : ''}>${escapeHtml(t('theme_studio_delete'))}</button>
         </div>
         <span class="jc-theme-hint jc-theme-validation" id="jc-theme-profile-name-error" data-role="profile-name-error"${profileNameInvalid ? '' : ' hidden'}>${escapeHtml(t('theme_studio_profile_name_invalid'))}</span>
@@ -1009,6 +1011,11 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
                 || !applyingState.adoptCommitted(ownedAcknowledged)) {
                 throw Object.assign(new Error('Acknowledged theme could not be adopted'), { kind: 'protocol' });
             }
+            // An import diff is relative to the pre-save baseline. A joined
+            // persistence owner may return an acknowledgement rebased over
+            // newer remote fields, so neither a completed review nor an
+            // in-flight validation may survive this authoritative transition.
+            retireImportWork();
             // A joined save can rebase this draft over a concurrent profile
             // rename. Retire the pre-save input buffer with the rest of the
             // committed draft so a later render cannot stage that old name

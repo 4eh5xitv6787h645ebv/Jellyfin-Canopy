@@ -304,6 +304,34 @@ describe('Theme Studio identity-owned runtime', () => {
         window.removeEventListener('jc:theme-studio-runtime-changed', changed);
     });
 
+    it('keeps a newer acknowledgement that arrives while a recovery reload fails', async () => {
+        const committed = themeConfiguration();
+        let rejectReload: (reason: unknown) => void = () => undefined;
+        const plugin = vi.fn()
+            .mockResolvedValueOnce(committed)
+            .mockImplementationOnce(() => new Promise<unknown>((_resolve, reject) => {
+                rejectReload = reject;
+            }));
+        JC.core.api = { plugin } as unknown as ApiApi;
+        const { runtime } = createRuntime();
+        await runtime.load();
+
+        const reloadRequest = runtime.reload();
+        const acknowledged = themeConfiguration();
+        acknowledged.Revision = 8;
+        acknowledged.Profiles[0].BasePreset = 'studio';
+        expect(runtime.adoptAcknowledged(acknowledged)).toBe(true);
+        rejectReload(new Error('server unavailable'));
+
+        await expect(reloadRequest).resolves.toBe(false);
+        expect(runtime.getConfiguration()).toMatchObject({
+            Revision: 8,
+            Profiles: [expect.objectContaining({ BasePreset: 'studio' })],
+        });
+        expect(runtime.getDiagnostics()).toMatchObject({ status: 'active', revision: 8 });
+        expect(document.documentElement.getAttribute('data-jc-theme-preset')).toBe('studio');
+    });
+
     it('accepts a supported store reset as a new authoritative revision generation', async () => {
         const committed = themeConfiguration();
         committed.Revision = 9;

@@ -493,6 +493,24 @@ describe('Theme Studio responsive settings editor', () => {
         expect(panel.querySelector('[aria-invalid="true"]')).toBeNull();
     });
 
+    it('disables Duplicate at the validated profile limit', () => {
+        const source = structuredClone(configuration.Profiles[0]);
+        for (let index = 2; index <= 24; index += 1) {
+            configuration.Profiles.push({
+                ...structuredClone(source),
+                Id: `profile-${index}`,
+                Name: `Profile ${index}`,
+            });
+        }
+
+        wireThemeStudioEditor(context());
+
+        expect(panel.querySelectorAll('[data-field="profile"] option')).toHaveLength(24);
+        expect(button('add-profile').disabled).toBe(true);
+        button('add-profile').click();
+        expect(preview).not.toHaveBeenCalled();
+    });
+
     it('accepts the full rune-based profile-name limit for non-BMP characters', () => {
         wireThemeStudioEditor(context());
         const input = panel.querySelector<HTMLInputElement>('[data-role="profile-name"]')!;
@@ -580,6 +598,50 @@ describe('Theme Studio responsive settings editor', () => {
         expect(panel.querySelector<HTMLInputElement>('[data-role="profile-name"]')?.value)
             .toBe('Renamed elsewhere');
         expect(button('apply').disabled).toBe(true);
+    });
+
+    it('retires an import review when Apply acknowledges a rebased baseline', async () => {
+        const imported = themeConfiguration();
+        imported.Profiles[0].Palette = 'neutral';
+        const portable = {
+            SchemaVersion: imported.SchemaVersion,
+            ActiveProfileId: imported.ActiveProfileId,
+            Profiles: imported.Profiles,
+            Schedule: imported.Schedule,
+        };
+        JC.core.api = {
+            plugin: vi.fn().mockResolvedValue({ valid: true, data: portable }),
+        } as unknown as ApiApi;
+        const authoritative = themeConfiguration();
+        authoritative.Profiles[0].BasePreset = 'studio';
+        authoritative.Schedule = [{
+            Id: 'remote-schedule', ProfileId: 'default', StartMonthDay: '01-01', EndMonthDay: '12-31',
+            Priority: 5, Enabled: true,
+        }];
+        JC.saveUserSettings = vi.fn((): Promise<UserSettingsSaveResult> => Promise.resolve(
+            acknowledgedTheme(authoritative, 4),
+        ));
+        wireThemeStudioEditor(context());
+        button('preset', 'studio').click();
+        const input = panel.querySelector<HTMLInputElement>('[data-field="import-file"]')!;
+        Object.defineProperty(input, 'files', {
+            configurable: true,
+            value: [new File([JSON.stringify(portable)], 'reviewed-before-apply.json', { type: 'application/json' })],
+        });
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+        await vi.waitFor(() => expect(panel.querySelector('[data-action="accept-import"]')).not.toBeNull());
+
+        button('apply').click();
+
+        await vi.waitFor(() => expect(panel.textContent).toContain('theme_studio_saved'));
+        expect(panel.querySelector('.jc-theme-import-diff')).toBeNull();
+        expect(panel.querySelector('[data-action="accept-import"]')).toBeNull();
+        expect(panel.textContent).not.toContain('theme_studio_import_ready');
+        button('editor-mode', 'expert').click();
+        const adopted = JSON.parse(
+            panel.querySelector<HTMLTextAreaElement>('[data-field="expert-json"]')!.value,
+        ) as UserThemeConfiguration;
+        expect(adopted.Schedule).toEqual([expect.objectContaining({ Id: 'remote-schedule' })]);
     });
 
     it('accepts an exact acknowledgement while the runtime is between live-config generations', async () => {

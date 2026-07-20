@@ -3,6 +3,7 @@ import { parseUserThemeConfiguration } from './schema';
 
 const HISTORY_LIMIT = 50;
 export const THEME_PROFILE_NAME_MAX_LENGTH = 80;
+export const THEME_PROFILE_MAX_COUNT = 24;
 
 export function isValidThemeProfileName(name: string): boolean {
     const cleanName = name.trim();
@@ -146,7 +147,8 @@ export class ThemeEditorState {
 
     addProfile(name: string): boolean {
         const cleanName = name.trim();
-        if (!isValidThemeProfileName(cleanName) || this.#draft.Profiles.length >= 24) return false;
+        if (!isValidThemeProfileName(cleanName)
+            || this.#draft.Profiles.length >= THEME_PROFILE_MAX_COUNT) return false;
         return this.mutate((draft) => {
             const source = draft.Profiles.find((profile) => profile.Id === draft.ActiveProfileId);
             const profile = JSON.parse(JSON.stringify(source)) as ThemeProfile;
