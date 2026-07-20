@@ -118,6 +118,26 @@ function createPanelOwner(identityContext: IdentityContext): PanelOwner {
 
 type OwnedPanelElement = HTMLElement & { _identityCleanup?: () => void };
 
+interface SyntheticPanelEscapeEvent {
+    readonly type: 'keydown';
+    readonly key: 'Escape';
+    readonly target?: EventTarget | null;
+    stopPropagation?(): void;
+}
+
+type PanelCloseEvent = KeyboardEvent | MouseEvent | SyntheticPanelEscapeEvent;
+
+/** True when a printable keyboard event belongs to an editable surface. */
+function isEditableKeyboardTarget(target: EventTarget | null): boolean {
+    if (!(target instanceof Element)) return false;
+    const editable = target.closest('input, textarea, select, [contenteditable]');
+    if (!editable) return false;
+    if (editable.matches('input, textarea, select')) return true;
+    // The nearest explicit contenteditable boundary owns the inherited state;
+    // a nested `contenteditable="false"` island is deliberately non-editable.
+    return editable.getAttribute('contenteditable') !== 'false';
+}
+
 /** Toggle the main settings panel, joining calls made during the same open. */
 export function showEnhancedPanel(): Promise<void> {
     if (currentPanelOwner?.phase === 'open') {
@@ -285,7 +305,7 @@ async function openPanel(owner: PanelOwner): Promise<void> {
     let offset = { x: 0, y: 0 };
     let autoCloseTimer: number | null = null;
     let isMouseInside = false;
-    let closeHelp: (ev: any) => void = () => undefined;
+    let closeHelp: (ev: PanelCloseEvent) => void = () => undefined;
 
     // Every descendant listener installed by the split panel modules is
     // authorization-gated at the panel root. This also protects a retained,
@@ -528,8 +548,14 @@ async function openPanel(owner: PanelOwner): Promise<void> {
     });
 
     // --- Event Handlers for Settings Panel ---
-    closeHelp = (ev: any) => {
-        if ((ev.type === 'keydown' && (ev.key === 'Escape' || ev.key === '?')) || (ev.type === 'click' && ev.target.id === 'closeSettingsPanel')) {
+    closeHelp = (ev) => {
+        const keyboardClose = 'key' in ev && ev.type === 'keydown'
+            && (ev.key === 'Escape'
+                || (ev.key === '?' && !isEditableKeyboardTarget(ev.target ?? null)));
+        const buttonClose = ev.type === 'click'
+            && ev.target instanceof HTMLElement
+            && ev.target.id === 'closeSettingsPanel';
+        if (keyboardClose || buttonClose) {
             // modal-a11y's Escape path invokes this with a synthetic
             // `{ type, key }` object (not a DOM event), so stopPropagation may be
             // absent — guard it. Calling it unconditionally threw a TypeError

@@ -19,6 +19,13 @@ const mocks = vi.hoisted(() => ({
 vi.mock('./template', () => ({
     buildPanelHtml: () => `
         <button id="closeSettingsPanel" type="button">close</button>
+        <input id="lifecycleEditableInput" type="text">
+        <textarea id="lifecycleEditableTextarea"></textarea>
+        <select id="lifecycleEditableSelect"><option>one</option></select>
+        <div id="lifecycleEditableContent" contenteditable="true" tabindex="0">
+            <span id="lifecycleEditableContentChild">editable</span>
+        </div>
+        <button id="lifecycleStaleKeyTarget" type="button">stale key target</button>
         <div class="jc-panel-body">
             <div class="jc-panel-nav"><div class="jc-panel-nav-items"></div></div>
             <div class="jc-panel-main">
@@ -324,6 +331,57 @@ describe('settings panel lifecycle owner', () => {
         expect(focus).toHaveBeenCalledTimes(1);
         expect(isAnyModalOpen()).toBe(false);
         expect(document.body.classList.contains('jc-modal-open')).toBe(false);
+    });
+
+    it.each([
+        ['input', '#lifecycleEditableInput', '#lifecycleEditableInput'],
+        ['textarea', '#lifecycleEditableTextarea', '#lifecycleEditableTextarea'],
+        ['select', '#lifecycleEditableSelect', '#lifecycleEditableSelect'],
+        ['nested contenteditable', '#lifecycleEditableContentChild', '#lifecycleEditableContent'],
+    ] as const)(
+        'lets a %s own the printable question-mark key',
+        async (_surface, targetSelector, focusSelector) => {
+            await showPanel!();
+            const panel = document.getElementById('jellyfin-canopy-panel')!;
+            const target = panel.querySelector<HTMLElement>(targetSelector)!;
+            panel.querySelector<HTMLElement>(focusSelector)!.focus();
+
+            target.dispatchEvent(new KeyboardEvent('keydown', { key: '?', bubbles: true }));
+
+            expect(document.getElementById('jellyfin-canopy-panel')).toBe(panel);
+            expect(panel.isConnected).toBe(true);
+            expect(isAnyModalOpen()).toBe(true);
+        }
+    );
+
+    it('still closes on Escape from an editable descendant', async () => {
+        await showPanel!();
+        const input = document.getElementById('lifecycleEditableInput') as HTMLInputElement;
+        input.focus();
+
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+
+        expect(document.getElementById('jellyfin-canopy-panel')).toBeNull();
+        expect(isAnyModalOpen()).toBe(false);
+    });
+
+    it('keeps a replacement owner live when a retained stale subtree emits question mark', async () => {
+        await showPanel!();
+        const stalePanel = document.getElementById('jellyfin-canopy-panel')!;
+        const staleTarget = stalePanel.querySelector<HTMLElement>('#lifecycleStaleKeyTarget')!;
+        resetPanel!();
+
+        await showPanel!();
+        const replacement = document.getElementById('jellyfin-canopy-panel')!;
+        stalePanel.id = 'retained-stale-settings-panel';
+        document.body.appendChild(stalePanel);
+
+        staleTarget.dispatchEvent(new KeyboardEvent('keydown', { key: '?', bubbles: true }));
+
+        expect(document.getElementById('jellyfin-canopy-panel')).toBe(replacement);
+        expect(replacement.isConnected).toBe(true);
+        expect(isAnyModalOpen()).toBe(true);
+        stalePanel.remove();
     });
 
     it('continues disposing resources after one child cleanup throws', async () => {
