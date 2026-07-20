@@ -1208,6 +1208,53 @@ describe('Theme Studio responsive settings editor', () => {
         expect(button('apply').disabled).toBe(true);
     });
 
+    it('cancels a queued draft preview before an explicit Reload yields', async () => {
+        let resolveReload: (loaded: boolean) => void = () => undefined;
+        reload.mockImplementation(() => new Promise<boolean>((resolve) => { resolveReload = resolve; }));
+        JC.saveUserSettings = vi.fn().mockRejectedValue(Object.assign(new Error('conflict'), { kind: 'conflict' }));
+        wireThemeStudioEditor(context());
+        button('preset', 'cinematic').click();
+        expect(frames.size).toBeGreaterThan(0);
+        button('apply').click();
+        await vi.waitFor(() => expect(panel.textContent).toContain('theme_studio_error_conflict'));
+
+        button('reload').click();
+        flushFrames();
+
+        expect(preview).not.toHaveBeenCalled();
+        resolveReload(true);
+        await vi.waitFor(() => expect(panel.textContent).toContain('theme_studio_reloaded'));
+        flushFrames();
+        expect(preview).not.toHaveBeenCalled();
+        expect(button('apply').disabled).toBe(true);
+    });
+
+    it('cancels pending Expert draft work before an explicit Reload yields', async () => {
+        let resolveReload: (loaded: boolean) => void = () => undefined;
+        reload.mockImplementation(() => new Promise<boolean>((resolve) => { resolveReload = resolve; }));
+        JC.saveUserSettings = vi.fn().mockRejectedValue(Object.assign(new Error('conflict'), { kind: 'conflict' }));
+        wireThemeStudioEditor(context());
+        button('preset', 'cinematic').click();
+        button('apply').click();
+        await vi.waitFor(() => expect(panel.textContent).toContain('theme_studio_error_conflict'));
+        flushFrames();
+        preview.mockClear();
+        button('editor-mode', 'expert').click();
+        const editor = panel.querySelector<HTMLTextAreaElement>('[data-field="expert-json"]')!;
+        editor.value = editor.value.replace('canopy-night', 'neutral');
+        editor.dispatchEvent(new Event('input', { bubbles: true }));
+
+        button('reload').click();
+        vi.advanceTimersByTime(250);
+
+        expect(preview).not.toHaveBeenCalled();
+        resolveReload(true);
+        await vi.waitFor(() => expect(panel.textContent).toContain('theme_studio_reloaded'));
+        flushFrames();
+        expect(preview).not.toHaveBeenCalled();
+        expect(button('apply').disabled).toBe(true);
+    });
+
     it('adopts an acknowledged Apply even if the panel closes while saving', async () => {
         let resolveSave: (result: UserSettingsSaveResult) => void = () => undefined;
         JC.saveUserSettings = vi.fn(() => new Promise<UserSettingsSaveResult>((resolve) => {

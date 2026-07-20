@@ -906,6 +906,11 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         // began against the discarded draft before yielding to the runtime.
         importGeneration += 1;
         clearPendingImport();
+        if (expertTimer) {
+            clearTimeout(expertTimer);
+            expertTimer = 0;
+        }
+        cancelPreviewFrame();
         loading = true;
         status = t('theme_studio_loading');
         render();

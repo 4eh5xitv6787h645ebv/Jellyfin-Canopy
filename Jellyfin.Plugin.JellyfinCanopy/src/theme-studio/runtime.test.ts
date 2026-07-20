@@ -156,6 +156,26 @@ describe('Theme Studio identity-owned runtime', () => {
         );
     });
 
+    it('still performs its initial authoritative read after an early acknowledgement', async () => {
+        const server = themeConfiguration();
+        server.Revision = 6;
+        server.Profiles[0].Palette = 'neutral';
+        const plugin = apiReturning(server);
+        const { runtime } = createRuntime();
+        const acknowledged = themeConfiguration();
+        acknowledged.Revision = 5;
+        acknowledged.Profiles[0].BasePreset = 'studio';
+
+        expect(runtime.adoptAcknowledged(acknowledged)).toBe(true);
+        await expect(runtime.whenReady()).resolves.toBe(true);
+
+        expect(plugin).toHaveBeenCalledOnce();
+        expect(runtime.getConfiguration()).toMatchObject({
+            Revision: 6,
+            Profiles: [expect.objectContaining({ BasePreset: 'canopy', Palette: 'neutral' })],
+        });
+    });
+
     it('reloads authoritative state through the existing abortable owner', async () => {
         const first = themeConfiguration();
         const second = themeConfiguration();

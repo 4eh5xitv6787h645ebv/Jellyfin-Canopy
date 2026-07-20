@@ -120,6 +120,7 @@ export class ThemeStudioRuntime {
     #previewAllowScheduling = true;
     #disposed = false;
     #installed = false;
+    #authoritativeLoadSettled = false;
     #loadGeneration = 0;
     #acknowledgementGeneration = 0;
     #loadPromise: Promise<void> | null = null;
@@ -183,10 +184,14 @@ export class ThemeStudioRuntime {
 
     load(): Promise<void> {
         if (this.#disposed || !this.#scope.isCurrent()) return Promise.resolve();
+        this.#authoritativeLoadSettled = false;
         const generation = ++this.#loadGeneration;
         const task = this.#loadOwned(generation, this.#acknowledgementGeneration);
         const tracked = task.finally(() => {
-            if (this.#loadPromise === tracked) this.#loadPromise = null;
+            if (this.#loadPromise === tracked) {
+                this.#loadPromise = null;
+                if (generation === this.#loadGeneration) this.#authoritativeLoadSettled = true;
+            }
         });
         this.#loadPromise = tracked;
         return tracked;
@@ -256,7 +261,7 @@ export class ThemeStudioRuntime {
     async whenReady(): Promise<boolean> {
         if (this.#disposed || !this.#scope.isCurrent()) return false;
         if (this.#loadPromise) await this.#loadPromise;
-        else if (!this.#configuration) await this.load();
+        else if (!this.#authoritativeLoadSettled || !this.#configuration) await this.load();
         return this.#configuration !== null && this.#scope.isCurrent() && !this.#disposed;
     }
 
