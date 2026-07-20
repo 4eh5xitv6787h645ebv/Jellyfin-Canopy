@@ -713,9 +713,21 @@ Volume lifecycle:
 - The Volume's baselines are **immutable during ordinary measurement runs**:
   writable Jellyfin state is copied to instance-local storage; each
   profile's baseline is identified by the seed-input digest in its own
-  metadata record; a baseline is refreshed only through an exclusive
-  seed-refresh path that rebuilds **only the affected profile's baseline**,
-  and only when one of that profile's seed inputs changes.
+  metadata record. A baseline is built or rebuilt only through an exclusive
+  seed-refresh path that rebuilds **only the affected profile's baseline**.
+  The refresh trigger is exactly the **seed-provenance check below failing**
+  for that profile — for any reason: the tested commit's seed inputs
+  changed, or the baseline or its metadata record is missing, unreadable,
+  corrupt, wrong-profile, or carries an unparseable digest. The refresh
+  writes the rebuilt baseline first and its metadata record (digest computed
+  from the seed inputs of the commit that ran the refresh) **last**, so a
+  refresh interrupted mid-write leaves a baseline indistinguishable from a
+  missing one and simply re-triggers refresh on the next run. While the
+  provenance check passes, refresh must not run (an unchanged-input rebuild
+  only adds noise and Volume churn); when it fails, refresh is the defined
+  recovery transition — there is **no baseline state from which the tier
+  cannot recover**, and recovery never requires artificially changing a seed
+  input.
 - A baseline never contains **plugin-persisted runtime state** (for example
   `tag-cache.json` under the plugin configuration directory): the warm-start
   input is produced in-run by the cold session of the tag-cache state
@@ -735,10 +747,12 @@ Volume lifecycle:
 - Every measurement run verifies **seed provenance before measuring**: the
   digest recorded in the Volume's metadata **for the profile being run** must
   equal the digest computed from the **tested commit's** seed inputs for that
-  profile. A mismatch — stale seed, missing or wrong-profile baseline,
-  changed Jellyfin image pin — is a configuration failure: the run is
-  **no-evidence** (never a pass or a breach) until the exclusive seed-refresh
-  path rebuilds that profile's baseline.
+  profile. A verification failure — stale seed, changed Jellyfin image pin,
+  or a missing, unreadable, corrupt, or wrong-profile baseline or metadata
+  record — is a configuration failure: the run is **no-evidence** (never a
+  pass or a breach) until the exclusive seed-refresh path, whose trigger is
+  exactly this verification failure (see above), rebuilds that profile's
+  baseline.
 
 Secrets and teardown:
 
