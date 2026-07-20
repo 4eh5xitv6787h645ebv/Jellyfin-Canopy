@@ -59,6 +59,10 @@ describe('Theme Studio CSS serialization', () => {
             'Adapter live-guide-v12',
             'Adapter book-reader-v12',
             'Adapter mobile-safe-area-v12',
+            'Adapter canopy-shell-v1',
+            'Adapter canopy-protection-v1',
+            'Adapter canopy-card-overlays-v1',
+            'Adapter canopy-transient-ui-v1',
         ]) expect(first, adapter).toContain(adapter);
         expect(first).toContain('[data-jc-theme-navigation="bottom"]');
         expect(first).toContain('[data-jc-theme-home-hero="cinematic"]');

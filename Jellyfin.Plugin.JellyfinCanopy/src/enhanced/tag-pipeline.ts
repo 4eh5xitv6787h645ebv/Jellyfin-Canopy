@@ -2094,7 +2094,7 @@ async function processBatch(
  * for the top-right corner get the offset. Other positions are untouched.
  * @returns CSS rules string
  */
-function buildIndicatorOffsetCSS(): string {
+export function buildIndicatorOffsetCSS(): string {
     const posMap = {
         'genre-overlay-container': JC.currentSettings?.genreTagsPosition || JC.pluginConfig?.GenreTagsPosition || 'top-right',
         'quality-overlay-container': JC.currentSettings?.qualityTagsPosition || JC.pluginConfig?.QualityTagsPosition || 'top-left',
@@ -2103,7 +2103,11 @@ function buildIndicatorOffsetCSS(): string {
     };
     const topRightContainers = Object.entries(posMap)
         .filter(([, pos]) => pos === 'top-right')
-        .map(([cls]) => `.cardScalable:has(.countIndicator, .playedIndicator) > .jc-tag-host > .${cls}`)
+        .flatMap(([cls]) => [
+            `.cardScalable:has(.countIndicator, .playedIndicator) > .jc-tag-host > .${cls}`,
+            '.cardScalable:has(.countIndicator, .playedIndicator) > .jc-tag-host'
+                + ` > .jc-tag-lane[data-jc-tag-position="top-right"] > .${cls}`,
+        ])
         .join(',\n                ');
 
     if (!topRightContainers) return '';

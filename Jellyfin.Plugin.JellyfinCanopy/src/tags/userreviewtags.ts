@@ -6,6 +6,7 @@
 
 import { JC as JEBase } from '../globals';
 import { createStableMethodFacade } from '../core/feature-loader';
+import { attachThemeTagOverlay, resolvePosition } from '../core/tag-renderer-base';
 import { ensureMaterialSymbolsFont, injectCss, removeCss } from '../core/ui-kit';
 import type { ApiApi, IdentityContext } from '../types/jc';
 
@@ -273,8 +274,12 @@ async function appendUserRatingToContainer(
             overlay = document.createElement('div');
             overlay.className = 'rating-overlay-container';
             overlay.dataset.jcIdentityOwned = 'true';
+            overlay.dataset.jcTagPosition = resolvePosition(
+                'ratingTagsPosition', 'RatingTagsPosition', 'bottom-right',
+            ).pos;
+            overlay.dataset.jcThemeComponent = 'card-tag-stack';
             JC.identity.own(overlay, context);
-            containerOrEl.appendChild(overlay);
+            attachThemeTagOverlay(containerOrEl, overlay);
         }
         container = overlay;
     }

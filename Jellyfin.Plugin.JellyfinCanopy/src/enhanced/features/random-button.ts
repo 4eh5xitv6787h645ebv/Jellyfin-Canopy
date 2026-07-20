@@ -146,6 +146,8 @@ function onRandomClick(context: IdentityContext, randomButton: HTMLButtonElement
 function buildRandomButton(context: IdentityContext, anchor: HTMLElement): HTMLDivElement {
     const buttonContainer = document.createElement('div');
     buttonContainer.id = 'randomItemButtonContainer';
+    buttonContainer.dataset.jcThemeSurface = 'shell';
+    buttonContainer.dataset.jcThemeComponent = 'random-action';
 
     const onModern = anchor.closest('.MuiToolbar-root') !== null;
     let randomButton: HTMLButtonElement;
@@ -172,6 +174,7 @@ function buildRandomButton(context: IdentityContext, anchor: HTMLElement): HTMLD
     }
 
     randomButton.addEventListener('click', () => onRandomClick(context, randomButton));
+    randomButton.dataset.jcThemeComponent = 'icon-button';
     buttonContainer.appendChild(randomButton);
     return buttonContainer;
 }

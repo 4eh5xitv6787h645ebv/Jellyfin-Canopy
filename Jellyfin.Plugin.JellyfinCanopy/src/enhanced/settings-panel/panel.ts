@@ -235,6 +235,8 @@ async function openPanel(owner: PanelOwner): Promise<void> {
     const help = document.createElement('div');
     help.id = PANEL_ID;
     help.setAttribute('data-jc-identity-owned', 'true');
+    help.dataset.jcThemeSurface = 'settings';
+    help.dataset.jcThemeComponent = 'enhanced-panel';
     JC.identity.own(help, identityContext);
     owner.root = help;
     owner.registerCleanup(() => help.remove());
@@ -266,6 +268,8 @@ async function openPanel(owner: PanelOwner): Promise<void> {
     const backdrop = document.createElement('div');
     backdrop.id = BACKDROP_ID;
     backdrop.setAttribute('data-jc-identity-owned', 'true');
+    backdrop.dataset.jcThemeSurface = 'settings';
+    backdrop.dataset.jcThemeComponent = 'modal-backdrop';
     backdrop.setAttribute('aria-hidden', 'true');
     JC.identity.own(backdrop, identityContext);
     Object.assign(backdrop.style, {

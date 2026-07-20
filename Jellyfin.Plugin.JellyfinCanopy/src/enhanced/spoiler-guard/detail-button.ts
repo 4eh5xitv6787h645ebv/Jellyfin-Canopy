@@ -114,6 +114,8 @@ export function addSpoilerBlurButton(itemId: string, visiblePage: Element, itemT
         existing = document.createElement('button');
         existing.setAttribute('is', 'emby-button');
         existing.className = 'button-flat detailButton emby-button jc-spoiler-blur-btn';
+        existing.dataset.jcThemeSurface = 'details';
+        existing.dataset.jcThemeComponent = 'protection-toggle';
         existing.type = 'button';
         existing.dataset.jcIdentityOwned = 'true';
         JC.identity.own(existing, context);

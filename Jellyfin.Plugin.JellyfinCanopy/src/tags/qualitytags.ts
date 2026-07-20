@@ -674,6 +674,9 @@ function insertOverlay(ctx: TagRendererContext, container: HTMLElement, qualitie
 
     const qualityContainer = document.createElement('div');
     qualityContainer.className = containerClass;
+    qualityContainer.dataset.jcTagPosition = resolvePosition(
+        'qualityTagsPosition', 'QualityTagsPosition', 'top-left',
+    ).pos;
 
     for (const { key } of categoriesSorted) {
         for (const q of buckets.get(key)!) {

@@ -224,6 +224,8 @@ function createRemoveButton(context: IdentityContext, scroller: HTMLElement, ite
     });
     button.dataset.jcItemId = itemId;
     button.dataset.jcSurface = surface;
+    button.dataset.jcThemeSurface = 'home';
+    button.dataset.jcThemeComponent = 'remove-action';
     const textEl = button.querySelector('.actionSheetItemText')!;
 
     button.addEventListener('click', (e) => {

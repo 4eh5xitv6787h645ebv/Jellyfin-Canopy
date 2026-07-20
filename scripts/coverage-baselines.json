@@ -9,12 +9,12 @@
       "scope": "Jellyfin.Plugin.JellyfinCanopy/src/core/**",
       "report": "coverage/coverage-summary.json",
       "measured": {
-        "coveredLines": 1932,
-        "totalLines": 2253
+        "coveredLines": 1963,
+        "totalLines": 2288
       },
       "tolerance": {
         "missingCoveredLines": 1,
-        "rationale": "Two clean local Node 22/V8 coverage runs on 2026-07-17 passed 1244 tests, and the final clean run passed 1249 tests; all three measured the identical complete 2253-line core scope at 1932 covered lines (85.752%). Issue #122's localized/late home-row regressions exercise existing navigation and action-sheet paths, advancing 17 covered lines over the reviewed 1915/2253 baseline without changing scope. The existing one-line tolerance is unchanged and permits only the previously reproduced negligible instrumentation variance; coverage-baseline.test.js retains exact below-floor, above-baseline, scope-change, and broad-tolerance negative boundaries."
+        "rationale": "Theme Studio Canopy-surface integration in issue #393. Repeated clean local Node 22/V8 coverage runs on 2026-07-21 each passed all 1594 tests over the identical complete 2288-line core scope and measured 1963 covered lines (85.795%). Relative to the prior 1932/2253 baseline, the legitimate 35-line scope increase adds identity-owned tag-lane attachment and cleanup, semantic notification visibility states, and native-indicator compatibility through tag lanes. Focused tests cover same-corner reuse, stable position metadata, identity ownership, empty-lane cleanup, unknown-position fallback, stock RTL exits, visibility transitions, and the nested native-indicator selector. Covered lines advance by 31 and total core coverage improves from 85.752% to 85.795%. The existing one-line tolerance is unchanged and permits only the previously reproduced negligible instrumentation variance; coverage-baseline.test.js retains exact below-floor, above-baseline, scope-change, and broad-tolerance negative boundaries."
       }
     },
     "server": {

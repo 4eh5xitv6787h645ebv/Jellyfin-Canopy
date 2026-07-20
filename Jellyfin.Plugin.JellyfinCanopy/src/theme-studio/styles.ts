@@ -1,5 +1,6 @@
 import type { ThemeTokenValue } from '../types/jc';
 import { serializeAccessibilityAdapters } from './accessibility';
+import { serializeCanopySurfaceAdapters } from './canopy-surfaces';
 import { withOpacity } from './color';
 import { serializeEffectsAdapters } from './effects';
 import { serializeMediaSurfaceAdapters } from './media-surfaces';
@@ -206,5 +207,6 @@ ${serializeEffectsAdapters(selector)}
 ${serializePresentationAdapters(selector)}
 ${serializeMediaSurfaceAdapters(selector)}
 ${serializeMobileAdapters(selector)}
+${serializeCanopySurfaceAdapters(selector)}
 ${serializeAccessibilityAdapters(selector, theme)}`;
 }

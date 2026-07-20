@@ -78,10 +78,13 @@ function confirmMultiRemove(context: IdentityContext, targets: { name: string; s
 
         const overlay = document.createElement('div');
         overlay.className = 'jc-remove-confirm-overlay';
+        overlay.dataset.jcThemeSurface = 'home';
+        overlay.dataset.jcThemeComponent = 'modal-backdrop';
         // Above Jellyfin's action sheet / dialog (z-index 999999) so it's never behind a closing menu.
         overlay.style.cssText = 'position:fixed;inset:0;z-index:1000001;background:rgba(0,0,0,0.75);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:16px;';
 
         const dialog = document.createElement('div');
+        dialog.dataset.jcThemeComponent = 'destructive-confirmation';
         dialog.style.cssText = 'background:linear-gradient(135deg,rgba(30,30,35,0.98),rgba(20,20,25,0.98));border:1px solid rgba(255,255,255,0.12);border-radius:12px;padding:24px;max-width:460px;width:100%;color:#fff;max-height:80vh;display:flex;flex-direction:column;';
 
         const title = document.createElement('h3');
@@ -196,6 +199,8 @@ function createMultiSelectRemoveButton(context: IdentityContext, scroller: HTMLE
         icon: 'visibility_off',
         text: multiSelectRemoveLabel(targets)
     });
+    button.dataset.jcThemeSurface = 'home';
+    button.dataset.jcThemeComponent = 'remove-action';
     const textEl = button.querySelector('.actionSheetItemText')!;
 
     button.addEventListener('click', (e) => {

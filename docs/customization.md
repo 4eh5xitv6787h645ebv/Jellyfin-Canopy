@@ -102,6 +102,18 @@ The desktop capture uses a maintained High Contrast profile with 200% text, Arab
 
 The phone capture comes from the same real Jellyfin 12 browser test at 390 × 844 with coarse-pointer behavior. The focus ring, long labels, touch targets, content order, and single-column reflow are asserted separately from the screenshot.
 
+### Canopy feature surfaces
+
+Theme Studio also gives Canopy's own modern interfaces the same semantic surfaces as Jellyfin. The Enhanced settings panel, native tabs, random actions, protected-content controls, hidden-content management, tags, ratings, filler warnings, confirmations, notifications, loading states, and errors inherit the active profile without changing what those features do. The desktop fixture below deliberately places three tags in one card corner alongside a rating and filler warning to verify that the overlays stack instead of colliding.
+
+![Theme Studio Canopy feature surfaces on a modern desktop](images/theme-studio-canopy-surfaces-desktop.png)
+
+Tags use one logical lane per configured corner. Long values wrap inside the card, touch and keyboard actions remain reachable, RTL flips logical placement, and coarse-pointer controls stay at least 44 CSS pixels. Hidden and spoiler-protected values remain hidden until their owning feature authorizes a reveal; a theme cannot bypass confirmation, administrator, or feature-enabled policy.
+
+![Theme Studio Canopy feature surfaces on a modern phone](images/theme-studio-canopy-surfaces-phone.png)
+
+The phone capture is the same authenticated Jellyfin 12 fixture at 390 × 844. The suite also verifies phone landscape, desktop wide, High Contrast, reduced transparency, keyboard focus, RTL, and exact stock/no-op behavior on tablet-only, legacy, and TV layouts.
+
 ### Dynamic color and privacy
 
 Dynamic color is optional and runs only after the usable theme has painted. Canopy reads one same-origin Jellyfin **Primary** or **Backdrop** image, reduces it to a small local color sample, and blends the result with the profile accent. Analysis is cancellable and bounded; it never contacts an artwork CDN, and a media URL, item identifier, image tag, or sampled pixels are never written to `theme.json`, profile exports, CSS logs, or documentation captures. When analysis is unavailable or fails, the curated palette remains active.

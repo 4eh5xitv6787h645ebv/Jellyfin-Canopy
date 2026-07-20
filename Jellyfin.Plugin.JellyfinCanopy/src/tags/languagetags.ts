@@ -140,6 +140,7 @@ function insertLanguageTags(ctx: TagRendererContext, container: HTMLElement, lan
     const wrap = document.createElement('div');
     wrap.className = containerClass;
     const pos = resolvePosition('languageTagsPosition', 'LanguageTagsPosition', 'bottom-left');
+    wrap.dataset.jcTagPosition = pos.pos;
     wrap.style.position = 'absolute';
     wrap.style.top = pos.topVal; wrap.style.right = pos.rightVal; wrap.style.bottom = pos.bottomVal; wrap.style.left = pos.leftVal;
     // If positioned top-right and the card has indicators, add a top margin to avoid overlap

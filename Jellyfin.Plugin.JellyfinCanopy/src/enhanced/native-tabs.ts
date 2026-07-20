@@ -121,6 +121,8 @@ function createRuntime(scope: FeatureScope): NativeTabsRuntime {
 
         const group = markOwned(document.createElement('div'));
         group.id = 'jc-native-tabs-group';
+        group.dataset.jcThemeSurface = 'home';
+        group.dataset.jcThemeComponent = 'native-tab-actions';
         group.style.cssText = 'display:flex;align-items:center;order:-1;';
         const separator = document.createElement('span');
         separator.id = 'jc-native-tabs-separator';
@@ -204,6 +206,8 @@ function createRuntime(scope: FeatureScope): NativeTabsRuntime {
                 window.location.hash = `${base}?tab=${entry.index}`;
             },
         }), entry.id);
+        link.dataset.jcThemeSurface = 'home';
+        link.dataset.jcThemeComponent = 'native-tab-link';
         group.insertBefore(link, separator);
         const firstAppearance = !animatedLinkIds.has(entry.id);
         animatedLinkIds.add(entry.id);
@@ -231,6 +235,8 @@ function createRuntime(scope: FeatureScope): NativeTabsRuntime {
                 button.setAttribute('is', 'emby-button');
                 button.id = buttonId;
                 button.className = 'emby-tab-button';
+                button.dataset.jcThemeSurface = 'home';
+                button.dataset.jcThemeComponent = 'native-tab';
                 button.setAttribute('data-index', String(entry.index));
                 const label = document.createElement('div');
                 label.className = 'emby-button-foreground';
@@ -246,6 +252,8 @@ function createRuntime(scope: FeatureScope): NativeTabsRuntime {
                 const panel = markOwned(document.createElement('div'), entry.id);
                 panel.id = panelId;
                 panel.className = 'tabContent pageTabContent';
+                panel.dataset.jcThemeSurface = 'home';
+                panel.dataset.jcThemeComponent = 'native-tab-panel';
                 panel.setAttribute('data-index', String(entry.index));
                 root.appendChild(panel);
                 entry.onMount(panel);

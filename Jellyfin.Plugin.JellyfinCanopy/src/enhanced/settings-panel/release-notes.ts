@@ -46,7 +46,11 @@ export async function showReleaseNotesNotification(): Promise<void> {
     const notification = document.createElement('div');
     notification.id = notificationId;
     notification.setAttribute('data-jc-identity-owned', 'true');
+    notification.dataset.jcThemeSurface = 'notifications';
+    notification.dataset.jcThemeComponent = 'release-notes';
+    notification.dataset.jcThemeVisibility = 'hidden';
     JC.identity.own(notification, context);
+    const hiddenTransform = 'translateY(-50%) translateX(100%)';
 
     // --- Release notes autoclose ---
     let autoCloseTimer: number | null = null;
@@ -55,7 +59,8 @@ export async function showReleaseNotesNotification(): Promise<void> {
 
     const closePanel = () => {
         if (document.getElementById(notificationId)) {
-            notification.style.transform = 'translateY(-50%) translateX(100%)';
+            notification.dataset.jcThemeVisibility = 'hidden';
+            notification.style.transform = hiddenTransform;
             const timer = window.setTimeout(() => {
                 releaseTimers.delete(timer);
                 notification.remove();
@@ -105,7 +110,7 @@ export async function showReleaseNotesNotification(): Promise<void> {
         position: 'fixed',
         top: '50%',
         right: '20px',
-        transform: 'translateY(-50%) translateX(100%)',
+        transform: hiddenTransform,
         background: panelBg,
         color: textColor,
         padding: '0',
@@ -203,7 +208,10 @@ export async function showReleaseNotesNotification(): Promise<void> {
     document.body.appendChild(notification);
     const enterTimer = window.setTimeout(() => {
         releaseTimers.delete(enterTimer);
-        if (JC.identity.isCurrent(context)) notification.style.transform = 'translateY(-50%) translateX(0)';
+        if (JC.identity.isCurrent(context)) {
+            notification.dataset.jcThemeVisibility = 'visible';
+            notification.style.transform = 'translateY(-50%) translateX(0)';
+        }
     }, 10);
     releaseTimers.add(enterTimer);
 

@@ -36,6 +36,8 @@ export function buildSeerrPendingToggle(data: any, mediaType: string): HTMLButto
     // secondary action with its own ghost styling.
     btn.className = 'jc-spoiler-pending-btn';
     btn.dataset.jcIdentityOwned = 'true';
+    btn.dataset.jcThemeSurface = 'seerr-details';
+    btn.dataset.jcThemeComponent = 'protection-toggle';
     btn.setAttribute('data-jc-tmdb-id', String(tmdbId));
     btn.setAttribute('data-jc-media-type', mediaType);
     JC.identity.own(btn, context);

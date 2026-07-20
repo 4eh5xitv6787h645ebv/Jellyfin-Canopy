@@ -185,6 +185,63 @@ describe('tag-renderer-base projection invalidation (BI-SEC-035)', () => {
     });
 });
 
+describe('tag-renderer-base Theme Studio corner lanes', () => {
+    afterEach(() => {
+        document.body.innerHTML = '';
+        JC.tagPipeline = undefined;
+        JC.pluginConfig = {};
+    });
+
+    it('stacks same-corner overlays in one semantic lane and removes empty lanes', () => {
+        const host = buildCardHost('indexPage');
+        const first = register(`lane-a-${Date.now()}`, {
+            ...minimalSpec(),
+            containerClass: 'lane-overlay-a',
+            taggedAttr: 'jcLaneATagged',
+        });
+        const second = register(`lane-b-${Date.now()}`, {
+            ...minimalSpec(),
+            containerClass: 'lane-overlay-b',
+            taggedAttr: 'jcLaneBTagged',
+        });
+        const overlayA = document.createElement('div');
+        overlayA.className = 'lane-overlay-a';
+        overlayA.dataset.jcTagPosition = 'top-right';
+        overlayA.appendChild(document.createElement('span'));
+        const overlayB = document.createElement('div');
+        overlayB.className = 'lane-overlay-b';
+        overlayB.dataset.jcTagPosition = 'top-right';
+        overlayB.appendChild(document.createElement('span'));
+
+        expect(first.commitOverlay(host, overlayA)).toBe(true);
+        expect(second.commitOverlay(host, overlayB)).toBe(true);
+        const lanes = host.querySelectorAll<HTMLElement>(':scope > .jc-tag-lane');
+        expect(lanes).toHaveLength(1);
+        expect(lanes[0].dataset.jcTagPosition).toBe('top-right');
+        expect(lanes[0].dataset.jcThemeComponent).toBe('card-tag-lane');
+        expect(lanes[0].dataset.jcIdentityOwned).toBe('true');
+        expect(overlayA.dataset.jcThemeComponent).toBe('card-tag-stack');
+        expect([...lanes[0].children]).toEqual([overlayA, overlayB]);
+
+        first.removeExistingOverlay(host);
+        expect(host.querySelector('.jc-tag-lane')).not.toBeNull();
+        second.removeExistingOverlay(host);
+        expect(host.querySelector('.jc-tag-lane')).toBeNull();
+    });
+
+    it('keeps unknown positions layout-neutral instead of inventing a corner', () => {
+        const host = buildCardHost('indexPage');
+        const ctx = register(`lane-invalid-${Date.now()}`, minimalSpec());
+        const overlay = document.createElement('div');
+        overlay.className = 'jc-q';
+        overlay.dataset.jcTagPosition = 'middle';
+        overlay.appendChild(document.createElement('span'));
+        expect(ctx.commitOverlay(host, overlay)).toBe(true);
+        expect(overlay.parentElement).toBe(host);
+        expect(host.querySelector('.jc-tag-lane')).toBeNull();
+    });
+});
+
 describe('tag-renderer-base identity ownership', () => {
     afterEach(() => {
         JC.identity.transition('test-server-id', 'test-user-id', 'tag-renderer-test-cleanup');

@@ -77,6 +77,8 @@ function removeMarker(target: HTMLElement): void {
 function marker(): HTMLSpanElement {
     const badge = document.createElement('span');
     badge.className = MARKER_CLASS;
+    badge.dataset.jcThemeSurface = 'media-card';
+    badge.dataset.jcThemeComponent = 'warning-badge';
     badge.textContent = localizedFiller();
     badge.setAttribute('role', 'note');
     badge.setAttribute('aria-label', localizedFiller());
