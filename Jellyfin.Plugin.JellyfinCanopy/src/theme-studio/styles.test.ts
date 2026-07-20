@@ -54,6 +54,10 @@ describe('Theme Studio CSS serialization', () => {
             'Adapter seasons-v12',
             'Adapter progress-indicators-v12',
             'Adapter dialogs-forms-v12',
+            'Adapter player-media-v12',
+            'Adapter music-now-playing-v12',
+            'Adapter live-guide-v12',
+            'Adapter book-reader-v12',
             'Adapter mobile-safe-area-v12',
         ]) expect(first, adapter).toContain(adapter);
         expect(first).toContain('[data-jc-theme-navigation="bottom"]');

@@ -532,6 +532,11 @@ describe('Theme Studio identity-owned runtime', () => {
             'progress-position': 'bottom',
             'watched-indicator': 'check',
             'unwatched-indicator': 'corner',
+            'player-osd-density': 'standard',
+            'player-control-material': 'translucent',
+            'player-pause-screen-material': 'translucent',
+            'player-subtitle-backdrop': 'shadow',
+            'player-trickplay-shape': 'rounded',
         });
         expect(document.getElementById(COMMITTED_STYLE_ID)?.textContent)
             .toContain('--jf-palette-background-default: #0B0B12');
@@ -678,6 +683,11 @@ describe('Theme Studio identity-owned runtime', () => {
                 'progress.position': 'floating',
                 'progress.watched-indicator': 'floating',
                 'progress.unwatched-indicator': 'none',
+                'player.osd-density': 'cinematic',
+                'player.control-material': 'glass',
+                'player.pause-screen-material': 'solid',
+                'player.subtitle-backdrop': 'box',
+                'player.trickplay-shape': 'pill',
             },
             Accessibility: {
                 ...preview.Profiles[0].Accessibility,
@@ -708,6 +718,11 @@ describe('Theme Studio identity-owned runtime', () => {
             'progress-position': 'floating',
             'watched-indicator': 'floating',
             'unwatched-indicator': 'none',
+            'player-osd-density': 'cinematic',
+            'player-control-material': 'glass',
+            'player-pause-screen-material': 'solid',
+            'player-subtitle-backdrop': 'box',
+            'player-trickplay-shape': 'pill',
         });
         expect(JC.core.themeStudio?.getDiagnostics().status).toBe('preview');
 
@@ -731,6 +746,11 @@ describe('Theme Studio identity-owned runtime', () => {
             'progress-position': 'bottom',
             'watched-indicator': 'check',
             'unwatched-indicator': 'corner',
+            'player-osd-density': 'standard',
+            'player-control-material': 'translucent',
+            'player-pause-screen-material': 'translucent',
+            'player-subtitle-backdrop': 'shadow',
+            'player-trickplay-shape': 'rounded',
         });
         expect(JC.core.themeStudio?.getDiagnostics().status).toBe('active');
         expect(currentApi).toBe(JC.core.themeStudio);

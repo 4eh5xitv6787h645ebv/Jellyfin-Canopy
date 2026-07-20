@@ -56,6 +56,11 @@ const ROOT_ATTRIBUTES = Object.freeze([
     'data-jc-theme-progress-position',
     'data-jc-theme-watched-indicator',
     'data-jc-theme-unwatched-indicator',
+    'data-jc-theme-player-osd-density',
+    'data-jc-theme-player-control-material',
+    'data-jc-theme-player-pause-screen-material',
+    'data-jc-theme-player-subtitle-backdrop',
+    'data-jc-theme-player-trickplay-shape',
 ]);
 
 const MEDIA_QUERIES = Object.freeze({
@@ -611,6 +616,14 @@ export class ThemeStudioRuntime {
         root.setAttribute('data-jc-theme-progress-position', theme.presentation.progressPosition);
         root.setAttribute('data-jc-theme-watched-indicator', theme.presentation.watchedIndicator);
         root.setAttribute('data-jc-theme-unwatched-indicator', theme.presentation.unwatchedIndicator);
+        root.setAttribute('data-jc-theme-player-osd-density', String(theme.tokens['player.osd-density']));
+        root.setAttribute('data-jc-theme-player-control-material', String(theme.tokens['player.control-material']));
+        root.setAttribute(
+            'data-jc-theme-player-pause-screen-material',
+            String(theme.tokens['player.pause-screen-material']),
+        );
+        root.setAttribute('data-jc-theme-player-subtitle-backdrop', String(theme.tokens['player.subtitle-backdrop']));
+        root.setAttribute('data-jc-theme-player-trickplay-shape', String(theme.tokens['player.trickplay-shape']));
         this.#applyMobileEnvironment(theme.breakpoint === 'phone', theme.reducedTransparency);
     }
 

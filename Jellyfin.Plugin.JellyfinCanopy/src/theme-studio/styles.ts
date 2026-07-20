@@ -1,5 +1,6 @@
 import type { ThemeTokenValue } from '../types/jc';
 import { readableForeground } from './color';
+import { serializeMediaSurfaceAdapters } from './media-surfaces';
 import { serializeMobileAdapters } from './mobile';
 import { serializePresentationAdapters } from './presentation';
 import type { ResolvedTheme } from './resolver';
@@ -219,5 +220,6 @@ ${declarationBlock(declarations)}
 }
 ${adapters(selector, theme)}
 ${serializePresentationAdapters(selector)}
+${serializeMediaSurfaceAdapters(selector)}
 ${serializeMobileAdapters(selector)}`;
 }

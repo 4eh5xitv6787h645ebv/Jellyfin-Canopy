@@ -1171,7 +1171,16 @@ import {
       const percent = (bookmark.timestamp / duration) * 100;
       const markerColor = bookmark.exactMatch ? '#00d4ff' : '#ffa500';
 
-      const marker = document.createElement('div');
+      const root = document.documentElement;
+      const modernBrowserMarker = root.classList.contains('jc-modern-layout')
+        && !root.classList.contains('jc-legacy-layout')
+        && !root.classList.contains('layout-tv')
+        && !document.body?.classList.contains('layout-tv')
+        && root.getAttribute('data-layout') !== 'tv';
+      const marker = modernBrowserMarker
+        ? document.createElement('button')
+        : document.createElement('div');
+      if (marker instanceof HTMLButtonElement) marker.type = 'button';
       marker.className = 'jc-bookmark-marker';
       marker.dataset.jcIdentityOwned = 'true';
       marker.dataset.jcIdentityEpoch = String(captured.context!.epoch);
@@ -1189,6 +1198,9 @@ import {
         display: flex;
         align-items: center;
         justify-content: center;
+        padding: 0;
+        border: 0;
+        background: transparent;
       `;
 
       const icon = document.createElement('span');
@@ -1206,6 +1218,7 @@ import {
       const labelText = bookmark.label || JC.t!('bookmark_no_label');
       const versionNote = !bookmark.exactMatch ? ` ${JC.t!('bookmark_file_changed')}` : '';
       marker.title = `${labelText} - ${formatTimestamp(bookmark.timestamp)}${versionNote}`;
+      if (modernBrowserMarker) marker.setAttribute('aria-label', marker.title);
 
       // Click to jump to bookmark
       marker.addEventListener('click', (e) => {
