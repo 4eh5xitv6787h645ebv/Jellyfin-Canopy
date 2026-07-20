@@ -517,6 +517,40 @@ Measurement protocol requirements for the follow-up harness:
   client-parse, and browser-heap keys) are measured from this response and no
   other: a reset, delta, or projection-only response — however produced — is
   **no-evidence** under every envelope key, never a small-payload pass.
+- **Cold-response sampling and client-reset protocol.** The percentile and
+  heap envelope keys are defined over repeated samples of the cold response,
+  and the client state between samples is part of every client-side metric's
+  identity:
+  - **Client identity and location.** The measurement client is a
+    harness-driven browser of a pinned build (browser name and version
+    recorded in the result artifact), running on the Linode host **outside**
+    the CPU-limited Jellyfin container, fetching over the instance-local
+    Docker network. A remote or off-instance client measures the network
+    path, not the plugin, and is **no-evidence** for the envelope keys.
+  - **Samples.** After the in-memory cache is fully built: one discarded
+    warm-up request, then exactly **20 measured samples**. Each measured
+    sample runs in a **fresh browser context** — empty HTTP cache, no
+    cookies or storage carried over, and a new connection (no connection or
+    TLS-session reuse across samples) — authenticated as the pinned
+    measurement user. Fetching repeatedly into one warm context, or any
+    other sample count, is a configuration failure — **no-evidence** for the
+    affected keys.
+  - **Per-sample heap protocol.** In the fresh context: force garbage
+    collection and record the baseline heap; fetch and fully parse the
+    snapshot, retaining the parsed result; force garbage collection again;
+    the sample's heap delta is post minus baseline.
+  - **Aggregation, pinned per key.** `maxTagCacheColdTransferP95Milliseconds`
+    and `maxTagCacheColdClientParseP95Milliseconds` are the p95 over the 20
+    samples. `maxTagCacheColdBrowserHeapDeltaBytes` is the **median** over
+    the 20 samples — GC scheduling makes single-sample heap deltas noisy,
+    and the median is the stable estimator the budget bounds.
+    `maxTagCacheSnapshotSerializationPeakAllocatedBytes` is the **maximum**
+    of the per-request server-side measurements across the samples.
+    `maxTagCacheColdResponseBytes` is recorded once: the harness asserts all
+    measured responses are byte-identical in size — a size that varies
+    across samples is a nondeterministic snapshot and is **no-evidence** for
+    every envelope key. Raw per-sample values are published alongside the
+    aggregates per the raw-plus-summary rule below.
 - Publish **raw samples plus summarized values** (p50/p95/max as applicable)
   for both profiles, not summaries alone.
 - Use fixed, named measurement markers in harness output so runs are comparable
