@@ -411,9 +411,19 @@ Measurement protocol requirements for the follow-up harness:
   across time and instrumentation changes are explicit.
 - Measure `maxResponseFilterP95MicrosecondsPerItem` under an **active** filter
   workload: Hidden Content entries present, and Spoiler Guard enabled with a
-  non-empty policy for the measured user, so every filter in the chain does its
-  real per-item work. Timing the disabled/empty-policy fast-path no-ops does
-  not satisfy this metric.
+  non-empty policy covering unwatched items in the measured page, so each of
+  the three item-shaping filters (`HiddenContentResponseFilter`,
+  `SpoilerIdentityTagFilter`, `SpoilerFieldStripFilter`) does its real
+  per-item work on the item-list response. `SpoilerBlurImageFilter` by design
+  never does per-item work on item-list actions — it rejects every
+  non-image/non-trickplay action up front and synchronously delegates — so on
+  this metric its contribution is exactly that rejection-and-delegate cost,
+  which **is** its real production overhead on list responses; recording it is
+  correct and is not a violation of the active-workload rule (its image-path
+  work is exercised only by image requests, which have no large returned-item
+  page and are out of this metric's scope). Timing the disabled/empty-policy
+  fast-path no-ops of the three item-shaping filters does not satisfy this
+  metric.
 - Record stable seed metadata (seed version/digest, profile) and topology
   metadata (instance type, region, CPU quota) with every result.
 - The numbers produced here feed the SR-10 scaling documentation's
