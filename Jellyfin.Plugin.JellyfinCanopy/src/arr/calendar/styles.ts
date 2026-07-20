@@ -737,6 +737,10 @@ const CSS_STYLES = `
       transition: all 0.2s ease;
       user-select: none;
       border: 2px solid transparent;
+      background: transparent;
+      color: inherit;
+      font: inherit;
+      text-align: left;
     }
 
     .jc-calendar-legend-item:hover {

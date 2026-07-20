@@ -155,16 +155,20 @@ describe('bookmarks library identity ownership', () => {
     const tabs = [...container.querySelectorAll<HTMLButtonElement>('.jc-tab')];
     expect(tabs.map(tab => [tab.dataset.tab, tab.querySelector('.jc-tab-count')?.textContent]))
       .toEqual([['movie', '2'], ['tv', '2'], ['other', '3']]);
+    expect(tabs.map(tab => [tab.type, tab.getAttribute('aria-pressed')]))
+      .toEqual([['button', 'true'], ['button', 'false'], ['button', 'false']]);
     expect(container.querySelectorAll('.jc-bookmark-row')).toHaveLength(2);
 
     tabs.find(tab => tab.dataset.tab === 'other')!.click();
     await vi.waitFor(() => expect(container.querySelectorAll('.jc-bookmark-row')).toHaveLength(3));
+    expect(tabs.map(tab => tab.getAttribute('aria-pressed'))).toEqual(['false', 'false', 'true']);
     expect(container.textContent).toContain('Generic video bookmark');
     expect(container.textContent).toContain('Unknown bookmark');
     expect(container.textContent).toContain('Missing-type bookmark');
 
     tabs.find(tab => tab.dataset.tab === 'tv')!.click();
     await vi.waitFor(() => expect(container.querySelectorAll('.jc-bookmark-row')).toHaveLength(2));
+    expect(tabs.map(tab => tab.getAttribute('aria-pressed'))).toEqual(['false', 'true', 'false']);
     expect(container.textContent).toContain('Episode bookmark');
     expect(container.textContent).toContain('Series bookmark');
   });

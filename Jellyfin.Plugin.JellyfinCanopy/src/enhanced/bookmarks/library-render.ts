@@ -1,9 +1,6 @@
 // src/enhanced/bookmarks/library-render.ts
 //
-// Bookmarks Library View — mount detection + main library rendering,
-// plus the small shared time/type helpers.
-// Split from bookmarks-library.js (code motion; bodies verbatim).
-// (Converted from js/enhanced/bookmarks-library-render.js — bodies semantically identical.)
+// Bookmarks library mount, renderer, and shared time/type helpers.
 
 import { JC } from '../../globals';
 import { escapeHtml, toast } from '../../core/ui-kit';
@@ -46,12 +43,7 @@ function bookmarkConfigOrEmpty(value: unknown): BookmarkConfig {
   return { bookmarks: {} };
 }
 
-// The container the bookmarks library renders into, set by the pages-framework
-// descriptor (bookmarks/page.ts) for the lifetime of one adoption and cleared
-// on drain. DOM-as-truth: a disconnected container makes every render a no-op
-// instead of painting into a detached tree. Replaces the old
-// '.sections.bookmarks' class scan that picked the LAST visible match — a
-// defect that mis-targeted stale/duplicate nodes.
+// The adopted connected container is the only render target.
 let activeContainer: HTMLElement | null = null;
 let activeContainerIdentity: IdentityContext | null = null;
 
@@ -61,9 +53,7 @@ export function setActiveContainer(container: HTMLElement | null): void {
   activeContainerIdentity = container ? JC.identity.capture() : null;
 }
 
-// Coalesce bursts of refresh requests (e.g. the module's own
-// 'jc-bookmarks-updated' event plus an explicit post-write refresh in the same
-// tick) into a single render.
+// Coalesce same-tick refresh bursts into one render.
 let renderQueueGeneration = 0;
 let queuedIdentity: IdentityContext | null = null;
 
@@ -74,12 +64,7 @@ export function resetBookmarksLibraryRender(): void {
   activeContainerIdentity = null;
 }
 
-/**
- * Re-render the bookmarks library into the active container. No-op when the
- * page is not adopted or its container has left the DOM. The single refresh
- * entry point used by the 'jc-bookmarks-updated' event and every post-write
- * refresh — no DOM scanning, no stale-container guard.
- */
+/** Re-render only the active, connected, identity-owned container. */
 export function renderActiveBookmarks(context: IdentityContext | null = JC.identity.capture()): void {
   if (!context || !JC.identity.isCurrent(context)) return;
   if (!activeContainer || !activeContainer.isConnected) return;
@@ -122,10 +107,7 @@ export async function renderBookmarksLibrary(
 
   for (const [id, bm] of bookmarkEntries) {
     const normalizedType = normalizeBookmarkMediaType(bm.mediaType);
-    // Include the canonical category in the group identity. Provider ids can
-    // overlap across media classes, and conflicting legacy values for one item
-    // must remain visible in their own fallback category rather than inheriting
-    // whichever record happened to be enumerated first.
+    // Category prevents provider-ID collisions across media classes.
     const itemKey = bm.itemId || bm.tmdbId || bm.tvdbId || 'unknown';
     const key = `${normalizedType}:${itemKey}`;
     if (!groupedByItem[key]) {
@@ -158,14 +140,14 @@ export async function renderBookmarksLibrary(
   // Create UI
   container.innerHTML = `
     <div class="jc-bookmarks-wrapper">
-      <div class="jc-bookmark-tabs">
-        <button class="jc-tab ${currentTab === 'movie' ? 'active' : ''}" data-tab="movie">
+      <div class="jc-bookmark-tabs" role="group" aria-label="${JC.t!('bookmarks_library_title')}">
+        <button type="button" class="jc-tab ${currentTab === 'movie' ? 'active' : ''}" data-tab="movie" aria-pressed="${currentTab === 'movie'}">
           ${JC.t!('bookmarks_library_tab_movies')} <span class="jc-tab-count">${typeCounts.movie.bookmarks}</span>
         </button>
-        <button class="jc-tab ${currentTab === 'tv' ? 'active' : ''}" data-tab="tv">
+        <button type="button" class="jc-tab ${currentTab === 'tv' ? 'active' : ''}" data-tab="tv" aria-pressed="${currentTab === 'tv'}">
           ${JC.t!('bookmarks_library_tab_series')} <span class="jc-tab-count">${typeCounts.tv.bookmarks}</span>
         </button>
-        <button class="jc-tab ${currentTab === 'other' ? 'active' : ''}" data-tab="other">
+        <button type="button" class="jc-tab ${currentTab === 'other' ? 'active' : ''}" data-tab="other" aria-pressed="${currentTab === 'other'}">
           ${JC.t!('bookmarks_library_tab_other')} <span class="jc-tab-count">${typeCounts.other.bookmarks}</span>
         </button>
       </div>
@@ -296,7 +278,9 @@ export async function renderBookmarksLibrary(
           const tab = btn.dataset.tab as BookmarkMediaType;
           container.dataset.currentTab = tab;
           container.querySelectorAll<HTMLElement>('.jc-tab').forEach(b => {
-            b.classList.toggle('active', b.dataset.tab === tab);
+            const selected = b.dataset.tab === tab;
+            b.classList.toggle('active', selected);
+            b.setAttribute('aria-pressed', String(selected));
           });
           await renderBookmarkItems(itemsContainer, groupedByItem, tab, context);
         })(); });
