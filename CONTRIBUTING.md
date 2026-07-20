@@ -390,7 +390,7 @@ one-to-one with a budget key in `scripts/scale-budgets.json`:
 | `maxTagCacheFullBuildMilliseconds` | Wall-clock duration of a **cold** full tag-cache build over the seeded library — every entry constructed from scratch, per the tag-cache state protocol below. |
 | `maxTagCacheFullBuildPeakResidentDeltaBytes` | Peak server resident-memory (RSS) delta during that cold full build, relative to the pre-build baseline. |
 | `maxLibraryScanEventP95Milliseconds` | p95 latency of the synchronous scan-thread event handlers (the [S1 rule](#performance-rules)) during a controlled bulk add. |
-| `maxResponseFilterP95MicrosecondsPerItem` | p95 latency overhead added by the plugin's complete synchronous MVC item-response filter chain — all four action filters registered in `PluginServiceRegistrator`, in registration order: `HiddenContentResponseFilter`, `SpoilerIdentityTagFilter`, `SpoilerFieldStripFilter`, `SpoilerBlurImageFilter`; any filter later added to that chain joins this metric automatically — on large item-list responses, normalized per returned item. |
+| `maxResponseFilterP95MicrosecondsPerItem` | p95 latency overhead added by the plugin's complete synchronous MVC item-response filter chain — all four action filters registered in `PluginServiceRegistrator`, in registration order: `HiddenContentResponseFilter`, `SpoilerIdentityTagFilter`, `SpoilerFieldStripFilter`, `SpoilerBlurImageFilter`; any filter later added to that chain joins this metric automatically — on large item-list responses, normalized per **examined (pre-filter) item** per the fixed page-shape rule below. |
 | `maxPluginStartupMilliseconds` | Plugin startup duration on the seeded server with the persisted tag cache **present** (warm start, the production steady state), per the tag-cache state protocol below. |
 | `maxTagCacheColdResponseBytes` | Size in bytes of the cold tag-cache response. |
 | `maxTagCacheSnapshotSerializationPeakAllocatedBytes` | Peak server allocation during tag-cache snapshot serialization. |
@@ -455,6 +455,21 @@ Measurement protocol requirements for the follow-up harness:
   page and are out of this metric's scope). Timing the disabled/empty-policy
   fast-path no-ops of the three item-shaping filters does not satisfy this
   metric.
+- Measure `maxResponseFilterP95MicrosecondsPerItem` against a **fixed, pinned
+  page shape** and normalize by the **examined (pre-filter) item count**.
+  `HiddenContentResponseFilter` removes items from the response, so a
+  post-filter (returned-item) denominator moves with policy cardinality rather
+  than filter cost — two runs inspecting the same page while hiding 1 versus
+  999 items would report incomparable per-item numbers, and a page whose items
+  are all hidden has no denominator at all. The pinned shape: every measured
+  request produces a page whose filter chain examines exactly **1,000 items**,
+  of which exactly **100 (10%)** are hidden by the Hidden Content policy and
+  the remaining **900** are unwatched items covered by the non-empty Spoiler
+  Guard policy (this instantiates the active-workload rule above). The harness
+  records both the examined and returned counts for every measured page; a
+  measured page whose examined count or hidden/covered composition deviates
+  from this shape is a configuration failure — **no-evidence** for this
+  metric, never a pass computed from a drifted denominator.
 - Record stable seed metadata (seed version/digest, profile) and topology
   metadata (instance type, region, CPU quota) with every result.
 - The numbers produced here feed the SR-10 scaling documentation's
