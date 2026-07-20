@@ -277,18 +277,25 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 return authorizationResult;
             }
 
-            if (_configProvider.ConfigurationOrNull?.ThemeStudioAllowSeasonalScheduling == false
-                && userConfiguration?.Schedule?.Count > 0)
-            {
-                return BadRequest(new UserFileMutationResponse<UserThemeConfiguration>
+            return CommitUserFile(
+                authorizedUserId,
+                "theme.json",
+                userConfiguration,
+                "theme",
+                (current, candidate) =>
                 {
-                    Code = "theme_schedule_disabled",
-                    File = "theme.json",
-                    Message = "Theme scheduling is disabled by the administrator."
-                });
-            }
+                    if (_configProvider.ConfigurationOrNull?.ThemeStudioAllowSeasonalScheduling != false
+                        || ThemeSchedulesMatch(current.Schedule, candidate.Schedule))
+                    {
+                        return null;
+                    }
 
-            return CommitUserFile(authorizedUserId, "theme.json", userConfiguration, "theme");
+                    return new UserFileCommitPolicyFailure
+                    {
+                        Code = "theme_schedule_disabled",
+                        Message = "Theme scheduling is disabled by the administrator; new or modified schedules are not accepted."
+                    };
+                });
         }
 
         [HttpPost("user-settings/{userId}/theme.json/validate")]
@@ -337,6 +344,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                     });
             }
 
+            if (_configProvider.ConfigurationOrNull?.ThemeStudioAllowSeasonalScheduling == false
+                && candidate.Schedule.Count > 0)
+            {
+                return BadRequest(new
+                {
+                    valid = false,
+                    code = "theme_schedule_disabled",
+                    message = "Theme scheduling is disabled by the administrator."
+                });
+            }
+
             return Ok(new
             {
                 valid = true,
@@ -346,6 +364,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 data = ThemeExportDocument.FromConfiguration(candidate)
             });
         }
+
+        private static bool ThemeSchedulesMatch(
+            IReadOnlyList<ThemeScheduleEntry> current,
+            IReadOnlyList<ThemeScheduleEntry> candidate)
+            => JsonSerializer.Serialize(current, PersistedJson.WriteOptions)
+                == JsonSerializer.Serialize(candidate, PersistedJson.WriteOptions);
 
         [HttpPost("user-settings/{userId}/theme.json/migrate-jellyfish")]
         [Authorize]
@@ -424,6 +448,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         {
             public UserFileCommitStatus Status { get; set; }
             public T? State { get; set; }
+            public string Code { get; set; } = string.Empty;
+            public string Message { get; set; } = string.Empty;
+        }
+
+        private sealed class UserFileCommitPolicyFailure
+        {
+            public string Code { get; set; } = string.Empty;
             public string Message { get; set; } = string.Empty;
         }
 
@@ -431,7 +462,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             string authorizedUserId,
             string fileName,
             T? candidate,
-            string displayName)
+            string displayName,
+            Func<T, T, UserFileCommitPolicyFailure?>? mutationPolicy = null)
             where T : class, IRevisionedUserConfiguration, new()
         {
             if (candidate != null)
@@ -481,7 +513,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
 
             try
             {
-                var result = CommitUserFileState(authorizedUserId, fileName, expectedRevision, candidate);
+                var result = CommitUserFileState(
+                    authorizedUserId,
+                    fileName,
+                    expectedRevision,
+                    candidate,
+                    mutationPolicy);
                 if (result.State != null)
                 {
                     SetUserFileEvidence(result.State);
@@ -491,9 +528,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 {
                     Success = result.Status == UserFileCommitStatus.Success,
                     Conflict = result.Status == UserFileCommitStatus.Conflict,
-                    Code = result.Status == UserFileCommitStatus.TooLarge
-                        ? "payload_too_large"
-                        : result.Status == UserFileCommitStatus.Invalid ? "invalid_payload" : string.Empty,
+                    Code = !string.IsNullOrEmpty(result.Code)
+                        ? result.Code
+                        : result.Status == UserFileCommitStatus.TooLarge
+                            ? "payload_too_large"
+                            : result.Status == UserFileCommitStatus.Invalid ? "invalid_payload" : string.Empty,
                     Message = result.Message,
                     File = fileName,
                     Revision = result.State?.Revision ?? 0,
@@ -550,7 +589,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             string authorizedUserId,
             string fileName,
             long? expectedRevision,
-            T candidate)
+            T candidate,
+            Func<T, T, UserFileCommitPolicyFailure?>? mutationPolicy)
             where T : class, IRevisionedUserConfiguration, new()
         {
             return _userConfigurationManager.TransactUserConfiguration<T, UserFileCommitResult<T>>(
@@ -582,6 +622,18 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                         Status = UserFileCommitStatus.Conflict,
                         State = current,
                         Message = "The user file changed. Rebase the intended fields on the returned state and retry."
+                    };
+                }
+
+                var policyFailure = mutationPolicy?.Invoke(current, candidate);
+                if (policyFailure != null)
+                {
+                    return new UserFileCommitResult<T>
+                    {
+                        Status = UserFileCommitStatus.Invalid,
+                        State = current,
+                        Code = policyFailure.Code,
+                        Message = policyFailure.Message
                     };
                 }
 

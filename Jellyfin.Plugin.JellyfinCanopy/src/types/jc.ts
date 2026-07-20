@@ -120,10 +120,25 @@ export interface ThemeStudioDiagnostics {
     readonly mode: 'dark' | 'light' | null;
 }
 
+export interface ThemeStudioPreviewOptions {
+    /** Editor previews target ActiveProfileId instead of today's scheduled profile. */
+    readonly allowScheduling?: boolean;
+}
+
 /** Identity-owned seam consumed by the later Theme Studio editor chunk. */
 export interface ThemeStudioRuntimeApi {
-    preview(configuration: unknown): boolean;
+    preview(configuration: unknown, options?: ThemeStudioPreviewOptions): boolean;
     cancelPreview(): void;
+    /** Returns an isolated, identity-owned copy for the current editor session. */
+    getConfiguration(): UserThemeConfiguration | null;
+    /** Resolves after the current authoritative load settles. */
+    whenReady(): Promise<boolean>;
+    /** True until this runtime's current authoritative server read settles. */
+    hasPendingAuthoritativeLoad(): boolean;
+    /** Reloads authoritative server state without replacing this runtime owner. */
+    reload(): Promise<boolean>;
+    /** Publishes a validated document only after its write was acknowledged. */
+    adoptAcknowledged(configuration: unknown): boolean;
     refresh(): void;
     getDiagnostics(): ThemeStudioDiagnostics;
 }

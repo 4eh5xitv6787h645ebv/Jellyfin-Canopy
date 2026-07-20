@@ -14,11 +14,14 @@ const mocks = vi.hoisted(() => ({
     wireSettingsListeners: vi.fn(),
     wireShortcutEditor: vi.fn(),
     wireSpoilerGuardListeners: vi.fn(),
+    wireThemeStudioEditor: vi.fn(),
 }));
 
 vi.mock('./template', () => ({
     buildPanelHtml: () => `
         <button id="closeSettingsPanel" type="button">close</button>
+        <input id="lifecycleEditable" type="text">
+        <textarea id="lifecycleTextarea"></textarea>
         <div class="jc-panel-body">
             <div class="jc-panel-nav"><div class="jc-panel-nav-items"></div></div>
             <div class="jc-panel-main">
@@ -27,10 +30,14 @@ vi.mock('./template', () => ({
                     <h2 class="jc-pane-title">General</h2>
                     <details id="lifecycleDetails"><summary>details</summary></details>
                 </section>
+                <section class="jc-pane" data-pane="theme-studio">
+                    <h2 class="jc-pane-title">Theme Studio</h2>
+                </section>
             </div>
         </div>`,
 }));
 vi.mock('./shortcut-editor', () => ({ wireShortcutEditor: mocks.wireShortcutEditor }));
+vi.mock('./theme-editor', () => ({ wireThemeStudioEditor: mocks.wireThemeStudioEditor }));
 vi.mock('./settings', () => ({
     wireSettingsListeners: mocks.wireSettingsListeners,
     wireMiscSettingsControls: mocks.wireMiscSettingsControls,
@@ -325,6 +332,98 @@ describe('settings panel lifecycle owner', () => {
         expect(isAnyModalOpen()).toBe(false);
         expect(document.body.classList.contains('jc-modal-open')).toBe(false);
     });
+
+    it('suspends inactivity close while a child owns unsaved work and resumes after release', async () => {
+        let setAutoCloseSuspended: ((suspended: boolean) => void) | null = null;
+        mocks.wireThemeStudioEditor.mockImplementationOnce((ctx: {
+            setAutoCloseSuspended(suspended: boolean): void;
+        }) => {
+            setAutoCloseSuspended = (suspended) => ctx.setAutoCloseSuspended(suspended);
+            ctx.setAutoCloseSuspended(true);
+        });
+
+        await showPanel!();
+        await vi.advanceTimersByTimeAsync(10);
+        expect(document.getElementById('jellyfin-canopy-panel')).not.toBeNull();
+
+        setAutoCloseSuspended!(false);
+        await vi.advanceTimersByTimeAsync(10);
+        expect(document.getElementById('jellyfin-canopy-panel')).toBeNull();
+    });
+
+    it('activates a pane when rotation leaves the compact phone layout', async () => {
+        const media = new EventTarget() as MediaQueryList & { matches: boolean };
+        Object.assign(media, {
+            matches: true,
+            media: '(compact-phone)',
+            onchange: null,
+            addListener(listener: (event: MediaQueryListEvent) => void) {
+                media.addEventListener('change', listener as EventListener);
+            },
+            removeListener(listener: (event: MediaQueryListEvent) => void) {
+                media.removeEventListener('change', listener as EventListener);
+            },
+        });
+        mediaTargets.add(media);
+        vi.stubGlobal('matchMedia', vi.fn(() => media));
+
+        await showPanel!();
+        const panel = document.getElementById('jellyfin-canopy-panel')!;
+        expect(panel.querySelector('.jc-pane.active')).toBeNull();
+        expect(panel.querySelector<HTMLElement>('.jc-panel-main')?.inert).toBe(true);
+
+        media.matches = false;
+        media.dispatchEvent(new Event('change'));
+
+        expect(panel.querySelector('.jc-pane.active')?.getAttribute('data-pane')).toBe('general');
+        expect(panel.querySelector<HTMLElement>('.jc-panel-main')?.inert).toBe(false);
+    });
+
+    it('restores Theme Studio inner-scroll ownership after compact Back and rotation', async () => {
+        const media = new EventTarget() as MediaQueryList & { matches: boolean };
+        Object.assign(media, {
+            matches: true,
+            media: '(compact-phone)',
+            onchange: null,
+            addListener(listener: (event: MediaQueryListEvent) => void) {
+                media.addEventListener('change', listener as EventListener);
+            },
+            removeListener(listener: (event: MediaQueryListEvent) => void) {
+                media.removeEventListener('change', listener as EventListener);
+            },
+        });
+        mediaTargets.add(media);
+        vi.stubGlobal('matchMedia', vi.fn(() => media));
+
+        await showPanel!();
+        const panel = document.getElementById('jellyfin-canopy-panel')!;
+        const main = panel.querySelector<HTMLElement>('.jc-panel-main')!;
+        panel.querySelector<HTMLButtonElement>('[data-tab="theme-studio"]')!.click();
+        expect(main.classList.contains('jc-theme-pane-active')).toBe(true);
+
+        panel.querySelector<HTMLButtonElement>('#jcPanelBack')!.click();
+        expect(panel.querySelector('.jc-pane.active')?.getAttribute('data-pane')).toBe('theme-studio');
+        expect(main.classList.contains('jc-theme-pane-active')).toBe(false);
+
+        media.matches = false;
+        media.dispatchEvent(new Event('change'));
+
+        expect(main.classList.contains('jc-theme-pane-active')).toBe(true);
+        expect(main.inert).toBe(false);
+    });
+
+    it.each(['lifecycleEditable', 'lifecycleTextarea'])(
+        'allows question marks in editable field %s without dismissing the panel',
+        async (id) => {
+            await showPanel!();
+            const field = document.getElementById(id)!;
+            field.focus();
+            field.dispatchEvent(new KeyboardEvent('keydown', { key: '?', bubbles: true }));
+
+            expect(document.getElementById('jellyfin-canopy-panel')).not.toBeNull();
+            expect(document.activeElement).toBe(field);
+        }
+    );
 
     it('continues disposing resources after one child cleanup throws', async () => {
         const beforeThrow = vi.fn();

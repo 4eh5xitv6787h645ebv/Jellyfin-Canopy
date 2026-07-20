@@ -67,11 +67,14 @@ const scopes: TestFeatureScope[] = [];
 let originalApi: ApiApi | undefined;
 let originalEvents: JellyfinEvents | undefined;
 let originalRemember: typeof JC.rememberUserSettingsSnapshot;
+let originalAcknowledgedSnapshot: typeof JC.getAcknowledgedUserSettingsSnapshot;
 
 beforeEach(() => {
     originalApi = JC.core.api;
     originalEvents = window.Events;
     originalRemember = JC.rememberUserSettingsSnapshot;
+    originalAcknowledgedSnapshot = JC.getAcknowledgedUserSettingsSnapshot;
+    JC.getAcknowledgedUserSettingsSnapshot = undefined;
     window.Events = eventsHarness();
     const media = mediaHarness();
     vi.stubGlobal('matchMedia', media.matchMedia);
@@ -95,6 +98,7 @@ afterEach(async () => {
     JC.core.api = originalApi;
     window.Events = originalEvents;
     JC.rememberUserSettingsSnapshot = originalRemember;
+    JC.getAcknowledgedUserSettingsSnapshot = originalAcknowledgedSnapshot;
     delete (window as unknown as { __themeMedia?: unknown }).__themeMedia;
     delete JC.core.themeStudio;
     document.getElementById(COMMITTED_STYLE_ID)?.remove();
@@ -129,6 +133,366 @@ function createRuntime(): { runtime: ThemeStudioRuntime; harness: TestFeatureSco
 }
 
 describe('Theme Studio identity-owned runtime', () => {
+    it('exposes isolated editor state and adopts only validated acknowledged documents', async () => {
+        apiReturning(themeConfiguration());
+        const { runtime } = createRuntime();
+        await runtime.load();
+
+        const editorCopy = runtime.getConfiguration();
+        const identity = JC.identity.capture();
+        expect(editorCopy).not.toBeNull();
+        expect(JC.identity.isOwned(editorCopy, identity)).toBe(true);
+        editorCopy!.Profiles[0].BasePreset = 'oled';
+        expect(runtime.getConfiguration()?.Profiles[0].BasePreset).toBe('canopy');
+
+        expect(runtime.adoptAcknowledged({ invalid: true })).toBe(false);
+        expect(runtime.getConfiguration()?.Profiles[0].BasePreset).toBe('canopy');
+        editorCopy!.Revision = 4;
+        const changed = vi.fn();
+        window.addEventListener('jc:theme-studio-runtime-changed', changed);
+        expect(runtime.adoptAcknowledged(editorCopy)).toBe(true);
+        expect(changed).toHaveBeenCalledOnce();
+        window.removeEventListener('jc:theme-studio-runtime-changed', changed);
+        expect(runtime.getConfiguration()).toMatchObject({ Revision: 4, ActiveProfileId: 'default' });
+        expect(document.documentElement.getAttribute('data-jc-theme-preset')).toBe('oled');
+        expect(JC.rememberUserSettingsSnapshot).toHaveBeenLastCalledWith(
+            'theme.json', expect.objectContaining({ Revision: 4 }),
+        );
+    });
+
+    it('still performs its initial authoritative read after an early acknowledgement', async () => {
+        const server = themeConfiguration();
+        server.Revision = 6;
+        server.Profiles[0].Palette = 'neutral';
+        const plugin = apiReturning(server);
+        const { runtime } = createRuntime();
+        const acknowledged = themeConfiguration();
+        acknowledged.Revision = 5;
+        acknowledged.Profiles[0].BasePreset = 'studio';
+
+        expect(runtime.adoptAcknowledged(acknowledged)).toBe(true);
+        await expect(runtime.whenReady()).resolves.toBe(true);
+
+        expect(plugin).toHaveBeenCalledOnce();
+        expect(runtime.getConfiguration()).toMatchObject({
+            Revision: 6,
+            Profiles: [expect.objectContaining({ BasePreset: 'canopy', Palette: 'neutral' })],
+        });
+    });
+
+    it('imports a cached save acknowledgement before a replacement runtime initial read fails', async () => {
+        const plugin = vi.fn().mockRejectedValue(new Error('server unavailable'));
+        JC.core.api = { plugin } as unknown as ApiApi;
+        const acknowledged = themeConfiguration();
+        acknowledged.Revision = 5;
+        acknowledged.Profiles[0].BasePreset = 'studio';
+        JC.getAcknowledgedUserSettingsSnapshot = vi.fn(() =>
+            JC.identity.own(structuredClone(acknowledged), JC.identity.capture()));
+
+        const { runtime } = createRuntime();
+        await expect(runtime.whenReady()).resolves.toBe(true);
+
+        expect(JC.getAcknowledgedUserSettingsSnapshot).toHaveBeenCalledWith('theme.json');
+        expect(plugin).toHaveBeenCalledOnce();
+        expect(runtime.getConfiguration()).toMatchObject({
+            Revision: 5,
+            Profiles: [expect.objectContaining({ BasePreset: 'studio' })],
+        });
+        expect(runtime.getDiagnostics()).toMatchObject({ status: 'active', revision: 5 });
+    });
+
+    it.each([
+        ['fails', new Error('server unavailable')],
+        ['returns malformed data', { invalid: true }],
+    ])('keeps an early acknowledgement when its initial read %s', async (_label, outcome) => {
+        const plugin = vi.fn();
+        if (outcome instanceof Error) plugin.mockRejectedValue(outcome);
+        else plugin.mockResolvedValue(outcome);
+        JC.core.api = { plugin } as unknown as ApiApi;
+        const { runtime } = createRuntime();
+        const acknowledged = themeConfiguration();
+        acknowledged.Revision = 5;
+        acknowledged.Profiles[0].BasePreset = 'studio';
+
+        expect(runtime.adoptAcknowledged(acknowledged)).toBe(true);
+        await expect(runtime.whenReady()).resolves.toBe(true);
+
+        expect(plugin).toHaveBeenCalledOnce();
+        expect(runtime.getConfiguration()).toMatchObject({
+            Revision: 5,
+            Profiles: [expect.objectContaining({ BasePreset: 'studio' })],
+        });
+        expect(runtime.getDiagnostics()).toMatchObject({ status: 'active', revision: 5 });
+        expect(document.documentElement.getAttribute('data-jc-theme-preset')).toBe('studio');
+    });
+
+    it('reloads authoritative state through the existing abortable owner', async () => {
+        const first = themeConfiguration();
+        const second = themeConfiguration();
+        second.Revision = 9;
+        second.Profiles[0].Palette = 'neutral';
+        const plugin = vi.fn().mockResolvedValueOnce(first).mockResolvedValueOnce(second);
+        JC.core.api = { plugin } as unknown as ApiApi;
+        const { runtime } = createRuntime();
+        await runtime.load();
+        const changed = vi.fn();
+        window.addEventListener('jc:theme-studio-runtime-changed', changed);
+        const preview = themeConfiguration();
+        preview.Profiles[0].BasePreset = 'glass';
+        expect(runtime.preview(preview)).toBe(true);
+
+        await expect(runtime.reload()).resolves.toBe(true);
+        expect(plugin).toHaveBeenCalledTimes(2);
+        expect(runtime.getConfiguration()).toMatchObject({ Revision: 9 });
+        expect(document.documentElement.getAttribute('data-jc-theme-preview')).toBeNull();
+        expect(document.documentElement.getAttribute('data-jc-theme-palette')).toBe('neutral');
+        expect(changed).toHaveBeenCalledOnce();
+        expect((changed.mock.calls[0]?.[0] as CustomEvent).detail).toEqual({ reason: 'reloaded' });
+        window.removeEventListener('jc:theme-studio-runtime-changed', changed);
+    });
+
+    it('keeps the last validated committed theme when an authoritative reload fails', async () => {
+        const committed = themeConfiguration();
+        committed.Revision = 7;
+        committed.Profiles[0].Palette = 'neutral';
+        const plugin = vi.fn()
+            .mockResolvedValueOnce(committed)
+            .mockRejectedValueOnce(new Error('server unavailable'));
+        JC.core.api = { plugin } as unknown as ApiApi;
+        const { runtime } = createRuntime();
+        await runtime.load();
+        const preview = themeConfiguration();
+        preview.Profiles[0].BasePreset = 'glass';
+        expect(runtime.preview(preview)).toBe(true);
+        const changed = vi.fn();
+        window.addEventListener('jc:theme-studio-runtime-changed', changed);
+
+        await expect(runtime.reload()).resolves.toBe(false);
+
+        expect(runtime.getConfiguration()).toMatchObject({ Revision: 7 });
+        expect(document.documentElement.getAttribute('data-jc-theme-preview')).toBeNull();
+        expect(document.documentElement.getAttribute('data-jc-theme-palette')).toBe('neutral');
+        expect(document.getElementById(COMMITTED_STYLE_ID)).not.toBeNull();
+        expect(runtime.getDiagnostics()).toMatchObject({ status: 'active', revision: 7 });
+        expect(changed).not.toHaveBeenCalled();
+        window.removeEventListener('jc:theme-studio-runtime-changed', changed);
+    });
+
+    it('does not report a failed reload as successful when an acknowledgement is retained', async () => {
+        const committed = themeConfiguration();
+        const plugin = vi.fn()
+            .mockResolvedValueOnce(committed)
+            .mockRejectedValueOnce(new Error('server unavailable'));
+        JC.core.api = { plugin } as unknown as ApiApi;
+        const { runtime } = createRuntime();
+        await runtime.load();
+        const acknowledged = themeConfiguration();
+        acknowledged.Revision = 8;
+        acknowledged.Profiles[0].BasePreset = 'studio';
+        expect(runtime.adoptAcknowledged(acknowledged)).toBe(true);
+        const changed = vi.fn();
+        window.addEventListener('jc:theme-studio-runtime-changed', changed);
+
+        await expect(runtime.reload()).resolves.toBe(false);
+
+        expect(runtime.getConfiguration()).toMatchObject({
+            Revision: 8,
+            Profiles: [expect.objectContaining({ BasePreset: 'studio' })],
+        });
+        expect(runtime.getDiagnostics()).toMatchObject({ status: 'active', revision: 8 });
+        expect(changed).not.toHaveBeenCalled();
+        window.removeEventListener('jc:theme-studio-runtime-changed', changed);
+    });
+
+    it('keeps a newer acknowledgement that arrives while a recovery reload fails', async () => {
+        const committed = themeConfiguration();
+        let rejectReload: (reason: unknown) => void = () => undefined;
+        const plugin = vi.fn()
+            .mockResolvedValueOnce(committed)
+            .mockImplementationOnce(() => new Promise<unknown>((_resolve, reject) => {
+                rejectReload = reject;
+            }));
+        JC.core.api = { plugin } as unknown as ApiApi;
+        const { runtime } = createRuntime();
+        await runtime.load();
+
+        const reloadRequest = runtime.reload();
+        const acknowledged = themeConfiguration();
+        acknowledged.Revision = 8;
+        acknowledged.Profiles[0].BasePreset = 'studio';
+        expect(runtime.adoptAcknowledged(acknowledged)).toBe(true);
+        rejectReload(new Error('server unavailable'));
+
+        await expect(reloadRequest).resolves.toBe(false);
+        expect(runtime.getConfiguration()).toMatchObject({
+            Revision: 8,
+            Profiles: [expect.objectContaining({ BasePreset: 'studio' })],
+        });
+        expect(runtime.getDiagnostics()).toMatchObject({ status: 'active', revision: 8 });
+        expect(document.documentElement.getAttribute('data-jc-theme-preset')).toBe('studio');
+    });
+
+    it('accepts a supported store reset as a new authoritative revision generation', async () => {
+        const committed = themeConfiguration();
+        committed.Revision = 9;
+        committed.Profiles[0].BasePreset = 'studio';
+        const reset = themeConfiguration();
+        reset.Revision = 0;
+        reset.Profiles[0].BasePreset = 'material';
+        const plugin = vi.fn().mockResolvedValueOnce(committed).mockResolvedValueOnce(reset);
+        JC.core.api = { plugin } as unknown as ApiApi;
+        const { runtime } = createRuntime();
+        await runtime.load();
+
+        await expect(runtime.reload()).resolves.toBe(true);
+
+        expect(runtime.getConfiguration()).toMatchObject({
+            Revision: 0,
+            Profiles: [expect.objectContaining({ BasePreset: 'material' })],
+        });
+        expect(document.documentElement.getAttribute('data-jc-theme-preset')).toBe('material');
+        expect(JC.rememberUserSettingsSnapshot).toHaveBeenLastCalledWith(
+            'theme.json', expect.objectContaining({ Revision: 0 }),
+        );
+    });
+
+    it('keeps a newer acknowledgement that arrives during a recovery reload', async () => {
+        const committed = themeConfiguration();
+        committed.Revision = 9;
+        let resolveReset!: (value: unknown) => void;
+        const plugin = vi.fn()
+            .mockResolvedValueOnce(committed)
+            .mockImplementationOnce(() => new Promise<unknown>((resolve) => { resolveReset = resolve; }));
+        JC.core.api = { plugin } as unknown as ApiApi;
+        const { runtime } = createRuntime();
+        await runtime.load();
+        const reload = runtime.reload();
+        const acknowledged = themeConfiguration();
+        acknowledged.Revision = 10;
+        acknowledged.Profiles[0].BasePreset = 'studio';
+        expect(runtime.adoptAcknowledged(acknowledged)).toBe(true);
+        const reset = themeConfiguration();
+        reset.Revision = 0;
+        reset.Profiles[0].BasePreset = 'material';
+        resolveReset(reset);
+
+        await expect(reload).resolves.toBe(true);
+
+        expect(runtime.getConfiguration()).toMatchObject({
+            Revision: 10,
+            Profiles: [expect.objectContaining({ BasePreset: 'studio' })],
+        });
+        expect(document.documentElement.getAttribute('data-jc-theme-preset')).toBe('studio');
+    });
+
+    it('rejects a late acknowledgement older than the loaded authoritative revision', async () => {
+        const loaded = themeConfiguration();
+        loaded.Revision = 9;
+        loaded.Profiles[0].Palette = 'neutral';
+        apiReturning(loaded);
+        const { runtime } = createRuntime();
+        await runtime.load();
+        vi.mocked(JC.rememberUserSettingsSnapshot!).mockClear();
+        const changed = vi.fn();
+        window.addEventListener('jc:theme-studio-runtime-changed', changed);
+        const stale = themeConfiguration();
+        stale.Revision = 8;
+        stale.Profiles[0].Palette = 'vivid';
+
+        expect(runtime.adoptAcknowledged(stale)).toBe(false);
+
+        expect(runtime.getConfiguration()).toMatchObject({ Revision: 9 });
+        expect(document.documentElement.getAttribute('data-jc-theme-palette')).toBe('neutral');
+        expect(JC.rememberUserSettingsSnapshot).not.toHaveBeenCalled();
+        expect(changed).not.toHaveBeenCalled();
+        window.removeEventListener('jc:theme-studio-runtime-changed', changed);
+    });
+
+    it('never lets an older overlapping load overwrite a newer reload', async () => {
+        let resolveOlder: (value: unknown) => void = () => undefined;
+        let resolveNewer: (value: unknown) => void = () => undefined;
+        const plugin = vi.fn()
+            .mockImplementationOnce(() => new Promise<unknown>((resolve) => { resolveOlder = resolve; }))
+            .mockImplementationOnce(() => new Promise<unknown>((resolve) => { resolveNewer = resolve; }));
+        JC.core.api = { plugin } as unknown as ApiApi;
+        const { runtime } = createRuntime();
+        const olderLoad = runtime.load();
+        const newerLoad = runtime.reload();
+        const newer = themeConfiguration();
+        newer.Revision = 12;
+        newer.Profiles[0].Palette = 'neutral';
+        resolveNewer(newer);
+        await expect(newerLoad).resolves.toBe(true);
+        expect(runtime.getConfiguration()).toMatchObject({ Revision: 12 });
+
+        const older = themeConfiguration();
+        older.Revision = 4;
+        older.Profiles[0].Palette = 'vivid';
+        resolveOlder(older);
+        await olderLoad;
+        expect(runtime.getConfiguration()).toMatchObject({ Revision: 12 });
+        expect(document.documentElement.getAttribute('data-jc-theme-palette')).toBe('neutral');
+    });
+
+    it('never lets an obsolete reload restore its snapshot over a newer reload', async () => {
+        const committed = themeConfiguration();
+        committed.Revision = 7;
+        let resolveOlder!: (value: unknown) => void;
+        let resolveNewer!: (value: unknown) => void;
+        const plugin = vi.fn()
+            .mockResolvedValueOnce(committed)
+            .mockImplementationOnce(() => new Promise<unknown>((resolve) => { resolveOlder = resolve; }))
+            .mockImplementationOnce(() => new Promise<unknown>((resolve) => { resolveNewer = resolve; }));
+        JC.core.api = { plugin } as unknown as ApiApi;
+        const { runtime } = createRuntime();
+        await runtime.load();
+
+        const olderReload = runtime.reload();
+        const newerReload = runtime.reload();
+        const newer = themeConfiguration();
+        newer.Revision = 12;
+        newer.Profiles[0].Palette = 'neutral';
+        resolveNewer(newer);
+        await expect(newerReload).resolves.toBe(true);
+        const older = themeConfiguration();
+        older.Revision = 8;
+        older.Profiles[0].Palette = 'vivid';
+        resolveOlder(older);
+        await expect(olderReload).resolves.toBe(false);
+
+        expect(runtime.getConfiguration()).toMatchObject({ Revision: 12 });
+        expect(document.documentElement.getAttribute('data-jc-theme-palette')).toBe('neutral');
+    });
+
+    it('lets an in-flight authoritative load supersede an older acknowledgement', async () => {
+        let resolveLoad: (value: unknown) => void = () => undefined;
+        const plugin = vi.fn(() => new Promise<unknown>((resolve) => { resolveLoad = resolve; }));
+        JC.core.api = { plugin } as unknown as ApiApi;
+        const { runtime } = createRuntime();
+        const load = runtime.load();
+        const acknowledged = themeConfiguration();
+        acknowledged.Revision = 4;
+        acknowledged.Profiles[0].Palette = 'neutral';
+
+        expect(runtime.adoptAcknowledged(acknowledged)).toBe(true);
+        expect(runtime.getConfiguration()).toMatchObject({ Revision: 4 });
+        expect(runtime.hasPendingAuthoritativeLoad()).toBe(true);
+        expect(runtime.getDiagnostics().status).toBe('active');
+
+        const newer = themeConfiguration();
+        newer.Revision = 5;
+        newer.Profiles[0].Palette = 'vivid';
+        resolveLoad(newer);
+        await load;
+
+        expect(runtime.getConfiguration()).toMatchObject({ Revision: 5 });
+        expect(runtime.hasPendingAuthoritativeLoad()).toBe(false);
+        expect(document.documentElement.getAttribute('data-jc-theme-palette')).toBe('vivid');
+        expect(JC.rememberUserSettingsSnapshot).toHaveBeenLastCalledWith(
+            'theme.json', expect.objectContaining({ Revision: 5 }),
+        );
+    });
+
     it('loads once, applies one committed layer, and follows host theme/media changes live', async () => {
         const plugin = apiReturning(themeConfiguration());
         const { runtime } = createRuntime();
@@ -237,6 +601,33 @@ describe('Theme Studio identity-owned runtime', () => {
         expect(currentApi).toBe(JC.core.themeStudio);
     });
 
+    it('lets editor previews target ActiveProfileId while committed presentation remains scheduled', async () => {
+        const scheduled = themeConfiguration();
+        scheduled.Profiles.push({
+            ...structuredClone(scheduled.Profiles[0]),
+            Id: 'seasonal',
+            Name: 'Seasonal',
+            BasePreset: 'cinematic',
+            Palette: 'vivid',
+        });
+        scheduled.Schedule = [{
+            Id: 'year-round', ProfileId: 'seasonal', StartMonthDay: '01-01', EndMonthDay: '12-31',
+            Priority: 10, Enabled: true,
+        }];
+        apiReturning(scheduled);
+        const { runtime } = createRuntime();
+        await runtime.load();
+        expectRootThemeState({ profile: 'seasonal', preset: 'cinematic', palette: 'vivid' });
+
+        const draft = structuredClone(scheduled);
+        draft.Profiles[0].BasePreset = 'glass';
+        expect(JC.core.themeStudio?.preview(draft, { allowScheduling: false })).toBe(true);
+        expectRootThemeState({ profile: 'default', preset: 'glass', palette: 'canopy-night' });
+
+        JC.core.themeStudio?.cancelPreview();
+        expectRootThemeState({ profile: 'seasonal', preset: 'cinematic', palette: 'vivid' });
+    });
+
     it('suspends committed reduced-motion adapters while a full-motion preview is active', async () => {
         const committed = themeConfiguration();
         committed.Profiles[0].Accessibility.Motion = 'off';
@@ -278,6 +669,23 @@ describe('Theme Studio identity-owned runtime', () => {
         runtime.refresh();
         expect(document.getElementById(COMMITTED_STYLE_ID)).not.toBeNull();
         expect(document.documentElement.getAttribute('data-jc-theme-active')).toBe('true');
+    });
+
+    it('forgets a cancelled dashboard preview before later navigation', async () => {
+        history.replaceState({}, '', '/web/#/dashboard');
+        apiReturning(themeConfiguration());
+        const { runtime } = createRuntime();
+        await runtime.load();
+        const preview = themeConfiguration();
+        preview.Profiles[0].BasePreset = 'glass';
+
+        expect(runtime.preview(preview)).toBe(false);
+        runtime.cancelPreview();
+        history.replaceState({}, '', '/web/#/home');
+        runtime.refresh();
+
+        expect(document.documentElement.getAttribute('data-jc-theme-preset')).toBe('canopy');
+        expect(document.documentElement.getAttribute('data-jc-theme-preview')).toBeNull();
     });
 
     it('removes presentation synchronously on identity reset and read/validation failure', async () => {

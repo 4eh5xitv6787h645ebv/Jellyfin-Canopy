@@ -2,6 +2,7 @@ import type { FeatureScope } from '../core/feature-loader';
 import { JC } from '../globals';
 import type {
     ThemeStudioDiagnostics,
+    ThemeStudioPreviewOptions,
     ThemeStudioRuntimeApi,
     UserThemeConfiguration,
 } from '../types/jc';
@@ -15,6 +16,7 @@ import {
 } from './styles';
 
 const THEME_CHANGE = 'THEME_CHANGE';
+const RUNTIME_CHANGE = 'jc:theme-studio-runtime-changed';
 const ROOT_ATTRIBUTES = Object.freeze([
     'data-jc-theme-active',
     'data-jc-theme-preview',
@@ -115,8 +117,14 @@ export class ThemeStudioRuntime {
     readonly #cleanups: Array<() => void> = [];
     #configuration: UserThemeConfiguration | null = null;
     #previewConfiguration: UserThemeConfiguration | null = null;
+    #previewAllowScheduling = true;
     #disposed = false;
     #installed = false;
+    #authoritativeLoadSettled = false;
+    #loadGeneration = 0;
+    #acknowledgementGeneration = 0;
+    #configurationAcknowledged = false;
+    #loadPromise: Promise<boolean> | null = null;
     #diagnostics: ThemeStudioDiagnostics = Object.freeze({
         status: 'inactive', revision: null, profileId: null, breakpoint: null, mode: null,
     });
@@ -161,17 +169,53 @@ export class ThemeStudioRuntime {
         this.#cleanups.push(JC.identity.registerReset('theme-studio-runtime', () => this.dispose()));
 
         const api: ThemeStudioRuntimeApi = Object.freeze({
-            preview: (configuration: unknown) => this.preview(configuration),
+            preview: (configuration: unknown, options?: ThemeStudioPreviewOptions) => this.preview(configuration, options),
             cancelPreview: () => this.cancelPreview(),
+            getConfiguration: () => this.getConfiguration(),
+            whenReady: () => this.whenReady(),
+            hasPendingAuthoritativeLoad: () => this.hasPendingAuthoritativeLoad(),
+            reload: () => this.reload(),
+            adoptAcknowledged: (configuration: unknown) => this.adoptAcknowledged(configuration),
             refresh: () => this.refresh(),
             getDiagnostics: () => this.getDiagnostics(),
         });
         this.#api = api;
         JC.core.themeStudio = api;
+        this.#announceRuntimeChange('installed');
+        // The persistence owner resolves a save only after caching its exact
+        // structured acknowledgement. Import that evidence synchronously so a
+        // config-restart gap (including one outliving the editor) cannot lose a
+        // committed theme before this runtime's first server read settles.
+        const acknowledged = parseUserThemeConfiguration(
+            JC.getAcknowledgedUserSettingsSnapshot?.('theme.json'),
+        );
+        if (acknowledged
+            && (!this.#configuration || acknowledged.Revision > this.#configuration.Revision)) {
+            this.adoptAcknowledged(acknowledged);
+        }
     }
 
-    async load(): Promise<void> {
-        if (this.#disposed || !this.#scope.isCurrent()) return;
+    load(acceptRevisionReset = false): Promise<boolean> {
+        if (this.#disposed || !this.#scope.isCurrent()) return Promise.resolve(false);
+        this.#authoritativeLoadSettled = false;
+        const generation = ++this.#loadGeneration;
+        const acknowledgementGeneration = this.#acknowledgementGeneration;
+        const task = this.#loadOwned(generation, acknowledgementGeneration, acceptRevisionReset);
+        const tracked = task.finally(() => {
+            if (this.#loadPromise === tracked) {
+                this.#loadPromise = null;
+                if (generation === this.#loadGeneration) this.#authoritativeLoadSettled = true;
+            }
+        });
+        this.#loadPromise = tracked;
+        return tracked;
+    }
+
+    async #loadOwned(
+        generation: number,
+        acknowledgementGeneration: number,
+        acceptRevisionReset: boolean,
+    ): Promise<boolean> {
         this.#setDiagnostics('loading', null);
         try {
             const api = JC.core.api;
@@ -180,21 +224,42 @@ export class ThemeStudioRuntime {
                 `/user-settings/${encodeURIComponent(this.#scope.userId)}/theme.json`,
                 { signal: this.#scope.signal, skipCache: true, timeoutMs: 10_000 },
             );
-            if (this.#disposed) return;
+            if (this.#disposed || generation !== this.#loadGeneration) return false;
             if (!this.#scope.isCurrent()) {
                 this.dispose();
-                return;
+                return false;
             }
             const configuration = parseUserThemeConfiguration(raw);
             if (!configuration) throw new Error('Theme Studio response failed validation');
+            // Ordinary loads keep the higher revision whichever response
+            // settles last. An explicit recovery reload may accept a lower
+            // reset generation, unless a newer acknowledgement arrived while
+            // that GET was in flight.
+            const acknowledgementAdvanced = acknowledgementGeneration !== this.#acknowledgementGeneration;
+            if (this.#configuration && configuration.Revision < this.#configuration.Revision
+                && (!acceptRevisionReset || acknowledgementAdvanced)) {
+                this.refresh();
+                return true;
+            }
             this.#configuration = JC.identity.own(configuration);
+            this.#configurationAcknowledged = false;
             JC.rememberUserSettingsSnapshot?.('theme.json', this.#configuration);
             this.refresh();
+            return true;
         } catch (error) {
-            if (this.#disposed || this.#scope.signal.aborted || !this.#scope.isCurrent()
-                || (error as { name?: string } | null)?.name === 'AbortError') return;
+            if (this.#disposed || generation !== this.#loadGeneration
+                || this.#scope.signal.aborted || !this.#scope.isCurrent()
+                || (error as { name?: string } | null)?.name === 'AbortError') return false;
+            // A failed read is not evidence that an exact save response is
+            // invalid, including when it arrived before this first GET began.
+            if (this.#configurationAcknowledged && this.#configuration) {
+                this.refresh();
+                return false;
+            }
             this.#configuration = null;
+            this.#configurationAcknowledged = false;
             this.#previewConfiguration = null;
+            this.#previewAllowScheduling = true;
             this.#clearPresentation();
             this.#setDiagnostics('error', null);
             JC.bootDiagnostics.record({
@@ -205,21 +270,102 @@ export class ThemeStudioRuntime {
                 storage: 'none',
                 key: 'theme.json',
             });
+            return false;
         }
     }
 
-    preview(value: unknown): boolean {
+    getConfiguration(): UserThemeConfiguration | null {
+        if (this.#disposed || !this.#scope.isCurrent() || !this.#configuration) return null;
+        const configuration = parseUserThemeConfiguration(this.#configuration);
+        const identity = JC.identity.capture();
+        return configuration && identity ? JC.identity.own(configuration, identity) : null;
+    }
+
+    async whenReady(): Promise<boolean> {
+        if (this.#disposed || !this.#scope.isCurrent()) return false;
+        if (this.#loadPromise) await this.#loadPromise;
+        else if (!this.#authoritativeLoadSettled || !this.#configuration) await this.load();
+        return this.#configuration !== null && this.#scope.isCurrent() && !this.#disposed;
+    }
+
+    hasPendingAuthoritativeLoad(): boolean {
+        return !this.#disposed && this.#scope.isCurrent()
+            && (!this.#authoritativeLoadSettled || this.#loadPromise !== null);
+    }
+
+    async reload(): Promise<boolean> {
+        if (this.#disposed || !this.#scope.isCurrent()) return false;
+        const previous = this.#configuration
+            ? parseUserThemeConfiguration(this.#configuration)
+            : null;
+        this.cancelPreview();
+        // An explicit recovery reload is a generation boundary: an administrator
+        // may have reset the quarantined store and legitimately recreated it at
+        // revision zero. A newer acknowledgement that arrives during this GET
+        // still wins through the acknowledgement-generation guard in #loadOwned.
+        const acknowledgementGeneration = this.#acknowledgementGeneration;
+        const request = this.load(true);
+        const generation = this.#loadGeneration;
+        const requestSucceeded = await request;
+        if (generation !== this.#loadGeneration) return false;
+        const loaded = requestSucceeded && this.#configuration !== null
+            && this.#scope.isCurrent() && !this.#disposed;
+        if (!loaded && previous
+            && acknowledgementGeneration === this.#acknowledgementGeneration
+            && this.#scope.isCurrent() && !this.#disposed) {
+            const identity = JC.identity.capture();
+            if (identity) {
+                // A failed recovery read is not evidence that the last
+                // validated document became invalid. Keep that committed
+                // presentation while the editor reports the reload failure.
+                this.#configuration = JC.identity.own(previous, identity);
+                this.refresh();
+            }
+        }
+        if (loaded) this.#announceRuntimeChange('reloaded');
+        return loaded;
+    }
+
+    adoptAcknowledged(value: unknown): boolean {
+        if (this.#disposed || !this.#scope.isCurrent()) return false;
+        const configuration = parseUserThemeConfiguration(value);
+        if (!configuration) return false;
+        if (this.#configuration && configuration.Revision < this.#configuration.Revision) return false;
+        const identity = JC.identity.capture();
+        if (!identity) return false;
+        // Do not cancel an authoritative GET already in flight: it may contain
+        // a still newer concurrent commit. #loadOwned compares revisions when
+        // that response settles, while the source marker protects this exact
+        // acknowledgement if the read fails.
+        this.#configuration = JC.identity.own(configuration, identity);
+        this.#acknowledgementGeneration += 1;
+        this.#configurationAcknowledged = true;
+        this.#previewConfiguration = null;
+        this.#previewAllowScheduling = true;
+        JC.rememberUserSettingsSnapshot?.('theme.json', this.#configuration);
+        this.refresh();
+        // Apply acknowledgements can outlive the editor that initiated them.
+        // Notify any replacement editor so it adopts this authoritative full
+        // document before it can stage a newer write from a stale snapshot.
+        this.#announceRuntimeChange('acknowledged');
+        return true;
+    }
+
+    preview(value: unknown, options: ThemeStudioPreviewOptions = {}): boolean {
         if (this.#disposed || !this.#scope.isCurrent() || !this.#configuration) return false;
         const configuration = parseUserThemeConfiguration(value);
         if (!configuration) return false;
         this.#previewConfiguration = configuration;
+        this.#previewAllowScheduling = options.allowScheduling !== false;
         this.refresh();
         return document.documentElement.getAttribute('data-jc-theme-preview') === 'true';
     }
 
     cancelPreview(): void {
-        if (this.#disposed || !this.#scope.isCurrent() || presentationOwner !== this) return;
+        if (this.#disposed || !this.#scope.isCurrent()) return;
         this.#previewConfiguration = null;
+        this.#previewAllowScheduling = true;
+        if (presentationOwner !== this) return;
         removeStyle(PREVIEW_STYLE_ID);
         document.documentElement.removeAttribute('data-jc-theme-preview');
         if (!this.#disposed && this.#configuration && this.#scope.isCurrent() && !this.#dashboardBlocked()) {
@@ -257,17 +403,28 @@ export class ThemeStudioRuntime {
     dispose(): void {
         if (this.#disposed) return;
         this.#disposed = true;
+        this.#loadGeneration += 1;
+        this.#loadPromise = null;
         this.#configuration = null;
+        this.#configurationAcknowledged = false;
         this.#previewConfiguration = null;
+        this.#previewAllowScheduling = true;
         this.#clearPresentation();
         for (let index = this.#cleanups.length - 1; index >= 0; index -= 1) {
             try { this.#cleanups[index]?.(); } catch { /* exact teardown continues */ }
         }
         this.#cleanups.length = 0;
         this.#media.clear();
-        if (this.#api && JC.core.themeStudio === this.#api) delete JC.core.themeStudio;
+        if (this.#api && JC.core.themeStudio === this.#api) {
+            delete JC.core.themeStudio;
+            this.#announceRuntimeChange('disposed');
+        }
         this.#api = null;
         this.#setDiagnostics('inactive', null);
+    }
+
+    #announceRuntimeChange(reason: 'installed' | 'reloaded' | 'acknowledged' | 'disposed'): void {
+        try { window.dispatchEvent(new CustomEvent(RUNTIME_CHANGE, { detail: { reason } })); } catch { /* legacy host */ }
     }
 
     #dashboardBlocked(): boolean {
@@ -294,9 +451,12 @@ export class ThemeStudioRuntime {
         };
     }
 
-    #resolve(configuration: UserThemeConfiguration): ResolvedTheme {
+    #resolve(
+        configuration: UserThemeConfiguration,
+        allowScheduling = JC.pluginConfig?.ThemeStudioAllowSeasonalScheduling !== false,
+    ): ResolvedTheme {
         return resolveTheme(configuration, this.#captureMedia(), {
-            allowScheduling: JC.pluginConfig?.ThemeStudioAllowSeasonalScheduling !== false,
+            allowScheduling,
         });
     }
 
@@ -330,7 +490,7 @@ export class ThemeStudioRuntime {
 
     #applyPreview(): void {
         if (!this.#previewConfiguration) return;
-        const theme = this.#resolve(this.#previewConfiguration);
+        const theme = this.#resolve(this.#previewConfiguration, this.#previewAllowScheduling);
         claimPresentation(this);
         updateStyle('preview', theme);
         this.#applyRootAttributes(theme);

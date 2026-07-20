@@ -24,7 +24,7 @@ export const themeStudioFeature: FeatureModule = Object.freeze({
                 runtime.dispose();
                 return;
             }
-            await runtime.load();
+            await runtime.whenReady();
             if (!scope.isCurrent()) runtime.dispose();
         } catch (error) {
             runtime.dispose();

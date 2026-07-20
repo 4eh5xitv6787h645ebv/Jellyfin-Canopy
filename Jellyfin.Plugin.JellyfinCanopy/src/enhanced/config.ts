@@ -77,6 +77,8 @@ export interface UserSettingsSaveResult {
     file: string;
     revision: number;
     contentHash: string;
+    /** Isolated authoritative wire document carried by the exact acknowledgement. */
+    data: Record<string, unknown>;
 }
 
 export class UserSettingsPersistenceError extends Error {
@@ -593,14 +595,14 @@ async function drainQueue(queue: SaveQueue): Promise<void> {
                     restoreTarget(intent, ack.data);
                     reconcileSettledUserSettings(intent, ack.data);
                 }
-                const result: UserSettingsSaveResult = {
+                intent.waiters.forEach(waiter => waiter.resolve({
                     acknowledged: true,
                     deduplicated: false,
                     file: intent.fileName,
                     revision: ack.revision,
-                    contentHash: ack.contentHash
-                };
-                intent.waiters.forEach(waiter => waiter.resolve(result));
+                    contentHash: ack.contentHash,
+                    data: cloneRecord(ack.data),
+                }));
             } catch (rawError) {
                 const error = classifyPersistenceError(rawError);
                 let rollbackApplied = false;
@@ -673,6 +675,19 @@ JC.rememberUserSettingsSnapshot = (fileName: string, settings: unknown): void =>
     _conflictedKeys.delete(key);
 };
 
+JC.getAcknowledgedUserSettingsSnapshot = (fileName: string): Record<string, unknown> | null => {
+    if (!SUPPORTED_USER_FILES.has(fileName)) return null;
+    const owner = JC.identity.capture();
+    if (!owner) return null;
+    const key = cacheKeyFor(owner, fileName);
+    const wire = _ackedWire.get(key);
+    // A normal GET also populates _ackedWire. Only the hash exists after an
+    // exact structured save acknowledgement, so stale read snapshots can
+    // never masquerade as durable write evidence during a feature restart.
+    if (!wire || !_ackedHash.has(key)) return null;
+    return JC.identity.own(localValue(fileName, wire), owner);
+};
+
 JC.saveUserSettings = (fileName: string, settings: unknown): Promise<UserSettingsSaveResult> => {
     try {
         if (!SUPPORTED_USER_FILES.has(fileName) || !settings || typeof settings !== 'object' || Array.isArray(settings)) {
@@ -708,16 +723,18 @@ JC.saveUserSettings = (fileName: string, settings: unknown): Promise<UserSetting
         const revision = revisionOf(_ackedWire.get(key) || desiredWire) || 0;
         let queue = _queues.get(key);
         const acknowledgedHash = _ackedHash.get(key);
+        const acknowledgedWire = _ackedWire.get(key);
         if (!queue?.active && !queue?.pending
             && !_conflictedKeys.has(key)
-            && _ackedSerialized.get(key) === serialized && acknowledgedHash) {
+            && _ackedSerialized.get(key) === serialized && acknowledgedHash && acknowledgedWire) {
             reconcileAcknowledgedUserSettings(fileName, owner);
             return Promise.resolve({
                 acknowledged: true,
                 deduplicated: true,
                 file: fileName,
                 revision,
-                contentHash: acknowledgedHash
+                contentHash: acknowledgedHash,
+                data: cloneRecord(acknowledgedWire),
             });
         }
 

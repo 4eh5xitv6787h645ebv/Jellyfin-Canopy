@@ -16,6 +16,7 @@ import { wireSpoilerGuardListeners } from '../spoiler-guard/settings-tab';
 import { wireLanguageControls } from './language';
 import { resetLanguageControls } from './language';
 import { resetReleaseNotes } from './release-notes';
+import { wireThemeStudioEditor } from './theme-editor';
 import type { IdentityContext } from '../../types/jc';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -31,6 +32,7 @@ export interface PanelContext {
     trackTimer: (timer: number) => void;
     pluginShortcuts: any[];
     resetAutoCloseTimer: () => void;
+    setAutoCloseSuspended: (suspended: boolean) => void;
     panelBgColor: string;
     headerFooterBg: string;
     detailsBackground: string;
@@ -117,6 +119,13 @@ function createPanelOwner(identityContext: IdentityContext): PanelOwner {
 }
 
 type OwnedPanelElement = HTMLElement & { _identityCleanup?: () => void };
+
+interface ClosePanelEvent {
+    readonly type: string;
+    readonly key?: string;
+    readonly target?: EventTarget | null;
+    stopPropagation?(): void;
+}
 
 /** Toggle the main settings panel, joining calls made during the same open. */
 export function showEnhancedPanel(): Promise<void> {
@@ -284,8 +293,9 @@ async function openPanel(owner: PanelOwner): Promise<void> {
     let isDragging = false;
     let offset = { x: 0, y: 0 };
     let autoCloseTimer: number | null = null;
+    let autoCloseSuspended = false;
     let isMouseInside = false;
-    let closeHelp: (ev: any) => void = () => undefined;
+    let closeHelp: (ev: ClosePanelEvent) => void = () => undefined;
 
     // Every descendant listener installed by the split panel modules is
     // authorization-gated at the panel root. This also protects a retained,
@@ -314,6 +324,7 @@ async function openPanel(owner: PanelOwner): Promise<void> {
     };
     owner.registerCleanup(() => {
         clearAutoCloseTimer();
+        autoCloseSuspended = false;
         isDragging = false;
         isMouseInside = false;
         offset = { x: 0, y: 0 };
@@ -323,6 +334,7 @@ async function openPanel(owner: PanelOwner): Promise<void> {
     const resetAutoCloseTimer = () => {
         if (!owner.isCurrent()) return;
         clearAutoCloseTimer();
+        if (autoCloseSuspended) return;
         const timer = window.setTimeout(() => {
             owner.forgetTimer(timer);
             if (autoCloseTimer === timer) autoCloseTimer = null;
@@ -332,6 +344,13 @@ async function openPanel(owner: PanelOwner): Promise<void> {
         }, JC.CONFIG!.HELP_PANEL_AUTOCLOSE_DELAY as number);
         autoCloseTimer = timer;
         owner.trackTimer(timer);
+    };
+
+    const setAutoCloseSuspended = (suspended: boolean): void => {
+        if (autoCloseSuspended === suspended) return;
+        autoCloseSuspended = suspended;
+        clearAutoCloseTimer();
+        if (!suspended && owner.isCurrent() && !isMouseInside) resetAutoCloseTimer();
     };
 
     const handleMouseDown = (e: MouseEvent) => {
@@ -386,6 +405,7 @@ async function openPanel(owner: PanelOwner): Promise<void> {
         trackTimer: (timer) => owner.trackTimer(timer),
         pluginShortcuts,
         resetAutoCloseTimer,
+        setAutoCloseSuspended,
         panelBgColor,
         headerFooterBg,
         detailsBackground,
@@ -404,6 +424,7 @@ async function openPanel(owner: PanelOwner): Promise<void> {
     document.body.append(backdrop, help);
 
     wireShortcutEditor(ctx);
+    wireThemeStudioEditor(ctx);
     resetAutoCloseTimer();
 
     // --- Section navigation (adaptive settings view) ---
@@ -425,7 +446,10 @@ async function openPanel(owner: PanelOwner): Promise<void> {
         // desktop shows both columns side by side, so neither is inert there.
         const navColumn = help.querySelector<HTMLElement>('.jc-panel-nav');
         const mainColumn = help.querySelector<HTMLElement>('.jc-panel-main');
-        const phoneMedia = window.matchMedia('(max-width: 760px)');
+        const phoneMedia = window.matchMedia(
+            '(max-width: 760px), (orientation: landscape) and (max-height: 599px) '
+            + 'and (max-width: 999px) and (pointer: coarse)'
+        );
         const syncLayerFocus = (moveFocus: boolean) => {
             if (!navColumn || !mainColumn) return;
             if (phoneMedia.matches) {
@@ -443,13 +467,10 @@ async function openPanel(owner: PanelOwner): Promise<void> {
                 mainColumn.inert = false;
             }
         };
-        const handlePhoneMediaChange = () => syncLayerFocus(false);
-        phoneMedia.addEventListener('change', handlePhoneMediaChange);
-        owner.registerCleanup(() => phoneMedia.removeEventListener('change', handlePhoneMediaChange));
-
         const activate = (pane: HTMLElement, persist: boolean) => {
             panes.forEach(p => p.classList.toggle('active', p === pane));
             items.forEach(b => b.classList.toggle('active', b.dataset.tab === pane.dataset.pane));
+            mainColumn?.classList.toggle('jc-theme-pane-active', pane.dataset.pane === 'theme-studio');
             body.classList.add('jc-pane-open');
             syncLayerFocus(persist);
             if (persist) {
@@ -480,9 +501,31 @@ async function openPanel(owner: PanelOwner): Promise<void> {
             items.push(button);
         });
 
+        const handlePhoneMediaChange = () => {
+            if (!phoneMedia.matches) {
+                const activePane = panes.find((pane) => pane.classList.contains('active'));
+                if (!activePane) {
+                    const lastTab = (JC.currentSettings as any).lastOpenedTab;
+                    activate(panes.find((pane) => pane.dataset.pane === lastTab) || panes[0], false);
+                    return;
+                }
+                // Compact Back keeps the pane selected but releases its inner
+                // scroll owner. Restore that owner when both columns become
+                // visible again without requiring another tab click.
+                mainColumn?.classList.toggle(
+                    'jc-theme-pane-active',
+                    activePane.dataset.pane === 'theme-studio',
+                );
+            }
+            syncLayerFocus(false);
+        };
+        phoneMedia.addEventListener('change', handlePhoneMediaChange);
+        owner.registerCleanup(() => phoneMedia.removeEventListener('change', handlePhoneMediaChange));
+
         // Mobile back button returns to the section list.
         help.querySelector('#jcPanelBack')?.addEventListener('click', () => {
             body.classList.remove('jc-pane-open');
+            mainColumn?.classList.remove('jc-theme-pane-active');
             syncLayerFocus(true);
             resetAutoCloseTimer();
         });
@@ -528,8 +571,15 @@ async function openPanel(owner: PanelOwner): Promise<void> {
     });
 
     // --- Event Handlers for Settings Panel ---
-    closeHelp = (ev: any) => {
-        if ((ev.type === 'keydown' && (ev.key === 'Escape' || ev.key === '?')) || (ev.type === 'click' && ev.target.id === 'closeSettingsPanel')) {
+    closeHelp = (ev: ClosePanelEvent) => {
+        const target = ev.target;
+        const editableQuestion = ev.type === 'keydown' && ev.key === '?'
+            && target instanceof HTMLElement
+            && (target.matches('input, textarea, select, [contenteditable="true"]')
+                || target.isContentEditable);
+        if (editableQuestion) return;
+        if ((ev.type === 'keydown' && (ev.key === 'Escape' || ev.key === '?'))
+            || (ev.type === 'click' && target instanceof HTMLElement && target.id === 'closeSettingsPanel')) {
             // modal-a11y's Escape path invokes this with a synthetic
             // `{ type, key }` object (not a DOM event), so stopPropagation may be
             // absent — guard it. Calling it unconditionally threw a TypeError

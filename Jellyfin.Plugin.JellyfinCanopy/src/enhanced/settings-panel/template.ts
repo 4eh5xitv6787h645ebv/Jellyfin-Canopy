@@ -87,8 +87,8 @@ export function buildPanelHtml(ctx: PanelContext): string {
                 #jellyfin-canopy-panel .jc-pane.active { display: block; }
                 #jellyfin-canopy-panel .jc-pane-title { display: flex; align-items: center; gap: 8px; margin: 14px 0 12px 0; font-size: 17px; font-weight: 700; color: #fff; font-family: inherit; }
                 #jellyfin-canopy-panel .jc-pane-back { display: none; align-items: center; gap: 6px; margin: 12px 0 0 0; padding: 6px 10px; border: none; border-radius: 8px; background: rgba(255,255,255,0.08); color: #fff; font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer; align-self: flex-start; }
-                @media (max-width: 760px) {
-                    #jellyfin-canopy-panel { top: 0 !important; left: 0 !important; transform: none !important; width: 100vw !important; max-width: 100vw !important; height: 100dvh !important; max-height: 100dvh !important; border-radius: 0 !important; border: none !important; box-sizing: border-box !important; }
+                @media (max-width: 760px), (orientation: landscape) and (max-height: 599px) and (max-width: 999px) and (pointer: coarse) {
+                    #jellyfin-canopy-panel { top: 0 !important; left: 0 !important; transform: none !important; width: 100vw !important; min-width: 0 !important; max-width: 100vw !important; height: 100dvh !important; max-height: 100dvh !important; border-radius: 0 !important; border: none !important; box-sizing: border-box !important; }
                     #jellyfin-canopy-panel .jc-panel-body { display: block; position: relative; overflow: hidden; }
                     #jellyfin-canopy-panel .jc-panel-nav { position: absolute; inset: 0; border-right: none; z-index: 1; }
                     #jellyfin-canopy-panel .jc-panel-main { position: absolute; inset: 0; z-index: 2; background: rgb(24, 24, 24); transform: translateX(102%); transition: transform 200ms ease; }
@@ -154,6 +154,12 @@ export function buildPanelHtml(ctx: PanelContext): string {
                     </div>
                 </div>` : ''}
                 <div id="settings-content" style="display: contents;">
+                    ${JC.pluginConfig.ThemeStudioEnabled === true ? `
+                    <section class="jc-pane" data-pane="theme-studio">
+                        <h3 class="jc-pane-title"><span class="material-icons" aria-hidden="true">palette</span> ${escapeHtml(JC.t!('theme_studio_title'))}</h3>
+                        <p class="jc-theme-hint">${escapeHtml(JC.t!('theme_studio_description'))}</p>
+                        <div class="jc-theme-editor-root" data-theme-editor-root></div>
+                    </section>` : ''}
                     <section class="jc-pane" data-pane="playback">
                         <h3 class="jc-pane-title">${JC.icon!(JC.IconName!.PLAYBACK)} ${JC.t!('panel_settings_playback')}</h3>
                         <div style="padding: 0 16px 16px 16px;">

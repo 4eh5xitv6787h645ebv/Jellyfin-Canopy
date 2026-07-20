@@ -47,7 +47,8 @@ describe('bookmarks library identity ownership', () => {
       deduplicated: false,
       file: 'settings.json',
       revision: 1,
-      contentHash: 'a'.repeat(64)
+      contentHash: 'a'.repeat(64),
+      data: { Revision: 1 },
     });
     JC.bookmarks = {
       delete: deleteBookmark,

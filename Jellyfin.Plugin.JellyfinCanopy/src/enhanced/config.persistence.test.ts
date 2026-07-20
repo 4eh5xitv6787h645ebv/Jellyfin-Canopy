@@ -62,6 +62,7 @@ describe('acknowledged user-settings persistence', () => {
     it('does not treat a loaded baseline as write acknowledgement evidence', async () => {
         const settings = own({ Revision: 7, Mode: 'same' });
         JC.rememberUserSettingsSnapshot!('settings.json', settings);
+        expect(JC.getAcknowledgedUserSettingsSnapshot!('settings.json')).toBeNull();
         const ajax = vi.spyOn(ApiClient, 'ajax')
             .mockResolvedValue(acknowledged('settings.json', 7, { Mode: 'same' }));
 
@@ -72,6 +73,15 @@ describe('acknowledged user-settings persistence', () => {
             acknowledged: true, deduplicated: true, revision: 7, contentHash: HASH
         });
         expect(ajax).toHaveBeenCalledTimes(1);
+        const first = JC.getAcknowledgedUserSettingsSnapshot!('settings.json') as Record<string, unknown>;
+        expect(first).toEqual({ Revision: 7, Mode: 'same' });
+        expect(JC.identity.isOwned(first, JC.identity.capture())).toBe(true);
+        first.Mode = 'mutated copy';
+        expect(JC.getAcknowledgedUserSettingsSnapshot!('settings.json'))
+            .toEqual({ Revision: 7, Mode: 'same' });
+
+        JC.identity.transition('test-server-id', 'other-user-id', 'persistence-test-switch');
+        expect(JC.getAcknowledgedUserSettingsSnapshot!('settings.json')).toBeNull();
     });
 
     it('accepts the PascalCase acknowledgement envelope emitted by the live ASP.NET host', async () => {
@@ -266,6 +276,42 @@ describe('acknowledged user-settings persistence', () => {
         expect(ajax).toHaveBeenCalledTimes(2);
         const secondBody = JSON.parse(String(ajax.mock.calls[1][0].data));
         expect(secondBody).toEqual({ Revision: 1, LocalMode: 'new', RemoteMode: 'remote' });
+    });
+
+    it('returns the exact rebased acknowledgement to every joined waiter', async () => {
+        const firstTarget = own({ Revision: 0, Profile: 'base', Schedule: 'base' });
+        JC.rememberUserSettingsSnapshot!('theme.json', firstTarget);
+        let rejectInitial: (reason: unknown) => void = () => undefined;
+        const initial = new Promise<never>((_resolve, reject) => { rejectInitial = reject; });
+        const authoritative = { Revision: 1, Profile: 'base', Schedule: 'remote' };
+        const acknowledgedData = { Revision: 2, Profile: 'local', Schedule: 'remote' };
+        const ajax = vi.spyOn(ApiClient, 'ajax')
+            .mockReturnValueOnce(initial)
+            .mockResolvedValueOnce(acknowledged('theme.json', 2, acknowledgedData));
+
+        firstTarget.Profile = 'local';
+        const first = JC.saveUserSettings!('theme.json', firstTarget);
+        await vi.waitFor(() => expect(ajax).toHaveBeenCalledOnce());
+        const joinedTarget = own(structuredClone(firstTarget));
+        const joined = JC.saveUserSettings!('theme.json', joinedTarget);
+        rejectInitial(httpError(409, {
+            success: false,
+            conflict: true,
+            file: 'theme.json',
+            revision: 1,
+            contentHash: HASH,
+            data: authoritative,
+        }));
+
+        const [firstResult, joinedResult] = await Promise.all([first, joined]);
+        expect(firstResult).toMatchObject({ data: acknowledgedData });
+        expect(joinedResult).toMatchObject({ data: acknowledgedData });
+        expect(firstResult.data).not.toBe(joinedResult.data);
+        expect(firstTarget).toEqual(acknowledgedData);
+        expect(joinedTarget).toEqual({ Revision: 0, Profile: 'local', Schedule: 'base' });
+        expect(JSON.parse(String(ajax.mock.calls[1][0].data))).toEqual({
+            Revision: 1, Profile: 'local', Schedule: 'remote',
+        });
     });
 
     it('rejects a same-field conflict and adopts the authoritative state', async () => {
