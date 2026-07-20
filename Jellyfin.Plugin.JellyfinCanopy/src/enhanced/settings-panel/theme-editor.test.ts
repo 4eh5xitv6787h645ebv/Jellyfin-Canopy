@@ -307,6 +307,8 @@ describe('Theme Studio responsive settings editor', () => {
             .toBeGreaterThan(-1);
         expect(styles.indexOf('#jellyfin-canopy-panel.jc-theme-preview-only .jc-theme-return'))
             .toBeLessThan(styles.indexOf('@media'));
+        expect(styles.indexOf('#jellyfin-canopy-panel.jc-theme-preview-only .jc-theme-studio'))
+            .toBeLessThan(styles.indexOf('@media'));
         button('preset', 'glass').click();
         flushFrames();
         button('preview-only').focus();

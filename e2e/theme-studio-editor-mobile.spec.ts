@@ -167,9 +167,12 @@ test.describe.serial('Theme Studio mobile editor', () => {
         await page.setViewportSize({ width: 1024, height: 768 });
         await expect(panel.locator('[data-action="return-editor"]')).toBeVisible();
         await expect(page.locator('#jellyfin-canopy-panel-backdrop')).toBeHidden();
+        await expect(panel.locator('.jc-theme-studio')).toBeHidden();
+        await expect(panel.locator('.jc-theme-actions')).toBeHidden();
         await panel.locator('[data-action="return-editor"]').click();
         await expect(panel).not.toHaveClass(/jc-theme-preview-only/);
         await expect(page.locator('#jellyfin-canopy-panel-backdrop')).toBeVisible();
+        await expect(panel.locator('.jc-theme-studio')).toBeVisible();
         await expect(panel.locator('[data-action="editor-mode"][aria-pressed="true"]')).toBeFocused();
 
         await page.setViewportSize({ width: 740, height: 360 });

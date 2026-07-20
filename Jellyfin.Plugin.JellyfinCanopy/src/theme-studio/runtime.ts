@@ -303,7 +303,10 @@ export class ThemeStudioRuntime {
         // may have reset the quarantined store and legitimately recreated it at
         // revision zero. A newer acknowledgement that arrives during this GET
         // still wins through the acknowledgement-generation guard in #loadOwned.
-        const requestSucceeded = await this.load(true);
+        const request = this.load(true);
+        const generation = this.#loadGeneration;
+        const requestSucceeded = await request;
+        if (generation !== this.#loadGeneration) return false;
         const loaded = requestSucceeded && this.#configuration !== null
             && this.#scope.isCurrent() && !this.#disposed;
         if (!loaded && previous && this.#scope.isCurrent() && !this.#disposed) {

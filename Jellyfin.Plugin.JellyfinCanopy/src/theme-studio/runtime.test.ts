@@ -406,6 +406,36 @@ describe('Theme Studio identity-owned runtime', () => {
         expect(document.documentElement.getAttribute('data-jc-theme-palette')).toBe('neutral');
     });
 
+    it('never lets an obsolete reload restore its snapshot over a newer reload', async () => {
+        const committed = themeConfiguration();
+        committed.Revision = 7;
+        let resolveOlder!: (value: unknown) => void;
+        let resolveNewer!: (value: unknown) => void;
+        const plugin = vi.fn()
+            .mockResolvedValueOnce(committed)
+            .mockImplementationOnce(() => new Promise<unknown>((resolve) => { resolveOlder = resolve; }))
+            .mockImplementationOnce(() => new Promise<unknown>((resolve) => { resolveNewer = resolve; }));
+        JC.core.api = { plugin } as unknown as ApiApi;
+        const { runtime } = createRuntime();
+        await runtime.load();
+
+        const olderReload = runtime.reload();
+        const newerReload = runtime.reload();
+        const newer = themeConfiguration();
+        newer.Revision = 12;
+        newer.Profiles[0].Palette = 'neutral';
+        resolveNewer(newer);
+        await expect(newerReload).resolves.toBe(true);
+        const older = themeConfiguration();
+        older.Revision = 8;
+        older.Profiles[0].Palette = 'vivid';
+        resolveOlder(older);
+        await expect(olderReload).resolves.toBe(false);
+
+        expect(runtime.getConfiguration()).toMatchObject({ Revision: 12 });
+        expect(document.documentElement.getAttribute('data-jc-theme-palette')).toBe('neutral');
+    });
+
     it('lets an in-flight authoritative load supersede an older acknowledgement', async () => {
         let resolveLoad: (value: unknown) => void = () => undefined;
         const plugin = vi.fn(() => new Promise<unknown>((resolve) => { resolveLoad = resolve; }));

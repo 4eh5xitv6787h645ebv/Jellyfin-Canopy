@@ -370,6 +370,19 @@ function editorStyles(): string {
         #jellyfin-canopy-panel .jc-theme-return, #jellyfin-canopy-panel .jc-theme-mobile-preview { display:none; }
         #jellyfin-canopy-panel-backdrop.jc-theme-preview-backdrop-hidden { display:none!important; }
         #jellyfin-canopy-panel.jc-theme-preview-only .jc-theme-return { display:inline-flex; position:fixed; z-index:1000001; inset-block-start:max(12px,env(safe-area-inset-top)); inset-inline-end:max(12px,env(safe-area-inset-right)); pointer-events:auto; }
+        #jellyfin-canopy-panel.jc-theme-preview-only { background:transparent!important; border:0!important; box-shadow:none!important; backdrop-filter:none!important; pointer-events:none; }
+        #jellyfin-canopy-panel.jc-theme-preview-only .jc-panel-header,
+        #jellyfin-canopy-panel.jc-theme-preview-only .jc-panel-nav,
+        #jellyfin-canopy-panel.jc-theme-preview-only .jc-pane-back,
+        #jellyfin-canopy-panel.jc-theme-preview-only .panel-footer,
+        #jellyfin-canopy-panel.jc-theme-preview-only #closeSettingsPanel,
+        #jellyfin-canopy-panel.jc-theme-preview-only .jc-pane-title,
+        #jellyfin-canopy-panel.jc-theme-preview-only .jc-pane > .jc-theme-hint,
+        #jellyfin-canopy-panel.jc-theme-preview-only .jc-theme-toolbar,
+        #jellyfin-canopy-panel.jc-theme-preview-only .jc-theme-studio,
+        #jellyfin-canopy-panel.jc-theme-preview-only .jc-theme-actions { display:none!important; }
+        #jellyfin-canopy-panel.jc-theme-preview-only .jc-panel-body,
+        #jellyfin-canopy-panel.jc-theme-preview-only .jc-panel-main { background:transparent!important; overflow:visible!important; pointer-events:none; }
         @media (min-width:761px) and (max-width:900px) { #jellyfin-canopy-panel .jc-theme-studio { grid-template-columns:minmax(0,1fr); } #jellyfin-canopy-panel .jc-theme-preview-card { position:static; } }
         @media ${COMPACT_EDITOR_MEDIA} {
             #jellyfin-canopy-panel { top:var(--jc-panel-visual-top,0px)!important; height:var(--jc-panel-visual-height,100dvh)!important; max-height:var(--jc-panel-visual-height,100dvh)!important; }
@@ -378,19 +391,6 @@ function editorStyles(): string {
             #jellyfin-canopy-panel .jc-theme-preview-card { position:static; }
             #jellyfin-canopy-panel .jc-theme-mobile-preview { display:inline-flex; }
             #jellyfin-canopy-panel .jc-theme-actions { margin-inline:0; }
-            #jellyfin-canopy-panel.jc-theme-preview-only { background:transparent!important; border:0!important; box-shadow:none!important; backdrop-filter:none!important; pointer-events:none; }
-            #jellyfin-canopy-panel.jc-theme-preview-only .jc-panel-header,
-            #jellyfin-canopy-panel.jc-theme-preview-only .jc-panel-nav,
-            #jellyfin-canopy-panel.jc-theme-preview-only .jc-pane-back,
-            #jellyfin-canopy-panel.jc-theme-preview-only .panel-footer,
-            #jellyfin-canopy-panel.jc-theme-preview-only #closeSettingsPanel,
-            #jellyfin-canopy-panel.jc-theme-preview-only .jc-pane-title,
-            #jellyfin-canopy-panel.jc-theme-preview-only .jc-pane > .jc-theme-hint,
-            #jellyfin-canopy-panel.jc-theme-preview-only .jc-theme-toolbar,
-            #jellyfin-canopy-panel.jc-theme-preview-only .jc-theme-studio,
-            #jellyfin-canopy-panel.jc-theme-preview-only .jc-theme-actions { display:none!important; }
-            #jellyfin-canopy-panel.jc-theme-preview-only .jc-panel-body,
-            #jellyfin-canopy-panel.jc-theme-preview-only .jc-panel-main { background:transparent!important; overflow:visible!important; pointer-events:none; }
         }
         @media (prefers-reduced-motion:reduce) { #jellyfin-canopy-panel .jc-theme-button, #jellyfin-canopy-panel .jc-theme-preset { transition:none!important; } }
         @media (forced-colors:active) { #jellyfin-canopy-panel .jc-theme-button.primary, #jellyfin-canopy-panel .jc-theme-preset[aria-pressed="true"] { border:3px solid ButtonText; } }
