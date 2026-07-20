@@ -1274,4 +1274,22 @@ describe('Theme Studio responsive settings editor', () => {
         expect(button('apply').disabled).toBe(true);
         expect(preview).not.toHaveBeenCalled();
     });
+
+    it('preserves a buffered profile-name draft across a formatting-only Expert edit', () => {
+        wireThemeStudioEditor(context());
+        const name = panel.querySelector<HTMLInputElement>('[data-role="profile-name"]')!;
+        name.value = 'Buffered name';
+        name.dispatchEvent(new Event('input', { bubbles: true }));
+        button('editor-mode', 'expert').click();
+        const editor = panel.querySelector<HTMLTextAreaElement>('[data-field="expert-json"]')!;
+        editor.value = JSON.stringify(configuration);
+        editor.dispatchEvent(new Event('input', { bubbles: true }));
+
+        vi.advanceTimersByTime(250);
+
+        expect(panel.textContent).toContain('theme_studio_unsaved');
+        expect(panel.textContent).not.toContain('theme_studio_ready');
+        expect(button('apply').disabled).toBe(false);
+        expect(preview).not.toHaveBeenCalled();
+    });
 });

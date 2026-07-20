@@ -783,7 +783,9 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
                 if (!recoveryRequired) status = t('theme_studio_ready');
             }
         } else if (!recoveryRequired) {
-            status = t(state.snapshot().dirty ? 'theme_studio_unsaved' : 'theme_studio_ready');
+            status = t(state.snapshot().dirty || profileNameDirty()
+                ? 'theme_studio_unsaved'
+                : 'theme_studio_ready');
         }
         if (rerender) render();
         return true;
