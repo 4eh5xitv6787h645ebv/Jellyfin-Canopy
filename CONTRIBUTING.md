@@ -387,11 +387,11 @@ one-to-one with a budget key in `scripts/scale-budgets.json`:
 
 | Budget key | What is measured |
 | --- | --- |
-| `maxTagCacheFullBuildMilliseconds` | Wall-clock duration of a full tag-cache build over the seeded library. |
-| `maxTagCacheFullBuildPeakResidentDeltaBytes` | Peak server resident-memory (RSS) delta during that full build, relative to the pre-build baseline. |
+| `maxTagCacheFullBuildMilliseconds` | Wall-clock duration of a **cold** full tag-cache build over the seeded library — every entry constructed from scratch, per the tag-cache state protocol below. |
+| `maxTagCacheFullBuildPeakResidentDeltaBytes` | Peak server resident-memory (RSS) delta during that cold full build, relative to the pre-build baseline. |
 | `maxLibraryScanEventP95Milliseconds` | p95 latency of the synchronous scan-thread event handlers (the [S1 rule](#performance-rules)) during a controlled bulk add. |
 | `maxResponseFilterP95MicrosecondsPerItem` | p95 latency overhead added by the plugin's complete synchronous MVC item-response filter chain — all four action filters registered in `PluginServiceRegistrator`, in registration order: `HiddenContentResponseFilter`, `SpoilerIdentityTagFilter`, `SpoilerFieldStripFilter`, `SpoilerBlurImageFilter`; any filter later added to that chain joins this metric automatically — on large item-list responses, normalized per returned item. |
-| `maxPluginStartupMilliseconds` | Plugin startup duration on the seeded server. |
+| `maxPluginStartupMilliseconds` | Plugin startup duration on the seeded server with the persisted tag cache **present** (warm start, the production steady state), per the tag-cache state protocol below. |
 | `maxTagCacheColdResponseBytes` | Size in bytes of the cold tag-cache response. |
 | `maxTagCacheSnapshotSerializationPeakAllocatedBytes` | Peak server allocation during tag-cache snapshot serialization. |
 | `maxTagCacheColdTransferP95Milliseconds` | p95 transfer time of the cold tag-cache response. |
@@ -405,6 +405,37 @@ time/memory.
 
 Measurement protocol requirements for the follow-up harness:
 
+- **Tag-cache state protocol.** Two facts about the shipped code make naive
+  measurement of the tag-cache metrics wrong: `TagCacheService.BuildFullCache`
+  is a *reconcile* that reuses the existing entry for any item whose source
+  revision is unchanged, and `StartupService` runs `BuildFullCache` during
+  startup whenever no persisted cache exists. So a build triggered over
+  existing cache state measures a warm reconcile that never exercises per-item
+  entry construction (a quadratic entry-build regression would pass), while
+  simply deleting the cache before startup folds the initial build into the
+  startup measurement. The harness must therefore measure the two metric
+  groups in **separate server sessions with explicit, asserted cache state**:
+  1. **Warm session — startup metric.** Start the server with the baseline's
+     persisted tag cache (`tag-cache.json`) present in the instance-local
+     writable state. `maxPluginStartupMilliseconds` is recorded from this
+     session only; the harness asserts that startup loaded a nonzero entry
+     count from disk and that no full build ran during startup.
+  2. **Cold session — full-build metrics.** Stop the server, delete the
+     persisted tag cache from the instance-local writable state (the Volume
+     baseline itself is never modified), and start the server again. Startup
+     now performs the initial full build against an empty in-memory cache;
+     `maxTagCacheFullBuildMilliseconds` and
+     `maxTagCacheFullBuildPeakResidentDeltaBytes` are recorded from the named
+     measurement markers bracketing the build itself — never from whole-startup
+     timing — and startup duration is never recorded from this session. The
+     harness asserts the cold precondition (no persisted cache on disk and
+     zero in-memory entries when the build starts).
+  Each session's cache state (warm/cold) and the asserted preconditions are
+  recorded in the result artifact; a run that cannot prove the cold
+  precondition is **no-evidence** for the full-build metrics — a warm
+  reconcile number is never reported under a full-build key. The cold-response
+  envelope metrics below require a fully built cache and may be measured in
+  either session once its load or build has completed.
 - Publish **raw samples plus summarized values** (p50/p95/max as applicable)
   for both profiles, not summaries alone.
 - Use fixed, named measurement markers in harness output so runs are comparable
