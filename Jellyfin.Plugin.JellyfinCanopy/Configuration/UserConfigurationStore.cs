@@ -40,6 +40,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         {
             "settings.json",
             "theme.json",
+            "theme-css.json",
             "shortcuts.json",
             "elsewhere.json",
             "bookmark.json",

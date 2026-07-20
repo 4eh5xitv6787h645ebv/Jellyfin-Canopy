@@ -6,6 +6,7 @@ import type {
     IdentityContext,
     ThemeStudioPreviewOptions,
     ThemeStudioRuntimeApi,
+    UserThemeCssConfiguration,
     UserThemeConfiguration,
 } from '../../types/jc';
 import type { UserSettingsSaveResult } from '../config';
@@ -156,6 +157,12 @@ beforeEach(() => {
         hasPendingAuthoritativeLoad: () => false,
         reload,
         adoptAcknowledged,
+        getAdvancedCssConfiguration: () => null,
+        whenAdvancedCssReady: vi.fn().mockResolvedValue(false),
+        reloadAdvancedCss: vi.fn().mockResolvedValue(false),
+        previewAdvancedCss: vi.fn(() => false),
+        cancelAdvancedCssPreview: vi.fn<() => void>(),
+        adoptAdvancedCssAcknowledged: vi.fn(() => false),
         refresh: vi.fn<() => void>(),
         getDiagnostics: () => ({
             status: 'active', revision: configuration.Revision, profileId: configuration.ActiveProfileId,
@@ -1121,6 +1128,176 @@ describe('Theme Studio responsive settings editor', () => {
             LegacyMigration: { JellyfishTheme: '', Completed: false },
             Schedule: [expect.objectContaining({ Id: 'summer' })],
         }), { allowScheduling: false });
+    });
+
+    it('requires explicit confirmation when imported profile names collide', async () => {
+        const profile = structuredClone(configuration.Profiles[0]);
+        profile.Id = 'imported-default';
+        const portable = {
+            SchemaVersion: configuration.SchemaVersion,
+            ActiveProfileId: profile.Id,
+            Profiles: [profile],
+            ScheduleTimeZone: 'local',
+            Schedule: [],
+        };
+        JC.core.api = {
+            plugin: vi.fn().mockResolvedValue({ valid: true, data: portable }),
+        } as unknown as ApiApi;
+        wireThemeStudioEditor(context());
+        const input = panel.querySelector<HTMLInputElement>('[data-field="import-file"]')!;
+        Object.defineProperty(input, 'files', {
+            configurable: true,
+            value: [new File([JSON.stringify(portable)], 'collision.json', { type: 'application/json' })],
+        });
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+
+        await vi.waitFor(() => expect(panel.querySelector('.jc-theme-import-collision')).not.toBeNull());
+        expect(button('accept-import').disabled).toBe(true);
+        button('accept-import').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        expect(button('apply').disabled).toBe(true);
+
+        const confirmation = panel.querySelector<HTMLInputElement>('[data-field="import-collision-confirm"]')!;
+        confirmation.checked = true;
+        confirmation.dispatchEvent(new Event('change', { bubbles: true }));
+        expect(button('accept-import').disabled).toBe(false);
+        button('accept-import').click();
+        flushFrames();
+
+        expect(preview).toHaveBeenLastCalledWith(expect.objectContaining({
+            ActiveProfileId: 'imported-default',
+            Profiles: [expect.objectContaining({ Id: 'imported-default', Name: 'Default' })],
+        }), { allowScheduling: false });
+    });
+
+    it('shows only allowlisted bounded diagnostics from a rejected import', async () => {
+        const responseJSON = {
+            diagnostics: [
+                { code: 'unsupported_schema', message: 'attacker supplied secret' },
+                { code: 'remote_url', message: 'https://secret.invalid/a.css' },
+                { code: 'credential_field', message: 'api key: should-not-render' },
+                { code: 'unknown_code', message: '<script>not rendered</script>' },
+                ...Array.from({ length: 12 }, () => ({ code: 'invalid_document', message: 'ignored' })),
+            ],
+        };
+        JC.core.api = {
+            plugin: vi.fn().mockRejectedValue(Object.assign(new Error('HTTP 400'), { responseJSON })),
+        } as unknown as ApiApi;
+        wireThemeStudioEditor(context());
+        const input = panel.querySelector<HTMLInputElement>('[data-field="import-file"]')!;
+        Object.defineProperty(input, 'files', {
+            configurable: true,
+            value: [new File(['{}'], 'unsafe.json', { type: 'application/json' })],
+        });
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+
+        await vi.waitFor(() => expect(panel.textContent).toContain(
+            'theme_studio_import_diagnostic_unsupported_schema',
+        ));
+        const items = panel.querySelectorAll('.jc-theme-import-diff.jc-theme-validation li');
+        expect(items.length).toBeLessThanOrEqual(8);
+        expect(panel.textContent).toContain('theme_studio_import_diagnostic_remote_url');
+        expect(panel.textContent).toContain('theme_studio_import_diagnostic_credential_field');
+        expect(panel.textContent).not.toContain('should-not-render');
+        expect(panel.textContent).not.toContain('<script>');
+    });
+
+    it('integrity-checks curated gallery entries before staging typed profile fields', async () => {
+        wireThemeStudioEditor(context());
+
+        expect(panel.querySelectorAll('.jc-theme-gallery-card')).toHaveLength(9);
+        expect(panel.querySelectorAll('.jc-theme-gallery-card p')).toHaveLength(9);
+        expect(panel.querySelectorAll('.jc-theme-gallery-card code')).toHaveLength(9);
+        const galleryButton = panel.querySelector<HTMLButtonElement>(
+            '[data-action="apply-gallery"][data-gallery-id="cinematic-dusk"]',
+        )!;
+        galleryButton.click();
+
+        await vi.waitFor(() => expect(button('apply').disabled).toBe(false));
+        flushFrames();
+        expect(preview).toHaveBeenLastCalledWith(expect.objectContaining({
+            Profiles: [expect.objectContaining({
+                BasePreset: 'cinematic',
+                Palette: 'dracula',
+                Accent: 'pink',
+                Tokens: {},
+            })],
+        }), { allowScheduling: false });
+        expect(panel.textContent).toContain('theme_studio_gallery_applied');
+    });
+
+    it('previews, validates, and separately saves advanced local declarations', async () => {
+        const advanced: UserThemeCssConfiguration = {
+            Revision: 0,
+            SchemaVersion: 1,
+            Enabled: false,
+            Snippets: [],
+        };
+        const runtime = JC.core.themeStudio!;
+        const previewAdvancedCss = vi.fn(() => true);
+        const cancelAdvancedCssPreview = vi.fn<() => void>();
+        const adoptAdvancedCssAcknowledged = vi.fn(() => true);
+        JC.pluginConfig = { ...JC.pluginConfig, ThemeStudioAllowAdvancedCss: true };
+        JC.core.themeStudio = {
+            ...runtime,
+            getAdvancedCssConfiguration: () => structuredClone(advanced),
+            whenAdvancedCssReady: vi.fn().mockResolvedValue(true),
+            reloadAdvancedCss: vi.fn().mockResolvedValue(true),
+            previewAdvancedCss,
+            cancelAdvancedCssPreview,
+            adoptAdvancedCssAcknowledged,
+        } satisfies ThemeStudioRuntimeApi;
+        JC.saveUserSettings = vi.fn((_file, payload): Promise<UserSettingsSaveResult> => {
+            const data = structuredClone(payload as UserThemeCssConfiguration);
+            data.Revision = 1;
+            return Promise.resolve({
+                acknowledged: true,
+                deduplicated: false,
+                file: 'theme-css.json',
+                revision: 1,
+                contentHash: 'd'.repeat(64),
+                data: data as unknown as Record<string, unknown>,
+            });
+        });
+        wireThemeStudioEditor(context());
+        await vi.waitFor(() => expect(panel.querySelector('[data-action="add-css-snippet"]')).not.toBeNull());
+
+        button('add-css-snippet').click();
+        let enabled = panel.querySelector<HTMLInputElement>('[data-field="advanced-css-enabled"]')!;
+        enabled.checked = true;
+        enabled.dispatchEvent(new Event('change', { bubbles: true }));
+        let declarations = panel.querySelector<HTMLTextAreaElement>(
+            '[data-field="advanced-css-declarations"]',
+        )!;
+        declarations.value = 'background:url(https://example.invalid/theme.css);';
+        declarations.dispatchEvent(new Event('input', { bubbles: true }));
+
+        declarations = panel.querySelector('[data-field="advanced-css-declarations"]')!;
+        expect(declarations.getAttribute('aria-invalid')).toBe('true');
+        expect(button('save-css').disabled).toBe(true);
+        expect(cancelAdvancedCssPreview).toHaveBeenCalled();
+
+        declarations.value = 'border-radius:16px; --jc-theme-custom-accent:#8f76ff;';
+        declarations.dispatchEvent(new Event('input', { bubbles: true }));
+        expect(button('save-css').disabled).toBe(false);
+        expect(previewAdvancedCss).toHaveBeenLastCalledWith(expect.objectContaining({
+            Enabled: true,
+            Snippets: [expect.objectContaining({ Target: 'root' })],
+        }));
+        button('save-css').click();
+
+        await vi.waitFor(() => expect(JC.saveUserSettings).toHaveBeenCalledWith(
+            'theme-css.json',
+            expect.objectContaining({
+                Enabled: true,
+                Snippets: [expect.objectContaining({
+                    Declarations: 'border-radius:16px;--jc-theme-custom-accent:#8f76ff;',
+                })],
+            }),
+        ));
+        expect(adoptAdvancedCssAcknowledged).toHaveBeenCalledWith(expect.objectContaining({ Revision: 1 }));
+        expect(button('save-css').disabled).toBe(true);
+        expect(panel.textContent).toContain('theme_studio_css_saved');
+        expect(button('apply').disabled).toBe(true);
     });
 
     it.each(['preset', 'profile-name', 'expert-json'] as const)(

@@ -255,6 +255,89 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
         }
 
         [Fact]
+        public void ThemeImportValidation_RejectsUnsupportedRemoteExecutableAndCredentialFieldsWithBoundedDiagnostics()
+        {
+            var import = new ThemeExportDocument
+            {
+                SchemaVersion = ThemeConfigurationPolicy.CurrentSchemaVersion + 1,
+                Profiles = new List<ThemeProfile>
+                {
+                    ThemeProfile.CreateDefault("canopy", "canopy-night")
+                }
+            };
+            using var remote = JsonDocument.Parse("\"https://example.invalid/theme.css\"");
+            using var script = JsonDocument.Parse("\"<script>alert(1)</script>\"");
+            using var secret = JsonDocument.Parse("\"do-not-echo-this-secret\"");
+            import.ExtensionData["RemoteStyle"] = remote.RootElement.Clone();
+            import.ExtensionData["Markup"] = script.RootElement.Clone();
+            import.ExtensionData["ApiKey"] = secret.RootElement.Clone();
+
+            var result = Assert.IsType<BadRequestObjectResult>(
+                Controller().ValidateUserSettingsThemeImport(UserId, import));
+            var json = JsonSerializer.Serialize(result.Value);
+
+            Assert.Contains("unsupported_schema", json, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("unsupported_field", json, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("credential_field", json, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("remote_url", json, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("executable_markup", json, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("do-not-echo-this-secret", json, StringComparison.Ordinal);
+            Assert.InRange(ThemeImportDiagnostics.Analyze(
+                import,
+                import.ToConfiguration(),
+                PersistedPayloadPolicy.Validate(import.ToConfiguration())).Count,
+                1,
+                ThemeImportDiagnostics.MaximumDiagnostics);
+            Assert.False(File.Exists(FilePath("theme.json")));
+        }
+
+        [Fact]
+        public void ThemeCss_IsAdministratorGatedRevisionSafeAndSeparatelyPersisted()
+        {
+            var disabledGet = Controller().GetUserThemeCss(UserId);
+            Assert.Equal(StatusCodes.Status403Forbidden, Assert.IsType<ObjectResult>(disabledGet).StatusCode);
+
+            _provider.Current = new PluginConfiguration { ThemeStudioAllowAdvancedCss = true };
+            var initialController = Controller();
+            var initial = Assert.IsType<UserThemeCssConfiguration>(
+                Assert.IsType<OkObjectResult>(initialController.GetUserThemeCss(UserId)).Value);
+            Assert.False(initial.Enabled);
+            Assert.Empty(initial.Snippets);
+            Assert.Equal("\"0\"", initialController.Response.Headers.ETag.ToString());
+
+            var candidate = new UserThemeCssConfiguration
+            {
+                Enabled = true,
+                Snippets = new List<ThemeCssSnippet>
+                {
+                    new()
+                    {
+                        Id = "local-accent",
+                        Name = "Local accent",
+                        Target = "cards",
+                        Declarations = "--jc-theme-custom-accent:#8f76ff;"
+                    }
+                }
+            };
+            var saved = Assert.IsType<UserSettingsController.UserFileMutationResponse<UserThemeCssConfiguration>>(
+                Assert.IsType<OkObjectResult>(Controller(0).SaveUserThemeCss(UserId, candidate)).Value);
+            Assert.True(saved.Success);
+            Assert.Equal(1, saved.Revision);
+            Assert.True(File.Exists(FilePath("theme-css.json")));
+            Assert.False(File.Exists(FilePath("theme.json")));
+
+            var stale = new UserThemeCssConfiguration { Revision = 0, Enabled = false };
+            Assert.IsType<ConflictObjectResult>(Controller(0).SaveUserThemeCss(UserId, stale));
+            Assert.True(_manager.GetUserConfigurationStrict<UserThemeCssConfiguration>(
+                UserId,
+                "theme-css.json").Enabled);
+
+            _provider.Current = new PluginConfiguration { ThemeStudioAllowAdvancedCss = false };
+            var disabledSave = Controller(1).SaveUserThemeCss(UserId, saved.Data!);
+            Assert.Equal(StatusCodes.Status403Forbidden, Assert.IsType<ObjectResult>(disabledSave).StatusCode);
+        }
+
+        [Fact]
         public void ThemeImportValidation_MigratesOlderSchemaWithoutAliasingOrWriting()
         {
             var profile = ThemeProfile.CreateDefault("canopy", "canopy-night");

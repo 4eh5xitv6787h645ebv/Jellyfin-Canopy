@@ -203,6 +203,24 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             return Ok(ThemeExportDocument.FromConfiguration(read.Value));
         }
 
+        [HttpGet("user-settings/{userId}/theme-css.json")]
+        [Authorize]
+        public IActionResult GetUserThemeCss(string userId)
+        {
+            var authorizationResult = AuthorizeUserConfigAccess(userId, out var authorizedUserId);
+            if (authorizationResult != null)
+            {
+                return authorizationResult;
+            }
+
+            if (_configProvider.ConfigurationOrNull?.ThemeStudioAllowAdvancedCss != true)
+            {
+                return ThemeCssDisabled();
+            }
+
+            return ReadUserFile<UserThemeCssConfiguration>(authorizedUserId, "theme-css.json");
+        }
+
         [HttpGet("user-settings/{userId}/shortcuts.json")]
         [Authorize]
         public IActionResult GetUserSettingsShortcuts(string userId)
@@ -246,6 +264,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 "shortcuts.json" => ReadUserFileEvidence<UserShortcuts>(authorizedUserId, fileName),
                 "elsewhere.json" => ReadUserFileEvidence<ElsewhereSettings>(authorizedUserId, fileName),
                 "theme.json" => ReadUserThemeEvidence(authorizedUserId),
+                "theme-css.json" => _configProvider.ConfigurationOrNull?.ThemeStudioAllowAdvancedCss == true
+                    ? ReadUserFileEvidence<UserThemeCssConfiguration>(authorizedUserId, fileName)
+                    : ThemeCssDisabled(),
                 _ => NotFound(new { success = false, message = "Unsupported user settings file." })
             };
         }
@@ -298,6 +319,32 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 });
         }
 
+        [HttpPost("user-settings/{userId}/theme-css.json")]
+        [Authorize]
+        [Produces("application/json")]
+        [PersistedPayloadLimit(PersistedPayloadPolicy.StandardRequestBytes)]
+        public IActionResult SaveUserThemeCss(
+            string userId,
+            [FromBody] UserThemeCssConfiguration userConfiguration)
+        {
+            var authorizationResult = AuthorizeUserConfigAccess(userId, out var authorizedUserId);
+            if (authorizationResult != null)
+            {
+                return authorizationResult;
+            }
+
+            if (_configProvider.ConfigurationOrNull?.ThemeStudioAllowAdvancedCss != true)
+            {
+                return ThemeCssDisabled();
+            }
+
+            return CommitUserFile(
+                authorizedUserId,
+                "theme-css.json",
+                userConfiguration,
+                "advanced theme CSS");
+        }
+
         [HttpPost("user-settings/{userId}/theme.json/validate")]
         [Authorize]
         [Produces("application/json")]
@@ -327,20 +374,24 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 ThemeConfigurationMigration.TryMigrate(imported, out candidate);
             }
             var validation = PersistedPayloadPolicy.Validate(candidate);
-            if (candidate == null || !validation.IsValid)
+            var diagnostics = ThemeImportDiagnostics.Analyze(import, candidate, validation);
+            if (candidate == null || !validation.IsValid || diagnostics.Count > 0)
             {
+                var code = diagnostics.FirstOrDefault()?.Code;
                 return validation.Status == PersistedPayloadStatus.TooLarge
                     ? StatusCode(StatusCodes.Status413PayloadTooLarge, new
                     {
                         valid = false,
-                        code = validation.Code,
-                        message = "The imported theme exceeds the supported size limit."
+                        code = code ?? validation.Code,
+                        message = "The imported theme exceeds the supported size limit.",
+                        diagnostics
                     })
                     : BadRequest(new
                     {
                         valid = false,
-                        code = validation.Code,
-                        message = "The imported theme is invalid."
+                        code = code ?? validation.Code,
+                        message = "The imported theme is invalid.",
+                        diagnostics
                     });
             }
 
@@ -351,7 +402,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 {
                     valid = false,
                     code = "theme_schedule_disabled",
-                    message = "Theme scheduling is disabled by the administrator."
+                    message = "Theme scheduling is disabled by the administrator.",
+                    diagnostics = new[]
+                    {
+                        new ThemeImportDiagnostic(
+                            "theme_schedule_disabled",
+                            "Theme scheduling is disabled by the administrator.")
+                    }
                 });
             }
 
@@ -361,6 +418,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 schemaVersion = candidate.SchemaVersion,
                 profileCount = candidate.Profiles.Count,
                 activeProfileId = candidate.ActiveProfileId,
+                diagnostics = Array.Empty<ThemeImportDiagnostic>(),
                 data = ThemeExportDocument.FromConfiguration(candidate)
             });
         }
@@ -371,6 +429,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             => string.Equals(current.ScheduleTimeZone, candidate.ScheduleTimeZone, StringComparison.Ordinal)
                 && JsonSerializer.Serialize(current.Schedule, PersistedJson.WriteOptions)
                     == JsonSerializer.Serialize(candidate.Schedule, PersistedJson.WriteOptions);
+
+        private IActionResult ThemeCssDisabled()
+            => StatusCode(StatusCodes.Status403Forbidden, new
+            {
+                success = false,
+                code = "theme_css_disabled",
+                message = "Advanced Theme Studio CSS is disabled by the administrator."
+            });
 
         [HttpPost("user-settings/{userId}/theme.json/migrate-jellyfish")]
         [Authorize]

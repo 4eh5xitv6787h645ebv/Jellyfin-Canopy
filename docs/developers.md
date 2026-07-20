@@ -219,6 +219,7 @@ Complete replacements for `settings.json`, `theme.json`, `shortcuts.json`, `else
 | --- | ---: | ---: | --- |
 | `settings.json` | 1 MiB | 1 MiB | Up to 1,000 extension properties |
 | `theme.json` | 1 MiB | 128 KiB | Up to 24 profiles, 32 schedules, and 128 typed overrides per token scope |
+| `theme-css.json` | 1 MiB | 64 KiB | Up to 16 declaration-only snippets and 64 declarations per snippet |
 | `shortcuts.json` | 1 MiB | 1 MiB | Up to 1,000 shortcuts and 1,000 extension properties |
 | `elsewhere.json` | 1 MiB | 1 MiB | Up to 500 regions, 500 services, and 1,000 extension properties |
 | `hidden-content.json` | 8 MiB | 7 MiB | Up to **10,000 hidden items** (intentionally sized and tested with realistic populated records for large supported libraries) |
@@ -227,7 +228,7 @@ Known settings/shortcut/Elsewhere free-text fields are capped at 512 characters.
 
 Forward-compatible `[JsonExtensionData]` remains supported, but unknown JSON is recursively bounded across the complete extension map: property names 256 characters, string values 4,096 characters, depth 16, and 20,000 JSON nodes. Finally, the shared user-configuration store refuses every serialized file over 8 MiB as a caller-independent backstop. Successful logs contain metadata such as file, revision, hash, item count, and byte count—not old/new values or supplied secrets.
 
-`theme.json` is intentionally stricter than the older general-purpose files: unknown fields are captured so they cannot disappear silently, then rejected before persistence. This keeps raw CSS, selectors, HTML, scripts, `@import`, and URLs out of the typed theme contract. The separately gated advanced-CSS feature does not use `theme.json`.
+`theme.json` is intentionally stricter than the older general-purpose files: unknown fields are captured so they cannot disappear silently, then rejected before persistence. This keeps raw CSS, selectors, HTML, scripts, `@import`, and URLs out of the typed theme contract. The separately gated advanced-declaration feature uses `theme-css.json`, never `theme.json`.
 
 ### Theme Studio profile API
 
@@ -240,6 +241,10 @@ GET  /JellyfinCanopy/user-settings/{userId}/theme.json/export
 POST /JellyfinCanopy/user-settings/{userId}/theme.json
 POST /JellyfinCanopy/user-settings/{userId}/theme.json/validate
 POST /JellyfinCanopy/user-settings/{userId}/theme.json/migrate-jellyfish
+
+GET  /JellyfinCanopy/user-settings/{userId}/theme-css.json
+GET  /JellyfinCanopy/user-settings/{userId}/theme-css.json/evidence
+POST /JellyfinCanopy/user-settings/{userId}/theme-css.json
 ```
 
 The first GET atomically creates the administrator-selected defaults. Existing older schemas are migrated through pure ordered transformations under the same per-user file lock; a migration advances `Revision`. Reads return `ETag: "<revision>"` and `X-JC-Content-Hash`. A complete POST must send that strong revision as both `If-Match: "<revision>"` and body `Revision`; missing evidence returns `428`, stale evidence returns `409` with authoritative state, and a successful mutation advances the revision exactly once.
@@ -292,7 +297,11 @@ Schema 2 persists PascalCase names exactly as represented by the TypeScript inte
 
 `ScheduleTimeZone` accepts only `local` or `utc`. A schedule entry's `Kind` is `season` or `holiday`; an omitted value migrates as `season`. Month-day ranges are inclusive and may wrap across New Year. At most 32 entries are accepted. A matching holiday always outranks a matching season, then descending priority and stable entry ID break ties within a kind.
 
-Export omits the revision and legacy-migration evidence and deep-clones the shareable data, including the typed schedule and its time-zone choice. Both `/validate` and `/migrate-jellyfish` are non-mutating staging operations; callers must show the result and explicitly save it through the revisioned POST. Jellyfish migration accepts only a bundled canonical theme name such as `Ocean`, never a CSS import, filename, or URL. Dynamic-color analysis never adds a media URL, item ID, image tag, or sampled value to this payload or its export.
+Export omits revision and legacy-migration evidence and deep-clones the shareable data, including the typed schedule and its time-zone choice. It also omits user/server identity, provider configuration, credentials, media identity, dynamic-color evidence, and the entire advanced-declaration document. Both `/validate` and `/migrate-jellyfish` are non-mutating staging operations; callers must show the result and explicitly save it through the revisioned POST. Jellyfish migration accepts only a bundled canonical theme name such as `Ocean`, never a CSS import, filename, or URL. Dynamic-color analysis never adds a media URL, item ID, image tag, or sampled value to this payload or its export.
+
+Import validation returns at most eight static, non-value-bearing diagnostics. It rejects unsupported schemas, unknown fields, credential/server/private field names, script or HTML markers, remote URLs/resources, invalid typed values, and oversized or overly complex documents. The client maps allowlisted diagnostic codes to bundled localized text instead of rendering server-supplied values. Its visible diff is capped, and a normalized case-insensitive profile-name collision must be acknowledged before the staged document can replace the draft.
+
+The advanced routes return `403 theme_css_disabled` unless `ThemeStudioAllowAdvancedCss` is enabled. `theme-css.json` has its own optimistic revision, evidence hash, recoverable file, schema-1 parser, 64 KiB serialized limit, and maximum of 16 uniquely identified snippets. Each snippet selects one fixed Canopy-owned target and supplies at most 4 KiB/64 CSS declarations. The shared C# and TypeScript grammars reject selectors, braces, at-rules, comments/escapes, executable properties, markup, and URL-bearing resource functions or schemes. This state is intentionally not portable.
 
 ### Theme Studio curated catalog
 
@@ -304,9 +313,13 @@ The palette inventory includes neutral, vivid, attributed Catppuccin/Dracula ada
 
 `src/theme-studio/provenance.json` is the machine-readable source/license/reuse graph. Catalog tests require every preset, palette, and icon family to have a valid forward and reverse provenance link. Sources whose reuse or license could not be established are recorded as inspiration-only and contribute no copied bytes. The same JSON is embedded as `Jellyfin.Plugin.JellyfinCanopy.ThemeStudio.provenance.json`, keeping the audit evidence available offline in the built plugin. Gallery images may use only the declared `verified-live-capture` IDs and are added to the documentation from tested Jellyfin builds; mockups are not accepted as release evidence.
 
+`src/theme-studio/curated-gallery.json` is a second immutable manifest for the visible gallery. It contains nine bundled typed combinations, a local description, exact provenance IDs, versioned catalog identifiers, and a SHA-256 checksum over canonical entry data. Module evaluation rejects an invalid manifest; selection verifies the checksum again with Web Crypto before mutating the active draft. Gallery application resets personal token/responsive/accessibility overrides rather than carrying unrelated values into a curated combination. No gallery path evaluates code, fetches a manifest, or loads a remote stylesheet.
+
 ### Theme Studio client runtime
 
-Theme Studio is an import-pure, identity-scoped lazy feature. When the administrator enables it, one feature generation performs one authenticated `theme.json` read, validates the complete response against the browser copy of schema 2, and then resolves one active profile. Presentation is deliberately limited to Jellyfin's modern MUI layout on phone and desktop/wide browser breakpoints. Legacy, tablet-only, and TV layouts retain the stock Jellyfin theme: preview returns false and the runtime publishes no Theme Studio style layer or root attribute. An oversized response, unknown field, unsupported token, read failure, obsolete identity, unsupported layout, or activation failure removes the Theme Studio presentation and leaves Jellyfin's selected base theme in control. The runtime never stores CSS, walks components for computed styles, or creates a style element per component.
+Theme Studio is an import-pure, identity-scoped lazy feature. When the administrator enables it, one feature generation performs one authenticated `theme.json` read, validates the complete response against the browser copy of schema 2, and then resolves one active profile. Presentation is deliberately limited to Jellyfin's modern MUI layout on phone and desktop/wide browser breakpoints. Legacy, tablet-only, and TV layouts retain the stock Jellyfin theme: preview returns false and the runtime publishes no Theme Studio style layer or root attribute. An oversized response, unknown field, unsupported token, read failure, obsolete identity, unsupported layout, or activation failure removes the Theme Studio presentation and leaves Jellyfin's selected base theme in control. The typed runtime never accepts profile CSS, walks components for computed styles, or creates a style element per component.
+
+When the independent advanced policy is enabled, the same identity generation also reads `theme-css.json` through `ThemeAdvancedCssRuntime`. It emits at most one committed and one preview style element. Canopy generates every selector under an exact root gate requiring modern Theme Studio activation, a non-Dashboard route, phone/desktop/wide breakpoint, standard contrast, and no forced colors. Fixed targets cover only owned variables, shell, cards, details, dialogs, or player controls. Policy disablement, logout/identity transition, unsupported layout, Dashboard/sign-in recovery, configuration replacement, parse failure, or runtime disposal removes both style elements. An acknowledgement is adopted only for the current owner and never at a lower revision.
 
 The integration boundary is pinned to Jellyfin Web commit `3d7adb53480f02164041fdd983b3f7abc28d0fd9`: `src/themes/index.ts` configures MUI CSS variables with prefix `jf` and selector `[data-theme="%s"]`. Jellyfin alone owns root `data-theme`, layout selection, and the document `THEME_CHANGE` event. Canopy observes them and recomputes its bounded modern-only layer without writing `data-theme`, changing layout, or reloading the page.
 
