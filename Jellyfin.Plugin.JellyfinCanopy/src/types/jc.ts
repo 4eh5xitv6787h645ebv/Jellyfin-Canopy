@@ -81,6 +81,7 @@ export interface ThemeProfile {
 export interface ThemeScheduleEntry {
     Id: string;
     ProfileId: string;
+    Kind?: 'season' | 'holiday';
     StartMonthDay: string;
     EndMonthDay: string;
     Priority: number;
@@ -97,6 +98,7 @@ export interface UserThemeConfiguration {
     SchemaVersion: 2;
     ActiveProfileId: string;
     Profiles: ThemeProfile[];
+    ScheduleTimeZone?: 'local' | 'utc';
     Schedule: ThemeScheduleEntry[];
     LegacyMigration: ThemeLegacyMigration;
 }
@@ -105,6 +107,7 @@ export interface ThemeExportDocument {
     SchemaVersion: number;
     ActiveProfileId: string;
     Profiles: ThemeProfile[];
+    ScheduleTimeZone?: 'local' | 'utc';
     Schedule: ThemeScheduleEntry[];
 }
 

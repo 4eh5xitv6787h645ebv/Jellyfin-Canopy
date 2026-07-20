@@ -40,6 +40,62 @@ Native installations can place the Jellyfin configuration directory elsewhere; C
 !!! info "Turning the branding middleware off"
     The branding middleware is on by default. If it ever conflicts with another plugin, or you want to fall back to Jellyfin's stock assets, an admin can set the advanced [`DisableBrandingMiddleware`](#advanced-kill-switches) kill-switch (default off). When it is on, the plugin stops serving your uploaded images and Jellyfin's built-in assets are used instead.
 
+## Theme Studio
+
+Theme Studio is Canopy's per-user visual system for Jellyfin's **modern phone and modern desktop/wide layouts**. It combines curated presets with typed controls for color, typography, density, navigation, cards, details pages, player surfaces, glass and translucent materials, shadows, motion, local artwork-derived accents, and calendar profiles. It intentionally does not theme the legacy layout, tablet-only breakpoint, or TV mode; those surfaces retain Jellyfin's stock presentation.
+
+![Theme Studio full effects on a modern desktop](images/theme-studio-effects-desktop.png)
+
+The desktop capture above and phone capture below come from the committed Jellyfin 12 browser test fixture, with a full effects profile, a local artwork-derived accent, and a holiday schedule active.
+
+![Theme Studio full effects on a modern phone](images/theme-studio-effects-phone.png)
+
+### Enable it as an administrator
+
+Open **Dashboard → Plugins → Jellyfin Canopy → Extras → Theme Studio**, enable **Theme Studio**, choose the defaults and policy you want, then save:
+
+| Setting | Default | What it controls |
+|---|---|---|
+| **Enable Theme Studio** | Off | Loads the per-user Theme Studio editor and modern-layout runtime. |
+| **Default preset for new users** | Canopy | Seeds the first profile; changing it later does not overwrite existing users. |
+| **Default palette for new users** | Canopy Night | Seeds the first profile's palette. |
+| **Apply curated Theme Studio tokens to the administrator dashboard** | Off | Opts the dashboard into safe typed colors. Presentation modules and raw CSS remain excluded, preserving a recovery surface. |
+| **Allow users to validate and import typed theme profiles** | On | Shows JSON import. Imports are validated and reviewed as a diff before they can be applied. |
+| **Allow local media-derived dynamic color** | On | Lets profiles derive an accent from one same-server poster or backdrop. |
+| **Allow per-user seasonal schedules** | On | Lets users create season and holiday date ranges. |
+| **Maximum Theme Studio effects tier** | Full | Caps every user's material, blur, shadow/glow, image treatment, and motion cost at Full, Balanced, or Minimal. |
+| **Allow the separately gated advanced CSS module** | Off | Reserves the independent advanced-CSS policy; typed Theme Studio profiles never contain CSS. |
+
+When Theme Studio is enabled, it owns the theme experience and the older **Theme Selector (Jellyfish)** picker stays inactive. Existing Jellyfish selections can be staged through Theme Studio's migration path without importing third-party CSS or a remote URL.
+
+### Make a personal profile
+
+1. Open the **Enhanced panel** and select **Theme Studio**.
+2. Pick a curated preset, palette, accent, and light/dark/system mode.
+3. Adjust presentation and effects. Controls marked as overrides stay sparse; choosing the inherited option returns that value to the preset.
+4. Use **Preview only** to inspect the page without the editor covering it. Undo, redo, reset, and cancel remain local until you choose **Apply**.
+5. Choose **Apply** to save the complete profile to your Jellyfin account. The same account receives the profile on another supported browser after it signs in.
+
+Profiles can select solid, translucent, or glass surfaces; none, dim, gradient, or blurred backdrop treatment; bounded elevation and glow; calm, expressive, or off motion; and a poster/backdrop dynamic accent. The three cost tiers behave monotonically:
+
+| Tier | Behavior |
+|---|---|
+| **Full** | Allows the requested bounded material, backdrop treatment, shadow/glow, motion, and dynamic accent. |
+| **Balanced** | Caps blur/saturation/glow and shadows, converts blurred backdrops to gradients, and converts expressive motion to calm. |
+| **Minimal** | Uses solid surfaces, no blur/glow/shadow or backdrop treatment, motion off, and dynamic color off. |
+
+Your selection can never exceed the administrator's maximum. A browser can reduce it further: a low-end modern phone uses Minimal; unsupported backdrop filtering removes glass blur; reduced transparency forces solid surfaces; reduced motion disables motion; and high contrast or forced colors use the minimal visual-cost path. Coarse/no-hover input also keeps card actions visible instead of hiding them behind hover.
+
+### Dynamic color and privacy
+
+Dynamic color is optional and runs only after the usable theme has painted. Canopy reads one same-origin Jellyfin **Primary** or **Backdrop** image, reduces it to a small local color sample, and blends the result with the profile accent. Analysis is cancellable and bounded; it never contacts an artwork CDN, and a media URL, item identifier, image tag, or sampled pixels are never written to `theme.json`, profile exports, CSS logs, or documentation captures. When analysis is unavailable or fails, the curated palette remains active.
+
+### Seasonal and holiday profiles
+
+The schedule editor supports up to 32 entries. Choose **Local time** when the theme should follow the browser's civil date, or **UTC** for the same boundary everywhere. Each entry selects a profile, start/end month-day, priority, type, and enabled state. Ranges can wrap across New Year.
+
+Resolution is deterministic: a matching **Holiday** entry wins over every matching **Season**, even when the season has a higher priority; priority then breaks ties within the same type, followed by the stable entry identifier. The runtime rechecks calendar boundaries and also rechecks after focus/visibility changes, so daylight-saving and timezone changes do not require a reload.
+
 ## Extras
 
 The **Extras** tab collects a set of optional cosmetic tweaks — small touches that make the dashboard and detail pages nicer to look at. Every one of them is **off by default**, so you opt in only to the ones you want. Enable each with its checkbox on the Extras tab and click **Save** (some need a browser refresh to take effect).

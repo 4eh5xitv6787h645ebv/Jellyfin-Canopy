@@ -298,6 +298,8 @@ public sealed class PersistedPayloadPolicyTests
         profile.Tokens["color.primary"] = JsonValue("#7c5cff");
         profile.Tokens["layout.density"] = JsonValue("cozy");
         profile.Tokens["effects.blur"] = JsonValue(18);
+        profile.Tokens["color.dynamic-source"] = JsonValue("backdrop");
+        profile.Tokens["color.dynamic-strength"] = JsonValue(0.75);
         profile.Responsive.Phone = new ThemeBreakpointOverrides();
         profile.Responsive.Phone.Tokens["layout.navigation"] = JsonValue("bottom");
         profile.Accessibility.Motion = "off";
@@ -305,10 +307,12 @@ public sealed class PersistedPayloadPolicyTests
         {
             Id = "winter",
             ProfileId = ThemeProfile.DefaultId,
+            Kind = "holiday",
             StartMonthDay = "12-01",
             EndMonthDay = "02-29",
             Priority = 10
         });
+        theme.ScheduleTimeZone = "utc";
         theme.LegacyMigration.JellyfishTheme = "Ocean";
         theme.LegacyMigration.Completed = true;
 
@@ -386,6 +390,14 @@ public sealed class PersistedPayloadPolicyTests
         outOfRange.Profiles[0].Tokens["effects.blur"] = JsonValue(49);
         AssertInvalid(outOfRange);
 
+        var invalidDynamicSource = UserThemeConfiguration.CreateDefault("canopy", "canopy-night");
+        invalidDynamicSource.Profiles[0].Tokens["color.dynamic-source"] = JsonValue("remote");
+        AssertInvalid(invalidDynamicSource);
+
+        var invalidDynamicStrength = UserThemeConfiguration.CreateDefault("canopy", "canopy-night");
+        invalidDynamicStrength.Profiles[0].Tokens["color.dynamic-strength"] = JsonValue(1.01);
+        AssertInvalid(invalidDynamicStrength);
+
         var invalidResponsive = UserThemeConfiguration.CreateDefault("canopy", "canopy-night");
         var tvOverrides = new ThemeBreakpointOverrides();
         tvOverrides.Tokens["layout.navigation"] = JsonValue("touch-only");
@@ -409,6 +421,21 @@ public sealed class PersistedPayloadPolicyTests
             EndMonthDay = "03-01"
         });
         AssertInvalid(invalidSchedule);
+
+        var invalidTimeZone = UserThemeConfiguration.CreateDefault("canopy", "canopy-night");
+        invalidTimeZone.ScheduleTimeZone = "browser-script";
+        AssertInvalid(invalidTimeZone);
+
+        var invalidKind = UserThemeConfiguration.CreateDefault("canopy", "canopy-night");
+        invalidKind.Schedule.Add(new ThemeScheduleEntry
+        {
+            Id = "event",
+            ProfileId = ThemeProfile.DefaultId,
+            Kind = "festival",
+            StartMonthDay = "01-01",
+            EndMonthDay = "01-01"
+        });
+        AssertInvalid(invalidKind);
 
         var invalidAccessibility = UserThemeConfiguration.CreateDefault("canopy", "canopy-night");
         invalidAccessibility.Profiles[0].Accessibility.Motion = "force-motion";

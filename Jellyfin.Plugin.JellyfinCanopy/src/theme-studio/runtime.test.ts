@@ -3,6 +3,7 @@ import { JC } from '../globals';
 import { createTestFeatureScope, type TestFeatureScope } from '../test/feature-scope';
 import { themeConfiguration } from '../test/theme-studio-fixture';
 import type { ApiApi } from '../types/jc';
+import { DYNAMIC_ACCENT_STYLE_ID } from './dynamic-color';
 import { MOBILE_ENVIRONMENT_STYLE_ID } from './mobile';
 import { ThemeStudioRuntime } from './runtime';
 import { COMMITTED_STYLE_ID, PREVIEW_STYLE_ID } from './styles';
@@ -69,12 +70,14 @@ let originalApi: ApiApi | undefined;
 let originalEvents: JellyfinEvents | undefined;
 let originalRemember: typeof JC.rememberUserSettingsSnapshot;
 let originalAcknowledgedSnapshot: typeof JC.getAcknowledgedUserSettingsSnapshot;
+let originalDom: typeof JC.core.dom;
 
 beforeEach(() => {
     originalApi = JC.core.api;
     originalEvents = window.Events;
     originalRemember = JC.rememberUserSettingsSnapshot;
     originalAcknowledgedSnapshot = JC.getAcknowledgedUserSettingsSnapshot;
+    originalDom = JC.core.dom;
     JC.getAcknowledgedUserSettingsSnapshot = undefined;
     window.Events = eventsHarness();
     const media = mediaHarness();
@@ -101,11 +104,14 @@ afterEach(async () => {
     window.Events = originalEvents;
     JC.rememberUserSettingsSnapshot = originalRemember;
     JC.getAcknowledgedUserSettingsSnapshot = originalAcknowledgedSnapshot;
+    JC.core.dom = originalDom;
     delete (window as unknown as { __themeMedia?: unknown }).__themeMedia;
     delete JC.core.themeStudio;
     document.getElementById(COMMITTED_STYLE_ID)?.remove();
     document.getElementById(PREVIEW_STYLE_ID)?.remove();
     document.getElementById(MOBILE_ENVIRONMENT_STYLE_ID)?.remove();
+    document.getElementById(DYNAMIC_ACCENT_STYLE_ID)?.remove();
+    document.body.replaceChildren();
     for (const name of [...document.documentElement.attributes].map((item) => item.name)) {
         if (name.startsWith('data-jc-theme-')) document.documentElement.removeAttribute(name);
     }
@@ -533,9 +539,9 @@ describe('Theme Studio identity-owned runtime', () => {
             'watched-indicator': 'check',
             'unwatched-indicator': 'corner',
             'player-osd-density': 'standard',
-            'player-control-material': 'translucent',
-            'player-pause-screen-material': 'translucent',
-            'player-subtitle-backdrop': 'shadow',
+            'player-control-material': 'solid',
+            'player-pause-screen-material': 'solid',
+            'player-subtitle-backdrop': 'solid',
             'player-trickplay-shape': 'rounded',
         });
         expect(document.getElementById(COMMITTED_STYLE_ID)?.textContent)
@@ -568,6 +574,165 @@ describe('Theme Studio identity-owned runtime', () => {
         media.set('(orientation: landscape) and (max-height: 599px) and (max-width: 999px) and (pointer: coarse)', true);
         expect(document.documentElement.getAttribute('data-jc-theme-breakpoint')).toBe('phone');
         expect(document.getElementById(COMMITTED_STYLE_ID)).not.toBeNull();
+    });
+
+    it('publishes capped effect and holiday schedule state with one bounded calendar timer', async () => {
+        window.innerWidth = 1366;
+        window.innerHeight = 768;
+        vi.stubGlobal('CSS', { supports: vi.fn(() => true) });
+        JC.pluginConfig.ThemeStudioMaximumEffectsLevel = 'balanced';
+        JC.pluginConfig.ThemeStudioAllowDynamicColor = false;
+        const configuration = themeConfiguration();
+        configuration.ScheduleTimeZone = 'utc';
+        configuration.Profiles[0].Tokens = {
+            'effects.level': 'full',
+            'effects.material': 'glass',
+            'effects.image-treatment': 'blur',
+            'motion.profile': 'expressive',
+            'color.dynamic-source': 'poster',
+        };
+        configuration.Schedule = [{
+            Id: 'year-round-holiday', ProfileId: 'default', Kind: 'holiday',
+            StartMonthDay: '01-01', EndMonthDay: '12-31', Priority: 1, Enabled: true,
+        }];
+        const timeout = vi.spyOn(window, 'setTimeout');
+        const clearTimeout = vi.spyOn(window, 'clearTimeout');
+        apiReturning(configuration);
+        const { runtime, harness } = createRuntime();
+        await runtime.load();
+
+        expectRootThemeState({
+            breakpoint: 'desktop',
+            'effects-level': 'balanced',
+            'effects-material': 'glass',
+            'image-treatment': 'gradient',
+            'motion-profile': 'calm',
+            'dynamic-source': 'off',
+            'dynamic-accent': 'off',
+            schedule: 'year-round-holiday',
+            'schedule-kind': 'holiday',
+            'schedule-time-zone': 'utc',
+        });
+        const calendarTimers = timeout.mock.calls.filter((call) =>
+            typeof call[1] === 'number' && call[1] >= 1_000 && call[1] <= 6 * 60 * 60 * 1_000);
+        expect(calendarTimers).toHaveLength(1);
+
+        await harness.dispose();
+        expect(clearTimeout).toHaveBeenCalled();
+        expect(document.documentElement.hasAttribute('data-jc-theme-effects-level')).toBe(false);
+    });
+
+    it('derives one post-paint local accent, reuses one subscriber, and tears it down exactly', async () => {
+        window.innerWidth = 1366;
+        window.innerHeight = 768;
+        vi.stubGlobal('CSS', { supports: vi.fn(() => true) });
+        JC.pluginConfig.ThemeStudioMaximumEffectsLevel = 'full';
+        JC.pluginConfig.ThemeStudioAllowDynamicColor = true;
+        const unsubscribe = vi.fn();
+        const onBodyMutation = vi.fn(() => ({ unsubscribe, disconnect: unsubscribe }));
+        JC.core.dom = { onBodyMutation } as unknown as typeof JC.core.dom;
+        const close = vi.fn();
+        vi.stubGlobal('createImageBitmap', vi.fn(() => Promise.resolve({ close })));
+        vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(new Response(new Uint8Array([1, 2, 3]), {
+            status: 200,
+            headers: { 'content-type': 'image/png', 'content-length': '3' },
+        }))));
+        vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+            drawImage: vi.fn(),
+            getImageData: vi.fn(() => ({ data: new Uint8ClampedArray([
+                230, 40, 80, 255, 230, 40, 80, 255, 230, 40, 80, 255,
+            ]) })),
+        } as unknown as CanvasRenderingContext2D);
+        document.body.innerHTML = '<div class="page">'
+            + '<img src="/Items/private-item/Images/Primary?tag=private-tag"></div>';
+        const configuration = themeConfiguration();
+        configuration.Profiles[0].Tokens = {
+            'effects.level': 'full',
+            'color.dynamic-source': 'poster',
+            'color.dynamic-strength': 1,
+        };
+        apiReturning(configuration);
+        const { runtime, harness } = createRuntime();
+        await runtime.load();
+
+        await vi.waitFor(() => expect(document.documentElement.getAttribute('data-jc-theme-dynamic-accent'))
+            .toBe('active'));
+        expect(onBodyMutation).toHaveBeenCalledOnce();
+        runtime.refresh();
+        runtime.refresh();
+        expect(onBodyMutation).toHaveBeenCalledOnce();
+        const css = document.getElementById(DYNAMIC_ACCENT_STYLE_ID)?.textContent ?? '';
+        expect(css).toContain('--jf-palette-primary-main: #E62850');
+        expect(css).not.toContain('/Items/');
+        expect(css).not.toContain('private-tag');
+        expect(close).toHaveBeenCalledOnce();
+
+        await harness.dispose();
+        expect(unsubscribe).toHaveBeenCalledOnce();
+        expect(document.getElementById(DYNAMIC_ACCENT_STYLE_ID)).toBeNull();
+    });
+
+    it('bounds failed dynamic analysis to three backoff attempts despite noisy body mutations', async () => {
+        window.innerWidth = 1366;
+        window.innerHeight = 768;
+        vi.stubGlobal('CSS', { supports: vi.fn(() => true) });
+        JC.pluginConfig.ThemeStudioMaximumEffectsLevel = 'full';
+        JC.pluginConfig.ThemeStudioAllowDynamicColor = true;
+        let notifyMutation = (): void => undefined;
+        JC.core.dom = {
+            onBodyMutation: vi.fn((_key: string, callback: () => void) => {
+                notifyMutation = callback;
+                return { unsubscribe: vi.fn(), disconnect: vi.fn() };
+            }),
+        } as unknown as typeof JC.core.dom;
+        const clockStart = Date.now();
+        const retryHandlers: Array<() => void> = [];
+        const nativeSetTimeout = window.setTimeout.bind(window);
+        const isTimerCallback = (value: TimerHandler): value is (...args: unknown[]) => void =>
+            typeof value === 'function';
+        vi.spyOn(window, 'setTimeout').mockImplementation((handler, delay) => {
+            if ((delay === 1_000 || delay === 5_000) && isTimerCallback(handler)) {
+                retryHandlers.push(() => { handler(); });
+                return 9_000 + retryHandlers.length;
+            }
+            return nativeSetTimeout(handler, delay);
+        });
+        const fetchMock = vi.fn(() => Promise.reject(new TypeError('temporary local image failure')));
+        vi.stubGlobal('createImageBitmap', vi.fn());
+        vi.stubGlobal('fetch', fetchMock);
+        document.body.innerHTML = '<div class="page">'
+            + '<img src="/Items/private-item/Images/Primary?tag=private-tag"></div>';
+        const configuration = themeConfiguration();
+        configuration.Profiles[0].Tokens = {
+            'effects.level': 'full',
+            'color.dynamic-source': 'poster',
+        };
+        apiReturning(configuration);
+        createRuntime();
+        await JC.core.themeStudio?.whenReady();
+
+        await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+        expect(retryHandlers).toHaveLength(1);
+        for (let index = 0; index < 100; index += 1) notifyMutation();
+        await Promise.resolve();
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+
+        const dateNow = vi.spyOn(Date, 'now').mockReturnValue(clockStart + 10_000);
+        retryHandlers[0]();
+        await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+        expect(retryHandlers).toHaveLength(2);
+        for (let index = 0; index < 100; index += 1) notifyMutation();
+        await Promise.resolve();
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+
+        dateNow.mockReturnValue(clockStart + 20_000);
+        retryHandlers[1]();
+        await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+        for (let index = 0; index < 100; index += 1) notifyMutation();
+        await new Promise<void>((resolve) => nativeSetTimeout(resolve, 20));
+        expect(fetchMock).toHaveBeenCalledTimes(3);
+        expect(retryHandlers).toHaveLength(2);
+        expect(document.documentElement.getAttribute('data-jc-theme-dynamic-accent')).toBe('fallback');
     });
 
     it('leaves legacy and TV layouts untouched and reactivates only on a supported modern surface', async () => {
@@ -719,9 +884,9 @@ describe('Theme Studio identity-owned runtime', () => {
             'watched-indicator': 'floating',
             'unwatched-indicator': 'none',
             'player-osd-density': 'cinematic',
-            'player-control-material': 'glass',
+            'player-control-material': 'solid',
             'player-pause-screen-material': 'solid',
-            'player-subtitle-backdrop': 'box',
+            'player-subtitle-backdrop': 'solid',
             'player-trickplay-shape': 'pill',
         });
         expect(JC.core.themeStudio?.getDiagnostics().status).toBe('preview');
@@ -747,9 +912,9 @@ describe('Theme Studio identity-owned runtime', () => {
             'watched-indicator': 'check',
             'unwatched-indicator': 'corner',
             'player-osd-density': 'standard',
-            'player-control-material': 'translucent',
-            'player-pause-screen-material': 'translucent',
-            'player-subtitle-backdrop': 'shadow',
+            'player-control-material': 'solid',
+            'player-pause-screen-material': 'solid',
+            'player-subtitle-backdrop': 'solid',
             'player-trickplay-shape': 'rounded',
         });
         expect(JC.core.themeStudio?.getDiagnostics().status).toBe('active');

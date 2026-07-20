@@ -719,6 +719,7 @@ test.describe.serial('Theme Studio runtime bridge', () => {
             acknowledgedSchedule = [{
                 Id: 'remote-rebased-schedule',
                 ProfileId: body.ActiveProfileId,
+                Kind: 'season',
                 StartMonthDay: '01-01',
                 EndMonthDay: '12-31',
                 Priority: 7,

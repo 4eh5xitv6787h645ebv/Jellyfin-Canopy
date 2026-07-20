@@ -1993,6 +1993,15 @@
                             <div class="checkboxContainer"><label><input id="themeStudioAllowProfileImport" data-config-key="ThemeStudioAllowProfileImport" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Allow users to validate and import typed theme profiles</span></label></div>
                             <div class="checkboxContainer"><label><input id="themeStudioAllowDynamicColor" data-config-key="ThemeStudioAllowDynamicColor" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Allow local media-derived dynamic color</span></label></div>
                             <div class="checkboxContainer"><label><input id="themeStudioAllowSeasonalScheduling" data-config-key="ThemeStudioAllowSeasonalScheduling" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Allow per-user seasonal schedules</span></label></div>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="themeStudioMaximumEffectsLevel">Maximum Theme Studio effects tier</label>
+                                <select is="emby-select" id="themeStudioMaximumEffectsLevel" data-config-key="ThemeStudioMaximumEffectsLevel" data-config-fallback="full" name="themeStudioMaximumEffectsLevel" class="emby-select">
+                                    <option value="full">Full</option>
+                                    <option value="balanced">Balanced</option>
+                                    <option value="minimal">Minimal</option>
+                                </select>
+                                <div class="fieldDescription">Caps every user's material, motion, image treatment, glow, and shadow cost. Browser accessibility and capability checks may reduce it further, but never increase it.</div>
+                            </div>
                             <div class="checkboxContainer"><label><input id="themeStudioAllowAdvancedCss" data-config-key="ThemeStudioAllowAdvancedCss" is="emby-checkbox" type="checkbox"/><span>Allow the separately gated advanced CSS module</span></label></div>
                             <div class="jc-setting-description" data-desc-for="themeStudioAllowAdvancedCss">
                                 <div class="fieldDescription">Default: OFF. This policy does not place CSS in <code>theme.json</code>; that file accepts typed values only. Advanced CSS remains local, size-bounded, risk-labelled, and outside dashboard recovery surfaces.</div>

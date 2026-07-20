@@ -253,6 +253,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
             ThemeStudioAllowProfileImport = true;
             ThemeStudioAllowDynamicColor = true;
             ThemeStudioAllowSeasonalScheduling = true;
+            ThemeStudioMaximumEffectsLevel = "full";
             ThemeStudioAllowAdvancedCss = false;
             ColoredActivityIconsEnabled = false;
             PluginIconsEnabled = false;
@@ -693,6 +694,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         public bool ThemeStudioAllowProfileImport { get; set; }
         public bool ThemeStudioAllowDynamicColor { get; set; }
         public bool ThemeStudioAllowSeasonalScheduling { get; set; }
+        public string ThemeStudioMaximumEffectsLevel { get; set; }
         public bool ThemeStudioAllowAdvancedCss { get; set; }
         public bool ColoredActivityIconsEnabled { get; set; }
         public bool PluginIconsEnabled { get; set; }

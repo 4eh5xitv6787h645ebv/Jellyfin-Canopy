@@ -6,9 +6,11 @@ import {
     resolvePresetVersion,
     type ThemeCatalogBreakpoint,
 } from './catalog';
+import { selectThemeSchedule, type ThemeScheduleSelection, type ThemeScheduleTimeZone } from './schedule';
 
 export type ThemeBreakpoint = ThemeCatalogBreakpoint;
 export type ResolvedThemeMode = 'dark' | 'light';
+export type ResolvedEffectsLevel = 'minimal' | 'balanced' | 'full';
 
 export interface ThemeMediaState {
     readonly viewportWidth: number;
@@ -22,11 +24,15 @@ export interface ThemeMediaState {
     readonly hover: boolean;
     readonly coarsePointer: boolean;
     readonly jellyfinTheme: string;
+    readonly backdropFilterSupported?: boolean;
+    readonly lowPower?: boolean;
 }
 
 export interface ResolveThemeOptions {
     readonly allowScheduling?: boolean;
+    readonly allowDynamicColor?: boolean;
     readonly now?: Date;
+    readonly maximumEffectsLevel?: unknown;
 }
 
 export interface ResolvedThemePresentation {
@@ -59,6 +65,15 @@ export interface ResolvedTheme {
     readonly coarsePointer: boolean;
     readonly focus: 'standard' | 'strong';
     readonly underlineLinks: boolean;
+    readonly scheduleId: string | null;
+    readonly scheduleKind: 'season' | 'holiday' | null;
+    readonly scheduleTimeZone: ThemeScheduleTimeZone;
+    readonly effectsLevel: ResolvedEffectsLevel;
+    readonly effectsMaterial: 'solid' | 'translucent' | 'glass';
+    readonly imageTreatment: 'none' | 'dim' | 'gradient' | 'blur';
+    readonly motionProfile: 'off' | 'calm' | 'expressive';
+    readonly dynamicColorSource: 'off' | 'poster' | 'backdrop';
+    readonly dynamicColorStrength: number;
     readonly presentation: ResolvedThemePresentation;
     readonly tokens: Readonly<Record<string, ThemeTokenValue>>;
 }
@@ -95,6 +110,8 @@ const BASE_TOKENS: Readonly<Record<string, ThemeTokenValue>> = Object.freeze({
     'layout.card-actions': 'hover',
     'layout.poster-ratio': 'auto',
     'layout.cast-shape': 'circle',
+    'color.dynamic-source': 'off',
+    'color.dynamic-strength': 0.65,
     'effects.level': 'balanced',
     'effects.material': 'translucent',
     'effects.blur': 12,
@@ -140,24 +157,47 @@ export function resolveBreakpoint(media: Pick<ThemeMediaState,
     return 'wide';
 }
 
-function scheduledProfile(configuration: UserThemeConfiguration, now: Date): ThemeProfile | null {
-    const current = `${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-    const eligible = configuration.Schedule.filter((entry) => {
-        if (!entry.Enabled) return false;
-        return entry.StartMonthDay <= entry.EndMonthDay
-            ? current >= entry.StartMonthDay && current <= entry.EndMonthDay
-            : current >= entry.StartMonthDay || current <= entry.EndMonthDay;
-    }).sort((left, right) => right.Priority - left.Priority || left.Id.localeCompare(right.Id));
-    const selected = eligible[0];
-    return selected ? configuration.Profiles.find((item) => item.Id === selected.ProfileId) ?? null : null;
+function selectProfile(
+    configuration: UserThemeConfiguration,
+    options: ResolveThemeOptions,
+): Readonly<{ profile: ThemeProfile; schedule: ThemeScheduleSelection | null }> {
+    const schedule = options.allowScheduling === false
+        ? null
+        : selectThemeSchedule(configuration, options.now ?? new Date());
+    const scheduled = schedule
+        ? configuration.Profiles.find((item) => item.Id === schedule.profileId)
+        : null;
+    return Object.freeze({
+        profile: scheduled ?? configuration.Profiles.find((item) => item.Id === configuration.ActiveProfileId)
+            ?? configuration.Profiles[0],
+        schedule: scheduled ? schedule : null,
+    });
 }
 
-function selectProfile(configuration: UserThemeConfiguration, options: ResolveThemeOptions): ThemeProfile {
-    const scheduled = options.allowScheduling === false
-        ? null
-        : scheduledProfile(configuration, options.now ?? new Date());
-    return scheduled ?? configuration.Profiles.find((item) => item.Id === configuration.ActiveProfileId)
-        ?? configuration.Profiles[0];
+const EFFECT_LEVEL_COST: Readonly<Record<ResolvedEffectsLevel, number>> = Object.freeze({
+    minimal: 0,
+    balanced: 1,
+    full: 2,
+});
+
+function effectsLevel(value: unknown, fallback: ResolvedEffectsLevel): ResolvedEffectsLevel {
+    return value === 'minimal' || value === 'balanced' || value === 'full' ? value : fallback;
+}
+
+function administratorEffectsLevel(value: unknown): ResolvedEffectsLevel {
+    if (value === undefined || value === null || value === '') return 'full';
+    // A malformed administrative value must fail closed instead of silently
+    // granting the highest-cost tier.
+    return effectsLevel(value, 'minimal');
+}
+
+function lowerEffectsLevel(left: ResolvedEffectsLevel, right: ResolvedEffectsLevel): ResolvedEffectsLevel {
+    return EFFECT_LEVEL_COST[left] <= EFFECT_LEVEL_COST[right] ? left : right;
+}
+
+function capShadow(value: ThemeTokenValue, maximum: 'none' | 'soft' | 'medium'): ThemeTokenValue {
+    const costs: Readonly<Record<string, number>> = Object.freeze({ none: 0, soft: 1, medium: 2, strong: 3 });
+    return (costs[String(value)] ?? 0) <= costs[maximum] ? value : maximum;
 }
 
 function systemChoice(value: 'system' | 'on' | 'off', system: boolean): boolean {
@@ -235,7 +275,8 @@ export function resolveTheme(
     media: ThemeMediaState,
     options: ResolveThemeOptions = {},
 ): ResolvedTheme {
-    const profile = selectProfile(configuration, options);
+    const selection = selectProfile(configuration, options);
+    const profile = selection.profile;
     const mode: ResolvedThemeMode = profile.Mode === 'light' ? 'light'
         : profile.Mode === 'dark' ? 'dark'
             : media.jellyfinTheme.toLowerCase().includes('light') || (!media.jellyfinTheme && !media.darkScheme)
@@ -282,19 +323,83 @@ export function resolveTheme(
     tokens['accessibility.transparency'] = reducedTransparency ? 'off' : 'on';
     tokens['accessibility.focus-emphasis'] = focus;
     tokens['accessibility.underline-links'] = underlineLinks;
-    if (reducedMotion) {
-        tokens['motion.profile'] = 'off';
-        tokens['motion.duration-scale'] = 0;
-        tokens['motion.hover-lift'] = 0;
-        tokens['motion.page-transition'] = false;
+
+    let resolvedEffectsLevel = effectsLevel(tokens['effects.level'], 'balanced');
+    resolvedEffectsLevel = lowerEffectsLevel(
+        resolvedEffectsLevel,
+        administratorEffectsLevel(options.maximumEffectsLevel),
+    );
+    if (media.backdropFilterSupported === false) {
+        resolvedEffectsLevel = lowerEffectsLevel(resolvedEffectsLevel, 'balanced');
+    }
+    if (media.lowPower || highContrast || media.forcedColors) resolvedEffectsLevel = 'minimal';
+    tokens['effects.level'] = resolvedEffectsLevel;
+
+    let requestedMotion = choiceToken(
+        tokens,
+        'motion.profile',
+        ['off', 'calm', 'expressive', 'system'] as const,
+        'system',
+    );
+    if (requestedMotion === 'system') requestedMotion = 'calm';
+
+    if (resolvedEffectsLevel === 'balanced') {
+        const saturation = Number(tokens['effects.saturation']);
+        tokens['effects.blur'] = Math.min(12, Number(tokens['effects.blur']) || 0);
+        tokens['effects.saturation'] = Math.min(1.2, Number.isFinite(saturation) ? saturation : 1);
+        tokens['effects.backdrop-opacity'] = Math.max(0.78, Number(tokens['effects.backdrop-opacity']) || 0);
+        tokens['effects.glow'] = Math.min(0.25, Number(tokens['effects.glow']) || 0);
+        tokens['elevation.glow-intensity'] = Math.min(0.25, Number(tokens['elevation.glow-intensity']) || 0);
+        tokens['elevation.surface-shadow'] = capShadow(tokens['elevation.surface-shadow'], 'soft');
+        tokens['elevation.card-shadow'] = capShadow(tokens['elevation.card-shadow'], 'soft');
+        tokens['elevation.dialog-shadow'] = capShadow(tokens['elevation.dialog-shadow'], 'medium');
+        if (tokens['effects.image-treatment'] === 'blur') tokens['effects.image-treatment'] = 'gradient';
+        if (requestedMotion === 'expressive') requestedMotion = 'calm';
+        tokens['motion.duration-scale'] = Math.min(1, Number(tokens['motion.duration-scale']) || 0);
+        tokens['motion.hover-lift'] = Math.min(3, Number(tokens['motion.hover-lift']) || 0);
         tokens['motion.stagger'] = false;
+    } else if (resolvedEffectsLevel === 'minimal') {
+        tokens['effects.material'] = 'solid';
+        tokens['effects.blur'] = 0;
+        tokens['effects.saturation'] = 1;
+        tokens['effects.backdrop-opacity'] = 1;
+        tokens['effects.glow'] = 0;
+        tokens['effects.image-treatment'] = 'none';
+        tokens['elevation.glow-intensity'] = 0;
+        tokens['elevation.surface-shadow'] = 'none';
+        tokens['elevation.card-shadow'] = 'none';
+        tokens['elevation.dialog-shadow'] = 'none';
+        tokens['player.control-material'] = 'solid';
+        tokens['player.pause-screen-material'] = 'solid';
+        tokens['player.subtitle-backdrop'] = 'solid';
+        tokens['color.dynamic-source'] = 'off';
+        requestedMotion = 'off';
+    }
+
+    if (options.allowDynamicColor === false) tokens['color.dynamic-source'] = 'off';
+
+    if (media.backdropFilterSupported === false) {
+        if (tokens['effects.material'] === 'glass') tokens['effects.material'] = 'translucent';
+        tokens['effects.blur'] = 0;
+        tokens['effects.saturation'] = 1;
     }
     if (reducedTransparency) {
         tokens['effects.material'] = 'solid';
         tokens['effects.blur'] = 0;
         tokens['effects.saturation'] = 1;
         tokens['effects.backdrop-opacity'] = 1;
+        tokens['player.control-material'] = 'solid';
+        tokens['player.pause-screen-material'] = 'solid';
+        tokens['player.subtitle-backdrop'] = 'solid';
     }
+    if (reducedMotion || requestedMotion === 'off') {
+        requestedMotion = 'off';
+        tokens['motion.duration-scale'] = 0;
+        tokens['motion.hover-lift'] = 0;
+        tokens['motion.page-transition'] = false;
+        tokens['motion.stagger'] = false;
+    }
+    tokens['motion.profile'] = requestedMotion;
     if (media.coarsePointer || !media.hover) {
         tokens['layout.card-actions'] = 'always';
         tokens['motion.hover-lift'] = 0;
@@ -303,6 +408,26 @@ export function resolveTheme(
         tokens['shape.border-width'] = Math.max(2, Number(tokens['shape.border-width']) || 0);
         tokens['elevation.focus-ring'] = 'strong';
     }
+
+    const effectsMaterial = choiceToken(
+        tokens,
+        'effects.material',
+        ['solid', 'translucent', 'glass'] as const,
+        'solid',
+    );
+    const imageTreatment = choiceToken(
+        tokens,
+        'effects.image-treatment',
+        ['none', 'dim', 'gradient', 'blur'] as const,
+        'none',
+    );
+    const dynamicColorSource = choiceToken(
+        tokens,
+        'color.dynamic-source',
+        ['off', 'poster', 'backdrop'] as const,
+        'off',
+    );
+    const dynamicColorStrength = Math.max(0, Math.min(1, Number(tokens['color.dynamic-strength']) || 0));
 
     return Object.freeze({
         profileId: profile.Id,
@@ -320,6 +445,15 @@ export function resolveTheme(
         coarsePointer: media.coarsePointer,
         focus,
         underlineLinks,
+        scheduleId: selection.schedule?.id ?? null,
+        scheduleKind: selection.schedule?.kind ?? null,
+        scheduleTimeZone: configuration.ScheduleTimeZone === 'utc' ? 'utc' : 'local',
+        effectsLevel: resolvedEffectsLevel,
+        effectsMaterial,
+        imageTreatment,
+        motionProfile: requestedMotion,
+        dynamicColorSource,
+        dynamicColorStrength,
         presentation: resolvePresentation(tokens, breakpoint),
         tokens: Object.freeze(tokens),
     });

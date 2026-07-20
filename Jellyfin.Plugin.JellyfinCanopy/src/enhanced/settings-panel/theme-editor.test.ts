@@ -264,7 +264,9 @@ describe('Theme Studio responsive settings editor', () => {
     it('previews presentation controls as sparse, reversible token overrides', () => {
         wireThemeStudioEditor(context());
         expect(panel.querySelectorAll('[data-field="presentation-token"]')).toHaveLength(12);
-        expect(panel.querySelectorAll('.jc-theme-module-group')).toHaveLength(3);
+        expect(panel.querySelectorAll('.jc-theme-module-group')).toHaveLength(7);
+        expect(panel.querySelectorAll('[data-theme-effects-group]')).toHaveLength(3);
+        expect(panel.querySelector('[data-theme-schedule-editor]')).not.toBeNull();
 
         let navigation = panel.querySelector<HTMLSelectElement>(
             '[data-field="presentation-token"][data-token="layout.navigation"]',
@@ -297,6 +299,119 @@ describe('Theme Studio responsive settings editor', () => {
         draft = preview.mock.lastCall?.[0] as UserThemeConfiguration;
         expect(draft.Profiles[0].Tokens).not.toHaveProperty('layout.navigation');
         expect(draft.Profiles[0].Tokens).toHaveProperty('progress.thickness', 7);
+    });
+
+    it('previews bounded effects, motion, and dynamic color as sparse focused overrides', () => {
+        JC.pluginConfig.ThemeStudioMaximumEffectsLevel = 'balanced';
+        JC.pluginConfig.ThemeStudioAllowDynamicColor = true;
+        wireThemeStudioEditor(context());
+        expect(panel.querySelectorAll('[data-field="effects-token"]')).toHaveLength(17);
+
+        const choose = (token: string, value: string): void => {
+            const control = panel.querySelector<HTMLSelectElement>(
+                `[data-field="effects-token"][data-token="${token}"]`,
+            )!;
+            control.focus();
+            control.value = value;
+            control.dispatchEvent(new Event('change', { bubbles: true }));
+            expect((document.activeElement as HTMLElement | null)?.dataset.focusKey).toBe(`effects:${token}`);
+        };
+        choose('effects.level', 'full');
+        choose('effects.material', 'glass');
+        choose('effects.blur', '24');
+        choose('effects.glow', '0.5');
+        choose('motion.profile', 'expressive');
+        choose('motion.page-transition', 'true');
+        choose('color.dynamic-source', 'backdrop');
+        choose('color.dynamic-strength', '0.75');
+        flushFrames();
+
+        let draft = preview.mock.lastCall?.[0] as UserThemeConfiguration;
+        expect(draft.Profiles[0].Tokens).toMatchObject({
+            'effects.level': 'full',
+            'effects.material': 'glass',
+            'effects.blur': 24,
+            'effects.glow': 0.5,
+            'motion.profile': 'expressive',
+            'motion.page-transition': true,
+            'color.dynamic-source': 'backdrop',
+            'color.dynamic-strength': 0.75,
+        });
+
+        choose('effects.material', '__preset__');
+        flushFrames();
+        draft = preview.mock.lastCall?.[0] as UserThemeConfiguration;
+        expect(draft.Profiles[0].Tokens).not.toHaveProperty('effects.material');
+
+        JC.pluginConfig.ThemeStudioAllowDynamicColor = false;
+        window.dispatchEvent(new CustomEvent('jc:config-changed'));
+        expect(panel.querySelector('[data-theme-effects-group="dynamic"]')).toBeNull();
+        expect(panel.querySelector('[data-token="color.dynamic-source"]')).toBeNull();
+    });
+
+    it('adds, validates, focuses, previews, deletes, and bounds seasonal schedule entries', () => {
+        configuration.Profiles.push({
+            ...structuredClone(configuration.Profiles[0]), Id: 'seasonal', Name: 'Seasonal',
+        });
+        JC.pluginConfig.ThemeStudioAllowSeasonalScheduling = true;
+        wireThemeStudioEditor(context());
+        button('add-season').click();
+
+        const change = (focusKey: string, value: string, checked?: boolean): void => {
+            const control = panel.querySelector<HTMLInputElement | HTMLSelectElement>(
+                `[data-focus-key="${focusKey}"]`,
+            )!;
+            control.focus();
+            control.value = value;
+            if (control instanceof HTMLInputElement && checked !== undefined) control.checked = checked;
+            control.dispatchEvent(new Event('change', { bubbles: true }));
+            expect((document.activeElement as HTMLElement | null)?.dataset.focusKey).toBe(focusKey);
+        };
+        change('schedule:time-zone', 'utc');
+        change('schedule:season-1:kind', 'holiday');
+        change('schedule:season-1:profile', 'seasonal');
+        change('schedule:season-1:start', '12-24');
+        change('schedule:season-1:end', '12-26');
+        change('schedule:season-1:priority', '90');
+        change('schedule:season-1:enabled', 'on', true);
+        flushFrames();
+
+        let draft = preview.mock.lastCall?.[0] as UserThemeConfiguration;
+        expect(draft.ScheduleTimeZone).toBe('utc');
+        expect(draft.Schedule).toEqual([{
+            Id: 'season-1', ProfileId: 'seasonal', Kind: 'holiday',
+            StartMonthDay: '12-24', EndMonthDay: '12-26', Priority: 90, Enabled: true,
+        }]);
+
+        change('schedule:season-1:start', '02-31');
+        expect(panel.textContent).toContain('theme_studio_schedule_invalid');
+        expect(panel.querySelector<HTMLInputElement>('[data-focus-key="schedule:season-1:start"]')?.value)
+            .toBe('12-24');
+
+        button('delete-schedule').click();
+        flushFrames();
+        draft = preview.mock.lastCall?.[0] as UserThemeConfiguration;
+        expect(draft.Schedule).toEqual([]);
+        expect(panel.textContent).toContain('theme_studio_schedule_empty');
+
+        button('undo').click();
+        expect(panel.querySelectorAll('.jc-theme-schedule-row')).toHaveLength(1);
+    });
+
+    it('disables new schedule entries at the 32-entry capacity', () => {
+        configuration.Schedule = Array.from({ length: 32 }, (_, index) => ({
+            Id: `season-${index + 1}`,
+            ProfileId: 'default',
+            Kind: 'season' as const,
+            StartMonthDay: '01-01',
+            EndMonthDay: '12-31',
+            Priority: index,
+            Enabled: false,
+        }));
+        wireThemeStudioEditor(context());
+        expect(button('add-season').disabled).toBe(true);
+        expect(button('add-holiday').disabled).toBe(true);
+        expect(panel.querySelectorAll('.jc-theme-schedule-row')).toHaveLength(32);
     });
 
     it('shows the resolved preset fallback and omits the unsupported unwatched check choice', () => {
@@ -1271,6 +1386,7 @@ describe('Theme Studio responsive settings editor', () => {
         const documentValue = parsed as Record<string, unknown>;
         expect(documentValue.SchemaVersion).toBe(2);
         expect(documentValue.ActiveProfileId).toBe('default');
+        expect(documentValue.ScheduleTimeZone).toBe('local');
         expect(Array.isArray(documentValue.Profiles)).toBe(true);
         expect(Array.isArray(documentValue.Schedule)).toBe(true);
         expect(documentValue).not.toHaveProperty('Revision');
