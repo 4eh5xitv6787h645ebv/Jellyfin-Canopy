@@ -390,7 +390,7 @@ one-to-one with a budget key in `scripts/scale-budgets.json`:
 | `maxTagCacheFullBuildMilliseconds` | Wall-clock duration of a **cold** full tag-cache build over the seeded library — every entry constructed from scratch, per the tag-cache state protocol below. |
 | `maxTagCacheFullBuildPeakResidentDeltaBytes` | Peak server resident-memory (RSS) delta during that cold full build, relative to the pre-build baseline. |
 | `maxLibraryScanEventP95Milliseconds` | p95 latency of the synchronous scan-thread event handlers (the [S1 rule](#performance-rules)) during a controlled bulk add. |
-| `maxResponseFilterP95MicrosecondsPerItem` | p95 latency overhead added by the plugin's complete synchronous MVC item-response filter chain — all four action filters registered in `PluginServiceRegistrator`, in registration order: `HiddenContentResponseFilter`, `SpoilerIdentityTagFilter`, `SpoilerFieldStripFilter`, `SpoilerBlurImageFilter`; any filter later added to that chain joins this metric automatically — on large item-list responses, normalized per **examined (pre-filter) item** per the fixed page-shape rule below. |
+| `maxResponseFilterP95MicrosecondsPerItem` | p95 latency overhead added by the plugin's complete synchronous MVC item-response filter chain — all four action filters registered in `PluginServiceRegistrator`, in registration order: `HiddenContentResponseFilter`, `SpoilerIdentityTagFilter`, `SpoilerFieldStripFilter`, `SpoilerBlurImageFilter`; any filter later added to that chain joins this metric automatically — on the pinned list-endpoint workload defined in the measurement protocol below, normalized per **examined (pre-filter) item** per the fixed page-shape rule below. |
 | `maxPluginStartupMilliseconds` | Plugin startup duration on the seeded server with the persisted tag cache **present** (warm start, the production steady state), per the tag-cache state protocol below. |
 | `maxTagCacheColdResponseBytes` | Size in bytes of the cold tag-cache response. |
 | `maxTagCacheSnapshotSerializationPeakAllocatedBytes` | Peak server allocation during tag-cache snapshot serialization. |
@@ -401,7 +401,9 @@ one-to-one with a budget key in `scripts/scale-budgets.json`:
 The last five form the tag-cache cold-response envelope required by SR-06's
 response-envelope rule (SR-22): response bytes, serialization peak allocation,
 transfer time, client parse time, and browser heap — not just build
-time/memory.
+time/memory. Wherever this section says "cold tag-cache response" it means
+exactly the pinned full-snapshot request defined in the measurement protocol
+below — never a delta, reset, or projection-only response.
 
 Measurement protocol requirements for the follow-up harness:
 
@@ -436,6 +438,43 @@ Measurement protocol requirements for the follow-up harness:
   reconcile number is never reported under a full-build key. The cold-response
   envelope metrics below require a fully built cache and may be measured in
   either session once its load or build has completed.
+- **One pinned measurement user.** Every measured response in this section —
+  the response-filter pages and the cold tag-cache response — is requested as
+  a single fixed, profile-seeded, **non-administrator** measurement user with
+  access to the entire seeded library and the pinned policy state of the fixed
+  page-shape rule below. The user's identity is part of every response
+  metric's identity: measuring as an administrator, a different seeded user,
+  or an ad-hoc per-run user changes the authorization, access-query, and
+  policy work being timed, so a run that measured any other user is a
+  configuration failure — **no-evidence** for the affected metrics.
+- **Pinned response-filter workload.** `maxResponseFilterP95MicrosecondsPerItem`
+  is measured on the stock Jellyfin list endpoint `GET /Items` — MVC action
+  `Items.GetItems`, the `library` surface in `HiddenContentResponseFilter`'s
+  action map. The filter chain registers against specific MVC actions, so the
+  endpoint and action are part of this metric's identity. The complete query
+  template — a recursive episode listing with a fixed sort, a fixed requested
+  field set, and `limit=1000` over a pinned deterministic slice of the seeded
+  library — is fixed by the follow-up harness, recorded verbatim in the
+  result artifact, and held constant across runs. Satisfying the 1,000-item
+  composition through a different endpoint, action, query template, or user
+  produces incomparable numbers and is **no-evidence** for this metric;
+  changing the pinned template is an instrumentation change under the
+  named-markers comparability rule below.
+- **The cold tag-cache response, defined.** The cold tag-cache response is
+  exactly one thing: a single authorized
+  `GET /JellyfinCanopy/tag-cache/{userId}` request for the measurement user
+  carrying **no cursor parameters** — no `since`, `contentEpoch`,
+  `contentRevision`, `projectionEpoch`, `projectionRevision`, or
+  `projectionOnly` — served after the in-memory cache is fully built: the
+  endpoint's full personalized snapshot path. The harness asserts the
+  response is a snapshot, not a control message or delta: `reset`,
+  `contentReset`, and `projectionReset` all `false`, and `count` equal to the
+  profile's expected accessible entry count for the measurement user. All
+  five envelope metrics (`maxTagCacheColdResponseBytes`,
+  `maxTagCacheSnapshotSerializationPeakAllocatedBytes`, and the transfer,
+  client-parse, and browser-heap keys) are measured from this response and no
+  other: a reset, delta, or projection-only response — however produced — is
+  **no-evidence** under every envelope key, never a small-payload pass.
 - Publish **raw samples plus summarized values** (p50/p95/max as applicable)
   for both profiles, not summaries alone.
 - Use fixed, named measurement markers in harness output so runs are comparable
