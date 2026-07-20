@@ -502,10 +502,20 @@ async function openPanel(owner: PanelOwner): Promise<void> {
         });
 
         const handlePhoneMediaChange = () => {
-            if (!phoneMedia.matches && !panes.some((pane) => pane.classList.contains('active'))) {
-                const lastTab = (JC.currentSettings as any).lastOpenedTab;
-                activate(panes.find((pane) => pane.dataset.pane === lastTab) || panes[0], false);
-                return;
+            if (!phoneMedia.matches) {
+                const activePane = panes.find((pane) => pane.classList.contains('active'));
+                if (!activePane) {
+                    const lastTab = (JC.currentSettings as any).lastOpenedTab;
+                    activate(panes.find((pane) => pane.dataset.pane === lastTab) || panes[0], false);
+                    return;
+                }
+                // Compact Back keeps the pane selected but releases its inner
+                // scroll owner. Restore that owner when both columns become
+                // visible again without requiring another tab click.
+                mainColumn?.classList.toggle(
+                    'jc-theme-pane-active',
+                    activePane.dataset.pane === 'theme-studio',
+                );
             }
             syncLayerFocus(false);
         };

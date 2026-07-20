@@ -535,6 +535,14 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         pendingImportPreserveDormantSchedule = null;
     };
 
+    const invalidateImportForDraftChange = (): void => {
+        // Validation and its displayed diff are relative to one exact draft.
+        // Any later edit retires both so accepting an old review can never
+        // replace newer work that was not represented in that review.
+        importGeneration += 1;
+        clearPendingImport();
+    };
+
     const updateVisualViewport = (): void => {
         const viewport = window.visualViewport;
         if (!viewport) return;
@@ -709,6 +717,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
             render();
             return;
         }
+        invalidateImportForDraftChange();
         syncProfileName(true);
         const snapshot = state!.snapshot();
         if (synchronizeExpert) expertText = JSON.stringify(snapshot.configuration, null, 2);
@@ -759,6 +768,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         }
         const didChange = state.replace(valid);
         if (didChange) {
+            invalidateImportForDraftChange();
             if (!preserveProfileName || activeProfileChanged) syncProfileName(true);
             const snapshot = state.snapshot();
             if (carriedProfileName) expertText = JSON.stringify(snapshot.configuration, null, 2);
@@ -793,6 +803,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         profileNameText = profile.Name;
         profileNameInvalid = false;
         if (renamed) {
+            invalidateImportForDraftChange();
             expertText = JSON.stringify(state.snapshot().configuration, null, 2);
             if (state.snapshot().dirty) {
                 status = t('theme_studio_unsaved');
@@ -994,7 +1005,16 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
     };
 
     const stageImport = async (file: File): Promise<void> => {
-        const generation = ++importGeneration;
+        // Choosing a new file retires any older validation or review before
+        // asynchronous file/server work begins.
+        importGeneration += 1;
+        clearPendingImport();
+        if (!recoveryRequired && state) {
+            status = t(state.snapshot().dirty || profileNameDirty()
+                ? 'theme_studio_unsaved'
+                : 'theme_studio_ready');
+        }
+        render();
         const preserveDormantSchedule = !schedulingAllowed;
         if (saving || loading || file.size > MAXIMUM_IMPORT_FILE_BYTES
             || JC.pluginConfig?.ThemeStudioAllowProfileImport !== true || !JC.core.api) {
@@ -1010,6 +1030,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
             render();
             return;
         }
+        const generation = ++importGeneration;
         let parsed: unknown;
         try {
             parsed = JSON.parse(await file.text());
@@ -1143,7 +1164,14 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
                 ? configurationWithDormantSchedule(pendingImport, state.snapshot().configuration)
                 : pendingImport;
             clearPendingImport();
-            if (imported) changed(state.replace(imported));
+            if (imported) {
+                const replaced = state.replace(imported);
+                if (replaced) changed(true);
+                else {
+                    status = t(state.snapshot().dirty ? 'theme_studio_unsaved' : 'theme_studio_ready');
+                    render();
+                }
+            }
             else {
                 status = t('theme_studio_import_invalid');
                 render();
@@ -1181,6 +1209,8 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         const target = event.target as HTMLInputElement | HTMLTextAreaElement;
         if (!state || saving || loading) return;
         if (target.dataset.role === 'profile-name') {
+            invalidateImportForDraftChange();
+            root.querySelector<HTMLElement>('.jc-theme-import-diff')?.remove();
             profileNameProfileId = state.activeProfile().Id;
             profileNameText = target.value;
             profileNameInvalid = !isValidThemeProfileName(profileNameText);
@@ -1210,7 +1240,12 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
             const empty = root.querySelector<HTMLElement>('[data-role="preset-empty"]');
             if (empty) empty.hidden = visible > 0;
         } else if (target.dataset.field === 'expert-json') {
+            invalidateImportForDraftChange();
+            root.querySelector<HTMLElement>('.jc-theme-import-diff')?.remove();
             expertText = target.value;
+            status = t('theme_studio_unsaved');
+            const statusElement = root.querySelector<HTMLElement>('.jc-theme-status');
+            if (statusElement) statusElement.textContent = `● ${status}`;
             clearTimeout(expertTimer);
             expertTimer = window.setTimeout(() => {
                 expertTimer = 0;

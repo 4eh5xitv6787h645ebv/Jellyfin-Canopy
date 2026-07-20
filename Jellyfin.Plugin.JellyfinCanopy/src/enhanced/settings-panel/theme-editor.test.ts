@@ -739,6 +739,105 @@ describe('Theme Studio responsive settings editor', () => {
         }), { allowScheduling: false });
     });
 
+    it.each(['preset', 'profile-name', 'expert-json'] as const)(
+        'invalidates a reviewed import after a later %s draft edit',
+        async (edit) => {
+            const imported = themeConfiguration();
+            imported.Profiles[0].Palette = 'neutral';
+            const portable = {
+                SchemaVersion: imported.SchemaVersion,
+                ActiveProfileId: imported.ActiveProfileId,
+                Profiles: imported.Profiles,
+                Schedule: imported.Schedule,
+            };
+            JC.core.api = {
+                plugin: vi.fn().mockResolvedValue({ valid: true, data: portable }),
+            } as unknown as ApiApi;
+            wireThemeStudioEditor(context());
+            const input = panel.querySelector<HTMLInputElement>('[data-field="import-file"]')!;
+            Object.defineProperty(input, 'files', {
+                configurable: true,
+                value: [new File([JSON.stringify(portable)], 'reviewed.json', { type: 'application/json' })],
+            });
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+            await vi.waitFor(() => expect(panel.querySelector('.jc-theme-import-diff')).not.toBeNull());
+
+            if (edit === 'preset') {
+                button('preset', 'studio').click();
+            } else if (edit === 'profile-name') {
+                const name = panel.querySelector<HTMLInputElement>('[data-role="profile-name"]')!;
+                name.value = 'Edited after review';
+                name.dispatchEvent(new Event('input', { bubbles: true }));
+            } else {
+                button('editor-mode', 'expert').click();
+                const expert = panel.querySelector<HTMLTextAreaElement>('[data-field="expert-json"]')!;
+                const draft = JSON.parse(expert.value) as UserThemeConfiguration;
+                draft.Profiles[0].Accent = 'red';
+                expert.value = JSON.stringify(draft, null, 2);
+                expert.dispatchEvent(new Event('input', { bubbles: true }));
+            }
+
+            expect(panel.querySelector('.jc-theme-import-diff')).toBeNull();
+            expect(panel.querySelector('[data-action="accept-import"]')).toBeNull();
+            expect(panel.textContent).not.toContain('theme_studio_import_ready');
+        },
+    );
+
+    it('does not publish an import review when the draft changes during validation', async () => {
+        let resolveValidation: (value: unknown) => void = () => undefined;
+        const plugin = vi.fn(() => new Promise<unknown>((resolve) => { resolveValidation = resolve; }));
+        JC.core.api = { plugin } as unknown as ApiApi;
+        const portable = {
+            SchemaVersion: configuration.SchemaVersion,
+            ActiveProfileId: configuration.ActiveProfileId,
+            Profiles: configuration.Profiles,
+            Schedule: configuration.Schedule,
+        };
+        wireThemeStudioEditor(context());
+        const input = panel.querySelector<HTMLInputElement>('[data-field="import-file"]')!;
+        Object.defineProperty(input, 'files', {
+            configurable: true,
+            value: [new File([JSON.stringify(portable)], 'pending-draft.json', { type: 'application/json' })],
+        });
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+        await vi.waitFor(() => expect(plugin).toHaveBeenCalledOnce());
+
+        button('preset', 'studio').click();
+        resolveValidation({ valid: true, data: portable });
+        await vi.advanceTimersByTimeAsync(1);
+
+        expect(panel.querySelector('.jc-theme-import-diff')).toBeNull();
+        expect(panel.querySelector('[data-action="accept-import"]')).toBeNull();
+        expect(button('preset', 'studio').getAttribute('aria-pressed')).toBe('true');
+    });
+
+    it('returns to the current draft status after accepting a no-op import', async () => {
+        const portable = {
+            SchemaVersion: configuration.SchemaVersion,
+            ActiveProfileId: configuration.ActiveProfileId,
+            Profiles: configuration.Profiles,
+            Schedule: configuration.Schedule,
+        };
+        JC.core.api = {
+            plugin: vi.fn().mockResolvedValue({ valid: true, data: portable }),
+        } as unknown as ApiApi;
+        wireThemeStudioEditor(context());
+        const input = panel.querySelector<HTMLInputElement>('[data-field="import-file"]')!;
+        Object.defineProperty(input, 'files', {
+            configurable: true,
+            value: [new File([JSON.stringify(portable)], 'same.json', { type: 'application/json' })],
+        });
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+        await vi.waitFor(() => expect(panel.textContent).toContain('theme_studio_import_no_changes'));
+
+        button('accept-import').click();
+
+        expect(panel.querySelector('.jc-theme-import-diff')).toBeNull();
+        expect(panel.textContent).toContain('theme_studio_ready');
+        expect(panel.textContent).not.toContain('theme_studio_import_ready');
+        expect(button('apply').disabled).toBe(true);
+    });
+
     it('retains dormant schedules while importing profiles when scheduling is disabled', async () => {
         JC.pluginConfig.ThemeStudioAllowSeasonalScheduling = false;
         configuration.Schedule = [{

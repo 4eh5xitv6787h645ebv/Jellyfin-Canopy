@@ -30,6 +30,9 @@ vi.mock('./template', () => ({
                     <h2 class="jc-pane-title">General</h2>
                     <details id="lifecycleDetails"><summary>details</summary></details>
                 </section>
+                <section class="jc-pane" data-pane="theme-studio">
+                    <h2 class="jc-pane-title">Theme Studio</h2>
+                </section>
             </div>
         </div>`,
 }));
@@ -374,6 +377,39 @@ describe('settings panel lifecycle owner', () => {
 
         expect(panel.querySelector('.jc-pane.active')?.getAttribute('data-pane')).toBe('general');
         expect(panel.querySelector<HTMLElement>('.jc-panel-main')?.inert).toBe(false);
+    });
+
+    it('restores Theme Studio inner-scroll ownership after compact Back and rotation', async () => {
+        const media = new EventTarget() as MediaQueryList & { matches: boolean };
+        Object.assign(media, {
+            matches: true,
+            media: '(compact-phone)',
+            onchange: null,
+            addListener(listener: (event: MediaQueryListEvent) => void) {
+                media.addEventListener('change', listener as EventListener);
+            },
+            removeListener(listener: (event: MediaQueryListEvent) => void) {
+                media.removeEventListener('change', listener as EventListener);
+            },
+        });
+        mediaTargets.add(media);
+        vi.stubGlobal('matchMedia', vi.fn(() => media));
+
+        await showPanel!();
+        const panel = document.getElementById('jellyfin-canopy-panel')!;
+        const main = panel.querySelector<HTMLElement>('.jc-panel-main')!;
+        panel.querySelector<HTMLButtonElement>('[data-tab="theme-studio"]')!.click();
+        expect(main.classList.contains('jc-theme-pane-active')).toBe(true);
+
+        panel.querySelector<HTMLButtonElement>('#jcPanelBack')!.click();
+        expect(panel.querySelector('.jc-pane.active')?.getAttribute('data-pane')).toBe('theme-studio');
+        expect(main.classList.contains('jc-theme-pane-active')).toBe(false);
+
+        media.matches = false;
+        media.dispatchEvent(new Event('change'));
+
+        expect(main.classList.contains('jc-theme-pane-active')).toBe(true);
+        expect(main.inert).toBe(false);
     });
 
     it.each(['lifecycleEditable', 'lifecycleTextarea'])(
