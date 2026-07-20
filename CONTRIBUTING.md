@@ -367,15 +367,38 @@ GitHub-hosted control-plane job.
 **Single-flight concurrency contract.** Every run of the scale tier — the
 nightly L schedule, the weekly XL schedule, manual `workflow_dispatch`, and
 release-dispatched exact-SHA runs — declares the same GitHub Actions
-concurrency group (`canopy-scale`) with `cancel-in-progress: false`. At most
-one run executes at a time; a trigger that arrives while a run is in flight
-**queues** behind it and is never cancelled by a newer trigger. This
-concurrency group — not the Volume's attach limit — is the serialization
-mechanism: the one-Linode-at-a-time attach constraint (see the Volume
-lifecycle below) is a physical backstop that correctly queued runs never
-reach, so no run spends provisioning money only to lose an attach race, and a
-release-dispatched run is never failed by an attach conflict with the nightly
-schedule — it waits its turn, then runs.
+concurrency group (`canopy-scale`) with `cancel-in-progress: false`. The
+group guarantees exactly one thing: **at most one run executes at a time**,
+and a run that has started is never cancelled by a newer trigger. It is
+**not** a lossless queue: GitHub Actions holds at most **one pending run per
+concurrency group**, and a newer trigger **replaces and cancels the pending
+run** even with `cancel-in-progress: false`. No part of this spec may assume
+a pending run "waits its turn"; each trigger class instead carries an
+explicit displacement posture:
+
+- **Scheduled and manual runs** tolerate displacement. A scheduled nightly
+  L, weekly XL, or manual run cancelled while pending provisioned nothing,
+  spent nothing, and needs no reconciliation; the loss is accepted because
+  the next scheduled run of that profile covers it. A cancelled-while-pending
+  run is a scheduling artifact, never a no-evidence anomaly requiring action.
+- **Release-dispatched exact-SHA runs** must not lose evidence to
+  displacement. The release workflow never fire-and-forgets a dispatch: it
+  resolves the run it dispatched, watches that specific run to completion,
+  and if the run is **cancelled without ever starting** (displaced from the
+  pending slot by a newer trigger), re-dispatches it. A displacement
+  cancellation executed no infrastructure work and measured nothing, so it
+  is **not an attempt** under the per-profile retry policy (see the
+  exact-tag-SHA section below) and consumes no retry allowance. The
+  watch-and-redispatch loop needs no counter of its own: it is bounded by
+  the release job's hard `timeout-minutes` cap under the bounded-lifecycle
+  rule — the same cap that bounds every other wait in the tier — after
+  which the release gate reports missing exact-SHA evidence exactly like
+  any other evidence failure.
+
+The group's mutual-exclusion guarantee — not the Volume's attach limit — is
+the serialization mechanism: the one-Linode-at-a-time attach constraint (see
+the Volume lifecycle below) is a physical backstop that serialized runs never
+reach, so no run spends provisioning money only to lose an attach race.
 
 #### Scale profiles (provisional — SR-06 canonicalizes)
 
@@ -754,7 +777,12 @@ fresh.
 
 Retry policy (applied per profile): an infrastructure no-evidence failure
 (provisioning, SSH, collection, teardown) permits at most **two additional
-attempts** for that profile. A completed run with a budget breach is
+attempts** for that profile. A dispatched run cancelled while pending —
+displaced from the `canopy-scale` group's single pending slot by a newer
+trigger (see the single-flight concurrency contract in the job shape above)
+— never started, spent nothing, and is **not an attempt**: the release
+workflow re-dispatches it without consuming this allowance, bounded by the
+release job's `timeout-minutes` cap. A completed run with a budget breach is
 evidence — it is not retryable. In blocking mode, lacking a fresh exact-SHA
 passing result for **any** required profile after those retries blocks the
 release; as with every other release gate, there is no bypass.
@@ -973,7 +1001,8 @@ PR events.
    L artifact with no exact-SHA XL artifact — and exhausted retries).
 6. Exact-tag-SHA release integration in `release.yml` (only when ratcheting to
    blocking; must require a passing result for every budgeted profile, never a
-   single profile's artifact).
+   single profile's artifact; includes the watch-and-redispatch-on-displacement
+   loop from the single-flight concurrency contract).
 7. SR-06 canonicalization of the L/XL profile definitions.
 
 ### Docs
