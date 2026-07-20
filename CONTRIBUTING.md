@@ -479,14 +479,21 @@ breach.
 Advisory results never block a PR or a release. Once `enforcement` is
 `"blocking"`, the release workflow's reused quality gates (see
 [RELEASING.md](RELEASING.md)) must additionally obtain a provenance-verified
-scale result whose `testedCommitSha` **exactly equals the tag SHA** — a nightly
-result for some older `main` commit describes that commit, not the tag, and can
-neither block nor satisfy a tag release. Two ways to obtain it:
+**passing scale result for every profile declared in `limits` (currently L and
+XL)**, each with a `testedCommitSha` that **exactly equals the tag SHA** — a
+nightly result for some older `main` commit describes that commit, not the tag,
+and can neither block nor satisfy a tag release. Each result artifact covers
+exactly one profile, so the release gate evaluates the profiles independently
+and one profile's pass never stands in for another's: an exact-SHA L pass with
+a missing, stale, or breaching XL result blocks the release exactly as an L
+breach would. For each required profile there are two ways to obtain its
+result:
 
-1. **Dispatch**: the release workflow dispatches a fresh scale run for the tag
-   commit; or
-2. **Reuse**: it reuses a canonical GitHub workflow artifact for that exact
-   commit created within the preceding **seven days** (the freshness window).
+1. **Dispatch**: the release workflow dispatches a fresh scale run of that
+   profile for the tag commit; or
+2. **Reuse**: it reuses a canonical GitHub workflow artifact for that profile
+   and that exact commit created within the preceding **seven days** (the
+   freshness window).
 
 The immutable result artifact must record: tested commit SHA, profile, seed
 version, the SHA-256 of the `scale-budgets.json` used, workflow run ID and
@@ -496,10 +503,11 @@ digest, that the producing run was a `main`-only schedule/`workflow_dispatch`
 run, that the artifact is retained through the freshness window, and that its
 budget digest equals the tag commit's `scale-budgets.json` digest.
 
-Retry policy: an infrastructure no-evidence failure (provisioning, SSH,
-collection, teardown) permits at most **two additional attempts**. A completed
-run with a budget breach is evidence — it is not retryable. In blocking mode,
-having no fresh exact-SHA passing result after those retries blocks the
+Retry policy (applied per profile): an infrastructure no-evidence failure
+(provisioning, SSH, collection, teardown) permits at most **two additional
+attempts** for that profile. A completed run with a budget breach is
+evidence — it is not retryable. In blocking mode, lacking a fresh exact-SHA
+passing result for **any** required profile after those retries blocks the
 release; as with every other release gate, there is no bypass.
 
 #### Runner topology (decided 2026-07-20): Linode ephemeral instances
@@ -580,9 +588,11 @@ PR events.
 4. Measurement harness and the immutable result-artifact schema.
 5. Budget comparator with fail-closed validation and its negative tests
    (unknown schema, missing/extra keys, `null` while blocking, over-budget,
-   stale/wrong-SHA artifacts, exhausted retries).
+   stale/wrong-SHA artifacts, missing-profile release evidence — e.g. a passing
+   L artifact with no exact-SHA XL artifact — and exhausted retries).
 6. Exact-tag-SHA release integration in `release.yml` (only when ratcheting to
-   blocking).
+   blocking; must require a passing result for every budgeted profile, never a
+   single profile's artifact).
 7. SR-06 canonicalization of the L/XL profile definitions.
 
 ### Docs
