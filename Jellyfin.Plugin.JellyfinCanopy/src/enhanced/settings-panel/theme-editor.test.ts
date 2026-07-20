@@ -152,6 +152,7 @@ beforeEach(() => {
         cancelPreview,
         getConfiguration: () => JC.identity.own(structuredClone(configuration), identity),
         whenReady: vi.fn().mockResolvedValue(true),
+        hasPendingAuthoritativeLoad: () => false,
         reload,
         adoptAcknowledged,
         refresh: vi.fn<() => void>(),
@@ -1110,8 +1111,9 @@ describe('Theme Studio responsive settings editor', () => {
             ...runtime,
             getConfiguration: () => JC.identity.own(structuredClone(configuration), identity),
             whenReady: vi.fn(() => ready),
+            hasPendingAuthoritativeLoad: () => true,
             getDiagnostics: () => ({
-                status: 'loading', revision: configuration.Revision,
+                status: 'active', revision: configuration.Revision,
                 profileId: configuration.ActiveProfileId, breakpoint: 'desktop', mode: 'dark',
             }),
         } satisfies ThemeStudioRuntimeApi;

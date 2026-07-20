@@ -122,8 +122,9 @@ export class ThemeStudioRuntime {
     #installed = false;
     #authoritativeLoadSettled = false;
     #loadGeneration = 0;
+    #acknowledgementGeneration = 0;
     #configurationAcknowledged = false;
-    #loadPromise: Promise<void> | null = null;
+    #loadPromise: Promise<boolean> | null = null;
     #diagnostics: ThemeStudioDiagnostics = Object.freeze({
         status: 'inactive', revision: null, profileId: null, breakpoint: null, mode: null,
     });
@@ -172,6 +173,7 @@ export class ThemeStudioRuntime {
             cancelPreview: () => this.cancelPreview(),
             getConfiguration: () => this.getConfiguration(),
             whenReady: () => this.whenReady(),
+            hasPendingAuthoritativeLoad: () => this.hasPendingAuthoritativeLoad(),
             reload: () => this.reload(),
             adoptAcknowledged: (configuration: unknown) => this.adoptAcknowledged(configuration),
             refresh: () => this.refresh(),
@@ -193,11 +195,12 @@ export class ThemeStudioRuntime {
         }
     }
 
-    load(): Promise<void> {
-        if (this.#disposed || !this.#scope.isCurrent()) return Promise.resolve();
+    load(acceptRevisionReset = false): Promise<boolean> {
+        if (this.#disposed || !this.#scope.isCurrent()) return Promise.resolve(false);
         this.#authoritativeLoadSettled = false;
         const generation = ++this.#loadGeneration;
-        const task = this.#loadOwned(generation);
+        const acknowledgementGeneration = this.#acknowledgementGeneration;
+        const task = this.#loadOwned(generation, acknowledgementGeneration, acceptRevisionReset);
         const tracked = task.finally(() => {
             if (this.#loadPromise === tracked) {
                 this.#loadPromise = null;
@@ -208,7 +211,11 @@ export class ThemeStudioRuntime {
         return tracked;
     }
 
-    async #loadOwned(generation: number): Promise<void> {
+    async #loadOwned(
+        generation: number,
+        acknowledgementGeneration: number,
+        acceptRevisionReset: boolean,
+    ): Promise<boolean> {
         this.#setDiagnostics('loading', null);
         try {
             const api = JC.core.api;
@@ -217,33 +224,37 @@ export class ThemeStudioRuntime {
                 `/user-settings/${encodeURIComponent(this.#scope.userId)}/theme.json`,
                 { signal: this.#scope.signal, skipCache: true, timeoutMs: 10_000 },
             );
-            if (this.#disposed || generation !== this.#loadGeneration) return;
+            if (this.#disposed || generation !== this.#loadGeneration) return false;
             if (!this.#scope.isCurrent()) {
                 this.dispose();
-                return;
+                return false;
             }
             const configuration = parseUserThemeConfiguration(raw);
             if (!configuration) throw new Error('Theme Studio response failed validation');
-            // An acknowledgement can arrive while this authoritative GET is
-            // in flight. Keep the higher revision whichever response settles
-            // last; a stale read must not roll back an exact save response.
-            if (this.#configuration && configuration.Revision < this.#configuration.Revision) {
+            // Ordinary loads keep the higher revision whichever response
+            // settles last. An explicit recovery reload may accept a lower
+            // reset generation, unless a newer acknowledgement arrived while
+            // that GET was in flight.
+            const acknowledgementAdvanced = acknowledgementGeneration !== this.#acknowledgementGeneration;
+            if (this.#configuration && configuration.Revision < this.#configuration.Revision
+                && (!acceptRevisionReset || acknowledgementAdvanced)) {
                 this.refresh();
-                return;
+                return true;
             }
             this.#configuration = JC.identity.own(configuration);
             this.#configurationAcknowledged = false;
             JC.rememberUserSettingsSnapshot?.('theme.json', this.#configuration);
             this.refresh();
+            return true;
         } catch (error) {
             if (this.#disposed || generation !== this.#loadGeneration
                 || this.#scope.signal.aborted || !this.#scope.isCurrent()
-                || (error as { name?: string } | null)?.name === 'AbortError') return;
+                || (error as { name?: string } | null)?.name === 'AbortError') return false;
             // A failed read is not evidence that an exact save response is
             // invalid, including when it arrived before this first GET began.
             if (this.#configurationAcknowledged && this.#configuration) {
                 this.refresh();
-                return;
+                return false;
             }
             this.#configuration = null;
             this.#configurationAcknowledged = false;
@@ -259,6 +270,7 @@ export class ThemeStudioRuntime {
                 storage: 'none',
                 key: 'theme.json',
             });
+            return false;
         }
     }
 
@@ -276,14 +288,24 @@ export class ThemeStudioRuntime {
         return this.#configuration !== null && this.#scope.isCurrent() && !this.#disposed;
     }
 
+    hasPendingAuthoritativeLoad(): boolean {
+        return !this.#disposed && this.#scope.isCurrent()
+            && (!this.#authoritativeLoadSettled || this.#loadPromise !== null);
+    }
+
     async reload(): Promise<boolean> {
         if (this.#disposed || !this.#scope.isCurrent()) return false;
         const previous = this.#configuration
             ? parseUserThemeConfiguration(this.#configuration)
             : null;
         this.cancelPreview();
-        await this.load();
-        const loaded = this.#configuration !== null && this.#scope.isCurrent() && !this.#disposed;
+        // An explicit recovery reload is a generation boundary: an administrator
+        // may have reset the quarantined store and legitimately recreated it at
+        // revision zero. A newer acknowledgement that arrives during this GET
+        // still wins through the acknowledgement-generation guard in #loadOwned.
+        const requestSucceeded = await this.load(true);
+        const loaded = requestSucceeded && this.#configuration !== null
+            && this.#scope.isCurrent() && !this.#disposed;
         if (!loaded && previous && this.#scope.isCurrent() && !this.#disposed) {
             const identity = JC.identity.capture();
             if (identity) {
@@ -310,6 +332,7 @@ export class ThemeStudioRuntime {
         // that response settles, while the source marker protects this exact
         // acknowledgement if the read fails.
         this.#configuration = JC.identity.own(configuration, identity);
+        this.#acknowledgementGeneration += 1;
         this.#configurationAcknowledged = true;
         this.#previewConfiguration = null;
         this.#previewAllowScheduling = true;

@@ -1410,6 +1410,6 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
     // this runtime's first authoritative GET is still in flight. Reconcile
     // that provisional baseline when the load settles, while preserving any
     // local work the user stages in the meantime.
-    const initialLoadPending = runtime?.getDiagnostics().status === 'loading';
+    const initialLoadPending = runtime?.hasPendingAuthoritativeLoad() === true;
     if (!configuration || initialLoadPending) void hydrate(!configuration);
 }

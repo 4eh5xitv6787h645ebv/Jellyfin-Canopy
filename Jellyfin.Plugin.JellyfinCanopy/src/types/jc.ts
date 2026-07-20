@@ -133,6 +133,8 @@ export interface ThemeStudioRuntimeApi {
     getConfiguration(): UserThemeConfiguration | null;
     /** Resolves after the current authoritative load settles. */
     whenReady(): Promise<boolean>;
+    /** True until this runtime's current authoritative server read settles. */
+    hasPendingAuthoritativeLoad(): boolean;
     /** Reloads authoritative server state without replacing this runtime owner. */
     reload(): Promise<boolean>;
     /** Publishes a validated document only after its write was acknowledged. */
