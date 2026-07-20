@@ -515,6 +515,43 @@ describe('Theme Studio responsive settings editor', () => {
         expect(button('apply').disabled).toBe(true);
     });
 
+    it('accepts an exact acknowledgement while the runtime is between live-config generations', async () => {
+        let resolveSave: (result: UserSettingsSaveResult) => void = () => undefined;
+        JC.saveUserSettings = vi.fn(() => new Promise<UserSettingsSaveResult>((resolve) => {
+            resolveSave = resolve;
+        }));
+        const replacementRuntime = JC.core.themeStudio!;
+        wireThemeStudioEditor(context());
+        button('preset', 'studio').click();
+        button('apply').click();
+
+        delete JC.core.themeStudio;
+        window.dispatchEvent(new CustomEvent('jc:theme-studio-runtime-changed', {
+            detail: { reason: 'disposed' },
+        }));
+        const authoritative = themeConfiguration();
+        authoritative.Revision = 4;
+        authoritative.Profiles[0].BasePreset = 'studio';
+        configuration = JC.identity.own(structuredClone(authoritative), identity);
+        resolveSave(acknowledgedTheme(authoritative, 4, 'e'.repeat(64)));
+
+        await vi.waitFor(() => expect(panel.textContent).toContain('theme_studio_saved'));
+        expect(panel.textContent).not.toContain('theme_studio_error_protocol');
+        expect(button('apply').disabled).toBe(true);
+
+        const replacementAdopt = vi.fn(() => true);
+        JC.core.themeStudio = { ...replacementRuntime, adoptAcknowledged: replacementAdopt };
+        window.dispatchEvent(new CustomEvent('jc:theme-studio-runtime-changed', {
+            detail: { reason: 'installed' },
+        }));
+
+        await vi.waitFor(() => expect(replacementAdopt).toHaveBeenCalledWith(
+            expect.objectContaining({ Revision: 4, Profiles: [expect.objectContaining({ BasePreset: 'studio' })] }),
+        ));
+        await vi.waitFor(() => expect(panel.textContent).toContain('theme_studio_ready'));
+        expect(button('apply').disabled).toBe(true);
+    });
+
     it('freezes every draft mutation while Apply is awaiting acknowledgement', async () => {
         let resolveSave: (result: UserSettingsSaveResult) => void = () => undefined;
         JC.saveUserSettings = vi.fn(() => new Promise<UserSettingsSaveResult>((resolve) => {
@@ -584,6 +621,51 @@ describe('Theme Studio responsive settings editor', () => {
                 expect.objectContaining({ Palette: 'neutral' }),
             ],
         }), { allowScheduling: false });
+    });
+
+    it('carries a staged profile name when Expert JSON switches the active profile', () => {
+        const bedroom = structuredClone(configuration.Profiles[0]);
+        bedroom.Id = 'bedroom';
+        bedroom.Name = 'Bedroom';
+        configuration.Profiles.push(bedroom);
+        wireThemeStudioEditor(context());
+        let name = panel.querySelector<HTMLInputElement>('[data-role="profile-name"]')!;
+        name.value = 'Living room';
+        name.dispatchEvent(new Event('input', { bubbles: true }));
+        button('editor-mode', 'expert').click();
+        let editor = panel.querySelector<HTMLTextAreaElement>('[data-field="expert-json"]')!;
+        const switched = JSON.parse(editor.value) as UserThemeConfiguration;
+        switched.ActiveProfileId = 'bedroom';
+        editor.value = JSON.stringify(switched, null, 2);
+        editor.dispatchEvent(new Event('input', { bubbles: true }));
+        vi.advanceTimersByTime(250);
+        flushFrames();
+
+        const switchedPreview = preview.mock.lastCall?.[0] as UserThemeConfiguration;
+        expect(switchedPreview.ActiveProfileId).toBe('bedroom');
+        expect(switchedPreview.Profiles).toEqual(expect.arrayContaining([
+            expect.objectContaining({ Id: 'default', Name: 'Living room' }),
+            expect.objectContaining({ Id: 'bedroom', Name: 'Bedroom' }),
+        ]));
+        expect(preview.mock.lastCall?.[1]).toEqual({ allowScheduling: false });
+        editor = panel.querySelector<HTMLTextAreaElement>('[data-field="expert-json"]')!;
+        expect((JSON.parse(editor.value) as UserThemeConfiguration).Profiles).toEqual(expect.arrayContaining([
+            expect.objectContaining({ Id: 'default', Name: 'Living room' }),
+        ]));
+
+        button('editor-mode', 'beginner').click();
+        name = panel.querySelector<HTMLInputElement>('[data-role="profile-name"]')!;
+        expect(name.value).toBe('Bedroom');
+        name.value = 'Projector';
+        name.dispatchEvent(new Event('input', { bubbles: true }));
+        button('rename-profile').click();
+        flushFrames();
+        const renamedPreview = preview.mock.lastCall?.[0] as UserThemeConfiguration;
+        expect(renamedPreview.Profiles).toEqual(expect.arrayContaining([
+            expect.objectContaining({ Id: 'default', Name: 'Living room' }),
+            expect.objectContaining({ Id: 'bedroom', Name: 'Projector' }),
+        ]));
+        expect(preview.mock.lastCall?.[1]).toEqual({ allowScheduling: false });
     });
 
     it('keeps keyboard draft activity alive by resetting panel auto-close', () => {
@@ -687,6 +769,9 @@ describe('Theme Studio responsive settings editor', () => {
             expect.objectContaining({ body: { ...portable, Schedule: [] } }),
         );
         expect(panel.textContent).not.toContain('theme_studio_import_schedule_removed');
+        // Acceptance must use the policy captured for this validation, even
+        // if the live config object changes before its event is delivered.
+        JC.pluginConfig.ThemeStudioAllowSeasonalScheduling = true;
         button('accept-import').click();
         flushFrames();
 
@@ -696,6 +781,45 @@ describe('Theme Studio responsive settings editor', () => {
         }), { allowScheduling: false });
         expect(button('apply').disabled).toBe(false);
     });
+
+    it.each(['validation', 'review'] as const)(
+        'invalidates an import during %s when scheduling policy changes live',
+        async (phase) => {
+            JC.pluginConfig.ThemeStudioAllowSeasonalScheduling = false;
+            let resolveValidation: (value: unknown) => void = () => undefined;
+            const plugin = vi.fn(() => new Promise<unknown>((resolve) => { resolveValidation = resolve; }));
+            JC.core.api = { plugin } as unknown as ApiApi;
+            const portable = {
+                SchemaVersion: configuration.SchemaVersion,
+                ActiveProfileId: configuration.ActiveProfileId,
+                Profiles: configuration.Profiles,
+                Schedule: configuration.Schedule,
+            };
+            wireThemeStudioEditor(context());
+            const input = panel.querySelector<HTMLInputElement>('[data-field="import-file"]')!;
+            Object.defineProperty(input, 'files', {
+                configurable: true,
+                value: [new File([JSON.stringify(portable)], 'pending-policy.json', { type: 'application/json' })],
+            });
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+            await vi.waitFor(() => expect(plugin).toHaveBeenCalledOnce());
+            if (phase === 'review') {
+                resolveValidation({ valid: true, data: { ...portable, Schedule: [] } });
+                await vi.waitFor(() => expect(panel.textContent).toContain('theme_studio_import_ready'));
+            }
+
+            JC.pluginConfig.ThemeStudioAllowSeasonalScheduling = true;
+            window.dispatchEvent(new CustomEvent('jc:config-changed'));
+            if (phase === 'validation') {
+                resolveValidation({ valid: true, data: { ...portable, Schedule: [] } });
+                await vi.advanceTimersByTimeAsync(1);
+            }
+
+            expect(panel.textContent).not.toContain('theme_studio_import_ready');
+            expect(panel.querySelector('[data-action="accept-import"]')).toBeNull();
+            expect(button('apply').disabled).toBe(true);
+        },
+    );
 
     it.each(['cancel', 'reload'] as const)(
         'does not resurrect pending import validation after %s discards the draft',

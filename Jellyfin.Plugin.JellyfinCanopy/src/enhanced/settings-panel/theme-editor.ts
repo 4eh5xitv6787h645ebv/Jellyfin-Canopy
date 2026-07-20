@@ -509,6 +509,8 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
     let status = configuration ? t('theme_studio_ready') : t('theme_studio_unavailable');
     let pendingImport: UserThemeConfiguration | null = null;
     let pendingImportChanges: string[] = [];
+    let pendingImportPreserveDormantSchedule: boolean | null = null;
+    let deferredAcknowledgement: UserThemeConfiguration | null = null;
     let expertText = configuration ? JSON.stringify(configuration, null, 2) : '';
     let expertInvalid = false;
     let profileNameProfileId = state?.activeProfile().Id ?? '';
@@ -524,7 +526,14 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
     let runtimeGeneration = 0;
     let disposed = false;
     let autoCloseProtected = false;
+    let schedulingAllowed = JC.pluginConfig?.ThemeStudioAllowSeasonalScheduling !== false;
     const previewEnvironmentCleanups: Array<() => void> = [];
+
+    const clearPendingImport = (): void => {
+        pendingImport = null;
+        pendingImportChanges = [];
+        pendingImportPreserveDormantSchedule = null;
+    };
 
     const updateVisualViewport = (): void => {
         const viewport = window.visualViewport;
@@ -732,10 +741,27 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
             return false;
         }
         const preserveProfileName = profileNameDirty();
+        const activeProfileChanged = valid.ActiveProfileId !== state.activeProfile().Id;
+        let carriedProfileName = false;
+        if (preserveProfileName && activeProfileChanged) {
+            if (!isValidThemeProfileName(profileNameText)) {
+                profileNameInvalid = true;
+                status = t('theme_studio_profile_name_invalid');
+                if (rerender) render();
+                return false;
+            }
+            const renamedProfile = valid.Profiles.find((profile) => profile.Id === profileNameProfileId);
+            if (renamedProfile) {
+                renamedProfile.Name = profileNameText.trim();
+                carriedProfileName = true;
+            }
+            profileNameInvalid = false;
+        }
         const didChange = state.replace(valid);
         if (didChange) {
-            if (!preserveProfileName) syncProfileName(true);
+            if (!preserveProfileName || activeProfileChanged) syncProfileName(true);
             const snapshot = state.snapshot();
+            if (carriedProfileName) expertText = JSON.stringify(snapshot.configuration, null, 2);
             if (snapshot.dirty) {
                 status = t('theme_studio_unsaved');
                 schedulePreview();
@@ -848,8 +874,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         state = new ThemeEditorState(nextConfiguration);
         syncProfileName(true);
         expertText = JSON.stringify(nextConfiguration, null, 2);
-        pendingImport = null;
-        pendingImportChanges = [];
+        clearPendingImport();
         expertInvalid = false;
         loading = false;
         recoveryRequired = false;
@@ -862,8 +887,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         // Reload is an explicit authoritative discard. Retire validation that
         // began against the discarded draft before yielding to the runtime.
         importGeneration += 1;
-        pendingImport = null;
-        pendingImportChanges = [];
+        clearPendingImport();
         loading = true;
         status = t('theme_studio_loading');
         render();
@@ -883,7 +907,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         state = configuration ? new ThemeEditorState(configuration) : null;
         syncProfileName(true);
         expertText = configuration ? JSON.stringify(configuration, null, 2) : '';
-        pendingImport = null;
+        clearPendingImport();
         expertInvalid = false;
         loading = false;
         recoveryRequired = false;
@@ -935,9 +959,20 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
                 : null;
             cancelPreviewFrame();
             if (!JC.identity.isCurrent(ctx.identityContext) || !ownedAcknowledged
-                || !acknowledgementRuntime?.adoptAcknowledged(ownedAcknowledged)
-                || (!disposed && !applyingState.adoptCommitted(ownedAcknowledged))) {
+                || !applyingState.adoptCommitted(ownedAcknowledged)) {
                 throw Object.assign(new Error('Acknowledged theme could not be adopted'), { kind: 'protocol' });
+            }
+            if (!acknowledgementRuntime) {
+                // A live configuration publication briefly removes the old
+                // runtime before its successor installs. The exact server
+                // acknowledgement still commits the editor immediately; its
+                // presentation is forwarded when that successor appears.
+                deferredAcknowledgement = ownedAcknowledged;
+            } else if (!acknowledgementRuntime.adoptAcknowledged(ownedAcknowledged)) {
+                // A replacement may already own newer authoritative state.
+                // Hydration reconciles that state without misreporting this
+                // exact, successfully committed write as a protocol failure.
+                void hydrate(false);
             }
             if (disposed) return;
             expertText = JSON.stringify(ownedAcknowledged, null, 2);
@@ -955,6 +990,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
 
     const stageImport = async (file: File): Promise<void> => {
         const generation = ++importGeneration;
+        const preserveDormantSchedule = !schedulingAllowed;
         if (saving || loading || file.size > MAXIMUM_IMPORT_FILE_BYTES
             || JC.pluginConfig?.ThemeStudioAllowProfileImport !== true || !JC.core.api) {
             status = t('theme_studio_import_invalid');
@@ -988,7 +1024,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
             // including a user's own export of a dormant stored schedule.
             // Validate only the portable profiles, then graft the unchanged
             // authoritative schedule back below.
-            const validationDocument = JC.pluginConfig?.ThemeStudioAllowSeasonalScheduling === false
+            const validationDocument = preserveDormantSchedule
                 ? { ...(parsed as Record<string, unknown>), Schedule: [] }
                 : parsed;
             const response = await JC.core.api.plugin(
@@ -1002,16 +1038,16 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
             const imported = importedConfiguration(
                 response,
                 current,
-                JC.pluginConfig?.ThemeStudioAllowSeasonalScheduling === false,
+                preserveDormantSchedule,
             );
             if (!imported) throw new Error('Theme import validation response was invalid');
             pendingImport = imported;
             pendingImportChanges = importSummary(current, imported);
+            pendingImportPreserveDormantSchedule = preserveDormantSchedule;
             status = t('theme_studio_import_ready');
         } catch {
             if (disposed || generation !== importGeneration || !JC.identity.isCurrent(ctx.identityContext)) return;
-            pendingImport = null;
-            pendingImportChanges = [];
+            clearPendingImport();
             status = t('theme_studio_import_invalid');
         }
         render();
@@ -1084,8 +1120,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
             JC.core.themeStudio?.cancelPreview();
             expertText = JSON.stringify(state.snapshot().configuration, null, 2);
             expertInvalid = false;
-            pendingImport = null;
-            pendingImportChanges = [];
+            clearPendingImport();
             status = t('theme_studio_cancelled');
             render();
         } else if (action === 'apply') void apply();
@@ -1099,19 +1134,17 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         }
         else if (action === 'accept-import' && pendingImport
             && JC.pluginConfig?.ThemeStudioAllowProfileImport === true) {
-            const imported = JC.pluginConfig?.ThemeStudioAllowSeasonalScheduling === false
+            const imported = pendingImportPreserveDormantSchedule === true
                 ? configurationWithDormantSchedule(pendingImport, state.snapshot().configuration)
                 : pendingImport;
-            pendingImport = null;
-            pendingImportChanges = [];
+            clearPendingImport();
             if (imported) changed(state.replace(imported));
             else {
                 status = t('theme_studio_import_invalid');
                 render();
             }
         } else if (action === 'reject-import') {
-            pendingImport = null;
-            pendingImportChanges = [];
+            clearPendingImport();
             status = t('theme_studio_import_cancelled');
             render();
         } else if (action === 'import') {
@@ -1234,17 +1267,43 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
 
     const onRuntimeChanged = (event: Event): void => {
         const reason = (event as CustomEvent<{ reason?: string }>).detail?.reason;
+        const nextRuntime = JC.core.themeStudio;
+        if (deferredAcknowledgement && nextRuntime) {
+            // Clear before propagation because the real runtime synchronously
+            // emits an acknowledged event; this keeps that event re-entrant.
+            const acknowledged = deferredAcknowledgement;
+            deferredAcknowledgement = null;
+            if (!nextRuntime.adoptAcknowledged(acknowledged)) {
+                const authoritative = nextRuntime.getConfiguration();
+                if (!authoritative || authoritative.Revision < acknowledged.Revision) {
+                    deferredAcknowledgement = acknowledged;
+                }
+            }
+        }
         // The initiating editor already owns these two continuations. A clean
         // replacement editor does not, so it still consumes the same event.
         if ((reason === 'reloaded' && loading) || (reason === 'acknowledged' && saving)) return;
         void hydrate(false);
     };
     const onConfigChanged = (): void => {
-        if (JC.pluginConfig?.ThemeStudioAllowProfileImport !== true) {
+        const nextSchedulingAllowed = JC.pluginConfig?.ThemeStudioAllowSeasonalScheduling !== false;
+        const importPolicyChanged = nextSchedulingAllowed !== schedulingAllowed
+            || JC.pluginConfig?.ThemeStudioAllowProfileImport !== true;
+        if (importPolicyChanged) {
+            const discardedReview = pendingImport !== null;
             importGeneration += 1;
-            pendingImport = null;
-            pendingImportChanges = [];
+            clearPendingImport();
+            if (discardedReview && !saving && !loading) {
+                status = t(profileNameInvalid
+                    ? 'theme_studio_profile_name_invalid'
+                    : expertInvalid
+                    ? 'theme_studio_invalid'
+                    : state?.snapshot().dirty || profileNameDirty()
+                    ? 'theme_studio_unsaved'
+                    : 'theme_studio_ready');
+            }
         }
+        schedulingAllowed = nextSchedulingAllowed;
         render();
         if (!state || JC.core.themeStudio !== runtime) void hydrate(false);
     };
@@ -1278,7 +1337,8 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         runtime?.cancelPreview();
         if (JC.core.themeStudio !== runtime) JC.core.themeStudio?.cancelPreview();
         state = null;
-        pendingImport = null;
+        clearPendingImport();
+        deferredAcknowledgement = null;
     });
     render();
     if (!configuration) void hydrate(true);
