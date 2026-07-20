@@ -10,6 +10,7 @@ import { JC } from '../globals';
 import { getItemCached } from './helpers';
 import {
     applyContentResponse,
+    buildIndicatorOffsetCSS,
     decideContentResponse,
     projectionOnlyContentRequiresReset,
     decideProjectionResponse,
@@ -73,6 +74,27 @@ function legacyNoImageRow(): HTMLElement {
     row.appendChild(img);
     return img;
 }
+
+describe('native card indicator compatibility', () => {
+    it('preserves the stock top-right offset through semantic theme lanes', () => {
+        const oldSettings = JC.currentSettings;
+        const oldConfig = JC.pluginConfig;
+        try {
+            JC.currentSettings = { ...oldSettings, genreTagsPosition: 'top-right' };
+            JC.pluginConfig = { ...oldConfig, GenreTagsPosition: 'top-right' };
+            const css = buildIndicatorOffsetCSS();
+            const prefix = '.cardScalable:has(.countIndicator, .playedIndicator) > .jc-tag-host';
+            expect(css).toContain(`${prefix} > .genre-overlay-container`);
+            expect(css).toContain(
+                `${prefix} > .jc-tag-lane[data-jc-tag-position="top-right"] > .genre-overlay-container`,
+            );
+            expect(css).toContain('margin-top: clamp(20px, 3vw, 30px)');
+        } finally {
+            JC.currentSettings = oldSettings;
+            JC.pluginConfig = oldConfig;
+        }
+    });
+});
 
 describe('idle scan lifecycle (BI-QA-129)', () => {
     const restoreGlobal = (name: 'requestIdleCallback' | 'cancelIdleCallback', descriptor?: PropertyDescriptor): void => {

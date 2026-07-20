@@ -174,7 +174,7 @@ async function mountCanopyFixture(page: Page): Promise<void> {
                 <div class="panel-footer"><button type="button">Cancel</button><button class="jc-theme-button" type="button">Apply</button></div>
               </section>
               <section class="card-grid" aria-label="Canopy card overlay combinations">
-                <article class="card"><div class="cardBox"><div class="cardScalable"><div class="jc-tag-host"><div class="jc-tag-lane" data-jc-tag-position="top-right" data-jc-theme-component="card-tag-lane"><div class="genre-overlay-container"><span class="genre-tag">✦</span></div><div class="quality-overlay-container"><span class="quality-overlay-label">4K HDR10+</span></div><div class="rating-overlay-container"><span class="rating-tag"><span class="rating-star-icon">★</span><span class="rating-text">9.1</span></span><span class="rating-tag jc-userreview-tag">♥ 10</span></div></div><div class="jc-tag-lane" data-jc-tag-position="bottom-left"><div class="language-overlay-container"><span class="language-flag" role="img" aria-label="French audio"></span></div></div></div><button class="jc-hide-btn" type="button" aria-label="Hide item">×</button></div><div class="cardFooter"><strong>Stacked metadata</strong><span>Three systems share one corner without overlap.</span></div></div></article>
+                <article class="card"><div class="cardBox"><div class="cardScalable jc-anime-filler-anchor"><span class="jc-anime-filler-marker" data-jc-theme-component="warning-badge">Filler episode</span><div class="jc-tag-host"><div class="jc-tag-lane" data-jc-tag-position="top-left" data-jc-theme-component="card-tag-lane"><div class="genre-overlay-container"><span class="genre-tag">✦</span></div></div><div class="jc-tag-lane" data-jc-tag-position="top-right" data-jc-theme-component="card-tag-lane"><div class="quality-overlay-container"><span class="quality-overlay-label">4K HDR10+</span></div><div class="rating-overlay-container"><span class="rating-tag"><span class="rating-star-icon">★</span><span class="rating-text">9.1</span></span><span class="rating-tag jc-userreview-tag">♥ 10</span></div></div><div class="jc-tag-lane" data-jc-tag-position="bottom-left"><div class="language-overlay-container"><span class="language-flag" role="img" aria-label="French audio"></span></div></div></div></div><button class="jc-hide-btn" type="button" aria-label="Hide item">×</button><div class="cardFooter"><strong>Combined overlays</strong><span>Hide, filler and tag lanes occupy separate collision-safe positions.</span></div></div></article>
                 <article class="card"><div class="cardBox"><div class="cardScalable jc-anime-filler-anchor"><span class="jc-anime-filler-marker" data-jc-theme-component="warning-badge">Filler episode</span><div class="jc-tag-host"><div class="jc-tag-lane" data-jc-tag-position="top-right"><div class="quality-overlay-container"><span class="quality-overlay-label">1080p</span></div><div class="rating-overlay-container"><span class="rating-tag">87%</span></div></div></div></div><div class="cardFooter"><strong>Warning coexistence</strong><span>Filler and rating remain independently visible.</span></div></div></article>
                 <article class="card"><div class="cardBox"><div class="cardScalable" data-jc-spoiler-state="on" style="filter:blur(8px)"></div><div class="cardFooter"><strong>Protected artwork</strong><span>The theme cannot remove this feature-owned blur.</span></div></div><div class="jc-hidden" style="display:none">Protected overview must stay hidden</div><div data-jc-home-removed="1" style="display:none">Removed home item</div></article>
               </section>
@@ -242,18 +242,17 @@ async function viewportEvidence(page: Page): Promise<{
         ) * Math.max(0, Math.min(left.bottom, right.bottom) - Math.max(left.top, right.top));
         let competingOverlayOverlap = 0;
         for (const card of fixture.querySelectorAll<HTMLElement>('.card')) {
-            const cardLane = card.querySelector<HTMLElement>(
-                '.jc-tag-lane[data-jc-tag-position="top-right"]',
-            );
-            if (!cardLane) continue;
-            const laneBounds = cardLane.getBoundingClientRect();
-            for (const competing of card.querySelectorAll<HTMLElement>(
-                '.jc-hide-btn, .jc-anime-filler-marker',
-            )) {
-                competingOverlayOverlap = Math.max(
-                    competingOverlayOverlap,
-                    intersectionArea(laneBounds, competing.getBoundingClientRect()),
-                );
+            const overlays = [...card.querySelectorAll<HTMLElement>(
+                '.jc-tag-lane[data-jc-tag-position], .jc-hide-btn, .jc-anime-filler-marker',
+            )].map((element) => element.getBoundingClientRect())
+                .filter((bounds) => bounds.width > 0 && bounds.height > 0);
+            for (let leftIndex = 0; leftIndex < overlays.length; leftIndex += 1) {
+                for (let rightIndex = leftIndex + 1; rightIndex < overlays.length; rightIndex += 1) {
+                    competingOverlayOverlap = Math.max(
+                        competingOverlayOverlap,
+                        intersectionArea(overlays[leftIndex], overlays[rightIndex]),
+                    );
+                }
             }
         }
         const targetSizes = targets.map((target) => ({
@@ -396,15 +395,34 @@ test.describe.serial('Theme Studio core Canopy surfaces', () => {
         await seedModernCoarseLayout(page);
         await loginAs(page, 'admin', consoleErrors);
         await waitForThemeRuntime(page, 'desktop');
+        await expect(page.locator('#jc-tag-pipeline-perf')).toHaveCount(1);
+
+        const mountIndicatorFixture = async (): Promise<number> => page.evaluate(() => {
+            document.getElementById('jc-unsupported-indicator-fixture')?.remove();
+            const css = document.getElementById('jc-tag-pipeline-perf')?.textContent ?? '';
+            const match = css.match(
+                /\.jc-tag-lane\[data-jc-tag-position="top-right"\] > \.([a-z-]+-overlay-container)/,
+            );
+            if (!match) throw new Error('Nested native-indicator compatibility selector is missing');
+            const card = document.createElement('div');
+            card.id = 'jc-unsupported-indicator-fixture';
+            card.innerHTML = '<div class="cardScalable"><span class="countIndicator">2</span>'
+                + '<div class="jc-tag-host"><div class="jc-tag-lane" data-jc-tag-position="top-right">'
+                + `<div class="${match[1]}">Tag</div></div></div></div>`;
+            document.body.append(card);
+            return Number.parseFloat(getComputedStyle(card.querySelector<HTMLElement>(`.${match[1]}`)!).marginTop);
+        });
 
         await page.setViewportSize({ width: 820, height: 1180 });
         await expect.poll(() => themePresentationCount(page)).toBe(0);
+        expect(await mountIndicatorFixture()).toBeGreaterThanOrEqual(20);
         await page.evaluate(() => {
             document.documentElement.classList.remove('jc-modern-layout');
             document.documentElement.classList.add('jc-legacy-layout');
             window.dispatchEvent(new Event('resize'));
         });
         await expect.poll(() => themePresentationCount(page)).toBe(0);
+        expect(await mountIndicatorFixture()).toBeGreaterThanOrEqual(20);
         await page.evaluate(() => {
             document.documentElement.classList.remove('jc-legacy-layout');
             document.documentElement.classList.add('jc-modern-layout', 'layout-tv');
@@ -412,6 +430,7 @@ test.describe.serial('Theme Studio core Canopy surfaces', () => {
             window.dispatchEvent(new Event('resize'));
         });
         await expect.poll(() => themePresentationCount(page)).toBe(0);
+        expect(await mountIndicatorFixture()).toBeGreaterThanOrEqual(20);
         assertNoRuntimeErrors(consoleErrors);
     });
 });

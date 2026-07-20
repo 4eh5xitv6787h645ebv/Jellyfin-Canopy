@@ -210,15 +210,18 @@ describe('toast scheduling', () => {
             expect(node).not.toBeNull();
             expect(node?.innerHTML).toBe('<strong>Saved</strong>');
             expect(node?.style.transform).toBe('translateX(100%)');
+            expect(node?.dataset.jcThemeVisibility).toBe('hidden');
 
             vi.advanceTimersByTime(9);
             expect(node?.style.transform).toBe('translateX(100%)');
 
             vi.advanceTimersByTime(1);
             expect(node?.style.transform).toBe('translateX(0)');
+            expect(node?.dataset.jcThemeVisibility).toBe('visible');
 
             vi.advanceTimersByTime(990);
             expect(node?.style.transform).toBe('translateX(100%)');
+            expect(node?.dataset.jcThemeVisibility).toBe('hidden');
             expect(node?.isConnected).toBe(true);
 
             vi.advanceTimersByTime(299);
@@ -227,6 +230,27 @@ describe('toast scheduling', () => {
             vi.advanceTimersByTime(1);
             expect(node?.isConnected).toBe(false);
         } finally {
+            vi.runOnlyPendingTimers();
+            vi.useRealTimers();
+            document.querySelectorAll('.jellyfin-canopy-toast').forEach((node) => node.remove());
+        }
+    });
+
+    it('retains the stock physical exit transform in unsupported RTL layouts', () => {
+        vi.useFakeTimers();
+        document.documentElement.dir = 'rtl';
+        try {
+            toast('Saved', 1_000);
+            const node = document.querySelector<HTMLElement>('.jellyfin-canopy-toast');
+            expect(node?.style.right).toBe('20px');
+            expect(node?.style.transform).toBe('translateX(100%)');
+
+            vi.advanceTimersByTime(10);
+            expect(node?.style.transform).toBe('translateX(0)');
+            vi.advanceTimersByTime(990);
+            expect(node?.style.transform).toBe('translateX(100%)');
+        } finally {
+            document.documentElement.removeAttribute('dir');
             vi.runOnlyPendingTimers();
             vi.useRealTimers();
             document.querySelectorAll('.jellyfin-canopy-toast').forEach((node) => node.remove());

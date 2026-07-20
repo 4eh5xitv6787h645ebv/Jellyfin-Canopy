@@ -71,9 +71,14 @@ describe('Theme Studio Canopy surface contract', () => {
         expect(css).toContain('[data-jc-tag-position="top-right"]');
         expect(css).toContain('flex-direction: column-reverse');
         expect(css).toContain(':has(.jc-hide-btn)');
+        expect(css).toContain(':has(.jc-hide-btn):has(.jc-anime-filler-marker) .jc-hide-btn');
+        expect(css).toContain(':has(.jc-hide-btn):has(.jc-anime-filler-marker) .jc-anime-filler-marker');
+        expect(css).toContain(':has(.jc-anime-filler-marker) .jc-tag-lane[data-jc-tag-position="top-left"]');
         expect(css).toContain('.card:focus-within .genre-tag .genre-text');
         expect(css).toContain('[data-jc-theme-pointer="coarse"]');
         expect(css).toContain('[dir="rtl"]');
+        expect(css).toContain('.jellyfin-canopy-toast[data-jc-theme-visibility="hidden"]');
+        expect(css).toContain('#jellyfin-release-notes-notification[data-jc-theme-visibility="visible"]');
         expect(css).toContain('min-inline-size: max(2.75rem, 44px)');
         expect(css).toContain('[data-jc-theme-transparency="reduced"]');
         expect(css).toContain('[data-jc-theme-effects-level="minimal"]');

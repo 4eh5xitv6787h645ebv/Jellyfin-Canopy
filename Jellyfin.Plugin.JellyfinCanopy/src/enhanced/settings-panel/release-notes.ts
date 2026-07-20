@@ -48,10 +48,9 @@ export async function showReleaseNotesNotification(): Promise<void> {
     notification.setAttribute('data-jc-identity-owned', 'true');
     notification.dataset.jcThemeSurface = 'notifications';
     notification.dataset.jcThemeComponent = 'release-notes';
+    notification.dataset.jcThemeVisibility = 'hidden';
     JC.identity.own(notification, context);
-    const hiddenTransform = document.documentElement.dir === 'rtl'
-        ? 'translateY(-50%) translateX(-100%)'
-        : 'translateY(-50%) translateX(100%)';
+    const hiddenTransform = 'translateY(-50%) translateX(100%)';
 
     // --- Release notes autoclose ---
     let autoCloseTimer: number | null = null;
@@ -60,6 +59,7 @@ export async function showReleaseNotesNotification(): Promise<void> {
 
     const closePanel = () => {
         if (document.getElementById(notificationId)) {
+            notification.dataset.jcThemeVisibility = 'hidden';
             notification.style.transform = hiddenTransform;
             const timer = window.setTimeout(() => {
                 releaseTimers.delete(timer);
@@ -208,7 +208,10 @@ export async function showReleaseNotesNotification(): Promise<void> {
     document.body.appendChild(notification);
     const enterTimer = window.setTimeout(() => {
         releaseTimers.delete(enterTimer);
-        if (JC.identity.isCurrent(context)) notification.style.transform = 'translateY(-50%) translateX(0)';
+        if (JC.identity.isCurrent(context)) {
+            notification.dataset.jcThemeVisibility = 'visible';
+            notification.style.transform = 'translateY(-50%) translateX(0)';
+        }
     }, 10);
     releaseTimers.add(enterTimer);
 

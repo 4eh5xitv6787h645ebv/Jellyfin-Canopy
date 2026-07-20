@@ -597,6 +597,16 @@ ${selector} .cardScalable:has(> .jc-anime-filler-marker) > .jc-tag-host > .jc-ta
 ${selector} .card:has(.jc-hide-btn) .jc-tag-lane[data-jc-tag-position="top-right"] {
   inset-block-start: max(3.5rem, calc(var(--jc-control-gap) + 2.75rem)) !important;
 }
+${selector} .card:has(.jc-hide-btn):has(.jc-anime-filler-marker) .jc-hide-btn {
+  inset-inline-start: 0.35rem !important;
+  inset-inline-end: auto !important;
+}
+${selector} .card:has(.jc-hide-btn):has(.jc-anime-filler-marker) .jc-tag-lane[data-jc-tag-position="top-left"] {
+  inset-block-start: max(3.5rem, calc(var(--jc-control-gap) + 2.75rem)) !important;
+}
+${selector} .card:has(.jc-hide-btn):has(.jc-anime-filler-marker) .jc-tag-lane[data-jc-tag-position="top-right"] {
+  inset-block-start: max(2.75rem, calc(var(--jc-control-gap) + 2rem)) !important;
+}
 ${selector} .jc-tag-lane[data-jc-tag-position] > :where(
   .genre-overlay-container,
   .language-overlay-container,
@@ -669,6 +679,9 @@ ${selector} .jc-anime-filler-marker {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+${selector} .card:has(.jc-hide-btn):has(.jc-anime-filler-marker) .jc-anime-filler-marker {
+  max-inline-size: calc(100% - 4rem) !important;
+}
 ${selector} .mediaInfoOfficialRating[data-jc-colored-rating="true"] {
   border-color: var(--jc-color-control-border) !important;
   border-radius: var(--jc-shape-control-radius) !important;
@@ -719,8 +732,20 @@ ${selector} #jellyfin-release-notes-notification {
 ${selector}[dir="rtl"] .jc-undo-toast:not(.jc-visible) {
   transform: translateX(-100%);
 }
+${selector}[dir="rtl"] .jellyfin-canopy-toast[data-jc-theme-visibility="hidden"] {
+  transform: translateX(-100%) !important;
+}
+${selector}[dir="rtl"] #jellyfin-release-notes-notification[data-jc-theme-visibility="hidden"] {
+  transform: translateY(-50%) translateX(-100%) !important;
+}
 ${selector}[dir="rtl"] :where(.jellyfin-canopy-toast, .jc-undo-toast, #jellyfin-release-notes-notification) {
   inset-inline-end: max(var(--jc-page-gutter), var(--jc-safe-area-left)) !important;
+}
+${selector}[dir="rtl"] .jellyfin-canopy-toast[data-jc-theme-visibility="visible"] {
+  transform: translateX(0) !important;
+}
+${selector}[dir="rtl"] #jellyfin-release-notes-notification[data-jc-theme-visibility="visible"] {
+  transform: translateY(-50%) translateX(0) !important;
 }
 ${selector}[dir="rtl"] .jc-undo-toast.jc-visible {
   transform: translateX(0);
