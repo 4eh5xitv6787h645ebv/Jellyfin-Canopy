@@ -139,7 +139,9 @@ function previewMedia(): ThemeMediaState {
     return {
         viewportWidth: Math.max(1, window.innerWidth || document.documentElement.clientWidth || 1280),
         viewportHeight: Math.max(1, window.innerHeight || document.documentElement.clientHeight || 720),
-        tv: document.documentElement.classList.contains('layout-tv') || document.body.classList.contains('layout-tv'),
+        tv: document.documentElement.classList.contains('layout-tv')
+            || document.body.classList.contains('layout-tv')
+            || document.documentElement.getAttribute('data-layout') === 'tv',
         darkScheme: mediaMatches('(prefers-color-scheme: dark)'),
         reducedMotion: mediaMatches('(prefers-reduced-motion: reduce)'),
         moreContrast: mediaMatches('(prefers-contrast: more)'),
@@ -1404,5 +1406,10 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         deferredAcknowledgement = null;
     });
     render();
-    if (!configuration) void hydrate(true);
+    // A cached exact acknowledgement can make configuration available while
+    // this runtime's first authoritative GET is still in flight. Reconcile
+    // that provisional baseline when the load settles, while preserving any
+    // local work the user stages in the meantime.
+    const initialLoadPending = runtime?.getDiagnostics().status === 'loading';
+    if (!configuration || initialLoadPending) void hydrate(!configuration);
 }

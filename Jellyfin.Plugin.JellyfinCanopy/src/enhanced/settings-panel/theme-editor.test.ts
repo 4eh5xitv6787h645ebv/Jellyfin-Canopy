@@ -134,6 +134,7 @@ beforeEach(() => {
     }));
     vi.stubGlobal('cancelAnimationFrame', vi.fn((id: number) => { frames.delete(id); }));
     document.documentElement.removeAttribute('data-theme');
+    document.documentElement.removeAttribute('data-layout');
     document.documentElement.classList.remove('layout-tv');
     document.body.classList.remove('layout-tv');
     JC.identity.transition('', '', 'theme-editor-test-logout');
@@ -263,6 +264,7 @@ describe('Theme Studio responsive settings editor', () => {
         configuration.Profiles[0].Accent = 'palette';
         configuration.Profiles[0].Responsive.Desktop = { Tokens: { 'color.primary': '#222222' } };
         configuration.Profiles[0].Responsive.Phone = { Tokens: { 'color.primary': '#111111' } };
+        configuration.Profiles[0].Responsive.Tv = { Tokens: { 'color.primary': '#333333' } };
         wireThemeStudioEditor(context());
         const color = (name: string): string => panel.querySelector<HTMLElement>('.jc-theme-preview-card')!
             .style.getPropertyValue(name);
@@ -286,6 +288,12 @@ describe('Theme Studio responsive settings editor', () => {
         expect(frames).toHaveLength(1);
         flushFrames();
         expect(color('--jc-preview-canvas')).toBe(lightCanvas);
+
+        document.documentElement.setAttribute('data-layout', 'tv');
+        await Promise.resolve();
+        expect(frames).toHaveLength(1);
+        flushFrames();
+        expect(color('--jc-preview-primary')).toBe('#333333');
     });
 
     it('keeps page preview reachable on phones and removes it on Cancel and teardown', () => {
@@ -1088,6 +1096,35 @@ describe('Theme Studio responsive settings editor', () => {
             detail: { reason: 'installed' },
         }));
         await vi.waitFor(() => expect(panel.querySelectorAll('.jc-theme-preset')).toHaveLength(9));
+        expect(panel.textContent).toContain('theme_studio_ready');
+    });
+
+    it('reconciles provisional state after an in-flight authoritative load settles', async () => {
+        let resolveReady!: (ready: boolean) => void;
+        const ready = new Promise<boolean>((resolve) => { resolveReady = resolve; });
+        const authoritative = themeConfiguration();
+        authoritative.Revision = configuration.Revision + 1;
+        authoritative.Profiles[0].BasePreset = 'studio';
+        const runtime = JC.core.themeStudio!;
+        JC.core.themeStudio = {
+            ...runtime,
+            getConfiguration: () => JC.identity.own(structuredClone(configuration), identity),
+            whenReady: vi.fn(() => ready),
+            getDiagnostics: () => ({
+                status: 'loading', revision: configuration.Revision,
+                profileId: configuration.ActiveProfileId, breakpoint: 'desktop', mode: 'dark',
+            }),
+        } satisfies ThemeStudioRuntimeApi;
+
+        wireThemeStudioEditor(context());
+        expect(button('preset', 'canopy').getAttribute('aria-pressed')).toBe('true');
+        configuration = JC.identity.own(authoritative, identity);
+        resolveReady(true);
+
+        await vi.waitFor(() => {
+            expect(button('preset', 'studio').getAttribute('aria-pressed')).toBe('true');
+        });
+        expect(button('apply').disabled).toBe(true);
         expect(panel.textContent).toContain('theme_studio_ready');
     });
 
