@@ -501,12 +501,16 @@ result:
    freshness window).
 
 The immutable result artifact must record: tested commit SHA, profile, seed
-version, the SHA-256 of the `scale-budgets.json` used, workflow run ID and
-attempt, creation time, topology metadata, raw metrics, the compared limits,
-enforcement mode, and outcome. Release-time reuse verifies the artifact ID and
-digest, that the producing run was a `main`-only schedule/`workflow_dispatch`
-run, that the artifact is retained through the freshness window, and that its
-budget digest equals the tag commit's `scale-budgets.json` digest.
+version and seed-input digest, the SHA-256 of the `scale-budgets.json` used,
+workflow run ID and attempt, creation time, topology metadata, raw metrics,
+the compared limits, enforcement mode, and outcome. Release-time reuse
+verifies the artifact ID and digest, that the producing run was a `main`-only
+schedule/`workflow_dispatch` run, that the artifact is retained through the
+freshness window, that its budget digest equals the tag commit's
+`scale-budgets.json` digest, and that its recorded seed-input digest equals
+the digest computed from the tag commit's seed inputs for that profile — a
+result measured against the wrong library shape is not evidence, no matter
+how fresh.
 
 Retry policy (applied per profile): an infrastructure no-evidence failure
 (provisioning, SSH, collection, teardown) permits at most **two additional
@@ -554,6 +558,12 @@ Volume lifecycle:
   storage; the baseline is identified by a digest of its seed inputs and
   profile; it is refreshed only through an exclusive seed-refresh path, and
   only when the seed script or profile definition changes.
+- Every measurement run verifies **seed provenance before measuring**: the
+  baseline digest recorded on the Volume must equal the digest computed from
+  the **tested commit's** seed inputs (seed script plus profile definition)
+  for the profile being run. A mismatch — stale seed, wrong profile — is a
+  configuration failure: the run is **no-evidence** (never a pass or a
+  breach) until the exclusive seed-refresh path rebuilds the baseline.
 
 Secrets and teardown:
 
