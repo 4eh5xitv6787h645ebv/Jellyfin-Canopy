@@ -779,7 +779,8 @@ Volume lifecycle:
   profile-namespaced paths (`baselines/L/`, `baselines/XL/`). Each baseline
   is a pre-seeded stub library plus the scanned Jellyfin database, so a run
   skips the multi-hour initial scan, and carries its own metadata record
-  (profile, seed version, seed-input digest). A run reads and verifies only
+  (profile, seed version, seed-input digest, and the baseline-content digest
+  defined under seed provenance below). A run reads and verifies only
   its own profile's baseline, so the nightly L schedule and the weekly XL
   schedule never invalidate each other's baseline — alternating the two
   required schedules must never trigger a rebuild. Stub files are
@@ -797,10 +798,13 @@ Volume lifecycle:
   seed-refresh path that rebuilds **only the affected profile's baseline**.
   The refresh trigger is exactly the **seed-provenance check below failing**
   for that profile — for any reason: the tested commit's seed inputs
-  changed, or the baseline or its metadata record is missing, unreadable,
-  corrupt, wrong-profile, or carries an unparseable digest. The refresh
-  writes the rebuilt baseline first and its metadata record (digest computed
-  from the seed inputs of the commit that ran the refresh) **last**, so a
+  changed, the baseline or its metadata record is missing, unreadable,
+  corrupt, wrong-profile, or carries an unparseable digest, or the
+  baseline's recomputed content digest no longer matches the recorded one.
+  The refresh writes the rebuilt baseline first and its metadata record —
+  the seed-input digest computed from the seed inputs of the commit that ran
+  the refresh, plus the baseline-content digest computed from the
+  just-written baseline files — **last**, so a
   refresh interrupted mid-write leaves a baseline indistinguishable from a
   missing one and simply re-triggers refresh on the next run. While the
   provenance check passes, refresh must not run (an unchanged-input rebuild
@@ -824,15 +828,30 @@ Volume lifecycle:
   invalidates the baseline — the Volume's database was produced by the old
   server build — even when the seed script and profile definition are
   unchanged.
-- Every measurement run verifies **seed provenance before measuring**: the
-  digest recorded in the Volume's metadata **for the profile being run** must
-  equal the digest computed from the **tested commit's** seed inputs for that
-  profile. A verification failure — stale seed, changed Jellyfin image pin,
-  or a missing, unreadable, corrupt, or wrong-profile baseline or metadata
-  record — is a configuration failure: the run is **no-evidence** (never a
-  pass or a breach) until the exclusive seed-refresh path, whose trigger is
-  exactly this verification failure (see above), rebuilds that profile's
-  baseline.
+- Every measurement run verifies **seed provenance before measuring**, in
+  two parts. First, **input identity**: the seed-input digest recorded in
+  the Volume's metadata **for the profile being run** must equal the digest
+  computed from the **tested commit's** seed inputs for that profile.
+  Second, **baseline content integrity**: matching metadata does not prove
+  the bytes underneath survived, so the metadata record also carries a
+  **baseline-content digest**, computed at refresh time from the finished
+  baseline itself — the digest of a canonical, sorted manifest of every file
+  in that profile's baseline, recording each entry's relative path and size
+  plus the SHA-256 of every file with nonzero size (which covers the scanned
+  Jellyfin database; zero-byte sparse stubs contribute path and size only,
+  keeping recomputation an inode walk plus a database hash) — and the run
+  recomputes that digest from the attached baseline and requires equality.
+  A failure of **either** part — stale seed, changed Jellyfin image pin, a
+  missing, unreadable, or wrong-profile baseline or metadata record, or a
+  content-digest mismatch such as a truncated database or missing, extra,
+  or resized files under otherwise-plausible metadata — is one and the same
+  provenance failure: the run is **no-evidence** (never a pass or a breach),
+  and that failure is exactly the trigger of the exclusive seed-refresh path
+  (see above), which rebuilds that profile's baseline. A corrupted baseline
+  whose metadata remains valid therefore can neither be measured nor strand
+  the tier in repeated no-evidence runs — it fails the content check and
+  recovers through the same refresh transition as every other provenance
+  failure.
 
 Secrets and teardown:
 
