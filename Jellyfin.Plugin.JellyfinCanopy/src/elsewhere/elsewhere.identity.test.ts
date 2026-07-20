@@ -129,4 +129,67 @@ describe('Elsewhere account ownership', () => {
         expect(staleSearch.disabled).toBe(false);
         expect(apiFetch).toHaveBeenCalledTimes(requestsBeforeSwitch);
     });
+
+    it('moves focus into settings, traps Tab, closes on Escape, and restores the opener', async () => {
+        document.body.innerHTML = `
+            <div class="detailSectionContent">
+                <a href="https://www.themoviedb.org/movie/123">TMDB</a>
+            </div>`;
+        vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
+            const url = input instanceof Request
+                ? input.url
+                : input instanceof URL ? input.href : input;
+            const text = url.includes('providers.txt') ? 'Netflix' : 'US\tUnited States';
+            return Promise.resolve({
+                ok: true,
+                status: 200,
+                text: () => Promise.resolve(text),
+                clone() { return this; },
+            } as unknown as Response);
+        }));
+        JC.core.api = {
+            fetch: vi.fn().mockResolvedValue({ results: { US: { flatrate: [] } } }),
+        } as unknown as typeof JC.core.api;
+
+        (JC as typeof JC & { initializeElsewhereScript: () => void }).initializeElsewhereScript();
+        await vi.advanceTimersByTimeAsync(2_500);
+        await Promise.resolve();
+        await Promise.resolve();
+
+        const settingsButton = document.querySelector<HTMLButtonElement>('.elsewhere-settings-button')!;
+        const modal = document.getElementById('streaming-settings-modal')!;
+        const dialog = modal.querySelector<HTMLElement>('.streaming-settings-dialog')!;
+        const regionSelect = dialog.querySelector<HTMLSelectElement>('#region-select')!;
+        const saveButton = dialog.querySelector<HTMLButtonElement>('#save-settings')!;
+        expect(settingsButton).not.toBeNull();
+        expect(modal.getAttribute('aria-hidden')).toBe('true');
+
+        settingsButton.focus();
+        settingsButton.click();
+        expect(modal.style.display).toBe('flex');
+        expect(modal.hasAttribute('aria-hidden')).toBe(false);
+        expect(dialog.getAttribute('role')).toBe('dialog');
+        expect(dialog.getAttribute('aria-modal')).toBe('true');
+        expect(dialog.getAttribute('aria-label')).toBe('elsewhere_settings_title');
+        expect(document.activeElement).toBe(regionSelect);
+        expect(document.body.classList).toContain('jc-modal-open');
+
+        saveButton.focus();
+        saveButton.dispatchEvent(new KeyboardEvent('keydown', {
+            key: 'Tab',
+            bubbles: true,
+            cancelable: true,
+        }));
+        expect(document.activeElement).toBe(regionSelect);
+
+        regionSelect.dispatchEvent(new KeyboardEvent('keydown', {
+            key: 'Escape',
+            bubbles: true,
+            cancelable: true,
+        }));
+        expect(modal.style.display).toBe('none');
+        expect(modal.getAttribute('aria-hidden')).toBe('true');
+        expect(document.activeElement).toBe(settingsButton);
+        expect(document.body.classList).not.toContain('jc-modal-open');
+    });
 });

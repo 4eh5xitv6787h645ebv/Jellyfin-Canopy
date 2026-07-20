@@ -544,7 +544,7 @@ function initializeReviews(): void {
 
         const textElement = reviewCard.querySelector('.tmdb-review-text')!;
         textElement.innerHTML = parseMarkdown(previewContent) +
-            (isLongReview ? `<span class="tmdb-review-toggle">${JC.t('reviews_read_more')}</span>` : '');
+            (isLongReview ? `<button class="tmdb-review-toggle" type="button">${JC.t('reviews_read_more')}</button>` : '');
 
         return reviewCard;
     }
@@ -641,7 +641,7 @@ function initializeReviews(): void {
         const textElement = reviewCard.querySelector('.tmdb-review-text');
         if (textElement) {
             textElement.innerHTML = parseMarkdown(previewContent) +
-                (isLongReview ? `<span class="tmdb-review-toggle">${JC.t('reviews_read_more')}</span>` : '');
+                (isLongReview ? `<button class="tmdb-review-toggle" type="button">${JC.t('reviews_read_more')}</button>` : '');
         }
 
         // Store full content for toggling
@@ -671,21 +671,25 @@ function initializeReviews(): void {
         const form = document.createElement('div');
         form.className = 'jc-review-form';
         let currentRating: number = existingReview?.rating || 0;
+        const ratingsLabel = escapeHtml(JC.t('panel_settings_spoiler_guard_override_ratings'));
+        const reviewLabel = escapeHtml(JC.t('reviews_add'));
+        const saveLabel = escapeHtml(JC.t('elsewhere_settings_save'));
+        const cancelLabel = escapeHtml(JC.t('elsewhere_settings_cancel'));
 
         form.innerHTML = `
             ${existingReview ? '' : `<h4 class="jc-review-form-title">${JC.t('reviews_add')}</h4>`}
-            <div class="jc-review-star-picker" role="radiogroup">
-                ${[1,2,3,4,5].map(n => `<button class="jc-star-btn${currentRating >= n ? ' jc-star-selected' : ''}" data-value="${n}" type="button">★</button>`).join('')}
-                <button class="jc-star-clear-btn" type="button"><span class="material-icons" aria-hidden="true">close</span></button>
+            <div class="jc-review-star-picker" role="radiogroup" aria-label="${ratingsLabel}">
+                ${[1,2,3,4,5].map(n => `<button class="jc-star-btn${currentRating >= n ? ' jc-star-selected' : ''}" data-value="${n}" type="button" role="radio" aria-label="${n}/5" aria-checked="${currentRating === n ? 'true' : 'false'}">★</button>`).join('')}
+                <button class="jc-star-clear-btn" type="button" aria-label="${ratingsLabel} 0/5"><span class="material-icons" aria-hidden="true">close</span></button>
                 <span class="jc-star-label"></span>
             </div>
-            <textarea class="jc-review-textarea" maxlength="2000">${escapeHtml(existingReview?.content || '')}</textarea>
+            <textarea class="jc-review-textarea" maxlength="2000" aria-label="${reviewLabel}" aria-describedby="jc-review-form-error">${escapeHtml(existingReview?.content || '')}</textarea>
             <div class="jc-review-char-counter"><span class="jc-review-char-count">${existingReview?.content?.length || 0}</span>/2000</div>
             <div class="jc-review-form-btns">
-                <button class="jc-review-btn jc-review-submit-btn" type="button"><span class="material-icons" aria-hidden="true">save</span></button>
-                <button class="jc-review-btn jc-review-cancel-btn" type="button"><span class="material-icons" aria-hidden="true">close</span></button>
+                <button class="jc-review-btn jc-review-submit-btn" type="button" aria-label="${saveLabel}"><span class="material-icons" aria-hidden="true">save</span></button>
+                <button class="jc-review-btn jc-review-cancel-btn" type="button" aria-label="${cancelLabel}"><span class="material-icons" aria-hidden="true">close</span></button>
             </div>
-            <div class="jc-review-form-error" aria-live="polite"></div>
+            <div class="jc-review-form-error" id="jc-review-form-error" role="alert" aria-live="polite"></div>
         `;
 
         const starBtns = form.querySelectorAll<HTMLButtonElement>('.jc-star-btn');
@@ -702,6 +706,8 @@ function initializeReviews(): void {
             starBtns.forEach(btn => {
                 const v = parseInt(btn.dataset.value!, 10);
                 btn.classList.toggle('jc-star-selected', v <= currentRating);
+                btn.setAttribute('aria-checked', String(v === currentRating));
+                btn.tabIndex = v === (currentRating || 1) ? 0 : -1;
             });
             starLabel.textContent = currentRating > 0 ? `${currentRating}/5` : '';
         }
@@ -710,6 +716,14 @@ function initializeReviews(): void {
 
         starBtns.forEach(btn => {
             btn.addEventListener('click', () => updateStars(parseInt(btn.dataset.value!, 10)));
+            btn.addEventListener('keydown', (event) => {
+                if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return;
+                event.preventDefault();
+                const direction = event.key === 'ArrowRight' || event.key === 'ArrowDown' ? 1 : -1;
+                const value = Math.max(1, Math.min(5, (currentRating || 1) + direction));
+                updateStars(value);
+                starBtns[value - 1]?.focus();
+            });
             btn.addEventListener('mouseenter', () => starBtns.forEach(b => b.classList.toggle('jc-star-hover', parseInt(b.dataset.value!, 10) <= parseInt(btn.dataset.value!, 10))));
             btn.addEventListener('mouseleave', () => starBtns.forEach(b => b.classList.remove('jc-star-hover')));
         });
@@ -948,19 +962,19 @@ function initializeReviews(): void {
                     if (card.classList.contains('jc-user-review-card')) {
                         const full = card.dataset.fullContent || '';
                         if (textElement.classList.toggle('expanded')) {
-                            textElement.innerHTML = parseMarkdown(full) + `<span class="tmdb-review-toggle">${JC.t('reviews_read_less')}</span>`;
+                            textElement.innerHTML = parseMarkdown(full) + `<button class="tmdb-review-toggle" type="button">${JC.t('reviews_read_less')}</button>`;
                         } else {
-                            textElement.innerHTML = parseMarkdown(full.substring(0, 350)) + `<span class="tmdb-review-toggle">${JC.t('reviews_read_more')}</span>`;
+                            textElement.innerHTML = parseMarkdown(full.substring(0, 350)) + `<button class="tmdb-review-toggle" type="button">${JC.t('reviews_read_more')}</button>`;
                         }
                         return;
                     }
                     const review = resolveReviewByCard(reviews!, card);
                     if (!review) return;
                     if (textElement.classList.toggle('expanded')) {
-                        textElement.innerHTML = parseMarkdown(review.content) + `<span class="tmdb-review-toggle">${JC.t('reviews_read_less')}</span>`;
+                        textElement.innerHTML = parseMarkdown(review.content) + `<button class="tmdb-review-toggle" type="button">${JC.t('reviews_read_less')}</button>`;
                     } else {
                         const previewContent = review.content.substring(0, 350);
-                        textElement.innerHTML = parseMarkdown(previewContent) + `<span class="tmdb-review-toggle">${JC.t('reviews_read_more')}</span>`;
+                        textElement.innerHTML = parseMarkdown(previewContent) + `<button class="tmdb-review-toggle" type="button">${JC.t('reviews_read_more')}</button>`;
                     }
                 }
             });

@@ -126,6 +126,18 @@ The desktop evidence combines live and paused stream states, transcode and downl
 
 The phone capture is the same authenticated Jellyfin 12 fixture at 390 × 844. Separate assertions cover 844 × 390 phone landscape, 1920 × 1080 wide desktop, 44 CSS-pixel controls, keyboard focus, RTL, long labels, no nested vertical scrollers, and unchanged private policy hooks. Tablet-only, legacy, and TV layouts retain stock operational styling.
 
+### Discovery, requests, reviews, and external services
+
+Discovery results, Seerr requests, Sonarr/Radarr/Bazarr actions, reviews, external links, and release information receive coordinated Theme Studio presentation when their owning Canopy features are both enabled and configured. Availability, request, approval, rejection, failure, release, and progress states pair color with text, icons, shapes, or progress semantics. Theme Studio does not send provider requests, expose service URLs or API keys, change permissions, or load remote visual assets.
+
+![Theme Studio discovery and integration surfaces on a modern desktop](images/theme-studio-integration-surfaces-desktop.png)
+
+The desktop fixture combines a discovery hero and media row, Seerr request states and season controls, ARR release and rejection details, review summaries and editing controls, external links, release dates, and loading, empty, error, and permission states. The documentation capture uses a 1366 × 1200 desktop viewport so every production-aligned surface remains in frame; runtime assertions also cover 1366 × 768 and 1920 × 1080. Sheets and dialogs stay bounded on wide displays, while long translated and mixed-direction content wraps without obscuring actions.
+
+![Theme Studio discovery and integration surfaces on a modern phone](images/theme-studio-integration-surfaces-phone.png)
+
+The phone capture comes from the same authenticated Jellyfin 12 fixture at 390 × 844. Separate assertions cover 844 × 390 phone landscape, 1920 × 1080 wide desktop, 44 CSS-pixel controls, keyboard and screen-reader semantics, RTL, long content, and exact stock/no-op behavior on tablet-only, legacy, and TV layouts. Disabling or leaving Seerr or an ARR service unconfigured prevents its specialized presentation asset from loading; the shared typed Theme Studio tokens remain available to ordinary modern Jellyfin surfaces.
+
 ### Dynamic color and privacy
 
 Dynamic color is optional and runs only after the usable theme has painted. Canopy reads one same-origin Jellyfin **Primary** or **Backdrop** image, reduces it to a small local color sample, and blends the result with the profile accent. Analysis is cancellable and bounded; it never contacts an artwork CDN, and a media URL, item identifier, image tag, or sampled pixels are never written to `theme.json`, profile exports, CSS logs, or documentation captures. When analysis is unavailable or fails, the curated palette remains active.

@@ -228,7 +228,7 @@ Object.values(grouped).forEach((dl: any) => {
     row.className = 'jc-download-row';
     row.innerHTML = `
         <div class="jc-download-title">${escapeHtml(dl.title || JC.t!('seerr_popover_downloading'))}</div>
-        <div class="jc-download-progress"><div class="fill" style="width:${pct}%"></div></div>
+        <div class="jc-download-progress" role="progressbar" aria-label="${escapeHtml(dl.title || JC.t!('seerr_popover_downloading'))}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}"><div class="fill" style="width:${pct}%"></div></div>
         <div class="jc-download-meta">
             <span>${pct}%</span>
             <span>${escapeHtml((dl.status || 'Downloading').toString())}</span>

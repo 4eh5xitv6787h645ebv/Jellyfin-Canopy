@@ -213,6 +213,7 @@ state.identity = identity;
 // jc-modal-open gate that suppresses JC global shortcuts while open (A11Y-1 /
 // INT-1). Replaces the former hand-rolled Escape-only keydown listener.
 modal._a11y = installModalA11y(modal, {
+    dialogElement: modal.querySelector<HTMLElement>('.modal-container') ?? modal,
     labelledBy: 'jc-more-info-title',
     onEscape: () => moreInfoModal.close(),
 });

@@ -45,6 +45,9 @@ export const EMBEDDED_ASSET_KEYS = Object.freeze([
     'ratings/ratings.css',
     'branding/canopy-mark.svg',
     'theme-studio/operational-surfaces.css',
+    'theme-studio/seerr-surfaces.css',
+    'theme-studio/arr-surfaces.css',
+    'theme-studio/external-surfaces.css',
 ] as const);
 
 export type EmbeddedAssetKey = (typeof EMBEDDED_ASSET_KEYS)[number];

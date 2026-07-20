@@ -68,11 +68,31 @@ interface DropdownItem {
     tip: string;
 }
 
+function statusText(status: string | null): string {
+    const state = status === 'complete' ? 'complete' : status === 'partial' ? 'partial' : 'missing';
+    const key = state === 'complete'
+        ? 'downloads_status_completed'
+        : state === 'partial' ? 'seerr_season_status_partial' : 'seerr_btn_request_missing';
+    const fallback = state === 'complete' ? 'Complete' : state === 'partial' ? 'Partial' : 'Missing';
+    const translated = JC.t?.(key);
+    const label = translated && translated !== key ? translated : fallback;
+    return `${state === 'complete' ? '✓' : state === 'partial' ? '◐' : '○'} ${label}`;
+}
+
 let arrLinksGeneration = 0;
 let arrLinksTimer: ReturnType<typeof setTimeout> | null = null;
 let arrLinksWaitResolve: (() => void) | null = null;
 let arrLinksObserver: MutationObserver | ObserverProxy | null = null;
 let arrLinksOutsideClick: ((event: MouseEvent) => void) | null = null;
+
+/** Close every open ARR instance menu except an optional current owner. */
+export function closeArrDropdowns(except?: Element): void {
+    document.querySelectorAll<HTMLElement>('.arr-dropdown.open').forEach((dropdown) => {
+        if (dropdown === except) return;
+        dropdown.classList.remove('open');
+        dropdown.querySelector<HTMLElement>('[aria-expanded]')?.setAttribute('aria-expanded', 'false');
+    });
+}
 
 function removeArrLinksUi(): void {
     document.querySelectorAll('.arr-dropdown').forEach((node) => {
@@ -734,6 +754,12 @@ async function initializeArrLinks(): Promise<void> {
                     button.appendChild(img);
                 }
             }
+            if (status) {
+                const state = document.createElement('span');
+                state.className = `arr-status-text arr-status-text--${status}`;
+                state.textContent = statusText(status);
+                button.appendChild(state);
+            }
             return button;
         }
 
@@ -759,6 +785,9 @@ async function initializeArrLinks(): Promise<void> {
             toggle.className = 'button-link emby-button arr-link';
             toggle.href = '#';
             toggle.title = `${label} (${items.length} instances)`;
+            toggle.setAttribute('role', 'button');
+            toggle.setAttribute('aria-haspopup', 'menu');
+            toggle.setAttribute('aria-expanded', 'false');
 
             if (JC.pluginConfig.ShowArrLinksAsText) {
                 toggle.textContent = label;
@@ -782,21 +811,23 @@ async function initializeArrLinks(): Promise<void> {
                 e.preventDefault();
                 e.stopPropagation();
                 if (!isActive(context, expectedGeneration)) return;
-                document.querySelectorAll('.arr-dropdown.open').forEach(d => {
-                    if (d !== wrapper) d.classList.remove('open');
-                });
+                closeArrDropdowns(wrapper);
                 wrapper.classList.toggle('open');
+                toggle.setAttribute('aria-expanded', wrapper.classList.contains('open') ? 'true' : 'false');
             });
 
             // Menu
             const menu = document.createElement('div');
             menu.className = 'arr-dropdown-menu';
+            menu.setAttribute('role', 'menu');
+            menu.setAttribute('aria-label', label);
 
             items.forEach(function(item) {
                 const link = extLink(item.url, {
                     title: item.tip || item.name,
                     className: 'arr-dropdown-item',
                 });
+                link.setAttribute('role', 'menuitem');
 
                 const dot = document.createElement('span');
                 dot.className = `arr-dropdown-dot arr-dropdown-dot--${item.status || 'missing'}`;
@@ -806,6 +837,12 @@ async function initializeArrLinks(): Promise<void> {
                 nameSpan.className = 'arr-dropdown-item-name';
                 nameSpan.textContent = item.name ?? '';
                 link.appendChild(nameSpan);
+
+                const stateSpan = document.createElement('span');
+                const state = item.status || 'missing';
+                stateSpan.className = `arr-dropdown-status-text arr-dropdown-status-text--${state}`;
+                stateSpan.textContent = statusText(state);
+                link.appendChild(stateSpan);
 
                 if (item.badge) {
                     const badgeSpan = document.createElement('span');
@@ -834,7 +871,7 @@ async function initializeArrLinks(): Promise<void> {
         arrLinksOutsideClick = function(e: MouseEvent) {
             if (!isActive(context, expectedGeneration)) return;
             if (!(e.target as Element | null)?.closest('.arr-dropdown')) {
-                document.querySelectorAll('.arr-dropdown.open').forEach(d => d.classList.remove('open'));
+                closeArrDropdowns();
             }
         };
         document.addEventListener('click', arrLinksOutsideClick);

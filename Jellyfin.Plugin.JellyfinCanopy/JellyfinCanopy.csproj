@@ -83,6 +83,15 @@
     <None Remove="Assets\theme-studio-operational-surfaces.css"/>
     <EmbeddedResource Include="Assets\theme-studio-operational-surfaces.css"
                       LogicalName="Jellyfin.Plugin.JellyfinCanopy.Assets.theme-studio-operational-surfaces.css"/>
+    <None Remove="Assets\theme-studio-seerr-surfaces.css"/>
+    <EmbeddedResource Include="Assets\theme-studio-seerr-surfaces.css"
+                      LogicalName="Jellyfin.Plugin.JellyfinCanopy.Assets.theme-studio-seerr-surfaces.css"/>
+    <None Remove="Assets\theme-studio-arr-surfaces.css"/>
+    <EmbeddedResource Include="Assets\theme-studio-arr-surfaces.css"
+                      LogicalName="Jellyfin.Plugin.JellyfinCanopy.Assets.theme-studio-arr-surfaces.css"/>
+    <None Remove="Assets\theme-studio-external-surfaces.css"/>
+    <EmbeddedResource Include="Assets\theme-studio-external-surfaces.css"
+                      LogicalName="Jellyfin.Plugin.JellyfinCanopy.Assets.theme-studio-external-surfaces.css"/>
   </ItemGroup>
 
   <!-- Production client modules compiled by esbuild into the manifest-owned dist/

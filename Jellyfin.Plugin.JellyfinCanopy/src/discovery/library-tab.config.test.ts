@@ -96,6 +96,7 @@ describe('Discovery active-pane config hot reload', () => {
             DiscoveryEnabled: true,
             DiscoveryLibraryTab: true,
             SeerrEnabled: true,
+            SeerrConfigured: true,
         });
         disableEveryDefaultRow();
 

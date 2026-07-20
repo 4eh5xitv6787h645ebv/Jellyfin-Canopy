@@ -44,6 +44,9 @@ function setStatusBadge(card: any, item: any) {
 
     badge.innerHTML = badgeConfig.icon;
     badge.className = `seerr-status-badge ${badgeConfig.cssClass}`;
+    badge.setAttribute('role', 'status');
+    badge.setAttribute('aria-label', JC.t!(seerrStatus.getChipConfig(displayStatus).labelKey));
+    badge.querySelector('svg')?.setAttribute('aria-hidden', 'true');
     badge.style.display = 'flex';
 
     if (displayStatus === DisplayStatus.PARTIAL && item.mediaType === 'tv' && hasDownloads) {

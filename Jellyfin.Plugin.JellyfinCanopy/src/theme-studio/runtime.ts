@@ -28,6 +28,7 @@ import {
     serializeThemeStyles,
     type ThemeStyleLayer,
 } from './styles';
+import { installIntegrationStylesheets } from './integration-stylesheets';
 
 const THEME_CHANGE = 'THEME_CHANGE';
 const RUNTIME_CHANGE = 'jc:theme-studio-runtime-changed';
@@ -267,6 +268,7 @@ export class ThemeStudioRuntime {
         this.#installed = true;
         this.#clearPresentation(true);
         installOperationalStylesheet(this);
+        this.#cleanups.push(installIntegrationStylesheets(this));
         this.#cleanups.push(() => {
             if (operationalStylesheetOwner !== this) return;
             operationalStylesheetOwner = null;

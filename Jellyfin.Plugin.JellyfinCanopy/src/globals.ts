@@ -22,5 +22,6 @@ export const JC: JEGlobal = window.JellyfinCanopy;
 export function isDiscoveryLibraryConfigured(config: PluginConfig | undefined): boolean {
     return config?.DiscoveryEnabled !== false
         && config?.DiscoveryLibraryTab !== false
-        && config?.SeerrEnabled === true;
+        && config?.SeerrEnabled === true
+        && config?.SeerrConfigured === true;
 }

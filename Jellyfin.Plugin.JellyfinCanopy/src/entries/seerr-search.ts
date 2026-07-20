@@ -7,6 +7,7 @@ export function isSeerrSearchEnabled(state: FeatureLoaderState): boolean {
     const config = window.JellyfinCanopy?.pluginConfig;
     return Boolean(state.identity)
         && config?.SeerrEnabled === true
+        && config?.SeerrConfigured === true
         && config?.SeerrShowSearchResults !== false;
 }
 

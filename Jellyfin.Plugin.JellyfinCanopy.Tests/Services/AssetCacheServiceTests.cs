@@ -510,6 +510,30 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             Assert.DoesNotContain("@import", css, StringComparison.OrdinalIgnoreCase);
         }
 
+        [Theory]
+        [InlineData("theme-studio/seerr-surfaces.css", "seerr-discovery-v1")]
+        [InlineData("theme-studio/arr-surfaces.css", "arr-release-operations-v1")]
+        [InlineData("theme-studio/external-surfaces.css", "reviews-availability-links-v1")]
+        public void OpenEmbeddedAsset_ThemeIntegrationStylesheets_ArePresentAndLocallyScoped(
+            string key,
+            string adapter)
+        {
+            var service = CreateService(new RecordingHttpMessageHandler());
+            var resolved = service.Resolve(key);
+
+            using var stream = AssetCacheService.OpenEmbeddedAsset(resolved);
+
+            Assert.NotNull(stream);
+            using var reader = new StreamReader(stream!, Encoding.UTF8);
+            var css = reader.ReadToEnd();
+            Assert.Contains(adapter, css, StringComparison.Ordinal);
+            Assert.Contains(":root.jc-modern-layout", css, StringComparison.Ordinal);
+            Assert.Contains("[data-jc-theme-breakpoint=\"phone\"]", css, StringComparison.Ordinal);
+            Assert.Contains("[data-jc-theme-breakpoint=\"desktop\"]", css, StringComparison.Ordinal);
+            Assert.DoesNotContain("url(", css, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("@import", css, StringComparison.OrdinalIgnoreCase);
+        }
+
         private sealed class ManualTimeProvider : TimeProvider
         {
             private DateTimeOffset _now;

@@ -139,14 +139,14 @@ describe('built-in detail integration catalog', () => {
         const item = descriptor('arr-search');
         JC.pluginConfig = {
             ArrSearchEnabled: true,
-            RadarrInstances: [{ Enabled: true, Url: 'https://radarr.example' }],
+            RadarrConfigured: true,
         };
         expect(item.isEnabled(state)).toBe(false);
         JC.currentUser = { Policy: { IsAdministrator: true } };
         expect(item.isEnabled(state)).toBe(true);
-        JC.pluginConfig.RadarrInstances = [{ Enabled: false, Url: 'https://radarr.example' }];
+        JC.pluginConfig.RadarrConfigured = false;
         expect(item.isEnabled(state)).toBe(false);
-        JC.pluginConfig.RadarrUrl = 'https://legacy-radarr.example';
+        JC.pluginConfig.SonarrConfigured = true;
         expect(item.isEnabled(state)).toBe(true);
         JC.pluginConfig.ArrSearchEnabled = false;
         expect(item.isEnabled(state)).toBe(false);
@@ -155,8 +155,10 @@ describe('built-in detail integration catalog', () => {
     it('gates the remaining integrations from their exact live switches', () => {
         JC.pluginConfig = {
             ArrTagsShowAsLinks: true,
+            SonarrConfigured: true,
             LetterboxdEnabled: true,
         };
+        JC.currentUser = { Policy: { IsAdministrator: true } };
         expect(descriptor('arr-detail-links').isEnabled(state)).toBe(true);
         expect(descriptor('letterboxd-links').isEnabled(state)).toBe(true);
         expect(descriptor('details-enhancements').isEnabled(state)).toBe(false);

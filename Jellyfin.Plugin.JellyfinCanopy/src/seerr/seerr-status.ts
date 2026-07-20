@@ -14,6 +14,13 @@ export interface SeerrButtonConfig {
     iconKey: string;
 }
 
+/** Visible, localized request-history state rendered beside a season. */
+export interface SeerrRequestStateInfo {
+    labelKey: string;
+    cssClass: string;
+    icon: string;
+}
+
 /**
  * Single source of truth for Seerr's status enums and all status-driven
  * display decisions (JC.seerrStatus).
@@ -30,6 +37,7 @@ export interface SeerrStatusApi {
     getBadgeConfig: (displayStatus: string) => { icon: string; cssClass: string } | null;
     getDisplayInfo: (mediaStatus: number | undefined, hasActiveDownloads?: boolean) => { labelKey: string; cssClass: string };
     getChipConfig: (displayStatus: string) => { labelKey: string; cssClass: string };
+    getRequestStateInfo: (requestStatus: number | undefined) => SeerrRequestStateInfo | null;
 }
 
 declare module '../types/jc' {
@@ -83,6 +91,7 @@ seerrStatus.DISPLAY = Object.freeze({
 });
 
 const DisplayStatus = seerrStatus.DISPLAY;
+const RequestStatus = seerrStatus.REQUEST;
 
 // ── Status helpers ───────────────────────────────────────────────────────
 
@@ -275,6 +284,28 @@ seerrStatus.getChipConfig = function(displayStatus) {
             return { labelKey: 'seerr_btn_deleted',            cssClass: 'chip-deleted'    };
         default:
             return { labelKey: 'seerr_btn_requested',          cssClass: 'chip-requested'  };
+    }
+};
+
+/**
+ * Maps Seerr's request-status enum to an explicit text + icon + class cue.
+ * Request status is intentionally kept separate from MediaStatus: the two
+ * upstream enums share integers but describe different state domains.
+ */
+seerrStatus.getRequestStateInfo = function(requestStatus) {
+    switch (requestStatus) {
+        case RequestStatus.PENDING:
+            return { labelKey: 'seerr_btn_pending', cssClass: 'pending', icon: '◷' };
+        case RequestStatus.APPROVED:
+            return { labelKey: 'requests_approved_toast', cssClass: 'approved', icon: '✓' };
+        case RequestStatus.DECLINED:
+            return { labelKey: 'seerr_btn_declined', cssClass: 'declined', icon: '✕' };
+        case RequestStatus.FAILED:
+            return { labelKey: 'downloads_status_failed', cssClass: 'failed', icon: '!' };
+        case RequestStatus.COMPLETED:
+            return { labelKey: 'downloads_status_completed', cssClass: 'completed', icon: '✓' };
+        default:
+            return null;
     }
 };
 

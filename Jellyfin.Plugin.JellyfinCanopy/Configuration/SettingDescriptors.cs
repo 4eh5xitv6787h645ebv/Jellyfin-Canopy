@@ -218,6 +218,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
 
                 // Seerr Search Settings
                 Public("SeerrEnabled", c => c.SeerrEnabled),
+                // Capability-only projection for client import gates. This deliberately exposes
+                // neither the internal URL nor API key and stays false before authentication.
+                PublicContextual("SeerrConfigured", ctx => ctx.IsAuthenticated
+                    && !string.IsNullOrWhiteSpace(ctx.Config.SeerrUrls)
+                    && !string.IsNullOrWhiteSpace(ctx.Config.SeerrApiKey)),
                 Public("SeerrShowSearchResults", c => c.SeerrShowSearchResults),
                 Public("SeerrShowReportButton", c => c.SeerrShowReportButton),
                 Public("SeerrShowIssueIndicator", c => c.SeerrShowIssueIndicator),
@@ -298,6 +303,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
 
                 // Arr Links Settings
                 Public("ArrLinksEnabled", c => c.ArrLinksEnabled),
+                // Capability-only booleans keep disabled/unconfigured client closures cold
+                // without projecting service URLs or API keys to non-admin theme code.
+                PublicContextual("SonarrConfigured", ctx => ctx.IsAuthenticated
+                    && ctx.Config.GetEnabledSonarrInstances().Count > 0),
+                PublicContextual("RadarrConfigured", ctx => ctx.IsAuthenticated
+                    && ctx.Config.GetEnabledRadarrInstances().Count > 0),
+                PublicContextual("BazarrConfigured", ctx => ctx.IsAuthenticated
+                    && !string.IsNullOrWhiteSpace(ctx.Config.BazarrUrl)),
                 Public("ShowArrLinksAsText", c => c.ShowArrLinksAsText),
                 Public("ArrLinksShowStatusSingle", c => c.ArrLinksShowStatusSingle),
 

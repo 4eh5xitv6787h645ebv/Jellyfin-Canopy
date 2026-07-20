@@ -4,7 +4,8 @@ import { activateSeerrCore } from '../seerr/core-feature';
 /** Configuration-only predicate; route features depend on this foundation. */
 export function isSeerrCoreEnabled(state: FeatureLoaderState): boolean {
     return Boolean(state.identity)
-        && window.JellyfinCanopy?.pluginConfig?.SeerrEnabled === true;
+        && window.JellyfinCanopy?.pluginConfig?.SeerrEnabled === true
+        && window.JellyfinCanopy?.pluginConfig?.SeerrConfigured === true;
 }
 
 /** Union of routes served by dependent Seerr/Discovery feature chunks. */

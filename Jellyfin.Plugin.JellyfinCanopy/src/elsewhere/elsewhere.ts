@@ -8,6 +8,7 @@ import { assetUrl } from '../core/asset-urls';
 import { isDetailsPageVisible } from '../core/details-view';
 import { onBodyMutation } from '../core/dom-observer';
 import { createStableMethodFacade } from '../core/feature-loader';
+import { installModalA11y, type ModalA11yHandle } from '../core/modal-a11y';
 import { onNavigate, onViewPage } from '../core/navigation';
 import type { ApiApi, JELegacyHelpers, PluginConfig } from '../types/jc';
 
@@ -69,6 +70,7 @@ function initializeElsewhereImpl(): void {
     const timeoutHandles = new Set<number>();
     const idleHandles = new Set<number>();
     const subscriptions: Array<() => void> = [];
+    let settingsModalA11y: ModalA11yHandle | null = null;
     const isInitializerCurrent = (): boolean => !disposed
         && (!identityContext || JC.identity.isCurrent(identityContext));
     const rejectStaleEvent = (event?: Event): boolean => {
@@ -110,6 +112,8 @@ function initializeElsewhereImpl(): void {
     };
     activeElsewhereCleanup = () => {
         disposed = true;
+        settingsModalA11y?.release();
+        settingsModalA11y = null;
         for (const handle of timeoutHandles) clearTimeout(handle);
         timeoutHandles.clear();
         if (typeof cancelIdleCallback === 'function') {
@@ -117,6 +121,13 @@ function initializeElsewhereImpl(): void {
         }
         idleHandles.clear();
         for (const unsubscribe of subscriptions.splice(0)) unsubscribe();
+    };
+
+    const closeSettingsModal = (modal: HTMLElement): void => {
+        modal.style.display = 'none';
+        modal.setAttribute('aria-hidden', 'true');
+        settingsModalA11y?.release();
+        settingsModalA11y = null;
     };
     if (!JC.pluginConfig.ElsewhereEnabled) {
         console.log('🪼 Jellyfin Canopy: 🎬 Jellyfin Elsewhere: Feature is disabled in plugin settings.');
@@ -206,6 +217,7 @@ function initializeElsewhereImpl(): void {
     function createMaterialIcon(iconName: string, size = '18px'): HTMLElement {
         const icon = document.createElement('span');
         icon.className = 'material-icons';
+        icon.setAttribute('aria-hidden', 'true');
         icon.textContent = iconName;
         icon.style.fontSize = size;
         icon.style.lineHeight = '1';
@@ -214,6 +226,7 @@ function initializeElsewhereImpl(): void {
 
     function createAutocompleteInput(placeholder: string, options: string[], selectedValues: string[], onSelect: (selected: string[]) => void): HTMLElement {
         const container = document.createElement('div');
+        container.className = 'streaming-autocomplete';
         container.style.cssText = 'position: relative; margin-bottom: 6px;';
 
         let debounceTimer: ReturnType<typeof setTimeout> | undefined;
@@ -232,6 +245,7 @@ function initializeElsewhereImpl(): void {
         }, 300) : null;
 
         const input = document.createElement('input');
+        input.className = 'streaming-autocomplete-input';
         input.type = 'text';
         input.placeholder = placeholder;
         input.style.cssText = `
@@ -246,6 +260,7 @@ function initializeElsewhereImpl(): void {
         `;
 
         const dropdown = document.createElement('div');
+        dropdown.className = 'streaming-autocomplete-menu';
         dropdown.style.cssText = `
             position: absolute;
             top: 100%;
@@ -262,6 +277,7 @@ function initializeElsewhereImpl(): void {
         `;
 
         const selectedContainer = document.createElement('div');
+        selectedContainer.className = 'streaming-selected-tags';
         selectedContainer.style.cssText = `
             display: flex;
             flex-wrap: wrap;
@@ -313,6 +329,7 @@ function initializeElsewhereImpl(): void {
 
             options.forEach((option, index) => {
                 const item = document.createElement('div');
+                item.className = 'streaming-autocomplete-option';
                 item.textContent = option;
                 item.style.cssText = `
                     padding: 10px;
@@ -440,9 +457,13 @@ function initializeElsewhereImpl(): void {
     // Create settings modal
     function createSettingsModal(): void {
         if (!isInitializerCurrent()) return;
+        settingsModalA11y?.release();
+        settingsModalA11y = null;
         document.getElementById('streaming-settings-modal')?.remove();
         const modal = fenceInteractiveRoot(document.createElement('div'));
         modal.id = 'streaming-settings-modal';
+        modal.classList.add('streaming-settings-modal');
+        modal.setAttribute('aria-hidden', 'true');
         modal.style.cssText = `
             position: fixed;
             top: 0;
@@ -457,6 +478,7 @@ function initializeElsewhereImpl(): void {
         `;
 
         const content = document.createElement('div');
+        content.className = 'streaming-settings-dialog';
         content.style.cssText = `
             background: #181818;
             padding: 20px;
@@ -475,7 +497,7 @@ function initializeElsewhereImpl(): void {
 
             <div style="margin-bottom: 16px;">
                 <label style="display: block; margin-bottom: 6px; font-weight: 600; color: #ccc;">${JC.t('elsewhere_settings_country')}</label>
-                <select id="region-select" style="width: 100%; padding: 12px; border: 1px solid #444; border-radius: 6px; background: #2a2a2a; color: #fff; font-size: 14px;">
+                <select id="region-select" class="streaming-provider-select" style="width: 100%; padding: 12px; border: 1px solid #444; border-radius: 6px; background: #2a2a2a; color: #fff; font-size: 14px;">
                     ${Object.entries(availableRegions).map(([code, name]) =>
                         `<option value="${JC.escapeHtml(code)}" ${code === userRegion ? 'selected' : ''}>${JC.escapeHtml(name)}</option>`
                     ).join('')}
@@ -493,8 +515,8 @@ function initializeElsewhereImpl(): void {
             </div>
 
             <div style="display: flex; gap: 12px; justify-content: flex-end;">
-                <button id="cancel-settings" style="padding: 10px 18px; border: 1px solid #444; background: #2a2a2a; color: #fff; border-radius: 6px; cursor: pointer; font-size: 14px;">${JC.t('elsewhere_settings_cancel')}</button>
-                <button id="save-settings" style="padding: 10px 18px; border: none; background: #0078d4; color: white; border-radius: 6px; cursor: pointer; font-size: 14px;">${JC.t('elsewhere_settings_save')}</button>
+                <button id="cancel-settings" class="streaming-settings-cancel" style="padding: 10px 18px; border: 1px solid #444; background: #2a2a2a; color: #fff; border-radius: 6px; cursor: pointer; font-size: 14px;">${JC.t('elsewhere_settings_cancel')}</button>
+                <button id="save-settings" class="streaming-settings-save" style="padding: 10px 18px; border: none; background: #0078d4; color: white; border-radius: 6px; cursor: pointer; font-size: 14px;">${JC.t('elsewhere_settings_save')}</button>
             </div>
         `;
 
@@ -524,7 +546,7 @@ function initializeElsewhereImpl(): void {
 
         document.getElementById('cancel-settings')!.onclick = (event) => {
             if (rejectStaleEvent(event)) return;
-            modal.style.display = 'none';
+            closeSettingsModal(modal);
         };
 
         document.getElementById('save-settings')!.onclick = (event) => {
@@ -559,7 +581,7 @@ function initializeElsewhereImpl(): void {
                 userRegions = selectedRegions;
                 userServices = selectedServices;
                 JC.userConfig.elsewhere = elsewhereSettings;
-                modal.style.display = 'none';
+                closeSettingsModal(modal);
             }).catch(() => undefined).finally(() => {
                 if (isInitializerCurrent()) saveButton.disabled = false;
             });
@@ -569,7 +591,7 @@ function initializeElsewhereImpl(): void {
         modal.onclick = (e) => {
             if (rejectStaleEvent(e)) return;
             if (e.target === modal) {
-                modal.style.display = 'none';
+                closeSettingsModal(modal);
             }
         };
     }
@@ -585,7 +607,7 @@ function initializeElsewhereImpl(): void {
 
     function createServiceBadge(service: any, tmdbId: string, mediaType: string): HTMLElement {
         const badge = document.createElement('div');
-        badge.classList.add('jc-elsewhere-blur-surface');
+        badge.classList.add('jc-elsewhere-blur-surface', 'streaming-provider-chip');
         badge.style.cssText = `
             display: inline-flex;
             align-items: center;
@@ -603,6 +625,7 @@ function initializeElsewhereImpl(): void {
         `;
 
         const logo = document.createElement('img');
+        logo.className = 'streaming-provider-logo';
         logo.src = `https://image.tmdb.org/t/p/w92${service.logo_path}`;
         logo.alt = service.provider_name;
         logo.style.cssText = `
@@ -617,6 +640,7 @@ function initializeElsewhereImpl(): void {
         badge.appendChild(logo);
 
         const text = document.createElement('span');
+        text.className = 'streaming-provider-name';
         text.textContent = service.provider_name;
         badge.appendChild(text);
 
@@ -689,7 +713,7 @@ function initializeElsewhereImpl(): void {
         const regionData = data.results[DEFAULT_REGION];
 
         const container = document.createElement('div');
-        container.classList.add('jc-elsewhere-blur-surface');
+        container.classList.add('jc-elsewhere-blur-surface', 'streaming-result');
         container.style.cssText = `
             margin: 10px 0;
             padding: 12px;
@@ -702,6 +726,7 @@ function initializeElsewhereImpl(): void {
 
         // Create header with title and controls
         const header = document.createElement('div');
+        header.className = 'streaming-result-header';
         header.style.cssText = `
             display: flex;
             justify-content: space-between;
@@ -745,6 +770,7 @@ function initializeElsewhereImpl(): void {
             (hasFilteredServices && regionData && regionData.link) ? regionData.link : '#',
             { title: 'JustWatch' }
         );
+        title.classList.add('streaming-title');
 
         if (hasFilteredServices) {
             title.textContent = JC.t('elsewhere_panel_available_in', { region: availableRegions[DEFAULT_REGION] || DEFAULT_REGION });
@@ -810,6 +836,7 @@ function initializeElsewhereImpl(): void {
 
          // Create controls container
         const controls = document.createElement('div');
+        controls.className = 'streaming-controls';
         controls.style.cssText = `
             display: flex;
             gap: 8px;
@@ -818,7 +845,9 @@ function initializeElsewhereImpl(): void {
 
         // Search button with Material Icon
         const searchButton = document.createElement('button');
-        searchButton.className = 'elsewhere-search-button';
+        searchButton.className = 'elsewhere-search-button streaming-search-button';
+        searchButton.type = 'button';
+        searchButton.setAttribute('aria-label', JC.t('elsewhere_panel_search_button'));
         const searchIcon = createMaterialIcon('search', '16px');
         searchButton.appendChild(searchIcon);
         searchButton.appendChild(document.createTextNode(''));
@@ -849,7 +878,9 @@ function initializeElsewhereImpl(): void {
 
         // Settings button with Material Icon
         const settingsButton = document.createElement('button');
-        settingsButton.className = 'elsewhere-settings-button';
+        settingsButton.className = 'elsewhere-settings-button streaming-settings-button';
+        settingsButton.type = 'button';
+        settingsButton.setAttribute('aria-label', JC.t('elsewhere_settings_title'));
         const settingsIcon = createMaterialIcon('settings', '16px');
         settingsButton.appendChild(settingsIcon);
 
@@ -880,9 +911,17 @@ function initializeElsewhereImpl(): void {
         settingsButton.onclick = (event) => {
             if (rejectStaleEvent(event)) return;
             const modal = document.getElementById('streaming-settings-modal');
-            if (modal) {
-                modal.style.display = 'flex';
-            }
+            const dialog = modal?.querySelector<HTMLElement>('.streaming-settings-dialog');
+            if (!modal || !dialog) return;
+            settingsModalA11y?.release();
+            modal.style.display = 'flex';
+            modal.removeAttribute('aria-hidden');
+            settingsModalA11y = installModalA11y(modal, {
+                dialogElement: dialog,
+                label: JC.t('elsewhere_settings_title'),
+                initialFocus: () => dialog.querySelector<HTMLSelectElement>('#region-select'),
+                onEscape: () => closeSettingsModal(modal),
+            });
         };
 
         controls.appendChild(searchButton);
@@ -908,6 +947,7 @@ function initializeElsewhereImpl(): void {
             if (hasFilteredServices) {
                 // Use the pre-filtered services
                 const servicesContainer = document.createElement('div');
+                servicesContainer.className = 'streaming-providers';
                 servicesContainer.style.cssText = 'display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 12px;';
 
                 filteredServices.forEach((service: any) => {
@@ -918,6 +958,8 @@ function initializeElsewhereImpl(): void {
             } else if (DEFAULT_PROVIDERS.length > 0) {
                 // Services exist but all were filtered out by user's provider preferences
                 const noServices = document.createElement('div');
+                noServices.className = 'streaming-empty';
+                noServices.setAttribute('role', 'status');
                 noServices.textContent = JC.t('elsewhere_panel_no_configured_services');
                 noServices.style.cssText = 'color: #999; font-size: 13px; margin-bottom: 12px;';
                 container.appendChild(noServices);
@@ -927,12 +969,16 @@ function initializeElsewhereImpl(): void {
         // Create manual result container for search results
         const resultContainer = document.createElement('div');
         resultContainer.id = 'streaming-result-container';
+        resultContainer.className = 'streaming-results';
+        resultContainer.setAttribute('aria-live', 'polite');
         container.appendChild(resultContainer);
 
         // Add click handler for manual lookup (multiple regions)
         searchButton.onclick = (event) => {
             if (rejectStaleEvent(event)) return;
             searchButton.disabled = true;
+            searchButton.classList.add('streaming-loading');
+            searchButton.setAttribute('aria-busy', 'true');
             searchButton.innerHTML = '';
             const loadingIcon = createMaterialIcon('refresh', '16px');
             loadingIcon.style.animation = 'spin 1s linear infinite';
@@ -956,6 +1002,8 @@ function initializeElsewhereImpl(): void {
 
             fetchStreamingData(tmdbId, mediaType, (error, data) => {
                 searchButton.disabled = false;
+                searchButton.classList.remove('streaming-loading');
+                searchButton.removeAttribute('aria-busy');
                 searchButton.innerHTML = '';
                 const searchIcon = createMaterialIcon('search', '16px');
                 searchButton.appendChild(searchIcon);
@@ -963,7 +1011,7 @@ function initializeElsewhereImpl(): void {
                 searchButton.style.opacity = '1';
 
                 if (error) {
-                    resultContainer.innerHTML = `<div style="color: #ff6b6b; font-size: 13px; margin-top: 8px;">${JC.t('elsewhere_panel_error', { error: JC.escapeHtml(String(error)) })}</div>`;
+                    resultContainer.innerHTML = `<div class="streaming-error" role="alert" style="color: #ff6b6b; font-size: 13px; margin-top: 8px;">${JC.t('elsewhere_panel_error', { error: JC.escapeHtml(String(error)) })}</div>`;
                     return;
                 }
 
@@ -1012,6 +1060,8 @@ function initializeElsewhereImpl(): void {
                 // If no results found anywhere, show a general message
                 if (!hasAnyResults && unavailableRegions.length === 0) {
                     const noServices = document.createElement('div');
+                    noServices.className = 'streaming-empty';
+                    noServices.setAttribute('role', 'status');
                     noServices.style.cssText = 'color: #6c757d; font-size: 13px; margin-top: 8px;';
                     noServices.textContent = JC.t('elsewhere_panel_no_services_in_regions');
                     resultContainer.appendChild(noServices);
@@ -1025,7 +1075,8 @@ function initializeElsewhereImpl(): void {
     // Create display for unavailable regions
     function createUnavailableRegionsDisplay(unavailableRegions: string[]): HTMLElement {
         const container = document.createElement('div');
-        container.classList.add('jc-elsewhere-blur-surface');
+        container.classList.add('jc-elsewhere-blur-surface', 'streaming-result', 'streaming-error');
+        container.setAttribute('role', 'alert');
         container.style.cssText = `
             margin: 0 0 6px 0;
             padding: 12px;
@@ -1038,6 +1089,7 @@ function initializeElsewhereImpl(): void {
 
         // Create header with title and close button
         const header = document.createElement('div');
+        header.className = 'streaming-result-header';
         header.style.cssText = `
             display: flex;
             justify-content: space-between;
@@ -1046,6 +1098,7 @@ function initializeElsewhereImpl(): void {
         `;
 
         const title = document.createElement('div');
+        title.className = 'streaming-title';
         const regionNames = unavailableRegions.map(region => availableRegions[region] || region);
         const regionText = regionNames.length === 1 ? regionNames[0] :
                           regionNames.length === 2 ? regionNames.join(' and ') :
@@ -1061,9 +1114,12 @@ function initializeElsewhereImpl(): void {
 
         // Create close button
         const closeButton = document.createElement('button');
+        closeButton.className = 'streaming-result-close';
+        closeButton.type = 'button';
+        closeButton.setAttribute('aria-label', JC.t('arr_search_close'));
         const closeIcon = createMaterialIcon('close', '16px');
         closeButton.appendChild(closeIcon);
-        closeButton.title = 'Close';
+        closeButton.title = JC.t('arr_search_close');
         closeButton.style.cssText = `
             display: flex;
             align-items: center;
@@ -1119,7 +1175,7 @@ function initializeElsewhereImpl(): void {
         }
 
         const container = document.createElement('div');
-        container.classList.add('jc-elsewhere-blur-surface');
+        container.classList.add('jc-elsewhere-blur-surface', 'streaming-result');
         container.style.cssText = `
             margin: 10px 0 0 0;
             padding: 12px;
@@ -1132,6 +1188,7 @@ function initializeElsewhereImpl(): void {
 
         // Create header with title and close button
         const header = document.createElement('div');
+        header.className = 'streaming-result-header';
         header.style.cssText = `
             display: flex;
             justify-content: space-between;
@@ -1144,6 +1201,7 @@ function initializeElsewhereImpl(): void {
             regionData.link || '#',
             { title: 'JustWatch' }
         );
+        title.classList.add('streaming-title');
         title.textContent = JC.t('elsewhere_panel_available_in_region', { region: availableRegions[region] || region });
         title.style.cssText = `
             font-weight: 600;
@@ -1165,6 +1223,9 @@ function initializeElsewhereImpl(): void {
 
         // Create close button
         const closeButton = document.createElement('button');
+        closeButton.className = 'streaming-result-close';
+        closeButton.type = 'button';
+        closeButton.setAttribute('aria-label', JC.t('arr_search_close'));
         const closeIcon = createMaterialIcon('close', '16px');
         closeButton.appendChild(closeIcon);
         closeButton.style.cssText = `
@@ -1202,6 +1263,7 @@ function initializeElsewhereImpl(): void {
         container.appendChild(header);
 
         const servicesContainer = document.createElement('div');
+        servicesContainer.className = 'streaming-providers';
         servicesContainer.style.cssText = 'display: flex; flex-wrap: wrap; gap: 3px;';
 
         services.forEach((service: any) => {
@@ -1221,6 +1283,8 @@ function initializeElsewhereImpl(): void {
             if (!isInitializerCurrent()) return;
             if (error) {
                 const errorDiv = document.createElement('div');
+                errorDiv.className = 'streaming-error';
+                errorDiv.setAttribute('role', 'alert');
                 errorDiv.style.cssText = 'font-size: 13px; margin-top: 8px; color: #ff6b6b;';
                 errorDiv.textContent = JC.t('elsewhere_panel_error', { error });
                 container.appendChild(errorDiv);

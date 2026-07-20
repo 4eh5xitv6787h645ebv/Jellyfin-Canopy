@@ -123,7 +123,7 @@ function fillHoverPopover(item: any) {
             popoverHTML += `
                 <div class="seerr-popover-item">
                     <div class="title">${escapeHtml(downloadStatus.title) || JC.t!('seerr_popover_downloading')}</div>
-                    <div class="seerr-hover-progress"><div class="bar" style="width:0%;"></div></div>
+                    <div class="seerr-hover-progress" role="progressbar" aria-label="${escapeHtml(downloadStatus.title) || JC.t!('seerr_popover_downloading')}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div class="bar" style="width:0%;"></div></div>
                     <div class="row">
                         <div>0%</div>
                         <div class="status">Queued</div>
@@ -137,7 +137,7 @@ function fillHoverPopover(item: any) {
             popoverHTML += `
                 <div class="seerr-popover-item">
                     <div class="title">${escapeHtml(downloadStatus.title) || JC.t!('seerr_popover_downloading')}</div>
-                    <div class="seerr-hover-progress"><div class="bar" style="width:${percentage}%;"></div></div>
+                    <div class="seerr-hover-progress" role="progressbar" aria-label="${escapeHtml(downloadStatus.title) || JC.t!('seerr_popover_downloading')}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percentage}"><div class="bar" style="width:${percentage}%;"></div></div>
                     <div class="row">
                         <div>${percentage}%</div>
                         <div class="status">${escapeHtml(statusDisplay)}</div>
@@ -201,7 +201,7 @@ function createInlineProgress(downloadStatus: any) {
     const progressContainer = document.createElement('div');
     progressContainer.className = 'seerr-inline-progress';
     progressContainer.innerHTML = `
-        <div class="seerr-inline-progress-bar"><div class="seerr-inline-progress-fill" style="width: ${percentage}%"></div></div>
+        <div class="seerr-inline-progress-bar" role="progressbar" aria-label="${escapeHtml(downloadStatus.title || 'Download')}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percentage}"><div class="seerr-inline-progress-fill" style="width: ${percentage}%"></div></div>
         <div class="seerr-inline-progress-text">${percentage}% • ${escapeHtml((downloadStatus.status || 'downloading').replace(/^./, (c: any) => c.toUpperCase()))}</div>`;
     return progressContainer;
 }

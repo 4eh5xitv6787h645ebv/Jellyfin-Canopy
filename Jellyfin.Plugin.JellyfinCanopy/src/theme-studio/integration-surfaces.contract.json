@@ -1,0 +1,47 @@
+[
+  {
+    "id": "seerr-discovery-v1",
+    "asset": "theme-studio/seerr-surfaces.css",
+    "outcome": "Search cards, discovery rows, filters and library placement share one responsive Theme Studio vocabulary.",
+    "tokens": ["color.surface", "shape.card-radius", "spacing.card-gap", "layout.content-max-inline-size"],
+    "modernRoles": [".seerr-card", ".jc-discovery-feed", ".jc-discovery-row", ".seerr-discovery-header", ".seerr-discovery-filter", ".seerr-filter-btn", ".seerr-discovery-sort", ".seerr-sort-select"],
+    "stateRoles": [".seerr-status-badge", ".status-available", ".status-pending", ".status-processing", ".status-requested", ".seerr-request-state-approved", ".seerr-request-state-declined", ".seerr-request-state-failed"],
+    "policyHooks": ["SeerrApiKey", "SeerrUrls", "SeerrBaseUrl", "data-source-token"]
+  },
+  {
+    "id": "seerr-details-requests-v1",
+    "asset": "theme-studio/seerr-surfaces.css",
+    "outcome": "Details heroes, request actions, season sheets, status chips and download progress remain legible and touch-safe.",
+    "tokens": ["color.primary", "color.negative", "shape.dialog-radius", "progress.thickness"],
+    "modernRoles": [".jc-more-info-modal .modal-container", ".jc-more-info-actions", ".seerr-season-modal .seerr-season-content", ".seerr-request-button"],
+    "stateRoles": [".jc-status-chip", ".jc-download-progress", ".seerr-inline-progress", ".seerr-request-state", ".seerr-4k-popup"],
+    "policyHooks": ["RequestApprovalsEnabled", "SeerrEnable4KRequests", "userId", "permission"]
+  },
+  {
+    "id": "arr-links-release-search-v1",
+    "asset": "theme-studio/arr-surfaces.css",
+    "outcome": "ARR links, instance menus, search, release rejection detail, management and queue progress are responsive and non-color-dependent.",
+    "tokens": ["color.caution", "color.positive", "shape.popover-radius", "elevation.dialog-shadow"],
+    "modernRoles": [".arr-link", ".arr-dropdown-menu", ".jc-arr-modal", ".jc-arr-release"],
+    "stateRoles": [".arr-status-text", ".arr-dropdown-status-text", ".jc-arr-rejected", ".jc-arr-progress-bar", ".jc-arr-message-error"],
+    "policyHooks": ["SonarrApiKey", "RadarrApiKey", "SonarrInstances", "RadarrInstances", "data-source-token"]
+  },
+  {
+    "id": "reviews-v1",
+    "asset": "theme-studio/external-surfaces.css",
+    "outcome": "TMDB and user reviews, long content, rating controls and moderation actions adapt without changing authorization.",
+    "tokens": ["color.text", "color.focus", "shape.control-radius", "spacing.control-gap"],
+    "modernRoles": [".tmdb-reviews-section > summary.sectionTitle", ".tmdb-review-card", ".jc-review-form", ".jc-review-textarea"],
+    "stateRoles": [".jc-user-review-card", ".jc-star-btn", ".jc-review-form-error", ".tmdb-review-toggle"],
+    "policyHooks": ["viewerIsAdmin", "currentUserId", "review.userId", "data-source-token"]
+  },
+  {
+    "id": "availability-external-links-v1",
+    "asset": "theme-studio/external-surfaces.css",
+    "outcome": "Elsewhere availability, Letterboxd links and release-date chips use bounded local presentation across supported layouts.",
+    "tokens": ["color.elevated", "color.control-border", "shape.card-radius", "layout.page-gutter"],
+    "modernRoles": [".streaming-lookup-container", ".streaming-result", ".streaming-provider-chip", ".letterboxd-link", ".mediaInfoItem-releaseDate"],
+    "stateRoles": [".streaming-loading", ".streaming-empty", ".streaming-error", ".jc-release-date-icon"],
+    "policyHooks": ["TMDB_API_KEY", "DEFAULT_PROVIDERS", "IGNORE_PROVIDERS", "SeerrBaseUrl"]
+  }
+]

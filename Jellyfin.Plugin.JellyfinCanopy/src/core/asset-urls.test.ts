@@ -75,6 +75,12 @@ describe('assetUrl', () => {
             .toBe('http://jellyfin.test/JellyfinCanopy/assets/ratings/ratings.css');
         expect(assetUrl('theme-studio/operational-surfaces.css'))
             .toBe('http://jellyfin.test/JellyfinCanopy/assets/theme-studio/operational-surfaces.css');
+        expect(assetUrl('theme-studio/seerr-surfaces.css'))
+            .toBe('http://jellyfin.test/JellyfinCanopy/assets/theme-studio/seerr-surfaces.css');
+        expect(assetUrl('theme-studio/arr-surfaces.css'))
+            .toBe('http://jellyfin.test/JellyfinCanopy/assets/theme-studio/arr-surfaces.css');
+        expect(assetUrl('theme-studio/external-surfaces.css'))
+            .toBe('http://jellyfin.test/JellyfinCanopy/assets/theme-studio/external-surfaces.css');
     });
 });
 
