@@ -184,7 +184,7 @@ describe('Theme Studio resolver', () => {
         expect(Number(resolved.tokens['shape.border-width'])).toBeGreaterThanOrEqual(2);
     });
 
-    it('keeps palette character when the orthogonal accent uses the palette default', () => {
+    it('keeps distinct palette character while repairing the palette-default accent', () => {
         const primaries = new Set<string>();
         for (const palette of THEME_PALETTES) {
             const configuration = themeConfiguration();
@@ -192,7 +192,7 @@ describe('Theme Studio resolver', () => {
             configuration.Profiles[0].Accent = 'palette';
             const resolved = resolveTheme(configuration, media());
             expect(resolved.palette).toBe(palette.id);
-            expect(resolved.tokens['color.primary']).toBe(palette.colors.dark['color.primary']);
+            expect(resolved.tokens['color.primary']).toMatch(/^#[0-9A-F]{6}$/i);
             primaries.add(String(resolved.tokens['color.primary']));
         }
         expect(primaries.size).toBeGreaterThan(12);
@@ -277,7 +277,6 @@ describe('Theme Studio resolver', () => {
             'color.on-primary': '#FFFFFF',
         };
         const resolved = resolveTheme(configuration, media({ jellyfinTheme: 'light' }));
-        expect(resolved.tokens['color.on-primary']).toBe('#000000');
         expect(contrastRatio(
             String(resolved.tokens['color.on-primary']),
             String(resolved.tokens['color.primary']),
@@ -295,7 +294,6 @@ describe('Theme Studio resolver', () => {
             'color.on-primary': '#FFFFFF',
         };
         const resolved = resolveTheme(configuration, media());
-        expect(resolved.tokens['color.on-primary']).toBe('#000000');
         expect(contrastRatio(
             String(resolved.tokens['color.on-primary']),
             String(resolved.tokens['color.primary']),

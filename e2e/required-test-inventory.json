@@ -89,6 +89,8 @@
     "e2e/spoiler-identity-tags.spec.ts › spoiler guard identity tags (reverse-proxy-safe attribution) › anonymous image fetches resolve per-user by marker on a shared IP",
     "e2e/spoiler-identity-tags.spec.ts › spoiler guard identity tags (reverse-proxy-safe attribution) › authenticated DTO responses carry per-user markers (distinct per user, blurhashes re-keyed)",
     "e2e/spoiler-identity-tags.spec.ts › spoiler guard identity tags (reverse-proxy-safe attribution) › unknown or absent markers fail safe (legacy ladder, no errors)",
+    "e2e/theme-studio-accessibility.spec.ts › Theme Studio accessibility and internationalization › keeps the accessible theme layer absent on tablet, legacy and TV layouts",
+    "e2e/theme-studio-accessibility.spec.ts › Theme Studio accessibility and internationalization › preserves focus, states, Arabic/Hebrew RTL, 200% text and 400%-equivalent reflow",
     "e2e/theme-studio-editor-mobile.spec.ts › Theme Studio mobile editor › fits 320 px portrait and coarse-pointer landscape with safe touch targets",
     "e2e/theme-studio-effects.spec.ts › Theme Studio bounded effects › full effects, dynamic holiday accents, and keyboard/touch surfaces work across modern desktop, wide, and phone views",
     "e2e/theme-studio-effects.spec.ts › Theme Studio bounded effects › low-end modern phone portrait and landscape reduce costly effects without overflow",

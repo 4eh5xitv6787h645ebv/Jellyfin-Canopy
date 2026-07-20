@@ -42,7 +42,9 @@ function buildTokenRules(): ReadonlyMap<string, TokenRule> {
         'color.canvas', 'color.surface', 'color.elevated', 'color.overlay',
         'color.text', 'color.text-muted', 'color.primary', 'color.on-primary',
         'color.secondary', 'color.positive', 'color.caution', 'color.negative',
-        'color.info', 'color.divider', 'color.focus');
+        'color.info', 'color.divider', 'color.focus', 'color.on-secondary',
+        'color.on-positive', 'color.on-caution', 'color.on-negative', 'color.on-info',
+        'color.link', 'color.control-border', 'color.disabled', 'color.scrim', 'color.on-scrim');
     assign(rules, choice('off', 'poster', 'backdrop'), 'color.dynamic-source');
     assign(rules, number(0, 1), 'color.dynamic-strength');
     assign(rules, choice('system', 'inter', 'serif', 'rounded', 'monospace'),

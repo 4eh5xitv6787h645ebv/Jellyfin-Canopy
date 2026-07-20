@@ -1,3 +1,4 @@
+import { accessibleThemeForeground } from './accessibility';
 import { readableForeground } from './color';
 import type { ResolvedTheme } from './resolver';
 
@@ -261,7 +262,12 @@ export class DynamicAccentCache {
 
 export function serializeDynamicAccentStyle(theme: ResolvedTheme, derived: string): string {
     const base = String(theme.tokens['color.primary']);
-    const accent = blendDynamicAccent(base, derived, theme.dynamicColorStrength);
+    const blended = blendDynamicAccent(base, derived, theme.dynamicColorStrength);
+    if (!/^#[0-9A-F]{6}$/i.test(blended)) return '';
+    const accent = accessibleThemeForeground(
+        theme.tokens,
+        blended,
+    );
     if (!/^#[0-9A-F]{6}$/i.test(accent)) return '';
     const onAccent = readableForeground(
         accent,

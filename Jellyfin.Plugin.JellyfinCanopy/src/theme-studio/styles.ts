@@ -1,5 +1,6 @@
 import type { ThemeTokenValue } from '../types/jc';
-import { readableForeground } from './color';
+import { serializeAccessibilityAdapters } from './accessibility';
+import { withOpacity } from './color';
 import { serializeEffectsAdapters } from './effects';
 import { serializeMediaSurfaceAdapters } from './media-surfaces';
 import { serializeMobileAdapters } from './mobile';
@@ -109,15 +110,15 @@ function customDeclarations(theme: ResolvedTheme): Record<string, string> {
     declarations['--jc-content-max-inline-size'] = '120rem';
     declarations['--jc-motion-duration'] = `${Math.round(180 * numberToken(theme, 'motion.duration-scale'))}ms`;
     declarations['--jc-motion-easing'] = EASING[stringToken(theme, 'motion.easing')] ?? EASING.standard;
-    declarations['--jc-effects-surface-background'] = rgba(
+    declarations['--jc-effects-surface-background'] = withOpacity(
         stringToken(theme, 'color.surface'),
         numberToken(theme, 'effects.backdrop-opacity'),
     );
-    declarations['--jc-effects-elevated-background'] = rgba(
+    declarations['--jc-effects-elevated-background'] = withOpacity(
         stringToken(theme, 'color.elevated'),
         numberToken(theme, 'effects.backdrop-opacity'),
     );
-    declarations['--jc-effects-glow-color'] = rgba(
+    declarations['--jc-effects-glow-color'] = withOpacity(
         stringToken(theme, 'color.primary'),
         numberToken(theme, 'effects.glow'),
     );
@@ -134,6 +135,9 @@ function jellyfinDeclarations(theme: ResolvedTheme): Record<string, string> {
     const primary = stringToken(theme, 'color.primary');
     const onPrimary = stringToken(theme, 'color.on-primary');
     const negative = stringToken(theme, 'color.negative');
+    const onNegative = stringToken(theme, 'color.on-negative');
+    const disabled = stringToken(theme, 'color.disabled');
+    const controlBorder = stringToken(theme, 'color.control-border');
     const divider = stringToken(theme, 'color.divider');
     const [primaryRed, primaryGreen, primaryBlue] = hexChannels(primary);
     return {
@@ -142,7 +146,7 @@ function jellyfinDeclarations(theme: ResolvedTheme): Record<string, string> {
         '--jf-palette-background-defaultImage': 'none',
         '--jf-palette-text-primary': text,
         '--jf-palette-text-secondary': textMuted,
-        '--jf-palette-text-disabled': rgba(text, 0.38),
+        '--jf-palette-text-disabled': disabled,
         '--jf-palette-primary-main': primary,
         '--jf-palette-primary-light': primary,
         '--jf-palette-primary-dark': primary,
@@ -151,16 +155,16 @@ function jellyfinDeclarations(theme: ResolvedTheme): Record<string, string> {
         '--jf-palette-error-main': negative,
         '--jf-palette-error-light': negative,
         '--jf-palette-error-dark': negative,
-        '--jf-palette-error-contrastText': readableForeground(negative, '#FFFFFF', surface, canvas),
+        '--jf-palette-error-contrastText': onNegative,
         '--jf-palette-divider': divider,
-        '--jf-palette-action-active': rgba(text, 0.56),
+        '--jf-palette-action-active': text,
         '--jf-palette-action-hover': rgba(text, 0.08),
         '--jf-palette-action-hoverOpacity': '0.08',
         '--jf-palette-action-selected': rgba(primary, 0.20),
         '--jf-palette-action-selectedOpacity': '0.20',
-        '--jf-palette-action-disabled': rgba(text, 0.38),
+        '--jf-palette-action-disabled': disabled,
         '--jf-palette-action-disabledBackground': rgba(text, 0.12),
-        '--jf-palette-action-disabledOpacity': '0.38',
+        '--jf-palette-action-disabledOpacity': '1',
         '--jf-palette-action-focus': rgba(text, 0.12),
         '--jf-palette-action-focusOpacity': '0.12',
         '--jf-palette-action-activatedOpacity': '0.12',
@@ -172,46 +176,13 @@ function jellyfinDeclarations(theme: ResolvedTheme): Record<string, string> {
         '--jf-palette-SnackbarContent-bg': elevated,
         '--jf-palette-SnackbarContent-color': text,
         '--jf-palette-FilledInput-bg': rgba(text, 0.08),
-        '--jf-palette-FilledInput-borderColor': divider,
+        '--jf-palette-FilledInput-borderColor': controlBorder,
     };
 }
 
 function declarationBlock(declarations: Record<string, string>): string {
     return Object.entries(declarations).sort(([left], [right]) => left.localeCompare(right))
         .map(([name, value]) => `  ${name}: ${value};`).join('\n');
-}
-
-function adapters(selector: string, theme: ResolvedTheme): string {
-    const focusWidth = cssTokenValue('elevation.focus-ring', token(theme, 'elevation.focus-ring'));
-    const textDecoration = theme.underlineLinks ? 'underline' : 'none';
-    const routeSelector = `${selector}[data-jc-theme-route]`;
-    const motion = theme.reducedMotion ? `
-${routeSelector} *, ${routeSelector} *::before, ${routeSelector} *::after {
-  animation-duration: 0.01ms !important;
-  animation-iteration-count: 1 !important;
-  scroll-behavior: auto !important;
-    transition-duration: 0.01ms !important;
-}` : '';
-    return `
-/* Adapter focus-v12: keyboard focus in Jellyfin 12 modern layout. */
-${routeSelector} :is(a, button, input, select, textarea, [tabindex]):focus-visible {
-  outline: ${focusWidth} solid var(--jc-color-focus);
-  outline-offset: 2px;
-}
-${routeSelector} a:not(.emby-button) {
-  text-decoration: ${textDecoration};
-  text-underline-offset: 0.16em;
-}
-${routeSelector} {
-  forced-color-adjust: auto;
-}${motion}
-@media (forced-colors: active) {
-  ${routeSelector} {
-    --jc-color-focus: Highlight;
-    --jf-palette-primary-main: Highlight;
-    --jf-palette-primary-contrastText: HighlightText;
-  }
-}`;
 }
 
 export type ThemeStyleLayer = 'committed' | 'preview';
@@ -231,9 +202,9 @@ export function serializeThemeStyles(theme: ResolvedTheme, layer: ThemeStyleLaye
     return `${selector} {
 ${declarationBlock(declarations)}
 }
-${adapters(selector, theme)}
 ${serializeEffectsAdapters(selector)}
 ${serializePresentationAdapters(selector)}
 ${serializeMediaSurfaceAdapters(selector)}
-${serializeMobileAdapters(selector)}`;
+${serializeMobileAdapters(selector)}
+${serializeAccessibilityAdapters(selector, theme)}`;
 }

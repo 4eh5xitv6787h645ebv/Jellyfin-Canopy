@@ -662,7 +662,8 @@ describe('Theme Studio identity-owned runtime', () => {
         runtime.refresh();
         expect(onBodyMutation).toHaveBeenCalledOnce();
         const css = document.getElementById(DYNAMIC_ACCENT_STYLE_ID)?.textContent ?? '';
-        expect(css).toContain('--jf-palette-primary-main: #E62850');
+        expect(css).toContain('--jf-palette-primary-main: #F291A6');
+        expect(css).not.toContain('--jf-palette-primary-main: #E62850');
         expect(css).not.toContain('/Items/');
         expect(css).not.toContain('private-tag');
         expect(close).toHaveBeenCalledOnce();

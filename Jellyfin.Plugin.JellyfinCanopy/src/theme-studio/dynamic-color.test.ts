@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { themeConfiguration } from '../test/theme-studio-fixture';
+import { contrastRatio, withOpacity } from './color';
 import { resolveTheme, type ThemeMediaState } from './resolver';
 import {
     analyzeLocalMediaImage,
@@ -106,6 +107,38 @@ describe('Theme Studio local dynamic color', () => {
         expect(css).toContain('--jf-palette-primary-main:');
         expect(css).not.toContain('url(');
         expect(css).not.toContain('/Items/');
+    });
+
+    it('corrects a late artwork accent against final translucent materials', () => {
+        const configuration = themeConfiguration();
+        const profile = configuration.Profiles[0];
+        profile.Mode = 'light';
+        profile.Tokens = {
+            'effects.level': 'full',
+            'effects.material': 'glass',
+            'effects.backdrop-opacity': 0.82,
+            'color.dynamic-source': 'poster',
+            'color.dynamic-strength': 1,
+        };
+        const theme = resolveTheme(configuration, { ...media, darkScheme: false, jellyfinTheme: 'light' });
+        const css = serializeDynamicAccentStyle(theme, '#FFFFFF');
+        const accent = css.match(/--jc-color-primary:\s*(#[0-9A-F]{6})/i)?.[1];
+        expect(accent).toBeTruthy();
+
+        const opacity = Number(theme.tokens['effects.backdrop-opacity']);
+        const surface = withOpacity(String(theme.tokens['color.surface']), opacity);
+        const elevated = withOpacity(String(theme.tokens['color.elevated']), opacity);
+        const canvas = String(theme.tokens['color.canvas']);
+        const ratios = [
+            contrastRatio(accent!, canvas, canvas, canvas),
+            contrastRatio(accent!, surface, canvas, canvas),
+            contrastRatio(accent!, elevated, surface, canvas),
+            contrastRatio(accent!, surface, '#000000', '#000000'),
+            contrastRatio(accent!, surface, '#FFFFFF', '#FFFFFF'),
+            contrastRatio(accent!, elevated, surface, '#000000'),
+            contrastRatio(accent!, elevated, surface, '#FFFFFF'),
+        ];
+        expect(Math.min(...ratios)).toBeGreaterThanOrEqual(4.5);
     });
 
     it('stops an oversized stream before decode and never fetches after cancellation', async () => {

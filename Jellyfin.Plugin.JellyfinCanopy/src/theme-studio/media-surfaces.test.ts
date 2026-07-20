@@ -51,6 +51,11 @@ describe('Theme Studio modern media surface modules', () => {
         ]) expect(css, role).toContain(role);
         const playerOptions = css.slice(0, css.indexOf('/* Adapter music-now-playing-v12'));
         expect(playerOptions).not.toMatch(/\.videoSubtitlesInner[^}]*!important/s);
+        expect(playerOptions).toContain('background-color: var(--jc-color-scrim)');
+        expect(playerOptions).toContain('color: var(--jc-color-on-scrim) !important');
+        expect(playerOptions).toContain('.jc-chip.tmdb, .jc-chip.critic, .jc-star, .jc-text');
+        expect(css).toContain('#jc-osd-rating-container :where(.jc-chip, .jc-star, .jc-text)');
+        expect(css).toContain('color: var(--jc-color-text) !important');
         expect(css.match(/background-image: none/g)?.length).toBeGreaterThanOrEqual(2);
     });
 

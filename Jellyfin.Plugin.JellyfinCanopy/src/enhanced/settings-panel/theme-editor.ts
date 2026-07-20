@@ -1,6 +1,8 @@
 import { escapeHtml } from '../../core/ui-kit';
 import { JC } from '../../globals';
 import {
+    resolveAccent,
+    resolvePalette,
     THEME_ACCENTS,
     THEME_PALETTES,
     THEME_PRESETS,
@@ -594,6 +596,7 @@ function editorStyles(): string {
         #jellyfin-canopy-panel .jc-theme-toolbar { grid-column:1/-1; justify-content:space-between; margin-block-end:14px; }
         #jellyfin-canopy-panel .jc-theme-field { display:grid; gap:6px; min-width:0; margin-block-end:14px; }
         #jellyfin-canopy-panel .jc-theme-field > span, #jellyfin-canopy-panel .jc-theme-label { font-weight:650; }
+        #jellyfin-canopy-panel .jc-theme-sr-only { position:absolute!important; inline-size:1px!important; block-size:1px!important; padding:0!important; margin:-1px!important; overflow:hidden!important; clip-path:inset(50%)!important; white-space:nowrap!important; border:0!important; }
         #jellyfin-canopy-panel .jc-theme-hint { color:rgba(255,255,255,.7); font-size:12px; line-height:1.45; }
         #jellyfin-canopy-panel .jc-theme-validation { color:#ffb3b3; }
         #jellyfin-canopy-panel .jc-theme-module-group { min-width:0; margin:16px 0; border:1px solid rgba(255,255,255,.16); border-radius:12px; padding:12px; }
@@ -605,17 +608,21 @@ function editorStyles(): string {
         #jellyfin-canopy-panel .jc-theme-schedule-row .jc-theme-field { margin:0; }
         #jellyfin-canopy-panel .jc-theme-schedule-enabled { min-height:44px; align-self:end; }
         #jellyfin-canopy-panel .jc-theme-control { box-sizing:border-box; width:100%; min-height:44px; border:1px solid rgba(255,255,255,.22); border-radius:9px; background:#101218; color:#fff; padding:9px 11px; font:inherit; }
-        #jellyfin-canopy-panel .jc-theme-control:focus-visible, #jellyfin-canopy-panel .jc-theme-button:focus-visible, #jellyfin-canopy-panel .jc-theme-preset:focus-visible { outline:3px solid #00d4ff; outline-offset:2px; }
+        #jellyfin-canopy-panel .jc-theme-control:focus-visible, #jellyfin-canopy-panel .jc-theme-button:focus-visible, #jellyfin-canopy-panel .jc-theme-preset:focus-visible, #jellyfin-canopy-panel input[type="checkbox"]:focus-visible { outline:3px solid #00d4ff; outline-offset:2px; }
+        #jellyfin-canopy-panel .jc-theme-control[aria-invalid="true"] { border:3px double #ffb3b3; }
         #jellyfin-canopy-panel .jc-theme-button { min-height:44px; border:1px solid rgba(255,255,255,.22); border-radius:9px; background:rgba(255,255,255,.08); color:#fff; padding:8px 12px; font:inherit; font-weight:650; cursor:pointer; }
         #jellyfin-canopy-panel .jc-theme-button[aria-pressed="true"], #jellyfin-canopy-panel .jc-theme-button.primary { border-color:#00d4ff; background:#2f80ff; }
         #jellyfin-canopy-panel .jc-theme-button.danger { border-color:#ff8e8e; }
-        #jellyfin-canopy-panel .jc-theme-button:disabled { opacity:.45; cursor:default; }
+        #jellyfin-canopy-panel .jc-theme-button:disabled { border-style:dashed; color:#bfc4cf; background:#181b23; opacity:1; cursor:default; }
         #jellyfin-canopy-panel .jc-theme-preset-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(145px,100%),1fr)); gap:9px; min-width:0; }
         #jellyfin-canopy-panel .jc-theme-preset { position:relative; min-height:104px; border:2px solid rgba(255,255,255,.18); border-radius:12px; background:linear-gradient(145deg,#101218,#252a38); color:#fff; padding:12px; text-align:start; cursor:pointer; overflow:hidden; }
         #jellyfin-canopy-panel .jc-theme-preset[aria-pressed="true"] { border-color:#00d4ff; box-shadow:inset 0 0 0 2px #101218; }
         #jellyfin-canopy-panel .jc-theme-preset[aria-pressed="true"]::after { content:"✓"; position:absolute; inset-block-start:8px; inset-inline-end:9px; font-weight:900; }
         #jellyfin-canopy-panel .jc-theme-preset strong, #jellyfin-canopy-panel .jc-theme-preset small { display:block; padding-inline-end:16px; }
         #jellyfin-canopy-panel .jc-theme-preset small { margin-block-start:5px; color:rgba(255,255,255,.72); line-height:1.3; }
+        #jellyfin-canopy-panel .jc-theme-preset .jc-theme-preset-meta { margin-block-start:8px; color:#d9deea; font-size:11px; font-weight:700; }
+        #jellyfin-canopy-panel .jc-theme-color-control { display:grid; grid-template-columns:2rem minmax(0,1fr); gap:8px; align-items:center; }
+        #jellyfin-canopy-panel .jc-theme-swatch { box-sizing:border-box; inline-size:2rem; block-size:2rem; border:2px solid #fff; border-radius:50%; background:var(--jc-theme-swatch-color); box-shadow:0 0 0 1px #101218; }
         #jellyfin-canopy-panel .jc-theme-preview-card { position:sticky; inset-block-start:10px; align-self:start; border:1px solid var(--jc-preview-divider); border-radius:14px; overflow:hidden; background:var(--jc-preview-surface); color:var(--jc-preview-text); }
         #jellyfin-canopy-panel .jc-theme-preview-art { min-height:180px; display:grid; align-content:end; padding:18px; color:var(--jc-preview-text); background:linear-gradient(180deg,transparent 15%,var(--jc-preview-canvas) 96%),linear-gradient(125deg,var(--jc-preview-primary),var(--jc-preview-secondary) 48%,var(--jc-preview-elevated)); }
         #jellyfin-canopy-panel .jc-theme-preview-body { padding:14px; display:grid; gap:10px; background:var(--jc-preview-surface); }
@@ -656,8 +663,17 @@ function editorStyles(): string {
             #jellyfin-canopy-panel .jc-theme-mobile-preview { display:inline-flex; }
             #jellyfin-canopy-panel .jc-theme-actions { margin-inline:0; }
         }
+        #jellyfin-canopy-panel [dir="rtl"] .jc-theme-directional-icon, [dir="rtl"] #jellyfin-canopy-panel .jc-theme-directional-icon { display:inline-block; transform:scaleX(-1); }
         @media (prefers-reduced-motion:reduce) { #jellyfin-canopy-panel .jc-theme-button, #jellyfin-canopy-panel .jc-theme-preset { transition:none!important; } }
-        @media (forced-colors:active) { #jellyfin-canopy-panel .jc-theme-button.primary, #jellyfin-canopy-panel .jc-theme-preset[aria-pressed="true"] { border:3px solid ButtonText; } }
+        @media (prefers-reduced-transparency:reduce) { #jellyfin-canopy-panel, #jellyfin-canopy-panel .jc-theme-actions { backdrop-filter:none!important; background:#101218!important; } }
+        @media (forced-colors:active) {
+            #jellyfin-canopy-panel .jc-theme-swatch { display:none; }
+            #jellyfin-canopy-panel .jc-theme-color-control { grid-template-columns:minmax(0,1fr); }
+            #jellyfin-canopy-panel .jc-theme-button, #jellyfin-canopy-panel .jc-theme-control, #jellyfin-canopy-panel .jc-theme-preset { border:1px solid ButtonText; background:ButtonFace; color:ButtonText; forced-color-adjust:auto; }
+            #jellyfin-canopy-panel .jc-theme-button.primary, #jellyfin-canopy-panel .jc-theme-preset[aria-pressed="true"] { border:3px double Highlight; outline:1px solid Highlight; }
+            #jellyfin-canopy-panel .jc-theme-control[aria-invalid="true"], #jellyfin-canopy-panel .jc-theme-validation { border-color:CanvasText; color:CanvasText; text-decoration:underline wavy; }
+            #jellyfin-canopy-panel .jc-theme-button:disabled { border:1px dashed GrayText; color:GrayText; }
+        }
     </style>`;
 }
 
@@ -677,12 +693,12 @@ function profileControls(
             ${configuration.Profiles.map((profile) => option(profile.Id, profile.Name, profile.Id === active.Id)).join('')}
         </select>
         <div class="jc-theme-row">
-            <input class="jc-theme-control" style="flex:1 1 150px" data-role="profile-name" value="${escapeHtml(profileName)}" aria-label="${escapeHtml(t('theme_studio_profile_name'))}" aria-invalid="${profileNameInvalid}" aria-describedby="jc-theme-profile-name-error">
+            <input class="jc-theme-control" style="flex:1 1 150px" data-role="profile-name" value="${escapeHtml(profileName)}" aria-label="${escapeHtml(t('theme_studio_profile_name'))}" aria-invalid="${profileNameInvalid}"${profileNameInvalid ? ' aria-errormessage="jc-theme-profile-name-error"' : ''}>
             <button class="jc-theme-button" type="button" data-action="rename-profile">${escapeHtml(t('theme_studio_rename'))}</button>
             <button class="jc-theme-button" type="button" data-action="add-profile"${duplicateDisabled ? ' disabled' : ''}>${escapeHtml(t('theme_studio_duplicate'))}</button>
             <button class="jc-theme-button danger" type="button" data-action="delete-profile"${deleteDisabled ? ' disabled' : ''}>${escapeHtml(t('theme_studio_delete'))}</button>
         </div>
-        <span class="jc-theme-hint jc-theme-validation" id="jc-theme-profile-name-error" data-role="profile-name-error"${profileNameInvalid ? '' : ' hidden'}>${escapeHtml(t('theme_studio_profile_name_invalid'))}</span>
+        <span class="jc-theme-hint jc-theme-validation" id="jc-theme-profile-name-error" data-role="profile-name-error" role="alert" aria-live="polite"${profileNameInvalid ? '' : ' hidden'}>${escapeHtml(t('theme_studio_profile_name_invalid'))}</span>
     </div>`;
 }
 
@@ -762,8 +778,12 @@ function beginnerEditor(
             <div class="jc-theme-preset-grid" role="group" aria-label="${escapeHtml(t('theme_studio_presets'))}">
                 ${THEME_PRESETS.map((preset) => {
                     const key = PRESET_KEYS[preset.id] ?? preset.id;
+                    const descriptionId = `jc-theme-preset-${preset.id}-description`;
+                    const accessibility = preset.accessibilityFallback === 'strong'
+                        ? t('theme_studio_value_strong') : t('theme_studio_choice_system');
                     return `<button class="jc-theme-preset" type="button" data-action="preset" data-value="${escapeHtml(preset.id)}" aria-pressed="${preset.id === active.BasePreset}"${presetMatches(preset) ? '' : ' hidden'}>
-                        <strong>${escapeHtml(t(`${key}_name`))}</strong><small>${escapeHtml(t(`${key}_desc`))}</small>
+                        <strong>${escapeHtml(t(`${key}_name`))}</strong><small id="${descriptionId}">${escapeHtml(t(`${key}_desc`))}</small>
+                        <small class="jc-theme-preset-meta">${escapeHtml(t('theme_studio_effects_level'))}: ${escapeHtml(t(`theme_studio_value_${preset.performanceTier}`))} · ${escapeHtml(t('theme_studio_contrast'))}: ${escapeHtml(accessibility)}</small>
                     </button>`;
                 }).join('')}
             </div>
@@ -771,10 +791,10 @@ function beginnerEditor(
         </div>
         <div class="jc-theme-row">
             <label class="jc-theme-field" style="flex:1 1 180px"><span>${escapeHtml(t('theme_studio_palette'))}</span>
-                <select class="jc-theme-control" data-field="palette">${THEME_PALETTES.map((palette) => option(palette.id, t(PALETTE_KEYS[palette.id] ?? palette.id), palette.id === active.Palette)).join('')}</select>
+                <span class="jc-theme-color-control"><span class="jc-theme-swatch" aria-hidden="true" style="--jc-theme-swatch-color:${escapeHtml(resolvePalette(active.Palette).colors[active.Mode === 'light' ? 'light' : 'dark']['color.primary'])}"></span><select class="jc-theme-control" data-field="palette">${THEME_PALETTES.map((palette) => option(palette.id, t(PALETTE_KEYS[palette.id] ?? palette.id), palette.id === active.Palette)).join('')}</select></span>
             </label>
             <label class="jc-theme-field" style="flex:1 1 180px"><span>${escapeHtml(t('theme_studio_accent'))}</span>
-                <select class="jc-theme-control" data-field="accent">${THEME_ACCENTS.map((accent) => option(accent.id, t(ACCENT_KEYS[accent.id] ?? accent.id), accent.id === active.Accent)).join('')}</select>
+                <span class="jc-theme-color-control"><span class="jc-theme-swatch" aria-hidden="true" style="--jc-theme-swatch-color:${escapeHtml(resolveAccent(active.Accent, active.Mode === 'light' ? 'light' : 'dark') ?? resolvePalette(active.Palette).colors[active.Mode === 'light' ? 'light' : 'dark']['color.primary'])}"></span><select class="jc-theme-control" data-field="accent">${THEME_ACCENTS.map((accent) => option(accent.id, t(ACCENT_KEYS[accent.id] ?? accent.id), accent.id === active.Accent)).join('')}</select></span>
             </label>
         </div>
         <div class="jc-theme-field"><span>${escapeHtml(t('theme_studio_color_mode'))}</span>
@@ -823,7 +843,7 @@ function previewCard(configuration: UserThemeConfiguration, active: ThemeProfile
         + `--jc-preview-on-primary:${escapeHtml(colors.onPrimary)};--jc-preview-secondary:${escapeHtml(colors.secondary)};`
         + `--jc-preview-divider:${escapeHtml(colors.divider)}`;
     return `<aside class="jc-theme-preview-card" style="${style}" aria-label="${escapeHtml(t('theme_studio_preview'))}">
-        <div class="jc-theme-preview-art"><small>${escapeHtml(t('theme_studio_live_preview'))}</small><strong style="font-size:24px">${escapeHtml(active.Name)}</strong></div>
+        <div class="jc-theme-preview-art"><small>${escapeHtml(t('theme_studio_live_preview'))}</small><strong dir="auto" style="font-size:24px">${escapeHtml(active.Name)}</strong></div>
         <div class="jc-theme-preview-body"><strong>${escapeHtml(t(`${presetKey}_name`))}</strong>
             <span class="jc-theme-hint">${escapeHtml(t(`${presetKey}_desc`))}</span>
             <div class="jc-theme-preview-pills"><span>${escapeHtml(t(PALETTE_KEYS[active.Palette] ?? active.Palette))}</span><span>${escapeHtml(t(`theme_studio_mode_${active.Mode}`))}</span></div>
@@ -1042,17 +1062,18 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
                     <button class="jc-theme-button" type="button" data-action="editor-mode" data-value="expert" aria-pressed="${mode === 'expert'}">${escapeHtml(t('theme_studio_expert'))}</button>
                 </div>
                 <div class="jc-theme-row">
-                    <button class="jc-theme-button" type="button" data-action="undo"${snapshot.canUndo ? '' : ' disabled'} aria-label="${escapeHtml(t('theme_studio_undo'))}">↶ ${escapeHtml(t('theme_studio_undo'))}</button>
-                    <button class="jc-theme-button" type="button" data-action="redo"${snapshot.canRedo ? '' : ' disabled'} aria-label="${escapeHtml(t('theme_studio_redo'))}">↷ ${escapeHtml(t('theme_studio_redo'))}</button>
-                    <button class="jc-theme-button" type="button" data-action="reset-profile">↺ ${escapeHtml(t('theme_studio_reset'))}</button>
+                    <button class="jc-theme-button" type="button" data-action="undo"${snapshot.canUndo ? '' : ' disabled'} aria-label="${escapeHtml(t('theme_studio_undo'))}"><span class="jc-theme-directional-icon" aria-hidden="true">↶</span> ${escapeHtml(t('theme_studio_undo'))}</button>
+                    <button class="jc-theme-button" type="button" data-action="redo"${snapshot.canRedo ? '' : ' disabled'} aria-label="${escapeHtml(t('theme_studio_redo'))}"><span class="jc-theme-directional-icon" aria-hidden="true">↷</span> ${escapeHtml(t('theme_studio_redo'))}</button>
+                    <button class="jc-theme-button" type="button" data-action="reset-profile"><span class="jc-theme-directional-icon" aria-hidden="true">↺</span> ${escapeHtml(t('theme_studio_reset'))}</button>
                     <button class="jc-theme-button jc-theme-mobile-preview" type="button" data-action="preview-only" aria-describedby="jc-theme-modern-scope"${surfaceSupported ? '' : ' disabled'}>${escapeHtml(t('theme_studio_show_preview'))}</button>
                 </div>
             </div>
                 <div class="jc-theme-editor">
                     ${mode === 'beginner' ? beginnerEditor(snapshot.configuration, active, query, activeProfileName, activeProfileNameInvalid, schedulingAllowed) : `
                         ${profileControls(snapshot.configuration, active, activeProfileName, activeProfileNameInvalid, schedulingAllowed)}
-                        <label class="jc-theme-field"><span>${escapeHtml(t('theme_studio_expert_json'))}</span><span class="jc-theme-hint">${escapeHtml(t('theme_studio_expert_hint'))}</span>
-                            <textarea class="jc-theme-control jc-theme-expert" data-field="expert-json" spellcheck="false" aria-invalid="${expertInvalid}">${escapeHtml(expertText)}</textarea>
+                        <label class="jc-theme-field"><span>${escapeHtml(t('theme_studio_expert_json'))}</span><span class="jc-theme-hint" id="jc-theme-expert-hint">${escapeHtml(t('theme_studio_expert_hint'))}</span>
+                            <textarea class="jc-theme-control jc-theme-expert" data-field="expert-json" spellcheck="false" aria-invalid="${expertInvalid}" aria-describedby="jc-theme-expert-hint${expertInvalid ? ' jc-theme-expert-error' : ''}"${expertInvalid ? ' aria-errormessage="jc-theme-expert-error"' : ''}>${escapeHtml(expertText)}</textarea>
+                            ${expertInvalid ? `<span class="jc-theme-hint jc-theme-validation" id="jc-theme-expert-error" role="alert" aria-live="polite">${escapeHtml(t('theme_studio_invalid'))}</span>` : ''}
                         </label>`}
                     <div class="jc-theme-row">
                         ${JC.pluginConfig?.ThemeStudioAllowProfileImport === true ? `<input hidden type="file" accept="application/json,.json" data-field="import-file"><button class="jc-theme-button" type="button" data-action="import">${escapeHtml(t('theme_studio_import'))}</button>` : ''}
@@ -1632,6 +1653,8 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
             profileNameText = target.value;
             profileNameInvalid = !isValidThemeProfileName(profileNameText);
             target.setAttribute('aria-invalid', String(profileNameInvalid));
+            if (profileNameInvalid) target.setAttribute('aria-errormessage', 'jc-theme-profile-name-error');
+            else target.removeAttribute('aria-errormessage');
             const error = root.querySelector<HTMLElement>('[data-role="profile-name-error"]');
             if (error) error.hidden = !profileNameInvalid;
             const snapshot = state.snapshot();
