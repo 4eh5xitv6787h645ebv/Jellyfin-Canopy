@@ -583,7 +583,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         frame = requestAnimationFrame(() => {
             frame = 0;
             if (!disposed && JC.identity.isCurrent(ctx.identityContext) && runtime === previewRuntime) {
-                previewRuntime.preview(state!.snapshot().configuration);
+                previewRuntime.preview(state!.snapshot().configuration, { allowScheduling: false });
             }
         });
     };
@@ -925,10 +925,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
             const acknowledgement = await JC.saveUserSettings('theme.json', payload);
             const acknowledgementRuntime = JC.core.themeStudio;
             runtime = acknowledgementRuntime;
-            const acknowledged = parseUserThemeConfiguration({
-                ...payload,
-                Revision: acknowledgement.revision,
-            });
+            const acknowledged = parseUserThemeConfiguration(acknowledgement.data);
             const ownedAcknowledged = acknowledged
                 ? JC.identity.own(acknowledged, ctx.identityContext)
                 : null;

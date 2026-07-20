@@ -1,7 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JC } from '../../globals';
 import { themeConfiguration } from '../../test/theme-studio-fixture';
-import type { ApiApi, IdentityContext, ThemeStudioRuntimeApi, UserThemeConfiguration } from '../../types/jc';
+import type {
+    ApiApi,
+    IdentityContext,
+    ThemeStudioPreviewOptions,
+    ThemeStudioRuntimeApi,
+    UserThemeConfiguration,
+} from '../../types/jc';
 import type { UserSettingsSaveResult } from '../config';
 import type { PanelContext } from './panel';
 import { wireThemeStudioEditor } from './theme-editor';
@@ -9,7 +15,7 @@ import { wireThemeStudioEditor } from './theme-editor';
 let identity: IdentityContext;
 let panel: HTMLElement;
 let cleanups: Array<() => void>;
-let preview: ReturnType<typeof vi.fn<(value: unknown) => boolean>>;
+let preview: ReturnType<typeof vi.fn<(value: unknown, options?: ThemeStudioPreviewOptions) => boolean>>;
 let cancelPreview: ReturnType<typeof vi.fn<() => void>>;
 let adoptAcknowledged: ReturnType<typeof vi.fn<(value: unknown) => boolean>>;
 let reload: ReturnType<typeof vi.fn<() => Promise<boolean>>>;
@@ -56,6 +62,23 @@ function flushFrames(): void {
     const pending = [...frames.entries()];
     frames.clear();
     for (const [, callback] of pending) callback(16);
+}
+
+function acknowledgedTheme(
+    value: UserThemeConfiguration,
+    revision: number,
+    contentHash = 'a'.repeat(64),
+): UserSettingsSaveResult {
+    const data = structuredClone(value);
+    data.Revision = revision;
+    return {
+        acknowledged: true,
+        deduplicated: false,
+        file: 'theme.json',
+        revision,
+        contentHash,
+        data: data as unknown as Record<string, unknown>,
+    };
 }
 
 interface MutableMediaQueryList extends MediaQueryList {
@@ -117,7 +140,7 @@ beforeEach(() => {
     identity = JC.identity.transition('server-a', 'user-a', 'theme-editor-test-login')!;
     JC.pluginConfig = { ...JC.pluginConfig, ThemeStudioAllowProfileImport: true };
     configuration = JC.identity.own(themeConfiguration(), identity);
-    preview = vi.fn(() => true);
+    preview = vi.fn<(value: unknown, options?: ThemeStudioPreviewOptions) => boolean>(() => true);
     cancelPreview = vi.fn<() => void>();
     adoptAcknowledged = vi.fn(() => true);
     reload = vi.fn().mockResolvedValue(true);
@@ -225,7 +248,7 @@ describe('Theme Studio responsive settings editor', () => {
         expect(preview).toHaveBeenCalledOnce();
         expect(preview).toHaveBeenCalledWith(expect.objectContaining({
             Profiles: [expect.objectContaining({ BasePreset: 'oled', Palette: 'neutral' })],
-        }));
+        }), { allowScheduling: false });
         expect(button('apply').disabled).toBe(false);
     });
 
@@ -328,7 +351,7 @@ describe('Theme Studio responsive settings editor', () => {
                 Id: 'default', Name: 'Default', BasePreset: 'material', Palette: 'neutral',
                 Accent: 'palette', Mode: 'system', Tokens: {},
             })],
-        }));
+        }), { allowScheduling: false });
         expect(panel.textContent).toContain('theme_studio_reset_done');
         expect(button('apply').disabled).toBe(false);
         expect(JC.saveUserSettings).not.toHaveBeenCalled();
@@ -354,7 +377,7 @@ describe('Theme Studio responsive settings editor', () => {
         expect(input.value).toBe('Living room');
         expect(preview).toHaveBeenLastCalledWith(expect.objectContaining({
             Profiles: [expect.objectContaining({ Name: 'Living room', BasePreset: 'material' })],
-        }));
+        }), { allowScheduling: false });
 
         button('undo').click();
         input = panel.querySelector<HTMLInputElement>('[data-role="profile-name"]')!;
@@ -447,10 +470,15 @@ describe('Theme Studio responsive settings editor', () => {
     });
 
     it('adopts the exact acknowledgement when a joined saver leaves this target untouched', async () => {
-        JC.saveUserSettings = vi.fn((): Promise<UserSettingsSaveResult> => Promise.resolve({
-            acknowledged: true, deduplicated: false, file: 'theme.json', revision: 4,
-            contentHash: 'a'.repeat(64),
-        }));
+        const authoritative = themeConfiguration();
+        authoritative.Profiles[0].BasePreset = 'studio';
+        authoritative.Schedule = [{
+            Id: 'remote-schedule', ProfileId: 'default', StartMonthDay: '01-01', EndMonthDay: '12-31',
+            Priority: 5, Enabled: true,
+        }];
+        JC.saveUserSettings = vi.fn((): Promise<UserSettingsSaveResult> => Promise.resolve(
+            acknowledgedTheme(authoritative, 4),
+        ));
         wireThemeStudioEditor(context());
         button('preset', 'studio').click();
         flushFrames();
@@ -462,7 +490,10 @@ describe('Theme Studio responsive settings editor', () => {
         expect(JC.saveUserSettings).toHaveBeenCalledWith(
             'theme.json', expect.objectContaining({ Revision: 3, Profiles: [expect.objectContaining({ BasePreset: 'studio' })] }),
         );
-        expect(adoptAcknowledged).toHaveBeenCalledWith(expect.objectContaining({ Revision: 4 }));
+        expect(adoptAcknowledged).toHaveBeenCalledWith(expect.objectContaining({
+            Revision: 4,
+            Schedule: [expect.objectContaining({ Id: 'remote-schedule' })],
+        }));
         expect(button('apply').disabled).toBe(true);
     });
 
@@ -477,10 +508,9 @@ describe('Theme Studio responsive settings editor', () => {
 
         expect(panel.querySelector<HTMLFieldSetElement>('.jc-theme-workspace')?.disabled).toBe(true);
         button('preset', 'oled').dispatchEvent(new MouseEvent('click', { bubbles: true }));
-        resolveSave({
-            acknowledged: true, deduplicated: false, file: 'theme.json', revision: 3,
-            contentHash: 'b'.repeat(64),
-        });
+        const authoritative = themeConfiguration();
+        authoritative.Profiles[0].BasePreset = 'studio';
+        resolveSave(acknowledgedTheme(authoritative, 3, 'b'.repeat(64)));
         await vi.waitFor(() => expect(adoptAcknowledged).toHaveBeenCalledOnce());
 
         expect(JC.saveUserSettings).toHaveBeenCalledWith(
@@ -492,11 +522,13 @@ describe('Theme Studio responsive settings editor', () => {
     });
 
     it('flushes the final expert edit synchronously when Apply is pressed', async () => {
-        JC.saveUserSettings = vi.fn((_file, payload): Promise<UserSettingsSaveResult> => Promise.resolve({
-            acknowledged: true, deduplicated: false, file: 'theme.json',
-            revision: (payload as UserThemeConfiguration).Revision,
-            contentHash: 'c'.repeat(64),
-        }));
+        JC.saveUserSettings = vi.fn((_file, payload): Promise<UserSettingsSaveResult> => Promise.resolve(
+            acknowledgedTheme(
+                payload as UserThemeConfiguration,
+                (payload as UserThemeConfiguration).Revision,
+                'c'.repeat(64),
+            ),
+        ));
         wireThemeStudioEditor(context());
         button('preset', 'studio').click();
         button('editor-mode', 'expert').click();
@@ -533,7 +565,7 @@ describe('Theme Studio responsive settings editor', () => {
                 expect.objectContaining({ Palette: 'neutral' }),
                 expect.objectContaining({ Palette: 'neutral' }),
             ],
-        }));
+        }), { allowScheduling: false });
     });
 
     it('keeps keyboard draft activity alive by resetting panel auto-close', () => {
@@ -600,7 +632,7 @@ describe('Theme Studio responsive settings editor', () => {
             Revision: 3,
             LegacyMigration: { JellyfishTheme: '', Completed: false },
             Schedule: [expect.objectContaining({ Id: 'summer' })],
-        }));
+        }), { allowScheduling: false });
     });
 
     it('retains dormant schedules while importing profiles when scheduling is disabled', async () => {
@@ -637,7 +669,7 @@ describe('Theme Studio responsive settings editor', () => {
         expect(preview).toHaveBeenLastCalledWith(expect.objectContaining({
             Profiles: [expect.objectContaining({ Palette: 'neutral' })],
             Schedule: [expect.objectContaining({ Id: 'winter', ProfileId: 'default' })],
-        }));
+        }), { allowScheduling: false });
         expect(button('apply').disabled).toBe(false);
     });
 
@@ -750,7 +782,7 @@ describe('Theme Studio responsive settings editor', () => {
         flushFrames();
         expect(replacementPreview).toHaveBeenCalledWith(expect.objectContaining({
             Profiles: [expect.objectContaining({ BasePreset: 'cinematic' })],
-        }));
+        }), { allowScheduling: false });
     });
 
     it('flushes pending Expert JSON before replacement-runtime hydration', async () => {
@@ -783,7 +815,7 @@ describe('Theme Studio responsive settings editor', () => {
         flushFrames();
         expect(replacementPreview).toHaveBeenCalledWith(expect.objectContaining({
             Profiles: [expect.objectContaining({ Palette: 'neutral' })],
-        }));
+        }), { allowScheduling: false });
     });
 
     it('tracks the visual viewport so the mobile action bar stays above keyboards', () => {
@@ -846,10 +878,9 @@ describe('Theme Studio responsive settings editor', () => {
         button('preset', 'studio').click();
         button('apply').click();
         cleanups[0]();
-        resolveSave({
-            acknowledged: true, deduplicated: false, file: 'theme.json', revision: 3,
-            contentHash: 'd'.repeat(64),
-        });
+        const authoritative = themeConfiguration();
+        authoritative.Profiles[0].BasePreset = 'studio';
+        resolveSave(acknowledgedTheme(authoritative, 3, 'd'.repeat(64)));
 
         await vi.waitFor(() => expect(adoptAcknowledged).toHaveBeenCalledOnce());
     });

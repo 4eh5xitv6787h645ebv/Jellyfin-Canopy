@@ -120,9 +120,14 @@ export interface ThemeStudioDiagnostics {
     readonly mode: 'dark' | 'light' | null;
 }
 
+export interface ThemeStudioPreviewOptions {
+    /** Editor previews target ActiveProfileId instead of today's scheduled profile. */
+    readonly allowScheduling?: boolean;
+}
+
 /** Identity-owned seam consumed by the later Theme Studio editor chunk. */
 export interface ThemeStudioRuntimeApi {
-    preview(configuration: unknown): boolean;
+    preview(configuration: unknown, options?: ThemeStudioPreviewOptions): boolean;
     cancelPreview(): void;
     /** Returns an isolated, identity-owned copy for the current editor session. */
     getConfiguration(): UserThemeConfiguration | null;

@@ -2,6 +2,7 @@ import type { FeatureScope } from '../core/feature-loader';
 import { JC } from '../globals';
 import type {
     ThemeStudioDiagnostics,
+    ThemeStudioPreviewOptions,
     ThemeStudioRuntimeApi,
     UserThemeConfiguration,
 } from '../types/jc';
@@ -116,6 +117,7 @@ export class ThemeStudioRuntime {
     readonly #cleanups: Array<() => void> = [];
     #configuration: UserThemeConfiguration | null = null;
     #previewConfiguration: UserThemeConfiguration | null = null;
+    #previewAllowScheduling = true;
     #disposed = false;
     #installed = false;
     #loadGeneration = 0;
@@ -164,7 +166,7 @@ export class ThemeStudioRuntime {
         this.#cleanups.push(JC.identity.registerReset('theme-studio-runtime', () => this.dispose()));
 
         const api: ThemeStudioRuntimeApi = Object.freeze({
-            preview: (configuration: unknown) => this.preview(configuration),
+            preview: (configuration: unknown, options?: ThemeStudioPreviewOptions) => this.preview(configuration, options),
             cancelPreview: () => this.cancelPreview(),
             getConfiguration: () => this.getConfiguration(),
             whenReady: () => this.whenReady(),
@@ -214,6 +216,7 @@ export class ThemeStudioRuntime {
                 || (error as { name?: string } | null)?.name === 'AbortError') return;
             this.#configuration = null;
             this.#previewConfiguration = null;
+            this.#previewAllowScheduling = true;
             this.#clearPresentation();
             this.#setDiagnostics('error', null);
             JC.bootDiagnostics.record({
@@ -263,6 +266,7 @@ export class ThemeStudioRuntime {
         this.#loadPromise = null;
         this.#configuration = JC.identity.own(configuration, identity);
         this.#previewConfiguration = null;
+        this.#previewAllowScheduling = true;
         JC.rememberUserSettingsSnapshot?.('theme.json', this.#configuration);
         this.refresh();
         // Apply acknowledgements can outlive the editor that initiated them.
@@ -272,11 +276,12 @@ export class ThemeStudioRuntime {
         return true;
     }
 
-    preview(value: unknown): boolean {
+    preview(value: unknown, options: ThemeStudioPreviewOptions = {}): boolean {
         if (this.#disposed || !this.#scope.isCurrent() || !this.#configuration) return false;
         const configuration = parseUserThemeConfiguration(value);
         if (!configuration) return false;
         this.#previewConfiguration = configuration;
+        this.#previewAllowScheduling = options.allowScheduling !== false;
         this.refresh();
         return document.documentElement.getAttribute('data-jc-theme-preview') === 'true';
     }
@@ -284,6 +289,7 @@ export class ThemeStudioRuntime {
     cancelPreview(): void {
         if (this.#disposed || !this.#scope.isCurrent()) return;
         this.#previewConfiguration = null;
+        this.#previewAllowScheduling = true;
         if (presentationOwner !== this) return;
         removeStyle(PREVIEW_STYLE_ID);
         document.documentElement.removeAttribute('data-jc-theme-preview');
@@ -326,6 +332,7 @@ export class ThemeStudioRuntime {
         this.#loadPromise = null;
         this.#configuration = null;
         this.#previewConfiguration = null;
+        this.#previewAllowScheduling = true;
         this.#clearPresentation();
         for (let index = this.#cleanups.length - 1; index >= 0; index -= 1) {
             try { this.#cleanups[index]?.(); } catch { /* exact teardown continues */ }
@@ -368,9 +375,12 @@ export class ThemeStudioRuntime {
         };
     }
 
-    #resolve(configuration: UserThemeConfiguration): ResolvedTheme {
+    #resolve(
+        configuration: UserThemeConfiguration,
+        allowScheduling = JC.pluginConfig?.ThemeStudioAllowSeasonalScheduling !== false,
+    ): ResolvedTheme {
         return resolveTheme(configuration, this.#captureMedia(), {
-            allowScheduling: JC.pluginConfig?.ThemeStudioAllowSeasonalScheduling !== false,
+            allowScheduling,
         });
     }
 
@@ -404,7 +414,7 @@ export class ThemeStudioRuntime {
 
     #applyPreview(): void {
         if (!this.#previewConfiguration) return;
-        const theme = this.#resolve(this.#previewConfiguration);
+        const theme = this.#resolve(this.#previewConfiguration, this.#previewAllowScheduling);
         claimPresentation(this);
         updateStyle('preview', theme);
         this.#applyRootAttributes(theme);

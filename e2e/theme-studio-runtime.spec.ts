@@ -330,6 +330,7 @@ test.describe.serial('Theme Studio runtime bridge', () => {
         await page.setViewportSize({ width: 1440, height: 900 });
         await seedLayout(page, 'experimental');
         const writes: Array<{ revision: number; ifMatch: string | null; preset: string }> = [];
+        let acknowledgedSchedule: Array<Record<string, unknown>> = [];
         await page.route('**/JellyfinCanopy/user-settings/*/theme.json', async (route) => {
             if (route.request().method() !== 'POST') {
                 await route.continue();
@@ -337,24 +338,34 @@ test.describe.serial('Theme Studio runtime bridge', () => {
             }
             const body = route.request().postDataJSON() as {
                 Revision: number;
+                ActiveProfileId: string;
                 Profiles: Array<{ BasePreset: string }>;
             } & Record<string, unknown>;
             const revision = body.Revision + 1;
+            acknowledgedSchedule = [{
+                Id: 'remote-rebased-schedule',
+                ProfileId: body.ActiveProfileId,
+                StartMonthDay: '01-01',
+                EndMonthDay: '12-31',
+                Priority: 7,
+                Enabled: true,
+            }];
             writes.push({
                 revision,
                 ifMatch: route.request().headers()['if-match'] ?? null,
                 preset: body.Profiles[0]?.BasePreset ?? '',
             });
+            const conflict = writes.length === 1;
             await route.fulfill({
-                status: 200,
+                status: conflict ? 409 : 200,
                 contentType: 'application/json',
                 body: JSON.stringify({
-                    success: true,
-                    conflict: false,
+                    success: !conflict,
+                    conflict,
                     file: 'theme.json',
                     revision,
                     contentHash: 'a'.repeat(64),
-                    data: { ...body, Revision: revision },
+                    data: { ...body, Revision: revision, Schedule: acknowledgedSchedule },
                 }),
             });
         });
@@ -429,14 +440,30 @@ test.describe.serial('Theme Studio runtime bridge', () => {
         expect(writes).toEqual([]);
 
         await panel.locator('[data-action="apply"]').click();
-        await expect.poll(() => writes.length).toBe(1);
+        await expect.poll(() => writes.length).toBe(2);
         expect(writes[0]).toMatchObject({
             preset: 'oled',
             ifMatch: `"${writes[0].revision - 1}"`,
         });
+        expect(writes[1]).toMatchObject({
+            preset: 'oled',
+            ifMatch: `"${writes[1].revision - 1}"`,
+        });
         await expect(panel.locator('[data-action="apply"]')).toBeDisabled();
         await expect.poll(() => page.evaluate(() =>
-            window.JellyfinCanopy.core.themeStudio?.getDiagnostics().revision)).toBe(writes[0].revision);
+            window.JellyfinCanopy.core.themeStudio?.getDiagnostics().revision)).toBe(writes[1].revision);
+        expect(await page.evaluate(() =>
+            window.JellyfinCanopy.core.themeStudio?.getConfiguration()?.Schedule))
+            .toEqual(acknowledgedSchedule);
+        const expectedConflicts = consoleErrors.unexpected4xx().filter((response) =>
+            response.status === 409 && response.method === 'POST'
+            && /\/JellyfinCanopy\/user-settings\/[^/]+\/theme\.json$/.test(response.url));
+        expect(expectedConflicts).toHaveLength(1);
+        expect(consoleErrors.unexpected4xx()).toEqual(expectedConflicts);
+        expect(consoleErrors.real()).toEqual([
+            'Failed to load resource: the server responded with a status of 409 (Conflict)',
+        ]);
+        consoleErrors.reset();
         const serverAfter = await api<Record<string, unknown>>(
             baseURL!, `/JellyfinCanopy/user-settings/${admin.userId}/theme.json`, admin.token,
         );

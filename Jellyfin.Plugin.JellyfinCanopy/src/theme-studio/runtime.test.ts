@@ -338,6 +338,33 @@ describe('Theme Studio identity-owned runtime', () => {
         expect(currentApi).toBe(JC.core.themeStudio);
     });
 
+    it('lets editor previews target ActiveProfileId while committed presentation remains scheduled', async () => {
+        const scheduled = themeConfiguration();
+        scheduled.Profiles.push({
+            ...structuredClone(scheduled.Profiles[0]),
+            Id: 'seasonal',
+            Name: 'Seasonal',
+            BasePreset: 'cinematic',
+            Palette: 'vivid',
+        });
+        scheduled.Schedule = [{
+            Id: 'year-round', ProfileId: 'seasonal', StartMonthDay: '01-01', EndMonthDay: '12-31',
+            Priority: 10, Enabled: true,
+        }];
+        apiReturning(scheduled);
+        const { runtime } = createRuntime();
+        await runtime.load();
+        expectRootThemeState({ profile: 'seasonal', preset: 'cinematic', palette: 'vivid' });
+
+        const draft = structuredClone(scheduled);
+        draft.Profiles[0].BasePreset = 'glass';
+        expect(JC.core.themeStudio?.preview(draft, { allowScheduling: false })).toBe(true);
+        expectRootThemeState({ profile: 'default', preset: 'glass', palette: 'canopy-night' });
+
+        JC.core.themeStudio?.cancelPreview();
+        expectRootThemeState({ profile: 'seasonal', preset: 'cinematic', palette: 'vivid' });
+    });
+
     it('suspends committed reduced-motion adapters while a full-motion preview is active', async () => {
         const committed = themeConfiguration();
         committed.Profiles[0].Accessibility.Motion = 'off';
