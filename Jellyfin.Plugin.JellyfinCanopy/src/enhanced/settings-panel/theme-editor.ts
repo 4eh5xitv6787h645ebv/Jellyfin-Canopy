@@ -984,9 +984,16 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
             return;
         }
         try {
+            // Disabled scheduling makes imported schedule mutations invalid,
+            // including a user's own export of a dormant stored schedule.
+            // Validate only the portable profiles, then graft the unchanged
+            // authoritative schedule back below.
+            const validationDocument = JC.pluginConfig?.ThemeStudioAllowSeasonalScheduling === false
+                ? { ...(parsed as Record<string, unknown>), Schedule: [] }
+                : parsed;
             const response = await JC.core.api.plugin(
                 `/user-settings/${encodeURIComponent(ctx.identityContext.userId)}/theme.json/validate`,
-                { method: 'POST', body: parsed, skipCache: true, skipRetry: true, timeoutMs: 10_000 },
+                { method: 'POST', body: validationDocument, skipCache: true, skipRetry: true, timeoutMs: 10_000 },
             );
             if (disposed || generation !== importGeneration || !state
                 || !JC.identity.isCurrent(ctx.identityContext)

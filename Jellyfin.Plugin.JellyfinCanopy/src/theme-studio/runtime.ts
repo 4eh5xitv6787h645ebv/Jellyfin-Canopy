@@ -246,9 +246,22 @@ export class ThemeStudioRuntime {
 
     async reload(): Promise<boolean> {
         if (this.#disposed || !this.#scope.isCurrent()) return false;
+        const previous = this.#configuration
+            ? parseUserThemeConfiguration(this.#configuration)
+            : null;
         this.cancelPreview();
         await this.load();
         const loaded = this.#configuration !== null && this.#scope.isCurrent() && !this.#disposed;
+        if (!loaded && previous && this.#scope.isCurrent() && !this.#disposed) {
+            const identity = JC.identity.capture();
+            if (identity) {
+                // A failed recovery read is not evidence that the last
+                // validated document became invalid. Keep that committed
+                // presentation while the editor reports the reload failure.
+                this.#configuration = JC.identity.own(previous, identity);
+                this.refresh();
+            }
+        }
         if (loaded) this.#announceRuntimeChange('reloaded');
         return loaded;
     }

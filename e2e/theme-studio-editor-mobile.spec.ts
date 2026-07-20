@@ -181,6 +181,12 @@ test.describe.serial('Theme Studio mobile editor', () => {
         expect(landscape.panelLeft).toBeGreaterThanOrEqual(-1);
         expect(landscape.panelRight).toBeLessThanOrEqual(landscape.viewportWidth + 1);
 
+        await page.setViewportSize({ width: 1024, height: 768 });
+        const themePane = panel.locator('.jc-pane[data-pane="theme-studio"]');
+        await expect(themePane).toHaveClass(/\bactive\b/);
+        await expect(themePane).toBeVisible();
+        await expect(panel.locator('[data-theme-editor-root]')).toBeVisible();
+
         await panel.locator('[data-action="cancel"]').click();
         await expect(page.locator(PREVIEW_STYLE)).toHaveCount(0);
         await expect(panel.locator('[data-action="apply"]')).toBeDisabled();

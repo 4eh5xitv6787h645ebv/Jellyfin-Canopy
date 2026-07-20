@@ -181,6 +181,33 @@ describe('Theme Studio identity-owned runtime', () => {
         window.removeEventListener('jc:theme-studio-runtime-changed', changed);
     });
 
+    it('keeps the last validated committed theme when an authoritative reload fails', async () => {
+        const committed = themeConfiguration();
+        committed.Revision = 7;
+        committed.Profiles[0].Palette = 'neutral';
+        const plugin = vi.fn()
+            .mockResolvedValueOnce(committed)
+            .mockRejectedValueOnce(new Error('server unavailable'));
+        JC.core.api = { plugin } as unknown as ApiApi;
+        const { runtime } = createRuntime();
+        await runtime.load();
+        const preview = themeConfiguration();
+        preview.Profiles[0].BasePreset = 'glass';
+        expect(runtime.preview(preview)).toBe(true);
+        const changed = vi.fn();
+        window.addEventListener('jc:theme-studio-runtime-changed', changed);
+
+        await expect(runtime.reload()).resolves.toBe(false);
+
+        expect(runtime.getConfiguration()).toMatchObject({ Revision: 7 });
+        expect(document.documentElement.getAttribute('data-jc-theme-preview')).toBeNull();
+        expect(document.documentElement.getAttribute('data-jc-theme-palette')).toBe('neutral');
+        expect(document.getElementById(COMMITTED_STYLE_ID)).not.toBeNull();
+        expect(runtime.getDiagnostics()).toMatchObject({ status: 'active', revision: 7 });
+        expect(changed).not.toHaveBeenCalled();
+        window.removeEventListener('jc:theme-studio-runtime-changed', changed);
+    });
+
     it('rejects a late acknowledgement older than the loaded authoritative revision', async () => {
         const loaded = themeConfiguration();
         loaded.Revision = 9;

@@ -661,16 +661,18 @@ describe('Theme Studio responsive settings editor', () => {
         }];
         const imported = themeConfiguration();
         imported.Profiles[0].Palette = 'neutral';
-        imported.Schedule = [];
+        imported.Schedule = structuredClone(configuration.Schedule);
         const portable = {
             SchemaVersion: imported.SchemaVersion,
             ActiveProfileId: imported.ActiveProfileId,
             Profiles: imported.Profiles,
             Schedule: imported.Schedule,
         };
-        JC.core.api = {
-            plugin: vi.fn().mockResolvedValue({ valid: true, data: portable }),
-        } as unknown as ApiApi;
+        const plugin = vi.fn((_path: string, options: { body?: unknown }) => Promise.resolve({
+            valid: true,
+            data: options.body,
+        }));
+        JC.core.api = { plugin } as unknown as ApiApi;
         wireThemeStudioEditor(context());
         const input = panel.querySelector<HTMLInputElement>('[data-field="import-file"]')!;
         Object.defineProperty(input, 'files', {
@@ -680,6 +682,10 @@ describe('Theme Studio responsive settings editor', () => {
         input.dispatchEvent(new Event('change', { bubbles: true }));
 
         await vi.waitFor(() => expect(panel.textContent).toContain('theme_studio_import_ready'));
+        expect(plugin).toHaveBeenCalledWith(
+            `/user-settings/${identity.userId}/theme.json/validate`,
+            expect.objectContaining({ body: { ...portable, Schedule: [] } }),
+        );
         expect(panel.textContent).not.toContain('theme_studio_import_schedule_removed');
         button('accept-import').click();
         flushFrames();

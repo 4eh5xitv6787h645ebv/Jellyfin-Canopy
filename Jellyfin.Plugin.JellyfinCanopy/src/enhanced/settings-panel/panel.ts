@@ -467,10 +467,6 @@ async function openPanel(owner: PanelOwner): Promise<void> {
                 mainColumn.inert = false;
             }
         };
-        const handlePhoneMediaChange = () => syncLayerFocus(false);
-        phoneMedia.addEventListener('change', handlePhoneMediaChange);
-        owner.registerCleanup(() => phoneMedia.removeEventListener('change', handlePhoneMediaChange));
-
         const activate = (pane: HTMLElement, persist: boolean) => {
             panes.forEach(p => p.classList.toggle('active', p === pane));
             items.forEach(b => b.classList.toggle('active', b.dataset.tab === pane.dataset.pane));
@@ -504,6 +500,17 @@ async function openPanel(owner: PanelOwner): Promise<void> {
             navHost.appendChild(button);
             items.push(button);
         });
+
+        const handlePhoneMediaChange = () => {
+            if (!phoneMedia.matches && !panes.some((pane) => pane.classList.contains('active'))) {
+                const lastTab = (JC.currentSettings as any).lastOpenedTab;
+                activate(panes.find((pane) => pane.dataset.pane === lastTab) || panes[0], false);
+                return;
+            }
+            syncLayerFocus(false);
+        };
+        phoneMedia.addEventListener('change', handlePhoneMediaChange);
+        owner.registerCleanup(() => phoneMedia.removeEventListener('change', handlePhoneMediaChange));
 
         // Mobile back button returns to the section list.
         help.querySelector('#jcPanelBack')?.addEventListener('click', () => {

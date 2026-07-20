@@ -348,6 +348,34 @@ describe('settings panel lifecycle owner', () => {
         expect(document.getElementById('jellyfin-canopy-panel')).toBeNull();
     });
 
+    it('activates a pane when rotation leaves the compact phone layout', async () => {
+        const media = new EventTarget() as MediaQueryList & { matches: boolean };
+        Object.assign(media, {
+            matches: true,
+            media: '(compact-phone)',
+            onchange: null,
+            addListener(listener: (event: MediaQueryListEvent) => void) {
+                media.addEventListener('change', listener as EventListener);
+            },
+            removeListener(listener: (event: MediaQueryListEvent) => void) {
+                media.removeEventListener('change', listener as EventListener);
+            },
+        });
+        mediaTargets.add(media);
+        vi.stubGlobal('matchMedia', vi.fn(() => media));
+
+        await showPanel!();
+        const panel = document.getElementById('jellyfin-canopy-panel')!;
+        expect(panel.querySelector('.jc-pane.active')).toBeNull();
+        expect(panel.querySelector<HTMLElement>('.jc-panel-main')?.inert).toBe(true);
+
+        media.matches = false;
+        media.dispatchEvent(new Event('change'));
+
+        expect(panel.querySelector('.jc-pane.active')?.getAttribute('data-pane')).toBe('general');
+        expect(panel.querySelector<HTMLElement>('.jc-panel-main')?.inert).toBe(false);
+    });
+
     it.each(['lifecycleEditable', 'lifecycleTextarea'])(
         'allows question marks in editable field %s without dismissing the panel',
         async (id) => {
