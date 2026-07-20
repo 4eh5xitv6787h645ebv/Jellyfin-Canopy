@@ -486,7 +486,20 @@ Measurement protocol requirements for the follow-up harness:
   composition through a different endpoint, action, query template, or user
   produces incomparable numbers and is **no-evidence** for this metric;
   changing the pinned template is an instrumentation change under the
-  named-markers comparability rule below.
+  named-markers comparability rule below. Sampling population, warm-up, and
+  aggregation are pinned as well: with the server started and the
+  active-workload state below in place, the harness issues exactly **5
+  discarded warm-up requests** of the pinned template (absorbing JIT and
+  first-touch cache costs — unlike the S1 scan-event metric, list traffic in
+  production is steady-state warm), then exactly **20 measured requests** of
+  the identical template as the pinned measurement user. Each measured
+  request yields one sample: the complete synchronous filter-chain duration
+  from the named markers, divided by the fixed page shape's 1,000 examined
+  items. `maxResponseFilterP95MicrosecondsPerItem` is the p95 (nearest-rank,
+  per the pinned percentile rule below) over those 20 per-request samples,
+  and the raw per-request samples are published per the raw-plus-summary
+  rule below. Any other warm-up count, sample count, or aggregation is a
+  configuration failure — **no-evidence** for this metric.
 - **Pinned bulk-add workload (S1 scan-event metric).**
   `maxLibraryScanEventP95Milliseconds` is measured against one fixed
   workload, identical at both profiles (the scale variable is the
@@ -569,6 +582,15 @@ Measurement protocol requirements for the follow-up harness:
   for both profiles, not summaries alone.
 - Use fixed, named measurement markers in harness output so runs are comparable
   across time and instrumentation changes are explicit.
+- **Percentile algorithm, pinned.** Every p95 in this section — the
+  scan-event, response-filter, transfer, and client-parse keys — is computed
+  by the **nearest-rank** method: sort the samples ascending and take the
+  `ceil(0.95 × N)`-th value (for N = 20, the 19th sample), with no
+  interpolation. Percentile-method choice materially moves small-sample
+  percentiles, so the algorithm is part of every percentile metric's
+  identity: a percentile computed any other way is an instrumentation change
+  under the named-markers comparability rule above, and its result is not
+  comparable with the seven-run baseline the ratchet policy requires.
 - Measure `maxResponseFilterP95MicrosecondsPerItem` under an **active** filter
   workload: Hidden Content entries present, and Spoiler Guard enabled with a
   non-empty policy covering unwatched items in the measured page, so each of
