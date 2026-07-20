@@ -7,6 +7,11 @@ import type {
     UserThemeConfiguration,
 } from '../types/jc';
 import { resolveBreakpoint, resolveTheme, type ResolvedTheme, type ThemeMediaState } from './resolver';
+import {
+    MOBILE_ENVIRONMENT_STYLE_ID,
+    resolveMobileEnvironment,
+    serializeMobileEnvironmentStyle,
+} from './mobile';
 import { parseUserThemeConfiguration } from './schema';
 import {
     COMMITTED_STYLE_ID,
@@ -17,6 +22,9 @@ import {
 
 const THEME_CHANGE = 'THEME_CHANGE';
 const RUNTIME_CHANGE = 'jc:theme-studio-runtime-changed';
+const NON_EDITABLE_INPUT_TYPES = Object.freeze([
+    'button', 'checkbox', 'color', 'file', 'hidden', 'image', 'radio', 'range', 'reset', 'submit',
+]);
 const ROOT_ATTRIBUTES = Object.freeze([
     'data-jc-theme-active',
     'data-jc-theme-preview',
@@ -33,6 +41,9 @@ const ROOT_ATTRIBUTES = Object.freeze([
     'data-jc-theme-pointer',
     'data-jc-theme-hover',
     'data-jc-theme-forced-colors',
+    'data-jc-theme-orientation',
+    'data-jc-theme-keyboard',
+    'data-jc-theme-performance',
     'data-jc-theme-route',
     'data-jc-theme-density',
     'data-jc-theme-navigation',
@@ -112,6 +123,39 @@ function removeStyle(id: string): void {
     document.getElementById(id)?.remove();
 }
 
+function mobileEnvironmentStyle(): HTMLStyleElement {
+    const existing = document.getElementById(MOBILE_ENVIRONMENT_STYLE_ID);
+    if (existing instanceof HTMLStyleElement) return existing;
+    existing?.remove();
+    const style = document.createElement('style');
+    style.id = MOBILE_ENVIRONMENT_STYLE_ID;
+    style.dataset.jcOwner = 'theme-studio';
+    style.dataset.jcLayer = 'mobile-environment';
+    document.head.append(style);
+    return style;
+}
+
+function backdropFilterSupported(): boolean {
+    if (typeof CSS === 'undefined' || typeof CSS.supports !== 'function') return false;
+    return CSS.supports('backdrop-filter', 'blur(1px)')
+        || CSS.supports('-webkit-backdrop-filter', 'blur(1px)');
+}
+
+function deviceCapability(name: 'deviceMemory' | 'hardwareConcurrency'): number | null {
+    const value = (navigator as Navigator & { readonly deviceMemory?: number })[name];
+    return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
+}
+
+function editableElementFocused(): boolean {
+    const active = document.activeElement;
+    if (active instanceof HTMLTextAreaElement) return !active.disabled && !active.readOnly;
+    if (active instanceof HTMLInputElement) {
+        return !active.disabled && !active.readOnly
+            && !NON_EDITABLE_INPUT_TYPES.includes(active.type.toLowerCase());
+    }
+    return active instanceof HTMLElement && active.isContentEditable;
+}
+
 function rootThemeName(): string {
     return document.documentElement.getAttribute('data-theme')?.trim() ?? '';
 }
@@ -159,6 +203,42 @@ export class ThemeStudioRuntime {
         this.#clearPresentation(true);
 
         const refresh = (): void => this.refresh();
+        let environmentFrame = 0;
+        let fullRefreshRequested = false;
+        const scheduleEnvironmentRefresh = (): void => {
+            if (this.#disposed || environmentFrame !== 0) return;
+            environmentFrame = window.requestAnimationFrame(() => {
+                environmentFrame = 0;
+                if (this.#disposed) return;
+                if (fullRefreshRequested) {
+                    fullRefreshRequested = false;
+                    this.refresh();
+                    return;
+                }
+                this.#refreshMobileEnvironment();
+            });
+        };
+        const scheduleFullRefresh = (): void => {
+            fullRefreshRequested = true;
+            scheduleEnvironmentRefresh();
+        };
+        const visualViewport = window.visualViewport;
+        visualViewport?.addEventListener('resize', scheduleEnvironmentRefresh);
+        visualViewport?.addEventListener('scroll', scheduleEnvironmentRefresh);
+        window.addEventListener('resize', scheduleFullRefresh, { passive: true });
+        window.addEventListener('orientationchange', scheduleFullRefresh, { passive: true });
+        document.addEventListener('focusin', scheduleEnvironmentRefresh);
+        document.addEventListener('focusout', scheduleEnvironmentRefresh);
+        this.#cleanups.push(() => {
+            visualViewport?.removeEventListener('resize', scheduleEnvironmentRefresh);
+            visualViewport?.removeEventListener('scroll', scheduleEnvironmentRefresh);
+            window.removeEventListener('resize', scheduleFullRefresh);
+            window.removeEventListener('orientationchange', scheduleFullRefresh);
+            document.removeEventListener('focusin', scheduleEnvironmentRefresh);
+            document.removeEventListener('focusout', scheduleEnvironmentRefresh);
+            if (environmentFrame !== 0) window.cancelAnimationFrame(environmentFrame);
+            environmentFrame = 0;
+        });
         if (typeof window.matchMedia === 'function') {
             for (const [name, query] of Object.entries(MEDIA_QUERIES) as Array<[MediaName, string]>) {
                 const media = window.matchMedia(query);
@@ -531,6 +611,54 @@ export class ThemeStudioRuntime {
         root.setAttribute('data-jc-theme-progress-position', theme.presentation.progressPosition);
         root.setAttribute('data-jc-theme-watched-indicator', theme.presentation.watchedIndicator);
         root.setAttribute('data-jc-theme-unwatched-indicator', theme.presentation.unwatchedIndicator);
+        this.#applyMobileEnvironment(theme.breakpoint === 'phone', theme.reducedTransparency);
+    }
+
+    #refreshMobileEnvironment(): void {
+        const root = document.documentElement;
+        if (!this.#scope.isCurrent()) {
+            this.dispose();
+            return;
+        }
+        if (presentationOwner !== this || root.getAttribute('data-jc-theme-active') !== 'true') return;
+        this.#applyMobileEnvironment(
+            root.getAttribute('data-jc-theme-breakpoint') === 'phone',
+            root.getAttribute('data-jc-theme-transparency') === 'reduced',
+        );
+    }
+
+    #applyMobileEnvironment(phone: boolean, reducedTransparency: boolean): void {
+        const root = document.documentElement;
+        const visualViewport = window.visualViewport;
+        const layoutWidth = Math.max(1, window.innerWidth || root.clientWidth || 1);
+        const layoutHeight = Math.max(1, window.innerHeight || root.clientHeight || 1);
+        const environment = resolveMobileEnvironment({
+            phone,
+            layoutWidth,
+            layoutHeight,
+            visualHeight: visualViewport?.height ?? layoutHeight,
+            visualOffsetTop: visualViewport?.offsetTop ?? 0,
+            visualScale: visualViewport?.scale ?? 1,
+            editableFocused: editableElementFocused(),
+            reducedTransparency,
+            backdropFilterSupported: backdropFilterSupported(),
+            deviceMemory: deviceCapability('deviceMemory'),
+            hardwareConcurrency: deviceCapability('hardwareConcurrency'),
+        });
+        root.setAttribute('data-jc-theme-orientation', environment.orientation);
+        root.setAttribute('data-jc-theme-keyboard', environment.keyboard);
+        root.setAttribute('data-jc-theme-performance', environment.performance);
+        if (!phone) {
+            removeStyle(MOBILE_ENVIRONMENT_STYLE_ID);
+            return;
+        }
+        const style = mobileEnvironmentStyle();
+        const css = serializeMobileEnvironmentStyle(
+            ':root.jc-modern-layout[data-jc-theme-active="true"]'
+                + '[data-jc-theme-breakpoint="phone"][data-jc-theme-route]',
+            environment,
+        );
+        if (style.textContent !== css) style.textContent = css;
     }
 
     #applyPreview(): void {
@@ -547,6 +675,7 @@ export class ThemeStudioRuntime {
         if (!force && presentationOwner !== this) return;
         removeStyle(COMMITTED_STYLE_ID);
         removeStyle(PREVIEW_STYLE_ID);
+        removeStyle(MOBILE_ENVIRONMENT_STYLE_ID);
         const root = document.documentElement;
         for (const name of ROOT_ATTRIBUTES) root.removeAttribute(name);
         presentationOwner = null;

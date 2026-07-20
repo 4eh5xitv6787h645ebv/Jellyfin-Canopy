@@ -3,6 +3,7 @@ import { JC } from '../globals';
 import { createTestFeatureScope, type TestFeatureScope } from '../test/feature-scope';
 import { themeConfiguration } from '../test/theme-studio-fixture';
 import type { ApiApi } from '../types/jc';
+import { MOBILE_ENVIRONMENT_STYLE_ID } from './mobile';
 import { ThemeStudioRuntime } from './runtime';
 import { COMMITTED_STYLE_ID, PREVIEW_STYLE_ID } from './styles';
 
@@ -104,6 +105,7 @@ afterEach(async () => {
     delete JC.core.themeStudio;
     document.getElementById(COMMITTED_STYLE_ID)?.remove();
     document.getElementById(PREVIEW_STYLE_ID)?.remove();
+    document.getElementById(MOBILE_ENVIRONMENT_STYLE_ID)?.remove();
     for (const name of [...document.documentElement.attributes].map((item) => item.name)) {
         if (name.startsWith('data-jc-theme-')) document.documentElement.removeAttribute(name);
     }
@@ -589,6 +591,68 @@ describe('Theme Studio identity-owned runtime', () => {
         runtime.refresh();
         expect(document.getElementById(COMMITTED_STYLE_ID)).not.toBeNull();
         expect(document.documentElement.getAttribute('data-jc-theme-breakpoint')).toBe('phone');
+    });
+
+    it('tracks visual viewport and capability state only for the modern phone breakpoint', async () => {
+        const viewport = Object.assign(new EventTarget(), { height: 500, offsetTop: 0, scale: 1 });
+        vi.stubGlobal('visualViewport', viewport);
+        vi.stubGlobal('CSS', undefined);
+        apiReturning(themeConfiguration());
+        const { runtime } = createRuntime();
+
+        const input = document.createElement('input');
+        document.body.append(input);
+        input.focus();
+
+        await runtime.load();
+
+        expectRootThemeState({
+            breakpoint: 'phone',
+            orientation: 'portrait',
+            keyboard: 'open',
+            performance: 'reduced',
+        });
+        expect(document.getElementById(MOBILE_ENVIRONMENT_STYLE_ID)?.textContent).toContain(
+            '--jc-visual-viewport-height: 500px',
+        );
+        expect(document.getElementById(MOBILE_ENVIRONMENT_STYLE_ID)?.textContent).toContain(
+            '--jc-keyboard-inset: 344px',
+        );
+        expect(document.getElementById(MOBILE_ENVIRONMENT_STYLE_ID)?.textContent).toContain(
+            '[data-jc-theme-breakpoint="phone"][data-jc-theme-route]',
+        );
+
+        const refresh = vi.spyOn(runtime, 'refresh');
+        const started = performance.now();
+        viewport.height = 480;
+        for (let index = 0; index < 100; index += 1) viewport.dispatchEvent(new Event('scroll'));
+        await vi.waitFor(() => expect(document.getElementById(MOBILE_ENVIRONMENT_STYLE_ID)?.textContent)
+            .toContain('--jc-visual-viewport-height: 480px'));
+        expect(refresh).not.toHaveBeenCalled();
+        expect(performance.now() - started).toBeLessThan(250);
+
+        viewport.height = 300;
+        viewport.scale = 2;
+        viewport.dispatchEvent(new Event('resize'));
+        await vi.waitFor(() => expect(document.documentElement.getAttribute('data-jc-theme-keyboard'))
+            .toBe('closed'));
+        expect(document.getElementById(MOBILE_ENVIRONMENT_STYLE_ID)?.textContent).toContain(
+            '--jc-keyboard-inset: 0px',
+        );
+
+        window.innerWidth = 1366;
+        window.innerHeight = 768;
+        viewport.height = 768;
+        viewport.scale = 1;
+        window.dispatchEvent(new Event('resize'));
+        await vi.waitFor(() => expect(document.documentElement.getAttribute('data-jc-theme-breakpoint'))
+            .toBe('desktop'));
+        expect(refresh).toHaveBeenCalledTimes(1);
+        expectRootThemeState({
+            orientation: 'landscape', keyboard: 'closed', performance: 'full',
+        });
+        expect(document.getElementById(MOBILE_ENVIRONMENT_STYLE_ID)).toBeNull();
+        input.remove();
     });
 
     it('owns a later preview layer and cancels it without disturbing committed state', async () => {

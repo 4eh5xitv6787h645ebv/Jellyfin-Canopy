@@ -1,5 +1,6 @@
 import type { ThemeTokenValue } from '../types/jc';
 import { readableForeground } from './color';
+import { serializeMobileAdapters } from './mobile';
 import { serializePresentationAdapters } from './presentation';
 import type { ResolvedTheme } from './resolver';
 
@@ -91,6 +92,9 @@ function customDeclarations(theme: ResolvedTheme): Record<string, string> {
     declarations['--jc-safe-area-right'] = 'env(safe-area-inset-right, 0px)';
     declarations['--jc-safe-area-bottom'] = 'env(safe-area-inset-bottom, 0px)';
     declarations['--jc-safe-area-left'] = 'env(safe-area-inset-left, 0px)';
+    declarations['--jc-visual-viewport-height'] = '100dvh';
+    declarations['--jc-visual-viewport-top'] = '0px';
+    declarations['--jc-keyboard-inset'] = '0px';
     declarations['--jc-density-factor'] = String(densityFactor);
     declarations['--jc-space-factor'] = String(spaceFactor);
     declarations['--jc-effective-font-size'] = `${Number((
@@ -214,5 +218,6 @@ export function serializeThemeStyles(theme: ResolvedTheme, layer: ThemeStyleLaye
 ${declarationBlock(declarations)}
 }
 ${adapters(selector, theme)}
-${serializePresentationAdapters(selector)}`;
+${serializePresentationAdapters(selector)}
+${serializeMobileAdapters(selector)}`;
 }
