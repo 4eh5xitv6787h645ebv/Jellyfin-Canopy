@@ -556,8 +556,25 @@ result:
    and that exact commit created within the preceding **seven days** (the
    freshness window).
 
-The immutable result artifact must record: tested commit SHA, profile, seed
-version and seed-input digest, the SHA-256 of the `scale-budgets.json` used,
+Result identity is the commit that was **actually measured**, not the commit
+that was requested. In both paths the scale workflow resolves the commit under
+test to a SHA up front, checks out that **exact SHA** — never a movable ref: a
+dispatch after `main` has advanced past the tag must still check out and build
+the tag commit — and takes every input from that single checkout: the plugin
+source it builds, the `scripts/scale-budgets.json` it compares against, and
+the seed-input definitions it digests. `testedCommitSha` is produced from the
+measurement checkout itself (`git rev-parse HEAD` at build time), never echoed
+from a workflow input or dispatch parameter; before building, the run verifies
+the checkout `HEAD` equals the requested SHA and aborts as **no-evidence** on
+any mismatch. The artifact also records the SHA-256 of the plugin package the
+run built and measured, tying the evidence to the exact bits under test — an
+artifact whose `testedCommitSha` was not derived this way is not evidence for
+any commit.
+
+The immutable result artifact must record: tested commit SHA (derived from the
+measurement checkout as above), profile, seed version and seed-input digest,
+the SHA-256 of the built-and-measured plugin package, the SHA-256 of the
+`scale-budgets.json` used,
 workflow run ID and attempt, creation time, topology metadata, raw metrics,
 the compared limits, enforcement mode, and outcome. Release-time reuse
 verifies the artifact ID and digest, that the producing run was a `main`-only
