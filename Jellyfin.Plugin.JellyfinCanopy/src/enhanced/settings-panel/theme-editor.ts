@@ -354,7 +354,7 @@ function editorStyles(): string {
         #jellyfin-canopy-panel .jc-theme-preview-art { min-height:180px; display:grid; align-content:end; padding:18px; color:var(--jc-preview-text); background:linear-gradient(180deg,transparent 15%,var(--jc-preview-canvas) 96%),linear-gradient(125deg,var(--jc-preview-primary),var(--jc-preview-secondary) 48%,var(--jc-preview-elevated)); }
         #jellyfin-canopy-panel .jc-theme-preview-body { padding:14px; display:grid; gap:10px; background:var(--jc-preview-surface); }
         #jellyfin-canopy-panel .jc-theme-preview-card .jc-theme-hint { color:var(--jc-preview-muted); }
-        #jellyfin-canopy-panel .jc-theme-preview-card .jc-theme-button.primary { border-color:var(--jc-preview-primary); background:var(--jc-preview-primary); color:var(--jc-preview-on-primary); }
+        #jellyfin-canopy-panel .jc-theme-preview-action { display:inline-flex; align-items:center; justify-content:center; box-sizing:border-box; width:max-content; min-height:44px; border:1px solid var(--jc-preview-primary); border-radius:9px; background:var(--jc-preview-primary); color:var(--jc-preview-on-primary); padding:8px 12px; font:inherit; font-weight:650; }
         #jellyfin-canopy-panel .jc-theme-preview-pills { display:flex; gap:7px; flex-wrap:wrap; }
         #jellyfin-canopy-panel .jc-theme-preview-pills span { border:1px solid currentColor; border-radius:999px; padding:4px 8px; font-size:11px; }
         #jellyfin-canopy-panel .jc-theme-expert { min-height:310px; resize:vertical; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; white-space:pre; overflow:auto; }
@@ -365,6 +365,7 @@ function editorStyles(): string {
         #jellyfin-canopy-panel .jc-theme-actions .jc-theme-status { flex:1 1 190px; min-width:0; }
         #jellyfin-canopy-panel .jc-theme-return, #jellyfin-canopy-panel .jc-theme-mobile-preview { display:none; }
         #jellyfin-canopy-panel-backdrop.jc-theme-preview-backdrop-hidden { display:none!important; }
+        #jellyfin-canopy-panel.jc-theme-preview-only .jc-theme-return { display:inline-flex; position:fixed; z-index:1000001; inset-block-start:max(12px,env(safe-area-inset-top)); inset-inline-end:max(12px,env(safe-area-inset-right)); pointer-events:auto; }
         @media (min-width:761px) and (max-width:900px) { #jellyfin-canopy-panel .jc-theme-studio { grid-template-columns:minmax(0,1fr); } #jellyfin-canopy-panel .jc-theme-preview-card { position:static; } }
         @media (max-width:760px), (orientation:landscape) and (max-height:599px) and (max-width:999px) and (pointer:coarse) {
             #jellyfin-canopy-panel { top:var(--jc-panel-visual-top,0px)!important; height:var(--jc-panel-visual-height,100dvh)!important; max-height:var(--jc-panel-visual-height,100dvh)!important; }
@@ -386,7 +387,6 @@ function editorStyles(): string {
             #jellyfin-canopy-panel.jc-theme-preview-only .jc-theme-actions { display:none!important; }
             #jellyfin-canopy-panel.jc-theme-preview-only .jc-panel-body,
             #jellyfin-canopy-panel.jc-theme-preview-only .jc-panel-main { background:transparent!important; overflow:visible!important; pointer-events:none; }
-            #jellyfin-canopy-panel.jc-theme-preview-only .jc-theme-return { display:inline-flex; position:fixed; z-index:1000001; inset-block-start:max(12px,env(safe-area-inset-top)); inset-inline-end:max(12px,env(safe-area-inset-right)); pointer-events:auto; }
         }
         @media (prefers-reduced-motion:reduce) { #jellyfin-canopy-panel .jc-theme-button, #jellyfin-canopy-panel .jc-theme-preset { transition:none!important; } }
         @media (forced-colors:active) { #jellyfin-canopy-panel .jc-theme-button.primary, #jellyfin-canopy-panel .jc-theme-preset[aria-pressed="true"] { border:3px solid ButtonText; } }
@@ -497,7 +497,7 @@ function previewCard(configuration: UserThemeConfiguration, active: ThemeProfile
         <div class="jc-theme-preview-body"><strong>${escapeHtml(t(`${presetKey}_name`))}</strong>
             <span class="jc-theme-hint">${escapeHtml(t(`${presetKey}_desc`))}</span>
             <div class="jc-theme-preview-pills"><span>${escapeHtml(t(PALETTE_KEYS[active.Palette] ?? active.Palette))}</span><span>${escapeHtml(t(`theme_studio_mode_${active.Mode}`))}</span></div>
-            <button class="jc-theme-button primary" type="button">${escapeHtml(t('theme_studio_preview_action'))}</button>
+            <span class="jc-theme-preview-action" aria-hidden="true">${escapeHtml(t('theme_studio_preview_action'))}</span>
         </div>
     </aside>`;
 }

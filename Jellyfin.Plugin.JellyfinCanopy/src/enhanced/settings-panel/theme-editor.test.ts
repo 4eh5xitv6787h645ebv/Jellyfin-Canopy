@@ -203,6 +203,8 @@ describe('Theme Studio responsive settings editor', () => {
             initialPreview.style.getPropertyValue('--jc-preview-surface'),
             initialPreview.style.getPropertyValue('--jc-preview-primary'),
         ];
+        expect(initialPreview.querySelector('button')).toBeNull();
+        expect(initialPreview.querySelector('.jc-theme-preview-action')?.tagName).toBe('SPAN');
         const search = panel.querySelector<HTMLInputElement>('[data-field="preset-search"]')!;
         search.focus();
         search.value = 'oled';
@@ -288,6 +290,11 @@ describe('Theme Studio responsive settings editor', () => {
 
     it('keeps page preview reachable on phones and removes it on Cancel and teardown', () => {
         wireThemeStudioEditor(context());
+        const styles = panel.querySelector('style')?.textContent ?? '';
+        expect(styles.indexOf('#jellyfin-canopy-panel.jc-theme-preview-only .jc-theme-return'))
+            .toBeGreaterThan(-1);
+        expect(styles.indexOf('#jellyfin-canopy-panel.jc-theme-preview-only .jc-theme-return'))
+            .toBeLessThan(styles.indexOf('@media'));
         button('preset', 'glass').click();
         flushFrames();
         button('preview-only').click();

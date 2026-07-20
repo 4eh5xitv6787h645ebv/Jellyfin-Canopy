@@ -163,7 +163,12 @@ test.describe.serial('Theme Studio mobile editor', () => {
         await expect(panel.locator('[data-action="return-editor"]')).toBeVisible();
         expect(await page.evaluate(() =>
             document.documentElement.getAttribute('data-jc-theme-preview'))).toBe('true');
+        await page.setViewportSize({ width: 1024, height: 768 });
+        await expect(panel.locator('[data-action="return-editor"]')).toBeVisible();
+        await expect(page.locator('#jellyfin-canopy-panel-backdrop')).toBeHidden();
         await panel.locator('[data-action="return-editor"]').click();
+        await expect(panel).not.toHaveClass(/jc-theme-preview-only/);
+        await expect(page.locator('#jellyfin-canopy-panel-backdrop')).toBeVisible();
 
         await page.setViewportSize({ width: 740, height: 360 });
         await expect(panel.locator('[data-action="preview-only"]')).toBeVisible();

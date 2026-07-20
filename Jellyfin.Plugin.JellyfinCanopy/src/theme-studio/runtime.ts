@@ -122,7 +122,7 @@ export class ThemeStudioRuntime {
     #installed = false;
     #authoritativeLoadSettled = false;
     #loadGeneration = 0;
-    #acknowledgementGeneration = 0;
+    #configurationAcknowledged = false;
     #loadPromise: Promise<void> | null = null;
     #diagnostics: ThemeStudioDiagnostics = Object.freeze({
         status: 'inactive', revision: null, profileId: null, breakpoint: null, mode: null,
@@ -186,7 +186,7 @@ export class ThemeStudioRuntime {
         if (this.#disposed || !this.#scope.isCurrent()) return Promise.resolve();
         this.#authoritativeLoadSettled = false;
         const generation = ++this.#loadGeneration;
-        const task = this.#loadOwned(generation, this.#acknowledgementGeneration);
+        const task = this.#loadOwned(generation);
         const tracked = task.finally(() => {
             if (this.#loadPromise === tracked) {
                 this.#loadPromise = null;
@@ -197,7 +197,7 @@ export class ThemeStudioRuntime {
         return tracked;
     }
 
-    async #loadOwned(generation: number, acknowledgementGeneration: number): Promise<void> {
+    async #loadOwned(generation: number): Promise<void> {
         this.#setDiagnostics('loading', null);
         try {
             const api = JC.core.api;
@@ -221,21 +221,21 @@ export class ThemeStudioRuntime {
                 return;
             }
             this.#configuration = JC.identity.own(configuration);
+            this.#configurationAcknowledged = false;
             JC.rememberUserSettingsSnapshot?.('theme.json', this.#configuration);
             this.refresh();
         } catch (error) {
             if (this.#disposed || generation !== this.#loadGeneration
                 || this.#scope.signal.aborted || !this.#scope.isCurrent()
                 || (error as { name?: string } | null)?.name === 'AbortError') return;
-            // If an exact acknowledgement landed after this request began,
-            // the failed read is not evidence that the acknowledged document
-            // is unavailable. Preserve it as the current authority.
-            if (acknowledgementGeneration !== this.#acknowledgementGeneration
-                && this.#configuration) {
+            // A failed read is not evidence that an exact save response is
+            // invalid, including when it arrived before this first GET began.
+            if (this.#configurationAcknowledged && this.#configuration) {
                 this.refresh();
                 return;
             }
             this.#configuration = null;
+            this.#configurationAcknowledged = false;
             this.#previewConfiguration = null;
             this.#previewAllowScheduling = true;
             this.#clearPresentation();
@@ -296,10 +296,10 @@ export class ThemeStudioRuntime {
         if (!identity) return false;
         // Do not cancel an authoritative GET already in flight: it may contain
         // a still newer concurrent commit. #loadOwned compares revisions when
-        // that response settles, while this generation protects the exact
+        // that response settles, while the source marker protects this exact
         // acknowledgement if the read fails.
-        this.#acknowledgementGeneration += 1;
         this.#configuration = JC.identity.own(configuration, identity);
+        this.#configurationAcknowledged = true;
         this.#previewConfiguration = null;
         this.#previewAllowScheduling = true;
         JC.rememberUserSettingsSnapshot?.('theme.json', this.#configuration);
@@ -366,6 +366,7 @@ export class ThemeStudioRuntime {
         this.#loadGeneration += 1;
         this.#loadPromise = null;
         this.#configuration = null;
+        this.#configurationAcknowledged = false;
         this.#previewConfiguration = null;
         this.#previewAllowScheduling = true;
         this.#clearPresentation();

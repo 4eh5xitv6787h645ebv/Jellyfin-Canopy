@@ -176,6 +176,31 @@ describe('Theme Studio identity-owned runtime', () => {
         });
     });
 
+    it.each([
+        ['fails', new Error('server unavailable')],
+        ['returns malformed data', { invalid: true }],
+    ])('keeps an early acknowledgement when its initial read %s', async (_label, outcome) => {
+        const plugin = vi.fn();
+        if (outcome instanceof Error) plugin.mockRejectedValue(outcome);
+        else plugin.mockResolvedValue(outcome);
+        JC.core.api = { plugin } as unknown as ApiApi;
+        const { runtime } = createRuntime();
+        const acknowledged = themeConfiguration();
+        acknowledged.Revision = 5;
+        acknowledged.Profiles[0].BasePreset = 'studio';
+
+        expect(runtime.adoptAcknowledged(acknowledged)).toBe(true);
+        await expect(runtime.whenReady()).resolves.toBe(true);
+
+        expect(plugin).toHaveBeenCalledOnce();
+        expect(runtime.getConfiguration()).toMatchObject({
+            Revision: 5,
+            Profiles: [expect.objectContaining({ BasePreset: 'studio' })],
+        });
+        expect(runtime.getDiagnostics()).toMatchObject({ status: 'active', revision: 5 });
+        expect(document.documentElement.getAttribute('data-jc-theme-preset')).toBe('studio');
+    });
+
     it('reloads authoritative state through the existing abortable owner', async () => {
         const first = themeConfiguration();
         const second = themeConfiguration();
