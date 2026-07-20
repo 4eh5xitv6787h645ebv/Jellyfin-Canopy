@@ -6,7 +6,9 @@ export const THEME_PROFILE_NAME_MAX_LENGTH = 80;
 
 export function isValidThemeProfileName(name: string): boolean {
     const cleanName = name.trim();
-    return cleanName.length > 0 && [...cleanName].length <= THEME_PROFILE_NAME_MAX_LENGTH;
+    return cleanName.length > 0
+        && [...cleanName].length <= THEME_PROFILE_NAME_MAX_LENGTH
+        && !/[\u0000-\u001f\u007f-\u009f]/.test(cleanName);
 }
 
 function cloneConfiguration(value: UserThemeConfiguration): UserThemeConfiguration {

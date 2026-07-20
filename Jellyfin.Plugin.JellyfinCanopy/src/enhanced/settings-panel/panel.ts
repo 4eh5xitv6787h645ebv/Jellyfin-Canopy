@@ -120,6 +120,13 @@ function createPanelOwner(identityContext: IdentityContext): PanelOwner {
 
 type OwnedPanelElement = HTMLElement & { _identityCleanup?: () => void };
 
+interface ClosePanelEvent {
+    readonly type: string;
+    readonly key?: string;
+    readonly target?: EventTarget | null;
+    stopPropagation?(): void;
+}
+
 /** Toggle the main settings panel, joining calls made during the same open. */
 export function showEnhancedPanel(): Promise<void> {
     if (currentPanelOwner?.phase === 'open') {
@@ -288,7 +295,7 @@ async function openPanel(owner: PanelOwner): Promise<void> {
     let autoCloseTimer: number | null = null;
     let autoCloseSuspended = false;
     let isMouseInside = false;
-    let closeHelp: (ev: any) => void = () => undefined;
+    let closeHelp: (ev: ClosePanelEvent) => void = () => undefined;
 
     // Every descendant listener installed by the split panel modules is
     // authorization-gated at the panel root. This also protects a retained,
@@ -547,8 +554,15 @@ async function openPanel(owner: PanelOwner): Promise<void> {
     });
 
     // --- Event Handlers for Settings Panel ---
-    closeHelp = (ev: any) => {
-        if ((ev.type === 'keydown' && (ev.key === 'Escape' || ev.key === '?')) || (ev.type === 'click' && ev.target.id === 'closeSettingsPanel')) {
+    closeHelp = (ev: ClosePanelEvent) => {
+        const target = ev.target;
+        const editableQuestion = ev.type === 'keydown' && ev.key === '?'
+            && target instanceof HTMLElement
+            && (target.matches('input, textarea, select, [contenteditable="true"]')
+                || target.isContentEditable);
+        if (editableQuestion) return;
+        if ((ev.type === 'keydown' && (ev.key === 'Escape' || ev.key === '?'))
+            || (ev.type === 'click' && target instanceof HTMLElement && target.id === 'closeSettingsPanel')) {
             // modal-a11y's Escape path invokes this with a synthetic
             // `{ type, key }` object (not a DOM event), so stopPropagation may be
             // absent — guard it. Calling it unconditionally threw a TypeError

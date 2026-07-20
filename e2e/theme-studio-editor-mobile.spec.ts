@@ -105,10 +105,26 @@ test.describe.serial('Theme Studio mobile editor', () => {
         await panel.locator('[data-action="reset-profile"]').click();
         await expect.poll(() => page.evaluate(() =>
             document.documentElement.getAttribute('data-jc-theme-preset'))).toBe('material');
-        await expect(profileName).not.toHaveValue('Mobile living room');
+        await expect(profileName).toHaveValue('Mobile living room');
         await panel.locator('[data-action="undo"]').click();
         await expect.poll(() => page.evaluate(() =>
             document.documentElement.getAttribute('data-jc-theme-preset'))).toBe('glass');
+        await expect(profileName).toHaveValue('Mobile living room');
+        const retainedScroll = await panel.locator('[data-theme-editor-root]').evaluate((root) => {
+            const studio = root.querySelector<HTMLElement>('.jc-theme-studio')!;
+            const palette = root.querySelector<HTMLSelectElement>('[data-field="palette"]')!;
+            const maximum = Math.max(0, studio.scrollHeight - studio.clientHeight);
+            studio.scrollTop = Math.min(180, maximum);
+            const before = studio.scrollTop;
+            palette.value = 'neutral';
+            palette.dispatchEvent(new Event('change', { bubbles: true }));
+            return {
+                before,
+                after: root.querySelector<HTMLElement>('.jc-theme-studio')!.scrollTop,
+            };
+        });
+        expect(retainedScroll.before).toBeGreaterThan(0);
+        expect(retainedScroll.after).toBe(retainedScroll.before);
         await page.setViewportSize({ width: 320, height: 700 });
 
         const portrait = await page.evaluate(() => {

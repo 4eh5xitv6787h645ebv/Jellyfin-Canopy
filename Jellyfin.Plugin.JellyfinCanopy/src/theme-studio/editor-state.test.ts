@@ -56,6 +56,15 @@ describe('ThemeEditorState', () => {
         expect(state.switchProfile('missing')).toBe(false);
     });
 
+    it('rejects C0 and C1 control characters in profile names before schema publication', () => {
+        const state = new ThemeEditorState(themeConfiguration());
+
+        expect(state.renameActiveProfile('Living\u0007room')).toBe(false);
+        expect(state.renameActiveProfile('Living\u0085room')).toBe(false);
+        expect(state.addProfile('Projector\u007froom')).toBe(false);
+        expect(state.snapshot()).toMatchObject({ dirty: false, canUndo: false });
+    });
+
     it('stages an undoable active-profile reset without changing identity, schedules, or other profiles', () => {
         const source = themeConfiguration();
         source.Profiles[0].Name = 'Living room';

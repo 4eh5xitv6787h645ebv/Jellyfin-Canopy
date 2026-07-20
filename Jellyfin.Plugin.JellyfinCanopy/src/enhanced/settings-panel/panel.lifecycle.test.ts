@@ -20,6 +20,8 @@ const mocks = vi.hoisted(() => ({
 vi.mock('./template', () => ({
     buildPanelHtml: () => `
         <button id="closeSettingsPanel" type="button">close</button>
+        <input id="lifecycleEditable" type="text">
+        <textarea id="lifecycleTextarea"></textarea>
         <div class="jc-panel-body">
             <div class="jc-panel-nav"><div class="jc-panel-nav-items"></div></div>
             <div class="jc-panel-main">
@@ -345,6 +347,19 @@ describe('settings panel lifecycle owner', () => {
         await vi.advanceTimersByTimeAsync(10);
         expect(document.getElementById('jellyfin-canopy-panel')).toBeNull();
     });
+
+    it.each(['lifecycleEditable', 'lifecycleTextarea'])(
+        'allows question marks in editable field %s without dismissing the panel',
+        async (id) => {
+            await showPanel!();
+            const field = document.getElementById(id)!;
+            field.focus();
+            field.dispatchEvent(new KeyboardEvent('keydown', { key: '?', bubbles: true }));
+
+            expect(document.getElementById('jellyfin-canopy-panel')).not.toBeNull();
+            expect(document.activeElement).toBe(field);
+        }
+    );
 
     it('continues disposing resources after one child cleanup throws', async () => {
         const beforeThrow = vi.fn();

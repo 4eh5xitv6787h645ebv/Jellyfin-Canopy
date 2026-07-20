@@ -252,6 +252,37 @@ function restoreFocus(root: HTMLElement, snapshot: FocusSnapshot | null): void {
     }
 }
 
+interface ScrollSnapshot {
+    readonly studioTop: number;
+    readonly studioLeft: number;
+    readonly expertTop: number;
+    readonly expertLeft: number;
+}
+
+function captureScroll(root: HTMLElement): ScrollSnapshot {
+    const studio = root.querySelector<HTMLElement>('.jc-theme-studio');
+    const expert = root.querySelector<HTMLTextAreaElement>('[data-field="expert-json"]');
+    return {
+        studioTop: studio?.scrollTop ?? 0,
+        studioLeft: studio?.scrollLeft ?? 0,
+        expertTop: expert?.scrollTop ?? 0,
+        expertLeft: expert?.scrollLeft ?? 0,
+    };
+}
+
+function restoreScroll(root: HTMLElement, snapshot: ScrollSnapshot): void {
+    const studio = root.querySelector<HTMLElement>('.jc-theme-studio');
+    if (studio) {
+        studio.scrollTop = snapshot.studioTop;
+        studio.scrollLeft = snapshot.studioLeft;
+    }
+    const expert = root.querySelector<HTMLTextAreaElement>('[data-field="expert-json"]');
+    if (expert) {
+        expert.scrollTop = snapshot.expertTop;
+        expert.scrollLeft = snapshot.expertLeft;
+    }
+}
+
 function persistenceKind(error: unknown): PersistenceKind {
     const kind = (error as { kind?: unknown } | null)?.kind;
     return typeof kind === 'string' && [
@@ -613,9 +644,11 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         if (disposed) return;
         syncAutoCloseProtection();
         const focused = captureFocus(root);
+        const scrolled = captureScroll(root);
         if (!state) {
             root.innerHTML = `${editorStyles()}<p class="jc-theme-status" role="status">${escapeHtml(status)}</p><button class="jc-theme-button" type="button" data-action="reload">${escapeHtml(t('theme_studio_reload'))}</button>`;
             restoreFocus(root, focused);
+            restoreScroll(root, scrolled);
             return;
         }
         const snapshot = state.snapshot();
@@ -660,6 +693,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
                 <div class="jc-theme-row">${recoveryRequired ? `<button class="jc-theme-button" type="button" data-action="reload"${busy ? ' disabled' : ''}>${escapeHtml(t('theme_studio_reload'))}</button>` : ''}<button class="jc-theme-button" type="button" data-action="cancel"${busy ? ' disabled' : ''}>${escapeHtml(t('theme_studio_cancel'))}</button><button class="jc-theme-button primary" type="button" data-action="apply"${!hasLocalDraft || busy || expertInvalid || profileNameInvalid || recoveryRequired ? ' disabled' : ''}>${escapeHtml(saving ? t('theme_studio_saving') : t('theme_studio_apply'))}</button></div>
             </div>`;
         restoreFocus(root, focused);
+        restoreScroll(root, scrolled);
     };
 
     const changed = (success: boolean, synchronizeExpert = true, successStatus?: string): void => {
@@ -991,7 +1025,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
             render();
             return;
         }
-        if (mutatesDraft && action !== 'add-profile' && action !== 'reset-profile'
+        if (mutatesDraft && action !== 'add-profile'
             && !flushProfileName()) {
             render();
             return;
@@ -1020,7 +1054,6 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
             } else changed(state.addProfile(copyName));
         } else if (action === 'delete-profile') changed(state.deleteActiveProfile());
         else if (action === 'reset-profile') {
-            syncProfileName(true);
             const defaults = administratorThemeDefaults();
             const reset = state.resetActiveProfile(defaults.preset, defaults.palette);
             if (reset) changed(true, true, t('theme_studio_reset_done'));

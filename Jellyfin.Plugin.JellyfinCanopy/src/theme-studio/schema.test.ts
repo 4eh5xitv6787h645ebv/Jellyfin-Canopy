@@ -89,6 +89,10 @@ describe('Theme Studio browser schema boundary', () => {
         invalidAccent.Profiles[0].Accent = 'javascript';
         expect(parseUserThemeConfiguration(invalidAccent)).toBeNull();
 
+        const controlName = themeConfiguration();
+        controlName.Profiles[0].Name = 'Living\u0085room';
+        expect(parseUserThemeConfiguration(controlName)).toBeNull();
+
         const curated = themeConfiguration();
         curated.Profiles[0].Palette = 'catppuccin';
         curated.Profiles[0].Accent = 'palette';

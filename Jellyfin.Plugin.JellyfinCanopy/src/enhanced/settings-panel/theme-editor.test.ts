@@ -340,6 +340,59 @@ describe('Theme Studio responsive settings editor', () => {
         expect(cancelPreview).toHaveBeenCalledOnce();
     });
 
+    it('commits a valid staged profile name before reset and keeps it when reset is undone', () => {
+        JC.pluginConfig.ThemeStudioDefaultPreset = 'material';
+        wireThemeStudioEditor(context());
+        let input = panel.querySelector<HTMLInputElement>('[data-role="profile-name"]')!;
+        input.value = 'Living room';
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+
+        button('reset-profile').click();
+        flushFrames();
+
+        input = panel.querySelector<HTMLInputElement>('[data-role="profile-name"]')!;
+        expect(input.value).toBe('Living room');
+        expect(preview).toHaveBeenLastCalledWith(expect.objectContaining({
+            Profiles: [expect.objectContaining({ Name: 'Living room', BasePreset: 'material' })],
+        }));
+
+        button('undo').click();
+        input = panel.querySelector<HTMLInputElement>('[data-role="profile-name"]')!;
+        expect(input.value).toBe('Living room');
+        expect(button('preset', 'canopy').getAttribute('aria-pressed')).toBe('true');
+        expect(button('apply').disabled).toBe(false);
+    });
+
+    it('preserves workspace and Expert JSON scrolling across full editor rerenders', () => {
+        wireThemeStudioEditor(context());
+        let studio = panel.querySelector<HTMLElement>('.jc-theme-studio')!;
+        studio.scrollTop = 231;
+        studio.scrollLeft = 17;
+        const palette = panel.querySelector<HTMLSelectElement>('[data-field="palette"]')!;
+        palette.value = 'neutral';
+        palette.dispatchEvent(new Event('change', { bubbles: true }));
+
+        studio = panel.querySelector<HTMLElement>('.jc-theme-studio')!;
+        expect(studio.scrollTop).toBe(231);
+        expect(studio.scrollLeft).toBe(17);
+
+        button('editor-mode', 'expert').click();
+        studio = panel.querySelector<HTMLElement>('.jc-theme-studio')!;
+        const expert = panel.querySelector<HTMLTextAreaElement>('[data-field="expert-json"]')!;
+        studio.scrollTop = 319;
+        expert.scrollTop = 143;
+        expert.scrollLeft = 29;
+        expert.value = `${expert.value}\n`;
+        expert.dispatchEvent(new Event('input', { bubbles: true }));
+        vi.advanceTimersByTime(250);
+
+        studio = panel.querySelector<HTMLElement>('.jc-theme-studio')!;
+        const renderedExpert = panel.querySelector<HTMLTextAreaElement>('[data-field="expert-json"]')!;
+        expect(studio.scrollTop).toBe(319);
+        expect(renderedExpert.scrollTop).toBe(143);
+        expect(renderedExpert.scrollLeft).toBe(29);
+    });
+
     it('preserves an in-progress profile name across mobile preview rerenders', () => {
         const viewport = Object.assign(new EventTarget(), { height: 412, offsetTop: 177 });
         vi.stubGlobal('visualViewport', viewport);
