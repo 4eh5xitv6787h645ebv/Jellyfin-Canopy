@@ -515,8 +515,13 @@ version and seed-input digest, the SHA-256 of the `scale-budgets.json` used,
 workflow run ID and attempt, creation time, topology metadata, raw metrics,
 the compared limits, enforcement mode, and outcome. Release-time reuse
 verifies the artifact ID and digest, that the producing run was a `main`-only
-schedule/`workflow_dispatch` run, that the artifact is retained through the
-freshness window, that its budget digest equals the tag commit's
+schedule/`workflow_dispatch` run, that the recorded producing run attempt
+**concluded successfully** — an artifact is uploaded at the collect step,
+before teardown, so a run classified no-evidence after upload (for example,
+its `always()` teardown failed to destroy the instance or detach the Volume)
+fails its workflow run per the teardown contract below, and its artifacts,
+however green, are never reusable evidence — that the artifact is retained
+through the freshness window, that its budget digest equals the tag commit's
 `scale-budgets.json` digest, and that its recorded seed-input digest equals
 the digest computed from the tag commit's seed inputs for that profile (seed
 inputs as canonically defined under Volume lifecycle below — including the
@@ -595,6 +600,14 @@ Secrets and teardown:
 - Teardown runs under `always()` so a failed run cannot leak a paid instance;
   it destroys the exact instance it provisioned and confirms the Volume is
   detached. A collection failure must not suppress cleanup.
+- A teardown failure — instance not confirmed destroyed or Volume not
+  confirmed detached — **fails the workflow run**, even when every earlier
+  step (including collection and artifact upload) succeeded. This makes the
+  no-evidence classification machine-visible in the run conclusion: because
+  the canonical artifact is uploaded at collect, before destroy, the run
+  conclusion is the only signal that distinguishes a fully successful run from
+  one whose evidence was voided by a later lifecycle failure, and release-time
+  reuse depends on it (see the exact-tag-SHA section above).
 - GitHub workflow artifacts are the **canonical** results store. Copies
   mirrored to the Object Storage bucket are optional, analysis-only, and are
   never release evidence.
