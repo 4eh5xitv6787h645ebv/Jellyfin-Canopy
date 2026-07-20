@@ -539,8 +539,8 @@ describe('Theme Studio identity-owned runtime', () => {
             'watched-indicator': 'check',
             'unwatched-indicator': 'corner',
             'player-osd-density': 'standard',
-            'player-control-material': 'translucent',
-            'player-pause-screen-material': 'translucent',
+            'player-control-material': 'solid',
+            'player-pause-screen-material': 'solid',
             'player-subtitle-backdrop': 'shadow',
             'player-trickplay-shape': 'rounded',
         });
@@ -643,7 +643,8 @@ describe('Theme Studio identity-owned runtime', () => {
                 230, 40, 80, 255, 230, 40, 80, 255, 230, 40, 80, 255,
             ]) })),
         } as unknown as CanvasRenderingContext2D);
-        document.body.innerHTML = '<img src="/Items/private-item/Images/Primary?tag=private-tag">';
+        document.body.innerHTML = '<div class="page">'
+            + '<img src="/Items/private-item/Images/Primary?tag=private-tag"></div>';
         const configuration = themeConfiguration();
         configuration.Profiles[0].Tokens = {
             'effects.level': 'full',
@@ -699,7 +700,8 @@ describe('Theme Studio identity-owned runtime', () => {
         const fetchMock = vi.fn(() => Promise.reject(new TypeError('temporary local image failure')));
         vi.stubGlobal('createImageBitmap', vi.fn());
         vi.stubGlobal('fetch', fetchMock);
-        document.body.innerHTML = '<img src="/Items/private-item/Images/Primary?tag=private-tag">';
+        document.body.innerHTML = '<div class="page">'
+            + '<img src="/Items/private-item/Images/Primary?tag=private-tag"></div>';
         const configuration = themeConfiguration();
         configuration.Profiles[0].Tokens = {
             'effects.level': 'full',
@@ -882,7 +884,7 @@ describe('Theme Studio identity-owned runtime', () => {
             'watched-indicator': 'floating',
             'unwatched-indicator': 'none',
             'player-osd-density': 'cinematic',
-            'player-control-material': 'glass',
+            'player-control-material': 'solid',
             'player-pause-screen-material': 'solid',
             'player-subtitle-backdrop': 'box',
             'player-trickplay-shape': 'pill',
@@ -910,8 +912,8 @@ describe('Theme Studio identity-owned runtime', () => {
             'watched-indicator': 'check',
             'unwatched-indicator': 'corner',
             'player-osd-density': 'standard',
-            'player-control-material': 'translucent',
-            'player-pause-screen-material': 'translucent',
+            'player-control-material': 'solid',
+            'player-pause-screen-material': 'solid',
             'player-subtitle-backdrop': 'shadow',
             'player-trickplay-shape': 'rounded',
         });

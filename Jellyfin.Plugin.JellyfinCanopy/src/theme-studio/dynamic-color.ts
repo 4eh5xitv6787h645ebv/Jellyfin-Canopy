@@ -59,6 +59,24 @@ function inlineBackgroundUrl(element: HTMLElement): string {
     return match?.[1] ?? '';
 }
 
+function findMediaImageWithin(
+    root: ParentNode,
+    imageType: 'Primary' | 'Backdrop',
+    origin: string,
+): LocalMediaImage | null {
+    const image = root.querySelector<HTMLImageElement>(
+        `img[src*="/Items/"][src*="/Images/${imageType}"],`
+        + `img[data-src*="/Items/"][data-src*="/Images/${imageType}"]`,
+    );
+    const imageValue = image?.currentSrc || image?.src || image?.dataset.src || '';
+    const direct = localMediaImage(imageValue, origin);
+    if (direct) return direct;
+    const background = root.querySelector<HTMLElement>(
+        `[style*="/Items/"][style*="/Images/${imageType}"]`,
+    );
+    return localMediaImage(background ? inlineBackgroundUrl(background) : '', origin);
+}
+
 /** Finds one local candidate with no layout reads or computed-style walk. */
 export function findLocalMediaImage(
     documentValue: Document,
@@ -66,17 +84,27 @@ export function findLocalMediaImage(
     origin = window.location.origin,
 ): LocalMediaImage | null {
     const imageType = source === 'poster' ? 'Primary' : 'Backdrop';
-    const image = documentValue.querySelector<HTMLImageElement>(
-        `img[src*="/Items/"][src*="/Images/${imageType}"],`
-        + `img[data-src*="/Items/"][data-src*="/Images/${imageType}"]`,
-    );
-    const imageValue = image?.currentSrc || image?.src || image?.dataset.src || '';
-    const direct = localMediaImage(imageValue, origin);
-    if (direct) return direct;
-    const background = documentValue.querySelector<HTMLElement>(
-        `[style*="/Items/"][style*="/Images/${imageType}"]`,
-    );
-    return localMediaImage(background ? inlineBackgroundUrl(background) : '', origin);
+    const activePage = documentValue.querySelector<HTMLElement>('.page:not(.hide)');
+    const active = activePage ? findMediaImageWithin(activePage, imageType, origin) : null;
+    if (active || source === 'poster') return active;
+
+    // Jellyfin keeps its backdrop layer outside the page cache. Accept only
+    // that finite global role, never a candidate retained inside `.page.hide`.
+    const globalBackdrops = Array.from(documentValue.querySelectorAll<HTMLElement>(
+        '.backdropImage, .backgroundContainer',
+    )).slice(0, 8);
+    for (const globalBackdrop of globalBackdrops) {
+        if (!globalBackdrop || globalBackdrop.closest('.page')) continue;
+        const candidate = globalBackdrop instanceof HTMLImageElement
+            ? localMediaImage(
+                globalBackdrop.currentSrc || globalBackdrop.src || globalBackdrop.dataset.src || '',
+                origin,
+            )
+            : findMediaImageWithin(globalBackdrop, imageType, origin)
+                ?? localMediaImage(inlineBackgroundUrl(globalBackdrop), origin);
+        if (candidate) return candidate;
+    }
+    return null;
 }
 
 /** Bounded, deterministic colour quantization over at most a 32×32 sample. */

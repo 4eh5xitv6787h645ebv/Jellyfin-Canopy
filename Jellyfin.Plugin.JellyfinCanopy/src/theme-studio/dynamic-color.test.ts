@@ -42,12 +42,28 @@ describe('Theme Studio local dynamic color', () => {
     });
 
     it('finds one direct poster or inline backdrop without computed-style or layout reads', () => {
-        document.body.innerHTML = '<img src="/Items/poster/Images/Primary?tag=1">'
-            + '<div style="background-image:url(\'/Items/backdrop/Images/Backdrop?tag=2\')"></div>';
+        document.body.innerHTML = '<div class="page">'
+            + '<img src="/Items/poster/Images/Primary?tag=1">'
+            + '<div style="background-image:url(\'/Items/backdrop/Images/Backdrop?tag=2\')"></div></div>';
         expect(findLocalMediaImage(document, 'poster', window.location.origin)?.key)
             .toBe(`${window.location.origin}/Items/poster/Images/Primary`);
         expect(findLocalMediaImage(document, 'backdrop', window.location.origin)?.key)
             .toBe(`${window.location.origin}/Items/backdrop/Images/Backdrop`);
+    });
+
+    it('ignores a hidden cached page and uses the active page before a bounded global backdrop', () => {
+        document.body.innerHTML = '<div class="page hide"><div class="backdropImage">'
+            + '<img src="/Items/stale/Images/Backdrop"></div>'
+            + '</div>'
+            + '<div class="page"><img src="/Items/active/Images/Backdrop"></div>'
+            + '<img class="backdropImage" src="/Items/global/Images/Backdrop">';
+        expect(findLocalMediaImage(document, 'backdrop', window.location.origin)?.key)
+            .toBe(`${window.location.origin}/Items/active/Images/Backdrop`);
+
+        document.querySelector('.page:not(.hide)')?.remove();
+        expect(findLocalMediaImage(document, 'backdrop', window.location.origin)?.key)
+            .toBe(`${window.location.origin}/Items/global/Images/Backdrop`);
+        expect(findLocalMediaImage(document, 'poster', window.location.origin)).toBeNull();
     });
 
     it('derives a deterministic bounded dominant accent and ignores transparent or grey pixels', () => {

@@ -344,8 +344,9 @@ export function resolveTheme(
     if (requestedMotion === 'system') requestedMotion = 'calm';
 
     if (resolvedEffectsLevel === 'balanced') {
+        const saturation = Number(tokens['effects.saturation']);
         tokens['effects.blur'] = Math.min(12, Number(tokens['effects.blur']) || 0);
-        tokens['effects.saturation'] = Math.min(1.2, Number(tokens['effects.saturation']) || 1);
+        tokens['effects.saturation'] = Math.min(1.2, Number.isFinite(saturation) ? saturation : 1);
         tokens['effects.backdrop-opacity'] = Math.max(0.78, Number(tokens['effects.backdrop-opacity']) || 0);
         tokens['effects.glow'] = Math.min(0.25, Number(tokens['effects.glow']) || 0);
         tokens['elevation.glow-intensity'] = Math.min(0.25, Number(tokens['elevation.glow-intensity']) || 0);
@@ -368,6 +369,8 @@ export function resolveTheme(
         tokens['elevation.surface-shadow'] = 'none';
         tokens['elevation.card-shadow'] = 'none';
         tokens['elevation.dialog-shadow'] = 'none';
+        tokens['player.control-material'] = 'solid';
+        tokens['player.pause-screen-material'] = 'solid';
         tokens['color.dynamic-source'] = 'off';
         requestedMotion = 'off';
     }
@@ -384,6 +387,8 @@ export function resolveTheme(
         tokens['effects.blur'] = 0;
         tokens['effects.saturation'] = 1;
         tokens['effects.backdrop-opacity'] = 1;
+        tokens['player.control-material'] = 'solid';
+        tokens['player.pause-screen-material'] = 'solid';
     }
     if (reducedMotion || requestedMotion === 'off') {
         requestedMotion = 'off';

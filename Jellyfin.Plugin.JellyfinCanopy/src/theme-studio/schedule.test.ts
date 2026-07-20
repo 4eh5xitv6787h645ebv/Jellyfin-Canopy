@@ -17,6 +17,15 @@ describe('Theme Studio seasonal schedule', () => {
         expect(configuration.Schedule.map((entry) => entry.Id)).toEqual(['z-season', 'z-holiday', 'a-holiday']);
     });
 
+    it('uses identifier code-unit order instead of the browser locale for exact ties', () => {
+        const configuration = themeConfiguration();
+        configuration.Schedule = [
+            { Id: 'b', ProfileId: 'default', Kind: 'season', StartMonthDay: '01-01', EndMonthDay: '12-31', Priority: 1, Enabled: true },
+            { Id: 'aa', ProfileId: 'default', Kind: 'season', StartMonthDay: '01-01', EndMonthDay: '12-31', Priority: 1, Enabled: true },
+        ];
+        expect(selectThemeSchedule(configuration, new Date(2026, 6, 20, 12))?.id).toBe('aa');
+    });
+
     it('supports wrapped seasons, disabled entries, and legacy season defaults', () => {
         const configuration = themeConfiguration();
         configuration.Schedule = [

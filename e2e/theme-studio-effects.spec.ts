@@ -445,6 +445,16 @@ test.describe.serial('Theme Studio bounded effects', () => {
         await loginAs(page, 'admin', consoleErrors);
         await waitForThemeRuntime(page, 'phone');
         await mountEffectsFixture(page);
+        await page.evaluate(() => {
+            const probe = document.createElement('div');
+            probe.id = 'jc-minimal-material-probe';
+            probe.style.cssText = 'position:fixed;inset-inline-start:-10000px;inline-size:10px;block-size:10px;overflow:hidden';
+            probe.innerHTML = '<div class="videoOsdBottom"></div>'
+                + '<div id="pause-screen-content"></div>'
+                + '<div class="nowPlayingInfoContainer"></div>'
+                + '<div class="bookOsdRow"></div>';
+            document.body.append(probe);
+        });
         expect((await previewEffects(page)).accepted).toBe(true);
         await expect.poll(() => page.evaluate(() => ({
             breakpoint: document.documentElement.getAttribute('data-jc-theme-breakpoint'),
@@ -455,9 +465,12 @@ test.describe.serial('Theme Studio bounded effects', () => {
             motion: document.documentElement.getAttribute('data-jc-theme-motion-profile'),
             source: document.documentElement.getAttribute('data-jc-theme-dynamic-source'),
             accent: document.documentElement.getAttribute('data-jc-theme-dynamic-accent'),
+            playerControl: document.documentElement.getAttribute('data-jc-theme-player-control-material'),
+            playerPause: document.documentElement.getAttribute('data-jc-theme-player-pause-screen-material'),
         }))).toEqual({
             breakpoint: 'phone', performance: 'reduced', level: 'minimal', material: 'solid',
             treatment: 'none', motion: 'off', source: 'off', accent: 'off',
+            playerControl: 'solid', playerPause: 'solid',
         });
         for (const viewport of [
             { name: 'portrait', width: 390, height: 844 },
@@ -477,6 +490,30 @@ test.describe.serial('Theme Studio bounded effects', () => {
             });
         expect(dialogEffects.backdrop).toBe('none');
         expect(dialogEffects.shadow).toBe('none');
+        const materialEffects = await page.locator('#jc-minimal-material-probe > *').evaluateAll((elements) => {
+            const reference = document.createElement('div');
+            reference.style.backgroundColor = 'var(--jc-color-surface)';
+            document.body.append(reference);
+            const solid = getComputedStyle(reference).backgroundColor;
+            reference.remove();
+            return elements.map((element) => {
+                const styles = getComputedStyle(element);
+                return {
+                    role: element.id || element.className,
+                    background: styles.backgroundColor,
+                    image: styles.backgroundImage,
+                    backdrop: styles.backdropFilter,
+                    shadow: styles.boxShadow,
+                    solid,
+                };
+            });
+        });
+        for (const effects of materialEffects) {
+            expect(effects.background, effects.role).toBe(effects.solid);
+            expect(effects.image, effects.role).toBe('none');
+            expect(effects.backdrop, effects.role).toBe('none');
+            expect(effects.shadow, effects.role).toBe('none');
+        }
         assertNoRuntimeErrors(consoleErrors);
     });
 });

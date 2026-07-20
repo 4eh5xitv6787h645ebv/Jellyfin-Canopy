@@ -335,6 +335,8 @@ describe('Theme Studio resolver', () => {
             'motion.stagger': true,
             'color.dynamic-source': 'poster',
             'color.dynamic-strength': 0.75,
+            'player.control-material': 'glass',
+            'player.pause-screen-material': 'glass',
         };
 
         const full = resolveTheme(configuration, media({ backdropFilterSupported: true }), {
@@ -380,6 +382,8 @@ describe('Theme Studio resolver', () => {
                 'effects.glow': 0,
                 'elevation.card-shadow': 'none',
                 'motion.duration-scale': 0,
+                'player.control-material': 'solid',
+                'player.pause-screen-material': 'solid',
             });
         }
 
@@ -392,6 +396,16 @@ describe('Theme Studio resolver', () => {
 
         configuration.Profiles[0].Tokens['effects.level'] = 'minimal';
         expect(resolveTheme(configuration, media(), { maximumEffectsLevel: 'full' }).effectsLevel).toBe('minimal');
+    });
+
+    it('preserves the valid zero saturation boundary when Balanced caps only the maximum', () => {
+        const configuration = themeConfiguration();
+        configuration.Profiles[0].Tokens = {
+            'effects.level': 'full',
+            'effects.saturation': 0,
+        };
+        expect(resolveTheme(configuration, media(), { maximumEffectsLevel: 'balanced' })
+            .tokens['effects.saturation']).toBe(0);
     });
 
     it('publishes deterministic holiday schedule metadata and honors UTC policy', () => {

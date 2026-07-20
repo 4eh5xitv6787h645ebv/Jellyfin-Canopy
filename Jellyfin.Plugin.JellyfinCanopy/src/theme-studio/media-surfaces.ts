@@ -563,6 +563,27 @@ ${selector}[data-jc-theme-transparency="reduced"] :where(
   background-image: none !important;
   background-color: var(--jc-color-surface);
 }
+${selector}[data-jc-theme-effects-level="minimal"] :where(
+  .videoOsdBottom,
+  .sliderBubble,
+  .chapterThumbContainer,
+  #jc-osd-rating-container .jc-chip,
+  [data-jc-frame-overlay="true"],
+  #pause-screen-content,
+  #pause-screen-close-btn,
+  .nowPlayingInfoContainer,
+  .nowPlayingPlaylist,
+  .nowPlayingPage [role="status"],
+  .tvguide [role="status"],
+  #bookPlayerContainer [role="status"],
+  .bookOsdRow
+) {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  background-image: none !important;
+  background-color: var(--jc-color-surface) !important;
+  box-shadow: none !important;
+}
 @media (orientation: landscape) and (max-height: 599px) {
   ${selector}[data-jc-theme-breakpoint="phone"] .videoOsdBottom {
     padding-block-start: 2.75rem;

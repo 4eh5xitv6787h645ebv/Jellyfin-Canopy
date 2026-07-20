@@ -81,6 +81,11 @@ describe('Theme Studio modern media surface modules', () => {
         expect(css).toContain(':focus-visible');
         expect(css).toContain('@media (forced-colors: active)');
         expect(css).toContain('[data-jc-theme-transparency="reduced"]');
+        expect(css).toContain('[data-jc-theme-effects-level="minimal"]');
+        for (const solidRole of [
+            '.videoOsdBottom', '#pause-screen-content', '.nowPlayingInfoContainer',
+            '.nowPlayingPlaylist', '.bookOsdRow', '[data-jc-frame-overlay="true"]',
+        ]) expect(css, `minimal/${solidRole}`).toContain(solidRole);
         expect(css).not.toContain('url(');
         expect(css).not.toContain('@import');
         expect(css).not.toMatch(/(?:^|[;{\n])\s*order\s*:/m);

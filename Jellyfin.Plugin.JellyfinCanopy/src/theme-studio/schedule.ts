@@ -26,6 +26,10 @@ function includesDay(entry: ThemeScheduleEntry, current: string): boolean {
         : current >= entry.StartMonthDay || current <= entry.EndMonthDay;
 }
 
+function compareIdentifier(left: string, right: string): number {
+    return left < right ? -1 : left > right ? 1 : 0;
+}
+
 /**
  * Resolves one deterministic schedule entry. Holidays outrank seasons;
  * priorities break ties within a kind, followed by the stable entry id.
@@ -39,7 +43,7 @@ export function selectThemeSchedule(
         .sort((left, right) => {
             const kind = Number((right.Kind ?? 'season') === 'holiday')
                 - Number((left.Kind ?? 'season') === 'holiday');
-            return kind || right.Priority - left.Priority || left.Id.localeCompare(right.Id);
+            return kind || right.Priority - left.Priority || compareIdentifier(left.Id, right.Id);
         })[0];
     return selected ? Object.freeze({
         id: selected.Id,
