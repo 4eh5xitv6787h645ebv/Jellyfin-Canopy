@@ -527,10 +527,12 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
     let saving = false;
     let loading = false;
     let recoveryRequired = false;
+    let recoveryStatus: string | null = null;
     let frame = 0;
     let previewCardFrame = 0;
     let expertTimer = 0;
     let importGeneration = 0;
+    let importValidationController: AbortController | null = null;
     let runtimeGeneration = 0;
     let disposed = false;
     let autoCloseProtected = false;
@@ -543,12 +545,33 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         pendingImportPreserveDormantSchedule = null;
     };
 
+    const retireImportWork = (): void => {
+        importGeneration += 1;
+        importValidationController?.abort();
+        importValidationController = null;
+        clearPendingImport();
+    };
+
     const invalidateImportForDraftChange = (): void => {
         // Validation and its displayed diff are relative to one exact draft.
         // Any later edit retires both so accepting an old review can never
         // replace newer work that was not represented in that review.
-        importGeneration += 1;
-        clearPendingImport();
+        retireImportWork();
+    };
+
+    const visibleStatus = (): string => recoveryRequired && recoveryStatus
+        ? recoveryStatus
+        : status;
+
+    const clearRecovery = (): void => {
+        recoveryRequired = false;
+        recoveryStatus = null;
+    };
+
+    const requireRecovery = (message: string): void => {
+        recoveryRequired = true;
+        recoveryStatus = message;
+        status = message;
     };
 
     const updateVisualViewport = (): void => {
@@ -713,7 +736,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
             </div>
             </fieldset>
             <div class="jc-theme-actions">
-                <div class="jc-theme-status" role="status" aria-live="polite">${hasLocalDraft ? `● ${escapeHtml(status)}` : escapeHtml(status)}</div>
+                <div class="jc-theme-status" role="status" aria-live="polite">${hasLocalDraft ? `● ${escapeHtml(visibleStatus())}` : escapeHtml(visibleStatus())}</div>
                 <div class="jc-theme-row">${recoveryRequired ? `<button class="jc-theme-button" type="button" data-action="reload"${busy ? ' disabled' : ''}>${escapeHtml(t('theme_studio_reload'))}</button>` : ''}<button class="jc-theme-button" type="button" data-action="cancel"${busy ? ' disabled' : ''}>${escapeHtml(t('theme_studio_cancel'))}</button><button class="jc-theme-button primary" type="button" data-action="apply"${!hasLocalDraft || busy || expertInvalid || profileNameInvalid || recoveryRequired ? ' disabled' : ''}>${escapeHtml(saving ? t('theme_studio_saving') : t('theme_studio_apply'))}</button></div>
             </div>`;
         restoreFocus(root, focused);
@@ -731,7 +754,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         if (synchronizeExpert) expertText = JSON.stringify(snapshot.configuration, null, 2);
         expertInvalid = false;
         if (snapshot.dirty) {
-            status = t('theme_studio_unsaved');
+            if (!recoveryRequired) status = t('theme_studio_unsaved');
             schedulePreview();
         } else {
             clearStagedPreview();
@@ -780,7 +803,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
             const snapshot = state.snapshot();
             if (carriedProfileName) expertText = JSON.stringify(snapshot.configuration, null, 2);
             if (snapshot.dirty) {
-                status = t('theme_studio_unsaved');
+                if (!recoveryRequired) status = t('theme_studio_unsaved');
                 schedulePreview();
             } else {
                 clearStagedPreview();
@@ -799,7 +822,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         if (!state || !profileNameDirty()) return !profileNameInvalid;
         if (!isValidThemeProfileName(profileNameText)) {
             profileNameInvalid = true;
-            status = t('theme_studio_profile_name_invalid');
+            if (!recoveryRequired) status = t('theme_studio_profile_name_invalid');
             return false;
         }
         const profileId = profileNameProfileId;
@@ -815,7 +838,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
             invalidateImportForDraftChange();
             expertText = JSON.stringify(state.snapshot().configuration, null, 2);
             if (state.snapshot().dirty) {
-                status = t('theme_studio_unsaved');
+                if (!recoveryRequired) status = t('theme_studio_unsaved');
                 schedulePreview();
             } else {
                 clearStagedPreview();
@@ -838,9 +861,9 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
                 state = null;
                 syncProfileName(true);
             } else {
-                recoveryRequired = true;
+                requireRecovery(t('theme_studio_unavailable'));
             }
-            status = t('theme_studio_unavailable');
+            if (!state || force) status = t('theme_studio_unavailable');
             render();
             return;
         }
@@ -876,7 +899,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
             if (state.matchesCommitted(nextConfiguration)) {
                 configuration = nextConfiguration;
                 loading = false;
-                recoveryRequired = false;
+                clearRecovery();
                 status = t(profileNameInvalid
                     ? 'theme_studio_profile_name_invalid'
                     : expertInvalid
@@ -887,8 +910,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
                 return;
             }
             loading = false;
-            recoveryRequired = true;
-            status = t('theme_studio_error_conflict');
+            requireRecovery(t('theme_studio_error_conflict'));
             render();
             return;
         }
@@ -899,7 +921,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         clearPendingImport();
         expertInvalid = false;
         loading = false;
-        recoveryRequired = false;
+        clearRecovery();
         status = t(reloaded ? 'theme_studio_reloaded' : 'theme_studio_ready');
         render();
     };
@@ -908,8 +930,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         if (saving || loading) return;
         // Reload is an explicit authoritative discard. Retire validation that
         // began against the discarded draft before yielding to the runtime.
-        importGeneration += 1;
-        clearPendingImport();
+        retireImportWork();
         if (expertTimer) {
             clearTimeout(expertTimer);
             expertTimer = 0;
@@ -925,8 +946,8 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         if (disposed || generation !== runtimeGeneration || runtime !== nextRuntime) return;
         if (!loaded || !nextRuntime || !JC.identity.isCurrent(ctx.identityContext)) {
             loading = false;
-            if (state) recoveryRequired = true;
-            status = t('theme_studio_unavailable');
+            if (state) requireRecovery(t('theme_studio_unavailable'));
+            else status = t('theme_studio_unavailable');
             render();
             return;
         }
@@ -937,7 +958,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         clearPendingImport();
         expertInvalid = false;
         loading = false;
-        recoveryRequired = false;
+        clearRecovery();
         status = configuration ? t('theme_studio_reloaded') : t('theme_studio_unavailable');
         render();
     };
@@ -958,8 +979,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         }
         const persistenceRuntime = JC.core.themeStudio;
         if (!persistenceRuntime) {
-            recoveryRequired = true;
-            status = t('theme_studio_unavailable');
+            requireRecovery(t('theme_studio_unavailable'));
             render();
             return;
         }
@@ -1010,11 +1030,15 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
             if (disposed) return;
             expertText = JSON.stringify(ownedAcknowledged, null, 2);
             status = t('theme_studio_saved');
-            recoveryRequired = false;
+            clearRecovery();
         } catch (error) {
             const kind = persistenceKind(error);
             status = t(`theme_studio_error_${kind}`);
-            recoveryRequired = kind === 'conflict' || kind === 'unavailable' || kind === 'protocol';
+            if (kind === 'conflict' || kind === 'unavailable' || kind === 'protocol') {
+                requireRecovery(status);
+            } else {
+                clearRecovery();
+            }
         } finally {
             saving = false;
             if (!disposed && JC.identity.isCurrent(ctx.identityContext)) render();
@@ -1024,8 +1048,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
     const stageImport = async (file: File): Promise<void> => {
         // Choosing a new file retires any older validation or review before
         // asynchronous file/server work begins.
-        importGeneration += 1;
-        clearPendingImport();
+        retireImportWork();
         if (!recoveryRequired && state) {
             status = t(state.snapshot().dirty || profileNameDirty()
                 ? 'theme_studio_unsaved'
@@ -1062,6 +1085,8 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
             }
             return;
         }
+        const validationController = new AbortController();
+        importValidationController = validationController;
         try {
             // Disabled scheduling makes imported schedule mutations invalid,
             // including a user's own export of a dormant stored schedule.
@@ -1072,7 +1097,14 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
                 : parsed;
             const response = await JC.core.api.plugin(
                 `/user-settings/${encodeURIComponent(ctx.identityContext.userId)}/theme.json/validate`,
-                { method: 'POST', body: validationDocument, skipCache: true, skipRetry: true, timeoutMs: 10_000 },
+                {
+                    method: 'POST',
+                    body: validationDocument,
+                    signal: validationController.signal,
+                    skipCache: true,
+                    skipRetry: true,
+                    timeoutMs: 10_000,
+                },
             );
             if (disposed || generation !== importGeneration || !state
                 || !JC.identity.isCurrent(ctx.identityContext)
@@ -1092,6 +1124,8 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
             if (disposed || generation !== importGeneration || !JC.identity.isCurrent(ctx.identityContext)) return;
             clearPendingImport();
             status = t('theme_studio_import_invalid');
+        } finally {
+            if (importValidationController === validationController) importValidationController = null;
         }
         render();
     };
@@ -1152,7 +1186,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         else if (action === 'cancel') {
             // A slow server validation belongs to the draft being discarded;
             // its continuation must never repopulate the import review.
-            importGeneration += 1;
+            retireImportWork();
             if (expertTimer) {
                 clearTimeout(expertTimer);
                 expertTimer = 0;
@@ -1163,7 +1197,6 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
             JC.core.themeStudio?.cancelPreview();
             expertText = JSON.stringify(state.snapshot().configuration, null, 2);
             expertInvalid = false;
-            clearPendingImport();
             status = t('theme_studio_cancelled');
             render();
         } else if (action === 'apply') void apply();
@@ -1244,10 +1277,10 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
             if (error) error.hidden = !profileNameInvalid;
             const snapshot = state.snapshot();
             const hasLocalDraft = snapshot.dirty || profileNameDirty();
-            if (profileNameInvalid) status = t('theme_studio_profile_name_invalid');
+            if (profileNameInvalid && !recoveryRequired) status = t('theme_studio_profile_name_invalid');
             else if (!recoveryRequired) status = t(hasLocalDraft ? 'theme_studio_unsaved' : 'theme_studio_ready');
             const statusElement = root.querySelector<HTMLElement>('.jc-theme-status');
-            if (statusElement) statusElement.textContent = `${hasLocalDraft ? '● ' : ''}${status}`;
+            if (statusElement) statusElement.textContent = `${hasLocalDraft ? '● ' : ''}${visibleStatus()}`;
             const applyButton = root.querySelector<HTMLButtonElement>('[data-action="apply"]');
             if (applyButton) {
                 applyButton.disabled = !hasLocalDraft || saving || loading
@@ -1268,9 +1301,9 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
             invalidateImportForDraftChange();
             root.querySelector<HTMLElement>('.jc-theme-import-diff')?.remove();
             expertText = target.value;
-            status = t('theme_studio_unsaved');
+            if (!recoveryRequired) status = t('theme_studio_unsaved');
             const statusElement = root.querySelector<HTMLElement>('.jc-theme-status');
-            if (statusElement) statusElement.textContent = `● ${status}`;
+            if (statusElement) statusElement.textContent = `● ${visibleStatus()}`;
             clearTimeout(expertTimer);
             expertTimer = window.setTimeout(() => {
                 expertTimer = 0;
@@ -1356,8 +1389,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
             || JC.pluginConfig?.ThemeStudioAllowProfileImport !== true;
         if (importPolicyChanged) {
             const discardedReview = pendingImport !== null;
-            importGeneration += 1;
-            clearPendingImport();
+            retireImportWork();
             if (discardedReview && !saving && !loading) {
                 status = t(profileNameInvalid
                     ? 'theme_studio_profile_name_invalid'
@@ -1379,7 +1411,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         if (disposed) return;
         disposed = true;
         runtimeGeneration += 1;
-        importGeneration += 1;
+        retireImportWork();
         cancelPreviewFrame();
         cancelPreviewCardFrame();
         if (expertTimer) clearTimeout(expertTimer);
@@ -1402,7 +1434,6 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         runtime?.cancelPreview();
         if (JC.core.themeStudio !== runtime) JC.core.themeStudio?.cancelPreview();
         state = null;
-        clearPendingImport();
         deferredAcknowledgement = null;
     });
     render();

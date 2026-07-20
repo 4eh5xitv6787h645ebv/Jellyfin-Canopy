@@ -874,6 +874,52 @@ describe('Theme Studio responsive settings editor', () => {
         expect(button('preset', 'studio').getAttribute('aria-pressed')).toBe('true');
     });
 
+    it.each(['replacement', 'cancel', 'teardown'] as const)(
+        'aborts pending import validation on %s',
+        async (retirement) => {
+            const signals: AbortSignal[] = [];
+            const plugin = vi.fn((_path: string, options?: { signal?: AbortSignal }) =>
+                new Promise<unknown>((_resolve, reject) => {
+                    const signal = options?.signal;
+                    if (!signal) return;
+                    signals.push(signal);
+                    signal.addEventListener('abort', () => {
+                        reject(new DOMException('Import validation retired', 'AbortError'));
+                    }, { once: true });
+                }));
+            JC.core.api = { plugin } as unknown as ApiApi;
+            const portable = {
+                SchemaVersion: configuration.SchemaVersion,
+                ActiveProfileId: configuration.ActiveProfileId,
+                Profiles: configuration.Profiles,
+                Schedule: configuration.Schedule,
+            };
+            wireThemeStudioEditor(context());
+            const chooseFile = (name: string): void => {
+                const input = panel.querySelector<HTMLInputElement>('[data-field="import-file"]')!;
+                Object.defineProperty(input, 'files', {
+                    configurable: true,
+                    value: [new File([JSON.stringify(portable)], name, { type: 'application/json' })],
+                });
+                input.dispatchEvent(new Event('change', { bubbles: true }));
+            };
+
+            chooseFile('first.json');
+            await vi.waitFor(() => expect(signals).toHaveLength(1));
+            if (retirement === 'replacement') {
+                chooseFile('second.json');
+                await vi.waitFor(() => expect(signals).toHaveLength(2));
+            } else if (retirement === 'cancel') {
+                button('cancel').click();
+            } else {
+                cleanups[0]();
+            }
+
+            expect(signals[0].aborted).toBe(true);
+            if (retirement === 'replacement') expect(signals[1].aborted).toBe(false);
+        },
+    );
+
     it('returns to the current draft status after accepting a no-op import', async () => {
         const portable = {
             SchemaVersion: configuration.SchemaVersion,
@@ -1236,6 +1282,12 @@ describe('Theme Studio responsive settings editor', () => {
         expect(button('apply').disabled).toBe(true);
         expect(panel.textContent).toContain('theme_studio_error_conflict');
         expect(reload).not.toHaveBeenCalled();
+
+        button('preset', 'oled').click();
+        expect(button('preset', 'oled').getAttribute('aria-pressed')).toBe('true');
+        expect(button('apply').disabled).toBe(true);
+        expect(panel.textContent).toContain('theme_studio_error_conflict');
+        expect(panel.textContent).not.toContain('theme_studio_unsaved');
 
         // Conflict recovery is deliberately explicit; the user can export the
         // preserved draft before accepting authoritative server state.
