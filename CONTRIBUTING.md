@@ -390,7 +390,7 @@ one-to-one with a budget key in `scripts/scale-budgets.json`:
 | `maxTagCacheFullBuildMilliseconds` | Wall-clock duration of a full tag-cache build over the seeded library. |
 | `maxTagCacheFullBuildPeakResidentDeltaBytes` | Peak server resident-memory (RSS) delta during that full build, relative to the pre-build baseline. |
 | `maxLibraryScanEventP95Milliseconds` | p95 latency of the synchronous scan-thread event handlers (the [S1 rule](#performance-rules)) during a controlled bulk add. |
-| `maxResponseFilterP95MicrosecondsPerItem` | p95 response-filter overhead on large item pages (S3), normalized per returned item. |
+| `maxResponseFilterP95MicrosecondsPerItem` | p95 latency overhead added by the plugin's synchronous MVC response-filter chain — `HiddenContentResponseFilter` followed by the Spoiler Guard `SpoilerFieldStripFilter` (registration order in `PluginServiceRegistrator`) — on large item-list responses, normalized per returned item. |
 | `maxPluginStartupMilliseconds` | Plugin startup duration on the seeded server. |
 | `maxTagCacheColdResponseBytes` | Size in bytes of the cold tag-cache response. |
 | `maxTagCacheSnapshotSerializationPeakAllocatedBytes` | Peak server allocation during tag-cache snapshot serialization. |
