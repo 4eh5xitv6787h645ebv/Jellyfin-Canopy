@@ -135,7 +135,7 @@ test.describe.serial('Theme Studio mobile editor', () => {
         });
         expect(retainedScroll.before).toBeGreaterThan(0);
         expect(retainedScroll.after).toBe(retainedScroll.before);
-        await page.setViewportSize({ width: 320, height: 700 });
+        await page.setViewportSize({ width: 320, height: 568 });
 
         const portrait = await page.evaluate(() => {
             const root = document.querySelector('[data-theme-editor-root]') as HTMLElement;
@@ -169,8 +169,35 @@ test.describe.serial('Theme Studio mobile editor', () => {
         expect(portrait.actionBottom).toBeLessThanOrEqual(portrait.viewportHeight + 1);
         expect(portrait.minimumTarget).toBeGreaterThanOrEqual(44);
         expect(portrait.moduleColumns).toBe(1);
+        const controlClearance = async (action: 'reset-profile' | 'preview-only') => {
+            await panel.locator(`[data-action="${action}"]`).scrollIntoViewIfNeeded();
+            return page.evaluate((targetAction) => {
+                const root = document.querySelector<HTMLElement>('[data-theme-editor-root]')!;
+                const studio = root.querySelector<HTMLElement>('.jc-theme-studio')!.getBoundingClientRect();
+                const actions = root.querySelector<HTMLElement>('.jc-theme-actions')!.getBoundingClientRect();
+                const control = root.querySelector<HTMLElement>(`[data-action="${targetAction}"]`)!
+                    .getBoundingClientRect();
+                return {
+                    studioTop: studio.top,
+                    usableBottom: Math.min(studio.bottom, actions.top),
+                    controlTop: control.top,
+                    controlBottom: control.bottom,
+                };
+            }, action);
+        };
+        for (const action of ['reset-profile', 'preview-only'] as const) {
+            const clearance = await controlClearance(action);
+            expect(clearance.controlTop, action).toBeGreaterThanOrEqual(clearance.studioTop - 1);
+            expect(clearance.controlBottom, action).toBeLessThanOrEqual(clearance.usableBottom + 1);
+        }
+        const previewOnly = panel.locator('[data-action="preview-only"]');
+        await expect(page).toHaveScreenshot('theme-studio-editor-phone.png', {
+            animations: 'disabled',
+            caret: 'hide',
+            maxDiffPixelRatio: 0.02,
+        });
 
-        await panel.locator('[data-action="preview-only"]').click();
+        await previewOnly.click();
         await expect(panel).toHaveClass(/jc-theme-preview-only/);
         await expect(page.locator('#jellyfin-canopy-panel-backdrop')).toBeHidden();
         await expect(panel.locator('[data-action="return-editor"]')).toBeVisible();

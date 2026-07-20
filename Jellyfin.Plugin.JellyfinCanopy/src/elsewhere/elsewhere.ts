@@ -585,6 +585,7 @@ function initializeElsewhereImpl(): void {
 
     function createServiceBadge(service: any, tmdbId: string, mediaType: string): HTMLElement {
         const badge = document.createElement('div');
+        badge.classList.add('jc-elsewhere-blur-surface');
         badge.style.cssText = `
             display: inline-flex;
             align-items: center;
@@ -688,6 +689,7 @@ function initializeElsewhereImpl(): void {
         const regionData = data.results[DEFAULT_REGION];
 
         const container = document.createElement('div');
+        container.classList.add('jc-elsewhere-blur-surface');
         container.style.cssText = `
             margin: 10px 0;
             padding: 12px;
@@ -1023,6 +1025,7 @@ function initializeElsewhereImpl(): void {
     // Create display for unavailable regions
     function createUnavailableRegionsDisplay(unavailableRegions: string[]): HTMLElement {
         const container = document.createElement('div');
+        container.classList.add('jc-elsewhere-blur-surface');
         container.style.cssText = `
             margin: 0 0 6px 0;
             padding: 12px;
@@ -1116,6 +1119,7 @@ function initializeElsewhereImpl(): void {
         }
 
         const container = document.createElement('div');
+        container.classList.add('jc-elsewhere-blur-surface');
         container.style.cssText = `
             margin: 10px 0 0 0;
             padding: 12px;

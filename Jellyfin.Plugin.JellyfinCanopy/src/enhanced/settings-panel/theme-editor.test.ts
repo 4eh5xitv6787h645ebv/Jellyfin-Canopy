@@ -199,6 +199,7 @@ describe('Theme Studio responsive settings editor', () => {
     it('renders the split workflow and frame-coalesces valid live preview changes', () => {
         wireThemeStudioEditor(context());
         expect(panel.querySelector('.jc-theme-studio')).not.toBeNull();
+        expect(panel.querySelector('.jc-theme-studio > .jc-theme-toolbar')).not.toBeNull();
         expect(panel.querySelectorAll('.jc-theme-preset')).toHaveLength(9);
         expect(panel.querySelector('.jc-theme-preset-grid')?.getAttribute('role')).toBe('group');
         expect(button('preset', 'canopy').getAttribute('role')).toBeNull();

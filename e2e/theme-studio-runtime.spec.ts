@@ -5,6 +5,7 @@ import { api, authenticate, PLUGIN_ID, type Session } from './fixtures/api';
 const CONFIG_PATH = `/Plugins/${PLUGIN_ID}/Configuration`;
 const COMMITTED_STYLE = '#jc-theme-studio-committed';
 const PREVIEW_STYLE = '#jc-theme-studio-preview';
+const MOBILE_ENVIRONMENT_STYLE = '#jc-theme-studio-mobile-environment';
 const CURATED_PRESETS = [
     ['canopy', 'canopy-night'],
     ['minimal', 'neutral'],
@@ -35,6 +36,13 @@ async function forceCoarsePointer(page: Page): Promise<void> {
                 },
             });
         }) as typeof window.matchMedia;
+    });
+}
+
+async function forceLowEndPhone(page: Page): Promise<void> {
+    await page.addInitScript(() => {
+        Object.defineProperty(navigator, 'deviceMemory', { configurable: true, value: 1 });
+        Object.defineProperty(navigator, 'hardwareConcurrency', { configurable: true, value: 2 });
     });
 }
 
@@ -420,6 +428,186 @@ test.describe.serial('Theme Studio runtime bridge', () => {
         assertNoRuntimeErrors(consoleErrors);
     });
 
+    test('modern phone environment tracks safe viewport while tablet stays stock and touch desktop stays desktop', async ({
+        page,
+        consoleErrors,
+    }) => {
+        await forceCoarsePointer(page);
+        await forceLowEndPhone(page);
+        await page.setViewportSize({ width: 320, height: 568 });
+        await seedLayout(page, 'experimental');
+        await loginAs(page, 'admin', consoleErrors);
+        await waitForThemeRuntime(page, 'phone');
+
+        for (const viewport of [
+            { width: 320, height: 568, orientation: 'portrait' },
+            { width: 390, height: 844, orientation: 'portrait' },
+            { width: 844, height: 390, orientation: 'landscape' },
+        ] as const) {
+            await page.setViewportSize(viewport);
+            await refreshThemeRuntime(page);
+            await waitForThemeRuntime(page, 'phone');
+            const evidence = await page.evaluate(() => {
+                const root = document.documentElement;
+                const fixture = document.createElement('div');
+                fixture.innerHTML = '<div class="actionSheet"><div class="actionSheetScroller"><button class="actionSheetMenuItem">Action with a long localized label</button></div></div><div class="videoOsdBottom"><button>Play</button></div>';
+                document.body.append(fixture);
+                const action = fixture.querySelector<HTMLElement>('.actionSheetMenuItem')!
+                    .getBoundingClientRect();
+                const osd = fixture.querySelector<HTMLElement>('.videoOsdBottom')!
+                    .getBoundingClientRect();
+                const styles = getComputedStyle(root);
+                const result = {
+                    breakpoint: root.getAttribute('data-jc-theme-breakpoint'),
+                    orientation: root.getAttribute('data-jc-theme-orientation'),
+                    keyboard: root.getAttribute('data-jc-theme-keyboard'),
+                    performance: root.getAttribute('data-jc-theme-performance'),
+                    environmentLayers: document.querySelectorAll('#jc-theme-studio-mobile-environment').length,
+                    visualHeight: styles.getPropertyValue('--jc-visual-viewport-height').trim(),
+                    keyboardInset: styles.getPropertyValue('--jc-keyboard-inset').trim(),
+                    targetHeight: action.height,
+                    osdRight: osd.right,
+                    viewportWidth: innerWidth,
+                    overflow: document.documentElement.scrollWidth - innerWidth,
+                };
+                fixture.remove();
+                return result;
+            });
+            expect(evidence, JSON.stringify(viewport)).toMatchObject({
+                breakpoint: 'phone',
+                orientation: viewport.orientation,
+                keyboard: 'closed',
+                performance: 'reduced',
+                environmentLayers: 1,
+                keyboardInset: '0px',
+            });
+            expect(evidence.visualHeight).toMatch(/^\d+px$/);
+            expect(evidence.targetHeight).toBeGreaterThanOrEqual(44);
+            expect(evidence.osdRight).toBeLessThanOrEqual(evidence.viewportWidth + 1);
+            expect(evidence.overflow).toBeLessThanOrEqual(1);
+        }
+
+        await page.setViewportSize({ width: 390, height: 844 });
+        await refreshThemeRuntime(page);
+        await waitForThemeRuntime(page, 'phone');
+        const repeatedEventEvidence = await page.evaluate(async () => {
+            const committed = document.querySelector<HTMLStyleElement>('#jc-theme-studio-committed')!;
+            const text = committed.textContent;
+            let longTasks = 0;
+            let layoutShift = 0;
+            const observer = typeof PerformanceObserver === 'function'
+                ? new PerformanceObserver((list) => {
+                    for (const entry of list.getEntries()) {
+                        if (entry.entryType === 'longtask') longTasks += 1;
+                        const shift = entry as PerformanceEntry & { hadRecentInput?: boolean; value?: number };
+                        if (entry.entryType === 'layout-shift' && !shift.hadRecentInput) {
+                            layoutShift += shift.value ?? 0;
+                        }
+                    }
+                })
+                : null;
+            try { observer?.observe({ entryTypes: ['longtask', 'layout-shift'] }); } catch { /* unsupported metrics */ }
+            const started = performance.now();
+            for (let index = 0; index < 120; index += 1) {
+                window.visualViewport?.dispatchEvent(new Event('scroll'));
+            }
+            await new Promise<void>((resolve) => requestAnimationFrame(() =>
+                requestAnimationFrame(() => resolve())));
+            observer?.disconnect();
+            return {
+                duration: performance.now() - started,
+                longTasks,
+                layoutShift,
+                committedLayerStable: document.querySelector('#jc-theme-studio-committed') === committed
+                    && committed.textContent === text,
+            };
+        });
+        expect(repeatedEventEvidence.committedLayerStable).toBe(true);
+        expect(repeatedEventEvidence.duration).toBeLessThan(500);
+        expect(repeatedEventEvidence.longTasks).toBe(0);
+        expect(repeatedEventEvidence.layoutShift).toBeLessThanOrEqual(0.01);
+
+        const cdp = await page.context().newCDPSession(page);
+        await cdp.send('Emulation.setPageScaleFactor', { pageScaleFactor: 2 });
+        await expect.poll(() => page.evaluate(() => window.visualViewport?.scale ?? 1)).toBe(2);
+        await expect.poll(() => page.evaluate(() => ({
+            keyboard: document.documentElement.getAttribute('data-jc-theme-keyboard'),
+            inset: getComputedStyle(document.documentElement).getPropertyValue('--jc-keyboard-inset').trim(),
+        }))).toEqual({ keyboard: 'closed', inset: '0px' });
+        await cdp.send('Emulation.setPageScaleFactor', { pageScaleFactor: 1 });
+
+        const keyboardAvoidance = await page.evaluate(() => {
+            const root = document.documentElement;
+            const route = root.getAttribute('data-jc-theme-route');
+            root.setAttribute('data-jc-theme-keyboard', 'open');
+            root.setAttribute('data-jc-theme-route', 'player');
+            root.style.setProperty('--jc-visual-viewport-height', '348px');
+            root.style.setProperty('--jc-keyboard-inset', '496px');
+            const fixture = document.createElement('div');
+            fixture.innerHTML = '<div class="actionSheet"><button class="actionSheetMenuItem">Action</button></div><div class="videoOsdBottom"><button>Play</button></div><div class="jc-arr-modal-overlay"></div><div class="jc-discovery-customize-overlay"></div><div class="jc-remove-confirm-overlay"></div><div id="pause-screen-content"></div><div class="arr-dropdown-menu"></div><div class="jc-elsewhere-blur-surface"></div><div class="seerr-season-header"></div>';
+            document.body.append(fixture);
+            const action = fixture.querySelector<HTMLElement>('.actionSheet')!.getBoundingClientRect();
+            const osd = fixture.querySelector<HTMLElement>('.videoOsdBottom')!.getBoundingClientRect();
+            const fallbackSelectors = [
+                '.jc-arr-modal-overlay', '.jc-discovery-customize-overlay', '.jc-remove-confirm-overlay',
+                '#pause-screen-content', '.arr-dropdown-menu', '.jc-elsewhere-blur-surface',
+            ];
+            const fallbacks = fallbackSelectors.map((selector) =>
+                getComputedStyle(fixture.querySelector<HTMLElement>(selector)!).backdropFilter);
+            fallbacks.push(getComputedStyle(
+                fixture.querySelector<HTMLElement>('.seerr-season-header')!, '::before',
+            ).backdropFilter);
+            fixture.remove();
+            root.style.removeProperty('--jc-visual-viewport-height');
+            root.style.removeProperty('--jc-keyboard-inset');
+            root.setAttribute('data-jc-theme-keyboard', 'closed');
+            if (route) root.setAttribute('data-jc-theme-route', route);
+            return { actionBottom: action.bottom, osdBottom: osd.bottom, visibleBottom: 348, fallbacks };
+        });
+        expect(keyboardAvoidance.actionBottom).toBeLessThanOrEqual(keyboardAvoidance.visibleBottom + 1);
+        expect(keyboardAvoidance.osdBottom).toBeLessThanOrEqual(keyboardAvoidance.visibleBottom + 1);
+        expect(keyboardAvoidance.fallbacks).toEqual(Array(7).fill('none'));
+
+        for (const viewport of [
+            { width: 600, height: 960 },
+            { width: 820, height: 1180 },
+        ] as const) {
+            await page.setViewportSize(viewport);
+            await refreshThemeRuntime(page);
+            await expect(page.locator(COMMITTED_STYLE)).toHaveCount(0);
+            await expect(page.locator(MOBILE_ENVIRONMENT_STYLE)).toHaveCount(0);
+            expect(await page.evaluate(() => ({
+                active: document.documentElement.hasAttribute('data-jc-theme-active'),
+                breakpoint: document.documentElement.getAttribute('data-jc-theme-breakpoint'),
+                keyboard: document.documentElement.getAttribute('data-jc-theme-keyboard'),
+            }))).toEqual({ active: false, breakpoint: null, keyboard: null });
+        }
+
+        for (const viewport of [
+            { width: 1366, height: 768, breakpoint: 'desktop' },
+            { width: 1920, height: 1080, breakpoint: 'wide' },
+        ] as const) {
+            await page.setViewportSize(viewport);
+            await refreshThemeRuntime(page);
+            await waitForThemeRuntime(page, viewport.breakpoint);
+            await expect(page.locator(MOBILE_ENVIRONMENT_STYLE)).toHaveCount(0);
+            expect(await page.evaluate(() => ({
+                breakpoint: document.documentElement.getAttribute('data-jc-theme-breakpoint'),
+                pointer: document.documentElement.getAttribute('data-jc-theme-pointer'),
+                orientation: document.documentElement.getAttribute('data-jc-theme-orientation'),
+                keyboard: document.documentElement.getAttribute('data-jc-theme-keyboard'),
+                performance: document.documentElement.getAttribute('data-jc-theme-performance'),
+            }))).toEqual({
+                breakpoint: viewport.breakpoint,
+                pointer: 'coarse',
+                orientation: 'landscape',
+                keyboard: 'closed',
+                performance: 'full',
+            });
+        }
+        assertNoRuntimeErrors(consoleErrors);
+    });
+
     test('all nine curated presets preview on desktop and phone with versioned, bounded output', async ({
         baseURL,
         page,
@@ -480,6 +668,16 @@ test.describe.serial('Theme Studio runtime bridge', () => {
                 const overflow = await previewOverflowEvidence(page);
                 expect(overflow.active, `${preset} ${viewport.name} overflow`)
                     .toBeLessThanOrEqual(overflow.baseline + 1);
+                if (viewport.name === 'phone portrait') {
+                    // `tv-focus` is retained only as the persisted compatibility ID.
+                    // Public evidence uses the modern-layout product name: Focus.
+                    const evidenceName = preset === 'tv-focus' ? 'focus' : preset;
+                    await expect(page).toHaveScreenshot(`theme-studio-${evidenceName}-phone.png`, {
+                        animations: 'disabled',
+                        caret: 'hide',
+                        maxDiffPixelRatio: 0.02,
+                    });
+                }
             }
         }
 

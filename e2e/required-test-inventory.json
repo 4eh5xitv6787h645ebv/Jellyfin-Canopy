@@ -93,8 +93,9 @@
     "e2e/theme-studio-runtime.spec.ts › Theme Studio runtime bridge › all nine curated presets preview on desktop and phone with versioned, bounded output",
     "e2e/theme-studio-runtime.spec.ts › Theme Studio runtime bridge › desktop editor stages locally and adopts only the exact Apply acknowledgement",
     "e2e/theme-studio-runtime.spec.ts › Theme Studio runtime bridge › legacy, tablet, and TV markers stay untouched while modern dashboard remains a recovery space",
-    "e2e/theme-studio-runtime.spec.ts › Theme Studio runtime bridge › modern desktop bridges official variables and follows Jellyfin theme changes live",
-    "e2e/theme-studio-runtime.spec.ts › Theme Studio runtime bridge › phone portrait and coarse-pointer landscape stay bounded without duplicate layers",
+  "e2e/theme-studio-runtime.spec.ts › Theme Studio runtime bridge › modern desktop bridges official variables and follows Jellyfin theme changes live",
+  "e2e/theme-studio-runtime.spec.ts › Theme Studio runtime bridge › modern phone environment tracks safe viewport while tablet stays stock and touch desktop stays desktop",
+  "e2e/theme-studio-runtime.spec.ts › Theme Studio runtime bridge › phone portrait and coarse-pointer landscape stay bounded without duplicate layers",
     "e2e/theme-studio-runtime.spec.ts › Theme Studio runtime bridge › presentation modules compose on modern desktop and phone without changing host order",
     "e2e/tags.spec.ts › tags › hide-on-hover fades the detail-page primary poster tags",
     "e2e/tags.spec.ts › tags › home library cards get data-jc-*-tagged markers per enabled family"

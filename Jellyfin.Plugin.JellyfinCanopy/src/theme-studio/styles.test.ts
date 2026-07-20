@@ -25,6 +25,8 @@ describe('Theme Studio CSS serialization', () => {
         for (const role of [
             '--jc-color-canvas',
             '--jc-safe-area-bottom',
+            '--jc-visual-viewport-height',
+            '--jc-keyboard-inset',
             '--jc-effective-font-size',
             '--jc-content-max-inline-size',
             '--jc-motion-easing',
@@ -52,6 +54,7 @@ describe('Theme Studio CSS serialization', () => {
             'Adapter seasons-v12',
             'Adapter progress-indicators-v12',
             'Adapter dialogs-forms-v12',
+            'Adapter mobile-safe-area-v12',
         ]) expect(first, adapter).toContain(adapter);
         expect(first).toContain('[data-jc-theme-navigation="bottom"]');
         expect(first).toContain('[data-jc-theme-home-hero="cinematic"]');
