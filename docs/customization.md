@@ -114,6 +114,18 @@ Tags use one logical lane per configured corner. Long values wrap inside the car
 
 The phone capture is the same authenticated Jellyfin 12 fixture at 390 × 844. The suite also verifies phone landscape, desktop wide, High Contrast, reduced transparency, keyboard focus, RTL, and exact stock/no-op behavior on tablet-only, legacy, and TV layouts.
 
+### Operational surfaces
+
+Active streams, the Sonarr/Radarr calendar, downloads and requests, issues, and bookmarks also inherit the active profile on supported modern layouts. Theme Studio changes their surface, type, spacing, focus, progress, and semantic status presentation; each feature still owns its requests, live updates, permissions, session identity, and hidden values.
+
+![Theme Studio operational surfaces on a modern desktop](images/theme-studio-operational-surfaces-desktop.png)
+
+The desktop evidence combines live and paused stream states, transcode and download progress, calendar availability, request approval, orphaned-bookmark recovery, and a conflict dialog. Text labels and boundaries accompany color, and the fixture verifies that repeated live patches retain the same nodes without creating another polling or observer owner.
+
+![Theme Studio operational surfaces on a modern phone](images/theme-studio-operational-surfaces-phone.png)
+
+The phone capture is the same authenticated Jellyfin 12 fixture at 390 × 844. Separate assertions cover 844 × 390 phone landscape, 1920 × 1080 wide desktop, 44 CSS-pixel controls, keyboard focus, RTL, long labels, no nested vertical scrollers, and unchanged private policy hooks. Tablet-only, legacy, and TV layouts retain stock operational styling.
+
 ### Dynamic color and privacy
 
 Dynamic color is optional and runs only after the usable theme has painted. Canopy reads one same-origin Jellyfin **Primary** or **Backdrop** image, reduces it to a small local color sample, and blends the result with the profile accent. Analysis is cancellable and bounded; it never contacts an artwork CDN, and a media URL, item identifier, image tag, or sampled pixels are never written to `theme.json`, profile exports, CSS logs, or documentation captures. When analysis is unavailable or fails, the curated palette remains active.

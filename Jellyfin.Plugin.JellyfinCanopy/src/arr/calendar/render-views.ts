@@ -294,67 +294,68 @@ function renderLegend(): string {
         if (!hasActiveFilters) return '';
         return state.activeFilters.has(filterType) ? 'active' : 'inactive';
     };
+    const isFilterPressed = (filterType: string): boolean => !hasActiveFilters || state.activeFilters.has(filterType);
 
     const showRequestsFilter = !!JC.pluginConfig?.SeerrEnabled && !state.settings.forceOnlyRequested;
     const requestsLabel = JC.t?.('requests_requests') || 'Requests';
     const requestsLegend = showRequestsFilter
-        ? `<div class="jc-calendar-legend-item ${getItemClass('Requests')}" data-calendar-filter="Requests">
+        ? `<button type="button" class="jc-calendar-legend-item ${getItemClass('Requests')}" data-calendar-filter="Requests" aria-pressed="${isFilterPressed('Requests')}">
           <span class="material-symbols-rounded" style="color: #6f63f2; font-size: 18px;">download</span>
           <span>${requestsLabel}</span>
-        </div>`
+        </button>`
         : '';
 
     const watchlistLegend = state.settings.highlightFavorites
-        ? `<div class="jc-calendar-legend-item ${getItemClass('Watchlist')}" data-calendar-filter="Watchlist">
+        ? `<button type="button" class="jc-calendar-legend-item ${getItemClass('Watchlist')}" data-calendar-filter="Watchlist" aria-pressed="${isFilterPressed('Watchlist')}">
           <span class="material-symbols-rounded" style="color: #ffd700; font-size: 18px; font-variation-settings: 'FILL' 1;">bookmark</span>
           <span>${JC.t?.('calendar_watchlist')}</span>
-        </div>`
+        </button>`
         : '';
 
     const watchedLegend = state.settings.highlightWatchedSeries
-        ? `<div class="jc-calendar-legend-item ${getItemClass('Watched')}" data-calendar-filter="Watched">
+        ? `<button type="button" class="jc-calendar-legend-item ${getItemClass('Watched')}" data-calendar-filter="Watched" aria-pressed="${isFilterPressed('Watched')}">
           <span class="material-symbols-rounded" style="color: #64b5f6; font-size: 18px;">visibility</span>
           <span>${JC.t?.('calendar_watched')}</span>
-        </div>`
+        </button>`
         : '';
 
     const hasTwoFilters = state.activeFilters.size >= 2;
-    const unmonitoredLegend = `<div class="jc-calendar-legend-item jc-calendar-unmonitored-toggle ${state.settings.showUnmonitored ? 'active' : hasActiveFilters ? 'inactive' : ''}" data-calendar-action="toggle-unmonitored" style="cursor: pointer;">
+    const unmonitoredLegend = `<button type="button" class="jc-calendar-legend-item jc-calendar-unmonitored-toggle ${state.settings.showUnmonitored ? 'active' : hasActiveFilters ? 'inactive' : ''}" data-calendar-action="toggle-unmonitored" aria-pressed="${state.settings.showUnmonitored ? 'true' : 'false'}">
         <span class="material-symbols-rounded" style="color: #ff9800; font-size: 18px;">${state.settings.showUnmonitored ? 'visibility' : 'visibility_off'}</span>
         <span>${JC.t?.('calendar_include_unmonitored') || 'Unmonitored'}</span>
-      </div>`;
+      </button>`;
     const filterControls = `
       <div class="jc-calendar-filter-controls">
         <div class="jc-calendar-filter-toggle ${hasTwoFilters ? '' : 'is-disabled'}" role="group" aria-label="Filter mode">
-          <button type="button" class="jc-calendar-filter-btn ${state.filterMatchMode === 'any' ? 'active' : ''}" data-filter-mode="any" ${hasTwoFilters ? '' : 'disabled aria-disabled="true"'}>OR</button>
-          <button type="button" class="jc-calendar-filter-btn ${state.filterMatchMode === 'all' ? 'active' : ''}" data-filter-mode="all" ${hasTwoFilters ? '' : 'disabled aria-disabled="true"'}>AND</button>
+          <button type="button" class="jc-calendar-filter-btn ${state.filterMatchMode === 'any' ? 'active' : ''}" data-filter-mode="any" aria-pressed="${state.filterMatchMode === 'any'}" ${hasTwoFilters ? '' : 'disabled aria-disabled="true"'}>OR</button>
+          <button type="button" class="jc-calendar-filter-btn ${state.filterMatchMode === 'all' ? 'active' : ''}" data-filter-mode="all" aria-pressed="${state.filterMatchMode === 'all'}" ${hasTwoFilters ? '' : 'disabled aria-disabled="true"'}>AND</button>
         </div>
-        <button type="button" class="jc-calendar-filter-invert ${state.filterInvert ? 'active' : ''} ${hasActiveFilters ? '' : 'is-disabled'}" data-filter-invert="true" ${hasActiveFilters ? '' : 'disabled aria-disabled="true"'}>NOT</button>
+        <button type="button" class="jc-calendar-filter-invert ${state.filterInvert ? 'active' : ''} ${hasActiveFilters ? '' : 'is-disabled'}" data-filter-invert="true" aria-pressed="${state.filterInvert ? 'true' : 'false'}" ${hasActiveFilters ? '' : 'disabled aria-disabled="true"'}>NOT</button>
       </div>`;
 
     return `
       <div class="jc-calendar-legend">
         ${filterControls}
-        <div class="jc-calendar-legend-item ${getItemClass('CinemaRelease')}" data-calendar-filter="CinemaRelease">
+        <button type="button" class="jc-calendar-legend-item ${getItemClass('CinemaRelease')}" data-calendar-filter="CinemaRelease" aria-pressed="${isFilterPressed('CinemaRelease')}">
           <span class="material-symbols-rounded" style="color: ${STATUS_COLORS.CinemaRelease}; font-size: 18px;">local_movies</span>
           <span>${JC.t?.('calendar_cinema_release')}</span>
-        </div>
-        <div class="jc-calendar-legend-item ${getItemClass('DigitalRelease')}" data-calendar-filter="DigitalRelease">
+        </button>
+        <button type="button" class="jc-calendar-legend-item ${getItemClass('DigitalRelease')}" data-calendar-filter="DigitalRelease" aria-pressed="${isFilterPressed('DigitalRelease')}">
           <span class="material-symbols-rounded" style="color: ${STATUS_COLORS.DigitalRelease}; font-size: 18px;">ondemand_video</span>
           <span>${JC.t?.('calendar_digital_release')}</span>
-        </div>
-        <div class="jc-calendar-legend-item ${getItemClass('PhysicalRelease')}" data-calendar-filter="PhysicalRelease">
+        </button>
+        <button type="button" class="jc-calendar-legend-item ${getItemClass('PhysicalRelease')}" data-calendar-filter="PhysicalRelease" aria-pressed="${isFilterPressed('PhysicalRelease')}">
           <span class="material-symbols-rounded" style="color: ${STATUS_COLORS.PhysicalRelease}; font-size: 18px;">album</span>
           <span>${JC.t?.('calendar_physical_release')}</span>
-        </div>
-        <div class="jc-calendar-legend-item ${getItemClass('Episode')}" data-calendar-filter="Episode">
+        </button>
+        <button type="button" class="jc-calendar-legend-item ${getItemClass('Episode')}" data-calendar-filter="Episode" aria-pressed="${isFilterPressed('Episode')}">
           <span class="material-symbols-rounded" style="color: ${STATUS_COLORS.Episode}; font-size: 18px;">tv_guide</span>
           <span>${JC.t?.('calendar_episode')}</span>
-        </div>
-        <div class="jc-calendar-legend-item ${getItemClass('Available')}" data-calendar-filter="Available">
+        </button>
+        <button type="button" class="jc-calendar-legend-item ${getItemClass('Available')}" data-calendar-filter="Available" aria-pressed="${isFilterPressed('Available')}">
           <span class="material-symbols-rounded" style="color: #4caf50; font-size: 18px;">check_circle</span>
           <span>${JC.t?.('seerr_btn_available') || 'Available'}</span>
-        </div>
+        </button>
         ${requestsLegend}
         ${watchlistLegend}
         ${watchedLegend}
@@ -401,18 +402,18 @@ export function renderPage(): void {
         </div>
         <div class="jc-calendar-actions jc-calendar-actions-right">
           <div class="jc-calendar-nav">
-            <button class="jc-calendar-view-btn ${state.viewMode === 'day' ? 'active' : ''}" data-calendar-view="day">${JC.t?.('calendar_day') || 'Day'}</button>
-            <button class="jc-calendar-view-btn ${state.viewMode === 'week' ? 'active' : ''}" data-calendar-view="week">${JC.t?.('calendar_week')}</button>
-            <button class="jc-calendar-view-btn ${state.viewMode === 'month' ? 'active' : ''}" data-calendar-view="month">${JC.t?.('calendar_month')}</button>
-            <button class="jc-calendar-view-btn ${state.viewMode === 'agenda' ? 'active' : ''}" data-calendar-view="agenda">${JC.t?.('calendar_agenda')}</button>
+            <button class="jc-calendar-view-btn ${state.viewMode === 'day' ? 'active' : ''}" data-calendar-view="day" aria-pressed="${state.viewMode === 'day'}">${JC.t?.('calendar_day') || 'Day'}</button>
+            <button class="jc-calendar-view-btn ${state.viewMode === 'week' ? 'active' : ''}" data-calendar-view="week" aria-pressed="${state.viewMode === 'week'}">${JC.t?.('calendar_week')}</button>
+            <button class="jc-calendar-view-btn ${state.viewMode === 'month' ? 'active' : ''}" data-calendar-view="month" aria-pressed="${state.viewMode === 'month'}">${JC.t?.('calendar_month')}</button>
+            <button class="jc-calendar-view-btn ${state.viewMode === 'agenda' ? 'active' : ''}" data-calendar-view="agenda" aria-pressed="${state.viewMode === 'agenda'}">${JC.t?.('calendar_agenda')}</button>
             <div class="jc-calendar-mode-toggle ${state.viewMode === 'agenda' ? 'is-disabled' : ''}" role="group" aria-label="Display mode">
-              <button type="button" class="jc-calendar-mode-btn ${state.settings.displayMode === 'list' ? 'active' : ''}" title="List" aria-label="List" data-mode="list" ${state.viewMode === 'agenda' ? 'disabled aria-disabled="true"' : ''}>
+              <button type="button" class="jc-calendar-mode-btn ${state.settings.displayMode === 'list' ? 'active' : ''}" title="List" aria-label="List" aria-pressed="${state.settings.displayMode === 'list'}" data-mode="list" ${state.viewMode === 'agenda' ? 'disabled aria-disabled="true"' : ''}>
                 <span class="material-icons">view_list</span>
               </button>
-              <button type="button" class="jc-calendar-mode-btn ${state.settings.displayMode === 'backdrop' ? 'active' : ''}" title="Backdrop" aria-label="Backdrop" data-mode="backdrop" ${state.viewMode === 'agenda' ? 'disabled aria-disabled="true"' : ''}>
+              <button type="button" class="jc-calendar-mode-btn ${state.settings.displayMode === 'backdrop' ? 'active' : ''}" title="Backdrop" aria-label="Backdrop" aria-pressed="${state.settings.displayMode === 'backdrop'}" data-mode="backdrop" ${state.viewMode === 'agenda' ? 'disabled aria-disabled="true"' : ''}>
                 <span class="material-icons">image</span>
               </button>
-              <button type="button" class="jc-calendar-mode-btn ${state.settings.displayMode === 'cards' ? 'active' : ''}" title="Cards" aria-label="Cards" data-mode="cards" ${state.viewMode === 'agenda' ? 'disabled aria-disabled="true"' : ''}>
+              <button type="button" class="jc-calendar-mode-btn ${state.settings.displayMode === 'cards' ? 'active' : ''}" title="Cards" aria-label="Cards" aria-pressed="${state.settings.displayMode === 'cards'}" data-mode="cards" ${state.viewMode === 'agenda' ? 'disabled aria-disabled="true"' : ''}>
                 <span class="material-icons">view_module</span>
               </button>
             </div>

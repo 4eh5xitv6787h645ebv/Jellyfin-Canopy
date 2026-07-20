@@ -12,6 +12,7 @@ describe('calendar page error state', () => {
     let toast: ReturnType<typeof vi.fn>;
     let data: typeof import('./data');
     let views: typeof import('./render-views');
+    let actions: typeof import('./actions');
 
     beforeEach(async () => {
         vi.resetModules();
@@ -24,6 +25,7 @@ describe('calendar page error state', () => {
         JC.toast = toast;
         data = await import('./data');
         views = await import('./render-views');
+        actions = await import('./actions');
     });
 
     it('fetchCalendarEvents flags eventsError and toasts on total failure, rendering the error state', async () => {
@@ -45,6 +47,8 @@ describe('calendar page error state', () => {
 
         expect(container.innerHTML).toContain('calendar_load_error');
         expect(container.innerHTML).not.toContain('calendar_no_releases');
+        expect(container.querySelector('.jc-calendar-view-btn.active')?.getAttribute('aria-pressed')).toBe('true');
+        expect(container.querySelector('.jc-calendar-mode-btn')?.getAttribute('aria-pressed')).toMatch(/^(?:true|false)$/);
     });
 
     it('fetchUserRequests publishes a complete server-owned snapshot', async () => {
@@ -67,6 +71,58 @@ describe('calendar page error state', () => {
         expect(data.state.requestedLoaded).toBe(true);
         expect(data.state.requestedError).toBe(false);
         expect(toast).not.toHaveBeenCalled();
+    });
+
+    it('renders real legend controls as keyboard buttons with synchronized pressed state', () => {
+        const JC = window.JellyfinCanopy as any;
+        JC.identity.transition('calendar-test-server', 'calendar-test-user', 'calendar-controls');
+        const context = JC.identity.capture();
+        data.state.isLoading = false;
+        data.state.events = [];
+        data.state.eventsError = false;
+        data.state.activeFilters = new Set();
+        data.state.filterMatchMode = 'any';
+        data.state.filterInvert = false;
+        data.state.settings.showUnmonitored = false;
+
+        const container = document.createElement('div');
+        container.id = 'jc-calendar-container';
+        JC.identity.own(container, context);
+        container.addEventListener('click', (event) => actions.handleEventClick(event as MouseEvent));
+        document.body.appendChild(container);
+        views.setActiveContainer(container);
+        views.renderPage();
+
+        const legendButtons = [...container.querySelectorAll<HTMLButtonElement>('[data-calendar-filter]')];
+        expect(legendButtons.length).toBeGreaterThan(4);
+        expect(legendButtons.every(button => button instanceof HTMLButtonElement && button.type === 'button')).toBe(true);
+        expect(legendButtons.every(button => button.getAttribute('aria-pressed') === 'true')).toBe(true);
+
+        container.querySelector<HTMLButtonElement>('[data-calendar-filter="DigitalRelease"]')!.click();
+        expect(data.state.activeFilters).toEqual(new Set(['DigitalRelease']));
+        expect(container.querySelector('[data-calendar-filter="DigitalRelease"]')?.getAttribute('aria-pressed')).toBe('true');
+        expect(container.querySelector('[data-calendar-filter="CinemaRelease"]')?.getAttribute('aria-pressed')).toBe('false');
+
+        const unmonitored = container.querySelector<HTMLButtonElement>('[data-calendar-action="toggle-unmonitored"]')!;
+        expect(unmonitored.type).toBe('button');
+        expect(unmonitored.getAttribute('aria-pressed')).toBe('false');
+        unmonitored.click();
+        expect(data.state.settings.showUnmonitored).toBe(true);
+        expect(container.querySelector('[data-calendar-action="toggle-unmonitored"]')?.getAttribute('aria-pressed')).toBe('true');
+
+        data.state.activeFilters.add('CinemaRelease');
+        views.renderPage();
+        const matchAll = container.querySelector<HTMLButtonElement>('[data-filter-mode="all"]')!;
+        expect(matchAll.disabled).toBe(false);
+        expect(matchAll.getAttribute('aria-pressed')).toBe('false');
+        matchAll.click();
+        expect(data.state.filterMatchMode).toBe('all');
+        expect(container.querySelector('[data-filter-mode="all"]')?.getAttribute('aria-pressed')).toBe('true');
+
+        container.querySelector<HTMLButtonElement>('[data-filter-invert]')!.click();
+        expect(data.state.filterInvert).toBe(true);
+        expect(container.querySelector('[data-filter-invert]')?.getAttribute('aria-pressed')).toBe('true');
+        views.setActiveContainer(null);
     });
 
     it('flags a snapshot failure, publishes no partial keys, and allows a retry', async () => {

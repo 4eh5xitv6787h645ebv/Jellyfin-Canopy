@@ -8,7 +8,9 @@ import {
     USERS,
     waitForHash,
 } from './fixtures/auth';
-import { api, authenticate } from './fixtures/api';
+import { api, authenticate, PLUGIN_ID } from './fixtures/api';
+
+const CONFIG_PATH = `/Plugins/${PLUGIN_ID}/Configuration`;
 
 interface ItemList {
     Items?: Array<{ Id?: string; Name?: string }>;
@@ -226,6 +228,43 @@ async function mountMediaFixture(page: Page): Promise<void> {
 }
 
 test.describe('Theme Studio modern media surfaces', () => {
+    let original: Record<string, unknown>;
+
+    test.beforeAll(async ({ baseURL }) => {
+        const session = await authenticate(baseURL!, USERS.admin.username, USERS.admin.password);
+        const configuration = await api<Record<string, unknown>>(baseURL!, CONFIG_PATH, session.token);
+        expect(configuration, 'plugin configuration must be readable').toBeTruthy();
+        original = configuration!;
+    });
+
+    test.beforeEach(async ({ baseURL }) => {
+        const session = await authenticate(baseURL!, USERS.admin.username, USERS.admin.password);
+        await api(baseURL!, CONFIG_PATH, session.token, {
+            method: 'POST',
+            body: JSON.stringify({
+                ...original,
+                ThemeStudioEnabled: true,
+                ThemeStudioDashboardEnabled: false,
+                ThemeSelectorEnabled: false,
+                LayoutEnforcement: 'None',
+            }),
+        });
+    });
+
+    test.afterEach(async ({ baseURL }) => {
+        const session = await authenticate(baseURL!, USERS.admin.username, USERS.admin.password);
+        await api(baseURL!, CONFIG_PATH, session.token, {
+            method: 'POST', body: JSON.stringify(original),
+        });
+    });
+
+    test.afterAll(async ({ baseURL }) => {
+        const session = await authenticate(baseURL!, USERS.admin.username, USERS.admin.password);
+        await api(baseURL!, CONFIG_PATH, session.token, {
+            method: 'POST', body: JSON.stringify(original),
+        });
+    });
+
     test('theme previews preserve the active media element, playback position, focus and lifecycle', async ({
         baseURL,
         page,

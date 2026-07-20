@@ -230,6 +230,59 @@ describe('startLive gating', () => {
         setIntervalSpy.mockRestore();
     });
 
+    it('keeps the real live progress node and its accessible value synchronized', async () => {
+        const initial = [{
+            Id: 's-live', SupportsRemoteControl: false,
+            NowPlayingItem: { Id: 'i-live', Name: 'Live movie', RunTimeTicks: 12_000_000_000 },
+            PlayState: { IsPaused: false, PositionTicks: 3_000_000_000, PlayMethod: 'Transcode' },
+            TranscodingInfo: {
+                IsVideoDirect: false, Bitrate: 5_000_000, Width: 1920, Height: 1080,
+                Framerate: 24, TranscodeReasons: ['VideoCodecNotSupported'], CompletionPercentage: 25,
+            },
+        }];
+        const updated = [{
+            ...initial[0],
+            PlayState: { ...initial[0].PlayState, PositionTicks: 6_000_000_000 },
+            TranscodingInfo: { ...initial[0].TranscodingInfo, CompletionPercentage: 150 },
+        }];
+        let sessionFetches = 0;
+        const plugin = vi.fn((path: string) => {
+            if (!path.endsWith('/active-streams/sessions')) return Promise.resolve({});
+            sessionFetches += 1;
+            return Promise.resolve(sessionFetches <= 2 ? initial : updated);
+        });
+        let sessionsNudge: (() => void) | undefined;
+        (globalThis as any).ApiClient.subscribe = vi.fn((_channels: string[], callback: () => void) => {
+            sessionsNudge = callback;
+            return () => { /* unsub */ };
+        });
+        stubCore(plugin);
+        const { installActiveStreams } = await import('./active-streams');
+        installActiveStreams();
+        api().activeStreams.initialize();
+        await flush();
+        clickHeader();
+        await flush();
+
+        const card = document.querySelector<HTMLElement>('.jc-as-card[data-session-id="s-live"]')!;
+        const bar = card.querySelector<HTMLElement>('.jc-as-progress-bar')!;
+        const fill = card.querySelector<HTMLElement>('.jc-as-progress-fill')!;
+        const transcodeFill = card.querySelector<HTMLElement>('.jc-as-transcode-fill')!;
+        expect(bar.getAttribute('aria-valuenow')).toBe('25.0');
+
+        sessionsNudge!();
+        await new Promise((resolve) => setTimeout(resolve, 850));
+        await flush();
+
+        expect(document.querySelector('.jc-as-card[data-session-id="s-live"]')).toBe(card);
+        expect(document.querySelector('.jc-as-progress-bar')).toBe(bar);
+        expect(document.querySelector('.jc-as-progress-fill')).toBe(fill);
+        expect(fill.style.width).toBe('50%');
+        expect(bar.getAttribute('aria-valuenow')).toBe('50.0');
+        expect(bar.getAttribute('aria-valuetext')).toBe('10:00 / 20:00');
+        expect(transcodeFill.style.width).toBe('100%');
+    });
+
     it('arms the fallback interval when no socket is available, and its tick skips while hidden', async () => {
         const plugin = setupImmediate();
         const { installActiveStreams } = await import('./active-streams');

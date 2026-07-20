@@ -767,7 +767,7 @@ const buildSessionCard = (
 
     const pos = ps.PositionTicks || 0;
     const dur = item.RunTimeTicks || 0;
-    const pct = dur ? Math.min(100, (pos / dur) * 100).toFixed(1) : 0;
+    const pct = dur ? Math.max(0, Math.min(100, (pos / dur) * 100)).toFixed(1) : 0;
 
     const card = stampOwner(document.createElement('div'), context);
     card.className = 'jc-as-card jc-as-card-with-poster';
@@ -868,12 +868,17 @@ const buildSessionCard = (
 
         const bar = document.createElement('div');
         bar.className = 'jc-as-progress-bar';
+        bar.setAttribute('role', 'progressbar');
+        bar.setAttribute('aria-valuemin', '0');
+        bar.setAttribute('aria-valuemax', '100');
+        bar.setAttribute('aria-valuenow', String(pct));
+        bar.setAttribute('aria-valuetext', `${ticksToTime(pos)} / ${ticksToTime(dur)}`);
 
         // Transcoding buffer — amber layer behind playback position
         if (ts && ts.CompletionPercentage != null) {
             const transcodeFill = document.createElement('div');
             transcodeFill.className = 'jc-as-transcode-fill';
-            transcodeFill.style.width = `${Math.min(100, ts.CompletionPercentage).toFixed(1)}%`;
+            transcodeFill.style.width = `${Math.max(0, Math.min(100, ts.CompletionPercentage)).toFixed(1)}%`;
             bar.appendChild(transcodeFill);
         }
 
@@ -1182,31 +1187,15 @@ const buildSessionActions = (
     return wrap;
 };
 
-// ── Live-update helpers ────────────────────────────────────────────────────
-// Stable per-card key. Admins get the real session Id (also the action target);
-// non-admins get a non-sensitive composite (fields already shown on the card).
-// The composite folds in the now-playing item id and a per-refresh occurrence
-// index so two non-admin sessions that share user/client/device (identical
-// composites) still resolve to DISTINCT cards — otherwise they collide and one
-// card stops receiving live updates. `index` is the position within the
-// fetched active-session list, which renderPanel / applyLiveUpdate /
-// panelMatchesSessions all iterate in the same order, so the key is consistent
-// across a refresh. Exported for unit testing.
+// Admin cards use session ID; non-admin composites include item + occurrence
+// so identical user/client/device sessions still update distinct cards.
 export const sessionCardKey = (s: SessionView, index?: number): string => {
     if (s.Id) return String(s.Id);
     const composite = `${s.UserName || ''}|${s.Client || ''}|${s.DeviceName || ''}|${s.NowPlayingItem?.Id || ''}`;
     return index == null ? composite : `${composite}#${index}`;
 };
 
-// Structural signature: an in-place tick is only safe when the card's identity
-// AND its non-progress structure are unchanged. If the session switches item,
-// flips direct-play↔transcode, or its badge-driving quality fields shift, the
-// signature changes → a full rebuild (so the title/poster/badges never go stale
-// under a moving progress bar). The tick path (applyLiveUpdate) only refreshes
-// progress/state, so the live-varying badge fields (transcode bitrate /
-// resolution / framerate / reasons) must be folded in here — otherwise the
-// badges would freeze until an unrelated structural change forced a rebuild.
-// Exported for unit testing.
+// Identity and every non-progress badge field force a rebuild when changed.
 export const sessionSig = (s: SessionView): string => {
     const item: SessionNowPlaying = s.NowPlayingItem || {};
     const ps: SessionPlayState = s.PlayState || {};
@@ -1250,21 +1239,14 @@ const updateFooter = (context: IdentityContext): void => {
     if (_lastUpdated) footer.textContent = `Updated ${_lastUpdated.toLocaleTimeString()}`;
 };
 
-/**
- * Does the open panel already show exactly this set of sessions? When true a
- * live tick updates progress/state IN PLACE (R2/R7) instead of rebuilding every
- * card (which would reload posters and flicker). A structural change (a stream
- * started/stopped) returns false → a full renderPanel.
- */
+/** True only when a live tick can update in place without stale structure. */
 export const panelMatchesSessions = (sessions: SessionView[]): boolean => {
     const body = document.querySelector('#jc-active-streams-panel .jc-as-panel-body');
     if (!body) return false;
     const cards = Array.from(body.querySelectorAll('.jc-as-card[data-session-id]'));
     const active = activeSessions(sessions);
     if (cards.length !== active.length || active.length === 0) return false;
-    // Match on identity AND structural signature: a card whose session switched
-    // item, flipped direct-play↔transcode, or changed a badge-driving quality
-    // field must be rebuilt, not tick-updated.
+    // Identity and structural signatures must both match.
     const renderedSig = new Map(cards.map(c => [c.getAttribute('data-session-id'), c.getAttribute('data-live-sig')]));
     return active.every((s, i) => renderedSig.get(sessionCardKey(s, i)) === sessionSig(s));
 };
@@ -1285,14 +1267,21 @@ const applyLiveUpdate = (sessions: SessionView[], context: IdentityContext): voi
         const item: SessionNowPlaying = s.NowPlayingItem || {};
         const pos = ps.PositionTicks || 0;
         const dur = item.RunTimeTicks || 0;
+        const progress = dur ? Math.max(0, Math.min(100, (pos / dur) * 100)).toFixed(1) : '0.0';
 
         const fill = card.querySelector<HTMLElement>('.jc-as-progress-fill');
-        if (fill && dur) fill.style.width = `${Math.min(100, (pos / dur) * 100).toFixed(1)}%`;
+        if (fill && dur) fill.style.width = `${progress}%`;
+
+        const bar = card.querySelector<HTMLElement>('.jc-as-progress-bar');
+        if (bar && dur) {
+            bar.setAttribute('aria-valuenow', progress);
+            bar.setAttribute('aria-valuetext', `${ticksToTime(pos)} / ${ticksToTime(dur)}`);
+        }
 
         const ts = s.TranscodingInfo;
         const tfill = card.querySelector<HTMLElement>('.jc-as-transcode-fill');
         if (tfill && ts && ts.CompletionPercentage != null) {
-            tfill.style.width = `${Math.min(100, ts.CompletionPercentage).toFixed(1)}%`;
+            tfill.style.width = `${Math.max(0, Math.min(100, ts.CompletionPercentage)).toFixed(1)}%`;
         }
 
         const timeEl = card.querySelector<HTMLElement>('.jc-as-progress-time');
@@ -1311,12 +1300,7 @@ const applyLiveUpdate = (sessions: SessionView[], context: IdentityContext): voi
     updateFooter(context);
 };
 
-// ── Card UI-state preservation across structural rebuilds ──────────────────
-// A structural rebuild (renderPanel) discards every card DOM node. If an admin
-// had a per-session compose form open (with typed text) or a stop-confirm
-// armed, that transient interaction state would be lost mid-action. Capture it
-// keyed by card id before the rebuild and restore it (in buildSessionActions)
-// for cards still present afterwards.
+// Preserve per-card compose/confirmation state across structural rebuilds.
 interface CardUiState { composeOpen: boolean; composeText: string; confirmArmed: boolean }
 
 const captureCardUiState = (body: Element): Map<string, CardUiState> => {
@@ -1338,9 +1322,7 @@ const renderPanel = (sessions: SessionView[] | null, context: IdentityContext): 
     const panel = document.getElementById('jc-active-streams-panel');
     if (!panel) return;
 
-    // A null sessions arg means the fetch failed (not "zero streams"). Show an
-    // error row so the open panel agrees with the header button's red error
-    // state instead of collapsing null → "No active streams" (W4-ERR-7).
+    // Null is a fetch failure, distinct from an empty session list.
     if (sessions === null) {
         const errText = JC.t?.('active_streams_load_error') || 'Failed to fetch sessions';
         const titleErr = panel.querySelector('.jc-as-panel-title');
@@ -1432,18 +1414,14 @@ const updateHeaderButton = (sessions: SessionView[] | null, context: IdentityCon
     }
 };
 
-// Fetch sessions once, then update the header badge and (if open) the panel.
-// A `live` refresh updates progress/state in place when the session set is
-// unchanged (R2/R7); a structural change rebuilds the card list.
+// Live refreshes update matching cards in place; structural changes rebuild.
 const updateCounter = async (
     opts?: { live?: boolean },
     requestedContext: IdentityContext | null = _identityContext,
 ): Promise<void> => {
     const context = requestedContext;
     if (!isCurrentContext(context)) return;
-    // Request-ordering guard: ws nudges, the fallback interval, manual refresh
-    // and post-action refreshes can overlap. Drop a response that a newer
-    // request has already superseded so a slow reply can't roll back the panel.
+    // Drop slow responses superseded by a newer refresh.
     const seq = ++_refreshSeq;
     const sessions = await fetchSessions(context);
     if (seq !== _refreshSeq || !isCurrentContext(context)) return;
@@ -1464,9 +1442,7 @@ const stopPolling = (): void => {
     if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; }
 };
 
-// ── Live updates (active only while the panel is open) ─────────────────────
-// Debounced nudge: coalesce a burst of core `Sessions` websocket pushes into a
-// single live refresh. Not self-rescheduling — the timer fires once and clears.
+// Coalesce websocket bursts into one non-self-rescheduling live refresh.
 const nudgeLive = (context: IdentityContext): void => {
     if (!isCurrentContext(context) || !_panelOpen || _nudgeTimer) return;
     _nudgeTimer = setTimeout(() => {
@@ -1477,9 +1453,7 @@ const nudgeLive = (context: IdentityContext): void => {
 
 const startLive = (context: IdentityContext): void => {
     if (!isCurrentContext(context)) return;
-    // Push channel: the core `Sessions` websocket message (same one the native
-    // dashboard's live-sessions view subscribes to). Best-effort — fails soft
-    // when the SDK socket bridge is unavailable (older hosts / jsdom).
+    // Prefer the native Sessions push channel when the SDK exposes it.
     if (!_liveUnsub && typeof ApiClient !== 'undefined' && typeof ApiClient.subscribe === 'function') {
         try {
             _liveUnsub = ApiClient.subscribe(['Sessions'], () => nudgeLive(context));
@@ -1487,10 +1461,7 @@ const startLive = (context: IdentityContext): void => {
             _liveUnsub = null;
         }
     }
-    // Fallback cadence — ONLY when the websocket push is unavailable (R5:
-    // push-nudged is the mechanism, the interval is the fallback). Page-scoped
-    // (panel open) + visibility-gated. When the socket is subscribed we rely on
-    // its pushes plus the on-focus refresh below.
+    // Fallback polling is panel-scoped and visibility-gated.
     if (!_liveUnsub && !_liveTimer) {
         _liveTimer = setInterval(() => {
             if (!isCurrentContext(context)) return;
@@ -1498,8 +1469,7 @@ const startLive = (context: IdentityContext): void => {
             void updateCounter({ live: true }, context);
         }, LIVE_FALLBACK_MS);
     }
-    // Refresh immediately when the tab regains focus (the interval skipped
-    // hidden ticks, so the panel could be stale on return).
+    // Refresh once when a hidden tab becomes visible.
     if (!_visListener) {
         _visListener = (): void => {
             if (isCurrentContext(context) && _panelOpen && document.visibilityState === 'visible') {

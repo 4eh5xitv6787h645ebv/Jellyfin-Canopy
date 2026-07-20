@@ -1,6 +1,4 @@
-// src/arr/requests/render-cards.ts
-// Requests Page — download, request, issue and season-pack card rendering
-// (split from requests-page.js).
+// Download, request, issue and season-pack cards.
 
 import { assetUrl } from '../../core/asset-urls';
 import { JC } from '../arr-globals';
@@ -18,13 +16,10 @@ import type { DownloadGroup } from './render-helpers';
 
 const escapeHtml = JC.escapeHtml;
 
-// PERF(R6): no remote assets — arr icons served from the local asset cache.
+// Icons come from the local asset cache.
 const SONARR_ICON_URL = assetUrl('icons/sonarr.svg');
 const RADARR_ICON_URL = assetUrl('icons/radarr-light-hybrid-light.svg');
 
-/**
- * Render a download card
- */
 export function renderDownloadCard(item: DownloadItem): string {
     const STATUS_COLORS = getStatusColors();
     const statusColor = STATUS_COLORS[item.status as string] || STATUS_COLORS.Unknown;
@@ -35,10 +30,10 @@ export function renderDownloadCard(item: DownloadItem): string {
         ? `<img class="jc-download-poster" src="${escapeHtml(item.posterUrl)}" alt="" loading="lazy" onerror="this.style.display='none'">`
         : `<div class="jc-download-poster placeholder"></div>`;
 
-    const progress = Number(item.progress) || 0;
+    const progress = Math.max(0, Math.min(100, Number(item.progress) || 0));
     const progressHtml = `
       <div class="jc-download-progress-container">
-        <div class="jc-download-progress">
+        <div class="jc-download-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress}">
           <div class="jc-download-progress-bar" style="width: ${progress}%; background: ${statusColor}"></div>
         </div>
         <div class="jc-download-stats">
@@ -67,9 +62,6 @@ export function renderDownloadCard(item: DownloadItem): string {
     `;
 }
 
-/**
- * Render a request card
- */
 export function renderRequestCard(item: RequestItem): string {
     const status = resolveRequestStatus(item.mediaStatus, item);
     const releaseDateLabel = getReleaseDateLabel(item);
@@ -112,7 +104,6 @@ export function renderRequestCard(item: RequestItem): string {
       `;
     }
 
-    // Handle release date label - check if it contains HTML
     let releaseDateHtml = '';
     if (releaseDateLabel) {
         const dateText = typeof releaseDateLabel === 'object' ? releaseDateLabel.label : releaseDateLabel;
@@ -265,9 +256,6 @@ export function renderIssueCard(issue: IssueItem): string {
     `;
 }
 
-/**
- * Render a season pack card (collapsed view of multiple episodes)
- */
 export function renderSeasonPackCard(group: Extract<DownloadGroup, { type: 'seasonPack' }>): string {
     const STATUS_COLORS = getStatusColors();
     const item = group.item;
@@ -277,16 +265,12 @@ export function renderSeasonPackCard(group: Extract<DownloadGroup, { type: 'seas
         ? `<img class="jc-download-poster" src="${escapeHtml(item.posterUrl)}" alt="" loading="lazy" onerror="this.style.display='none'">`
         : `<div class="jc-download-poster placeholder"></div>`;
 
-    // Calculate total size for the pack
-    // Check if all episodes have identical sizes (season pack download)
     const firstSize = group.episodes[0]?.totalSize || 0;
     const firstRemaining = group.episodes[0]?.sizeRemaining || 0;
     const isSeasonPackDownload = group.episodes.every(
         (ep) => ep.totalSize === firstSize && ep.sizeRemaining === firstRemaining
     );
 
-    // If it's a season pack download (same size for all), use the size once
-    // Otherwise, sum individual episode sizes
     const totalSize = isSeasonPackDownload
         ? firstSize
         : group.episodes.reduce((sum, ep) => sum + (ep.totalSize || 0), 0);
@@ -294,10 +278,10 @@ export function renderSeasonPackCard(group: Extract<DownloadGroup, { type: 'seas
         ? firstRemaining
         : group.episodes.reduce((sum, ep) => sum + (ep.sizeRemaining || 0), 0);
 
-    const progress = Number(item.progress) || 0;
+    const progress = Math.max(0, Math.min(100, Number(item.progress) || 0));
     const progressHtml = `
       <div class="jc-download-progress-container">
-        <div class="jc-download-progress">
+        <div class="jc-download-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress}">
           <div class="jc-download-progress-bar" style="width: ${progress}%; background: ${statusColor}"></div>
         </div>
         <div class="jc-download-stats">

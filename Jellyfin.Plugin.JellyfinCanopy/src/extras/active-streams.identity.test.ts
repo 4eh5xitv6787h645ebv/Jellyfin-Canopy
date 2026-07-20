@@ -142,6 +142,22 @@ describe('active-streams identity-owned controls', () => {
         vi.restoreAllMocks();
     });
 
+    it('publishes textual progress semantics without exposing the session owner', async () => {
+        const plugin = vi.fn((path: string) => path.endsWith('/active-streams/sessions')
+            ? Promise.resolve([SESSION])
+            : Promise.resolve({ sent: 1, skipped: 0, errors: [] }));
+        configure(plugin);
+        await initializeAndOpen();
+
+        const progress = document.querySelector<HTMLElement>('.jc-as-progress-bar')!;
+        expect(progress.getAttribute('role')).toBe('progressbar');
+        expect(progress.getAttribute('aria-valuemin')).toBe('0');
+        expect(progress.getAttribute('aria-valuemax')).toBe('100');
+        expect(progress.getAttribute('aria-valuenow')).toBe('25.0');
+        expect(progress.getAttribute('aria-valuetext')).toBe('5:00 / 20:00');
+        expect(progress.outerHTML).not.toContain('Account A viewer');
+    });
+
     it.each([
         ['same server A→B', 'server-a'],
         ['server switch A→B', 'server-b'],

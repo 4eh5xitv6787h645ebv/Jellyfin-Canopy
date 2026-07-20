@@ -5,7 +5,7 @@ import { themeConfiguration } from '../test/theme-studio-fixture';
 import type { ApiApi } from '../types/jc';
 import { DYNAMIC_ACCENT_STYLE_ID } from './dynamic-color';
 import { MOBILE_ENVIRONMENT_STYLE_ID } from './mobile';
-import { ThemeStudioRuntime } from './runtime';
+import { OPERATIONAL_STYLESHEET_ID, ThemeStudioRuntime } from './runtime';
 import { COMMITTED_STYLE_ID, PREVIEW_STYLE_ID } from './styles';
 
 interface MutableMediaQueryList extends MediaQueryList {
@@ -111,6 +111,7 @@ afterEach(async () => {
     document.getElementById(PREVIEW_STYLE_ID)?.remove();
     document.getElementById(MOBILE_ENVIRONMENT_STYLE_ID)?.remove();
     document.getElementById(DYNAMIC_ACCENT_STYLE_ID)?.remove();
+    document.getElementById(OPERATIONAL_STYLESHEET_ID)?.remove();
     document.body.replaceChildren();
     for (const name of [...document.documentElement.attributes].map((item) => item.name)) {
         if (name.startsWith('data-jc-theme-')) document.documentElement.removeAttribute(name);
@@ -143,6 +144,25 @@ function createRuntime(): { runtime: ThemeStudioRuntime; harness: TestFeatureSco
 }
 
 describe('Theme Studio identity-owned runtime', () => {
+    it('generation-owns one local operational stylesheet and tears down only the current owner', () => {
+        const first = createRuntime();
+        const link = document.getElementById(OPERATIONAL_STYLESHEET_ID);
+        expect(link).toBeInstanceOf(HTMLLinkElement);
+        expect(link).toMatchObject({
+            rel: 'stylesheet',
+            href: 'http://jellyfin.test/JellyfinCanopy/assets/theme-studio/operational-surfaces.css',
+        });
+        expect(document.querySelectorAll(`#${OPERATIONAL_STYLESHEET_ID}`)).toHaveLength(1);
+
+        const second = createRuntime();
+        expect(document.getElementById(OPERATIONAL_STYLESHEET_ID)).toBe(link);
+        first.runtime.dispose();
+        expect(document.getElementById(OPERATIONAL_STYLESHEET_ID)).toBe(link);
+
+        second.runtime.dispose();
+        expect(document.getElementById(OPERATIONAL_STYLESHEET_ID)).toBeNull();
+    });
+
     it('exposes isolated editor state and adopts only validated acknowledged documents', async () => {
         apiReturning(themeConfiguration());
         const { runtime } = createRuntime();

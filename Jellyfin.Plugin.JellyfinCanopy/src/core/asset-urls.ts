@@ -44,6 +44,7 @@ export const EMBEDDED_ASSET_KEYS = Object.freeze([
     'seerr/poster-fallback.svg',
     'ratings/ratings.css',
     'branding/canopy-mark.svg',
+    'theme-studio/operational-surfaces.css',
 ] as const);
 
 export type EmbeddedAssetKey = (typeof EMBEDDED_ASSET_KEYS)[number];
