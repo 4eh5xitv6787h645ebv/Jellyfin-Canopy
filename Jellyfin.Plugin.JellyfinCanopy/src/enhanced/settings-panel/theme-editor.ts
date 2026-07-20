@@ -962,6 +962,11 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
                 || !applyingState.adoptCommitted(ownedAcknowledged)) {
                 throw Object.assign(new Error('Acknowledged theme could not be adopted'), { kind: 'protocol' });
             }
+            // A joined save can rebase this draft over a concurrent profile
+            // rename. Retire the pre-save input buffer with the rest of the
+            // committed draft so a later render cannot stage that old name
+            // over the exact acknowledged document.
+            syncProfileName(true);
             if (!acknowledgementRuntime) {
                 // A live configuration publication briefly removes the old
                 // runtime before its successor installs. The exact server

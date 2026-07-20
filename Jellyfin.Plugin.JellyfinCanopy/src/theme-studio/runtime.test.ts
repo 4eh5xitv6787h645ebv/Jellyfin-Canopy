@@ -257,6 +257,32 @@ describe('Theme Studio identity-owned runtime', () => {
         expect(document.documentElement.getAttribute('data-jc-theme-palette')).toBe('neutral');
     });
 
+    it('lets an in-flight authoritative load supersede an older acknowledgement', async () => {
+        let resolveLoad: (value: unknown) => void = () => undefined;
+        const plugin = vi.fn(() => new Promise<unknown>((resolve) => { resolveLoad = resolve; }));
+        JC.core.api = { plugin } as unknown as ApiApi;
+        const { runtime } = createRuntime();
+        const load = runtime.load();
+        const acknowledged = themeConfiguration();
+        acknowledged.Revision = 4;
+        acknowledged.Profiles[0].Palette = 'neutral';
+
+        expect(runtime.adoptAcknowledged(acknowledged)).toBe(true);
+        expect(runtime.getConfiguration()).toMatchObject({ Revision: 4 });
+
+        const newer = themeConfiguration();
+        newer.Revision = 5;
+        newer.Profiles[0].Palette = 'vivid';
+        resolveLoad(newer);
+        await load;
+
+        expect(runtime.getConfiguration()).toMatchObject({ Revision: 5 });
+        expect(document.documentElement.getAttribute('data-jc-theme-palette')).toBe('vivid');
+        expect(JC.rememberUserSettingsSnapshot).toHaveBeenLastCalledWith(
+            'theme.json', expect.objectContaining({ Revision: 5 }),
+        );
+    });
+
     it('loads once, applies one committed layer, and follows host theme/media changes live', async () => {
         const plugin = apiReturning(themeConfiguration());
         const { runtime } = createRuntime();

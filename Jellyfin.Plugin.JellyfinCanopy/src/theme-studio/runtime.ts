@@ -121,6 +121,7 @@ export class ThemeStudioRuntime {
     #disposed = false;
     #installed = false;
     #loadGeneration = 0;
+    #acknowledgementGeneration = 0;
     #loadPromise: Promise<void> | null = null;
     #diagnostics: ThemeStudioDiagnostics = Object.freeze({
         status: 'inactive', revision: null, profileId: null, breakpoint: null, mode: null,
@@ -183,7 +184,7 @@ export class ThemeStudioRuntime {
     load(): Promise<void> {
         if (this.#disposed || !this.#scope.isCurrent()) return Promise.resolve();
         const generation = ++this.#loadGeneration;
-        const task = this.#loadOwned(generation);
+        const task = this.#loadOwned(generation, this.#acknowledgementGeneration);
         const tracked = task.finally(() => {
             if (this.#loadPromise === tracked) this.#loadPromise = null;
         });
@@ -191,7 +192,7 @@ export class ThemeStudioRuntime {
         return tracked;
     }
 
-    async #loadOwned(generation: number): Promise<void> {
+    async #loadOwned(generation: number, acknowledgementGeneration: number): Promise<void> {
         this.#setDiagnostics('loading', null);
         try {
             const api = JC.core.api;
@@ -207,6 +208,13 @@ export class ThemeStudioRuntime {
             }
             const configuration = parseUserThemeConfiguration(raw);
             if (!configuration) throw new Error('Theme Studio response failed validation');
+            // An acknowledgement can arrive while this authoritative GET is
+            // in flight. Keep the higher revision whichever response settles
+            // last; a stale read must not roll back an exact save response.
+            if (this.#configuration && configuration.Revision < this.#configuration.Revision) {
+                this.refresh();
+                return;
+            }
             this.#configuration = JC.identity.own(configuration);
             JC.rememberUserSettingsSnapshot?.('theme.json', this.#configuration);
             this.refresh();
@@ -214,6 +222,14 @@ export class ThemeStudioRuntime {
             if (this.#disposed || generation !== this.#loadGeneration
                 || this.#scope.signal.aborted || !this.#scope.isCurrent()
                 || (error as { name?: string } | null)?.name === 'AbortError') return;
+            // If an exact acknowledgement landed after this request began,
+            // the failed read is not evidence that the acknowledged document
+            // is unavailable. Preserve it as the current authority.
+            if (acknowledgementGeneration !== this.#acknowledgementGeneration
+                && this.#configuration) {
+                this.refresh();
+                return;
+            }
             this.#configuration = null;
             this.#previewConfiguration = null;
             this.#previewAllowScheduling = true;
@@ -273,10 +289,11 @@ export class ThemeStudioRuntime {
         if (this.#configuration && configuration.Revision < this.#configuration.Revision) return false;
         const identity = JC.identity.capture();
         if (!identity) return false;
-        // A response already in flight must not overwrite this newer, exact
-        // acknowledgement after it eventually settles.
-        this.#loadGeneration += 1;
-        this.#loadPromise = null;
+        // Do not cancel an authoritative GET already in flight: it may contain
+        // a still newer concurrent commit. #loadOwned compares revisions when
+        // that response settles, while this generation protects the exact
+        // acknowledgement if the read fails.
+        this.#acknowledgementGeneration += 1;
         this.#configuration = JC.identity.own(configuration, identity);
         this.#previewConfiguration = null;
         this.#previewAllowScheduling = true;

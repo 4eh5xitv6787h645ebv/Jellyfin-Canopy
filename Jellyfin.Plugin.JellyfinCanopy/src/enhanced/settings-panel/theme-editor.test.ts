@@ -490,6 +490,7 @@ describe('Theme Studio responsive settings editor', () => {
     it('adopts the exact acknowledgement when a joined saver leaves this target untouched', async () => {
         const authoritative = themeConfiguration();
         authoritative.Profiles[0].BasePreset = 'studio';
+        authoritative.Profiles[0].Name = 'Renamed elsewhere';
         authoritative.Schedule = [{
             Id: 'remote-schedule', ProfileId: 'default', StartMonthDay: '01-01', EndMonthDay: '12-31',
             Priority: 5, Enabled: true,
@@ -510,8 +511,11 @@ describe('Theme Studio responsive settings editor', () => {
         );
         expect(adoptAcknowledged).toHaveBeenCalledWith(expect.objectContaining({
             Revision: 4,
+            Profiles: [expect.objectContaining({ Name: 'Renamed elsewhere' })],
             Schedule: [expect.objectContaining({ Id: 'remote-schedule' })],
         }));
+        expect(panel.querySelector<HTMLInputElement>('[data-role="profile-name"]')?.value)
+            .toBe('Renamed elsewhere');
         expect(button('apply').disabled).toBe(true);
     });
 
