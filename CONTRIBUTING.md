@@ -389,7 +389,7 @@ one-to-one with a budget key in `scripts/scale-budgets.json`:
 | --- | --- |
 | `maxTagCacheFullBuildMilliseconds` | Wall-clock duration of a **cold** full tag-cache build over the seeded library — every entry constructed from scratch, per the tag-cache state protocol below. |
 | `maxTagCacheFullBuildPeakResidentDeltaBytes` | Peak server resident-memory (RSS) delta during that cold full build, relative to the pre-build baseline. |
-| `maxLibraryScanEventP95Milliseconds` | p95 latency of the synchronous scan-thread event handlers (the [S1 rule](#performance-rules)) during a controlled bulk add. |
+| `maxLibraryScanEventP95Milliseconds` | p95 per-event latency of the plugin's synchronous scan-thread event handlers (the [S1 rule](#performance-rules)) during the pinned bulk-add workload defined in the measurement protocol below. |
 | `maxResponseFilterP95MicrosecondsPerItem` | p95 latency overhead added by the plugin's complete synchronous MVC item-response filter chain — all four action filters registered in `PluginServiceRegistrator`, in registration order: `HiddenContentResponseFilter`, `SpoilerIdentityTagFilter`, `SpoilerFieldStripFilter`, `SpoilerBlurImageFilter`; any filter later added to that chain joins this metric automatically — on the pinned list-endpoint workload defined in the measurement protocol below, normalized per **examined (pre-filter) item** per the fixed page-shape rule below. |
 | `maxPluginStartupMilliseconds` | Plugin startup duration on the seeded server with the persisted tag cache **present** (warm start, the production steady state), per the tag-cache state protocol below. |
 | `maxTagCacheColdResponseBytes` | Size in bytes of the cold tag-cache response. |
@@ -473,6 +473,35 @@ Measurement protocol requirements for the follow-up harness:
   produces incomparable numbers and is **no-evidence** for this metric;
   changing the pinned template is an instrumentation change under the
   named-markers comparability rule below.
+- **Pinned bulk-add workload (S1 scan-event metric).**
+  `maxLibraryScanEventP95Milliseconds` is measured against one fixed
+  workload, identical at both profiles (the scale variable is the
+  pre-existing profile library the handlers run against, not the add
+  itself): exactly **10,000 new stub episodes** (100 series × 100 episodes,
+  the same sparse stub shape the seed generator produces), placed as one
+  pinned folder in **instance-local storage** and ingested by a **single
+  standard library scan**. Add cadence and concurrency are therefore the
+  server's own scan behavior — already pinned by the digest-pinned Jellyfin
+  image and the verified `--cpus 2` container quota — never a
+  harness-invented add loop. One scan of 10,000 items is the shape that
+  accumulates thousands of pending coalesced changes in the deferred
+  worker, so a regression that appears only at queue depth cannot pass a
+  trickle-sized add. Timing boundary: each sample is the wall-clock duration
+  of the plugin's complete synchronous handler chain for **one**
+  `ILibraryManager.ItemAdded/ItemUpdated/ItemRemoved` event, recorded from
+  named markers bracketing plugin-handler entry and exit — never Jellyfin's
+  surrounding dispatch, other subscribers' work, or whole-scan duration.
+  Aggregation: p95 over **all** per-event samples from the single scan, with
+  **no warm-up discard** — first-event JIT and initialization costs are
+  deliberately included because production bulk adds pay them — and the
+  harness asserts at least 10,000 item-added samples were recorded.
+  Isolation: this workload runs as the **final measurement of the run**, in
+  a dedicated server session started only after every tag-cache, envelope,
+  startup, and response-filter metric is complete, so every other metric
+  observes exactly the profile's nominal library cardinality; the added
+  items are never written to the Volume baseline. A run that measures this
+  metric with a different item count, folder shape, add mechanism, or
+  ordering is a configuration failure — **no-evidence** for this metric.
 - **The cold tag-cache response, defined.** The cold tag-cache response is
   exactly one thing: a single authorized
   `GET /JellyfinCanopy/tag-cache/{userId}` request for the measurement user
