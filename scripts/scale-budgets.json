@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "enforcement": "advisory",
+  "limits": {
+    "L": {
+      "maxTagCacheFullBuildMilliseconds": null,
+      "maxTagCacheFullBuildPeakResidentDeltaBytes": null,
+      "maxLibraryScanEventP95Milliseconds": null,
+      "maxResponseFilterP95MicrosecondsPerItem": null,
+      "maxPluginStartupMilliseconds": null,
+      "maxTagCacheColdResponseBytes": null,
+      "maxTagCacheSnapshotSerializationPeakAllocatedBytes": null,
+      "maxTagCacheColdTransferP95Milliseconds": null,
+      "maxTagCacheColdClientParseP95Milliseconds": null,
+      "maxTagCacheColdBrowserHeapDeltaBytes": null
+    },
+    "XL": {
+      "maxTagCacheFullBuildMilliseconds": null,
+      "maxTagCacheFullBuildPeakResidentDeltaBytes": null,
+      "maxLibraryScanEventP95Milliseconds": null,
+      "maxResponseFilterP95MicrosecondsPerItem": null,
+      "maxPluginStartupMilliseconds": null,
+      "maxTagCacheColdResponseBytes": null,
+      "maxTagCacheSnapshotSerializationPeakAllocatedBytes": null,
+      "maxTagCacheColdTransferP95Milliseconds": null,
+      "maxTagCacheColdClientParseP95Milliseconds": null,
+      "maxTagCacheColdBrowserHeapDeltaBytes": null
+    }
+  }
+}

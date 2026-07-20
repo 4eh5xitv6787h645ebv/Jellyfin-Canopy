@@ -58,6 +58,7 @@ published as a deterministic, manifest-owned client distribution:
 
 - `Jellyfin.Plugin.JellyfinCanopy/src/` — **the client.** Strict TypeScript ES modules organized into the boot-critical platform, import-pure feature entries under `src/entries/`, and implementation areas (`enhanced/`, `seerr/`, `arr/`, `tags/`, `elsewhere/`, `extras/`, `others/`). `scripts/build-bundle.js` uses esbuild splitting to produce `dist/entries/*.js`, content-addressed `dist/chunks/*.js`, adjacent source maps, and `dist/client-manifest.json`; there is no client monolith or area-barrel boot path.
 - `scripts/bundle-budgets.json` — fail-closed limits for the boot graph, feature static and dynamically expanded closures, individual/output counts, source maps, the client manifest, and total published bytes.
+- `scripts/scale-budgets.json` — machine-readable performance limits for the [nightly large-library scale tier](#nightly-large-library-scale-tier); same philosophy as `bundle-budgets.json`, currently advisory with `null` (not-yet-measured) placeholders.
 - `Jellyfin.Plugin.JellyfinCanopy/Controllers/` — one small feature controller per HTTP surface, nearly all deriving from `JellyfinCanopyControllerBase` (the anonymous asset-serving `AssetsController` derives directly from `ControllerBase`).
 - `Jellyfin.Plugin.JellyfinCanopy/Configuration/` — `PluginConfiguration.cs` (admin settings), `SettingDescriptors.cs` (the settings registry — the single source of truth for what reaches clients), the admin config page.
 - `Jellyfin.Plugin.JellyfinCanopy.Tests/` — xUnit tests, including golden snapshots that pin the config payload contract.
@@ -332,6 +333,257 @@ security-sensitive exception: it requires both `JF_BIND_ADDRESS=<numeric-ip>`
 and `JF_ALLOW_NON_LOOPBACK=true`, plus four nondefault `JF_ADMIN_USER`,
 `JF_ADMIN_PASS`, `JF_USER_NAME`, and `JF_USER_PASS` values. Never expose the
 documented test credentials to a LAN or public interface.
+
+### Nightly large-library scale tier
+
+This section is the specification for the repository's scale-test tier. The
+tier is **advisory today**: the workflow, seed generator, measurement harness,
+and budget comparator are follow-up implementation issues cut from this spec
+(listed at the end). Nothing here runs per PR, and nothing here currently
+blocks a release. The durable heading stays stable while the tier ratchets from
+advisory to blocking; its current status is expressed in this content, never by
+renaming the section.
+
+Why it exists: the per-PR gates use small seeded libraries on 2-CPU parity
+servers, and the only performance artifacts are client-side jank benchmarks
+(non-CI) plus the static `check:performance-rules` guard. None of that would
+catch a change that makes the tag-cache build quadratic or regresses scan-event
+handling at scale. The scale tier measures the plugin against genuinely large
+synthetic libraries on a fixed schedule instead.
+
+#### Job shape
+
+A scheduled GitHub Actions workflow (nightly for profile L, weekly or
+`workflow_dispatch` for profile XL) runs from `main` only. Its steps, in order:
+provision an ephemeral Linode instance, attach the persistent seed Volume,
+prepare the instance (Docker, plugin build under test), verify the runtime
+quota, measure every metric below, compare measurements against
+`scripts/scale-budgets.json`, collect results as workflow artifacts, and
+destroy the instance. The workflow has **no `pull_request` trigger** and never
+registers a self-hosted runner; orchestration is plain SSH from the
+GitHub-hosted control-plane job.
+
+#### Scale profiles (provisional — SR-06 canonicalizes)
+
+- **L — 100,000 episodes.** Runs nightly.
+- **XL — approximately 2,000,000 items**, provisionally targeted as roughly
+  2,000,000 episodes plus 500 users as the worst-case shape, built as far as
+  feasible. Runs weekly and on demand.
+
+Both profiles are provisional definitions owned here only until SR-06
+canonicalizes them; if SR-06 changes a profile, this section and the budget
+file follow it.
+
+The synthetic library is produced by a bulk-item generator extending the
+existing `e2e/docker/seed.sh` machinery (follow-up issue). Stub media files are
+zero-byte/sparse — no real video — so profile XL is an inode question, not a
+disk-space question, and the seed script must verify `df -i` headroom on the
+Volume before seeding.
+
+#### Metrics
+
+Every run measures, per profile, the following ten metrics. Each corresponds
+one-to-one with a budget key in `scripts/scale-budgets.json`:
+
+| Budget key | What is measured |
+| --- | --- |
+| `maxTagCacheFullBuildMilliseconds` | Wall-clock duration of a full tag-cache build over the seeded library. |
+| `maxTagCacheFullBuildPeakResidentDeltaBytes` | Peak server resident-memory (RSS) delta during that full build, relative to the pre-build baseline. |
+| `maxLibraryScanEventP95Milliseconds` | p95 latency of the synchronous scan-thread event handlers (the [S1 rule](#performance-rules)) during a controlled bulk add. |
+| `maxResponseFilterP95MicrosecondsPerItem` | p95 response-filter overhead on large item pages (S3), normalized per returned item. |
+| `maxPluginStartupMilliseconds` | Plugin startup duration on the seeded server. |
+| `maxTagCacheColdResponseBytes` | Size in bytes of the cold tag-cache response. |
+| `maxTagCacheSnapshotSerializationPeakAllocatedBytes` | Peak server allocation during tag-cache snapshot serialization. |
+| `maxTagCacheColdTransferP95Milliseconds` | p95 transfer time of the cold tag-cache response. |
+| `maxTagCacheColdClientParseP95Milliseconds` | p95 client parse time of the cold tag-cache response. |
+| `maxTagCacheColdBrowserHeapDeltaBytes` | Browser heap delta after the client consumes the cold tag-cache response. |
+
+The last five form the tag-cache cold-response envelope required by SR-06's
+response-envelope rule (SR-22): response bytes, serialization peak allocation,
+transfer time, client parse time, and browser heap — not just build
+time/memory.
+
+Measurement protocol requirements for the follow-up harness:
+
+- Publish **raw samples plus summarized values** (p50/p95/max as applicable)
+  for both profiles, not summaries alone.
+- Use fixed, named measurement markers in harness output so runs are comparable
+  across time and instrumentation changes are explicit.
+- Record stable seed metadata (seed version/digest, profile) and topology
+  metadata (instance type, region, CPU quota) with every result.
+- The numbers produced here feed the SR-10 scaling documentation's
+  "not yet measured" placeholders; publishing them is part of the run's job,
+  not an optional extra.
+
+#### Budget file format: `scripts/scale-budgets.json`
+
+The budget file mirrors the philosophy of `scripts/bundle-budgets.json`:
+reviewed, machine-readable integer limits committed next to the code they
+constrain. Its shape:
+
+- `schemaVersion` — currently `1`. Consumers reject unknown schema versions.
+- `enforcement` — `"advisory"` or `"blocking"`. Initially `"advisory"`.
+- `limits.L` and `limits.XL` — exactly these two profiles, each containing
+  exactly the ten keys in the table above.
+
+Value semantics:
+
+- A limit is either `null` or a non-negative safe integer in the unit encoded
+  by its key name (`…Milliseconds`, `…Bytes`, `…MicrosecondsPerItem`).
+- `null` means **unmeasured**: the metric is still measured and reported, but
+  it has no limit yet. `null` never counts as a pass.
+- A measured metric **breaches** its budget when `actual > maximum` (same
+  semantics as the bundle budgets).
+- Consumers (the follow-up comparator) must reject unknown `schemaVersion`
+  values, missing or extra profiles, missing or extra keys, and negative or
+  non-integer measured limits — and, while `enforcement` is `"blocking"`, any
+  `null` limit is itself a configuration failure (fail closed).
+
+The committed JSON file is canonical; this section documents its fields and
+semantics and deliberately does not duplicate its contents.
+
+#### Comparison step and outcomes
+
+The comparator (follow-up issue) reads `scripts/scale-budgets.json` **from the
+tested commit**, validates the exact schema above, compares each numeric
+`actual` with its `maximum`, and records one outcome per metric:
+
+- **pass** — measured and within budget;
+- **breach** — measured and over budget;
+- **unmeasured** — the limit is `null` (reported, never treated as green).
+
+A run that fails before producing comparable measurements (provisioning, SSH,
+seeding, collection, teardown) is **no-evidence** — an infrastructure failure,
+tracked separately from metric regressions and never recorded as a pass or a
+breach.
+
+#### Regression policy and the advisory→blocking ratchet
+
+- The repository maintainer reviews every nightly failure (breach or
+  no-evidence) by the next working day, and always before approving a release.
+- Infrastructure no-evidence failures are triaged as CI health; a confirmed or
+  repeated metric breach gets a tracked issue (opened or updated) like any
+  other regression.
+- Limits are populated through reviewed measurement PRs while `enforcement`
+  stays `"advisory"`: after at least **seven comparable successful runs per
+  profile** on unchanged instrumentation, topology, and seed version, set each
+  limit from the reviewed high-water measurement plus the smallest justified
+  noise margin.
+- `enforcement` flips to `"blocking"` only when every limit is numeric **and**
+  the follow-up workflow and release integration exist.
+- Budgets follow the repository's standard ratchet rule: tighten them after
+  sustained improvements; never raise one merely to turn a run green.
+
+#### Release-blocking semantics (exact tag SHA)
+
+Advisory results never block a PR or a release. Once `enforcement` is
+`"blocking"`, the release workflow's reused quality gates (see
+[RELEASING.md](RELEASING.md)) must additionally obtain a provenance-verified
+scale result whose `testedCommitSha` **exactly equals the tag SHA** — a nightly
+result for some older `main` commit describes that commit, not the tag, and can
+neither block nor satisfy a tag release. Two ways to obtain it:
+
+1. **Dispatch**: the release workflow dispatches a fresh scale run for the tag
+   commit; or
+2. **Reuse**: it reuses a canonical GitHub workflow artifact for that exact
+   commit created within the preceding **seven days** (the freshness window).
+
+The immutable result artifact must record: tested commit SHA, profile, seed
+version, the SHA-256 of the `scale-budgets.json` used, workflow run ID and
+attempt, creation time, topology metadata, raw metrics, the compared limits,
+enforcement mode, and outcome. Release-time reuse verifies the artifact ID and
+digest, that the producing run was a `main`-only schedule/`workflow_dispatch`
+run, that the artifact is retained through the freshness window, and that its
+budget digest equals the tag commit's `scale-budgets.json` digest.
+
+Retry policy: an infrastructure no-evidence failure (provisioning, SSH,
+collection, teardown) permits at most **two additional attempts**. A completed
+run with a budget breach is evidence — it is not retryable. In blocking mode,
+having no fresh exact-SHA passing result after those retries blocks the
+release; as with every other release gate, there is no bypass.
+
+#### Runner topology (decided 2026-07-20): Linode ephemeral instances
+
+The job runs on ephemeral Linode instances provisioned per run — never on
+GitHub-hosted runners (too small, too variable) and never as a registered
+self-hosted GitHub runner (fork-PR code-execution risk). The scheduled
+workflow drives the instance over plain SSH: provision → attach → prepare →
+verify → measure → compare → collect → destroy.
+
+- **Profile L (nightly)**: Dedicated 8 GB (`g6-dedicated-4`, 4 vCPU dedicated /
+  8 GB / 160 GB) at ~$0.11/hr, ~2–3 h per run.
+- **Profile XL (weekly / on demand)**: Dedicated 16 GB (`g6-dedicated-8`,
+  8 vCPU / 16 GB / 320 GB) at ~$0.22/hr.
+- **Dedicated CPU plans only** — shared-plan noisy-neighbor variance would make
+  perf budgets flap.
+- **Parity inside the box**: the Jellyfin container runs with `--cpus 2` — the
+  repository's official parity profile — and the run verifies Docker applied
+  that quota before measuring; spare host cores absorb Docker, harness, and
+  metric overhead so measurements stay clean.
+- **Estimated cost**: ~$15–20/month (nightly L + weekly XL + Volume + optional
+  Object Storage).
+
+Existing account-side infrastructure (given; the follow-up implementation
+documents against it rather than re-deciding it): region `eu-central`
+(Frankfurt) for compute and Volume; Block Storage Volume `canopy-scale-seed`
+(80 GB, id `16926868`); Object Storage bucket `canopy-scale-results` in
+`de-fra-2` (S3-compatible endpoint `de-fra-1.linodeobjects.com`); a dedicated
+SSH keypair; the provision/attach/teardown lifecycle was proven working on
+2026-07-20.
+
+Volume lifecycle:
+
+- The Volume holds the pre-seeded stub library plus the scanned Jellyfin
+  database so a run skips the multi-hour initial scan. Volumes attach to one
+  Linode at a time (same region), so **runs are serialized** on the Volume.
+- The Volume's media/database baseline is **immutable during ordinary
+  measurement runs**: writable Jellyfin state is copied to instance-local
+  storage; the baseline is identified by a digest of its seed inputs and
+  profile; it is refreshed only through an exclusive seed-refresh path, and
+  only when the seed script or profile definition changes.
+
+Secrets and teardown:
+
+- The Linode API token and SSH private key live as GitHub Actions secrets
+  scoped to the scheduled workflow's environment, reachable only from
+  `main`-only scheduled/manual dispatch. Raw run logs must never expose them.
+- Teardown runs under `always()` so a failed run cannot leak a paid instance;
+  it destroys the exact instance it provisioned and confirms the Volume is
+  detached. A collection failure must not suppress cleanup.
+- GitHub workflow artifacts are the **canonical** results store. Copies
+  mirrored to the Object Storage bucket are optional, analysis-only, and are
+  never release evidence.
+
+#### Why this is not a per-PR gate
+
+The scale tier stays out of the per-PR path deliberately, and must not be
+"fixed" into one later:
+
+- a run takes multiple hours of wall-clock on paid dedicated hardware;
+- the seed Volume is an exclusive, serialized resource;
+- PR-triggered execution on infrastructure holding account secrets is exactly
+  the fork-PR code-execution risk the topology decision excludes.
+
+Per-PR performance protection remains what it is today: the static
+`check:performance-rules` gate and the server-side guard tests
+(`LibraryScanEventGuardTests`). Do not add `pull_request` triggers to the scale
+workflow and do not register the Linode instances as self-hosted runners for
+PR events.
+
+#### Follow-up implementation issues cut from this spec
+
+1. Sparse bulk-item generator extending `e2e/docker/seed.sh` (with the `df -i`
+   headroom check).
+2. Seed refresh/versioning tooling for the Volume baseline.
+3. The `main`-only scheduled workflow: SSH provisioning, quota verification,
+   `always()` teardown.
+4. Measurement harness and the immutable result-artifact schema.
+5. Budget comparator with fail-closed validation and its negative tests
+   (unknown schema, missing/extra keys, `null` while blocking, over-budget,
+   stale/wrong-SHA artifacts, exhausted retries).
+6. Exact-tag-SHA release integration in `release.yml` (only when ratcheting to
+   blocking).
+7. SR-06 canonicalization of the L/XL profile definitions.
 
 ### Docs
 
