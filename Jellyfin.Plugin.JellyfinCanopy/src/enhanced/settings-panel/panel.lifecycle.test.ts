@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
     wireSettingsListeners: vi.fn(),
     wireShortcutEditor: vi.fn(),
     wireSpoilerGuardListeners: vi.fn(),
+    wireThemeStudioEditor: vi.fn(),
 }));
 
 vi.mock('./template', () => ({
@@ -31,6 +32,7 @@ vi.mock('./template', () => ({
         </div>`,
 }));
 vi.mock('./shortcut-editor', () => ({ wireShortcutEditor: mocks.wireShortcutEditor }));
+vi.mock('./theme-editor', () => ({ wireThemeStudioEditor: mocks.wireThemeStudioEditor }));
 vi.mock('./settings', () => ({
     wireSettingsListeners: mocks.wireSettingsListeners,
     wireMiscSettingsControls: mocks.wireMiscSettingsControls,
@@ -324,6 +326,24 @@ describe('settings panel lifecycle owner', () => {
         expect(focus).toHaveBeenCalledTimes(1);
         expect(isAnyModalOpen()).toBe(false);
         expect(document.body.classList.contains('jc-modal-open')).toBe(false);
+    });
+
+    it('suspends inactivity close while a child owns unsaved work and resumes after release', async () => {
+        let setAutoCloseSuspended: ((suspended: boolean) => void) | null = null;
+        mocks.wireThemeStudioEditor.mockImplementationOnce((ctx: {
+            setAutoCloseSuspended(suspended: boolean): void;
+        }) => {
+            setAutoCloseSuspended = (suspended) => ctx.setAutoCloseSuspended(suspended);
+            ctx.setAutoCloseSuspended(true);
+        });
+
+        await showPanel!();
+        await vi.advanceTimersByTimeAsync(10);
+        expect(document.getElementById('jellyfin-canopy-panel')).not.toBeNull();
+
+        setAutoCloseSuspended!(false);
+        await vi.advanceTimersByTimeAsync(10);
+        expect(document.getElementById('jellyfin-canopy-panel')).toBeNull();
     });
 
     it('continues disposing resources after one child cleanup throws', async () => {

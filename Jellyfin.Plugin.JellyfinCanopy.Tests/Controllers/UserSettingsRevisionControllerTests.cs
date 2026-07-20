@@ -420,9 +420,105 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
 
             var result = Controller(0).SaveUserSettingsTheme(UserId, candidate);
 
-            Assert.IsType<BadRequestObjectResult>(result);
+            var response = Assert.IsType<UserSettingsController.UserFileMutationResponse<UserThemeConfiguration>>(
+                Assert.IsType<BadRequestObjectResult>(result).Value);
+            Assert.Equal("theme_schedule_disabled", response.Code);
             Assert.Equal("winter", Assert.Single(
                 _manager.GetUserConfigurationStrict<UserThemeConfiguration>(UserId, "theme.json").Schedule).Id);
+        }
+
+        [Fact]
+        public void Theme_DisabledSchedulingChecksScheduleInsideTheCommitTransaction()
+        {
+            _provider.Current = new PluginConfiguration
+            {
+                ThemeStudioAllowProfileImport = true,
+                ThemeStudioAllowSeasonalScheduling = false
+            };
+            var stored = UserThemeConfiguration.CreateDefault("canopy", "canopy-night");
+            stored.Schedule.Add(new ThemeScheduleEntry
+            {
+                Id = "winter",
+                ProfileId = ThemeProfile.DefaultId,
+                StartMonthDay = "12-01",
+                EndMonthDay = "02-29"
+            });
+            _manager.SaveUserConfiguration(UserId, "theme.json", stored);
+            var candidate = _manager.GetUserConfigurationStrict<UserThemeConfiguration>(UserId, "theme.json");
+            candidate.Profiles[0].Name = "Candidate profile edit";
+            var raced = UserThemeConfiguration.CreateDefault("canopy", "canopy-night");
+            raced.Schedule.Add(new ThemeScheduleEntry
+            {
+                Id = "summer",
+                ProfileId = ThemeProfile.DefaultId,
+                StartMonthDay = "06-01",
+                EndMonthDay = "08-31"
+            });
+            var injected = 0;
+            _manager.UserFileLockObserverForTests = observation =>
+            {
+                if (observation.Operation == "transaction"
+                    && observation.FileName == "theme.json"
+                    && observation.Phase == UserFileLockPhase.Waiting
+                    && Interlocked.Exchange(ref injected, 1) == 0)
+                {
+                    _manager.SaveUserConfiguration(UserId, "theme.json", raced);
+                }
+            };
+
+            try
+            {
+                var result = Controller(0).SaveUserSettingsTheme(UserId, candidate);
+                var response = Assert.IsType<UserSettingsController.UserFileMutationResponse<UserThemeConfiguration>>(
+                    Assert.IsType<BadRequestObjectResult>(result).Value);
+                Assert.Equal("theme_schedule_disabled", response.Code);
+            }
+            finally
+            {
+                _manager.UserFileLockObserverForTests = null;
+            }
+
+            var durable = _manager.GetUserConfigurationStrict<UserThemeConfiguration>(UserId, "theme.json");
+            Assert.Equal("summer", Assert.Single(durable.Schedule).Id);
+            Assert.Equal("Default", durable.Profiles[0].Name);
+        }
+
+        [Fact]
+        public void Theme_DisabledSchedulingSurfacesCorruptStoreAsUnavailable()
+        {
+            _provider.Current = new PluginConfiguration
+            {
+                ThemeStudioAllowProfileImport = true,
+                ThemeStudioAllowSeasonalScheduling = false
+            };
+            Directory.CreateDirectory(Path.GetDirectoryName(FilePath("theme.json"))!);
+            File.WriteAllText(FilePath("theme.json"), "{ malformed");
+            var candidate = UserThemeConfiguration.CreateDefault("canopy", "canopy-night");
+
+            var result = Controller(0).SaveUserSettingsTheme(UserId, candidate);
+
+            Assert.Equal(
+                StatusCodes.Status503ServiceUnavailable,
+                Assert.IsType<ObjectResult>(result).StatusCode);
+        }
+
+        [Fact]
+        public void Theme_DisabledSchedulingSurfacesUnreadableStorePathAsUnavailable()
+        {
+            _provider.Current = new PluginConfiguration
+            {
+                ThemeStudioAllowProfileImport = true,
+                ThemeStudioAllowSeasonalScheduling = false
+            };
+            Directory.CreateDirectory(FilePath("theme.json"));
+            var candidate = UserThemeConfiguration.CreateDefault("canopy", "canopy-night");
+            candidate.Profiles[0].Name = "Requires a real write";
+
+            var result = Controller(0).SaveUserSettingsTheme(UserId, candidate);
+
+            Assert.Equal(
+                StatusCodes.Status503ServiceUnavailable,
+                Assert.IsType<ObjectResult>(result).StatusCode);
         }
 
         [Fact]

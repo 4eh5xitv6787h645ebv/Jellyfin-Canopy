@@ -32,6 +32,7 @@ export interface PanelContext {
     trackTimer: (timer: number) => void;
     pluginShortcuts: any[];
     resetAutoCloseTimer: () => void;
+    setAutoCloseSuspended: (suspended: boolean) => void;
     panelBgColor: string;
     headerFooterBg: string;
     detailsBackground: string;
@@ -285,6 +286,7 @@ async function openPanel(owner: PanelOwner): Promise<void> {
     let isDragging = false;
     let offset = { x: 0, y: 0 };
     let autoCloseTimer: number | null = null;
+    let autoCloseSuspended = false;
     let isMouseInside = false;
     let closeHelp: (ev: any) => void = () => undefined;
 
@@ -315,6 +317,7 @@ async function openPanel(owner: PanelOwner): Promise<void> {
     };
     owner.registerCleanup(() => {
         clearAutoCloseTimer();
+        autoCloseSuspended = false;
         isDragging = false;
         isMouseInside = false;
         offset = { x: 0, y: 0 };
@@ -324,6 +327,7 @@ async function openPanel(owner: PanelOwner): Promise<void> {
     const resetAutoCloseTimer = () => {
         if (!owner.isCurrent()) return;
         clearAutoCloseTimer();
+        if (autoCloseSuspended) return;
         const timer = window.setTimeout(() => {
             owner.forgetTimer(timer);
             if (autoCloseTimer === timer) autoCloseTimer = null;
@@ -333,6 +337,13 @@ async function openPanel(owner: PanelOwner): Promise<void> {
         }, JC.CONFIG!.HELP_PANEL_AUTOCLOSE_DELAY as number);
         autoCloseTimer = timer;
         owner.trackTimer(timer);
+    };
+
+    const setAutoCloseSuspended = (suspended: boolean): void => {
+        if (autoCloseSuspended === suspended) return;
+        autoCloseSuspended = suspended;
+        clearAutoCloseTimer();
+        if (!suspended && owner.isCurrent() && !isMouseInside) resetAutoCloseTimer();
     };
 
     const handleMouseDown = (e: MouseEvent) => {
@@ -387,6 +398,7 @@ async function openPanel(owner: PanelOwner): Promise<void> {
         trackTimer: (timer) => owner.trackTimer(timer),
         pluginShortcuts,
         resetAutoCloseTimer,
+        setAutoCloseSuspended,
         panelBgColor,
         headerFooterBg,
         detailsBackground,

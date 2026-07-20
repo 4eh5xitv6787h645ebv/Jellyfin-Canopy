@@ -14,6 +14,7 @@ let cancelPreview: ReturnType<typeof vi.fn<() => void>>;
 let adoptAcknowledged: ReturnType<typeof vi.fn<(value: unknown) => boolean>>;
 let reload: ReturnType<typeof vi.fn<() => Promise<boolean>>>;
 let resetAutoCloseTimer: ReturnType<typeof vi.fn<() => void>>;
+let setAutoCloseSuspended: ReturnType<typeof vi.fn<(suspended: boolean) => void>>;
 let configuration: UserThemeConfiguration;
 let frames: Map<number, FrameRequestCallback>;
 let nextFrame: number;
@@ -31,6 +32,7 @@ function context(): PanelContext {
         trackTimer: () => undefined,
         pluginShortcuts: [],
         resetAutoCloseTimer,
+        setAutoCloseSuspended,
         panelBgColor: '#181818',
         headerFooterBg: '#202020',
         detailsBackground: '#202020',
@@ -120,6 +122,7 @@ beforeEach(() => {
     adoptAcknowledged = vi.fn(() => true);
     reload = vi.fn().mockResolvedValue(true);
     resetAutoCloseTimer = vi.fn<() => void>();
+    setAutoCloseSuspended = vi.fn<(suspended: boolean) => void>();
     JC.core.themeStudio = {
         preview,
         cancelPreview,
@@ -413,6 +416,24 @@ describe('Theme Studio responsive settings editor', () => {
         expect(resetAutoCloseTimer).toHaveBeenCalledTimes(2);
     });
 
+    it('suspends panel auto-close for staged and pending Expert drafts until Cancel', () => {
+        wireThemeStudioEditor(context());
+        setAutoCloseSuspended.mockClear();
+
+        button('preset', 'glass').click();
+        expect(setAutoCloseSuspended).toHaveBeenLastCalledWith(true);
+        button('cancel').click();
+        expect(setAutoCloseSuspended).toHaveBeenLastCalledWith(false);
+
+        button('editor-mode', 'expert').click();
+        setAutoCloseSuspended.mockClear();
+        const editor = panel.querySelector<HTMLTextAreaElement>('[data-field="expert-json"]')!;
+        editor.value = editor.value.replace('canopy-night', 'neutral');
+        editor.dispatchEvent(new Event('input', { bubbles: true }));
+        expect(setAutoCloseSuspended).toHaveBeenCalledOnce();
+        expect(setAutoCloseSuspended).toHaveBeenCalledWith(true);
+    });
+
     it('validates portable imports on the server and includes schedule differences', async () => {
         const imported = themeConfiguration();
         imported.Profiles[0].Palette = 'neutral';
@@ -448,6 +469,44 @@ describe('Theme Studio responsive settings editor', () => {
             LegacyMigration: { JellyfishTheme: '', Completed: false },
             Schedule: [expect.objectContaining({ Id: 'summer' })],
         }));
+    });
+
+    it('retains dormant schedules while importing profiles when scheduling is disabled', async () => {
+        JC.pluginConfig.ThemeStudioAllowSeasonalScheduling = false;
+        configuration.Schedule = [{
+            Id: 'winter', ProfileId: 'default', StartMonthDay: '12-01', EndMonthDay: '02-28',
+            Priority: 10, Enabled: true,
+        }];
+        const imported = themeConfiguration();
+        imported.Profiles[0].Palette = 'neutral';
+        imported.Schedule = [];
+        const portable = {
+            SchemaVersion: imported.SchemaVersion,
+            ActiveProfileId: imported.ActiveProfileId,
+            Profiles: imported.Profiles,
+            Schedule: imported.Schedule,
+        };
+        JC.core.api = {
+            plugin: vi.fn().mockResolvedValue({ valid: true, data: portable }),
+        } as unknown as ApiApi;
+        wireThemeStudioEditor(context());
+        const input = panel.querySelector<HTMLInputElement>('[data-field="import-file"]')!;
+        Object.defineProperty(input, 'files', {
+            configurable: true,
+            value: [new File([JSON.stringify(portable)], 'profiles.json', { type: 'application/json' })],
+        });
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+
+        await vi.waitFor(() => expect(panel.textContent).toContain('theme_studio_import_ready'));
+        expect(panel.textContent).not.toContain('theme_studio_import_schedule_removed');
+        button('accept-import').click();
+        flushFrames();
+
+        expect(preview).toHaveBeenLastCalledWith(expect.objectContaining({
+            Profiles: [expect.objectContaining({ Palette: 'neutral' })],
+            Schedule: [expect.objectContaining({ Id: 'winter', ProfileId: 'default' })],
+        }));
+        expect(button('apply').disabled).toBe(false);
     });
 
     it('exports the portable document without revision or migration internals', async () => {
@@ -559,6 +618,39 @@ describe('Theme Studio responsive settings editor', () => {
         flushFrames();
         expect(replacementPreview).toHaveBeenCalledWith(expect.objectContaining({
             Profiles: [expect.objectContaining({ BasePreset: 'cinematic' })],
+        }));
+    });
+
+    it('flushes pending Expert JSON before replacement-runtime hydration', async () => {
+        wireThemeStudioEditor(context());
+        button('editor-mode', 'expert').click();
+        const editor = panel.querySelector<HTMLTextAreaElement>('[data-field="expert-json"]')!;
+        const pending = JSON.parse(editor.value) as UserThemeConfiguration;
+        pending.Profiles[0].Palette = 'neutral';
+        editor.value = JSON.stringify(pending, null, 2);
+        editor.dispatchEvent(new Event('input', { bubbles: true }));
+
+        const previousRuntime = JC.core.themeStudio!;
+        const replacementPreview = vi.fn(() => true);
+        JC.core.themeStudio = {
+            ...previousRuntime,
+            preview: replacementPreview,
+            getConfiguration: () => JC.identity.own(structuredClone(configuration), identity),
+            whenReady: vi.fn().mockResolvedValue(true),
+        } satisfies ThemeStudioRuntimeApi;
+        window.dispatchEvent(new CustomEvent('jc:theme-studio-runtime-changed', {
+            detail: { reason: 'installed' },
+        }));
+
+        await vi.waitFor(() => expect(button('apply').disabled).toBe(false));
+        const hydrated = JSON.parse(
+            panel.querySelector<HTMLTextAreaElement>('[data-field="expert-json"]')!.value,
+        ) as UserThemeConfiguration;
+        expect(hydrated.Profiles[0].Palette).toBe('neutral');
+        expect(panel.textContent).toContain('theme_studio_unsaved');
+        flushFrames();
+        expect(replacementPreview).toHaveBeenCalledWith(expect.objectContaining({
+            Profiles: [expect.objectContaining({ Palette: 'neutral' })],
         }));
     });
 

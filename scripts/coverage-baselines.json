@@ -21,12 +21,12 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 20731,
-        "totalLines": 29172
+        "coveredLines": 20756,
+        "totalLines": 29192
       },
       "tolerance": {
         "missingCoveredLines": 4,
-        "rationale": "Theme Studio responsive editor hardening in issue #386. Two clean local .NET 10.0.9/Coverlet runs on 2026-07-19 each passed all 1824 tests over the identical complete 29172-line assembly scope and measured 20730 and 20731 covered lines. Relative to the prior 20726/29168 baseline, the legitimate four-line scope increase compares empty schedule candidates with dormant persisted schedules and covers every new line; the one-line total variation is within the already reproduced Coverlet concurrency variance. The reviewed high measurement improves total assembly coverage from 71.057% to 71.065%. The existing four-line low-side tolerance is unchanged and remains far below the policy maximum; coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, and broad-tolerance negative boundaries."
+        "rationale": "Theme Studio responsive editor final-review fixes in issue #386. Two clean local .NET 10.0.9/Coverlet runs on 2026-07-20 each passed all 1827 tests over the identical complete 29192-line assembly scope and both measured 20756 covered lines. Relative to the prior 20731/29172 baseline, the legitimate 20-line scope increase moves disabled-schedule enforcement into the revisioned store transaction, preserves exact policy response codes, and covers atomic race, corrupt-store, and unavailable-store regressions; the reviewed covered-line count advances by 25 and total assembly coverage improves from 71.065% to 71.102%. The existing four-line low-side tolerance is unchanged and remains far below the policy maximum; coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, and broad-tolerance negative boundaries."
       }
     }
   }
