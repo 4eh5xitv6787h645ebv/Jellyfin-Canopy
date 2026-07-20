@@ -98,6 +98,8 @@
     "e2e/theme-studio-effects.spec.ts › Theme Studio bounded effects › low-end modern phone portrait and landscape reduce costly effects without overflow",
     "e2e/theme-studio-media-surfaces.spec.ts › Theme Studio modern media surfaces › phone portrait/landscape, desktop and wide media fixtures fit and remain touch/keyboard reachable",
     "e2e/theme-studio-media-surfaces.spec.ts › Theme Studio modern media surfaces › theme previews preserve the active media element, playback position, focus and lifecycle",
+    "e2e/theme-studio-operational-surfaces.spec.ts › Theme Studio operational surfaces › desktop, wide and phone operational surfaces fit, remain semantic, and patch live in place",
+    "e2e/theme-studio-operational-surfaces.spec.ts › Theme Studio operational surfaces › tablet-only, legacy and TV markers retain stock operational geometry and privacy",
     "e2e/theme-studio-runtime.spec.ts › Theme Studio runtime bridge › all nine curated presets preview on desktop and phone with versioned, bounded output",
     "e2e/theme-studio-runtime.spec.ts › Theme Studio runtime bridge › desktop editor stages locally and adopts only the exact Apply acknowledgement",
     "e2e/theme-studio-runtime.spec.ts › Theme Studio runtime bridge › legacy, tablet, and TV markers stay untouched while modern dashboard remains a recovery space",

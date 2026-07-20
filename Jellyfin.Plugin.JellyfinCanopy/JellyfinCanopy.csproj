@@ -78,6 +78,11 @@
     <!-- Colored ratings CSS: this repo's css/ratings.css is the source of truth
          (PRs land here), embedded so the asset is guaranteed available offline. -->
     <EmbeddedResource Include="..\css\ratings.css" Link="Assets\ratings.css" LogicalName="Jellyfin.Plugin.JellyfinCanopy.Assets.ratings.css"/>
+    <!-- Static operational adapters share resolved Theme Studio variables but
+         remain outside the generated client bundle to avoid source-map duplication. -->
+    <None Remove="Assets\theme-studio-operational-surfaces.css"/>
+    <EmbeddedResource Include="Assets\theme-studio-operational-surfaces.css"
+                      LogicalName="Jellyfin.Plugin.JellyfinCanopy.Assets.theme-studio-operational-surfaces.css"/>
   </ItemGroup>
 
   <!-- Production client modules compiled by esbuild into the manifest-owned dist/

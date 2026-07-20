@@ -401,18 +401,18 @@ export function renderPage(): void {
         </div>
         <div class="jc-calendar-actions jc-calendar-actions-right">
           <div class="jc-calendar-nav">
-            <button class="jc-calendar-view-btn ${state.viewMode === 'day' ? 'active' : ''}" data-calendar-view="day">${JC.t?.('calendar_day') || 'Day'}</button>
-            <button class="jc-calendar-view-btn ${state.viewMode === 'week' ? 'active' : ''}" data-calendar-view="week">${JC.t?.('calendar_week')}</button>
-            <button class="jc-calendar-view-btn ${state.viewMode === 'month' ? 'active' : ''}" data-calendar-view="month">${JC.t?.('calendar_month')}</button>
-            <button class="jc-calendar-view-btn ${state.viewMode === 'agenda' ? 'active' : ''}" data-calendar-view="agenda">${JC.t?.('calendar_agenda')}</button>
+            <button class="jc-calendar-view-btn ${state.viewMode === 'day' ? 'active' : ''}" data-calendar-view="day" aria-pressed="${state.viewMode === 'day'}">${JC.t?.('calendar_day') || 'Day'}</button>
+            <button class="jc-calendar-view-btn ${state.viewMode === 'week' ? 'active' : ''}" data-calendar-view="week" aria-pressed="${state.viewMode === 'week'}">${JC.t?.('calendar_week')}</button>
+            <button class="jc-calendar-view-btn ${state.viewMode === 'month' ? 'active' : ''}" data-calendar-view="month" aria-pressed="${state.viewMode === 'month'}">${JC.t?.('calendar_month')}</button>
+            <button class="jc-calendar-view-btn ${state.viewMode === 'agenda' ? 'active' : ''}" data-calendar-view="agenda" aria-pressed="${state.viewMode === 'agenda'}">${JC.t?.('calendar_agenda')}</button>
             <div class="jc-calendar-mode-toggle ${state.viewMode === 'agenda' ? 'is-disabled' : ''}" role="group" aria-label="Display mode">
-              <button type="button" class="jc-calendar-mode-btn ${state.settings.displayMode === 'list' ? 'active' : ''}" title="List" aria-label="List" data-mode="list" ${state.viewMode === 'agenda' ? 'disabled aria-disabled="true"' : ''}>
+              <button type="button" class="jc-calendar-mode-btn ${state.settings.displayMode === 'list' ? 'active' : ''}" title="List" aria-label="List" aria-pressed="${state.settings.displayMode === 'list'}" data-mode="list" ${state.viewMode === 'agenda' ? 'disabled aria-disabled="true"' : ''}>
                 <span class="material-icons">view_list</span>
               </button>
-              <button type="button" class="jc-calendar-mode-btn ${state.settings.displayMode === 'backdrop' ? 'active' : ''}" title="Backdrop" aria-label="Backdrop" data-mode="backdrop" ${state.viewMode === 'agenda' ? 'disabled aria-disabled="true"' : ''}>
+              <button type="button" class="jc-calendar-mode-btn ${state.settings.displayMode === 'backdrop' ? 'active' : ''}" title="Backdrop" aria-label="Backdrop" aria-pressed="${state.settings.displayMode === 'backdrop'}" data-mode="backdrop" ${state.viewMode === 'agenda' ? 'disabled aria-disabled="true"' : ''}>
                 <span class="material-icons">image</span>
               </button>
-              <button type="button" class="jc-calendar-mode-btn ${state.settings.displayMode === 'cards' ? 'active' : ''}" title="Cards" aria-label="Cards" data-mode="cards" ${state.viewMode === 'agenda' ? 'disabled aria-disabled="true"' : ''}>
+              <button type="button" class="jc-calendar-mode-btn ${state.settings.displayMode === 'cards' ? 'active' : ''}" title="Cards" aria-label="Cards" aria-pressed="${state.settings.displayMode === 'cards'}" data-mode="cards" ${state.viewMode === 'agenda' ? 'disabled aria-disabled="true"' : ''}>
                 <span class="material-icons">view_module</span>
               </button>
             </div>

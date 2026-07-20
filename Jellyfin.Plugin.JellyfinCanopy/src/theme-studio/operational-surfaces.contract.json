@@ -1,0 +1,90 @@
+[
+  {
+    "id": "active-streams-operations-v1",
+    "outcome": "Active-stream header, panel, sessions, progress, broadcast and administrator actions",
+    "tokens": ["color.*", "type.*", "shape.*", "elevation.*", "space.*", "motion.*", "progress.*"],
+    "modernRoles": [
+      "#jc-active-streams", "#jc-active-streams-panel", ".jc-as-panel-header", ".jc-as-panel-body",
+      ".jc-as-card", ".jc-as-poster", ".jc-as-card-info", ".jc-as-state", ".jc-as-progress-row",
+      ".jc-as-progress-bar", ".jc-as-progress-fill", ".jc-as-transcode-fill", ".jc-as-badges",
+      ".jc-as-badge", ".jc-as-user", ".jc-as-broadcast-form", ".jc-as-msg-form", ".jc-as-presets",
+      ".jc-as-actions", ".jc-as-panel-footer"
+    ],
+    "stateRoles": [
+      ".jc-as-active", ".jc-as-err", ".jc-as-panel-open", ".jc-as-state-playing",
+      ".jc-as-state-paused", ".jc-as-badge-direct", ".jc-as-badge-transcode",
+      ".jc-as-badge-reason", ".jc-as-refreshing", ".jc-as-broadcast-ok",
+      ".jc-as-broadcast-err", ".jc-as-confirming"
+    ],
+    "policyHooks": [
+      "[data-session-id]", "[data-jc-identity-owned=\"true\"]", "[data-jc-identity-user]",
+      "[data-jc-identity-server]", "[data-jc-identity-epoch]"
+    ]
+  },
+  {
+    "id": "calendar-operations-v1",
+    "outcome": "Calendar navigation, views, filters, responsive grids, agendas and event status",
+    "tokens": ["color.*", "type.*", "shape.*", "elevation.*", "space.*", "motion.*"],
+    "modernRoles": [
+      ".jc-calendar-page", ".jc-calendar-header", ".jc-calendar-title", ".jc-calendar-actions",
+      ".jc-calendar-nav", ".jc-calendar-view-btn", ".jc-calendar-mode-btn", ".jc-calendar-layout",
+      ".jc-calendar-main", ".jc-calendar-sidebar", ".jc-calendar-legend",
+      ".jc-calendar-filter-controls", ".jc-calendar-month-grid", ".jc-calendar-grid",
+      ".jc-calendar-day", ".jc-calendar-event", ".jc-calendar-agenda",
+      ".jc-calendar-agenda-event", ".jc-calendar-card", ".jc-calendar-card-time",
+      ".jc-calendar-status-icon", ".jc-calendar-play-btn", ".jc-calendar-empty"
+    ],
+    "stateRoles": [
+      ".active", ".is-disabled", ".is-collapsed", ".jc-calendar-today", ".jc-has-file",
+      ".is-available", ".is-unavailable", ".is-late", ".jc-error-state"
+    ],
+    "policyHooks": ["[data-access]", "[data-event-id]"]
+  },
+  {
+    "id": "request-download-operations-v1",
+    "outcome": "Download progress/search, request and issue tabs, status cards and gated actions",
+    "tokens": ["color.*", "type.*", "shape.*", "elevation.*", "space.*", "motion.*", "progress.*"],
+    "modernRoles": [
+      ".jc-downloads-page", ".jc-downloads-section", ".jc-downloads-controls",
+      ".jc-downloads-tabs", ".jc-downloads-tab", ".jc-downloads-search-container",
+      ".jc-downloads-search-input", ".jc-downloads-grid", ".jc-download-card",
+      ".jc-download-poster", ".jc-download-progress", ".jc-download-progress-bar",
+      ".jc-download-stats", ".jc-requests-tabs", ".jc-requests-tab", ".jc-request-card",
+      ".jc-requests-status-chip", ".jc-request-actions", ".jc-issues-tabs", ".jc-issues-tab",
+      ".jc-issue-card", ".jc-issue-status-chip", ".jc-pagination", ".jc-empty-state", ".jc-loading"
+    ],
+    "stateRoles": [
+      ".active", ".jc-chip-available", ".jc-chip-pending", ".jc-chip-processing",
+      ".jc-chip-declined", ".jc-issue-status-open", ".jc-issue-status-resolved",
+      ".jc-error-state", ".is-disabled"
+    ],
+    "policyHooks": [
+      "[data-source-token]", "[data-request-id]", "[data-avatar-src]", "[data-issue-tmdb-id]",
+      "[data-issue-media-type]", "[data-media-id]"
+    ]
+  },
+  {
+    "id": "bookmark-operations-v1",
+    "outcome": "Bookmark library, timeline, player dialogs, conflict tools and orphan recovery",
+    "tokens": ["color.*", "type.*", "shape.*", "elevation.*", "space.*", "motion.*", "progress.*"],
+    "modernRoles": [
+      ".jc-bookmarks-page", ".jc-bookmarks-wrapper", ".jc-bookmark-tabs", ".jc-tab",
+      ".jc-bookmarks-grid", ".jc-bookmark-item", ".jc-bookmark-item-header",
+      ".jc-bookmarks-list", ".jc-bookmark-row", ".jc-bookmark-main", ".jc-bookmark-bar",
+      ".jc-bookmark-info", ".jc-bookmark-actions", ".jc-btn-edit-row", ".jc-bookmarks-empty",
+      ".jc-bm-player-modal-overlay", ".jc-bm-player-modal-container",
+      ".jc-bm-library-modal-overlay", ".jc-bm-library-modal-container",
+      ".jc-bookmark-modal-actions", ".jc-replacement-options", ".jc-orphaned-results",
+      ".jc-duplicate-item", ".jc-merge-version"
+    ],
+    "stateRoles": [
+      ".active", ".show", ".jc-bookmark-item-orphaned", ".replacement-option.selected",
+      ".jc-merge-version.is-target", ".jc-merge-version.is-source"
+    ],
+    "policyHooks": [
+      "[data-jc-identity-owned=\"true\"]", "[data-jc-bookmark-library-modal=\"true\"]",
+      "[data-safety-user]", "[data-safety-reset]", "[data-version-item-id]",
+      "[data-offset-item-id]", "[data-item-id]"
+    ]
+  }
+]

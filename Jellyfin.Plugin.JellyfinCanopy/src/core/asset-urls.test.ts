@@ -73,6 +73,8 @@ describe('assetUrl', () => {
             .toBe('http://jellyfin.test/JellyfinCanopy/assets/seerr/poster-fallback.svg');
         expect(assetUrl('ratings/ratings.css'))
             .toBe('http://jellyfin.test/JellyfinCanopy/assets/ratings/ratings.css');
+        expect(assetUrl('theme-studio/operational-surfaces.css'))
+            .toBe('http://jellyfin.test/JellyfinCanopy/assets/theme-studio/operational-surfaces.css');
     });
 });
 

@@ -45,6 +45,8 @@ describe('calendar page error state', () => {
 
         expect(container.innerHTML).toContain('calendar_load_error');
         expect(container.innerHTML).not.toContain('calendar_no_releases');
+        expect(container.querySelector('.jc-calendar-view-btn.active')?.getAttribute('aria-pressed')).toBe('true');
+        expect(container.querySelector('.jc-calendar-mode-btn')?.getAttribute('aria-pressed')).toMatch(/^(?:true|false)$/);
     });
 
     it('fetchUserRequests publishes a complete server-owned snapshot', async () => {

@@ -492,6 +492,24 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             Assert.DoesNotContain("http", svg.Replace("http://www.w3.org", string.Empty, StringComparison.Ordinal), StringComparison.Ordinal);
         }
 
+        [Fact]
+        public void OpenEmbeddedAsset_ThemeOperationalStylesheet_IsPresentAndLocallyScoped()
+        {
+            var service = CreateService(new RecordingHttpMessageHandler());
+            var resolved = service.Resolve("theme-studio/operational-surfaces.css");
+
+            using var stream = AssetCacheService.OpenEmbeddedAsset(resolved);
+
+            Assert.NotNull(stream);
+            using var reader = new StreamReader(stream!, Encoding.UTF8);
+            var css = reader.ReadToEnd();
+            Assert.Contains(":root.jc-modern-layout", css, StringComparison.Ordinal);
+            Assert.Contains("[data-jc-theme-breakpoint=\"phone\"]", css, StringComparison.Ordinal);
+            Assert.Contains("[data-jc-theme-breakpoint=\"desktop\"]", css, StringComparison.Ordinal);
+            Assert.DoesNotContain("url(", css, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("@import", css, StringComparison.OrdinalIgnoreCase);
+        }
+
         private sealed class ManualTimeProvider : TimeProvider
         {
             private DateTimeOffset _now;

@@ -131,6 +131,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 "ratings/ratings.css",
                 "Jellyfin.Plugin.JellyfinCanopy.Assets.ratings.css",
                 "text/css"),
+            // Theme Studio operational adapters: static, same-origin CSS that
+            // consumes runtime token variables without owning feature policy.
+            new EmbeddedAssetDescriptor(
+                "theme-studio/operational-surfaces.css",
+                "Jellyfin.Plugin.JellyfinCanopy.Assets.theme-studio-operational-surfaces.css",
+                "text/css"),
         };
 
         /// <summary>Maps a derived asset's file extension to the Content-Type it is served with.</summary>

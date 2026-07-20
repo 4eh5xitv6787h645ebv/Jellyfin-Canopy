@@ -1,4 +1,5 @@
 import type { FeatureScope } from '../core/feature-loader';
+import { assetUrl } from '../core/asset-urls';
 import { JC } from '../globals';
 import type {
     ThemeStudioDiagnostics,
@@ -30,6 +31,7 @@ import {
 
 const THEME_CHANGE = 'THEME_CHANGE';
 const RUNTIME_CHANGE = 'jc:theme-studio-runtime-changed';
+export const OPERATIONAL_STYLESHEET_ID = 'jc-theme-studio-operational-surfaces';
 const MAXIMUM_DYNAMIC_ANALYSIS_ATTEMPTS = 3;
 const MAXIMUM_DYNAMIC_FAILURE_ENTRIES = 16;
 const DYNAMIC_RETRY_DELAYS_MS = Object.freeze([1_000, 5_000] as const);
@@ -107,13 +109,24 @@ interface DynamicAnalysisFailure {
     readonly retryAt: number;
 }
 
-// Presentation is global DOM state, so teardown must be generation-aware.
-// A retained API from an obsolete feature generation must never clear the
-// styles and root attributes installed by its successor.
 let presentationOwner: ThemeStudioRuntime | null = null;
+let operationalStylesheetOwner: ThemeStudioRuntime | null = null;
 
 function claimPresentation(owner: ThemeStudioRuntime): void {
     presentationOwner = owner;
+}
+
+function installOperationalStylesheet(owner: ThemeStudioRuntime): void {
+    const existing = document.getElementById(OPERATIONAL_STYLESHEET_ID);
+    const link = existing instanceof HTMLLinkElement ? existing : document.createElement('link');
+    if (existing && existing !== link) existing.remove();
+    link.id = OPERATIONAL_STYLESHEET_ID;
+    link.rel = 'stylesheet';
+    link.dataset.jcOwner = 'theme-studio';
+    const href = assetUrl('theme-studio/operational-surfaces.css');
+    if (link.getAttribute('href') !== href) link.setAttribute('href', href);
+    if (!link.isConnected) document.head.append(link);
+    operationalStylesheetOwner = owner;
 }
 
 function dashboardRoute(): boolean {
@@ -252,9 +265,13 @@ export class ThemeStudioRuntime {
     install(): void {
         if (this.#installed || this.#disposed || !this.#scope.isCurrent()) return;
         this.#installed = true;
-        // Remove orphaned presentation from an interrupted older generation
-        // before this identity acquires any asynchronous work.
         this.#clearPresentation(true);
+        installOperationalStylesheet(this);
+        this.#cleanups.push(() => {
+            if (operationalStylesheetOwner !== this) return;
+            operationalStylesheetOwner = null;
+            document.getElementById(OPERATIONAL_STYLESHEET_ID)?.remove();
+        });
 
         const refresh = (): void => this.refresh();
         let environmentFrame = 0;
@@ -343,10 +360,6 @@ export class ThemeStudioRuntime {
         this.#api = api;
         JC.core.themeStudio = api;
         this.#announceRuntimeChange('installed');
-        // The persistence owner resolves a save only after caching its exact
-        // structured acknowledgement. Import that evidence synchronously so a
-        // config-restart gap (including one outliving the editor) cannot lose a
-        // committed theme before this runtime's first server read settles.
         const acknowledged = parseUserThemeConfiguration(
             JC.getAcknowledgedUserSettingsSnapshot?.('theme.json'),
         );
@@ -392,10 +405,6 @@ export class ThemeStudioRuntime {
             }
             const configuration = parseUserThemeConfiguration(raw);
             if (!configuration) throw new Error('Theme Studio response failed validation');
-            // Ordinary loads keep the higher revision whichever response
-            // settles last. An explicit recovery reload may accept a lower
-            // reset generation, unless a newer acknowledgement arrived while
-            // that GET was in flight.
             const acknowledgementAdvanced = acknowledgementGeneration !== this.#acknowledgementGeneration;
             if (this.#configuration && configuration.Revision < this.#configuration.Revision
                 && (!acceptRevisionReset || acknowledgementAdvanced)) {
@@ -411,8 +420,6 @@ export class ThemeStudioRuntime {
             if (this.#disposed || generation !== this.#loadGeneration
                 || this.#scope.signal.aborted || !this.#scope.isCurrent()
                 || (error as { name?: string } | null)?.name === 'AbortError') return false;
-            // A failed read is not evidence that an exact save response is
-            // invalid, including when it arrived before this first GET began.
             if (this.#configurationAcknowledged && this.#configuration) {
                 this.refresh();
                 return false;
@@ -460,10 +467,6 @@ export class ThemeStudioRuntime {
             ? parseUserThemeConfiguration(this.#configuration)
             : null;
         this.cancelPreview();
-        // An explicit recovery reload is a generation boundary: an administrator
-        // may have reset the quarantined store and legitimately recreated it at
-        // revision zero. A newer acknowledgement that arrives during this GET
-        // still wins through the acknowledgement-generation guard in #loadOwned.
         const acknowledgementGeneration = this.#acknowledgementGeneration;
         const request = this.load(true);
         const generation = this.#loadGeneration;
@@ -476,9 +479,6 @@ export class ThemeStudioRuntime {
             && this.#scope.isCurrent() && !this.#disposed) {
             const identity = JC.identity.capture();
             if (identity) {
-                // A failed recovery read is not evidence that the last
-                // validated document became invalid. Keep that committed
-                // presentation while the editor reports the reload failure.
                 this.#configuration = JC.identity.own(previous, identity);
                 this.refresh();
             }
@@ -494,10 +494,6 @@ export class ThemeStudioRuntime {
         if (this.#configuration && configuration.Revision < this.#configuration.Revision) return false;
         const identity = JC.identity.capture();
         if (!identity) return false;
-        // Do not cancel an authoritative GET already in flight: it may contain
-        // a still newer concurrent commit. #loadOwned compares revisions when
-        // that response settles, while the source marker protects this exact
-        // acknowledgement if the read fails.
         this.#configuration = JC.identity.own(configuration, identity);
         this.#acknowledgementGeneration += 1;
         this.#configurationAcknowledged = true;
@@ -505,9 +501,6 @@ export class ThemeStudioRuntime {
         this.#previewAllowScheduling = true;
         JC.rememberUserSettingsSnapshot?.('theme.json', this.#configuration);
         this.refresh();
-        // Apply acknowledgements can outlive the editor that initiated them.
-        // Notify any replacement editor so it adopts this authoritative full
-        // document before it can stage a newer write from a stale snapshot.
         this.#announceRuntimeChange('acknowledged');
         return true;
     }
@@ -813,8 +806,6 @@ export class ThemeStudioRuntime {
 
     #scheduleDynamicScan(): void {
         if (this.#disposed || this.#dynamicFrame !== 0 || !this.#dynamicTheme) return;
-        // rAF starts discovery only after the committed layer has painted; image
-        // fetch/decode never blocks the usable theme or navigation lifecycle.
         this.#dynamicFrame = window.requestAnimationFrame(() => {
             this.#dynamicFrame = 0;
             void this.#scanDynamicAccent();

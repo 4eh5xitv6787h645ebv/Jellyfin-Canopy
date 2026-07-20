@@ -767,7 +767,7 @@ const buildSessionCard = (
 
     const pos = ps.PositionTicks || 0;
     const dur = item.RunTimeTicks || 0;
-    const pct = dur ? Math.min(100, (pos / dur) * 100).toFixed(1) : 0;
+    const pct = dur ? Math.max(0, Math.min(100, (pos / dur) * 100)).toFixed(1) : 0;
 
     const card = stampOwner(document.createElement('div'), context);
     card.className = 'jc-as-card jc-as-card-with-poster';
@@ -868,12 +868,17 @@ const buildSessionCard = (
 
         const bar = document.createElement('div');
         bar.className = 'jc-as-progress-bar';
+        bar.setAttribute('role', 'progressbar');
+        bar.setAttribute('aria-valuemin', '0');
+        bar.setAttribute('aria-valuemax', '100');
+        bar.setAttribute('aria-valuenow', String(pct));
+        bar.setAttribute('aria-valuetext', `${ticksToTime(pos)} / ${ticksToTime(dur)}`);
 
         // Transcoding buffer — amber layer behind playback position
         if (ts && ts.CompletionPercentage != null) {
             const transcodeFill = document.createElement('div');
             transcodeFill.className = 'jc-as-transcode-fill';
-            transcodeFill.style.width = `${Math.min(100, ts.CompletionPercentage).toFixed(1)}%`;
+            transcodeFill.style.width = `${Math.max(0, Math.min(100, ts.CompletionPercentage)).toFixed(1)}%`;
             bar.appendChild(transcodeFill);
         }
 

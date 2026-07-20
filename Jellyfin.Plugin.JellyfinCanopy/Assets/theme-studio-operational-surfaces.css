@@ -1,0 +1,982 @@
+/* Adapter active-streams-operations-v1: live presentation only. */
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) #jc-active-streams {
+  box-sizing: border-box;
+  min-inline-size: max(2.75rem, 44px);
+  min-block-size: max(2.75rem, 44px);
+  border-radius: var(--jc-shape-control-radius);
+  color: var(--jc-color-text);
+  touch-action: manipulation;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) #jc-active-streams:is(:hover, :focus-visible),
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) #jc-active-streams.jc-as-active {
+  background: color-mix(in srgb, var(--jc-color-primary) 18%, transparent);
+  color: var(--jc-color-primary);
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) #jc-active-streams.jc-as-err {
+  border: var(--jc-shape-border-width) solid var(--jc-color-negative);
+  color: var(--jc-color-negative);
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) #jc-active-streams .jc-as-sup {
+  min-inline-size: 1.25rem;
+  min-block-size: 1.25rem;
+  padding-inline: 0.2rem;
+  border: var(--jc-shape-border-width) solid var(--jc-color-surface);
+  border-radius: 999px;
+  background: var(--jc-color-primary);
+  color: var(--jc-color-on-primary) !important;
+  font-family: var(--jc-type-family-ui);
+  font-size: 0.7rem;
+  line-height: 1.1rem;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) #jc-active-streams-panel {
+  inset-inline-start: auto !important;
+  inset-inline-end: max(var(--jc-page-gutter), var(--jc-safe-area-right)) !important;
+  box-sizing: border-box;
+  inline-size: min(30rem, calc(100vw - var(--jc-page-gutter) - var(--jc-page-gutter))) !important;
+  max-inline-size: min(30rem, calc(100vw - var(--jc-safe-area-left) - var(--jc-safe-area-right))) !important;
+  max-block-size: calc(var(--jc-visual-viewport-height) - var(--jc-visual-viewport-top) - var(--jc-safe-area-bottom) - 4.75rem) !important;
+  padding: var(--jc-control-gap) !important;
+  gap: var(--jc-control-gap) !important;
+  overscroll-behavior: contain;
+  border: var(--jc-shape-border-width) solid var(--jc-color-divider) !important;
+  border-radius: var(--jc-shape-dialog-radius) !important;
+  background: color-mix(in srgb, var(--jc-color-surface) 94%, transparent) !important;
+  box-shadow: var(--jc-elevation-dialog-shadow) !important;
+  color: var(--jc-color-text) !important;
+  font-family: var(--jc-type-family-ui);
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) #jc-active-streams-panel .jc-as-panel-header {
+  gap: calc(var(--jc-control-gap) / 2);
+  border-color: var(--jc-color-divider) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) #jc-active-streams-panel :where(.jc-as-panel-title, .jc-as-card-title, .jc-as-card-title-link) {
+  color: var(--jc-color-text) !important;
+  overflow-wrap: anywhere;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) #jc-active-streams-panel :where(
+  .jc-as-card-subtitle,
+  .jc-as-user,
+  .jc-as-progress-time,
+  .jc-as-panel-footer,
+  .jc-as-broadcast-timeout-label
+) {
+  color: var(--jc-color-text-muted) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) #jc-active-streams-panel :where(
+  .jc-as-panel-close,
+  .jc-as-refresh-btn,
+  .jc-as-broadcast-btn,
+  .jc-as-action-btn,
+  .jc-as-preset,
+  .jc-as-broadcast-send,
+  .jc-as-broadcast-cancel
+) {
+  box-sizing: border-box;
+  min-inline-size: max(2.75rem, 44px);
+  min-block-size: max(2.75rem, 44px);
+  border-radius: var(--jc-shape-control-radius) !important;
+  touch-action: manipulation;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) #jc-active-streams-panel :where(button, input, textarea):focus-visible,
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) #jc-active-streams:focus-visible,
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) #jc-active-streams-panel .jc-as-card-title-link:focus-visible {
+  outline: var(--jc-elevation-focus-ring) solid var(--jc-color-focus) !important;
+  outline-offset: 2px;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) #jc-active-streams-panel .jc-as-card {
+  box-sizing: border-box;
+  min-inline-size: 0;
+  padding: var(--jc-control-gap) !important;
+  border: var(--jc-shape-border-width) solid var(--jc-color-divider) !important;
+  border-radius: var(--jc-shape-card-radius) !important;
+  background: var(--jc-color-elevated) !important;
+  box-shadow: var(--jc-elevation-card-shadow);
+  color: var(--jc-color-text);
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) #jc-active-streams-panel :where(.jc-as-poster, .jc-as-poster-placeholder) {
+  inline-size: 3.25rem !important;
+  block-size: 4.875rem !important;
+  border-radius: var(--jc-shape-control-radius) !important;
+  background: var(--jc-color-canvas) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) #jc-active-streams-panel :where(.jc-as-state, .jc-as-badge, .jc-as-preset) {
+  border: var(--jc-shape-border-width) solid var(--jc-color-divider);
+  border-radius: 999px !important;
+  background: var(--jc-color-surface) !important;
+  color: var(--jc-color-text) !important;
+  line-height: 1.35;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) #jc-active-streams-panel .jc-as-state-playing,
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) #jc-active-streams-panel .jc-as-badge-direct,
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) #jc-active-streams-panel .jc-as-broadcast-ok {
+  border-color: var(--jc-color-positive) !important;
+  background: color-mix(in srgb, var(--jc-color-positive) 18%, var(--jc-color-surface)) !important;
+  color: var(--jc-color-text) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) #jc-active-streams-panel .jc-as-state-paused,
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) #jc-active-streams-panel .jc-as-badge-transcode {
+  border-color: var(--jc-color-caution) !important;
+  background: color-mix(in srgb, var(--jc-color-caution) 18%, var(--jc-color-surface)) !important;
+  color: var(--jc-color-text) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) #jc-active-streams-panel .jc-as-badge-reason,
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) #jc-active-streams-panel .jc-as-broadcast-err {
+  border-color: var(--jc-color-negative) !important;
+  background: color-mix(in srgb, var(--jc-color-negative) 18%, var(--jc-color-surface)) !important;
+  color: var(--jc-color-text) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) #jc-active-streams-panel .jc-as-progress-bar {
+  block-size: max(var(--jc-progress-thickness), 0.4rem) !important;
+  border-radius: 999px !important;
+  background: color-mix(in srgb, var(--jc-color-text) 16%, var(--jc-color-canvas)) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) #jc-active-streams-panel .jc-as-progress-fill {
+  border-radius: 999px !important;
+  background: var(--jc-color-primary) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) #jc-active-streams-panel .jc-as-transcode-fill {
+  border-radius: 999px !important;
+  background: var(--jc-color-caution) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) #jc-active-streams-panel :where(
+  .jc-as-broadcast-input,
+  .jc-as-broadcast-textarea,
+  .jc-as-broadcast-timeout-input
+) {
+  box-sizing: border-box;
+  min-block-size: max(2.75rem, 44px);
+  max-inline-size: 100%;
+  border: var(--jc-shape-border-width) solid var(--jc-color-control-border) !important;
+  border-radius: var(--jc-shape-control-radius) !important;
+  background: var(--jc-color-canvas) !important;
+  color: var(--jc-color-text) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) #jc-active-streams-panel :where(.jc-as-broadcast-form, .jc-as-msg-form, .jc-as-panel-footer) {
+  border-color: var(--jc-color-divider) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) #jc-active-streams-panel :where(.jc-as-broadcast-actions, .jc-as-actions, .jc-as-presets) {
+  align-items: center;
+  flex-wrap: wrap;
+  gap: calc(var(--jc-control-gap) / 2);
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) #jc-active-streams-panel .jc-as-broadcast-send,
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) #jc-active-streams-panel .jc-as-action-btn.jc-as-action-active {
+  border-color: var(--jc-color-primary) !important;
+  background: var(--jc-color-primary) !important;
+  color: var(--jc-color-on-primary) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) #jc-active-streams-panel .jc-as-action-btn-stop,
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) #jc-active-streams-panel .jc-as-action-btn-stop.jc-as-confirming {
+  border-color: var(--jc-color-negative) !important;
+  background: color-mix(in srgb, var(--jc-color-negative) 18%, var(--jc-color-surface)) !important;
+  color: var(--jc-color-text) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) #jc-active-streams-panel :where(button, input, textarea):disabled {
+  color: var(--jc-color-disabled) !important;
+  cursor: not-allowed;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"])[data-jc-theme-breakpoint="phone"] #jc-active-streams-panel {
+  inset-inline-start: max(var(--jc-page-gutter), var(--jc-safe-area-left)) !important;
+  inset-inline-end: max(var(--jc-page-gutter), var(--jc-safe-area-right)) !important;
+  inline-size: auto !important;
+  max-inline-size: none !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"])[data-jc-theme-breakpoint="phone"] #jc-active-streams-panel .jc-as-card-with-poster {
+  gap: calc(var(--jc-control-gap) / 2) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"])[data-jc-theme-breakpoint="phone"] #jc-active-streams-panel .jc-as-broadcast-timeout-row {
+  align-items: stretch;
+  flex-wrap: wrap;
+}
+
+
+/* Adapter calendar-operations-v1: modes, filters, grids and agendas. */
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .jc-calendar-page {
+  box-sizing: border-box;
+  inline-size: 100%;
+  max-inline-size: var(--jc-content-max-inline-size);
+  margin-inline: auto;
+  padding-inline: max(var(--jc-page-gutter), var(--jc-safe-area-left)) max(var(--jc-page-gutter), var(--jc-safe-area-right));
+  color: var(--jc-color-text);
+  font-family: var(--jc-type-family-ui);
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .jc-calendar-header {
+  box-sizing: border-box;
+  gap: var(--jc-control-gap);
+  margin-block-end: var(--jc-section-gap);
+  padding-block-end: var(--jc-control-gap);
+  border-block-end: var(--jc-shape-border-width) solid var(--jc-color-divider);
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .jc-calendar-title {
+  min-inline-size: 0;
+  color: var(--jc-color-text) !important;
+  font-family: var(--jc-type-family-display);
+  overflow-wrap: anywhere;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .jc-calendar-page :where(
+  .jc-calendar-nav-btn,
+  .jc-calendar-view-btn,
+  .jc-calendar-mode-btn,
+  .jc-calendar-filter-btn,
+  .jc-calendar-filter-toggle,
+  .jc-calendar-filter-invert,
+  .jc-calendar-unmonitored-toggle,
+  .jc-calendar-sidebar-toggle,
+  .jc-calendar-play-btn
+) {
+  box-sizing: border-box;
+  min-inline-size: max(2.75rem, 44px);
+  min-block-size: max(2.75rem, 44px);
+  border: var(--jc-shape-border-width) solid var(--jc-color-control-border) !important;
+  border-radius: var(--jc-shape-control-radius) !important;
+  background: var(--jc-color-surface) !important;
+  color: var(--jc-color-text) !important;
+  touch-action: manipulation;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .jc-calendar-page :where(button, [role="button"]):focus-visible,
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .jc-calendar-page [data-calendar-filter]:focus-visible {
+  outline: var(--jc-elevation-focus-ring) solid var(--jc-color-focus) !important;
+  outline-offset: 2px;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .jc-calendar-page :where(
+  .jc-calendar-view-btn.active,
+  .jc-calendar-mode-btn.active,
+  .jc-calendar-filter-btn.active,
+  .jc-calendar-filter-toggle.active,
+  .jc-calendar-filter-invert.active,
+  .jc-calendar-legend-item.active
+) {
+  border-color: var(--jc-color-primary) !important;
+  background: color-mix(in srgb, var(--jc-color-primary) 22%, var(--jc-color-surface)) !important;
+  color: var(--jc-color-text) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .jc-calendar-page :where(.is-disabled, button:disabled) {
+  border-color: var(--jc-color-divider) !important;
+  color: var(--jc-color-disabled) !important;
+  opacity: 1 !important;
+  cursor: not-allowed;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .jc-calendar-layout {
+  box-sizing: border-box;
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) minmax(14rem, 19rem);
+  align-items: start;
+  gap: var(--jc-section-gap) !important;
+  max-inline-size: 100%;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .jc-calendar-main {
+  min-inline-size: 0;
+  max-inline-size: 100%;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .jc-calendar-sidebar {
+  box-sizing: border-box;
+  min-inline-size: 0;
+  max-inline-size: 19rem;
+  border: var(--jc-shape-border-width) solid var(--jc-color-divider) !important;
+  border-radius: var(--jc-shape-card-radius) !important;
+  background: var(--jc-color-surface) !important;
+  box-shadow: var(--jc-elevation-surface-shadow);
+  color: var(--jc-color-text);
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .jc-calendar-sidebar-content {
+  max-block-size: none !important;
+  overflow: visible !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) :where(.jc-calendar-legend, .jc-calendar-filter-controls) {
+  gap: calc(var(--jc-control-gap) / 2) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .jc-calendar-legend-item {
+  box-sizing: border-box;
+  min-block-size: max(2.75rem, 44px);
+  border: var(--jc-shape-border-width) solid transparent;
+  border-radius: var(--jc-shape-control-radius);
+  color: var(--jc-color-text);
+  overflow-wrap: anywhere;
+  touch-action: manipulation;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) :where(.jc-calendar-month-grid, .jc-calendar-grid) {
+  border-color: var(--jc-color-divider) !important;
+  background: var(--jc-color-divider) !important;
+  gap: max(var(--jc-shape-border-width), 1px) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .jc-calendar-day {
+  min-inline-size: 0;
+  border-color: var(--jc-color-divider) !important;
+  background: var(--jc-color-canvas) !important;
+  color: var(--jc-color-text) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .jc-calendar-day-header,
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .jc-calendar-hour-label,
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .jc-calendar-agenda-date {
+  color: var(--jc-color-text-muted) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .jc-calendar-today {
+  box-shadow: inset 0 0 0 max(2px, var(--jc-shape-border-width)) var(--jc-color-primary);
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) :where(.jc-calendar-event, .jc-calendar-agenda-event, .jc-calendar-card) {
+  box-sizing: border-box;
+  min-inline-size: 0;
+  border: var(--jc-shape-border-width) solid var(--jc-color-divider) !important;
+  border-inline-start-width: max(3px, var(--jc-shape-border-width)) !important;
+  border-radius: var(--jc-shape-card-radius) !important;
+  background-color: var(--jc-color-elevated) !important;
+  box-shadow: var(--jc-elevation-card-shadow);
+  color: var(--jc-color-text) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .jc-calendar-card-image-wrap,
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .jc-calendar-card-image {
+  border-radius: calc(var(--jc-shape-card-radius) - var(--jc-shape-border-width)) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .jc-calendar-card-overlay {
+  background: linear-gradient(0deg, color-mix(in srgb, var(--jc-color-canvas) 96%, transparent), color-mix(in srgb, var(--jc-color-canvas) 28%, transparent)) !important;
+  color: var(--jc-color-text) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) :where(
+  .jc-calendar-event-title,
+  .jc-calendar-agenda-event-title,
+  .jc-calendar-card-title
+) {
+  color: var(--jc-color-text) !important;
+  overflow-wrap: anywhere;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) :where(
+  .jc-calendar-event-subtitle,
+  .jc-calendar-event-type,
+  .jc-calendar-agenda-event-meta,
+  .jc-calendar-agenda-subtitle,
+  .jc-calendar-card-subtitle,
+  .jc-calendar-card-meta
+) {
+  color: var(--jc-color-text-muted) !important;
+  overflow-wrap: anywhere;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) :where(.jc-calendar-card-time, .jc-arr-badge, .jc-calendar-status-icon) {
+  border: var(--jc-shape-border-width) solid var(--jc-color-divider) !important;
+  border-radius: 999px !important;
+  background: var(--jc-color-surface) !important;
+  color: var(--jc-color-text) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .jc-calendar-card-time.is-available,
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .jc-calendar-event.jc-has-file,
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .jc-calendar-agenda-event.jc-has-file {
+  border-color: var(--jc-color-positive) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .jc-calendar-card-time.is-late {
+  border-color: var(--jc-color-negative) !important;
+  background: color-mix(in srgb, var(--jc-color-negative) 16%, var(--jc-color-surface)) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) :where(.jc-calendar-empty, .jc-calendar-page .jc-error-state) {
+  box-sizing: border-box;
+  max-inline-size: min(42rem, 100%);
+  margin-inline: auto;
+  padding: var(--jc-section-gap) var(--jc-page-gutter) !important;
+  border: var(--jc-shape-border-width) solid var(--jc-color-divider);
+  border-radius: var(--jc-shape-card-radius) !important;
+  background: var(--jc-color-surface) !important;
+  color: var(--jc-color-text) !important;
+  overflow-wrap: anywhere;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .jc-calendar-page .jc-error-state {
+  border-color: var(--jc-color-negative) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"])[data-jc-theme-breakpoint="wide"] .jc-calendar-layout {
+  grid-template-columns: minmax(0, 1fr) minmax(16rem, 21rem);
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"])[data-jc-theme-breakpoint="phone"] .jc-calendar-header {
+  display: flex !important;
+  align-items: stretch !important;
+  flex-direction: column;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"])[data-jc-theme-breakpoint="phone"] :where(.jc-calendar-actions, .jc-calendar-nav, .jc-calendar-nav-group) {
+  inline-size: 100%;
+  max-inline-size: 100%;
+  flex-wrap: wrap;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"])[data-jc-theme-breakpoint="phone"] .jc-calendar-actions-right .jc-calendar-nav {
+  display: grid !important;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"])[data-jc-theme-breakpoint="phone"] .jc-calendar-mode-toggle {
+  grid-column: 1 / -1;
+  display: grid !important;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"])[data-jc-theme-breakpoint="phone"] .jc-calendar-layout {
+  display: flex !important;
+  flex-direction: column;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"])[data-jc-theme-breakpoint="phone"] .jc-calendar-sidebar {
+  inline-size: 100% !important;
+  max-inline-size: none;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"])[data-jc-theme-breakpoint="phone"] .jc-calendar-main {
+  inline-size: 100%;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scrollbar-gutter: stable;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"])[data-jc-theme-breakpoint="phone"] :where(.jc-calendar-month, .jc-calendar-grid) {
+  min-inline-size: 42rem;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"])[data-jc-theme-breakpoint="phone"] .jc-calendar-agenda {
+  min-inline-size: 0;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"])[data-jc-theme-breakpoint="phone"] .jc-calendar-agenda-row {
+  grid-template-columns: 6.5rem minmax(0, 1fr) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"])[data-jc-theme-breakpoint="phone"] .jc-calendar-agenda-event {
+  align-items: start;
+}
+
+
+/* Adapter request-download-operations-v1: progress, search and gated actions. */
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .jc-downloads-page {
+  box-sizing: border-box;
+  inline-size: 100%;
+  max-inline-size: var(--jc-content-max-inline-size);
+  margin-inline: auto;
+  padding-inline: max(var(--jc-page-gutter), var(--jc-safe-area-left)) max(var(--jc-page-gutter), var(--jc-safe-area-right));
+  color: var(--jc-color-text);
+  font-family: var(--jc-type-family-ui);
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .jc-downloads-section {
+  box-sizing: border-box;
+  max-inline-size: 100%;
+  margin-block: 0 var(--jc-section-gap) !important;
+  padding: var(--jc-section-gap) !important;
+  border: var(--jc-shape-border-width) solid var(--jc-color-divider) !important;
+  border-radius: var(--jc-shape-card-radius) !important;
+  background: color-mix(in srgb, var(--jc-color-surface) 94%, transparent) !important;
+  color: var(--jc-color-text) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .jc-downloads-section > h2 {
+  max-inline-size: var(--jc-type-max-reading-width);
+  color: var(--jc-color-text) !important;
+  font-family: var(--jc-type-family-display);
+  overflow-wrap: anywhere;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) :where(.jc-downloads-controls, .jc-downloads-tabs, .jc-requests-tabs, .jc-issues-tabs) {
+  box-sizing: border-box;
+  max-inline-size: 100%;
+  gap: calc(var(--jc-control-gap) / 2) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) :where(.jc-downloads-tabs, .jc-requests-tabs, .jc-issues-tabs) {
+  scrollbar-width: thin;
+  scrollbar-color: var(--jc-color-control-border) transparent;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .jc-downloads-page :where(
+  .jc-downloads-tab,
+  .jc-downloads-search-toggle,
+  .jc-requests-tab,
+  .jc-issues-tab,
+  .jc-refresh-btn,
+  .jc-request-watch-btn,
+  .jc-request-approve-btn,
+  .jc-request-decline-btn,
+  .jc-issue-view-btn,
+  .jc-pagination button
+) {
+  box-sizing: border-box;
+  min-inline-size: max(2.75rem, 44px);
+  min-block-size: max(2.75rem, 44px);
+  border: var(--jc-shape-border-width) solid var(--jc-color-control-border) !important;
+  border-radius: var(--jc-shape-control-radius) !important;
+  background: var(--jc-color-surface) !important;
+  color: var(--jc-color-text) !important;
+  touch-action: manipulation;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .jc-downloads-page :where(button, input, [role="button"]):focus-visible,
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .jc-downloads-page :where(.jc-download-card, .jc-request-card, .jc-issue-card):focus-within {
+  outline: var(--jc-elevation-focus-ring) solid var(--jc-color-focus) !important;
+  outline-offset: 2px;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .jc-downloads-page :where(
+  .jc-downloads-tab.active,
+  .jc-downloads-search-toggle.active,
+  .jc-requests-tab.active,
+  .jc-issues-tab.active
+) {
+  border-color: var(--jc-color-primary) !important;
+  background: color-mix(in srgb, var(--jc-color-primary) 22%, var(--jc-color-surface)) !important;
+  color: var(--jc-color-text) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .jc-downloads-search-container {
+  box-sizing: border-box;
+  inline-size: min(36rem, 100%);
+  border: var(--jc-shape-border-width) solid var(--jc-color-control-border) !important;
+  border-radius: var(--jc-shape-control-radius) !important;
+  background: var(--jc-color-canvas) !important;
+  color: var(--jc-color-text-muted) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .jc-downloads-search-input {
+  box-sizing: border-box;
+  min-block-size: max(2.75rem, 44px);
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  background: transparent !important;
+  color: var(--jc-color-text) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .jc-downloads-grid {
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: stretch;
+  gap: var(--jc-card-gap) !important;
+  max-inline-size: 100%;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"])[data-jc-theme-breakpoint="wide"] .jc-downloads-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) :where(.jc-download-card, .jc-request-card, .jc-issue-card) {
+  box-sizing: border-box;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  border: var(--jc-shape-border-width) solid var(--jc-color-divider) !important;
+  border-radius: var(--jc-shape-card-radius) !important;
+  background: var(--jc-color-elevated) !important;
+  box-shadow: var(--jc-elevation-card-shadow) !important;
+  color: var(--jc-color-text) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) :where(.jc-download-poster, .jc-request-poster) {
+  border-radius: calc(var(--jc-shape-card-radius) - var(--jc-shape-border-width)) !important;
+  background: var(--jc-color-canvas) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) :where(.jc-download-title, .jc-request-title, .jc-issue-title) {
+  color: var(--jc-color-text) !important;
+  overflow-wrap: anywhere;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) :where(
+  .jc-download-subtitle,
+  .jc-download-stats,
+  .jc-request-meta,
+  .jc-request-year,
+  .jc-issue-message,
+  .jc-issue-summary
+) {
+  color: var(--jc-color-text-muted) !important;
+  overflow-wrap: anywhere;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) :where(
+  .jc-download-badge,
+  .jc-requests-status-chip,
+  .jc-release-date-chip,
+  .jc-issue-status-chip,
+  .jc-issue-type-chip,
+  .jc-downloads-tab-count
+) {
+  border: var(--jc-shape-border-width) solid var(--jc-color-divider) !important;
+  border-radius: 999px !important;
+  background: var(--jc-color-surface) !important;
+  color: var(--jc-color-text) !important;
+  line-height: 1.35;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) :where(.jc-chip-available, .jc-issue-status-resolved) {
+  border-color: var(--jc-color-positive) !important;
+  background: color-mix(in srgb, var(--jc-color-positive) 18%, var(--jc-color-surface)) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) :where(.jc-chip-pending, .jc-chip-processing, .jc-issue-status-open, .jc-release-date-chip) {
+  border-color: var(--jc-color-caution) !important;
+  background: color-mix(in srgb, var(--jc-color-caution) 18%, var(--jc-color-surface)) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) :where(.jc-chip-declined, .jc-chip-rejected, .jc-chip-deleted) {
+  border-color: var(--jc-color-negative) !important;
+  background: color-mix(in srgb, var(--jc-color-negative) 18%, var(--jc-color-surface)) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .jc-download-progress {
+  block-size: max(var(--jc-progress-thickness), 0.45rem) !important;
+  border-radius: 999px !important;
+  background: color-mix(in srgb, var(--jc-color-text) 16%, var(--jc-color-canvas)) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .jc-download-progress-bar {
+  border-radius: 999px !important;
+  background: var(--jc-color-primary) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .jc-request-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: calc(var(--jc-control-gap) / 2);
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .jc-request-approve-btn {
+  border-color: var(--jc-color-positive) !important;
+  background: color-mix(in srgb, var(--jc-color-positive) 18%, var(--jc-color-surface)) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .jc-request-decline-btn {
+  border-color: var(--jc-color-negative) !important;
+  background: color-mix(in srgb, var(--jc-color-negative) 18%, var(--jc-color-surface)) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .jc-downloads-page :where(button, input):disabled,
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .jc-downloads-page .is-disabled {
+  border-color: var(--jc-color-divider) !important;
+  color: var(--jc-color-disabled) !important;
+  opacity: 1 !important;
+  cursor: not-allowed;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .jc-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: var(--jc-control-gap);
+  color: var(--jc-color-text);
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) :where(.jc-empty-state, .jc-loading) {
+  box-sizing: border-box;
+  max-inline-size: min(42rem, 100%);
+  margin-inline: auto;
+  padding: var(--jc-section-gap) var(--jc-page-gutter) !important;
+  border: var(--jc-shape-border-width) solid var(--jc-color-divider) !important;
+  border-radius: var(--jc-shape-card-radius) !important;
+  background: var(--jc-color-surface) !important;
+  color: var(--jc-color-text) !important;
+  overflow-wrap: anywhere;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .jc-error-state {
+  border-color: var(--jc-color-negative) !important;
+  background: color-mix(in srgb, var(--jc-color-negative) 14%, var(--jc-color-surface)) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"])[data-jc-theme-breakpoint="phone"] .jc-downloads-section {
+  padding: var(--jc-control-gap) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"])[data-jc-theme-breakpoint="phone"] :where(.jc-downloads-tabs, .jc-requests-tabs, .jc-issues-tabs) {
+  flex-wrap: nowrap !important;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"])[data-jc-theme-breakpoint="phone"] .jc-downloads-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"])[data-jc-theme-breakpoint="phone"] :where(.jc-download-card, .jc-request-card, .jc-issue-card) {
+  inline-size: 100% !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"])[data-jc-theme-breakpoint="phone"] :where(.jc-request-title-row, .jc-issue-title-row, .jc-request-meta) {
+  flex-wrap: wrap;
+}
+
+
+/* Adapter bookmark-operations-v1: library, timeline and owned dialogs. */
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .jc-bookmarks-page {
+  box-sizing: border-box;
+  inline-size: 100%;
+  max-inline-size: var(--jc-content-max-inline-size);
+  margin-inline: auto;
+  padding-inline: max(var(--jc-page-gutter), var(--jc-safe-area-left)) max(var(--jc-page-gutter), var(--jc-safe-area-right));
+  color: var(--jc-color-text);
+  font-family: var(--jc-type-family-ui);
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) :where(.jc-bookmarks-wrapper, .jc-bookmarks-container) {
+  box-sizing: border-box;
+  max-inline-size: min(86rem, 100%);
+  margin-inline: auto;
+  color: var(--jc-color-text) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) :where(.jc-bookmark-hero-subtitle, .jc-bookmark-item-meta, .jc-episode-title, .jc-bm-time) {
+  color: var(--jc-color-text-muted) !important;
+  overflow-wrap: anywhere;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) :where(.jc-bookmark-tabs, .jc-bookmark-actions-footer) {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: calc(var(--jc-control-gap) / 2) !important;
+  max-inline-size: 100%;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .jc-bookmarks-page :where(
+  .jc-tab,
+  .jc-btn,
+  .jc-btn-action,
+  .jc-btn-find-replacement,
+  .jc-offset-icon,
+  .jc-bookmark-actions-footer button
+),
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) :where(.jc-bm-player-modal-overlay, .jc-bm-library-modal-overlay) :where(button, [role="button"]) {
+  box-sizing: border-box;
+  min-inline-size: max(2.75rem, 44px);
+  min-block-size: max(2.75rem, 44px);
+  border: var(--jc-shape-border-width) solid var(--jc-color-control-border) !important;
+  border-radius: var(--jc-shape-control-radius) !important;
+  background: var(--jc-color-surface) !important;
+  color: var(--jc-color-text) !important;
+  touch-action: manipulation;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .jc-bookmarks-page :where(button, input, a, [role="button"]):focus-visible,
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) :where(.jc-bm-player-modal-overlay, .jc-bm-library-modal-overlay) :where(button, input, [role="button"]):focus-visible {
+  outline: var(--jc-elevation-focus-ring) solid var(--jc-color-focus) !important;
+  outline-offset: 2px;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .jc-bookmarks-page .jc-tab.active {
+  border-color: var(--jc-color-primary) !important;
+  background: color-mix(in srgb, var(--jc-color-primary) 22%, var(--jc-color-surface)) !important;
+  color: var(--jc-color-text) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .jc-bookmarks-grid {
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: var(--jc-card-gap) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"])[data-jc-theme-breakpoint="wide"] .jc-bookmarks-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .jc-bookmark-item {
+  box-sizing: border-box;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  border: var(--jc-shape-border-width) solid var(--jc-color-divider) !important;
+  border-radius: var(--jc-shape-card-radius) !important;
+  background: var(--jc-color-elevated) !important;
+  box-shadow: var(--jc-elevation-card-shadow) !important;
+  color: var(--jc-color-text) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .jc-bookmark-item-orphaned {
+  border: max(3px, var(--jc-shape-border-width)) double var(--jc-color-caution) !important;
+  background: color-mix(in srgb, var(--jc-color-caution) 12%, var(--jc-color-elevated)) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .jc-bookmark-item-header {
+  box-sizing: border-box;
+  gap: var(--jc-control-gap) !important;
+  border-color: var(--jc-color-divider) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) :where(.jc-bookmark-item-poster, .jc-bookmark-item-placeholder) {
+  border-radius: var(--jc-shape-control-radius) !important;
+  background: var(--jc-color-canvas) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .jc-bookmark-item-title,
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .jc-bookmark-label {
+  color: var(--jc-color-text) !important;
+  overflow-wrap: anywhere;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .jc-bookmark-row {
+  box-sizing: border-box;
+  border-block-start: var(--jc-shape-border-width) solid var(--jc-color-divider) !important;
+  background: var(--jc-color-surface) !important;
+  color: var(--jc-color-text) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .jc-bookmark-main {
+  min-inline-size: 0;
+  gap: var(--jc-control-gap) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .jc-bookmark-bar {
+  inline-size: max(var(--jc-progress-thickness), 0.35rem) !important;
+  border-radius: 999px !important;
+  background: var(--jc-color-primary) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) :where(.jc-bookmark-info, .jc-bookmark-actions) {
+  min-inline-size: 0;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .jc-bookmark-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: calc(var(--jc-control-gap) / 2) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .jc-btn-edit-row {
+  box-sizing: border-box;
+  max-inline-size: 100%;
+  gap: calc(var(--jc-control-gap) / 2) !important;
+  border-color: var(--jc-color-divider) !important;
+  background: var(--jc-color-canvas) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .jc-btn-edit-row .jc-input,
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) :where(.jc-bm-player-modal-overlay, .jc-bm-library-modal-overlay) :where(input, textarea, select) {
+  box-sizing: border-box;
+  min-inline-size: 0;
+  min-block-size: max(2.75rem, 44px);
+  max-inline-size: 100%;
+  border: var(--jc-shape-border-width) solid var(--jc-color-control-border) !important;
+  border-radius: var(--jc-shape-control-radius) !important;
+  background: var(--jc-color-canvas) !important;
+  color: var(--jc-color-text) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) :where(.jc-btn-delete, .jc-btn-footer-delete, .jc-bookmark-btn-delete) {
+  border-color: var(--jc-color-negative) !important;
+  background: color-mix(in srgb, var(--jc-color-negative) 18%, var(--jc-color-surface)) !important;
+  color: var(--jc-color-text) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .jc-bookmarks-empty {
+  box-sizing: border-box;
+  max-inline-size: min(42rem, 100%);
+  margin-inline: auto;
+  padding: var(--jc-section-gap) var(--jc-page-gutter) !important;
+  border: var(--jc-shape-border-width) solid var(--jc-color-divider) !important;
+  border-radius: var(--jc-shape-card-radius) !important;
+  background: var(--jc-color-surface) !important;
+  color: var(--jc-color-text) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) :where(.jc-bm-player-modal-overlay, .jc-bm-library-modal-overlay) {
+  box-sizing: border-box;
+  padding-block: max(var(--jc-page-gutter), var(--jc-safe-area-top)) max(var(--jc-page-gutter), var(--jc-safe-area-bottom)) !important;
+  padding-inline: max(var(--jc-page-gutter), var(--jc-safe-area-left)) max(var(--jc-page-gutter), var(--jc-safe-area-right)) !important;
+  background: color-mix(in srgb, var(--jc-color-scrim) 88%, transparent) !important;
+  color: var(--jc-color-text) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) :where(.jc-bm-player-modal-container, .jc-bm-library-modal-container) {
+  box-sizing: border-box;
+  inline-size: min(46rem, 100%) !important;
+  max-inline-size: 100% !important;
+  max-block-size: calc(var(--jc-visual-viewport-height) - var(--jc-safe-area-top) - var(--jc-safe-area-bottom) - var(--jc-page-gutter) - var(--jc-page-gutter)) !important;
+  overflow: auto !important;
+  overscroll-behavior: contain;
+  border: var(--jc-shape-border-width) solid var(--jc-color-divider) !important;
+  border-radius: var(--jc-shape-dialog-radius) !important;
+  background: var(--jc-color-surface) !important;
+  box-shadow: var(--jc-elevation-dialog-shadow) !important;
+  color: var(--jc-color-text) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) :where(
+  .jc-bookmarks-modal-header,
+  .jc-bookmark-modal-actions,
+  .jc-bookmark-actions-footer,
+  .jc-modal-list-item,
+  .jc-duplicate-item,
+  .jc-merge-version,
+  .jc-orphaned-result-item,
+  .replacement-option
+) {
+  border-color: var(--jc-color-divider) !important;
+  background: var(--jc-color-elevated) !important;
+  color: var(--jc-color-text) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) :where(.jc-modal-subtitle, .jc-modal-help-text, .jc-modal-list-item-meta, .jc-orphaned-result-meta, .jc-duplicate-meta) {
+  color: var(--jc-color-text-muted) !important;
+  overflow-wrap: anywhere;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) :where(.replacement-option.selected, .jc-merge-version.is-target) {
+  border-color: var(--jc-color-primary) !important;
+  background: color-mix(in srgb, var(--jc-color-primary) 18%, var(--jc-color-elevated)) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) :where(.jc-modal-warning-box, .jc-bookmark-item-orphaned .jc-bookmark-item-meta) {
+  border-color: var(--jc-color-caution) !important;
+  background: color-mix(in srgb, var(--jc-color-caution) 14%, var(--jc-color-surface)) !important;
+  color: var(--jc-color-text) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .jc-modal-info-box {
+  border-color: var(--jc-color-info) !important;
+  background: color-mix(in srgb, var(--jc-color-info) 14%, var(--jc-color-surface)) !important;
+  color: var(--jc-color-text) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) :where(
+  #jc-active-streams-panel,
+  .jc-calendar-page,
+  .jc-downloads-page,
+  .jc-bookmarks-page,
+  .jc-bm-player-modal-overlay,
+  .jc-bm-library-modal-overlay
+) :where(button, input, textarea, select):disabled {
+  color: var(--jc-color-disabled) !important;
+  cursor: not-allowed;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"])[data-jc-theme-breakpoint="phone"] .jc-bookmarks-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"])[data-jc-theme-breakpoint="phone"] :where(.jc-bookmark-tabs, .jc-bookmark-actions-footer) {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"])[data-jc-theme-breakpoint="phone"] .jc-bookmark-main {
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"])[data-jc-theme-breakpoint="phone"] .jc-bookmark-actions {
+  inline-size: 100%;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"])[data-jc-theme-breakpoint="phone"] .jc-btn-edit-row {
+  grid-template-columns: minmax(0, 1fr) !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"])[data-jc-theme-breakpoint="phone"] :where(.jc-bm-player-modal-container, .jc-bm-library-modal-container) {
+  inline-size: 100% !important;
+}
+
+
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"])[data-jc-theme-transparency="reduced"] :where(
+  #jc-active-streams-panel,
+  .jc-calendar-sidebar,
+  .jc-calendar-event,
+  .jc-calendar-agenda-event,
+  .jc-calendar-card,
+  .jc-downloads-section,
+  .jc-download-card,
+  .jc-request-card,
+  .jc-issue-card,
+  .jc-bookmark-item,
+  .jc-bm-player-modal-overlay,
+  .jc-bm-library-modal-overlay,
+  .jc-bm-player-modal-container,
+  .jc-bm-library-modal-container
+),
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"])[data-jc-theme-effects-level="minimal"] :where(
+  #jc-active-streams-panel,
+  .jc-calendar-sidebar,
+  .jc-calendar-event,
+  .jc-calendar-agenda-event,
+  .jc-calendar-card,
+  .jc-downloads-section,
+  .jc-download-card,
+  .jc-request-card,
+  .jc-issue-card,
+  .jc-bookmark-item,
+  .jc-bm-player-modal-overlay,
+  .jc-bm-library-modal-overlay,
+  .jc-bm-player-modal-container,
+  .jc-bm-library-modal-container
+) {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  background-image: none !important;
+  box-shadow: none !important;
+}
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"])[data-jc-theme-motion="reduced"] :where(
+  #jc-active-streams-panel,
+  #jc-active-streams-panel *,
+  .jc-calendar-page *,
+  .jc-downloads-page *,
+  .jc-bookmarks-page *,
+  .jc-bm-player-modal-overlay *,
+  .jc-bm-library-modal-overlay *
+) {
+  animation-duration: 1ms !important;
+  transition-duration: 1ms !important;
+}
+@media (orientation: landscape) and (max-height: 599px) {
+  :root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"])[data-jc-theme-breakpoint="phone"] #jc-active-streams-panel,
+  :root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"])[data-jc-theme-breakpoint="phone"] :where(.jc-bm-player-modal-container, .jc-bm-library-modal-container) {
+    max-block-size: calc(var(--jc-visual-viewport-height) - var(--jc-safe-area-top) - var(--jc-safe-area-bottom) - var(--jc-control-gap)) !important;
+  }
+  :root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"])[data-jc-theme-breakpoint="phone"] :where(.jc-calendar-header, .jc-downloads-section, .jc-bookmark-item-header) {
+    margin-block-end: var(--jc-control-gap) !important;
+    padding-block: calc(var(--jc-control-gap) / 2) !important;
+  }
+}
+@media (forced-colors: active) {
+  :root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) :where(
+    #jc-active-streams-panel,
+    .jc-as-card,
+    .jc-as-state,
+    .jc-as-badge,
+    .jc-calendar-sidebar,
+    .jc-calendar-day,
+    .jc-calendar-event,
+    .jc-calendar-agenda-event,
+    .jc-calendar-card,
+    .jc-downloads-section,
+    .jc-download-card,
+    .jc-request-card,
+    .jc-issue-card,
+    .jc-download-badge,
+    .jc-requests-status-chip,
+    .jc-bookmark-item,
+    .jc-bookmark-row,
+    .jc-bm-player-modal-container,
+    .jc-bm-library-modal-container
+  ) {
+    border: 1px solid CanvasText !important;
+    background: Canvas !important;
+    box-shadow: none !important;
+    color: CanvasText !important;
+    forced-color-adjust: auto;
+  }
+  :root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) :where(.jc-as-progress-fill, .jc-download-progress-bar, .jc-bookmark-bar) {
+    background: Highlight !important;
+  }
+}

@@ -136,6 +136,8 @@ test.describe.serial('Theme Studio mobile editor', () => {
         expect(retainedScroll.before).toBeGreaterThan(0);
         expect(retainedScroll.after).toBe(retainedScroll.before);
         await page.setViewportSize({ width: 320, height: 568 });
+        await expect.poll(() => page.evaluate(() => getComputedStyle(document.documentElement)
+            .getPropertyValue('--jc-visual-viewport-height').trim())).toBe('568px');
 
         const portrait = await page.evaluate(() => {
             const root = document.querySelector('[data-theme-editor-root]') as HTMLElement;

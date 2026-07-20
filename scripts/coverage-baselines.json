@@ -21,12 +21,12 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 20771,
-        "totalLines": 29207
+        "coveredLines": 20777,
+        "totalLines": 29213
       },
       "tolerance": {
         "missingCoveredLines": 4,
-        "rationale": "Theme Studio effects and motion controls in issue #391. Two clean local .NET 10.0.9/Coverlet runs on 2026-07-20 each passed all 1830 tests over the identical complete 29207-line assembly scope and both measured 20771 covered lines. Relative to the prior 20756/29192 baseline, the legitimate 15-line scope increase adds the administrator effects ceiling plus persisted schedule timezone and entry-kind policy, with every new instrumented line covered by configuration, migration, and revision-controller tests; total assembly coverage improves from 71.102% to 71.117%. The existing four-line low-side tolerance is unchanged and remains far below the policy maximum; coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, and broad-tolerance negative boundaries."
+        "rationale": "Theme Studio operational surfaces in issue #394. Two clean local .NET 10.0.9/Coverlet runs on 2026-07-21 each passed all 1831 tests over the identical complete 29213-line assembly scope and measured 20777 covered lines. Relative to the prior 20771/29207 baseline, the legitimate six-line scope increase registers the same-origin embedded operational stylesheet and every new instrumented manifest line is covered by the asset-cache assembly test; total assembly coverage improves from 71.117% to 71.122%. The existing four-line low-side tolerance is unchanged and remains far below the policy maximum; coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, and broad-tolerance negative boundaries."
       }
     }
   }

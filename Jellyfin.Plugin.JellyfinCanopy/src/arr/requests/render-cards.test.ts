@@ -62,6 +62,11 @@ describe('renderDownloadCard escaping', () => {
         const subtitle = host.querySelector('.jc-download-subtitle')!;
         expect(subtitle.textContent).toBe(HOSTILE);
         expect(subtitle.children.length).toBe(0);
+        const progress = host.querySelector('.jc-download-progress')!;
+        expect(progress.getAttribute('role')).toBe('progressbar');
+        expect(progress.getAttribute('aria-valuemin')).toBe('0');
+        expect(progress.getAttribute('aria-valuemax')).toBe('100');
+        expect(progress.getAttribute('aria-valuenow')).toBe('42');
     });
 
     it('coerces a non-numeric progress instead of interpolating it into the style attribute', () => {
@@ -71,6 +76,17 @@ describe('renderDownloadCard escaping', () => {
         const bar = host.querySelector<HTMLElement>('.jc-download-progress-bar')!;
         expect(bar.getAttribute('style')).toContain('width: 0%');
         expect(bar.getAttribute('style')).not.toContain('javascript:');
+    });
+
+    it.each([
+        { value: -5, expected: '0' },
+        { value: 150, expected: '100' },
+    ])('bounds progress $value to the ARIA range', ({ value, expected }) => {
+        const host = renderToDom(renderDownloadCard(hostileItem({ progress: value })));
+        const progress = host.querySelector<HTMLElement>('.jc-download-progress')!;
+        const bar = host.querySelector<HTMLElement>('.jc-download-progress-bar')!;
+        expect(progress.getAttribute('aria-valuenow')).toBe(expected);
+        expect(bar.getAttribute('style')).toContain(`width: ${expected}%`);
     });
 });
 
@@ -98,6 +114,7 @@ describe('renderSeasonPackCard escaping', () => {
         const rangeBadge = badges[badges.length - 1];
         expect(rangeBadge.textContent).toBe(HOSTILE);
         expect(rangeBadge.children.length).toBe(0);
+        expect(host.querySelector('.jc-download-progress')?.getAttribute('aria-valuenow')).toBe('42');
     });
 });
 

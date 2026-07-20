@@ -58,7 +58,7 @@ export function renderPage(): void {
         html += `
       <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1em;">
         <h2 style="margin: 0.5em 0 0 0;">${labelActiveDownloads}</h2>
-        <button class="jc-refresh-btn emby-button" style="background: transparent; border: 1px solid rgba(255,255,255,0.3); color: inherit; padding: 0.5em; border-radius: 10px; cursor: pointer; display: flex; align-items: center; gap: 0.5em; opacity: 0.8; transition: all 0.2s;">
+        <button class="jc-refresh-btn emby-button" aria-label="${escapeHtml(labelActiveDownloads)}" style="background: transparent; border: 1px solid rgba(255,255,255,0.3); color: inherit; padding: 0.5em; border-radius: 10px; cursor: pointer; display: flex; align-items: center; gap: 0.5em; opacity: 0.8; transition: all 0.2s;">
           <span class="material-icons" style="font-size: 18px;">refresh</span>
         </button>
       </div>
@@ -88,13 +88,13 @@ export function renderPage(): void {
                     const totalGroupedCount = statuses.reduce((sum, [_, count]) => sum + count, 0);
 
                     html += `<div class="jc-downloads-tabs">`;
-                    html += `<button is="emby-button" type="button" class="jc-downloads-tab emby-button ${state.downloadsActiveTab === 'all' ? 'active' : ''}" data-tab="all">
+                    html += `<button is="emby-button" type="button" class="jc-downloads-tab emby-button ${state.downloadsActiveTab === 'all' ? 'active' : ''}" data-tab="all" aria-pressed="${state.downloadsActiveTab === 'all'}">
             <span>${translateStatus('All')}</span>
             <span class="jc-downloads-tab-count">${Number(totalGroupedCount) || 0}</span>
           </button>`;
 
                     for (const [status, count] of statuses) {
-                        html += `<button is="emby-button" type="button" class="jc-downloads-tab emby-button ${state.downloadsActiveTab === status ? 'active' : ''}" data-tab="${escapeHtml(status)}">
+                        html += `<button is="emby-button" type="button" class="jc-downloads-tab emby-button ${state.downloadsActiveTab === status ? 'active' : ''}" data-tab="${escapeHtml(status)}" aria-pressed="${state.downloadsActiveTab === status}">
               <span>${escapeHtml(translateStatus(status))}</span>
               <span class="jc-downloads-tab-count">${Number(count) || 0}</span>
             </button>`;
@@ -102,7 +102,7 @@ export function renderPage(): void {
 
                     // Add search icon button after tabs
                     if (showSearchBar) {
-                        html += `<button class="jc-downloads-search-toggle ${state.downloadsSearchVisible ? 'active' : ''}">
+                        html += `<button class="jc-downloads-search-toggle ${state.downloadsSearchVisible ? 'active' : ''}" aria-label="Search downloads" aria-expanded="${state.downloadsSearchVisible ? 'true' : 'false'}">
               <span class="material-icons">search</span>
             </button>`;
                     }
@@ -114,7 +114,7 @@ export function renderPage(): void {
                 if (showSearchBar && state.downloadsSearchVisible) {
                     html += `<div class="jc-downloads-search-container">
             <span class="material-icons jc-downloads-search-icon">search</span>
-            <input type="text" class="jc-downloads-search-input" value="${escapeHtml(state.downloadsSearchQuery)}" autofocus>
+            <input type="text" class="jc-downloads-search-input" aria-label="Search downloads" value="${escapeHtml(state.downloadsSearchQuery)}" autofocus>
           </div>`;
                 }
 
@@ -165,11 +165,11 @@ export function renderPage(): void {
 
         html += `
             <div class="jc-requests-tabs">
-              <button is="emby-button" type="button" class="jc-requests-tab emby-button ${state.requestsFilter === 'all' ? 'active' : ''}" data-requests-filter="all">${labelAll}</button>
-              <button is="emby-button" type="button" class="jc-requests-tab emby-button ${state.requestsFilter === 'pending' ? 'active' : ''}" data-requests-filter="pending">${labelPending}</button>
-              <button is="emby-button" type="button" class="jc-requests-tab emby-button ${state.requestsFilter === 'processing' ? 'active' : ''}" data-requests-filter="processing">${labelProcessing}</button>
-              <button is="emby-button" type="button" class="jc-requests-tab emby-button ${state.requestsFilter === 'comingsoon' ? 'active' : ''}" data-requests-filter="comingsoon">${labelComingSoon}</button>
-              <button is="emby-button" type="button" class="jc-requests-tab emby-button ${state.requestsFilter === 'available' ? 'active' : ''}" data-requests-filter="available">${labelAvailable}</button>
+              <button is="emby-button" type="button" class="jc-requests-tab emby-button ${state.requestsFilter === 'all' ? 'active' : ''}" data-requests-filter="all" aria-pressed="${state.requestsFilter === 'all'}">${labelAll}</button>
+              <button is="emby-button" type="button" class="jc-requests-tab emby-button ${state.requestsFilter === 'pending' ? 'active' : ''}" data-requests-filter="pending" aria-pressed="${state.requestsFilter === 'pending'}">${labelPending}</button>
+              <button is="emby-button" type="button" class="jc-requests-tab emby-button ${state.requestsFilter === 'processing' ? 'active' : ''}" data-requests-filter="processing" aria-pressed="${state.requestsFilter === 'processing'}">${labelProcessing}</button>
+              <button is="emby-button" type="button" class="jc-requests-tab emby-button ${state.requestsFilter === 'comingsoon' ? 'active' : ''}" data-requests-filter="comingsoon" aria-pressed="${state.requestsFilter === 'comingsoon'}">${labelComingSoon}</button>
+              <button is="emby-button" type="button" class="jc-requests-tab emby-button ${state.requestsFilter === 'available' ? 'active' : ''}" data-requests-filter="available" aria-pressed="${state.requestsFilter === 'available'}">${labelAvailable}</button>
             </div>
           `;
 
@@ -235,8 +235,8 @@ export function renderPage(): void {
         const labelResolved = (JC.t && JC.t('seerr_issue_resolved')) || 'Resolved';
         html += `
         <div class="jc-issues-tabs">
-          <button is="emby-button" type="button" class="jc-issues-tab emby-button ${state.issuesFilter === 'open' ? 'active' : ''}" data-issues-filter="open">${labelOpen}</button>
-          <button is="emby-button" type="button" class="jc-issues-tab emby-button ${state.issuesFilter === 'resolved' ? 'active' : ''}" data-issues-filter="resolved">${labelResolved}</button>
+          <button is="emby-button" type="button" class="jc-issues-tab emby-button ${state.issuesFilter === 'open' ? 'active' : ''}" data-issues-filter="open" aria-pressed="${state.issuesFilter === 'open'}">${labelOpen}</button>
+          <button is="emby-button" type="button" class="jc-issues-tab emby-button ${state.issuesFilter === 'resolved' ? 'active' : ''}" data-issues-filter="resolved" aria-pressed="${state.issuesFilter === 'resolved'}">${labelResolved}</button>
         </div>
       `;
 

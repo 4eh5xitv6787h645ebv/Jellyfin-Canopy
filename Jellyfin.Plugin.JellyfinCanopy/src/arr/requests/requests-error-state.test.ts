@@ -56,6 +56,8 @@ describe('requests page error state', () => {
 
         expect(container.innerHTML).toContain('requests_load_error');
         expect(container.innerHTML).not.toContain('requests_no_requests_found');
+        expect(container.querySelector('.jc-requests-tab.active')?.getAttribute('aria-pressed')).toBe('true');
+        expect(container.querySelector('.jc-refresh-btn')?.getAttribute('aria-label')).toBe('requests_downloads');
     });
 
     it('a successful fetch clears requestsError so the empty state can show again', async () => {
