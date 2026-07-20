@@ -364,6 +364,19 @@ destroy the instance. The workflow has **no `pull_request` trigger** and never
 registers a self-hosted runner; orchestration is plain SSH from the
 GitHub-hosted control-plane job.
 
+**Single-flight concurrency contract.** Every run of the scale tier — the
+nightly L schedule, the weekly XL schedule, manual `workflow_dispatch`, and
+release-dispatched exact-SHA runs — declares the same GitHub Actions
+concurrency group (`canopy-scale`) with `cancel-in-progress: false`. At most
+one run executes at a time; a trigger that arrives while a run is in flight
+**queues** behind it and is never cancelled by a newer trigger. This
+concurrency group — not the Volume's attach limit — is the serialization
+mechanism: the one-Linode-at-a-time attach constraint (see the Volume
+lifecycle below) is a physical backstop that correctly queued runs never
+reach, so no run spends provisioning money only to lose an attach race, and a
+release-dispatched run is never failed by an attach conflict with the nightly
+schedule — it waits its turn, then runs.
+
 #### Scale profiles (provisional — SR-06 canonicalizes)
 
 - **L — 100,000 episodes.** Runs nightly.
@@ -772,8 +785,11 @@ Volume lifecycle:
   required schedules must never trigger a rebuild. Stub files are
   zero-byte/sparse, so both baselines coexist on the Volume and the `df -i`
   inode-headroom check covers the combined baselines. Volumes attach to one
-  Linode at a time (same region), so **runs are serialized** on the Volume
-  regardless of profile.
+  Linode at a time (same region); run serialization is enforced upstream by
+  the single-flight concurrency contract in the job shape above, and the
+  attach limit is the physical backstop behind it — an attach conflict can
+  only mean that contract was violated, and the run fails there as
+  **no-evidence** rather than retrying into another run's attachment.
 - The Volume's baselines are **immutable during ordinary measurement runs**:
   writable Jellyfin state is copied to instance-local storage; each
   profile's baseline is identified by the seed-input digest in its own
@@ -846,8 +862,13 @@ Secrets and teardown:
   tier tag, destroy any whose recorded expiry has passed, and detach the
   Volume from any instance being destroyed (unblocking the serialized
   Volume for the run about to start). Reconciliation acts only on recorded
-  tags — it never touches untagged instances, and never touches a tagged,
-  unexpired instance (that is the serialized in-flight run). It is
+  tags — it never touches untagged instances, and never destroys a tagged,
+  unexpired instance. Under the single-flight concurrency contract (see the
+  job shape above) no peer run can be live, so a tagged, unexpired instance
+  can only be a not-yet-expired leak from a lost controller; rather than
+  provisioning alongside it and racing it for the Volume, the run stops
+  there — an infrastructure **no-evidence** failure with no new spend — and
+  the instance's recorded expiry guarantees a later run reclaims it. It is
   idempotent and safe to re-run; a reconciliation that cannot complete
   fails the run before any new spend. Because profile L runs nightly, a
   leaked instance survives at most about one schedule interval (~one day,
@@ -886,10 +907,11 @@ PR events.
 1. Sparse bulk-item generator extending `e2e/docker/seed.sh` (with the `df -i`
    headroom check).
 2. Seed refresh/versioning tooling for the per-profile Volume baselines.
-3. The `main`-only scheduled workflow: pre-run reconciliation of expired
-   tagged instances, SSH provisioning with creation-time ownership/expiry
-   tags, bounded API/SSH/job timeouts, quota verification, `always()`
-   teardown.
+3. The `main`-only scheduled workflow: the single-flight `canopy-scale`
+   concurrency group (`cancel-in-progress: false`), pre-run reconciliation
+   of expired tagged instances, SSH provisioning with creation-time
+   ownership/expiry tags, bounded API/SSH/job timeouts, quota verification,
+   `always()` teardown.
 4. Measurement harness and the immutable result-artifact schema.
 5. Budget comparator with fail-closed validation and its negative tests
    (unknown schema, missing/extra keys, `null` while blocking, over-budget,
