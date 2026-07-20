@@ -743,7 +743,7 @@ function advancedCssControls(
         <div class="jc-theme-css-list">
             ${configuration.Snippets.map((snippet) => {
                 const invalid = invalidSnippetIds.has(snippet.Id);
-                const errorId = `jc-theme-css-error-${snippet.Id}`;
+                const errorId = `jc-theme-css-error-${escapeHtml(snippet.Id)}`;
                 return `<fieldset class="jc-theme-css-card" data-css-snippet="${escapeHtml(snippet.Id)}"><legend>${escapeHtml(snippet.Name)}</legend>
                     <label class="jc-theme-check"><input type="checkbox" data-field="advanced-css-snippet-enabled" data-snippet-id="${escapeHtml(snippet.Id)}"${snippet.Enabled ? ' checked' : ''}><span>${escapeHtml(t('theme_studio_css_snippet_enable'))}</span></label>
                     <div class="jc-theme-module-grid"><label class="jc-theme-field"><span>${escapeHtml(t('theme_studio_css_name'))}</span><input class="jc-theme-control" data-field="advanced-css-name" data-snippet-id="${escapeHtml(snippet.Id)}" value="${escapeHtml(snippet.Name)}" maxlength="80" dir="auto"></label>

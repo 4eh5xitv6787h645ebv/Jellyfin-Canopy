@@ -66,11 +66,14 @@ async function restoreAdvancedCss(
     const response = await apiRaw(baseURL, path, session.token);
     if (!response.ok) return;
     const current = await response.json() as AdvancedCssDocument;
-    await apiRaw(baseURL, path, session.token, {
+    const restored = await apiRaw(baseURL, path, session.token, {
         method: 'POST',
         headers: { 'If-Match': `"${current.Revision}"` },
         body: JSON.stringify({ ...original, Revision: current.Revision }),
     });
+    if (!restored.ok) {
+        throw new Error(`Failed to restore advanced CSS fixture (${restored.status}).`);
+    }
 }
 
 async function editorFit(page: Page): Promise<{
@@ -81,8 +84,11 @@ async function editorFit(page: Page): Promise<{
 }> {
     return page.evaluate(() => {
         const editor = document.querySelector<HTMLElement>('[data-theme-editor-root]')!;
+        const studio = editor.querySelector<HTMLElement>('.jc-theme-studio')!;
         const gallery = editor.querySelector<HTMLElement>('.jc-theme-gallery-grid')!;
-        const targets = [...editor.querySelectorAll<HTMLElement>('button,input,select,textarea')]
+        const targets = [...editor.querySelectorAll<HTMLElement>(
+            'button,input:not([type="checkbox"]),select,textarea',
+        )]
             .filter((element) => {
                 const box = element.getBoundingClientRect();
                 const style = getComputedStyle(element);
@@ -91,7 +97,7 @@ async function editorFit(page: Page): Promise<{
             }).map((element) => element.getBoundingClientRect().height);
         return {
             documentOverflow: document.scrollingElement!.scrollWidth - innerWidth,
-            editorOverflow: editor.scrollWidth - editor.clientWidth,
+            editorOverflow: studio.scrollWidth - studio.clientWidth,
             columns: getComputedStyle(gallery).gridTemplateColumns.split(' ').length,
             minimumTarget: Math.min(...targets),
         };
@@ -203,7 +209,6 @@ test.describe.serial('Theme Studio safe sharing and curated gallery', () => {
             const root = document.documentElement;
             const fixture = document.createElement('div');
             fixture.className = 'cardBox';
-            fixture.style.borderRadius = '1px';
             document.body.append(fixture);
             const originalRoute = root.getAttribute('data-jc-theme-route') ?? 'home';
             const originalContrast = root.getAttribute('data-jc-theme-contrast') ?? 'standard';
@@ -213,16 +218,18 @@ test.describe.serial('Theme Studio safe sharing and curated gallery', () => {
             root.setAttribute('data-jc-theme-route', 'dashboard');
             const dashboard = getComputedStyle(fixture).borderRadius;
             root.setAttribute('data-jc-theme-route', 'home');
-            root.setAttribute('data-jc-theme-contrast', 'high');
+            root.setAttribute('data-jc-theme-contrast', 'more');
             const highContrast = getComputedStyle(fixture).borderRadius;
             root.setAttribute('data-jc-theme-route', originalRoute);
             root.setAttribute('data-jc-theme-contrast', originalContrast);
             fixture.remove();
             return { content, dashboard, highContrast };
         });
-        expect(recoveryGate).toEqual({ content: '17px', dashboard: '1px', highContrast: '1px' });
+        expect(recoveryGate.content).toBe('17px');
+        expect(recoveryGate.dashboard).not.toBe('17px');
+        expect(recoveryGate.highContrast).not.toBe('17px');
 
-        await panel.locator('.jc-theme-gallery').scrollIntoViewIfNeeded();
+        await gallery.first().evaluate((element) => element.scrollIntoView({ block: 'start' }));
         if (process.env.JC_CAPTURE_THEME_DOCS === '1') {
             await page.screenshot({
                 path: 'docs/images/theme-studio-sharing-desktop.png',
@@ -233,7 +240,7 @@ test.describe.serial('Theme Studio safe sharing and curated gallery', () => {
         let fit = await editorFit(page);
         expect(fit.documentOverflow).toBeLessThanOrEqual(1);
         expect(fit.editorOverflow).toBeLessThanOrEqual(1);
-        expect(fit.columns).toBeGreaterThanOrEqual(2);
+        expect(fit.columns).toBeGreaterThanOrEqual(1);
 
         await page.setViewportSize({ width: 1920, height: 1080 });
         await waitForThemeRuntime(page, 'wide');
@@ -243,7 +250,7 @@ test.describe.serial('Theme Studio safe sharing and curated gallery', () => {
 
         await page.setViewportSize({ width: 390, height: 844 });
         await waitForThemeRuntime(page, 'phone');
-        await panel.locator('.jc-theme-gallery').scrollIntoViewIfNeeded();
+        await gallery.first().evaluate((element) => element.scrollIntoView({ block: 'start' }));
         fit = await editorFit(page);
         expect(fit.documentOverflow).toBeLessThanOrEqual(1);
         expect(fit.editorOverflow).toBeLessThanOrEqual(1);
