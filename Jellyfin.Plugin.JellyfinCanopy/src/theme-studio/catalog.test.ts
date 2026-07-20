@@ -45,6 +45,16 @@ describe('Theme Studio curated catalog', () => {
         expect(() => (THEME_PRESETS as unknown as ThemePresetMutation)[0].name = 'mutated').toThrow();
     });
 
+    it('retains the Focus preset storage identifier without TV-specific behavior', () => {
+        const focus = THEME_PRESETS.find((preset) => preset.id === 'tv-focus');
+        expect(focus).toBeDefined();
+        expect(focus?.id).toBe('tv-focus');
+        expect(focus?.name).toBe('Focus');
+        expect(focus?.description).not.toMatch(/\btv\b/i);
+        expect(focus?.thumbnail.captureId).toBe('preset-tv-focus-v1');
+        expect(focus?.responsive).not.toHaveProperty('tv');
+    });
+
     it('uses latest versions by default and fails a missing frozen version to Canopy', () => {
         expect(resolvePresetVersion('glass', null, false)).toMatchObject({
             fallback: false, definition: { id: 'glass', version: 1 },

@@ -316,6 +316,14 @@ public sealed class PersistedPayloadPolicyTests
     }
 
     [Fact]
+    public void Theme_PreviousFocusPresetIdentifier_RemainsValid()
+    {
+        var theme = UserThemeConfiguration.CreateDefault("tv-focus", "canopy-night");
+
+        AssertValid(theme);
+    }
+
+    [Fact]
     public void Theme_ProfileIdentityNamesAndCapacity_AreBounded()
     {
         var emoji80 = string.Concat(Enumerable.Repeat("🪼", ThemeConfigurationPolicy.MaximumProfileNameRunes));

@@ -82,7 +82,8 @@ beforeEach(() => {
     Object.defineProperty(window, 'innerHeight', { value: 844, configurable: true, writable: true });
     history.replaceState({}, '', '/web/#/home');
     document.documentElement.setAttribute('data-theme', 'dark');
-    document.documentElement.classList.remove('layout-tv');
+    document.documentElement.classList.remove('jc-legacy-layout', 'layout-tv');
+    document.documentElement.classList.add('jc-modern-layout');
     document.body.className = '';
     JC.pluginConfig = {
         ThemeStudioEnabled: true,
@@ -107,6 +108,7 @@ afterEach(async () => {
         if (name.startsWith('data-jc-theme-')) document.documentElement.removeAttribute(name);
     }
     document.documentElement.removeAttribute('data-theme');
+    document.documentElement.classList.remove('jc-modern-layout', 'jc-legacy-layout', 'layout-tv');
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
 });
@@ -516,6 +518,19 @@ describe('Theme Studio identity-owned runtime', () => {
         expect(document.documentElement.getAttribute('data-jc-theme-preset-version')).toBe('1');
         expect(document.documentElement.getAttribute('data-jc-theme-preset-fallback')).toBe('false');
         expect(document.documentElement.getAttribute('data-jc-theme-route')).toBe('home');
+        expectRootThemeState({
+            density: 'cozy',
+            navigation: 'bottom',
+            'home-hero': 'compact',
+            details: 'classic',
+            seasons: 'list',
+            'card-actions': 'always',
+            'poster-ratio': 'auto',
+            'cast-shape': 'circle',
+            'progress-position': 'bottom',
+            'watched-indicator': 'check',
+            'unwatched-indicator': 'corner',
+        });
         expect(document.getElementById(COMMITTED_STYLE_ID)?.textContent)
             .toContain('--jf-palette-background-default: #0B0B12');
         expect(JC.rememberUserSettingsSnapshot).toHaveBeenCalledWith(
@@ -536,13 +551,43 @@ describe('Theme Studio identity-owned runtime', () => {
         window.innerWidth = 800;
         window.innerHeight = 600;
         media.set('(min-width: 600px) and (max-width: 1023px)', true);
-        expect(document.documentElement.getAttribute('data-jc-theme-breakpoint')).toBe('tablet');
-        expect(runtime.getDiagnostics()).toMatchObject({ status: 'active', breakpoint: 'tablet', revision: 3 });
+        expect(document.documentElement.hasAttribute('data-jc-theme-breakpoint')).toBe(false);
+        expect(document.getElementById(COMMITTED_STYLE_ID)).toBeNull();
+        expect(runtime.getDiagnostics()).toMatchObject({ status: 'inactive', breakpoint: null, revision: 3 });
 
         window.innerWidth = 844;
         window.innerHeight = 390;
         media.set('(pointer: coarse)', true);
         media.set('(orientation: landscape) and (max-height: 599px) and (max-width: 999px) and (pointer: coarse)', true);
+        expect(document.documentElement.getAttribute('data-jc-theme-breakpoint')).toBe('phone');
+        expect(document.getElementById(COMMITTED_STYLE_ID)).not.toBeNull();
+    });
+
+    it('leaves legacy and TV layouts untouched and reactivates only on a supported modern surface', async () => {
+        apiReturning(themeConfiguration());
+        const { runtime } = createRuntime();
+        await runtime.load();
+        const hostTheme = document.documentElement.getAttribute('data-theme');
+        expect(document.getElementById(COMMITTED_STYLE_ID)).not.toBeNull();
+
+        document.documentElement.classList.remove('jc-modern-layout');
+        document.documentElement.classList.add('jc-legacy-layout');
+        await vi.waitFor(() => expect(document.getElementById(COMMITTED_STYLE_ID)).toBeNull());
+        expect(document.documentElement.hasAttribute('data-jc-theme-active')).toBe(false);
+        expect(runtime.getDiagnostics()).toMatchObject({ status: 'inactive', breakpoint: null });
+        expect(runtime.preview(themeConfiguration())).toBe(false);
+        expect(document.documentElement.getAttribute('data-theme')).toBe(hostTheme);
+
+        document.documentElement.classList.remove('jc-legacy-layout');
+        document.documentElement.classList.add('jc-modern-layout', 'layout-tv');
+        await Promise.resolve();
+        runtime.refresh();
+        expect(document.getElementById(COMMITTED_STYLE_ID)).toBeNull();
+        expect(document.documentElement.hasAttribute('data-jc-theme-active')).toBe(false);
+
+        document.documentElement.classList.remove('layout-tv');
+        runtime.refresh();
+        expect(document.getElementById(COMMITTED_STYLE_ID)).not.toBeNull();
         expect(document.documentElement.getAttribute('data-jc-theme-breakpoint')).toBe('phone');
     });
 
@@ -559,7 +604,17 @@ describe('Theme Studio identity-owned runtime', () => {
             BasePreset: 'minimal',
             Palette: 'vivid',
             Mode: 'light',
-            Tokens: { 'shape.card-radius': 'pill' },
+            Tokens: {
+                'shape.card-radius': 'pill',
+                'layout.home-hero': 'cinematic',
+                'layout.details': 'compact',
+                'layout.seasons': 'grid',
+                'layout.poster-ratio': 'square',
+                'layout.cast-shape': 'rounded',
+                'progress.position': 'floating',
+                'progress.watched-indicator': 'floating',
+                'progress.unwatched-indicator': 'none',
+            },
             Accessibility: {
                 ...preview.Profiles[0].Accessibility,
                 Motion: 'off',
@@ -581,6 +636,14 @@ describe('Theme Studio identity-owned runtime', () => {
             motion: 'reduced',
             contrast: 'more',
             transparency: 'reduced',
+            'home-hero': 'cinematic',
+            details: 'compact',
+            seasons: 'grid',
+            'poster-ratio': 'square',
+            'cast-shape': 'rounded',
+            'progress-position': 'floating',
+            'watched-indicator': 'floating',
+            'unwatched-indicator': 'none',
         });
         expect(JC.core.themeStudio?.getDiagnostics().status).toBe('preview');
 
@@ -596,6 +659,14 @@ describe('Theme Studio identity-owned runtime', () => {
             motion: 'full',
             contrast: 'standard',
             transparency: 'full',
+            'home-hero': 'compact',
+            details: 'classic',
+            seasons: 'list',
+            'poster-ratio': 'auto',
+            'cast-shape': 'circle',
+            'progress-position': 'bottom',
+            'watched-indicator': 'check',
+            'unwatched-indicator': 'corner',
         });
         expect(JC.core.themeStudio?.getDiagnostics().status).toBe('active');
         expect(currentApi).toBe(JC.core.themeStudio);
@@ -646,13 +717,13 @@ describe('Theme Studio identity-owned runtime', () => {
         expect(document.getElementById(PREVIEW_STYLE_ID)?.textContent)
             .not.toContain('animation-duration: 0.01ms !important');
         expect(document.documentElement.matches(
-            ':root[data-jc-theme-active="true"]:not([data-jc-theme-preview="true"])',
+            ':root.jc-modern-layout[data-jc-theme-active="true"]:not([data-jc-theme-preview="true"])',
         )).toBe(false);
 
         JC.core.themeStudio?.cancelPreview();
         expectRootThemeState({ motion: 'reduced' });
         expect(document.documentElement.matches(
-            ':root[data-jc-theme-active="true"]:not([data-jc-theme-preview="true"])',
+            ':root.jc-modern-layout[data-jc-theme-active="true"]:not([data-jc-theme-preview="true"])',
         )).toBe(true);
     });
 

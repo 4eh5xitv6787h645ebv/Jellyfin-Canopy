@@ -25,6 +25,9 @@ describe('Theme Studio CSS serialization', () => {
         for (const role of [
             '--jc-color-canvas',
             '--jc-safe-area-bottom',
+            '--jc-effective-font-size',
+            '--jc-content-max-inline-size',
+            '--jc-motion-easing',
             '--jf-palette-background-default',
             '--jf-palette-background-paper',
             '--jf-palette-text-primary',
@@ -34,15 +37,33 @@ describe('Theme Studio CSS serialization', () => {
             '--jf-palette-AppBar-defaultBg',
             '--jf-card-borderRadius',
         ]) expect(first, role).toContain(`${role}:`);
-        expect(first).toContain(':root[data-jc-theme-active="true"]');
+        expect(first).toContain(':root.jc-modern-layout[data-jc-theme-active="true"]');
         expect(first).toContain(':not([data-jc-theme-preview="true"])');
         expect(first).not.toContain('@layer');
-        expect(first).toContain('Adapter legacy-v12-base-surfaces');
-        expect(first).toContain('.jc-legacy-layout[data-jc-theme-route]');
+        expect(first).not.toContain('legacy-v12-base-surfaces');
+        expect(first).not.toContain('.jc-legacy-layout');
+        expect(first).not.toContain('.skinHeader');
         expect(first).toContain('Adapter focus-v12');
+        for (const adapter of [
+            'Adapter shell-navigation-v12',
+            'Adapter home-hero-v12',
+            'Adapter media-cards-v12',
+            'Adapter details-cast-v12',
+            'Adapter seasons-v12',
+            'Adapter progress-indicators-v12',
+            'Adapter dialogs-forms-v12',
+        ]) expect(first, adapter).toContain(adapter);
+        expect(first).toContain('[data-jc-theme-navigation="bottom"]');
+        expect(first).toContain('[data-jc-theme-home-hero="cinematic"]');
+        expect(first).toContain('[data-jc-theme-details="compact"]');
+        expect(first).toContain('[data-jc-theme-seasons="list"]');
+        expect(first).toContain('[data-jc-theme-poster-ratio="backdrop"]');
+        expect(first).toContain('[data-jc-theme-progress-position="floating"]');
+        expect(first).toContain(':not([data-jc-theme-route="dashboard"])');
         expect(first).toContain('--jf-palette-error-contrastText: #000000');
         expect(first).not.toContain('url(');
         expect(first).not.toContain('@import');
+        expect(first).not.toMatch(/(?:^|[;{\n])\s*order\s*:/m);
     });
 
     it('keeps preview in the later cascade layer and emits bounded accessibility adapters', () => {
@@ -51,7 +72,7 @@ describe('Theme Studio CSS serialization', () => {
         configuration.Profiles[0].Accessibility.UnderlineLinks = true;
         const theme = resolveTheme(configuration, { ...media, forcedColors: true });
         const css = serializeThemeStyles(theme, 'preview');
-        expect(css).toContain(':root[data-jc-theme-preview="true"]');
+        expect(css).toContain(':root.jc-modern-layout[data-jc-theme-preview="true"]');
         expect(css).toContain('animation-duration: 0.01ms !important');
         expect(css).toContain('text-decoration: underline');
         expect(css).toContain('@media (forced-colors: active)');
@@ -75,5 +96,21 @@ describe('Theme Studio CSS serialization', () => {
         const theme = resolveTheme(configuration, media);
         expect(serializeThemeStyles(theme, 'committed'))
             .toContain('--jf-palette-error-contrastText: #000000');
+    });
+
+    it('precomputes density and text scaling into valid bounded dimensions', () => {
+        const configuration = themeConfiguration();
+        configuration.Profiles[0].Tokens = {
+            'layout.density': 'spacious',
+            'space.scale': 'compact',
+            'space.page-gutter': 2,
+            'type.scale': 1.25,
+            'accessibility.text-scale': 1.2,
+        };
+        const css = serializeThemeStyles(resolveTheme(configuration, media), 'committed');
+        expect(css).toContain('--jc-density-factor: 1.18');
+        expect(css).toContain('--jc-space-factor: 0.875');
+        expect(css).toContain('--jc-page-gutter: 2.065rem');
+        expect(css).toContain('--jc-effective-font-size: 1.5rem');
     });
 });
