@@ -469,6 +469,24 @@ describe('Theme Studio responsive settings editor', () => {
         expect(panel.querySelector('[aria-invalid="true"]')).toBeNull();
     });
 
+    it('accepts the full rune-based profile-name limit for non-BMP characters', () => {
+        wireThemeStudioEditor(context());
+        const input = panel.querySelector<HTMLInputElement>('[data-role="profile-name"]')!;
+        const name = '🎥'.repeat(80);
+
+        expect(input.maxLength).toBe(-1);
+        input.value = name;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        button('rename-profile').click();
+        flushFrames();
+
+        expect(panel.querySelector<HTMLInputElement>('[data-role="profile-name"]')?.value).toBe(name);
+        expect(preview).toHaveBeenLastCalledWith(expect.objectContaining({
+            Profiles: [expect.objectContaining({ Name: name })],
+        }), { allowScheduling: false });
+        expect(button('apply').disabled).toBe(false);
+    });
+
     it('adopts the exact acknowledgement when a joined saver leaves this target untouched', async () => {
         const authoritative = themeConfiguration();
         authoritative.Profiles[0].BasePreset = 'studio';
@@ -672,6 +690,55 @@ describe('Theme Studio responsive settings editor', () => {
         }), { allowScheduling: false });
         expect(button('apply').disabled).toBe(false);
     });
+
+    it.each(['cancel', 'reload'] as const)(
+        'does not resurrect pending import validation after %s discards the draft',
+        async (discardAction) => {
+            let resolveValidation: (value: unknown) => void = () => undefined;
+            const plugin = vi.fn(() => new Promise<unknown>((resolve) => { resolveValidation = resolve; }));
+            JC.core.api = { plugin } as unknown as ApiApi;
+            if (discardAction === 'reload') {
+                JC.saveUserSettings = vi.fn().mockRejectedValue(
+                    Object.assign(new Error('conflict'), { kind: 'conflict' }),
+                );
+            }
+            wireThemeStudioEditor(context());
+            if (discardAction === 'reload') {
+                button('preset', 'cinematic').click();
+                button('apply').click();
+                await vi.waitFor(() => expect(panel.textContent).toContain('theme_studio_error_conflict'));
+            }
+
+            const portable = {
+                SchemaVersion: configuration.SchemaVersion,
+                ActiveProfileId: configuration.ActiveProfileId,
+                Profiles: configuration.Profiles,
+                Schedule: configuration.Schedule,
+            };
+            const input = panel.querySelector<HTMLInputElement>('[data-field="import-file"]')!;
+            Object.defineProperty(input, 'files', {
+                configurable: true,
+                value: [new File([JSON.stringify(portable)], 'pending-theme.json', { type: 'application/json' })],
+            });
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+            await vi.waitFor(() => expect(plugin).toHaveBeenCalledOnce());
+
+            button(discardAction).click();
+            if (discardAction === 'reload') {
+                await vi.waitFor(() => expect(panel.textContent).toContain('theme_studio_reloaded'));
+            } else {
+                expect(panel.textContent).toContain('theme_studio_cancelled');
+            }
+            resolveValidation({ valid: true, data: portable });
+            await vi.advanceTimersByTimeAsync(1);
+
+            expect(panel.textContent).toContain(
+                discardAction === 'reload' ? 'theme_studio_reloaded' : 'theme_studio_cancelled',
+            );
+            expect(panel.textContent).not.toContain('theme_studio_import_ready');
+            expect(panel.querySelector('[data-action="accept-import"]')).toBeNull();
+        },
+    );
 
     it('exports the portable document without revision or migration internals', async () => {
         let exported: Blob | null = null;

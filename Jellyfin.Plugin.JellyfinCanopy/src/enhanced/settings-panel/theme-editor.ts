@@ -7,7 +7,6 @@ import {
 } from '../../theme-studio/catalog';
 import {
     isValidThemeProfileName,
-    THEME_PROFILE_NAME_MAX_LENGTH,
     ThemeEditorState,
 } from '../../theme-studio/editor-state';
 import { resolveTheme, type ThemeMediaState } from '../../theme-studio/resolver';
@@ -406,7 +405,7 @@ function profileControls(
             ${configuration.Profiles.map((profile) => option(profile.Id, profile.Name, profile.Id === active.Id)).join('')}
         </select>
         <div class="jc-theme-row">
-            <input class="jc-theme-control" style="flex:1 1 150px" data-role="profile-name" maxlength="${THEME_PROFILE_NAME_MAX_LENGTH}" value="${escapeHtml(profileName)}" aria-label="${escapeHtml(t('theme_studio_profile_name'))}" aria-invalid="${profileNameInvalid}" aria-describedby="jc-theme-profile-name-error">
+            <input class="jc-theme-control" style="flex:1 1 150px" data-role="profile-name" value="${escapeHtml(profileName)}" aria-label="${escapeHtml(t('theme_studio_profile_name'))}" aria-invalid="${profileNameInvalid}" aria-describedby="jc-theme-profile-name-error">
             <button class="jc-theme-button" type="button" data-action="rename-profile">${escapeHtml(t('theme_studio_rename'))}</button>
             <button class="jc-theme-button" type="button" data-action="add-profile">${escapeHtml(t('theme_studio_duplicate'))}</button>
             <button class="jc-theme-button danger" type="button" data-action="delete-profile"${configuration.Profiles.length <= 1 ? ' disabled' : ''}>${escapeHtml(t('theme_studio_delete'))}</button>
@@ -860,6 +859,11 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
 
     const reload = async (): Promise<void> => {
         if (saving || loading) return;
+        // Reload is an explicit authoritative discard. Retire validation that
+        // began against the discarded draft before yielding to the runtime.
+        importGeneration += 1;
+        pendingImport = null;
+        pendingImportChanges = [];
         loading = true;
         status = t('theme_studio_loading');
         render();
@@ -1060,6 +1064,9 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
             }
         }
         else if (action === 'cancel') {
+            // A slow server validation belongs to the draft being discarded;
+            // its continuation must never repopulate the import review.
+            importGeneration += 1;
             if (expertTimer) {
                 clearTimeout(expertTimer);
                 expertTimer = 0;
@@ -1071,6 +1078,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
             expertText = JSON.stringify(state.snapshot().configuration, null, 2);
             expertInvalid = false;
             pendingImport = null;
+            pendingImportChanges = [];
             status = t('theme_studio_cancelled');
             render();
         } else if (action === 'apply') void apply();
