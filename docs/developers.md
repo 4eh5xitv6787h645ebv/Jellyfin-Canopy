@@ -767,7 +767,7 @@ Existing violations get a `PERF(S2)` **debt marker** citing this rule — docume
 
 **Enforced.** Review-enforced against this text today. SR-09 extends the source-scan guard (in the `LibraryScanEventGuardTests` style) to flag `Recursive = true` queries without pagination outside an allowlist.
 
-**In the tree (documented DEBT — cited, not yet fixed):** `Services/TagCacheService.cs:316` (`BuildFullCache` materializes every taggable item in one `GetItemList`), `:1001` (per-user accessible-id set materialized via recursive `GetItemIds`), `:1751` (journal reconciliation full-library pass); `Data/ItemLookupService.cs:82,119` (recursive batch lookups).
+**In the tree (documented DEBT — cited, not yet fixed):** `Services/TagCacheService.cs:316` (`BuildFullCache` materializes every taggable item in one `GetItemList`), `:1001` (per-user accessible-id set materialized via recursive `GetItemIds`); `Data/ItemLookupService.cs:82,119` (recursive batch lookups). The third `Recursive = true` site in `TagCacheService` (`GetFirstEpisode`, ~`:1751`) is **not** debt: it is `ParentId`-scoped with `Limit = 1` — exactly the bounded single-item lookup this rule permits.
 
 #### S3 — Per-item response-filter budget
 
