@@ -6,6 +6,7 @@ describe('Theme Studio Jellyfin presentation modules', () => {
         expect(THEME_PRESENTATION_MODULES.map((module) => module.id)).toEqual([
             'shell-navigation-v12',
             'home-hero-v12',
+            'home-libraries-v12',
             'media-cards-v12',
             'details-cast-v12',
             'seasons-v12',
@@ -56,5 +57,14 @@ describe('Theme Studio Jellyfin presentation modules', () => {
         const css = serializePresentationAdapters(':root[data-jc-theme-active="true"]');
         expect(css).toContain('inline-size: clamp(20rem, 52vw, 48rem) !important');
         expect(css).not.toContain('inline-size: clamp(20rem, 72vw, 58rem)');
+    });
+
+    it('offers a modern responsive home library grid without changing source order', () => {
+        const css = serializePresentationAdapters(':root[data-jc-theme-active="true"]');
+        expect(css).toContain('[data-jc-theme-home-libraries="grid"]');
+        expect(css).toContain(':is([data-jc-theme-home-hero="compact"], [data-jc-theme-home-hero="cinematic"])');
+        expect(css).toContain('grid-template-columns: repeat(auto-fit');
+        expect(css).toContain('grid-template-columns: repeat(2, minmax(0, 1fr))');
+        expect(css).not.toMatch(/(?:^|[;{\n])\s*order\s*:/m);
     });
 });

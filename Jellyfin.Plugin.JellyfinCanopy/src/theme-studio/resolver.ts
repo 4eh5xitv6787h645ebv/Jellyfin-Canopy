@@ -40,6 +40,7 @@ export interface ResolvedThemePresentation {
     readonly density: 'compact' | 'cozy' | 'spacious';
     readonly navigation: 'header' | 'sidebar' | 'pills' | 'bottom';
     readonly homeHero: 'off' | 'compact' | 'cinematic';
+    readonly homeLibraries: 'scroll' | 'grid';
     readonly details: 'classic' | 'compact' | 'cinematic';
     readonly seasons: 'list' | 'grid';
     readonly cardActions: 'hover' | 'always' | 'menu';
@@ -106,6 +107,7 @@ const BASE_TOKENS: Readonly<Record<string, ThemeTokenValue>> = Object.freeze({
     'layout.density': 'cozy',
     'layout.navigation': 'auto',
     'layout.home-hero': 'compact',
+    'layout.home-libraries': 'scroll',
     'layout.details': 'classic',
     'layout.seasons': 'auto',
     'layout.card-actions': 'hover',
@@ -259,6 +261,7 @@ function resolvePresentation(
         density: choiceToken(tokens, 'layout.density', ['compact', 'cozy', 'spacious'] as const, 'cozy'),
         navigation,
         homeHero: choiceToken(tokens, 'layout.home-hero', ['off', 'compact', 'cinematic'] as const, 'compact'),
+        homeLibraries: choiceToken(tokens, 'layout.home-libraries', ['scroll', 'grid'] as const, 'scroll'),
         details: choiceToken(tokens, 'layout.details', ['classic', 'compact', 'cinematic'] as const, 'classic'),
         seasons: requestedSeasons === 'auto' ? breakpoint === 'phone' ? 'list' : 'grid' : requestedSeasons,
         cardActions: choiceToken(tokens, 'layout.card-actions', ['hover', 'always', 'menu'] as const, 'hover'),

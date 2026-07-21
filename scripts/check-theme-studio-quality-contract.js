@@ -9,7 +9,10 @@ const DEFAULT_ROOT = path.resolve(__dirname, '..');
 const DEFAULT_CONTRACT = path.join(__dirname, 'theme-studio-quality.contract.json');
 const REQUIRED_SUPPORTED_LAYOUTS = ['desktop', 'wide', 'phone-portrait', 'phone-landscape'];
 const REQUIRED_UNSUPPORTED_LAYOUTS = ['tablet-only', 'legacy', 'tv'];
-const REQUIRED_RESEARCH_EVIDENCE = ['ecosystem', 'design-contract', 'roadmap', 'verification-matrix'];
+const REQUIRED_RESEARCH_EVIDENCE = [
+    'ecosystem', 'forum-snapshot', 'design-contract', 'roadmap', 'verification-matrix',
+];
+const REQUIRED_FORUM_THREAD_COUNT = 157;
 const REQUIRED_PRIMARY_PRESETS = [
     'canopy', 'minimal', 'cinematic', 'glass', 'material', 'studio', 'tv-focus', 'oled', 'high-contrast',
 ];
@@ -87,17 +90,50 @@ function verifyQualityContract({ root = DEFAULT_ROOT, contract } = {}) {
     }
     exactIds(research?.files, REQUIRED_RESEARCH_EVIDENCE, 'research evidence files');
     const researchSources = [];
-    let ecosystemSource = '';
+    const researchSourceById = new Map();
     for (const evidence of research.files) {
         const source = readText(root, evidence.path);
         researchSources.push(source);
-        if (evidence.id === 'ecosystem') ecosystemSource = source;
+        researchSourceById.set(evidence.id, source);
         if (!Array.isArray(evidence.anchors) || evidence.anchors.length < 4) {
             fail(`${evidence.path} must own at least four release anchors`);
         }
         for (const anchor of evidence.anchors) {
             if (!source.includes(anchor)) fail(`${evidence.path} lost ${JSON.stringify(anchor)}`);
         }
+    }
+    if (research.inventory?.forumThreadCount !== REQUIRED_FORUM_THREAD_COUNT) {
+        fail(`forum thread inventory must remain pinned to ${REQUIRED_FORUM_THREAD_COUNT}`);
+    }
+    const forumSource = researchSourceById.get('forum-snapshot') || '';
+    const forumThreadUrls = new Set(extractLinks(forumSource)
+        .map(link => link.target)
+        .filter(target => target.startsWith('https://forum.jellyfin.org/t-')));
+    if (forumThreadUrls.size !== REQUIRED_FORUM_THREAD_COUNT) {
+        fail(`forum thread snapshot must contain exactly ${REQUIRED_FORUM_THREAD_COUNT} unique thread URLs`);
+    }
+    const forumRows = forumSource.split('\n')
+        .filter(line => /^\| \d+ \| (?:theme|component\/help|extension|unsupported) \|/.test(line));
+    const forumRowNumbers = new Set();
+    const forumRowUrls = new Set();
+    for (const row of forumRows) {
+        const number = Number(row.match(/^\| (\d+) \|/)?.[1]);
+        const urls = extractLinks(row)
+            .map(link => link.target)
+            .filter(target => target.startsWith('https://forum.jellyfin.org/t-'));
+        if (!Number.isInteger(number) || urls.length !== 1) {
+            fail('every forum snapshot row must have one numbered classified thread URL');
+        }
+        forumRowNumbers.add(number);
+        forumRowUrls.add(urls[0]);
+    }
+    const expectedForumRows = Array.from({ length: REQUIRED_FORUM_THREAD_COUNT }, (_, index) => index + 1);
+    if (forumRows.length !== REQUIRED_FORUM_THREAD_COUNT
+        || JSON.stringify([...forumRowNumbers].sort((left, right) => left - right))
+            !== JSON.stringify(expectedForumRows)
+        || forumRowUrls.size !== REQUIRED_FORUM_THREAD_COUNT
+        || [...forumThreadUrls].some(url => !forumRowUrls.has(url))) {
+        fail('forum snapshot must enumerate classified rows 1 through 157 exactly once');
     }
     const researchUrls = new Set(researchSources
         .flatMap(source => extractLinks(source).map(link => link.target))
@@ -109,15 +145,21 @@ function verifyQualityContract({ root = DEFAULT_ROOT, contract } = {}) {
         if (!researchUrls.has(requiredUrl)) fail(`research lost discovery source ${requiredUrl}`);
     }
     const repositoryRoots = new Set();
-    for (const { target } of extractLinks(ecosystemSource)) {
-        if (!target.startsWith('https://github.com/')) continue;
-        const url = new URL(target);
-        const segments = url.pathname.split('/').filter(Boolean);
-        if (segments.length < 2 || ['users', 'search', 'topics'].includes(segments[0])) continue;
-        repositoryRoots.add(`${url.origin}/${segments[0]}/${segments[1]}`);
+    for (const evidenceId of ['ecosystem', 'forum-snapshot']) {
+        for (const { target } of extractLinks(researchSourceById.get(evidenceId) || '')) {
+            if (!target.startsWith('https://')) continue;
+            const url = new URL(target);
+            if (!['github.com', 'gitlab.com'].includes(url.hostname)) continue;
+            const segments = url.pathname.split('/').filter(Boolean);
+            if (segments.length < 2
+                || (url.hostname === 'github.com' && ['users', 'search', 'topics'].includes(segments[0]))) {
+                continue;
+            }
+            repositoryRoots.add(`${url.origin}/${segments[0].toLowerCase()}/${segments[1].toLowerCase()}`);
+        }
     }
     if (repositoryRoots.size !== research.inventory?.repositoryRootCount) {
-        fail(`ecosystem inventory must contain exactly ${research.inventory?.repositoryRootCount} repository roots`);
+        fail(`research inventory must contain exactly ${research.inventory?.repositoryRootCount} repository roots`);
     }
     if (!Array.isArray(research.forbiddenStaleClaims) || research.forbiddenStaleClaims.length < 4) {
         fail('research stale-scope claim inventory is incomplete');
@@ -283,7 +325,8 @@ function verifyQualityContract({ root = DEFAULT_ROOT, contract } = {}) {
         noOpLayouts: resolved.scope.unsupportedNoOpLayouts.length,
         researchFiles: research.files.length,
         researchExternalUrls: researchUrls.size,
-        ecosystemRepositoryRoots: repositoryRoots.size,
+        researchRepositoryRoots: repositoryRoots.size,
+        forumThreads: forumThreadUrls.size,
         presets: presets.length,
         evidenceOwners: resolved.evidenceOwners.length,
         crossBrowserEngines: crossBrowser.browsers.length,
@@ -298,7 +341,8 @@ if (require.main === module) {
             `Theme Studio quality contract passed: ${result.layouts} modern layouts, `
             + `${result.noOpLayouts} no-op layouts, ${result.presets} presets, `
             + `${result.researchFiles} research files, `
-            + `${result.ecosystemRepositoryRoots} ecosystem repositories / `
+            + `${result.researchRepositoryRoots} research repositories / `
+            + `${result.forumThreads} forum threads / `
             + `${result.researchExternalUrls} reviewed research URLs, `
             + `${result.evidenceOwners} cross-cutting gate owners, `
             + `${result.crossBrowserTests} tests across ${result.crossBrowserEngines} additional engines.`,

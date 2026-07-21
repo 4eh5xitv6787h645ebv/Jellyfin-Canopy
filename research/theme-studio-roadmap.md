@@ -75,6 +75,7 @@ pull request.
 |---|---|---|
 | [#405](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/405) | Preserve strict account-switch coverage while containing an upstream Jellyfin WebSocket-disposal crash | Exact-head six-shard validation |
 | [#448](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/448) | Classify the changed broad-search top-100 window, add 46 reviewed roots including one linked successor, and reconcile every visual contribution | Final research-completeness audit |
+| [#449](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/449) | Enumerate all 157 forum threads, reconcile forum/GitLab/code-index roots, and add the responsive home-library grid product gap | Independent non-GitHub completion audit |
 
 Follow-ups use the same milestone, Project 8, evidence template and completion
 rule as the original rows. They do not widen Theme Studio into legacy,

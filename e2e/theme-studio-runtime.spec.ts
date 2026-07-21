@@ -252,6 +252,7 @@ test.describe.serial('Theme Studio runtime bridge', () => {
             'layout.density': 'spacious',
             'layout.navigation': 'sidebar',
             'layout.home-hero': 'cinematic',
+            'layout.home-libraries': 'grid',
             'layout.details': 'cinematic',
             'layout.seasons': 'grid',
             'layout.card-actions': 'always',
@@ -268,6 +269,7 @@ test.describe.serial('Theme Studio runtime bridge', () => {
                 density: root.getAttribute('data-jc-theme-density'),
                 navigation: root.getAttribute('data-jc-theme-navigation'),
                 hero: root.getAttribute('data-jc-theme-home-hero'),
+                libraries: root.getAttribute('data-jc-theme-home-libraries'),
                 details: root.getAttribute('data-jc-theme-details'),
                 seasons: root.getAttribute('data-jc-theme-seasons'),
                 actions: root.getAttribute('data-jc-theme-card-actions'),
@@ -278,7 +280,7 @@ test.describe.serial('Theme Studio runtime bridge', () => {
                 unwatched: root.getAttribute('data-jc-theme-unwatched-indicator'),
             };
         })).toEqual({
-            density: 'spacious', navigation: 'sidebar', hero: 'cinematic', details: 'cinematic',
+            density: 'spacious', navigation: 'sidebar', hero: 'cinematic', libraries: 'grid', details: 'cinematic',
             seasons: 'grid', actions: 'always', ratio: 'backdrop', cast: 'circle',
             progress: 'floating', watched: 'check', unwatched: 'none',
         });
@@ -289,15 +291,20 @@ test.describe.serial('Theme Studio runtime bridge', () => {
             const fixture = document.createElement('div');
             fixture.setAttribute('data-jc-presentation-fixture', 'true');
             fixture.innerHTML = `<div class="MuiDrawer-paper"><button id="jc-order-a" class="MuiButton-root">A</button><button id="jc-order-b" class="MuiButton-root">B</button></div>
-                <div id="indexPage"><div class="homeSectionsContainer"><section class="section0"><div class="itemsContainer"><button class="card card-hoverable"><span class="cardBox"><span class="cardScalable"><span class="cardPadder-backdrop"></span></span><span class="cardFooter"><span class="cardText">A deliberately very long localized media title that must wrap safely</span></span><span class="cardOverlayButton-hover"></span><span class="itemProgressBar"></span><span class="playedIndicator"></span><span class="countIndicator"></span></span></button></div></section></div></div>
+                <div id="indexPage"><div class="homeSectionsContainer"><section class="section0"><div class="itemsContainer"><button id="jc-home-a" class="card card-hoverable"><span class="cardBox"><span class="cardScalable"><span class="cardPadder-backdrop"></span></span><span class="cardFooter"><span class="cardText">A deliberately very long localized media title that must wrap safely</span></span><span class="cardOverlayButton-hover"></span><span class="itemProgressBar"></span><span class="playedIndicator"></span><span class="countIndicator"></span></span></button><button id="jc-home-b" class="card"><span class="cardBox"><span class="cardScalable"><span class="cardPadder-backdrop"></span></span></span></button><button id="jc-home-c" class="card"><span class="cardBox"><span class="cardScalable"><span class="cardPadder-backdrop"></span></span></span></button></div></section></div></div>
                 <main class="itemDetailPage"><div class="itemBackdrop"></div><div class="itemMiscInfo">Long metadata label</div><div class="mainDetailButtons"><button class="detailButton">Play</button></div><section id="childrenCollapsible"><div class="itemsContainer"><button class="card"><span class="cardBox"><span class="cardScalable"><span class="cardPadder-episode"></span></span><span class="cardFooter">Episode</span></span></button></div></section><section id="castCollapsible"><div class="itemsContainer"><button class="card"><span class="cardScalable"><span class="cardPadder-cast"></span><span class="cardImageContainer"></span></span></button></div></section></main>
                 <div class="MuiDialog-paper" role="dialog"><label class="MuiFormControl-root"><span class="MuiInputBase-root">Input</span></label></div>`;
             document.body.append(fixture);
             const order = () => [...fixture.querySelectorAll<HTMLButtonElement>('#jc-order-a, #jc-order-b')]
                 .map((button) => button.id);
+            const homeOrder = () => [...fixture.querySelectorAll<HTMLButtonElement>(
+                '#jc-home-a, #jc-home-b, #jc-home-c',
+            )].map((button) => button.id);
             const beforeOrder = order();
+            const beforeHomeOrder = homeOrder();
             root.setAttribute('data-jc-theme-route', 'home');
             const hero = getComputedStyle(fixture.querySelector<HTMLElement>('.section0')!);
+            const homeLibraries = getComputedStyle(fixture.querySelector<HTMLElement>('.section0 .itemsContainer')!);
             const heroMinHeight = Number.parseFloat(hero.minHeight);
             root.setAttribute('data-jc-theme-route', 'details');
             const drawer = getComputedStyle(fixture.querySelector<HTMLElement>('.MuiDrawer-paper')!);
@@ -313,7 +320,11 @@ test.describe.serial('Theme Studio runtime bridge', () => {
             const evidence = {
                 beforeOrder,
                 afterOrder: order(),
+                beforeHomeOrder,
+                afterHomeOrder: homeOrder(),
                 heroMinHeight,
+                homeLibrariesDisplay: homeLibraries.display,
+                homeLibrariesColumns: homeLibraries.gridTemplateColumns,
                 drawerWidth: Number.parseFloat(drawer.width),
                 backdropHeight: Number.parseFloat(backdrop.height),
                 seasonsDisplay: seasons.display,
@@ -334,7 +345,11 @@ test.describe.serial('Theme Studio runtime bridge', () => {
         });
         expect(desktop.beforeOrder).toEqual(['jc-order-a', 'jc-order-b']);
         expect(desktop.afterOrder).toEqual(desktop.beforeOrder);
+        expect(desktop.beforeHomeOrder).toEqual(['jc-home-a', 'jc-home-b', 'jc-home-c']);
+        expect(desktop.afterHomeOrder).toEqual(desktop.beforeHomeOrder);
         expect(desktop.heroMinHeight).toBeGreaterThanOrEqual(320);
+        expect(desktop.homeLibrariesDisplay).toBe('grid');
+        expect(desktop.homeLibrariesColumns).not.toBe('none');
         expect(desktop.drawerWidth).toBeGreaterThanOrEqual(240);
         expect(desktop.drawerWidth).toBeLessThanOrEqual(321);
         expect(desktop.backdropHeight).toBeGreaterThanOrEqual(352);
@@ -353,29 +368,43 @@ test.describe.serial('Theme Studio runtime bridge', () => {
         await page.evaluate(() => window.JellyfinCanopy.core.themeStudio?.cancelPreview());
         await page.setViewportSize({ width: 390, height: 844 });
         await refreshThemeRuntime(page);
+        expect(await previewTokens(page, configuration!, {
+            'layout.home-hero': 'cinematic',
+            'layout.home-libraries': 'grid',
+        })).toBe(true);
         await expect.poll(() => page.evaluate(() => {
             const root = document.documentElement;
             return {
                 breakpoint: root.getAttribute('data-jc-theme-breakpoint'),
                 navigation: root.getAttribute('data-jc-theme-navigation'),
+                libraries: root.getAttribute('data-jc-theme-home-libraries'),
                 seasons: root.getAttribute('data-jc-theme-seasons'),
                 actions: root.getAttribute('data-jc-theme-card-actions'),
             };
-        })).toEqual({ breakpoint: 'phone', navigation: 'bottom', seasons: 'list', actions: 'always' });
+        })).toEqual({
+            breakpoint: 'phone', navigation: 'bottom', libraries: 'grid', seasons: 'list', actions: 'always',
+        });
         const phone = await page.evaluate(() => {
             const fixture = document.createElement('div');
-            fixture.innerHTML = '<header class="MuiAppBar-root"><nav class="MuiToolbar-root"><button class="MuiButton-root">Home</button><button class="MuiButton-root">Library</button></nav></header>';
+            fixture.innerHTML = '<div id="indexPage"><div class="homeSectionsContainer"><section class="section0"><div class="itemsContainer"><button id="jc-phone-home-a" class="card"></button><button id="jc-phone-home-b" class="card"></button><button id="jc-phone-home-c" class="card"></button></div></section></div></div><header class="MuiAppBar-root"><nav class="MuiToolbar-root"><button class="MuiButton-root">Home</button><button class="MuiButton-root">Library</button></nav></header>';
             document.body.append(fixture);
             const appBarElement = fixture.querySelector<HTMLElement>('.MuiAppBar-root')!;
             const appBar = getComputedStyle(appBarElement);
             const appBarBox = appBarElement.getBoundingClientRect();
             const button = fixture.querySelector<HTMLElement>('.MuiButton-root')!.getBoundingClientRect();
+            const home = fixture.querySelector<HTMLElement>('.section0 .itemsContainer')!;
+            const homeStyles = getComputedStyle(home);
+            const homeOrder = [...home.children].map((card) => card.id);
             const evidence = {
                 position: appBar.position,
                 bottom: appBar.bottom,
                 barBottom: appBarBox.bottom,
                 viewportHeight: innerHeight,
                 targetHeight: button.height,
+                homeDisplay: homeStyles.display,
+                homeColumnCount: homeStyles.gridTemplateColumns.split(' ').filter(Boolean).length,
+                homeFirstColumn: getComputedStyle(home.firstElementChild!).gridColumn,
+                homeOrder,
             };
             fixture.remove();
             return evidence;
@@ -384,6 +413,10 @@ test.describe.serial('Theme Studio runtime bridge', () => {
         expect(phone.bottom).toBe('0px');
         expect(Math.abs(phone.barBottom - phone.viewportHeight)).toBeLessThanOrEqual(1);
         expect(phone.targetHeight).toBeGreaterThanOrEqual(44);
+        expect(phone.homeDisplay).toBe('grid');
+        expect(phone.homeColumnCount).toBe(2);
+        expect(phone.homeFirstColumn).toBe('1 / -1');
+        expect(phone.homeOrder).toEqual(['jc-phone-home-a', 'jc-phone-home-b', 'jc-phone-home-c']);
         const phoneOverflow = await themeOverflowEvidence(page);
         expect(phoneOverflow.active).toBeLessThanOrEqual(phoneOverflow.baseline + 1);
         assertNoRuntimeErrors(consoleErrors);
@@ -682,6 +715,11 @@ test.describe.serial('Theme Studio runtime bridge', () => {
                         maxDiffPixelRatio: 0.02,
                     });
                     if (process.env.JC_CAPTURE_THEME_DOCS === '1' && preset === 'canopy') {
+                        expect(await previewTokens(page, configuration!, {
+                            'layout.home-libraries': 'grid',
+                        })).toBe(true);
+                        await expect.poll(() => page.evaluate(() =>
+                            document.documentElement.getAttribute('data-jc-theme-home-libraries'))).toBe('grid');
                         await page.screenshot({
                             path: `docs/images/theme-studio-home-${evidenceView}.png`,
                             animations: 'disabled',

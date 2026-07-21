@@ -29,6 +29,12 @@ export const THEME_PRESENTATION_MODULES: readonly ThemePresentationModule[] = Ob
         modernRoles: ['#indexPage .homeSectionsContainer', '.section0', '.card'],
     },
     {
+        id: 'home-libraries-v12',
+        outcome: 'Scrolling-row or responsive-grid home library presentation',
+        tokens: ['layout.home-libraries', 'layout.home-hero', 'space.card-gap'],
+        modernRoles: ['#indexPage .homeSectionsContainer', '.section0', '.itemsContainer', '.card'],
+    },
+    {
         id: 'media-cards-v12',
         outcome: 'Rows, grids, card ratios, long text, actions and missing artwork',
         tokens: ['layout.poster-ratio', 'layout.card-actions', 'shape.card-radius', 'motion.hover-lift'],
@@ -187,6 +193,37 @@ ${selector}[data-jc-theme-route="home"][data-jc-theme-home-hero="cinematic"] #in
   font-family: var(--jc-type-family-display);
   font-size: clamp(1rem, 2vw, 1.45rem);
   font-weight: 700;
+}
+`;
+}
+
+function homeLibraries(selector: string): string {
+    return `
+/* Adapter home-libraries-v12: opt-in responsive library grid without DOM reordering. */
+${selector}[data-jc-theme-route="home"][data-jc-theme-home-libraries="grid"] #indexPage .homeSectionsContainer > .section0:not(.hide) .itemsContainer {
+  display: grid !important;
+  grid-template-columns: repeat(auto-fit, minmax(clamp(9rem, 20vw, 14rem), 1fr));
+  gap: var(--jc-card-gap);
+  overflow: visible !important;
+  scroll-snap-type: none;
+}
+${selector}[data-jc-theme-route="home"][data-jc-theme-home-libraries="grid"] #indexPage .section0:not(.hide) .itemsContainer > .card {
+  inline-size: auto !important;
+  max-inline-size: none !important;
+  min-inline-size: 0;
+  margin: 0 !important;
+}
+${selector}[data-jc-theme-route="home"][data-jc-theme-home-libraries="grid"][data-jc-theme-home-hero="compact"] #indexPage .section0:not(.hide) .itemsContainer > .card:first-child {
+  grid-column: span 2;
+}
+${selector}[data-jc-theme-route="home"][data-jc-theme-home-libraries="grid"][data-jc-theme-home-hero="cinematic"] #indexPage .section0:not(.hide) .itemsContainer > .card:first-child {
+  grid-column: 1 / -1;
+}
+${selector}[data-jc-theme-breakpoint="phone"][data-jc-theme-route="home"][data-jc-theme-home-libraries="grid"] #indexPage .homeSectionsContainer > .section0:not(.hide) .itemsContainer {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+${selector}[data-jc-theme-breakpoint="phone"][data-jc-theme-route="home"][data-jc-theme-home-libraries="grid"]:is([data-jc-theme-home-hero="compact"], [data-jc-theme-home-hero="cinematic"]) #indexPage .section0:not(.hide) .itemsContainer > .card:first-child {
+  grid-column: 1 / -1;
 }
 `;
 }
@@ -497,6 +534,7 @@ export function serializePresentationAdapters(rootSelector: string): string {
     return [
         shellNavigation(selector),
         homeHero(selector),
+        homeLibraries(selector),
         mediaCards(selector),
         detailsCast(selector),
         seasons(selector),

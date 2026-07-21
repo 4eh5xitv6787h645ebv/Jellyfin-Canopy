@@ -20,9 +20,11 @@ Open the **Enhanced panel**, select **Theme Studio**, and choose a preset. **Beg
 
 The same account receives its server-backed profile after signing in on another supported browser. The live result is constrained to presentation: it does not reorder content, change navigation destinations, reveal protected metadata, or take ownership of playback.
 
-![Canopy preset applied to the modern desktop Jellyfin home page](images/theme-studio-home-desktop.png)
+The **Home libraries** control keeps Jellyfin's source order and content while choosing either its familiar horizontal scrolling row or a responsive grid. Grid mode uses flexible desktop columns, two bounded phone columns, and a full-width first card when a compact or cinematic lead treatment is active.
 
-![Canopy preset applied to the modern phone Jellyfin home page](images/theme-studio-home-phone.png)
+![Canopy preset with the responsive home-library grid on the modern desktop Jellyfin home page](images/theme-studio-home-desktop.png)
+
+![Canopy preset with the two-column home-library grid on the modern phone Jellyfin home page](images/theme-studio-home-phone.png)
 
 ### Presets and effects
 

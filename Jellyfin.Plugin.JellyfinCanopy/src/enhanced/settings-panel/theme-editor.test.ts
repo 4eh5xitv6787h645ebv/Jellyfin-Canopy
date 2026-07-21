@@ -433,7 +433,7 @@ describe('Theme Studio responsive settings editor', () => {
 
     it('previews presentation controls as sparse, reversible token overrides', () => {
         wireThemeStudioEditor(context());
-        expect(panel.querySelectorAll('[data-field="presentation-token"]')).toHaveLength(12);
+        expect(panel.querySelectorAll('[data-field="presentation-token"]')).toHaveLength(13);
         expect(panel.querySelectorAll('.jc-theme-module-group')).toHaveLength(7);
         expect(panel.querySelectorAll('[data-theme-effects-group]')).toHaveLength(3);
         expect(panel.querySelector('[data-theme-schedule-editor]')).not.toBeNull();
@@ -445,6 +445,12 @@ describe('Theme Studio responsive settings editor', () => {
         navigation.value = 'sidebar';
         navigation.dispatchEvent(new Event('change', { bubbles: true }));
 
+        const homeLibraries = panel.querySelector<HTMLSelectElement>(
+            '[data-field="presentation-token"][data-token="layout.home-libraries"]',
+        )!;
+        homeLibraries.value = 'grid';
+        homeLibraries.dispatchEvent(new Event('change', { bubbles: true }));
+
         const thickness = panel.querySelector<HTMLSelectElement>(
             '[data-field="presentation-token"][data-token="progress.thickness"]',
         )!;
@@ -455,6 +461,7 @@ describe('Theme Studio responsive settings editor', () => {
         let draft = preview.mock.lastCall?.[0] as UserThemeConfiguration;
         expect(draft.Profiles[0].Tokens).toMatchObject({
             'layout.navigation': 'sidebar',
+            'layout.home-libraries': 'grid',
             'progress.thickness': 7,
         });
         expect(button('apply').disabled).toBe(false);

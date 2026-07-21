@@ -1041,6 +1041,1330 @@
     {
       "url": "https://github.com/Wenneker/jellyfin_themes",
       "reason": "Theme Studio ecosystem source reviewed in the 2026-07-21 completion-audit search rerank."
+    },
+    {
+      "url": "https://forum.jellyfin.org/f-themes-styles",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/syndication.php?fid=24&limit=100",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-%E2%99%BE%EF%B8%8F-finity",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-%F0%9F%8D%8B%EF%B8%8F-zestytheme",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-%F0%9F%8D%93strawberryjam%F0%9F%8D%93",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-10-9-jamfin-a-glassmorphism-theme",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-37-themes",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-actors-display-on-detail-page",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-add-new-themse-to-drop-down-menu",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-adding-customizing-fonts",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-adding-poster-logo-background-to-title-page",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-album-artist-on-genre-pages",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-all-i-want-is-a-logo-on-the-login-page",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-all-people-in-one-overview",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-android-tv-app-slidebar",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-android-tv-theme",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-android-tv-themes",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-any-working-theme-for-the-experimental-mode",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-banner-logo",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-big-tv-screen",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-blue-radiance-default-theme-how",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-boxart-instead-poster-on-detail-page",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-change-the-label-studio-to-a-different-word-on-main-movie-page",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-change-the-structure-of-the-title-page-by-using-css",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-change-view-of-films-and-series-css",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-cleaner-way-to-show-more-columns-on-the-home-screen",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-collection-card-image-occupying-too-much-space",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-collections-items-list-modification",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-control-osd-an-accessible-cross-platform-tv-mode",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-crunchyroll-subtitle-style",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-css-code-problem",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-css-color-picker-visible-in-jellyfin-skin-manager-plugin",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-css-for-movie-library-cast-crew-thumbs-in-grid-view",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-css-for-playerbar-hide-time",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-css-for-tv-series-guest-stars-in-grid-view",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-css-help-%E2%80%94-any-way-to-remove-the-background-slideshow",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-css-help-editing-elegantfin",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-css-plugin-to-minimize-library-tiles-on-homescreen",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-css-solution-for-cast-order-after-special-features",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-css-tizen-issue",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-css-to-hide-title-in-tv-show",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-cursor-theme",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-custom-background-from-local-files",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-custom-css",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-custom-css-button-color",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-custom-css-help",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-custom-css-recovered",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-custom-font-on-the-desktop-media-player-app",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-custom-library-icon-pack",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-custom-recommendations-imdb-cards-and-trailer-search",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-customizing-toast-notifications-position-and-duration-in-docker-container",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-darkflix",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-different-images-on-details-page-and-recently-added",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-disable-hide-trailers-and-upcoming",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-distinguish-collections-from-movies",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-dynamic-library-background-image",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-enhancing-jellyfin-s-tv-network-section",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-experimental-mode-theme",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-favicon-not-updating",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-finality-updated-for-10-10-x",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-finimalism-theme-offline",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-finimalism-updated-for-10-11-x",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-flow-for-jellyfin",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-font-outline-in-home-screen",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-getting-random-background-in-my-media-row",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-gnat-god-not-another-theme%E2%80%BD",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-grid-style-libraries-on-tv",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-help--6459",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-help-adding-video-as-background-rounded-edges-to-all-cards",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-help-needed-jellyfin-background-css-and-show-header-images",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-help-to-make-background-transparent",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-hide-%E2%80%9Emovies%E2%80%9C-on-actor-detail-page",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-hide-the-download-button-with-css",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-hide-the-pg-age-rating-on-the-home-screen",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-home-style-css-code",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-how-can-i-remove-time-background",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-how-do-i-change-the-default-blue-accent-colour-for-hover-buttons",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-how-make-backdrops-more-transparent",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-how-to-add-a-sub-menu-like-disney",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-how-to-create-a-css-theme-for-the-lg-webos-app",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-how-to-customize-jellyfin-10-9-x-with-mods",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-how-to-get-imdb-to-replace-the-star",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-how-to-reset-css-to-default",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-icons-for-metadata-providers",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-ijelly-theme",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-image-gallery-within-a-movie-profile",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-improved-search-rss",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-in-need-of-a-collection-library-thumbnail",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-infinite-scroll",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-is-it-possible-to-mod-jellyfin-movie-pages-to-include-a-letterboxd-link-like-imdb",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-is-there-select-view-modifiable",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-issue-with-receiving-custom-css-code-from-the-server",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-jellyfin-home-redesign",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-jellyfin-library-cart-art",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-jellyfin-netflix-skin",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-jellyfin-ratings",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-jellyfin-scroll-bar-width",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-jellyhub-theme",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-jellypane-offline-theme",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-jellypane-updated-for-10-10-x",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-jellyskin-jellyfin-v10-9-support",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-libraries-with-different-languages",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-library-card-images",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-library-listing-image-dimensions-vary-css-fix",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-light-and-sleek-grid-view",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-links-to-other-detail-pages-in-overview",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-list-of-custom-thumbnail-packs-for-jellyfin",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-live-tv-custom-background-image",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-log-in-customization",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-login-background",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-logo-on-osd-instead-of-text",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-mixed-movies-and-shows-artist-artwork",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-modification",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-more-than-99-unwatched",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-most-simple-way-to-replace-the-standard-font",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-music-playlist-art",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-my-custom-library-thumbnails",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-my-first-theme-css",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-need-help-for-css-modification",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-new-season-view",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-new-theme",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-new-update-liquid-glass-jellyfin-theme-glassmorphism-10-11-x",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-no-backdrops-in-mixed-library-overview",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-played-indicator-missing-episodes",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-positioning-of-primary-image",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-powderblue",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-prayag17-jellyfin-icons-got-archived",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-prettified-the-details-page",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-primary-view-with-long-files-names-possible",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-progress-bar-when-controls-hidden",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-re-arranging-the-order-of-sections-is-easy",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-remove-poster-from-movie-details",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-remove-unset-inline-styles-in-a-theme",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-removing-more-like-this",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-replace-metadata-text-with-icons",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-revamped-darkflix-v4-2024",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-roku-interface",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-scyfin-css-theme",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-scyfin-css-theme-10-9-x-support",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-seeking-help-customizing-an-existing-jellyfin-theme-css-novice",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-shortcut-to-collection",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-show-your-theme-style",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-small-problem-with-flex-wrap",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-snippet-got-annoyed-with-the-movie-extras-scroller",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-solar",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-some-help-with-css",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-spotlight-trailers-on-the-homepage",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-startseitenanpassung",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-theme-starlight",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-themes-or-plugins-to-enhance-music-playback-experience",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-thumbnail-request",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-top-library-buttons",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-ultrachromatic-main-page-backdrop",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-users-password",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-using-vs-code-for-custom-css",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-wider-logo",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-youtube-twitch-downloads-behave-like-tv-shows",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-zombie-css-10-9-x-compatible",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://forum.jellyfin.org/t-zoomy-my-second-theme",
+      "reason": "Theme Studio Jellyfin Forum discovery source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/11ason/home",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/449",
+      "reason": "Theme Studio Project 8 completion-audit tracking issue."
+    },
+    {
+      "url": "https://github.com/ASKaraferias/jellyfin-cat",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/Aetherinox/jellyfin-theme-glass",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/Arlind-dev/jellyfin-custom-css",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/B3Crazy/Jellyfin-Skins",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/BobHasNoSoul/jellyfin-mods",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/Bobisawesome07/jellyfish",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/C4uTi0N/Jellyprovements",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/ChrisScott9456/jellyskin-legacy-css",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/CruiserMKII/themes",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/DeBendeBurcht/SpectraFin",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/Deadshot2027/zombie-remake",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/DevilsDesigns/Devils-Designs-Custom-Jellyfin-Thumbnails",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/Deyusha69/jellyfin-theme",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/Druidblack/jellyfin_ratings",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/Entree3k/Jellyfin",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/Evolve5164/deltanet",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/ExtraToast/personal-stack",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/FSA1/Custom-Jellyfin-Skins",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/FabianBartl/jellyfin-scripts",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/Fortfite/miscfiles",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/Geo-ten/jellyfin-core-slider",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/Geounix/Ultrachromic",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/Geounix/novastream",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/HEMAKING11/jellyfin-my-theme",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/IAmParadox27/jellyfin-plugin-home-sections",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/JSethCreates/jellyfin-script-controlOSD",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/JSethCreates/jellyfin-script-spotlight",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/JSethCreates/python-tool-trailhound",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/James2802/Jellyflix",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/JetMick/jetmick.github.io",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/Komeiji-Shiki/GrayWill-ST",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/KugaNagisa/jelly-sakura-themes",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/L10Messi10/jelly-minimal",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/Lolotte521/WebCode",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/LucieFairePy/JellyFlix",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/Luisa-HT/Item-trade-frontend",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/MOODMNKY-LLC/mood-mnky-command",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/MRunkehl/cineplex",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/MRunkehl/cineplex-theme",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/Md7113/Porter-LLC",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/MueslySnipes/MueslySnipes",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/Neto-EM/JellyfinTheme",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/NickR240/PangolinGlass",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/Nintendosss/Starry-Night-Theme",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/Nipppi/jellygray-light",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/Niskeletor/Nisflix",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/Niskeletor/nisflix-v2",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/NotReeceHarris/NotReeceHarris",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/PalmarHealer/cleanfin",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/Phantomwise/jellyfin-custom-thumbnails-collection",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/Piglit09/piggietv-jellyfin-theme",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/PowerPCFan/CSS-Themes",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/Pukimaa/jellyfin-mods",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/Pulgarcit0/Jellyfin-themes",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/RadicalMuffinMan/moonfin-server",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/Rhys-Woolcott/bonk",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/RikoxCode/NeonBlur",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/RoaycL/jellyfin-emby-theme",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/Ryah/jellyfin-theme",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/SauravKhare/jellyflix-theme",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/Ser4ph4/ser4ph4.github.io",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/Ser4ph4/themes",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/ServTECTelecom/ServJelly",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/ShiniGandhi/JellyTheme",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/Shurelol/ScriptsForEmby",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/Skirmantas-SK/jellyfin-apple-tv",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/Skulldorom/jellyfin-css",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/Starwarsfan2099/starwarsfan2099.github.io",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/TheVodouch/jellyfin-css",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/Topiksit0/Jellyto",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/UdayPrakashMinz/Cyan",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/ValerioLyndon/Rockfin",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/WauLau/Harpy-HSP",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/Yannick-student/SambucaflixCSS",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/a-silly-goose/spicy-jelly",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/aditya-damerla128/jellytv",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/ajongsma/OSX_MediaCenter_MountainLion",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/alqix0/dotfiles",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/annie-things/annie-mlb-video-helper",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/asarayja/redfox",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/bobbibg/jellyfin-plugin-cypherflix-hub",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/ccrsxx/themes",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/cecilia-sanare/jellyfin-theme",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/cedev-1/Jellyfin-modern-theme-custom",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/celticslment/Jellyfin-Theme",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/cfm-miku-en/my-finality-remix-",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/chefbennyj1/emby_custom_css",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/cj-vana/liquidfin",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/classicalDonkey/Jamfin",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/cleiton-tavares/jellyfin-plugin-full-custom-media-bar",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/coudy/typescript",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/dbaines/shiznoid",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/decentraland/builder",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/developed-by-will/jellydash",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/deyusha2/Darkflix",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/dhanushkt/dragon-db",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/dillacorn/omv-remote-dots",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/djmohsen/dmThemes",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/djones0/dancetube-theme",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/fallenbagel/Hint-of-Colors",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/felixschmittdev/neoglasses",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/foclabroc/toolbox",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/gFabri/Channels-RPI4",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/gaara144hz/gaara144hz",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/getuliomedeiros/template-feflix",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/hamada387/Hamflix",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/hunternick87/Jellyfish",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/itzenzy2/Jellyfin-Netflix-Theme",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/jackloves111/EMBY.JS.CSS",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/jeffsim/bluesky",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/jellyfin/jellyfin-vue",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/jollywitch/better-jellyfin-search",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/justcivah/artandbargains",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/karimbouri/ConfigFiles",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/kmageorge/jellyfin-kgtv",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/krlsantcard/Jellyfin-10.9",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/kushiemoon-dev/jellyfin-cyberpunk-neon",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/labdiynez/system",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/llaera/asemes",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/mastyu/css",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/mathcals/emby-android",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/measaura/JF_Masterclass",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/mellnDE/mellnde.github.io",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/morganzero/moviotheme",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/namith1003/Delicious",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/nandyalu/trailarr",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/nos30/jellyfin",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/novotnyllc/MetroLog",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/nyakuoff/jellyfin-setup",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/ohheavenlytrevor/theme",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/philosophiedeluxe/my_homepage",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/prayag17/Jellyfin-Icons",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/quocthinhthan/Rental-P2P-MVP",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/r3draid3r04/jellyfin-theme",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/r9titi/jellyplex",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/razor2611/jellyfin",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/sandunwira/Lumina",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/sandunwira/LuminaWeb",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/schutterwaelder/BaerFin",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/seamonkey420/MyJellyFinCSS",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/sean-sang/abyss-css-modification",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/seanmcbroom/jellyfin-styles",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/taylorsegell/jelly-theme-teags",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/tecosaur/golgi",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/tedhinklater/Jellyfin-Featured-Content-Bar",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/tedhinklater/finality",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/telebytes/Telebytes-Mod",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/tengicungduocnhe/Jellyfin.SkinManager.C500",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/thatvistuagain/jf-styles",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/thebeebs/hhg2oop",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/tywentghxst/goatsplusconfigs",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/upidapi/NixOs",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/ux-mark/moving-fairy",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/v1rusnl/Embymalism",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/vc0sta/mediaserver-config",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/victornavorskie/homelab",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/villagra/playerframework",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/visualblind/jellyfin-css",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/visualblind/jellyfin-stuff",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/vnt87/phimhubtheme",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/voidwave/voidwave.github.io",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/vriksterr/jellyfin-custom-css",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/wiliferamirez/Jellyfin-Theme",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/xenoncolt/JellyFlixCustomCSS",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/youraerials/rainbow",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/zeroWELL2/JF-theme",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://github.com/zoravar08/MBCtheme",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://gitlab.com/Krafting/jellyhub-theme",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://gitlab.com/Krafting/jellyhub-theme1",
+      "reason": "Theme Studio forum/code-index research source reviewed in the 2026-07-21 completion audit."
+    },
+    {
+      "url": "https://jellyfin.org/docs/general/clients/css-customization/",
+      "reason": "Official Jellyfin CSS customization contract reviewed in the 2026-07-21 completion audit."
     }
   ]
 }

@@ -38,12 +38,18 @@
     "liveRefreshDate": "2026-07-21",
     "scopeReconciledDate": "2026-07-21",
     "inventory": {
-      "externalUrlCount": 186,
-      "repositoryRootCount": 152,
+      "externalUrlCount": 517,
+      "repositoryRootCount": 322,
+      "forumThreadCount": 157,
       "requiredDiscoveryUrls": [
         "https://github.com/topics/jellyfin-theme",
         "https://github.com/search?q=jellyfin+themes&type=repositories",
-        "https://github.com/awesome-jellyfin/awesome-jellyfin/blob/3938da69c0577e6e0bd933fc52291e13e9964857/THEMES.md"
+        "https://github.com/awesome-jellyfin/awesome-jellyfin/blob/3938da69c0577e6e0bd933fc52291e13e9964857/THEMES.md",
+        "https://jellyfin.org/docs/general/clients/css-customization/",
+        "https://forum.jellyfin.org/f-themes-styles",
+        "https://forum.jellyfin.org/syndication.php?fid=24&limit=100",
+        "https://forum.jellyfin.org/t-37-themes",
+        "https://gitlab.com/Krafting/jellyhub-theme"
       ]
     },
     "files": [
@@ -57,6 +63,18 @@
           "## Synthesis matrix",
           "## Adopt, adapt, and reject",
           "## Refresh procedure"
+        ]
+      },
+      {
+        "id": "forum-snapshot",
+        "path": "research/theme-studio-forum-snapshot.md",
+        "anchors": [
+          "Every one of the 157 threads",
+          "## Complete forum thread snapshot",
+          "## Forum-linked repository classification",
+          "## GitHub code-index long tail",
+          "`layout.home-libraries`",
+          "## Reconciled product delta"
         ]
       },
       {
@@ -78,6 +96,7 @@
           "#383",
           "#400",
           "#448",
+          "#449",
           "## Program completion rule"
         ]
       },
@@ -253,6 +272,15 @@
       "anchors": [
         "pins source evidence, MUI naming, host ownership and the modern-only surface matrix",
         "keeps the emitted --jf bridge exactly synchronized"
+      ]
+    },
+    {
+      "gate": "responsive home-library grid geometry and unchanged source order",
+      "path": "e2e/theme-studio-runtime.spec.ts",
+      "anchors": [
+        "'layout.home-libraries': 'grid'",
+        "homeLibrariesDisplay",
+        "afterHomeOrder: homeOrder()"
       ]
     },
     {

@@ -231,7 +231,7 @@ safe on the dashboard.
 | `shape.*` | radiusScale, cardRadius, controlRadius, dialogRadius, avatarShape, borderWidth |
 | `elevation.*` | surfaceShadow, cardShadow, dialogShadow, focusRing, glowIntensity |
 | `space.*` | scale, pageGutter, sectionGap, cardGap, controlGap, safeAreaMode |
-| `layout.*` | density, maxContentWidth, navigation, homeHero, details, seasons, cardActions, posterRatio, castShape |
+| `layout.*` | density, maxContentWidth, navigation, homeHero, homeLibraries, details, seasons, cardActions, posterRatio, castShape |
 | `effects.*` | level, material, blur, saturation, backdropOpacity, imageTreatment, noise, glow |
 | `motion.*` | profile, durationScale, easing, hoverLift, pageTransition, stagger |
 | `progress.*` | position, thickness, watchedIndicator, unwatchedIndicator, playedTreatment |

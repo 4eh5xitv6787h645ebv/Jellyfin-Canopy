@@ -58,7 +58,7 @@
       "input": "keyboard-and-pointer",
       "locale": "en-US",
       "scheme": "dark",
-      "capabilities": ["typed-theme", "full-effects", "deterministic-font"],
+      "capabilities": ["typed-theme", "full-effects", "responsive-home-library-grid", "deterministic-font"],
       "preset": "canopy",
       "state": "home"
     },
@@ -69,7 +69,7 @@
       "input": "coarse-touch",
       "locale": "en-US",
       "scheme": "dark",
-      "capabilities": ["typed-theme", "full-effects", "coarse-pointer", "deterministic-font"],
+      "capabilities": ["typed-theme", "full-effects", "responsive-home-library-grid", "coarse-pointer", "deterministic-font"],
       "preset": "canopy",
       "state": "home"
     },

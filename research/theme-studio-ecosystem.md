@@ -2,7 +2,7 @@
 
 Project: [Jellyfin Canopy — themes](https://github.com/users/4eh5xitv6787h645ebv/projects/8)
 
-Tracking: [#382](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/382), [#383](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/383)
+Tracking: [#382](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/382), [#383](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/383), [#449](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/449)
 
 Snapshot date: **2026-07-19**
 
@@ -19,6 +19,13 @@ covered:
 - the pinned [awesome-jellyfin theme list](https://github.com/awesome-jellyfin/awesome-jellyfin/blob/3938da69c0577e6e0bd933fc52291e13e9964857/THEMES.md);
 - broad GitHub repository searches for Jellyfin theme, skin, CSS, mobile, TV,
   glass, Material, Apple TV, Netflix, icon, seasonal, and theme-manager terms;
+- bounded GitHub code-index searches for the Jellyfin Web roles
+  `layout-desktop`, `detailPageWrapperContainer`, `homeSectionsContainer`,
+  `itemDetailPage`, and `cardOverlayContainer`;
+- the official [Jellyfin CSS customization contract](https://jellyfin.org/docs/general/clients/css-customization/), all eight pages of the
+  [Jellyfin Forum Themes & Styles category](https://forum.jellyfin.org/f-themes-styles), its
+  [RSS feed](https://forum.jellyfin.org/syndication.php?fid=24&limit=100), and the curated
+  [37 Themes index](https://forum.jellyfin.org/t-37-themes);
 - repositories linked by the discovered projects; and
 - official Jellyfin Web theme sources at commit
   [`3d7adb5`](https://github.com/jellyfin/jellyfin-web/tree/3d7adb53480f02164041fdd983b3f7abc28d0fd9/src/themes).
@@ -33,6 +40,11 @@ code or asset reuse requires an explicit compatibility and attribution review.
 This inventory extracts product ideas. It does not copy third-party CSS. That
 boundary is important for provenance, maintainability, Jellyfin 12 compatibility,
 and the differing licenses in the ecosystem.
+
+The independent [forum and code-index snapshot](theme-studio-forum-snapshot.md)
+enumerates all 157 current forum threads and preserves the complete long-tail
+classification, including GitLab-only, unavailable, derivative, extension, and
+false-positive sources. The same non-execution and no-reuse boundary applies.
 
 ## Source inventory
 
@@ -292,6 +304,7 @@ stock/no-op.
 | Cards/density | infinitv, Finity, finimalism, NetFin | Poster/backdrop/square ratios, compact/cozy/spacious density, bounded hover/focus actions |
 | Navigation | Abyss, Ultrachromic, ijelly, infinitv | Header/sidebar/pill presentations chosen per breakpoint and input mode, with stable destinations |
 | Home/hero | Media Bar, Zombie, NetFin, ijelly | Optional accessible hero module with predictable layout reservation and a reduced-data mode |
+| Home libraries | Jellyfin Home Redesign and forum grid/column requests | Typed scrolling-row or responsive-grid choice; flexible desktop columns, two bounded phone columns, and unchanged source order |
 | Details/seasons | ElegantFin, Flow, JellyTheme, NetFin | Hero/compact detail modes, episode list/grid choice, readable metadata, no fixed 1080p assumptions |
 | Player/OSD | infinitv, ElegantFin, Medusa, JellyTheme, Comfort, Muse | Compact/cinematic OSD options that preserve controls, focus order, captions, Trickplay, and Canopy overlays |
 | Music/Live TV/books | ElegantFin and documented gaps elsewhere | Explicit required surfaces, never an untested “best effort” |
@@ -313,6 +326,8 @@ stock/no-op.
 - Live preview with staged changes, undo, reset, and per-control defaults.
 - Multiple card, navigation, details, season, progress, indicator, and login
   presentations without changing their behavior or accessible order.
+- A scrolling-row or responsive-grid home-library presentation that preserves
+  Jellyfin's cards, content, and source order on modern desktop and phone.
 - Optional seasonal scheduling, local dynamic color, local icon families, and
   performance tiers.
 - Explicit modern-browser coverage of Canopy surfaces and historically neglected
@@ -350,9 +365,14 @@ stock/no-op.
 ## Refresh procedure
 
 1. Record the date and current commits for Jellyfin Web and awesome-jellyfin.
-2. Export the GitHub `jellyfin-theme` topic and repeat the search terms in this
-   document.
-3. Compare repository URLs, archived states, last pushes, and license metadata.
-4. Read new projects without executing third-party code.
-5. Append sources and map genuinely new behavior into the synthesis matrix.
-6. Open or update a Theme Studio issue for every newly discovered requirement.
+2. Export the GitHub `jellyfin-theme` topic, repeat the repository searches, and
+   repeat the bounded Jellyfin-selector code-index queries listed above.
+3. Enumerate every page of the Jellyfin Forum Themes & Styles category, reconcile
+   the RSS feed and curated 37 Themes index, and retain unavailable links as
+   provenance rather than silently dropping them.
+4. Compare GitHub and GitLab repository roots, redirects, archived states, last
+   pushes, and license metadata.
+5. Read new metadata, README/tree, CSS, and forum text without executing
+   third-party code, installers, imports, assets, or network workflows.
+6. Append sources and map genuinely new behavior into the synthesis matrix.
+7. Open or update a Theme Studio issue for every newly discovered requirement.

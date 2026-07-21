@@ -242,6 +242,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
             Add(rules, TokenRule.Number(0.5, 3), "space.page-gutter", "space.section-gap", "space.card-gap", "space.control-gap");
             Add(rules, TokenRule.Choice("auto", "header", "sidebar", "pills", "bottom"), "layout.navigation");
             Add(rules, TokenRule.Choice("off", "compact", "cinematic"), "layout.home-hero");
+            Add(rules, TokenRule.Choice("scroll", "grid"), "layout.home-libraries");
             Add(rules, TokenRule.Choice("classic", "compact", "cinematic"), "layout.details");
             Add(rules, TokenRule.Choice("list", "grid", "auto"), "layout.seasons");
             Add(rules, TokenRule.Choice("hover", "always", "menu"), "layout.card-actions");
