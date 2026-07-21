@@ -1,0 +1,122 @@
+{
+  "schemaVersion": 1,
+  "entries": [
+    {
+      "id": "canopy-balanced",
+      "version": 1,
+      "name": "Canopy Balanced",
+      "description": "A calm all-round profile with clear hierarchy, violet focus, and restrained depth.",
+      "presetId": "canopy",
+      "presetVersion": 1,
+      "paletteId": "canopy-night",
+      "accentId": "violet",
+      "mode": "system",
+      "sourceIds": ["jellyfin-web", "better-styles", "elegantfin"],
+      "checksum": "eb07481fee173c6dd9e2c3127aed45923ac6eb006fdc892e13f65de8342ae6ac"
+    },
+    {
+      "id": "minimal-neutral",
+      "version": 1,
+      "name": "Minimal Neutral",
+      "description": "A dense, solid, low-motion profile for people who prefer Jellyfin close to stock.",
+      "presetId": "minimal",
+      "presetVersion": 1,
+      "paletteId": "neutral",
+      "accentId": "blue",
+      "mode": "system",
+      "sourceIds": ["better-styles", "finimalism", "neutralfin", "jellygray"],
+      "checksum": "e01906385baf5dc1f67368d4773fcf77f615231c871eb585246f1b522b324263"
+    },
+    {
+      "id": "cinematic-dusk",
+      "version": 1,
+      "name": "Cinematic Dusk",
+      "description": "Backdrop-led browsing with dark theatrical color, strong card depth, and bounded motion.",
+      "presetId": "cinematic",
+      "presetVersion": 1,
+      "paletteId": "dracula",
+      "accentId": "pink",
+      "mode": "dark",
+      "sourceIds": ["netfin", "flow", "ijelly", "dracula"],
+      "checksum": "a64dc873e3afc7e86e893194f65077f328543898feba8e987fc95a3bc944705b"
+    },
+    {
+      "id": "glass-aurora",
+      "version": 1,
+      "name": "Glass Aurora",
+      "description": "Layered glass surfaces with an aurora palette and an explicit lower-cost phone fallback.",
+      "presetId": "glass",
+      "presetVersion": 1,
+      "paletteId": "jellyfish-aurora",
+      "accentId": "cyan",
+      "mode": "dark",
+      "sourceIds": ["abyss", "jamfin", "glassfin", "jellyfish"],
+      "checksum": "e8ce54554f5bcebb3ddf6fde322e74ba9ffb9a3e3d5e117559e1007ce42641a7"
+    },
+    {
+      "id": "material-vivid",
+      "version": 1,
+      "name": "Material Vivid",
+      "description": "Solid Material-inspired surfaces, pill actions, and a vivid but semantic color system.",
+      "presetId": "material",
+      "presetVersion": 1,
+      "paletteId": "vivid",
+      "accentId": "blue",
+      "mode": "system",
+      "sourceIds": ["gnat", "spookyfin", "jellyfin-web"],
+      "checksum": "c4ef3b9f7bfc0f01289f700c837bebe7ef9e6696985bb9c5ef798bd402a33b8b"
+    },
+    {
+      "id": "studio-graphite",
+      "version": 1,
+      "name": "Studio Graphite",
+      "description": "Compact production-style information density with solid graphite surfaces and teal focus.",
+      "presetId": "studio",
+      "presetVersion": 1,
+      "paletteId": "neutral",
+      "accentId": "teal",
+      "mode": "system",
+      "sourceIds": ["elegantfin", "neutralfin", "jellygray"],
+      "checksum": "2a9904772070852aeae1d97e62e37c8f59f04b2ae294df821ebc20f417a06817"
+    },
+    {
+      "id": "focus-accessible",
+      "version": 1,
+      "name": "Focus Accessible",
+      "description": "Always-visible actions, strong focus rings, calm motion, and generous modern touch targets.",
+      "presetId": "tv-focus",
+      "presetVersion": 1,
+      "paletteId": "canopy-night",
+      "accentId": "violet",
+      "mode": "system",
+      "sourceIds": ["infinitv", "ijelly", "jellyfin-web"],
+      "checksum": "da61594aa9759de10254a7a5fefddc9da85ab4f2b7fde971a746f17fd3509cc9"
+    },
+    {
+      "id": "oled-theater",
+      "version": 1,
+      "name": "OLED Theater",
+      "description": "True-black dark surfaces, red theater accents, and minimal rendering cost for OLED displays.",
+      "presetId": "oled",
+      "presetVersion": 1,
+      "paletteId": "neutral",
+      "accentId": "red",
+      "mode": "dark",
+      "sourceIds": ["scyfin", "neutralfin"],
+      "checksum": "eb0a18954f7070dc9470b1bfb1fbb7bc6faa2ef251dc4fc0f3bfbd8151e42701"
+    },
+    {
+      "id": "maximum-contrast",
+      "version": 1,
+      "name": "Maximum Contrast",
+      "description": "Solid surfaces, explicit boundaries, underlined links, and the strongest maintained focus treatment.",
+      "presetId": "high-contrast",
+      "presetVersion": 1,
+      "paletteId": "neutral",
+      "accentId": "blue",
+      "mode": "system",
+      "sourceIds": ["jellyfin-web", "neutralfin"],
+      "checksum": "3c78c5a4b97b5e07c142b2ffadccecedbf5396c181910294e57088e0e14f6aaa"
+    }
+  ]
+}

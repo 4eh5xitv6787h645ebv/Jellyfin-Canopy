@@ -1,0 +1,308 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text.Json;
+
+namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
+{
+    internal sealed class ThemeImportDiagnostic
+    {
+        public ThemeImportDiagnostic(string code, string message)
+        {
+            Code = code;
+            Message = message;
+        }
+
+        public string Code { get; }
+
+        public string Message { get; }
+    }
+
+    /// <summary>
+    /// Produces a small, non-reflective diagnostic list for untrusted profile
+    /// documents. Messages never echo imported names, values, URLs, or secrets.
+    /// </summary>
+    internal static class ThemeImportDiagnostics
+    {
+        public const int MaximumDiagnostics = 8;
+        private const int MaximumVisitedNodes = 10_000;
+        private const int MaximumDepth = 16;
+
+        private static readonly HashSet<string> CredentialPropertyNames = new(StringComparer.Ordinal)
+        {
+            "apikey", "accesskey", "accesstoken", "refreshtoken", "password",
+            "secret", "credential", "credentials", "serverid", "serverurl", "userid"
+        };
+
+        private static readonly HashSet<string> EventHandlerPropertyNames = new(StringComparer.Ordinal)
+        {
+            "onabort", "onafterprint", "onanimationcancel", "onanimationend",
+            "onanimationiteration", "onanimationstart", "onauxclick", "onbeforeinput",
+            "onbeforematch", "onbeforeprint", "onbeforetoggle", "onbeforeunload", "onblur", "oncancel",
+            "oncanplay", "oncanplaythrough", "onchange", "onclick", "onclose", "oncommand",
+            "oncontextlost", "oncontextmenu", "oncontextrestored", "oncopy", "oncuechange", "oncut", "ondblclick",
+            "ondrag", "ondragend", "ondragenter", "ondragleave", "ondragover", "ondragstart",
+            "ondrop", "ondurationchange", "onemptied", "onended", "onerror", "onfocus",
+            "onfocusin", "onfocusout", "onformdata", "onfullscreenchange",
+            "onfullscreenerror", "ongotpointercapture", "onhashchange", "oninput",
+            "oninvalid", "onkeydown", "onkeypress", "onkeyup", "onlanguagechange",
+            "onload", "onloadeddata", "onloadedmetadata", "onloadstart",
+            "onlostpointercapture", "onmessage", "onmessageerror", "onmousedown",
+            "onmouseenter", "onmouseleave", "onmousemove", "onmouseout", "onmouseover",
+            "onmouseup", "onoffline", "ononline", "onpagehide", "onpageshow", "onpaste",
+            "onpause", "onplay", "onplaying", "onpointercancel", "onpointerdown",
+            "onpointerenter", "onpointerleave", "onpointermove", "onpointerout",
+            "onpointerover", "onpointerrawupdate", "onpointerup", "onpopstate",
+            "onprogress", "onratechange", "onrejectionhandled", "onreset", "onresize",
+            "onscroll", "onscrollend", "onsecuritypolicyviolation", "onseeked",
+            "onseeking", "onselect", "onselectionchange", "onselectstart", "onslotchange",
+            "onstalled", "onstorage", "onsubmit", "onsuspend", "ontimeupdate", "ontoggle",
+            "ontouchcancel", "ontouchend", "ontouchmove", "ontouchstart",
+            "ontransitioncancel", "ontransitionend", "ontransitionrun",
+            "ontransitionstart", "onunhandledrejection", "onunload", "onvolumechange",
+            "onwaiting", "onwebkitanimationend", "onwebkitanimationiteration",
+            "onwebkitanimationstart", "onwebkittransitionend", "onwheel"
+        };
+
+        public static IReadOnlyList<ThemeImportDiagnostic> Analyze(
+            ThemeExportDocument? document,
+            UserThemeConfiguration? candidate,
+            PersistedPayloadValidation validation)
+        {
+            var diagnostics = new List<ThemeImportDiagnostic>(MaximumDiagnostics);
+            void Add(string code, string message)
+            {
+                if (diagnostics.Count >= MaximumDiagnostics
+                    || diagnostics.Any(item => string.Equals(item.Code, code, StringComparison.Ordinal)))
+                {
+                    return;
+                }
+
+                diagnostics.Add(new ThemeImportDiagnostic(code, message));
+            }
+
+            if (document == null)
+            {
+                Add("document_required", "A typed Theme Studio profile document is required.");
+            }
+            else
+            {
+                if (document.SchemaVersion < 0
+                    || document.SchemaVersion > ThemeConfigurationPolicy.CurrentSchemaVersion)
+                {
+                    Add("unsupported_schema", "The theme uses an unsupported schema version.");
+                }
+
+                if (HasUnsupportedFields(document))
+                {
+                    Add("unsupported_field", "The theme contains fields outside the supported typed profile schema.");
+                }
+
+                try
+                {
+                    var root = JsonSerializer.SerializeToElement(document, PersistedJson.WriteOptions);
+                    var nodes = 0;
+                    Inspect(root, 0, ref nodes, Add);
+                    if (nodes >= MaximumVisitedNodes)
+                    {
+                        Add("diagnostic_limit", "The theme is too complex to validate safely.");
+                    }
+                }
+                catch (JsonException)
+                {
+                    Add("invalid_json_value", "The theme contains a value that cannot be validated safely.");
+                }
+            }
+
+            if (validation.Status == PersistedPayloadStatus.TooLarge)
+            {
+                Add("payload_too_large", "The imported theme exceeds the supported size limit.");
+            }
+            else if (candidate == null || !validation.IsValid)
+            {
+                Add("invalid_document", "The imported theme does not satisfy the supported typed profile schema.");
+            }
+
+            return diagnostics;
+        }
+
+        private static void Inspect(
+            JsonElement element,
+            int depth,
+            ref int nodes,
+            Action<string, string> add)
+        {
+            if (depth > MaximumDepth || nodes++ >= MaximumVisitedNodes)
+            {
+                return;
+            }
+
+            if (element.ValueKind == JsonValueKind.Object)
+            {
+                foreach (var property in element.EnumerateObject())
+                {
+                    var normalizedName = new string(property.Name
+                        .Where(char.IsLetterOrDigit)
+                        .Select(char.ToLowerInvariant)
+                        .ToArray());
+                    if (CredentialPropertyNames.Contains(normalizedName)
+                        || normalizedName.Contains("credential", StringComparison.Ordinal)
+                        || normalizedName.Contains("password", StringComparison.Ordinal)
+                        || normalizedName.Contains("secret", StringComparison.Ordinal))
+                    {
+                        add("credential_field", "Credential, server identity, and private fields are not allowed in shared themes.");
+                    }
+
+                    Inspect(property.Value, depth + 1, ref nodes, add);
+                    if (nodes >= MaximumVisitedNodes) return;
+                }
+            }
+            else if (element.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var item in element.EnumerateArray())
+                {
+                    Inspect(item, depth + 1, ref nodes, add);
+                    if (nodes >= MaximumVisitedNodes) return;
+                }
+            }
+            else if (element.ValueKind == JsonValueKind.String)
+            {
+                var value = element.GetString() ?? string.Empty;
+                var lowered = value.ToLowerInvariant();
+                if (ContainsRemoteResource(lowered))
+                {
+                    add("remote_url", "Remote URLs and imported resources are not allowed in shared themes.");
+                }
+
+                if (ContainsMarkup(value)
+                    || lowered.Contains("javascript:", StringComparison.Ordinal)
+                    || lowered.Contains("vbscript:", StringComparison.Ordinal)
+                    || lowered.Contains("data:text/html", StringComparison.Ordinal)
+                    || ContainsEventHandler(lowered))
+                {
+                    add("executable_markup", "Script, HTML, and executable markup are not allowed in shared themes.");
+                }
+            }
+        }
+
+        private static bool ContainsMarkup(string value)
+        {
+            for (var index = 0; index < value.Length; index++)
+            {
+                if (value[index] != '<') continue;
+                var next = index + 1;
+                if (next < value.Length && value[next] == '/') next++;
+                if (next < value.Length
+                    && (char.IsLetter(value[next]) || value[next] == '!' || value[next] == '?'))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool ContainsRemoteResource(string lowered)
+        {
+            for (var index = 0; index + 2 < lowered.Length; index++)
+            {
+                if (lowered[index] == '/' && lowered[index + 1] == '/')
+                {
+                    var boundary = index == 0
+                        || (lowered[index - 1] != ':' && IsTokenBoundary(lowered[index - 1]));
+                    var hasAuthority = index + 2 < lowered.Length
+                        && !char.IsWhiteSpace(lowered[index + 2])
+                        && lowered[index + 2] != '/';
+                    if (boundary && hasAuthority) return true;
+                }
+
+                if (lowered[index] != ':' || lowered[index + 1] != '/' || lowered[index + 2] != '/')
+                {
+                    continue;
+                }
+
+                var schemeStart = index - 1;
+                while (schemeStart >= 0 && IsSchemeCharacter(lowered[schemeStart])) schemeStart--;
+                schemeStart++;
+                if (schemeStart < index
+                    && char.IsLetter(lowered[schemeStart])
+                    && (schemeStart == 0 || IsTokenBoundary(lowered[schemeStart - 1])))
+                {
+                    return true;
+                }
+            }
+
+            for (var index = 0; index + 3 < lowered.Length; index++)
+            {
+                if (lowered.AsSpan(index).StartsWith("url(", StringComparison.Ordinal)
+                    && (index == 0 || IsTokenBoundary(lowered[index - 1])))
+                {
+                    return true;
+                }
+
+                if (!lowered.AsSpan(index).StartsWith("@import", StringComparison.Ordinal)) continue;
+                var next = index + "@import".Length;
+                if (next == lowered.Length
+                    || char.IsWhiteSpace(lowered[next])
+                    || lowered[next] == '\''
+                    || lowered[next] == '"')
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool IsSchemeCharacter(char value)
+            => char.IsLetterOrDigit(value) || value == '+' || value == '-' || value == '.';
+
+        private static bool IsTokenBoundary(char value)
+            => !char.IsLetterOrDigit(value) && value != '_' && value != '-';
+
+        private static bool ContainsEventHandler(string lowered)
+        {
+            for (var index = 0; index + 3 < lowered.Length; index++)
+            {
+                if (lowered[index] != 'o' || lowered[index + 1] != 'n'
+                    || (index > 0 && !IsAttributeBoundary(lowered[index - 1])))
+                {
+                    continue;
+                }
+
+                var next = index + 2;
+                while (next < lowered.Length && char.IsLetter(lowered[next])) next++;
+                if (next == index + 2) continue;
+                var propertyName = lowered.Substring(index, next - index);
+                if (!EventHandlerPropertyNames.Contains(propertyName)) continue;
+                while (next < lowered.Length && char.IsWhiteSpace(lowered[next])) next++;
+                if (next < lowered.Length && lowered[next] == '=') return true;
+            }
+
+            return false;
+        }
+
+        private static bool IsAttributeBoundary(char value)
+            => char.IsWhiteSpace(value) || value == '<' || value == '/' || value == '\'' || value == '"';
+
+        private static bool HasUnsupportedFields(ThemeExportDocument document)
+            => HasValues(document.ExtensionData)
+                || document.Profiles == null
+                || document.Schedule == null
+                || document.Profiles.Any(profile => profile == null
+                    || HasValues(profile.ExtensionData)
+                    || profile.Responsive == null
+                    || HasValues(profile.Responsive.ExtensionData)
+                    || (profile.Responsive.Phone != null && HasValues(profile.Responsive.Phone.ExtensionData))
+                    || (profile.Responsive.Tablet != null && HasValues(profile.Responsive.Tablet.ExtensionData))
+                    || (profile.Responsive.Desktop != null && HasValues(profile.Responsive.Desktop.ExtensionData))
+                    || (profile.Responsive.Wide != null && HasValues(profile.Responsive.Wide.ExtensionData))
+                    || (profile.Responsive.Tv != null && HasValues(profile.Responsive.Tv.ExtensionData))
+                    || profile.Accessibility == null
+                    || HasValues(profile.Accessibility.ExtensionData))
+                || document.Schedule.Any(entry => entry == null || HasValues(entry.ExtensionData));
+
+        private static bool HasValues(Dictionary<string, JsonElement>? values)
+            => values == null || values.Count > 0;
+    }
+}

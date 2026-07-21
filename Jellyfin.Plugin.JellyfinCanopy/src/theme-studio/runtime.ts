@@ -29,6 +29,7 @@ import {
     type ThemeStyleLayer,
 } from './styles';
 import { installIntegrationStylesheets } from './integration-stylesheets';
+import { ThemeAdvancedCssRuntime } from './advanced-css';
 
 const THEME_CHANGE = 'THEME_CHANGE';
 const RUNTIME_CHANGE = 'jc:theme-studio-runtime-changed';
@@ -232,6 +233,7 @@ function modernLayout(): boolean {
 
 export class ThemeStudioRuntime {
     readonly #scope: FeatureScope;
+    readonly #advancedCss: ThemeAdvancedCssRuntime;
     readonly #media = new Map<MediaName, MediaQueryList>();
     readonly #cleanups: Array<() => void> = [];
     readonly #dynamicAccentCache = new DynamicAccentCache();
@@ -261,12 +263,14 @@ export class ThemeStudioRuntime {
 
     constructor(scope: FeatureScope) {
         this.#scope = scope;
+        this.#advancedCss = new ThemeAdvancedCssRuntime(scope);
     }
 
     install(): void {
         if (this.#installed || this.#disposed || !this.#scope.isCurrent()) return;
         this.#installed = true;
         this.#clearPresentation(true);
+        this.#advancedCss.install();
         installOperationalStylesheet(this);
         this.#cleanups.push(installIntegrationStylesheets(this));
         this.#cleanups.push(() => {
@@ -356,6 +360,13 @@ export class ThemeStudioRuntime {
             hasPendingAuthoritativeLoad: () => this.hasPendingAuthoritativeLoad(),
             reload: () => this.reload(),
             adoptAcknowledged: (configuration: unknown) => this.adoptAcknowledged(configuration),
+            getAdvancedCssConfiguration: () => this.#advancedCss.getConfiguration(),
+            whenAdvancedCssReady: () => this.#advancedCss.whenReady(),
+            reloadAdvancedCss: () => this.#advancedCss.load(),
+            previewAdvancedCss: (configuration: unknown) => this.#advancedCss.preview(configuration),
+            cancelAdvancedCssPreview: () => this.#advancedCss.cancelPreview(),
+            adoptAdvancedCssAcknowledged: (configuration: unknown) =>
+                this.#advancedCss.adoptAcknowledged(configuration),
             refresh: () => this.refresh(),
             getDiagnostics: () => this.getDiagnostics(),
         });
@@ -558,6 +569,7 @@ export class ThemeStudioRuntime {
             removeStyle(PREVIEW_STYLE_ID);
             document.documentElement.removeAttribute('data-jc-theme-preview');
         }
+        this.#advancedCss.refresh();
     }
 
     getDiagnostics(): ThemeStudioDiagnostics {
@@ -574,6 +586,7 @@ export class ThemeStudioRuntime {
         this.#previewConfiguration = null;
         this.#previewAllowScheduling = true;
         this.#clearPresentation();
+        this.#advancedCss.dispose();
         this.#dynamicAccentCache.clear();
         this.#dynamicFailures.clear();
         for (let index = this.#cleanups.length - 1; index >= 0; index -= 1) {
@@ -936,6 +949,7 @@ export class ThemeStudioRuntime {
         this.#scheduleTimer = 0;
         if (!force && presentationOwner !== this) {
             this.#clearDynamicAccent(true, false);
+            this.#advancedCss.clear();
             return;
         }
         this.#clearDynamicAccent(true);
@@ -944,6 +958,7 @@ export class ThemeStudioRuntime {
         removeStyle(MOBILE_ENVIRONMENT_STYLE_ID);
         const root = document.documentElement;
         for (const name of ROOT_ATTRIBUTES) root.removeAttribute(name);
+        this.#advancedCss.clear();
         presentationOwner = null;
     }
 

@@ -110,6 +110,8 @@
   "e2e/theme-studio-runtime.spec.ts › Theme Studio runtime bridge › modern phone environment tracks safe viewport while tablet stays stock and touch desktop stays desktop",
   "e2e/theme-studio-runtime.spec.ts › Theme Studio runtime bridge › phone portrait and coarse-pointer landscape stay bounded without duplicate layers",
     "e2e/theme-studio-runtime.spec.ts › Theme Studio runtime bridge › presentation modules compose on modern desktop and phone without changing host order",
+    "e2e/theme-studio-sharing.spec.ts › Theme Studio safe sharing and curated gallery › gallery and local declaration editor fit modern desktop, wide, and phone while unsupported layouts stay stock",
+    "e2e/theme-studio-sharing.spec.ts › Theme Studio safe sharing and curated gallery › unsafe imports and declarations fail closed while typed export and collision review remain usable",
     "e2e/tags.spec.ts › tags › hide-on-hover fades the detail-page primary poster tags",
     "e2e/tags.spec.ts › tags › home library cards get data-jc-*-tagged markers per enabled family"
   ]

@@ -13,6 +13,18 @@ import {
     ThemeEditorState,
 } from '../../theme-studio/editor-state';
 import {
+    emptyThemeCssConfiguration,
+    parseUserThemeCssConfiguration,
+    THEME_ADVANCED_CSS_MAX_SNIPPETS,
+    validateThemeCssDeclarations,
+} from '../../theme-studio/advanced-css';
+import {
+    applyCuratedGalleryEntry,
+    CURATED_THEME_GALLERY,
+    galleryProvenance,
+    verifyCuratedGalleryEntry,
+} from '../../theme-studio/gallery';
+import {
     resolveBreakpoint,
     resolveTheme,
     type ResolvedThemePresentation,
@@ -20,10 +32,14 @@ import {
 } from '../../theme-studio/resolver';
 import { parseUserThemeConfiguration } from '../../theme-studio/schema';
 import type {
+    HttpError,
     ThemeExportDocument,
+    ThemeCssSnippet,
+    ThemeCssTarget,
     ThemeProfile,
     ThemeTokenValue,
     UserThemeConfiguration,
+    UserThemeCssConfiguration,
 } from '../../types/jc';
 import type { PanelContext } from './panel';
 
@@ -31,6 +47,7 @@ type EditorMode = 'beginner' | 'expert';
 type PersistenceKind = 'validation' | 'authorization' | 'conflict' | 'unavailable' | 'cancelled' | 'protocol';
 
 const MAXIMUM_IMPORT_FILE_BYTES = 1024 * 1024;
+const MAXIMUM_IMPORT_DIFF_ITEMS = 32;
 const RUNTIME_CHANGE = 'jc:theme-studio-runtime-changed';
 const CONFIG_CHANGE = 'jc:config-changed';
 const HOST_THEME_CHANGE = 'THEME_CHANGE';
@@ -105,6 +122,19 @@ const ACCENT_KEYS: Readonly<Record<string, string>> = Object.freeze({
 });
 
 const PRESENTATION_DEFAULT = '__preset__';
+const IMPORT_DIAGNOSTIC_KEYS: Readonly<Record<string, string>> = Object.freeze({
+    document_required: 'theme_studio_import_diagnostic_document_required',
+    unsupported_schema: 'theme_studio_import_diagnostic_unsupported_schema',
+    unsupported_field: 'theme_studio_import_diagnostic_unsupported_field',
+    credential_field: 'theme_studio_import_diagnostic_credential_field',
+    remote_url: 'theme_studio_import_diagnostic_remote_url',
+    executable_markup: 'theme_studio_import_diagnostic_executable_markup',
+    payload_too_large: 'theme_studio_import_diagnostic_payload_too_large',
+    invalid_document: 'theme_studio_import_diagnostic_invalid_document',
+    diagnostic_limit: 'theme_studio_import_diagnostic_limit',
+    invalid_json_value: 'theme_studio_import_diagnostic_invalid_json_value',
+    theme_schedule_disabled: 'theme_studio_import_diagnostic_schedule_disabled',
+});
 
 interface PresentationTokenControl {
     readonly token: string;
@@ -465,6 +495,7 @@ interface FocusSnapshot {
     readonly attribute: 'data-focus-key' | 'data-field' | 'data-action' | 'data-role';
     readonly value: string;
     readonly dataValue: string;
+    readonly dataSnippetId: string;
     readonly selectionStart: number | null;
     readonly selectionEnd: number | null;
     readonly selectionDirection: 'forward' | 'backward' | 'none' | null;
@@ -482,6 +513,7 @@ function captureFocus(root: HTMLElement): FocusSnapshot | null {
         attribute,
         value: active.getAttribute(attribute) ?? '',
         dataValue: active.dataset.value ?? '',
+        dataSnippetId: active.dataset.snippetId ?? '',
         selectionStart: selectable ? active.selectionStart : null,
         selectionEnd: selectable ? active.selectionEnd : null,
         selectionDirection: selectable ? active.selectionDirection : null,
@@ -493,7 +525,8 @@ function restoreFocus(root: HTMLElement, snapshot: FocusSnapshot | null): void {
     const match = [...root.querySelectorAll<HTMLElement>(`[${snapshot.attribute}]`)].find((candidate) =>
         candidate.tagName === snapshot.tagName
         && candidate.getAttribute(snapshot.attribute) === snapshot.value
-        && (candidate.dataset.value ?? '') === snapshot.dataValue);
+        && (candidate.dataset.value ?? '') === snapshot.dataValue
+        && (candidate.dataset.snippetId ?? '') === snapshot.dataSnippetId);
     if (!match) return;
     match.focus({ preventScroll: true });
     if ((match instanceof HTMLInputElement || match instanceof HTMLTextAreaElement)
@@ -513,6 +546,7 @@ interface ScrollSnapshot {
     readonly studioLeft: number;
     readonly expertTop: number;
     readonly expertLeft: number;
+    readonly css: readonly { readonly id: string; readonly top: number; readonly left: number }[];
 }
 
 function captureScroll(root: HTMLElement): ScrollSnapshot {
@@ -523,6 +557,12 @@ function captureScroll(root: HTMLElement): ScrollSnapshot {
         studioLeft: studio?.scrollLeft ?? 0,
         expertTop: expert?.scrollTop ?? 0,
         expertLeft: expert?.scrollLeft ?? 0,
+        css: [...root.querySelectorAll<HTMLTextAreaElement>('[data-field="advanced-css-declarations"]')]
+            .map((textarea) => ({
+                id: textarea.dataset.snippetId ?? '',
+                top: textarea.scrollTop,
+                left: textarea.scrollLeft,
+            })),
     };
 }
 
@@ -537,6 +577,14 @@ function restoreScroll(root: HTMLElement, snapshot: ScrollSnapshot): void {
         expert.scrollTop = snapshot.expertTop;
         expert.scrollLeft = snapshot.expertLeft;
     }
+    for (const saved of snapshot.css) {
+        const textarea = [...root.querySelectorAll<HTMLTextAreaElement>('[data-field="advanced-css-declarations"]')]
+            .find((candidate) => candidate.dataset.snippetId === saved.id);
+        if (textarea) {
+            textarea.scrollTop = saved.top;
+            textarea.scrollLeft = saved.left;
+        }
+    }
 }
 
 function persistenceKind(error: unknown): PersistenceKind {
@@ -544,6 +592,36 @@ function persistenceKind(error: unknown): PersistenceKind {
     return typeof kind === 'string' && [
         'validation', 'authorization', 'conflict', 'unavailable', 'cancelled', 'protocol',
     ].includes(kind) ? kind as PersistenceKind : 'unavailable';
+}
+
+function importDiagnosticsFromError(error: unknown): string[] {
+    const response = (error as HttpError | null)?.responseJSON;
+    if (!response || typeof response !== 'object' || Array.isArray(response)) return [];
+    const diagnostics = (response as { diagnostics?: unknown }).diagnostics;
+    if (!Array.isArray(diagnostics)) return [];
+    return diagnostics.slice(0, 8).flatMap((item) => {
+        if (!item || typeof item !== 'object' || Array.isArray(item)) return [];
+        const code = (item as { code?: unknown; Code?: unknown }).code
+            ?? (item as { Code?: unknown }).Code;
+        if (typeof code !== 'string') return [];
+        const key = IMPORT_DIAGNOSTIC_KEYS[code];
+        return key ? [t(key)] : [];
+    });
+}
+
+function isOnlyScheduleDisabledImportError(error: unknown): boolean {
+    const response = (error as HttpError | null)?.responseJSON;
+    if (!response || typeof response !== 'object' || Array.isArray(response)) return false;
+    const value = response as { code?: unknown; Code?: unknown; diagnostics?: unknown; Diagnostics?: unknown };
+    const code = value.code ?? value.Code;
+    const diagnostics = value.diagnostics ?? value.Diagnostics;
+    if (code !== 'theme_schedule_disabled' || !Array.isArray(diagnostics) || diagnostics.length !== 1) {
+        return false;
+    }
+    const diagnostic: unknown = diagnostics[0] as unknown;
+    return Boolean(diagnostic && typeof diagnostic === 'object' && !Array.isArray(diagnostic)
+        && ((diagnostic as { code?: unknown; Code?: unknown }).code
+            ?? (diagnostic as { Code?: unknown }).Code) === 'theme_schedule_disabled');
 }
 
 function importSummary(current: UserThemeConfiguration, candidate: UserThemeConfiguration): string[] {
@@ -581,7 +659,119 @@ function importSummary(current: UserThemeConfiguration, candidate: UserThemeConf
             changes.push(t('theme_studio_import_schedule_removed', { id: entry.Id }));
         }
     }
-    return changes.length > 0 ? changes : [t('theme_studio_import_no_changes')];
+    if (changes.length === 0) return [t('theme_studio_import_no_changes')];
+    if (changes.length <= MAXIMUM_IMPORT_DIFF_ITEMS) return changes;
+    const remaining = changes.length - MAXIMUM_IMPORT_DIFF_ITEMS;
+    return [
+        ...changes.slice(0, MAXIMUM_IMPORT_DIFF_ITEMS),
+        t('theme_studio_import_more_changes', { count: remaining }),
+    ];
+}
+
+export function themeImportNameCollisions(
+    current: UserThemeConfiguration,
+    candidate: UserThemeConfiguration,
+): string[] {
+    const currentNames = new Map<string, string[]>();
+    for (const profile of current.Profiles) {
+        const key = profile.Name.normalize('NFKC').toLocaleLowerCase();
+        currentNames.set(key, [...(currentNames.get(key) ?? []), profile.Id]);
+    }
+    const candidateNames = new Map<string, ThemeProfile[]>();
+    for (const profile of candidate.Profiles) {
+        const key = profile.Name.normalize('NFKC').toLocaleLowerCase();
+        candidateNames.set(key, [...(candidateNames.get(key) ?? []), profile]);
+    }
+    const collisions = new Set<string>();
+    for (const [key, profiles] of candidateNames) {
+        if (profiles.length > 1) collisions.add(profiles[0].Name);
+        const existingIds = currentNames.get(key) ?? [];
+        if (profiles.some((profile) => existingIds.some((id) => id !== profile.Id))) {
+            collisions.add(profiles[0].Name);
+        }
+    }
+    return [...collisions].sort((left, right) => left.localeCompare(right)).slice(0, 24);
+}
+
+function galleryControls(): string {
+    return `<details class="jc-theme-sharing-section jc-theme-gallery" open>
+        <summary>${escapeHtml(t('theme_studio_gallery_title'))}</summary>
+        <p class="jc-theme-hint">${escapeHtml(t('theme_studio_gallery_hint'))}</p>
+        <div class="jc-theme-gallery-grid">
+            ${CURATED_THEME_GALLERY.map((entry) => {
+                const provenance = galleryProvenance(entry)
+                    .map((source) => `${source.name} · ${source.license}`).join('; ');
+                return `<article class="jc-theme-gallery-card" data-gallery-entry="${escapeHtml(entry.id)}">
+                    <div class="jc-theme-gallery-swatch" aria-hidden="true"><span></span><span></span><span></span></div>
+                    <h4>${escapeHtml(entry.name)}</h4>
+                    <p>${escapeHtml(entry.description)}</p>
+                    <dl><div><dt>${escapeHtml(t('theme_studio_gallery_sources'))}</dt><dd>${escapeHtml(provenance)}</dd></div>
+                    <div><dt>${escapeHtml(t('theme_studio_gallery_integrity'))}</dt><dd><code>${escapeHtml(entry.checksum.slice(0, 12))}…</code></dd></div></dl>
+                    <button class="jc-theme-button" type="button" data-action="apply-gallery" data-gallery-id="${escapeHtml(entry.id)}">${escapeHtml(t('theme_studio_gallery_use'))}</button>
+                </article>`;
+            }).join('')}
+        </div>
+    </details>`;
+}
+
+function nextCssSnippetId(configuration: UserThemeCssConfiguration): string {
+    const ids = new Set(configuration.Snippets.map((snippet) => snippet.Id));
+    for (let index = 1; index <= 10_000; index += 1) {
+        const id = `custom-style-${index}`;
+        if (!ids.has(id)) return id;
+    }
+    return `custom-style-${configuration.Snippets.length + 1}`;
+}
+
+function validCssSnippetInput(snippet: ThemeCssSnippet): boolean {
+    return snippet.Name.length > 0 && snippet.Name === snippet.Name.trim()
+        && [...snippet.Name].length <= 80
+        && !/[\u0000-\u001f\u007f-\u009f]/.test(snippet.Name)
+        && validateThemeCssDeclarations(snippet.Declarations).valid;
+}
+
+function cssTargetOptions(selected: ThemeCssTarget): string {
+    const targets: readonly ThemeCssTarget[] = ['root', 'shell', 'cards', 'details', 'dialogs', 'player'];
+    return targets.map((target) => option(
+        target,
+        t(`theme_studio_css_target_${target}`),
+        target === selected,
+    )).join('');
+}
+
+function advancedCssControls(
+    configuration: UserThemeCssConfiguration | null,
+    invalidSnippetIds: ReadonlySet<string>,
+    dirty: boolean,
+    loading: boolean,
+    saving: boolean,
+    status: string,
+): string {
+    if (loading || !configuration) {
+        return `<details class="jc-theme-sharing-section jc-theme-advanced-css" open><summary>${escapeHtml(t('theme_studio_css_title'))}</summary><p class="jc-theme-hint" role="status">${escapeHtml(status)}</p></details>`;
+    }
+    const atLimit = configuration.Snippets.length >= THEME_ADVANCED_CSS_MAX_SNIPPETS;
+    return `<details class="jc-theme-sharing-section jc-theme-advanced-css" open>
+        <summary>${escapeHtml(t('theme_studio_css_title'))}</summary>
+        <div class="jc-theme-risk" role="note"><strong>${escapeHtml(t('theme_studio_css_risk_title'))}</strong><p>${escapeHtml(t('theme_studio_css_risk'))}</p></div>
+        <label class="jc-theme-check"><input type="checkbox" data-field="advanced-css-enabled"${configuration.Enabled ? ' checked' : ''}><span>${escapeHtml(t('theme_studio_css_enable'))}</span></label>
+        <div class="jc-theme-css-list">
+            ${configuration.Snippets.map((snippet) => {
+                const invalid = invalidSnippetIds.has(snippet.Id);
+                const errorId = `jc-theme-css-error-${escapeHtml(snippet.Id)}`;
+                return `<fieldset class="jc-theme-css-card" data-css-snippet="${escapeHtml(snippet.Id)}"><legend>${escapeHtml(snippet.Name)}</legend>
+                    <label class="jc-theme-check"><input type="checkbox" data-field="advanced-css-snippet-enabled" data-snippet-id="${escapeHtml(snippet.Id)}"${snippet.Enabled ? ' checked' : ''}><span>${escapeHtml(t('theme_studio_css_snippet_enable'))}</span></label>
+                    <div class="jc-theme-module-grid"><label class="jc-theme-field"><span>${escapeHtml(t('theme_studio_css_name'))}</span><input class="jc-theme-control" data-field="advanced-css-name" data-snippet-id="${escapeHtml(snippet.Id)}" value="${escapeHtml(snippet.Name)}" maxlength="80" dir="auto"></label>
+                    <label class="jc-theme-field"><span>${escapeHtml(t('theme_studio_css_target'))}</span><select class="jc-theme-control" data-field="advanced-css-target" data-snippet-id="${escapeHtml(snippet.Id)}">${cssTargetOptions(snippet.Target)}</select></label></div>
+                    <label class="jc-theme-field"><span>${escapeHtml(t('theme_studio_css_declarations'))}</span><span class="jc-theme-hint">${escapeHtml(t('theme_studio_css_declarations_hint'))}</span><textarea class="jc-theme-control jc-theme-css-text" data-field="advanced-css-declarations" data-snippet-id="${escapeHtml(snippet.Id)}" spellcheck="false" aria-invalid="${invalid}"${invalid ? ` aria-errormessage="${errorId}"` : ''}>${escapeHtml(snippet.Declarations)}</textarea></label>
+                    ${invalid ? `<p class="jc-theme-hint jc-theme-validation" id="${errorId}" role="alert">${escapeHtml(t('theme_studio_css_invalid'))}</p>` : ''}
+                    <button class="jc-theme-button" type="button" data-action="delete-css-snippet" data-snippet-id="${escapeHtml(snippet.Id)}">${escapeHtml(t('theme_studio_css_delete'))}</button>
+                </fieldset>`;
+            }).join('')}
+        </div>
+        <div class="jc-theme-row"><button class="jc-theme-button" type="button" data-action="add-css-snippet"${atLimit ? ' disabled' : ''}>${escapeHtml(t('theme_studio_css_add'))}</button><button class="jc-theme-button" type="button" data-action="reset-css"${saving ? ' disabled' : ''}>${escapeHtml(t('theme_studio_css_reset'))}</button><button class="jc-theme-button primary" type="button" data-action="save-css"${!dirty || saving || invalidSnippetIds.size > 0 ? ' disabled' : ''}>${escapeHtml(saving ? t('theme_studio_css_saving') : t('theme_studio_css_save'))}</button></div>
+        <p class="jc-theme-status" role="status" aria-live="polite">${dirty ? '● ' : ''}${escapeHtml(status)}</p>
+    </details>`;
 }
 
 function editorStyles(): string {
@@ -633,6 +823,26 @@ function editorStyles(): string {
         #jellyfin-canopy-panel .jc-theme-expert { min-height:310px; resize:vertical; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; white-space:pre; overflow:auto; }
         #jellyfin-canopy-panel .jc-theme-import-diff { border-inline-start:3px solid #00d4ff; background:rgba(0,212,255,.08); padding:10px 12px; margin-block:12px; }
         #jellyfin-canopy-panel .jc-theme-import-diff ul { margin:7px 0 0; padding-inline-start:20px; }
+        #jellyfin-canopy-panel .jc-theme-import-collision { border:2px solid #ffbf69; border-radius:9px; padding:10px; margin-block:10px; }
+        #jellyfin-canopy-panel .jc-theme-sharing-section { margin-block:18px; border:1px solid rgba(255,255,255,.18); border-radius:12px; padding:12px; }
+        #jellyfin-canopy-panel .jc-theme-sharing-section > summary { min-height:44px; display:flex; align-items:center; font-size:16px; font-weight:750; cursor:pointer; }
+        #jellyfin-canopy-panel .jc-theme-gallery-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(210px,100%),1fr)); gap:10px; }
+        #jellyfin-canopy-panel .jc-theme-gallery-card { display:flex; flex-direction:column; min-width:0; border:1px solid rgba(255,255,255,.16); border-radius:11px; padding:11px; background:#151821; }
+        #jellyfin-canopy-panel .jc-theme-gallery-card h4 { margin:8px 0 4px; }
+        #jellyfin-canopy-panel .jc-theme-gallery-card p { flex:1; margin:0 0 8px; color:rgba(255,255,255,.78); line-height:1.45; }
+        #jellyfin-canopy-panel .jc-theme-gallery-card dl { display:grid; gap:5px; margin:0 0 10px; font-size:11px; overflow-wrap:anywhere; }
+        #jellyfin-canopy-panel .jc-theme-gallery-card dl div { display:grid; grid-template-columns:auto minmax(0,1fr); gap:6px; }
+        #jellyfin-canopy-panel .jc-theme-gallery-card dt { font-weight:750; }
+        #jellyfin-canopy-panel .jc-theme-gallery-card dd { margin:0; }
+        #jellyfin-canopy-panel .jc-theme-gallery-swatch { display:grid; grid-template-columns:2fr 1fr 1fr; block-size:34px; border-radius:8px; overflow:hidden; border:1px solid rgba(255,255,255,.25); }
+        #jellyfin-canopy-panel .jc-theme-gallery-swatch span:nth-child(1) { background:#171722; }
+        #jellyfin-canopy-panel .jc-theme-gallery-swatch span:nth-child(2) { background:#8f76ff; }
+        #jellyfin-canopy-panel .jc-theme-gallery-swatch span:nth-child(3) { background:#45d6c2; }
+        #jellyfin-canopy-panel .jc-theme-risk { border:2px solid #ffbf69; border-radius:10px; padding:10px; background:rgba(255,191,105,.09); }
+        #jellyfin-canopy-panel .jc-theme-risk p { margin:5px 0 0; line-height:1.45; }
+        #jellyfin-canopy-panel .jc-theme-css-list { display:grid; gap:10px; margin-block:12px; }
+        #jellyfin-canopy-panel .jc-theme-css-card { min-width:0; border:1px solid rgba(255,255,255,.16); border-radius:10px; padding:10px; }
+        #jellyfin-canopy-panel .jc-theme-css-text { min-height:132px; resize:vertical; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; direction:ltr; text-align:start; }
         #jellyfin-canopy-panel .jc-theme-status { min-height:22px; font-weight:650; }
         #jellyfin-canopy-panel .jc-theme-actions { z-index:4; display:flex; flex:none; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px; margin-inline:-20px; padding:10px 20px calc(10px + env(safe-area-inset-bottom)); background:rgba(16,18,24,.97); border-block-start:1px solid rgba(255,255,255,.15); }
         #jellyfin-canopy-panel .jc-theme-actions .jc-theme-status { flex:1 1 190px; min-width:0; }
@@ -669,7 +879,8 @@ function editorStyles(): string {
         @media (forced-colors:active) {
             #jellyfin-canopy-panel .jc-theme-swatch { display:none; }
             #jellyfin-canopy-panel .jc-theme-color-control { grid-template-columns:minmax(0,1fr); }
-            #jellyfin-canopy-panel .jc-theme-button, #jellyfin-canopy-panel .jc-theme-control, #jellyfin-canopy-panel .jc-theme-preset { border:1px solid ButtonText; background:ButtonFace; color:ButtonText; forced-color-adjust:auto; }
+            #jellyfin-canopy-panel .jc-theme-button, #jellyfin-canopy-panel .jc-theme-control, #jellyfin-canopy-panel .jc-theme-preset, #jellyfin-canopy-panel .jc-theme-gallery-card, #jellyfin-canopy-panel .jc-theme-css-card, #jellyfin-canopy-panel .jc-theme-risk { border:1px solid ButtonText; background:ButtonFace; color:ButtonText; forced-color-adjust:auto; }
+            #jellyfin-canopy-panel .jc-theme-gallery-swatch { display:none; }
             #jellyfin-canopy-panel .jc-theme-button.primary, #jellyfin-canopy-panel .jc-theme-preset[aria-pressed="true"] { border:3px double Highlight; outline:1px solid Highlight; }
             #jellyfin-canopy-panel .jc-theme-control[aria-invalid="true"], #jellyfin-canopy-panel .jc-theme-validation { border-color:CanvasText; color:CanvasText; text-decoration:underline wavy; }
             #jellyfin-canopy-panel .jc-theme-button:disabled { border:1px dashed GrayText; color:GrayText; }
@@ -863,6 +1074,9 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
     let status = configuration ? t('theme_studio_ready') : t('theme_studio_unavailable');
     let pendingImport: UserThemeConfiguration | null = null;
     let pendingImportChanges: string[] = [];
+    let pendingImportCollisions: string[] = [];
+    let pendingImportDiagnostics: string[] = [];
+    let importCollisionConfirmed = false;
     let pendingImportPreserveDormantSchedule: boolean | null = null;
     let deferredAcknowledgement: UserThemeConfiguration | null = null;
     let expertText = configuration ? JSON.stringify(configuration, null, 2) : '';
@@ -878,16 +1092,35 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
     let previewCardFrame = 0;
     let expertTimer = 0;
     let importGeneration = 0;
+    let galleryGeneration = 0;
+    let galleryPending = false;
     let importValidationController: AbortController | null = null;
     let runtimeGeneration = 0;
     let disposed = false;
     let autoCloseProtected = false;
     let schedulingAllowed = JC.pluginConfig?.ThemeStudioAllowSeasonalScheduling !== false;
+    let advancedCssConfiguration = JC.pluginConfig?.ThemeStudioAllowAdvancedCss === true
+        ? runtime?.getAdvancedCssConfiguration() ?? null
+        : null;
+    let committedAdvancedCss = advancedCssConfiguration
+        ? JSON.stringify(advancedCssConfiguration)
+        : null;
+    const advancedCssInvalidIds = new Set<string>();
+    let advancedCssLoading = JC.pluginConfig?.ThemeStudioAllowAdvancedCss === true
+        && advancedCssConfiguration === null;
+    let advancedCssSaving = false;
+    let advancedCssStatus = advancedCssLoading
+        ? t('theme_studio_css_loading')
+        : t('theme_studio_css_ready');
+    let advancedCssGeneration = 0;
     const previewEnvironmentCleanups: Array<() => void> = [];
 
     const clearPendingImport = (): void => {
         pendingImport = null;
         pendingImportChanges = [];
+        pendingImportCollisions = [];
+        pendingImportDiagnostics = [];
+        importCollisionConfirmed = false;
         pendingImportPreserveDormantSchedule = null;
     };
 
@@ -896,6 +1129,13 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         importValidationController?.abort();
         importValidationController = null;
         clearPendingImport();
+    };
+
+    const retireGalleryWork = (): boolean => {
+        const wasPending = galleryPending;
+        galleryGeneration += 1;
+        galleryPending = false;
+        return wasPending;
     };
 
     const invalidateImportForDraftChange = (): void => {
@@ -908,6 +1148,26 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
     const visibleStatus = (): string => recoveryRequired && recoveryStatus
         ? recoveryStatus
         : status;
+
+    const advancedCssDirty = (): boolean => Boolean(advancedCssConfiguration)
+        && JSON.stringify(advancedCssConfiguration) !== committedAdvancedCss;
+
+    const previewAdvancedCss = (): void => {
+        if (!advancedCssConfiguration || advancedCssInvalidIds.size > 0) {
+            JC.core.themeStudio?.cancelAdvancedCssPreview();
+            return;
+        }
+        JC.core.themeStudio?.previewAdvancedCss(advancedCssConfiguration);
+    };
+
+    const updateAdvancedCssValidity = (snippet: ThemeCssSnippet): void => {
+        if (validCssSnippetInput(snippet)) advancedCssInvalidIds.delete(snippet.Id);
+        else advancedCssInvalidIds.add(snippet.Id);
+        advancedCssStatus = advancedCssInvalidIds.size > 0
+            ? t('theme_studio_css_invalid')
+            : t('theme_studio_css_unsaved');
+        previewAdvancedCss();
+    };
 
     const clearRecovery = (): void => {
         recoveryRequired = false;
@@ -1027,7 +1287,10 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
             || profileNameInvalid
             || expertTimer !== 0
             || expertInvalid
-            || pendingImport !== null;
+            || pendingImport !== null
+            || advancedCssDirty()
+            || advancedCssInvalidIds.size > 0
+            || advancedCssSaving;
         if (protectedDraft === autoCloseProtected) return;
         autoCloseProtected = protectedDraft;
         ctx.setAutoCloseSuspended(protectedDraft);
@@ -1046,14 +1309,14 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         }
         const snapshot = state.snapshot();
         const active = snapshot.configuration.Profiles.find((profile) => profile.Id === snapshot.configuration.ActiveProfileId)!;
-        const busy = saving || loading;
+        const busy = saving || loading || galleryPending;
         const hasLocalDraft = snapshot.dirty || profileNameDirty();
         const activeProfileName = profileNameProfileId === active.Id ? profileNameText : active.Name;
         const activeProfileNameInvalid = profileNameProfileId === active.Id && profileNameInvalid;
         const surfaceSupported = presentationSurfaceSupported();
         root.innerHTML = `${editorStyles()}
             <button class="jc-theme-button jc-theme-return" type="button" data-action="return-editor">${escapeHtml(t('theme_studio_return_editor'))}</button>
-            <fieldset class="jc-theme-workspace"${busy ? ' disabled' : ''}>
+            <fieldset class="jc-theme-workspace" aria-busy="${galleryPending}"${busy ? ' disabled' : ''}>
             <p class="jc-theme-hint" id="jc-theme-modern-scope" role="note">${escapeHtml(t('theme_studio_modern_scope'))}</p>
             <div class="jc-theme-studio">
             <div class="jc-theme-toolbar">
@@ -1075,11 +1338,21 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
                             <textarea class="jc-theme-control jc-theme-expert" data-field="expert-json" spellcheck="false" aria-invalid="${expertInvalid}" aria-describedby="jc-theme-expert-hint${expertInvalid ? ' jc-theme-expert-error' : ''}"${expertInvalid ? ' aria-errormessage="jc-theme-expert-error"' : ''}>${escapeHtml(expertText)}</textarea>
                             ${expertInvalid ? `<span class="jc-theme-hint jc-theme-validation" id="jc-theme-expert-error" role="alert" aria-live="polite">${escapeHtml(t('theme_studio_invalid'))}</span>` : ''}
                         </label>`}
+                    ${galleryControls()}
                     <div class="jc-theme-row">
                         ${JC.pluginConfig?.ThemeStudioAllowProfileImport === true ? `<input hidden type="file" accept="application/json,.json" data-field="import-file"><button class="jc-theme-button" type="button" data-action="import">${escapeHtml(t('theme_studio_import'))}</button>` : ''}
                         <button class="jc-theme-button" type="button" data-action="export">${escapeHtml(t('theme_studio_export'))}</button>
                     </div>
-                    ${pendingImport ? `<div class="jc-theme-import-diff"><strong>${escapeHtml(t('theme_studio_import_review'))}</strong><ul>${pendingImportChanges.map((change) => `<li>${escapeHtml(change)}</li>`).join('')}</ul><div class="jc-theme-row"><button class="jc-theme-button primary" type="button" data-action="accept-import">${escapeHtml(t('theme_studio_import_accept'))}</button><button class="jc-theme-button" type="button" data-action="reject-import">${escapeHtml(t('theme_studio_import_reject'))}</button></div></div>` : ''}
+                    ${pendingImport ? `<div class="jc-theme-import-diff"><strong>${escapeHtml(t('theme_studio_import_review'))}</strong><ul>${pendingImportChanges.map((change) => `<li>${escapeHtml(change)}</li>`).join('')}</ul>${pendingImportCollisions.length > 0 ? `<div class="jc-theme-import-collision" role="alert"><strong>${escapeHtml(t('theme_studio_import_collision_title'))}</strong><p>${escapeHtml(t('theme_studio_import_collision_hint'))}</p><ul>${pendingImportCollisions.map((name) => `<li dir="auto">${escapeHtml(name)}</li>`).join('')}</ul><label class="jc-theme-check"><input type="checkbox" data-field="import-collision-confirm"${importCollisionConfirmed ? ' checked' : ''}><span>${escapeHtml(t('theme_studio_import_collision_confirm'))}</span></label></div>` : ''}<div class="jc-theme-row"><button class="jc-theme-button primary" type="button" data-action="accept-import"${pendingImportCollisions.length > 0 && !importCollisionConfirmed ? ' disabled' : ''}>${escapeHtml(t('theme_studio_import_accept'))}</button><button class="jc-theme-button" type="button" data-action="reject-import">${escapeHtml(t('theme_studio_import_reject'))}</button></div></div>` : ''}
+                    ${pendingImportDiagnostics.length > 0 ? `<div class="jc-theme-import-diff jc-theme-validation" role="alert"><strong>${escapeHtml(t('theme_studio_import_diagnostics'))}</strong><ul>${pendingImportDiagnostics.map((message) => `<li>${escapeHtml(message)}</li>`).join('')}</ul></div>` : ''}
+                    ${JC.pluginConfig?.ThemeStudioAllowAdvancedCss === true ? advancedCssControls(
+                        advancedCssConfiguration,
+                        advancedCssInvalidIds,
+                        advancedCssDirty(),
+                        advancedCssLoading,
+                        advancedCssSaving,
+                        advancedCssStatus,
+                    ) : ''}
                 </div>
                 ${previewCard(snapshot.configuration, active)}
             </div>
@@ -1092,11 +1365,17 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         restoreScroll(root, scrolled);
     };
 
-    const changed = (success: boolean, synchronizeExpert = true, successStatus?: string): void => {
+    const changed = (
+        success: boolean,
+        synchronizeExpert = true,
+        successStatus?: string,
+        retireGallery = true,
+    ): void => {
         if (!success) {
             render();
             return;
         }
+        if (retireGallery) retireGalleryWork();
         invalidateImportForDraftChange();
         syncProfileName(true);
         const snapshot = state!.snapshot();
@@ -1147,6 +1426,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         }
         const didChange = state.replace(valid);
         if (didChange) {
+            retireGalleryWork();
             invalidateImportForDraftChange();
             if (!preserveProfileName || activeProfileChanged) syncProfileName(true);
             const snapshot = state.snapshot();
@@ -1184,6 +1464,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         profileNameText = profile.Name;
         profileNameInvalid = false;
         if (renamed) {
+            retireGalleryWork();
             invalidateImportForDraftChange();
             expertText = JSON.stringify(state.snapshot().configuration, null, 2);
             if (state.snapshot().dirty) {
@@ -1197,6 +1478,41 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
             status = t(state.snapshot().dirty ? 'theme_studio_unsaved' : 'theme_studio_ready');
         }
         return true;
+    };
+
+    const hydrateAdvancedCss = async (force: boolean): Promise<void> => {
+        const generation = ++advancedCssGeneration;
+        const cssRuntime = JC.core.themeStudio;
+        if (JC.pluginConfig?.ThemeStudioAllowAdvancedCss !== true || !cssRuntime) {
+            advancedCssLoading = false;
+            advancedCssConfiguration = null;
+            committedAdvancedCss = null;
+            advancedCssInvalidIds.clear();
+            advancedCssStatus = t('theme_studio_css_unavailable');
+            if (!disposed) render();
+            return;
+        }
+        if (!force && advancedCssDirty()) return;
+        advancedCssLoading = true;
+        advancedCssStatus = t('theme_studio_css_loading');
+        render();
+        const ready = await cssRuntime.whenAdvancedCssReady();
+        if (disposed || generation !== advancedCssGeneration || JC.core.themeStudio !== cssRuntime
+            || !JC.identity.isCurrent(ctx.identityContext)) return;
+        const loaded = ready ? cssRuntime.getAdvancedCssConfiguration() : null;
+        advancedCssLoading = false;
+        if (!loaded) {
+            advancedCssConfiguration = null;
+            committedAdvancedCss = null;
+            advancedCssStatus = t('theme_studio_css_unavailable');
+            render();
+            return;
+        }
+        advancedCssConfiguration = loaded;
+        committedAdvancedCss = JSON.stringify(loaded);
+        advancedCssInvalidIds.clear();
+        advancedCssStatus = t('theme_studio_css_ready');
+        render();
     };
 
     const hydrate = async (force: boolean, reloaded = false): Promise<void> => {
@@ -1276,7 +1592,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
     };
 
     const reload = async (): Promise<void> => {
-        if (saving || loading) return;
+        if (saving || loading || galleryPending) return;
         // Reload is an explicit authoritative discard. Retire validation that
         // began against the discarded draft before yielding to the runtime.
         retireImportWork();
@@ -1313,7 +1629,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
     };
 
     const apply = async (): Promise<void> => {
-        if (!state || saving || recoveryRequired || !JC.saveUserSettings) return;
+        if (!state || saving || loading || galleryPending || recoveryRequired || !JC.saveUserSettings) return;
         if (!flushExpert(false)) {
             render();
             return;
@@ -1399,6 +1715,44 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         }
     };
 
+    const saveAdvancedCss = async (): Promise<void> => {
+        if (!advancedCssConfiguration || advancedCssSaving || !JC.saveUserSettings
+            || JC.pluginConfig?.ThemeStudioAllowAdvancedCss !== true) return;
+        const candidate = parseUserThemeCssConfiguration(advancedCssConfiguration);
+        if (!candidate) {
+            advancedCssStatus = t('theme_studio_css_invalid');
+            render();
+            return;
+        }
+        const cssRuntime = JC.core.themeStudio;
+        if (!cssRuntime) {
+            advancedCssStatus = t('theme_studio_css_unavailable');
+            render();
+            return;
+        }
+        advancedCssSaving = true;
+        advancedCssStatus = t('theme_studio_css_saving');
+        render();
+        try {
+            const payload = JC.identity.own(candidate, ctx.identityContext);
+            const acknowledgement = await JC.saveUserSettings('theme-css.json', payload);
+            const acknowledged = parseUserThemeCssConfiguration(acknowledgement.data);
+            if (!acknowledged || !JC.identity.isCurrent(ctx.identityContext)
+                || !JC.core.themeStudio?.adoptAdvancedCssAcknowledged(acknowledged)) {
+                throw Object.assign(new Error('Advanced CSS acknowledgement was invalid'), { kind: 'protocol' });
+            }
+            advancedCssConfiguration = JC.identity.own(acknowledged, ctx.identityContext);
+            committedAdvancedCss = JSON.stringify(acknowledged);
+            advancedCssInvalidIds.clear();
+            advancedCssStatus = t('theme_studio_css_saved');
+        } catch (error) {
+            advancedCssStatus = t(`theme_studio_error_${persistenceKind(error)}`);
+        } finally {
+            advancedCssSaving = false;
+            if (!disposed && JC.identity.isCurrent(ctx.identityContext)) render();
+        }
+    };
+
     const stageImport = async (file: File): Promise<void> => {
         // Choosing a new file retires any older validation or review before
         // asynchronous file/server work begins.
@@ -1410,7 +1764,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         }
         render();
         const preserveDormantSchedule = !schedulingAllowed;
-        if (saving || loading || file.size > MAXIMUM_IMPORT_FILE_BYTES
+        if (saving || loading || galleryPending || file.size > MAXIMUM_IMPORT_FILE_BYTES
             || JC.pluginConfig?.ThemeStudioAllowProfileImport !== true || !JC.core.api) {
             status = t('theme_studio_import_invalid');
             render();
@@ -1442,24 +1796,28 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         const validationController = new AbortController();
         importValidationController = validationController;
         try {
-            // Disabled scheduling makes imported schedule mutations invalid,
-            // including a user's own export of a dormant stored schedule.
-            // Validate only the portable profiles, then graft the unchanged
-            // authoritative schedule back below.
-            const validationDocument = preserveDormantSchedule
-                ? { ...(parsed as Record<string, unknown>), Schedule: [] }
-                : parsed;
-            const response = await JC.core.api.plugin(
-                `/user-settings/${encodeURIComponent(ctx.identityContext.userId)}/theme.json/validate`,
-                {
+            const validationApi = JC.core.api;
+            const validateDocument = (body: unknown): Promise<unknown> => validationApi.plugin(
+                `/user-settings/${encodeURIComponent(ctx.identityContext.userId)}/theme.json/validate`, {
                     method: 'POST',
-                    body: validationDocument,
+                    body,
                     signal: validationController.signal,
                     skipCache: true,
                     skipRetry: true,
                     timeoutMs: 10_000,
-                },
-            );
+                });
+            // Always diagnose the complete source first. A user's valid export
+            // can contain a dormant schedule that policy currently disallows;
+            // only that exact, sole diagnostic permits a second profiles-only
+            // validation before the unchanged authoritative schedule is grafted
+            // back during acceptance.
+            let response: unknown;
+            try {
+                response = await validateDocument(parsed);
+            } catch (error) {
+                if (!preserveDormantSchedule || !isOnlyScheduleDisabledImportError(error)) throw error;
+                response = await validateDocument({ ...(parsed as Record<string, unknown>), Schedule: [] });
+            }
             if (disposed || generation !== importGeneration || !state
                 || !JC.identity.isCurrent(ctx.identityContext)
                 || JC.pluginConfig?.ThemeStudioAllowProfileImport !== true) return;
@@ -1472,11 +1830,15 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
             if (!imported) throw new Error('Theme import validation response was invalid');
             pendingImport = imported;
             pendingImportChanges = importSummary(current, imported);
+            pendingImportCollisions = themeImportNameCollisions(current, imported);
+            importCollisionConfirmed = false;
             pendingImportPreserveDormantSchedule = preserveDormantSchedule;
             status = t('theme_studio_import_ready');
-        } catch {
+        } catch (error) {
             if (disposed || generation !== importGeneration || !JC.identity.isCurrent(ctx.identityContext)) return;
+            const diagnostics = importDiagnosticsFromError(error);
             clearPendingImport();
+            pendingImportDiagnostics = diagnostics;
             status = t('theme_studio_import_invalid');
         } finally {
             if (importValidationController === validationController) importValidationController = null;
@@ -1484,19 +1846,60 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         render();
     };
 
+    const applyGallery = async (id: string): Promise<void> => {
+        const entry = CURATED_THEME_GALLERY.find((candidate) => candidate.id === id);
+        if (!entry || !state || saving || loading || galleryPending) return;
+        const targetState = state;
+        const draftFingerprint = JSON.stringify(targetState.snapshot().configuration);
+        const generation = ++galleryGeneration;
+        galleryPending = true;
+        status = t('theme_studio_gallery_verifying');
+        render();
+        const verified = await verifyCuratedGalleryEntry(entry);
+        if (disposed || generation !== galleryGeneration || !JC.identity.isCurrent(ctx.identityContext)) return;
+        if (state !== targetState || saving || loading
+            || JSON.stringify(targetState.snapshot().configuration) !== draftFingerprint) {
+            galleryPending = false;
+            status = t(state?.snapshot().dirty || profileNameDirty()
+                ? 'theme_studio_unsaved'
+                : 'theme_studio_ready');
+            render();
+            return;
+        }
+        galleryPending = false;
+        if (!verified) {
+            status = t('theme_studio_gallery_invalid');
+            render();
+            return;
+        }
+        const applied = targetState.updateActiveProfile((profile) => applyCuratedGalleryEntry(profile, entry));
+        if (applied) changed(
+            true,
+            true,
+            t('theme_studio_gallery_applied', { name: entry.name }),
+            false,
+        );
+        else {
+            status = t('theme_studio_gallery_unchanged');
+            render();
+        }
+    };
+
     root.addEventListener('click', (event) => {
         ctx.resetAutoCloseTimer();
         const button = (event.target as HTMLElement).closest<HTMLElement>('[data-action]');
         if (!button) return;
         const action = button.dataset.action;
-        if ((saving || loading) && action !== 'return-editor') return;
+        if ((saving || loading || galleryPending) && action !== 'return-editor') return;
+        if ((advancedCssSaving || advancedCssLoading)
+            && ['add-css-snippet', 'delete-css-snippet', 'reset-css', 'save-css'].includes(action ?? '')) return;
         if (button.hasAttribute('disabled') || !state) {
             if (action === 'reload') void reload();
             return;
         }
         const mutatesDraft = ['undo', 'redo', 'preset', 'mode', 'rename-profile', 'add-profile',
             'delete-profile', 'reset-profile', 'accept-import', 'add-season', 'add-holiday',
-            'delete-schedule'].includes(action ?? '');
+            'delete-schedule', 'apply-gallery'].includes(action ?? '');
         if (mutatesDraft && !flushExpert(false)) {
             render();
             return;
@@ -1581,6 +1984,39 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
             render();
         } else if (action === 'apply') void apply();
         else if (action === 'reload') void reload();
+        else if (action === 'apply-gallery') void applyGallery(button.dataset.galleryId ?? '');
+        else if (action === 'add-css-snippet' && advancedCssConfiguration
+            && advancedCssConfiguration.Snippets.length < THEME_ADVANCED_CSS_MAX_SNIPPETS) {
+            const nextCount = advancedCssConfiguration.Snippets.length + 1;
+            advancedCssConfiguration.Snippets.push({
+                Id: nextCssSnippetId(advancedCssConfiguration),
+                Name: t('theme_studio_css_default_name', { count: nextCount }),
+                Target: 'root',
+                Enabled: true,
+                Declarations: '--jc-theme-custom-accent:#8f76ff;',
+            });
+            advancedCssStatus = t('theme_studio_css_unsaved');
+            previewAdvancedCss();
+            render();
+        } else if (action === 'delete-css-snippet' && advancedCssConfiguration) {
+            const snippetId = button.dataset.snippetId;
+            if (!snippetId) return;
+            advancedCssConfiguration.Snippets = advancedCssConfiguration.Snippets
+                .filter((snippet) => snippet.Id !== snippetId);
+            advancedCssInvalidIds.delete(snippetId);
+            advancedCssStatus = t('theme_studio_css_unsaved');
+            previewAdvancedCss();
+            render();
+        } else if (action === 'reset-css' && advancedCssConfiguration) {
+            const revision = advancedCssConfiguration.Revision;
+            advancedCssConfiguration = { ...emptyThemeCssConfiguration(), Revision: revision };
+            advancedCssInvalidIds.clear();
+            advancedCssStatus = t('theme_studio_css_unsaved');
+            previewAdvancedCss();
+            render();
+        } else if (action === 'save-css') {
+            void saveAdvancedCss();
+        }
         else if (action === 'preview-only') {
             ctx.help.classList.add('jc-theme-preview-only');
             document.getElementById('jellyfin-canopy-panel-backdrop')?.classList.add('jc-theme-preview-backdrop-hidden');
@@ -1597,6 +2033,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
             returnTarget?.focus();
         }
         else if (action === 'accept-import' && pendingImport
+            && (pendingImportCollisions.length === 0 || importCollisionConfirmed)
             && JC.pluginConfig?.ThemeStudioAllowProfileImport === true) {
             const imported = pendingImportPreserveDormantSchedule === true
                 ? configurationWithDormantSchedule(pendingImport, state.snapshot().configuration)
@@ -1645,7 +2082,9 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
     root.addEventListener('input', (event) => {
         ctx.resetAutoCloseTimer();
         const target = event.target as HTMLInputElement | HTMLTextAreaElement;
-        if (!state || saving || loading) return;
+        if (!state || saving || loading || galleryPending) return;
+        if ((advancedCssSaving || advancedCssLoading)
+            && target.dataset.field?.startsWith('advanced-css-')) return;
         if (target.dataset.role === 'profile-name') {
             invalidateImportForDraftChange();
             root.querySelector<HTMLElement>('.jc-theme-import-diff')?.remove();
@@ -1665,7 +2104,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
             if (statusElement) statusElement.textContent = `${hasLocalDraft ? '● ' : ''}${visibleStatus()}`;
             const applyButton = root.querySelector<HTMLButtonElement>('[data-action="apply"]');
             if (applyButton) {
-                applyButton.disabled = !hasLocalDraft || saving || loading
+                applyButton.disabled = !hasLocalDraft || saving || loading || galleryPending
                     || expertInvalid || profileNameInvalid || recoveryRequired;
             }
             syncAutoCloseProtection();
@@ -1692,13 +2131,24 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
                 if (!disposed && JC.identity.isCurrent(ctx.identityContext)) flushExpert(true);
             }, 250);
             syncAutoCloseProtection();
+        } else if ((target.dataset.field === 'advanced-css-name'
+            || target.dataset.field === 'advanced-css-declarations') && advancedCssConfiguration) {
+            const snippet = advancedCssConfiguration.Snippets
+                .find((candidate) => candidate.Id === target.dataset.snippetId);
+            if (!snippet) return;
+            if (target.dataset.field === 'advanced-css-name') snippet.Name = target.value;
+            else snippet.Declarations = target.value;
+            updateAdvancedCssValidity(snippet);
+            render();
         }
     });
 
     root.addEventListener('change', (event) => {
         ctx.resetAutoCloseTimer();
         const target = event.target as HTMLInputElement | HTMLSelectElement;
-        if (!state || saving || loading) return;
+        if (!state || saving || loading || galleryPending) return;
+        if ((advancedCssSaving || advancedCssLoading)
+            && target.dataset.field?.startsWith('advanced-css-')) return;
         const value = target.value;
         const mutatesDraft = ['profile', 'palette', 'accent', 'motion', 'contrast', 'transparency',
             'underline-links', 'presentation-token', 'effects-token', 'schedule-time-zone',
@@ -1711,7 +2161,31 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
             render();
             return;
         }
-        if (target.dataset.field === 'profile') changed(state.switchProfile(value));
+        if (target.dataset.field === 'import-collision-confirm' && target instanceof HTMLInputElement) {
+            importCollisionConfirmed = target.checked;
+            render();
+        } else if (target.dataset.field === 'advanced-css-enabled' && target instanceof HTMLInputElement
+            && advancedCssConfiguration) {
+            advancedCssConfiguration.Enabled = target.checked;
+            advancedCssStatus = t('theme_studio_css_unsaved');
+            previewAdvancedCss();
+            render();
+        } else if (target.dataset.field === 'advanced-css-snippet-enabled'
+            && target instanceof HTMLInputElement && advancedCssConfiguration) {
+            const snippet = advancedCssConfiguration.Snippets
+                .find((candidate) => candidate.Id === target.dataset.snippetId);
+            if (!snippet) return;
+            snippet.Enabled = target.checked;
+            updateAdvancedCssValidity(snippet);
+            render();
+        } else if (target.dataset.field === 'advanced-css-target' && advancedCssConfiguration) {
+            const snippet = advancedCssConfiguration.Snippets
+                .find((candidate) => candidate.Id === target.dataset.snippetId);
+            if (!snippet || !['root', 'shell', 'cards', 'details', 'dialogs', 'player'].includes(value)) return;
+            snippet.Target = value as ThemeCssTarget;
+            updateAdvancedCssValidity(snippet);
+            render();
+        } else if (target.dataset.field === 'profile') changed(state.switchProfile(value));
         else if (target.dataset.field === 'palette') changed(state.updateActiveProfile((profile) => { profile.Palette = value; }));
         else if (target.dataset.field === 'accent') changed(state.updateActiveProfile((profile) => { profile.Accent = value; }));
         else if (target.dataset.field === 'motion') changed(state.updateActiveProfile((profile) => { profile.Accessibility.Motion = value as ThemeProfile['Accessibility']['Motion']; }));
@@ -1794,7 +2268,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         ctx.resetAutoCloseTimer();
         const target = event.target as HTMLElement;
         if ((!event.ctrlKey && !event.metaKey) || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)
-            || !state || saving || loading) return;
+            || !state || saving || loading || galleryPending) return;
         if (!flushExpert(false)) {
             render();
             return;
@@ -1813,6 +2287,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
     });
 
     const onRuntimeChanged = (event: Event): void => {
+        retireGalleryWork();
         const reason = (event as CustomEvent<{ reason?: string }>).detail?.reason;
         const nextRuntime = JC.core.themeStudio;
         if (deferredAcknowledgement && nextRuntime) {
@@ -1831,8 +2306,15 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         // replacement editor does not, so it still consumes the same event.
         if ((reason === 'reloaded' && loading) || (reason === 'acknowledged' && saving)) return;
         void hydrate(false);
+        void hydrateAdvancedCss(false);
     };
     const onConfigChanged = (): void => {
+        const discardedGallery = retireGalleryWork();
+        if (discardedGallery && !saving && !loading) {
+            status = t(state?.snapshot().dirty || profileNameDirty()
+                ? 'theme_studio_unsaved'
+                : 'theme_studio_ready');
+        }
         const nextSchedulingAllowed = JC.pluginConfig?.ThemeStudioAllowSeasonalScheduling !== false;
         const importPolicyChanged = nextSchedulingAllowed !== schedulingAllowed
             || JC.pluginConfig?.ThemeStudioAllowProfileImport !== true;
@@ -1850,6 +2332,17 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
             }
         }
         schedulingAllowed = nextSchedulingAllowed;
+        if (JC.pluginConfig?.ThemeStudioAllowAdvancedCss !== true) {
+            advancedCssGeneration += 1;
+            JC.core.themeStudio?.cancelAdvancedCssPreview();
+            advancedCssConfiguration = null;
+            committedAdvancedCss = null;
+            advancedCssInvalidIds.clear();
+            advancedCssLoading = false;
+            advancedCssStatus = t('theme_studio_css_unavailable');
+        } else if (!advancedCssConfiguration) {
+            void hydrateAdvancedCss(true);
+        }
         render();
         if (!state || JC.core.themeStudio !== runtime) void hydrate(false);
     };
@@ -1860,6 +2353,8 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         if (disposed) return;
         disposed = true;
         runtimeGeneration += 1;
+        advancedCssGeneration += 1;
+        retireGalleryWork();
         retireImportWork();
         cancelPreviewFrame();
         cancelPreviewCardFrame();
@@ -1882,7 +2377,11 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         document.getElementById('jellyfin-canopy-panel-backdrop')?.classList.remove('jc-theme-preview-backdrop-hidden');
         runtime?.cancelPreview();
         if (JC.core.themeStudio !== runtime) JC.core.themeStudio?.cancelPreview();
+        runtime?.cancelAdvancedCssPreview();
+        if (JC.core.themeStudio !== runtime) JC.core.themeStudio?.cancelAdvancedCssPreview();
         state = null;
+        advancedCssConfiguration = null;
+        committedAdvancedCss = null;
         deferredAcknowledgement = null;
     });
     render();
@@ -1892,4 +2391,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
     // local work the user stages in the meantime.
     const initialLoadPending = runtime?.hasPendingAuthoritativeLoad() === true;
     if (!configuration || initialLoadPending) void hydrate(!configuration);
+    if (JC.pluginConfig?.ThemeStudioAllowAdvancedCss === true) {
+        void hydrateAdvancedCss(!advancedCssConfiguration);
+    }
 }

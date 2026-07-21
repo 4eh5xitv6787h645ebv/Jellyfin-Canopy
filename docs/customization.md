@@ -60,11 +60,11 @@ Open **Dashboard → Plugins → Jellyfin Canopy → Extras → Theme Studio**, 
 | **Default preset for new users** | Canopy | Seeds the first profile; changing it later does not overwrite existing users. |
 | **Default palette for new users** | Canopy Night | Seeds the first profile's palette. |
 | **Apply curated Theme Studio tokens to the administrator dashboard** | Off | Opts the dashboard into safe typed colors. Presentation modules and raw CSS remain excluded, preserving a recovery surface. |
-| **Allow users to validate and import typed theme profiles** | On | Shows JSON import. Imports are validated and reviewed as a diff before they can be applied. |
+| **Allow users to validate and import typed theme profiles** | On | Shows JSON import. Imports are validated, diagnosed, and reviewed as a bounded diff; profile-name collisions require explicit confirmation. |
 | **Allow local media-derived dynamic color** | On | Lets profiles derive an accent from one same-server poster or backdrop. |
 | **Allow per-user seasonal schedules** | On | Lets users create season and holiday date ranges. |
 | **Maximum Theme Studio effects tier** | Full | Caps every user's material, blur, shadow/glow, image treatment, and motion cost at Full, Balanced, or Minimal. |
-| **Allow the separately gated advanced CSS module** | Off | Reserves the independent advanced-CSS policy; typed Theme Studio profiles never contain CSS. |
+| **Allow the separately gated advanced CSS module** | Off | Enables a separate, local-only declaration editor for advanced users. Typed profiles and gallery entries never contain CSS. |
 
 When Theme Studio is enabled, it owns the theme experience and the older **Theme Selector (Jellyfish)** picker stays inactive. Existing Jellyfish selections can be staged through Theme Studio's migration path without importing third-party CSS or a remote URL.
 
@@ -85,6 +85,30 @@ Profiles can select solid, translucent, or glass surfaces; none, dim, gradient, 
 | **Minimal** | Uses solid surfaces, no blur/glow/shadow or backdrop treatment, motion off, and dynamic color off. |
 
 Your selection can never exceed the administrator's maximum. A browser can reduce it further: a low-end modern phone uses Minimal; unsupported backdrop filtering removes glass blur; reduced transparency forces solid surfaces; reduced motion disables motion; and high contrast or forced colors use the minimal visual-cost path. Coarse/no-hover input also keeps card actions visible instead of hiding them behind hover.
+
+### Share profiles and use the curated gallery
+
+**Export JSON** creates a portable typed Theme Studio document. It contains profiles, supported typed overrides, accessibility choices, and optional schedules. It does **not** contain the Jellyfin user or server identity, revision evidence, migration state, provider configuration, API keys, media identifiers, dynamic-color samples, or advanced declarations. Schema 2 is the current format; Canopy can stage its explicitly supported older schema migrations, while a future or unknown schema is rejected.
+
+**Import JSON** never saves immediately. Canopy validates the entire file on the authenticated server, rejects unknown fields, credentials, HTML, scripts, remote URLs, unsupported schemas, and unsupported token values, then shows a bounded change report. A profile name that collides with another identifier needs a separate confirmation. Choose **Keep current draft** or **Cancel preview** for an instant rollback; choose **Apply** only after reviewing the staged result. A concurrent server edit causes a revision conflict instead of silently replacing either copy.
+
+The curated gallery is bundled into the plugin and works without internet access. Every entry uses allowlisted preset, palette, accent, and mode identifiers, includes a local SHA-256 checksum, and names the source projects and licences behind its visual direction. Canopy verifies that checksum before changing the draft. Gallery entries contain no executable code, remote asset, or third-party stylesheet.
+
+![Theme Studio sharing and curated gallery on a modern desktop](images/theme-studio-sharing-desktop.png)
+
+The desktop capture is produced by the authenticated Jellyfin 12 acceptance test after a bundled gallery entry passes its integrity check. The same test verifies the declaration recovery gate, separate persistence, 1920 × 1080 wide reflow, and stock/no-op behavior outside the supported layouts.
+
+![Theme Studio sharing and curated gallery on a modern phone](images/theme-studio-sharing-phone.png)
+
+The phone capture uses the same editor at 390 × 844. The test also covers 844 × 390 phone landscape, a single-column gallery, 44 CSS-pixel controls, bounded diagnostics, collision confirmation, and zero horizontal overflow.
+
+### Advanced local declarations
+
+Administrators can optionally enable **Advanced CSS** for users who understand the recovery risk. This is not a general stylesheet box: each snippet has an owned target such as theme variables, cards, details, dialogs, or player controls, and accepts a bounded declaration list only. Selectors, braces, `@import`, scripts, HTML, URLs, data/blob/file resources, font imports, and remote assets are rejected. Canopy owns the selector and applies it only to modern phone and modern desktop/wide content while standard contrast is active. Sign-in, the administrator Dashboard, tablet-only, legacy, TV, forced-colors, and High Contrast surfaces remain untouched.
+
+Advanced declarations live in the separate per-user `theme-css.json` file and are never mixed into a preset, gallery entry, normal profile import, or profile export. They remain local to this Jellyfin server. Disabling the administrator policy removes their style layer without modifying the typed profile. If a declaration makes a content page hard to use, open the Dashboard recovery surface, disable the policy, or use **Reset local declarations**; Jellyfin's selected stock theme remains available on excluded layouts.
+
+Third-party CSS cannot be imported as a Theme Studio profile. Review its licence and privacy behavior yourself, then translate only the specific local declarations you need into the advanced editor. A remote stylesheet, tracking URL, script, selector, or credential is never a supported Theme Studio sharing format.
 
 ### Accessibility, high contrast, and RTL
 

@@ -21,12 +21,12 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 20802,
-        "totalLines": 29238
+        "coveredLines": 21093,
+        "totalLines": 29523
       },
       "tolerance": {
         "missingCoveredLines": 4,
-        "rationale": "Theme Studio discovery and integration surfaces in issue #395. Two clean local .NET 10.0.9/Coverlet runs on 2026-07-21 each passed all 1835 tests over the identical complete 29238-line assembly scope and measured 20798 and 20802 covered lines. Relative to the prior 20777/29213 baseline, the legitimate 25-line scope increase adds authenticated Seerr/ARR/Bazarr capability projection and registers three same-origin embedded integration stylesheets; the new floor advances covered lines by 21 and improves required total assembly coverage from 71.109% to 71.134%. The existing four-line low-side tolerance exactly covers the reproduced instrumentation variance and remains far below the policy maximum; coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, and broad-tolerance negative boundaries."
+        "rationale": "Theme Studio safe sharing, curated gallery, and advanced declaration foundations in issue #396. Two clean local .NET 10.0.9/Coverlet runs on 2026-07-21 each measured 21093/29523 lines (71.446%) after passing all 1862 tests; two subsequent final runs over the identical production scope each passed the expanded 1866-test suite and measured 21092/29523 (71.443%). The reviewed baseline retains the higher repeated measurement so that coverage cannot regress. Relative to the prior 21032/29463 baseline, the legitimate 60-line scope increase narrows remote-resource and executable-event recognition to real token boundaries and the complete reviewed browser event-handler set so schema-valid exported names round-trip without weakening unsafe import rejection; focused controller theories cover every newly instrumented production line and the current standardized handler additions. The unchanged four-line low-side tolerance covers the observed one-line instrumentation variance without widening it, while the required floor improves from 71.371% to 71.432%; coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, and broad-tolerance negative boundaries."
       }
     }
   }

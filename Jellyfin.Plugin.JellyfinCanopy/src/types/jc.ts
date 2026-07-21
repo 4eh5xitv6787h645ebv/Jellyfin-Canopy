@@ -111,6 +111,24 @@ export interface ThemeExportDocument {
     Schedule: ThemeScheduleEntry[];
 }
 
+export type ThemeCssTarget = 'root' | 'shell' | 'cards' | 'details' | 'dialogs' | 'player';
+
+export interface ThemeCssSnippet {
+    Id: string;
+    Name: string;
+    Target: ThemeCssTarget;
+    Enabled: boolean;
+    Declarations: string;
+}
+
+/** Local-only advanced declarations; never embedded in a shareable profile. */
+export interface UserThemeCssConfiguration {
+    Revision: number;
+    SchemaVersion: 1;
+    Enabled: boolean;
+    Snippets: ThemeCssSnippet[];
+}
+
 export interface ThemeLegacyJellyfishSelection {
     Theme: string;
 }
@@ -142,6 +160,13 @@ export interface ThemeStudioRuntimeApi {
     reload(): Promise<boolean>;
     /** Publishes a validated document only after its write was acknowledged. */
     adoptAcknowledged(configuration: unknown): boolean;
+    /** Separately gated local CSS state; never part of theme.json exports. */
+    getAdvancedCssConfiguration(): UserThemeCssConfiguration | null;
+    whenAdvancedCssReady(): Promise<boolean>;
+    reloadAdvancedCss(): Promise<boolean>;
+    previewAdvancedCss(configuration: unknown): boolean;
+    cancelAdvancedCssPreview(): void;
+    adoptAdvancedCssAcknowledged(configuration: unknown): boolean;
     refresh(): void;
     getDiagnostics(): ThemeStudioDiagnostics;
 }
