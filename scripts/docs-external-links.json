@@ -201,6 +201,14 @@
       "reason": "Project 8 research, planning, or pinned baseline reference."
     },
     {
+      "url": "https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/405",
+      "reason": "Project 8 completion-audit follow-up reference."
+    },
+    {
+      "url": "https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/448",
+      "reason": "Project 8 completion-audit follow-up reference."
+    },
+    {
       "url": "https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/new",
       "reason": "Canonical Jellyfin Canopy project link."
     },
@@ -849,6 +857,190 @@
     {
       "url": "https://www.w3.org/WAI/WCAG22/Understanding/use-of-color.html",
       "reason": "Official W3C WCAG guidance supporting Theme Studio non-color state cues."
+    },
+    {
+      "url": "https://github.com/ackbarr/jellyfin_themes",
+      "reason": "Theme Studio ecosystem source reviewed in the 2026-07-21 completion-audit search rerank."
+    },
+    {
+      "url": "https://github.com/adamperkowski/jellyfin",
+      "reason": "Theme Studio ecosystem source reviewed in the 2026-07-21 completion-audit search rerank."
+    },
+    {
+      "url": "https://github.com/adrientualTH/jellyfin-skins",
+      "reason": "Theme Studio ecosystem source reviewed in the 2026-07-21 completion-audit search rerank."
+    },
+    {
+      "url": "https://github.com/AJaxx86/jellyfin_themes",
+      "reason": "Theme Studio ecosystem source reviewed in the 2026-07-21 completion-audit search rerank."
+    },
+    {
+      "url": "https://github.com/AttractiveToad/jellyfin-plugin-themesongs",
+      "reason": "Theme Studio ecosystem source reviewed in the 2026-07-21 completion-audit search rerank."
+    },
+    {
+      "url": "https://github.com/Cattosan/jellyfintheme1",
+      "reason": "Theme Studio ecosystem source reviewed in the 2026-07-21 completion-audit search rerank."
+    },
+    {
+      "url": "https://github.com/cloudd901/Jellyfin_Themes",
+      "reason": "Theme Studio ecosystem source reviewed in the 2026-07-21 completion-audit search rerank."
+    },
+    {
+      "url": "https://github.com/danieladov/jellyfin-plugin-themesongs",
+      "reason": "Theme Studio ecosystem source reviewed in the 2026-07-21 completion-audit search rerank."
+    },
+    {
+      "url": "https://github.com/Deanosim/awesome-jellyfin",
+      "reason": "Theme Studio ecosystem source reviewed in the 2026-07-21 completion-audit search rerank."
+    },
+    {
+      "url": "https://github.com/EusthEnoptEron/jellyfin-plugin-animethemes",
+      "reason": "Theme Studio ecosystem source reviewed in the 2026-07-21 completion-audit search rerank."
+    },
+    {
+      "url": "https://github.com/everviolet/jellyfin-tui",
+      "reason": "Theme Studio ecosystem source reviewed in the 2026-07-21 completion-audit search rerank."
+    },
+    {
+      "url": "https://github.com/iamngoni/jellyfin-next",
+      "reason": "Theme Studio ecosystem source reviewed in the 2026-07-21 completion-audit search rerank."
+    },
+    {
+      "url": "https://github.com/isabelroses/jellyfin",
+      "reason": "Theme Studio ecosystem source reviewed in the 2026-07-21 completion-audit search rerank."
+    },
+    {
+      "url": "https://github.com/jaysalw/mechanix-jellyfin-themes",
+      "reason": "Theme Studio ecosystem source reviewed in the 2026-07-21 completion-audit search rerank."
+    },
+    {
+      "url": "https://github.com/jaysolanki02/jellyfin-themes",
+      "reason": "Theme Studio ecosystem source reviewed in the 2026-07-21 completion-audit search rerank."
+    },
+    {
+      "url": "https://github.com/jmurra21/-jellyfin_themes",
+      "reason": "Theme Studio ecosystem source reviewed in the 2026-07-21 completion-audit search rerank."
+    },
+    {
+      "url": "https://github.com/julienfgsf/jellyfin",
+      "reason": "Theme Studio ecosystem source reviewed in the 2026-07-21 completion-audit search rerank."
+    },
+    {
+      "url": "https://github.com/KingCharlesVI/jellyfin-themes",
+      "reason": "Theme Studio ecosystem source reviewed in the 2026-07-21 completion-audit search rerank."
+    },
+    {
+      "url": "https://github.com/kirtan3d/Jellyfin.Plugin.AssignThemeSong",
+      "reason": "Theme Studio ecosystem source reviewed in the 2026-07-21 completion-audit search rerank."
+    },
+    {
+      "url": "https://github.com/kumarvivek1752/ThemeClipper",
+      "reason": "Theme Studio ecosystem source reviewed in the 2026-07-21 completion-audit search rerank."
+    },
+    {
+      "url": "https://github.com/LAN-Nyan/JellyFin-Themes",
+      "reason": "Theme Studio ecosystem source reviewed in the 2026-07-21 completion-audit search rerank."
+    },
+    {
+      "url": "https://github.com/LizardByte/Themerr-jellyfin",
+      "reason": "Theme Studio ecosystem source reviewed in the 2026-07-21 completion-audit search rerank."
+    },
+    {
+      "url": "https://github.com/Lydialan7/jellyfin-themes",
+      "reason": "Theme Studio ecosystem source reviewed in the 2026-07-21 completion-audit search rerank."
+    },
+    {
+      "url": "https://github.com/mudrhiod/JellyfinThemes",
+      "reason": "Theme Studio ecosystem source reviewed in the 2026-07-21 completion-audit search rerank."
+    },
+    {
+      "url": "https://github.com/ndom91/jellyfin-theme",
+      "reason": "Theme Studio ecosystem source reviewed in the 2026-07-21 completion-audit search rerank."
+    },
+    {
+      "url": "https://github.com/nessli420/jellify",
+      "reason": "Theme Studio ecosystem source reviewed in the 2026-07-21 completion-audit search rerank."
+    },
+    {
+      "url": "https://github.com/nossienl/jellyfin-themes",
+      "reason": "Theme Studio ecosystem source reviewed in the 2026-07-21 completion-audit search rerank."
+    },
+    {
+      "url": "https://github.com/pokwir/jellyfin-themes",
+      "reason": "Theme Studio ecosystem source reviewed in the 2026-07-21 completion-audit search rerank."
+    },
+    {
+      "url": "https://github.com/Pukabyte/trailerfin",
+      "reason": "Theme Studio ecosystem source reviewed in the 2026-07-21 completion-audit search rerank."
+    },
+    {
+      "url": "https://github.com/Purfview/IMDb-Scout-Mod",
+      "reason": "Theme Studio ecosystem source reviewed in the 2026-07-21 completion-audit search rerank."
+    },
+    {
+      "url": "https://github.com/radityaharya/custom-tweaks",
+      "reason": "Theme Studio ecosystem source reviewed in the 2026-07-21 completion-audit search rerank."
+    },
+    {
+      "url": "https://github.com/rahul7710/Jellyfin-Theme",
+      "reason": "Theme Studio ecosystem source reviewed in the 2026-07-21 completion-audit search rerank."
+    },
+    {
+      "url": "https://github.com/RandyCat0/themes",
+      "reason": "Theme Studio ecosystem source reviewed in the 2026-07-21 completion-audit search rerank."
+    },
+    {
+      "url": "https://github.com/reidcatch8/JellyfinThemes",
+      "reason": "Theme Studio ecosystem source reviewed in the 2026-07-21 completion-audit search rerank."
+    },
+    {
+      "url": "https://github.com/rugerdutton/duttfin",
+      "reason": "Theme Studio ecosystem source reviewed in the 2026-07-21 completion-audit search rerank."
+    },
+    {
+      "url": "https://github.com/SalGnt/jellyfin-plugin-themesongs",
+      "reason": "Theme Studio ecosystem source reviewed in the 2026-07-21 completion-audit search rerank."
+    },
+    {
+      "url": "https://github.com/sheerdagy/zoomy",
+      "reason": "Theme Studio ecosystem source reviewed in the 2026-07-21 completion-audit search rerank."
+    },
+    {
+      "url": "https://github.com/siniradam/jellyfin-themes",
+      "reason": "Theme Studio ecosystem source reviewed in the 2026-07-21 completion-audit search rerank."
+    },
+    {
+      "url": "https://github.com/skaffa/jellyfin-themes",
+      "reason": "Theme Studio ecosystem source reviewed in the 2026-07-21 completion-audit search rerank."
+    },
+    {
+      "url": "https://github.com/t874ntzjr8-stack/CrossRoad",
+      "reason": "Theme Studio ecosystem source reviewed in the 2026-07-21 completion-audit search rerank."
+    },
+    {
+      "url": "https://github.com/Tal0na/Awesome-SelfHosted-Music-Awesome",
+      "reason": "Theme Studio ecosystem source reviewed in the 2026-07-21 completion-audit search rerank."
+    },
+    {
+      "url": "https://github.com/tayfurevsen/jellyfin-themes",
+      "reason": "Theme Studio ecosystem source reviewed in the 2026-07-21 completion-audit search rerank."
+    },
+    {
+      "url": "https://github.com/topa-LE/jellyfin-blue-dark-themes",
+      "reason": "Theme Studio ecosystem source reviewed in the 2026-07-21 completion-audit search rerank."
+    },
+    {
+      "url": "https://github.com/Unending/Spectra",
+      "reason": "Theme Studio ecosystem source reviewed in the 2026-07-21 completion-audit search rerank."
+    },
+    {
+      "url": "https://github.com/vixer1984/My-Jellyfin-Themes",
+      "reason": "Theme Studio ecosystem source reviewed in the 2026-07-21 completion-audit search rerank."
+    },
+    {
+      "url": "https://github.com/Wenneker/jellyfin_themes",
+      "reason": "Theme Studio ecosystem source reviewed in the 2026-07-21 completion-audit search rerank."
     }
   ]
 }

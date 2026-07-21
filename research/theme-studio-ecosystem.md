@@ -200,25 +200,105 @@ Search-result pages are intentionally recorded for repeatability where a small
 repository can be renamed or removed. A future inventory refresh must repeat the
 same queries and append additions rather than silently rewriting the snapshot.
 
+### 2026-07-21 completion-audit search rerank
+
+The final #382 audit repeated the documented broad `jellyfin themes` GitHub
+repository search after the initial refresh. Search ranking had changed: 45 of
+the current top 100 roots were not individually linked above. All 45 are frozen
+and classified below. The archived Isabel Roses theme points to one maintained
+successor that was outside the 100-result window, so this audit adds 46 reviewed
+repository roots in total. Repository state, license metadata and push dates are
+the values GitHub reported during the audit.
+
+Real visual candidates were inspected through repository metadata plus README,
+tree and CSS text only. No third-party code, installer, build system, webhook or
+theme import was executed. An unresolved license remains research-only.
+
+#### Visual themes, partial themes and visual-adjacent repositories
+
+| Repository | Status/license at audit | Evidence, contribution and disposition |
+|---|---|---|
+| [isabelroses/jellyfin](https://github.com/isabelroses/jellyfin) | Archived; MIT; pushed 2025-03-02 | Four Catppuccin flavor files and screenshots, with no distinct phone claim; the README redirects to the maintained successor below. Flavor/accent separation was already adopted. |
+| [adamperkowski/jellyfin](https://github.com/adamperkowski/jellyfin) | Not archived; MIT; pushed 2026-06-19 | Maintained Catppuccin flavor and accent implementation linked by the archived repository. It reinforces palette-as-data and independent accent selection; Canopy already ships that outcome without copying CSS. |
+| [radityaharya/custom-tweaks](https://github.com/radityaharya/custom-tweaks) | Not archived; Unresolved; pushed 2024-08-28 | Unmaintained Ultrachromic-derived CSS plus a remote script. The secondary-screen queue declutter and mobile exception are useful density evidence, but hiding operational controls and webroot/remote-script injection are rejected; hero, status, queue and responsive density outcomes already exist in typed Canopy surfaces. |
+| [RandyCat0/themes](https://github.com/RandyCat0/themes) | Not archived; Unresolved; pushed 2026-03-13 | Empty repository at audit time. It provides no source, screenshot, responsive evidence or reusable idea, but remains recorded so a later refresh can detect content. |
+| [mudrhiod/JellyfinThemes](https://github.com/mudrhiod/JellyfinThemes) | Not archived; Unresolved; pushed 2025-11-29 | Mirror containing only a remote Eyecandy stylesheet import, with no local CSS or responsive evidence. Runtime remote imports and unresolved-source reuse remain rejected. |
+| [reidcatch8/JellyfinThemes](https://github.com/reidcatch8/JellyfinThemes) | Not archived; GPL-3.0; pushed 2026-04-19 | Liquid-glass variables, shine, hairline borders, blur/saturation and a bundled finimalism variant. No phone evidence was documented; glass/material, border, elevation and bounded motion tokens already cover the contribution, while remote fonts are rejected. |
+| [jmurra21/-jellyfin_themes](https://github.com/jmurra21/-jellyfin_themes) | Not archived; Unresolved; pushed 2025-04-18 | Accent-channel variables, glass/static-drawer rules, explicit `.layout-mobile` branches and an OLED add-on, mixed with generic/non-Jellyfin experiments. Canopy already separates palette, accent, navigation, material and OLED roles and tests real phone layouts. |
+| [siniradam/jellyfin-themes](https://github.com/siniradam/jellyfin-themes) | Not archived; Unresolved; pushed 2025-12-13 | Modular Comfort theme optimized for reachable mobile rewind/play/forward controls; its README also records iOS failure with recursive imports. Canopy's single local bundle, phone-landscape OSD, 44-pixel targets and composable modules already adopt both lessons. |
+| [tayfurevsen/jellyfin-themes](https://github.com/tayfurevsen/jellyfin-themes) | Not archived; Unresolved; pushed 2025-09-13 | Small Zoomy variant with translucent headers, blurred backdrops and wide-detail sizing; no modern-phone evidence. Existing material, image-treatment and responsive details modules cover it. |
+| [nossienl/jellyfin-themes](https://github.com/nossienl/jellyfin-themes) | Not archived; Unresolved; pushed 2026-01-12 | Two Netflix-style files emphasizing dense rows, dark hierarchy, larger hover cards and hidden subtitles, but with fixed card widths and no phone evidence. Cinematic/density/hover outcomes are genericized; brand mimicry, hidden information and fixed dimensions are rejected. |
+| [jaysolanki02/jellyfin-themes](https://github.com/jaysolanki02/jellyfin-themes) | Not archived; Unresolved; pushed 2025-11-27 | Minimal login reset and a max-width overflow guard, without broader surface or screenshot evidence. Login ownership and horizontal-overflow assertions already cover the useful boundary. |
+| [ackbarr/jellyfin_themes](https://github.com/ackbarr/jellyfin_themes) | Not archived; CC0-1.0; pushed 2025-09-14 | Library-cover image pack rather than a CSS theme. It reinforces locally owned asset/provenance requirements but adds no presentation module. |
+| [pokwir/jellyfin-themes](https://github.com/pokwir/jellyfin-themes) | Not archived; Unresolved; pushed 2025-04-24 | A single remote Unsplash page background with no responsive evidence. User-selectable local/background-derived imagery is covered; runtime third-party image dependence is rejected. |
+| [skaffa/jellyfin-themes](https://github.com/skaffa/jellyfin-themes) | Not archived; Unresolved; pushed 2025-01-31 | Login-only stylesheet and screenshot. It reinforces the login surface row but adds no token or layout requirement. |
+| [Lydialan7/jellyfin-themes](https://github.com/Lydialan7/jellyfin-themes) | Not archived; Unresolved; pushed 2026-04-26 | Empty repository at audit time; no theme or responsive evidence was available. |
+| [cloudd901/Jellyfin_Themes](https://github.com/cloudd901/Jellyfin_Themes) | Not archived; Unresolved; pushed 2026-07-04 | Aurora Stream pairs static and animated cinematic/glass variants, frozen navigation and 1366/700-pixel screenshots. Canopy already expresses the useful difference as off/calm/expressive motion over the same preset and verifies supported phone/desktop classes; the 700-pixel sample does not expand support to tablet-only layouts. |
+| [AJaxx86/jellyfin_themes](https://github.com/AJaxx86/jellyfin_themes) | Not archived; Unresolved; pushed 2025-12-30 | Ark Glass Dark uses blue-purple gradients, blur, hairline borders, rounded cards and gradient progress. No responsive evidence was documented; semantic accents, glass, borders, shape and progress roles already cover it. |
+| [Wenneker/jellyfin_themes](https://github.com/Wenneker/jellyfin_themes) | Not archived; Unresolved; pushed 2025-08-06 | Large Netflix-derived dark-blue stylesheet plus a Zesty color fork, including remote brand fonts and subtitle rules. Player/subtitle typography and dark cinematic hierarchy are covered; service branding, remote fonts and legacy selector bulk are rejected. |
+| [KingCharlesVI/jellyfin-themes](https://github.com/KingCharlesVI/jellyfin-themes) | Not archived; Unresolved; pushed 2024-02-05 | Two Ultrachromic import compositions for compact episodes, login, indicators, progress, glass and rounding. This is module-composition demand already represented by typed profiles; runtime imports and unresolved reuse are rejected. |
+| [LAN-Nyan/JellyFin-Themes](https://github.com/LAN-Nyan/JellyFin-Themes) | Not archived; Unresolved; pushed 2026-04-15 | Red/black and Spotify-like variants with pill actions, accent variables, mobile detail-button fixes and hover scaling. Canopy already owns generic Material/cinematic presets, phone-specific action geometry and bounded hover/motion without copying brand expression. |
+| [jaysalw/mechanix-jellyfin-themes](https://github.com/jaysalw/mechanix-jellyfin-themes) | Not archived; Unresolved; pushed 2026-02-06 | Empty repository at audit time despite its Mecha Comet description; no source or responsive evidence was available. |
+| [vixer1984/My-Jellyfin-Themes](https://github.com/vixer1984/My-Jellyfin-Themes) | Not archived; Unresolved; pushed 2026-02-03 | Empty repository at audit time; no theme evidence was available. |
+| [Cattosan/jellyfintheme1](https://github.com/Cattosan/jellyfintheme1) | Not archived; Unresolved; pushed 2022-12-29 | Small rounded/transparent theme with compact episodes, indicator placement and wide/narrow media queries. Shape, density, progress/indicator and responsive detail roles already cover the useful ideas; malformed and legacy selectors are not adopted. |
+| [julienfgsf/jellyfin](https://github.com/julienfgsf/jellyfin) | Not archived; Unresolved; pushed 2025-08-07 | Large Zesty-derived cyan/glass composition with fixed desktop offsets and TV selectors. Palette, details and backdrop ideas are covered; brittle fixed geometry and TV-layout styling are rejected for this milestone. |
+| [topa-LE/jellyfin-blue-dark-themes](https://github.com/topa-LE/jellyfin-blue-dark-themes) | Not archived; Unresolved; pushed 2021-09-04 | Older blue/dark treatment spanning forms, drawers, dialogs and player context. Semantic dark palettes and form/dialog coverage already include the outcome; no current modern-phone evidence exists. |
+| [iamngoni/jellyfin-next](https://github.com/iamngoni/jellyfin-next) | Not archived; Unresolved metadata; pushed 2026-04-19 | Muse documents a minimalist violet radial canvas, pill navigation/actions, restrained motion, hairlines, detailed OSD, dialogs, login and dashboard. These map directly to existing palette, navigation, shape, motion, player and surface controls; its README states MIT but GitHub did not resolve SPDX metadata at audit time. |
+| [rugerdutton/duttfin](https://github.com/rugerdutton/duttfin) | Not archived; GPL-3.0; pushed 2026-05-12 | OKLCH accents, a multicolor header rule, viewport scroll masks, translucent chrome and logical RTL placement. Semantic color, gradient/elevation, bounded overflow and RTL contracts already cover the outcomes; remote fonts/logo are not reused. |
+| [t874ntzjr8-stack/CrossRoad](https://github.com/t874ntzjr8-stack/CrossRoad) | Not archived; MIT; pushed 2026-03-20 | Compact modular glass theme with optional static sidebar, floating progress, smaller cast, count indicators, branding and moving cards. Canopy's composable schema already covers the useful modules; remote branding and imports remain outside the safe path. |
+| [Unending/Spectra](https://github.com/Unending/Spectra) | Not archived; MIT; pushed 2026-06-17 | Single corner-indicator micro-theme. Corner/floating/check/none watched and unwatched indicator roles already provide the generalized outcome with non-color state evidence. |
+| [ndom91/jellyfin-theme](https://github.com/ndom91/jellyfin-theme) | Not archived; Unresolved; pushed 2024-11-18 | Zombie-derived glass/pill composition with palette variables, small-screen media rules and icon imports. Palette, shape, navigation, responsive hero and local icon roles already cover it; remote imports and lineage CSS are not copied. |
+| [sheerdagy/zoomy](https://github.com/sheerdagy/zoomy) | Not archived; Unresolved; pushed 2025-02-02 | Jellyfin 10.10 theme with large screenshots, gradient chrome, blurred backdrops and expanded wide details but no explicit modern-phone proof. Existing image treatments and desktop/wide details modes cover it. |
+| [adrientualTH/jellyfin-skins](https://github.com/adrientualTH/jellyfin-skins) | Not archived; Unresolved; pushed 2026-04-23 | Composite CSS for blur, cast density, library art, progress and cinematic details, including remote imports/assets. Existing modules cover the outcomes; remote artwork and unresolved imported CSS are rejected. |
+
+#### Non-visual results and false positives
+
+| Repository | Status/license at audit | Classification |
+|---|---|---|
+| [danieladov/jellyfin-plugin-themesongs](https://github.com/danieladov/jellyfin-plugin-themesongs) | Not archived; MIT; pushed 2025-12-21 | Theme-song download plugin, not a visual Jellyfin Web theme. |
+| [LizardByte/Themerr-jellyfin](https://github.com/LizardByte/Themerr-jellyfin) | Not archived; AGPL-3.0; pushed 2026-07-21 | ThemerrDB audio/theme-song plugin, not presentation. |
+| [EusthEnoptEron/jellyfin-plugin-animethemes](https://github.com/EusthEnoptEron/jellyfin-plugin-animethemes) | Not archived; GPL-3.0; pushed 2026-02-11 | Anime opening/ending media-fetch plugin, not a visual theme. |
+| [Pukabyte/trailerfin](https://github.com/Pukabyte/trailerfin) | Not archived; Unresolved; pushed 2025-07-12 | Trailer/background-video importer, not a web theme. |
+| [Purfview/IMDb-Scout-Mod](https://github.com/Purfview/IMDb-Scout-Mod) | Not archived; MIT; pushed 2026-07-20 | Cross-site IMDb userscript mentioning Jellyfin indicators, not a Jellyfin Web theme. |
+| [Tal0na/Awesome-SelfHosted-Music-Awesome](https://github.com/Tal0na/Awesome-SelfHosted-Music-Awesome) | Not archived; NOASSERTION; pushed 2026-07-10 | General self-hosted music directory, not a theme implementation. |
+| [kumarvivek1752/ThemeClipper](https://github.com/kumarvivek1752/ThemeClipper) | Not archived; CC0-1.0; pushed 2025-08-31 | Media theme-clip generator, not visual presentation. |
+| [kirtan3d/Jellyfin.Plugin.AssignThemeSong](https://github.com/kirtan3d/Jellyfin.Plugin.AssignThemeSong) | Not archived; Unresolved; pushed 2026-07-02 | Theme-song upload/download plugin, not visual presentation. |
+| [nessli420/jellify](https://github.com/nessli420/jellify) | Not archived; Unresolved; pushed 2025-11-02 | Standalone Spotify-styled Jellyfin music player, not the supported embedded Jellyfin Web surface. |
+| [Deanosim/awesome-jellyfin](https://github.com/Deanosim/awesome-jellyfin) | Archived; Unresolved; pushed 2024-01-04 | One-file awesome-list fork, not a theme. |
+| [everviolet/jellyfin-tui](https://github.com/everviolet/jellyfin-tui) | Not archived; NOASSERTION; pushed 2026-03-05 | Native terminal client, outside the modern Jellyfin Web theme runtime. |
+| [SalGnt/jellyfin-plugin-themesongs](https://github.com/SalGnt/jellyfin-plugin-themesongs) | Not archived; MIT; pushed 2026-07-16 | Theme-song service plugin, not visual presentation. |
+| [AttractiveToad/jellyfin-plugin-themesongs](https://github.com/AttractiveToad/jellyfin-plugin-themesongs) | Not archived; MIT; pushed 2025-09-01 | Theme-song download plugin, not visual presentation. |
+| [rahul7710/Jellyfin-Theme](https://github.com/rahul7710/Jellyfin-Theme) | Not archived; Unresolved; pushed 2026-05-22 | Gemini/AI Studio application whose repository name caused a search false positive; it contains no Jellyfin theme. |
+
+The reranked window adds no unimplemented product requirement. Its strongest
+new evidence—Comfort's phone OSD reachability, Aurora's static/animated pairing,
+Muse's restrained component system, Duttfin's logical RTL treatment, CrossRoad's
+module composition and Spectra's indicator geometry—maps to existing, tested
+Theme Studio controls. Small themes also reinforce the existing rejection of
+remote fonts/images/scripts, brand imitation, fixed widths, hidden behavior and
+unlicensed CSS reuse. The supported boundary remains modern phone portrait and
+landscape plus modern desktop/wide; legacy, tablet-only and TV markers remain
+stock/no-op.
+
 ## Synthesis matrix
 
 | Theme dimension | Strong evidence | Canopy outcome |
 |---|---|---|
-| Semantic palette | Jellyfin 12, Finity, GNAT, Catppuccin, Ultrachromic | Versioned role-based tokens mapped to `--jf-*`; palette and accent can change independently |
+| Semantic palette | Jellyfin 12, Finity, GNAT, Catppuccin, Ultrachromic, Muse, Duttfin | Versioned role-based tokens mapped to `--jf-*`; palette and accent can change independently |
 | Light/dark/OLED | Jellyfin built-ins, chromic family, scyfin, Catppuccin | All presets declare supported color schemes; OLED is a surface tier, not a separate implementation |
 | Typography | Abyss, Glass themes, Apple-style themes | Local/system font stacks, scale, weight, line height, and reading-width tokens; never blur a text layer |
-| Surface/glass | Abyss, Jamfin, GlassFin, JellySkin | Solid, translucent, and glass material tiers; blur automatically reduces for capability/performance preferences |
+| Surface/glass | Abyss, Jamfin, GlassFin, JellySkin, CrossRoad, Aurora Stream | Solid, translucent, and glass material tiers; blur automatically reduces for capability/performance preferences |
 | Shape/elevation | ElegantFin, GNAT, SpookyFin, Ultrachromic | Independent radius, border, shadow, and focus-ring scales |
 | Cards/density | infinitv, Finity, finimalism, NetFin | Poster/backdrop/square ratios, compact/cozy/spacious density, bounded hover/focus actions |
 | Navigation | Abyss, Ultrachromic, ijelly, infinitv | Header/sidebar/pill presentations chosen per breakpoint and input mode, with stable destinations |
 | Home/hero | Media Bar, Zombie, NetFin, ijelly | Optional accessible hero module with predictable layout reservation and a reduced-data mode |
 | Details/seasons | ElegantFin, Flow, JellyTheme, NetFin | Hero/compact detail modes, episode list/grid choice, readable metadata, no fixed 1080p assumptions |
-| Player/OSD | infinitv, ElegantFin, Medusa, JellyTheme | Compact/cinematic OSD options that preserve controls, focus order, captions, Trickplay, and Canopy overlays |
+| Player/OSD | infinitv, ElegantFin, Medusa, JellyTheme, Comfort, Muse | Compact/cinematic OSD options that preserve controls, focus order, captions, Trickplay, and Canopy overlays |
 | Music/Live TV/books | ElegantFin and documented gaps elsewhere | Explicit required surfaces, never an untested “best effort” |
-| Motion | Abyss, JellyThemes, ijelly, JellySkin | Calm/expressive/off profiles with reduced-motion override and bounded transition properties |
+| Motion | Abyss, JellyThemes, ijelly, JellySkin, Aurora Stream | Calm/expressive/off profiles with reduced-motion override and bounded transition properties |
 | Seasonal/dynamic | Evergarden, Seasonals, dynamic Material clients | Optional palette scheduling and local media-derived accent; no remote assets or unbounded particles |
 | Icons | Lucide, metadata icons, GNAT | Optional local icon packs using current color, stable labels, and no semantic meaning conveyed by icon alone |
-| Mobile/touch | MobileTweaks, NetFin, ElegantFin | Mobile is a first-class layout profile with safe areas, keyboard, wrapping, tap targets, and orientation checks |
+| Mobile/touch | MobileTweaks, NetFin, ElegantFin, Comfort, LAN-Nyan | Mobile is a first-class layout profile with safe areas, keyboard, wrapping, tap targets, and orientation checks |
 | TV/remote (research only) | infinitv, ijelly, ElegantFin | Record focus, overscan, and low-effects ideas for a possible future project; Theme Studio remains stock/no-op on TV layout markers |
 | Accessibility/i18n | JellyTheme RTL, Material semantics, official Jellyfin | Contrast and forced-color checks, zoom/reflow, RTL/logical properties, long labels, reduced motion/transparency |
 | Performance | JellySkin performance add-on, Ultrachromic TV mode, Seasonals | Automatic effects budget plus user-selectable full/balanced/minimal modes |

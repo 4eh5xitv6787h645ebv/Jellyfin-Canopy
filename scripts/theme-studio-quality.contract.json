@@ -38,8 +38,8 @@
     "liveRefreshDate": "2026-07-21",
     "scopeReconciledDate": "2026-07-21",
     "inventory": {
-      "externalUrlCount": 138,
-      "repositoryRootCount": 106,
+      "externalUrlCount": 186,
+      "repositoryRootCount": 152,
       "requiredDiscoveryUrls": [
         "https://github.com/topics/jellyfin-theme",
         "https://github.com/search?q=jellyfin+themes&type=repositories",
@@ -77,6 +77,7 @@
           "themes — Project 8",
           "#383",
           "#400",
+          "#448",
           "## Program completion rule"
         ]
       },
