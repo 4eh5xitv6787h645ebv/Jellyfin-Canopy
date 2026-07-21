@@ -209,6 +209,13 @@ test.describe.serial('Theme Studio mobile editor', () => {
             caret: 'hide',
             maxDiffPixelRatio: 0.02,
         });
+        if (process.env.JC_CAPTURE_THEME_DOCS === '1') {
+            await page.screenshot({
+                path: 'docs/images/theme-studio-editor-phone.png',
+                animations: 'disabled',
+                caret: 'hide',
+            });
+        }
 
         await previewOnly.click();
         await expect(panel).toHaveClass(/jc-theme-preview-only/);

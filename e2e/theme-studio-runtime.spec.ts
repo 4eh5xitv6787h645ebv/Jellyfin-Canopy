@@ -682,6 +682,13 @@ test.describe.serial('Theme Studio runtime bridge', () => {
                         caret: 'hide',
                         maxDiffPixelRatio: 0.02,
                     });
+                    if (process.env.JC_CAPTURE_THEME_DOCS === '1' && preset === 'canopy') {
+                        await page.screenshot({
+                            path: `docs/images/theme-studio-home-${evidenceView}.png`,
+                            animations: 'disabled',
+                            caret: 'hide',
+                        });
+                    }
                 }
             }
         }
@@ -776,6 +783,16 @@ test.describe.serial('Theme Studio runtime bridge', () => {
             };
         });
         expect(split).toEqual({ previewAfterEditor: true, mainOverflow: 0 });
+        if (process.env.JC_CAPTURE_THEME_DOCS === '1') {
+            await panel.locator('.jc-theme-studio').evaluate((studio) => {
+                studio.scrollTop = 0;
+            });
+            await page.screenshot({
+                path: 'docs/images/theme-studio-editor-desktop.png',
+                animations: 'disabled',
+                caret: 'hide',
+            });
+        }
         const initialPreviewPrimary = await preview.evaluate((card) =>
             (card as HTMLElement).style.getPropertyValue('--jc-preview-primary'));
         await panel.locator('[data-field="accent"]').selectOption('red');

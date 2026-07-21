@@ -68,6 +68,10 @@ nav:
   - Spoiler Guard: spoiler-guard.md
   - Anime Filler Warnings: anime-filler-warnings.md
   - Customization: customization.md
+  - Theme Studio:
+    - User Guide: theme-studio.md
+    - Administrator Guide: theme-studio-admin.md
+    - Developer Guide: theme-studio-developer.md
   - Reference: reference.md
   - Developer Guide: developers.md
   - Help & Community: help.md

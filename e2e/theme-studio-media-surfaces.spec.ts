@@ -311,6 +311,18 @@ test.describe('Theme Studio modern media surfaces', () => {
             await showRoute(page, `/details?id=${itemId}`);
             const playButton = page.locator('.page:not(.hide) .mainDetailButtons .btnPlay').first();
             await expect(playButton).toBeVisible({ timeout: 30_000 });
+            if (process.env.JC_CAPTURE_THEME_DOCS === '1') {
+                await page.setViewportSize({ width: 1366, height: 768 });
+                await waitForThemeRuntime(page, 'desktop');
+                await page.screenshot({
+                    path: 'docs/images/theme-studio-details-desktop.png',
+                    animations: 'disabled',
+                    caret: 'hide',
+                });
+                await page.setViewportSize({ width: 844, height: 390 });
+                await waitForThemeRuntime(page, 'phone');
+                await expect(playButton).toBeVisible({ timeout: 30_000 });
+            }
             await playButton.click();
             await waitForHash(page, '/video');
             await page.waitForFunction(
@@ -415,6 +427,13 @@ test.describe('Theme Studio modern media surfaces', () => {
                 // geometry remain exact. Keep the tolerance below 0.8%.
                 maxDiffPixels: 2_500,
             });
+            if (process.env.JC_CAPTURE_THEME_DOCS === '1') {
+                await page.screenshot({
+                    path: 'docs/images/theme-studio-player-phone-landscape.png',
+                    animations: 'disabled',
+                    caret: 'hide',
+                });
+            }
 
             const evidence = await page.evaluate(() => {
                 const runtime = window.JellyfinCanopy.core.themeStudio;
@@ -649,6 +668,14 @@ test.describe('Theme Studio modern media surfaces', () => {
                 // Keep this below 0.8% of the smallest 390x844 capture.
                 maxDiffPixels: 2_500,
             });
+            if (process.env.JC_CAPTURE_THEME_DOCS === '1'
+                && (viewport.name === 'phone-portrait' || viewport.name === 'phone-landscape')) {
+                await page.screenshot({
+                    path: `docs/images/theme-studio-${viewport.name}.png`,
+                    animations: 'disabled',
+                    caret: 'hide',
+                });
+            }
         }
         await page.evaluate(() => window.JellyfinCanopy.core.themeStudio?.cancelPreview());
         assertNoRuntimeErrors(consoleErrors);

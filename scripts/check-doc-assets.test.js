@@ -47,13 +47,13 @@ test('live repository assets are referenced, non-animated, and within ratcheted 
     const result = auditAssets();
     assert.deepEqual(result.problems, []);
     assert.deepEqual(result.metrics.documentation, {
-        files: 59,
-        bytes: 26540546,
+        files: 73,
+        bytes: 27880600,
         largestBytes: 2941758,
     });
     assert.deepEqual(result.metrics.repository, {
-        files: 115,
-        bytes: 34349857,
+        files: 129,
+        bytes: 35689911,
         largestBytes: 2941758,
     });
 });
