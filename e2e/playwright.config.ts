@@ -34,6 +34,7 @@ export default defineConfig({
     reporter: requiredReporter,
     use: {
         baseURL: process.env.JF_BASE_URL || 'http://localhost:8099',
+        serviceWorkers: 'block',
         viewport: { width: 1440, height: 900 },
         screenshot: 'only-on-failure',
         trace,

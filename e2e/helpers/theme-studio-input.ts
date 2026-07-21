@@ -19,16 +19,18 @@ export async function emulatePointer(page: Page, coarse: boolean): Promise<void>
         const nativeMatchMedia = window.matchMedia.bind(window);
         window.matchMedia = ((query: string): MediaQueryList => {
             const nativeList = nativeMatchMedia(query);
-            if (!query.includes('(pointer: coarse)')) return nativeList;
+            const pointerOnly = /^\(pointer:\s*coarse\)$/.test(query.trim());
+            if (!/\(pointer:\s*coarse\)/.test(query)) return nativeList;
             const remainingQuery = query
                 .replace(/\s+and\s+\(pointer:\s*coarse\)/g, '')
+                .replace(/\(pointer:\s*coarse\)\s+and\s+/g, '')
                 .trim();
             const matches = () => coarsePointer
-                && (remainingQuery === '(pointer: coarse)' || nativeMatchMedia(remainingQuery).matches);
+                && (pointerOnly || nativeMatchMedia(remainingQuery).matches);
             return new Proxy(nativeList, {
-                get(target, property, receiver) {
+                get(target, property) {
                     if (property === 'matches') return matches();
-                    const value = Reflect.get(target, property, receiver) as unknown;
+                    const value = Reflect.get(target, property, target) as unknown;
                     return typeof value === 'function' ? value.bind(target) : value;
                 },
             });

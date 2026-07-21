@@ -199,34 +199,97 @@ async function boundedImageBlob(response: Response, signal: AbortSignal): Promis
     }
 }
 
+interface DecodedDynamicImage {
+    readonly source: CanvasImageSource;
+    close(): void;
+}
+
+async function decodeHtmlImage(blob: Blob, signal: AbortSignal): Promise<DecodedDynamicImage | null> {
+    if (signal.aborted || typeof Image !== 'function'
+        || typeof URL.createObjectURL !== 'function' || typeof URL.revokeObjectURL !== 'function') return null;
+    return new Promise((resolve) => {
+        const objectUrl = URL.createObjectURL(blob);
+        const image = new Image();
+        image.decoding = 'async';
+        let settled = false;
+        const finish = (accepted: boolean): void => {
+            if (settled) return;
+            settled = true;
+            image.onload = null;
+            image.onerror = null;
+            signal.removeEventListener('abort', abort);
+            if (!accepted) {
+                image.src = '';
+                URL.revokeObjectURL(objectUrl);
+                resolve(null);
+                return;
+            }
+            resolve({
+                source: image,
+                close: () => {
+                    image.src = '';
+                    URL.revokeObjectURL(objectUrl);
+                },
+            });
+        };
+        const abort = (): void => finish(false);
+        signal.addEventListener('abort', abort, { once: true });
+        if (signal.aborted) {
+            finish(false);
+            return;
+        }
+        image.onload = () => finish(true);
+        image.onerror = () => finish(false);
+        image.src = objectUrl;
+    });
+}
+
+async function decodeDynamicImage(blob: Blob, signal: AbortSignal): Promise<DecodedDynamicImage | null> {
+    if (typeof createImageBitmap === 'function') {
+        try {
+            const bitmap = await createImageBitmap(blob, {
+                resizeWidth: SAMPLE_EDGE,
+                resizeHeight: SAMPLE_EDGE,
+                resizeQuality: 'low',
+            });
+            return { source: bitmap, close: () => bitmap.close() };
+        } catch {
+            if (signal.aborted) return null;
+            // Safari/WebKit can expose createImageBitmap while rejecting a
+            // supported image or its resize options. Retain the bounded blob
+            // and use the same local HTML image decode path in that case.
+        }
+    }
+    return decodeHtmlImage(blob, signal);
+}
+
 /** Fetches and decodes only one bounded same-origin image after usable paint. */
 export async function analyzeLocalMediaImage(
     image: LocalMediaImage,
     signal: AbortSignal,
 ): Promise<string | null> {
-    if (signal.aborted || typeof createImageBitmap !== 'function') return null;
+    if (signal.aborted) return null;
     const response = await fetch(image.url, { credentials: 'same-origin', signal, cache: 'default' });
     const declaredLength = Number(response.headers.get('content-length'));
     if (!response.ok || (Number.isFinite(declaredLength) && declaredLength > MAXIMUM_DYNAMIC_IMAGE_BYTES)
         || !/^image\//i.test(response.headers.get('content-type') ?? '')) return null;
     const blob = await boundedImageBlob(response, signal);
     if (!blob || signal.aborted) return null;
-    const bitmap = await createImageBitmap(blob, {
-        resizeWidth: SAMPLE_EDGE,
-        resizeHeight: SAMPLE_EDGE,
-        resizeQuality: 'low',
-    });
+    const decoded = await decodeDynamicImage(blob, signal);
+    if (!decoded || signal.aborted) {
+        decoded?.close();
+        return null;
+    }
     try {
-        if (signal.aborted) return null;
         const canvas = document.createElement('canvas');
         canvas.width = SAMPLE_EDGE;
         canvas.height = SAMPLE_EDGE;
         const context = canvas.getContext('2d', { willReadFrequently: true });
         if (!context) return null;
-        context.drawImage(bitmap, 0, 0, SAMPLE_EDGE, SAMPLE_EDGE);
+        context.drawImage(decoded.source, 0, 0, SAMPLE_EDGE, SAMPLE_EDGE);
         return deriveDominantAccent(context.getImageData(0, 0, SAMPLE_EDGE, SAMPLE_EDGE).data);
     } finally {
-        bitmap.close();
+        decoded.close();
     }
 }
 

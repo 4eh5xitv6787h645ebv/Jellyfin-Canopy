@@ -108,6 +108,12 @@
   color: var(--jc-color-text) !important;
   touch-action: manipulation;
 }
+:root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .seerr-more-info-link {
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  padding: calc(var(--jc-control-gap) * .35) calc(var(--jc-control-gap) * .6) !important;
+}
 :root.jc-modern-layout:is([data-jc-theme-active="true"],[data-jc-theme-preview="true"])[data-jc-theme-route]:not([data-jc-theme-route="dashboard"]):is([data-jc-theme-breakpoint="phone"],[data-jc-theme-breakpoint="desktop"],[data-jc-theme-breakpoint="wide"]) .seerr-button-request {
   border-color: var(--jc-color-primary) !important;
   background: var(--jc-color-primary) !important;

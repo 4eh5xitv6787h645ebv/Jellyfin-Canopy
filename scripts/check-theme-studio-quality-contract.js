@@ -209,6 +209,9 @@ function verifyQualityContract({ root = DEFAULT_ROOT, contract } = {}) {
     if (!playwright.includes("const trace = required || ci || process.env.JF_E2E_TRACE === 'off'")) {
         fail('Playwright tracing must be off for required and CI runs');
     }
+    if (!playwright.includes("serviceWorkers: 'block'")) {
+        fail('Playwright service workers must remain blocked for deterministic route evidence');
+    }
     readText(root, resolved.ci.safeArtifactCollector);
     for (const workflow of resolved.ci.artifactWorkflows) {
         const source = readText(root, workflow);

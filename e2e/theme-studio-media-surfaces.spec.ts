@@ -9,6 +9,7 @@ import {
     waitForHash,
 } from './fixtures/auth';
 import { api, authenticate, PLUGIN_ID } from './fixtures/api';
+import { emulatePointer } from './helpers/theme-studio-input';
 import { installThemeStudioVisualFont } from './helpers/theme-studio-visual';
 
 const CONFIG_PATH = `/Plugins/${PLUGIN_ID}/Configuration`;
@@ -32,20 +33,9 @@ interface PlaybackEvidence {
 }
 
 async function seedModernLayout(page: Page): Promise<void> {
+    await emulatePointer(page, true);
     await page.addInitScript(() => {
         window.localStorage.setItem('layout', 'experimental');
-        const nativeMatchMedia = window.matchMedia.bind(window);
-        window.matchMedia = ((query: string): MediaQueryList => {
-            const list = nativeMatchMedia(query);
-            if (query !== '(pointer: coarse)') return list;
-            return new Proxy(list, {
-                get(target, property, receiver) {
-                    if (property === 'matches') return true;
-                    const value = Reflect.get(target, property, receiver) as unknown;
-                    return typeof value === 'function' ? value.bind(target) : value;
-                },
-            });
-        }) as typeof window.matchMedia;
     });
 }
 

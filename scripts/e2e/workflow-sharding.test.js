@@ -69,6 +69,7 @@ test('required E2E uses six native file shards with one fresh serial two-CPU ser
     assert.match(playwrightConfig, /workers:\s*1/);
     assert.match(playwrightConfig, /fullyParallel:\s*false/);
     assert.match(playwrightConfig, /retries:\s*required \? 0 : 1/);
+    assert.match(playwrightConfig, /serviceWorkers:\s*'block'/);
     assert.match(
         playwrightConfig,
         /const trace = required \|\| ci \|\| process\.env\.JF_E2E_TRACE === 'off' \? 'off' : 'retain-on-failure'/

@@ -188,6 +188,7 @@ describe('Theme Studio integration surface contract', () => {
         expect(cssFor('seerr')).not.toContain('.jc-discovery-row-title');
         expect(SEERR_PRODUCER_SOURCE).toContain("button.className = 'seerr-request-button seerr-button-request'");
         expect(cssFor('seerr')).toContain('.seerr-button-request');
+        expect(cssFor('seerr')).toMatch(/\.seerr-more-info-link \{\s+display: inline-flex !important;/);
         expect(cssFor('seerr')).not.toContain('.jc-more-info-actions-primary');
     });
 
