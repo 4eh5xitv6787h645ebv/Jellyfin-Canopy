@@ -11,6 +11,7 @@
   "scripts": {
     "check:toolchain": "node scripts/check-node-toolchain.js",
     "check:performance-rules": "node scripts/check-performance-rules.js",
+    "check:theme-studio-quality": "node scripts/check-theme-studio-quality-contract.js",
     "check:jellyfin-web-theme-contract": "node scripts/check-jellyfin-web-theme-contract.js",
     "check:markdown-links": "node scripts/check-markdown-links.js && node scripts/check-installation-permissions.js",
     "check:docs-assets": "node scripts/check-doc-assets.js",
@@ -34,6 +35,7 @@
     "perf:trace": "node e2e/perf/capture-traces.js"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.12.1",
     "@playwright/test": "1.58.2",
     "@vitest/coverage-v8": "4.1.9",
     "esbuild": "0.28.1",

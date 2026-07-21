@@ -194,7 +194,8 @@ test('Jellyfin Docker automation stays on unstable nightly and cannot bypass ful
     const pinnedNightly = /jellyfin\/jellyfin:unstable@sha256:[0-9a-f]{64}/;
     assert.match(compose, pinnedNightly);
     assert.doesNotMatch(compose, /jellyfin\/jellyfin:[^\s"}]*rc[12]/i);
-    assert.match(buildWorkflow, /pull_request:\n {4}branches: \[main, master\]/);
+    assert.match(buildWorkflow, /^ {2}pull_request:\s*$/m);
+    assert.doesNotMatch(buildWorkflow, /^ {2}pull_request:\s*\n\s+branches:/m);
     assert.match(buildWorkflow, /E2E_SHARD_TOTAL: "6"/);
     assert.match(buildWorkflow, pinnedNightly);
 

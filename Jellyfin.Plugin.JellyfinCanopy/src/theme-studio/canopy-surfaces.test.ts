@@ -74,6 +74,12 @@ describe('Theme Studio Canopy surface contract', () => {
         expect(css).toContain(':has(.jc-hide-btn):has(.jc-anime-filler-marker) .jc-hide-btn');
         expect(css).toContain(':has(.jc-hide-btn):has(.jc-anime-filler-marker) .jc-anime-filler-marker');
         expect(css).toContain(':has(.jc-anime-filler-marker) .jc-tag-lane[data-jc-tag-position="top-left"]');
+        expect(css).toContain(
+            ':has(.jc-hide-btn):has(.jc-anime-filler-marker) .jc-tag-lane[data-jc-tag-position="top-right"]',
+        );
+        expect(css).toContain(
+            'inset-block-start: max(3.5rem, calc(var(--jc-control-gap) + 2.75rem)) !important',
+        );
         expect(css).toContain('.card:focus-within .genre-tag .genre-text');
         expect(css).toContain('[data-jc-theme-pointer="coarse"]');
         expect(css).toContain('[dir="rtl"]');

@@ -1,6 +1,7 @@
 import type { Page } from 'playwright/test';
 import { assertNoRuntimeErrors, expect, loginAs, test, USERS } from './fixtures/auth';
 import { api, authenticate, PLUGIN_ID, type Session } from './fixtures/api';
+import { installThemeStudioVisualFont } from './helpers/theme-studio-visual';
 
 const CONFIG_PATH = `/Plugins/${PLUGIN_ID}/Configuration`;
 const COMMITTED_STYLE = '#jc-theme-studio-committed';
@@ -164,7 +165,8 @@ test.describe.serial('Theme Studio runtime bridge', () => {
         original = configuration!;
     });
 
-    test.beforeEach(async ({ baseURL }) => {
+    test.beforeEach(async ({ baseURL, page }) => {
+        await installThemeStudioVisualFont(page);
         await api(baseURL!, CONFIG_PATH, admin.token, {
             method: 'POST',
             body: JSON.stringify({
@@ -180,6 +182,7 @@ test.describe.serial('Theme Studio runtime bridge', () => {
     });
 
     test.afterEach(async ({ baseURL }) => {
+        if (!admin || !original) return;
         await api(baseURL!, CONFIG_PATH, admin.token, {
             method: 'POST',
             body: JSON.stringify(original),
@@ -187,6 +190,7 @@ test.describe.serial('Theme Studio runtime bridge', () => {
     });
 
     test.afterAll(async ({ baseURL }) => {
+        if (!admin || !original) return;
         await api(baseURL!, CONFIG_PATH, admin.token, {
             method: 'POST',
             body: JSON.stringify(original),
@@ -668,11 +672,12 @@ test.describe.serial('Theme Studio runtime bridge', () => {
                 const overflow = await previewOverflowEvidence(page);
                 expect(overflow.active, `${preset} ${viewport.name} overflow`)
                     .toBeLessThanOrEqual(overflow.baseline + 1);
-                if (viewport.name === 'phone portrait') {
+                if (viewport.name === 'desktop' || viewport.name === 'phone portrait') {
                     // `tv-focus` is retained only as the persisted compatibility ID.
                     // Public evidence uses the modern-layout product name: Focus.
                     const evidenceName = preset === 'tv-focus' ? 'focus' : preset;
-                    await expect(page).toHaveScreenshot(`theme-studio-${evidenceName}-phone.png`, {
+                    const evidenceView = viewport.name === 'desktop' ? 'desktop' : 'phone';
+                    await expect(page).toHaveScreenshot(`theme-studio-${evidenceName}-${evidenceView}.png`, {
                         animations: 'disabled',
                         caret: 'hide',
                         maxDiffPixelRatio: 0.02,

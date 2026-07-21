@@ -1,8 +1,33 @@
+import AxeBuilder from '@axe-core/playwright';
 import type { Page } from 'playwright/test';
 import { assertNoRuntimeErrors, expect, loginAs, test, USERS } from './fixtures/auth';
 import { api, authenticate, PLUGIN_ID, type Session } from './fixtures/api';
+import { installThemeStudioVisualFont } from './helpers/theme-studio-visual';
 
 const CONFIG_PATH = `/Plugins/${PLUGIN_ID}/Configuration`;
+const ACCESSIBILITY_SCAN_SCOPE = '#jc-theme-accessibility-fixture';
+const ACCESSIBILITY_STANDARD_TAGS = [
+    'wcag2a',
+    'wcag2aa',
+    'wcag21a',
+    'wcag21aa',
+    'wcag22aa',
+];
+
+async function expectNoAutomatedAccessibilityViolations(page: Page, surface: string): Promise<void> {
+    const results = await new AxeBuilder({ page })
+        .include(ACCESSIBILITY_SCAN_SCOPE)
+        .withTags(ACCESSIBILITY_STANDARD_TAGS)
+        .analyze();
+    const violations = results.violations.map((violation) => ({
+        id: violation.id,
+        impact: violation.impact,
+        help: violation.help,
+        targets: violation.nodes.flatMap((node) => node.target),
+    }));
+    expect(violations, `${surface} automated accessibility violations:\n${JSON.stringify(violations, null, 2)}`)
+        .toEqual([]);
+}
 
 async function seedModernCoarseLayout(page: Page): Promise<void> {
     await page.addInitScript(() => {
@@ -84,6 +109,8 @@ async function mountAccessibilityFixture(page: Page): Promise<void> {
         const style = document.createElement('style');
         style.id = 'jc-theme-accessibility-fixture-style';
         style.textContent = `
+          html, body { inline-size:100%; max-inline-size:100%; overflow:hidden!important; }
+          body > :not(#jc-theme-accessibility-fixture) { display:none!important; }
           #jc-theme-accessibility-fixture {
             position:fixed; inset:0; z-index:1000000; box-sizing:border-box; overflow:auto;
             min-inline-size:0; background:var(--jc-color-canvas); color:var(--jc-color-text);
@@ -228,6 +255,7 @@ test.describe.serial('Theme Studio accessibility and internationalization', () =
     });
 
     test.beforeEach(async ({ baseURL, page }) => {
+        await installThemeStudioVisualFont(page);
         await api(baseURL!, CONFIG_PATH, admin.token, {
             method: 'POST',
             body: JSON.stringify({
@@ -267,6 +295,7 @@ test.describe.serial('Theme Studio accessibility and internationalization', () =
         await waitForThemeRuntime(page, 'desktop');
         await previewAccessibleTheme(page);
         await mountAccessibilityFixture(page);
+        await expectNoAutomatedAccessibilityViolations(page, 'modern desktop');
 
         let evidence = await layoutEvidence(page);
         expect(evidence).toMatchObject({ direction: 'rtl', columns: 2 });
@@ -354,6 +383,7 @@ test.describe.serial('Theme Studio accessibility and internationalization', () =
         expect(evidence.documentOverflow).toBeLessThanOrEqual(1);
         expect(evidence.fixtureOverflow).toBeLessThanOrEqual(1);
         expect(evidence.minimumTarget).toBeGreaterThanOrEqual(44);
+        await expectNoAutomatedAccessibilityViolations(page, 'modern phone portrait');
         await expect(page).toHaveScreenshot('theme-studio-accessibility-phone.png', {
             animations: 'disabled', caret: 'hide', maxDiffPixelRatio: 0.02,
         });

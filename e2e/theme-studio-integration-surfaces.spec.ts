@@ -1,6 +1,7 @@
 import type { Page } from 'playwright/test';
 import { assertNoRuntimeErrors, expect, loginAs, test, USERS } from './fixtures/auth';
 import { api, authenticate, PLUGIN_ID, type Session } from './fixtures/api';
+import { installThemeStudioVisualFont } from './helpers/theme-studio-visual';
 
 const CONFIG_PATH = `/Plugins/${PLUGIN_ID}/Configuration`;
 const STYLE_IDS = [
@@ -62,6 +63,8 @@ async function previewIntegrationTheme(page: Page): Promise<void> {
 }
 
 async function mountIntegrationFixture(page: Page): Promise<void> {
+    await page.waitForFunction(() =>
+        typeof window.JellyfinCanopy.discoveryFilter?.createSectionHeader === 'function');
     await page.evaluate(() => {
         document.getElementById('jc-theme-integration-fixture')?.remove();
         document.getElementById('jc-theme-integration-fixture-style')?.remove();
@@ -289,7 +292,8 @@ test.describe.serial('Theme Studio discovery and integration surfaces', () => {
         original = (await api<Record<string, unknown>>(baseURL!, CONFIG_PATH, admin.token))!;
     });
 
-    test.beforeEach(async ({ baseURL }) => {
+    test.beforeEach(async ({ baseURL, page }) => {
+        await installThemeStudioVisualFont(page);
         await api(baseURL!, CONFIG_PATH, admin.token, {
             method: 'POST',
             body: JSON.stringify({
@@ -320,6 +324,7 @@ test.describe.serial('Theme Studio discovery and integration surfaces', () => {
     });
 
     test.afterEach(async ({ baseURL }) => {
+        if (!admin || !original) return;
         await api(baseURL!, CONFIG_PATH, admin.token, { method: 'POST', body: JSON.stringify(original) });
     });
 

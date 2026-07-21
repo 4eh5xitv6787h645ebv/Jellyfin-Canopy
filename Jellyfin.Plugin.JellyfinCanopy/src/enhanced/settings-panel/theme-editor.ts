@@ -829,7 +829,10 @@ function editorStyles(): string {
         #jellyfin-canopy-panel .jc-pane[data-pane="theme-studio"].active { display:flex; flex:1; flex-direction:column; min-height:0; }
         #jellyfin-canopy-panel .jc-theme-editor-root { display:flex; flex:1; flex-direction:column; min-width:0; min-height:0; }
         #jellyfin-canopy-panel .jc-theme-workspace { display:flex; flex:1; flex-direction:column; min-width:0; min-height:0; min-inline-size:0; margin:0; padding:0; border:0; overflow:hidden; }
-        #jellyfin-canopy-panel .jc-theme-studio { display:grid; flex:1 1 auto; grid-template-columns:minmax(330px, 1fr) minmax(240px, .72fr); gap:16px; min-width:0; min-height:0; overflow-y:auto; padding-block-end:14px; }
+        #jellyfin-canopy-panel .jc-theme-studio { display:grid; flex:1 1 auto; grid-template-columns:minmax(330px, 1fr) minmax(240px, .72fr); gap:16px; min-width:0; min-height:0; overflow-y:auto; scroll-padding-block:32px; padding-block-end:14px; }
+        #jellyfin-canopy-panel .jc-theme-intro { grid-column:1/-1; min-width:0; }
+        #jellyfin-canopy-panel .jc-theme-intro > .jc-theme-hint { margin:0; }
+        #jellyfin-canopy-panel .jc-theme-intro > .jc-theme-migration { margin:12px 0 0; }
         #jellyfin-canopy-panel .jc-theme-editor, #jellyfin-canopy-panel .jc-theme-preview-card { min-width:0; }
         #jellyfin-canopy-panel .jc-theme-toolbar, #jellyfin-canopy-panel .jc-theme-row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
         #jellyfin-canopy-panel .jc-theme-toolbar { grid-column:1/-1; justify-content:space-between; margin-block-end:14px; }
@@ -1391,16 +1394,18 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         root.innerHTML = `${editorStyles()}
             <button class="jc-theme-button jc-theme-return" type="button" data-action="return-editor">${escapeHtml(t('theme_studio_return_editor'))}</button>
             <fieldset class="jc-theme-workspace" aria-busy="${busy}"${busy ? ' disabled' : ''}>
-            <p class="jc-theme-hint" id="jc-theme-modern-scope" role="note">${escapeHtml(t('theme_studio_modern_scope'))}</p>
-            ${jellyfishMigrationControls(
-                jellyfishInspection,
-                snapshot.configuration,
-                configuration,
-                jellyfishPending,
-                busy,
-                surfaceSupported,
-            )}
             <div class="jc-theme-studio">
+            <div class="jc-theme-intro">
+                <p class="jc-theme-hint" id="jc-theme-modern-scope" role="note">${escapeHtml(t('theme_studio_modern_scope'))}</p>
+                ${jellyfishMigrationControls(
+                    jellyfishInspection,
+                    snapshot.configuration,
+                    configuration,
+                    jellyfishPending,
+                    busy,
+                    surfaceSupported,
+                )}
+            </div>
             <div class="jc-theme-toolbar">
                 <div class="jc-theme-row" role="group" aria-label="${escapeHtml(t('theme_studio_editor_mode'))}">
                     <button class="jc-theme-button" type="button" data-action="editor-mode" data-value="beginner" aria-pressed="${mode === 'beginner'}">${escapeHtml(t('theme_studio_beginner'))}</button>

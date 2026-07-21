@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import type { Page } from 'playwright/test';
 import { assertNoRuntimeErrors, expect, loginAs, test, USERS } from './fixtures/auth';
 import { api, apiRaw, authenticate, PLUGIN_ID, type Session } from './fixtures/api';
+import { installThemeStudioVisualFont } from './helpers/theme-studio-visual';
 
 const CONFIG_PATH = `/Plugins/${PLUGIN_ID}/Configuration`;
 const ADVANCED_STYLE = '#jc-theme-studio-advanced-css';
@@ -119,6 +120,7 @@ test.describe.serial('Theme Studio safe sharing and curated gallery', () => {
     });
 
     test.beforeEach(async ({ baseURL, page }) => {
+        await installThemeStudioVisualFont(page);
         await api(baseURL!, CONFIG_PATH, admin.token, {
             method: 'POST',
             body: JSON.stringify({
@@ -141,6 +143,7 @@ test.describe.serial('Theme Studio safe sharing and curated gallery', () => {
     });
 
     test.afterEach(async ({ baseURL }) => {
+        if (!admin || !originalConfiguration || !originalAdvancedCss) return;
         await restoreAdvancedCss(baseURL!, admin, originalAdvancedCss);
         await api(baseURL!, CONFIG_PATH, admin.token, {
             method: 'POST',
@@ -149,6 +152,7 @@ test.describe.serial('Theme Studio safe sharing and curated gallery', () => {
     });
 
     test.afterAll(async ({ baseURL }) => {
+        if (!admin || !originalConfiguration) return;
         await api(baseURL!, CONFIG_PATH, admin.token, {
             method: 'POST',
             body: JSON.stringify(originalConfiguration),

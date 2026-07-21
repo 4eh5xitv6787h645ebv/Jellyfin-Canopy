@@ -13,8 +13,12 @@
 import { defineConfig } from 'playwright/test';
 
 const outputDir = process.env.JF_E2E_OUTPUT_DIR?.trim() || `${__dirname}/test-results`;
-const trace = process.env.JF_E2E_TRACE === 'off' ? 'off' : 'retain-on-failure';
 const required = process.env.JF_E2E_REQUIRED === 'true';
+const ci = process.env.CI === 'true';
+// Traces contain DOM snapshots, request metadata and evaluated arguments. Keep
+// them available for explicit local debugging, but never retain them in CI or
+// the required evidence matrix. CI publishes bounded screenshots only.
+const trace = required || ci || process.env.JF_E2E_TRACE === 'off' ? 'off' : 'retain-on-failure';
 const requiredReporter = required
     ? [['list'], [`${__dirname}/../scripts/e2e/required-inventory-reporter.js`]]
     : [['list']];

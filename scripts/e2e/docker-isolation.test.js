@@ -162,7 +162,10 @@ test('Playwright output can be unique per local shard while retaining the old de
         /process\.env\.JF_E2E_OUTPUT_DIR\?\.trim\(\) \|\| `\$\{__dirname\}\/test-results`/
     );
     assert.match(playwright, /outputDir,/);
-    assert.match(playwright, /JF_E2E_TRACE === 'off' \? 'off' : 'retain-on-failure'/);
+    assert.match(
+        playwright,
+        /required \|\| ci \|\| process\.env\.JF_E2E_TRACE === 'off' \? 'off' : 'retain-on-failure'/
+    );
     assert.match(playwright, /trace,/);
     assert.doesNotMatch(playwright, /outputDir: `\$\{__dirname\}\/test-results`/);
 });
