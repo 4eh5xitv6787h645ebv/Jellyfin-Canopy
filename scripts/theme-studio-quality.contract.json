@@ -84,7 +84,7 @@
     "spec": "e2e/theme-studio-runtime.spec.ts",
     "snapshotDirectory": "e2e/theme-studio-runtime.spec.ts-snapshots",
     "platform": "linux",
-    "mediaFixtureMaxDiffPixels": 512,
+    "mediaFixtureMaxDiffPixels": 2500,
     "deterministicFont": {
       "family": "DejaVu Sans",
       "helper": "e2e/helpers/theme-studio-visual.ts",

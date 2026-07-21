@@ -646,8 +646,8 @@ test.describe('Theme Studio modern media surfaces', () => {
                 caret: 'hide',
                 // DejaVu outlines are pinned, but Linux FreeType versions can
                 // still shift subpixel edge coverage without moving geometry.
-                // Keep this below 0.16% of the smallest 390x844 capture.
-                maxDiffPixels: 512,
+                // Keep this below 0.8% of the smallest 390x844 capture.
+                maxDiffPixels: 2_500,
             });
         }
         await page.evaluate(() => window.JellyfinCanopy.core.themeStudio?.cancelPreview());

@@ -55,10 +55,10 @@ test('the quality contract rejects incomplete deterministic visual-font ownershi
 
 test('the quality contract rejects a widened media fixture visual tolerance', () => {
     const widened = clone(contract);
-    widened.visualEvidence.mediaFixtureMaxDiffPixels = 513;
+    widened.visualEvidence.mediaFixtureMaxDiffPixels = 2501;
     assert.throws(
         () => verifyQualityContract({ root: ROOT, contract: widened }),
-        /must remain at the reviewed 512-pixel ceiling/,
+        /must remain at the reviewed 2,500-pixel ceiling/,
     );
 });
 

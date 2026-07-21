@@ -102,11 +102,16 @@ async function findTarget(page: Page): Promise<Target | null> {
     });
 }
 
-async function routeClassifications(page: Page, target: Target, requestCount: { value: number }): Promise<void> {
+async function routeClassifications(
+    page: Page,
+    target: Target,
+    requestCount: { value: number; itemIds?: Set<string> },
+): Promise<void> {
     await page.route('**/JellyfinCanopy/anime-filler/classifications', async (route) => {
         requestCount.value++;
         const body = route.request().postDataJSON() as { itemIds?: string[] };
         const itemIds = body.itemIds || [];
+        itemIds.forEach((itemId) => requestCount.itemIds?.add(itemId));
         await route.fulfill({
             status: 200,
             contentType: 'application/json',
@@ -176,7 +181,7 @@ test.describe.serial('anime filler warnings', () => {
         await loginAs(page, 'admin', consoleErrors);
         const target = await findTarget(page);
         expect(target, 'seed season with two episodes').not.toBeNull();
-        const requests = { value: 0 };
+        const requests = { value: 0, itemIds: new Set<string>() };
         await routeClassifications(page, target!, requests);
 
         await showDetails(page, target!.seasonId);
@@ -191,7 +196,12 @@ test.describe.serial('anime filler warnings', () => {
 
         await showDetails(page, target!.canonId);
         await expect(page.locator(`#itemDetailPage ${MARKER}`)).toHaveCount(0);
-        expect(requests.value).toBeGreaterThanOrEqual(3);
+        // A stable feature generation may reuse the season-page classification
+        // cache across both detail navigations, while a lifecycle replacement
+        // may batch the same IDs into additional requests. Assert the semantic
+        // coverage rather than a timing-dependent number of network batches.
+        expect(requests.itemIds.has(target!.fillerId)).toBe(true);
+        expect(requests.itemIds.has(target!.canonId)).toBe(true);
         expect(await page.evaluate(() => localStorage.getItem('layout'))).toBe('experimental');
         assertNoRuntimeErrors(consoleErrors);
     });

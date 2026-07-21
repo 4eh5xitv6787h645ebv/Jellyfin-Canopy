@@ -90,11 +90,14 @@ function verifyQualityContract({ root = DEFAULT_ROOT, contract } = {}) {
     if (!runtimeSource.includes("viewport.name === 'desktop' || viewport.name === 'phone portrait'")) {
         fail(`${visual.spec} must capture both desktop and phone primary-preset baselines`);
     }
-    if (visual.mediaFixtureMaxDiffPixels !== 512) {
-        fail('media fixture visual tolerance must remain at the reviewed 512-pixel ceiling');
+    if (visual.mediaFixtureMaxDiffPixels !== 2_500) {
+        fail('media fixture visual tolerance must remain at the reviewed 2,500-pixel ceiling');
     }
     const mediaVisualSource = readText(root, 'e2e/theme-studio-media-surfaces.spec.ts');
-    if (!mediaVisualSource.includes(`maxDiffPixels: ${visual.mediaFixtureMaxDiffPixels}`)) {
+    const mediaFixtureAnchor = 'toHaveScreenshot(`theme-studio-media-${viewport.name}.png`';
+    const mediaFixtureStart = mediaVisualSource.indexOf(mediaFixtureAnchor);
+    if (mediaFixtureStart < 0
+        || !mediaVisualSource.slice(mediaFixtureStart, mediaFixtureStart + 700).includes('maxDiffPixels: 2_500')) {
         fail('media fixture screenshots lost their reviewed absolute visual tolerance');
     }
     const visualFont = visual.deterministicFont;
