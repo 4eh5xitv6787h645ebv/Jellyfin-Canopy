@@ -1,0 +1,74 @@
+{
+  "schemaVersion": 1,
+  "repository": "https://github.com/jellyfin/jellyfin-web",
+  "commit": "3d7adb53480f02164041fdd983b3f7abc28d0fd9",
+  "sources": {
+    "src/themes/index.ts": "c42c54d9dffb5ddf24d6d243e16787d0887db5f7be00bd9476a2433b5bc273ac",
+    "src/scripts/themeManager.js": "9ebc4e718704ca6ae9fcc688844a3d4c3cb1b041d3ca98d08c0e4ca51736444f",
+    "src/components/ThemeCss.tsx": "a083c76a5e8e0cba00e52019801c85a9840da2cee42dd2f034fe08548c9a314f",
+    "src/scripts/autoThemes.js": "d58e2ab5d8c776811b3e3490f4b10747df86d498130c71bf3d89c89a3b94c6fa"
+  },
+  "mui": {
+    "cssVariablePrefix": "jf",
+    "colorSchemeSelector": "[data-theme=\"%s\"]",
+    "defaultColorScheme": "dark"
+  },
+  "hostOwnership": {
+    "themeAttribute": "data-theme",
+    "themeChangeEvent": "THEME_CHANGE",
+    "userPreference": "appTheme",
+    "dashboardPreference": "dashboardTheme",
+    "dashboardSwitchesTheme": true
+  },
+  "builtInThemes": {
+    "appletv": "light",
+    "blueradiance": "dark",
+    "dark": "dark",
+    "light": "light",
+    "purplehaze": "dark",
+    "wmc": "dark"
+  },
+  "bridgedVariables": [
+    "--jf-card-borderRadius",
+    "--jf-palette-action-activatedOpacity",
+    "--jf-palette-action-active",
+    "--jf-palette-action-disabled",
+    "--jf-palette-action-disabledBackground",
+    "--jf-palette-action-disabledOpacity",
+    "--jf-palette-action-focus",
+    "--jf-palette-action-focusOpacity",
+    "--jf-palette-action-hover",
+    "--jf-palette-action-hoverOpacity",
+    "--jf-palette-action-selected",
+    "--jf-palette-action-selectedOpacity",
+    "--jf-palette-AppBar-defaultBg",
+    "--jf-palette-AppBar-transparentBg",
+    "--jf-palette-background-default",
+    "--jf-palette-background-defaultImage",
+    "--jf-palette-background-paper",
+    "--jf-palette-Button-inheritContainedBg",
+    "--jf-palette-Button-inheritContainedHoverBg",
+    "--jf-palette-divider",
+    "--jf-palette-error-contrastText",
+    "--jf-palette-error-dark",
+    "--jf-palette-error-light",
+    "--jf-palette-error-main",
+    "--jf-palette-FilledInput-bg",
+    "--jf-palette-FilledInput-borderColor",
+    "--jf-palette-primary-contrastText",
+    "--jf-palette-primary-dark",
+    "--jf-palette-primary-light",
+    "--jf-palette-primary-main",
+    "--jf-palette-primary-mainChannel",
+    "--jf-palette-SnackbarContent-bg",
+    "--jf-palette-SnackbarContent-color",
+    "--jf-palette-text-disabled",
+    "--jf-palette-text-primary",
+    "--jf-palette-text-secondary"
+  ],
+  "canopySurfacePolicy": {
+    "supported": ["phone", "desktop", "wide"],
+    "unsupported": ["legacy", "tablet", "tv"],
+    "dashboardRequiresOptIn": true
+  }
+}

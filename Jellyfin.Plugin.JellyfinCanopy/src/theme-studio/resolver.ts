@@ -7,6 +7,7 @@ import {
     type ThemeCatalogBreakpoint,
 } from './catalog';
 import { selectThemeSchedule, type ThemeScheduleSelection, type ThemeScheduleTimeZone } from './schedule';
+import { officialJellyfinThemeMode } from './jellyfin-web-contract';
 
 export type ThemeBreakpoint = ThemeCatalogBreakpoint;
 export type ResolvedThemeMode = 'dark' | 'light';
@@ -287,10 +288,14 @@ export function resolveTheme(
 ): ResolvedTheme {
     const selection = selectProfile(configuration, options);
     const profile = selection.profile;
+    const officialHostMode = officialJellyfinThemeMode(media.jellyfinTheme);
+    const normalizedHostTheme = media.jellyfinTheme.trim().toLowerCase();
+    const fallbackHostMode: ResolvedThemeMode = normalizedHostTheme.includes('light') ? 'light'
+        : normalizedHostTheme.includes('dark') ? 'dark'
+            : media.darkScheme ? 'dark' : 'light';
     const mode: ResolvedThemeMode = profile.Mode === 'light' ? 'light'
         : profile.Mode === 'dark' ? 'dark'
-            : media.jellyfinTheme.toLowerCase().includes('light') || (!media.jellyfinTheme && !media.darkScheme)
-                ? 'light' : 'dark';
+            : officialHostMode ?? fallbackHostMode;
     const breakpoint = resolveBreakpoint(media);
     const presetResolution = resolvePresetVersion(
         profile.BasePreset,

@@ -30,6 +30,11 @@ import {
 } from './styles';
 import { installIntegrationStylesheets } from './integration-stylesheets';
 import { ThemeAdvancedCssRuntime } from './advanced-css';
+import {
+    finalizeAcknowledgedJellyfishMigration,
+    removeAcknowledgedJellyfishStyles,
+    type JellyfishThemeName,
+} from './jellyfish-migration';
 
 const THEME_CHANGE = 'THEME_CHANGE';
 const RUNTIME_CHANGE = 'jc:theme-studio-runtime-changed';
@@ -344,6 +349,14 @@ export class ThemeStudioRuntime {
         });
         this.#cleanups.push(() => observer.disconnect());
 
+        // Jellyfin Web renders device-local custom CSS as an unlabelled React
+        // <style>. After an acknowledged migration, keep only the exact known
+        // Jellyfish import suppressed on supported modern surfaces. Arbitrary
+        // CSS and unsupported layouts are never touched.
+        const legacyStyleObserver = new MutationObserver(() => this.#suppressAcknowledgedJellyfishStyle());
+        legacyStyleObserver.observe(document.head, { childList: true, subtree: true, characterData: true });
+        this.#cleanups.push(() => legacyStyleObserver.disconnect());
+
         const events = window.Events;
         if (events) {
             events.on(document, THEME_CHANGE, refresh);
@@ -427,6 +440,7 @@ export class ThemeStudioRuntime {
             this.#configuration = JC.identity.own(configuration);
             this.#configurationAcknowledged = false;
             JC.rememberUserSettingsSnapshot?.('theme.json', this.#configuration);
+            this.#reconcileAcknowledgedJellyfishMigration();
             this.refresh();
             return true;
         } catch (error) {
@@ -513,6 +527,7 @@ export class ThemeStudioRuntime {
         this.#previewConfiguration = null;
         this.#previewAllowScheduling = true;
         JC.rememberUserSettingsSnapshot?.('theme.json', this.#configuration);
+        this.#reconcileAcknowledgedJellyfishMigration();
         this.refresh();
         this.#announceRuntimeChange('acknowledged');
         return true;
@@ -558,6 +573,7 @@ export class ThemeStudioRuntime {
             this.#setDiagnostics('inactive', null);
             return;
         }
+        this.#reconcileAcknowledgedJellyfishMigration();
         if (this.#dashboardBlocked()) {
             this.#clearPresentation();
             this.#setDiagnostics('inactive', null);
@@ -614,6 +630,21 @@ export class ThemeStudioRuntime {
         if (!modernLayout() || tvLayout()) return false;
         const breakpoint = resolveBreakpoint(this.#captureMedia());
         return breakpoint === 'phone' || breakpoint === 'desktop' || breakpoint === 'wide';
+    }
+
+    #suppressAcknowledgedJellyfishStyle(): void {
+        if (!this.#configuration || !this.#surfaceSupported()
+            || this.#configuration.LegacyMigration.Completed !== true) return;
+        const theme = this.#configuration.LegacyMigration.JellyfishTheme as JellyfishThemeName;
+        removeAcknowledgedJellyfishStyles(theme);
+    }
+
+    #reconcileAcknowledgedJellyfishMigration(): void {
+        if (!this.#configuration || !this.#surfaceSupported()
+            || this.#configuration.LegacyMigration.Completed !== true) return;
+        const context = JC.identity.capture();
+        if (!context || !JC.identity.isCurrent(context)) return;
+        finalizeAcknowledgedJellyfishMigration(context, this.#configuration);
     }
 
     #matches(name: MediaName): boolean {

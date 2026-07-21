@@ -202,7 +202,11 @@ describe('Theme Studio resolver', () => {
         const configuration = themeConfiguration();
         expect(resolveTheme(configuration, media({ jellyfinTheme: 'light', darkScheme: true })).mode).toBe('light');
         expect(resolveTheme(configuration, media({ jellyfinTheme: 'dark', darkScheme: false })).mode).toBe('dark');
+        expect(resolveTheme(configuration, media({ jellyfinTheme: 'appletv', darkScheme: true })).mode).toBe('light');
+        expect(resolveTheme(configuration, media({ jellyfinTheme: 'purplehaze', darkScheme: false })).mode).toBe('dark');
         expect(resolveTheme(configuration, media({ jellyfinTheme: '', darkScheme: false })).mode).toBe('light');
+        expect(resolveTheme(configuration, media({ jellyfinTheme: 'future-theme', darkScheme: false })).mode).toBe('light');
+        expect(resolveTheme(configuration, media({ jellyfinTheme: 'future-theme', darkScheme: true })).mode).toBe('dark');
     });
 
     it('can only reduce motion/transparency and strengthens focus for system contrast', () => {

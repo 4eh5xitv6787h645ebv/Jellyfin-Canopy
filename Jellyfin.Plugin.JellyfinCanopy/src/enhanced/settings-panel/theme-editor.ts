@@ -25,6 +25,13 @@ import {
     verifyCuratedGalleryEntry,
 } from '../../theme-studio/gallery';
 import {
+    finalizeAcknowledgedJellyfishMigration,
+    inspectJellyfishMigration,
+    mergeStagedJellyfishMigration,
+    restoreJellyfishCompatibilityKeys,
+    type JellyfishMigrationInspection,
+} from '../../theme-studio/jellyfish-migration';
+import {
     resolveBreakpoint,
     resolveTheme,
     type ResolvedThemePresentation,
@@ -774,6 +781,48 @@ function advancedCssControls(
     </details>`;
 }
 
+function jellyfishMigrationControls(
+    inspection: JellyfishMigrationInspection,
+    draft: UserThemeConfiguration,
+    committed: UserThemeConfiguration | null,
+    pending: boolean,
+    busy: boolean,
+    surfaceSupported: boolean,
+): string {
+    const staged = draft.LegacyMigration.Completed
+        && !committed?.LegacyMigration.Completed;
+    if (staged) {
+        return `<section class="jc-theme-migration staged" data-jellyfish-migration="staged" role="status">
+            <strong>${escapeHtml(t('theme_studio_jellyfish_staged_title'))}</strong>
+            <p>${escapeHtml(t('theme_studio_jellyfish_staged', { theme: draft.LegacyMigration.JellyfishTheme }))}</p>
+        </section>`;
+    }
+    if (inspection.state === 'available') {
+        const disabled = pending || busy || !surfaceSupported;
+        return `<section class="jc-theme-migration" data-jellyfish-migration="available" aria-labelledby="jc-theme-jellyfish-title">
+            <strong id="jc-theme-jellyfish-title">${escapeHtml(t('theme_studio_jellyfish_found_title'))}</strong>
+            <p>${escapeHtml(t('theme_studio_jellyfish_found', { theme: inspection.selection.theme }))}</p>
+            <p class="jc-theme-hint">${escapeHtml(t('theme_studio_jellyfish_safety'))}</p>
+            <button class="jc-theme-button primary" type="button" data-action="migrate-jellyfish"${disabled ? ' disabled' : ''}>${escapeHtml(t(pending ? 'theme_studio_jellyfish_staging' : 'theme_studio_jellyfish_preview'))}</button>
+            ${surfaceSupported ? '' : `<p class="jc-theme-hint">${escapeHtml(t('theme_studio_jellyfish_modern_only'))}</p>`}
+        </section>`;
+    }
+    if (inspection.state === 'unrecognized') {
+        return `<section class="jc-theme-migration warning" data-jellyfish-migration="unrecognized" role="alert">
+            <strong>${escapeHtml(t('theme_studio_jellyfish_unknown_title'))}</strong>
+            <p>${escapeHtml(t('theme_studio_jellyfish_unknown'))}</p>
+        </section>`;
+    }
+    if (inspection.state === 'completed') {
+        return `<section class="jc-theme-migration complete" data-jellyfish-migration="completed" role="status">
+            <strong>${escapeHtml(t('theme_studio_jellyfish_complete_title'))}</strong>
+            <p>${escapeHtml(t('theme_studio_jellyfish_complete', { theme: inspection.theme }))}</p>
+            ${inspection.rollbackAvailable ? `<p class="jc-theme-hint">${escapeHtml(t('theme_studio_jellyfish_rollback_hint'))}</p><button class="jc-theme-button" type="button" data-action="restore-jellyfish" data-theme="${escapeHtml(inspection.theme)}"${busy ? ' disabled' : ''}>${escapeHtml(t('theme_studio_jellyfish_restore'))}</button>` : ''}
+        </section>`;
+    }
+    return '';
+}
+
 function editorStyles(): string {
     return `<style>
         #jellyfin-canopy-panel .jc-panel-main.jc-theme-pane-active { overflow:hidden; }
@@ -789,6 +838,10 @@ function editorStyles(): string {
         #jellyfin-canopy-panel .jc-theme-sr-only { position:absolute!important; inline-size:1px!important; block-size:1px!important; padding:0!important; margin:-1px!important; overflow:hidden!important; clip-path:inset(50%)!important; white-space:nowrap!important; border:0!important; }
         #jellyfin-canopy-panel .jc-theme-hint { color:rgba(255,255,255,.7); font-size:12px; line-height:1.45; }
         #jellyfin-canopy-panel .jc-theme-validation { color:#ffb3b3; }
+        #jellyfin-canopy-panel .jc-theme-migration { margin:0 0 14px; border:2px solid #00d4ff; border-radius:12px; padding:12px; background:rgba(0,212,255,.08); }
+        #jellyfin-canopy-panel .jc-theme-migration.staged, #jellyfin-canopy-panel .jc-theme-migration.complete { border-color:#77d99b; background:rgba(73,186,111,.1); }
+        #jellyfin-canopy-panel .jc-theme-migration.warning { border-color:#ffbf69; background:rgba(255,191,105,.09); }
+        #jellyfin-canopy-panel .jc-theme-migration p { margin:6px 0 10px; line-height:1.45; }
         #jellyfin-canopy-panel .jc-theme-module-group { min-width:0; margin:16px 0; border:1px solid rgba(255,255,255,.16); border-radius:12px; padding:12px; }
         #jellyfin-canopy-panel .jc-theme-module-group legend { padding-inline:6px; font-weight:750; }
         #jellyfin-canopy-panel .jc-theme-module-group > .jc-theme-hint { margin:0 0 12px; }
@@ -879,7 +932,7 @@ function editorStyles(): string {
         @media (forced-colors:active) {
             #jellyfin-canopy-panel .jc-theme-swatch { display:none; }
             #jellyfin-canopy-panel .jc-theme-color-control { grid-template-columns:minmax(0,1fr); }
-            #jellyfin-canopy-panel .jc-theme-button, #jellyfin-canopy-panel .jc-theme-control, #jellyfin-canopy-panel .jc-theme-preset, #jellyfin-canopy-panel .jc-theme-gallery-card, #jellyfin-canopy-panel .jc-theme-css-card, #jellyfin-canopy-panel .jc-theme-risk { border:1px solid ButtonText; background:ButtonFace; color:ButtonText; forced-color-adjust:auto; }
+            #jellyfin-canopy-panel .jc-theme-button, #jellyfin-canopy-panel .jc-theme-control, #jellyfin-canopy-panel .jc-theme-preset, #jellyfin-canopy-panel .jc-theme-gallery-card, #jellyfin-canopy-panel .jc-theme-css-card, #jellyfin-canopy-panel .jc-theme-risk, #jellyfin-canopy-panel .jc-theme-migration { border:1px solid ButtonText; background:ButtonFace; color:ButtonText; forced-color-adjust:auto; }
             #jellyfin-canopy-panel .jc-theme-gallery-swatch { display:none; }
             #jellyfin-canopy-panel .jc-theme-button.primary, #jellyfin-canopy-panel .jc-theme-preset[aria-pressed="true"] { border:3px double Highlight; outline:1px solid Highlight; }
             #jellyfin-canopy-panel .jc-theme-control[aria-invalid="true"], #jellyfin-canopy-panel .jc-theme-validation { border-color:CanvasText; color:CanvasText; text-decoration:underline wavy; }
@@ -1094,6 +1147,12 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
     let importGeneration = 0;
     let galleryGeneration = 0;
     let galleryPending = false;
+    let jellyfishInspection: JellyfishMigrationInspection = configuration
+        ? inspectJellyfishMigration(ctx.identityContext, configuration.LegacyMigration)
+        : { state: 'none' };
+    let jellyfishPending = false;
+    let jellyfishGeneration = 0;
+    let jellyfishController: AbortController | null = null;
     let importValidationController: AbortController | null = null;
     let runtimeGeneration = 0;
     let disposed = false;
@@ -1136,6 +1195,21 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         galleryGeneration += 1;
         galleryPending = false;
         return wasPending;
+    };
+
+    const retireJellyfishWork = (): boolean => {
+        const wasPending = jellyfishPending;
+        jellyfishGeneration += 1;
+        jellyfishController?.abort();
+        jellyfishController = null;
+        jellyfishPending = false;
+        return wasPending;
+    };
+
+    const refreshJellyfishInspection = (): void => {
+        jellyfishInspection = configuration
+            ? inspectJellyfishMigration(ctx.identityContext, configuration.LegacyMigration)
+            : { state: 'none' };
     };
 
     const invalidateImportForDraftChange = (): void => {
@@ -1309,15 +1383,23 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         }
         const snapshot = state.snapshot();
         const active = snapshot.configuration.Profiles.find((profile) => profile.Id === snapshot.configuration.ActiveProfileId)!;
-        const busy = saving || loading || galleryPending;
+        const busy = saving || loading || galleryPending || jellyfishPending;
         const hasLocalDraft = snapshot.dirty || profileNameDirty();
         const activeProfileName = profileNameProfileId === active.Id ? profileNameText : active.Name;
         const activeProfileNameInvalid = profileNameProfileId === active.Id && profileNameInvalid;
         const surfaceSupported = presentationSurfaceSupported();
         root.innerHTML = `${editorStyles()}
             <button class="jc-theme-button jc-theme-return" type="button" data-action="return-editor">${escapeHtml(t('theme_studio_return_editor'))}</button>
-            <fieldset class="jc-theme-workspace" aria-busy="${galleryPending}"${busy ? ' disabled' : ''}>
+            <fieldset class="jc-theme-workspace" aria-busy="${busy}"${busy ? ' disabled' : ''}>
             <p class="jc-theme-hint" id="jc-theme-modern-scope" role="note">${escapeHtml(t('theme_studio_modern_scope'))}</p>
+            ${jellyfishMigrationControls(
+                jellyfishInspection,
+                snapshot.configuration,
+                configuration,
+                jellyfishPending,
+                busy,
+                surfaceSupported,
+            )}
             <div class="jc-theme-studio">
             <div class="jc-theme-toolbar">
                 <div class="jc-theme-row" role="group" aria-label="${escapeHtml(t('theme_studio_editor_mode'))}">
@@ -1563,6 +1645,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         if (!force && state && hasLocalWork) {
             if (state.matchesCommitted(nextConfiguration)) {
                 configuration = nextConfiguration;
+                refreshJellyfishInspection();
                 loading = false;
                 clearRecovery();
                 status = t(profileNameInvalid
@@ -1580,6 +1663,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
             return;
         }
         configuration = nextConfiguration;
+        refreshJellyfishInspection();
         state = new ThemeEditorState(nextConfiguration);
         syncProfileName(true);
         expertText = JSON.stringify(nextConfiguration, null, 2);
@@ -1592,10 +1676,11 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
     };
 
     const reload = async (): Promise<void> => {
-        if (saving || loading || galleryPending) return;
+        if (saving || loading || galleryPending || jellyfishPending) return;
         // Reload is an explicit authoritative discard. Retire validation that
         // began against the discarded draft before yielding to the runtime.
         retireImportWork();
+        retireJellyfishWork();
         if (expertTimer) {
             clearTimeout(expertTimer);
             expertTimer = 0;
@@ -1617,6 +1702,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
             return;
         }
         configuration = nextRuntime.getConfiguration();
+        refreshJellyfishInspection();
         state = configuration ? new ThemeEditorState(configuration) : null;
         syncProfileName(true);
         expertText = configuration ? JSON.stringify(configuration, null, 2) : '';
@@ -1629,7 +1715,8 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
     };
 
     const apply = async (): Promise<void> => {
-        if (!state || saving || loading || galleryPending || recoveryRequired || !JC.saveUserSettings) return;
+        if (!state || saving || loading || galleryPending || jellyfishPending
+            || recoveryRequired || !JC.saveUserSettings) return;
         if (!flushExpert(false)) {
             render();
             return;
@@ -1674,6 +1761,14 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
                 || !applyingState.adoptCommitted(ownedAcknowledged)) {
                 throw Object.assign(new Error('Acknowledged theme could not be adopted'), { kind: 'protocol' });
             }
+            const committedJellyfishMigration = configuration?.LegacyMigration.Completed !== true
+                && ownedAcknowledged.LegacyMigration.Completed === true;
+            const jellyfishCleanup = finalizeAcknowledgedJellyfishMigration(
+                ctx.identityContext,
+                ownedAcknowledged,
+            );
+            configuration = ownedAcknowledged;
+            refreshJellyfishInspection();
             // An import diff is relative to the pre-save baseline. A joined
             // persistence owner may return an acknowledgement rebased over
             // newer remote fields, so neither a completed review nor an
@@ -1699,7 +1794,11 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
             }
             if (disposed) return;
             expertText = JSON.stringify(ownedAcknowledged, null, 2);
-            status = t('theme_studio_saved');
+            status = committedJellyfishMigration
+                ? t(jellyfishCleanup.cleanupComplete
+                    ? 'theme_studio_jellyfish_saved'
+                    : 'theme_studio_jellyfish_cleanup_pending')
+                : t('theme_studio_saved');
             clearRecovery();
         } catch (error) {
             const kind = persistenceKind(error);
@@ -1885,12 +1984,72 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         }
     };
 
+    const stageJellyfishMigration = async (): Promise<void> => {
+        if (jellyfishInspection.state !== 'available' || !state || !JC.core.api
+            || saving || loading || galleryPending || jellyfishPending || recoveryRequired) return;
+        if (!presentationSurfaceSupported()) {
+            status = t('theme_studio_jellyfish_modern_only');
+            render();
+            return;
+        }
+        if (!flushExpert(false) || !flushProfileName()) {
+            render();
+            return;
+        }
+        const selection = jellyfishInspection.selection;
+        const targetState = state;
+        const draftBefore = targetState.snapshot().configuration;
+        const fingerprint = JSON.stringify(draftBefore);
+        const controller = new AbortController();
+        jellyfishController = controller;
+        const generation = ++jellyfishGeneration;
+        jellyfishPending = true;
+        status = t('theme_studio_jellyfish_staging');
+        render();
+        try {
+            const response = await JC.core.api.plugin(
+                `/user-settings/${encodeURIComponent(ctx.identityContext.userId)}/theme.json/migrate-jellyfish`,
+                {
+                    method: 'POST',
+                    body: { Theme: selection.theme },
+                    signal: controller.signal,
+                    skipCache: true,
+                    skipRetry: true,
+                    timeoutMs: 10_000,
+                },
+            );
+            if (disposed || generation !== jellyfishGeneration || state !== targetState
+                || !JC.identity.isCurrent(ctx.identityContext) || !presentationSurfaceSupported()
+                || JSON.stringify(targetState.snapshot().configuration) !== fingerprint) return;
+            const candidate = mergeStagedJellyfishMigration(response, draftBefore, selection.theme);
+            if (!candidate) throw Object.assign(new Error('Jellyfish migration response was invalid'), { kind: 'protocol' });
+            jellyfishPending = false;
+            const replaced = targetState.replace(candidate);
+            if (replaced) {
+                changed(true, true, t('theme_studio_jellyfish_staged', { theme: selection.theme }));
+            } else {
+                status = t('theme_studio_jellyfish_stage_error');
+                render();
+            }
+        } catch (error) {
+            if (disposed || generation !== jellyfishGeneration || !JC.identity.isCurrent(ctx.identityContext)
+                || (error as { name?: string } | null)?.name === 'AbortError') return;
+            status = t('theme_studio_jellyfish_stage_error');
+        } finally {
+            if (jellyfishController === controller) jellyfishController = null;
+            if (!disposed && generation === jellyfishGeneration && JC.identity.isCurrent(ctx.identityContext)) {
+                jellyfishPending = false;
+                render();
+            }
+        }
+    };
+
     root.addEventListener('click', (event) => {
         ctx.resetAutoCloseTimer();
         const button = (event.target as HTMLElement).closest<HTMLElement>('[data-action]');
         if (!button) return;
         const action = button.dataset.action;
-        if ((saving || loading || galleryPending) && action !== 'return-editor') return;
+        if ((saving || loading || galleryPending || jellyfishPending) && action !== 'return-editor') return;
         if ((advancedCssSaving || advancedCssLoading)
             && ['add-css-snippet', 'delete-css-snippet', 'reset-css', 'save-css'].includes(action ?? '')) return;
         if (button.hasAttribute('disabled') || !state) {
@@ -1909,7 +2068,21 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
             render();
             return;
         }
-        if (action === 'undo') changed(state.undo());
+        if (action === 'migrate-jellyfish') void stageJellyfishMigration();
+        else if (action === 'restore-jellyfish'
+            && jellyfishInspection.state === 'completed'
+            && button.dataset.theme === jellyfishInspection.theme) {
+            const restored = restoreJellyfishCompatibilityKeys(
+                ctx.identityContext,
+                jellyfishInspection.theme,
+            );
+            refreshJellyfishInspection();
+            status = t(restored
+                ? 'theme_studio_jellyfish_restored'
+                : 'theme_studio_jellyfish_restore_error');
+            render();
+        }
+        else if (action === 'undo') changed(state.undo());
         else if (action === 'redo') changed(state.redo());
         else if (action === 'preset') changed(state.updateActiveProfile((profile) => { profile.BasePreset = button.dataset.value!; profile.PresetVersion = null; profile.FreezePresetVersion = false; }));
         else if (action === 'mode') changed(state.updateActiveProfile((profile) => { profile.Mode = button.dataset.value as ThemeProfile['Mode']; }));
@@ -1970,6 +2143,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
             // A slow server validation belongs to the draft being discarded;
             // its continuation must never repopulate the import review.
             retireImportWork();
+            retireJellyfishWork();
             if (expertTimer) {
                 clearTimeout(expertTimer);
                 expertTimer = 0;
@@ -2082,7 +2256,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
     root.addEventListener('input', (event) => {
         ctx.resetAutoCloseTimer();
         const target = event.target as HTMLInputElement | HTMLTextAreaElement;
-        if (!state || saving || loading || galleryPending) return;
+        if (!state || saving || loading || galleryPending || jellyfishPending) return;
         if ((advancedCssSaving || advancedCssLoading)
             && target.dataset.field?.startsWith('advanced-css-')) return;
         if (target.dataset.role === 'profile-name') {
@@ -2104,7 +2278,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
             if (statusElement) statusElement.textContent = `${hasLocalDraft ? '● ' : ''}${visibleStatus()}`;
             const applyButton = root.querySelector<HTMLButtonElement>('[data-action="apply"]');
             if (applyButton) {
-                applyButton.disabled = !hasLocalDraft || saving || loading || galleryPending
+                applyButton.disabled = !hasLocalDraft || saving || loading || galleryPending || jellyfishPending
                     || expertInvalid || profileNameInvalid || recoveryRequired;
             }
             syncAutoCloseProtection();
@@ -2146,7 +2320,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
     root.addEventListener('change', (event) => {
         ctx.resetAutoCloseTimer();
         const target = event.target as HTMLInputElement | HTMLSelectElement;
-        if (!state || saving || loading || galleryPending) return;
+        if (!state || saving || loading || galleryPending || jellyfishPending) return;
         if ((advancedCssSaving || advancedCssLoading)
             && target.dataset.field?.startsWith('advanced-css-')) return;
         const value = target.value;
@@ -2268,7 +2442,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         ctx.resetAutoCloseTimer();
         const target = event.target as HTMLElement;
         if ((!event.ctrlKey && !event.metaKey) || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)
-            || !state || saving || loading || galleryPending) return;
+            || !state || saving || loading || galleryPending || jellyfishPending) return;
         if (!flushExpert(false)) {
             render();
             return;
@@ -2310,7 +2484,13 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
     };
     const onConfigChanged = (): void => {
         const discardedGallery = retireGalleryWork();
+        const discardedJellyfish = retireJellyfishWork();
         if (discardedGallery && !saving && !loading) {
+            status = t(state?.snapshot().dirty || profileNameDirty()
+                ? 'theme_studio_unsaved'
+                : 'theme_studio_ready');
+        }
+        if (discardedJellyfish && !saving && !loading) {
             status = t(state?.snapshot().dirty || profileNameDirty()
                 ? 'theme_studio_unsaved'
                 : 'theme_studio_ready');
@@ -2355,6 +2535,7 @@ export function wireThemeStudioEditor(ctx: PanelContext): void {
         runtimeGeneration += 1;
         advancedCssGeneration += 1;
         retireGalleryWork();
+        retireJellyfishWork();
         retireImportWork();
         cancelPreviewFrame();
         cancelPreviewCardFrame();

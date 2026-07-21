@@ -73,6 +73,7 @@ let originalAcknowledgedSnapshot: typeof JC.getAcknowledgedUserSettingsSnapshot;
 let originalDom: typeof JC.core.dom;
 
 beforeEach(() => {
+    localStorage.clear();
     originalApi = JC.core.api;
     originalEvents = window.Events;
     originalRemember = JC.rememberUserSettingsSnapshot;
@@ -112,6 +113,8 @@ afterEach(async () => {
     document.getElementById(MOBILE_ENVIRONMENT_STYLE_ID)?.remove();
     document.getElementById(DYNAMIC_ACCENT_STYLE_ID)?.remove();
     document.getElementById(OPERATIONAL_STYLESHEET_ID)?.remove();
+    document.querySelectorAll('[data-test-jellyfish-style]').forEach((style) => style.remove());
+    localStorage.clear();
     document.body.replaceChildren();
     for (const name of [...document.documentElement.attributes].map((item) => item.name)) {
         if (name.startsWith('data-jc-theme-')) document.documentElement.removeAttribute(name);
@@ -144,6 +147,79 @@ function createRuntime(): { runtime: ThemeStudioRuntime; harness: TestFeatureSco
 }
 
 describe('Theme Studio identity-owned runtime', () => {
+    it('reconciles an acknowledged Jellyfish migration live and suppresses only the exact known import', async () => {
+        const identity = JC.identity.capture()!;
+        const key = `jc-theme:${identity.serverId}:${identity.userId}:customCss`;
+        const compatibilityKey = `${identity.userId}-customCss`;
+        const value = '@import url("http://jellyfin.test/JellyfinCanopy/assets/themes/ocean.css");';
+        localStorage.setItem(key, value);
+        localStorage.setItem(compatibilityKey, value);
+        const legacyStyle = document.createElement('style');
+        legacyStyle.dataset.testJellyfishStyle = 'true';
+        legacyStyle.textContent = value;
+        document.head.append(legacyStyle);
+        const configuration = themeConfiguration();
+        configuration.Profiles[0].Palette = 'jellyfish-ocean';
+        configuration.Profiles[0].Accent = 'palette';
+        configuration.LegacyMigration = { JellyfishTheme: 'Ocean', Completed: true };
+        apiReturning(configuration);
+        const { runtime, harness } = createRuntime();
+
+        await runtime.load();
+
+        expect(localStorage.getItem(key)).toBeNull();
+        expect(localStorage.getItem(compatibilityKey)).toBeNull();
+        expect(legacyStyle.isConnected).toBe(false);
+        expect(localStorage.getItem(
+            `jc-theme:${identity.serverId}:${identity.userId}:jellyfish-rollback-v1`,
+        )).not.toBeNull();
+
+        const reinserted = document.createElement('style');
+        reinserted.dataset.testJellyfishStyle = 'true';
+        reinserted.textContent = value;
+        document.head.append(reinserted);
+        await vi.waitFor(() => expect(reinserted.isConnected).toBe(false));
+
+        await harness.dispose();
+        const afterDisable = document.createElement('style');
+        afterDisable.dataset.testJellyfishStyle = 'true';
+        afterDisable.textContent = value;
+        document.head.append(afterDisable);
+        await Promise.resolve();
+        expect(afterDisable.isConnected).toBe(true);
+    });
+
+    it.each(['tablet', 'legacy', 'tv'] as const)(
+        'does not inspect, clean, or suppress legacy imports on the unsupported %s surface',
+        async (surface) => {
+            if (surface === 'tablet') window.innerWidth = 800;
+            if (surface === 'legacy') document.documentElement.classList.add('jc-legacy-layout');
+            if (surface === 'tv') document.documentElement.classList.add('layout-tv');
+            const identity = JC.identity.capture()!;
+            const key = `jc-theme:${identity.serverId}:${identity.userId}:customCss`;
+            const value = '@import url("http://jellyfin.test/JellyfinCanopy/assets/themes/ocean.css");';
+            localStorage.setItem(key, value);
+            const legacyStyle = document.createElement('style');
+            legacyStyle.dataset.testJellyfishStyle = 'true';
+            legacyStyle.textContent = value;
+            document.head.append(legacyStyle);
+            const configuration = themeConfiguration();
+            configuration.Profiles[0].Palette = 'jellyfish-ocean';
+            configuration.Profiles[0].Accent = 'palette';
+            configuration.LegacyMigration = { JellyfishTheme: 'Ocean', Completed: true };
+            apiReturning(configuration);
+            const { runtime } = createRuntime();
+
+            await runtime.load();
+            await Promise.resolve();
+
+            expect(localStorage.getItem(key)).toBe(value);
+            expect(legacyStyle.isConnected).toBe(true);
+            expect(document.getElementById(COMMITTED_STYLE_ID)).toBeNull();
+            expect(document.documentElement.getAttribute('data-jc-theme-active')).toBeNull();
+        },
+    );
+
     it('generation-owns one local operational stylesheet and tears down only the current owner', () => {
         const first = createRuntime();
         const link = document.getElementById(OPERATIONAL_STYLESHEET_ID);
