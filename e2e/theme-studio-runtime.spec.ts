@@ -306,6 +306,10 @@ test.describe.serial('Theme Studio runtime bridge', () => {
             const hero = getComputedStyle(fixture.querySelector<HTMLElement>('.section0')!);
             const homeLibraries = getComputedStyle(fixture.querySelector<HTMLElement>('.section0 .itemsContainer')!);
             const heroMinHeight = Number.parseFloat(hero.minHeight);
+            // CSSStyleDeclaration is live in real browsers. Snapshot the Home
+            // values before changing the route for the Details assertions.
+            const homeLibrariesDisplay = homeLibraries.display;
+            const homeLibrariesColumns = homeLibraries.gridTemplateColumns;
             root.setAttribute('data-jc-theme-route', 'details');
             const drawer = getComputedStyle(fixture.querySelector<HTMLElement>('.MuiDrawer-paper')!);
             const backdrop = getComputedStyle(fixture.querySelector<HTMLElement>('.itemBackdrop')!);
@@ -323,8 +327,8 @@ test.describe.serial('Theme Studio runtime bridge', () => {
                 beforeHomeOrder,
                 afterHomeOrder: homeOrder(),
                 heroMinHeight,
-                homeLibrariesDisplay: homeLibraries.display,
-                homeLibrariesColumns: homeLibraries.gridTemplateColumns,
+                homeLibrariesDisplay,
+                homeLibrariesColumns,
                 drawerWidth: Number.parseFloat(drawer.width),
                 backdropHeight: Number.parseFloat(backdrop.height),
                 seasonsDisplay: seasons.display,
