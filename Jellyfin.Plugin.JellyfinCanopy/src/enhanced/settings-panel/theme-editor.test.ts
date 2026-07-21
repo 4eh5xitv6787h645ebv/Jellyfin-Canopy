@@ -126,6 +126,9 @@ function editorMediaHarness(): {
 
 beforeEach(() => {
     vi.useFakeTimers();
+    localStorage.clear();
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1024 });
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 768 });
     frames = new Map();
     nextFrame = 1;
     vi.stubGlobal('requestAnimationFrame', vi.fn((callback: FrameRequestCallback) => {
@@ -197,12 +200,135 @@ afterEach(() => {
     document.documentElement.classList.remove('jc-modern-layout', 'jc-legacy-layout', 'layout-tv');
     document.documentElement.removeAttribute('data-layout');
     document.body.classList.remove('layout-tv');
+    localStorage.clear();
     vi.unstubAllGlobals();
     vi.useRealTimers();
     vi.restoreAllMocks();
 });
 
 describe('Theme Studio responsive settings editor', () => {
+    it.each([
+        { name: 'desktop', width: 1366, height: 768, coarse: false },
+        { name: 'phone portrait', width: 390, height: 844, coarse: true },
+        { name: 'phone landscape', width: 844, height: 390, coarse: true },
+    ])('stages, previews and acknowledges an exact Jellyfish migration on $name without a reload', async ({ width, height, coarse }) => {
+        Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
+        Object.defineProperty(window, 'innerHeight', { configurable: true, value: height });
+        const media = editorMediaHarness();
+        vi.stubGlobal('matchMedia', media.matchMedia);
+        window.matchMedia = media.matchMedia;
+        media.set('(pointer: coarse)', coarse);
+        const legacyImport = '@import url("http://jellyfin.test/JellyfinCanopy/assets/themes/ocean.css");';
+        localStorage.setItem(`jc-theme:${identity.serverId}:${identity.userId}:customCss`, legacyImport);
+        localStorage.setItem(`${identity.userId}-customCss`, legacyImport);
+        const legacyStyle = document.createElement('style');
+        legacyStyle.textContent = legacyImport;
+        document.head.append(legacyStyle);
+        const staged = themeConfiguration();
+        staged.Profiles[0].Palette = 'jellyfish-ocean';
+        staged.Profiles[0].Accent = 'palette';
+        staged.LegacyMigration = { JellyfishTheme: 'Ocean', Completed: true };
+        const plugin = vi.fn().mockResolvedValue({ valid: true, data: staged });
+        JC.core.api = { plugin } as unknown as ApiApi;
+        JC.saveUserSettings = vi.fn((_file, payload) => {
+            const owned = payload as UserThemeConfiguration;
+            return Promise.resolve(acknowledgedTheme(owned, configuration.Revision + 1));
+        });
+        wireThemeStudioEditor(context());
+
+        expect(panel.querySelector('[data-jellyfish-migration="available"]')).not.toBeNull();
+        button('migrate-jellyfish').click();
+        await vi.waitFor(() => expect(plugin).toHaveBeenCalledWith(
+            `/user-settings/${identity.userId}/theme.json/migrate-jellyfish`,
+            expect.objectContaining({ method: 'POST', body: { Theme: 'Ocean' } }),
+        ));
+        await vi.waitFor(() => expect(panel.querySelector('[data-jellyfish-migration="staged"]')).not.toBeNull());
+        flushFrames();
+        expect(preview).toHaveBeenLastCalledWith(expect.objectContaining({
+            LegacyMigration: { JellyfishTheme: 'Ocean', Completed: true },
+            Profiles: [expect.objectContaining({ Palette: 'jellyfish-ocean', Accent: 'palette' })],
+        }), { allowScheduling: false });
+        expect(localStorage.getItem(`jc-theme:${identity.serverId}:${identity.userId}:customCss`))
+            .toBe(legacyImport);
+
+        button('apply').click();
+
+        await vi.waitFor(() => expect(panel.textContent).toContain('theme_studio_jellyfish_saved'));
+        expect(JC.saveUserSettings).toHaveBeenCalledOnce();
+        expect(localStorage.getItem(`jc-theme:${identity.serverId}:${identity.userId}:customCss`)).toBeNull();
+        expect(localStorage.getItem(`${identity.userId}-customCss`)).toBeNull();
+        expect(legacyStyle.isConnected).toBe(false);
+        expect(panel.querySelector('[data-jellyfish-migration="completed"]')).not.toBeNull();
+        expect(button('restore-jellyfish')).not.toBeNull();
+        button('restore-jellyfish').click();
+        expect(localStorage.getItem(`jc-theme:${identity.serverId}:${identity.userId}:customCss`))
+            .toBe(legacyImport);
+        expect(panel.textContent).toContain('theme_studio_jellyfish_restored');
+    });
+
+    it('shows an unknown legacy import but never sends or executes it', () => {
+        const unknown = '@import url("https://private.invalid/secret.css");';
+        localStorage.setItem(`jc-theme:${identity.serverId}:${identity.userId}:customCss`, unknown);
+        const plugin = vi.fn();
+        JC.core.api = { plugin } as unknown as ApiApi;
+
+        wireThemeStudioEditor(context());
+
+        expect(panel.querySelector('[data-jellyfish-migration="unrecognized"]')).not.toBeNull();
+        expect(panel.textContent).not.toContain('private.invalid');
+        expect(panel.querySelector('[data-action="migrate-jellyfish"]')).toBeNull();
+        expect(plugin).not.toHaveBeenCalled();
+        expect([...document.querySelectorAll('style')].some((style) =>
+            (style.textContent ?? '').includes('private.invalid'))).toBe(false);
+    });
+
+    it.each([
+        { surface: 'tablet', width: 800, legacy: false, tv: false },
+        { surface: 'legacy', width: 1366, legacy: true, tv: false },
+        { surface: 'tv', width: 1920, legacy: false, tv: true },
+    ])('keeps Jellyfish migration inactive on $surface layouts', ({ width, legacy, tv }) => {
+        Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
+        document.documentElement.classList.toggle('jc-legacy-layout', legacy);
+        document.documentElement.classList.toggle('layout-tv', tv);
+        const value = '@import url("http://jellyfin.test/JellyfinCanopy/assets/themes/ocean.css");';
+        localStorage.setItem(`jc-theme:${identity.serverId}:${identity.userId}:customCss`, value);
+        const plugin = vi.fn();
+        JC.core.api = { plugin } as unknown as ApiApi;
+
+        wireThemeStudioEditor(context());
+
+        expect(button('migrate-jellyfish').disabled).toBe(true);
+        button('migrate-jellyfish').click();
+        expect(plugin).not.toHaveBeenCalled();
+        expect(localStorage.getItem(`jc-theme:${identity.serverId}:${identity.userId}:customCss`)).toBe(value);
+        expect(preview).not.toHaveBeenCalled();
+    });
+
+    it('drops a delayed migration response after identity handoff without cleaning either identity', async () => {
+        const value = '@import url("http://jellyfin.test/JellyfinCanopy/assets/themes/ocean.css");';
+        localStorage.setItem(`jc-theme:${identity.serverId}:${identity.userId}:customCss`, value);
+        let resolveMigration!: (value: unknown) => void;
+        const plugin = vi.fn(() => new Promise<unknown>((resolve) => { resolveMigration = resolve; }));
+        JC.core.api = { plugin } as unknown as ApiApi;
+        wireThemeStudioEditor(context());
+        button('migrate-jellyfish').click();
+        await vi.waitFor(() => expect(plugin).toHaveBeenCalledOnce());
+        const previous = identity;
+
+        identity = JC.identity.transition('server-b', 'user-b', 'jellyfish-editor-handoff')!;
+        const staged = themeConfiguration();
+        staged.Profiles[0].Palette = 'jellyfish-ocean';
+        staged.Profiles[0].Accent = 'palette';
+        staged.LegacyMigration = { JellyfishTheme: 'Ocean', Completed: true };
+        resolveMigration({ valid: true, data: staged });
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(preview).not.toHaveBeenCalled();
+        expect(localStorage.getItem(`jc-theme:${previous.serverId}:${previous.userId}:customCss`)).toBe(value);
+        expect(localStorage.getItem(`jc-theme:${identity.serverId}:${identity.userId}:customCss`)).toBeNull();
+    });
+
     it('renders the split workflow and frame-coalesces valid live preview changes', () => {
         wireThemeStudioEditor(context());
         expect(panel.querySelector('.jc-theme-studio')).not.toBeNull();

@@ -68,6 +68,38 @@ Open **Dashboard → Plugins → Jellyfin Canopy → Extras → Theme Studio**, 
 
 When Theme Studio is enabled, it owns the theme experience and the older **Theme Selector (Jellyfish)** picker stays inactive. Existing Jellyfish selections can be staged through Theme Studio's migration path without importing third-party CSS or a remote URL.
 
+### Migrate an existing Jellyfish selection
+
+Open the Enhanced panel's **Theme Studio** page on a modern phone or desktop browser. If this browser has one exact recognized Jellyfish colour import, a migration notice names the matching palette and offers **Preview migration**. All 15 choices from the existing selector are supported: Aurora, Banana, Coal, Coral, Forest, Grass, Jellyblue, Jellyflix, Jellypurple, Lavender, Midnight, Mint, Ocean, Peach, and Watermelon.
+
+![Recognized Jellyfish migration in Theme Studio on a modern desktop](images/theme-studio-jellyfish-migration-desktop.png)
+
+The desktop image is captured from the authenticated Jellyfin 12 browser test at 1366 × 768. The same test proves the notice and editor do not overflow, then exercises server staging, live preview, exact acknowledgement, scoped cleanup, import suppression, and rollback.
+
+![Recognized Jellyfish migration in Theme Studio on a modern phone](images/theme-studio-jellyfish-migration-phone.png)
+
+The phone image comes from the equivalent 390 × 844 modern portrait run with coarse-pointer behavior. Separate live-browser evidence covers 844 × 390 phone landscape and 1920 × 1080 wide desktop; tablet-only, legacy, and TV runs assert an exact no-op.
+
+Preview is deliberately staged. The browser sends the authenticated server only the canonical choice name, such as `Ocean`; it never sends or executes the stored CSS, filename, or URL. The server returns the bundled `jellyfish-ocean` palette, the editor applies it to the current active profile without discarding other profiles or schedules, and the live preview appears without reloading the page. **Cancel** leaves the old selection and its keys untouched. **Apply** must receive the normal revisioned server acknowledgement before cleanup starts.
+
+After that acknowledgement, Canopy removes only still-unchanged keys belonging to the current server/user identity and suppresses only an exact recognized Jellyfish import already rendered by Jellyfin Web. It first stores a small identity-scoped rollback record containing the canonical palette name, recognized random-theme state, and a 30-day expiry—never arbitrary CSS. **Restore compatibility selection** regenerates those known local values for rollback without executing the import or disabling Theme Studio. A changed, conflicting, unknown, mixed, remote, or malformed custom-CSS value is shown as unsupported and is never sent, loaded, changed, or deleted.
+
+Daily random selection migrates the currently applied recognized colour. Its old scheduler keys are cleaned only with the acknowledged migration and can be regenerated during the rollback window. Account/server handoff, feature disablement, panel close, stale responses, storage failure, or a revision conflict retires pending work without cleaning keys or publishing another user's preview.
+
+| Jellyfin surface | Theme Studio and migration behavior |
+|---|---|
+| Modern desktop and wide desktop | Full profile, migration preview, acknowledged cleanup, and rollback controls |
+| Modern phone portrait and phone landscape | Same lifecycle in the compact editor with 44 CSS-pixel controls and single-column reflow |
+| Administrator Dashboard | Stock recovery surface by default; optional typed colours only when the administrator enables the Dashboard policy; no presentation modules, migration preview, or advanced declarations |
+| Tablet-only breakpoint | Stock Jellyfin; no Theme Studio style, migration preview, key cleanup, or import suppression |
+| Legacy layout | Stock Jellyfin; no Theme Studio work |
+| TV layout | Stock Jellyfin; no Theme Studio work |
+| Sign-in and logged-out state | Stock Jellyfin; no per-user theme or migration state |
+
+Jellyfin Web remains the owner of its built-in Apple TV, Blue Radiance, Dark, Light, Purple Haze, and WMC themes, the root `data-theme` attribute, and Dashboard/user theme switching. A Theme Studio profile in **System** mode follows those official modes—Apple TV and Light are light; the other current built-ins are dark—while Canopy supplies its bounded semantic values only under the modern activation gate.
+
+Server branding CSS and unrelated device-local custom CSS are not converted or removed. They still participate in the browser cascade and can conflict through more-specific selectors or `!important`. For a predictable result, remove conflicting broad rules yourself or translate declaration-only values into Canopy's separately gated advanced editor. Theme Studio never treats general third-party CSS as a shareable profile.
+
 ### Make a personal profile
 
 1. Open the **Enhanced panel** and select **Theme Studio**.

@@ -11,6 +11,7 @@
   "scripts": {
     "check:toolchain": "node scripts/check-node-toolchain.js",
     "check:performance-rules": "node scripts/check-performance-rules.js",
+    "check:jellyfin-web-theme-contract": "node scripts/check-jellyfin-web-theme-contract.js",
     "check:markdown-links": "node scripts/check-markdown-links.js && node scripts/check-installation-permissions.js",
     "check:docs-assets": "node scripts/check-doc-assets.js",
     "check:docs": "node scripts/check-docs.js && node scripts/check-installation-permissions.js && node scripts/check-doc-assets.js && python -m mkdocs build --strict -d site",
