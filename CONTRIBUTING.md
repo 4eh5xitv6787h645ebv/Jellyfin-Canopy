@@ -58,6 +58,7 @@ published as a deterministic, manifest-owned client distribution:
 
 - `Jellyfin.Plugin.JellyfinCanopy/src/` — **the client.** Strict TypeScript ES modules organized into the boot-critical platform, import-pure feature entries under `src/entries/`, and implementation areas (`enhanced/`, `seerr/`, `arr/`, `tags/`, `elsewhere/`, `extras/`, `others/`). `scripts/build-bundle.js` uses esbuild splitting to produce `dist/entries/*.js`, content-addressed `dist/chunks/*.js`, adjacent source maps, and `dist/client-manifest.json`; there is no client monolith or area-barrel boot path.
 - `scripts/bundle-budgets.json` — fail-closed limits for the boot graph, feature static and dynamically expanded closures, individual/output counts, source maps, the client manifest, and total published bytes.
+- `scripts/scale-budgets.json` — machine-readable performance limits for the [nightly large-library scale tier](#nightly-large-library-scale-tier); same philosophy as `bundle-budgets.json`, currently advisory with `null` (not-yet-measured) placeholders.
 - `Jellyfin.Plugin.JellyfinCanopy/Controllers/` — one small feature controller per HTTP surface, nearly all deriving from `JellyfinCanopyControllerBase` (the anonymous asset-serving `AssetsController` derives directly from `ControllerBase`).
 - `Jellyfin.Plugin.JellyfinCanopy/Configuration/` — `PluginConfiguration.cs` (admin settings), `SettingDescriptors.cs` (the settings registry — the single source of truth for what reaches clients), the admin config page.
 - `Jellyfin.Plugin.JellyfinCanopy.Tests/` — xUnit tests, including golden snapshots that pin the config payload contract.
@@ -341,6 +342,699 @@ security-sensitive exception: it requires both `JF_BIND_ADDRESS=<numeric-ip>`
 and `JF_ALLOW_NON_LOOPBACK=true`, plus four nondefault `JF_ADMIN_USER`,
 `JF_ADMIN_PASS`, `JF_USER_NAME`, and `JF_USER_PASS` values. Never expose the
 documented test credentials to a LAN or public interface.
+
+### Nightly large-library scale tier
+
+This section is the specification for the repository's scale-test tier. The
+tier is **advisory today**: the workflow, seed generator, measurement harness,
+and budget comparator are follow-up implementation issues cut from this spec
+(listed at the end). Nothing here runs per PR, and nothing here currently
+blocks a release. The durable heading stays stable while the tier ratchets from
+advisory to blocking; its current status is expressed in this content, never by
+renaming the section.
+
+Why it exists: the per-PR gates use small seeded libraries on 2-CPU parity
+servers, and the only performance artifacts are client-side jank benchmarks
+(non-CI) plus the static `check:performance-rules` guard. None of that would
+catch a change that makes the tag-cache build quadratic or regresses scan-event
+handling at scale. The scale tier measures the plugin against genuinely large
+synthetic libraries on a fixed schedule instead.
+
+#### Job shape
+
+A scheduled GitHub Actions workflow (nightly for profile L, weekly or
+`workflow_dispatch` for profile XL) runs from `main` only. Its steps, in order:
+reconcile expired leaked resources (see secrets and teardown below),
+provision an ephemeral Linode instance, attach the persistent seed Volume,
+prepare the instance (Docker, plugin build under test), verify the runtime
+quota, measure every metric below, compare measurements against
+`scripts/scale-budgets.json`, collect results as workflow artifacts, and
+destroy the instance. The workflow has **no `pull_request` trigger** and never
+registers a self-hosted runner; orchestration is plain SSH from the
+GitHub-hosted control-plane job.
+
+**Single-flight concurrency contract.** Every run of the scale tier — the
+nightly L schedule, the weekly XL schedule, manual `workflow_dispatch`, and
+release-dispatched exact-SHA runs — declares the same GitHub Actions
+concurrency group (`canopy-scale`) with `cancel-in-progress: false`. The
+group guarantees exactly one thing: **at most one run executes at a time**,
+and a run that has started is never cancelled by a newer trigger. It is
+**not** a lossless queue: GitHub Actions holds at most **one pending run per
+concurrency group**, and a newer trigger **replaces and cancels the pending
+run** even with `cancel-in-progress: false`. No part of this spec may assume
+a pending run "waits its turn"; each trigger class instead carries an
+explicit displacement posture:
+
+- **Scheduled and manual runs** tolerate displacement. A scheduled nightly
+  L, weekly XL, or manual run cancelled while pending provisioned nothing,
+  spent nothing, and needs no reconciliation; the loss is accepted because
+  the next scheduled run of that profile covers it. A cancelled-while-pending
+  run is a scheduling artifact, never a no-evidence anomaly requiring action.
+- **Release-dispatched exact-SHA runs** must not lose evidence to
+  displacement. The release workflow never fire-and-forgets a dispatch: it
+  resolves the run it dispatched, watches that specific run to completion,
+  and if the run is **cancelled without ever starting** (displaced from the
+  pending slot by a newer trigger), re-dispatches it. A displacement
+  cancellation executed no infrastructure work and measured nothing, so it
+  is **not an attempt** under the per-profile retry policy (see the
+  exact-tag-SHA section below) and consumes no retry allowance. The
+  watch-and-redispatch loop needs no counter of its own: it is bounded by
+  the release job's hard `timeout-minutes` cap under the bounded-lifecycle
+  rule — the same cap that bounds every other wait in the tier — after
+  which the release gate reports missing exact-SHA evidence exactly like
+  any other evidence failure.
+
+The group's mutual-exclusion guarantee — not the Volume's attach limit — is
+the serialization mechanism: the one-Linode-at-a-time attach constraint (see
+the Volume lifecycle below) is a physical backstop that serialized runs never
+reach, so no run spends provisioning money only to lose an attach race.
+
+#### Scale profiles (provisional — SR-06 canonicalizes)
+
+- **L — 100,000 episodes.** Runs nightly.
+- **XL — approximately 2,000,000 items**, provisionally targeted as roughly
+  2,000,000 episodes plus 500 users as the worst-case shape, built as far as
+  feasible. Runs weekly and on demand.
+
+Both profiles are provisional definitions owned here only until SR-06
+canonicalizes them; if SR-06 changes a profile, this section and the budget
+file follow it.
+
+The synthetic library is produced by a bulk-item generator extending the
+existing `e2e/docker/seed.sh` machinery (follow-up issue). Stub media files are
+zero-byte/sparse — no real video — so profile XL is an inode question, not a
+disk-space question, and the seed script must verify `df -i` headroom on the
+Volume before seeding.
+
+#### Metrics
+
+Every run measures, per profile, the following ten metrics. Each corresponds
+one-to-one with a budget key in `scripts/scale-budgets.json`:
+
+| Budget key | What is measured |
+| --- | --- |
+| `maxTagCacheFullBuildMilliseconds` | Wall-clock duration of a **cold** full tag-cache build over the seeded library — every entry constructed from scratch, per the tag-cache state protocol below. |
+| `maxTagCacheFullBuildPeakResidentDeltaBytes` | Peak server resident-memory (RSS) delta during that cold full build, relative to the pre-build baseline. |
+| `maxLibraryScanEventP95Milliseconds` | p95 per-event latency of the plugin's synchronous scan-thread event handlers (the [S1 rule](#performance-rules)) during the pinned bulk-add workload defined in the measurement protocol below. |
+| `maxResponseFilterP95MicrosecondsPerItem` | p95 latency overhead added by the plugin's complete synchronous MVC item-response filter chain — all four action filters registered in `PluginServiceRegistrator`, in registration order: `HiddenContentResponseFilter`, `SpoilerIdentityTagFilter`, `SpoilerFieldStripFilter`, `SpoilerBlurImageFilter`; any filter later added to that chain joins this metric automatically — on the pinned list-endpoint workload defined in the measurement protocol below, normalized per **examined (pre-filter) item** per the fixed page-shape rule below. |
+| `maxPluginStartupMilliseconds` | Plugin startup duration on the seeded server with the persisted tag cache **present** (warm start, the production steady state), per the tag-cache state protocol below. |
+| `maxTagCacheColdResponseBytes` | Size in bytes of the cold tag-cache response. |
+| `maxTagCacheSnapshotSerializationPeakAllocatedBytes` | Peak server allocation during tag-cache snapshot serialization. |
+| `maxTagCacheColdTransferP95Milliseconds` | p95 transfer time of the cold tag-cache response. |
+| `maxTagCacheColdClientParseP95Milliseconds` | p95 client parse time of the cold tag-cache response. |
+| `maxTagCacheColdBrowserHeapDeltaBytes` | Browser heap delta after the client consumes the cold tag-cache response. |
+
+The last five form the tag-cache cold-response envelope required by SR-06's
+response-envelope rule (SR-22): response bytes, serialization peak allocation,
+transfer time, client parse time, and browser heap — not just build
+time/memory. Wherever this section says "cold tag-cache response" it means
+exactly the pinned full-snapshot request defined in the measurement protocol
+below — never a delta, reset, or projection-only response.
+
+Measurement protocol requirements for the follow-up harness:
+
+- **Tag-cache state protocol.** Two facts about the shipped code make naive
+  measurement of the tag-cache metrics wrong: `TagCacheService.BuildFullCache`
+  is a *reconcile* that reuses the existing entry for any item whose source
+  revision is unchanged, and `StartupService` runs `BuildFullCache` during
+  startup whenever no persisted cache exists. So a build triggered over
+  existing cache state measures a warm reconcile that never exercises per-item
+  entry construction (a quadratic entry-build regression would pass), while
+  simply deleting the cache before startup folds the initial build into the
+  startup measurement. The harness must therefore measure the two metric
+  groups in **separate server sessions with explicit, asserted cache state**,
+  cold before warm:
+  1. **Cold session first — full-build metrics.** Start the server with no
+     persisted tag cache in the instance-local writable state. The Volume
+     baseline never contains plugin-persisted runtime state (see the Volume
+     lifecycle), and the run additionally deletes any `tag-cache.json` from
+     the instance-local copy before this first start (the Volume baseline
+     itself is never modified). Startup performs the initial full build
+     against an empty in-memory cache; `maxTagCacheFullBuildMilliseconds` and
+     `maxTagCacheFullBuildPeakResidentDeltaBytes` are recorded from the named
+     measurement markers bracketing the build itself — never from whole-startup
+     timing — and startup duration is never recorded from this session. The
+     harness asserts the cold precondition (no persisted cache on disk and
+     zero in-memory entries when the build starts) and, after the build
+     completes, that the plugin persisted a `tag-cache.json` with a nonzero
+     entry count — that file is the warm session's input.
+  2. **Warm session — startup metric.** Restart the server with the cold
+     session's just-persisted `tag-cache.json` left in place.
+     `maxPluginStartupMilliseconds` is recorded from this session only; the
+     harness asserts that startup loaded a nonzero entry count from disk and
+     that no full build ran during startup.
+  Ordering cold-before-warm makes the warm cache's producer the **tested
+  commit itself, in the same run**: the persisted cache the warm session
+  loads was written by the exact plugin build under test, so a change to the
+  cache schema or `TagCacheEntry` serialization in that commit can never
+  leave the warm session loading — or rejecting — a stale cache, and no
+  persisted tag cache is ever stored on, versioned with, or restored from
+  the Volume. A cold session whose build did not persist a loadable
+  nonzero-entry cache is **no-evidence** for the startup metric.
+  Each session's cache state (warm/cold) and the asserted preconditions are
+  recorded in the result artifact; a run that cannot prove the cold
+  precondition is **no-evidence** for the full-build metrics — a warm
+  reconcile number is never reported under a full-build key. The cold-response
+  envelope metrics below require a fully built cache and may be measured in
+  either session once its load or build has completed.
+- **One pinned measurement user.** Every measured response in this section —
+  the response-filter pages and the cold tag-cache response — is requested as
+  a single fixed, profile-seeded, **non-administrator** measurement user with
+  access to the entire seeded library and the pinned policy state of the fixed
+  page-shape rule below. The user's identity is part of every response
+  metric's identity: measuring as an administrator, a different seeded user,
+  or an ad-hoc per-run user changes the authorization, access-query, and
+  policy work being timed, so a run that measured any other user is a
+  configuration failure — **no-evidence** for the affected metrics.
+- **Pinned response-filter workload.** `maxResponseFilterP95MicrosecondsPerItem`
+  is measured on the stock Jellyfin list endpoint `GET /Items` — MVC action
+  `Items.GetItems`, the `library` surface in `HiddenContentResponseFilter`'s
+  action map. The filter chain registers against specific MVC actions, so the
+  endpoint and action are part of this metric's identity. The complete query
+  template — a recursive episode listing with a fixed sort, a fixed requested
+  field set, and `limit=1000` over a pinned deterministic slice of the seeded
+  library — is fixed by the follow-up harness, recorded verbatim in the
+  result artifact, and held constant across runs. Satisfying the 1,000-item
+  composition through a different endpoint, action, query template, or user
+  produces incomparable numbers and is **no-evidence** for this metric;
+  changing the pinned template is an instrumentation change under the
+  named-markers comparability rule below. Sampling population, warm-up, and
+  aggregation are pinned as well: with the server started and the
+  active-workload state below in place, the harness issues exactly **5
+  discarded warm-up requests** of the pinned template (absorbing JIT and
+  first-touch cache costs — unlike the S1 scan-event metric, list traffic in
+  production is steady-state warm), then exactly **20 measured requests** of
+  the identical template as the pinned measurement user. Each measured
+  request yields one sample: the complete synchronous filter-chain duration
+  from the named markers, divided by the fixed page shape's 1,000 examined
+  items. `maxResponseFilterP95MicrosecondsPerItem` is the p95 (nearest-rank,
+  per the pinned percentile rule below) over those 20 per-request samples,
+  and the raw per-request samples are published per the raw-plus-summary
+  rule below. Any other warm-up count, sample count, or aggregation is a
+  configuration failure — **no-evidence** for this metric.
+- **Pinned bulk-add workload (S1 scan-event metric).**
+  `maxLibraryScanEventP95Milliseconds` is measured against one fixed
+  workload, identical at both profiles (the scale variable is the
+  pre-existing profile library the handlers run against, not the add
+  itself): exactly **10,000 new stub episodes** (100 series × 100 episodes,
+  the same sparse stub shape the seed generator produces), placed as one
+  pinned folder in **instance-local storage** and ingested by a **single
+  standard library scan**. Add cadence and concurrency are therefore the
+  server's own scan behavior — already pinned by the digest-pinned Jellyfin
+  image and the verified `--cpus 2` container quota — never a
+  harness-invented add loop. One scan of 10,000 items is the shape that
+  accumulates thousands of pending coalesced changes in the deferred
+  worker, so a regression that appears only at queue depth cannot pass a
+  trickle-sized add. Timing boundary: each sample is the wall-clock duration
+  of the plugin's complete synchronous handler chain for **one**
+  `ILibraryManager.ItemAdded/ItemUpdated/ItemRemoved` event, recorded from
+  named markers bracketing plugin-handler entry and exit — never Jellyfin's
+  surrounding dispatch, other subscribers' work, or whole-scan duration.
+  Aggregation: p95 over **all** per-event samples from the single scan, with
+  **no warm-up discard** — first-event JIT and initialization costs are
+  deliberately included because production bulk adds pay them — and the
+  harness asserts at least 10,000 item-added samples were recorded.
+  Isolation: this workload runs as the **final measurement of the run**, in
+  a dedicated server session started only after every tag-cache, envelope,
+  startup, and response-filter metric is complete, so every other metric
+  observes exactly the profile's nominal library cardinality; the added
+  items are never written to the Volume baseline. A run that measures this
+  metric with a different item count, folder shape, add mechanism, or
+  ordering is a configuration failure — **no-evidence** for this metric.
+- **The cold tag-cache response, defined.** The cold tag-cache response is
+  exactly one thing: a single authorized
+  `GET /JellyfinCanopy/tag-cache/{userId}` request for the measurement user
+  carrying **no cursor parameters** — no `since`, `contentEpoch`,
+  `contentRevision`, `projectionEpoch`, `projectionRevision`, or
+  `projectionOnly` — served after the in-memory cache is fully built: the
+  endpoint's full personalized snapshot path. The harness asserts the
+  response is a snapshot, not a control message or delta: `reset`,
+  `contentReset`, and `projectionReset` all `false`, and `count` equal to the
+  profile's expected accessible entry count for the measurement user. All
+  five envelope metrics (`maxTagCacheColdResponseBytes`,
+  `maxTagCacheSnapshotSerializationPeakAllocatedBytes`, and the transfer,
+  client-parse, and browser-heap keys) are measured from this response and no
+  other: a reset, delta, or projection-only response — however produced — is
+  **no-evidence** under every envelope key, never a small-payload pass.
+- **Cold-response sampling and client-reset protocol.** The percentile and
+  heap envelope keys are defined over repeated samples of the cold response,
+  and the client state between samples is part of every client-side metric's
+  identity:
+  - **Client identity and location.** The measurement client is a
+    harness-driven browser of a pinned build (browser name and version
+    recorded in the result artifact), running on the Linode host **outside**
+    the CPU-limited Jellyfin container, fetching over the instance-local
+    Docker network. A remote or off-instance client measures the network
+    path, not the plugin, and is **no-evidence** for the envelope keys.
+  - **Samples.** After the in-memory cache is fully built: one discarded
+    warm-up request, then exactly **20 measured samples**. Each measured
+    sample runs in a **fresh browser context** — empty HTTP cache, no
+    cookies or storage carried over, and a new connection (no connection or
+    TLS-session reuse across samples) — authenticated as the pinned
+    measurement user. Fetching repeatedly into one warm context, or any
+    other sample count, is a configuration failure — **no-evidence** for the
+    affected keys.
+  - **Per-sample heap protocol.** In the fresh context: force garbage
+    collection and record the baseline heap; fetch and fully parse the
+    snapshot, retaining the parsed result; force garbage collection again;
+    the sample's heap delta is post minus baseline.
+  - **Aggregation, pinned per key.** `maxTagCacheColdTransferP95Milliseconds`
+    and `maxTagCacheColdClientParseP95Milliseconds` are the p95 over the 20
+    samples. `maxTagCacheColdBrowserHeapDeltaBytes` is the **median** over
+    the 20 samples — GC scheduling makes single-sample heap deltas noisy,
+    and the median is the stable estimator the budget bounds.
+    `maxTagCacheSnapshotSerializationPeakAllocatedBytes` is the **maximum**
+    of the per-request server-side measurements across the samples.
+    `maxTagCacheColdResponseBytes` is recorded once: the harness asserts all
+    measured responses are byte-identical in size — a size that varies
+    across samples is a nondeterministic snapshot and is **no-evidence** for
+    every envelope key. Raw per-sample values are published alongside the
+    aggregates per the raw-plus-summary rule below.
+- Publish **raw samples plus summarized values** (p50/p95/max as applicable)
+  for both profiles, not summaries alone.
+- Use fixed, named measurement markers in harness output so runs are comparable
+  across time and instrumentation changes are explicit.
+- **Percentile algorithm, pinned.** Every p95 in this section — the
+  scan-event, response-filter, transfer, and client-parse keys — is computed
+  by the **nearest-rank** method: sort the samples ascending and take the
+  `ceil(0.95 × N)`-th value (for N = 20, the 19th sample), with no
+  interpolation. Percentile-method choice materially moves small-sample
+  percentiles, so the algorithm is part of every percentile metric's
+  identity: a percentile computed any other way is an instrumentation change
+  under the named-markers comparability rule above, and its result is not
+  comparable with the seven-run baseline the ratchet policy requires.
+- Measure `maxResponseFilterP95MicrosecondsPerItem` under an **active** filter
+  workload: Hidden Content entries present, and Spoiler Guard enabled with a
+  non-empty policy covering unwatched items in the measured page, so each of
+  the three item-shaping filters (`HiddenContentResponseFilter`,
+  `SpoilerIdentityTagFilter`, `SpoilerFieldStripFilter`) does its real
+  per-item work on the item-list response. `SpoilerBlurImageFilter` by design
+  never does per-item work on item-list actions — it rejects every
+  non-image/non-trickplay action up front and synchronously delegates — so on
+  this metric its contribution is exactly that rejection-and-delegate cost,
+  which **is** its real production overhead on list responses; recording it is
+  correct and is not a violation of the active-workload rule (its image-path
+  work is exercised only by image requests, which have no large returned-item
+  page and are out of this metric's scope). Timing the disabled/empty-policy
+  fast-path no-ops of the three item-shaping filters does not satisfy this
+  metric.
+- Measure `maxResponseFilterP95MicrosecondsPerItem` against a **fixed, pinned
+  page shape** and normalize by the **examined (pre-filter) item count**.
+  `HiddenContentResponseFilter` removes items from the response, so a
+  post-filter (returned-item) denominator moves with policy cardinality rather
+  than filter cost — two runs inspecting the same page while hiding 1 versus
+  999 items would report incomparable per-item numbers, and a page whose items
+  are all hidden has no denominator at all. The pinned shape: every measured
+  request produces a page whose filter chain examines exactly **1,000 items**,
+  of which exactly **100 (10%)** are hidden by the Hidden Content policy and
+  the remaining **900** are unwatched items covered by the non-empty Spoiler
+  Guard policy (this instantiates the active-workload rule above). The harness
+  records both the examined and returned counts for every measured page; a
+  measured page whose examined count or hidden/covered composition deviates
+  from this shape is a configuration failure — **no-evidence** for this
+  metric, never a pass computed from a drifted denominator.
+- Record stable seed metadata (seed version/digest, profile) and topology
+  metadata (instance type, region, CPU quota) with every result.
+- The numbers produced here feed the SR-10 scaling documentation's
+  "not yet measured" placeholders; publishing them is part of the run's job,
+  not an optional extra.
+
+#### Budget file format: `scripts/scale-budgets.json`
+
+The budget file mirrors the philosophy of `scripts/bundle-budgets.json`:
+reviewed, machine-readable integer limits committed next to the code they
+constrain. Its shape:
+
+- `schemaVersion` — currently `1`. Consumers reject unknown schema versions.
+- `enforcement` — `"advisory"` or `"blocking"`. Initially `"advisory"`.
+- `limits.L` and `limits.XL` — exactly these two profiles, each containing
+  exactly the ten keys in the table above.
+
+Value semantics:
+
+- A limit is either `null` or a non-negative safe integer in the unit encoded
+  by its key name (`…Milliseconds`, `…Bytes`, `…MicrosecondsPerItem`).
+- `null` means **unmeasured**: the metric is still measured and reported, but
+  it has no limit yet. `null` never counts as a pass.
+- A measured metric **breaches** its budget when `actual > maximum` (same
+  semantics as the bundle budgets).
+- Consumers (the follow-up comparator) must reject unknown `schemaVersion`
+  values, missing or extra profiles, missing or extra keys, and negative or
+  non-integer measured limits — and, while `enforcement` is `"blocking"`, any
+  `null` limit is itself a configuration failure (fail closed).
+
+The committed JSON file is canonical; this section documents its fields and
+semantics and deliberately does not duplicate its contents.
+
+#### Comparison step and outcomes
+
+The comparator (follow-up issue) reads `scripts/scale-budgets.json` **from the
+tested commit**, validates the exact schema above, compares each numeric
+`actual` with its `maximum`, and records one outcome per metric:
+
+- **pass** — measured and within budget;
+- **breach** — measured and over budget;
+- **unmeasured** — the limit is `null` (reported, never treated as green).
+
+A run that fails before producing comparable measurements (provisioning, SSH,
+seeding, collection, teardown) is **no-evidence** — an infrastructure failure,
+tracked separately from metric regressions and never recorded as a pass or a
+breach.
+
+#### Regression policy and the advisory→blocking ratchet
+
+- The repository maintainer reviews every nightly failure (breach or
+  no-evidence) by the next working day, and always before approving a release.
+- Infrastructure no-evidence failures are triaged as CI health; a confirmed or
+  repeated metric breach gets a tracked issue (opened or updated) like any
+  other regression.
+- Limits are populated through reviewed measurement PRs while `enforcement`
+  stays `"advisory"`: after at least **seven comparable successful runs per
+  profile** on unchanged instrumentation, topology, and seed version, set each
+  limit from the reviewed high-water measurement plus the smallest justified
+  noise margin.
+- `enforcement` flips to `"blocking"` only when every limit is numeric **and**
+  the follow-up workflow and release integration exist.
+- Budgets follow the repository's standard ratchet rule: tighten them after
+  sustained improvements; never raise one merely to turn a run green.
+
+#### Release-blocking semantics (exact tag SHA)
+
+Advisory results never block a PR or a release. Once `enforcement` is
+`"blocking"`, the release workflow's reused quality gates (see
+[RELEASING.md](RELEASING.md)) must additionally obtain a provenance-verified
+**passing scale result for every profile declared in `limits` (currently L and
+XL)**, each with a `testedCommitSha` that **exactly equals the tag SHA** — a
+nightly result for some older `main` commit describes that commit, not the tag,
+and can neither block nor satisfy a tag release. Each result artifact covers
+exactly one profile, so the release gate evaluates the profiles independently
+and one profile's pass never stands in for another's: an exact-SHA L pass with
+a missing, stale, or breaching XL result blocks the release exactly as an L
+breach would. For each required profile there are two ways to obtain its
+result:
+
+1. **Dispatch**: the release workflow dispatches a fresh scale run of that
+   profile for the tag commit; or
+2. **Reuse**: it reuses a canonical GitHub workflow artifact for that profile
+   and that exact commit created within the preceding **seven days** (the
+   freshness window).
+
+Result identity is the commit that was **actually measured**, not the commit
+that was requested. In both paths the scale workflow resolves the commit under
+test to a SHA up front, checks out that **exact SHA** — never a movable ref: a
+dispatch after `main` has advanced past the tag must still check out and build
+the tag commit — and takes every input from that single checkout: the plugin
+source it builds, the `scripts/scale-budgets.json` it compares against, and
+the seed-input definitions it digests. `testedCommitSha` is produced from the
+measurement checkout itself (`git rev-parse HEAD` at build time), never echoed
+from a workflow input or dispatch parameter; before building, the run verifies
+the checkout `HEAD` equals the requested SHA and aborts as **no-evidence** on
+any mismatch. The artifact also records the SHA-256 of the plugin package the
+run built and measured, tying the evidence to the exact bits under test — an
+artifact whose `testedCommitSha` was not derived this way is not evidence for
+any commit.
+
+The immutable result artifact must record: tested commit SHA (derived from the
+measurement checkout as above), profile, seed version and seed-input digest,
+the SHA-256 of the built-and-measured plugin package, the SHA-256 of the
+`scale-budgets.json` used,
+workflow run ID and attempt, creation time, topology metadata, raw metrics,
+the compared limits, enforcement mode, and outcome. Release-time reuse
+verifies the artifact ID and digest, that the producing run was a `main`-only
+schedule/`workflow_dispatch` run, that the recorded producing run attempt
+**concluded successfully** — an artifact is uploaded at the collect step,
+before teardown, so a run classified no-evidence after upload (for example,
+its `always()` teardown failed to destroy the instance or detach the Volume)
+fails its workflow run per the teardown contract below, and its artifacts,
+however green, are never reusable evidence — that the artifact is retained
+through the freshness window, that its budget digest equals the tag commit's
+`scale-budgets.json` digest, that its recorded seed-input digest equals
+the digest computed from the tag commit's seed inputs for that profile (seed
+inputs as canonically defined under Volume lifecycle below — including the
+pinned Jellyfin server image, so a database scanned by a different Jellyfin
+build can never satisfy this check), and that its recorded topology metadata
+**exactly matches the profile's fixed topology contract** (see the runner
+topology section below): the profile's dedicated instance plan
+(`g6-dedicated-4` for L, `g6-dedicated-8` for XL), the `eu-central` region,
+and a recorded, verified `--cpus 2` Jellyfin-container quota. A provisioning
+regression can produce an exact-SHA, fresh, green artifact from a shared
+plan, the wrong region, or an unconstrained container — that artifact is
+non-parity evidence and is treated as **no-evidence**, exactly like a
+seed-digest mismatch: a result measured against the wrong library shape, the
+wrong server build, or the wrong hardware is not evidence, no matter how
+fresh.
+
+Retry policy (applied per profile): an infrastructure no-evidence failure
+(provisioning, SSH, collection, teardown) permits at most **two additional
+attempts** for that profile. A dispatched run cancelled while pending —
+displaced from the `canopy-scale` group's single pending slot by a newer
+trigger (see the single-flight concurrency contract in the job shape above)
+— never started, spent nothing, and is **not an attempt**: the release
+workflow re-dispatches it without consuming this allowance, bounded by the
+release job's `timeout-minutes` cap. A completed run with a budget breach is
+evidence — it is not retryable. In blocking mode, lacking a fresh exact-SHA
+passing result for **any** required profile after those retries blocks the
+release; as with every other release gate, there is no bypass.
+
+#### Runner topology (decided 2026-07-20): Linode ephemeral instances
+
+The job runs on ephemeral Linode instances provisioned per run — never on
+GitHub-hosted runners (too small, too variable) and never as a registered
+self-hosted GitHub runner (fork-PR code-execution risk). The scheduled
+workflow drives the instance over plain SSH: reconcile → provision → attach →
+prepare → verify → measure → compare → collect → destroy.
+
+- **Profile L (nightly)**: Dedicated 8 GB (`g6-dedicated-4`, 4 vCPU dedicated /
+  8 GB / 160 GB) at ~$0.11/hr, ~2–3 h per run.
+- **Profile XL (weekly / on demand)**: Dedicated 16 GB (`g6-dedicated-8`,
+  8 vCPU / 16 GB / 320 GB) at ~$0.22/hr.
+- **Dedicated CPU plans only** — shared-plan noisy-neighbor variance would make
+  perf budgets flap.
+- **Parity inside the box**: the Jellyfin container runs with `--cpus 2` — the
+  repository's official parity profile — and the run verifies Docker applied
+  that quota before measuring; spare host cores absorb Docker, harness, and
+  metric overhead so measurements stay clean.
+- **Topology is verified, not assumed**: before measuring, the run queries the
+  provisioned instance's actual plan/type and region and confirms they match
+  the profile's contract above (alongside the container-quota check); any
+  mismatch aborts the run as **no-evidence**. The verified values — instance
+  plan, region, and applied container CPU quota — are what the result
+  artifact records as topology metadata, and release-time reuse re-checks
+  them independently (see the exact-tag-SHA section above).
+- **Estimated cost**: ~$15–20/month (nightly L + weekly XL + Volume + optional
+  Object Storage).
+
+Existing account-side infrastructure (given; the follow-up implementation
+documents against it rather than re-deciding it): region `eu-central`
+(Frankfurt) for compute and Volume; Block Storage Volume `canopy-scale-seed`
+(80 GB, id `16926868`); Object Storage bucket `canopy-scale-results` in
+`de-fra-2` (S3-compatible endpoint `de-fra-1.linodeobjects.com`); a dedicated
+SSH keypair; the provision/attach/teardown lifecycle was proven working on
+2026-07-20.
+
+Volume lifecycle:
+
+- The Volume holds **one independent baseline per profile**, stored under
+  profile-namespaced paths (`baselines/L/`, `baselines/XL/`). Each baseline
+  is a pre-seeded stub library plus the scanned Jellyfin database, so a run
+  skips the multi-hour initial scan, and carries its own metadata record
+  (profile, seed version, seed-input digest, and the baseline-content digest
+  defined under seed provenance below). A run reads and verifies only
+  its own profile's baseline, so the nightly L schedule and the weekly XL
+  schedule never invalidate each other's baseline — alternating the two
+  required schedules must never trigger a rebuild. Stub files are
+  zero-byte/sparse, so both baselines coexist on the Volume and the `df -i`
+  inode-headroom check covers the combined baselines. Volumes attach to one
+  Linode at a time (same region); run serialization is enforced upstream by
+  the single-flight concurrency contract in the job shape above, and the
+  attach limit is the physical backstop behind it — an attach conflict can
+  only mean that contract was violated, and the run fails there as
+  **no-evidence** rather than retrying into another run's attachment.
+- The Volume's baselines are **immutable during ordinary measurement runs**:
+  writable Jellyfin state is copied to instance-local storage; each
+  profile's baseline is identified by the seed-input digest in its own
+  metadata record. A baseline is built or rebuilt only through an exclusive
+  seed-refresh path that rebuilds **only the affected profile's baseline**.
+  The refresh trigger is exactly the **seed-provenance check below failing**
+  for that profile — for any reason: the tested commit's seed inputs
+  changed, the baseline or its metadata record is missing, unreadable,
+  corrupt, wrong-profile, or carries an unparseable digest, or the
+  baseline's recomputed content digest no longer matches the recorded one.
+  The refresh writes the rebuilt baseline first and its metadata record —
+  the seed-input digest computed from the seed inputs of the commit that ran
+  the refresh, plus the baseline-content digest computed from the
+  just-written baseline files — **last**, so a
+  refresh interrupted mid-write leaves a baseline indistinguishable from a
+  missing one and simply re-triggers refresh on the next run. While the
+  provenance check passes, refresh must not run (an unchanged-input rebuild
+  only adds noise and Volume churn); when it fails, refresh is the defined
+  recovery transition — there is **no baseline state from which the tier
+  cannot recover**, and recovery never requires artificially changing a seed
+  input.
+- A baseline never contains **plugin-persisted runtime state** (for example
+  `tag-cache.json` under the plugin configuration directory): the warm-start
+  input is produced in-run by the cold session of the tag-cache state
+  protocol above, never seeded, stored, or restored from the Volume — so a
+  plugin cache-schema or serialization change never invalidates a baseline
+  and is deliberately **not** a seed input.
+- **Seed inputs** — the canonical definition wherever this spec says "seed
+  inputs" or "seed-input digest" — are every input that materially shapes the
+  baseline library or its scanned database: the seed/generator scripts and the
+  `e2e/docker` machinery they invoke, the profile definition, and the
+  digest-pinned Jellyfin server image reference (`JF_IMAGE` in
+  `e2e/docker/seed.sh` and `e2e/docker/compose.yml`) under which the baseline
+  database was scanned. Bumping the pinned Jellyfin image digest alone
+  invalidates the baseline — the Volume's database was produced by the old
+  server build — even when the seed script and profile definition are
+  unchanged.
+- Every measurement run verifies **seed provenance before measuring**, in
+  two parts. First, **input identity**: the seed-input digest recorded in
+  the Volume's metadata **for the profile being run** must equal the digest
+  computed from the **tested commit's** seed inputs for that profile.
+  Second, **baseline content integrity**: matching metadata does not prove
+  the bytes underneath survived, so the metadata record also carries a
+  **baseline-content digest**, computed at refresh time from the finished
+  baseline itself — the digest of a canonical, sorted manifest of every file
+  in that profile's baseline, recording each entry's relative path and size
+  plus the SHA-256 of every file with nonzero size (which covers the scanned
+  Jellyfin database; zero-byte sparse stubs contribute path and size only,
+  keeping recomputation an inode walk plus a database hash) — and the run
+  recomputes that digest from the attached baseline and requires equality.
+  A failure of **either** part — stale seed, changed Jellyfin image pin, a
+  missing, unreadable, or wrong-profile baseline or metadata record, or a
+  content-digest mismatch such as a truncated database or missing, extra,
+  or resized files under otherwise-plausible metadata — is one and the same
+  provenance failure: the run is **no-evidence** (never a pass or a breach),
+  and that failure is exactly the trigger of the exclusive seed-refresh path
+  (see above), which rebuilds that profile's baseline. A corrupted baseline
+  whose metadata remains valid therefore can neither be measured nor strand
+  the tier in repeated no-evidence runs — it fails the content check and
+  recovers through the same refresh transition as every other provenance
+  failure.
+
+Secrets and teardown:
+
+- The Linode API token and SSH private key live only as secrets of a
+  dedicated GitHub Actions environment (`canopy-scale`), and the binding
+  control is that environment's **deployment branch policy, restricted to
+  `main`** — enforced by GitHub itself, not by workflow convention.
+  `workflow_dispatch` executes whichever ref the caller selects, so a
+  `main`-only trigger convention alone cannot protect the secrets: with the
+  branch policy in place, a dispatch of any other ref — including an
+  upstream feature branch carrying modified workflow or harness code — is
+  refused the environment and never materializes the token or key. As
+  defense in depth, every job that references the environment asserts
+  `github.ref == 'refs/heads/main'` as its first step and aborts otherwise;
+  release-dispatched exact-SHA runs satisfy both controls because the
+  **workflow** always runs from `main` — the tag SHA is the separate
+  measurement checkout defined above, never the workflow ref. Raw run logs
+  must never expose the secrets.
+- **Bounded lifecycle.** Every Linode API call and SSH command runs under an
+  explicit timeout, and every workflow job carries a hard `timeout-minutes`
+  cap sized to the profile's expected duration plus a fixed margin — nothing
+  in the run may wait unboundedly, so every run reaches a terminal state in
+  bounded time.
+- **Durable run ownership at creation time.** The instance is created — in
+  the same create API call, never a later step — with tags recording the
+  fixed tier tag (`canopy-scale`), the workflow run id and attempt, and an
+  expiry timestamp set to provision time plus the job's hard timeout plus a
+  fixed margin. Ownership and expiry therefore exist on the Linode account
+  itself even if the GitHub-hosted controller is lost immediately after
+  creation, before it persists or reports anything.
+- Teardown runs under `always()` as the first line of cleanup, so an
+  ordinary failed run cannot leak a paid instance: it destroys the exact
+  instance it provisioned and confirms the Volume is detached. A collection
+  failure must not suppress cleanup.
+- **Idempotent reconciliation.** The in-workflow `always()` step alone
+  cannot clean up after a lost or hard-timed-out controller, so it is not
+  the whole no-leak contract. The **first step of every scale run**, before
+  provisioning, reconciles leaked resources: list instances carrying the
+  tier tag, destroy any whose recorded expiry has passed, and detach the
+  Volume from any instance being destroyed (unblocking the serialized
+  Volume for the run about to start). Reconciliation acts only on recorded
+  tags — it never touches untagged instances, and never destroys a tagged,
+  unexpired instance. Under the single-flight concurrency contract (see the
+  job shape above) no peer run can be live, so a tagged, unexpired instance
+  can only be a not-yet-expired leak from a lost controller; rather than
+  provisioning alongside it and racing it for the Volume, the run stops
+  there — an infrastructure **no-evidence** failure with no new spend — and
+  the instance's recorded expiry guarantees a later run reclaims it. It is
+  idempotent and safe to re-run; a reconciliation that cannot complete
+  fails the run before any new spend. Because profile L runs nightly, the
+  **automated** leak bound is about one schedule interval (~one day,
+  roughly $3 at the L plan): the next run that fires reclaims any expired
+  instance before spending anything new. That bound is explicitly
+  **conditional on a scale run actually starting** — the expiry tag is
+  inert metadata on the Linode account, and reconciliation is the only
+  automated process that acts on it. If the controller is lost right after
+  creating a tagged instance and no later run fires — an Actions outage,
+  the workflow manually disabled, or GitHub auto-disabling schedules in an
+  inactive repository — nothing on the GitHub side ever reclaims it.
+- **Actions-independent detection backstop.** Because both automated
+  layers (`always()` teardown and pre-run reconciliation) run on GitHub
+  Actions, the no-leak contract requires one detection layer that does
+  not: a **Linode account usage alert** with its threshold set just above
+  the tier's expected monthly spend (~$25 against the ~$15–20/month
+  estimate in the topology section). A leaked L-plan instance bills
+  roughly $80/month, so a leak that outlives the schedule crosses the
+  threshold and emails the maintainer within days regardless of the state
+  of GitHub Actions. The absolute cost exposure is therefore bounded by
+  alert-triggered manual teardown, not by hoping the schedule resumes;
+  configuring this alert is part of standing up the tier (see the
+  follow-up issue list) and the tier must not be ratcheted to blocking
+  without it.
+- A teardown failure — instance not confirmed destroyed or Volume not
+  confirmed detached — **fails the workflow run**, even when every earlier
+  step (including collection and artifact upload) succeeded. This makes the
+  no-evidence classification machine-visible in the run conclusion: because
+  the canonical artifact is uploaded at collect, before destroy, the run
+  conclusion is the only signal that distinguishes a fully successful run from
+  one whose evidence was voided by a later lifecycle failure, and release-time
+  reuse depends on it (see the exact-tag-SHA section above).
+- GitHub workflow artifacts are the **canonical** results store. Copies
+  mirrored to the Object Storage bucket are optional, analysis-only, and are
+  never release evidence.
+
+#### Why this is not a per-PR gate
+
+The scale tier stays out of the per-PR path deliberately, and must not be
+"fixed" into one later:
+
+- a run takes multiple hours of wall-clock on paid dedicated hardware;
+- the seed Volume is an exclusive, serialized resource;
+- PR-triggered execution on infrastructure holding account secrets is exactly
+  the fork-PR code-execution risk the topology decision excludes.
+
+Per-PR performance protection remains what it is today: the static
+`check:performance-rules` gate and the server-side guard tests
+(`LibraryScanEventGuardTests`). Do not add `pull_request` triggers to the scale
+workflow and do not register the Linode instances as self-hosted runners for
+PR events.
+
+#### Follow-up implementation issues cut from this spec
+
+1. Sparse bulk-item generator extending `e2e/docker/seed.sh` (with the `df -i`
+   headroom check).
+2. Seed refresh/versioning tooling for the per-profile Volume baselines.
+3. The `main`-only scheduled workflow: the single-flight `canopy-scale`
+   concurrency group (`cancel-in-progress: false`), pre-run reconciliation
+   of expired tagged instances, SSH provisioning with creation-time
+   ownership/expiry tags, bounded API/SSH/job timeouts, quota verification,
+   `always()` teardown, and the `canopy-scale` environment configured with
+   its `main`-restricted deployment branch policy plus the in-job ref guard.
+4. Measurement harness and the immutable result-artifact schema.
+5. Budget comparator with fail-closed validation and its negative tests
+   (unknown schema, missing/extra keys, `null` while blocking, over-budget,
+   stale/wrong-SHA artifacts, missing-profile release evidence — e.g. a passing
+   L artifact with no exact-SHA XL artifact — and exhausted retries).
+6. Exact-tag-SHA release integration in `release.yml` (only when ratcheting to
+   blocking; must require a passing result for every budgeted profile, never a
+   single profile's artifact; includes the watch-and-redispatch-on-displacement
+   loop from the single-flight concurrency contract).
+7. Linode account usage alert (threshold ~$25/month) as the
+   Actions-independent leak-detection backstop required by the secrets and
+   teardown contract; must be in place before ratcheting to blocking.
+8. SR-06 canonicalization of the L/XL profile definitions.
 
 ### Docs
 
