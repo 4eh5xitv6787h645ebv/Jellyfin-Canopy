@@ -1,6 +1,7 @@
 import type { Page } from 'playwright/test';
 import { assertNoRuntimeErrors, expect, loginAs, test, USERS } from './fixtures/auth';
 import { api, authenticate, PLUGIN_ID, type Session } from './fixtures/api';
+import { installThemeStudioVisualFont } from './helpers/theme-studio-visual';
 
 const CONFIG_PATH = `/Plugins/${PLUGIN_ID}/Configuration`;
 
@@ -215,6 +216,7 @@ async function viewportEvidence(page: Page): Promise<{
     readonly laneOverlap: number;
     readonly laneOverflow: number;
     readonly competingOverlayOverlap: number;
+    readonly competingOverlayPair: string;
     readonly hiddenDisplay: string;
     readonly removedDisplay: string;
     readonly protectedFilter: string;
@@ -241,17 +243,23 @@ async function viewportEvidence(page: Page): Promise<{
             Math.min(left.right, right.right) - Math.max(left.left, right.left),
         ) * Math.max(0, Math.min(left.bottom, right.bottom) - Math.max(left.top, right.top));
         let competingOverlayOverlap = 0;
+        let competingOverlayPair = '';
         for (const card of fixture.querySelectorAll<HTMLElement>('.card')) {
             const overlays = [...card.querySelectorAll<HTMLElement>(
                 '.jc-tag-lane[data-jc-tag-position], .jc-hide-btn, .jc-anime-filler-marker',
-            )].map((element) => element.getBoundingClientRect())
-                .filter((bounds) => bounds.width > 0 && bounds.height > 0);
+            )].map((element) => ({
+                bounds: element.getBoundingClientRect(),
+                descriptor: element.matches('.jc-tag-lane')
+                    ? `.jc-tag-lane[${element.dataset.jcTagPosition}]`
+                    : `.${element.className}`,
+            })).filter(({ bounds }) => bounds.width > 0 && bounds.height > 0);
             for (let leftIndex = 0; leftIndex < overlays.length; leftIndex += 1) {
                 for (let rightIndex = leftIndex + 1; rightIndex < overlays.length; rightIndex += 1) {
-                    competingOverlayOverlap = Math.max(
-                        competingOverlayOverlap,
-                        intersectionArea(overlays[leftIndex], overlays[rightIndex]),
-                    );
+                    const area = intersectionArea(overlays[leftIndex].bounds, overlays[rightIndex].bounds);
+                    if (area > competingOverlayOverlap) {
+                        competingOverlayOverlap = area;
+                        competingOverlayPair = `${overlays[leftIndex].descriptor} / ${overlays[rightIndex].descriptor}`;
+                    }
                 }
             }
         }
@@ -267,6 +275,7 @@ async function viewportEvidence(page: Page): Promise<{
             laneOverlap: overlap,
             laneOverflow: Math.max(0, laneBox.right - cardBox.right, cardBox.left - laneBox.left),
             competingOverlayOverlap,
+            competingOverlayPair,
             hiddenDisplay: getComputedStyle(fixture.querySelector('.jc-hidden')!).display,
             removedDisplay: getComputedStyle(fixture.querySelector('[data-jc-home-removed]')!).display,
             protectedFilter: getComputedStyle(fixture.querySelector('[data-jc-spoiler-state="on"]')!).filter,
@@ -292,7 +301,8 @@ test.describe.serial('Theme Studio core Canopy surfaces', () => {
         original = configuration!;
     });
 
-    test.beforeEach(async ({ baseURL }) => {
+    test.beforeEach(async ({ baseURL, page }) => {
+        await installThemeStudioVisualFont(page);
         await api(baseURL!, CONFIG_PATH, admin.token, {
             method: 'POST',
             body: JSON.stringify({

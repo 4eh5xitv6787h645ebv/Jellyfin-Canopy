@@ -9,6 +9,7 @@ import {
     waitForHash,
 } from './fixtures/auth';
 import { api, authenticate, PLUGIN_ID } from './fixtures/api';
+import { installThemeStudioVisualFont } from './helpers/theme-studio-visual';
 
 const CONFIG_PATH = `/Plugins/${PLUGIN_ID}/Configuration`;
 
@@ -91,6 +92,24 @@ async function waitForThemeRuntime(page: Page, breakpoint: string): Promise<void
             && root.getAttribute('data-jc-theme-breakpoint') === expected
             && document.querySelectorAll('#jc-theme-studio-committed').length === 1;
     }, breakpoint);
+}
+
+async function previewMediaTheme(page: Page): Promise<boolean> {
+    return page.evaluate(() => {
+        const runtime = window.JellyfinCanopy.core.themeStudio;
+        const draft = runtime?.getConfiguration();
+        const active = draft?.Profiles.find((profile) => profile.Id === draft.ActiveProfileId)
+            ?? draft?.Profiles[0];
+        if (!runtime || !draft || !active) throw new Error('Theme Studio configuration is unavailable');
+        active.BasePreset = 'canopy';
+        active.PresetVersion = 1;
+        active.FreezePresetVersion = true;
+        active.Palette = 'canopy-night';
+        active.Accent = 'palette';
+        active.Mode = 'dark';
+        active.Tokens = {};
+        return runtime.preview(draft, { allowScheduling: false });
+    });
 }
 
 async function mountMediaFixture(page: Page): Promise<void> {
@@ -237,7 +256,8 @@ test.describe('Theme Studio modern media surfaces', () => {
         original = configuration!;
     });
 
-    test.beforeEach(async ({ baseURL }) => {
+    test.beforeEach(async ({ baseURL, page }) => {
+        await installThemeStudioVisualFont(page);
         const session = await authenticate(baseURL!, USERS.admin.username, USERS.admin.password);
         await api(baseURL!, CONFIG_PATH, session.token, {
             method: 'POST',
@@ -245,6 +265,7 @@ test.describe('Theme Studio modern media surfaces', () => {
                 ...original,
                 ThemeStudioEnabled: true,
                 ThemeStudioDashboardEnabled: false,
+                ThemeStudioAllowDynamicColor: false,
                 ThemeSelectorEnabled: false,
                 LayoutEnforcement: 'None',
             }),
@@ -475,6 +496,7 @@ test.describe('Theme Studio modern media surfaces', () => {
         await page.setViewportSize({ width: 844, height: 390 });
         await loginAs(page, 'admin', consoleErrors);
         await waitForThemeRuntime(page, 'phone');
+        expect(await previewMediaTheme(page)).toBe(true);
         await mountMediaFixture(page);
 
         const viewports = [
@@ -624,6 +646,7 @@ test.describe('Theme Studio modern media surfaces', () => {
                 caret: 'hide',
             });
         }
+        await page.evaluate(() => window.JellyfinCanopy.core.themeStudio?.cancelPreview());
         assertNoRuntimeErrors(consoleErrors);
     });
 });

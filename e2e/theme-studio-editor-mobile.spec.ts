@@ -1,6 +1,7 @@
 import type { Page } from 'playwright/test';
 import { assertNoRuntimeErrors, expect, loginAs, test, USERS } from './fixtures/auth';
 import { api, authenticate, PLUGIN_ID, type Session } from './fixtures/api';
+import { installThemeStudioVisualFont } from './helpers/theme-studio-visual';
 
 test.use({
     viewport: { width: 320, height: 700 },
@@ -45,6 +46,7 @@ test.describe.serial('Theme Studio mobile editor', () => {
     });
 
     test.beforeEach(async ({ baseURL, page }) => {
+        await installThemeStudioVisualFont(page);
         await api(baseURL!, CONFIG_PATH, admin.token, {
             method: 'POST',
             body: JSON.stringify({
@@ -194,6 +196,13 @@ test.describe.serial('Theme Studio mobile editor', () => {
             expect(clearance.controlTop, action).toBeGreaterThanOrEqual(clearance.studioTop - 1);
             expect(clearance.controlBottom, action).toBeLessThanOrEqual(clearance.usableBottom + 1);
         }
+        await panel.evaluate((element) => element.setAttribute('data-jc-theme-editor-evidence', 'true'));
+        await page.addStyleTag({
+            content: '#jellyfin-canopy-panel[data-jc-theme-editor-evidence="true"] [data-jellyfish-migration]{display:none!important}',
+        });
+        await panel.locator('.jc-theme-studio').evaluate((studio) => {
+            studio.scrollTop = 0;
+        });
         const previewOnly = panel.locator('[data-action="preview-only"]');
         await expect(page).toHaveScreenshot('theme-studio-editor-phone.png', {
             animations: 'disabled',

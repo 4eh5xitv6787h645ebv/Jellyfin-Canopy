@@ -11,6 +11,18 @@ const REQUIRED_UNSUPPORTED_LAYOUTS = ['tablet-only', 'legacy', 'tv'];
 const REQUIRED_PRIMARY_PRESETS = [
     'canopy', 'minimal', 'cinematic', 'glass', 'material', 'studio', 'tv-focus', 'oled', 'high-contrast',
 ];
+const REQUIRED_VISUAL_SPECS = [
+    'e2e/theme-studio-accessibility.spec.ts',
+    'e2e/theme-studio-canopy-surfaces.spec.ts',
+    'e2e/theme-studio-editor-mobile.spec.ts',
+    'e2e/theme-studio-effects.spec.ts',
+    'e2e/theme-studio-integration-surfaces.spec.ts',
+    'e2e/theme-studio-jellyfish-migration.spec.ts',
+    'e2e/theme-studio-media-surfaces.spec.ts',
+    'e2e/theme-studio-operational-surfaces.spec.ts',
+    'e2e/theme-studio-runtime.spec.ts',
+    'e2e/theme-studio-sharing.spec.ts',
+];
 
 function fail(message) {
     throw new Error(`Theme Studio quality contract: ${message}`);
@@ -77,6 +89,26 @@ function verifyQualityContract({ root = DEFAULT_ROOT, contract } = {}) {
     }
     if (!runtimeSource.includes("viewport.name === 'desktop' || viewport.name === 'phone portrait'")) {
         fail(`${visual.spec} must capture both desktop and phone primary-preset baselines`);
+    }
+    const visualFont = visual.deterministicFont;
+    if (visualFont?.family !== 'DejaVu Sans') fail('visual evidence must use the deterministic DejaVu Sans font');
+    exactIds(visualFont?.specs, REQUIRED_VISUAL_SPECS, 'visual evidence specs');
+    const visualHelper = readText(root, visualFont.helper);
+    for (const anchor of [
+        'installThemeStudioVisualFont',
+        `--jc-type-family-ui: "${visualFont.family}"`,
+        'data-jc-e2e-visual-font="deterministic"',
+    ]) {
+        if (!visualHelper.includes(anchor)) fail(`${visualFont.helper} lost ${anchor}`);
+    }
+    for (const spec of visualFont.specs) {
+        const source = readText(root, spec);
+        if (!source.includes("from './helpers/theme-studio-visual'")) {
+            fail(`${spec} does not import the deterministic visual-font helper`);
+        }
+        if (!source.includes('await installThemeStudioVisualFont(page);')) {
+            fail(`${spec} does not install the deterministic visual font before navigation`);
+        }
     }
 
     const accessibility = resolved.accessibilityScan;

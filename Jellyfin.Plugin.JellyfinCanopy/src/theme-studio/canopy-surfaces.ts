@@ -605,7 +605,7 @@ ${selector} .card:has(.jc-hide-btn):has(.jc-anime-filler-marker) .jc-tag-lane[da
   inset-block-start: max(3.5rem, calc(var(--jc-control-gap) + 2.75rem)) !important;
 }
 ${selector} .card:has(.jc-hide-btn):has(.jc-anime-filler-marker) .jc-tag-lane[data-jc-tag-position="top-right"] {
-  inset-block-start: max(2.75rem, calc(var(--jc-control-gap) + 2rem)) !important;
+  inset-block-start: max(3.5rem, calc(var(--jc-control-gap) + 2.75rem)) !important;
 }
 ${selector} .jc-tag-lane[data-jc-tag-position] > :where(
   .genre-overlay-container,

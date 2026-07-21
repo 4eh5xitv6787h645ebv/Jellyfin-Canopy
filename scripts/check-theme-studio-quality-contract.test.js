@@ -37,6 +37,22 @@ test('the quality contract fails closed when a modern layout or preset baseline 
     );
 });
 
+test('the quality contract rejects incomplete deterministic visual-font ownership', () => {
+    const missingSpec = clone(contract);
+    missingSpec.visualEvidence.deterministicFont.specs.pop();
+    assert.throws(
+        () => verifyQualityContract({ root: ROOT, contract: missingSpec }),
+        /visual evidence specs must be exactly/,
+    );
+
+    const hostDependentFont = clone(contract);
+    hostDependentFont.visualEvidence.deterministicFont.family = 'system-ui';
+    assert.throws(
+        () => verifyQualityContract({ root: ROOT, contract: hostDependentFont }),
+        /must use the deterministic DejaVu Sans font/,
+    );
+});
+
 test('the quality contract rejects a reduced accessibility standard inventory', () => {
     const reduced = clone(contract);
     reduced.accessibilityScan.tags.push('future-required-tag');

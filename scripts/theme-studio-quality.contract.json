@@ -84,6 +84,22 @@
     "spec": "e2e/theme-studio-runtime.spec.ts",
     "snapshotDirectory": "e2e/theme-studio-runtime.spec.ts-snapshots",
     "platform": "linux",
+    "deterministicFont": {
+      "family": "DejaVu Sans",
+      "helper": "e2e/helpers/theme-studio-visual.ts",
+      "specs": [
+        "e2e/theme-studio-accessibility.spec.ts",
+        "e2e/theme-studio-canopy-surfaces.spec.ts",
+        "e2e/theme-studio-editor-mobile.spec.ts",
+        "e2e/theme-studio-effects.spec.ts",
+        "e2e/theme-studio-integration-surfaces.spec.ts",
+        "e2e/theme-studio-jellyfish-migration.spec.ts",
+        "e2e/theme-studio-media-surfaces.spec.ts",
+        "e2e/theme-studio-operational-surfaces.spec.ts",
+        "e2e/theme-studio-runtime.spec.ts",
+        "e2e/theme-studio-sharing.spec.ts"
+      ]
+    },
     "requiredViews": [
       "desktop",
       "phone"

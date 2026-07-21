@@ -660,6 +660,9 @@ describe('Theme Studio responsive settings editor', () => {
         const styles = panel.querySelector('style')?.textContent ?? '';
         expect(styles.indexOf('#jellyfin-canopy-panel.jc-theme-preview-only .jc-theme-return'))
             .toBeGreaterThan(-1);
+        expect(styles).toContain('scroll-padding-block:32px');
+        expect(panel.querySelector('.jc-theme-studio > .jc-theme-intro #jc-theme-modern-scope'))
+            .not.toBeNull();
         expect(styles.indexOf('#jellyfin-canopy-panel.jc-theme-preview-only .jc-theme-return'))
             .toBeLessThan(styles.indexOf('@media'));
         expect(styles.indexOf('#jellyfin-canopy-panel.jc-theme-preview-only .jc-theme-studio'))

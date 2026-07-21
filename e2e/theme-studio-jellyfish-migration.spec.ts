@@ -1,12 +1,15 @@
 import type { Page } from 'playwright/test';
 import { assertNoRuntimeErrors, expect, loginAs, test, USERS } from './fixtures/auth';
 import { api, apiRaw, authenticate, PLUGIN_ID, type Session } from './fixtures/api';
+import { installThemeStudioVisualFont } from './helpers/theme-studio-visual';
 
 const CONFIG_PATH = `/Plugins/${PLUGIN_ID}/Configuration`;
 const COMMITTED_STYLE = '#jc-theme-studio-committed';
 const PREVIEW_STYLE = '#jc-theme-studio-preview';
 const LEGACY_STYLE_ID = 'jc-e2e-jellyfish-import';
 const UNKNOWN_STYLE_ID = 'jc-e2e-unrelated-style';
+const LIVE_PANEL_ID = 'jellyfin-canopy-panel-live-e2e';
+const MIGRATION_EVIDENCE_ATTRIBUTE = 'data-jc-e2e-migration-evidence';
 
 interface ThemeDocument {
     Revision: number;
@@ -76,6 +79,54 @@ async function closeThemeEditor(page: Page): Promise<void> {
     if (await panel.count() === 0) return;
     await page.keyboard.press('Escape');
     await expect(panel).toHaveCount(0);
+}
+
+async function mountMigrationEvidence(page: Page): Promise<ReturnType<Page['locator']>> {
+    await page.evaluate(({ livePanelId, evidenceAttribute }) => {
+        const panel = document.getElementById('jellyfin-canopy-panel');
+        const migration = panel?.querySelector<HTMLElement>('[data-jellyfish-migration="available"]');
+        if (!panel || !migration) throw new Error('Live Jellyfish migration evidence is unavailable.');
+        const bounds = migration.getBoundingClientRect();
+        const styles = getComputedStyle(migration);
+        panel.id = livePanelId;
+
+        const evidence = document.createElement('div');
+        evidence.id = 'jellyfin-canopy-panel';
+        evidence.setAttribute(evidenceAttribute, 'true');
+        evidence.setAttribute('aria-hidden', 'true');
+        evidence.inert = true;
+        evidence.style.cssText = `
+            position: fixed !important;
+            inset: 0 auto auto 0 !important;
+            inline-size: ${bounds.width}px !important;
+            block-size: auto !important;
+            max-inline-size: none !important;
+            max-block-size: none !important;
+            overflow: visible !important;
+            transform: none !important;
+            z-index: 2147483647 !important;
+            color: ${styles.color};
+            font-family: ${styles.fontFamily};
+            font-size: ${styles.fontSize};
+            direction: ${styles.direction};
+        `;
+        const clone = migration.cloneNode(true) as HTMLElement;
+        clone.removeAttribute('aria-labelledby');
+        for (const element of clone.querySelectorAll<HTMLElement>('[id]')) element.removeAttribute('id');
+        evidence.append(clone);
+        document.body.append(evidence);
+    }, { livePanelId: LIVE_PANEL_ID, evidenceAttribute: MIGRATION_EVIDENCE_ATTRIBUTE });
+    return page.locator(
+        `#jellyfin-canopy-panel[${MIGRATION_EVIDENCE_ATTRIBUTE}="true"] [data-jellyfish-migration="available"]`,
+    );
+}
+
+async function removeMigrationEvidence(page: Page): Promise<void> {
+    await page.evaluate(({ livePanelId, evidenceAttribute }) => {
+        document.querySelector(`#jellyfin-canopy-panel[${evidenceAttribute}="true"]`)?.remove();
+        const panel = document.getElementById(livePanelId);
+        if (panel) panel.id = 'jellyfin-canopy-panel';
+    }, { livePanelId: LIVE_PANEL_ID, evidenceAttribute: MIGRATION_EVIDENCE_ATTRIBUTE });
 }
 
 async function commitTheme(
@@ -179,7 +230,8 @@ test.describe.serial('Theme Studio Jellyfish migration', () => {
         ))!;
     });
 
-    test.beforeEach(async ({ baseURL }) => {
+    test.beforeEach(async ({ baseURL, page }) => {
+        await installThemeStudioVisualFont(page);
         await api(baseURL!, CONFIG_PATH, admin.token, {
             method: 'POST',
             body: JSON.stringify({
@@ -242,11 +294,15 @@ test.describe.serial('Theme Studio Jellyfish migration', () => {
             expect(fit.panelOverflow).toBeLessThanOrEqual(1);
             if (viewport.breakpoint === 'phone') expect(fit.migrationTarget).toBeGreaterThanOrEqual(44);
 
-            await expect(migration).toHaveScreenshot(`theme-studio-jellyfish-migration-${viewport.evidence}.png`, {
-                animations: 'disabled',
-                caret: 'hide',
-                maxDiffPixelRatio: 0.02,
-            });
+            const migrationEvidence = await mountMigrationEvidence(page);
+            try {
+                await expect(migrationEvidence).toHaveScreenshot(
+                    `theme-studio-jellyfish-migration-${viewport.evidence}.png`,
+                    { animations: 'disabled', caret: 'hide', maxDiffPixelRatio: 0.02 },
+                );
+            } finally {
+                await removeMigrationEvidence(page);
+            }
             if (process.env.JC_CAPTURE_THEME_DOCS === '1' && viewport.evidence === 'desktop') {
                 await page.screenshot({
                     path: 'docs/images/theme-studio-jellyfish-migration-desktop.png',
