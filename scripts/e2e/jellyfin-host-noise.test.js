@@ -198,10 +198,15 @@ test('Firefox Home-tab serialization requires its exact stock chunk source', () 
         stack: '',
     };
     assert.equal(isKnownJellyfinWebHostNoise(observed), true);
+    assert.equal(isKnownJellyfinWebHostNoise({
+        ...observed,
+        url: 'http://localhost:8100/web/home.6f5c86d430f38b204798.chunk.js',
+    }), true);
     for (const mutation of [
         { text: `${FIREFOX_HOME_TAB_ERROR}: extra` },
         { source: 'pageerror' },
         { url: 'http://localhost:8100/web/hometab.chunk.js' },
+        { url: 'http://localhost:8100/web/home.chunk.js' },
         { url: 'http://localhost:8100/JellyfinCanopy/hometab.2be9340f81cc7f0987ef.chunk.js' },
         { url: 'http://localhost:8100/web/hometab.2be9340f81cc7f0987ef.chunk.js?debug=true' },
     ]) {

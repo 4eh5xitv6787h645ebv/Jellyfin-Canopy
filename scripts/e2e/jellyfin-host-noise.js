@@ -14,6 +14,7 @@ const JELLYFIN_WEB_BUNDLE_FRAME = /\/web\/[A-Za-z0-9_.%-]+\.[A-Fa-f0-9]{12,}\.ch
 const JELLYFIN_WEB_CHUNK_FRAME = /(?:^|\n)[^\n]*(?:(?:https?:\/\/[^/\s)]+)|(?<![A-Za-z0-9._~!$&'()*+,;=:@%/?#-]))\/web\/[A-Za-z0-9_.%-]+\.[A-Fa-f0-9]{12,}\.chunk\.js:\d+(?::\d+)?(?:\)?\s*$)/m;
 const CANOPY_STACK_FRAME = /(?:^|\n)[^\n]*(?:\bJellyfinCanopy\b|\/JellyfinCanopy(?:\/|[?#]))/i;
 const HOME_TAB_SOURCE = /^\/web\/hometab\.[A-Za-z0-9]{12,}\.chunk\.js$/;
+const HOME_SOURCE = /^\/web\/home\.[A-Za-z0-9]{12,}\.chunk\.js$/;
 const AXIOS_BUNDLE_PATH = '/web/node_modules.axios.bundle.js';
 
 /**
@@ -246,7 +247,7 @@ function isKnownJellyfinWebHostNoise(detail) {
         try {
             const source = new URL(String(detail?.url || ''));
             return ['http:', 'https:'].includes(source.protocol)
-                && HOME_TAB_SOURCE.test(source.pathname)
+                && (HOME_TAB_SOURCE.test(source.pathname) || HOME_SOURCE.test(source.pathname))
                 && source.search === ''
                 && source.hash === '';
         } catch {
