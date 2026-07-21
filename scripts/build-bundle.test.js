@@ -29,6 +29,27 @@ test('production build is byte-deterministic with sorted, resolving dynamic inve
 
     assert.deepEqual(snapshot(first.artifacts), snapshot(second.artifacts));
     assert.deepEqual(first.manifest, second.manifest);
+    assert.equal(first.manifest.budgets.totalRawBytes, budget.limits.maxTotalRawBytes);
+    const manifestRawBytes = first.artifacts.get('client-manifest.json').length;
+    assert.equal(
+        first.manifest.budgets.totalRawBytes + manifestRawBytes,
+        budget.limits.maxPublishedRawBytes,
+    );
+    const oneByteLower = JSON.parse(JSON.stringify(budget));
+    oneByteLower.limits.maxTotalRawBytes -= 1;
+    oneByteLower.limits.maxPublishedRawBytes -= 1;
+    assert.throws(
+        () => assertBudgets(first.manifest.budgets, oneByteLower),
+        /total raw bytes budget exceeded/,
+    );
+    assert.throws(
+        () => assertPublishedBudgets(
+            manifestRawBytes,
+            first.manifest.budgets.totalRawBytes,
+            oneByteLower,
+        ),
+        /published raw bytes budget exceeded/,
+    );
     assert.match(first.manifest.buildId, /^[0-9a-f]{64}$/);
     assert.deepEqual(Object.keys(first.manifest.files), Object.keys(first.manifest.files).sort());
     assert.equal(first.manifest.entries.compatibility, undefined);

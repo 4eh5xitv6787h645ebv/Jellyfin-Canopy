@@ -22,11 +22,11 @@
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
         "coveredLines": 21093,
-        "totalLines": 29523
+        "totalLines": 29524
       },
       "tolerance": {
         "missingCoveredLines": 5,
-        "rationale": "Theme Studio safe sharing, curated gallery, and advanced declaration foundations in issue #396. Two clean local .NET 10.0.9/Coverlet runs on 2026-07-21 each measured 21093/29523 lines (71.446%) after passing all 1862 tests; two subsequent final runs over the identical production scope each passed the expanded 1866-test suite and measured 21092/29523 (71.443%). A clean GitHub Actions .NET 10.0.10/Coverlet run at exact head 78cef4dfc697db41b3d225971463860951855bda also passed all 1866 tests over the identical 29523-line production scope and measured 21088 covered lines (71.429%), establishing a five-line runtime-version instrumentation band. The reviewed baseline retains the higher repeated measurement so that coverage cannot regress. Relative to the prior 21032/29463 baseline, the legitimate 60-line scope increase narrows remote-resource and executable-event recognition to real token boundaries and the complete reviewed browser event-handler set so schema-valid exported names round-trip without weakening unsafe import rejection; focused controller theories cover every newly instrumented production line and the current standardized handler additions. The one-line tolerance adjustment covers the observed .NET 10.0.10 instrumentation variance while the required floor remains above the prior 71.371% floor at 71.429%; coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, and broad-tolerance negative boundaries."
+        "rationale": "Theme Studio safe sharing, curated gallery, and advanced declaration foundations in issue #396, plus the modern Home libraries grid control in issue #449. A clean local .NET 10.0.9/Coverlet run on 2026-07-21 passed all 1866 tests and measured 21093/29524 lines (71.444%). Relative to the prior reviewed 21093/29523 baseline, the legitimate one-line scope increase is the fail-closed server allowlist rule for layout.home-libraries; PersistedPayloadPolicyTests exercises the allowed grid value. The five-line tolerance remains unchanged and covers the previously reproduced .NET 10.0.10 instrumentation band; its required floor of 21088/29524 (71.428%) stays above the earlier 71.371% floor. coverage-baseline.test.js retains the exact below-floor, above-baseline, scope-change, and broad-tolerance negative boundaries."
       }
     }
   }

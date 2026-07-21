@@ -3,6 +3,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { URL } = require('node:url');
 const { extractLinks } = require('./check-markdown-links');
 
 const DEFAULT_ROOT = path.resolve(__dirname, '..');
