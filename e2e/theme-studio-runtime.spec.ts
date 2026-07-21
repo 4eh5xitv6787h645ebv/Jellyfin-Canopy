@@ -784,6 +784,9 @@ test.describe.serial('Theme Studio runtime bridge', () => {
         });
         expect(split).toEqual({ previewAfterEditor: true, mainOverflow: 0 });
         if (process.env.JC_CAPTURE_THEME_DOCS === '1') {
+            await panel.locator('.jc-theme-studio').evaluate((studio) => {
+                studio.scrollTop = 0;
+            });
             await page.screenshot({
                 path: 'docs/images/theme-studio-editor-desktop.png',
                 animations: 'disabled',
