@@ -90,6 +90,13 @@ function verifyQualityContract({ root = DEFAULT_ROOT, contract } = {}) {
     if (!runtimeSource.includes("viewport.name === 'desktop' || viewport.name === 'phone portrait'")) {
         fail(`${visual.spec} must capture both desktop and phone primary-preset baselines`);
     }
+    if (visual.mediaFixtureMaxDiffPixels !== 512) {
+        fail('media fixture visual tolerance must remain at the reviewed 512-pixel ceiling');
+    }
+    const mediaVisualSource = readText(root, 'e2e/theme-studio-media-surfaces.spec.ts');
+    if (!mediaVisualSource.includes(`maxDiffPixels: ${visual.mediaFixtureMaxDiffPixels}`)) {
+        fail('media fixture screenshots lost their reviewed absolute visual tolerance');
+    }
     const visualFont = visual.deterministicFont;
     if (visualFont?.family !== 'DejaVu Sans') fail('visual evidence must use the deterministic DejaVu Sans font');
     exactIds(visualFont?.specs, REQUIRED_VISUAL_SPECS, 'visual evidence specs');

@@ -644,6 +644,10 @@ test.describe('Theme Studio modern media surfaces', () => {
             await expect(page).toHaveScreenshot(`theme-studio-media-${viewport.name}.png`, {
                 animations: 'disabled',
                 caret: 'hide',
+                // DejaVu outlines are pinned, but Linux FreeType versions can
+                // still shift subpixel edge coverage without moving geometry.
+                // Keep this below 0.16% of the smallest 390x844 capture.
+                maxDiffPixels: 512,
             });
         }
         await page.evaluate(() => window.JellyfinCanopy.core.themeStudio?.cancelPreview());

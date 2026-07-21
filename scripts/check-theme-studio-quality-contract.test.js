@@ -53,6 +53,15 @@ test('the quality contract rejects incomplete deterministic visual-font ownershi
     );
 });
 
+test('the quality contract rejects a widened media fixture visual tolerance', () => {
+    const widened = clone(contract);
+    widened.visualEvidence.mediaFixtureMaxDiffPixels = 513;
+    assert.throws(
+        () => verifyQualityContract({ root: ROOT, contract: widened }),
+        /must remain at the reviewed 512-pixel ceiling/,
+    );
+});
+
 test('the quality contract rejects a reduced accessibility standard inventory', () => {
     const reduced = clone(contract);
     reduced.accessibilityScan.tags.push('future-required-tag');
