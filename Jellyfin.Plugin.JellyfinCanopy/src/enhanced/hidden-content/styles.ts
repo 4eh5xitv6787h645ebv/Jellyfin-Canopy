@@ -70,6 +70,24 @@ export function injectCSS(): void {
             background: rgba(0,0,0,0.82);
             border-color: rgba(255,255,255,0.28);
         }
+        /*
+         * Detail ribbon containment (issue #454, no-jank): the detail Hide
+         * button adds one more in-flow button to the native action row. The
+         * row's automatic minimum size (min-width: auto) equals the summed
+         * width of its buttons, so on a narrow viewport (390px mobile) the
+         * extra button pushes document scrollWidth past the viewport —
+         * horizontal page overflow. Lift the row's floor ONLY while our
+         * button is inside it (all four containers addHideContentButton can
+         * mount into), and let only OUR button compress; native buttons keep
+         * their exact intrinsic size. No media queries, no clipping, no
+         * overflow suppression; rows without our button keep native sizing.
+         */
+        :is(.mainDetailButtons, .detailButtons, .itemActionsBottom, .detailButtonsContainer):has(> .jc-detail-hide-btn) {
+            min-width: 0;
+        }
+        .jc-detail-hide-btn {
+            min-width: 0;
+        }
         .jc-detail-hide-btn.jc-already-hidden {
             opacity: 0.85;
             pointer-events: auto;
