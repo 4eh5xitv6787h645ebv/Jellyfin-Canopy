@@ -111,10 +111,17 @@ function ensureStyles(): HTMLStyleElement {
     if (existing) return existing;
     const style = document.createElement('style');
     style.id = STYLE_ID;
+    // Containment contract (issue #454, no-jank): the badge must never widen
+    // its host or the page. Every placement is either an absolute overlay
+    // (image anchors AND the bare .card/.listItem fallback applyMarker uses
+    // when no image container exists) or an in-flow pill hard-capped at its
+    // container's width (max-width + min-width:0 lifts the flex-item
+    // min-content floor; overflow-wrap folds long localized text instead of
+    // forcing intrinsic width past the viewport).
     style.textContent = `
         .${ANCHOR_CLASS} { position: relative; }
-        .${MARKER_CLASS} { display: inline-flex; align-items: center; min-height: 1.55em; padding: 0.15em 0.55em; border-radius: 999px; background: rgba(155, 24, 34, 0.94); color: #fff; font-size: 0.78rem; font-weight: 700; line-height: 1.2; letter-spacing: 0.02em; }
-        .cardScalable > .${MARKER_CLASS}, .cardImageContainer > .${MARKER_CLASS}, .listItemImage > .${MARKER_CLASS} { position: absolute; z-index: 4; right: 0.45rem; top: 0.45rem; pointer-events: none; }
+        .${MARKER_CLASS} { display: inline-flex; align-items: center; box-sizing: border-box; max-width: 100%; min-width: 0; overflow-wrap: anywhere; min-height: 1.55em; padding: 0.15em 0.55em; border-radius: 999px; background: rgba(155, 24, 34, 0.94); color: #fff; font-size: 0.78rem; font-weight: 700; line-height: 1.2; letter-spacing: 0.02em; }
+        .cardScalable > .${MARKER_CLASS}, .cardImageContainer > .${MARKER_CLASS}, .listItemImage > .${MARKER_CLASS}, .card > .${MARKER_CLASS}, .listItem > .${MARKER_CLASS} { position: absolute; z-index: 4; right: 0.45rem; top: 0.45rem; pointer-events: none; }
         .itemName > .${MARKER_CLASS}, .detailPagePrimaryContainer > .${MARKER_CLASS}, .detailRibbon > .${MARKER_CLASS} { margin-inline-start: 0.65rem; vertical-align: middle; }
     `;
     document.head.appendChild(style);
