@@ -15,6 +15,7 @@ const {
     calculateBudgetMetrics,
     createBuildArtifacts,
     esmOptions,
+    normalizeSourceMapBytes,
     publishArtifacts,
 } = require('./build-bundle');
 
@@ -22,10 +23,9 @@ function snapshot(artifacts) {
     return [...artifacts.entries()].map(([name, bytes]) => [name, bytes.toString('base64')]);
 }
 
-test('production build is byte-deterministic with sorted, resolving dynamic inventory', async () => {
-    const outDir = path.join(os.tmpdir(), 'jc-deterministic-output', 'dist');
-    const first = await createBuildArtifacts({ outDir });
-    const second = await createBuildArtifacts({ outDir });
+test('production build is byte-deterministic from its canonical virtual dist with sorted dynamic inventory', async () => {
+    const first = await createBuildArtifacts();
+    const second = await createBuildArtifacts();
 
     assert.deepEqual(snapshot(first.artifacts), snapshot(second.artifacts));
     assert.deepEqual(first.manifest, second.manifest);
@@ -98,15 +98,39 @@ test('ESM foundation has stable split-entry and content-addressed chunk naming',
 });
 
 test('generated JavaScript links portable adjacent external sourcemaps', async () => {
-    const outDir = path.join(os.tmpdir(), 'jc-sourcemap-output', 'dist');
-    const { artifacts } = await createBuildArtifacts({ outDir });
+    const { artifacts } = await createBuildArtifacts();
     for (const [name, bytes] of artifacts) {
         if (!name.endsWith('.js')) continue;
         assert.match(bytes.toString('utf8'), /\/\/# sourceMappingURL=[^\r\n]+\.map\s*$/);
         const map = JSON.parse(artifacts.get(`${name}.map`).toString('utf8'));
         assert.equal(map.sources.length, map.sourcesContent.length);
         assert.ok(map.sources.every((source) => !path.posix.isAbsolute(source) && !source.includes('\\')));
+        assert.ok(map.sources.every((source) => {
+            const projectSource = source.replace(/^(?:\.\.\/)+/, '');
+            return projectSource === 'locale-manifest.json' || projectSource.startsWith('src/');
+        }));
     }
+});
+
+test('source maps rebase checkout-dependent paths and reject sources outside the plugin', () => {
+    const outputPath = path.join(os.tmpdir(), 'arbitrary-checkout', 'dist', 'entries', 'feature.js.map');
+    const pluginRoot = path.join(__dirname, '..', 'Jellyfin.Plugin.JellyfinCanopy');
+    const sourcePath = path.join(pluginRoot, 'src', 'theme-studio', 'presentation.ts');
+    const sourceName = path.relative(path.dirname(outputPath), sourcePath).replace(/\\/g, '/');
+    const fixture = (name) => Buffer.from(`{\n  "version": 3,\n  "sources": [${JSON.stringify(name)}],\n  "sourcesContent": ["fixture"],\n  "mappings": ""\n}\n`);
+    const normalized = JSON.parse(normalizeSourceMapBytes(
+        fixture(sourceName),
+        outputPath,
+        'entries/feature.js.map',
+    ).toString('utf8'));
+    assert.deepEqual(normalized.sources, ['../../src/theme-studio/presentation.ts']);
+
+    const outside = path.relative(path.dirname(outputPath), path.join(os.tmpdir(), 'outside.ts'))
+        .replace(/\\/g, '/');
+    assert.throws(
+        () => normalizeSourceMapBytes(fixture(outside), outputPath, 'entries/feature.js.map'),
+        /source outside the plugin project/,
+    );
 });
 
 test('atomic publication removes stale nested chunks and writes the exact inventory', () => {

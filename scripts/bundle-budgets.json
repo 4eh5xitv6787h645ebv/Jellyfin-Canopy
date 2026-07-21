@@ -18,8 +18,8 @@
     "maxFeatureExpandedRawBytes": 786432,
     "maxFeatureExpandedGzipBytes": 262144,
     "maxSourceMapRawBytes": 6000000,
-    "maxTotalRawBytes": 7142421,
+    "maxTotalRawBytes": 7120696,
     "maxClientManifestRawBytes": 262144,
-    "maxPublishedRawBytes": 7225101
+    "maxPublishedRawBytes": 7203373
   }
 }

@@ -21,12 +21,12 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 21093,
+        "coveredLines": 21094,
         "totalLines": 29524
       },
       "tolerance": {
         "missingCoveredLines": 5,
-        "rationale": "Theme Studio safe sharing, curated gallery, and advanced declaration foundations in issue #396, plus the modern Home libraries grid control in issue #449. A clean local .NET 10.0.9/Coverlet run on 2026-07-21 passed all 1866 tests and measured 21093/29524 lines (71.444%). Relative to the prior reviewed 21093/29523 baseline, the legitimate one-line scope increase is the fail-closed server allowlist rule for layout.home-libraries; PersistedPayloadPolicyTests exercises the allowed grid value. The five-line tolerance remains unchanged and covers the previously reproduced .NET 10.0.10 instrumentation band; its required floor of 21088/29524 (71.428%) stays above the earlier 71.371% floor. coverage-baseline.test.js retains the exact below-floor, above-baseline, scope-change, and broad-tolerance negative boundaries."
+        "rationale": "Theme Studio safe sharing, curated gallery, and advanced declaration foundations in issue #396, plus the modern Home libraries grid control in issue #449. The exact-head GitHub Actions .NET/Coverlet run on 2026-07-21 passed all 1866 tests and measured 21094/29524 lines (71.447%); a clean local .NET 10.0.9 run measured 21093/29524 (71.444%). Relative to the prior reviewed 21093/29523 baseline, the legitimate one-line scope increase is the fail-closed server allowlist rule for layout.home-libraries; PersistedPayloadPolicyTests exercises the allowed grid value, and the higher CI measurement becomes the ratchet. The five-line tolerance remains unchanged for the previously reproduced runtime instrumentation band; its required floor of 21089/29524 (71.430%) stays above the earlier 71.371% floor. coverage-baseline.test.js retains the exact below-floor, above-baseline, scope-change, and broad-tolerance negative boundaries."
       }
     }
   }
