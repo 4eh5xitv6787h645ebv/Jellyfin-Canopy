@@ -232,6 +232,8 @@ Forward-compatible `[JsonExtensionData]` remains supported, but unknown JSON is 
 
 ### Theme Studio profile API
 
+The focused [Theme Studio developer guide](theme-studio-developer.md) maps the schema, lifecycle, extension workflow, test matrix, and verified documentation capture process. This section retains the detailed API and runtime contracts.
+
 Theme Studio state is server-backed and isolated per Jellyfin user. Every route below is `[Authorize]` and applies the same caller-or-administrator ownership check as the other per-user files:
 
 ```text

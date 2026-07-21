@@ -44,6 +44,8 @@ Native installations can place the Jellyfin configuration directory elsewhere; C
 
 Theme Studio is Canopy's per-user visual system for Jellyfin's **modern phone and modern desktop/wide layouts**. It combines curated presets with typed controls for color, typography, density, navigation, cards, details pages, player surfaces, glass and translucent materials, shadows, motion, local artwork-derived accents, and calendar profiles. It intentionally does not theme the legacy layout, tablet-only breakpoint, or TV mode; those surfaces retain Jellyfin's stock presentation.
 
+For a task-focused walkthrough, start with the [Theme Studio user guide](theme-studio.md). Server policy and recovery are covered in the [administrator guide](theme-studio-admin.md), and implementation/evidence ownership is covered in the [developer guide](theme-studio-developer.md).
+
 ![Theme Studio full effects on a modern desktop](images/theme-studio-effects-desktop.png)
 
 The desktop capture above and phone capture below come from the committed Jellyfin 12 browser test fixture, with a full effects profile, a local artwork-derived accent, and a holiday schedule active.

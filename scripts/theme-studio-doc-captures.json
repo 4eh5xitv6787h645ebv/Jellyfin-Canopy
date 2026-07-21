@@ -1,0 +1,319 @@
+{
+  "schemaVersion": 1,
+  "fixture": {
+    "id": "jellyfin-12-synthetic-release-fixture",
+    "owner": "e2e/docker/seed.sh",
+    "license": "GPL-3.0-only repository-generated test fixture",
+    "media": "Synthetic metadata, generated color bars, gradients, and same-origin test assets; no personal library data or third-party artwork"
+  },
+  "captures": [
+    {
+      "path": "docs/images/theme-studio-presets-desktop.png",
+      "source": "scripts/generate-theme-studio-doc-images.js",
+      "viewport": [{ "width": 1440, "height": 900, "layout": "modern-desktop" }],
+      "input": "keyboard-and-pointer",
+      "locale": "en-US",
+      "scheme": "dark",
+      "capabilities": ["typed-theme", "full-effects", "deterministic-font"],
+      "preset": ["canopy", "minimal", "cinematic", "glass", "material", "studio", "focus", "oled", "high-contrast"],
+      "state": "nine-preset-contact-sheet"
+    },
+    {
+      "path": "docs/images/theme-studio-presets-phone.png",
+      "source": "scripts/generate-theme-studio-doc-images.js",
+      "viewport": [{ "width": 390, "height": 844, "layout": "modern-phone-portrait" }],
+      "input": "coarse-touch",
+      "locale": "en-US",
+      "scheme": "dark",
+      "capabilities": ["typed-theme", "full-effects", "coarse-pointer", "deterministic-font"],
+      "preset": ["canopy", "minimal", "cinematic", "glass", "material", "studio", "focus", "oled", "high-contrast"],
+      "state": "nine-preset-contact-sheet"
+    },
+    {
+      "path": "docs/images/theme-studio-editor-desktop.png",
+      "source": "e2e/theme-studio-runtime.spec.ts",
+      "viewport": [{ "width": 1440, "height": 900, "layout": "modern-desktop" }],
+      "input": "keyboard-and-pointer",
+      "locale": "en-US",
+      "scheme": "dark",
+      "capabilities": ["typed-theme", "profile-import", "seasonal-schedule", "deterministic-font"],
+      "preset": "canopy",
+      "state": "desktop-editor"
+    },
+    {
+      "path": "docs/images/theme-studio-editor-phone.png",
+      "source": "e2e/theme-studio-editor-mobile.spec.ts",
+      "viewport": [{ "width": 320, "height": 700, "layout": "modern-phone-portrait" }],
+      "input": "coarse-touch",
+      "locale": "en-US",
+      "scheme": "dark",
+      "capabilities": ["typed-theme", "profile-import", "single-column-editor", "deterministic-font"],
+      "preset": "canopy",
+      "state": "phone-editor"
+    },
+    {
+      "path": "docs/images/theme-studio-home-desktop.png",
+      "source": "e2e/theme-studio-runtime.spec.ts",
+      "viewport": [{ "width": 1440, "height": 900, "layout": "modern-desktop" }],
+      "input": "keyboard-and-pointer",
+      "locale": "en-US",
+      "scheme": "dark",
+      "capabilities": ["typed-theme", "full-effects", "deterministic-font"],
+      "preset": "canopy",
+      "state": "home"
+    },
+    {
+      "path": "docs/images/theme-studio-home-phone.png",
+      "source": "e2e/theme-studio-runtime.spec.ts",
+      "viewport": [{ "width": 390, "height": 844, "layout": "modern-phone-portrait" }],
+      "input": "coarse-touch",
+      "locale": "en-US",
+      "scheme": "dark",
+      "capabilities": ["typed-theme", "full-effects", "coarse-pointer", "deterministic-font"],
+      "preset": "canopy",
+      "state": "home"
+    },
+    {
+      "path": "docs/images/theme-studio-details-desktop.png",
+      "source": "e2e/theme-studio-media-surfaces.spec.ts",
+      "viewport": [{ "width": 1366, "height": 768, "layout": "modern-desktop" }],
+      "input": "keyboard-and-pointer",
+      "locale": "en-US",
+      "scheme": "dark",
+      "capabilities": ["typed-theme", "details-adapter", "deterministic-font"],
+      "preset": "canopy",
+      "state": "movie-details"
+    },
+    {
+      "path": "docs/images/theme-studio-player-phone-landscape.png",
+      "source": "e2e/theme-studio-media-surfaces.spec.ts",
+      "viewport": [{ "width": 844, "height": 390, "layout": "modern-phone-landscape" }],
+      "input": "coarse-touch",
+      "locale": "en-US",
+      "scheme": "dark",
+      "capabilities": ["typed-theme", "native-player-osd", "coarse-pointer", "deterministic-font"],
+      "preset": "canopy",
+      "state": "paused-native-player"
+    },
+    {
+      "path": "docs/images/theme-studio-phone-portrait.png",
+      "source": "e2e/theme-studio-media-surfaces.spec.ts",
+      "viewport": [{ "width": 390, "height": 844, "layout": "modern-phone-portrait" }],
+      "input": "coarse-touch",
+      "locale": "en-US",
+      "scheme": "dark",
+      "capabilities": ["typed-theme", "media-surfaces", "coarse-pointer", "deterministic-font"],
+      "preset": "canopy",
+      "state": "responsive-media-surfaces"
+    },
+    {
+      "path": "docs/images/theme-studio-phone-landscape.png",
+      "source": "e2e/theme-studio-media-surfaces.spec.ts",
+      "viewport": [{ "width": 844, "height": 390, "layout": "modern-phone-landscape" }],
+      "input": "coarse-touch",
+      "locale": "en-US",
+      "scheme": "dark",
+      "capabilities": ["typed-theme", "media-surfaces", "coarse-pointer", "deterministic-font"],
+      "preset": "canopy",
+      "state": "responsive-media-surfaces"
+    },
+    {
+      "path": "docs/images/theme-studio-focus-desktop.png",
+      "source": "e2e/theme-studio-runtime.spec.ts",
+      "viewport": [{ "width": 1440, "height": 900, "layout": "modern-desktop" }],
+      "input": "keyboard-and-pointer",
+      "locale": "en-US",
+      "scheme": "dark",
+      "capabilities": ["typed-theme", "full-effects", "deterministic-font"],
+      "preset": "focus",
+      "state": "home"
+    },
+    {
+      "path": "docs/images/theme-studio-focus-phone.png",
+      "source": "e2e/theme-studio-runtime.spec.ts",
+      "viewport": [{ "width": 390, "height": 844, "layout": "modern-phone-portrait" }],
+      "input": "coarse-touch",
+      "locale": "en-US",
+      "scheme": "dark",
+      "capabilities": ["typed-theme", "full-effects", "coarse-pointer", "deterministic-font"],
+      "preset": "focus",
+      "state": "home"
+    },
+    {
+      "path": "docs/images/theme-studio-oled-desktop.png",
+      "source": "e2e/theme-studio-runtime.spec.ts",
+      "viewport": [{ "width": 1440, "height": 900, "layout": "modern-desktop" }],
+      "input": "keyboard-and-pointer",
+      "locale": "en-US",
+      "scheme": "dark",
+      "capabilities": ["typed-theme", "minimal-effects", "deterministic-font"],
+      "preset": "oled",
+      "state": "home"
+    },
+    {
+      "path": "docs/images/theme-studio-oled-phone.png",
+      "source": "e2e/theme-studio-runtime.spec.ts",
+      "viewport": [{ "width": 390, "height": 844, "layout": "modern-phone-portrait" }],
+      "input": "coarse-touch",
+      "locale": "en-US",
+      "scheme": "dark",
+      "capabilities": ["typed-theme", "minimal-effects", "coarse-pointer", "deterministic-font"],
+      "preset": "oled",
+      "state": "home"
+    },
+    {
+      "path": "docs/images/theme-studio-accessibility-desktop.png",
+      "source": "e2e/theme-studio-accessibility.spec.ts",
+      "viewport": [{ "width": 1366, "height": 768, "layout": "modern-desktop" }],
+      "input": "keyboard-and-pointer",
+      "locale": "ar",
+      "scheme": "dark-high-contrast",
+      "capabilities": ["high-contrast", "reduced-motion", "reduced-transparency", "rtl", "deterministic-font"],
+      "preset": "high-contrast",
+      "state": "accessibility-reflow"
+    },
+    {
+      "path": "docs/images/theme-studio-accessibility-phone.png",
+      "source": "e2e/theme-studio-accessibility.spec.ts",
+      "viewport": [{ "width": 390, "height": 844, "layout": "modern-phone-portrait" }],
+      "input": "coarse-touch",
+      "locale": "ar",
+      "scheme": "dark-high-contrast",
+      "capabilities": ["high-contrast", "reduced-motion", "reduced-transparency", "rtl", "coarse-pointer", "deterministic-font"],
+      "preset": "high-contrast",
+      "state": "accessibility-reflow"
+    },
+    {
+      "path": "docs/images/theme-studio-canopy-surfaces-desktop.png",
+      "source": "e2e/theme-studio-canopy-surfaces.spec.ts",
+      "viewport": [{ "width": 1366, "height": 768, "layout": "modern-desktop" }],
+      "input": "keyboard-and-pointer",
+      "locale": "en-US",
+      "scheme": "dark-high-contrast",
+      "capabilities": ["canopy-components", "high-contrast", "reduced-transparency", "deterministic-font"],
+      "preset": "high-contrast",
+      "state": "canopy-feature-surfaces"
+    },
+    {
+      "path": "docs/images/theme-studio-canopy-surfaces-phone.png",
+      "source": "e2e/theme-studio-canopy-surfaces.spec.ts",
+      "viewport": [{ "width": 390, "height": 844, "layout": "modern-phone-portrait" }],
+      "input": "coarse-touch",
+      "locale": "en-US",
+      "scheme": "dark-high-contrast",
+      "capabilities": ["canopy-components", "high-contrast", "reduced-transparency", "coarse-pointer", "deterministic-font"],
+      "preset": "high-contrast",
+      "state": "canopy-feature-surfaces"
+    },
+    {
+      "path": "docs/images/theme-studio-effects-desktop.png",
+      "source": "e2e/theme-studio-effects.spec.ts",
+      "viewport": [{ "width": 1366, "height": 768, "layout": "modern-desktop" }],
+      "input": "keyboard-and-pointer",
+      "locale": "en-US",
+      "scheme": "dark",
+      "capabilities": ["full-effects", "dynamic-color", "seasonal-schedule", "deterministic-font"],
+      "preset": "glass",
+      "state": "effects-and-capability-resolution"
+    },
+    {
+      "path": "docs/images/theme-studio-effects-phone.png",
+      "source": "e2e/theme-studio-effects.spec.ts",
+      "viewport": [{ "width": 390, "height": 844, "layout": "modern-phone-portrait" }],
+      "input": "coarse-touch",
+      "locale": "en-US",
+      "scheme": "dark",
+      "capabilities": ["full-effects", "dynamic-color", "seasonal-schedule", "coarse-pointer", "deterministic-font"],
+      "preset": "glass",
+      "state": "effects-and-capability-resolution"
+    },
+    {
+      "path": "docs/images/theme-studio-integration-surfaces-desktop.png",
+      "source": "e2e/theme-studio-integration-surfaces.spec.ts",
+      "viewport": [{ "width": 1366, "height": 1200, "layout": "modern-desktop" }],
+      "input": "keyboard-and-pointer",
+      "locale": "en-US",
+      "scheme": "dark",
+      "capabilities": ["seerr", "sonarr", "radarr", "bazarr", "reviews", "external-links", "deterministic-font"],
+      "preset": "canopy",
+      "state": "discovery-and-integration-surfaces"
+    },
+    {
+      "path": "docs/images/theme-studio-integration-surfaces-phone.png",
+      "source": "e2e/theme-studio-integration-surfaces.spec.ts",
+      "viewport": [{ "width": 390, "height": 844, "layout": "modern-phone-portrait" }],
+      "input": "coarse-touch",
+      "locale": "en-US",
+      "scheme": "dark",
+      "capabilities": ["seerr", "sonarr", "radarr", "bazarr", "reviews", "external-links", "coarse-pointer", "deterministic-font"],
+      "preset": "canopy",
+      "state": "discovery-and-integration-surfaces"
+    },
+    {
+      "path": "docs/images/theme-studio-jellyfish-migration-desktop.png",
+      "source": "e2e/theme-studio-jellyfish-migration.spec.ts",
+      "viewport": [{ "width": 1366, "height": 768, "layout": "modern-desktop" }],
+      "input": "keyboard-and-pointer",
+      "locale": "en-US",
+      "scheme": "dark",
+      "capabilities": ["jellyfish-migration", "identity-scoped-rollback", "deterministic-font"],
+      "preset": "canopy",
+      "state": "recognized-jellyfish-migration"
+    },
+    {
+      "path": "docs/images/theme-studio-jellyfish-migration-phone.png",
+      "source": "e2e/theme-studio-jellyfish-migration.spec.ts",
+      "viewport": [{ "width": 390, "height": 844, "layout": "modern-phone-portrait" }],
+      "input": "coarse-touch",
+      "locale": "en-US",
+      "scheme": "dark",
+      "capabilities": ["jellyfish-migration", "identity-scoped-rollback", "coarse-pointer", "deterministic-font"],
+      "preset": "canopy",
+      "state": "recognized-jellyfish-migration"
+    },
+    {
+      "path": "docs/images/theme-studio-operational-surfaces-desktop.png",
+      "source": "e2e/theme-studio-operational-surfaces.spec.ts",
+      "viewport": [{ "width": 1366, "height": 768, "layout": "modern-desktop" }],
+      "input": "keyboard-and-pointer",
+      "locale": "en-US",
+      "scheme": "dark",
+      "capabilities": ["active-streams", "calendar", "downloads", "requests", "bookmarks", "deterministic-font"],
+      "preset": "canopy",
+      "state": "operational-surfaces"
+    },
+    {
+      "path": "docs/images/theme-studio-operational-surfaces-phone.png",
+      "source": "e2e/theme-studio-operational-surfaces.spec.ts",
+      "viewport": [{ "width": 390, "height": 844, "layout": "modern-phone-portrait" }],
+      "input": "coarse-touch",
+      "locale": "en-US",
+      "scheme": "dark",
+      "capabilities": ["active-streams", "calendar", "downloads", "requests", "bookmarks", "coarse-pointer", "deterministic-font"],
+      "preset": "canopy",
+      "state": "operational-surfaces"
+    },
+    {
+      "path": "docs/images/theme-studio-sharing-desktop.png",
+      "source": "e2e/theme-studio-sharing.spec.ts",
+      "viewport": [{ "width": 1366, "height": 768, "layout": "modern-desktop" }],
+      "input": "keyboard-and-pointer",
+      "locale": "en-US",
+      "scheme": "dark",
+      "capabilities": ["typed-import", "typed-export", "curated-gallery", "advanced-declarations", "deterministic-font"],
+      "preset": "canopy",
+      "state": "sharing-and-gallery"
+    },
+    {
+      "path": "docs/images/theme-studio-sharing-phone.png",
+      "source": "e2e/theme-studio-sharing.spec.ts",
+      "viewport": [{ "width": 390, "height": 844, "layout": "modern-phone-portrait" }],
+      "input": "coarse-touch",
+      "locale": "en-US",
+      "scheme": "dark",
+      "capabilities": ["typed-import", "typed-export", "curated-gallery", "advanced-declarations", "coarse-pointer", "deterministic-font"],
+      "preset": "canopy",
+      "state": "sharing-and-gallery"
+    }
+  ]
+}
