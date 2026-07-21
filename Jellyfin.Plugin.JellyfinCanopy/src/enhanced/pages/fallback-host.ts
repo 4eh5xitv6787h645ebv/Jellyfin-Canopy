@@ -37,6 +37,7 @@ interface Adoption {
 let adoption: Adoption | null = null;
 let draining = false;
 let fallbackMountSubscribed = false;
+let pageExitSubscribed = false;
 
 // ONE stable registry handle for every adoption. Handles (and their
 // persistent onTeardown hooks) live in the lifecycle registry forever, so a
@@ -343,6 +344,14 @@ export function initFallbackHost(): void {
         } else {
             console.error(`${logPrefix} core DOM observer missing; deferred fallback adoption disabled`);
         }
+    }
+    if (!pageExitSubscribed) {
+        // A full document replacement does not pass through Jellyfin's SPA
+        // navigation hooks. Abort adoption-owned requests before the browser
+        // tears the network stack down so expected reload cancellation cannot
+        // surface as a false page error or publish stale state.
+        window.addEventListener('pagehide', () => drain('pagehide'));
+        pageExitSubscribed = true;
     }
     lateAdoptIfOnPage();
 }

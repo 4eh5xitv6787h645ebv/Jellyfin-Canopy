@@ -15,6 +15,7 @@ import { initFallbackHost, adoptedPageId, drain, lateAdoptIfOnPage } from './fal
 let renders: string[] = [];
 let disposes: string[] = [];
 let hides: string[] = [];
+let signals: AbortSignal[] = [];
 
 function makeDescriptor(id: string, enabled: () => boolean = () => true) {
     return {
@@ -24,8 +25,9 @@ function makeDescriptor(id: string, enabled: () => boolean = () => true) {
         titleFallback: id.toUpperCase(),
         icon: 'extension',
         isEnabled: enabled,
-        render({ host, handle }: any) {
+        render({ host, handle, signal }: any) {
             renders.push(id);
+            signals.push(signal);
             const marker = document.createElement('div');
             marker.className = `jc-test-${id}`;
             marker.textContent = `${id} content`;
@@ -64,6 +66,7 @@ describe('pages framework', () => {
         renders = [];
         disposes = [];
         hides = [];
+        signals = [];
         (JC.pluginConfig as any).PagesOrder = '';
         registerPage(makeDescriptor('alpha'));
         registerPage(makeDescriptor('beta'));
@@ -203,6 +206,21 @@ describe('pages framework', () => {
         await new Promise((resolve) => setTimeout(resolve, 0));
 
         expect(disposes).toEqual(['alpha']);
+        expect(adoptedPageId()).toBeNull();
+    });
+
+    it('pagehide drains the adoption before a full document replacement', () => {
+        setHash('#/alpha');
+        const fallback = mountFallback();
+        fireViewBeforeShow(fallback);
+        const signal = signals.at(-1)!;
+        expect(signal.aborted).toBe(false);
+
+        window.dispatchEvent(new Event('pagehide'));
+
+        expect(signal.aborted).toBe(true);
+        expect(disposes).toEqual(['alpha']);
+        expect(hides).toEqual(['alpha']);
         expect(adoptedPageId()).toBeNull();
     });
 
