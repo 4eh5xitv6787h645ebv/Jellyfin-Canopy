@@ -16,11 +16,37 @@ test('the live Theme Studio quality contract owns every release gate', () => {
     assert.deepEqual(verifyQualityContract({ root: ROOT }), {
         layouts: 4,
         noOpLayouts: 3,
+        researchFiles: 4,
+        researchExternalUrls: 138,
+        ecosystemRepositoryRoots: 106,
         presets: 9,
         evidenceOwners: 13,
         crossBrowserEngines: 2,
         crossBrowserTests: 28,
     });
+});
+
+test('the quality contract fails closed when reviewed research evidence is lost or stale', () => {
+    const missingFile = clone(contract);
+    missingFile.researchEvidence.files.pop();
+    assert.throws(
+        () => verifyQualityContract({ root: ROOT, contract: missingFile }),
+        /research evidence files must be exactly/,
+    );
+
+    const missingAnchor = clone(contract);
+    missingAnchor.researchEvidence.files[0].anchors.push('missing reviewed evidence');
+    assert.throws(
+        () => verifyQualityContract({ root: ROOT, contract: missingAnchor }),
+        /lost "missing reviewed evidence"/,
+    );
+
+    const reducedInventory = clone(contract);
+    reducedInventory.researchEvidence.inventory.repositoryRootCount += 1;
+    assert.throws(
+        () => verifyQualityContract({ root: ROOT, contract: reducedInventory }),
+        /ecosystem inventory must contain exactly/,
+    );
 });
 
 test('the quality contract fails closed when a modern layout or preset baseline is lost', () => {

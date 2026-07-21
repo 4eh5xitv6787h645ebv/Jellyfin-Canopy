@@ -3,11 +3,13 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { extractLinks } = require('./check-markdown-links');
 
 const DEFAULT_ROOT = path.resolve(__dirname, '..');
 const DEFAULT_CONTRACT = path.join(__dirname, 'theme-studio-quality.contract.json');
 const REQUIRED_SUPPORTED_LAYOUTS = ['desktop', 'wide', 'phone-portrait', 'phone-landscape'];
 const REQUIRED_UNSUPPORTED_LAYOUTS = ['tablet-only', 'legacy', 'tv'];
+const REQUIRED_RESEARCH_EVIDENCE = ['ecosystem', 'design-contract', 'roadmap', 'verification-matrix'];
 const REQUIRED_PRIMARY_PRESETS = [
     'canopy', 'minimal', 'cinematic', 'glass', 'material', 'studio', 'tv-focus', 'oled', 'high-contrast',
 ];
@@ -76,6 +78,54 @@ function verifyQualityContract({ root = DEFAULT_ROOT, contract } = {}) {
 
     exactIds(resolved.scope?.supportedModernLayouts, REQUIRED_SUPPORTED_LAYOUTS, 'supported modern layouts');
     exactIds(resolved.scope?.unsupportedNoOpLayouts, REQUIRED_UNSUPPORTED_LAYOUTS, 'unsupported no-op layouts');
+
+    const research = resolved.researchEvidence;
+    if (research?.snapshotDate !== '2026-07-19') fail('research snapshot date must remain pinned');
+    if (research?.liveRefreshDate !== '2026-07-21') fail('research live refresh date must remain pinned');
+    if (research?.scopeReconciledDate !== '2026-07-21') {
+        fail('research modern-layout scope reconciliation date must remain pinned');
+    }
+    exactIds(research?.files, REQUIRED_RESEARCH_EVIDENCE, 'research evidence files');
+    const researchSources = [];
+    let ecosystemSource = '';
+    for (const evidence of research.files) {
+        const source = readText(root, evidence.path);
+        researchSources.push(source);
+        if (evidence.id === 'ecosystem') ecosystemSource = source;
+        if (!Array.isArray(evidence.anchors) || evidence.anchors.length < 4) {
+            fail(`${evidence.path} must own at least four release anchors`);
+        }
+        for (const anchor of evidence.anchors) {
+            if (!source.includes(anchor)) fail(`${evidence.path} lost ${JSON.stringify(anchor)}`);
+        }
+    }
+    const researchUrls = new Set(researchSources
+        .flatMap(source => extractLinks(source).map(link => link.target))
+        .filter(target => /^https:\/\//.test(target)));
+    if (researchUrls.size !== research.inventory?.externalUrlCount) {
+        fail(`research external URL inventory must contain exactly ${research.inventory?.externalUrlCount}`);
+    }
+    for (const requiredUrl of research.inventory?.requiredDiscoveryUrls || []) {
+        if (!researchUrls.has(requiredUrl)) fail(`research lost discovery source ${requiredUrl}`);
+    }
+    const repositoryRoots = new Set();
+    for (const { target } of extractLinks(ecosystemSource)) {
+        if (!target.startsWith('https://github.com/')) continue;
+        const url = new URL(target);
+        const segments = url.pathname.split('/').filter(Boolean);
+        if (segments.length < 2 || ['users', 'search', 'topics'].includes(segments[0])) continue;
+        repositoryRoots.add(`${url.origin}/${segments[0]}/${segments[1]}`);
+    }
+    if (repositoryRoots.size !== research.inventory?.repositoryRootCount) {
+        fail(`ecosystem inventory must contain exactly ${research.inventory?.repositoryRootCount} repository roots`);
+    }
+    if (!Array.isArray(research.forbiddenStaleClaims) || research.forbiddenStaleClaims.length < 4) {
+        fail('research stale-scope claim inventory is incomplete');
+    }
+    const combinedResearch = researchSources.join('\n');
+    for (const claim of research.forbiddenStaleClaims) {
+        if (combinedResearch.includes(claim)) fail(`research retained stale scope claim ${JSON.stringify(claim)}`);
+    }
 
     const presets = resolved.primaryPresets;
     if (!Array.isArray(presets) || presets.length !== 9) fail('exactly nine primary presets are required');
@@ -229,6 +279,9 @@ function verifyQualityContract({ root = DEFAULT_ROOT, contract } = {}) {
     return {
         layouts: resolved.scope.supportedModernLayouts.length,
         noOpLayouts: resolved.scope.unsupportedNoOpLayouts.length,
+        researchFiles: research.files.length,
+        researchExternalUrls: researchUrls.size,
+        ecosystemRepositoryRoots: repositoryRoots.size,
         presets: presets.length,
         evidenceOwners: resolved.evidenceOwners.length,
         crossBrowserEngines: crossBrowser.browsers.length,
@@ -242,6 +295,9 @@ if (require.main === module) {
         console.log(
             `Theme Studio quality contract passed: ${result.layouts} modern layouts, `
             + `${result.noOpLayouts} no-op layouts, ${result.presets} presets, `
+            + `${result.researchFiles} research files, `
+            + `${result.ecosystemRepositoryRoots} ecosystem repositories / `
+            + `${result.researchExternalUrls} reviewed research URLs, `
             + `${result.evidenceOwners} cross-cutting gate owners, `
             + `${result.crossBrowserTests} tests across ${result.crossBrowserEngines} additional engines.`,
         );

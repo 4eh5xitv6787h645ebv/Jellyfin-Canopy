@@ -6,6 +6,7 @@ const MarkdownIt = require('markdown-it');
 
 const ROOT = path.join(__dirname, '..');
 const REQUIRED_FILES = ['README.md', 'CONTRIBUTING.md'];
+const MARKDOWN_DIRECTORIES = ['docs', 'research'];
 const markdown = new MarkdownIt({ html: true });
 
 function headingSlug(heading) {
@@ -195,7 +196,6 @@ function isExternal(target) {
 
 function collectMarkdownFiles(root = ROOT) {
     const files = [...REQUIRED_FILES];
-    const docsRoot = path.join(root, 'docs');
     const visit = (directory) => {
         for (const entry of fs.readdirSync(directory, { withFileTypes: true })
             .sort((left, right) => left.name.localeCompare(right.name))) {
@@ -206,7 +206,10 @@ function collectMarkdownFiles(root = ROOT) {
             }
         }
     };
-    if (fs.existsSync(docsRoot)) visit(docsRoot);
+    for (const directory of MARKDOWN_DIRECTORIES) {
+        const markdownRoot = path.join(root, directory);
+        if (fs.existsSync(markdownRoot)) visit(markdownRoot);
+    }
     return files;
 }
 
