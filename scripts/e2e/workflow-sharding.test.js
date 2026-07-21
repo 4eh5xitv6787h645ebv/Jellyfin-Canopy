@@ -104,6 +104,8 @@ test('Firefox and WebKit block on the exact Theme Studio structural inventory', 
     assert.doesNotMatch(browser, /continue-on-error:/);
     assert.match(browser, /npx playwright install --with-deps "\$\{\{ matrix\.browser \}\}"/);
     assert.match(browser, /docker pull -q "\$\{JF_IMAGE\}"/);
+    assert.match(browser, /sudo apt-get install --no-install-recommends --yes ffmpeg/);
+    assert.match(browser, /ffmpeg -version/);
     assert.match(browser, /JF_E2E_IMAGE_PREFETCHED: "true"/);
     assert.match(
         browser,

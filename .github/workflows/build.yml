@@ -288,6 +288,12 @@ jobs:
             exit 1
           fi
 
+      - name: Install bounded video dependency
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends --yes ffmpeg
+          ffmpeg -version
+
       - name: Run exact Theme Studio cross-browser inventory
         run: >-
           npm run e2e:local --
