@@ -18,6 +18,8 @@ test('the live Theme Studio quality contract owns every release gate', () => {
         noOpLayouts: 3,
         presets: 9,
         evidenceOwners: 13,
+        crossBrowserEngines: 2,
+        crossBrowserTests: 28,
     });
 });
 
@@ -68,5 +70,21 @@ test('the quality contract rejects a reduced accessibility standard inventory', 
     assert.throws(
         () => verifyQualityContract({ root: ROOT, contract: reduced }),
         /lost accessibility tag future-required-tag/,
+    );
+});
+
+test('the quality contract rejects reduced or non-blocking cross-browser ownership', () => {
+    const missingBrowser = clone(contract);
+    missingBrowser.crossBrowserAudit.browsers.pop();
+    assert.throws(
+        () => verifyQualityContract({ root: ROOT, contract: missingBrowser }),
+        /cross-browser engines must be exactly/,
+    );
+
+    const widenedRasterPolicy = clone(contract);
+    widenedRasterPolicy.crossBrowserAudit.rasterPolicy = 'compare every engine pixel-for-pixel';
+    assert.throws(
+        () => verifyQualityContract({ root: ROOT, contract: widenedRasterPolicy }),
+        /sole pixel-baseline owner/,
     );
 });

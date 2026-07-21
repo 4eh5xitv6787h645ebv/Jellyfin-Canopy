@@ -11,6 +11,7 @@ const REQUIRED_UNSUPPORTED_LAYOUTS = ['tablet-only', 'legacy', 'tv'];
 const REQUIRED_PRIMARY_PRESETS = [
     'canopy', 'minimal', 'cinematic', 'glass', 'material', 'studio', 'tv-focus', 'oled', 'high-contrast',
 ];
+const REQUIRED_CROSS_BROWSER_ENGINES = ['firefox', 'webkit'];
 const REQUIRED_VISUAL_SPECS = [
     'e2e/theme-studio-accessibility.spec.ts',
     'e2e/theme-studio-canopy-surfaces.spec.ts',
@@ -59,6 +60,14 @@ function verifyPullRequestWorkflow(root, relativePath) {
     if (/^ {2}pull_request:\s*\n\s+branches:/m.test(source)) {
         fail(`${relativePath} excludes stacked pull-request base branches`);
     }
+}
+
+function workflowJob(source, jobName) {
+    const start = source.indexOf(`\n  ${jobName}:`);
+    if (start < 0) fail(`workflow lost ${jobName} job`);
+    const remainder = source.slice(start + 1);
+    const next = remainder.slice(remainder.indexOf('\n') + 1).search(/^ {2}[a-zA-Z0-9_-]+:\s*$/m);
+    return next < 0 ? remainder : remainder.slice(0, remainder.indexOf('\n') + 1 + next);
 }
 
 function verifyQualityContract({ root = DEFAULT_ROOT, contract } = {}) {
@@ -150,6 +159,51 @@ function verifyQualityContract({ root = DEFAULT_ROOT, contract } = {}) {
         }
     }
 
+    const crossBrowser = resolved.crossBrowserAudit;
+    exactIds(crossBrowser?.browsers, REQUIRED_CROSS_BROWSER_ENGINES, 'cross-browser engines');
+    exactIds(crossBrowser?.specs, REQUIRED_VISUAL_SPECS, 'cross-browser specs');
+    if (crossBrowser.chromiumBaselineOwner !== 'e2e_shard') {
+        fail('Chromium pixel evidence must remain owned by the required E2E shard job');
+    }
+    if (crossBrowser.testCount !== 28) fail('cross-browser audit must own exactly 28 tests');
+    const browserInventory = JSON.parse(readText(root, crossBrowser.inventory));
+    if (browserInventory?.version !== 1 || !Array.isArray(browserInventory.tests)) {
+        fail('cross-browser inventory must use required-inventory schema version 1');
+    }
+    if (browserInventory.tests.length !== crossBrowser.testCount
+        || new Set(browserInventory.tests).size !== crossBrowser.testCount) {
+        fail('cross-browser inventory must contain exactly 28 unique tests');
+    }
+    const inventorySpecs = browserInventory.tests.map((id) => id.split(' › ')[0]);
+    exactIds([...new Set(inventorySpecs)], REQUIRED_VISUAL_SPECS, 'cross-browser inventory specs');
+    if (crossBrowser.rasterPolicy
+        !== 'Chromium owns reviewed pixels; Firefox and WebKit retain structural assertions with snapshots ignored') {
+        fail('cross-browser raster policy must keep Chromium as the sole pixel-baseline owner');
+    }
+    const browserWorkflow = readText(root, crossBrowser.workflow);
+    const browserJob = workflowJob(browserWorkflow, crossBrowser.workflowJob);
+    for (const anchor of [
+        'browser: [firefox, webkit]',
+        'npx playwright install --with-deps "${{ matrix.browser }}"',
+        'npm run e2e:local --',
+        '--browser "${{ matrix.browser }}"',
+        '--theme-studio-only',
+    ]) {
+        if (!browserJob.includes(anchor)) fail(`${crossBrowser.workflowJob} lost ${anchor}`);
+    }
+    if (browserJob.includes('continue-on-error:')) {
+        fail(`${crossBrowser.workflowJob} must remain blocking`);
+    }
+    const browserRunner = readText(root, crossBrowser.localRunner);
+    for (const anchor of [
+        '--browser NAME',
+        '--theme-studio-only',
+        '--ignore-snapshots',
+        'theme-studio-cross-browser-test-inventory.json',
+    ]) {
+        if (!browserRunner.includes(anchor)) fail(`${crossBrowser.localRunner} lost ${anchor}`);
+    }
+
     for (const workflow of resolved.ci.pullRequestWorkflows) verifyPullRequestWorkflow(root, workflow);
     const playwright = readText(root, resolved.ci.playwrightConfig);
     if (!playwright.includes("const trace = required || ci || process.env.JF_E2E_TRACE === 'off'")) {
@@ -174,6 +228,8 @@ function verifyQualityContract({ root = DEFAULT_ROOT, contract } = {}) {
         noOpLayouts: resolved.scope.unsupportedNoOpLayouts.length,
         presets: presets.length,
         evidenceOwners: resolved.evidenceOwners.length,
+        crossBrowserEngines: crossBrowser.browsers.length,
+        crossBrowserTests: browserInventory.tests.length,
     };
 }
 
@@ -183,7 +239,8 @@ if (require.main === module) {
         console.log(
             `Theme Studio quality contract passed: ${result.layouts} modern layouts, `
             + `${result.noOpLayouts} no-op layouts, ${result.presets} presets, `
-            + `${result.evidenceOwners} cross-cutting gate owners.`,
+            + `${result.evidenceOwners} cross-cutting gate owners, `
+            + `${result.crossBrowserTests} tests across ${result.crossBrowserEngines} additional engines.`,
         );
     } catch (error) {
         console.error(error instanceof Error ? error.message : String(error));

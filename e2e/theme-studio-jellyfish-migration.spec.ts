@@ -1,6 +1,7 @@
 import type { Page } from 'playwright/test';
 import { assertNoRuntimeErrors, expect, loginAs, test, USERS } from './fixtures/auth';
 import { api, apiRaw, authenticate, PLUGIN_ID, type Session } from './fixtures/api';
+import { emulatePointer } from './helpers/theme-studio-input';
 import { installThemeStudioVisualFont } from './helpers/theme-studio-visual';
 
 const CONFIG_PATH = `/Plugins/${PLUGIN_ID}/Configuration`;
@@ -43,13 +44,7 @@ const VIEWPORTS = [
 ] as const;
 
 async function seedModernLayout(page: Page, coarsePointer: boolean): Promise<void> {
-    // Drive Chromium's actual input emulation so CSS and JavaScript agree.
-    // Desktop cases retain a mouse/fine pointer; phone cases get the same
-    // coarse-pointer navigation behavior as a touch browser.
-    const cdp = await page.context().newCDPSession(page);
-    await cdp.send('Emulation.setTouchEmulationEnabled', coarsePointer
-        ? { enabled: true, maxTouchPoints: 1 }
-        : { enabled: false });
+    await emulatePointer(page, coarsePointer);
     await page.addInitScript(() => {
         localStorage.setItem('layout', 'experimental');
     });
@@ -266,7 +261,7 @@ test.describe.serial('Theme Studio Jellyfish migration', () => {
         });
     });
 
-    for (const viewport of VIEWPORTS) {
+    function registerMigrationTest(viewport: (typeof VIEWPORTS)[number]): void {
         test(`${viewport.title} previews, acknowledges, cleans, and rolls back an exact Jellyfish selection`, async ({
             baseURL,
             page,
@@ -395,6 +390,20 @@ test.describe.serial('Theme Studio Jellyfish migration', () => {
             assertNoRuntimeErrors(consoleErrors);
         });
     }
+
+    for (const viewport of VIEWPORTS.filter((candidate) => !candidate.coarse)) {
+        registerMigrationTest(viewport);
+    }
+
+    test.describe('', () => {
+        // Firefox/WebKit need a real touch-capable CSS context for the
+        // coarse-pointer landscape media query; Chromium also receives native
+        // CDP input emulation in the scenario helper.
+        test.use({ hasTouch: true });
+        for (const viewport of VIEWPORTS.filter((candidate) => candidate.coarse)) {
+            registerMigrationTest(viewport);
+        }
+    });
 
     test('tablet-only, legacy and TV layouts never preview, clean, or suppress the selection', async ({
         baseURL,

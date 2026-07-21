@@ -1,6 +1,7 @@
 import type { Page } from 'playwright/test';
 import { assertNoRuntimeErrors, expect, loginAs, test, USERS } from './fixtures/auth';
 import { api, authenticate, PLUGIN_ID, type Session } from './fixtures/api';
+import { emulatePointer } from './helpers/theme-studio-input';
 import { installThemeStudioVisualFont } from './helpers/theme-studio-visual';
 
 const CONFIG_PATH = `/Plugins/${PLUGIN_ID}/Configuration`;
@@ -24,20 +25,7 @@ async function seedLayout(page: Page, layout: 'experimental' | 'desktop'): Promi
 }
 
 async function forceCoarsePointer(page: Page): Promise<void> {
-    await page.addInitScript(() => {
-        const nativeMatchMedia = window.matchMedia.bind(window);
-        window.matchMedia = ((query: string): MediaQueryList => {
-            const list = nativeMatchMedia(query);
-            if (query !== '(pointer: coarse)') return list;
-            return new Proxy(list, {
-                get(target, property, receiver) {
-                    if (property === 'matches') return true;
-                    const value = Reflect.get(target, property, receiver) as unknown;
-                    return typeof value === 'function' ? value.bind(target) : value;
-                },
-            });
-        }) as typeof window.matchMedia;
-    });
+    await emulatePointer(page, true);
 }
 
 async function forceLowEndPhone(page: Page): Promise<void> {
@@ -531,14 +519,25 @@ test.describe.serial('Theme Studio runtime bridge', () => {
         expect(repeatedEventEvidence.longTasks).toBe(0);
         expect(repeatedEventEvidence.layoutShift).toBeLessThanOrEqual(0.01);
 
-        const cdp = await page.context().newCDPSession(page);
-        await cdp.send('Emulation.setPageScaleFactor', { pageScaleFactor: 2 });
-        await expect.poll(() => page.evaluate(() => window.visualViewport?.scale ?? 1)).toBe(2);
+        const browserName = page.context().browser()?.browserType().name();
+        const cdp = browserName === 'chromium'
+            ? await page.context().newCDPSession(page)
+            : null;
+        if (cdp) {
+            await cdp.send('Emulation.setPageScaleFactor', { pageScaleFactor: 2 });
+            await expect.poll(() => page.evaluate(() => window.visualViewport?.scale ?? 1)).toBe(2);
+        } else {
+            expect(await page.evaluate(() => ({
+                present: window.visualViewport !== null,
+                scale: window.visualViewport?.scale ?? 1,
+            }))).toEqual({ present: true, scale: 1 });
+            await page.evaluate(() => window.visualViewport?.dispatchEvent(new Event('resize')));
+        }
         await expect.poll(() => page.evaluate(() => ({
             keyboard: document.documentElement.getAttribute('data-jc-theme-keyboard'),
             inset: getComputedStyle(document.documentElement).getPropertyValue('--jc-keyboard-inset').trim(),
         }))).toEqual({ keyboard: 'closed', inset: '0px' });
-        await cdp.send('Emulation.setPageScaleFactor', { pageScaleFactor: 1 });
+        if (cdp) await cdp.send('Emulation.setPageScaleFactor', { pageScaleFactor: 1 });
 
         const keyboardAvoidance = await page.evaluate(() => {
             const root = document.documentElement;
@@ -857,9 +856,12 @@ test.describe.serial('Theme Studio runtime bridge', () => {
             && /\/JellyfinCanopy\/user-settings\/[^/]+\/theme\.json$/.test(response.url));
         expect(expectedConflicts).toHaveLength(1);
         expect(consoleErrors.unexpected4xx()).toEqual(expectedConflicts);
-        expect(consoleErrors.real()).toEqual([
-            'Failed to load resource: the server responded with a status of 409 (Conflict)',
-        ]);
+        // Chromium mirrors the proven response as a generic console line;
+        // Firefox and WebKit may not. The URL/method-aware response evidence
+        // above is authoritative, so only reject additional console errors.
+        expect(consoleErrors.real().filter((message) =>
+            message !== 'Failed to load resource: the server responded with a status of 409 (Conflict)'))
+            .toEqual([]);
         consoleErrors.reset();
         const serverAfter = await api<Record<string, unknown>>(
             baseURL!, `/JellyfinCanopy/user-settings/${admin.userId}/theme.json`, admin.token,

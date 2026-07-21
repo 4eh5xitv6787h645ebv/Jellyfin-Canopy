@@ -226,6 +226,31 @@
       ]
     }
   ],
+  "crossBrowserAudit": {
+    "chromiumBaselineOwner": "e2e_shard",
+    "browsers": [
+      "firefox",
+      "webkit"
+    ],
+    "inventory": "e2e/theme-studio-cross-browser-test-inventory.json",
+    "testCount": 28,
+    "specs": [
+      "e2e/theme-studio-accessibility.spec.ts",
+      "e2e/theme-studio-canopy-surfaces.spec.ts",
+      "e2e/theme-studio-editor-mobile.spec.ts",
+      "e2e/theme-studio-effects.spec.ts",
+      "e2e/theme-studio-integration-surfaces.spec.ts",
+      "e2e/theme-studio-jellyfish-migration.spec.ts",
+      "e2e/theme-studio-media-surfaces.spec.ts",
+      "e2e/theme-studio-operational-surfaces.spec.ts",
+      "e2e/theme-studio-runtime.spec.ts",
+      "e2e/theme-studio-sharing.spec.ts"
+    ],
+    "workflow": ".github/workflows/build.yml",
+    "workflowJob": "theme_studio_browsers",
+    "localRunner": "scripts/e2e/run-local-shards.sh",
+    "rasterPolicy": "Chromium owns reviewed pixels; Firefox and WebKit retain structural assertions with snapshots ignored"
+  },
   "ci": {
     "pullRequestWorkflows": [
       ".github/workflows/build.yml",

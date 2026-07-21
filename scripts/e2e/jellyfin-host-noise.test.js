@@ -6,6 +6,7 @@ const path = require('node:path');
 const test = require('node:test');
 
 const {
+    FIREFOX_HOME_TAB_ERROR,
     HOME_LOGOUT_AXIOS_401,
     HOME_SELECTED_INDEX_ERROR,
     HOME_TAB_PREFIX,
@@ -187,6 +188,25 @@ test('accepts the observed Home race only with both Jellyfin host chunks', () =>
         isKnownHiddenContentHostNoise(OBSERVED_HOME_RACE.replace('/web/home.', '/JellyfinCanopy/home.')),
         false
     );
+});
+
+test('Firefox Home-tab serialization requires its exact stock chunk source', () => {
+    const observed = {
+        source: 'console',
+        text: FIREFOX_HOME_TAB_ERROR,
+        url: 'http://localhost:8100/web/hometab.2be9340f81cc7f0987ef.chunk.js',
+        stack: '',
+    };
+    assert.equal(isKnownJellyfinWebHostNoise(observed), true);
+    for (const mutation of [
+        { text: `${FIREFOX_HOME_TAB_ERROR}: extra` },
+        { source: 'pageerror' },
+        { url: 'http://localhost:8100/web/hometab.chunk.js' },
+        { url: 'http://localhost:8100/JellyfinCanopy/hometab.2be9340f81cc7f0987ef.chunk.js' },
+        { url: 'http://localhost:8100/web/hometab.2be9340f81cc7f0987ef.chunk.js?debug=true' },
+    ]) {
+        assert.equal(isKnownJellyfinWebHostNoise({ ...observed, ...mutation }), false);
+    }
 });
 
 test('rejects a mixed Home race stack containing a Canopy plugin frame', () => {

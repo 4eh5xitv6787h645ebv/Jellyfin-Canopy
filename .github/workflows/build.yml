@@ -220,6 +220,82 @@ jobs:
           "${RUNNER_TEMP}/build-plugin-bundle/build-plugin-bundle.json"
           "${RUNNER_TEMP}/client-scripts-bundle/client-scripts-bundle.json"
 
+  # Chromium owns the deterministic pixel baselines in the required six-shard
+  # suite. Firefox and WebKit independently rerun the exact Theme Studio
+  # semantic, accessibility, layout, lifecycle, and no-op inventory without
+  # comparing engine-specific rasterization.
+  theme_studio_browsers:
+    name: Theme Studio (${{ matrix.browser }}, modern desktop + phone)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [firefox, webkit]
+    env:
+      JF_IMAGE: jellyfin/jellyfin:unstable@sha256:9040e988eca1e53cd90679d16edf7bd842cc661bf85da124431e25452b4abeb5
+      JF_MOCK_IMAGE: node:22-alpine@sha256:16e22a550f3863206a3f701448c45f7912c6896a62de43add43bb9c86130c3e2
+      JF_E2E_IMAGE_PREFETCHED: "true"
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Verify Node toolchain
+        run: npm run check:toolchain
+
+      - name: Install dev dependencies
+        run: npm ci
+
+      - name: Prepare pinned browser and Jellyfin image
+        run: |
+          prepare_dir="${RUNNER_TEMP}/jc-theme-browser-prepare"
+          mkdir -p "${prepare_dir}"
+
+          npx playwright install --with-deps "${{ matrix.browser }}" \
+            > "${prepare_dir}/playwright-install.log" 2>&1 &
+          playwright_pid=$!
+          docker pull -q "${JF_IMAGE}" > "${prepare_dir}/jellyfin-pull.log" 2>&1 &
+          image_pid=$!
+
+          playwright_status=0
+          image_status=0
+          wait "${playwright_pid}" || playwright_status=$?
+          wait "${image_pid}" || image_status=$?
+
+          for log_file in playwright-install jellyfin-pull; do
+            echo "::group::${log_file}"
+            cat "${prepare_dir}/${log_file}.log"
+            echo "::endgroup::"
+          done
+
+          if (( playwright_status != 0 || image_status != 0 )); then
+            echo "Preparation failed: playwright=${playwright_status}, image=${image_status}" >&2
+            exit 1
+          fi
+
+      - name: Run exact Theme Studio cross-browser inventory
+        run: >-
+          npm run e2e:local --
+          --shards 2
+          --cpus-per-server 2
+          --browser "${{ matrix.browser }}"
+          --theme-studio-only
+
   # Real-browser verification against a dockerized, freshly seeded Jellyfin 12
   # (e2e/docker/): boot, tags, panel, navigation survival, live updates and the
   # admin authz matrix, straight from the committed Playwright suite.

@@ -261,7 +261,11 @@ export function assertNoRuntimeErrors(consoleErrors: ConsoleErrors): void {
         consoleErrors.unexpected5xx(),
         'unexpected 5xx responses'
     ).toEqual([]);
-    expect(consoleErrors.real(), 'unexpected console errors').toEqual([]);
+    expect(consoleErrors.realDetails().map((detail) => ({
+        text: detail.text,
+        source: detail.source,
+        url: safeResponseUrl(detail.url),
+    })), 'unexpected console errors').toEqual([]);
     expect(
         consoleErrors.unexpected4xx(),
         'unexpected 4xx responses from plugin endpoints'

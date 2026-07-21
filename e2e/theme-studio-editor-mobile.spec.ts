@@ -5,7 +5,6 @@ import { installThemeStudioVisualFont } from './helpers/theme-studio-visual';
 
 test.use({
     viewport: { width: 320, height: 700 },
-    isMobile: true,
     hasTouch: true,
     deviceScaleFactor: 3,
 });

@@ -94,6 +94,24 @@ test('E2E installs once and prepares independent prerequisites concurrently', ()
     );
 });
 
+test('Firefox and WebKit block on the exact Theme Studio structural inventory', () => {
+    const browser = jobBlock('theme_studio_browsers', 'e2e_shard');
+
+    assert.match(browser, /name: Theme Studio \(\$\{\{ matrix\.browser \}\}, modern desktop \+ phone\)/);
+    assert.match(browser, /timeout-minutes: 45/);
+    assert.match(browser, /strategy:\n\s+fail-fast: false/);
+    assert.match(browser, /browser: \[firefox, webkit\]/);
+    assert.doesNotMatch(browser, /continue-on-error:/);
+    assert.match(browser, /npx playwright install --with-deps "\$\{\{ matrix\.browser \}\}"/);
+    assert.match(browser, /docker pull -q "\$\{JF_IMAGE\}"/);
+    assert.match(browser, /JF_E2E_IMAGE_PREFETCHED: "true"/);
+    assert.match(
+        browser,
+        /npm run e2e:local --[\s\S]*--shards 2[\s\S]*--cpus-per-server 2[\s\S]*--browser "\$\{\{ matrix\.browser \}\}"[\s\S]*--theme-studio-only/,
+    );
+    assert.doesNotMatch(browser, /upload-artifact|e2e\/test-results/);
+});
+
 test('every shard reports current-attempt evidence under unique artifact names', () => {
     const shard = jobBlock('e2e_shard', 'e2e');
 
