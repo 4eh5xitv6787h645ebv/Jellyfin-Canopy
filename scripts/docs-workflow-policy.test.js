@@ -60,6 +60,7 @@ const DOCS_COMMANDS = [
     ['node', 'scripts/check-docs.js'],
     ['node', 'scripts/check-installation-permissions.js'],
     ['node', 'scripts/check-doc-assets.js'],
+    ['node', 'scripts/check-theme-studio-docs.js'],
     ['python', '-m', 'mkdocs', 'build', '--strict', '-d', 'site'],
 ];
 
