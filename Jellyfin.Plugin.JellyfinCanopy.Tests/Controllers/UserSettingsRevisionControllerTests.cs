@@ -296,6 +296,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
         [InlineData("<b>markup</b>", "executable_markup")]
         [InlineData("onerror = alert(1)", "executable_markup")]
         [InlineData("Remote ftp://host/theme", "remote_url")]
+        [InlineData("//host/theme", "remote_url")]
+        [InlineData("background:url(theme.css)", "remote_url")]
+        [InlineData("@import \"theme.css\"", "remote_url")]
         public void ThemeImportValidation_RejectsMarkupAndGenericRemoteUrlsInTypedDisplayNames(
             string profileName,
             string expectedCode)
@@ -318,11 +321,18 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             Assert.False(File.Exists(FilePath("theme.json")));
         }
 
-        [Fact]
-        public void ThemeImportValidation_AcceptsSafeExportRoundTripAtMarkupBoundary()
+        [Theory]
+        [InlineData("Rock < Pop > Film & TV")]
+        [InlineData("AC//DC Cinema")]
+        [InlineData("AC // DC Cinema")]
+        [InlineData("Only=Dark")]
+        [InlineData("Bring-onerror=off")]
+        [InlineData("Ratio 1://2")]
+        [InlineData("Important @important update")]
+        public void ThemeImportValidation_AcceptsSafeExportRoundTripAtScannerBoundaries(string profileName)
         {
             var stored = UserThemeConfiguration.CreateDefault("canopy", "canopy-night");
-            stored.Profiles[0].Name = "Rock < Pop > Film & TV";
+            stored.Profiles[0].Name = profileName;
             _manager.SaveUserConfiguration(UserId, "theme.json", stored);
             var before = File.ReadAllText(FilePath("theme.json"));
             var exported = Assert.IsType<ThemeExportDocument>(
@@ -335,7 +345,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             using var response = JsonDocument.Parse(json);
             Assert.Contains("\"valid\":true", json, StringComparison.OrdinalIgnoreCase);
             Assert.Equal(
-                "Rock < Pop > Film & TV",
+                profileName,
                 response.RootElement.GetProperty("data").GetProperty("Profiles")[0].GetProperty("Name").GetString());
             Assert.Equal(before, File.ReadAllText(FilePath("theme.json")));
         }

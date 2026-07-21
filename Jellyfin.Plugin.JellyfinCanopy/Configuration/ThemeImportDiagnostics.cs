@@ -34,6 +34,36 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
             "secret", "credential", "credentials", "serverid", "serverurl", "userid"
         };
 
+        private static readonly HashSet<string> EventHandlerPropertyNames = new(StringComparer.Ordinal)
+        {
+            "onabort", "onafterprint", "onanimationcancel", "onanimationend",
+            "onanimationiteration", "onanimationstart", "onauxclick", "onbeforeinput",
+            "onbeforeprint", "onbeforetoggle", "onbeforeunload", "onblur", "oncancel",
+            "oncanplay", "oncanplaythrough", "onchange", "onclick", "onclose",
+            "oncontextmenu", "oncopy", "oncuechange", "oncut", "ondblclick", "ondrag",
+            "ondragend", "ondragenter", "ondragleave", "ondragover", "ondragstart",
+            "ondrop", "ondurationchange", "onemptied", "onended", "onerror", "onfocus",
+            "onfocusin", "onfocusout", "onformdata", "onfullscreenchange",
+            "onfullscreenerror", "ongotpointercapture", "onhashchange", "oninput",
+            "oninvalid", "onkeydown", "onkeypress", "onkeyup", "onlanguagechange",
+            "onload", "onloadeddata", "onloadedmetadata", "onloadstart",
+            "onlostpointercapture", "onmessage", "onmessageerror", "onmousedown",
+            "onmouseenter", "onmouseleave", "onmousemove", "onmouseout", "onmouseover",
+            "onmouseup", "onoffline", "ononline", "onpagehide", "onpageshow", "onpaste",
+            "onpause", "onplay", "onplaying", "onpointercancel", "onpointerdown",
+            "onpointerenter", "onpointerleave", "onpointermove", "onpointerout",
+            "onpointerover", "onpointerrawupdate", "onpointerup", "onpopstate",
+            "onprogress", "onratechange", "onrejectionhandled", "onreset", "onresize",
+            "onscroll", "onscrollend", "onsecuritypolicyviolation", "onseeked",
+            "onseeking", "onselect", "onselectionchange", "onselectstart", "onslotchange",
+            "onstalled", "onstorage", "onsubmit", "onsuspend", "ontimeupdate", "ontoggle",
+            "ontouchcancel", "ontouchend", "ontouchmove", "ontouchstart",
+            "ontransitioncancel", "ontransitionend", "ontransitionrun",
+            "ontransitionstart", "onunhandledrejection", "onunload", "onvolumechange",
+            "onwaiting", "onwebkitanimationend", "onwebkitanimationiteration",
+            "onwebkitanimationstart", "onwebkittransitionend", "onwheel"
+        };
+
         public static IReadOnlyList<ThemeImportDiagnostic> Analyze(
             ThemeExportDocument? document,
             UserThemeConfiguration? candidate,
@@ -139,9 +169,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
             {
                 var value = element.GetString() ?? string.Empty;
                 var lowered = value.ToLowerInvariant();
-                if (lowered.Contains("//", StringComparison.Ordinal)
-                    || lowered.Contains("url(", StringComparison.Ordinal)
-                    || lowered.Contains("@import", StringComparison.Ordinal))
+                if (ContainsRemoteResource(lowered))
                 {
                     add("remote_url", "Remote URLs and imported resources are not allowed in shared themes.");
                 }
@@ -174,12 +202,70 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
             return false;
         }
 
+        private static bool ContainsRemoteResource(string lowered)
+        {
+            for (var index = 0; index + 2 < lowered.Length; index++)
+            {
+                if (lowered[index] == '/' && lowered[index + 1] == '/')
+                {
+                    var boundary = index == 0
+                        || (lowered[index - 1] != ':' && IsTokenBoundary(lowered[index - 1]));
+                    var hasAuthority = index + 2 < lowered.Length
+                        && !char.IsWhiteSpace(lowered[index + 2])
+                        && lowered[index + 2] != '/';
+                    if (boundary && hasAuthority) return true;
+                }
+
+                if (lowered[index] != ':' || lowered[index + 1] != '/' || lowered[index + 2] != '/')
+                {
+                    continue;
+                }
+
+                var schemeStart = index - 1;
+                while (schemeStart >= 0 && IsSchemeCharacter(lowered[schemeStart])) schemeStart--;
+                schemeStart++;
+                if (schemeStart < index
+                    && char.IsLetter(lowered[schemeStart])
+                    && (schemeStart == 0 || IsTokenBoundary(lowered[schemeStart - 1])))
+                {
+                    return true;
+                }
+            }
+
+            for (var index = 0; index + 3 < lowered.Length; index++)
+            {
+                if (lowered.AsSpan(index).StartsWith("url(", StringComparison.Ordinal)
+                    && (index == 0 || IsTokenBoundary(lowered[index - 1])))
+                {
+                    return true;
+                }
+
+                if (!lowered.AsSpan(index).StartsWith("@import", StringComparison.Ordinal)) continue;
+                var next = index + "@import".Length;
+                if (next == lowered.Length
+                    || char.IsWhiteSpace(lowered[next])
+                    || lowered[next] == '\''
+                    || lowered[next] == '"')
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool IsSchemeCharacter(char value)
+            => char.IsLetterOrDigit(value) || value == '+' || value == '-' || value == '.';
+
+        private static bool IsTokenBoundary(char value)
+            => !char.IsLetterOrDigit(value) && value != '_' && value != '-';
+
         private static bool ContainsEventHandler(string lowered)
         {
             for (var index = 0; index + 3 < lowered.Length; index++)
             {
                 if (lowered[index] != 'o' || lowered[index + 1] != 'n'
-                    || (index > 0 && char.IsLetterOrDigit(lowered[index - 1])))
+                    || (index > 0 && !IsAttributeBoundary(lowered[index - 1])))
                 {
                     continue;
                 }
@@ -187,12 +273,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
                 var next = index + 2;
                 while (next < lowered.Length && char.IsLetter(lowered[next])) next++;
                 if (next == index + 2) continue;
+                var propertyName = lowered.Substring(index, next - index);
+                if (!EventHandlerPropertyNames.Contains(propertyName)) continue;
                 while (next < lowered.Length && char.IsWhiteSpace(lowered[next])) next++;
                 if (next < lowered.Length && lowered[next] == '=') return true;
             }
 
             return false;
         }
+
+        private static bool IsAttributeBoundary(char value)
+            => char.IsWhiteSpace(value) || value == '<' || value == '/' || value == '\'' || value == '"';
 
         private static bool HasUnsupportedFields(ThemeExportDocument document)
             => HasValues(document.ExtensionData)
