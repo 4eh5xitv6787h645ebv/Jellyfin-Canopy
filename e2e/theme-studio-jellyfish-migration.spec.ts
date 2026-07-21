@@ -236,14 +236,13 @@ test.describe.serial('Theme Studio Jellyfish migration', () => {
             await expect(migration).toContainText('Ocean');
             const migrate = migration.locator('[data-action="migrate-jellyfish"]');
             await expect(migrate).toBeEnabled();
-            await migration.evaluate((element) => element.scrollIntoView({ block: 'center' }));
 
             const fit = await editorFit(page);
             expect(fit.editorOverflow).toBeLessThanOrEqual(1);
             expect(fit.panelOverflow).toBeLessThanOrEqual(1);
             if (viewport.breakpoint === 'phone') expect(fit.migrationTarget).toBeGreaterThanOrEqual(44);
 
-            await expect(page).toHaveScreenshot(`theme-studio-jellyfish-migration-${viewport.evidence}.png`, {
+            await expect(migration).toHaveScreenshot(`theme-studio-jellyfish-migration-${viewport.evidence}.png`, {
                 animations: 'disabled',
                 caret: 'hide',
                 maxDiffPixelRatio: 0.02,

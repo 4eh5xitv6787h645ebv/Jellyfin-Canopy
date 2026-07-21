@@ -180,6 +180,7 @@ test.describe.serial('Theme Studio runtime bridge', () => {
     });
 
     test.afterEach(async ({ baseURL }) => {
+        if (!admin || !original) return;
         await api(baseURL!, CONFIG_PATH, admin.token, {
             method: 'POST',
             body: JSON.stringify(original),
@@ -187,6 +188,7 @@ test.describe.serial('Theme Studio runtime bridge', () => {
     });
 
     test.afterAll(async ({ baseURL }) => {
+        if (!admin || !original) return;
         await api(baseURL!, CONFIG_PATH, admin.token, {
             method: 'POST',
             body: JSON.stringify(original),
@@ -668,11 +670,12 @@ test.describe.serial('Theme Studio runtime bridge', () => {
                 const overflow = await previewOverflowEvidence(page);
                 expect(overflow.active, `${preset} ${viewport.name} overflow`)
                     .toBeLessThanOrEqual(overflow.baseline + 1);
-                if (viewport.name === 'phone portrait') {
+                if (viewport.name === 'desktop' || viewport.name === 'phone portrait') {
                     // `tv-focus` is retained only as the persisted compatibility ID.
                     // Public evidence uses the modern-layout product name: Focus.
                     const evidenceName = preset === 'tv-focus' ? 'focus' : preset;
-                    await expect(page).toHaveScreenshot(`theme-studio-${evidenceName}-phone.png`, {
+                    const evidenceView = viewport.name === 'desktop' ? 'desktop' : 'phone';
+                    await expect(page).toHaveScreenshot(`theme-studio-${evidenceName}-${evidenceView}.png`, {
                         animations: 'disabled',
                         caret: 'hide',
                         maxDiffPixelRatio: 0.02,

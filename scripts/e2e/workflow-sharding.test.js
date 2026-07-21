@@ -69,6 +69,10 @@ test('required E2E uses six native file shards with one fresh serial two-CPU ser
     assert.match(playwrightConfig, /workers:\s*1/);
     assert.match(playwrightConfig, /fullyParallel:\s*false/);
     assert.match(playwrightConfig, /retries:\s*required \? 0 : 1/);
+    assert.match(
+        playwrightConfig,
+        /const trace = required \|\| ci \|\| process\.env\.JF_E2E_TRACE === 'off' \? 'off' : 'retain-on-failure'/
+    );
 });
 
 test('E2E installs once and prepares independent prerequisites concurrently', () => {
@@ -119,6 +123,10 @@ test('every shard reports current-attempt evidence under unique artifact names',
     );
     const statusArtifact = shard.slice(shard.indexOf('name: e2e-status-'));
     assert.match(diagnosticArtifact, /retention-days: 7/);
+    assert.match(shard, /scripts\/e2e\/collect-safe-failure-artifacts\.js/);
+    assert.match(diagnosticArtifact, /path: \$\{\{ runner\.temp \}\}\/jc-e2e-safe-evidence\//);
+    assert.doesNotMatch(shard, /^\s+path:\s+e2e\/test-results\/?\s*$/m);
+    assert.doesNotMatch(shard, /Upload traces/);
     assert.match(statusArtifact, /retention-days: 30/);
     assert.match(shard, /if-no-files-found: error/);
     assert.doesNotMatch(shard, /jc-e2e-shard-results[^\n]*e2e\/test-results/);
@@ -166,7 +174,8 @@ test('stable blocking aggregate reuses same-run attempts and rejects invalid sha
 
 test('the same blocking workflow proves pull-request, main and release source SHAs', () => {
     assert.match(workflow, /push:\n\s+branches: \[main, master\]/);
-    assert.match(workflow, /pull_request:\n\s+branches: \[main, master\]/);
+    assert.match(workflow, /^ {2}pull_request:\s*$/m);
+    assert.doesNotMatch(workflow, /^ {2}pull_request:\s*\n\s+branches:/m);
     assert.match(workflow, /workflow_call:/);
     assert.match(releaseWorkflow, /provenance:\n\s+name: Verify release source provenance/);
     assert.match(releaseWorkflow, /quality-gates:\n\s+name: Required source-SHA quality gates\n\s+needs: provenance\n\s+uses: \.\/\.github\/workflows\/build\.yml/);
@@ -180,6 +189,9 @@ test('mutable latest-Jellyfin probing is isolated in one advisory workflow', () 
     assert.match(compatibilityWorkflow, /workflow_dispatch:/);
     assert.doesNotMatch(compatibilityWorkflow, /continue-on-error:/);
     assert.match(compatibilityWorkflow, /jellyfin\/jellyfin:unstable/);
+    assert.match(compatibilityWorkflow, /scripts\/e2e\/collect-safe-failure-artifacts\.js/);
+    assert.match(compatibilityWorkflow, /path: \$\{\{ runner\.temp \}\}\/jc-e2e-safe-evidence\//);
+    assert.doesNotMatch(compatibilityWorkflow, /^\s+path:\s+e2e\/test-results\/?\s*$/m);
     assert.doesNotMatch(workflow, /JF_IMAGE:\s+jellyfin\/jellyfin:unstable\s*$/m);
     assert.doesNotMatch(releaseWorkflow, /JF_IMAGE:\s+jellyfin\/jellyfin:unstable\s*$/m);
 });

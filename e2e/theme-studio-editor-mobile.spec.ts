@@ -63,6 +63,7 @@ test.describe.serial('Theme Studio mobile editor', () => {
     });
 
     test.afterEach(async ({ baseURL }) => {
+        if (!admin || !original) return;
         await api(baseURL!, CONFIG_PATH, admin.token, {
             method: 'POST',
             body: JSON.stringify(original),
@@ -70,6 +71,7 @@ test.describe.serial('Theme Studio mobile editor', () => {
     });
 
     test.afterAll(async ({ baseURL }) => {
+        if (!admin || !original) return;
         await api(baseURL!, CONFIG_PATH, admin.token, {
             method: 'POST',
             body: JSON.stringify(original),

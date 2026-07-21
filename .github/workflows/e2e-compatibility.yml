@@ -78,14 +78,22 @@ jobs:
       - name: Run compatibility suite
         run: npm run e2e
 
-      - name: Upload compatibility diagnostics
+      - name: Collect privacy-safe compatibility screenshots
+        if: failure()
+        run: >-
+          node scripts/e2e/collect-safe-failure-artifacts.js
+          e2e/test-results
+          "${RUNNER_TEMP}/jc-e2e-safe-evidence"
+          e2e/docker/seed-result.json
+
+      - name: Upload privacy-safe compatibility diagnostics
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: latest-jellyfin-e2e-${{ github.run_id }}-${{ github.run_attempt }}
-          path: e2e/test-results/
+          path: ${{ runner.temp }}/jc-e2e-safe-evidence/
           retention-days: 7
-          if-no-files-found: ignore
+          if-no-files-found: error
 
       - name: Sanitized server logs
         if: failure()

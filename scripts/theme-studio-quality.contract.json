@@ -1,0 +1,224 @@
+{
+  "schemaVersion": 1,
+  "scope": {
+    "supportedModernLayouts": [
+      {
+        "id": "desktop",
+        "width": 1440,
+        "height": 900,
+        "breakpoint": "desktop"
+      },
+      {
+        "id": "wide",
+        "width": 1920,
+        "height": 1080,
+        "breakpoint": "wide"
+      },
+      {
+        "id": "phone-portrait",
+        "width": 390,
+        "height": 844,
+        "breakpoint": "phone"
+      },
+      {
+        "id": "phone-landscape",
+        "width": 844,
+        "height": 390,
+        "breakpoint": "phone"
+      }
+    ],
+    "unsupportedNoOpLayouts": [
+      "tablet-only",
+      "legacy",
+      "tv"
+    ]
+  },
+  "primaryPresets": [
+    {
+      "id": "canopy",
+      "palette": "canopy-night",
+      "evidenceName": "canopy"
+    },
+    {
+      "id": "minimal",
+      "palette": "neutral",
+      "evidenceName": "minimal"
+    },
+    {
+      "id": "cinematic",
+      "palette": "vivid",
+      "evidenceName": "cinematic"
+    },
+    {
+      "id": "glass",
+      "palette": "catppuccin",
+      "evidenceName": "glass"
+    },
+    {
+      "id": "material",
+      "palette": "dracula",
+      "evidenceName": "material"
+    },
+    {
+      "id": "studio",
+      "palette": "neutral",
+      "evidenceName": "studio"
+    },
+    {
+      "id": "tv-focus",
+      "palette": "summer",
+      "evidenceName": "focus"
+    },
+    {
+      "id": "oled",
+      "palette": "canopy-night",
+      "evidenceName": "oled"
+    },
+    {
+      "id": "high-contrast",
+      "palette": "winter",
+      "evidenceName": "high-contrast"
+    }
+  ],
+  "visualEvidence": {
+    "spec": "e2e/theme-studio-runtime.spec.ts",
+    "snapshotDirectory": "e2e/theme-studio-runtime.spec.ts-snapshots",
+    "platform": "linux",
+    "requiredViews": [
+      "desktop",
+      "phone"
+    ]
+  },
+  "accessibilityScan": {
+    "package": "@axe-core/playwright",
+    "version": "4.12.1",
+    "spec": "e2e/theme-studio-accessibility.spec.ts",
+    "scope": "#jc-theme-accessibility-fixture",
+    "tags": [
+      "wcag2a",
+      "wcag2aa",
+      "wcag21a",
+      "wcag21aa",
+      "wcag22aa"
+    ]
+  },
+  "evidenceOwners": [
+    {
+      "gate": "schema, serialization, migration and bounded input",
+      "path": "Jellyfin.Plugin.JellyfinCanopy/src/theme-studio/schema.test.ts",
+      "anchors": [
+        "returns an isolated clone",
+        "rejects arbitrary CSS-bearing keys",
+        "requires the migrated schema-two browser contract"
+      ]
+    },
+    {
+      "gate": "preview, apply, rollback and editor history",
+      "path": "Jellyfin.Plugin.JellyfinCanopy/src/theme-studio/editor-state.test.ts",
+      "anchors": [
+        "bounded reversible history",
+        "previews a validated import",
+        "adopts acknowledged state exactly"
+      ]
+    },
+    {
+      "gate": "persistence conflict, identity handoff, media and cleanup lifecycle",
+      "path": "Jellyfin.Plugin.JellyfinCanopy/src/theme-studio/runtime.test.ts",
+      "anchors": [
+        "never lets an older overlapping load overwrite a newer reload",
+        "follows host theme/media changes live",
+        "removes presentation synchronously on identity reset"
+      ]
+    },
+    {
+      "gate": "migration cleanup and rollback conflict safety",
+      "path": "Jellyfin.Plugin.JellyfinCanopy/src/theme-studio/jellyfish-migration.test.ts",
+      "anchors": [
+        "does not erase a concurrent or unrecognized custom CSS edit",
+        "does not overwrite a post-migration edit",
+        "compensates already-written keys"
+      ]
+    },
+    {
+      "gate": "zero import-time side effects",
+      "path": "Jellyfin.Plugin.JellyfinCanopy/src/theme-studio/feature.import.test.ts",
+      "anchors": [
+        "acquires no styles, observers, subscriptions, timers, requests, or facade on import"
+      ]
+    },
+    {
+      "gate": "preset, token, asset and provenance inventory",
+      "path": "Jellyfin.Plugin.JellyfinCanopy/src/theme-studio/catalog.test.ts",
+      "anchors": [
+        "schema-valid presets",
+        "final-composited palette",
+        "license/provenance graph and local icon contract"
+      ]
+    },
+    {
+      "gate": "unsupported CSS construct rejection",
+      "path": "Jellyfin.Plugin.JellyfinCanopy/src/theme-studio/advanced-css.test.ts",
+      "anchors": [
+        "bounded declaration lists",
+        "rejects unknown schema"
+      ]
+    },
+    {
+      "gate": "official Jellyfin variable and ownership contract",
+      "path": "Jellyfin.Plugin.JellyfinCanopy/src/theme-studio/jellyfin-web-contract.test.ts",
+      "anchors": [
+        "pins source evidence, MUI naming, host ownership and the modern-only surface matrix",
+        "keeps the emitted --jf bridge exactly synchronized"
+      ]
+    },
+    {
+      "gate": "long tasks, layout shift and repeated-runtime budget",
+      "path": "e2e/theme-studio-runtime.spec.ts",
+      "anchors": [
+        "entryTypes: ['longtask', 'layout-shift']",
+        "layoutShift).toBeLessThanOrEqual(0.01)"
+      ]
+    },
+    {
+      "gate": "observer, listener and timer lifecycle budgets",
+      "path": "e2e/theme-studio-media-surfaces.spec.ts",
+      "anchors": [
+        "observers: 0, timers: 0, listeners: 0"
+      ]
+    },
+    {
+      "gate": "blur, effects and low-end modern phone budgets",
+      "path": "e2e/theme-studio-effects.spec.ts",
+      "anchors": [
+        "low-end modern phone portrait and landscape reduce costly effects without overflow"
+      ]
+    },
+    {
+      "gate": "bundle and build-output budgets",
+      "path": "scripts/bundle-budgets.json",
+      "anchors": [
+        "maxFeatureExpandedRawBytes",
+        "maxPublishedRawBytes"
+      ]
+    },
+    {
+      "gate": "localization inventory",
+      "path": "package.json",
+      "anchors": [
+        "validate-translations"
+      ]
+    }
+  ],
+  "ci": {
+    "pullRequestWorkflows": [
+      ".github/workflows/build.yml",
+      ".github/workflows/security-scan.yml"
+    ],
+    "playwrightConfig": "e2e/playwright.config.ts",
+    "safeArtifactCollector": "scripts/e2e/collect-safe-failure-artifacts.js",
+    "artifactWorkflows": [
+      ".github/workflows/build.yml",
+      ".github/workflows/e2e-compatibility.yml"
+    ]
+  }
+}

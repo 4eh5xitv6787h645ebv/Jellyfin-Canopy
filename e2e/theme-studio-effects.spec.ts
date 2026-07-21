@@ -317,12 +317,14 @@ test.describe.serial('Theme Studio bounded effects', () => {
     });
 
     test.afterEach(async ({ baseURL }) => {
+        if (!admin || !original) return;
         await api(baseURL!, CONFIG_PATH, admin.token, {
             method: 'POST', body: JSON.stringify(original),
         });
     });
 
     test.afterAll(async ({ baseURL }) => {
+        if (!admin || !original) return;
         await api(baseURL!, CONFIG_PATH, admin.token, {
             method: 'POST', body: JSON.stringify(original),
         });

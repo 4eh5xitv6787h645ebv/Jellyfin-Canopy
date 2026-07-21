@@ -9,7 +9,6 @@ on:
   push:
     branches: [main, master]
   pull_request:
-    branches: [main, master]
   workflow_dispatch:
   workflow_call:
 
@@ -130,6 +129,9 @@ jobs:
 
       - name: Script unit tests (translation validator hardening)
         run: npm run test:scripts
+
+      - name: Theme Studio cross-cutting quality contract
+        run: npm run check:theme-studio-quality
 
       - name: Client performance architecture guard (isolated CPU budget)
         run: npm run check:performance-rules
@@ -347,14 +349,22 @@ jobs:
           docker compose -f e2e/docker/compose.yml "${log_args[@]}" jellyfin 2>&1 \
             | node scripts/e2e/sanitize-jellyfin-log.js || true
 
-      - name: Upload traces and screenshots on failure
+      - name: Collect privacy-safe screenshots on failure
+        if: always() && steps.playwright.outcome != 'success'
+        run: >-
+          node scripts/e2e/collect-safe-failure-artifacts.js
+          e2e/test-results
+          "${RUNNER_TEMP}/jc-e2e-safe-evidence"
+          e2e/docker/seed-result.json
+
+      - name: Upload privacy-safe screenshot evidence on failure
         if: always() && steps.playwright.outcome != 'success'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: e2e-test-results-${{ github.run_id }}-${{ github.run_attempt }}-shard-${{ matrix.shard }}-of-${{ matrix.total }}
-          path: e2e/test-results/
+          path: ${{ runner.temp }}/jc-e2e-safe-evidence/
           retention-days: 7
-          if-no-files-found: ignore
+          if-no-files-found: error
 
       - name: Tear down
         if: always()

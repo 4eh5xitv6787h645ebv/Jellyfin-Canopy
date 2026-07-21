@@ -141,6 +141,7 @@ test.describe.serial('Theme Studio safe sharing and curated gallery', () => {
     });
 
     test.afterEach(async ({ baseURL }) => {
+        if (!admin || !originalConfiguration || !originalAdvancedCss) return;
         await restoreAdvancedCss(baseURL!, admin, originalAdvancedCss);
         await api(baseURL!, CONFIG_PATH, admin.token, {
             method: 'POST',
@@ -149,6 +150,7 @@ test.describe.serial('Theme Studio safe sharing and curated gallery', () => {
     });
 
     test.afterAll(async ({ baseURL }) => {
+        if (!admin || !originalConfiguration) return;
         await api(baseURL!, CONFIG_PATH, admin.token, {
             method: 'POST',
             body: JSON.stringify(originalConfiguration),

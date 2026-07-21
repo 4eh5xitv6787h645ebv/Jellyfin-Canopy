@@ -38,11 +38,11 @@
   ],
   "budgets": {
     "documentation": {
-      "maxBytes": 26310221,
+      "maxBytes": 26540546,
       "maxFileBytes": 2941758
     },
     "repository": {
-      "maxBytes": 33299607,
+      "maxBytes": 34293917,
       "maxFileBytes": 2941758
     }
   },

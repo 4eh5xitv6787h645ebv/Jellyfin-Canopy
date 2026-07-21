@@ -320,6 +320,7 @@ test.describe.serial('Theme Studio discovery and integration surfaces', () => {
     });
 
     test.afterEach(async ({ baseURL }) => {
+        if (!admin || !original) return;
         await api(baseURL!, CONFIG_PATH, admin.token, { method: 'POST', body: JSON.stringify(original) });
     });
 
