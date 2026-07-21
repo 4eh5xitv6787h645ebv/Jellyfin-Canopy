@@ -231,7 +231,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        browser: [firefox, webkit]
+        include:
+          - browser: firefox
+            shards: 2
+          # WebKit is materially more stable when its exact inventory stays
+          # serial with the Jellyfin server it mutates. Two WebKit/server pairs
+          # on one hosted runner caused reproducible cross-process contention;
+          # this still runs all 28 required tests with zero retries or skips.
+          - browser: webkit
+            shards: 1
     env:
       JF_IMAGE: jellyfin/jellyfin:unstable@sha256:9040e988eca1e53cd90679d16edf7bd842cc661bf85da124431e25452b4abeb5
       JF_MOCK_IMAGE: node:22-alpine@sha256:16e22a550f3863206a3f701448c45f7912c6896a62de43add43bb9c86130c3e2
@@ -297,7 +305,7 @@ jobs:
       - name: Run exact Theme Studio cross-browser inventory
         run: >-
           npm run e2e:local --
-          --shards 2
+          --shards "${{ matrix.shards }}"
           --cpus-per-server 2
           --browser "${{ matrix.browser }}"
           --theme-studio-only

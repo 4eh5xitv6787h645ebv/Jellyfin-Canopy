@@ -233,9 +233,11 @@ function verifyQualityContract({ root = DEFAULT_ROOT, contract } = {}) {
     const browserWorkflow = readText(root, crossBrowser.workflow);
     const browserJob = workflowJob(browserWorkflow, crossBrowser.workflowJob);
     for (const anchor of [
-        'browser: [firefox, webkit]',
+        '- browser: firefox\n            shards: 2',
+        '- browser: webkit\n            shards: 1',
         'npx playwright install --with-deps "${{ matrix.browser }}"',
         'npm run e2e:local --',
+        '--shards "${{ matrix.shards }}"',
         '--browser "${{ matrix.browser }}"',
         '--theme-studio-only',
     ]) {
