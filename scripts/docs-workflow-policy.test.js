@@ -50,6 +50,13 @@ function requireBlockingCommand(workflow, command) {
     return step;
 }
 
+function requireFullHistoryForDocs(workflow, jobName) {
+    const checkout = (workflow.jobs[jobName]?.steps || [])
+        .filter(step => step.uses?.startsWith('actions/checkout@'));
+    assert.equal(checkout.length, 1, `${jobName} must check out the reviewed source once`);
+    assert.equal(checkout[0].with?.['fetch-depth'], 0, `${jobName} must fetch capture provenance history`);
+}
+
 function exactPins(source) {
     return new Map([...source.matchAll(/^([a-z0-9][a-z0-9._-]*)==([^\s\\]+)(?:\s+\\)?$/gmi)]
         .map(match => [match[1].toLowerCase().replace(/[-_.]+/g, '-'), match[2]]));
@@ -130,6 +137,9 @@ test('one docs command owns every deterministic content and build gate', () => {
         assert.equal(python[0].with?.cache, 'pip');
         assert.equal(python[0].with?.['cache-dependency-path'], 'requirements-docs.txt');
     }
+    requireFullHistoryForDocs(workflows['docs.yml'], 'validate');
+    requireFullHistoryForDocs(workflows['build.yml'], 'client-scripts');
+    requireFullHistoryForDocs(workflows['release.yml'], 'release');
 });
 
 test('package docs command rejects advisory bypasses on every owned validator', () => {

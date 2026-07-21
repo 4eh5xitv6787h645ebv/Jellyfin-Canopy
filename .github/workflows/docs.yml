@@ -21,6 +21,11 @@ on:
       - 'scripts/check-doc-assets.js'
       - 'scripts/check-doc-assets.test.js'
       - 'scripts/docs-asset-policy.json'
+      - 'scripts/check-theme-studio-docs.js'
+      - 'scripts/check-theme-studio-docs.test.js'
+      - 'scripts/generate-theme-studio-doc-images.js'
+      - 'scripts/generate-theme-studio-doc-manifest.js'
+      - 'scripts/theme-studio-doc-captures.json'
       - 'package.json'
       - 'package-lock.json'
       - 'mkdocs.yml'
@@ -45,6 +50,11 @@ on:
       - 'scripts/check-doc-assets.js'
       - 'scripts/check-doc-assets.test.js'
       - 'scripts/docs-asset-policy.json'
+      - 'scripts/check-theme-studio-docs.js'
+      - 'scripts/check-theme-studio-docs.test.js'
+      - 'scripts/generate-theme-studio-doc-images.js'
+      - 'scripts/generate-theme-studio-doc-manifest.js'
+      - 'scripts/theme-studio-doc-captures.json'
       - 'package.json'
       - 'package-lock.json'
       - 'mkdocs.yml'
@@ -67,6 +77,8 @@ jobs:
           egress-policy: audit
 
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0 # capture manifests verify their exact producing ancestor
 
       - name: Set up Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
