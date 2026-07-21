@@ -70,6 +70,25 @@ export function injectCSS(): void {
             background: rgba(0,0,0,0.82);
             border-color: rgba(255,255,255,0.28);
         }
+        /*
+         * Hidden Content's own no-jank containment: injecting the detail Hide
+         * button adds one more in-flow button to the native detail action row,
+         * which never wraps. On a narrow viewport (390px phone) the widened
+         * row's min-content exceeds the viewport and the whole page scrolls
+         * sideways — injected UI must never do that, on either layout. (First
+         * measured by e2e/anime-filler-warnings.spec.ts's mobile scrollWidth
+         * assertion, issue #454; isolation probes show the filler badge is an
+         * absolute overlay contributing no width there, and the overflow
+         * reproduces with the filler stylesheet reverted whenever this button
+         * mounts.) Remedy: let ONLY a row that holds our button wrap, so every
+         * button — native and ours — keeps its exact intrinsic size and tap
+         * target. No media queries, no clipping, no overflow suppression, and
+         * no compression of any button; rows without our button never match
+         * the gated selector.
+         */
+        :is(.mainDetailButtons, .detailButtons, .itemActionsBottom, .detailButtonsContainer):has(> .jc-detail-hide-btn) {
+            flex-wrap: wrap;
+        }
         .jc-detail-hide-btn.jc-already-hidden {
             opacity: 0.85;
             pointer-events: auto;

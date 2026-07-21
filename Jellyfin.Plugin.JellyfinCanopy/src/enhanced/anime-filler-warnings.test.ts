@@ -8,6 +8,12 @@ type AjaxOptions = { data: string; signal?: AbortSignal };
 let ajax: Mock<(options: AjaxOptions) => Promise<AjaxResult>>;
 let dispose: (() => void) | null;
 
+function markerRules(): CSSStyleRule[] {
+    const style = document.getElementById('jc-anime-filler-warning-styles') as HTMLStyleElement | null;
+    if (!style?.sheet) return [];
+    return [...style.sheet.cssRules].filter((rule): rule is CSSStyleRule => rule instanceof CSSStyleRule);
+}
+
 beforeEach(() => {
     vi.useFakeTimers();
     resetDetailsViewTrackingForTests();
@@ -85,6 +91,82 @@ describe('anime filler warnings', () => {
         expect(document.querySelectorAll('.jc-anime-filler-marker')).toHaveLength(1);
         expect(document.querySelector('.itemName > .jc-anime-filler-marker')?.textContent).toBe('Filler');
         expect(document.querySelector('.detailPagePrimaryContainer')?.classList.contains('jc-anime-filler-anchor')).toBe(false);
+    });
+
+    it('keeps every card and list badge an out-of-flow overlay, with or without an image wrapper', async () => {
+        // Containment contract for episode rows on both layouts: a card/list
+        // badge must always be an absolute overlay so it can never add
+        // in-flow width to its row or the page.
+        //  - .listItemImage is the REAL shape of the seeded partial-library
+        //    season page (the e2e mobile scenario): the badge anchors into
+        //    the image wrapper. NOTE: this placement was already absolute on
+        //    main — live isolation probes for issue #454 showed the mobile
+        //    scrollWidth red was owned by the hidden-content detail Hide
+        //    button (fixed in hidden-content/styles.ts), not by this badge.
+        //  - the bare .card/.listItem rows cover applyMarker's image-less
+        //    fallback anchor ('|| target'), which on main produced an
+        //    unconstrained IN-FLOW badge — a latent overflow hazard this
+        //    hardening closes at the filler layer.
+        window.history.replaceState({}, '', '/web/index.html#/details?id=season-1');
+        document.body.innerHTML = `
+            <div id="itemDetailPage">
+                <h1 class="itemName">Season</h1>
+                <div class="listItem" data-id="episode-2"><div class="listItemImage"></div></div>
+                <div class="card" data-id="episode-3"></div>
+                <div class="listItem" data-id="episode-4"></div>
+            </div>`;
+        recordDetailsViewShown(document.querySelector('#itemDetailPage'));
+        ajax.mockResolvedValue({
+            items: [
+                { itemId: 'season-1', classification: 'Unknown' },
+                { itemId: 'episode-2', classification: 'Filler' },
+                { itemId: 'episode-3', classification: 'Filler' },
+                { itemId: 'episode-4', classification: 'Filler' },
+            ],
+        });
+        dispose = installAnimeFillerWarnings(new AbortController().signal, () => true);
+
+        await vi.advanceTimersByTimeAsync(80);
+
+        // Real seeded shape: the badge prefers the image wrapper anchor.
+        const imageBadge = document.querySelector<HTMLElement>('.listItemImage > .jc-anime-filler-marker');
+        // Image-less fallback shape: the card/list item itself is the anchor.
+        const cardBadge = document.querySelector<HTMLElement>('.card > .jc-anime-filler-marker');
+        const listBadge = document.querySelector<HTMLElement>('.listItem[data-id="episode-4"] > .jc-anime-filler-marker');
+        expect(imageBadge).not.toBeNull();
+        expect(cardBadge).not.toBeNull();
+        expect(listBadge).not.toBeNull();
+        const rules = markerRules();
+        expect(rules.length).toBeGreaterThan(0);
+        for (const badge of [imageBadge!, cardBadge!, listBadge!]) {
+            // Out of flow: contributes no width to the row or the page.
+            expect(rules.some(rule => badge.matches(rule.selectorText)
+                && rule.style.position === 'absolute'
+                && rule.style.pointerEvents === 'none')).toBe(true);
+            // ...and positioned against its own anchor, not an ancestor.
+            expect(badge.parentElement!.classList.contains('jc-anime-filler-anchor')).toBe(true);
+            expect(rules.some(rule => badge.parentElement!.matches(rule.selectorText)
+                && rule.style.position === 'relative')).toBe(true);
+        }
+    });
+
+    it('hard-caps in-flow detail badge width as a latent-overflow guard', async () => {
+        dispose = installAnimeFillerWarnings(new AbortController().signal, () => true);
+
+        await vi.advanceTimersByTimeAsync(80);
+
+        const badge = document.querySelector<HTMLElement>('.itemName > .jc-anime-filler-marker');
+        expect(badge).not.toBeNull();
+        const base = markerRules().filter(rule => badge!.matches(rule.selectorText));
+        expect(base.length).toBeGreaterThan(0);
+        // Width constraint: never wider than the anchor's content box.
+        expect(base.some(rule => rule.style.maxWidth === '100%'
+            && rule.style.boxSizing === 'border-box')).toBe(true);
+        // Flex-item min-content floor lifted so a tight row can compress the
+        // pill instead of overflowing the page.
+        expect(base.some(rule => rule.style.minWidth === '0px')).toBe(true);
+        // Long localized badge text folds instead of forcing intrinsic width.
+        expect(base.some(rule => rule.style.overflowWrap === 'anywhere')).toBe(true);
     });
 
     it('does not let an Unknown season target churn a descendant filler-card badge', async () => {
