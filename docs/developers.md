@@ -489,7 +489,7 @@ grep -rn "PERF(R3" Jellyfin.Plugin.JellyfinCanopy/src/
 | R8 | Sync work budget | Pre-paint hooks stay under ~2 ms per mutation batch (`performance.now()` guard); overflow goes async. |
 | R9 | Fail open — late beats never | The jank rules bound *when and how* content appears, never *whether*. A readiness wait or fetch that misses its window degrades to a late, shift-free entrance — it never silently skips the content, and a transient error is never cached as an answer. |
 
-Those nine are client-side (jank + resilience). There is also one **server-side** rule — [S1](#s1-never-block-jellyfins-synchronous-threads) — for plugin code that runs on Jellyfin's own threads (library-scan event handlers).
+Those nine are client-side (jank + resilience). The [server-side rules](#server-side-rules) — S1–S9 plus the response-envelope rule — govern plugin code whose cost lands on the host or on shared third-party upstreams: Jellyfin's own threads ([S1](#s1-never-block-jellyfins-synchronous-threads)), library-sized queries and caches, fleet-aggregate provider traffic, startup, and hot request paths, all quantified against the canonical [scale profiles](#scale-profiles-and-planning-assumptions).
 
 Several rules are backed by **source-scan guards** that fail on a new violation, not only on review. `npm run check:performance-rules` owns the R3/R5/R6 architecture scan: it parses and traverses each production TypeScript file once in a dedicated Node process and enforces a strict five-second current-thread CPU budget. Keeping that measurement outside the Vitest V8-coverage process prevents coverage instrumentation from being charged to the scanner. `src/test/leak-guard.test.ts` owns object URLs, un-torn-down observers, unbounded TTL maps, and self-rescheduling retry loops for R3/R5; the non-performance `css-injection-guard` and `error-as-empty-guard` companions are described under [Client security](#client-security).
 
@@ -687,7 +687,32 @@ function waitForAnchor(signal: AbortSignal): Promise<HTMLElement | null> {
 
 ### Server-side rules
 
-R1–R9 are about the client. One rule governs the **server** — plugin code that runs on threads Jellyfin owns, where the cost lands on the host, not the browser.
+R1–R9 are about the client. Rules **S1–S9**, plus the **response-envelope rule**, govern the **server** — plugin code that runs on threads Jellyfin owns, allocates memory on the host, queries the host database, or talks to shared third-party upstreams. The cost lands on the host (and, aggregated across every install, on the upstream), not the browser. Like R1–R9, they are enforceable in review: a PR that violates one needs a written justification, not a shrug. Only S1 has a source-scan guard today; **SR-09** owns extending guards to the remaining rules, **SR-08** owns the review-lens wiring, and **SR-15** owns the measurement budgets — until those land, S2–S9 and the envelope rule are review-enforced against this text.
+
+#### Scale profiles and planning assumptions
+
+"Large library" is quantified **once**, here, and every S-rule states its cost against these two canonical profiles instead of inventing its own numbers:
+
+| Profile | Definition | What it represents |
+|---|---|---|
+| **L** | **100,000 episodes** | The library from the S1 anecdote — the floor for "large". Real installs at this size exist and file bug reports. |
+| **XL** | **~2,000,000 episodes / ~500 users** | The design ceiling. A rule that holds at XL holds everywhere; budgets below are stated at XL. |
+
+Measured anecdotes from the live XL baseline run (2026-07-21, Linode g6-dedicated-4, Jellyfin 12 unstable) — cite these when reasoning about worst-case behavior:
+
+- Initial scan throughput is **~19–23 episodes/sec regardless of 2 vs 4 CPUs** — the scan serializes per top-level library folder, so a profile-L library takes hours and an XL library takes days to scan, and plugin work rides along the whole time.
+- The un-checkpointed SQLite **WAL grew to 55 GB** during sustained scan inserts; the main DB holds steady at **~8 GB at ~100k episodes** (~2 KB/episode marginal growth).
+- Media seeding ran at 656 files/sec — file creation is never the bottleneck; the database is.
+- **Admin Items-count queries time out under scan load** — the DB is saturated exactly when full-library plugin queries are most tempting (rebuild-on-change handlers), which is why S1/S2 exist.
+
+**The two-axis planning assumption (pinned).** Plugin cost scales along two *independent* axes, and the rules never conflate them:
+
+1. **Provider/upstream traffic scales with independent server installations.** Every install ships the same scheduled defaults, so fleet-aggregate load on a shared upstream is `per-server traffic × install count`. Default planning number: **100,000 servers**, unless better evidence exists.
+2. **RAM/disk/CPU/UI cost scales with users × library size** on one server (profiles L and XL above).
+
+100K *users* may share far fewer *servers* — never convert one axis into the other. A per-server rate limit says nothing about fleet load (S5); a fleet-average RPS says nothing about one server's worst-case allocation (S2/S4).
+
+SR-15's measurement spec references these profiles for its budgets; SR-22's envelope-delivery spec references profile XL.
 
 #### S1 — Never block Jellyfin's synchronous threads
 
@@ -725,6 +750,182 @@ grep -rn "PERF(S1)" Jellyfin.Plugin.JellyfinCanopy/
 ```
 
 **In the tree:** `Services/TagCacheMonitor.cs` (record-and-defer handler), `Services/TagCachePendingChanges.cs` (coalescing set), `Services/TagCacheService.cs` (debounced off-thread flush + `Dispose` drain), `Services/SeerrScanTriggerService.cs` (first-event deadline + one lifecycle-owned remote worker and follow-up slot), `EventHandlers/ContinueWatchingPlaybackEvents.cs` (a bulk library removal coalesces to one hidden-content prune per user for the whole batch, not one per removed item).
+
+#### S2 — Bounded library enumeration
+
+**Rule.** Any `ILibraryManager` enumeration is paginated or batched with a **stated batch size** (`StartIndex`/`Limit` on `InternalItemsQuery`, or an id-only pass followed by batched `GetItemById` resolves). No code path materializes the whole library into memory via an unbounded `Recursive = true` query — at profile L that is one list of 100k `BaseItem`s; at XL it is ~2M, and the query runs against a database that may be saturated by a scan (measured at XL: admin Items-count queries time out under scan load). A pass that genuinely must visit every item states its batch size, yields between batches, and honors cancellation.
+
+**Why.** An unbounded recursive materialization is `O(library)` memory and one giant DB round-trip whose latency and allocation grow with someone else's library, not with the feature's actual need. It works on the dev library and falls over at L/XL — the worst kind of regression, invisible until a user with a big library installs the plugin. Batching turns the same total work into bounded peak memory and interruptible, cancellable progress.
+
+**Marker.** Implementation sites and known violations are marked `// PERF(S2)`:
+
+```bash
+grep -rn "PERF(S2" Jellyfin.Plugin.JellyfinCanopy/
+```
+
+Existing violations get a `PERF(S2)` **debt marker** citing this rule — documented debt, never a silent exemption.
+
+**Enforced.** Review-enforced against this text today. SR-09 extends the source-scan guard (in the `LibraryScanEventGuardTests` style) to flag `Recursive = true` queries without pagination outside an allowlist.
+
+**In the tree (documented DEBT — cited, not yet fixed):** `Services/TagCacheService.cs:316` (`BuildFullCache` materializes every taggable item in one `GetItemList`), `:1001` (per-user accessible-id set materialized via recursive `GetItemIds`); `Data/ItemLookupService.cs:82,119` (recursive batch lookups). The third `Recursive = true` site in `TagCacheService` (`GetFirstEpisode`, ~`:1751`) is **not** debt: it is `ParentId`-scoped with `Limit = 1` — exactly the bounded single-item lookup this rule permits.
+
+#### S3 — Per-item response-filter budget
+
+**Rule.** Response filters that run **once per item served** — the SpoilerGuard filters (`Services/SpoilerGuard/SpoilerFieldStripFilter.cs`, `SpoilerBlurImageFilter.cs`, `SpoilerIdentityTagFilter.cs`) and `Services/HiddenContentResponseFilter.cs` — stay under a **~10 µs amortized synchronous budget per item** (the server analogue of R8's ~2 ms per mutation batch). Per-item work is a precomputed lookup (dictionary/set hit against state built off the request path), never a DB query, regex compilation, allocation storm, or I/O. Work that cannot fit the budget moves to a precomputed cache maintained by S1-style deferred workers.
+
+**Why.** A response filter's cost multiplies by every item in every response of every user. At a typical 100–300-item library page, ~10 µs/item is ~1–3 ms added per response — tolerable; 1 ms/item would be 300 ms of added synchronous latency per page for every user, and it scales with the users axis under concurrent load. R8 taught the same lesson client-side: per-element work needs an explicit budget or it silently eats the frame — here it eats the request.
+
+**Marker.** Budgeted per-item paths are marked `// PERF(S3)`:
+
+```bash
+grep -rn "PERF(S3" Jellyfin.Plugin.JellyfinCanopy/
+```
+
+**Enforced.** Review-enforced today. SR-09 adds a bounded micro-benchmark/stress guard for the per-item filter paths; SR-15's measurement spec budgets filter overhead at profile XL page sizes.
+
+#### S4 — Item-count-aware cache sizing
+
+**Rule.** Any cache keyed by library items **states its worst-case memory as `f(items)`** — and as `f(items × users)` for per-user derivations — in a comment at the cache's declaration, and is **bounded independent of library size** at profile XL (size/entry caps, TTL eviction, or a documented per-entry byte bound small enough that `f(XL)` is acceptable). "It's a cache, it'll be fine" is not a size statement.
+
+**Why.** A per-item cache entry that costs 500 bytes is 50 MB at profile L and 1 GB at XL — before per-user derivations multiply it by the users axis (500 users × a per-user id set over 2M items is catastrophic). The plugin shares the host process with Jellyfin itself, whose own DB and scan already dominate memory at XL (measured: ~8 GB main DB at 100k episodes); unbounded plugin caches make the plugin the reason the host OOMs.
+
+**Marker.** Sizing statements and known violations are marked `// PERF(S4)`:
+
+```bash
+grep -rn "PERF(S4" Jellyfin.Plugin.JellyfinCanopy/
+```
+
+**Enforced.** Review-enforced today: a PR adding an item-keyed cache without a worst-case sizing statement fails review. SR-09 adds cache-maximum and maximum-plus-one guard tests; SR-15 budgets resident cache bytes at XL.
+
+**In the tree (documented DEBT):** `Services/TagCacheService.cs` — the in-memory full-library tag cache (`ConcurrentDictionary` over every taggable item, `O(items)`), and its per-user accessible-id cache (`_userAccessCache`, one `HashSet` of all accessible item ids per active user — the `items × users` axis).
+
+#### S5 — Fleet-aware upstream traffic
+
+**Rule.** Any feature touching a **shared third-party upstream** — external providers (Jikan/AniList/TMDB, Seerr-adjacent metadata), the asset-mirror hosts, scheduled refreshes, background tasks, persistent caches with automatic refresh — must (a) ship **randomized per-install jitter** on any schedule, (b) send an **identifying `User-Agent`** (`JellyfinCanopy/<version>`) on every upstream HTTP call, and (c) include a **quantified Fleet Impact calculation** (below) in the PR. **Scope:** this rule covers work that leaves the server for shared infrastructure. Purely local scheduled work — the 03:00 tag-cache rebuild (`ScheduledTasks/BuildTagCacheTask.cs`) touches only the local DB — is explicitly **exempt** from jitter (it still answers to S2/S8).
+
+**Jitter, concretely.** Jellyfin's `TaskTriggerInfo` has **no jitter field**, so "add jitter" means one of: register the default trigger with a **randomized-per-install `TimeOfDayTicks`** chosen stably at registration (persist the offset so every restart keeps the same slot — stable per install, uniform across the fleet), or take an in-`ExecuteAsync` **random initial delay** before the first upstream call. A fleet of 100K servers firing the same default at the same wall-clock minute is a self-inflicted thundering herd.
+
+**Per-server vs fleet.** S5 lives on the first axis of the [planning assumption](#scale-profiles-and-planning-assumptions) — install count, not the L/XL library axis (a tiny library on 100K servers still aggregates to fleet-scale upstream traffic). A per-server limiter (`Services/AnimeFiller/ProviderRateGate.cs`) bounds **one server** and proves nothing about the fleet: 100K servers politely doing 1 request/sec each is 100K RPS at the provider. 100K servers on synchronized defaults is a distributed DDoS of Jikan/AniList/TMDB with this plugin's name on it. The asset-mirror hosts (jsDelivr, cdnjs, Google Fonts, flagcdn, raw.githubusercontent — hit by the default-on asset cache at startup + ~24 h refresh, `ScheduledTasks/RefreshCachedAssetsTask.cs`) are **first-class upstreams under this rule** and require the same Fleet Impact calculation (full audit: SR-18).
+
+**The Fleet Impact calculation (required, quantified — not "reasoning").** For any feature in scope, the PR states:
+
+- **Requests per server and across the fleet** — average *and* plausible-burst RPS at the 100,000-server planning default.
+- **Synchronization behavior on cold start, restart, and upgrade rollout.** A synchronized restart wave (a popular plugin update, a Jellyfin release) is a 100K-request burst even when the fleet average is 0.165 RPS — **average traffic alone proves nothing**.
+- **Data transferred per day**; **RAM and disk maximums per server** for whatever is cached.
+- **Provider rate limits, terms of service, and redistribution rights** for the data fetched.
+- **Behavior under 429, outage, and malformed/partial responses.**
+
+**Fleet-safe defaults** — each is the expected design, and its absence is reviewable as a violation:
+
+- Demand-driven updates over fleet-wide schedules.
+- Persistent caching across restarts (a restart must not re-fetch the world).
+- Per-key freshness instead of one global timestamp (one stale key must not refresh everything).
+- Stable randomized jitter for unavoidable schedules.
+- Single-flight coalescing + bounded concurrency toward the upstream.
+- `Retry-After` compliance + exponential backoff on 429/5xx.
+- Last-good data served during outages.
+- **Zero provider traffic when the feature is disabled.**
+- Negative caching that doesn't starve unrelated keys.
+- Symmetric read/write size validation on **actual bytes** (not declared lengths).
+- No scraping or redistribution without clear permission.
+
+**Release-blocking policy.** If the calculated fleet traffic exceeds what the provider can reasonably support, the feature **blocks** until there is a provider agreement, a licensed dataset, or a Canopy-operated aggregation service. There is no "ship it and see" tier for someone else's infrastructure.
+
+**Deterministic validation (required for provider/cache/background features).** Fleet proof is *calculation + bounded stress + deterministic time/concurrency tests* — unit/integration, not 100K test servers. Cover: cold start and server recreation; many callers, same key (single-flight); many callers, different keys (bounded concurrency); 429/timeout/partial/outage behavior; cache maximum and maximum-plus-one; corrupt rows and oversized encoded/decoded payloads; jitter distribution over simulated time; upgrade/cache-schema migration; **no work while disabled**.
+
+**Marker.** Jitter, User-Agent, and fleet-bounding sites are marked `// PERF(S5)`:
+
+```bash
+grep -rn "PERF(S5" Jellyfin.Plugin.JellyfinCanopy/
+```
+
+**Enforced.** Review-enforced today (the Fleet Impact calculation is a PR-description artifact, checkable in review). SR-09 adds guards where they are mechanical (identifying User-Agent on outbound clients, schedule registration without jitter for upstream-touching tasks); SR-18 audits the asset-mirror traffic.
+
+**In the tree:** `JellyfinCanopy.cs:72` + `Helpers/Seerr/SeerrHttpHelper.cs` (identifying `User-Agent` on Seerr/TMDB calls), `Services/AssetCacheService.cs` (mirror fetcher — its default-on startup + daily schedule is DEBT under this rule pending its SR-18 Fleet Impact calculation), `Services/AnimeFiller/ProviderRateGate.cs` (per-server gate — necessary, not sufficient).
+
+#### S6 — Per-user store fan-out bounds
+
+**Rule.** No **request path** may synchronously enumerate all user directories or all per-user stores; a request touches the calling user's store plus a bounded, stated set. Per-user store **counts and sizes carry stated bounds** as `f(users)` (entries per user, bytes per user, and therefore worst-case totals at profile XL's ~500 users). Cross-user sweeps (cleanup, migration, aggregation) run as scheduled or deferred work — and land in S8's jurisdiction, not a request's. S6 is **request-path-scoped by design**: startup cost is S8's domain.
+
+**Why.** A request path that fans out across every user's store turns one HTTP call into `O(users)` file/DB operations — latency and I/O that scale with someone else's user count, multiplying under concurrent requests (the users axis twice over). Per-user stores without size bounds are S4's unbounded-cache problem wearing a per-user disguise: 500 users × an unbounded per-user file is unbounded disk.
+
+**Marker.** Bounded fan-out sites and known violations are marked `// PERF(S6)`:
+
+```bash
+grep -rn "PERF(S6" Jellyfin.Plugin.JellyfinCanopy/
+```
+
+**Enforced.** Review-enforced today. SR-09 adds a source-scan guard for user-directory enumeration reachable from controller actions.
+
+#### S7 — Session/playback/user-lifecycle event fan-out
+
+**Rule.** S1's **O(1) record-and-defer / coalesce** discipline extends beyond `ILibraryManager` to every host event stream the plugin consumes: `ISessionManager` events that fire **per active stream** — `PlaybackStart`, `PlaybackStopped`, and above all `PlaybackProgress`, which ticks **~every 10 seconds per playing session** — and the `UserCreated`/`UserDeleted` lifecycle events (`EventHandlers/UserTopologyEvents.cs`). A handler on these streams does cheap in-memory checks and records/coalesces; config resolution, DB queries, and outbound HTTP happen on deferred workers, deduplicated per user+item, never per tick.
+
+**Why.** These events scale with **concurrent streams — the users axis**, exactly the axis S1's scan-thread story doesn't cover; at profile XL's ~500 users, hundreds of concurrent streams are plausible. At 100 concurrent streams, PlaybackProgress fires ~10 times per second across the plugin's subscribers; per-tick work that costs 50 ms of config resolution and remote calls is half a second of continuous plugin CPU plus a background drip of outbound requests, forever, in direct proportion to how successful the server is.
+
+**Marker.** Record-and-defer sites on session/lifecycle events are marked `// PERF(S7)`:
+
+```bash
+grep -rn "PERF(S7" Jellyfin.Plugin.JellyfinCanopy/
+```
+
+**Enforced.** Review-enforced today. SR-09 extends the S1 guard (`LibraryScanEventGuardTests`) to cover `ISessionManager` and user-lifecycle subscriptions with the same allowlist + synchronous-body denylist.
+
+**In the tree (documented DEBT):** `Services/AutoMovieRequestMonitor.cs` and `Services/AutoSeasonRequestMonitor.cs` — `OnPlaybackProgress` runs config resolution plus (deduplicated) Seerr calls on **every** progress tick of every stream; the dedup bounds the remote calls but the per-tick resolution work still scales with concurrent streams.
+
+#### S8 — Startup cost bound
+
+**Rule.** Startup work is **bounded or deferred off the critical path**. `IScheduledTask`/startup entry points may do O(1)–O(config) synchronous work (load persisted state, subscribe handlers, arm timers); anything `O(library)` or `O(users)` — full cache builds, full-library reconciliation, per-user sweeps — runs **incrementally or in background** after startup completes, yielding and cancellable. S6 is request-path-scoped, so without this rule startup would be exempt from the entire doctrine; S8 closes that gap.
+
+**Why.** Startup is the worst possible moment for `O(library)` work: the host is warming its own caches, the DB is busiest, and at profile XL a synchronous full-library build holds the plugin (and whatever waits on it) hostage for the duration of a multi-million-row scan on a database that measurably times out simple count queries under load. A server restart is also exactly the fleet-synchronized moment S5 warns about — startup work that touches upstreams doubles as a restart-wave burst.
+
+**Marker.** Deferred/incremental startup sites and known violations are marked `// PERF(S8)`:
+
+```bash
+grep -rn "PERF(S8" Jellyfin.Plugin.JellyfinCanopy/
+```
+
+**Enforced.** Review-enforced today. SR-15's startup-time measurement budgets against this rule; SR-08/SR-09 gain a citable rule for review-lens and guard coverage.
+
+**In the tree (documented DEBT):** `Services/StartupService.cs:93` — `ExecuteAsync` synchronously runs `BuildFullCache` (`O(library)`, see S2) on first install or when the on-disk cache is empty, putting a full-library materialization on the startup path exactly when the DB is least able to serve it.
+
+#### S9 — Per-request/middleware and shared-store budgets
+
+**Rule.** Middleware and controllers on **hot host paths** carry a **stated per-request budget** (time and allocation), and middleware that rewrites host responses **preserves HTTP compression and caching semantics** — `Accept-Encoding`, `ETag`/`Last-Modified`, 304 revalidation — or documents precisely why it cannot. **Shared stores state their contention/connection model** (connection reuse vs per-call, locking, expected concurrent writers) at the store's declaration. No rule about one request is enough: budgets are stated so that `budget × plausible concurrent requests` stays acceptable at profile XL.
+
+**Why.** Per-request costs multiply invisibly: middleware on `/web` runs for every app-shell load of every user; a dashboard endpoint polled by every open admin tab enumerates whatever it enumerates once per tab per interval; a store that opens a fresh SQLite connection per call serializes and re-pays connection setup under exactly the concurrent load it exists to serve. Breaking response-caching semantics (no 304s, uncompressed payloads) taxes every user on every visit to subsidize the one code path that was easier to write buffered.
+
+**Marker.** Budgeted middleware/store sites and known violations are marked `// PERF(S9)`:
+
+```bash
+grep -rn "PERF(S9" Jellyfin.Plugin.JellyfinCanopy/
+```
+
+**Enforced.** Review-enforced today. SR-09 adds guards where mechanical (response-rewrite middleware touching validator/encoding headers without a documented justification); SR-15 budgets the hot paths.
+
+**In the tree (documented DEBT):** `Services/ScriptInjectionStartupFilter.cs` — buffers the **entire `index.html`** into memory per `/web` GET, strips `Accept-Encoding` (the app shell is served uncompressed), and removes `ETag`/`Last-Modified` (no 304 revalidation — every visit re-downloads the shell); `Controllers/ActiveStreamsController.cs:85` — enumerates all sessions on every dashboard poll; `Configuration/ReviewsStore.cs` — opens a fresh SQLite connection per call against one server-wide database.
+
+#### The response-envelope rule — bound cache delivery
+
+**Rule.** Bounding a cache's **memory** (S4) is not bounding its **delivery**: any endpoint serving item-keyed cached data ships **paged, streamed, or delta snapshots** with a **stated response-byte budget and a stated client-heap budget at profile XL** — never the whole cache in one envelope. Cold-start responses are bounded the same way: a first request must not materialize and serialize a user's entire accessible universe in one round-trip. The delivery-mechanism spec (paging/delta protocol) lives in **SR-22**; **SR-15** owns the measurement budgets. Marker: `// PERF(SE)`.
+
+**Why.** At profile XL an item-keyed cache serialized whole is a response measured in hundreds of megabytes, parsed into a client heap that R-side rules never budgeted for — one GET that stalls the server (serialization CPU + response buffer), the network, and every receiving browser tab simultaneously. Delta/paged delivery turns the same data into bounded envelopes whose cost is stated and testable.
+
+```bash
+grep -rn "PERF(SE" Jellyfin.Plugin.JellyfinCanopy/
+```
+
+**Enforced.** Review-enforced today; SR-22 specifies the delivery mechanism, SR-15 the budgets, SR-09 any mechanical guard.
+
+**In the tree (documented DEBT):** `Services/TagCacheService.cs:21` (the design comment says it outright: "Clients fetch the full cache in one GET request"), `:970` (`GetCacheForUser` — a cold request materializes the user's **full accessible-ID set** before filtering), `Controllers/TagCacheController.cs:306` (the entire per-user cache view serialized into a single `Ok(...)` envelope).
+
+#### Per-server bounds inventory
+
+Known per-server costs the rules above bound — an inventory, not new rules; each entry names the rule that owns it:
+
+- **LiveNotifier config-save fan-out** (`Services/LiveNotifierService.cs:174`): every admin config save enumerates all live sessions to select deliverable devices — `O(sessions)` per save, bounded by the registry cap below (S7's axis, S9's budget discipline).
+- **Version heartbeat**: every open tab calls `/JellyfinCanopy/version` every 15 minutes (the self-update recheck doubling as the live-session heartbeat) — `O(open tabs)` background request load per server (S9).
+- **LiveSessionRegistry cap**: the live-session registry is bounded at **500 devices** (`Services/LiveSessionRegistry.cs:55`, `MaxEntries`) — the documented ceiling for push fan-out; the operator-facing limit documentation is owned by SR-11.
 
 ### Measured impact
 
