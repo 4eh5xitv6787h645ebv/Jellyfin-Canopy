@@ -73,6 +73,7 @@ async function editorFit(page: Page): Promise<{
     documentOverflow: number;
     editorOverflow: number;
     columns: number;
+    studioColumns: number;
     minimumTarget: number;
     overflowing: string[];
     coarsePointer: boolean;
@@ -96,6 +97,7 @@ async function editorFit(page: Page): Promise<{
             documentOverflow: document.scrollingElement!.scrollWidth - innerWidth,
             editorOverflow: studio.scrollWidth - studio.clientWidth,
             columns: getComputedStyle(gallery).gridTemplateColumns.split(' ').length,
+            studioColumns: getComputedStyle(studio).gridTemplateColumns.split(' ').length,
             minimumTarget: Math.min(...targets),
             overflowing: [...studio.querySelectorAll<HTMLElement>('*')].filter((element) => {
                 const box = element.getBoundingClientRect();
@@ -262,6 +264,7 @@ test.describe.serial('Theme Studio safe sharing and curated gallery', () => {
         expect(fit.documentOverflow).toBeLessThanOrEqual(1);
         expect(fit.editorOverflow, JSON.stringify(fit)).toBeLessThanOrEqual(1);
         expect(fit.columns).toBe(1);
+        expect(fit.studioColumns).toBe(1);
         expect(fit.minimumTarget).toBeGreaterThanOrEqual(44);
         if (process.env.JC_CAPTURE_THEME_DOCS === '1') {
             await page.screenshot({
@@ -276,7 +279,7 @@ test.describe.serial('Theme Studio safe sharing and curated gallery', () => {
         fit = await editorFit(page);
         expect(fit.documentOverflow).toBeLessThanOrEqual(1);
         expect(fit.editorOverflow, JSON.stringify(fit)).toBeLessThanOrEqual(1);
-        expect(fit.columns).toBe(1);
+        expect(fit.studioColumns).toBe(1);
         expect(fit.coarsePointer).toBe(true);
         expect(fit.compactLandscape).toBe(true);
 

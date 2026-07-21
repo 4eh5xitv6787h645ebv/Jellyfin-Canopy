@@ -658,6 +658,7 @@ describe('Theme Studio responsive settings editor', () => {
         media.set('(max-width:760px), (orientation:landscape) and (max-height:599px) and (max-width:999px) and (pointer:coarse)', true);
         wireThemeStudioEditor(context());
         const styles = panel.querySelector('style')?.textContent ?? '';
+        expect(styles).toContain(':root.jc-modern-layout[data-jc-theme-breakpoint="phone"] #jellyfin-canopy-panel .jc-theme-studio');
         expect(styles.indexOf('#jellyfin-canopy-panel.jc-theme-preview-only .jc-theme-return'))
             .toBeGreaterThan(-1);
         expect(styles).toContain('scroll-padding-block:32px');
