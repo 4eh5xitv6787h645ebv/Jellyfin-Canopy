@@ -371,10 +371,10 @@ Bug reports go to **GitHub Issues**. A clear, reproducible report is the single 
 
 ## Request a feature
 
-Have an idea? Feature proposals are gathered, discussed, and prioritized in **[GitHub Discussions](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/discussions)** — not in Issues.
+Have an idea? Feature proposals are gathered, discussed, and prioritized in **[GitHub Issues](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues)**.
 
-1. Check the [existing discussions](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/discussions) to see whether your idea is already there.
-2. Start a new discussion in the **Ideas** category.
+1. Check the [existing issues](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues) to see whether your idea is already tracked.
+2. Open a focused feature-request issue.
 3. Describe the feature clearly.
 4. Explain the use case and who benefits.
 5. Be open to discussion.
@@ -428,10 +428,9 @@ that are absent from the installed plugin.
 
 ## Community and support
 
-There are three official channels, each suited to a different kind of question:
+There are two official channels, each suited to a different kind of question:
 
-- **[GitHub Issues](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues)** — bug reports (see [Report an issue](#report-an-issue)).
-- **[GitHub Discussions](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/discussions)** — feature ideas (see [Request a feature](#request-a-feature)) and general questions.
+- **[GitHub Issues](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues)** — bug reports (see [Report an issue](#report-an-issue)), feature ideas (see [Request a feature](#request-a-feature)), and tracked support questions.
 - **[Discord Community](https://discord.gg/EYNFf7y4CG)** — real-time chat and support.
 
 The source lives in the [Jellyfin Canopy GitHub repository](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy).

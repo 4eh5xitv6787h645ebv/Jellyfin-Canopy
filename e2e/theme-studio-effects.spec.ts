@@ -1,26 +1,16 @@
 import type { Page } from 'playwright/test';
 import { assertNoRuntimeErrors, expect, loginAs, test, USERS } from './fixtures/auth';
 import { api, authenticate, PLUGIN_ID, type Session } from './fixtures/api';
+import { emulatePointer } from './helpers/theme-studio-input';
 import { installThemeStudioVisualFont } from './helpers/theme-studio-visual';
 
 const CONFIG_PATH = `/Plugins/${PLUGIN_ID}/Configuration`;
 const DYNAMIC_IMAGE_PATH = '/Items/jc-theme-effects-e2e/Images/Backdrop';
 
 async function seedModernLayout(page: Page, lowEnd = false): Promise<void> {
+    await emulatePointer(page, true);
     await page.addInitScript(({ emulateLowEnd }) => {
         localStorage.setItem('layout', 'experimental');
-        const nativeMatchMedia = window.matchMedia.bind(window);
-        window.matchMedia = ((query: string): MediaQueryList => {
-            const list = nativeMatchMedia(query);
-            if (query !== '(pointer: coarse)') return list;
-            return new Proxy(list, {
-                get(target, property, receiver) {
-                    if (property === 'matches') return true;
-                    const value = Reflect.get(target, property, receiver) as unknown;
-                    return typeof value === 'function' ? value.bind(target) : value;
-                },
-            });
-        }) as typeof window.matchMedia;
         if (emulateLowEnd) {
             Object.defineProperty(navigator, 'deviceMemory', { configurable: true, value: 1 });
             Object.defineProperty(navigator, 'hardwareConcurrency', { configurable: true, value: 2 });
@@ -391,7 +381,10 @@ test.describe.serial('Theme Studio bounded effects', () => {
             expect(evidence.minimumTarget, viewport.name).toBeGreaterThanOrEqual(44);
             expect(await page.locator('#jc-theme-studio-committed')).toHaveCount(1);
             expect(await page.locator('#jc-theme-studio-preview')).toHaveCount(1);
-            expect(await page.locator('#jc-theme-studio-dynamic-accent')).toHaveCount(1);
+            await expect.poll(() => page.evaluate(() =>
+                document.documentElement.getAttribute('data-jc-theme-dynamic-accent')), viewport.name)
+                .toBe('active');
+            await expect(page.locator('#jc-theme-studio-dynamic-accent'), viewport.name).toHaveCount(1);
             await expect(page).toHaveScreenshot(`theme-studio-effects-${viewport.name}.png`, {
                 animations: 'disabled', caret: 'hide', maxDiffPixelRatio: 0.02,
             });

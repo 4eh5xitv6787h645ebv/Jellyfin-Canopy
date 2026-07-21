@@ -154,6 +154,7 @@ const PRESENTATION_TOKEN_CONTROLS: readonly PresentationTokenControl[] = Object.
     { token: 'layout.density', labelKey: 'theme_studio_density', group: 'layout', values: ['compact', 'cozy', 'spacious'] },
     { token: 'layout.navigation', labelKey: 'theme_studio_navigation', group: 'layout', values: ['auto', 'header', 'sidebar', 'pills', 'bottom'] },
     { token: 'layout.home-hero', labelKey: 'theme_studio_home_hero', group: 'layout', values: ['off', 'compact', 'cinematic'] },
+    { token: 'layout.home-libraries', labelKey: 'theme_studio_home_libraries', group: 'layout', values: ['scroll', 'grid'] },
     { token: 'layout.details', labelKey: 'theme_studio_details_layout', group: 'layout', values: ['classic', 'compact', 'cinematic'] },
     { token: 'layout.seasons', labelKey: 'theme_studio_seasons_layout', group: 'layout', values: ['auto', 'list', 'grid'] },
     { token: 'layout.card-actions', labelKey: 'theme_studio_card_actions', group: 'media', values: ['hover', 'always', 'menu'] },
@@ -207,6 +208,7 @@ const PRESENTATION_VALUE_KEYS: Readonly<Record<string, string>> = Object.freeze(
     classic: 'theme_studio_value_classic',
     list: 'theme_studio_value_list',
     grid: 'theme_studio_value_grid',
+    scroll: 'theme_studio_value_scroll',
     hover: 'theme_studio_value_hover',
     always: 'theme_studio_value_always',
     menu: 'theme_studio_value_menu',
@@ -919,6 +921,14 @@ function editorStyles(): string {
         #jellyfin-canopy-panel.jc-theme-preview-only .jc-panel-body,
         #jellyfin-canopy-panel.jc-theme-preview-only .jc-panel-main { background:transparent!important; overflow:visible!important; pointer-events:none; }
         @media (min-width:761px) and (max-width:900px) { #jellyfin-canopy-panel .jc-theme-studio { grid-template-columns:minmax(0,1fr); } #jellyfin-canopy-panel .jc-theme-preview-card { position:static; } }
+        :root.jc-modern-layout[data-jc-theme-breakpoint="phone"] #jellyfin-canopy-panel { top:var(--jc-panel-visual-top,0px)!important; height:var(--jc-panel-visual-height,100dvh)!important; max-height:var(--jc-panel-visual-height,100dvh)!important; }
+        :root.jc-modern-layout[data-jc-theme-breakpoint="phone"] #jellyfin-canopy-panel .jc-pane[data-pane="theme-studio"] { min-width:0; }
+        :root.jc-modern-layout[data-jc-theme-breakpoint="phone"] #jellyfin-canopy-panel .jc-theme-studio,
+        :root.jc-modern-layout[data-jc-theme-breakpoint="phone"] #jellyfin-canopy-panel .jc-theme-module-grid,
+        :root.jc-modern-layout[data-jc-theme-breakpoint="phone"] #jellyfin-canopy-panel .jc-theme-schedule-row { grid-template-columns:minmax(0,1fr); }
+        :root.jc-modern-layout[data-jc-theme-breakpoint="phone"] #jellyfin-canopy-panel .jc-theme-preview-card { position:static; }
+        :root.jc-modern-layout[data-jc-theme-breakpoint="phone"] #jellyfin-canopy-panel .jc-theme-mobile-preview { display:inline-flex; }
+        :root.jc-modern-layout[data-jc-theme-breakpoint="phone"] #jellyfin-canopy-panel .jc-theme-actions { margin-inline:0; }
         @media ${COMPACT_EDITOR_MEDIA} {
             #jellyfin-canopy-panel { top:var(--jc-panel-visual-top,0px)!important; height:var(--jc-panel-visual-height,100dvh)!important; max-height:var(--jc-panel-visual-height,100dvh)!important; }
             #jellyfin-canopy-panel .jc-pane[data-pane="theme-studio"] { min-width:0; }

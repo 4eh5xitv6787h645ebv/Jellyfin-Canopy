@@ -3,14 +3,21 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { URL } = require('node:url');
+const { extractLinks } = require('./check-markdown-links');
 
 const DEFAULT_ROOT = path.resolve(__dirname, '..');
 const DEFAULT_CONTRACT = path.join(__dirname, 'theme-studio-quality.contract.json');
 const REQUIRED_SUPPORTED_LAYOUTS = ['desktop', 'wide', 'phone-portrait', 'phone-landscape'];
 const REQUIRED_UNSUPPORTED_LAYOUTS = ['tablet-only', 'legacy', 'tv'];
+const REQUIRED_RESEARCH_EVIDENCE = [
+    'ecosystem', 'forum-snapshot', 'design-contract', 'roadmap', 'verification-matrix',
+];
+const REQUIRED_FORUM_THREAD_COUNT = 157;
 const REQUIRED_PRIMARY_PRESETS = [
     'canopy', 'minimal', 'cinematic', 'glass', 'material', 'studio', 'tv-focus', 'oled', 'high-contrast',
 ];
+const REQUIRED_CROSS_BROWSER_ENGINES = ['firefox', 'webkit'];
 const REQUIRED_VISUAL_SPECS = [
     'e2e/theme-studio-accessibility.spec.ts',
     'e2e/theme-studio-canopy-surfaces.spec.ts',
@@ -61,12 +68,107 @@ function verifyPullRequestWorkflow(root, relativePath) {
     }
 }
 
+function workflowJob(source, jobName) {
+    const start = source.indexOf(`\n  ${jobName}:`);
+    if (start < 0) fail(`workflow lost ${jobName} job`);
+    const remainder = source.slice(start + 1);
+    const next = remainder.slice(remainder.indexOf('\n') + 1).search(/^ {2}[a-zA-Z0-9_-]+:\s*$/m);
+    return next < 0 ? remainder : remainder.slice(0, remainder.indexOf('\n') + 1 + next);
+}
+
 function verifyQualityContract({ root = DEFAULT_ROOT, contract } = {}) {
     const resolved = contract ?? JSON.parse(fs.readFileSync(DEFAULT_CONTRACT, 'utf8'));
     if (resolved?.schemaVersion !== 1) fail('unsupported schemaVersion');
 
     exactIds(resolved.scope?.supportedModernLayouts, REQUIRED_SUPPORTED_LAYOUTS, 'supported modern layouts');
     exactIds(resolved.scope?.unsupportedNoOpLayouts, REQUIRED_UNSUPPORTED_LAYOUTS, 'unsupported no-op layouts');
+
+    const research = resolved.researchEvidence;
+    if (research?.snapshotDate !== '2026-07-19') fail('research snapshot date must remain pinned');
+    if (research?.liveRefreshDate !== '2026-07-21') fail('research live refresh date must remain pinned');
+    if (research?.scopeReconciledDate !== '2026-07-21') {
+        fail('research modern-layout scope reconciliation date must remain pinned');
+    }
+    exactIds(research?.files, REQUIRED_RESEARCH_EVIDENCE, 'research evidence files');
+    const researchSources = [];
+    const researchSourceById = new Map();
+    for (const evidence of research.files) {
+        const source = readText(root, evidence.path);
+        researchSources.push(source);
+        researchSourceById.set(evidence.id, source);
+        if (!Array.isArray(evidence.anchors) || evidence.anchors.length < 4) {
+            fail(`${evidence.path} must own at least four release anchors`);
+        }
+        for (const anchor of evidence.anchors) {
+            if (!source.includes(anchor)) fail(`${evidence.path} lost ${JSON.stringify(anchor)}`);
+        }
+    }
+    if (research.inventory?.forumThreadCount !== REQUIRED_FORUM_THREAD_COUNT) {
+        fail(`forum thread inventory must remain pinned to ${REQUIRED_FORUM_THREAD_COUNT}`);
+    }
+    const forumSource = researchSourceById.get('forum-snapshot') || '';
+    const forumThreadUrls = new Set(extractLinks(forumSource)
+        .map(link => link.target)
+        .filter(target => target.startsWith('https://forum.jellyfin.org/t-')));
+    if (forumThreadUrls.size !== REQUIRED_FORUM_THREAD_COUNT) {
+        fail(`forum thread snapshot must contain exactly ${REQUIRED_FORUM_THREAD_COUNT} unique thread URLs`);
+    }
+    const forumRows = forumSource.split('\n')
+        .filter(line => /^\| \d+ \| (?:theme|component\/help|extension|unsupported) \|/.test(line));
+    const forumRowNumbers = new Set();
+    const forumRowUrls = new Set();
+    for (const row of forumRows) {
+        const number = Number(row.match(/^\| (\d+) \|/)?.[1]);
+        const urls = extractLinks(row)
+            .map(link => link.target)
+            .filter(target => target.startsWith('https://forum.jellyfin.org/t-'));
+        if (!Number.isInteger(number) || urls.length !== 1) {
+            fail('every forum snapshot row must have one numbered classified thread URL');
+        }
+        forumRowNumbers.add(number);
+        forumRowUrls.add(urls[0]);
+    }
+    const expectedForumRows = Array.from({ length: REQUIRED_FORUM_THREAD_COUNT }, (_, index) => index + 1);
+    if (forumRows.length !== REQUIRED_FORUM_THREAD_COUNT
+        || JSON.stringify([...forumRowNumbers].sort((left, right) => left - right))
+            !== JSON.stringify(expectedForumRows)
+        || forumRowUrls.size !== REQUIRED_FORUM_THREAD_COUNT
+        || [...forumThreadUrls].some(url => !forumRowUrls.has(url))) {
+        fail('forum snapshot must enumerate classified rows 1 through 157 exactly once');
+    }
+    const researchUrls = new Set(researchSources
+        .flatMap(source => extractLinks(source).map(link => link.target))
+        .filter(target => /^https:\/\//.test(target)));
+    if (researchUrls.size !== research.inventory?.externalUrlCount) {
+        fail(`research external URL inventory must contain exactly ${research.inventory?.externalUrlCount}`);
+    }
+    for (const requiredUrl of research.inventory?.requiredDiscoveryUrls || []) {
+        if (!researchUrls.has(requiredUrl)) fail(`research lost discovery source ${requiredUrl}`);
+    }
+    const repositoryRoots = new Set();
+    for (const evidenceId of ['ecosystem', 'forum-snapshot']) {
+        for (const { target } of extractLinks(researchSourceById.get(evidenceId) || '')) {
+            if (!target.startsWith('https://')) continue;
+            const url = new URL(target);
+            if (!['github.com', 'gitlab.com'].includes(url.hostname)) continue;
+            const segments = url.pathname.split('/').filter(Boolean);
+            if (segments.length < 2
+                || (url.hostname === 'github.com' && ['users', 'search', 'topics'].includes(segments[0]))) {
+                continue;
+            }
+            repositoryRoots.add(`${url.origin}/${segments[0].toLowerCase()}/${segments[1].toLowerCase()}`);
+        }
+    }
+    if (repositoryRoots.size !== research.inventory?.repositoryRootCount) {
+        fail(`research inventory must contain exactly ${research.inventory?.repositoryRootCount} repository roots`);
+    }
+    if (!Array.isArray(research.forbiddenStaleClaims) || research.forbiddenStaleClaims.length < 4) {
+        fail('research stale-scope claim inventory is incomplete');
+    }
+    const combinedResearch = researchSources.join('\n');
+    for (const claim of research.forbiddenStaleClaims) {
+        if (combinedResearch.includes(claim)) fail(`research retained stale scope claim ${JSON.stringify(claim)}`);
+    }
 
     const presets = resolved.primaryPresets;
     if (!Array.isArray(presets) || presets.length !== 9) fail('exactly nine primary presets are required');
@@ -150,10 +252,60 @@ function verifyQualityContract({ root = DEFAULT_ROOT, contract } = {}) {
         }
     }
 
+    const crossBrowser = resolved.crossBrowserAudit;
+    exactIds(crossBrowser?.browsers, REQUIRED_CROSS_BROWSER_ENGINES, 'cross-browser engines');
+    exactIds(crossBrowser?.specs, REQUIRED_VISUAL_SPECS, 'cross-browser specs');
+    if (crossBrowser.chromiumBaselineOwner !== 'e2e_shard') {
+        fail('Chromium pixel evidence must remain owned by the required E2E shard job');
+    }
+    if (crossBrowser.testCount !== 28) fail('cross-browser audit must own exactly 28 tests');
+    const browserInventory = JSON.parse(readText(root, crossBrowser.inventory));
+    if (browserInventory?.version !== 1 || !Array.isArray(browserInventory.tests)) {
+        fail('cross-browser inventory must use required-inventory schema version 1');
+    }
+    if (browserInventory.tests.length !== crossBrowser.testCount
+        || new Set(browserInventory.tests).size !== crossBrowser.testCount) {
+        fail('cross-browser inventory must contain exactly 28 unique tests');
+    }
+    const inventorySpecs = browserInventory.tests.map((id) => id.split(' › ')[0]);
+    exactIds([...new Set(inventorySpecs)], REQUIRED_VISUAL_SPECS, 'cross-browser inventory specs');
+    if (crossBrowser.rasterPolicy
+        !== 'Chromium owns reviewed pixels; Firefox and WebKit retain structural assertions with snapshots ignored') {
+        fail('cross-browser raster policy must keep Chromium as the sole pixel-baseline owner');
+    }
+    const browserWorkflow = readText(root, crossBrowser.workflow);
+    const browserJob = workflowJob(browserWorkflow, crossBrowser.workflowJob);
+    for (const anchor of [
+        '- browser: firefox\n            shards: 2',
+        '- browser: webkit\n            shards: 1',
+        'npx playwright install --with-deps "${{ matrix.browser }}"',
+        'npm run e2e:local --',
+        '--shards "${{ matrix.shards }}"',
+        '--browser "${{ matrix.browser }}"',
+        '--theme-studio-only',
+    ]) {
+        if (!browserJob.includes(anchor)) fail(`${crossBrowser.workflowJob} lost ${anchor}`);
+    }
+    if (browserJob.includes('continue-on-error:')) {
+        fail(`${crossBrowser.workflowJob} must remain blocking`);
+    }
+    const browserRunner = readText(root, crossBrowser.localRunner);
+    for (const anchor of [
+        '--browser NAME',
+        '--theme-studio-only',
+        '--ignore-snapshots',
+        'theme-studio-cross-browser-test-inventory.json',
+    ]) {
+        if (!browserRunner.includes(anchor)) fail(`${crossBrowser.localRunner} lost ${anchor}`);
+    }
+
     for (const workflow of resolved.ci.pullRequestWorkflows) verifyPullRequestWorkflow(root, workflow);
     const playwright = readText(root, resolved.ci.playwrightConfig);
     if (!playwright.includes("const trace = required || ci || process.env.JF_E2E_TRACE === 'off'")) {
         fail('Playwright tracing must be off for required and CI runs');
+    }
+    if (!playwright.includes("serviceWorkers: 'block'")) {
+        fail('Playwright service workers must remain blocked for deterministic route evidence');
     }
     readText(root, resolved.ci.safeArtifactCollector);
     for (const workflow of resolved.ci.artifactWorkflows) {
@@ -172,8 +324,14 @@ function verifyQualityContract({ root = DEFAULT_ROOT, contract } = {}) {
     return {
         layouts: resolved.scope.supportedModernLayouts.length,
         noOpLayouts: resolved.scope.unsupportedNoOpLayouts.length,
+        researchFiles: research.files.length,
+        researchExternalUrls: researchUrls.size,
+        researchRepositoryRoots: repositoryRoots.size,
+        forumThreads: forumThreadUrls.size,
         presets: presets.length,
         evidenceOwners: resolved.evidenceOwners.length,
+        crossBrowserEngines: crossBrowser.browsers.length,
+        crossBrowserTests: browserInventory.tests.length,
     };
 }
 
@@ -183,7 +341,12 @@ if (require.main === module) {
         console.log(
             `Theme Studio quality contract passed: ${result.layouts} modern layouts, `
             + `${result.noOpLayouts} no-op layouts, ${result.presets} presets, `
-            + `${result.evidenceOwners} cross-cutting gate owners.`,
+            + `${result.researchFiles} research files, `
+            + `${result.researchRepositoryRoots} research repositories / `
+            + `${result.forumThreads} forum threads / `
+            + `${result.researchExternalUrls} reviewed research URLs, `
+            + `${result.evidenceOwners} cross-cutting gate owners, `
+            + `${result.crossBrowserTests} tests across ${result.crossBrowserEngines} additional engines.`,
         );
     } catch (error) {
         console.error(error instanceof Error ? error.message : String(error));

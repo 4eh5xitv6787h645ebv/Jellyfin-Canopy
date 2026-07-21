@@ -69,6 +69,7 @@ test('required E2E uses six native file shards with one fresh serial two-CPU ser
     assert.match(playwrightConfig, /workers:\s*1/);
     assert.match(playwrightConfig, /fullyParallel:\s*false/);
     assert.match(playwrightConfig, /retries:\s*required \? 0 : 1/);
+    assert.match(playwrightConfig, /serviceWorkers:\s*'block'/);
     assert.match(
         playwrightConfig,
         /const trace = required \|\| ci \|\| process\.env\.JF_E2E_TRACE === 'off' \? 'off' : 'retain-on-failure'/
@@ -92,6 +93,29 @@ test('E2E installs once and prepares independent prerequisites concurrently', ()
         shard,
         /if \(\( build_status != 0 \|\| image_status != 0 \|\| playwright_status != 0 \)\)/
     );
+});
+
+test('Firefox and WebKit block on the exact Theme Studio structural inventory', () => {
+    const browser = jobBlock('theme_studio_browsers', 'e2e_shard');
+
+    assert.match(browser, /name: Theme Studio \(\$\{\{ matrix\.browser \}\}, modern desktop \+ phone\)/);
+    assert.match(browser, /timeout-minutes: 45/);
+    assert.match(browser, /strategy:\n\s+fail-fast: false/);
+    assert.match(
+        browser,
+        /include:[\s\S]*browser: firefox\n\s+shards: 2[\s\S]*browser: webkit\n\s+shards: 1/
+    );
+    assert.doesNotMatch(browser, /continue-on-error:/);
+    assert.match(browser, /npx playwright install --with-deps "\$\{\{ matrix\.browser \}\}"/);
+    assert.match(browser, /docker pull -q "\$\{JF_IMAGE\}"/);
+    assert.match(browser, /sudo apt-get install --no-install-recommends --yes ffmpeg/);
+    assert.match(browser, /ffmpeg -version/);
+    assert.match(browser, /JF_E2E_IMAGE_PREFETCHED: "true"/);
+    assert.match(
+        browser,
+        /npm run e2e:local --[\s\S]*--shards "\$\{\{ matrix\.shards \}\}"[\s\S]*--cpus-per-server 2[\s\S]*--browser "\$\{\{ matrix\.browser \}\}"[\s\S]*--theme-studio-only/,
+    );
+    assert.doesNotMatch(browser, /upload-artifact|e2e\/test-results/);
 });
 
 test('every shard reports current-attempt evidence under unique artifact names', () => {

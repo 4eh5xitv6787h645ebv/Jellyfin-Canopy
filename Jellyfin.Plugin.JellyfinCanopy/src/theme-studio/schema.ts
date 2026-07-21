@@ -66,6 +66,7 @@ function buildTokenRules(): ReadonlyMap<string, TokenRule> {
         'space.page-gutter', 'space.section-gap', 'space.card-gap', 'space.control-gap');
     assign(rules, choice('auto', 'header', 'sidebar', 'pills', 'bottom'), 'layout.navigation');
     assign(rules, choice('off', 'compact', 'cinematic'), 'layout.home-hero');
+    assign(rules, choice('scroll', 'grid'), 'layout.home-libraries');
     assign(rules, choice('classic', 'compact', 'cinematic'), 'layout.details');
     assign(rules, choice('list', 'grid', 'auto'), 'layout.seasons');
     assign(rules, choice('hover', 'always', 'menu'), 'layout.card-actions');

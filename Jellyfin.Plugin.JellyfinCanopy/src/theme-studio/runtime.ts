@@ -79,6 +79,7 @@ const ROOT_ATTRIBUTES = Object.freeze([
     'data-jc-theme-density',
     'data-jc-theme-navigation',
     'data-jc-theme-home-hero',
+    'data-jc-theme-home-libraries',
     'data-jc-theme-details',
     'data-jc-theme-seasons',
     'data-jc-theme-card-actions',
@@ -735,6 +736,7 @@ export class ThemeStudioRuntime {
         root.setAttribute('data-jc-theme-density', theme.presentation.density);
         root.setAttribute('data-jc-theme-navigation', theme.presentation.navigation);
         root.setAttribute('data-jc-theme-home-hero', theme.presentation.homeHero);
+        root.setAttribute('data-jc-theme-home-libraries', theme.presentation.homeLibraries);
         root.setAttribute('data-jc-theme-details', theme.presentation.details);
         root.setAttribute('data-jc-theme-seasons', theme.presentation.seasons);
         root.setAttribute('data-jc-theme-card-actions', theme.presentation.cardActions);

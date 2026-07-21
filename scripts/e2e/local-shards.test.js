@@ -14,6 +14,9 @@ const packageJson = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 
 const requiredInventory = JSON.parse(
     fs.readFileSync(path.join(ROOT, 'e2e', 'required-test-inventory.json'), 'utf8')
 );
+const themeStudioInventory = JSON.parse(
+    fs.readFileSync(path.join(ROOT, 'e2e', 'theme-studio-cross-browser-test-inventory.json'), 'utf8')
+);
 
 function runSourced(command, env = {}) {
     return spawnSync('bash', ['-c', `source "$1"; ${command}`, 'bash', SCRIPT], {
@@ -23,9 +26,10 @@ function runSourced(command, env = {}) {
     });
 }
 
-function discoverTests(shard) {
+function discoverTests(shard, extra = []) {
     const args = ['run', 'e2e', '--', '--list'];
     if (shard) args.push(`--shard=${shard}`);
+    args.push(...extra);
     const result = spawnSync('npm', args, {
         cwd: ROOT,
         encoding: 'utf8',
@@ -37,7 +41,7 @@ function discoverTests(shard) {
         .filter((line) => /^\s+.+\.spec\.ts:\d+:\d+ › /.test(line))
         .map((line) => line.trim());
     const inventoryIds = tests.map((line) => {
-        const match = line.match(/^(.+\.spec\.ts):\d+:\d+ › (.+)$/);
+        const match = line.match(/^(?:\[[^\]]+\] › )?(.+\.spec\.ts):\d+:\d+ › (.+)$/);
         assert.ok(match, `could not normalize discovered test ${JSON.stringify(line)}`);
         const file = match[1].replaceAll('\\', '/');
         return `${file.startsWith('e2e/') ? file : `e2e/${file}`} › ${match[2]}`;
@@ -57,6 +61,24 @@ test('parser defaults to four 2-CPU shards and accepts bounded exploratory overr
     const overridden = runSourced("parse_args --shards=16 --cpus-per-server 8 --allow-external-integrations; printf '%s %s %s' \"$SHARDS\" \"$CPUS_PER_SERVER\" \"$ALLOW_EXTERNAL_INTEGRATIONS\"");
     assert.equal(overridden.status, 0, overridden.stderr);
     assert.equal(overridden.stdout, '16 8 1');
+});
+
+test('parser selects only the three supported browsers and explicit Theme Studio scope', () => {
+    const defaults = runSourced("parse_args; printf '%s %s' \"$BROWSER\" \"$THEME_STUDIO_ONLY\"");
+    assert.equal(defaults.status, 0, defaults.stderr);
+    assert.equal(defaults.stdout, 'chromium 0');
+
+    for (const browser of ['chromium', 'firefox', 'webkit']) {
+        const selected = runSourced(
+            `parse_args --browser=${browser} --theme-studio-only; printf '%s %s' "$BROWSER" "$THEME_STUDIO_ONLY"`
+        );
+        assert.equal(selected.status, 0, selected.stderr);
+        assert.equal(selected.stdout, `${browser} 1`);
+    }
+    for (const args of ['parse_args --browser', 'parse_args --browser=safari', 'parse_args --browser=all']) {
+        const rejected = runSourced(args);
+        assert.equal(rejected.status, 2, `${args}\n${rejected.stderr}`);
+    }
 });
 
 test('parser rejects missing, malformed and out-of-range resource values', () => {
@@ -153,6 +175,7 @@ test('runner builds once, uses native file shards and waits for every phase', ()
 test('default local parity mode enforces and aggregates the committed zero-skip inventory', () => {
     for (const variable of [
         'JF_E2E_REQUIRED=true',
+        'JF_E2E_EXPECTED_FILE=',
         'JF_E2E_INVENTORY_FILE=',
         'JF_E2E_SHARD=',
         'JF_E2E_SHARD_TOTAL=',
@@ -166,6 +189,25 @@ test('default local parity mode enforces and aggregates the committed zero-skip 
     assert.match(source, /e2e\/required-test-inventory\.json/);
     assert.match(source, /validate_required_inventory \|\|/);
     assert.match(source, /ALLOW_EXTERNAL_INTEGRATIONS == 0/);
+});
+
+test('cross-browser scope is the exact 28-test Theme Studio inventory without pixel comparisons', () => {
+    assert.equal(themeStudioInventory.version, 1);
+    assert.equal(themeStudioInventory.tests.length, 28);
+    assert.equal(new Set(themeStudioInventory.tests).size, 28);
+    const discovered = discoverTests(undefined, [
+        '--browser=firefox',
+        '--ignore-snapshots',
+        'theme-studio-.*\\.spec\\.ts',
+    ]);
+    assert.equal(discovered.status, 0, discovered.stderr || discovered.stdout);
+    assert.deepEqual(
+        [...discovered.inventoryIds].sort(),
+        [...themeStudioInventory.tests].sort(),
+        'committed Theme Studio cross-browser inventory drifted from Playwright discovery'
+    );
+    assert.match(source, /--browser="\$\{BROWSER\}" --ignore-snapshots/);
+    assert.match(source, /theme-studio-\.\*\\\.spec\\\.ts/);
 });
 
 test('native four- and six-shard discovery is an exact duplicate-free inventory union', () => {

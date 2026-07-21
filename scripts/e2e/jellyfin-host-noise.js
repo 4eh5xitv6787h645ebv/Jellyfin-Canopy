@@ -5,6 +5,7 @@ const { URL } = require('node:url');
 
 const SCROLL_HANDLER_ERROR = 'pageerror: t.scrollHandler is not a function';
 const HOME_TAB_PREFIX = "[Home] failed to get tab controller TypeError: Cannot read properties of undefined (reading 'querySelector')";
+const FIREFOX_HOME_TAB_ERROR = '[Home] failed to get tab controller Error';
 const HOME_SELECTED_INDEX_ERROR = "pageerror: Cannot read properties of undefined (reading 'selectedIndex')";
 const HOME_LOGOUT_AXIOS_401 = 'AxiosError: Request failed with status code 401';
 const HOME_TAB_CHUNK = /\/web\/hometab\.[A-Za-z0-9]+\.chunk\.js:\d+:\d+/;
@@ -13,6 +14,7 @@ const JELLYFIN_WEB_BUNDLE_FRAME = /\/web\/[A-Za-z0-9_.%-]+\.[A-Fa-f0-9]{12,}\.ch
 const JELLYFIN_WEB_CHUNK_FRAME = /(?:^|\n)[^\n]*(?:(?:https?:\/\/[^/\s)]+)|(?<![A-Za-z0-9._~!$&'()*+,;=:@%/?#-]))\/web\/[A-Za-z0-9_.%-]+\.[A-Fa-f0-9]{12,}\.chunk\.js:\d+(?::\d+)?(?:\)?\s*$)/m;
 const CANOPY_STACK_FRAME = /(?:^|\n)[^\n]*(?:\bJellyfinCanopy\b|\/JellyfinCanopy(?:\/|[?#]))/i;
 const HOME_TAB_SOURCE = /^\/web\/hometab\.[A-Za-z0-9]{12,}\.chunk\.js$/;
+const HOME_SOURCE = /^\/web\/home\.[A-Za-z0-9]{12,}\.chunk\.js$/;
 const AXIOS_BUNDLE_PATH = '/web/node_modules.axios.bundle.js';
 
 /**
@@ -241,6 +243,17 @@ function isKnownJellyfinWebHostNoise(detail) {
     const stack = String(detail?.stack || '');
     if (isKnownJellyfinWebScrollHandlerError(detail)) return true;
     if (isKnownHiddenContentHostNoise(text)) return true;
+    if (detail?.source === 'console' && text === FIREFOX_HOME_TAB_ERROR) {
+        try {
+            const source = new URL(String(detail?.url || ''));
+            return ['http:', 'https:'].includes(source.protocol)
+                && (HOME_TAB_SOURCE.test(source.pathname) || HOME_SOURCE.test(source.pathname))
+                && source.search === ''
+                && source.hash === '';
+        } catch {
+            return false;
+        }
+    }
     return text === HOME_SELECTED_INDEX_ERROR
         && JELLYFIN_WEB_BUNDLE_FRAME.test(stack)
         && !CANOPY_STACK_FRAME.test(stack);
@@ -296,6 +309,7 @@ function isExpectedSignedOutHomeAxios401(detail, evidence, hasAllowedHost401) {
 }
 
 module.exports = {
+    FIREFOX_HOME_TAB_ERROR,
     HOME_LOGOUT_AXIOS_401,
     HOME_SELECTED_INDEX_ERROR,
     HOME_TAB_PREFIX,

@@ -33,6 +33,7 @@ test('live repository Markdown inventory resolves to files and headings', () => 
     assert.deepEqual(checkMarkdownLinks(), []);
     assert.ok(collectMarkdownFiles().includes('CONTRIBUTING.md'));
     assert.ok(collectMarkdownFiles().includes(path.join('docs', 'developers.md')));
+    assert.ok(collectMarkdownFiles().includes(path.join('research', 'theme-studio-ecosystem.md')));
 });
 
 test('validates relative files, images, MkDocs headings, and duplicate heading slugs', () => {

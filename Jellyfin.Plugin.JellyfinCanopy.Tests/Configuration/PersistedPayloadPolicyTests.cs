@@ -591,6 +591,7 @@ public sealed class PersistedPayloadPolicyTests
         tokens["layout.density"] = JsonValue("cozy");
         tokens["layout.navigation"] = JsonValue("auto");
         tokens["layout.home-hero"] = JsonValue("cinematic");
+        tokens["layout.home-libraries"] = JsonValue("grid");
         tokens["layout.details"] = JsonValue("cinematic");
         tokens["layout.seasons"] = JsonValue("auto");
         tokens["layout.card-actions"] = JsonValue("hover");

@@ -79,7 +79,6 @@ Contributions are welcome, whether or not you write code. You can report bugs, s
 The best starting points:
 
 - [Report issues and request features](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues)
-- [Discussions](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/discussions)
 - [Discord community](https://discord.gg/EYNFf7y4CG)
 
 For the full walkthrough — how to file a good bug report, propose a feature, or contribute a translation — head to [Help & Community](help.md).

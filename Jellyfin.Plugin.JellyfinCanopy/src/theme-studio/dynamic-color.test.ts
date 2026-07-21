@@ -21,7 +21,10 @@ const media: ThemeMediaState = {
     backdropFilterSupported: true,
 };
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+});
 
 describe('Theme Studio local dynamic color', () => {
     it('accepts only exact same-origin Jellyfin primary/backdrop images and strips the cache key query', () => {
@@ -139,6 +142,49 @@ describe('Theme Studio local dynamic color', () => {
             contrastRatio(accent!, elevated, surface, '#FFFFFF'),
         ];
         expect(Math.min(...ratios)).toBeGreaterThanOrEqual(4.5);
+    });
+
+    it('decodes the same bounded blob through an object URL when createImageBitmap is unavailable', async () => {
+        const image = localMediaImage('/Items/abc/Images/Primary', window.location.origin)!;
+        const pixels = new Uint8ClampedArray(32 * 32 * 4);
+        for (let index = 0; index < pixels.length; index += 4) pixels.set([240, 40, 60, 255], index);
+        const drawImage = vi.fn();
+        vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+            drawImage,
+            getImageData: () => ({ data: pixels }),
+        } as never);
+        vi.stubGlobal('createImageBitmap', undefined);
+        vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(new Response(
+            new Uint8Array([1, 2, 3, 4]),
+            { status: 200, headers: { 'content-type': 'image/png' } },
+        ))));
+
+        const NativeUrl = URL;
+        const createObjectURL = vi.fn(() => 'blob:jc-dynamic-accent');
+        const revokeObjectURL = vi.fn();
+        class FallbackUrl extends NativeUrl {
+            static override createObjectURL = createObjectURL;
+            static override revokeObjectURL = revokeObjectURL;
+        }
+        class FallbackImage {
+            decoding = '';
+            onload: (() => void) | null = null;
+            onerror: (() => void) | null = null;
+            #source = '';
+
+            get src(): string { return this.#source; }
+            set src(value: string) {
+                this.#source = value;
+                if (value) queueMicrotask(() => this.onload?.());
+            }
+        }
+        vi.stubGlobal('URL', FallbackUrl);
+        vi.stubGlobal('Image', FallbackImage);
+
+        await expect(analyzeLocalMediaImage(image, new AbortController().signal)).resolves.toBe('#F0283C');
+        expect(createObjectURL).toHaveBeenCalledOnce();
+        expect(drawImage).toHaveBeenCalledOnce();
+        expect(revokeObjectURL).toHaveBeenCalledWith('blob:jc-dynamic-accent');
     });
 
     it('stops an oversized stream before decode and never fetches after cancellation', async () => {

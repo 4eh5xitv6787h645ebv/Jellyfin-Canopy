@@ -231,10 +231,43 @@ function collectOutputBytes(results, outDir = OUT_DIR) {
         for (const output of result.outputFiles) {
             const relative = toDistPath(output.path, outDir);
             if (artifacts.has(relative)) throw new Error(`duplicate build output: ${relative}`);
-            artifacts.set(relative, Buffer.from(output.contents));
+            const bytes = relative.endsWith('.map')
+                ? normalizeSourceMapBytes(output.contents, output.path, relative)
+                : Buffer.from(output.contents);
+            artifacts.set(relative, bytes);
         }
     }
     return artifacts;
+}
+
+/**
+ * Rebase generated source paths to the shipped dist layout and reject sources
+ * outside the plugin project. This keeps maps checkout-independent while
+ * sourcesContent and mappings remain untouched.
+ */
+function normalizeSourceMapBytes(bytes, outputPath, relativePath) {
+    const source = Buffer.from(bytes).toString('utf8');
+    const map = JSON.parse(source);
+    if (!Array.isArray(map.sources) || map.sources.some((name) => typeof name !== 'string')) {
+        throw new Error(`${relativePath} has an invalid sources array`);
+    }
+    if (map.sourceRoot !== undefined && map.sourceRoot !== '') {
+        throw new Error(`${relativePath} has an unsupported sourceRoot`);
+    }
+    const stableOutputPath = path.join(OUT_DIR, ...relativePath.split('/'));
+    const normalized = map.sources.map((name) => {
+        const absoluteSource = path.resolve(path.dirname(outputPath), name);
+        const projectRelative = path.relative(PROJECT_DIR, absoluteSource);
+        if (projectRelative === '..' || projectRelative.startsWith(`..${path.sep}`)
+            || path.isAbsolute(projectRelative)) {
+            throw new Error(`${relativePath} references a source outside the plugin project`);
+        }
+        return path.relative(path.dirname(stableOutputPath), absoluteSource).replace(/\\/g, '/');
+    });
+    const replacement = `[${normalized.map((name) => JSON.stringify(name)).join(', ')}]`;
+    const pattern = /(\n {2}"sources": )\[[^\r\n]*\](,\r?\n)/;
+    if (!pattern.test(source)) throw new Error(`${relativePath} has an unsupported sources encoding`);
+    return Buffer.from(source.replace(pattern, `$1${replacement}$2`));
 }
 
 function contentTypeFor(relativePath) {
@@ -550,16 +583,19 @@ function createClientManifest(artifacts, metadata, budget) {
     return { schemaVersion: 2, buildId, entries, files, budgets: metrics };
 }
 
-async function createBuildArtifacts({ devMode = false, outDir = OUT_DIR, budget } = {}) {
+async function createBuildArtifacts({ devMode = false, budget } = {}) {
     const resolvedBudget = budget || JSON.parse(fs.readFileSync(BUDGET_PATH, 'utf8'));
     assertColdHomeCatalogOwnership();
+    // `write:false` means this is a virtual location. Keep it canonical so
+    // esbuild's content hashes and linked source-map paths never depend on a
+    // caller's temporary directory or the CI checkout depth.
     const results = await Promise.all([
-        esbuild.build(bootstrapOptions(devMode, outDir)),
-        esbuild.build(esmOptions(devMode, outDir)),
+        esbuild.build(bootstrapOptions(devMode, OUT_DIR)),
+        esbuild.build(esmOptions(devMode, OUT_DIR)),
     ]);
     assertSourceCensus(results.map((result) => result.metafile));
-    const artifacts = collectOutputBytes(results, outDir);
-    const metadata = normalizeOutputMetadata(results, outDir);
+    const artifacts = collectOutputBytes(results, OUT_DIR);
+    const metadata = normalizeOutputMetadata(results, OUT_DIR);
     const manifest = createClientManifest(artifacts, metadata, resolvedBudget);
     const manifestBytes = Buffer.from(`${stableStringify(manifest)}\n`);
     assertPublishedBudgets(manifestBytes.length, manifest.budgets.totalRawBytes, resolvedBudget);
@@ -690,6 +726,7 @@ module.exports = {
     createBuildArtifacts,
     createClientManifest,
     esmOptions,
+    normalizeSourceMapBytes,
     publishArtifacts,
     stableStringify,
 };

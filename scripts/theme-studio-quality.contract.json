@@ -33,6 +33,92 @@
       "tv"
     ]
   },
+  "researchEvidence": {
+    "snapshotDate": "2026-07-19",
+    "liveRefreshDate": "2026-07-21",
+    "scopeReconciledDate": "2026-07-21",
+    "inventory": {
+      "externalUrlCount": 517,
+      "repositoryRootCount": 322,
+      "forumThreadCount": 157,
+      "requiredDiscoveryUrls": [
+        "https://github.com/topics/jellyfin-theme",
+        "https://github.com/search?q=jellyfin+themes&type=repositories",
+        "https://github.com/awesome-jellyfin/awesome-jellyfin/blob/3938da69c0577e6e0bd933fc52291e13e9964857/THEMES.md",
+        "https://jellyfin.org/docs/general/clients/css-customization/",
+        "https://forum.jellyfin.org/f-themes-styles",
+        "https://forum.jellyfin.org/syndication.php?fid=24&limit=100",
+        "https://forum.jellyfin.org/t-37-themes",
+        "https://gitlab.com/Krafting/jellyhub-theme"
+      ]
+    },
+    "files": [
+      {
+        "id": "ecosystem",
+        "path": "research/theme-studio-ecosystem.md",
+        "anchors": [
+          "Snapshot date: **2026-07-19**",
+          "Live discovery refresh: **2026-07-21**",
+          "## Source inventory",
+          "## Synthesis matrix",
+          "## Adopt, adapt, and reject",
+          "## Refresh procedure"
+        ]
+      },
+      {
+        "id": "forum-snapshot",
+        "path": "research/theme-studio-forum-snapshot.md",
+        "anchors": [
+          "Every one of the 157 threads",
+          "## Complete forum thread snapshot",
+          "## Forum-linked repository classification",
+          "## GitHub code-index long tail",
+          "`layout.home-libraries`",
+          "## Reconciled product delta"
+        ]
+      },
+      {
+        "id": "design-contract",
+        "path": "research/theme-studio-design-contract.md",
+        "anchors": [
+          "## Official Jellyfin compatibility boundary",
+          "## Persistence and schema",
+          "## Canopy compatibility contract",
+          "explicit stock/no-op boundaries for this project",
+          "## Documentation image contract"
+        ]
+      },
+      {
+        "id": "roadmap",
+        "path": "research/theme-studio-roadmap.md",
+        "anchors": [
+          "themes — Project 8",
+          "#383",
+          "#400",
+          "#448",
+          "#449",
+          "## Program completion rule"
+        ]
+      },
+      {
+        "id": "verification-matrix",
+        "path": "research/theme-studio-verification-matrix.md",
+        "anchors": [
+          "## Supported viewport and input classes",
+          "## Required stock/no-op classes",
+          "## Canopy surface matrix",
+          "## Documentation capture manifest",
+          "Legacy, tablet-only, and TV screenshots are not release outputs"
+        ]
+      }
+    ],
+    "forbiddenStaleClaims": [
+      "modern MUI + legacy + Canopy surfaces",
+      "Phone/tablet/touch/safe-area adaptations",
+      "TV/remote, player, music, Live TV, and reader surfaces",
+      "| TV focus | ✓ | not applicable |"
+    ]
+  },
   "primaryPresets": [
     {
       "id": "canopy",
@@ -189,6 +275,15 @@
       ]
     },
     {
+      "gate": "responsive home-library grid geometry and unchanged source order",
+      "path": "e2e/theme-studio-runtime.spec.ts",
+      "anchors": [
+        "'layout.home-libraries': 'grid'",
+        "homeLibrariesDisplay",
+        "afterHomeOrder: homeOrder()"
+      ]
+    },
+    {
       "gate": "long tasks, layout shift and repeated-runtime budget",
       "path": "e2e/theme-studio-runtime.spec.ts",
       "anchors": [
@@ -226,6 +321,31 @@
       ]
     }
   ],
+  "crossBrowserAudit": {
+    "chromiumBaselineOwner": "e2e_shard",
+    "browsers": [
+      "firefox",
+      "webkit"
+    ],
+    "inventory": "e2e/theme-studio-cross-browser-test-inventory.json",
+    "testCount": 28,
+    "specs": [
+      "e2e/theme-studio-accessibility.spec.ts",
+      "e2e/theme-studio-canopy-surfaces.spec.ts",
+      "e2e/theme-studio-editor-mobile.spec.ts",
+      "e2e/theme-studio-effects.spec.ts",
+      "e2e/theme-studio-integration-surfaces.spec.ts",
+      "e2e/theme-studio-jellyfish-migration.spec.ts",
+      "e2e/theme-studio-media-surfaces.spec.ts",
+      "e2e/theme-studio-operational-surfaces.spec.ts",
+      "e2e/theme-studio-runtime.spec.ts",
+      "e2e/theme-studio-sharing.spec.ts"
+    ],
+    "workflow": ".github/workflows/build.yml",
+    "workflowJob": "theme_studio_browsers",
+    "localRunner": "scripts/e2e/run-local-shards.sh",
+    "rasterPolicy": "Chromium owns reviewed pixels; Firefox and WebKit retain structural assertions with snapshots ignored"
+  },
   "ci": {
     "pullRequestWorkflows": [
       ".github/workflows/build.yml",

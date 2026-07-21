@@ -2,11 +2,14 @@ import { readFile } from 'node:fs/promises';
 import type { Page } from 'playwright/test';
 import { assertNoRuntimeErrors, expect, loginAs, test, USERS } from './fixtures/auth';
 import { api, apiRaw, authenticate, PLUGIN_ID, type Session } from './fixtures/api';
+import { emulatePointer } from './helpers/theme-studio-input';
 import { installThemeStudioVisualFont } from './helpers/theme-studio-visual';
 
 const CONFIG_PATH = `/Plugins/${PLUGIN_ID}/Configuration`;
 const ADVANCED_STYLE = '#jc-theme-studio-advanced-css';
 const ADVANCED_PREVIEW_STYLE = '#jc-theme-studio-advanced-css-preview';
+
+test.use({ hasTouch: true });
 
 interface AdvancedCssDocument {
     Revision: number;
@@ -22,20 +25,9 @@ interface AdvancedCssDocument {
 }
 
 async function seedModernLayout(page: Page): Promise<void> {
+    await emulatePointer(page, true);
     await page.addInitScript(() => {
         localStorage.setItem('layout', 'experimental');
-        const nativeMatchMedia = window.matchMedia.bind(window);
-        window.matchMedia = ((query: string): MediaQueryList => {
-            const list = nativeMatchMedia(query);
-            if (query !== '(pointer: coarse)') return list;
-            return new Proxy(list, {
-                get(target, property, receiver) {
-                    if (property === 'matches') return true;
-                    const value = Reflect.get(target, property, receiver) as unknown;
-                    return typeof value === 'function' ? value.bind(target) : value;
-                },
-            });
-        }) as typeof window.matchMedia;
     });
 }
 
@@ -81,12 +73,17 @@ async function editorFit(page: Page): Promise<{
     documentOverflow: number;
     editorOverflow: number;
     columns: number;
+    studioColumns: number;
     minimumTarget: number;
+    overflowing: string[];
+    coarsePointer: boolean;
+    compactLandscape: boolean;
 }> {
     return page.evaluate(() => {
         const editor = document.querySelector<HTMLElement>('[data-theme-editor-root]')!;
         const studio = editor.querySelector<HTMLElement>('.jc-theme-studio')!;
         const gallery = editor.querySelector<HTMLElement>('.jc-theme-gallery-grid')!;
+        const studioBox = studio.getBoundingClientRect();
         const targets = [...editor.querySelectorAll<HTMLElement>(
             'button,input:not([type="checkbox"]),select,textarea',
         )]
@@ -100,7 +97,15 @@ async function editorFit(page: Page): Promise<{
             documentOverflow: document.scrollingElement!.scrollWidth - innerWidth,
             editorOverflow: studio.scrollWidth - studio.clientWidth,
             columns: getComputedStyle(gallery).gridTemplateColumns.split(' ').length,
+            studioColumns: getComputedStyle(studio).gridTemplateColumns.split(' ').length,
             minimumTarget: Math.min(...targets),
+            overflowing: [...studio.querySelectorAll<HTMLElement>('*')].filter((element) => {
+                const box = element.getBoundingClientRect();
+                return box.width > 0 && (box.left < studioBox.left - .5 || box.right > studioBox.right + .5);
+            }).slice(0, 12).map((element) => `${element.tagName}.${String(element.className)}`),
+            coarsePointer: matchMedia('(pointer:coarse)').matches,
+            compactLandscape: matchMedia('(orientation:landscape) and (max-height:599px) '
+                + 'and (max-width:999px) and (pointer:coarse)').matches,
         };
     });
 }
@@ -243,22 +248,23 @@ test.describe.serial('Theme Studio safe sharing and curated gallery', () => {
         }
         let fit = await editorFit(page);
         expect(fit.documentOverflow).toBeLessThanOrEqual(1);
-        expect(fit.editorOverflow).toBeLessThanOrEqual(1);
+        expect(fit.editorOverflow, JSON.stringify(fit)).toBeLessThanOrEqual(1);
         expect(fit.columns).toBeGreaterThanOrEqual(1);
 
         await page.setViewportSize({ width: 1920, height: 1080 });
         await waitForThemeRuntime(page, 'wide');
         fit = await editorFit(page);
         expect(fit.documentOverflow).toBeLessThanOrEqual(1);
-        expect(fit.editorOverflow).toBeLessThanOrEqual(1);
+        expect(fit.editorOverflow, JSON.stringify(fit)).toBeLessThanOrEqual(1);
 
         await page.setViewportSize({ width: 390, height: 844 });
         await waitForThemeRuntime(page, 'phone');
         await gallery.first().evaluate((element) => element.scrollIntoView({ block: 'start' }));
         fit = await editorFit(page);
         expect(fit.documentOverflow).toBeLessThanOrEqual(1);
-        expect(fit.editorOverflow).toBeLessThanOrEqual(1);
+        expect(fit.editorOverflow, JSON.stringify(fit)).toBeLessThanOrEqual(1);
         expect(fit.columns).toBe(1);
+        expect(fit.studioColumns).toBe(1);
         expect(fit.minimumTarget).toBeGreaterThanOrEqual(44);
         if (process.env.JC_CAPTURE_THEME_DOCS === '1') {
             await page.screenshot({
@@ -272,7 +278,10 @@ test.describe.serial('Theme Studio safe sharing and curated gallery', () => {
         await waitForThemeRuntime(page, 'phone');
         fit = await editorFit(page);
         expect(fit.documentOverflow).toBeLessThanOrEqual(1);
-        expect(fit.editorOverflow).toBeLessThanOrEqual(1);
+        expect(fit.editorOverflow, JSON.stringify(fit)).toBeLessThanOrEqual(1);
+        expect(fit.studioColumns).toBe(1);
+        expect(fit.coarsePointer).toBe(true);
+        expect(fit.compactLandscape).toBe(true);
 
         await panel.locator('[data-action="cancel"]').click();
         await page.setViewportSize({ width: 820, height: 1180 });

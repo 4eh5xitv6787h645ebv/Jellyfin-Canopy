@@ -2,6 +2,15 @@
 
 Theme Studio is a typed, identity-scoped presentation subsystem with explicit ownership boundaries. This page is an implementation and evidence map; the broader [Developer Guide](developers.md#theme-studio-profile-api) remains the source for endpoint and runtime detail.
 
+The dated research and release contract is versioned in
+`research/theme-studio-ecosystem.md`, `research/theme-studio-design-contract.md`,
+`research/theme-studio-roadmap.md`, and
+`research/theme-studio-verification-matrix.md`. The quality contract requires
+all four files, while the documentation gate validates their internal links and
+reviewed external-source inventory. TV, tablet-only, and legacy findings in the
+ecosystem inventory are research context only; they do not authorize a Theme
+Studio activation path.
+
 ## Schema and tokens
 
 Schema 2 defines profiles, schedules, accessibility settings, presentation options, player options, and responsive overrides. Server and browser validators reject unknown fields, unsupported enum values, future schemas, oversized documents, credentials, URLs, and executable content. Sparse overrides inherit from a preset; serialization is deterministic and migrations are explicit.

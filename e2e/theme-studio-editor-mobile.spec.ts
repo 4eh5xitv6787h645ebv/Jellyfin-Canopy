@@ -5,7 +5,6 @@ import { installThemeStudioVisualFont } from './helpers/theme-studio-visual';
 
 test.use({
     viewport: { width: 320, height: 700 },
-    isMobile: true,
     hasTouch: true,
     deviceScaleFactor: 3,
 });
@@ -96,16 +95,19 @@ test.describe.serial('Theme Studio mobile editor', () => {
         await panel.locator('[data-action="preset"][data-value="glass"]').click();
         await expect.poll(() => page.evaluate(() =>
             document.documentElement.getAttribute('data-jc-theme-preset'))).toBe('glass');
-        await expect(panel.locator('[data-field="presentation-token"]')).toHaveCount(12);
+        await expect(panel.locator('[data-field="presentation-token"]')).toHaveCount(13);
         await panel.locator('[data-field="presentation-token"][data-token="layout.navigation"]')
             .selectOption('bottom');
+        await panel.locator('[data-field="presentation-token"][data-token="layout.home-libraries"]')
+            .selectOption('grid');
         await panel.locator('[data-field="presentation-token"][data-token="progress.thickness"]')
             .selectOption('8');
         await expect.poll(() => page.evaluate(() => ({
+            libraries: document.documentElement.getAttribute('data-jc-theme-home-libraries'),
             navigation: document.documentElement.getAttribute('data-jc-theme-navigation'),
             progress: getComputedStyle(document.documentElement)
                 .getPropertyValue('--jc-progress-thickness').trim(),
-        }))).toEqual({ navigation: 'bottom', progress: '8px' });
+        }))).toEqual({ libraries: 'grid', navigation: 'bottom', progress: '8px' });
 
         let profileName = panel.locator('[data-role="profile-name"]');
         await profileName.fill('');

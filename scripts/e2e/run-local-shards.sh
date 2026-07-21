@@ -15,6 +15,8 @@ MEMORY_MIB_PER_SHARD_WARNING=2048
 SHARDS=4
 CPUS_PER_SERVER=2
 ALLOW_EXTERNAL_INTEGRATIONS=0
+BROWSER=chromium
+THEME_STUDIO_ONLY=0
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
@@ -32,6 +34,7 @@ USER_NAME=''
 USER_PASS=''
 INVENTORY_HEAD_SHA=''
 INVENTORY_RUN_ID=''
+EXPECTED_INVENTORY=''
 CLEANUP_STARTED=0
 
 declare -a PROJECTS=()
@@ -66,6 +69,8 @@ Run the complete Playwright inventory across isolated local Jellyfin servers.
 Options:
   --shards N                    Native Playwright shard count (1..16; default 4)
   --cpus-per-server N           CPU quota for each Jellyfin server (1..64; default 2)
+  --browser NAME                chromium, firefox, or webkit (default chromium)
+  --theme-studio-only           Run the exact 28-test cross-browser Theme Studio inventory
   --allow-external-integrations Forward TMDB_* and SEERR_* environment variables
   -h, --help                    Show this help
 
@@ -113,6 +118,19 @@ parse_args() {
                 ALLOW_EXTERNAL_INTEGRATIONS=1
                 shift
                 ;;
+            --browser)
+                require_option_value "$1" "$#"
+                BROWSER="$2"
+                shift 2
+                ;;
+            --browser=*)
+                BROWSER="${1#*=}"
+                shift
+                ;;
+            --theme-studio-only)
+                THEME_STUDIO_ONLY=1
+                shift
+                ;;
             -h|--help)
                 usage
                 exit 0
@@ -133,6 +151,11 @@ parse_args() {
     CPUS_PER_SERVER=$((10#${CPUS_PER_SERVER}))
     (( CPUS_PER_SERVER >= 1 && CPUS_PER_SERVER <= MAX_CPUS_PER_SERVER )) \
         || die "--cpus-per-server must be an integer from 1 to ${MAX_CPUS_PER_SERVER}"
+
+    case "${BROWSER}" in
+        chromium|firefox|webkit) ;;
+        *) die "--browser must be chromium, firefox, or webkit" ;;
+    esac
 }
 
 require_command() {
@@ -181,6 +204,12 @@ initialize_run() {
     INVENTORY_RUN_ID="$(date -u +%s%N)"
     [[ "${INVENTORY_RUN_ID}" =~ ^[1-9][0-9]*$ ]] \
         || die "could not allocate a numeric inventory run id"
+    if (( THEME_STUDIO_ONLY == 1 )); then
+        EXPECTED_INVENTORY="${REPO_ROOT}/e2e/theme-studio-cross-browser-test-inventory.json"
+    else
+        EXPECTED_INVENTORY="${REPO_ROOT}/e2e/required-test-inventory.json"
+    fi
+    [[ -f "${EXPECTED_INVENTORY}" ]] || die "expected inventory not found: ${EXPECTED_INVENTORY}"
 
     STATE_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/jc-e2e-${RUN_ID}.XXXXXX")" \
         || die "could not allocate an isolated state root"
@@ -259,7 +288,12 @@ print_resource_plan() {
     swap_used_mib="$(host_swap_used_mib)"
 
     log "plan: ${SHARDS} isolated server(s) x ${CPUS_PER_SERVER} CPU(s) = ${total_cpus} maximum Jellyfin server CPU threads"
-    log "the build, Chromium and bounded host ffmpeg work run outside those server quotas"
+    log "the build, ${BROWSER} and bounded host ffmpeg work run outside those server quotas"
+    if (( THEME_STUDIO_ONLY == 1 )); then
+        log "scope: exact 28-test Theme Studio cross-browser inventory; pixel snapshots are structural-only outside Chromium"
+    else
+        log "scope: complete required Playwright inventory"
+    fi
     log "memory guard: ${planned_mib} MiB suggested available (${MEMORY_MIB_PER_SHARD_WARNING} MiB per server/browser shard)"
     if (( CPUS_PER_SERVER != 2 )); then
         warn "${CPUS_PER_SERVER} CPUs/server is exploratory; official parity evidence uses exactly 2"
@@ -666,6 +700,7 @@ start_test_jobs() {
             export JF_E2E_TRACE=off
             if (( ALLOW_EXTERNAL_INTEGRATIONS == 0 )); then
                 export JF_E2E_REQUIRED=true
+                export JF_E2E_EXPECTED_FILE="${EXPECTED_INVENTORY}"
                 export JF_E2E_INVENTORY_FILE="${RESULT_DIRS[shard]}/shard-${shard}.inventory"
                 export JF_E2E_SHARD="${shard}"
                 export JF_E2E_SHARD_TOTAL="${SHARDS}"
@@ -673,8 +708,14 @@ start_test_jobs() {
                 export JF_E2E_RUN_ID="${INVENTORY_RUN_ID}"
                 export JF_E2E_RUN_ATTEMPT=1
             fi
+            if (( THEME_STUDIO_ONLY == 1 )); then
+                exec setsid --wait npm --prefix "${REPO_ROOT}" run e2e -- \
+                    --browser="${BROWSER}" --ignore-snapshots \
+                    --shard="${shard}/${SHARDS}" --output="${output_dir}" \
+                    'theme-studio-.*\.spec\.ts'
+            fi
             exec setsid --wait npm --prefix "${REPO_ROOT}" run e2e -- \
-                --shard="${shard}/${SHARDS}" --output="${output_dir}"
+                --browser="${BROWSER}" --shard="${shard}/${SHARDS}" --output="${output_dir}"
         ) > "${RESULT_DIRS[shard]}/playwright.log" 2>&1 &
         TEST_PIDS[shard]=$!
         log "test shard ${shard}/${SHARDS} started"
@@ -785,7 +826,7 @@ validate_required_inventory() {
     (( ALLOW_EXTERNAL_INTEGRATIONS == 0 )) || return 0
     node "${REPO_ROOT}/scripts/e2e/required-inventory.js" aggregate \
         --directory "${RESULT_ROOT}" \
-        --expected "${REPO_ROOT}/e2e/required-test-inventory.json" \
+        --expected "${EXPECTED_INVENTORY}" \
         --total "${SHARDS}" \
         --sha "${INVENTORY_HEAD_SHA}" \
         --run-id "${INVENTORY_RUN_ID}" \
@@ -793,7 +834,7 @@ validate_required_inventory() {
 }
 
 write_summary() {
-    local overall=0 shard test_display
+    local overall=0 shard test_display scope_label=complete
     local summary_tmp="${RESULT_ROOT}/summary.txt.tmp"
     local summary="${RESULT_ROOT}/summary.txt"
     validate_shard_markers || overall=1
@@ -806,11 +847,13 @@ write_summary() {
             overall=1
         fi
     done
+    (( THEME_STUDIO_ONLY == 0 )) || scope_label=theme-studio-cross-browser
 
     {
         printf 'Local Jellyfin E2E run %s\n' "${RUN_ID}"
         printf 'Shards: %s; CPUs/server: %s; maximum Jellyfin server CPU threads: %s\n' \
             "${SHARDS}" "${CPUS_PER_SERVER}" "$((SHARDS * CPUS_PER_SERVER))"
+        printf 'Browser: %s; scope: %s\n' "${BROWSER}" "${scope_label}"
         printf '\n%-10s %-10s %-10s %s\n' 'Shard' 'Seed' 'Tests' 'Base URL'
         for (( shard = 1; shard <= SHARDS; shard++ )); do
             test_display="${TEST_STATUS[shard]}"

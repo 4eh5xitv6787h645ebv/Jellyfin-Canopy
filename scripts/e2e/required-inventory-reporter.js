@@ -10,12 +10,26 @@ const {
 } = require('./required-inventory');
 
 const ROOT = path.resolve(__dirname, '..', '..');
-const EXPECTED_FILE = path.join(ROOT, 'e2e', 'required-test-inventory.json');
+const DEFAULT_EXPECTED_FILE = path.join(ROOT, 'e2e', 'required-test-inventory.json');
+const THEME_STUDIO_EXPECTED_FILE = path.join(ROOT, 'e2e', 'theme-studio-cross-browser-test-inventory.json');
+const ALLOWED_EXPECTED_FILES = new Set([DEFAULT_EXPECTED_FILE, THEME_STUDIO_EXPECTED_FILE]);
+const PLAYWRIGHT_BROWSER_PROJECTS = new Set(['chromium', 'firefox', 'webkit']);
+
+function expectedFile() {
+    const configured = process.env.JF_E2E_EXPECTED_FILE?.trim();
+    const resolved = configured ? path.resolve(ROOT, configured) : DEFAULT_EXPECTED_FILE;
+    if (!ALLOWED_EXPECTED_FILES.has(resolved)) {
+        throw new Error('JF_E2E_EXPECTED_FILE must name a committed required inventory');
+    }
+    return resolved;
+}
 
 function stableTestId(test) {
     const file = path.relative(ROOT, test.location.file).split(path.sep).join('/');
     const titles = test.titlePath()
-        .filter((title) => title && !title.endsWith('.spec.ts'));
+        .filter((title) => title
+            && !title.endsWith('.spec.ts')
+            && !PLAYWRIGHT_BROWSER_PROJECTS.has(title));
     return `${file} › ${titles.join(' › ')}`;
 }
 
@@ -31,7 +45,7 @@ function finalOutcome(test) {
 class RequiredInventoryReporter {
     onBegin(_config, suite) {
         try {
-            this.expected = readExpected(EXPECTED_FILE);
+            this.expected = readExpected(expectedFile());
             this.tests = suite.allTests();
         } catch (error) {
             this.beginError = error;
@@ -81,5 +95,6 @@ class RequiredInventoryReporter {
 }
 
 module.exports = RequiredInventoryReporter;
+module.exports.expectedFile = expectedFile;
 module.exports.finalOutcome = finalOutcome;
 module.exports.stableTestId = stableTestId;

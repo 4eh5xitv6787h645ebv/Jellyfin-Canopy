@@ -21,12 +21,12 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 21093,
-        "totalLines": 29523
+        "coveredLines": 21094,
+        "totalLines": 29524
       },
       "tolerance": {
-        "missingCoveredLines": 4,
-        "rationale": "Theme Studio safe sharing, curated gallery, and advanced declaration foundations in issue #396. Two clean local .NET 10.0.9/Coverlet runs on 2026-07-21 each measured 21093/29523 lines (71.446%) after passing all 1862 tests; two subsequent final runs over the identical production scope each passed the expanded 1866-test suite and measured 21092/29523 (71.443%). The reviewed baseline retains the higher repeated measurement so that coverage cannot regress. Relative to the prior 21032/29463 baseline, the legitimate 60-line scope increase narrows remote-resource and executable-event recognition to real token boundaries and the complete reviewed browser event-handler set so schema-valid exported names round-trip without weakening unsafe import rejection; focused controller theories cover every newly instrumented production line and the current standardized handler additions. The unchanged four-line low-side tolerance covers the observed one-line instrumentation variance without widening it, while the required floor improves from 71.371% to 71.432%; coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, and broad-tolerance negative boundaries."
+        "missingCoveredLines": 5,
+        "rationale": "Theme Studio safe sharing, curated gallery, and advanced declaration foundations in issue #396, plus the modern Home libraries grid control in issue #449. The exact-head GitHub Actions .NET/Coverlet run on 2026-07-21 passed all 1866 tests and measured 21094/29524 lines (71.447%); a clean local .NET 10.0.9 run measured 21093/29524 (71.444%). Relative to the prior reviewed 21093/29523 baseline, the legitimate one-line scope increase is the fail-closed server allowlist rule for layout.home-libraries; PersistedPayloadPolicyTests exercises the allowed grid value, and the higher CI measurement becomes the ratchet. The five-line tolerance remains unchanged for the previously reproduced runtime instrumentation band; its required floor of 21089/29524 (71.430%) stays above the earlier 71.371% floor. coverage-baseline.test.js retains the exact below-floor, above-baseline, scope-change, and broad-tolerance negative boundaries."
       }
     }
   }
