@@ -1,0 +1,316 @@
+// #459 — the Canopy header button tray must stay a SINGLE horizontally
+// scrollable row (never wrap to 2–3 rows) on both layouts, mobile and desktop,
+// for admin and non-admin, with the modern profile avatar pinned.
+//
+// Canopy owns no bar element; buttons are injected into a native container
+// resolved by getHeaderRightContainer(). The fix marks that container
+// `jc-header-tray` and installs a layout-scoped stylesheet (helpers.ts
+// ensureHeaderTrayCSS) forcing display:flex; flex-wrap:nowrap; overflow-x:auto
+// with non-shrinking children, and on modern flex-shrink:1 + safe flex-end so
+// the tray consumes only the space left of the profile Box.
+//
+// These specs seed a real layout before boot, drive the ACTUAL resolved tray,
+// append deterministic test-only buttons until it overflows, and prove the
+// single-row/scroll-containment contract geometrically — never relying on
+// overflow-y:visible.
+import type { Page } from 'playwright/test';
+import { test, expect, loginAs, assertNoRuntimeErrors, type Role } from './fixtures/auth';
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+
+type Layout = 'modern' | 'legacy';
+const LAYOUT_STAMP: Record<Layout, string> = {
+    modern: 'jc-modern-layout',
+    legacy: 'jc-legacy-layout',
+};
+
+const MOBILE = { width: 390, height: 844 } as const;
+const DESKTOP = { width: 1280, height: 800 } as const;
+// Wide enough to overflow the widest tested tray: 40 × 48px ≈ 1920px of
+// buttons exceeds the 1280px desktop viewport (and therefore any tray, which is
+// always ≤ the viewport), guaranteeing scrollWidth > clientWidth on every case.
+const FILLER_COUNT = 40;
+
+/**
+ * jellyfin-web's `localStorage['layout']` value. On the pinned Jellyfin 12
+ * (unstable) image the modern React layout is `modern` and the classic
+ * AngularJS header lives behind `desktop-legacy` / `mobile-legacy` (the older
+ * `experimental` / `desktop` names were renamed and now fall back to modern).
+ * Seed the value that actually renders the container the case exercises.
+ */
+async function seedLayout(page: Page, seedValue: string): Promise<void> {
+    await page.addInitScript((value) => localStorage.setItem('layout', value), seedValue);
+}
+
+/**
+ * Force the plugin to resolve + mark its tray, then append deterministic
+ * test-only icon buttons into the REAL resolved container until it overflows.
+ * Also drops one absolutely-positioned badge child (a `.jc-as-sup` stand-in) so
+ * badge clipping can be checked even on a non-admin tray without active-streams.
+ * Returns whether the resolved tray was found.
+ */
+async function fillResolvedTray(page: Page): Promise<boolean> {
+    return page.evaluate((count) => {
+        const helpers = (window as any).JellyfinCanopy?.helpers;
+        const tray: HTMLElement | null = helpers?.getHeaderRightContainer?.() ?? null;
+        if (!tray) return false;
+        for (let i = 0; i < count; i++) {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'headerButton headerButtonRight paper-icon-button-light jc-e2e-459-filler';
+            btn.dataset.jcE2e459 = String(i);
+            // Give the test button a fixed intrinsic size so overflow is
+            // deterministic on BOTH layouts. On the legacy layout there is no
+            // `.MuiToolbar-root` so Canopy's 48px button-sizing rule does not
+            // apply; without an explicit size these would collapse and never
+            // overflow. The fix's `flex:0 0 auto` (asserted via computed
+            // flex-shrink === 0) is what keeps these 48px wide instead of
+            // shrinking to fit — exactly the single-row behaviour under test.
+            btn.style.cssText = 'position:relative;box-sizing:border-box;width:48px;min-width:48px;height:48px;padding:0;margin:0;';
+            const glyph = document.createElement('span');
+            glyph.className = 'material-icons';
+            glyph.textContent = 'star';
+            btn.appendChild(glyph);
+            if (i === 0) {
+                // Absolutely-positioned child mirroring the active-streams badge
+                // geometry (top:2px; right:2px) to prove no clipping at scroll ends.
+                const badge = document.createElement('span');
+                badge.className = 'jc-e2e-459-badge';
+                badge.textContent = '9';
+                badge.style.cssText = 'position:absolute;top:2px;right:2px;font-size:11px;line-height:1.1;';
+                btn.appendChild(badge);
+            }
+            tray.appendChild(btn);
+        }
+        return tray.querySelectorAll('.jc-e2e-459-filler').length === count;
+    }, FILLER_COUNT);
+}
+
+interface TrayGeometry {
+    found: boolean;
+    stamp: boolean;
+    marked: boolean;
+    flexWrap: string;
+    scrollWidth: number;
+    clientWidth: number;
+    childShrink: string[];
+    childCenterYs: number[];
+    trayRight: number;
+    trayTop: number;
+    trayBottom: number;
+    innerWidth: number;
+    badge: { top: number; bottom: number; left: number; right: number } | null;
+}
+
+async function readTray(page: Page, stamp: string): Promise<TrayGeometry> {
+    return page.evaluate((layoutStamp) => {
+        const helpers = (window as any).JellyfinCanopy?.helpers;
+        const tray: HTMLElement | null = helpers?.getHeaderRightContainer?.() ?? null;
+        const empty: TrayGeometry = {
+            found: false, stamp: false, marked: false, flexWrap: '', scrollWidth: 0,
+            clientWidth: 0, childShrink: [], childCenterYs: [], trayRight: 0, trayTop: 0,
+            trayBottom: 0, innerWidth: window.innerWidth, badge: null,
+        };
+        if (!tray) return empty;
+        const style = getComputedStyle(tray);
+        const rect = tray.getBoundingClientRect();
+        const fillers = Array.from(tray.querySelectorAll<HTMLElement>('.jc-e2e-459-filler'));
+        const badgeEl = tray.querySelector<HTMLElement>('.jc-e2e-459-badge');
+        const badgeRect = badgeEl?.getBoundingClientRect();
+        return {
+            found: true,
+            stamp: document.documentElement.classList.contains(layoutStamp),
+            marked: tray.classList.contains('jc-header-tray'),
+            flexWrap: style.flexWrap,
+            scrollWidth: tray.scrollWidth,
+            clientWidth: tray.clientWidth,
+            childShrink: fillers.map((el) => getComputedStyle(el).flexShrink),
+            childCenterYs: fillers.map((el) => {
+                const r = el.getBoundingClientRect();
+                return Math.round(r.top + r.height / 2);
+            }),
+            trayRight: rect.right,
+            trayTop: rect.top,
+            trayBottom: rect.bottom,
+            innerWidth: window.innerWidth,
+            badge: badgeRect
+                ? { top: badgeRect.top, bottom: badgeRect.bottom, left: badgeRect.left, right: badgeRect.right }
+                : null,
+        } as TrayGeometry;
+    }, stamp);
+}
+
+/** Scroll the tray to a given scrollLeft and read back the achieved value. */
+async function scrollTray(page: Page, to: number | 'end'): Promise<number> {
+    return page.evaluate((target) => {
+        const helpers = (window as any).JellyfinCanopy?.helpers;
+        const tray: HTMLElement | null = helpers?.getHeaderRightContainer?.() ?? null;
+        if (!tray) return -1;
+        tray.scrollLeft = target === 'end' ? tray.scrollWidth : target;
+        return tray.scrollLeft;
+    }, to);
+}
+
+/** Compact layout/geometry snapshot for a failure message (lazy — only built
+ *  on the failure branch, never on the passing path). */
+async function diag(page: Page): Promise<string> {
+    return page.evaluate(() => {
+        const helpers = (window as any).JellyfinCanopy?.helpers;
+        const tray: HTMLElement | null = helpers?.getHeaderRightContainer?.() ?? null;
+        const style = tray ? getComputedStyle(tray) : null;
+        return JSON.stringify({
+            htmlClass: document.documentElement.className,
+            innerWidth: window.innerWidth,
+            trayClass: tray?.className?.toString().slice(0, 60) ?? null,
+            tray: tray && style
+                ? {
+                    cw: tray.clientWidth, sw: tray.scrollWidth, disp: style.display,
+                    dir: style.flexDirection, wrap: style.flexWrap, ox: style.overflowX,
+                    justify: style.justifyContent,
+                }
+                : null,
+            fillerCount: tray ? tray.querySelectorAll('.jc-e2e-459-filler').length : 0,
+        });
+    });
+}
+
+/** The profile / user-menu box geometry on the modern layout (avatar anchor). */
+async function readProfile(page: Page): Promise<{ found: boolean; left: number; top: number; visible: boolean } | null> {
+    return page.evaluate(() => {
+        const button = document.querySelector<HTMLElement>('[aria-controls="app-user-menu"]');
+        const toolbar = button?.closest('.MuiToolbar-root');
+        if (!button || !toolbar) return { found: false, left: 0, top: 0, visible: false };
+        let box: HTMLElement | null = button;
+        while (box && box.parentElement !== toolbar) box = box.parentElement;
+        const target = box ?? button;
+        const rect = target.getBoundingClientRect();
+        return {
+            found: true,
+            left: rect.left,
+            top: rect.top,
+            visible: rect.width > 0 && rect.height > 0 && !target.classList.contains('jc-header-tray'),
+        };
+    });
+}
+
+async function assertSingleScrollableRow(page: Page, layout: Layout): Promise<void> {
+    const filled = await fillResolvedTray(page);
+    expect(filled, 'the real resolved header tray must exist and accept test buttons').toBe(true);
+
+    const geo = await readTray(page, LAYOUT_STAMP[layout]);
+    expect(geo.found, 'resolved tray present').toBe(true);
+    expect(geo.stamp, `${LAYOUT_STAMP[layout]} must be stamped on <html>`).toBe(true);
+    expect(geo.marked, 'the resolved tray carries the jc-header-tray marker').toBe(true);
+
+    // Single row: never wraps, and every button center shares one row band.
+    expect(geo.flexWrap).toBe('nowrap');
+    const uniqueRows = new Set(geo.childCenterYs);
+    expect(
+        uniqueRows.size,
+        `all ${geo.childCenterYs.length} buttons must occupy one row (centers: ${[...uniqueRows].join(',')})`
+    ).toBe(1);
+
+    // Horizontal scroll, not wrap: content exceeds the scrollport.
+    if (geo.scrollWidth <= geo.clientWidth) {
+        throw new Error(`tray must overflow its scrollport (scrollWidth ${geo.scrollWidth} vs clientWidth ${geo.clientWidth}). DIAG=${await diag(page)}`);
+    }
+
+    // Direct children never shrink (flex-shrink:0) so they cannot collapse/wrap.
+    for (const shrink of geo.childShrink) expect(shrink).toBe('0');
+
+    // The tray box itself stays within the viewport and clips its overflowing
+    // content internally instead of widening the header past the screen edge.
+    // (Whole-document horizontal overflow is deliberately NOT asserted here: the
+    // seeded home page has its own horizontally-scrolling card shelves that load
+    // asynchronously and leak into document scrollWidth — unrelated to the header
+    // fix. The tray-scoped checks below are the correct, header-owned invariant.)
+    if (geo.clientWidth > geo.innerWidth + 2) {
+        throw new Error(`tray must fit within the viewport (clip, not widen the header): clientWidth ${geo.clientWidth} > innerWidth ${geo.innerWidth}. DIAG=${await diag(page)}`);
+    }
+    expect(geo.trayRight, 'tray right edge stays within the viewport').toBeLessThanOrEqual(geo.innerWidth + 2);
+
+    // Both scroll endpoints reachable (safe flex-end keeps the leading buttons
+    // in reach on modern; nothing is stranded in unreachable negative overflow).
+    const atStart = await scrollTray(page, 0);
+    expect(atStart).toBe(0);
+    const atEnd = await scrollTray(page, 'end');
+    expect(atEnd).toBeGreaterThan(0);
+}
+
+async function assertBadgeInsideScrollport(page: Page, layout: Layout): Promise<void> {
+    // At the endpoint where the badge-bearing (first) button is scrolled toward
+    // the clipping edge, the absolutely-positioned badge must stay within the
+    // tray's box (no clipping of .jc-as-sup-style children).
+    await scrollTray(page, 0);
+    const geo = await readTray(page, LAYOUT_STAMP[layout]);
+    expect(geo.badge, 'badge stand-in present').not.toBeNull();
+    const badge = geo.badge!;
+    // Vertically inside the tray band (top:2px keeps it below the tray top).
+    expect(badge.top).toBeGreaterThanOrEqual(geo.trayTop - 1);
+    expect(badge.bottom).toBeLessThanOrEqual(geo.trayBottom + 1);
+    expect(badge.right - badge.left, 'badge has non-zero width (rendered, not collapsed)').toBeGreaterThan(0);
+}
+
+interface Case {
+    layout: Layout;
+    role: Role;
+    viewport: { width: number; height: number };
+    seed: string;
+    label: string;
+}
+
+const CASES: Case[] = [
+    { layout: 'modern', role: 'admin', viewport: MOBILE, seed: 'modern', label: 'modern / mobile / admin' },
+    { layout: 'modern', role: 'user', viewport: DESKTOP, seed: 'modern', label: 'modern / desktop / non-admin' },
+    { layout: 'legacy', role: 'user', viewport: MOBILE, seed: 'mobile-legacy', label: 'legacy / mobile / non-admin' },
+    { layout: 'legacy', role: 'admin', viewport: DESKTOP, seed: 'desktop-legacy', label: 'legacy / desktop / admin' },
+];
+
+test.describe('header button tray stays a single scrollable row (#459)', () => {
+    for (const testCase of CASES) {
+        test(testCase.label, async ({ page, consoleErrors }) => {
+            await page.setViewportSize(testCase.viewport);
+            await seedLayout(page, testCase.seed);
+            await loginAs(page, testCase.role, consoleErrors);
+
+            // Fail (not skip) if the requested layout never stamped — the seed
+            // must have taken before boot.
+            const stamp = LAYOUT_STAMP[testCase.layout];
+            const stamped = await page.waitForFunction(
+                (wanted) => document.documentElement.classList.contains(wanted),
+                stamp,
+                { timeout: 20_000 }
+            ).then(() => true, () => false);
+            if (!stamped) throw new Error(`layout stamp ${stamp} missing. DIAG=${await diag(page)}`);
+
+            await assertSingleScrollableRow(page, testCase.layout);
+            await assertBadgeInsideScrollport(page, testCase.layout);
+
+            // The profile avatar is a separate, unmarked toolbar child that must
+            // stay pinned to the RIGHT of the scroll region. This shape only
+            // exists on the modern DESKTOP toolbar: on modern mobile the avatar
+            // moves into the drawer (so the tray resolves to the synthetic
+            // fallback and there is no in-row avatar), and the legacy header has
+            // no such sibling. Assert pinning only for the modern-desktop case.
+            if (testCase.layout === 'modern' && testCase.viewport === DESKTOP) {
+                await scrollTray(page, 0);
+                const start = await readProfile(page);
+                expect(start?.found, 'modern desktop toolbar exposes the profile avatar').toBe(true);
+                expect(start?.visible, 'profile avatar visible before scroll').toBe(true);
+
+                const trayBefore = await readTray(page, stamp);
+                // The scroll region ends at or left of the avatar (never over it).
+                expect(trayBefore.trayRight).toBeLessThanOrEqual(start!.left + 1);
+
+                await scrollTray(page, 'end');
+                const end = await readProfile(page);
+                expect(end?.visible, 'profile avatar visible after scroll').toBe(true);
+                // Stationary: internal tray scroll never moves the avatar.
+                expect(Math.abs(end!.left - start!.left)).toBeLessThanOrEqual(1);
+                expect(Math.abs(end!.top - start!.top)).toBeLessThanOrEqual(1);
+            }
+
+            assertNoRuntimeErrors(consoleErrors);
+        });
+    }
+});
