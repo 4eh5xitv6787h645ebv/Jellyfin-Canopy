@@ -11,6 +11,7 @@ import { JC } from '../globals';
 import '../core/ui-kit';
 import {
     clearItemCache, getHeaderRightContainer, getItemCached,
+    resetHeaderTrayCSSForTests,
     ITEM_CACHE_MAX_ENTRIES, ITEM_CACHE_MAX_IN_FLIGHT,
 } from './helpers';
 import { insertHeaderTrayButton, HeaderTrayOrder } from './header-tray';
@@ -92,6 +93,13 @@ describe('header-tray single-row scroll containment (#459)', () => {
         // Layout is cached once per page in production; reset it so each test's
         // resolver stamps from a clean slate (and never leaks into the R4 block).
         resetLayoutCacheForTests();
+        // The stylesheet-install guard is module-private and set true by the
+        // earlier R4 describe block (which resolves a container). Clear it AND
+        // remove the injected <style> so each #459 test's resolver genuinely
+        // (re)installs the sheet on the path under test, instead of asserting
+        // against lingering head state that would pass even if the install call
+        // were moved to an unreachable spot.
+        resetHeaderTrayCSSForTests();
         // Force a fresh nav so the per-navigation container cache never serves a
         // node from a previous test.
         history.pushState({}, '', `/tray-459-${Math.random().toString(36).slice(2)}`);
@@ -137,6 +145,10 @@ describe('header-tray single-row scroll containment (#459)', () => {
     it('installs the tray stylesheet on the legacy-first path and marks the legacy tray', () => {
         const header = buildLegacy();
 
+        // Guard reset in beforeEach removed any lingering sheet, so this proves
+        // the legacy path itself installs it (would catch the sheet install being
+        // moved after the legacy early return).
+        expect(document.querySelectorAll(`#${STYLE_ID}`).length).toBe(0);
         expect(getHeaderRightContainer()).toBe(header);
         // Installed despite the legacy early return (legacy-only sessions must
         // still get the fix).
@@ -175,6 +187,21 @@ describe('header-tray single-row scroll containment (#459)', () => {
         // Modern-only: the tray must be allowed to shrink (leave room for the
         // pinned profile avatar); legacy .headerRight shrinks by default.
         expect(css).toContain('flex-shrink: 1');
+
+        // The horizontal scrollbar is suppressed on BOTH engines so an
+        // overflowing tray never grows a gutter that would (a) render a
+        // non-native OS scrollbar, (b) shrink the content box below the button
+        // height and let the promoted overflow-y clip the .jc-as-sup badge, or
+        // (c) shift the header as it crosses the fit->overflow threshold (R1).
+        expect(css).toContain('scrollbar-width: none');
+        expect(css).toMatch(/\.jc-(modern|legacy)-layout \.jc-header-tray::-webkit-scrollbar/);
+        // Legacy-only: the native profile avatar lives inside the resolved
+        // .headerRight tray, so it must be sticky-pinned to the right edge (on
+        // modern the avatar is a separate, unmarked sibling and needs no pin).
+        expect(css).toContain('.jc-legacy-layout .jc-header-tray > .headerUserButton');
+        expect(css).toContain('position: sticky');
+        // The pin is legacy-scoped only — the modern avatar sibling is untouched.
+        expect(css).not.toMatch(/\.jc-modern-layout \.jc-header-tray > \.headerUserButton/);
 
         // No broad MUI Box selector (would hit unrelated toolbar boxes / profile).
         expect(css).not.toMatch(/\.MuiBox-root/);

@@ -305,9 +305,15 @@ function markHeaderTray<T extends HTMLElement>(el: T): T {
  *     jc-legacy-layout <html> stamps so the modern-only rules never touch the
  *     legacy header and vice-versa. On modern the tray must consume only the
  *     space left of the separate profile Box (safe flex-end keeps the leading
- *     buttons reachable when it overflows). No fixed tray height and no
- *     descendant overflow rule, so absolutely-positioned children like the
- *     active-streams badge (.jc-as-sup) stay inside the scrollport.
+ *     buttons reachable when it overflows); on legacy the native profile button
+ *     (.headerUserButton) lives inside the resolved tray, so it is sticky-pinned
+ *     to the right edge instead. The horizontal scrollbar is suppressed
+ *     (scrollbar-width:none / ::-webkit-scrollbar) so an overflowing tray never
+ *     grows a gutter — keeping the content box a stable button height (no R1
+ *     layout shift, no promoted-overflow-y clipping of the .jc-as-sup badge) and
+ *     the scroll region native-looking. No fixed tray height and no explicit
+ *     overflow-y rule, so absolutely-positioned children like the active-streams
+ *     badge (.jc-as-sup) stay inside the scrollport.
  */
 function ensureHeaderTrayCSS(): void {
     if (muiHeaderButtonCSSInjected) return;
@@ -334,6 +340,22 @@ function ensureHeaderTrayCSS(): void {
             min-width: 0 !important;
             max-width: 100% !important;
             overflow-x: auto !important;
+            /* Hide the horizontal scrollbar so an overflowing tray never grows a
+               scrollbar gutter. Without this, on classic (non-overlay) scrollbar
+               platforms (common desktop Linux/Windows Chrome/Firefox) the gutter
+               (a) renders a non-native OS scrollbar inside the fixed header,
+               (b) shrinks the content box below the 48px button height, so the
+               CSS-spec-promoted vertical overflow (setting only overflow-x auto
+               promotes the used vertical overflow to auto) then clips the buttons
+               and the absolutely-positioned .jc-as-sup badge at top:2px, and
+               (c) changes the tray height as it crosses the fit->overflow
+               threshold — the forbidden R1 layout shift. Overlay-scrollbar
+               platforms (mobile/macOS) already reserve no gutter; this makes
+               every platform behave that way, keeping the content box a stable
+               button height so the promoted overflow-y never has anything to
+               clip. Scrollbar suppression is the single-axis containment
+               strategy (no explicit overflow-y, which would itself clip). */
+            scrollbar-width: none !important;
             /* Both layouts natively right-align the tray (flex-end). With nowrap
                that packs the buttons rightward and pushes the leading ones into
                unreachable negative space (left of the scroll origin, which
@@ -341,6 +363,11 @@ function ensureHeaderTrayCSS(): void {
                native right-alignment when the row fits but falls back to
                start-alignment once it does not, so every button stays reachable. */
             justify-content: safe flex-end !important;
+        }
+        /* WebKit/Blink counterpart of scrollbar-width:none (see above). */
+        .jc-modern-layout .jc-header-tray::-webkit-scrollbar,
+        .jc-legacy-layout .jc-header-tray::-webkit-scrollbar {
+            display: none !important;
         }
         .jc-modern-layout .jc-header-tray > *,
         .jc-legacy-layout .jc-header-tray > * {
@@ -352,8 +379,36 @@ function ensureHeaderTrayCSS(): void {
         .jc-modern-layout .jc-header-tray {
             flex-shrink: 1 !important;
         }
+        /* Legacy only: the resolved tray IS the native .headerRight, which — unlike
+           the modern layout where the avatar is a separate, unmarked sibling Box —
+           CONTAINS the native profile button (.headerUserButton) as a trailing
+           scrolling child. Left as-is it would start off-screen and move with
+           scrollLeft (safe flex-end packs to flex-start once the row overflows).
+           Pin it to the right edge of the scrollport so the avatar stays put while
+           the icon buttons scroll under it, matching the modern pinned-avatar
+           behaviour and the acceptance criterion. */
+        .jc-legacy-layout .jc-header-tray > .headerUserButton {
+            position: sticky !important;
+            right: 0 !important;
+            z-index: 1 !important;
+        }
     `);
     muiHeaderButtonCSSInjected = true;
+}
+
+/**
+ * TEST-ONLY: clear the boot-local {@link ensureHeaderTrayCSS} guard and remove
+ * the injected `#jc-mui-header-button-fix` <style>. `muiHeaderButtonCSSInjected`
+ * is module-private with no runtime reset, so a describe block that already
+ * resolved a container leaves the flag set and the sheet in document.head. A
+ * later test that means to prove the sheet is (re)installed on the path under
+ * test would otherwise pass on that lingering state — even if the install call
+ * were moved to an unreachable spot. Resetting both here lets such a test
+ * genuinely exercise the install path. Never called from runtime code.
+ */
+export function resetHeaderTrayCSSForTests(): void {
+    muiHeaderButtonCSSInjected = false;
+    document.getElementById('jc-mui-header-button-fix')?.remove();
 }
 
 /** Uncached resolution behind {@link getHeaderRightContainer}. */
