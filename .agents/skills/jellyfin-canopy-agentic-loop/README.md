@@ -116,8 +116,10 @@ The loop spreads models by role to spare Claude/Opus budget:
 - **Implementation** — the single writer runs on **Fable (high)**, falling back
   to **Opus (high)** if Fable is exhausted (`implementModel` / `implementFallback`).
 - **Read-only steps except the gate runner** — with `modelSplit: true` (default):
-  **explore runs 2 Claude + 6 `gpt-5.6-sol`** explorers (`exploreClaudeCount`,
-  Sol slots at `xhigh`); plan (incl. synthesis), the review lenses, and
+  **explore runs 8 explorers on a non-docs standard/deep run — 2 Claude + 6
+  `gpt-5.6-sol`** (`exploreClaudeCount`, Sol slots at `xhigh`; a `quick` run uses 2
+  explorers and a `docs` surface uses its 4 docs-specific angles = 2 Claude + 2
+  Sol); plan (incl. synthesis), the review lenses, and
   finding-verification alternate **~50/50 Claude / `gpt-5.6-sol`**; an
   unroutable Sol slot falls back to Claude. After 3 consecutive Sol failures a
   circuit breaker sends the remaining Sol slots straight to Claude, and the

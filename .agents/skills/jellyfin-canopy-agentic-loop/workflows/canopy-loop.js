@@ -1729,7 +1729,10 @@ const openTodos = (implemented && implemented.openTodos) || []
 const implementationOk = !!implemented && openTodos.length === 0
 // Incidental (unrelated, pre-existing) bugs surfaced while exploring, deduped by
 // title. The main thread files the genuinely-new ones to the bug inventory
-// (Project 4) after checking they are not already reported.
+// (Project 4) — after checking they are not already reported — ONLY when issue
+// creation/labelling/Project mutation is authorized for the run; otherwise it
+// returns them as a proposed payload for the user and mutates nothing (filing is
+// an outward-facing action, not an implicit loop step). See SKILL.md.
 const incidentalBugs = (() => {
   const seen = new Set()
   const out = []

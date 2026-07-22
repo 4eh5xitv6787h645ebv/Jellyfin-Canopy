@@ -133,8 +133,11 @@ models by role:
 - **Weighted Claude / `gpt-5.6-sol` split — the whole way, except two roles.** With
   `modelSplit: true`, explore, plan (incl. synthesis), the review lenses, and the
   review's finding-verification are spread across Claude and `gpt-5.6-sol`:
-  - **Explore** runs 8 explorers (standard/deep depth); the first 2 on Claude/Opus
-    and the remaining 6 on `gpt-5.6-sol` (override with `exploreClaudeCount`).
+  - **Explore** runs 8 explorers on a non-docs standard/deep run; the first 2 on
+    Claude/Opus and the remaining 6 on `gpt-5.6-sol` (override with
+    `exploreClaudeCount`). A `quick` run uses 2 explorers, and a `docs` surface uses
+    its 4 docs-specific angles (2 Claude + 2 Sol) — the "6 Sol" figure is the
+    standard/deep code-surface case, not every run.
   - **Explore + plan** (incl. synthesis) run their Sol slots at **`xhigh`**
     reasoning effort on the `"agent"` route (`solExplorePlanEffort`, default
     `xhigh`); on the default `"codex-cli"` route those slots run at
@@ -166,9 +169,13 @@ Fable→Opus; review still gets ≥1 whole-diff `gpt-5.6-sol` reviewer).
 
 While exploring, agents surface **unrelated pre-existing bugs** they notice (they
 do **not** fix them — no scope creep). The loop returns them as
-`result.incidentalBugs`; the main thread dedupes against open issues and files the
-genuinely-new ones to the **Jellyfin Elevate Bug Inventory (Project 4)** with the
-`bug-inventory` + `no-stale` labels.
+`result.incidentalBugs`. **Only when issue creation, labelling, and Project
+mutation are authorized for this run** does the main thread dedupe against open
+issues and file the genuinely-new ones to the **Jellyfin Elevate Bug Inventory
+(Project 4)** with the `bug-inventory` + `no-stale` labels. Absent that
+authorization, surface the deduped list as a **proposed issue payload for the
+user to disposition** — do not mutate GitHub. Filing issues, like deploys and
+releases, is an outward-facing action, not an implicit step of the loop.
 
 The script fans out agents per phase, loops the review until a clean round, runs
 the repo-native gates, and returns a structured result (diff stat, findings
