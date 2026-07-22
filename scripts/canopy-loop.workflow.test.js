@@ -453,6 +453,33 @@ test('a verify-fix that commits after a clean review round is not ready-for-PR',
     assert.ok(r.residualRisks.some((s) => /never adversarially reviewed/i.test(s)));
 });
 
+test('envSetup is interpolated into every CONTRACTS prompt and the verify env echo is present', async () => {
+    const { agent, calls } = makeAgent(null);
+    await runWorkflow(
+        baseArgs({ envSetup: 'export DOTNET_ROOT=$HOME/.dotnet; export PATH="$DOTNET_ROOT:$PATH"' }),
+        agent,
+        parallel,
+        phase,
+        () => {},
+    );
+    const impl = calls.find((c) => (c.opts.label || '').startsWith('implement'));
+    const verifyCall = calls.find((c) => c.opts.phase === 'Verify');
+    assert.match(impl.prompt, /ENVIRONMENT \(run before ANY build\/test command/);
+    assert.match(impl.prompt, /DOTNET_ROOT=\$HOME\/\.dotnet/);
+    assert.match(verifyCall.prompt, /DOTNET_ROOT=\$HOME\/\.dotnet/, 'verify inherits the env prelude via CONTRACTS');
+    assert.match(verifyCall.prompt, /command -v dotnet && dotnet --version/, 'verify echoes the toolchain');
+    assert.match(verifyCall.prompt, /\$DOTNET_ROOT precedes the system\ndotnet on PATH/, 'generic PATH-precedence rule');
+});
+
+test('without envSetup no ENVIRONMENT block is injected (default prompts unchanged)', async () => {
+    const { agent, calls } = makeAgent(null);
+    await runWorkflow(baseArgs(), agent, parallel, phase, () => {});
+    assert.ok(
+        calls.every((c) => !/ENVIRONMENT \(run before ANY build\/test command/.test(c.prompt)),
+        'no env block by default',
+    );
+});
+
 test('a below-quorum explore spawns one consolidated recovery explorer and continues', async () => {
     // quick depth = 2 explorers, quorum 2. One fails → recovery explorer covers
     // the gap → the run proceeds normally.

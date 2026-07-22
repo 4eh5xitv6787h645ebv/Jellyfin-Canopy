@@ -34,6 +34,13 @@ const BRIEF = a.brief || '(no brief path supplied — read AGENTS.md and the tas
 // the launcher should read the brief and pass its text here — otherwise agents
 // may never open the path and will infer the task from weaker signals.
 const BRIEF_TEXT = a.briefText || ''
+// Optional environment prelude every build/test-running agent must execute
+// FIRST (workflow subagents get fresh shells, so the launcher's exports do not
+// propagate — historically the verify agent picked a system dotnet over the
+// $HOME/.dotnet toolchain). Generic hook only: the machine-specific value (e.g.
+// `export DOTNET_ROOT=$HOME/.dotnet; export PATH="$DOTNET_ROOT:$PATH"`) stays
+// on the launcher side.
+const ENV_SETUP = a.envSetup ? String(a.envSetup) : ''
 // client | server | cross | docs. An unknown value (e.g. a launcher typo like
 // "clinet") must NOT silently skip all surface-specific gates — fail closed to
 // 'cross', the superset that runs every surface's verification.
@@ -462,7 +469,7 @@ fail-closed auth/isolation/escaping/disposal/bounded work; coverage & lint caps
 are ratchets; rebuild generated bundles/manifests/snapshots/translations from
 source). Only this repository is writable; the Jellyfin-Enhanced repos are
 read-only. Never deploy to :8099, release, or mutate an external service.
-
+${ENV_SETUP ? `\nENVIRONMENT (run before ANY build/test command in every shell you open):\n  ${ENV_SETUP}\n` : ''}
 REQUIREMENT FIDELITY (binding): The acceptance criteria in the TASK / TASK BRIEF
 below are authoritative. Fix the ACTUAL reported defect and satisfy EVERY
 acceptance criterion. Do NOT infer the intended change from the branch name, and
@@ -1321,6 +1328,9 @@ review. Then run the repository-native gates for surface="${SURFACE}", in order,
 from ${WORKTREE}. Lint is ADVISORY (findings never block); every other gate is
 BLOCKING. Do not pipe wrappers through tail/grep/tee in a way that hides exit
 status. Do not run a plain suite right before its coverage variant.
+Before any dotnet gate, echo the toolchain (\`command -v dotnet && dotnet --version\`)
+as gate evidence; if DOTNET_ROOT is set, ensure $DOTNET_ROOT precedes the system
+dotnet on PATH so the repository's pinned SDK is the one that runs.
 
 HANDOFF: a non-empty \`git status --porcelain\` is a BLOCKING failure. The reviewed
 and pushable change is the committed range ${BASE}..HEAD, so any uncommitted edit
