@@ -56,15 +56,14 @@ async function fillResolvedTray(page: Page, layout: Layout): Promise<boolean> {
         const helpers = (window as any).JellyfinCanopy?.helpers;
         const tray: HTMLElement | null = helpers?.getHeaderRightContainer?.() ?? null;
         if (!tray) return false;
-        // Legacy: the native profile button (.headerUserButton) is a trailing
-        // in-flow scrolling child of the resolved .headerRight (NOT sticky-pinned —
-        // finding r5f1). The no-overlay / in-flow assertions must never pass
-        // vacuously (finding r2f2): if the seeded login DID NOT place
-        // .headerUserButton inside the resolved tray, synthesize a deterministic
-        // trailing stand-in so the avatar-scrolls-with-the-row behaviour is always
-        // exercised. The stand-in is a real trailing child of the scroll row, so it
-        // proves the behaviour whether or not the real avatar is present. It is
-        // marked so tests can report which shape ran.
+        // Legacy: the native profile button (.headerUserButton) is a trailing child
+        // of the resolved .headerRight, sticky-pinned to the scrollport's right edge
+        // (findings r6f1/r6f3/r6f5). The pinned-avatar assertions must never pass
+        // vacuously: if the seeded login DID NOT place .headerUserButton inside the
+        // resolved tray, synthesize a deterministic trailing stand-in so the
+        // avatar-stays-pinned behaviour is always exercised. The stand-in is a real
+        // trailing child of the scroll row, so it proves the behaviour whether or not
+        // the real avatar is present. It is marked so tests can report which shape ran.
         if (isLegacy && !tray.querySelector(':scope > .headerUserButton')) {
             const synthAvatar = document.createElement('button');
             synthAvatar.type = 'button';
@@ -80,7 +79,7 @@ async function fillResolvedTray(page: Page, layout: Layout): Promise<boolean> {
         // the native profile button (.headerUserButton) stays the trailing child
         // on the legacy header. Mirror that: insert the fillers BEFORE the avatar
         // (append when there is none, e.g. modern / synthetic fallback) so the
-        // avatar remains last and its in-flow scroll behaviour is exercised
+        // avatar remains last and its sticky-pin behaviour is exercised
         // realistically.
         const avatar = tray.querySelector<HTMLElement>(':scope > .headerUserButton');
         for (let i = 0; i < count; i++) {
@@ -210,11 +209,10 @@ async function diag(page: Page): Promise<string> {
  * The native legacy profile button (`.headerUserButton`) geometry. On the legacy
  * header this button is a trailing child of the resolved `.headerRight` scrollport
  * (unlike modern, where the avatar is a separate sibling Box OUTSIDE the tray). It
- * is deliberately a plain in-flow scrolling child — NOT sticky-pinned: a sticky
- * last child inside the one scrollport would translate onto the viewport edge and
- * overlay / intercept clicks for whatever button scrolls beneath it (r5f1). Reports
- * its computed position and rect so a test can prove it is in-flow (scrolls with
- * the row) rather than an overlay.
+ * is sticky-pinned (position:sticky; right:0) to the scrollport's right edge so it
+ * stays visible at rest and stationary while the icon buttons scroll beneath it
+ * (findings r6f1/r6f3/r6f5). Reports its computed position and rect so a test can
+ * prove it is pinned (does not ride the row's scroll) and on-screen at rest.
  */
 async function readLegacyAvatar(
     page: Page,
@@ -435,43 +433,53 @@ test.describe('header button tray stays a single scrollable row (#459)', () => {
 
             // On the legacy header the native profile button lives INSIDE the
             // resolved .headerRight scrollport (not a separate sibling as on
-            // modern). It must therefore be a plain IN-FLOW scrolling child — NOT
-            // sticky-pinned (finding r5f1): a `position:sticky;right:0` last child
-            // sharing the one scrollport would translate onto the viewport's right
-            // edge and overlay / intercept clicks for whatever button scrolls
-            // beneath it, producing overlapping native controls. Prove the avatar is
-            // NOT sticky and genuinely rides the row's scroll (moves with scrollLeft
-            // by ~the scroll distance), which is the anti-overlay signature — an
-            // overlay would stay clamped to the edge and barely move.
+            // modern). It must therefore be sticky-pinned (position:sticky; right:0)
+            // to the scrollport's right edge so it stays visible at rest and
+            // stationary while the icon buttons scroll beneath it — the binding
+            // pinned-avatar criterion (findings r6f1/r6f3/r6f5). Left as an ordinary
+            // in-flow child it would start off-screen once the row overflows and be
+            // reachable only after scrolling to the end. Prove the avatar IS sticky,
+            // is on-screen at rest (scrollLeft=0), and does NOT ride the row's scroll
+            // (moves ≈0px) — the pinned signature.
             if (testCase.layout === 'legacy') {
+                await scrollTray(page, 0);
                 const avatar = await readLegacyAvatar(page);
-                // Non-vacuous precondition (finding r2f2): fillResolvedTray guarantees
-                // a trailing .headerUserButton child (native, or a synthesized
-                // stand-in), so the in-flow / no-overlay criterion is ALWAYS
-                // exercised — the block cannot pass green without proving it.
+                // Non-vacuous precondition: fillResolvedTray guarantees a trailing
+                // .headerUserButton child (native, or a synthesized stand-in), so the
+                // pinned criterion is ALWAYS exercised — the block cannot pass green
+                // without proving it.
                 expect(avatar?.found, 'legacy resolved tray must contain a .headerUserButton').toBe(true);
                 {
-                    // Not an overlay: a sticky pin is exactly the r5f1 defect.
-                    expect(avatar!.position, 'legacy profile avatar must NOT be sticky-pinned (overlay)').not.toBe('sticky');
-                    await scrollTray(page, 0);
+                    // Pinned, not scrolling: the avatar is sticky-pinned to the
+                    // scrollport's right edge.
+                    expect(avatar!.position, 'legacy profile avatar must be sticky-pinned').toBe('sticky');
+                    // Visible at rest (scrollLeft=0): the pin holds it on-screen at
+                    // the right edge even before any scroll — an unpinned trailing
+                    // child would be stranded off the right edge here.
+                    expect(
+                        avatar!.right,
+                        `pinned avatar on-screen at rest (right ${avatar!.right} within viewport ${testCase.viewport.width})`,
+                    ).toBeLessThanOrEqual(testCase.viewport.width + 2);
+                    expect(avatar!.left, 'pinned avatar left edge within viewport at rest').toBeLessThan(testCase.viewport.width);
+
                     const atStart = await readLegacyAvatar(page);
                     const scrolledTo = await scrollTray(page, 'end');
                     const atEnd = await readLegacyAvatar(page);
-                    // The tray genuinely scrolled a long way (else the movement test
-                    // is vacuous). The avatar is a trailing in-flow child, so as the
-                    // row scrolls toward its end the avatar moves LEFT into view by
-                    // roughly the scroll distance — proving it is part of the scroll
-                    // content, not a fixed/sticky overlay clamped to the edge. A
-                    // sticky/overlay avatar would move ≈0px; the in-flow avatar moves
-                    // by most of the scroll distance. The threshold sits well above
-                    // any sub-pixel jitter so the two are unambiguous.
+                    // The tray genuinely scrolled a long way (else the stationarity
+                    // test is vacuous). A sticky-pinned avatar stays clamped to the
+                    // scrollport's right edge, so its viewport position barely moves
+                    // across the whole scroll — the anti-scroll signature. An in-flow
+                    // child riding the row would instead move by ≈the full scroll
+                    // distance. Assert the movement is a tiny fraction (<10%) of the
+                    // scroll: that cleanly separates a pin (a few px of sub-pixel /
+                    // scrollport-inset residual) from a rider (≈100% of the scroll),
+                    // without over-fitting to an exact sub-pixel value.
                     expect(scrolledTo, 'tray scrolled a meaningful distance').toBeGreaterThan(200);
                     expect(
                         Math.abs(atEnd!.left - atStart!.left),
-                        `avatar rides the scroll, not an overlay (moved ${Math.abs(atEnd!.left - atStart!.left).toFixed(1)}px over a ${scrolledTo}px scroll)`,
-                    ).toBeGreaterThan(scrolledTo / 2);
-                    // At the scroll end the trailing avatar is on-screen within the
-                    // viewport (reachable, not stranded past the right edge).
+                        `pinned avatar stays put, does not ride the scroll (moved ${Math.abs(atEnd!.left - atStart!.left).toFixed(1)}px over a ${scrolledTo}px scroll)`,
+                    ).toBeLessThan(scrolledTo * 0.1);
+                    // Still on-screen within the viewport at the scroll end.
                     expect(atEnd!.right).toBeLessThanOrEqual(testCase.viewport.width + 2);
                     expect(atEnd!.left).toBeLessThan(testCase.viewport.width);
                 }
