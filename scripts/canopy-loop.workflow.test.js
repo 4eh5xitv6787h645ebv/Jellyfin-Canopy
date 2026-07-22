@@ -453,6 +453,57 @@ test('a verify-fix that commits after a clean review round is not ready-for-PR',
     assert.ok(r.residualRisks.some((s) => /never adversarially reviewed/i.test(s)));
 });
 
+test('a verify-fixer that commits but returns null is still caught by the HEAD-sha check', async () => {
+    // The fixer commits real code, then dies before reporting (null / throw /
+    // omitted commits array). The old commits-array-only detection would leave
+    // verifyFixCommitted false and certify unreviewed code. HEAD moving between
+    // the failing verify and the green re-verify must mark the branch unreviewed
+    // regardless of what the fixer reported.
+    const { agent } = makeAgent((_p, opts) => {
+        const l = opts.label || '';
+        if (l === 'verify') return { gates: [{ name: 'g', pass: false }], allBlockingPassed: false, failures: ['boom'], headSha: 'aaa111' };
+        if (l.startsWith('verify-retry')) return { gates: [{ name: 'g', pass: true }], allBlockingPassed: true, e2e: { run: false, pass: true }, headSha: 'bbb222' };
+        if (l.startsWith('verify-fix')) return null; // committed, then failed to report
+        return undefined;
+    });
+    const r = await runWorkflow(baseArgs(), agent, parallel, phase, () => {});
+    assert.equal(r.loopClean, true, 'the review round itself was clean');
+    assert.equal(r.verifyFixCommitted, true, 'HEAD moved after a verify-fix → unreviewed commits');
+    assert.equal(r.readyForPR, false);
+    assert.ok(r.residualRisks.some((s) => /never adversarially reviewed/i.test(s)));
+});
+
+test('an unverifiable HEAD after a verify-fix fails closed', async () => {
+    // If the re-verify cannot report HEAD at all, the loop cannot prove the
+    // fixer did NOT commit — treat the branch as unreviewed (fail closed).
+    const { agent } = makeAgent((_p, opts) => {
+        const l = opts.label || '';
+        if (l === 'verify') return { gates: [{ name: 'g', pass: false }], allBlockingPassed: false, failures: ['boom'], headSha: 'aaa111' };
+        if (l.startsWith('verify-retry')) return { gates: [{ name: 'g', pass: true }], allBlockingPassed: true, e2e: { run: false, pass: true } }; // no headSha
+        if (l.startsWith('verify-fix')) return { applied: [], commits: [] }; // claims nothing committed
+        return undefined;
+    });
+    const r = await runWorkflow(baseArgs(), agent, parallel, phase, () => {});
+    assert.equal(r.verifyFixCommitted, true, 'unreadable HEAD after a fix attempt fails closed');
+    assert.equal(r.readyForPR, false);
+});
+
+test('an unchanged HEAD across a no-op verify-fix attempt stays ready-for-PR', async () => {
+    // The fixer ran but proved it committed nothing, and HEAD is identical
+    // across verify runs — the reviewed range is unchanged, so a green re-verify
+    // may certify.
+    const { agent } = makeAgent((_p, opts) => {
+        const l = opts.label || '';
+        if (l === 'verify') return { gates: [{ name: 'g', pass: false }], allBlockingPassed: false, failures: ['flake'], headSha: 'aaa111' };
+        if (l.startsWith('verify-retry')) return { gates: [{ name: 'g', pass: true }], allBlockingPassed: true, e2e: { run: false, pass: true }, headSha: 'aaa111' };
+        if (l.startsWith('verify-fix')) return { applied: [], commits: [] };
+        return undefined;
+    });
+    const r = await runWorkflow(baseArgs(), agent, parallel, phase, () => {});
+    assert.equal(r.verifyFixCommitted, false, 'identical HEAD + empty commits report → nothing unreviewed');
+    assert.equal(r.readyForPR, true);
+});
+
 test('an unknown surface coerces to cross and runs every surface gate', async () => {
     const { agent, calls } = makeAgent(null);
     await runWorkflow(baseArgs({ surface: 'clinet', runtime: false }), agent, parallel, phase, () => {});

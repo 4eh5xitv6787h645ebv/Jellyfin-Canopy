@@ -505,6 +505,7 @@ const VERIFY_SCHEMA = {
   additionalProperties: true,
   required: ['gates', 'allBlockingPassed'],
   properties: {
+    headSha: { type: 'string', description: 'exact output of `git rev-parse HEAD` in the worktree, read BEFORE running any gate' },
     gates: { type: 'array', items: { type: 'object', additionalProperties: true, required: ['name', 'pass'], properties: { name: { type: 'string' }, pass: { type: 'boolean' }, evidence: { type: 'string' } } } },
     allBlockingPassed: { type: 'boolean', description: 'true if every BLOCKING gate passed (lint is advisory, not blocking)' },
     e2e: { type: 'object', additionalProperties: true, properties: { run: { type: 'boolean' }, pass: { type: 'boolean' }, evidence: { type: 'string' } } },
@@ -1054,7 +1055,14 @@ let vround = 0
 // cleanRound. Those commits never appeared in any reviewer's diff, so reusing the
 // stale cleanRound to certify them is unsafe. Track whether any verify-fix
 // actually committed; if so the final diff is unreviewed and NOT ready for PR.
+// Detection is TWO-channel (fail closed): the fixer's own commits report, AND an
+// independent HEAD-sha comparison across verify runs — a fixer that commits and
+// then returns null/throws/omits its commits can not slip unreviewed code past
+// the certification. If HEAD cannot be established after a fix attempt, the loop
+// cannot prove nothing was committed, so it also fails closed.
 let verifyFixCommitted = false
+let lastVerifyHead = null // headSha from the most recent verify run
+let verifyFixAttempted = false // a verify-fix agent ran since that verify
 while (vround <= SIZING.verifyFixCap && !systemicFailure) {
   // FINAL VERIFY stays on Claude (authoritative gate run) — never split to Sol.
   verify = await safely(
@@ -1062,7 +1070,9 @@ while (vround <= SIZING.verifyFixCap && !systemicFailure) {
       agent(
         `${CONTRACTS}
 
-PHASE: VERIFY. Run the repository-native gates for surface="${SURFACE}", in order,
+PHASE: VERIFY. FIRST run \`git -C ${WORKTREE} rev-parse HEAD\` and report the exact
+sha as headSha — the loop uses it to prove no unreviewed commit slipped in after
+review. Then run the repository-native gates for surface="${SURFACE}", in order,
 from ${WORKTREE}. Lint is ADVISORY (findings never block); every other gate is
 BLOCKING. Do not pipe wrappers through tail/grep/tee in a way that hides exit
 status. Do not run a plain suite right before its coverage variant.
@@ -1083,6 +1093,19 @@ ALL BLOCKING gates passed, the e2e result if run, and a list of failures.`,
     { gates: [], allBlockingPassed: false, failures: ['verify agent did not return structured output'] },
     'Verify'
   )
+
+  const reportedHead = verify && typeof verify.headSha === 'string' && verify.headSha.trim() ? verify.headSha.trim() : null
+  if (verifyFixAttempted) {
+    // A fixer ran since the last verify. Any HEAD movement — or an inability to
+    // read HEAD on either side — means possibly-unreviewed commits (fail closed),
+    // regardless of what the fixer itself reported.
+    if (!reportedHead || !lastVerifyHead || reportedHead !== lastVerifyHead) {
+      if (!verifyFixCommitted) log('Verify: HEAD changed (or was unreadable) across a verify-fix attempt — marking the branch as carrying unreviewed commits')
+      verifyFixCommitted = true
+    }
+    verifyFixAttempted = false
+  }
+  if (reportedHead) lastVerifyHead = reportedHead
 
   const gatesOk = verify && verify.allBlockingPassed
   const e2eOk = !RUNTIME || (verify && verify.e2e && verify.e2e.pass)
@@ -1118,6 +1141,7 @@ ${JSON.stringify((verify && verify.failures) || [], null, 1).slice(0, 8000)}`,
     null,
     `Verify fixer (attempt ${vround})`
   )
+  verifyFixAttempted = true
   if (vfix && Array.isArray(vfix.commits) && vfix.commits.length) verifyFixCommitted = true
 }
 
@@ -1173,6 +1197,10 @@ const result = {
   canonicalPlan: canonicalPlan || null,
   verify: verify || null,
   verifyFixCommitted,
+  // Last HEAD sha independently reported by a verify run (null when verify never
+  // ran, e.g. a paused run) — lets the launcher pin resume/PR actions to the
+  // exact commit that was verified.
+  headSha: lastVerifyHead,
   readyForPR: !PAUSED && implementationOk && cleanRound && !reviewIncomplete && !verifyFixCommitted && blockingGreen && e2eGreen,
   residualRisks: []
     .concat(
