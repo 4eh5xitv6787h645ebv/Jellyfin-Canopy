@@ -1196,6 +1196,13 @@ let cleanRound = false
 // Set only when a round TERMINATES the loop with incomplete coverage — a reviewer
 // or a finding-verifier failed to return — so we never certify such a round clean.
 let reviewIncomplete = false
+// Set when a fix round does NOT fully apply its confirmed findings (the fixer
+// returned null, reported any `unresolved` id, or failed to apply every confirmed
+// id). Distinct from reviewIncomplete (which is a COVERAGE gap): here coverage was
+// complete but the fixer's OWN report says the defect is still in the diff, so a
+// later — possibly non-deterministically empty — clean round must not certify it.
+// A subsequent fixer that fully applies clears it.
+let unfixedConfirmed = false
 const MIXED_ROUND_CAP = SIZING.roundCap
 let round = 0
 if (START_PHASE === 'verify') {
@@ -1340,7 +1347,6 @@ SCENARIO: ${f.failureScenario}`,
     )
     break
   }
-  confirmedAll.push(...confirmed.map((f) => ({ ...f, round })))
   // A finding whose verifier failed to return is neither confirmed nor refuted:
   // that scope is unresolved even though we DID confirm (and will fix) others in
   // the same batch. Don't let the fixed-confirmed path silently drop it — mark the
@@ -1357,6 +1363,13 @@ SCENARIO: ${f.failureScenario}`,
   }
   log(`Review round ${round}: ${confirmed.length} confirmed → fixing`)
 
+  // Stable per-finding ids the fixer reports back in applied/unresolved, so we
+  // trust the fixer's OWN account of what it fixed rather than assuming a non-null
+  // return resolved everything (a fixer that returns applied:[], unresolved:[…]
+  // otherwise got its findings marked fixed and could be certified by the next
+  // empty round — the reproduced fail-open).
+  const fixIds = confirmed.map((_, i) => `r${round}f${i + 1}`)
+  const confirmedForFixer = confirmed.map((f, i) => ({ id: fixIds[i], ...f }))
   // Wrap the code-writing fixer in safely(): a StructuredOutput retry-cap throw
   // must NOT abort the whole workflow — verify still needs to run and report.
   const fixResult = await safely(
@@ -1373,18 +1386,43 @@ path — or making a second fix to the same state machine/owner — STOP and try
 deletion, reuse, or single ownership first; simpler is required over another
 guard. Do not fix anything not listed. ${COMMIT_RULE}
 
+REPORT HONESTLY: return \`applied\` = the \`id\`s you FULLY fixed and committed, and
+\`unresolved\` = the \`id\`s you could NOT fix. Every confirmed \`id\` below MUST
+appear in exactly one of the two lists — do not claim an id you did not commit a
+real fix for. A finding you leave out or list in \`unresolved\` blocks certification
+(honest is better than a false clean).
+
 CONFIRMED FINDINGS:
-${JSON.stringify(confirmed, null, 1).slice(0, 10000)}`,
+${JSON.stringify(confirmedForFixer, null, 1).slice(0, 10000)}`,
         { schema: FIX_SCHEMA, agentType: 'general-purpose', effort: 'high', phase: 'Review', label: `fix-r${round}` }
       ),
     null,
     `Review fixer (round ${round})`
   )
-  // Ledger: only findings the fixer actually processed count as fixed. A
-  // failed/null fixer leaves them unresolved so later rounds MAY re-report them.
-  if (fixResult)
-    for (const f of confirmed)
+  const appliedSet = new Set(
+    fixResult && Array.isArray(fixResult.applied) ? fixResult.applied.map((x) => String(x).trim()) : []
+  )
+  const reportedUnresolved =
+    fixResult && Array.isArray(fixResult.unresolved) ? fixResult.unresolved.filter((x) => x != null && String(x).trim()) : []
+  // Ledger + resolved-count: ONLY findings the fixer reports applied (by id) count
+  // as fixed/resolved. Everything else stays out of the "fixed" ledger so later
+  // rounds MAY re-report it.
+  confirmed.forEach((f, i) => {
+    if (fixResult && appliedSet.has(fixIds[i])) {
       ledger.push({ file: f.file, line: f.line || 0, summary: String(f.summary || '').slice(0, 140), status: 'fixed', reason: `applied by the round-${round} fixer`, round })
+      confirmedAll.push({ ...f, round })
+    }
+  })
+  // A fixer that returns null, reports ANY unresolved id, or fails to apply every
+  // confirmed id has NOT resolved the round. Flag the run so a later (possibly
+  // non-deterministically empty) clean round cannot certify still-present defects;
+  // a subsequent fixer that FULLY applies clears the flag.
+  const fullyApplied = !!fixResult && reportedUnresolved.length === 0 && fixIds.every((id) => appliedSet.has(id))
+  if (fullyApplied) unfixedConfirmed = false
+  else {
+    unfixedConfirmed = true
+    log(`Review round ${round}: fixer applied ${appliedSet.size}/${fixIds.length} confirmed finding(s)${reportedUnresolved.length ? `, ${reportedUnresolved.length} unresolved` : ''}${fixResult ? '' : ' (fixer returned nothing)'} → run cannot certify until they are fixed`)
+  }
 }
 if (!cleanRound && START_PHASE !== 'verify')
   log(
@@ -1639,7 +1677,7 @@ const result = {
   // ran, e.g. a paused run) — lets the launcher pin resume/PR actions to the
   // exact commit that was verified.
   headSha: lastVerifyHead,
-  readyForPR: !PAUSED && implementationOk && cleanRound && !reviewIncomplete && !verifyFixCommitted && blockingGreen && e2eGreen,
+  readyForPR: !PAUSED && implementationOk && cleanRound && !reviewIncomplete && !unfixedConfirmed && !verifyFixCommitted && blockingGreen && e2eGreen,
   residualRisks: []
     .concat(
       PAUSED
@@ -1658,6 +1696,7 @@ const result = {
         : []
     )
     .concat(cleanRound || reviewIncomplete ? [] : ['review loop hit its round cap with unresolved confirmed findings'])
+    .concat(unfixedConfirmed ? ['a review fixer left confirmed findings unapplied/unresolved — the branch is NOT certified; re-run the review loop before opening a PR'] : [])
     .concat(verifyFixCommitted ? ['verify-fix committed code AFTER the clean review round — those commits were never adversarially reviewed; re-run the review loop before opening a PR'] : [])
     .concat(blockingGreen ? [] : ['one or more BLOCKING gates are failing'])
     .concat(e2eGreen ? [] : ['e2e:local did not pass'])

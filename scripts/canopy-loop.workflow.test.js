@@ -47,7 +47,7 @@ function baseArgs(extra) {
 }
 
 // Canonical "everything succeeds" response for each labelled agent call.
-function happy(opts) {
+function happy(opts, prompt) {
     const label = (opts && opts.label) || '';
     const ph = (opts && opts.phase) || '';
     if (label.startsWith('explore')) return { owningLayer: 'x', files: [{ path: 'a', role: 'r' }], consumers: [], contracts: [], testSeams: [] };
@@ -55,7 +55,12 @@ function happy(opts) {
     if (label.startsWith('implement')) return { changedFiles: ['f'], commits: ['c'], selfConfidence: 'high', openTodos: [] };
     if (ph === 'Review') {
         if (label.startsWith('verify-r')) return { real: false, reason: 'refuted' };
-        if (label.startsWith('fix-r')) return { applied: ['a'], commits: ['c'] };
+        if (label.startsWith('fix-r')) {
+            // A fully-resolving fixer: echo back every confirmed finding id in the
+            // prompt as applied (the loop now trusts applied/unresolved by id).
+            const ids = [...String(prompt || '').matchAll(/"id":\s*"(r\d+f\d+)"/g)].map((m) => m[1]);
+            return { applied: ids, unresolved: [], commits: ['c'] };
+        }
         return { findings: [] }; // reviewers: review-r*, sol-r*, sol-cli-r*
     }
     if (ph === 'Verify') {
@@ -79,7 +84,7 @@ function makeAgent(override) {
                 return r;
             }
         }
-        return happy(opts);
+        return happy(opts, prompt);
     };
     return { agent, calls };
 }
@@ -331,7 +336,7 @@ test('a throwing review fixer exhausts the round cap and is never ready-for-PR',
     const r = await runWorkflow(baseArgs(), agent, parallel, phase, () => {});
     // Workflow resolves with a structured result rather than throwing out.
     assert.equal(typeof r, 'object');
-    assert.ok(r.confirmedFindingsResolved >= 1);
+    assert.equal(r.confirmedFindingsResolved, 0, 'a throwing fixer applies nothing → nothing counts resolved');
     assert.equal(r.loopClean, false, 'a round with an unfixed confirmed finding is not clean');
     assert.equal(r.reviewIncomplete, false, 'coverage was complete — the finding was confirmed, not lost');
     assert.equal(r.readyForPR, false, 'unresolved confirmed findings must block ready-for-PR');
@@ -339,6 +344,62 @@ test('a throwing review fixer exhausts the round cap and is never ready-for-PR',
         r.residualRisks.some((s) => /round cap with unresolved confirmed findings/i.test(s)),
         'the round-cap residual risk is reported',
     );
+});
+
+test('a fixer that reports a finding unresolved blocks certification even if a later round is clean', async () => {
+    // The reproduced fail-open: the fixer explicitly returns applied:[],
+    // unresolved:[id], yet the next round happens to come back empty. Trusting that
+    // empty round would certify a still-present defect — the fixer's own report
+    // must block it.
+    const { agent } = makeAgent((_p, opts) => {
+        const l = opts.label || '';
+        if (l === 'review-r1:1') return finding('needs a real fix');
+        if (l === 'verify-r1:1') return { real: true, reason: 'confirmed' };
+        if (l === 'fix-r1') return { applied: [], unresolved: ['r1f1'], commits: [] }; // fixer admits it could not fix
+        return undefined; // round 2 reviewers return empty (a non-deterministic miss)
+    });
+    const r = await runWorkflow(baseArgs(), agent, parallel, phase, () => {});
+    assert.equal(r.loopClean, true, 'round 2 was clean (reviewers missed the still-present defect)');
+    assert.equal(r.reviewIncomplete, false, 'coverage itself was complete — this is a fixer failure, not a lost scope');
+    assert.equal(r.readyForPR, false, 'an unresolved confirmed finding must block ready-for-PR');
+    assert.equal(r.confirmedFindingsResolved, 0, 'nothing was actually applied');
+    assert.ok(r.residualRisks.some((s) => /unapplied\/unresolved/i.test(s)));
+    assert.ok(!r.ledger.some((e) => e.status === 'fixed'), 'an unfixed finding is never ledgered as fixed');
+});
+
+test('a fixer that applies only SOME confirmed findings does not certify', async () => {
+    // Two confirmed findings; the fixer applies one and silently drops the other
+    // (neither in applied nor unresolved). Fail closed on the dropped id.
+    const { agent } = makeAgent((_p, opts) => {
+        const l = opts.label || '';
+        if (l === 'review-r1:1')
+            return {
+                findings: [
+                    { file: 'a.js', line: 1, severity: 'major', summary: 'A', failureScenario: 'x' },
+                    { file: 'b.js', line: 2, severity: 'major', summary: 'B', failureScenario: 'y' },
+                ],
+            };
+        if (/^verify-r1:\d+$/.test(l)) return { real: true, reason: 'both real' };
+        if (l === 'fix-r1') return { applied: ['r1f1'], unresolved: [], commits: ['c'] }; // r1f2 dropped
+        return undefined;
+    });
+    const r = await runWorkflow(baseArgs(), agent, parallel, phase, () => {});
+    assert.equal(r.readyForPR, false, 'a confirmed finding neither applied nor unresolved blocks certification');
+    assert.equal(r.confirmedFindingsResolved, 1, 'only the applied finding is counted resolved');
+});
+
+test('a fixer that fully applies every confirmed finding certifies (applied ids honored)', async () => {
+    const { agent } = makeAgent((_p, opts) => {
+        const l = opts.label || '';
+        if (l === 'review-r1:1') return finding('fix me');
+        if (l === 'verify-r1:1') return { real: true, reason: 'confirmed' };
+        if (l === 'fix-r1') return { applied: ['r1f1'], unresolved: [], commits: ['c'] };
+        return undefined;
+    });
+    const r = await runWorkflow(baseArgs(), agent, parallel, phase, () => {});
+    assert.equal(r.confirmedFindingsResolved, 1, 'the applied finding counts as resolved');
+    assert.equal(r.readyForPR, true);
+    assert.ok(r.ledger.some((e) => e.status === 'fixed'));
 });
 
 test('a throwing verify fixer does not abort the whole workflow', async () => {
