@@ -83,6 +83,8 @@ Workflow({
     runtime:  true,                                       // true → also run e2e:local
     depth:    "standard",                                 // "quick" | "standard" | "deep"
     startPhase: "explore",       // "review"/"verify" resume a paused run on the same branch
+    reviewedHead: "<sha>",       // with startPhase:"verify" ONLY: the HEAD the paused run was
+                                 // clean at — certifies the prior review iff verify reports the same HEAD
     envSetup: "<shell prelude every build/test agent runs first (e.g. DOTNET_ROOT exports)>",
     reviewMode: "spec",          // opt-in spec-authoring lenses (acceptance traceability, …)
 
@@ -108,10 +110,16 @@ Workflow({
   failure (session/usage limit, quota, credits) the loop STOPS spawning agents
   and returns `status:"paused"` with `pauseReason` and `resumeFrom`; relaunch
   later with `startPhase:"review"` (or `"verify"`) on the same branch instead of
-  re-burning explore/plan/implement. A verify-only resume never certifies
-  `readyForPR`. For campaigns over an issue queue, relaunch per issue with
-  `issue: N` (self-hydrating brief) and persist each run's returned
-  `resumeFrom`/`headSha` as the per-issue checkpoint.
+  re-burning explore/plan/implement. A verify-only resume normally never certifies
+  `readyForPR` — **except** when the pause came AFTER a certified-clean review
+  round (`resumeFrom.phase==="verify"`, the run's `loopClean` was true): record the
+  paused run's returned `headSha` (or `git -C <worktree> rev-parse HEAD`) and
+  resume with `startPhase:"verify"` **plus** `reviewedHead:<that sha>`. The run
+  certifies iff the verify agent independently reports the same HEAD (proving no
+  commit changed since the clean review); any mismatch stays fail-closed. For
+  campaigns over an issue queue, relaunch per issue with `issue: N` (self-hydrating
+  brief) and persist each run's returned `resumeFrom`/`headSha`/`loopClean` as the
+  per-issue checkpoint.
 
 ### Model routing
 

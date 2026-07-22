@@ -160,6 +160,39 @@ test('startPhase:"verify" runs gates only and can NEVER certify readyForPR (fail
     assert.ok(r.residualRisks.some((s) => /review loop was SKIPPED/i.test(s)));
 });
 
+test('startPhase:"verify" + reviewedHead matching the verified HEAD certifies the prior clean review', async () => {
+    // The #454 window: a run died AFTER a clean review round, during Verify. On
+    // resume the launcher passes back the sha it was clean at; the verify agent
+    // independently reports the SAME HEAD → the prior clean review still covers
+    // this exact range, so the run certifies without re-reviewing.
+    const { agent, calls } = makeAgent((_p, opts) => {
+        if (opts.phase === 'Verify' && (opts.label || '').startsWith('verify'))
+            return { gates: [{ name: 'g', pass: true }], allBlockingPassed: true, e2e: { run: false, pass: true }, headSha: 'deadbeefcafe' };
+        return undefined;
+    });
+    const r = await runWorkflow(baseArgs({ startPhase: 'verify', reviewedHead: 'deadbeefcafe' }), agent, parallel, phase, () => {});
+    assert.ok(!calls.some((c) => c.opts.phase === 'Review'), 'no review agents on a verify-only resume');
+    assert.equal(r.loopClean, true, 'prior clean review certified via reviewedHead match');
+    assert.equal(r.reviewIncomplete, false);
+    assert.equal(r.readyForPR, true, 'a verified HEAD == reviewedHead certifies without re-running review');
+    assert.ok(!r.residualRisks.some((s) => /review loop was SKIPPED/i.test(s)), 'no skipped-review residual when certified');
+});
+
+test('startPhase:"verify" + reviewedHead that does NOT match the verified HEAD stays fail-closed', async () => {
+    // A commit changed since the clean review (or the sha is stale): the prior
+    // review no longer covers this range, so the run must NOT certify.
+    const { agent } = makeAgent((_p, opts) => {
+        if (opts.phase === 'Verify' && (opts.label || '').startsWith('verify'))
+            return { gates: [{ name: 'g', pass: true }], allBlockingPassed: true, e2e: { run: false, pass: true }, headSha: 'aaaa1111' };
+        return undefined;
+    });
+    const r = await runWorkflow(baseArgs({ startPhase: 'verify', reviewedHead: 'bbbb2222' }), agent, parallel, phase, () => {});
+    assert.equal(r.loopClean, false, 'a HEAD mismatch does not certify');
+    assert.equal(r.reviewIncomplete, true);
+    assert.equal(r.readyForPR, false);
+    assert.ok(r.residualRisks.some((s) => /review loop was SKIPPED/i.test(s)));
+});
+
 test('an unknown startPhase falls back to a full run', async () => {
     const { agent, calls } = makeAgent(null);
     const r = await runWorkflow(baseArgs({ startPhase: 'implment' }), agent, parallel, phase, () => {});

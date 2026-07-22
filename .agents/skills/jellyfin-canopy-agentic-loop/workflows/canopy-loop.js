@@ -61,8 +61,20 @@ const BASE = a.base || 'origin/main'
 //   'review'  — skip Explore/Plan/Implement, adversarially review the committed
 //               range, then verify (can certify readyForPR — review runs fully);
 //   'verify'  — additionally skip the review loop: gates only. A verify-only
-//               resume can NEVER certify readyForPR (fail closed — no review ran).
+//               resume normally can NEVER certify readyForPR (fail closed — no
+//               review ran), UNLESS the launcher passes reviewedHead (below).
 const START_PHASE = ['explore', 'review', 'verify'].includes(a.startPhase) ? a.startPhase : 'explore'
+// reviewedHead escape hatch (fail-closed sha match). The primary #454 scenario is
+// a run that dies AFTER a certified-clean review round but during Localize/Verify
+// — it pauses with resumeFrom.phase='verify' and returns headSha. On the resume
+// the launcher passes that exact sha back as reviewedHead; IFF the verify agent
+// INDEPENDENTLY reports HEAD byte-identical to it, the prior clean review still
+// covers this exact commit range and the run certifies without re-reviewing. Any
+// mismatch, absence, or unreadable HEAD keeps the fail-closed default. Launcher
+// protocol: on status:'paused' with resumeFrom.phase==='verify' AND loopClean:true,
+// record `git -C <worktree> rev-parse HEAD` (or reuse the returned headSha) and
+// resume with startPhase:'verify' + reviewedHead:<that sha>.
+const REVIEWED_HEAD = a.reviewedHead ? String(a.reviewedHead).trim() : ''
 // User policy: INCLUDE the issue number in commit messages (traceability). Derived
 // from the branch (fix/issue-<N>) or args.issue. The main thread additionally puts
 // "Closes #<N>" in the PR body so a merge auto-closes the issue + moves the board item.
@@ -1134,11 +1146,14 @@ let reviewIncomplete = false
 const MIXED_ROUND_CAP = SIZING.roundCap
 let round = 0
 if (START_PHASE === 'verify') {
-  // Verify-only resume: the review loop is SKIPPED, so this run can never
-  // certify the branch clean — readyForPR stays false (fail closed). Use
-  // startPhase:'review' (or a full run) to certify.
+  // Verify-only resume: the review loop is SKIPPED, so by default this run can
+  // never certify the branch clean — readyForPR stays false (fail closed). The
+  // reviewedHead escape hatch may flip this AFTER verify establishes HEAD (see
+  // the post-verify block); use startPhase:'review' (or a full run) otherwise.
   reviewIncomplete = true
-  log('verify-only resume: review loop skipped — this run cannot certify readyForPR (fail closed)')
+  if (REVIEWED_HEAD)
+    log(`verify-only resume: review loop skipped — will certify the prior clean review IFF verify reports HEAD === reviewedHead (${REVIEWED_HEAD.slice(0, 12)}…)`)
+  else log('verify-only resume: review loop skipped — this run cannot certify readyForPR (fail closed)')
 }
 while (round < HARD_ROUND_CAP && !cleanRound && !halted() && START_PHASE !== 'verify') {
   round++
@@ -1476,6 +1491,24 @@ ${JSON.stringify((verify && verify.failures) || [], null, 1).slice(0, 8000)}`,
   if (vfix && Array.isArray(vfix.commits) && vfix.commits.length) verifyFixCommitted = true
 }
 
+// reviewedHead escape hatch (resolved here — needs the verify agent's HEAD). A
+// verify-only resume that was paused AFTER a certified-clean review round can now
+// certify IFF the launcher-supplied reviewedHead exactly equals the HEAD the
+// verify agent independently reported: identical shas prove no commit changed
+// since the clean review, so its coverage still holds for this exact range. Any
+// mismatch, missing sha, or unreadable HEAD keeps the fail-closed default above.
+let reviewedHeadCertified = false
+if (START_PHASE === 'verify' && REVIEWED_HEAD) {
+  if (lastVerifyHead && lastVerifyHead === REVIEWED_HEAD) {
+    cleanRound = true
+    reviewIncomplete = false
+    reviewedHeadCertified = true
+    log(`verify-only resume: verify HEAD ${lastVerifyHead.slice(0, 12)}… matches reviewedHead — prior clean review certified, no re-review needed`)
+  } else {
+    log(`verify-only resume: reviewedHead ${REVIEWED_HEAD.slice(0, 12)}… ≠ verify HEAD ${lastVerifyHead ? lastVerifyHead.slice(0, 12) + '…' : '(unreadable)'} — NOT certifying (fail closed)`)
+  }
+}
+
 // ── return structured result for the main thread to relay + act on ──────────
 const blockingGreen = !!(verify && verify.allBlockingPassed)
 const e2eGreen = !RUNTIME || !!(verify && verify.e2e && verify.e2e.pass)
@@ -1557,8 +1590,8 @@ const result = {
     .concat(implemented || PAUSED ? [] : ['implementation did not complete — both implementer models failed to return a result'])
     .concat(openTodos.length ? ['implementer left open acceptance-criteria TODOs — change is incomplete'] : [])
     .concat(
-      START_PHASE === 'verify'
-        ? ['verify-only resume: the adversarial review loop was SKIPPED — run startPhase:"review" (or a full run) before opening a PR']
+      START_PHASE === 'verify' && !reviewedHeadCertified
+        ? ['verify-only resume: the adversarial review loop was SKIPPED — pass reviewedHead:<the paused clean HEAD> to certify, or run startPhase:"review" (or a full run) before opening a PR']
         : reviewIncomplete
         ? ['adversarial review ended with incomplete coverage (a reviewer or finding-verifier failed) — the round could not be certified clean']
         : []

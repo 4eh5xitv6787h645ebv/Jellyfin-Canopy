@@ -52,6 +52,8 @@ oracle.
        runtime:  true,
        depth:    "quick" | "standard" | "deep",
        startPhase: "explore",      // resume a paused/limit-killed run with "review" or "verify"
+       reviewedHead: "<sha>",      // verify-resume only: certifies the prior clean review when
+                                   // verify reports this exact HEAD (record the paused run's headSha)
        envSetup: "<shell prelude run before any build/test, e.g. DOTNET_ROOT exports>",
        reviewMode: "spec",         // opt-in for specification authoring (spec lenses)
        solVia:   "codex-cli",      // default; or "agent" (needs a Sol-capable router)
@@ -95,9 +97,12 @@ The loop serves two envelopes:
 - **FEATURES** — large multi-day work: run `standard`/`deep`; the loop survives
   provider outages by returning `status:"paused"` with `pauseReason` +
   `resumeFrom` instead of burning retries, and a later session re-enters with
-  `startPhase:"review"`/`"verify"` against the same branch. Campaigns over an
-  issue queue relaunch per issue (`issue: N` self-hydrates the brief) and use
-  the returned resume fields as the per-issue checkpoint.
+  `startPhase:"review"`/`"verify"` against the same branch. A verify-only resume
+  is fail-closed (no review ran) unless the pause followed a clean review round:
+  pass `reviewedHead:<the returned headSha>` and it certifies iff verify reports
+  that exact HEAD. Campaigns over an issue queue relaunch per issue (`issue: N`
+  self-hydrates the brief) and use the returned resume fields as the per-issue
+  checkpoint.
 
 ### Model routing
 
