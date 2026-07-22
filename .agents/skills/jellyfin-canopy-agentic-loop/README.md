@@ -83,7 +83,8 @@ hard cap to mixed-cap+1 instead — prose does not converge under a ten-round
 escalation, and unresolved docs findings go back to a human.
 
 `surface` selects which repo-native gates run (docs runs also use 4
-docs-specific explore angles and skip Localize); `runtime:true` additionally
+docs-specific explore angles and skip Localize — `server` runs skip Localize too,
+having no client locale surface); `runtime:true` additionally
 builds the Release DLL and runs `npm run e2e:local` (dockerized
 `jellyfin/jellyfin:unstable`).
 
