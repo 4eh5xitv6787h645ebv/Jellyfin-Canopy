@@ -453,6 +453,56 @@ test('a verify-fix that commits after a clean review round is not ready-for-PR',
     assert.ok(r.residualRisks.some((s) => /never adversarially reviewed/i.test(s)));
 });
 
+test('three consecutive Sol failures trip the breaker: later rounds spawn no Sol attempts', async () => {
+    // Every Sol-routed agent throws (dead router). Round 1 burns its attempts
+    // (that is where the 3 consecutive failures accrue); a confirmed finding
+    // forces round 2, which must go STRAIGHT to Claude — zero sol-r2 spawns.
+    const { agent, calls } = makeAgent((_p, opts) => {
+        const l = opts.label || '';
+        if (opts.model === 'gpt-5.6-sol') return { __throw: 'router down' };
+        if (l === 'review-r1:1') return finding('real defect');
+        if (l === 'verify-r1:1') return { real: true, reason: 'confirmed' };
+        return undefined;
+    });
+    const r = await runWorkflow(baseArgs(), agent, parallel, phase, () => {});
+    assert.ok(r.reviewRounds >= 2, 'a second round ran');
+    assert.ok(!calls.some((c) => /^sol-r2:/.test(c.opts.label || '')), 'no Sol reviewer spawned after the breaker tripped');
+    assert.ok(calls.some((c) => /^review-r2:/.test(c.opts.label || '')), 'round-2 scopes covered by Claude');
+    assert.equal(r.modelCoverage.solDead, true);
+    assert.ok(r.modelCoverage.roundsWithoutSol.includes(1), 'the Sol-less round is visible');
+    assert.ok(
+        r.residualRisks.some((s) => /WITHOUT real cross-family/i.test(s)),
+        'the lost cross-family coverage is a named residual risk',
+    );
+});
+
+test('modelCoverage reports requested vs actual per slot class on a healthy run', async () => {
+    const { agent } = makeAgent(null);
+    const r = await runWorkflow(baseArgs({ depth: 'standard' }), agent, parallel, phase, () => {});
+    assert.equal(r.modelCoverage.solDead, false);
+    assert.deepEqual(r.modelCoverage.roundsWithoutSol, []);
+    assert.ok(r.modelCoverage.slots.Explore.ranSol >= 1, 'explore Sol slots recorded');
+    assert.ok(r.modelCoverage.slots.Review.ranSol >= 1, 'review Sol slots recorded');
+    assert.equal(r.modelCoverage.slots.Explore.claudeFallback, 0, 'no silent fallbacks on a healthy route');
+});
+
+test('a Sol success resets the breaker counter (two failures never trip it)', async () => {
+    // Sol lens slots fail twice in round 1 but the whole-diff Sol reviewer
+    // succeeds — the counter resets, solDead stays false.
+    let solFails = 0;
+    const { agent } = makeAgent((_p, opts) => {
+        const l = opts.label || '';
+        if (opts.model === 'gpt-5.6-sol' && /^sol-r1:[12]$/.test(l) && solFails < 2) {
+            solFails++;
+            return { __throw: 'transient' };
+        }
+        return undefined;
+    });
+    const r = await runWorkflow(baseArgs(), agent, parallel, phase, () => {});
+    assert.equal(r.modelCoverage.solDead, false, 'two non-consecutive-with-success failures never kill the route');
+    assert.equal(r.readyForPR, true);
+});
+
 test('docs surface: confirmed minors become advisory notes and the round counts clean', async () => {
     // A confirmed MINOR wording-adjacent defect on a docs surface must not force
     // another full fix round: it is reported in advisoryNotes and the round is

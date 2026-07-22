@@ -253,6 +253,41 @@ async function classified(makePromise) {
   }
 }
 
+// ── Sol route circuit breaker + model-coverage accounting ───────────────────
+// A dead Sol route (codex CLI missing, router down) fails EVERY slot the same
+// way; without a breaker each slot still burns a harness agent plus a Claude
+// fallback (22-23 empty results per production run). After 3 CONSECUTIVE Sol
+// failures the route is declared dead and remaining Sol slots go straight to
+// Claude; any Sol success resets the counter, so a healthy route is unaffected.
+// Fail-closed semantics are preserved — Claude still covers every scope.
+// modelCoverage additionally records requested-vs-actual model per slot class so
+// a run where "mixed-model review" silently became all-Claude is VISIBLE in the
+// result instead of being relabeled as healthy coverage.
+let solConsecutiveFailures = 0
+let solDead = false
+const modelCoverage = {} // per slot class (phase): { requested, ranSol, claudeFallback, reasons[] }
+let solOkThisRound = false // did any Sol reviewer actually run this review round?
+const roundsWithoutSol = [] // review rounds with zero real cross-family coverage
+function covNote(cls, ranSol, reason) {
+  const c = modelCoverage[cls] || (modelCoverage[cls] = { requested: 0, ranSol: 0, claudeFallback: 0, reasons: [] })
+  c.requested++
+  if (ranSol) c.ranSol++
+  else {
+    c.claudeFallback++
+    if (reason && c.reasons.length < 5) c.reasons.push(String(reason).slice(0, 90))
+  }
+}
+function noteSolFailure(reason) {
+  solConsecutiveFailures++
+  if (solConsecutiveFailures >= 3 && !solDead) {
+    solDead = true
+    log(`Sol route DEAD after 3 consecutive failures (${String(reason).slice(0, 60)}) — remaining Sol slots run on Claude`)
+  }
+}
+function noteSolSuccess() {
+  solConsecutiveFailures = 0
+}
+
 // codex forwards --output-schema to OpenAI Structured Outputs in STRICT mode,
 // which requires every object to set additionalProperties:false and list EVERY
 // declared property in `required`. Our workflow schemas are intentionally
@@ -330,16 +365,26 @@ ${prompt}
 // solLightEffort?: codex-cli effort (default SOL_LIGHT_EFFORT) }.
 async function splitAgent(i, prompt, opts, ctl) {
   if (systemicFailure) return null // outage: no Sol attempt, no Claude fallback
-  const useSol = ctl && typeof ctl.slot === 'function' ? ctl.slot(i) : solSlot(i)
-  if (useSol) {
+  const cls = (opts && opts.phase) || 'other'
+  const wantSol = ctl && typeof ctl.slot === 'function' ? ctl.slot(i) : solSlot(i)
+  if (wantSol && solDead) covNote(cls, false, 'sol route dead (circuit breaker)')
+  if (wantSol && !solDead) {
     try {
       let r = null
       if (SOL_AGENT_OK) r = await agent(prompt, { ...opts, model: SOL_MODEL, effort: (ctl && ctl.solEffort) || SOL_EFFORT })
       else if (opts && opts.schema)
         r = await codexAgent(prompt, opts.schema, { effort: (ctl && ctl.solLightEffort) || SOL_LIGHT_EFFORT, phase: opts.phase, label: (opts.label || '') + ':sol' })
-      if (r != null) return r
+      if (r != null) {
+        noteSolSuccess()
+        covNote(cls, true)
+        return r
+      }
+      noteSolFailure('null/unavailable result')
+      covNote(cls, false, 'sol returned null/unavailable')
     } catch (e) {
       noteAgentError(e) /* Sol failed → Claude fallback below (unless terminal) */
+      noteSolFailure(e && e.message)
+      covNote(cls, false, e && e.message)
     }
     if (systemicFailure) return null // terminal: the fallback would die the same way
   }
@@ -349,15 +394,25 @@ async function splitAgent(i, prompt, opts, ctl) {
 // tokens; falls back to Claude when Sol isn't routable/available.
 async function soloSolAgent(prompt, opts, solEffort) {
   if (systemicFailure) return null // outage: no Sol attempt, no Claude fallback
-  if (MODEL_SPLIT) {
+  const cls = (opts && opts.phase) || 'other'
+  if (MODEL_SPLIT && solDead) covNote(cls, false, 'sol route dead (circuit breaker)')
+  if (MODEL_SPLIT && !solDead) {
     try {
       let r = null
       if (SOL_AGENT_OK) r = await agent(prompt, { ...opts, model: SOL_MODEL, effort: solEffort || SOL_EFFORT })
       else if (opts && opts.schema)
         r = await codexAgent(prompt, opts.schema, { effort: solEffort || SOL_LIGHT_EFFORT, phase: opts.phase, label: (opts.label || '') + ':sol' })
-      if (r != null) return r
+      if (r != null) {
+        noteSolSuccess()
+        covNote(cls, true)
+        return r
+      }
+      noteSolFailure('null/unavailable result')
+      covNote(cls, false, 'sol returned null/unavailable')
     } catch (e) {
       noteAgentError(e) /* fall through to Claude (unless terminal) */
+      noteSolFailure(e && e.message)
+      covNote(cls, false, e && e.message)
     }
     if (systemicFailure) return null
   }
@@ -887,8 +942,19 @@ failure — reserve {"findings": []} for a genuine clean codex run.`,
 
   return async () => {
     if (systemicFailure) return null // outage: no Sol attempt, no Claude fallback
+    if (solDead) {
+      covNote('Review', false, 'sol route dead (circuit breaker)')
+      return claudeReview(roundNo, i, lens) // scope never lost
+    }
     const r = await runSol()
-    if (r != null) return r
+    if (r != null) {
+      noteSolSuccess()
+      covNote('Review', true)
+      solOkThisRound = true
+      return r
+    }
+    noteSolFailure('review sol slot failed/unavailable')
+    covNote('Review', false, 'sol review slot failed/unavailable')
     if (systemicFailure) return null // terminal: the fallback would die the same way
     return claudeReview(roundNo, i, lens) // scope never lost
   }
@@ -913,6 +979,7 @@ if (START_PHASE === 'verify') {
 }
 while (round < HARD_ROUND_CAP && !cleanRound && !systemicFailure && START_PHASE !== 'verify') {
   round++
+  solOkThisRound = false
 
   // Rounds 1..MIXED_ROUND_CAP run the mixed panel (Claude lenses + gpt-5.6-sol).
   // If still not clean after that, review CONTINUES with gpt-5.6-sol as the ONLY
@@ -953,6 +1020,10 @@ while (round < HARD_ROUND_CAP && !cleanRound && !systemicFailure && START_PHASE 
     reviewIncomplete = true
     log(`Review round ${round}: provider outage — pausing instead of spawning more agents`)
     break
+  }
+  if (!solOkThisRound) {
+    roundsWithoutSol.push(round)
+    log(`Review round ${round}: NO real gpt-5.6-sol coverage — every Sol slot fell back to Claude (route problem, not a clean mixed review)`)
   }
   const failedWorkers = results.filter((r) => r == null).length
   const raw = results.filter(Boolean).flatMap((r) => (r && r.findings) || [])
@@ -1292,6 +1363,10 @@ const result = {
   canonicalPlan: canonicalPlan || null,
   verify: verify || null,
   verifyFixCommitted,
+  // Requested-vs-actual model per slot class, breaker state, and any review
+  // rounds that silently lost cross-family coverage — a missing Sol pass is a
+  // route problem to FIX, never a healthy mixed review (per README).
+  modelCoverage: { slots: modelCoverage, solDead, roundsWithoutSol },
   // Last HEAD sha independently reported by a verify run (null when verify never
   // ran, e.g. a paused run) — lets the launcher pin resume/PR actions to the
   // exact commit that was verified.
@@ -1318,6 +1393,13 @@ const result = {
     .concat(verifyFixCommitted ? ['verify-fix committed code AFTER the clean review round — those commits were never adversarially reviewed; re-run the review loop before opening a PR'] : [])
     .concat(blockingGreen ? [] : ['one or more BLOCKING gates are failing'])
     .concat(e2eGreen ? [] : ['e2e:local did not pass'])
+    .concat(
+      roundsWithoutSol.length
+        ? [
+            `review round(s) ${roundsWithoutSol.join(', ')} ran WITHOUT real cross-family (gpt-5.6-sol) coverage — every Sol slot fell back to Claude; fix the Sol route (codex CLI / router) before treating this as a fully mixed-model review`,
+          ]
+        : []
+    )
     .concat(openTodos),
 }
 log(
