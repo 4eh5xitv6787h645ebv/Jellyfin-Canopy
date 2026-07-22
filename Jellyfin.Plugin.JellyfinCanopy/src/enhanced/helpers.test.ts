@@ -184,16 +184,13 @@ describe('header-tray single-row scroll containment (#459)', () => {
         // row fits, fall back to start-alignment when it overflows so the leading
         // buttons never land in unreachable negative overflow.
         expect(css).toContain('justify-content: safe flex-end');
-        // Fallback floor for engines that do not parse the `safe`/`unsafe`
-        // overflow-alignment keywords (Safari/iOS < 18, Chromium < 116): they
-        // discard the `safe flex-end` declaration entirely, so a plain
-        // `flex-start` MUST precede it as the always-valid value that keeps every
-        // button reachable there. Ordering matters — the plain floor is emitted
-        // first and the `safe` form immediately after (source-order cascade among
-        // equal-!important), so match the two adjacent declarations directly.
-        expect(css).toMatch(
-            /justify-content:\s*flex-start\s*!important;\s*justify-content:\s*safe flex-end\s*!important;/,
-        );
+        // No `flex-start` floor may precede it (r6f2): on the fit case that floor
+        // left-aligns the grown (flex:1 1 0) modern tray, opening a gap before the
+        // avatar and repositioning the already-right-packed native buttons when the
+        // sheet loads — the forbidden R1 layout shift. safe flex-end alone keeps the
+        // native flex-end on the fit case (no reposition, no jank) and only relaxes
+        // to start-alignment on overflow.
+        expect(css).not.toMatch(/justify-content:\s*flex-start/);
         // Modern-only: the tray must carry a 0 flex-basis (not merely
         // flex-shrink:1). The parent MUI Toolbar is flex-wrap:wrap and collects
         // flex lines from each child's hypothetical main size BEFORE flex-shrink
@@ -215,19 +212,18 @@ describe('header-tray single-row scroll containment (#459)', () => {
         expect(css).toContain('scrollbar-width: none');
         expect(css).toMatch(/\.jc-(modern|legacy)-layout \.jc-header-tray::-webkit-scrollbar/);
         // Legacy: the native profile avatar (.headerUserButton) lives INSIDE the
-        // resolved .headerRight scrollport, so it must NOT be sticky-pinned. A
-        // `position:sticky;right:0` last child inside the one scroll container is an
-        // overlay — it translates onto the viewport's right edge and covers /
-        // intercepts clicks for whatever button scrolls beneath it (r5f1). Instead
-        // the avatar is a plain in-flow scrolling child, covered by the shared
-        // `> *` non-shrink rule, so it rides the row's scroll like any other button.
-        // Assert no avatar-targeted rule and no sticky/z-index anywhere in the sheet.
-        expect(css).not.toMatch(/\.jc-legacy-layout \.jc-header-tray > \.headerUserButton/);
-        expect(css).not.toContain('position: sticky');
-        expect(css).not.toMatch(/z-index\s*:/);
-        // Neither layout targets the avatar with an overriding rule — it is only
-        // ever styled as a generic non-shrinking child of the scroll row.
-        expect(css).not.toMatch(/\.jc-(modern|legacy)-layout \.jc-header-tray > \.headerUserButton/);
+        // resolved .headerRight scrollport (unlike modern, where it is a separate
+        // sibling Box outside the tray). Left as an ordinary in-flow child it starts
+        // off-screen once the row overflows and is only reachable after scrolling to
+        // the end — violating the binding pinned-avatar criterion (r6f1/r6f3/r6f5).
+        // Sticky-pin it to the scrollport's right edge so it stays visible at rest
+        // and stationary while the icon buttons scroll beneath it.
+        expect(css).toMatch(
+            /\.jc-legacy-layout \.jc-header-tray > \.headerUserButton\s*\{[^}]*position:\s*sticky[^}]*right:\s*0/,
+        );
+        // The pin is legacy-scoped — modern's avatar is a separate sibling Box and
+        // must never receive an avatar-targeted rule.
+        expect(css).not.toMatch(/\.jc-modern-layout \.jc-header-tray > \.headerUserButton/);
 
         // No broad MUI Box selector (would hit unrelated toolbar boxes / profile).
         expect(css).not.toMatch(/\.MuiBox-root/);
