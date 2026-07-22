@@ -54,6 +54,12 @@ async function fillResolvedTray(page: Page): Promise<boolean> {
         const helpers = (window as any).JellyfinCanopy?.helpers;
         const tray: HTMLElement | null = helpers?.getHeaderRightContainer?.() ?? null;
         if (!tray) return false;
+        // In production Canopy inserts its buttons at the FRONT of the tray, so
+        // the native profile button (.headerUserButton) stays the trailing child
+        // on the legacy header. Mirror that: insert the fillers BEFORE the avatar
+        // (append when there is none, e.g. modern / synthetic fallback) so the
+        // avatar remains last and the sticky right-pin is exercised realistically.
+        const avatar = tray.querySelector<HTMLElement>(':scope > .headerUserButton');
         for (let i = 0; i < count; i++) {
             const btn = document.createElement('button');
             btn.type = 'button';
@@ -80,7 +86,8 @@ async function fillResolvedTray(page: Page): Promise<boolean> {
                 badge.style.cssText = 'position:absolute;top:2px;right:2px;font-size:11px;line-height:1.1;';
                 btn.appendChild(badge);
             }
-            tray.appendChild(btn);
+            if (avatar) tray.insertBefore(btn, avatar);
+            else tray.appendChild(btn);
         }
         return tray.querySelectorAll('.jc-e2e-459-filler').length === count;
     }, FILLER_COUNT);
@@ -171,6 +178,32 @@ async function diag(page: Page): Promise<string> {
                 : null,
             fillerCount: tray ? tray.querySelectorAll('.jc-e2e-459-filler').length : 0,
         });
+    });
+}
+
+/**
+ * The native legacy profile button (`.headerUserButton`) geometry. On the legacy
+ * header this button is a scrolling child of the resolved `.headerRight` tray
+ * (unlike modern, where the avatar is a separate sibling Box), so the fix
+ * sticky-pins it to the right edge. Reports its computed position and rect so a
+ * test can prove it stays pinned/stationary while the tray scrolls.
+ */
+async function readLegacyAvatar(
+    page: Page,
+): Promise<{ found: boolean; position: string; left: number; right: number; width: number } | null> {
+    return page.evaluate(() => {
+        const helpers = (window as any).JellyfinCanopy?.helpers;
+        const tray: HTMLElement | null = helpers?.getHeaderRightContainer?.() ?? null;
+        const avatar = tray?.querySelector<HTMLElement>(':scope > .headerUserButton') ?? null;
+        if (!avatar) return { found: false, position: '', left: 0, right: 0, width: 0 };
+        const rect = avatar.getBoundingClientRect();
+        return {
+            found: true,
+            position: getComputedStyle(avatar).position,
+            left: rect.left,
+            right: rect.right,
+            width: rect.width,
+        };
     });
 }
 
@@ -308,6 +341,35 @@ test.describe('header button tray stays a single scrollable row (#459)', () => {
                 // Stationary: internal tray scroll never moves the avatar.
                 expect(Math.abs(end!.left - start!.left)).toBeLessThanOrEqual(1);
                 expect(Math.abs(end!.top - start!.top)).toBeLessThanOrEqual(1);
+            }
+
+            // On the legacy header the native profile button lives INSIDE the
+            // resolved .headerRight tray (not a sibling), so the fix sticky-pins
+            // it to the right edge. Prove it is sticky and stays stationary (never
+            // starts off-screen or moves with scrollLeft) while the tray scrolls.
+            if (testCase.layout === 'legacy') {
+                const avatar = await readLegacyAvatar(page);
+                if (avatar?.found) {
+                    expect(avatar.position, 'legacy profile avatar is sticky-pinned').toBe('sticky');
+                    await scrollTray(page, 0);
+                    const atStart = await readLegacyAvatar(page);
+                    const scrolledTo = await scrollTray(page, 'end');
+                    const atEnd = await readLegacyAvatar(page);
+                    // The tray genuinely scrolled a long way (else "stationary" is
+                    // vacuous); the avatar is pinned, so it stays at the right edge
+                    // and barely moves. An UNpinned (scrolling) avatar would shift
+                    // by the full ~scrolledTo px; a couple of px of sub-pixel /
+                    // trailing-layout jitter is the pinned signature. The threshold
+                    // sits far below the scroll distance so the two are unambiguous.
+                    expect(scrolledTo, 'tray scrolled a meaningful distance').toBeGreaterThan(200);
+                    expect(atStart!.right).toBeLessThanOrEqual(testCase.viewport.width + 2);
+                    const AVATAR_PIN_JITTER_PX = 12;
+                    expect(
+                        Math.abs(atEnd!.left - atStart!.left),
+                        `avatar pinned (moved ${Math.abs(atEnd!.left - atStart!.left).toFixed(1)}px over a ${scrolledTo}px scroll)`,
+                    ).toBeLessThanOrEqual(AVATAR_PIN_JITTER_PX);
+                    expect(Math.abs(atEnd!.right - atStart!.right)).toBeLessThanOrEqual(AVATAR_PIN_JITTER_PX);
+                }
             }
 
             assertNoRuntimeErrors(consoleErrors);
