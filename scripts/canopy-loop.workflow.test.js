@@ -703,15 +703,34 @@ test('an explicit briefText suppresses the issue fetch (launcher brief stays aut
     assert.match(impl.prompt, /MANUAL BRIEF/);
 });
 
-test('a failed issue fetch falls back to the brief-path behavior', async () => {
+test('a failed issue fetch with no other task source pauses before the writer (fail closed)', async () => {
+    // issue:N was the intended brief source; the fetch failed and nothing else
+    // authoritative was supplied. Running agents on placeholders would implement
+    // AND certify with no acceptance criteria — pause instead.
     const { agent, calls } = makeAgent((_p, opts) => {
         if ((opts.label || '') === 'fetch-issue') return null;
         return undefined;
     });
     const r = await runWorkflow(baseArgs({ issue: 452 }), agent, parallel, phase, () => {});
+    assert.equal(r.status, 'paused');
+    assert.equal(r.resumeFrom.phase, 'explore');
+    assert.match(r.pauseReason, /hydration failed|authoritative requirements/i);
+    assert.ok(!calls.some((c) => (c.opts.label || '').startsWith('explore')), 'no explorers without authoritative requirements');
+    assert.ok(!calls.some((c) => (c.opts.label || '').startsWith('implement')), 'no writer without authoritative requirements');
+    assert.equal(r.readyForPR, false);
+    assert.ok(r.residualRisks.some((s) => /PAUSED .*resume/i.test(s)));
+});
+
+test('a failed issue fetch still runs when an explicit task was supplied (brief-path fallback preserved)', async () => {
+    const { agent, calls } = makeAgent((_p, opts) => {
+        if ((opts.label || '') === 'fetch-issue') return null;
+        return undefined;
+    });
+    const r = await runWorkflow(baseArgs({ issue: 452, task: 'EXPLICIT TASK, no fetch needed' }), agent, parallel, phase, () => {});
     const impl = calls.find((c) => (c.opts.label || '').startsWith('implement'));
     assert.match(impl.prompt, /brief text not inlined; open the path above/, 'existing brief-path fallback preserved');
-    assert.equal(r.readyForPR, true, 'a failed fetch alone never blocks the run');
+    assert.match(impl.prompt, /EXPLICIT TASK, no fetch needed/);
+    assert.equal(r.readyForPR, true, 'a failed fetch does not block when a task was supplied');
 });
 
 test('envSetup is interpolated into every CONTRACTS prompt and the verify env echo is present', async () => {

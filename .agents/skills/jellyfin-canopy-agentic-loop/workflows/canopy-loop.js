@@ -276,7 +276,13 @@ async function classified(makePromise) {
 // recovery agent also failed; pauses the run BEFORE the writer (same pause
 // contract as systemicFailure, resumable with a fresh full run).
 let quorumFailure = ''
-const halted = () => systemicFailure || !!quorumFailure
+// Input-validity failure: the launcher pointed at an issue as the brief source but
+// the live fetch failed AND no explicit task/briefText/brief path was supplied, so
+// there are NO authoritative requirements. Running agents anyway would implement
+// and (fail-open) certify work with no acceptance criteria — pause BEFORE Explore
+// instead (same pause contract; resume with a real task source or a working fetch).
+let inputFailure = ''
+const halted = () => systemicFailure || !!quorumFailure || !!inputFailure
 
 // Per-phase agent accounting (attempted / succeeded / null) returned as
 // result.agentStats, so silent `.filter(Boolean)` losses are visible.
@@ -513,8 +519,13 @@ or augment the body. If the command fails, return an empty body.`,
     if (!a.task)
       TASK = `Resolve issue #${ISSUE_NUM}: ${fetched.title || '(untitled)'} (${fetched.url || 'no url'}) — full body in the TASK BRIEF below.`
     log(`Brief self-hydrated from live issue #${ISSUE_NUM} (${fetched.body.length} chars)`)
+  } else if (START_PHASE === 'explore' && !a.task && !a.brief) {
+    // The issue WAS the intended brief source, the fetch failed, and nothing else
+    // authoritative was supplied — fail closed rather than implement on placeholders.
+    inputFailure = `issue #${ISSUE_NUM} hydration failed and no explicit task, briefText, or brief path was supplied — refusing to run agents with no authoritative requirements (fail closed)`
+    log(`Input: ${inputFailure}`)
   } else {
-    log(`Issue fetch for #${ISSUE_NUM} failed — continuing with the brief path only (existing behavior)`)
+    log(`Issue fetch for #${ISSUE_NUM} failed — continuing with the supplied task/brief (existing behavior)`)
   }
 }
 
@@ -527,7 +538,7 @@ or augment the body. If the command fails, return an empty body.`,
 // trips the breaker BEFORE any Sol slot spawns. A healthy route costs one tiny
 // agent; only an explicit available:false trips it (a null/ambiguous probe leaves
 // the runtime breaker to catch a mid-run death — fail toward attempting Sol).
-if (SOL_VIA === 'codex-cli' && MODEL_SPLIT && !systemicFailure) {
+if (SOL_VIA === 'codex-cli' && MODEL_SPLIT && !halted()) {
   const probe = await safely(
     () =>
       agent(
@@ -778,7 +789,7 @@ const exploreAngles = (SURFACE === 'docs'
 ).slice(0, SIZING.explorers)
 
 let explorations = []
-if (START_PHASE === 'explore') {
+if (START_PHASE === 'explore' && !halted()) {
   const exploreResults = await parallel(
     exploreAngles.map((angle, i) => () =>
       splitAgent(
@@ -1645,7 +1656,7 @@ const resumeFrom = !PAUSED
   : { phase: 'verify' }
 const result = {
   status: PAUSED ? 'paused' : 'complete',
-  pauseReason: PAUSED ? systemicFailureDetail || quorumFailure : null,
+  pauseReason: PAUSED ? systemicFailureDetail || quorumFailure || inputFailure : null,
   resumeFrom,
   startPhase: START_PHASE,
   branch: BRANCH,
@@ -1682,7 +1693,7 @@ const result = {
     .concat(
       PAUSED
         ? [
-            `run PAUSED (${systemicFailureDetail || quorumFailure}) — do NOT blindly retry; ${systemicFailure ? 'once capacity returns, ' : ''}resume with startPhase:"${resumeFrom.phase}" against the same branch`,
+            `run PAUSED (${systemicFailureDetail || quorumFailure || inputFailure}) — do NOT blindly retry; ${systemicFailure ? 'once capacity returns, ' : inputFailure ? 'supply a task/briefText (or fix the issue fetch), then ' : ''}resume with startPhase:"${resumeFrom.phase}" against the same branch`,
           ]
         : []
     )
