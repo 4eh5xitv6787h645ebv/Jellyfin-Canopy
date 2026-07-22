@@ -33,7 +33,9 @@ const BRIEF = a.brief || '(no brief path supplied — read AGENTS.md and the tas
 // Inlined brief CONTENTS (preferred). The script sandbox cannot read files, so
 // the launcher should read the brief and pass its text here — otherwise agents
 // may never open the path and will infer the task from weaker signals.
-const BRIEF_TEXT = a.briefText || ''
+// `let` because when args.issue is set and no briefText was passed, a Phase-0
+// agent self-hydrates it from the live issue (see "issue self-hydration").
+let BRIEF_TEXT = a.briefText || ''
 // Optional environment prelude every build/test-running agent must execute
 // FIRST (workflow subagents get fresh shells, so the launcher's exports do not
 // propagate — historically the verify agent picked a system dotnet over the
@@ -64,11 +66,11 @@ const START_PHASE = ['explore', 'review', 'verify'].includes(a.startPhase) ? a.s
 // User policy: INCLUDE the issue number in commit messages (traceability). Derived
 // from the branch (fix/issue-<N>) or args.issue. The main thread additionally puts
 // "Closes #<N>" in the PR body so a merge auto-closes the issue + moves the board item.
-const ISSUE_REF = (() => {
+const ISSUE_NUM = (() => {
   const raw = a.issue != null ? String(a.issue) : ((/issue[-/]?(\d+)/i.exec(BRANCH) || [])[1] || '')
-  const n = String(raw).replace(/[^0-9]/g, '')
-  return n ? '#' + n : ''
+  return String(raw).replace(/[^0-9]/g, '')
 })()
+const ISSUE_REF = ISSUE_NUM ? '#' + ISSUE_NUM : ''
 const COMMIT_RULE =
   'Commit hygiene: NO `Co-Authored-By` trailers' +
   (ISSUE_REF ? `, and INCLUDE the issue number ${ISSUE_REF} in each commit subject (end the subject with " (${ISSUE_REF})")` : '') +
@@ -455,6 +457,51 @@ async function safely(makePromise, fallback, what) {
     noteAgentError(e) // classify terminal (quota/limit) failures before falling back
     log(`${what} failed (${String(e && e.message ? e.message : e).slice(0, 90)}) → using fallback`)
     return fallback
+  }
+}
+
+// ── issue self-hydration (Phase 0) ──────────────────────────────────────────
+// When the launcher passes an issue number but no inlined briefText, ONE cheap
+// agent fetches the LIVE issue and its body becomes the brief — replacing the
+// manual copy-paste that can omit edits or go stale between authoring and
+// launch. Explicit task/briefText always win (the fetch never overrides them);
+// a failed fetch logs a warning and falls back to the existing brief-path
+// behavior unchanged.
+if (a.issue != null && ISSUE_NUM && !BRIEF_TEXT) {
+  const fetched = await safely(
+    () =>
+      agent(
+        `cd ${WORKTREE} first, then run (read-only):
+  gh issue view ${ISSUE_NUM} --json number,title,body,url,updatedAt
+Return the fields VERBATIM in your structured output — do NOT summarize, edit,
+or augment the body. If the command fails, return an empty body.`,
+        {
+          schema: {
+            type: 'object',
+            additionalProperties: true,
+            required: ['title', 'body'],
+            properties: {
+              number: { type: 'integer' },
+              title: { type: 'string' },
+              body: { type: 'string' },
+              url: { type: 'string' },
+              updatedAt: { type: 'string' },
+            },
+          },
+          agentType: 'general-purpose',
+          effort: 'low',
+          phase: 'Explore',
+          label: 'fetch-issue',
+        }
+      ),
+    null,
+    'Issue fetch'
+  )
+  if (fetched && fetched.body) {
+    BRIEF_TEXT = `Issue #${ISSUE_NUM}: ${fetched.title || ''}\n(${fetched.url || 'no url'} · updated ${fetched.updatedAt || 'unknown'})\n\n${fetched.body}`
+    log(`Brief self-hydrated from live issue #${ISSUE_NUM} (${fetched.body.length} chars)`)
+  } else {
+    log(`Issue fetch for #${ISSUE_NUM} failed — continuing with the brief path only (existing behavior)`)
   }
 }
 

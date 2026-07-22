@@ -453,6 +453,42 @@ test('a verify-fix that commits after a clean review round is not ready-for-PR',
     assert.ok(r.residualRisks.some((s) => /never adversarially reviewed/i.test(s)));
 });
 
+test('issue + no briefText: a Phase-0 agent hydrates the brief from the live issue', async () => {
+    const { agent, calls } = makeAgent((_p, opts) => {
+        if ((opts.label || '') === 'fetch-issue')
+            return { number: 452, title: 'Fix the widget', body: 'THE LIVE ISSUE BODY with acceptance criteria', url: 'https://x/452', updatedAt: '2026-07-20' };
+        return undefined;
+    });
+    const r = await runWorkflow(baseArgs({ issue: 452 }), agent, parallel, phase, () => {});
+    const fetch = calls.find((c) => (c.opts.label || '') === 'fetch-issue');
+    assert.ok(fetch, 'fetch-issue agent spawned');
+    assert.match(fetch.prompt, /gh issue view 452 --json number,title,body,url,updatedAt/);
+    assert.equal(fetch.opts.effort, 'low', 'the fetch is cheap');
+    const impl = calls.find((c) => (c.opts.label || '').startsWith('implement'));
+    assert.match(impl.prompt, /THE LIVE ISSUE BODY with acceptance criteria/, 'hydrated body reaches CONTRACTS');
+    assert.match(impl.prompt, /authoritative — read in full/, 'hydrated brief is treated as inlined brief text');
+    assert.equal(r.readyForPR, true);
+});
+
+test('an explicit briefText suppresses the issue fetch (launcher brief stays authoritative)', async () => {
+    const { agent, calls } = makeAgent(null);
+    await runWorkflow(baseArgs({ issue: 452, briefText: 'MANUAL BRIEF' }), agent, parallel, phase, () => {});
+    assert.ok(!calls.some((c) => (c.opts.label || '') === 'fetch-issue'), 'no fetch when briefText supplied');
+    const impl = calls.find((c) => (c.opts.label || '').startsWith('implement'));
+    assert.match(impl.prompt, /MANUAL BRIEF/);
+});
+
+test('a failed issue fetch falls back to the brief-path behavior', async () => {
+    const { agent, calls } = makeAgent((_p, opts) => {
+        if ((opts.label || '') === 'fetch-issue') return null;
+        return undefined;
+    });
+    const r = await runWorkflow(baseArgs({ issue: 452 }), agent, parallel, phase, () => {});
+    const impl = calls.find((c) => (c.opts.label || '').startsWith('implement'));
+    assert.match(impl.prompt, /brief text not inlined; open the path above/, 'existing brief-path fallback preserved');
+    assert.equal(r.readyForPR, true, 'a failed fetch alone never blocks the run');
+});
+
 test('envSetup is interpolated into every CONTRACTS prompt and the verify env echo is present', async () => {
     const { agent, calls } = makeAgent(null);
     await runWorkflow(
