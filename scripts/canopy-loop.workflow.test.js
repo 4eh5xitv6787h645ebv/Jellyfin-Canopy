@@ -578,6 +578,31 @@ test('issue + no briefText: a Phase-0 agent hydrates the brief from the live iss
     assert.equal(r.readyForPR, true);
 });
 
+test('issue-only launch replaces the placeholder TASK line with the fetched issue title', async () => {
+    // In the preferred issue:N-only shape, hydration must also fill TASK so agents
+    // do not open with "No task text supplied." above the authoritative brief.
+    const { agent, calls } = makeAgent((_p, opts) => {
+        if ((opts.label || '') === 'fetch-issue')
+            return { number: 452, title: 'Fix the widget', body: 'ACCEPTANCE CRITERIA', url: 'https://x/452', updatedAt: '2026-07-20' };
+        return undefined;
+    });
+    await runWorkflow(baseArgs({ issue: 452 }), agent, parallel, phase, () => {});
+    const impl = calls.find((c) => (c.opts.label || '').startsWith('implement'));
+    assert.doesNotMatch(impl.prompt, /No task text supplied/, 'placeholder TASK replaced after hydration');
+    assert.match(impl.prompt, /Resolve issue #452: Fix the widget/, 'TASK line derived from the fetched issue title');
+});
+
+test('an explicit task is NOT overwritten by issue hydration', async () => {
+    const { agent, calls } = makeAgent((_p, opts) => {
+        if ((opts.label || '') === 'fetch-issue')
+            return { number: 452, title: 'Fix the widget', body: 'ACCEPTANCE CRITERIA', url: 'https://x/452', updatedAt: '2026-07-20' };
+        return undefined;
+    });
+    await runWorkflow(baseArgs({ issue: 452, task: 'EXPLICIT LAUNCHER TASK' }), agent, parallel, phase, () => {});
+    const impl = calls.find((c) => (c.opts.label || '').startsWith('implement'));
+    assert.match(impl.prompt, /EXPLICIT LAUNCHER TASK/, 'explicit task wins over the fetched title');
+});
+
 test('an explicit briefText suppresses the issue fetch (launcher brief stays authoritative)', async () => {
     const { agent, calls } = makeAgent(null);
     await runWorkflow(baseArgs({ issue: 452, briefText: 'MANUAL BRIEF' }), agent, parallel, phase, () => {});

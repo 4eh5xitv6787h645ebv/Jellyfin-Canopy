@@ -28,7 +28,12 @@ const a = (() => {
 })()
 const WORKTREE = a.worktree || '.'
 const BRANCH = a.branch || '(current branch)'
-const TASK = a.task || 'No task text supplied.'
+// `let` because in the preferred `issue: N`-only launch shape (no task/briefText),
+// a successful Phase-0 issue hydration replaces this placeholder with a real task
+// line derived from the fetched issue title/url — otherwise every agent prompt
+// would open with "TASK: No task text supplied." above the authoritative brief,
+// a confusing signal for the requirement-fidelity reviewers.
+let TASK = a.task || 'No task text supplied.'
 const BRIEF = a.brief || '(no brief path supplied — read AGENTS.md and the task text)'
 // Inlined brief CONTENTS (preferred). The script sandbox cannot read files, so
 // the launcher should read the brief and pass its text here — otherwise agents
@@ -503,6 +508,10 @@ or augment the body. If the command fails, return an empty body.`,
   )
   if (fetched && fetched.body) {
     BRIEF_TEXT = `Issue #${ISSUE_NUM}: ${fetched.title || ''}\n(${fetched.url || 'no url'} · updated ${fetched.updatedAt || 'unknown'})\n\n${fetched.body}`
+    // Give the agent prompts a real TASK line too (only when the launcher supplied
+    // no explicit task) so the requirement-fidelity lens isn't fed the placeholder.
+    if (!a.task)
+      TASK = `Resolve issue #${ISSUE_NUM}: ${fetched.title || '(untitled)'} (${fetched.url || 'no url'}) — full body in the TASK BRIEF below.`
     log(`Brief self-hydrated from live issue #${ISSUE_NUM} (${fetched.body.length} chars)`)
   } else {
     log(`Issue fetch for #${ISSUE_NUM} failed — continuing with the brief path only (existing behavior)`)
