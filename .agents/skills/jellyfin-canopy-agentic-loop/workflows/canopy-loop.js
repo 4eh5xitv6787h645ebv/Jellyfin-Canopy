@@ -91,12 +91,31 @@ const ALL_LENSES = [
   'Product semantics & scope',
   'Docs, locale & generated artifacts',
 ]
+// Review mode: 'standard' reviews code/diff correctness. 'spec' (opt-in, for
+// specification/design-doc authoring) swaps in lenses that judge a SPEC — does
+// it trace to the acceptance criteria, agree with itself, name owners that can
+// build it, and state contracts that are verifiable — instead of hunting prose
+// style. Selected by the launcher with args.reviewMode:'spec'.
+const REVIEW_MODE = a.reviewMode === 'spec' ? 'spec' : 'standard'
+const SPEC_LENSES = [
+  'Acceptance traceability (does every acceptance criterion in the brief map to spec text that satisfies it? cite the criterion per finding)',
+  'Internal consistency (do any two statements in the spec contradict each other, a repository contract, or an existing doc?)',
+  'Implementability (does each requirement name a real owner/mechanism that can actually build and enforce it — no ownerless or impossible mandate?)',
+  'Verifiable contracts (is every stated requirement/safety contract testable or measurable as written?)',
+]
 const LENSES =
-  SURFACE === 'docs'
+  REVIEW_MODE === 'spec'
+    ? SPEC_LENSES
+    : SURFACE === 'docs'
     ? ['Correctness & logic', 'Docs, locale & generated artifacts', 'Product semantics & scope']
     : DEPTH === 'quick'
     ? ALL_LENSES.slice(0, 5).concat('Docs, locale & generated artifacts')
     : ALL_LENSES
+// Docs/prose and spec review gate fixing by SEVERITY: blocker/major confirmed
+// findings drive a fix round; confirmed minors are reported as advisory notes
+// and do NOT force another round (prose minors historically drove SR-15 to the
+// 10-round cap while the same machinery converged in 2 rounds on SR-06).
+const SEVERITY_GATED = SURFACE === 'docs' || REVIEW_MODE === 'spec'
 
 // Model mix for review (user policy): every review round runs BOTH the Claude
 // lens reviewers above (≥1) AND ≥1 gpt-5.6-sol whole-diff reviewer at high
@@ -167,8 +186,12 @@ const solSlot = (i) => MODEL_SPLIT && i % 2 === 1 // odd indices → Sol (~50/50
 const EXPLORE_CLAUDE_COUNT = a.exploreClaudeCount == null ? 2 : Math.max(0, a.exploreClaudeCount)
 const exploreSol = (i) => MODEL_SPLIT && i >= EXPLORE_CLAUDE_COUNT
 // The hard review-round ceiling: after the mixed roundCap, gpt-5.6-sol-only
-// review rounds continue up to here (user policy). Override with args.hardRoundCap.
-const HARD_ROUND_CAP = Math.max(1, a.hardRoundCap == null ? 10 : a.hardRoundCap)
+// review rounds continue up to here (user policy). Docs/spec surfaces default
+// MUCH lower (roundCap+1): prose churn does not converge under a 10-round
+// escalation, and unresolved docs findings should go back to a human instead.
+// Override with args.hardRoundCap.
+const DEFAULT_HARD_CAP = SEVERITY_GATED ? SIZING.roundCap + 1 : 10
+const HARD_ROUND_CAP = Math.max(1, a.hardRoundCap == null ? DEFAULT_HARD_CAP : a.hardRoundCap)
 
 // Effort for the non-review Sol phases (explore/plan/finding-verification). High
 // codex effort × many calls gets very slow, so these default to medium; the
@@ -731,7 +754,42 @@ The change is on branch ${BRANCH}. Inspect it with:
   git -C ${WORKTREE} status --porcelain   # MUST be empty — a non-empty result is a finding
 The reviewed diff is the COMMITTED range ${BASE}...HEAD; any uncommitted change is
 unreviewed and would be lost on push, so treat a dirty worktree as a real finding.
-You see ONLY the diff and this brief — never the implementer's reasoning.`
+You see ONLY the diff and this brief — never the implementer's reasoning.${
+  SURFACE === 'docs' || REVIEW_MODE === 'spec'
+    ? `
+
+DOCS/PROSE FINDING BAR: for documentation and specification text, a finding must
+be a FACTUAL defect — a wrong command or code sample, a broken link, a
+contradiction with a repository contract or an acceptance criterion, or an
+invalid example. Wording, tone, style, and restructuring preferences are NOT
+findings.`
+    : ''
+}${
+  REVIEW_MODE === 'spec'
+    ? `
+SPEC REVIEW MODE: every finding MUST cite the acceptance criterion, repository
+contract, or authoritative platform behavior it violates. Editorial preferences
+and speculative EXTRA requirements the brief never asked for are NOT findings.`
+    : ''
+}`
+
+// Finding LEDGER: what previous rounds already fixed or refuted (with the
+// verifier's reasons). Injected into every reviewer prompt from round 2 on so
+// reviewers stop re-reporting resolved items — the main convergence lever on
+// every surface, and the difference between 2 rounds and 10 on prose-heavy ones.
+const ledger = [] // { file, line, summary, status: 'fixed'|'refuted'|'advisory', reason, round }
+const ledgerBlock = () =>
+  !ledger.length
+    ? ''
+    : `
+
+FINDING LEDGER (already resolved in earlier rounds of THIS review):
+${JSON.stringify(ledger, null, 1).slice(0, 6000)}
+Do NOT re-report a "fixed", "refuted", or "advisory" item — or a trivial
+rewording of one — unless you bring NEW evidence that the verifier's reason is
+wrong or the fix is incomplete. A re-report without new evidence is noise and
+will be refuted.`
+const reviewCtx = () => reviewContext + ledgerBlock()
 
 // A Claude adversarial reviewer for a scope: lens set → that lens only; lens null
 // → a whole-diff pass. Used both as a first-class reviewer AND as the fallback
@@ -745,7 +803,7 @@ Assume the change is WRONG and prove how, THROUGH THIS LENS ONLY.`
 Assume the change is WRONG and prove how, across correctness, security/privacy
 (fail-closed), lifecycle/concurrency, bounds/perf/no-jank, JF12 + MUI/legacy
 compatibility, test strength, product scope, and docs/locale/generated-artifact gaps.`
-  const prompt = `${reviewContext}
+  const prompt = `${reviewCtx()}
 
 ${scoped}
 A finding needs a real file/line and a concrete failure scenario (inputs/state →
@@ -772,7 +830,7 @@ function solThunk(roundNo, i, lens) {
     : `across correctness, security/privacy (fail-closed), lifecycle/concurrency,
 bounds/perf/no-jank, JF12 + MUI/legacy compatibility, test strength, product
 scope, and docs/locale/generated-artifact gaps.`
-  const solPrompt = `${reviewContext}
+  const solPrompt = `${reviewCtx()}
 
 PHASE: ADVERSARIAL REVIEW (gpt-5.6-sol). Assume the change is WRONG and prove how,
 ${scope}
@@ -837,6 +895,9 @@ failure — reserve {"findings": []} for a genuine clean codex run.`,
 }
 
 const confirmedAll = []
+// Confirmed-but-minor docs/spec findings reported to the launcher instead of
+// forcing another fix round (see SEVERITY_GATED above).
+const advisoryNotes = []
 let cleanRound = false
 // Set only when a round TERMINATES the loop with incomplete coverage — a reviewer
 // or a finding-verifier failed to return — so we never certify such a round clean.
@@ -940,8 +1001,27 @@ SCENARIO: ${f.failureScenario}`,
 
   // A missing verdict (verifier agent failed) is NOT a refutation — the finding
   // is unresolved, not cleared. Only a returned real=false counts as refuted.
-  const unverified = deduped.filter((_, i) => verdicts[i] == null).length
-  const confirmed = deduped.filter((f, i) => verdicts[i] && verdicts[i].real)
+  const pairs = deduped.map((f, i) => ({ f, v: verdicts[i] }))
+  const unverified = pairs.filter((p) => p.v == null).length
+  const confirmedPairs = pairs.filter((p) => p.v && p.v.real)
+  // Ledger: refuted findings carry the verifier's reason forward so later
+  // rounds don't re-litigate them.
+  for (const p of pairs)
+    if (p.v && !p.v.real)
+      ledger.push({ file: p.f.file, line: p.f.line || 0, summary: String(p.f.summary || '').slice(0, 140), status: 'refuted', reason: String(p.v.reason || '').slice(0, 200), round })
+  // Severity gate (docs/spec only): confirmed MINORS become advisory notes for
+  // the launcher; only blocker/major findings reach the fixer. The severity is
+  // the verifier's when it gave one (it re-judged the finding), else the
+  // reviewer's, else major (fail closed toward fixing).
+  const sevOf = (p) => (p.v && p.v.severity) || p.f.severity || 'major'
+  let confirmed = confirmedPairs.map((p) => p.f)
+  if (SEVERITY_GATED) {
+    for (const p of confirmedPairs.filter((p) => sevOf(p) === 'minor')) {
+      advisoryNotes.push(`${p.f.file}:${p.f.line || '?'} — ${p.f.summary} [confirmed minor: ${String(p.v.reason || '').slice(0, 120)}]`)
+      ledger.push({ file: p.f.file, line: p.f.line || 0, summary: String(p.f.summary || '').slice(0, 140), status: 'advisory', reason: 'confirmed minor — reported as an advisory note, not fixed', round })
+    }
+    confirmed = confirmedPairs.filter((p) => sevOf(p) !== 'minor').map((p) => p.f)
+  }
   if (!confirmed.length) {
     if (unverified || failedWorkers) {
       reviewIncomplete = true
@@ -949,7 +1029,11 @@ SCENARIO: ${f.failureScenario}`,
       break
     }
     cleanRound = true
-    log(`Review round ${round}: ${deduped.length} findings, all refuted → clean`)
+    log(
+      `Review round ${round}: ${deduped.length} findings, ${
+        advisoryNotes.length ? `no blocker/major confirmed (${advisoryNotes.length} minor(s) reported as advisory) → clean` : 'all refuted → clean'
+      }`
+    )
     break
   }
   confirmedAll.push(...confirmed.map((f) => ({ ...f, round })))
@@ -971,7 +1055,7 @@ SCENARIO: ${f.failureScenario}`,
 
   // Wrap the code-writing fixer in safely(): a StructuredOutput retry-cap throw
   // must NOT abort the whole workflow — verify still needs to run and report.
-  await safely(
+  const fixResult = await safely(
     () =>
       agent(
         `${CONTRACTS}
@@ -992,6 +1076,11 @@ ${JSON.stringify(confirmed, null, 1).slice(0, 10000)}`,
     null,
     `Review fixer (round ${round})`
   )
+  // Ledger: only findings the fixer actually processed count as fixed. A
+  // failed/null fixer leaves them unresolved so later rounds MAY re-report them.
+  if (fixResult)
+    for (const f of confirmed)
+      ledger.push({ file: f.file, line: f.line || 0, summary: String(f.summary || '').slice(0, 140), status: 'fixed', reason: `applied by the round-${round} fixer`, round })
 }
 if (!cleanRound && START_PHASE !== 'verify')
   log(
@@ -1193,6 +1282,12 @@ const result = {
   reviewIncomplete,
   incidentalBugs,
   confirmedFindingsResolved: confirmedAll.length,
+  // Confirmed-but-minor docs/spec findings (severity-gated surfaces only) for
+  // the launcher/human to disposition — they did not force fix rounds.
+  advisoryNotes,
+  // Every finding disposition across rounds (fixed / refuted / advisory, with
+  // verifier reasons) — also the re-report suppressor injected into reviewers.
+  ledger,
   implement: implemented || null,
   canonicalPlan: canonicalPlan || null,
   verify: verify || null,

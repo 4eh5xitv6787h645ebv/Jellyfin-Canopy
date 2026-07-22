@@ -453,6 +453,106 @@ test('a verify-fix that commits after a clean review round is not ready-for-PR',
     assert.ok(r.residualRisks.some((s) => /never adversarially reviewed/i.test(s)));
 });
 
+test('docs surface: confirmed minors become advisory notes and the round counts clean', async () => {
+    // A confirmed MINOR wording-adjacent defect on a docs surface must not force
+    // another full fix round: it is reported in advisoryNotes and the round is
+    // clean (SR-15's churn driver).
+    const { agent, calls } = makeAgent((_p, opts) => {
+        const l = opts.label || '';
+        if (l === 'review-r1:1')
+            return { findings: [{ file: 'docs/a.md', line: 3, severity: 'minor', summary: 'stale sentence', failureScenario: 'x' }] };
+        if (l.startsWith('verify-r1')) return { real: true, severity: 'minor', reason: 'true but cosmetic' };
+        return undefined;
+    });
+    const r = await runWorkflow(baseArgs({ surface: 'docs', runtime: false }), agent, parallel, phase, () => {});
+    assert.equal(r.loopClean, true, 'a minors-only round counts clean');
+    assert.equal(r.reviewRounds, 1);
+    assert.ok(r.advisoryNotes.some((s) => /stale sentence/.test(s)), 'the confirmed minor is reported as advisory');
+    assert.ok(!calls.some((c) => (c.opts.label || '').startsWith('fix-r')), 'no fixer runs for minors only');
+    assert.equal(r.readyForPR, true);
+});
+
+test('non-docs surfaces still fix confirmed minors (severity gate is docs/spec-scoped)', async () => {
+    const { agent, calls } = makeAgent((_p, opts) => {
+        const l = opts.label || '';
+        if (l === 'review-r1:1')
+            return { findings: [{ file: 'a.js', line: 1, severity: 'minor', summary: 'off by one', failureScenario: 'x' }] };
+        if (l.startsWith('verify-r1')) return { real: true, severity: 'minor', reason: 'reproduces' };
+        return undefined;
+    });
+    const r = await runWorkflow(baseArgs(), agent, parallel, phase, () => {});
+    assert.ok(calls.some((c) => (c.opts.label || '').startsWith('fix-r')), 'code-surface minors still reach the fixer');
+    assert.equal(r.advisoryNotes.length, 0);
+    assert.ok(r.confirmedFindingsResolved >= 1);
+});
+
+test('docs surface: the hard round cap defaults to roundCap+1, not 10', async () => {
+    // quick depth → mixed roundCap 2 → docs hard cap 3. A blocker every round
+    // with a throwing fixer must stop after 3 rounds instead of churning to 10.
+    const { agent } = makeAgent((_p, opts) => {
+        const l = opts.label || '';
+        if (/^review-r\d+:1$/.test(l)) return finding('real blocker'); // mixed rounds
+        if (/^sol-r\d+:1$/.test(l)) return finding('real blocker'); // gpt-only round(s)
+        if (/^verify-r\d+:1$/.test(l)) return { real: true, severity: 'blocker', reason: 'c' };
+        if (l.startsWith('fix-r')) return { __throw: 'cap' };
+        return undefined;
+    });
+    const r = await runWorkflow(baseArgs({ surface: 'docs', runtime: false }), agent, parallel, phase, () => {});
+    assert.equal(r.reviewRounds, 3, 'docs hard cap is roundCap+1 (2+1)');
+    assert.equal(r.readyForPR, false);
+});
+
+test('the finding ledger reaches round-2 reviewers with fixed and refuted dispositions', async () => {
+    // Round 1: finding A confirmed+fixed, finding B refuted. Round-2 reviewer
+    // prompts must carry both dispositions and the no-re-report rule.
+    const { agent, calls } = makeAgent((_p, opts) => {
+        const l = opts.label || '';
+        if (l === 'review-r1:1')
+            return {
+                findings: [
+                    { file: 'a.js', line: 1, severity: 'major', summary: 'A real defect', failureScenario: 'x' },
+                    { file: 'b.js', line: 2, severity: 'major', summary: 'B bogus claim', failureScenario: 'y' },
+                ],
+            };
+        if (l === 'verify-r1:1') return { real: true, reason: 'A reproduces' };
+        if (l === 'verify-r1:2') return { real: false, reason: 'B impossible: guarded upstream' };
+        return undefined;
+    });
+    const r = await runWorkflow(baseArgs(), agent, parallel, phase, () => {});
+    assert.equal(r.loopClean, true, 'round 2 is clean');
+    const round2 = calls.filter((c) => /^(review|sol)-r2:/.test(c.opts.label || ''));
+    assert.ok(round2.length, 'round 2 reviewers ran');
+    for (const c of round2) {
+        assert.match(c.prompt, /FINDING LEDGER/, 'ledger block present');
+        assert.match(c.prompt, /A real defect/, 'fixed finding listed');
+        assert.match(c.prompt, /B impossible: guarded upstream/, 'refuted reason carried forward');
+        assert.match(c.prompt, /NEW evidence/, 'no-re-report rule present');
+    }
+    assert.ok(r.ledger.some((e) => e.status === 'fixed'), 'result exposes the fixed entry');
+    assert.ok(r.ledger.some((e) => e.status === 'refuted'), 'result exposes the refuted entry');
+});
+
+test('round-1 reviewers see no ledger block (nothing resolved yet)', async () => {
+    const { agent, calls } = makeAgent(null);
+    await runWorkflow(baseArgs(), agent, parallel, phase, () => {});
+    const round1 = calls.filter((c) => /^(review|sol)-r1:/.test(c.opts.label || ''));
+    assert.ok(round1.length, 'round 1 ran');
+    for (const c of round1) assert.doesNotMatch(c.prompt, /FINDING LEDGER/);
+});
+
+test('reviewMode:"spec" swaps in the spec lenses and the citation rule', async () => {
+    const { agent, calls } = makeAgent(null);
+    await runWorkflow(baseArgs({ surface: 'docs', runtime: false, reviewMode: 'spec' }), agent, parallel, phase, () => {});
+    const reviewPrompts = calls.filter((c) => c.opts.phase === 'Review').map((c) => c.prompt);
+    assert.ok(reviewPrompts.some((p) => /Acceptance traceability/.test(p)), 'spec lens present');
+    assert.ok(reviewPrompts.some((p) => /Implementability/.test(p)), 'spec lens present');
+    assert.ok(reviewPrompts.every((p) => !/Lifecycle & concurrency/.test(p)), 'code lenses are replaced');
+    assert.ok(
+        reviewPrompts.some((p) => /SPEC REVIEW MODE/.test(p) && /NOT findings/.test(p)),
+        'citation + no-editorial-preference rule present',
+    );
+});
+
 test('a verify-fixer that commits but returns null is still caught by the HEAD-sha check', async () => {
     // The fixer commits real code, then dies before reporting (null / throw /
     // omitted commits array). The old commits-array-only detection would leave
