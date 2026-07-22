@@ -453,6 +453,60 @@ test('a verify-fix that commits after a clean review round is not ready-for-PR',
     assert.ok(r.residualRisks.some((s) => /never adversarially reviewed/i.test(s)));
 });
 
+test('a below-quorum explore spawns one consolidated recovery explorer and continues', async () => {
+    // quick depth = 2 explorers, quorum 2. One fails → recovery explorer covers
+    // the gap → the run proceeds normally.
+    const { agent, calls } = makeAgent((_p, opts) => {
+        if ((opts.label || '') === 'explore:1') return null;
+        return undefined;
+    });
+    const r = await runWorkflow(baseArgs(), agent, parallel, phase, () => {});
+    assert.ok(calls.some((c) => (c.opts.label || '') === 'explore:recovery'), 'recovery explorer spawned');
+    assert.equal(r.status, 'complete');
+    assert.equal(r.readyForPR, true);
+    assert.equal(r.agentStats.explore.attempted, 3, '2 parallel + 1 recovery attempts accounted');
+    assert.equal(r.agentStats.explore.nulls, 1);
+});
+
+test('an explore still below quorum after recovery pauses before the writer', async () => {
+    const { agent, calls } = makeAgent((_p, opts) => {
+        const l = opts.label || '';
+        if (l === 'explore:1' || l === 'explore:recovery') return null;
+        return undefined;
+    });
+    const r = await runWorkflow(baseArgs(), agent, parallel, phase, () => {});
+    assert.equal(r.status, 'paused');
+    assert.match(r.pauseReason, /quorum|maps/i);
+    assert.equal(r.resumeFrom.phase, 'explore');
+    assert.ok(!calls.some((c) => (c.opts.label || '').startsWith('plan')), 'no planners after quorum failure');
+    assert.ok(!calls.some((c) => (c.opts.label || '').startsWith('implement')), 'no writer after quorum failure');
+    assert.ok(!calls.some((c) => c.opts.phase === 'Verify'), 'no verify after quorum failure');
+    assert.equal(r.readyForPR, false);
+});
+
+test('a below-quorum plan phase spawns one recovery planner and continues', async () => {
+    // standard depth = 3 planners, quorum 2. Two fail → recovery planner
+    // restores the quorum.
+    const { agent, calls } = makeAgent((_p, opts) => {
+        const l = opts.label || '';
+        if (l.startsWith('plan:2') || l.startsWith('plan:3')) return null; // (plan:2 is a ':sol' slot)
+        return undefined;
+    });
+    const r = await runWorkflow(baseArgs({ depth: 'standard' }), agent, parallel, phase, () => {});
+    assert.ok(calls.some((c) => (c.opts.label || '') === 'plan:recovery'), 'recovery planner spawned');
+    assert.equal(r.status, 'complete');
+    assert.equal(r.readyForPR, true);
+});
+
+test('agentStats accounts every phase on a happy run', async () => {
+    const { agent } = makeAgent(null);
+    const r = await runWorkflow(baseArgs({ depth: 'standard' }), agent, parallel, phase, () => {});
+    assert.equal(r.agentStats.explore.attempted, 8);
+    assert.equal(r.agentStats.explore.succeeded, 8);
+    assert.equal(r.agentStats.plan.attempted, 3);
+    assert.ok(r.agentStats.review.attempted >= 1, 'review batches accounted');
+});
+
 test('three consecutive Sol failures trip the breaker: later rounds spawn no Sol attempts', async () => {
     // Every Sol-routed agent throws (dead router). Round 1 burns its attempts
     // (that is where the 3 consecutive failures accrue); a confirmed finding

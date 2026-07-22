@@ -253,6 +253,24 @@ async function classified(makePromise) {
   }
 }
 
+// Evidence-quorum failure: explore/plan produced too little to implement from,
+// with no terminal provider error to blame. Set only after a consolidated
+// recovery agent also failed; pauses the run BEFORE the writer (same pause
+// contract as systemicFailure, resumable with a fresh full run).
+let quorumFailure = ''
+const halted = () => systemicFailure || !!quorumFailure
+
+// Per-phase agent accounting (attempted / succeeded / null) returned as
+// result.agentStats, so silent `.filter(Boolean)` losses are visible.
+const agentStats = {}
+function statAdd(ph, results) {
+  const s = agentStats[ph] || (agentStats[ph] = { attempted: 0, succeeded: 0, nulls: 0 })
+  s.attempted += results.length
+  const ok = results.filter((r) => r != null).length
+  s.succeeded += ok
+  s.nulls += results.length - ok
+}
+
 // ── Sol route circuit breaker + model-coverage accounting ───────────────────
 // A dead Sol route (codex CLI missing, router down) fails EVERY slot the same
 // way; without a breaker each slot still burns a harness agent plus a Claude
@@ -660,8 +678,40 @@ evidence. Only real defects; leave it empty if you see none.`,
     )
   )
   batchOutage(exploreResults, 'Explore')
+  statAdd('explore', exploreResults)
   explorations = exploreResults.filter(Boolean)
   log(`Explore: ${explorations.length} maps returned`)
+
+  // Evidence quorum: implementing off zero or one map defeats the fan-out's
+  // whole point. Below quorum (and not an outage), spend ONE consolidated
+  // recovery explorer on the direct-Claude route; if still short, pause before
+  // the writer rather than implement on missing evidence.
+  const EXPLORE_QUORUM = Math.min(2, exploreAngles.length)
+  if (!systemicFailure && explorations.length < EXPLORE_QUORUM) {
+    log(`Explore: ${explorations.length}/${exploreAngles.length} maps — below quorum (${EXPLORE_QUORUM}); spawning ONE consolidated recovery explorer (direct Claude)`)
+    const rec = await safely(
+      () =>
+        agent(
+          `${CONTRACTS}
+
+PHASE: EXPLORE (RECOVERY — read-only; do NOT edit any file). Earlier parallel
+explorers failed, so YOU must cover ALL of these angles in ONE consolidated map:
+${exploreAngles.map((s) => '- ' + s).join('\n')}
+Use rg/ls/Read to trace real code. Return where the change lives, who is
+affected, the analogue to copy, helpers to reuse, the contracts touched, and the
+test seams. Cite real paths; never guess.`,
+          { schema: EXPLORE_SCHEMA, agentType: 'Explore', effort: 'high', phase: 'Explore', label: 'explore:recovery' }
+        ),
+      null,
+      'Explore recovery'
+    )
+    statAdd('explore', [rec])
+    if (rec) explorations.push(rec)
+    if (!systemicFailure && explorations.length < EXPLORE_QUORUM) {
+      quorumFailure = `explore produced ${explorations.length}/${EXPLORE_QUORUM} maps even after the recovery agent — refusing to implement on missing evidence`
+      log(`Explore: ${quorumFailure}`)
+    }
+  }
 }
 
 const exploreDigest = JSON.stringify(explorations, null, 1).slice(0, 12000)
@@ -677,7 +727,7 @@ const planAngles = [
 
 let plans = []
 let canonicalPlan = null
-if (START_PHASE === 'explore' && !systemicFailure) {
+if (START_PHASE === 'explore' && !halted()) {
   phase('Plan')
   const planResults = await parallel(
     planAngles.map((angle, i) => () =>
@@ -700,10 +750,43 @@ docs to update.`,
     )
   )
   batchOutage(planResults, 'Plan')
+  statAdd('plan', planResults)
   plans = planResults.filter(Boolean)
+
+  // Plan quorum: a single surviving plan collapses the independent-plans
+  // premise. Below quorum (and not an outage), one consolidated recovery
+  // planner on the direct-Claude route; still short → pause before the writer.
+  const PLAN_QUORUM = Math.min(2, planAngles.length)
+  if (!systemicFailure && plans.length < PLAN_QUORUM) {
+    log(`Plan: ${plans.length}/${planAngles.length} plans — below quorum (${PLAN_QUORUM}); spawning ONE consolidated recovery planner (direct Claude)`)
+    const rec = await safely(
+      () =>
+        agent(
+          `${CONTRACTS}
+
+PHASE: PLAN (RECOVERY — read-only). Earlier parallel planners failed. Explore maps (JSON):
+${exploreDigest}
+
+Produce ONE implementation plan that balances ALL of these biases:
+${planAngles.map((s) => '- ' + s).join('\n')}
+Choose the owning layer, reuse-vs-new decisions, the SIMPLEST state/failure
+model, the failing-first tests (admin AND non-admin, negative/fallback), and the
+locale keys + docs to update.`,
+          { schema: PLAN_SCHEMA, effort: 'high', phase: 'Plan', label: 'plan:recovery' }
+        ),
+      null,
+      'Plan recovery'
+    )
+    statAdd('plan', [rec])
+    if (rec) plans.push(rec)
+    if (!systemicFailure && plans.length < PLAN_QUORUM) {
+      quorumFailure = `plan produced ${plans.length}/${PLAN_QUORUM} plans even after the recovery agent — refusing to implement without a plan quorum`
+      log(`Plan: ${quorumFailure}`)
+    }
+  }
 }
 
-if (START_PHASE === 'explore' && !systemicFailure) {
+if (START_PHASE === 'explore' && !halted()) {
   canonicalPlan = await safely(
   () =>
     soloSolAgent(
@@ -770,7 +853,7 @@ if (START_PHASE !== 'explore') {
   // the premise of resuming). Synthesize a placeholder so the readyForPR logic
   // works unchanged; reviewers/verify read the real state from BASE...HEAD.
   implemented = { changedFiles: [], commits: [], selfConfidence: 'medium', openTodos: [], resumed: true }
-} else if (!systemicFailure) {
+} else if (!halted()) {
   phase('Implement')
   implemented = await safely(
     () => agent(implementPrompt, { ...implOpts, model: IMPL_MODEL, label: `implement:${IMPL_MODEL}` }),
@@ -799,7 +882,7 @@ and CONTINUE from there rather than restarting from scratch.`,
 // ═══════════════════════════════════════════════════════════════════════════
 // PHASE 4 — ADVERSARIAL REVIEW LOOP (parallel review → verify → single fixer)
 // ═══════════════════════════════════════════════════════════════════════════
-if (!systemicFailure && START_PHASE !== 'verify') phase('Review')
+if (!halted() && START_PHASE !== 'verify') phase('Review')
 
 const reviewContext = `${CONTRACTS}
 
@@ -977,7 +1060,7 @@ if (START_PHASE === 'verify') {
   reviewIncomplete = true
   log('verify-only resume: review loop skipped — this run cannot certify readyForPR (fail closed)')
 }
-while (round < HARD_ROUND_CAP && !cleanRound && !systemicFailure && START_PHASE !== 'verify') {
+while (round < HARD_ROUND_CAP && !cleanRound && !halted() && START_PHASE !== 'verify') {
   round++
   solOkThisRound = false
 
@@ -1016,6 +1099,7 @@ while (round < HARD_ROUND_CAP && !cleanRound && !systemicFailure && START_PHASE 
   log(`Review round ${round}/${HARD_ROUND_CAP}${gptOnly ? ' [gpt-only]' : ''} — ${claudeLensCount} Claude lens + ${solCount}× ${SOL_MODEL} (${SOL_VIA}, ${SOL_EFFORT})${MODEL_SPLIT && !gptOnly ? ' [50/50 + whole-diff]' : ''}`)
 
   const results = await parallel(roundThunks)
+  statAdd('review', results)
   if (batchOutage(results, `Review round ${round}`)) {
     reviewIncomplete = true
     log(`Review round ${round}: provider outage — pausing instead of spawning more agents`)
@@ -1064,6 +1148,7 @@ SCENARIO: ${f.failureScenario}`,
     )
   )
 
+  statAdd('findingVerification', verdicts)
   if (batchOutage(verdicts, `Review round ${round} finding-verification`)) {
     reviewIncomplete = true
     log(`Review round ${round}: provider outage during finding-verification — pausing`)
@@ -1167,7 +1252,7 @@ if (!cleanRound && START_PHASE !== 'verify')
 // parity. Implementer/fixers add new i18n keys only to the base en.json; one
 // low-effort agent (gpt/opus on low) fans them out to every locale.
 // ═══════════════════════════════════════════════════════════════════════════
-if (SURFACE !== 'server' && !systemicFailure && START_PHASE !== 'verify') {
+if (SURFACE !== 'server' && !halted() && START_PHASE !== 'verify') {
   phase('Localize')
   log(`Localize: fanning base-locale keys out to all locales (effort=${LOCALIZE_EFFORT})`)
   await safely(
@@ -1196,7 +1281,7 @@ locales, do NOTHING and report "no locale work needed".`,
 // ═══════════════════════════════════════════════════════════════════════════
 // PHASE 5 — VERIFY (single runner; bounded fix-and-reverify)
 // ═══════════════════════════════════════════════════════════════════════════
-if (!systemicFailure) phase('Verify')
+if (!halted()) phase('Verify')
 
 const gateList = gateCommands()
 const e2eBlock = RUNTIME
@@ -1223,7 +1308,7 @@ let vround = 0
 let verifyFixCommitted = false
 let lastVerifyHead = null // headSha from the most recent verify run
 let verifyFixAttempted = false // a verify-fix agent ran since that verify
-while (vround <= SIZING.verifyFixCap && !systemicFailure) {
+while (vround <= SIZING.verifyFixCap && !halted()) {
   // FINAL VERIFY stays on Claude (authoritative gate run) — never split to Sol.
   verify = await safely(
     () =>
@@ -1332,7 +1417,7 @@ const incidentalBugs = (() => {
 // A paused run tells the launcher exactly where to re-enter: the committed
 // branch state carries everything the later phases need (they work purely from
 // the BASE...HEAD range), so nothing before resumeFrom.phase is re-run.
-const PAUSED = systemicFailure
+const PAUSED = halted()
 const resumeFrom = !PAUSED
   ? null
   : !implemented
@@ -1342,7 +1427,7 @@ const resumeFrom = !PAUSED
   : { phase: 'verify' }
 const result = {
   status: PAUSED ? 'paused' : 'complete',
-  pauseReason: PAUSED ? systemicFailureDetail : null,
+  pauseReason: PAUSED ? systemicFailureDetail || quorumFailure : null,
   resumeFrom,
   startPhase: START_PHASE,
   branch: BRANCH,
@@ -1367,6 +1452,9 @@ const result = {
   // rounds that silently lost cross-family coverage — a missing Sol pass is a
   // route problem to FIX, never a healthy mixed review (per README).
   modelCoverage: { slots: modelCoverage, solDead, roundsWithoutSol },
+  // Per-phase attempted/succeeded/null agent accounting (empty results are no
+  // longer silently filtered away without a trace).
+  agentStats,
   // Last HEAD sha independently reported by a verify run (null when verify never
   // ran, e.g. a paused run) — lets the launcher pin resume/PR actions to the
   // exact commit that was verified.
@@ -1376,7 +1464,7 @@ const result = {
     .concat(
       PAUSED
         ? [
-            `run PAUSED on a systemic provider failure (${systemicFailureDetail}) — do NOT relaunch a full run; once capacity returns, resume with startPhase:"${resumeFrom.phase}" against the same branch`,
+            `run PAUSED (${systemicFailureDetail || quorumFailure}) — do NOT blindly retry; ${systemicFailure ? 'once capacity returns, ' : ''}resume with startPhase:"${resumeFrom.phase}" against the same branch`,
           ]
         : []
     )
