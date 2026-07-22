@@ -471,6 +471,37 @@ test('codex-cli: a THROWING codex harness falls back to Claude, not a lost scope
     assert.ok(r.confirmedFindingsResolved >= 1, 'thrown codex scope covered by the Claude fallback');
 });
 
+test('codex-cli preflight: an unavailable codex CLI trips the breaker before any Sol slot spawns', async () => {
+    // The route is statically known at launch, so one cheap probe short-circuits a
+    // dead codex-cli route instead of burning a harness agent + Claude fallback per
+    // Sol slot before the runtime breaker trips.
+    const { agent, calls } = makeAgent((_p, opts) => {
+        if ((opts.label || '') === 'codex-preflight') return { available: false, version: '' };
+        return undefined;
+    });
+    const r = await runWorkflow(baseArgs({ solVia: 'codex-cli' }), agent, parallel, phase, () => {});
+    assert.ok(calls.some((c) => (c.opts.label || '') === 'codex-preflight'), 'preflight probe spawned on the codex-cli route');
+    assert.equal(r.modelCoverage.solDead, true, 'a missing codex CLI marks the Sol route dead up front');
+    assert.ok(!calls.some((c) => (c.opts.label || '').startsWith('sol-cli-r')), 'no codex harness spawned once the route is known dead');
+    assert.ok(calls.some((c) => (c.opts.label || '').startsWith('explore')), 'explore still runs (on Claude)');
+});
+
+test('codex-cli preflight: a healthy codex CLI leaves the Sol route live', async () => {
+    const { agent, calls } = makeAgent((_p, opts) => {
+        if ((opts.label || '') === 'codex-preflight') return { available: true, version: 'codex 1.2.3' };
+        return undefined;
+    });
+    const r = await runWorkflow(baseArgs({ solVia: 'codex-cli' }), agent, parallel, phase, () => {});
+    assert.equal(r.modelCoverage.solDead, false, 'a healthy probe does not trip the breaker');
+    assert.ok(calls.some((c) => (c.opts.label || '').startsWith('sol-cli-r')), 'codex harness runs on a live route');
+});
+
+test('the preflight probe does not run on the agent route', async () => {
+    const { agent, calls } = makeAgent(null);
+    await runWorkflow(baseArgs({ solVia: 'agent' }), agent, parallel, phase, () => {});
+    assert.ok(!calls.some((c) => (c.opts.label || '') === 'codex-preflight'), 'no codex preflight when solVia is agent');
+});
+
 test('a non-split round still runs at least one whole-diff Sol reviewer at solReviewers:0', async () => {
     // modelSplit:false + solReviewers:0 must NOT yield a Sol-less round: the
     // Math.max(1, SOL_REVIEWERS) floor keeps the "≥1 whole-diff Sol reviewer per

@@ -518,6 +518,40 @@ or augment the body. If the command fails, return an empty body.`,
   }
 }
 
+// ── codex-cli route preflight (Phase 0) ─────────────────────────────────────
+// Under the default codex-cli route the Sol slots are only discovered dead at
+// RUNTIME, after each of the first explore batch's Sol slots burns a harness
+// agent that finds `codex` absent plus a Claude fallback (the breaker bounds but
+// does not eliminate that tax — ~6 wasted spawns in explore alone). The route is
+// statically known at launch, so one cheap probe short-circuits it: a missing CLI
+// trips the breaker BEFORE any Sol slot spawns. A healthy route costs one tiny
+// agent; only an explicit available:false trips it (a null/ambiguous probe leaves
+// the runtime breaker to catch a mid-run death — fail toward attempting Sol).
+if (SOL_VIA === 'codex-cli' && MODEL_SPLIT && !systemicFailure) {
+  const probe = await safely(
+    () =>
+      agent(
+        `cd ${WORKTREE} first, then run (read-only, Bash):\n  command -v codex && codex --version\nReport available:true only if BOTH succeed (codex is on PATH and prints a version); otherwise available:false. Return the version string when known.`,
+        {
+          schema: { type: 'object', additionalProperties: true, required: ['available'], properties: { available: { type: 'boolean' }, version: { type: 'string' } } },
+          agentType: 'general-purpose',
+          effort: 'low',
+          phase: 'Explore',
+          label: 'codex-preflight',
+        }
+      ),
+    null,
+    'codex preflight'
+  )
+  if (probe && probe.available === false) {
+    solDead = true
+    covNote('preflight', false, `codex CLI unavailable at launch (${(probe.version && String(probe.version).slice(0, 40)) || 'command -v codex failed'})`)
+    log('codex-cli preflight: `codex` is unavailable — Sol route marked dead up front; all Sol slots run on Claude')
+  } else {
+    log(`codex-cli preflight: codex ${probe && probe.version ? `(${String(probe.version).slice(0, 40)}) ` : ''}available`)
+  }
+}
+
 // ── shared prompt preamble ──────────────────────────────────────────────────
 const CONTRACTS = `You are working on the Jellyfin Canopy plugin repository in the worktree at:
   ${WORKTREE}
