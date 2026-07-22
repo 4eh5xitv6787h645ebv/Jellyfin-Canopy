@@ -242,9 +242,13 @@ function noteAgentError(e) {
   return true
 }
 // An all-null parallel batch means every agent in it failed — a provider outage,
-// not N independent accidents. (results.length === 0 is not a batch at all.)
+// not N independent accidents. Require a REAL batch (>1): a single-element batch
+// returning null is a normal per-agent failure with correct fail-closed handling
+// downstream (unverified→reviewIncomplete, splitAgent Claude fallback), NOT an
+// outage — misclassifying it pauses the whole run on the common late-round case
+// of one finding whose lone verifier flaked. (results.length ≤ 1 is not a batch.)
 function batchOutage(results, what) {
-  if (results.length && results.every((r) => r == null)) {
+  if (results.length > 1 && results.every((r) => r == null)) {
     if (!systemicFailure) log(`${what}: ALL ${results.length} parallel agents failed — treating as provider outage`)
     systemicFailure = true
     if (!systemicFailureDetail) systemicFailureDetail = `${what}: all ${results.length} parallel agents returned null`

@@ -211,6 +211,26 @@ test('a fully-failed reviewer slot does not certify a clean round (fail closed)'
     assert.ok(r.residualRisks.some((s) => /incomplete coverage/i.test(s)));
 });
 
+test('a single confirmed finding whose lone verifier flakes does NOT pause the run as an outage', async () => {
+    // Late review rounds routinely carry exactly ONE finding. Its verifier batch
+    // has a single element; a lone null verdict there is a per-agent flake, not a
+    // provider outage. It must NOT trip batchOutage (which would pause the whole
+    // run, skipping the fixer/Localize/Verify). The finding stays unresolved
+    // (reviewIncomplete), the run COMPLETES, and Verify still runs.
+    const { agent, calls } = makeAgent((_p, opts) => {
+        const l = opts.label || '';
+        if (l === 'review-r1:1') return finding('lone late-round defect');
+        if (l.startsWith('verify-r')) return null; // the single verifier returns null
+        return undefined;
+    });
+    const r = await runWorkflow(baseArgs(), agent, parallel, phase, () => {});
+    assert.equal(r.status, 'complete', 'a 1-finding/1-null-verifier round is NOT a provider outage');
+    assert.notEqual(r.resumeFrom && r.resumeFrom.phase, 'review', 'the run is not paused for resume');
+    assert.equal(r.reviewIncomplete, true, 'the unverified finding leaves coverage incomplete');
+    assert.equal(r.readyForPR, false);
+    assert.ok(calls.some((c) => c.opts.phase === 'Verify'), 'verify still runs after a lone verifier flake');
+});
+
 test('a finding whose verifier fails is treated as unresolved, not refuted', async () => {
     const { agent } = makeAgent((_p, opts) => {
         const l = opts.label || '';
