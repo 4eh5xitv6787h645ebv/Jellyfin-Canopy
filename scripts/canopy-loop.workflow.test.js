@@ -92,6 +92,60 @@ test('happy path returns readyForPR', async () => {
     assert.equal(r.loopClean, true);
     assert.equal(r.readyForPR, true);
     assert.equal(r.reviewIncomplete, false);
+    assert.equal(r.status, 'complete');
+    assert.equal(r.pauseReason, null);
+    assert.equal(r.resumeFrom, null);
+});
+
+test('a terminal session-limit failure pauses the run instead of spawning more agents', async () => {
+    // Every review-phase agent dies on the Anthropic session limit (run #454).
+    // The loop must classify that as TERMINAL and stop spawning: no Claude
+    // fallbacks, no second round, no Localize, no Verify, no fixers — return a
+    // paused result pointing at the phase to resume from.
+    const { agent, calls } = makeAgent((_p, opts) => {
+        if (opts.phase === 'Review') return { __throw: "You've hit your session limit · resets 3am" };
+        return undefined;
+    });
+    const r = await runWorkflow(baseArgs({ surface: 'client' }), agent, parallel, phase, () => {});
+    assert.equal(r.status, 'paused');
+    assert.match(r.pauseReason, /session limit/i);
+    assert.equal(r.resumeFrom.phase, 'review');
+    assert.equal(r.readyForPR, false);
+    assert.equal(r.reviewIncomplete, true);
+    assert.equal(r.reviewRounds, 1, 'no second review round is attempted during an outage');
+    assert.ok(!calls.some((c) => c.opts.phase === 'Localize'), 'no Localize agent after terminal failure');
+    assert.ok(!calls.some((c) => c.opts.phase === 'Verify'), 'no Verify agent after terminal failure');
+    assert.ok(!calls.some((c) => (c.opts.label || '').startsWith('fix-r')), 'no fixer after terminal failure');
+    assert.ok(r.residualRisks.some((s) => /PAUSED .*resume/i.test(s)), 'the pause residual carries resume instructions');
+});
+
+test('an all-null explore batch is treated as a provider outage and pauses before implement', async () => {
+    // Nulls carry no error message, but EVERY agent in a batch failing is an
+    // infrastructure outage, not N coincidences — pause instead of burning the
+    // plan/implement/review/verify phases on a dead provider.
+    const { agent, calls } = makeAgent((_p, opts) => {
+        if ((opts.label || '').startsWith('explore')) return null;
+        return undefined;
+    });
+    const r = await runWorkflow(baseArgs(), agent, parallel, phase, () => {});
+    assert.equal(r.status, 'paused');
+    assert.equal(r.resumeFrom.phase, 'explore');
+    assert.equal(r.readyForPR, false);
+    assert.ok(!calls.some((c) => (c.opts.label || '').startsWith('plan')), 'no planner spawned during an outage');
+    assert.ok(!calls.some((c) => (c.opts.label || '').startsWith('implement')), 'no implementer spawned during an outage');
+    assert.ok(!calls.some((c) => c.opts.phase === 'Verify'), 'no verify spawned during an outage');
+});
+
+test('a singleton non-terminal agent failure does NOT trip systemic-failure mode', async () => {
+    // One explorer dying for its own reasons is the existing, expected fallback
+    // path — the run must complete normally (fail-closed semantics unchanged).
+    const { agent } = makeAgent((_p, opts) => {
+        if ((opts.label || '') === 'explore:1') return { __throw: 'transient tool crash' };
+        return undefined;
+    });
+    const r = await runWorkflow(baseArgs(), agent, parallel, phase, () => {});
+    assert.equal(r.status, 'complete');
+    assert.equal(r.readyForPR, true);
 });
 
 test('an unroutable Sol lens slot is reviewed by the Claude fallback, not lost', async () => {

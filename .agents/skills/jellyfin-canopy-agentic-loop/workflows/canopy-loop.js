@@ -172,6 +172,54 @@ const SOL_EXPLORE_PLAN_EFFORT = a.solExplorePlanEffort || 'xhigh'
 // (gpt or opus on low, inheriting the session model). Override with args.localizeEffort.
 const LOCALIZE_EFFORT = a.localizeEffort || 'low'
 
+// ── systemic-failure (quota / usage-limit) circuit breaker ──────────────────
+// A TERMINAL provider failure (Anthropic session/usage limit, exhausted quota
+// or credits) kills every subsequent agent the same way. Without detection the
+// loop keeps spawning doomed reviewers, Localize, Verify, and verify-fix agents
+// (run #454 burned 26 agent errors after "You've hit your session limit").
+// Two triggers set systemic-failure mode:
+//   1. an agent error message matching TERMINAL_FAILURE_RE, or
+//   2. an ENTIRE parallel batch returning null (provider/infrastructure outage —
+//      a single null is a normal per-agent failure and never trips this).
+// Once set, the loop stops spawning agents entirely (no Localize, no Verify, no
+// fixers, no Claude fallbacks) and returns early with status:'paused' plus
+// resumeFrom, so a later run can resume via startPhase instead of re-burning
+// the completed phases. Singleton failures keep the existing fail-closed
+// semantics (reviewIncomplete, verifier-null-is-unresolved, etc.) unchanged.
+const TERMINAL_FAILURE_RE =
+  /session limit|usage limit|quota exceeded|exceeded your (current )?quota|out of credits?|insufficient credits?|credit balance/i
+let systemicFailure = false
+let systemicFailureDetail = ''
+function noteAgentError(e) {
+  const msg = String(e && e.message ? e.message : e)
+  if (!TERMINAL_FAILURE_RE.test(msg)) return false
+  if (!systemicFailure) log(`TERMINAL provider failure ("${msg.slice(0, 90)}") — halting all further agent spawns`)
+  systemicFailure = true
+  if (!systemicFailureDetail) systemicFailureDetail = msg.slice(0, 160)
+  return true
+}
+// An all-null parallel batch means every agent in it failed — a provider outage,
+// not N independent accidents. (results.length === 0 is not a batch at all.)
+function batchOutage(results, what) {
+  if (results.length && results.every((r) => r == null)) {
+    if (!systemicFailure) log(`${what}: ALL ${results.length} parallel agents failed — treating as provider outage`)
+    systemicFailure = true
+    if (!systemicFailureDetail) systemicFailureDetail = `${what}: all ${results.length} parallel agents returned null`
+  }
+  return systemicFailure
+}
+// Await an agent promise, classifying any error before rethrowing. parallel()
+// nulls out throwers, which would otherwise DISCARD the error message — this is
+// how terminal failures inside parallel batches reach the classifier.
+async function classified(makePromise) {
+  try {
+    return await makePromise()
+  } catch (e) {
+    noteAgentError(e)
+    throw e
+  }
+}
+
 // codex forwards --output-schema to OpenAI Structured Outputs in STRICT mode,
 // which requires every object to set additionalProperties:false and list EVERY
 // declared property in `required`. Our workflow schemas are intentionally
@@ -202,6 +250,7 @@ function strictSchema(s) {
 // runs `codex ... exec --output-schema`, then RELAYS the structured result.
 // Returns null when codex is unavailable/errors so the caller falls back to Claude.
 async function codexAgent(prompt, schema, opts) {
+  if (systemicFailure) return null // outage: don't spawn the harness agent
   const eff = (opts && opts.effort) || SOL_LIGHT_EFFORT
   const r = await agent(
     `You are a HARNESS that runs an external gpt-5.6-sol analyst via the codex CLI
@@ -247,6 +296,7 @@ ${prompt}
 // gpt-5.6-sol reasoning effort for the 'agent' route (default SOL_EFFORT);
 // solLightEffort?: codex-cli effort (default SOL_LIGHT_EFFORT) }.
 async function splitAgent(i, prompt, opts, ctl) {
+  if (systemicFailure) return null // outage: no Sol attempt, no Claude fallback
   const useSol = ctl && typeof ctl.slot === 'function' ? ctl.slot(i) : solSlot(i)
   if (useSol) {
     try {
@@ -255,15 +305,17 @@ async function splitAgent(i, prompt, opts, ctl) {
       else if (opts && opts.schema)
         r = await codexAgent(prompt, opts.schema, { effort: (ctl && ctl.solLightEffort) || SOL_LIGHT_EFFORT, phase: opts.phase, label: (opts.label || '') + ':sol' })
       if (r != null) return r
-    } catch (_) {
-      /* Sol failed → Claude fallback below */
+    } catch (e) {
+      noteAgentError(e) /* Sol failed → Claude fallback below (unless terminal) */
     }
+    if (systemicFailure) return null // terminal: the fallback would die the same way
   }
-  return agent(prompt, opts)
+  return classified(() => agent(prompt, opts))
 }
 // A singleton read-only step we offload to Sol (plan synthesis) to spare Claude
 // tokens; falls back to Claude when Sol isn't routable/available.
 async function soloSolAgent(prompt, opts, solEffort) {
+  if (systemicFailure) return null // outage: no Sol attempt, no Claude fallback
   if (MODEL_SPLIT) {
     try {
       let r = null
@@ -271,11 +323,12 @@ async function soloSolAgent(prompt, opts, solEffort) {
       else if (opts && opts.schema)
         r = await codexAgent(prompt, opts.schema, { effort: solEffort || SOL_LIGHT_EFFORT, phase: opts.phase, label: (opts.label || '') + ':sol' })
       if (r != null) return r
-    } catch (_) {
-      /* fall through to Claude */
+    } catch (e) {
+      noteAgentError(e) /* fall through to Claude (unless terminal) */
     }
+    if (systemicFailure) return null
   }
-  return agent(prompt, opts)
+  return classified(() => agent(prompt, opts))
 }
 
 // Await a CRITICAL singleton agent; on any throw (e.g. a StructuredOutput retry
@@ -286,6 +339,7 @@ async function safely(makePromise, fallback, what) {
     const r = await makePromise()
     return r == null ? fallback : r
   } catch (e) {
+    noteAgentError(e) // classify terminal (quota/limit) failures before falling back
     log(`${what} failed (${String(e && e.message ? e.message : e).slice(0, 90)}) → using fallback`)
     return fallback
   }
@@ -492,8 +546,7 @@ const exploreAngles = [
   'the PERFORMANCE/BOUNDS surface: allocations, N+1 / manager-call counts, unbounded work, and the measurable budgets to assert',
 ].slice(0, SIZING.explorers)
 
-const explorations = (
-  await parallel(
+const exploreResults = await parallel(
     exploreAngles.map((angle, i) => () =>
       splitAgent(
         i,
@@ -513,7 +566,8 @@ evidence. Only real defects; leave it empty if you see none.`,
       )
     )
   )
-).filter(Boolean)
+batchOutage(exploreResults, 'Explore')
+const explorations = exploreResults.filter(Boolean)
 
 const exploreDigest = JSON.stringify(explorations, null, 1).slice(0, 12000)
 log(`Explore: ${explorations.length} maps returned`)
@@ -521,16 +575,17 @@ log(`Explore: ${explorations.length} maps returned`)
 // ═══════════════════════════════════════════════════════════════════════════
 // PHASE 2 — PLAN (independent plans → adversarial synthesis into one)
 // ═══════════════════════════════════════════════════════════════════════════
-phase('Plan')
-
 const planAngles = [
   'MINIMAL-CHANGE first: the smallest change at the true owner; delete/delegate state before adding any.',
   'RISK first: identify the failure modes and design the state/failure model that fails closed with fewest moving parts.',
   'REUSE first: maximise use of existing helpers/analogue; avoid any parallel implementation of a shared behavior.',
 ].slice(0, SIZING.planners)
 
-const plans = (
-  await parallel(
+let plans = []
+let canonicalPlan = null
+if (!systemicFailure) {
+  phase('Plan')
+  const planResults = await parallel(
     planAngles.map((angle, i) => () =>
       splitAgent(
         i,
@@ -550,9 +605,12 @@ docs to update.`,
       )
     )
   )
-).filter(Boolean)
+  batchOutage(planResults, 'Plan')
+  plans = planResults.filter(Boolean)
+}
 
-const canonicalPlan = await safely(
+if (!systemicFailure) {
+  canonicalPlan = await safely(
   () =>
     soloSolAgent(
       `${CONTRACTS}
@@ -575,14 +633,13 @@ and add the least while reusing the most.`,
     ),
   plans[0] || null,
   'Plan synthesis'
-)
-log(`Plan: ${plans.length} plans → 1 canonical (${(canonicalPlan && canonicalPlan.owningLayer) || 'n/a'})`)
+  )
+  log(`Plan: ${plans.length} plans → 1 canonical (${(canonicalPlan && canonicalPlan.owningLayer) || 'n/a'})`)
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // PHASE 3 — IMPLEMENT (single writer)
 // ═══════════════════════════════════════════════════════════════════════════
-phase('Implement')
-
 const implementPrompt = `${CONTRACTS}
 
 PHASE: IMPLEMENT. You are the SOLE writer in this worktree. Follow this canonical
@@ -613,33 +670,37 @@ self-confidence (high/medium/low) with any open TODOs.`
 const IMPL_MODEL = a.implementModel || 'fable'
 const IMPL_FALLBACK = a.implementFallback || 'opus'
 const implOpts = { schema: IMPLEMENT_SCHEMA, agentType: 'general-purpose', effort: 'high', phase: 'Implement' }
-let implemented = await safely(
-  () => agent(implementPrompt, { ...implOpts, model: IMPL_MODEL, label: `implement:${IMPL_MODEL}` }),
-  null,
-  `Implement (${IMPL_MODEL})`
-)
-if (!implemented) {
-  log(`Implement: ${IMPL_MODEL} unavailable/exhausted → falling back to ${IMPL_FALLBACK} (high)`)
+let implemented = null
+if (!systemicFailure) {
+  phase('Implement')
   implemented = await safely(
-    () =>
-      agent(
-        `${implementPrompt}
+    () => agent(implementPrompt, { ...implOpts, model: IMPL_MODEL, label: `implement:${IMPL_MODEL}` }),
+    null,
+    `Implement (${IMPL_MODEL})`
+  )
+  if (!implemented && !systemicFailure) {
+    log(`Implement: ${IMPL_MODEL} unavailable/exhausted → falling back to ${IMPL_FALLBACK} (high)`)
+    implemented = await safely(
+      () =>
+        agent(
+          `${implementPrompt}
 
 NOTE: a previous attempt may have left partial changes or commits in the
 worktree. Inspect \`git -C ${WORKTREE} status\` and \`git -C ${WORKTREE} log --oneline ${BASE}..HEAD\`
 and CONTINUE from there rather than restarting from scratch.`,
-        { ...implOpts, model: IMPL_FALLBACK, label: `implement:${IMPL_FALLBACK}-fallback` }
-      ),
-    null,
-    `Implement (${IMPL_FALLBACK})`
-  )
+          { ...implOpts, model: IMPL_FALLBACK, label: `implement:${IMPL_FALLBACK}-fallback` }
+        ),
+      null,
+      `Implement (${IMPL_FALLBACK})`
+    )
+  }
+  log(`Implement: ${(implemented && implemented.changedFiles && implemented.changedFiles.length) || 0} files, confidence ${(implemented && implemented.selfConfidence) || '?'}`)
 }
-log(`Implement: ${(implemented && implemented.changedFiles && implemented.changedFiles.length) || 0} files, confidence ${(implemented && implemented.selfConfidence) || '?'}`)
 
 // ═══════════════════════════════════════════════════════════════════════════
 // PHASE 4 — ADVERSARIAL REVIEW LOOP (parallel review → verify → single fixer)
 // ═══════════════════════════════════════════════════════════════════════════
-phase('Review')
+if (!systemicFailure) phase('Review')
 
 const reviewContext = `${CONTRACTS}
 
@@ -655,6 +716,7 @@ You see ONLY the diff and this brief — never the implementer's reasoning.`
 // → a whole-diff pass. Used both as a first-class reviewer AND as the fallback
 // when a Sol slot can't be routed, so no review scope is ever silently lost.
 function claudeReview(roundNo, i, lens) {
+  if (systemicFailure) return null // outage: don't spawn another doomed reviewer
   const scoped = lens
     ? `PHASE: ADVERSARIAL REVIEW — lens: "${lens}".
 Assume the change is WRONG and prove how, THROUGH THIS LENS ONLY.`
@@ -662,8 +724,7 @@ Assume the change is WRONG and prove how, THROUGH THIS LENS ONLY.`
 Assume the change is WRONG and prove how, across correctness, security/privacy
 (fail-closed), lifecycle/concurrency, bounds/perf/no-jank, JF12 + MUI/legacy
 compatibility, test strength, product scope, and docs/locale/generated-artifact gaps.`
-  return agent(
-    `${reviewContext}
+  const prompt = `${reviewContext}
 
 ${scoped}
 A finding needs a real file/line and a concrete failure scenario (inputs/state →
@@ -672,8 +733,9 @@ Watch for mechanically-similar-but-semantically-different code (side effects
 inside asserts/guards, eager vs lazy defaults, odd-length buffer truncation,
 bounds checks present in one build only, byte-vs-UTF assumptions, escape/format
 passes over the wrong data). Reject any workaround that needs a paragraph-long
-comment to justify it. Return only real findings (empty array if none).`,
-    { schema: FINDINGS_SCHEMA, agentType: 'code-reviewer', effort: 'medium', phase: 'Review', label: `review-r${roundNo}:${i + 1}${lens ? '' : ':whole'}` }
+comment to justify it. Return only real findings (empty array if none).`
+  return classified(() =>
+    agent(prompt, { schema: FINDINGS_SCHEMA, agentType: 'code-reviewer', effort: 'medium', phase: 'Review', label: `review-r${roundNo}:${i + 1}${lens ? '' : ':whole'}` })
   )
 }
 
@@ -729,7 +791,8 @@ failure — reserve {"findings": []} for a genuine clean codex run.`,
             { schema: FINDINGS_SCHEMA, agentType: 'general-purpose', effort: 'medium', phase: 'Review', label: `sol-cli-r${roundNo}:${i + 1}` }
             )
             return r && !r.solUnavailable ? r : null
-          } catch (_) {
+          } catch (e) {
+            noteAgentError(e)
             return null // codex harness threw → Claude fallback below (scope never lost)
           }
         }
@@ -737,14 +800,17 @@ failure — reserve {"findings": []} for a genuine clean codex run.`,
           try {
             const r = await agent(solPrompt, { schema: FINDINGS_SCHEMA, model: SOL_MODEL, effort: SOL_EFFORT, phase: 'Review', label: `sol-r${roundNo}:${i + 1}` })
             return r != null ? r : null
-          } catch (_) {
+          } catch (e) {
+            noteAgentError(e)
             return null // Sol not routable → Claude fallback below
           }
         }
 
   return async () => {
+    if (systemicFailure) return null // outage: no Sol attempt, no Claude fallback
     const r = await runSol()
     if (r != null) return r
+    if (systemicFailure) return null // terminal: the fallback would die the same way
     return claudeReview(roundNo, i, lens) // scope never lost
   }
 }
@@ -756,7 +822,7 @@ let cleanRound = false
 let reviewIncomplete = false
 const MIXED_ROUND_CAP = SIZING.roundCap
 let round = 0
-while (round < HARD_ROUND_CAP && !cleanRound) {
+while (round < HARD_ROUND_CAP && !cleanRound && !systemicFailure) {
   round++
 
   // Rounds 1..MIXED_ROUND_CAP run the mixed panel (Claude lenses + gpt-5.6-sol).
@@ -794,6 +860,11 @@ while (round < HARD_ROUND_CAP && !cleanRound) {
   log(`Review round ${round}/${HARD_ROUND_CAP}${gptOnly ? ' [gpt-only]' : ''} — ${claudeLensCount} Claude lens + ${solCount}× ${SOL_MODEL} (${SOL_VIA}, ${SOL_EFFORT})${MODEL_SPLIT && !gptOnly ? ' [50/50 + whole-diff]' : ''}`)
 
   const results = await parallel(roundThunks)
+  if (batchOutage(results, `Review round ${round}`)) {
+    reviewIncomplete = true
+    log(`Review round ${round}: provider outage — pausing instead of spawning more agents`)
+    break
+  }
   const failedWorkers = results.filter((r) => r == null).length
   const raw = results.filter(Boolean).flatMap((r) => (r && r.findings) || [])
 
@@ -833,6 +904,12 @@ SCENARIO: ${f.failureScenario}`,
     )
   )
 
+  if (batchOutage(verdicts, `Review round ${round} finding-verification`)) {
+    reviewIncomplete = true
+    log(`Review round ${round}: provider outage during finding-verification — pausing`)
+    break
+  }
+
   // A missing verdict (verifier agent failed) is NOT a refutation — the finding
   // is unresolved, not cleared. Only a returned real=false counts as refuted.
   const unverified = deduped.filter((_, i) => verdicts[i] == null).length
@@ -856,6 +933,11 @@ SCENARIO: ${f.failureScenario}`,
   if (unverified) {
     reviewIncomplete = true
     log(`Review round ${round}: ${confirmed.length} confirmed but ${unverified} finding(s) unverified (verifier failure) → coverage incomplete, run cannot certify clean`)
+  }
+  if (systemicFailure) {
+    reviewIncomplete = true
+    log(`Review round ${round}: provider outage — not spawning the fixer`)
+    break
   }
   log(`Review round ${round}: ${confirmed.length} confirmed → fixing`)
 
@@ -897,7 +979,7 @@ if (!cleanRound)
 // parity. Implementer/fixers add new i18n keys only to the base en.json; one
 // low-effort agent (gpt/opus on low) fans them out to every locale.
 // ═══════════════════════════════════════════════════════════════════════════
-if (SURFACE !== 'server') {
+if (SURFACE !== 'server' && !systemicFailure) {
   phase('Localize')
   log(`Localize: fanning base-locale keys out to all locales (effort=${LOCALIZE_EFFORT})`)
   await safely(
@@ -926,7 +1008,7 @@ locales, do NOTHING and report "no locale work needed".`,
 // ═══════════════════════════════════════════════════════════════════════════
 // PHASE 5 — VERIFY (single runner; bounded fix-and-reverify)
 // ═══════════════════════════════════════════════════════════════════════════
-phase('Verify')
+if (!systemicFailure) phase('Verify')
 
 const gateList = gateCommands()
 const e2eBlock = RUNTIME
@@ -946,7 +1028,7 @@ let vround = 0
 // stale cleanRound to certify them is unsafe. Track whether any verify-fix
 // actually committed; if so the final diff is unreviewed and NOT ready for PR.
 let verifyFixCommitted = false
-while (vround <= SIZING.verifyFixCap) {
+while (vround <= SIZING.verifyFixCap && !systemicFailure) {
   // FINAL VERIFY stays on Claude (authoritative gate run) — never split to Sol.
   verify = await safely(
     () =>
@@ -984,6 +1066,10 @@ ALL BLOCKING gates passed, the e2e result if run, and a list of failures.`,
   vround++
   if (vround > SIZING.verifyFixCap) {
     log(`Verify: still failing after ${SIZING.verifyFixCap} fix attempts — reporting failures`)
+    break
+  }
+  if (systemicFailure) {
+    log('Verify: provider outage — skipping the verify-fix retry (a code-writing fixer is pointless during an outage)')
     break
   }
   log(`Verify: failures → fix attempt ${vround}/${SIZING.verifyFixCap}`)
@@ -1032,7 +1118,21 @@ const incidentalBugs = (() => {
   }
   return out
 })()
+// A paused run tells the launcher exactly where to re-enter: the committed
+// branch state carries everything the later phases need (they work purely from
+// the BASE...HEAD range), so nothing before resumeFrom.phase is re-run.
+const PAUSED = systemicFailure
+const resumeFrom = !PAUSED
+  ? null
+  : !implemented
+  ? { phase: 'explore' }
+  : !cleanRound
+  ? { phase: 'review', round }
+  : { phase: 'verify' }
 const result = {
+  status: PAUSED ? 'paused' : 'complete',
+  pauseReason: PAUSED ? systemicFailureDetail : null,
+  resumeFrom,
   branch: BRANCH,
   surface: SURFACE,
   depth: DEPTH,
@@ -1045,9 +1145,16 @@ const result = {
   canonicalPlan: canonicalPlan || null,
   verify: verify || null,
   verifyFixCommitted,
-  readyForPR: implementationOk && cleanRound && !reviewIncomplete && !verifyFixCommitted && blockingGreen && e2eGreen,
+  readyForPR: !PAUSED && implementationOk && cleanRound && !reviewIncomplete && !verifyFixCommitted && blockingGreen && e2eGreen,
   residualRisks: []
-    .concat(implemented ? [] : ['implementation did not complete — both implementer models failed to return a result'])
+    .concat(
+      PAUSED
+        ? [
+            `run PAUSED on a systemic provider failure (${systemicFailureDetail}) — do NOT relaunch a full run; once capacity returns, resume with startPhase:"${resumeFrom.phase}" against the same branch`,
+          ]
+        : []
+    )
+    .concat(implemented || PAUSED ? [] : ['implementation did not complete — both implementer models failed to return a result'])
     .concat(openTodos.length ? ['implementer left open acceptance-criteria TODOs — change is incomplete'] : [])
     .concat(reviewIncomplete ? ['adversarial review ended with incomplete coverage (a reviewer or finding-verifier failed) — the round could not be certified clean'] : [])
     .concat(cleanRound || reviewIncomplete ? [] : ['review loop hit its round cap with unresolved confirmed findings'])
@@ -1057,6 +1164,6 @@ const result = {
     .concat(openTodos),
 }
 log(
-  `canopy-loop done: readyForPR=${result.readyForPR} · impl=${implementationOk} · rounds=${round} · findings resolved=${confirmedAll.length} · blockingGreen=${blockingGreen}${RUNTIME ? ` · e2e=${e2eGreen}` : ''}`
+  `canopy-loop ${result.status}: readyForPR=${result.readyForPR} · impl=${implementationOk} · rounds=${round} · findings resolved=${confirmedAll.length} · blockingGreen=${blockingGreen}${RUNTIME ? ` · e2e=${e2eGreen}` : ''}${PAUSED ? ` · resumeFrom=${resumeFrom.phase}` : ''}`
 )
 return result
