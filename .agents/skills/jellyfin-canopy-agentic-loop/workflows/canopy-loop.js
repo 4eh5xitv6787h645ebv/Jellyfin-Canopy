@@ -44,6 +44,16 @@ const SURFACE_COERCED = SURFACE !== SURFACE_INPUT
 const RUNTIME = a.runtime !== false && SURFACE !== 'docs'
 const DEPTH = a.depth || 'standard' // quick | standard | deep
 const BASE = a.base || 'origin/main'
+// Resume support: a run killed mid-flight (e.g. by a session usage limit) has
+// all completed work COMMITTED on the branch, and the review/verify prompts work
+// purely from the committed ${BASE}...HEAD range — so a relaunch can re-enter
+// later instead of re-burning explore/plan/implement:
+//   'explore' (default) — full run, byte-identical to the pre-resume behavior;
+//   'review'  — skip Explore/Plan/Implement, adversarially review the committed
+//               range, then verify (can certify readyForPR — review runs fully);
+//   'verify'  — additionally skip the review loop: gates only. A verify-only
+//               resume can NEVER certify readyForPR (fail closed — no review ran).
+const START_PHASE = ['explore', 'review', 'verify'].includes(a.startPhase) ? a.startPhase : 'explore'
 // User policy: INCLUDE the issue number in commit messages (traceability). Derived
 // from the branch (fix/issue-<N>) or args.issue. The main thread additionally puts
 // "Closes #<N>" in the PR body so a merge auto-closes the issue + moves the board item.
@@ -530,10 +540,12 @@ function gateCommands() {
 // ═══════════════════════════════════════════════════════════════════════════
 // PHASE 1 — EXPLORE (parallel, read-only)
 // ═══════════════════════════════════════════════════════════════════════════
-phase('Explore')
+if (START_PHASE === 'explore') phase('Explore')
 if (SURFACE_COERCED)
   log(`canopy-loop: unknown surface "${SURFACE_INPUT}" → coerced to "cross" (fail closed: runs all surface gates)`)
 log(`canopy-loop: ${DEPTH} depth · surface=${SURFACE} · runtime=${RUNTIME} · branch ${BRANCH}`)
+if (START_PHASE !== 'explore')
+  log(`canopy-loop: RESUME at "${START_PHASE}" — explore/plan/implement skipped; working from the committed ${BASE}...HEAD range`)
 
 const exploreAngles = [
   'the OWNING module and the exact functions/types that must change',
@@ -546,7 +558,9 @@ const exploreAngles = [
   'the PERFORMANCE/BOUNDS surface: allocations, N+1 / manager-call counts, unbounded work, and the measurable budgets to assert',
 ].slice(0, SIZING.explorers)
 
-const exploreResults = await parallel(
+let explorations = []
+if (START_PHASE === 'explore') {
+  const exploreResults = await parallel(
     exploreAngles.map((angle, i) => () =>
       splitAgent(
         i,
@@ -566,11 +580,12 @@ evidence. Only real defects; leave it empty if you see none.`,
       )
     )
   )
-batchOutage(exploreResults, 'Explore')
-const explorations = exploreResults.filter(Boolean)
+  batchOutage(exploreResults, 'Explore')
+  explorations = exploreResults.filter(Boolean)
+  log(`Explore: ${explorations.length} maps returned`)
+}
 
 const exploreDigest = JSON.stringify(explorations, null, 1).slice(0, 12000)
-log(`Explore: ${explorations.length} maps returned`)
 
 // ═══════════════════════════════════════════════════════════════════════════
 // PHASE 2 — PLAN (independent plans → adversarial synthesis into one)
@@ -583,7 +598,7 @@ const planAngles = [
 
 let plans = []
 let canonicalPlan = null
-if (!systemicFailure) {
+if (START_PHASE === 'explore' && !systemicFailure) {
   phase('Plan')
   const planResults = await parallel(
     planAngles.map((angle, i) => () =>
@@ -609,7 +624,7 @@ docs to update.`,
   plans = planResults.filter(Boolean)
 }
 
-if (!systemicFailure) {
+if (START_PHASE === 'explore' && !systemicFailure) {
   canonicalPlan = await safely(
   () =>
     soloSolAgent(
@@ -671,7 +686,12 @@ const IMPL_MODEL = a.implementModel || 'fable'
 const IMPL_FALLBACK = a.implementFallback || 'opus'
 const implOpts = { schema: IMPLEMENT_SCHEMA, agentType: 'general-purpose', effort: 'high', phase: 'Implement' }
 let implemented = null
-if (!systemicFailure) {
+if (START_PHASE !== 'explore') {
+  // Resumed run: the implementation is already COMMITTED on the branch (that is
+  // the premise of resuming). Synthesize a placeholder so the readyForPR logic
+  // works unchanged; reviewers/verify read the real state from BASE...HEAD.
+  implemented = { changedFiles: [], commits: [], selfConfidence: 'medium', openTodos: [], resumed: true }
+} else if (!systemicFailure) {
   phase('Implement')
   implemented = await safely(
     () => agent(implementPrompt, { ...implOpts, model: IMPL_MODEL, label: `implement:${IMPL_MODEL}` }),
@@ -700,7 +720,7 @@ and CONTINUE from there rather than restarting from scratch.`,
 // ═══════════════════════════════════════════════════════════════════════════
 // PHASE 4 — ADVERSARIAL REVIEW LOOP (parallel review → verify → single fixer)
 // ═══════════════════════════════════════════════════════════════════════════
-if (!systemicFailure) phase('Review')
+if (!systemicFailure && START_PHASE !== 'verify') phase('Review')
 
 const reviewContext = `${CONTRACTS}
 
@@ -822,7 +842,14 @@ let cleanRound = false
 let reviewIncomplete = false
 const MIXED_ROUND_CAP = SIZING.roundCap
 let round = 0
-while (round < HARD_ROUND_CAP && !cleanRound && !systemicFailure) {
+if (START_PHASE === 'verify') {
+  // Verify-only resume: the review loop is SKIPPED, so this run can never
+  // certify the branch clean — readyForPR stays false (fail closed). Use
+  // startPhase:'review' (or a full run) to certify.
+  reviewIncomplete = true
+  log('verify-only resume: review loop skipped — this run cannot certify readyForPR (fail closed)')
+}
+while (round < HARD_ROUND_CAP && !cleanRound && !systemicFailure && START_PHASE !== 'verify') {
   round++
 
   // Rounds 1..MIXED_ROUND_CAP run the mixed panel (Claude lenses + gpt-5.6-sol).
@@ -965,7 +992,7 @@ ${JSON.stringify(confirmed, null, 1).slice(0, 10000)}`,
     `Review fixer (round ${round})`
   )
 }
-if (!cleanRound)
+if (!cleanRound && START_PHASE !== 'verify')
   log(
     reviewIncomplete
       ? `Review: ended without a certified-clean round — coverage incomplete (reviewer/verifier failure); will report as residual risk`
@@ -979,7 +1006,7 @@ if (!cleanRound)
 // parity. Implementer/fixers add new i18n keys only to the base en.json; one
 // low-effort agent (gpt/opus on low) fans them out to every locale.
 // ═══════════════════════════════════════════════════════════════════════════
-if (SURFACE !== 'server' && !systemicFailure) {
+if (SURFACE !== 'server' && !systemicFailure && START_PHASE !== 'verify') {
   phase('Localize')
   log(`Localize: fanning base-locale keys out to all locales (effort=${LOCALIZE_EFFORT})`)
   await safely(
@@ -1133,6 +1160,7 @@ const result = {
   status: PAUSED ? 'paused' : 'complete',
   pauseReason: PAUSED ? systemicFailureDetail : null,
   resumeFrom,
+  startPhase: START_PHASE,
   branch: BRANCH,
   surface: SURFACE,
   depth: DEPTH,
@@ -1156,7 +1184,13 @@ const result = {
     )
     .concat(implemented || PAUSED ? [] : ['implementation did not complete — both implementer models failed to return a result'])
     .concat(openTodos.length ? ['implementer left open acceptance-criteria TODOs — change is incomplete'] : [])
-    .concat(reviewIncomplete ? ['adversarial review ended with incomplete coverage (a reviewer or finding-verifier failed) — the round could not be certified clean'] : [])
+    .concat(
+      START_PHASE === 'verify'
+        ? ['verify-only resume: the adversarial review loop was SKIPPED — run startPhase:"review" (or a full run) before opening a PR']
+        : reviewIncomplete
+        ? ['adversarial review ended with incomplete coverage (a reviewer or finding-verifier failed) — the round could not be certified clean']
+        : []
+    )
     .concat(cleanRound || reviewIncomplete ? [] : ['review loop hit its round cap with unresolved confirmed findings'])
     .concat(verifyFixCommitted ? ['verify-fix committed code AFTER the clean review round — those commits were never adversarially reviewed; re-run the review loop before opening a PR'] : [])
     .concat(blockingGreen ? [] : ['one or more BLOCKING gates are failing'])

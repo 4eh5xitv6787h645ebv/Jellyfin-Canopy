@@ -136,6 +136,38 @@ test('an all-null explore batch is treated as a provider outage and pauses befor
     assert.ok(!calls.some((c) => c.opts.phase === 'Verify'), 'no verify spawned during an outage');
 });
 
+test('startPhase:"review" skips explore/plan/implement and can still certify readyForPR', async () => {
+    const { agent, calls } = makeAgent(null);
+    const r = await runWorkflow(baseArgs({ startPhase: 'review' }), agent, parallel, phase, () => {});
+    assert.ok(!calls.some((c) => (c.opts.label || '').startsWith('explore')), 'no explorers on resume');
+    assert.ok(!calls.some((c) => (c.opts.label || '').startsWith('plan')), 'no planners on resume');
+    assert.ok(!calls.some((c) => (c.opts.label || '').startsWith('implement')), 'no implementer on resume');
+    assert.ok(calls.some((c) => c.opts.phase === 'Review'), 'review loop runs');
+    assert.ok(calls.some((c) => c.opts.phase === 'Verify'), 'verify runs');
+    assert.equal(r.implement.resumed, true, 'implementation is a synthesized resume placeholder');
+    assert.equal(r.loopClean, true);
+    assert.equal(r.readyForPR, true, 'a full review + green gates on resume can certify the branch');
+});
+
+test('startPhase:"verify" runs gates only and can NEVER certify readyForPR (fail closed)', async () => {
+    const { agent, calls } = makeAgent(null);
+    const r = await runWorkflow(baseArgs({ startPhase: 'verify' }), agent, parallel, phase, () => {});
+    assert.ok(!calls.some((c) => c.opts.phase === 'Review'), 'no review agents on a verify-only resume');
+    assert.ok(calls.some((c) => c.opts.phase === 'Verify'), 'verify runs');
+    assert.equal(r.loopClean, false);
+    assert.equal(r.reviewIncomplete, true);
+    assert.equal(r.readyForPR, false, 'green gates without review must not certify');
+    assert.ok(r.residualRisks.some((s) => /review loop was SKIPPED/i.test(s)));
+});
+
+test('an unknown startPhase falls back to a full run', async () => {
+    const { agent, calls } = makeAgent(null);
+    const r = await runWorkflow(baseArgs({ startPhase: 'implment' }), agent, parallel, phase, () => {});
+    assert.ok(calls.some((c) => (c.opts.label || '').startsWith('explore')), 'explorers run');
+    assert.equal(r.startPhase, 'explore');
+    assert.equal(r.readyForPR, true);
+});
+
 test('a singleton non-terminal agent failure does NOT trip systemic-failure mode', async () => {
     // One explorer dying for its own reasons is the existing, expected fallback
     // path — the run must complete normally (fail-closed semantics unchanged).
