@@ -12,8 +12,10 @@
 // native-tabs order:-1 group when present, else the DOM first child) so the
 // tray's buttons right-align against the avatar while staying reachable when the
 // row overflows. On legacy the resolved `.headerRight` is overridden to
-// justify-content:flex-start (its native profile button scrolls with the row —
-// no sticky pin). Neither alignment path uses the `safe`/`unsafe` keyword.
+// justify-content:flex-start and its native profile button (.headerUserButton),
+// which lives INSIDE that scrollport, is sticky-pinned to the inline-end edge so
+// it stays put while the icon buttons scroll. Neither alignment path uses the
+// `safe`/`unsafe` keyword.
 //
 // These specs seed a real layout before boot, drive the ACTUAL resolved tray,
 // append deterministic test-only buttons until it overflows, and prove the
@@ -55,16 +57,34 @@ async function seedLayout(page: Page, seedValue: string): Promise<void> {
  * badge clipping can be checked even on a non-admin tray without active-streams.
  * Returns whether the resolved tray was found.
  */
-async function fillResolvedTray(page: Page): Promise<boolean> {
-    return page.evaluate(({ count }) => {
+async function fillResolvedTray(page: Page, layout: Layout): Promise<boolean> {
+    return page.evaluate(({ count, isLegacy }) => {
         const helpers = (window as any).JellyfinCanopy?.helpers;
         const tray: HTMLElement | null = helpers?.getHeaderRightContainer?.() ?? null;
         if (!tray) return false;
+        // Legacy: the native profile button (.headerUserButton) is the trailing child
+        // of the resolved .headerRight and is sticky-pinned to the scrollport's right
+        // edge. The pinned-avatar assertions must never pass vacuously: if the seeded
+        // login DID NOT place .headerUserButton inside the resolved tray, synthesize a
+        // deterministic trailing stand-in so the pin behaviour is always exercised (a
+        // real trailing child of the scroll row, proving the CSS rule whether or not
+        // the real avatar is present).
+        if (isLegacy && !tray.querySelector(':scope > .headerUserButton')) {
+            const synthAvatar = document.createElement('button');
+            synthAvatar.type = 'button';
+            synthAvatar.className = 'headerButton headerUserButton paper-icon-button-light jc-e2e-459-synth-avatar';
+            synthAvatar.style.cssText = 'position:relative;box-sizing:border-box;width:48px;min-width:48px;height:48px;padding:0;margin:0;';
+            const glyph = document.createElement('span');
+            glyph.className = 'material-icons';
+            glyph.textContent = 'person';
+            synthAvatar.appendChild(glyph);
+            tray.appendChild(synthAvatar);
+        }
         // In production Canopy inserts its buttons at the FRONT of the tray, so the
         // native profile button (.headerUserButton), when present on the legacy
         // header, stays the trailing child. Mirror that: insert the fillers BEFORE
         // that button when it exists (append otherwise) so the row shape matches
-        // production and the trailing profile button scrolls with the row.
+        // production and the trailing profile button stays pinned at the right.
         const avatar = tray.querySelector<HTMLElement>(':scope > .headerUserButton');
         for (let i = 0; i < count; i++) {
             const btn = document.createElement('button');
@@ -96,7 +116,7 @@ async function fillResolvedTray(page: Page): Promise<boolean> {
             else tray.appendChild(btn);
         }
         return tray.querySelectorAll('.jc-e2e-459-filler').length === count;
-    }, { count: FILLER_COUNT });
+    }, { count: FILLER_COUNT, isLegacy: layout === 'legacy' });
 }
 
 interface TrayGeometry {
@@ -215,23 +235,48 @@ async function readProfile(
 }
 
 /**
- * Modern only: make `getHeaderRightContainer()` resolve to the REAL MUI action box
- * before the tray is driven.
+ * The native legacy profile button (`.headerUserButton`) geometry. On the legacy
+ * header it is a trailing child of the resolved `.headerRight` scrollport (unlike
+ * modern, where the avatar is a separate sibling Box OUTSIDE the tray). It is
+ * sticky-pinned (`position:sticky; inset-inline-end:0`) to the scrollport's
+ * inline-end edge so it stays visible at rest and stationary while the icon buttons
+ * scroll beneath it (findings r9f2/r9f7/r9f11). Reports its computed position and
+ * rect so a test can prove it is pinned (does not ride the row's scroll) and
+ * on-screen at rest.
+ */
+async function readLegacyAvatar(
+    page: Page,
+): Promise<{ found: boolean; position: string; left: number; right: number; width: number } | null> {
+    return page.evaluate(() => {
+        const helpers = (window as any).JellyfinCanopy?.helpers;
+        const tray: HTMLElement | null = helpers?.getHeaderRightContainer?.() ?? null;
+        const avatar = tray?.querySelector<HTMLElement>(':scope > .headerUserButton') ?? null;
+        if (!avatar) return { found: false, position: '', left: 0, right: 0, width: 0 };
+        const rect = avatar.getBoundingClientRect();
+        return {
+            found: true,
+            position: getComputedStyle(avatar).position,
+            left: rect.left,
+            right: rect.right,
+            width: rect.width,
+        };
+    });
+}
+
+/**
+ * Modern only: wait until the real MUI action Box (the user-menu Box's
+ * previousElementSibling) has mounted, then confirm `getHeaderRightContainer()`
+ * resolves to exactly that Box.
  *
- * The resolver stamps `jc-modern-layout` the instant it reaches the MUI toolbar, but
- * during the client's `preload` window the user-menu Box has not rendered yet, so it
- * returns the synthetic `.headerRight` fallback it appends to the toolbar. The
- * per-navigation cache (PERF R4) then keeps returning that still-connected synthetic
- * node — the cache only re-resolves a DETACHED element — so a single early resolve
- * (by Canopy's own injectors, by `fillResolvedTray`, or by a naive readiness poll that
- * itself calls the resolver) pins the tray to the empty fallback for the whole page.
- * Waiting on the layout stamp alone therefore races on a loaded machine.
- *
- * Gate on the real header via RAW DOM (never the resolver, to avoid re-creating and
- * re-caching the fallback), then detach any EMPTY synthetic fallback so the next
- * resolve returns the real action box, and confirm the resolved tray is no longer the
- * synthetic one. Idempotent and safe: a non-empty `.headerRight` (i.e. one actually
- * used as the tray) is never removed.
+ * The production resolver targets the REAL always-present action Box directly — via
+ * the user-menu Box's previousElementSibling when the user has loaded, else the
+ * toolbar's last child during the preload window — and NEVER synthesizes a container.
+ * So there is no synthetic-fallback state for the test to repair; it simply waits for
+ * the real header to finish mounting and asserts the resolver points at it. (An
+ * earlier revision appended a synthetic `.headerRight` during preload and the cache
+ * could pin it for the whole page — this helper used to delete that node before
+ * asserting, masking the production race; the resolver fix removed the synthetic path
+ * entirely, so the masking is gone too — r9f1/r9f8/r9f9/r9f12.)
  */
 async function ensureRealModernTray(page: Page): Promise<void> {
     const ready = await page.waitForFunction(() => {
@@ -244,22 +289,27 @@ async function ensureRealModernTray(page: Page): Promise<void> {
     }, null, { timeout: 30_000 }).then(() => true, () => false);
     if (!ready) throw new Error(`modern MUI header (user-menu + action box) not ready. DIAG=${await diag(page)}`);
 
+    // The resolver returns the real action Box (never a synthetic `.headerRight`).
+    // Confirm it points at the user-menu Box's previousElementSibling and that no
+    // synthetic fallback was ever created in the toolbar.
     const resolved = await page.waitForFunction(() => {
         const helpers = (window as any).JellyfinCanopy?.helpers;
         const userMenu = document.querySelector('[aria-controls="app-user-menu"]');
         const toolbar = userMenu?.closest('.MuiToolbar-root');
-        const synthetic = toolbar?.querySelector(':scope > .headerRight');
-        // Bust the poisoned cache: an empty synthetic fallback is detached so the
-        // per-nav cache misses on its next read and re-resolves to the real box.
-        if (synthetic && synthetic.childElementCount === 0) synthetic.remove();
-        const tray = helpers?.getHeaderRightContainer?.();
-        return !!tray && !(tray as HTMLElement).classList.contains('headerRight');
+        if (!userMenu || !toolbar) return false;
+        let box: Element | null = userMenu;
+        while (box && box.parentElement !== toolbar) box = box.parentElement;
+        const realActionBox = box?.previousElementSibling ?? null;
+        const tray = helpers?.getHeaderRightContainer?.() ?? null;
+        // No synthetic container is ever appended to the toolbar.
+        const noSynthetic = !toolbar.querySelector(':scope > .headerRight');
+        return !!tray && tray === realActionBox && noSynthetic;
     }, null, { timeout: 30_000 }).then(() => true, () => false);
-    if (!resolved) throw new Error(`modern tray never resolved off the synthetic fallback. DIAG=${await diag(page)}`);
+    if (!resolved) throw new Error(`modern tray never resolved to the real action box. DIAG=${await diag(page)}`);
 }
 
 async function assertSingleScrollableRow(page: Page, layout: Layout): Promise<void> {
-    const filled = await fillResolvedTray(page);
+    const filled = await fillResolvedTray(page, layout);
     expect(filled, 'the real resolved header tray must exist and accept test buttons').toBe(true);
 
     const geo = await readTray(page, LAYOUT_STAMP[layout]);
@@ -438,15 +488,55 @@ test.describe('header button tray stays a single scrollable row (#459)', () => {
                 expect(Math.abs(end!.top - start!.top)).toBeLessThanOrEqual(1);
             }
 
-            // On the legacy header the resolved container is the native
-            // .headerRight and the native profile button (.headerUserButton), when
-            // present, is a plain trailing child that scrolls WITH the row — it is
-            // deliberately NOT sticky-pinned (a pin would overlay and intercept
-            // clicks for the buttons scrolling beneath it, finding r7f1). The
-            // single-row / scroll-containment / both-endpoints-reachable /
-            // badge-not-clipped contract asserted above (assertSingleScrollableRow +
-            // assertBadgeInsideScrollport) is the whole legacy invariant; there is no
-            // pinned-avatar contract on legacy to assert.
+            // On the legacy header the native profile button lives INSIDE the
+            // resolved .headerRight scrollport (not a separate sibling as on modern),
+            // so it must be sticky-pinned to the scrollport's inline-end edge — it
+            // stays visible at rest and stationary while the icon buttons scroll
+            // beneath it (the binding pinned-avatar criterion, r9f2/r9f7/r9f11). Left
+            // as an ordinary in-flow child it would start off-screen once the row
+            // overflows and be reachable only after scrolling to the end. Prove the
+            // avatar IS sticky, is on-screen at rest (scrollLeft=0), and does NOT ride
+            // the row's scroll (moves ≈0px) — the pinned signature.
+            if (testCase.layout === 'legacy') {
+                await scrollTray(page, 0);
+                const avatar = await readLegacyAvatar(page);
+                // Non-vacuous precondition: fillResolvedTray guarantees a trailing
+                // .headerUserButton child (native, or a synthesized stand-in), so the
+                // pinned criterion is ALWAYS exercised — the block cannot pass green
+                // without proving it.
+                expect(avatar?.found, 'legacy resolved tray must contain a .headerUserButton').toBe(true);
+                // Pinned, not scrolling: computed position is sticky.
+                expect(avatar!.position, 'legacy profile avatar must be sticky-pinned').toBe('sticky');
+                // Visible at rest (scrollLeft=0): the pin holds it on-screen at the
+                // right edge even before any scroll — an unpinned trailing child would
+                // be stranded off the right edge here.
+                expect(
+                    avatar!.right,
+                    `pinned avatar on-screen at rest (right ${avatar!.right} within viewport ${testCase.viewport.width})`,
+                ).toBeLessThanOrEqual(testCase.viewport.width + 2);
+                expect(avatar!.left, 'pinned avatar left edge within viewport at rest').toBeLessThan(testCase.viewport.width);
+
+                const atStart = await readLegacyAvatar(page);
+                const scrolledTo = await scrollTray(page, 'end');
+                const atEnd = await readLegacyAvatar(page);
+                // The tray genuinely scrolled a long way (else the stationarity test
+                // is vacuous). A sticky-pinned avatar stays clamped to the scrollport's
+                // inline-end edge, so its viewport position barely moves across the
+                // whole scroll — the anti-scroll signature. An in-flow child riding the
+                // row would instead move by ≈the full scroll distance. Assert the
+                // movement is a tiny fraction (<10%) of the scroll: that cleanly
+                // separates a pin (a few px of sub-pixel / scrollport-inset residual)
+                // from a rider (≈100% of the scroll), without over-fitting to an exact
+                // sub-pixel value.
+                expect(scrolledTo, 'tray scrolled a meaningful distance').toBeGreaterThan(200);
+                expect(
+                    Math.abs(atEnd!.left - atStart!.left),
+                    `pinned avatar stays put, does not ride the scroll (moved ${Math.abs(atEnd!.left - atStart!.left).toFixed(1)}px over a ${scrolledTo}px scroll)`,
+                ).toBeLessThan(scrolledTo * 0.1);
+                // Still on-screen within the viewport at the scroll end.
+                expect(atEnd!.right).toBeLessThanOrEqual(testCase.viewport.width + 2);
+                expect(atEnd!.left).toBeLessThan(testCase.viewport.width);
+            }
 
             assertNoRuntimeErrors(consoleErrors);
         });

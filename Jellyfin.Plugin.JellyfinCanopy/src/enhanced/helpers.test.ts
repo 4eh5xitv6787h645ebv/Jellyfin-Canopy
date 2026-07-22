@@ -236,13 +236,24 @@ describe('header-tray single-row scroll containment (#459)', () => {
         // (c) shift the header as it crosses the fit->overflow threshold (R1).
         expect(css).toContain('scrollbar-width: none');
         expect(css).toMatch(/\.jc-(modern|legacy)-layout \.jc-header-tray::-webkit-scrollbar/);
-        // The legacy profile button (.headerUserButton) is a plain scrolling child
-        // now — no sticky pin on either layout. A sticky pin sits over the buttons
-        // scrolling beneath it and intercepts their clicks (r7f1); pure CSS cannot
-        // reserve a pinned region for an in-flow child, so the tray ships none. No
-        // avatar-targeted rule at all.
-        expect(css).not.toContain('.headerUserButton');
-        expect(css).not.toContain('position: sticky');
+        // Legacy only: the native profile button (.headerUserButton) lives INSIDE
+        // the resolved .headerRight scrollport (unlike modern, where the avatar is a
+        // separate sibling Box outside the tray), so it is sticky-pinned to the
+        // scrollport's inline-end edge — visible at rest and stationary while the
+        // icon buttons scroll under it (the binding pinned-avatar criterion,
+        // r9f2/r9f7/r9f11). In the fit case .headerRight is content-sized (no
+        // overflow), so sticky is inert and the avatar sits at its native right-edge
+        // position — no R1 shift. The rule is legacy-scoped and z-indexed above the
+        // scrolling buttons.
+        expect(css).toMatch(
+            /\.jc-legacy-layout \.jc-header-tray > \.headerUserButton\s*\{[^}]*position:\s*sticky/,
+        );
+        expect(css).toMatch(
+            /\.jc-legacy-layout \.jc-header-tray > \.headerUserButton\s*\{[^}]*inset-inline-end:\s*0/,
+        );
+        // The pin is legacy-only — no .headerUserButton rule leaks onto modern (where
+        // the avatar is already outside the tray and needs no pin).
+        expect(css).not.toMatch(/\.jc-modern-layout \.jc-header-tray[^{]*\.headerUserButton/);
 
         // No broad MUI Box selector (would hit unrelated toolbar boxes / profile).
         expect(css).not.toMatch(/\.MuiBox-root/);
@@ -311,7 +322,35 @@ describe('header-tray single-row scroll containment (#459)', () => {
         expect(document.querySelectorAll('.jc-header-tray').length).toBe(0);
     });
 
-    it('creates exactly one marked synthetic fallback when the toolbar has no user menu', () => {
+    it('resolves the real action Box (toolbar last child) during preload, never synthesizing a container', () => {
+        // Preload window: AppToolbar has rendered its always-present action-tray Box
+        // (flexGrow:1) but not yet the user-menu Box (the user has not loaded). The
+        // resolver must target that real Box — the toolbar's last child — so Canopy's
+        // buttons land in the same tray as the native play/cast buttons, and must
+        // NOT append a synthetic `.headerRight` (a second flexGrow sibling would split
+        // the row / R1 jank, and the cache would pin the fake Box for the whole page
+        // once the real user-menu mounts — r9f3/r9f4/r9f5/r9f6).
+        const appbar = document.createElement('div');
+        appbar.className = 'MuiAppBar-root';
+        const toolbar = document.createElement('div');
+        toolbar.className = 'MuiToolbar-root';
+        const actionBox = document.createElement('div');
+        actionBox.className = 'jc-test-action-box';
+        toolbar.appendChild(actionBox);
+        appbar.appendChild(toolbar);
+        document.body.appendChild(appbar);
+
+        const container = getHeaderRightContainer();
+        expect(container).toBe(actionBox);
+        expect(container!.classList.contains('jc-header-tray')).toBe(true);
+        // No synthetic container was appended to the toolbar.
+        expect(toolbar.querySelectorAll(':scope > .headerRight').length).toBe(0);
+        expect(toolbar.children.length).toBe(1);
+    });
+
+    it('returns null (retryable) when the modern toolbar has no resolvable action Box yet', () => {
+        // Earliest render: the toolbar exists but is still empty. Nothing to mark,
+        // nothing synthesized — callers retry until the action Box renders.
         const appbar = document.createElement('div');
         appbar.className = 'MuiAppBar-root';
         const toolbar = document.createElement('div');
@@ -319,11 +358,9 @@ describe('header-tray single-row scroll containment (#459)', () => {
         appbar.appendChild(toolbar);
         document.body.appendChild(appbar);
 
-        const container = getHeaderRightContainer();
-        expect(container).not.toBeNull();
-        expect(container!.classList.contains('headerRight')).toBe(true);
-        expect(container!.classList.contains('jc-header-tray')).toBe(true);
-        expect(toolbar.querySelectorAll(':scope > .headerRight').length).toBe(1);
+        expect(getHeaderRightContainer()).toBeNull();
+        expect(document.querySelectorAll('.jc-header-tray').length).toBe(0);
+        expect(toolbar.querySelectorAll(':scope > .headerRight').length).toBe(0);
     });
 
     it('re-resolves and re-marks a remounted tray without leaving a duplicate connected container', () => {
