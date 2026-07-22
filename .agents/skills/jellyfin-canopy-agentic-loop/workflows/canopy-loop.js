@@ -1449,6 +1449,16 @@ if (!cleanRound && START_PHASE !== 'verify')
       ? `Review: ended without a certified-clean round — coverage incomplete (reviewer/verifier failure); will report as residual risk`
       : `Review: hit round cap (${HARD_ROUND_CAP}) with unresolved findings — will report as residual risk`
   )
+// Mixed-model contract enforcement on the CERTIFYING round. Every round always
+// requests ≥1 gpt-5.6-sol reviewer (Math.max(1, SOL_REVIEWERS)); if the round that
+// went clean had NO real Sol coverage — every Sol slot fell back to Claude because
+// the route was down — it is an all-Claude review, not the documented cross-family
+// one, so it must not certify (roundsWithoutSol already records it, but readyForPR
+// ignored that field). round>0 excludes the reviewedHead escape hatch (no round ran).
+if (cleanRound && round > 0 && !solOkThisRound && START_PHASE !== 'verify') {
+  reviewIncomplete = true
+  log(`Review: the clean round ${round} ran with NO real gpt-5.6-sol coverage (Sol route down) — not a certified cross-family review; fail closed`)
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // PHASE 4.5 — LOCALIZE (cheap, low-effort translation busywork; NOT reviewed)

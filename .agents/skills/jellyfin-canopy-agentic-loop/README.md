@@ -139,7 +139,10 @@ Every **mixed** review round (up to the mixed cap) runs **both** Claude and
 Each Sol slot is fail-closed: if the route/CLI is unavailable, that slot's scope
 (its lens, or the whole diff) is reviewed by Claude instead — the slot is never
 dropped and a round is never certified clean with a lens left unreviewed. Treat a
-missing Sol pass as a signal to fix the route, not as a clean review.
+missing Sol pass as a signal to fix the route, not as a clean review — and the loop
+enforces it: the round that certifies `loopClean` MUST have **real** cross-family
+coverage. A clean round whose every Sol slot fell back to Claude (dead route) sets
+`reviewIncomplete`, so `readyForPR` stays false until the Sol route is fixed.
 
 ## Non–Claude-Code runtimes
 

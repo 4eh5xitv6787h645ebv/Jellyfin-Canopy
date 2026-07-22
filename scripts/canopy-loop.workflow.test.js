@@ -265,18 +265,20 @@ test('a singleton non-terminal agent failure does NOT trip systemic-failure mode
 });
 
 test('an unroutable Sol lens slot is reviewed by the Claude fallback, not lost', async () => {
-    // Every Sol agent throws (router down); the Claude fallback for one Sol lens
-    // reports a real defect. If the fallback did NOT run, no finding would exist.
+    // ONE Sol lens slot throws (its lens scope must not be dropped); the whole-diff
+    // Sol reviewer still runs, so the round keeps real cross-family coverage. The
+    // Claude fallback for the downed lens reports a real defect — proof the scope
+    // was covered rather than lost.
     const { agent } = makeAgent((_p, opts) => {
         const l = opts.label || '';
-        if (l.startsWith('sol-r')) return { __throw: 'sol unroutable' };
-        if (l === 'review-r1:2') return finding('defect on a Sol-owned lens');
+        if (l === 'sol-r1:2') return { __throw: 'sol lens slot unroutable' }; // one lens slot down
+        if (l === 'review-r1:2') return finding('defect on a Sol-owned lens'); // its Claude fallback catches it
         if (l.startsWith('verify-r1')) return { real: true, reason: 'confirmed' };
         return undefined;
     });
     const r = await runWorkflow(baseArgs(), agent, parallel, phase, () => {});
     assert.ok(r.confirmedFindingsResolved >= 1, 'Sol lens defect surfaced via Claude fallback');
-    assert.equal(r.readyForPR, true);
+    assert.equal(r.readyForPR, true, 'the whole-diff Sol reviewer kept real cross-family coverage');
 });
 
 test('a fully-failed reviewer slot does not certify a clean round (fail closed)', async () => {
@@ -869,6 +871,22 @@ test('three consecutive Sol failures trip the breaker: later rounds spawn no Sol
         r.residualRisks.some((s) => /WITHOUT real cross-family/i.test(s)),
         'the lost cross-family coverage is a named residual risk',
     );
+});
+
+test('a clean review round with NO real Sol coverage cannot certify (mixed-model contract)', async () => {
+    // Every Sol slot is unroutable, so the certifying round ran entirely on Claude
+    // fallbacks — not the documented cross-family review. readyForPR previously
+    // ignored roundsWithoutSol and certified anyway; it must now fail closed.
+    const { agent } = makeAgent((_p, opts) => {
+        if (opts.model === 'gpt-5.6-sol') return { __throw: 'router down' }; // all Sol → Claude fallback
+        return undefined; // Claude reviewers return empty → clean round
+    });
+    const r = await runWorkflow(baseArgs(), agent, parallel, phase, () => {});
+    assert.equal(r.loopClean, true, 'the round itself found nothing');
+    assert.equal(r.modelCoverage.solDead, true, 'the Sol route is dead');
+    assert.equal(r.reviewIncomplete, true, 'a Sol-less certifying round is not a certified review');
+    assert.equal(r.readyForPR, false, 'the mixed-model contract blocks certification without real Sol coverage');
+    assert.ok(r.residualRisks.some((s) => /cross-family/i.test(s)));
 });
 
 test('modelCoverage reports requested vs actual per slot class on a healthy run', async () => {
