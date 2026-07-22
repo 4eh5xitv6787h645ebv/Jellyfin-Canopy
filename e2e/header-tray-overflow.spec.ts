@@ -214,6 +214,50 @@ async function readProfile(
     });
 }
 
+/**
+ * Modern only: make `getHeaderRightContainer()` resolve to the REAL MUI action box
+ * before the tray is driven.
+ *
+ * The resolver stamps `jc-modern-layout` the instant it reaches the MUI toolbar, but
+ * during the client's `preload` window the user-menu Box has not rendered yet, so it
+ * returns the synthetic `.headerRight` fallback it appends to the toolbar. The
+ * per-navigation cache (PERF R4) then keeps returning that still-connected synthetic
+ * node — the cache only re-resolves a DETACHED element — so a single early resolve
+ * (by Canopy's own injectors, by `fillResolvedTray`, or by a naive readiness poll that
+ * itself calls the resolver) pins the tray to the empty fallback for the whole page.
+ * Waiting on the layout stamp alone therefore races on a loaded machine.
+ *
+ * Gate on the real header via RAW DOM (never the resolver, to avoid re-creating and
+ * re-caching the fallback), then detach any EMPTY synthetic fallback so the next
+ * resolve returns the real action box, and confirm the resolved tray is no longer the
+ * synthetic one. Idempotent and safe: a non-empty `.headerRight` (i.e. one actually
+ * used as the tray) is never removed.
+ */
+async function ensureRealModernTray(page: Page): Promise<void> {
+    const ready = await page.waitForFunction(() => {
+        const userMenu = document.querySelector('[aria-controls="app-user-menu"]');
+        const toolbar = userMenu?.closest('.MuiToolbar-root');
+        if (!userMenu || !toolbar) return false;
+        let box: Element | null = userMenu;
+        while (box && box.parentElement !== toolbar) box = box.parentElement;
+        return !!(box && box.previousElementSibling);
+    }, null, { timeout: 30_000 }).then(() => true, () => false);
+    if (!ready) throw new Error(`modern MUI header (user-menu + action box) not ready. DIAG=${await diag(page)}`);
+
+    const resolved = await page.waitForFunction(() => {
+        const helpers = (window as any).JellyfinCanopy?.helpers;
+        const userMenu = document.querySelector('[aria-controls="app-user-menu"]');
+        const toolbar = userMenu?.closest('.MuiToolbar-root');
+        const synthetic = toolbar?.querySelector(':scope > .headerRight');
+        // Bust the poisoned cache: an empty synthetic fallback is detached so the
+        // per-nav cache misses on its next read and re-resolves to the real box.
+        if (synthetic && synthetic.childElementCount === 0) synthetic.remove();
+        const tray = helpers?.getHeaderRightContainer?.();
+        return !!tray && !(tray as HTMLElement).classList.contains('headerRight');
+    }, null, { timeout: 30_000 }).then(() => true, () => false);
+    if (!resolved) throw new Error(`modern tray never resolved off the synthetic fallback. DIAG=${await diag(page)}`);
+}
+
 async function assertSingleScrollableRow(page: Page, layout: Layout): Promise<void> {
     const filled = await fillResolvedTray(page);
     expect(filled, 'the real resolved header tray must exist and accept test buttons').toBe(true);
@@ -323,6 +367,12 @@ test.describe('header button tray stays a single scrollable row (#459)', () => {
             ).then(() => true, () => false);
             if (!stamped) throw new Error(`layout stamp ${stamp} missing. DIAG=${await diag(page)}`);
 
+            // Modern only: resolve off the synthetic `preload` fallback onto the real MUI
+            // action box before driving the tray (the layout stamp alone races — see
+            // ensureRealModernTray). Legacy resolves to the native `.headerRight` itself
+            // and needs no such gate.
+            if (testCase.layout === 'modern') await ensureRealModernTray(page);
+
             await assertSingleScrollableRow(page, testCase.layout);
             await assertBadgeInsideScrollport(page, testCase.layout);
 
@@ -424,6 +474,10 @@ test.describe('header button tray stays a single scrollable row (#459)', () => {
         ).then(() => true, () => false);
         if (!stamped) throw new Error(`layout stamp ${stamp} missing. DIAG=${await diag(page)}`);
 
+        // Resolve off the synthetic `preload` fallback onto the real MUI action box
+        // (the layout stamp alone races on a loaded machine — see ensureRealModernTray).
+        await ensureRealModernTray(page);
+
         const geo = await page.evaluate(() => {
             const helpers = (window as any).JellyfinCanopy?.helpers;
             const tray: HTMLElement | null = helpers?.getHeaderRightContainer?.() ?? null;
@@ -438,12 +492,12 @@ test.describe('header button tray stays a single scrollable row (#459)', () => {
                 return btn;
             };
 
-            // A small number of order-0 action buttons — the row must FIT so the
-            // auto margin is active (non-zero free space) and its placement matters.
-            const actionA = mkButton('jc-e2e-fit-action-a');
-            const actionB = mkButton('jc-e2e-fit-action-b');
-            tray.appendChild(actionA);
-            tray.appendChild(actionB);
+            // Exactly one test-owned group: drop any real native-tabs group first so we
+            // never create a duplicate #jc-native-tabs-group id. One guaranteed order-0
+            // neighbour so contiguity is measurable even on an otherwise-bare tray.
+            tray.querySelector(':scope > #jc-native-tabs-group')?.remove();
+            const action = mkButton('jc-e2e-fit-action');
+            tray.appendChild(action);
 
             // Mirror native-tabs.getOrCreateGroup: appended LAST, order:-1 → visually
             // first. Give it real width via a contained 48px button.
@@ -455,18 +509,25 @@ test.describe('header button tray stays a single scrollable row (#459)', () => {
 
             const trayRect = tray.getBoundingClientRect();
             const groupRect = group.getBoundingClientRect();
-            const aRect = actionA.getBoundingClientRect();
-            const bRect = actionB.getBoundingClientRect();
+            // Every OTHER direct child's rendered box (excludes the group itself).
+            const others = Array.from(tray.children)
+                .filter((c) => c !== group)
+                .map((c) => c.getBoundingClientRect())
+                .filter((r) => r.width > 0 && r.height > 0);
+            // The group's nearest neighbour to its right in VISUAL order — regardless of
+            // how many real Canopy buttons sit in the cluster.
+            const toRight = others
+                .filter((r) => r.left >= groupRect.right - 1)
+                .sort((a, b) => a.left - b.left);
             return {
                 fits: tray.scrollWidth <= tray.clientWidth + 1,
                 trayLeft: trayRect.left,
                 trayRight: trayRect.right,
                 groupLeft: groupRect.left,
-                groupRight: groupRect.right,
-                aLeft: aRect.left,
-                aRight: aRect.right,
-                bRight: bRect.right,
                 trayWidth: trayRect.width,
+                neighbourCount: toRight.length,
+                neighbourGap: toRight.length ? toRight[0].left - groupRect.right : null,
+                rightmost: Math.max(groupRect.right, ...others.map((r) => r.right)),
             };
         });
 
@@ -474,18 +535,19 @@ test.describe('header button tray stays a single scrollable row (#459)', () => {
         // The scenario is only meaningful while the row fits (auto margin non-zero).
         expect(geo!.fits, `tray must fit for the fit-state check (DIAG=${await diag(page)})`).toBe(true);
 
-        // Contiguous: the reordered group sits immediately left of the first order-0
-        // button — no split. A margin on the DOM first child would open a large gap
-        // here (all the tray's free space).
+        // Contiguous: the reordered group sits immediately left of its right neighbour —
+        // no split. A margin on the DOM :first-child would open a large gap here (all
+        // the tray's free space would land between the order:-1 group and the rest).
+        expect(geo!.neighbourCount, 'the group has a right neighbour to be contiguous with').toBeGreaterThan(0);
         expect(
-            geo!.aLeft - geo!.groupRight,
+            geo!.neighbourGap,
             `native-tabs group must be contiguous with the following buttons, not split away `
-            + `(gap ${geo!.aLeft - geo!.groupRight}px)`,
+            + `(gap ${geo!.neighbourGap}px)`,
         ).toBeLessThanOrEqual(8);
 
         // Right-packed: the auto margin sits to the LEFT of the (visually-leading)
         // group, pushing the whole cluster toward the avatar. So the group's left edge
-        // is far from the tray's left/scroll origin. A margin on the DOM first child
+        // is far from the tray's left/scroll origin. A margin on the DOM :first-child
         // would instead leave the group pinned at the tray's left edge (groupLeft ≈
         // trayLeft). Require the free space to have moved the cluster well right.
         expect(
@@ -494,9 +556,9 @@ test.describe('header button tray stays a single scrollable row (#459)', () => {
             + `the tray's left edge (groupLeft-trayLeft ${geo!.groupLeft - geo!.trayLeft}px, trayWidth ${geo!.trayWidth}px)`,
         ).toBeGreaterThan(100);
 
-        // The cluster packs against the avatar side: last button's right edge near the
-        // tray's right edge (the scroll region ends left of the profile Box).
-        expect(geo!.trayRight - geo!.bRight, 'cluster packs against the tray right edge').toBeLessThanOrEqual(8);
+        // The cluster packs against the avatar side: the rightmost content edge sits at
+        // the tray's right edge (the scroll region ends left of the profile Box).
+        expect(geo!.trayRight - geo!.rightmost, 'cluster packs against the tray right edge').toBeLessThanOrEqual(8);
 
         assertNoRuntimeErrors(consoleErrors);
     });
