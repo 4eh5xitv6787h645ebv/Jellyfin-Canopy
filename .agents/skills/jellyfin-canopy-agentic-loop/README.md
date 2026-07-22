@@ -60,7 +60,10 @@ oracle.
        reviewMode: "spec",         // opt-in for specification authoring (spec lenses)
        solVia:   "codex-cli",      // default; or "agent" (needs a Sol-capable router)
        solEffort: "high",
-       solReviewers: 1             // whole-diff Sol reviewers per round (min 1)
+       solReviewers: 1,            // whole-diff Sol reviewers per round (min 1)
+       stallPatience: 2,           // review-loop non-convergence: no-progress rounds → stop (default 2)
+       backstopRounds: 25,         // review-loop absolute ceiling (default ~25; docs/spec roundCap+1)
+       hardRoundCap: 10            // EXPLICIT OVERRIDE: old fixed cap — pins the backstop AND disables the stall detector
      }
    })
    ```
@@ -79,10 +82,27 @@ oracle.
 | deep | 8 | 3 | 4 | 3 |
 
 The "mixed" cap is the Claude+Sol panel; if the loop is still not clean after
-it, review **continues with `gpt-5.6-sol` as the only reviewer** up to
-`hardRoundCap` (default 10). Docs surfaces and `reviewMode:"spec"` default the
-hard cap to mixed-cap+1 instead — prose does not converge under a ten-round
-escalation, and unresolved docs findings go back to a human.
+it, review **continues with `gpt-5.6-sol` as the only reviewer**. The loop then
+terminates on one of three signals, not an arbitrary count:
+
+- **a clean round** (no confirmed findings);
+- **a progress stall** — `stallPatience` consecutive rounds with no progress
+  (default 2), or a round whose confirmed findings are wholly a re-report of
+  ledger-disposed items (pure oscillation). A stall is **non-convergence**: the
+  run stops, does not certify, and returns a "did not converge" residual asking a
+  human to split the change. "Progress" = the confirmed-finding count strictly
+  fell vs the previous round, or ≥1 confirmed finding was newly applied;
+- **a runaway backstop** — an absolute ceiling (`backstopRounds`, default ~25;
+  docs and `reviewMode:"spec"` default mixed-cap+1) so a pathologically entangled
+  file cannot loop forever even while nominally making progress one finding at a
+  time.
+
+This replaces the old fixed 10-round cap: a legitimately-converging change is
+**never** cut off by a count, and a stalled one (the #167 config-page.js case:
+8 h / 21 M tokens / never converged) stops fast and surfaces for a human.
+`hardRoundCap` still works as an explicit override — it pins the backstop to that
+fixed count **and** disables the stall detector, restoring the old fixed-count
+behavior for callers who want it.
 
 `surface` selects which repo-native gates run (docs runs also use 4
 docs-specific explore angles and skip Localize — `server` runs skip Localize too,

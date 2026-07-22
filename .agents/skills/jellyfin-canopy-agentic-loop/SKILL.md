@@ -90,6 +90,12 @@ Workflow({
     envSetup: "<shell prelude every build/test agent runs first (e.g. DOTNET_ROOT exports)>",
     reviewMode: "spec",          // opt-in spec-authoring lenses (acceptance traceability, …)
 
+    // Review-loop termination (progress-based; see "Review" below):
+    stallPatience: 2,            // consecutive no-progress review rounds → stop as non-converged (default 2)
+    backstopRounds: 25,          // absolute round ceiling (default ~25; docs/spec default roundCap+1)
+    hardRoundCap: 10,            // EXPLICIT OVERRIDE: old fixed-count behavior — pins the backstop AND
+                                 // disables the stall detector (runs to exactly this many rounds)
+
     // Model routing (see "Model routing" below):
     modelSplit:  true,           // ~50/50 Claude/Sol on read-only steps to spare Opus budget
     solVia:      "codex-cli",    // default; or "agent" (subagent model param, needs a Sol-capable router)
@@ -145,9 +151,17 @@ models by role:
     either route. Plan keeps a ~50/50 split.
   - **Review** runs the mixed panel (Claude lenses + `gpt-5.6-sol`) for the first
     `roundCap` rounds (standard = 4); if still not clean it CONTINUES with
-    `gpt-5.6-sol` as the ONLY reviewer up to `hardRoundCap` (default 10; docs
-    surfaces and `reviewMode:"spec"` default to `roundCap`+1 instead). Review Sol
-    stays at `solEffort` (high). Three consecutive Sol failures trip a circuit
+    `gpt-5.6-sol` as the ONLY reviewer. The loop terminates on **(a)** a clean
+    round, **(b)** a **progress stall** — `stallPatience` consecutive rounds with
+    no progress (default 2), or a round whose confirmed findings are wholly a
+    ledger re-report (pure oscillation) — surfaced for a human as a
+    non-convergence residual, or **(c)** a high runaway **backstop**
+    (`backstopRounds`, default ~25; docs/`reviewMode:"spec"` default `roundCap`+1).
+    This replaces the old fixed 10-round cap: a converging change is never cut off
+    by an arbitrary count, and a stalled one (the #167 config-page.js case) stops
+    fast. `hardRoundCap` still works as an explicit override — it pins the backstop
+    to that fixed count **and** disables the stall detector (old behavior). Review
+    Sol stays at `solEffort` (high). Three consecutive Sol failures trip a circuit
     breaker (remaining Sol slots go straight to Claude); the result's
     `modelCoverage` shows requested-vs-actual coverage.
   Under `solVia: "codex-cli"` (default) the Sol slots run through a generalized
@@ -219,11 +233,13 @@ The engine ([`workflows/canopy-loop.js`](workflows/canopy-loop.js)) runs:
    mixed round runs models on purpose: the Claude lens reviewers **and** at least
    one `gpt-5.6-sol` (high effort) whole-diff reviewer, all in split context (diff
    + brief only, told to assume the code is wrong); rounds past the mixed cap are
-   `gpt-5.6-sol`-only up to `hardRoundCap`. Findings are deduped and adversarially
+   `gpt-5.6-sol`-only. Findings are deduped and adversarially
    verified to kill false positives; a **finding ledger** (fixed + refuted, with
    verifier reasons) is injected into later rounds so resolved items are not
    re-reported without new evidence; a single fixer applies confirmed findings;
-   re-review until a clean round. On docs surfaces (and `reviewMode:"spec"`) only
+   re-review until a clean round, a **progress stall** (non-convergence — default 2
+   no-progress rounds, surfaced for a human), or the runaway **backstop**. On docs
+   surfaces (and `reviewMode:"spec"`) only
    confirmed blocker/major findings drive fix rounds — confirmed minors are
    returned as `advisoryNotes`. Challenge the design before
    a second fix to the same owner/state model. If a workaround needs a
