@@ -6,8 +6,10 @@
 // resolved by getHeaderRightContainer(). The fix marks that container
 // `jc-header-tray` and installs a layout-scoped stylesheet (helpers.ts
 // ensureHeaderTrayCSS) forcing display:flex; flex-wrap:nowrap; overflow-x:auto
-// with non-shrinking children, and on modern flex-shrink:1 + safe flex-end so
-// the tray consumes only the space left of the profile Box.
+// with non-shrinking children, and on modern `flex:1 1 0` (a 0 flex-basis, not a
+// bare flex-shrink:1, so the wrapping MUI Toolbar cannot push the avatar onto a
+// 2nd row) + safe flex-end so the tray consumes only the space left of the
+// profile Box.
 //
 // These specs seed a real layout before boot, drive the ACTUAL resolved tray,
 // append deterministic test-only buttons until it overflows, and prove the
