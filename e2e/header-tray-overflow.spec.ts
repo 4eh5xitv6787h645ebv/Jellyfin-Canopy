@@ -58,30 +58,19 @@ async function seedLayout(page: Page, seedValue: string): Promise<void> {
  * Also drops one absolutely-positioned badge child (a `.jc-as-sup` stand-in) so
  * badge clipping can be checked even on a non-admin tray without active-streams.
  * Returns whether the resolved tray was found.
+ *
+ * On the legacy layout the REAL native profile button (`.headerUserButton`) is
+ * the trailing child of the resolved `.headerRight`; the caller gates on it via
+ * `ensureLegacyAvatar` BEFORE filling, so the fillers are inserted in front of
+ * the genuine avatar (never a synthesized stand-in) and the row shape matches
+ * production. No synthetic avatar is ever created — the pinned-avatar assertions
+ * exercise Jellyfin's own control.
  */
-async function fillResolvedTray(page: Page, layout: Layout): Promise<boolean> {
-    return page.evaluate(({ count, isLegacy }) => {
+async function fillResolvedTray(page: Page): Promise<boolean> {
+    return page.evaluate(({ count }) => {
         const helpers = (window as any).JellyfinCanopy?.helpers;
         const tray: HTMLElement | null = helpers?.getHeaderRightContainer?.() ?? null;
         if (!tray) return false;
-        // Legacy: the native profile button (.headerUserButton) is the trailing child
-        // of the resolved .headerRight and is sticky-pinned to the scrollport's right
-        // edge. The pinned-avatar assertions must never pass vacuously: if the seeded
-        // login DID NOT place .headerUserButton inside the resolved tray, synthesize a
-        // deterministic trailing stand-in so the pin behaviour is always exercised (a
-        // real trailing child of the scroll row, proving the CSS rule whether or not
-        // the real avatar is present).
-        if (isLegacy && !tray.querySelector(':scope > .headerUserButton')) {
-            const synthAvatar = document.createElement('button');
-            synthAvatar.type = 'button';
-            synthAvatar.className = 'headerButton headerUserButton paper-icon-button-light jc-e2e-459-synth-avatar';
-            synthAvatar.style.cssText = 'position:relative;box-sizing:border-box;width:48px;min-width:48px;height:48px;padding:0;margin:0;';
-            const glyph = document.createElement('span');
-            glyph.className = 'material-icons';
-            glyph.textContent = 'person';
-            synthAvatar.appendChild(glyph);
-            tray.appendChild(synthAvatar);
-        }
         // In production Canopy inserts its buttons at the FRONT of the tray, so the
         // native profile button (.headerUserButton), when present on the legacy
         // header, stays the trailing child. Mirror that: insert the fillers BEFORE
@@ -118,7 +107,7 @@ async function fillResolvedTray(page: Page, layout: Layout): Promise<boolean> {
             else tray.appendChild(btn);
         }
         return tray.querySelectorAll('.jc-e2e-459-filler').length === count;
-    }, { count: FILLER_COUNT, isLegacy: layout === 'legacy' });
+    }, { count: FILLER_COUNT });
 }
 
 interface TrayGeometry {
@@ -310,8 +299,37 @@ async function ensureRealModernTray(page: Page): Promise<void> {
     if (!resolved) throw new Error(`modern tray never resolved to the real action box. DIAG=${await diag(page)}`);
 }
 
+/**
+ * Legacy only: wait until Jellyfin's REAL native profile button
+ * (`.headerUserButton`) has mounted as a visible direct child of the resolved
+ * `.headerRight` scrollport, then confirm the resolver marks that same tray.
+ *
+ * jellyfin-web builds `.headerUserButton` inside `.headerRight` but starts it
+ * `.hide` (display:none, no geometry) and only un-hides it once the current user
+ * has loaded (libraryMenu.js updateUserInHeader). Gating on the real, laid-out
+ * avatar here — instead of ever synthesizing a stand-in — makes the pinned-avatar
+ * assertions exercise Jellyfin's own control: if the native avatar were absent,
+ * moved out of the tray, or still hidden, this throws rather than passing
+ * vacuously (r10f1–r10f5).
+ */
+async function ensureLegacyAvatar(page: Page): Promise<void> {
+    const ready = await page.waitForFunction(() => {
+        const helpers = (window as any).JellyfinCanopy?.helpers;
+        const tray: HTMLElement | null = helpers?.getHeaderRightContainer?.() ?? null;
+        if (!tray) return false;
+        const avatar = tray.querySelector<HTMLElement>(':scope > .headerUserButton');
+        if (!avatar) return false;
+        // Real + laid out: offsetParent is null while `.hide` (display:none) is set,
+        // and a hidden button has a zero-area rect. Require both so the gate resolves
+        // only once the genuine avatar is on-screen and measurable.
+        const rect = avatar.getBoundingClientRect();
+        return avatar.offsetParent !== null && rect.width > 0 && rect.height > 0;
+    }, null, { timeout: 30_000 }).then(() => true, () => false);
+    if (!ready) throw new Error(`legacy native profile avatar (.headerUserButton) never mounted visibly in the resolved tray. DIAG=${await diag(page)}`);
+}
+
 async function assertSingleScrollableRow(page: Page, layout: Layout): Promise<void> {
-    const filled = await fillResolvedTray(page, layout);
+    const filled = await fillResolvedTray(page);
     expect(filled, 'the real resolved header tray must exist and accept test buttons').toBe(true);
 
     const geo = await readTray(page, LAYOUT_STAMP[layout]);
@@ -421,9 +439,12 @@ test.describe('header button tray stays a single scrollable row (#459)', () => {
 
             // Modern only: resolve off the synthetic `preload` fallback onto the real MUI
             // action box before driving the tray (the layout stamp alone races — see
-            // ensureRealModernTray). Legacy resolves to the native `.headerRight` itself
-            // and needs no such gate.
+            // ensureRealModernTray). Legacy resolves to the native `.headerRight` itself,
+            // but its native profile button starts `.hide` and un-hides only after the
+            // user loads — gate on the real, laid-out avatar so the pinned-avatar block
+            // exercises Jellyfin's own control (never a synthesized stand-in).
             if (testCase.layout === 'modern') await ensureRealModernTray(page);
+            else await ensureLegacyAvatar(page);
 
             await assertSingleScrollableRow(page, testCase.layout);
             await assertBadgeInsideScrollport(page, testCase.layout);
@@ -502,10 +523,11 @@ test.describe('header button tray stays a single scrollable row (#459)', () => {
             if (testCase.layout === 'legacy') {
                 await scrollTray(page, 0);
                 const avatar = await readLegacyAvatar(page);
-                // Non-vacuous precondition: fillResolvedTray guarantees a trailing
-                // .headerUserButton child (native, or a synthesized stand-in), so the
-                // pinned criterion is ALWAYS exercised — the block cannot pass green
-                // without proving it.
+                // Non-vacuous precondition: ensureLegacyAvatar already waited for the
+                // REAL native .headerUserButton to mount visibly as a direct tray child,
+                // so this reads Jellyfin's own avatar (never a synthesized stand-in) and
+                // the pinned criterion is genuinely exercised — the block cannot pass
+                // green without proving it on the native control.
                 expect(avatar?.found, 'legacy resolved tray must contain a .headerUserButton').toBe(true);
                 // Pinned, not scrolling: computed position is sticky.
                 expect(avatar!.position, 'legacy profile avatar must be sticky-pinned').toBe('sticky');
