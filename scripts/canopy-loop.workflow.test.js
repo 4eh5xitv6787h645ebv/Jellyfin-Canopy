@@ -453,6 +453,26 @@ test('a verify-fix that commits after a clean review round is not ready-for-PR',
     assert.ok(r.residualRisks.some((s) => /never adversarially reviewed/i.test(s)));
 });
 
+test('every explorer contributes to the plan digest (equal-share, not head-slice)', async () => {
+    // 8 large explorer maps: a 12KB head-slice only ever showed the first ~3.
+    // With the per-item budget, the FIRST and the LAST explorer's identifying
+    // marker must both reach the planners.
+    const { agent, calls } = makeAgent((_p, opts) => {
+        const m = /^explore:(\d+)/.exec(opts.label || '');
+        if (m)
+            return {
+                owningLayer: `MARKER_EXPLORER_${m[1]}`,
+                files: [{ path: 'a', role: 'x'.repeat(3000) }],
+                consumers: [], contracts: [], testSeams: [],
+            };
+        return undefined;
+    });
+    await runWorkflow(baseArgs({ depth: 'standard' }), agent, parallel, phase, () => {});
+    const plan = calls.find((c) => (c.opts.label || '').startsWith('plan:'));
+    assert.match(plan.prompt, /MARKER_EXPLORER_1\b/, 'first explorer present');
+    assert.match(plan.prompt, /MARKER_EXPLORER_8\b/, 'last explorer present (was dropped by the head-slice)');
+});
+
 test('a docs run explores 4 docs-relevant angles and skips Localize', async () => {
     const { agent, calls } = makeAgent(null);
     const r = await runWorkflow(baseArgs({ surface: 'docs', runtime: false, depth: 'standard' }), agent, parallel, phase, () => {});

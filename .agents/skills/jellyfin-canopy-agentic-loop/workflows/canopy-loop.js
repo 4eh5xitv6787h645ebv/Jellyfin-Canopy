@@ -531,6 +531,15 @@ TASK BRIEF${BRIEF_TEXT ? ' (authoritative — read in full)' : ` — read this f
 ${BRIEF_TEXT || '(brief text not inlined; open the path above before planning)'}
 `
 
+// Equal-share digest for inter-phase handoffs: every item gets budget/n chars,
+// truncating WITHIN items instead of head-slicing the whole array (which showed
+// planners only the first ~3 of 8 pretty-printed explorer maps and threw the
+// rest — including the xhigh-priced Sol fan-out — away).
+const digest = (arr, budget) =>
+  '[' +
+  arr.map((x) => JSON.stringify(x, null, 1).slice(0, Math.floor(budget / Math.max(1, arr.length)))).join(',\n') +
+  ']'
+
 const dedupeKey = (f) => `${f.file || '?'}|${f.line || 0}|${String(f.summary || '').slice(0, 60)}`
 function dedupe(findings) {
   const seen = new Set()
@@ -780,7 +789,7 @@ test seams. Cite real paths; never guess.`,
   }
 }
 
-const exploreDigest = JSON.stringify(explorations, null, 1).slice(0, 12000)
+const exploreDigest = digest(explorations, 16000)
 
 // ═══════════════════════════════════════════════════════════════════════════
 // PHASE 2 — PLAN (independent plans → adversarial synthesis into one)
@@ -860,7 +869,7 @@ if (START_PHASE === 'explore' && !halted()) {
 
 PHASE: PLAN SYNTHESIS (read-only). You are the adversarial judge. Here are ${plans.length}
 independent plans (JSON):
-${JSON.stringify(plans, null, 1).slice(0, 12000)}
+${digest(plans, 12000)}
 
 Score them against the brief and the repository contracts. First (in your own
 reasoning, not as an extra output field) confirm every acceptance criterion in
