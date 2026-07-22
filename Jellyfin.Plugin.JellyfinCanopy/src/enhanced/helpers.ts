@@ -305,8 +305,9 @@ function markHeaderTray<T extends HTMLElement>(el: T): T {
  *     jc-legacy-layout <html> stamps so the modern-only rules never touch the
  *     legacy header and vice-versa. On modern the tray consumes only the space
  *     left of the separate profile Box (flex:1 1 0) and right-aligns its buttons
- *     against the avatar with an auto inline-start margin on the leading child —
- *     a universal mechanism that packs the buttons right when the row fits (no
+ *     against the avatar with an auto inline-start margin on the visually-leading
+ *     child (the native-tabs order:-1 group when present, else the DOM first child)
+ *     — a universal mechanism that packs the buttons right when the row fits (no
  *     gap, native look) and resolves to 0 when it overflows so every leading
  *     button stays reachable from the scroll origin. On legacy the resolved
  *     container is the native `.headerRight` (content-sized, justify-content:
@@ -417,14 +418,28 @@ function ensureHeaderTrayCSS(): void {
         }
         /* Modern only: because flex-grow:1 makes the tray wider than its content in
            the fit case, right-align the buttons against the avatar with an auto
-           inline-start margin on the LEADING child. Auto margins absorb positive
-           free space before justify-content, so the buttons pack against the profile
-           Box (native look, no gap, no reposition on sheet load — R1 safe); when the
-           row overflows there is no free space, the margin resolves to 0, and the
-           buttons pack from the scroll origin so every one stays reachable. Universal
-           — no safe/unsafe overflow-alignment keyword. (Modern has no order-shuffled
-           tray child, so the DOM :first-child is also the visually leading one.) */
-        .jc-modern-layout .jc-header-tray > *:first-child {
+           inline-start margin on the VISUALLY-LEADING child. Auto margins absorb
+           positive free space before justify-content, so the buttons pack against
+           the profile Box (native look, no gap, no reposition on sheet load — R1
+           safe); when the row overflows there is no free space, the margin resolves
+           to 0, and the buttons pack from the scroll origin so every one stays
+           reachable. Universal — no safe/unsafe overflow-alignment keyword.
+
+           The visually-leading child is NOT always the DOM :first-child. native-tabs
+           (native-tabs.ts getOrCreateGroup) appends #jc-native-tabs-group as the LAST
+           DOM child but gives it order:-1, so when that group exists it renders before
+           every order:0 button and is the visually-leading flex item. Putting the auto
+           margin on the DOM :first-child in that state would strand the reordered group
+           alone at the tray's left edge and open a gap between it and the remaining
+           right-packed buttons — a visible split, not the native contiguous tray. So
+           target the group when it is present, and the DOM :first-child only when it is
+           NOT (:not(:has(...))): exactly one visually-leading child ever carries the
+           auto margin. Two auto margins would split the free space between them and
+           reproduce the same gap, so the two rules are mutually exclusive by design. */
+        .jc-modern-layout .jc-header-tray > #jc-native-tabs-group {
+            margin-inline-start: auto !important;
+        }
+        .jc-modern-layout .jc-header-tray:not(:has(> #jc-native-tabs-group)) > *:first-child {
             margin-inline-start: auto !important;
         }
     `);

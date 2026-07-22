@@ -205,11 +205,28 @@ describe('header-tray single-row scroll containment (#459)', () => {
         expect(css).not.toContain('flex-shrink: 1');
         // Modern-only: because the grown (flex:1 1 0) tray is wider than its content
         // in the fit case, the buttons are right-aligned against the avatar with an
-        // auto inline-start margin on the LEADING child — not justify-content. Auto
-        // margins are universal (no safe/unsafe keyword) and resolve to 0 on
-        // overflow, so leading buttons stay reachable on every engine.
+        // auto inline-start margin on the VISUALLY-LEADING child — not justify-content.
+        // Auto margins are universal (no safe/unsafe keyword) and resolve to 0 on
+        // overflow, so leading buttons stay reachable on every engine. The
+        // visually-leading child is NOT always the DOM :first-child: native-tabs.ts
+        // appends #jc-native-tabs-group as the DOM-last child but with order:-1, so
+        // when it exists it renders first. The margin therefore goes on the group when
+        // present, and on the DOM :first-child only when the group is absent
+        // (:not(:has(...))) — never both, which would split the free space and strand
+        // the reordered group at the tray's left edge (a visible split, not the native
+        // contiguous tray).
         expect(css).toMatch(
-            /\.jc-modern-layout \.jc-header-tray > \*:first-child\s*\{[^}]*margin-inline-start:\s*auto/,
+            /\.jc-modern-layout \.jc-header-tray > #jc-native-tabs-group\s*\{[^}]*margin-inline-start:\s*auto/,
+        );
+        expect(css).toMatch(
+            /\.jc-modern-layout \.jc-header-tray:not\(:has\(> #jc-native-tabs-group\)\) > \*:first-child\s*\{[^}]*margin-inline-start:\s*auto/,
+        );
+        // Regression guard for the reordered-group split: the bare `> *:first-child`
+        // form (margin on the DOM first child regardless of the order:-1 group) must
+        // NOT be what ships — it stranded the native-tabs group at the tray's left
+        // edge whenever the group was present and the row fit.
+        expect(css).not.toMatch(
+            /\.jc-modern-layout \.jc-header-tray > \*:first-child\s*\{/,
         );
 
         // The horizontal scrollbar is suppressed on BOTH engines so an
@@ -240,6 +257,42 @@ describe('header-tray single-row scroll containment (#459)', () => {
                 expect(line).toMatch(/\.jc-(modern|legacy)-layout \.jc-header-tray/);
             }
         }
+    });
+
+    it('modern auto-margin selectors target the visually-leading child, not the DOM first child, when the native-tabs order:-1 group is present', () => {
+        // native-tabs.ts appends #jc-native-tabs-group as the DOM-LAST child but with
+        // order:-1, so it renders FIRST. The fit-case right-align margin must land on
+        // that reordered group, never on the DOM :first-child — otherwise the group is
+        // stranded alone at the tray's left edge with a gap to the right-packed buttons
+        // (r8f2/r8f4-r8f8/r8f10). Prove the shipped selectors resolve to the right node
+        // for both group-present and group-absent states.
+        document.documentElement.classList.add('jc-modern-layout');
+        const tray = document.createElement('div');
+        tray.className = 'jc-header-tray';
+        const leadingButton = document.createElement('button');
+        leadingButton.id = 'dom-first-action';
+        tray.appendChild(leadingButton);
+        // Mirror native-tabs.getOrCreateGroup: appended last, order:-1 (visually first).
+        const group = document.createElement('div');
+        group.id = 'jc-native-tabs-group';
+        group.style.cssText = 'display:flex;align-items:center;order:-1;';
+        tray.appendChild(group);
+        document.body.appendChild(tray);
+
+        const GROUP_RULE = '.jc-modern-layout .jc-header-tray > #jc-native-tabs-group';
+        const FIRST_CHILD_RULE =
+            '.jc-modern-layout .jc-header-tray:not(:has(> #jc-native-tabs-group)) > *:first-child';
+
+        // Group present: the margin rule selects the reordered group…
+        expect(document.querySelector(GROUP_RULE)).toBe(group);
+        // …and the DOM-first-child rule selects NOTHING (its :not(:has) gate is false),
+        // so the DOM first action never steals the auto margin.
+        expect(document.querySelector(FIRST_CHILD_RULE)).toBeNull();
+
+        // Group absent: the DOM first child is the visually-leading one and carries it.
+        group.remove();
+        expect(document.querySelector(GROUP_RULE)).toBeNull();
+        expect(document.querySelector(FIRST_CHILD_RULE)).toBe(leadingButton);
     });
 
     it('marks only the action tray on modern — the profile Box stays an unmarked sibling', () => {
