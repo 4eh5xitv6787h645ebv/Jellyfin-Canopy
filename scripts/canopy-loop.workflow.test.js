@@ -453,6 +453,25 @@ test('a verify-fix that commits after a clean review round is not ready-for-PR',
     assert.ok(r.residualRisks.some((s) => /never adversarially reviewed/i.test(s)));
 });
 
+test('a docs run explores 4 docs-relevant angles and skips Localize', async () => {
+    const { agent, calls } = makeAgent(null);
+    const r = await runWorkflow(baseArgs({ surface: 'docs', runtime: false, depth: 'standard' }), agent, parallel, phase, () => {});
+    const explore = calls.filter((c) => /^explore:\d+/.test(c.opts.label || ''));
+    assert.equal(explore.length, 4, 'docs runs use the 4 docs angles, not 8 code explorers');
+    assert.ok(explore.some((c) => /the DOCS surface: nav\/mkdocs structure/.test(c.prompt)), 'the DOCS-surface angle runs');
+    assert.ok(explore.every((c) => !/DATA\/STATE\/CONCURRENCY/.test(c.prompt)), 'no concurrency explorer for docs');
+    assert.ok(!calls.some((c) => c.opts.phase === 'Localize'), 'no Localize agent for docs');
+    assert.equal(r.readyForPR, true);
+});
+
+test('non-docs surfaces keep the full explorer list and Localize behavior', async () => {
+    const { agent, calls } = makeAgent(null);
+    await runWorkflow(baseArgs({ surface: 'client', depth: 'standard', runtime: false }), agent, parallel, phase, () => {});
+    const explore = calls.filter((c) => /^explore:\d+/.test(c.opts.label || ''));
+    assert.equal(explore.length, 8);
+    assert.ok(calls.some((c) => c.opts.phase === 'Localize'), 'client surface still localizes');
+});
+
 test('issue + no briefText: a Phase-0 agent hydrates the brief from the live issue', async () => {
     const { agent, calls } = makeAgent((_p, opts) => {
         if ((opts.label || '') === 'fetch-issue')

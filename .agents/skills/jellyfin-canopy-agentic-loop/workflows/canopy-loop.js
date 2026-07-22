@@ -698,16 +698,28 @@ log(`canopy-loop: ${DEPTH} depth · surface=${SURFACE} · runtime=${RUNTIME} · 
 if (START_PHASE !== 'explore')
   log(`canopy-loop: RESUME at "${START_PHASE}" — explore/plan/implement skipped; working from the committed ${BASE}...HEAD range`)
 
-const exploreAngles = [
-  'the OWNING module and the exact functions/types that must change',
-  'every PRODUCER and CONSUMER of the affected behavior (grep the whole tree)',
-  'the nearest ALREADY-IMPLEMENTED analogue and the existing cross-cutting helpers to reuse',
-  'the CONTRACTS at risk (auth/isolation/escaping/disposal/bounded-work/live-config) and the TEST SEAMS',
-  'the CLIENT surface: MUI + legacy layouts, native markup, locale keys, docs impacted',
-  'the SERVER surface: controllers/services/scheduled tasks, .NET tests, generated artifacts',
-  'the DATA/STATE/CONCURRENCY surface: persistence, caches, revisions, invalidation, and the races the change can introduce',
-  'the PERFORMANCE/BOUNDS surface: allocations, N+1 / manager-call counts, unbounded work, and the measurable budgets to assert',
-].slice(0, SIZING.explorers)
+// A docs-surface run gets docs-relevant angles: the standard list's client/
+// server/concurrency/performance explorers have nothing to trace against a
+// markdown-only change (each was also a Sol slot with a codex harness — pure
+// waste on SR-15/#454). Everything else keeps the full standard list.
+const exploreAngles = (SURFACE === 'docs'
+  ? [
+      'the OWNING docs pages and the exact sections/claims that must change',
+      'every PRODUCER and CONSUMER of the documented behavior: the code, gates, and contracts the text describes (grep the whole tree — the docs must not contradict them)',
+      'the nearest ALREADY-WRITTEN analogue page and the repo doc conventions to copy',
+      'the DOCS surface: nav/mkdocs structure, links, code examples, doc-asset policy, and the check:docs / mkdocs gates that validate them',
+    ]
+  : [
+      'the OWNING module and the exact functions/types that must change',
+      'every PRODUCER and CONSUMER of the affected behavior (grep the whole tree)',
+      'the nearest ALREADY-IMPLEMENTED analogue and the existing cross-cutting helpers to reuse',
+      'the CONTRACTS at risk (auth/isolation/escaping/disposal/bounded-work/live-config) and the TEST SEAMS',
+      'the CLIENT surface: MUI + legacy layouts, native markup, locale keys, docs impacted',
+      'the SERVER surface: controllers/services/scheduled tasks, .NET tests, generated artifacts',
+      'the DATA/STATE/CONCURRENCY surface: persistence, caches, revisions, invalidation, and the races the change can introduce',
+      'the PERFORMANCE/BOUNDS surface: allocations, N+1 / manager-call counts, unbounded work, and the measurable budgets to assert',
+    ]
+).slice(0, SIZING.explorers)
 
 let explorations = []
 if (START_PHASE === 'explore') {
@@ -1306,7 +1318,10 @@ if (!cleanRound && START_PHASE !== 'verify')
 // parity. Implementer/fixers add new i18n keys only to the base en.json; one
 // low-effort agent (gpt/opus on low) fans them out to every locale.
 // ═══════════════════════════════════════════════════════════════════════════
-if (SURFACE !== 'server' && !halted() && START_PHASE !== 'verify') {
+// Skipped for 'server' (no client locale surface) and 'docs' (docs-only changes
+// never touch js/locales; the validate-translations gate still runs in Verify,
+// so a docs change that somehow touched en.json still fails closed at the gate).
+if (SURFACE !== 'server' && SURFACE !== 'docs' && !halted() && START_PHASE !== 'verify') {
   phase('Localize')
   log(`Localize: fanning base-locale keys out to all locales (effort=${LOCALIZE_EFFORT})`)
   await safely(
