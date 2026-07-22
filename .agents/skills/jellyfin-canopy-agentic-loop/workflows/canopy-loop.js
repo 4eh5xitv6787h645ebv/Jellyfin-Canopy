@@ -96,9 +96,10 @@ const COMMIT_RULE =
 
 // roundCap here is the MIXED-panel review cap (Claude lenses + gpt-5.6-sol). If
 // the loop still isn't clean after it, review CONTINUES with gpt-5.6-sol as the
-// ONLY reviewer up to HARD_ROUND_CAP (see the review loop). explorers is the
-// TOTAL explorer count; the first EXPLORE_CLAUDE_COUNT run on Claude/Opus and the
-// rest on gpt-5.6-sol (see exploreSol).
+// ONLY reviewer until the loop terminates on a clean round, a progress stall, or
+// the runaway backstop (see the review loop). explorers is the TOTAL explorer
+// count; the first EXPLORE_CLAUDE_COUNT run on Claude/Opus and the rest on
+// gpt-5.6-sol (see exploreSol).
 const SIZING = {
   quick: { explorers: 2, planners: 2, roundCap: 2, verifyFixCap: 1 },
   standard: { explorers: 8, planners: 3, roundCap: 4, verifyFixCap: 2 },
