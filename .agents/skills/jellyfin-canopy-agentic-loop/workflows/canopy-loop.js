@@ -166,24 +166,10 @@ const SOL_VIA = a.solVia || 'codex-cli' // 'codex-cli' | 'agent'
 // the worktree — such as running the loop before this skill is merged to main.
 const CODEX_SCHEMA_PATH =
   a.codexSchema || `${WORKTREE}/.agents/skills/jellyfin-canopy-agentic-loop/references/codex-review-schema.json`
-// Per-run random heredoc delimiter for the codex harness. The reviewer prompt
-// embeds launcher-supplied (untrusted) TASK/BRIEF text; a fixed delimiter could
-// be closed early by a brief line equal to it, spilling the rest into the shell.
-// A random nonce the brief author cannot predict makes that collision infeasible.
-// NOTE: Math.random()/Date.now() THROW in the workflow sandbox (and would break
-// resume), so the nonce is derived deterministically from the run inputs via a
-// tiny FNV-1a hash. It is still unpredictable to a brief author who does not know
-// the exact TASK/BRANCH/WORKTREE, so an untrusted brief line cannot guess and
-// close the heredoc early.
-const _fnv1a = (s) => {
-  let h = 0x811c9dc5 >>> 0
-  for (let i = 0; i < s.length; i++) {
-    h = (h ^ s.charCodeAt(i)) >>> 0
-    h = Math.imul(h, 0x01000193) >>> 0
-  }
-  return h.toString(36)
-}
-const SOL_HEREDOC = 'SOL_PROMPT_' + _fnv1a(TASK + '|' + BRANCH + '|' + WORKTREE) + _fnv1a(BRIEF + '|' + BRIEF_TEXT)
+// NOTE: the codex review harness writes its prompt to a temp file with the Write
+// tool (see solThunk), NOT a shell heredoc, so there is no delimiter for an
+// untrusted brief line to close and no per-run nonce is needed — the injection
+// channel the old FNV-1a heredoc delimiter guarded against is closed at the source.
 
 // ── multi-model split (token offload) ───────────────────────────────────────
 // Route ~50% of the READ-ONLY reasoning to gpt-5.6-sol so a run doesn't spend
@@ -1081,22 +1067,33 @@ mechanically-similar-but-semantically-different code. Return only real findings
 
 PHASE: gpt-5.6-sol REVIEW via the local \`codex\` CLI. You are a HARNESS — run the
 external reviewer and relay its structured findings; do NOT review yourself.
-Run from ${WORKTREE} (HEAD must be committed and clean):
-  P=$(mktemp); R=$(mktemp); EV=$(mktemp); ER=$(mktemp)
-  trap 'rm -f "$P" "$R" "$EV" "$ER"' EXIT
-  cat > "$P" <<'${SOL_HEREDOC}'
+Work from ${WORKTREE} (HEAD must be committed and clean):
+1. Allocate two unique temp paths P and R by running \`mktemp\` twice (Bash). Do
+   NOT put them under ${WORKTREE}/.git — in a linked worktree (git worktree add)
+   .git is a gitdir POINTER FILE, not a directory, so writing under .git/ fails
+   with ENOTDIR. mktemp's OS-temp paths are outside the worktree and never dirty
+   git status.
+2. Write the REVIEW PROMPT between <<<PROMPT>>> markers VERBATIM to path P with
+   the Write tool (no shell heredoc — so untrusted TASK/BRIEF text embedded in the
+   prompt can never close a delimiter and spill into the shell). Do not paraphrase
+   or summarise it.
+3. Run (Bash), substituting the real P and R paths:
+     codex -a never -s read-only exec -C "${WORKTREE}" --ephemeral --ignore-user-config \\
+       --color never --json -m "${SOL_MODEL}" -c model_reasoning_effort="${SOL_EFFORT}" \\
+       --output-schema "${CODEX_SCHEMA_PATH}" -o R - < P
+4. Read R (JSON conforming to the schema) and RETURN its findings mapped to THIS
+   tool's schema (lens="gpt-5.6-sol", file, line, severity, summary,
+   failureScenario). If \`codex\` is missing OR exits non-zero, the Sol review did
+   NOT run: RETURN {"findings": [], "solUnavailable": true} so the loop covers this
+   scope with Claude instead. Do NOT invent findings and do NOT return a bare empty
+   array on failure — reserve {"findings": []} for a genuine clean codex run.
+5. ALWAYS delete the temp files before you finish — run \`rm -f\` on the real P and
+   R paths whether codex succeeded or failed — so no prompt or result files
+   accumulate in the OS temp directory across runs.
+
+<<<PROMPT>>>
 ${solPrompt}
-${SOL_HEREDOC}
-  codex -a never -s read-only exec -C "${WORKTREE}" --ephemeral --ignore-user-config \\
-    --color never --json -m "${SOL_MODEL}" -c model_reasoning_effort="${SOL_EFFORT}" \\
-    --output-schema "${CODEX_SCHEMA_PATH}" -o "$R" - < "$P" > "$EV" 2> "$ER"
-Then read "$R" (JSON conforming to the schema) and RETURN its findings mapped to
-THIS tool's schema (lens="gpt-5.6-sol", file, line, severity, summary,
-failureScenario). The temp files are cleaned up by the trap on shell exit.
-If \`codex\` is missing OR exits non-zero, the Sol review did NOT run: RETURN
-{"findings": [], "solUnavailable": true} so the loop covers this scope with
-Claude instead. Do NOT invent findings and do NOT return a bare empty array on
-failure — reserve {"findings": []} for a genuine clean codex run.`,
+<<<PROMPT>>>`,
             { schema: FINDINGS_SCHEMA, agentType: 'general-purpose', effort: 'medium', phase: 'Review', label: `sol-cli-r${roundNo}:${i + 1}` }
             )
             return r && !r.solUnavailable ? r : null

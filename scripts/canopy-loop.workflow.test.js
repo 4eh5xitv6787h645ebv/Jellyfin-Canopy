@@ -434,10 +434,14 @@ test('codex-cli: an unavailable codex run falls back to Claude instead of a sile
     const harness = calls.find((c) => (c.opts.label || '').startsWith('sol-cli-r'));
     assert.ok(harness, 'codex harness invoked');
     assert.match(harness.prompt, /solUnavailable/, 'harness signals unavailability rather than empty findings');
-    assert.match(harness.prompt, /trap 'rm -f/, 'harness cleans up its temp files');
-    // Randomised, unguessable heredoc delimiter (not the fixed, collidable SOL_PROMPT).
-    assert.match(harness.prompt, /<<'SOL_PROMPT_[a-z0-9]{8,}'/, 'per-run nonce heredoc delimiter');
-    assert.doesNotMatch(harness.prompt, /<<'SOL_PROMPT'\n/, 'no fixed collidable delimiter');
+    assert.match(harness.prompt, /rm -f/, 'harness cleans up its temp files');
+    // Injection-hardened: the prompt is written to a temp file with the Write tool
+    // between <<<PROMPT>>> markers — NO shell heredoc, so no delimiter for an
+    // untrusted brief line to close (mirrors the codexAgent read-only harness).
+    assert.match(harness.prompt, /Write tool/, 'prompt written via the Write tool, not a shell heredoc');
+    assert.match(harness.prompt, /<<<PROMPT>>>/, 'prompt fenced by non-shell markers');
+    assert.doesNotMatch(harness.prompt, /cat > "\$P" <</, 'no shell heredoc in the review harness');
+    assert.doesNotMatch(harness.prompt, /SOL_PROMPT_/, 'the collidable/computable heredoc nonce is gone');
 });
 
 test('codex-cli: a THROWING codex harness falls back to Claude, not a lost scope', async () => {
