@@ -193,6 +193,18 @@ test('startPhase:"verify" + reviewedHead that does NOT match the verified HEAD s
     assert.ok(r.residualRisks.some((s) => /review loop was SKIPPED/i.test(s)));
 });
 
+test('startPhase:"verify" resume still runs Localize on a client surface (parity fan-out)', async () => {
+    // A run can pause between the clean review round and Localize. Skipping
+    // Localize on the verify-resume would leave new en.json keys un-fanned-out and
+    // fail validate-translations forever, so the cheap parity fan-out must run.
+    const { agent, calls } = makeAgent(null);
+    const r = await runWorkflow(baseArgs({ surface: 'client', runtime: false, startPhase: 'verify' }), agent, parallel, phase, () => {});
+    assert.ok(!calls.some((c) => c.opts.phase === 'Review'), 'no review agents on a verify-only resume');
+    assert.ok(calls.some((c) => c.opts.phase === 'Localize'), 'Localize still fans out locale keys on a verify-resume');
+    assert.ok(calls.some((c) => c.opts.phase === 'Verify'), 'verify runs');
+    assert.equal(r.readyForPR, false, 'still fail-closed without a reviewedHead match');
+});
+
 test('an unknown startPhase falls back to a full run', async () => {
     const { agent, calls } = makeAgent(null);
     const r = await runWorkflow(baseArgs({ startPhase: 'implment' }), agent, parallel, phase, () => {});

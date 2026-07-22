@@ -60,9 +60,10 @@ const BASE = a.base || 'origin/main'
 //   'explore' (default) — full run, byte-identical to the pre-resume behavior;
 //   'review'  — skip Explore/Plan/Implement, adversarially review the committed
 //               range, then verify (can certify readyForPR — review runs fully);
-//   'verify'  — additionally skip the review loop: gates only. A verify-only
-//               resume normally can NEVER certify readyForPR (fail closed — no
-//               review ran), UNLESS the launcher passes reviewedHead (below).
+//   'verify'  — additionally skip the review loop: Localize (parity fan-out, not
+//               reviewed) then gates. A verify-only resume normally can NEVER
+//               certify readyForPR (fail closed — no review ran), UNLESS the
+//               launcher passes reviewedHead (below).
 const START_PHASE = ['explore', 'review', 'verify'].includes(a.startPhase) ? a.startPhase : 'explore'
 // reviewedHead escape hatch (fail-closed sha match). The primary #454 scenario is
 // a run that dies AFTER a certified-clean review round but during Localize/Verify
@@ -1359,7 +1360,15 @@ if (!cleanRound && START_PHASE !== 'verify')
 // Skipped for 'server' (no client locale surface) and 'docs' (docs-only changes
 // never touch js/locales; the validate-translations gate still runs in Verify,
 // so a docs change that somehow touched en.json still fails closed at the gate).
-if (SURFACE !== 'server' && SURFACE !== 'docs' && !halted() && START_PHASE !== 'verify') {
+// RUNS on a verify-resume too: a run that paused between the clean review round
+// and Localize left new en.json keys un-fanned-out, so a verify-only resume that
+// skipped Localize would fail validate-translations forever (or invite the
+// verify-fixer into the mass locale edits the fix prompts forbid). The phase is
+// cheap and self-no-ops when en.json has no new/changed keys, its chore(i18n)
+// commit lands BEFORE the first verify so verifyFixCommitted HEAD tracking is
+// untouched, and it is never adversarially reviewed — so it cannot poison
+// certification. Hence no START_PHASE guard here.
+if (SURFACE !== 'server' && SURFACE !== 'docs' && !halted()) {
   phase('Localize')
   log(`Localize: fanning base-locale keys out to all locales (effort=${LOCALIZE_EFFORT})`)
   await safely(

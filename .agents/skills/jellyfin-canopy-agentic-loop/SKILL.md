@@ -224,8 +224,11 @@ The engine ([`workflows/canopy-loop.js`](workflows/canopy-loop.js)) runs:
    `validate-translations` passes at parity). It fans the base keys out to every
    locale on a low-effort model (gpt/opus on `low`, `localizeEffort`), commits one
    `chore(i18n)` unit, and no-ops when no keys changed. Skipped for `server` and
-   `docs` surfaces. Not adversarially reviewed — translations are mechanical and
-   the `validate-translations` gate enforces parity.
+   `docs` surfaces. It still runs on a `startPhase:"verify"` resume (a run that
+   paused between the clean review and Localize would otherwise fail
+   `validate-translations` forever). Not adversarially reviewed — translations are
+   mechanical, the commit lands before the first verify, and the
+   `validate-translations` gate enforces parity.
 6. **Verify** (single runner) — run the repo-native gates for the surface, and
    for runtime-relevant work build the Release DLL and run `npm run e2e:local`
    (exercise admin and non-admin, assert real DOM/server state, zero
