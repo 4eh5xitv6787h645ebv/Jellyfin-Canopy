@@ -354,11 +354,13 @@ test('readyForPR is false when the implementer leaves open acceptance-criteria T
     assert.ok(r.residualRisks.some((s) => /open acceptance-criteria TODOs/i.test(s)));
 });
 
-test('a throwing review fixer exhausts the round cap and is never ready-for-PR', async () => {
+test('a throwing review fixer stalls the loop (no progress) and is never ready-for-PR', async () => {
     // EVERY round surfaces the same real, confirmed finding whose fixer throws
-    // (StructuredOutput retry cap). The loop must run to roundCap WITHOUT a clean
-    // round and report the branch as NOT ready — the sole guard of that safety
-    // property. (Also proves a throwing fixer resolves the workflow, never aborts.)
+    // (StructuredOutput retry cap). The fixer applies nothing and the confirmed
+    // count never falls, so the progress-stall detector must stop the loop after
+    // STALL_PATIENCE (default 2) no-progress rounds WITHOUT a clean round and
+    // report the branch as NOT ready — the sole guard of that safety property.
+    // (Also proves a throwing fixer resolves the workflow, never aborts.)
     const { agent } = makeAgent((_p, opts) => {
         const l = opts.label || '';
         // Mixed rounds surface the finding on the Claude lens-0 reviewer; gpt-only
@@ -372,13 +374,15 @@ test('a throwing review fixer exhausts the round cap and is never ready-for-PR',
     const r = await runWorkflow(baseArgs(), agent, parallel, phase, () => {});
     // Workflow resolves with a structured result rather than throwing out.
     assert.equal(typeof r, 'object');
+    assert.equal(r.reviewRounds, 2, 'the loop stalls after STALL_PATIENCE (2) no-progress rounds, not the old fixed cap');
+    assert.equal(r.reviewStalled, true, 'the stop is a progress stall, not a clean round');
     assert.equal(r.confirmedFindingsResolved, 0, 'a throwing fixer applies nothing → nothing counts resolved');
     assert.equal(r.loopClean, false, 'a round with an unfixed confirmed finding is not clean');
     assert.equal(r.reviewIncomplete, false, 'coverage was complete — the finding was confirmed, not lost');
     assert.equal(r.readyForPR, false, 'unresolved confirmed findings must block ready-for-PR');
     assert.ok(
-        r.residualRisks.some((s) => /round cap with unresolved confirmed findings/i.test(s)),
-        'the round-cap residual risk is reported',
+        r.residualRisks.some((s) => /did NOT converge/i.test(s)),
+        'the non-convergence residual risk is reported',
     );
 });
 
@@ -539,6 +543,165 @@ test('review escalates to gpt-5.6-sol-only after the mixed round cap', async () 
     assert.ok(solReviewRounds.has(3) && solReviewRounds.has(5), 'gpt-5.6-sol reviewers run the gpt-only rounds');
     assert.equal(r.readyForPR, false, 'unresolved confirmed findings across the escalation block PR');
     assert.equal(r.reviewRounds, 5, 'the loop ran to the hard round cap');
+});
+
+test('explicit hardRoundCap disables the stall detector (old fixed-count behavior)', async () => {
+    // A caller who passes hardRoundCap wants the OLD fixed behavior: the loop runs
+    // up to exactly that many rounds and the progress-stall early stop is OFF, even
+    // though the same finding re-confirms every round with no progress (which would
+    // otherwise stall at 2). Proves args.hardRoundCap pins the backstop AND turns
+    // off the stall detector.
+    const { agent } = makeAgent((_p, opts) => {
+        const l = opts.label || '';
+        if (/^review-r\d+:1$/.test(l)) return finding('never fixed'); // mixed rounds
+        if (/^sol-r\d+:1$/.test(l)) return finding('never fixed'); // gpt-only rounds
+        if (/^verify-r\d+:1$/.test(l)) return { real: true, reason: 'c' };
+        if (l.startsWith('fix-r')) return { __throw: 'cap' };
+        return undefined;
+    });
+    const r = await runWorkflow(baseArgs({ hardRoundCap: 4 }), agent, parallel, phase, () => {});
+    assert.equal(r.reviewRounds, 4, 'runs to the fixed hardRoundCap, not the 2-round stall');
+    assert.equal(r.reviewStalled, false, 'the stall detector is disabled under an explicit hardRoundCap');
+    assert.equal(r.backstopRounds, 4, 'hardRoundCap pins the absolute ceiling');
+    assert.equal(r.readyForPR, false);
+});
+
+test('a steady-progress run runs PAST the old 10-round cap to a clean round', async () => {
+    // The core regression the stall detector fixes: a legitimately-converging change
+    // is never cut off by an arbitrary count. Each round surfaces a DISTINCT
+    // confirmed finding that the fixer APPLIES (progress every round), so the loop
+    // never stalls; the change goes clean at round 12 — past the old fixed cap of 10
+    // — and certifies. (Fixer/verify use the happy defaults: applied ids honored,
+    // gates green.)
+    const { agent } = makeAgent((_p, opts) => {
+        const l = opts.label || '';
+        const m = /^(?:review|sol)-r(\d+):1$/.exec(l);
+        if (m) {
+            const rnd = Number(m[1]);
+            return rnd <= 11 ? finding(`distinct converging defect round ${rnd}`) : { findings: [] };
+        }
+        if (/^verify-r\d+:1$/.test(l)) return { real: true, reason: 'confirmed' };
+        return undefined; // fixer (happy) applies every id → progress each round
+    });
+    const r = await runWorkflow(baseArgs(), agent, parallel, phase, () => {});
+    assert.ok(r.reviewRounds > 10, `steady-progress run is not cut at the old 10-cap (ran ${r.reviewRounds} rounds)`);
+    assert.equal(r.reviewRounds, 12, 'goes clean the round after the last distinct finding');
+    assert.equal(r.reviewStalled, false, 'a converging run never trips the stall detector');
+    assert.equal(r.loopClean, true);
+    assert.equal(r.readyForPR, true, 'a converged + green run certifies');
+    assert.equal(r.confirmedFindingsResolved, 11, 'all 11 progressively-fixed findings counted');
+});
+
+test('a stalled run (2 no-progress rounds) stops early with the non-convergence residual', async () => {
+    // The #167 config-page.js shape: the same confirmed finding recurs and the fixer
+    // never resolves it, so no round makes progress. The stall detector stops after
+    // STALL_PATIENCE (default 2) no-progress rounds and reports non-convergence with
+    // readyForPR:false — instead of grinding to the old 10-round cap.
+    const { agent } = makeAgent((_p, opts) => {
+        const l = opts.label || '';
+        if (/^(?:review|sol)-r\d+:1$/.test(l)) return finding('entangled unfixable defect');
+        if (/^verify-r\d+:1$/.test(l)) return { real: true, reason: 'reproduces' };
+        if (l.startsWith('fix-r')) return { applied: [], unresolved: ['r' + 'x'], commits: [] }; // never resolves
+        return undefined;
+    });
+    const r = await runWorkflow(baseArgs(), agent, parallel, phase, () => {});
+    assert.equal(r.reviewRounds, 2, 'stops after STALL_PATIENCE (2) no-progress rounds');
+    assert.equal(r.reviewStalled, true);
+    assert.equal(r.loopClean, false);
+    assert.equal(r.readyForPR, false, 'a non-converged review must not certify readyForPR');
+    assert.ok(r.residualRisks.some((s) => /did NOT converge/i.test(s)), 'non-convergence residual present');
+    assert.ok(r.residualRisks.some((s) => /splitting the change/i.test(s)), 'residual advises splitting the change');
+});
+
+test('a lower stallPatience stops a no-progress run even sooner', async () => {
+    // args.stallPatience is caller-overridable; patience 1 stalls after a single
+    // no-progress round.
+    const { agent } = makeAgent((_p, opts) => {
+        const l = opts.label || '';
+        if (/^(?:review|sol)-r\d+:1$/.test(l)) return finding('unfixable');
+        if (/^verify-r\d+:1$/.test(l)) return { real: true, reason: 'x' };
+        if (l.startsWith('fix-r')) return { __throw: 'cap' };
+        return undefined;
+    });
+    const r = await runWorkflow(baseArgs({ stallPatience: 1 }), agent, parallel, phase, () => {});
+    assert.equal(r.reviewRounds, 1, 'stallPatience 1 stalls after the first no-progress round');
+    assert.equal(r.reviewStalled, true);
+});
+
+test('the runaway backstop halts a forever-progressing (never-converging) run', async () => {
+    // The pathological entangled-file case: every round confirms a NEW distinct
+    // finding that the fixer APPLIES (so it always "makes progress" and never
+    // stalls), yet a new one always appears so it never goes clean. Only the
+    // absolute backstop can stop it. args.backstopRounds pins a low ceiling for the
+    // test; the run halts there, not-clean and not-ready.
+    const { agent } = makeAgent((_p, opts) => {
+        const l = opts.label || '';
+        const m = /^(?:review|sol)-r(\d+):1$/.exec(l);
+        if (m) return finding(`endless distinct defect ${m[1]}`); // a NEW finding every round, forever
+        if (/^verify-r\d+:1$/.test(l)) return { real: true, reason: 'confirmed' };
+        return undefined; // fixer (happy) applies each → progress, never a stall
+    });
+    const r = await runWorkflow(baseArgs({ backstopRounds: 4 }), agent, parallel, phase, () => {});
+    assert.equal(r.backstopRounds, 4, 'the explicit backstop ceiling is honored');
+    assert.equal(r.reviewRounds, 4, 'the backstop halts the forever-progressing run at the ceiling');
+    assert.equal(r.reviewStalled, false, 'it never stalled — it always progressed; the backstop stopped it');
+    assert.equal(r.loopClean, false);
+    assert.equal(r.readyForPR, false);
+    assert.ok(r.residualRisks.some((s) => /runaway backstop/i.test(s)), 'the backstop residual is reported');
+});
+
+test('a pure-oscillation round (re-report of a ledger-refuted finding) stalls immediately', async () => {
+    // Round 1: finding A is REFUTED (ledgered) while an unrelated finding B is
+    // confirmed+fixed (so the round is not clean and the loop continues). Round 2: a
+    // reviewer re-reports A and a verifier confirms it — the confirmed set is WHOLLY
+    // a re-report of a ledger-disposed item, i.e. the loop is re-litigating a
+    // settled finding. That is pure oscillation and must stall at once
+    // (stallOscillation) even though it is only the first no-progress round.
+    const { agent } = makeAgent((_p, opts) => {
+        const l = opts.label || '';
+        if (l === 'review-r1:1')
+            return {
+                findings: [
+                    { file: 'a.js', line: 1, severity: 'major', summary: 'oscillating defect A', failureScenario: 'x' },
+                    { file: 'b.js', line: 2, severity: 'major', summary: 'unrelated defect B', failureScenario: 'y' },
+                ],
+            };
+        if (l === 'verify-r1:1') return { real: false, reason: 'A does not reproduce' }; // refuted → ledgered
+        if (l === 'verify-r1:2') return { real: true, reason: 'B reproduces' }; // confirmed+fixed → progress
+        if (l === 'review-r2:1')
+            return { findings: [{ file: 'a.js', line: 1, severity: 'major', summary: 'oscillating defect A', failureScenario: 'x' }] }; // same fingerprint re-reported
+        if (l === 'verify-r2:1') return { real: true, reason: 'A now claimed real (re-litigated)' };
+        if (l === 'fix-r2') return { __throw: 'cannot fix' };
+        return undefined; // fix-r1 (happy) applies B
+    });
+    const r = await runWorkflow(baseArgs(), agent, parallel, phase, () => {});
+    assert.equal(r.reviewRounds, 2, 'oscillation is detected on the round the settled finding returns');
+    assert.equal(r.reviewStalled, true);
+    assert.equal(r.stallOscillation, true, 'the stall is flagged as pure oscillation');
+    assert.equal(r.readyForPR, false);
+    assert.ok(r.residualRisks.some((s) => /pure oscillation/i.test(s)));
+});
+
+test('severity-gated minors-only round exits clean without triggering stall logic', async () => {
+    // Requirement #4: on a docs/spec surface, a confirmed MINOR becomes an advisory
+    // note and the round counts CLEAN and exits BEFORE any stall/backstop logic. The
+    // run must certify (loopClean, readyForPR) and never be flagged as stalled — the
+    // stall detector only matters when confirmed blocker/major findings keep coming.
+    const { agent, calls } = makeAgent((_p, opts) => {
+        const l = opts.label || '';
+        if (l === 'review-r1:1')
+            return { findings: [{ file: 'docs/a.md', line: 3, severity: 'minor', summary: 'stale phrasing', failureScenario: 'x' }] };
+        if (l.startsWith('verify-r1')) return { real: true, severity: 'minor', reason: 'true but cosmetic' };
+        return undefined;
+    });
+    const r = await runWorkflow(baseArgs({ surface: 'docs', runtime: false }), agent, parallel, phase, () => {});
+    assert.equal(r.reviewRounds, 1, 'a minors-only round exits clean at round 1');
+    assert.equal(r.loopClean, true);
+    assert.equal(r.reviewStalled, false, 'a minors-only clean exit never trips the stall detector');
+    assert.ok(r.advisoryNotes.some((s) => /stale phrasing/.test(s)));
+    assert.ok(!calls.some((c) => (c.opts.label || '').startsWith('fix-r')), 'no fixer for minors only');
+    assert.equal(r.readyForPR, true);
+    assert.ok(!r.residualRisks.some((s) => /did NOT converge|runaway backstop/i.test(s)), 'no stall/backstop residual on a clean minors-only run');
 });
 
 test('verify enforces a committed, clean handoff as a blocking gate', async () => {
@@ -1053,9 +1216,12 @@ test('docs/spec reviews carry a severity rubric and verifiers are required to re
     assert.match(verify.prompt, /Return severity \(blocker\/major\/minor\) REQUIRED/, 'verifier is required to return severity');
 });
 
-test('docs surface: the hard round cap defaults to roundCap+1, not 10', async () => {
-    // quick depth → mixed roundCap 2 → docs hard cap 3. A blocker every round
-    // with a throwing fixer must stop after 3 rounds instead of churning to 10.
+test('docs surface: a re-confirmed blocker with no progress stalls fast (well under the backstop)', async () => {
+    // quick depth → mixed roundCap 2 → docs backstop roundCap+1 = 3. A blocker
+    // re-confirmed every round with a throwing fixer makes no progress, so the
+    // stall detector stops it at STALL_PATIENCE (2) rounds — before the docs
+    // backstop — instead of the old fixed 10-round churn. (The minors→advisory
+    // clean exit is unaffected; only blocker/major churn reaches the stall path.)
     const { agent } = makeAgent((_p, opts) => {
         const l = opts.label || '';
         if (/^review-r\d+:1$/.test(l)) return finding('real blocker'); // mixed rounds
@@ -1065,7 +1231,9 @@ test('docs surface: the hard round cap defaults to roundCap+1, not 10', async ()
         return undefined;
     });
     const r = await runWorkflow(baseArgs({ surface: 'docs', runtime: false }), agent, parallel, phase, () => {});
-    assert.equal(r.reviewRounds, 3, 'docs hard cap is roundCap+1 (2+1)');
+    assert.equal(r.backstopRounds, 3, 'docs backstop stays low (roundCap+1 = 2+1)');
+    assert.equal(r.reviewRounds, 2, 'the stall detector stops docs churn at STALL_PATIENCE (2), under the backstop');
+    assert.equal(r.reviewStalled, true);
     assert.equal(r.readyForPR, false);
 });
 

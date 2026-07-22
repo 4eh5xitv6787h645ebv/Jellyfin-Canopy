@@ -199,13 +199,21 @@ const solSlot = (i) => MODEL_SPLIT && i % 2 === 1 // odd indices → Sol (~50/50
 // count with args.exploreClaudeCount.
 const EXPLORE_CLAUDE_COUNT = a.exploreClaudeCount == null ? 2 : Math.max(0, a.exploreClaudeCount)
 const exploreSol = (i) => MODEL_SPLIT && i >= EXPLORE_CLAUDE_COUNT
-// The hard review-round ceiling: after the mixed roundCap, gpt-5.6-sol-only
-// review rounds continue up to here (user policy). Docs/spec surfaces default
-// MUCH lower (roundCap+1): prose churn does not converge under a 10-round
-// escalation, and unresolved docs findings should go back to a human instead.
-// Override with args.hardRoundCap.
+// The review loop no longer terminates on a fixed round count — a crude count
+// (the old default 10) cannot tell "round 9 of genuine steady progress" from
+// "round 3 of hopeless oscillation" (the #167 config-page.js case: 8h / 21M
+// tokens / never converged). Termination is now PROGRESS-BASED: a clean round,
+// a progress STALL (STALL_PATIENCE consecutive no-progress rounds, or a round
+// whose confirmed findings are wholly a ledger re-report — see the review loop),
+// or a high runaway BACKSTOP. HARD_ROUND_CAP survives only as (a) the floor the
+// default backstop never drops below and (b) the OLD fixed-count behavior when a
+// caller passes args.hardRoundCap explicitly (which pins the backstop to that
+// value AND disables the stall detector's early stop — see STALL_DETECT below).
+// Docs/spec keep the low roundCap+1 default; the stall detector usually fires
+// first there anyway, and unresolved prose still goes back to a human fast.
+const HARD_CAP_SET = a.hardRoundCap != null
 const DEFAULT_HARD_CAP = SEVERITY_GATED ? SIZING.roundCap + 1 : 10
-const HARD_ROUND_CAP = Math.max(1, a.hardRoundCap == null ? DEFAULT_HARD_CAP : a.hardRoundCap)
+const HARD_ROUND_CAP = Math.max(1, HARD_CAP_SET ? a.hardRoundCap : DEFAULT_HARD_CAP)
 
 // Effort for the non-review Sol phases (explore/plan/finding-verification). High
 // codex effort × many calls gets very slow, so these default to medium; the
@@ -1286,6 +1294,49 @@ let reviewIncomplete = false
 // own report says the defect is still in the diff.
 const unresolvedFindings = new Map() // fingerprint → { file, line, summary, round }
 const MIXED_ROUND_CAP = SIZING.roundCap
+
+// ── non-convergence (progress-stall) detector + runaway backstop ─────────────
+// The round loop's real job is non-convergence DETECTION, not budget control
+// (terminal-failure pauses handle budget). A legitimately-converging change must
+// NEVER be cut off by an arbitrary count; a genuinely stalled one must stop ASAP
+// and surface for a human. So, evaluated after each review round from signals
+// already computed:
+//   • PROGRESS = the confirmed-finding count (what survives verification and goes
+//     to the fixer) strictly DECREASED vs the previous round, OR ≥1 confirmed
+//     finding was newly APPLIED this round.
+//   • STALL    = STALL_PATIENCE consecutive rounds with no progress (default 2),
+//     OR a round whose confirmed findings are WHOLLY a re-report of items the
+//     ledger already disposed of in an earlier round (pure oscillation).
+// On a stall the loop stops with the same not-clean / residual-risk shape the old
+// cap-hit produced (loopClean stays false; readyForPR cannot certify) plus a
+// "did not converge" residual so a human can split the change.
+// The BACKSTOP is an absolute ceiling so a pathological entangled file cannot
+// loop forever even while nominally making progress one finding at a time.
+const STALL_PATIENCE = Math.max(1, a.stallPatience != null ? a.stallPatience : 2)
+// An explicit args.hardRoundCap means the caller wants the OLD fixed-count
+// behavior: run up to exactly that many rounds and DISABLE the progress-stall
+// early stop (the backstop IS the hard cap). Otherwise the stall detector is the
+// primary terminator and the backstop is a high ceiling.
+const STALL_DETECT = !HARD_CAP_SET
+// Absolute round ceiling. Explicit hardRoundCap → that fixed count. Else an
+// explicit args.backstopRounds is honored as-is (min 1); the default is a high
+// ceiling floored at the old hard-cap-equivalent (~25 for code, roundCap+1 for
+// docs/spec where the stall detector terminates far sooner anyway).
+const BACKSTOP_ROUNDS = Math.max(
+  1,
+  HARD_CAP_SET
+    ? HARD_ROUND_CAP
+    : a.backstopRounds != null
+    ? a.backstopRounds
+    : SEVERITY_GATED
+    ? HARD_ROUND_CAP
+    : Math.max(HARD_ROUND_CAP, 25)
+)
+// Progress-stall bookkeeping across rounds.
+let prevConfirmedCount = null // confirmed count of the previous fixer round
+let noProgressStreak = 0 // consecutive rounds with no progress
+let reviewStalled = false // the loop stopped on a progress stall (non-convergence)
+let stallOscillation = false // the stall was pure oscillation (all re-reports), not just a streak
 let round = 0
 if (START_PHASE === 'verify') {
   // Verify-only resume: the review loop is SKIPPED, so by default this run can
@@ -1297,14 +1348,15 @@ if (START_PHASE === 'verify') {
     log(`verify-only resume: review loop skipped — will certify the prior clean review IFF verify reports HEAD === reviewedHead (${REVIEWED_HEAD.slice(0, 12)}…)`)
   else log('verify-only resume: review loop skipped — this run cannot certify readyForPR (fail closed)')
 }
-while (round < HARD_ROUND_CAP && !cleanRound && !halted() && START_PHASE !== 'verify') {
+while (round < BACKSTOP_ROUNDS && !cleanRound && !halted() && START_PHASE !== 'verify') {
   round++
   solOkThisRound = false
 
   // Rounds 1..MIXED_ROUND_CAP run the mixed panel (Claude lenses + gpt-5.6-sol).
   // If still not clean after that, review CONTINUES with gpt-5.6-sol as the ONLY
-  // reviewer (user policy) for every remaining round up to HARD_ROUND_CAP: all
-  // lenses run on Sol plus the whole-diff Sol reviewer(s), no Claude lens
+  // reviewer (user policy) for every remaining round until the loop terminates
+  // (clean / stall / backstop): all lenses run on Sol plus the whole-diff Sol
+  // reviewer(s), no Claude lens
   // reviewers. (A Sol slot still falls back to Claude for its scope ONLY if Sol
   // can't be routed at all — fail closed so no lens is left unreviewed.)
   const gptOnly = round > MIXED_ROUND_CAP
@@ -1333,7 +1385,7 @@ while (round < HARD_ROUND_CAP && !cleanRound && !halted() && START_PHASE !== 've
   }
   const claudeLensCount = gptOnly ? 0 : (MODEL_SPLIT ? LENSES.filter((_, i) => !solSlot(i)).length : LENSES.length)
   const solCount = roundThunks.length - claudeLensCount
-  log(`Review round ${round}/${HARD_ROUND_CAP}${gptOnly ? ' [gpt-only]' : ''} — ${claudeLensCount} Claude lens + ${solCount}× ${SOL_MODEL} (${SOL_VIA}, ${SOL_EFFORT})${MODEL_SPLIT && !gptOnly ? ' [50/50 + whole-diff]' : ''}`)
+  log(`Review round ${round}/${BACKSTOP_ROUNDS}${gptOnly ? ' [gpt-only]' : ''}${STALL_DETECT ? ` [stall-patience ${STALL_PATIENCE}]` : ' [fixed-cap]'} — ${claudeLensCount} Claude lens + ${solCount}× ${SOL_MODEL} (${SOL_VIA}, ${SOL_EFFORT})${MODEL_SPLIT && !gptOnly ? ' [50/50 + whole-diff]' : ''}`)
 
   const results = await parallel(roundThunks)
   statAdd('review', results)
@@ -1513,12 +1565,50 @@ ${JSON.stringify(confirmedForFixer, null, 1).slice(0, 10000)}`,
   })
   if (appliedThisRound < fixIds.length || reportedUnresolved.length || !fixResult)
     log(`Review round ${round}: fixer applied ${appliedThisRound}/${fixIds.length} confirmed finding(s)${reportedUnresolved.length ? `, ${reportedUnresolved.length} reported unresolved` : ''}${fixResult ? '' : ' (fixer returned nothing)'} → ${unresolvedFindings.size} finding(s) still unresolved; run cannot certify until they are fixed`)
+
+  // ── progress-stall check (non-convergence detection) ──────────────────────
+  // Reached only when this round confirmed blocker/major findings and ran a
+  // fixer (clean and coverage-incomplete rounds already broke out above). PURE
+  // OSCILLATION: the confirmed set is wholly a re-report of items the ledger
+  // disposed of in an EARLIER round (fixed/refuted/advisory) — the reviewers are
+  // re-litigating settled findings, the clearest non-convergence signal. STREAK:
+  // STALL_PATIENCE consecutive rounds where the confirmed count did not fall and
+  // the fixer applied nothing new. Either way we stop and surface for a human
+  // rather than churn to the backstop.
+  if (STALL_DETECT) {
+    const priorLedgerFps = new Set(
+      ledger
+        .filter((e) => e.round !== round && (e.status === 'fixed' || e.status === 'refuted' || e.status === 'advisory'))
+        .map(dedupeKey)
+    )
+    const pureOscillation = confirmed.length > 0 && confirmed.every((f) => priorLedgerFps.has(dedupeKey(f)))
+    const progressed = (prevConfirmedCount != null && confirmed.length < prevConfirmedCount) || appliedThisRound > 0
+    if (progressed) noProgressStreak = 0
+    else noProgressStreak++
+    prevConfirmedCount = confirmed.length
+    if (pureOscillation || noProgressStreak >= STALL_PATIENCE) {
+      reviewStalled = true
+      stallOscillation = pureOscillation
+      log(
+        `Review round ${round}: STALL — ${
+          pureOscillation
+            ? 'confirmed findings are wholly a re-report of items already disposed of in the ledger (pure oscillation)'
+            : `${noProgressStreak} consecutive round(s) without progress (STALL_PATIENCE=${STALL_PATIENCE})`
+        }; review is not converging → stopping and surfacing for a human`
+      )
+      break
+    }
+  } else {
+    prevConfirmedCount = confirmed.length
+  }
 }
 if (!cleanRound && START_PHASE !== 'verify')
   log(
     reviewIncomplete
       ? `Review: ended without a certified-clean round — coverage incomplete (reviewer/verifier failure); will report as residual risk`
-      : `Review: hit round cap (${HARD_ROUND_CAP}) with unresolved findings — will report as residual risk`
+      : reviewStalled
+      ? `Review: did NOT converge — stopped at round ${round} on a progress ${stallOscillation ? 'oscillation (re-report set)' : `stall (${STALL_PATIENCE} no-progress round(s))`}; surfacing for a human`
+      : `Review: hit the runaway backstop (${BACKSTOP_ROUNDS} rounds) with unresolved findings — will report as residual risk`
   )
 // Mixed-model contract enforcement on the CERTIFYING round. Every round always
 // requests ≥1 gpt-5.6-sol reviewer (Math.max(1, SOL_REVIEWERS)); if the round that
@@ -1768,6 +1858,12 @@ const result = {
   loopClean: cleanRound,
   reviewRounds: round,
   reviewIncomplete,
+  // Non-convergence signals: the loop stopped on a progress stall (reviewStalled)
+  // — optionally pure oscillation (stallOscillation) — rather than a clean round;
+  // and the absolute round ceiling in effect for this run.
+  reviewStalled,
+  stallOscillation,
+  backstopRounds: BACKSTOP_ROUNDS,
   incidentalBugs,
   confirmedFindingsResolved: confirmedAll.length,
   // Confirmed-but-minor docs/spec findings (severity-gated surfaces only) for
@@ -1809,7 +1905,21 @@ const result = {
         ? ['adversarial review ended with incomplete coverage (a reviewer or finding-verifier failed) — the round could not be certified clean']
         : []
     )
-    .concat(cleanRound || reviewIncomplete ? [] : ['review loop hit its round cap with unresolved confirmed findings'])
+    .concat(
+      cleanRound || reviewIncomplete
+        ? []
+        : reviewStalled
+        ? [
+            `review did NOT converge — ${
+              stallOscillation
+                ? 'confirmed findings were wholly a re-report of items already disposed of in the ledger (pure oscillation)'
+                : `${STALL_PATIENCE} consecutive review round(s) made no progress`
+            }; surfacing for a human — consider splitting the change into smaller independent pieces${
+              unresolvedFindings.size ? ` (${unresolvedFindings.size} finding(s) still unresolved)` : ''
+            }`,
+          ]
+        : ['review loop hit the runaway backstop (' + BACKSTOP_ROUNDS + ' rounds) with unresolved confirmed findings — surface for a human']
+    )
     .concat(
       unresolvedFindings.size
         ? [
