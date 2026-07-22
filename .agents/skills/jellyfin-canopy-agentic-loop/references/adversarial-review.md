@@ -21,7 +21,10 @@ prove how. Modelled on Bun's rewrite, tuned to Canopy's contracts.
    `canopy-loop.js`: `solReviewers` ≥ 1, obtained via the subagent model param or
    the `codex` CLI per `solVia`.) *Escalation* rounds past the mixed cap
    (`roundCap`) run `gpt-5.6-sol` only, up to `hardRoundCap` — a distinct mode,
-   not a mixed round.
+   not a mixed round. The round that **certifies** the branch clean must have
+   **real** cross-family coverage: if its every Sol slot fell back to Claude (dead
+   route), the run fails closed (`reviewIncomplete`) rather than certifying an
+   all-Claude review as mixed.
 4. **Verify before fixing.** Every finding is adversarially checked by an
    independent verifier that tries to *refute* it. Default to refuted when
    uncertain. Only confirmed findings reach the fixer — this kills
@@ -29,7 +32,11 @@ prove how. Modelled on Bun's rewrite, tuned to Canopy's contracts.
 5. **One fixer, then re-review.** A single writer applies the confirmed findings
    at their owner, adds regression evidence, and the round repeats. Stop when a
    full round produces no confirmed findings (a clean round), or after the round
-   cap — never on "we're probably fine".
+   cap — never on "we're probably fine". The fixer reports back which findings it
+   **applied** and which it left **unresolved** (by id); only applied findings are
+   ledgered as fixed, and a fixer that returns nothing, reports any unresolved id,
+   or does not cover every confirmed id blocks certification — a later empty round
+   cannot certify a defect the fixer said is still there.
    **Carry a finding ledger between rounds**: what earlier rounds fixed and what
    the verifier refuted (with reasons) goes into every later reviewer's context,
    and a resolved item may not be re-reported without NEW evidence. For docs/spec
