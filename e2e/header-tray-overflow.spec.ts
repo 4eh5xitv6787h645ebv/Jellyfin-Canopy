@@ -8,10 +8,12 @@
 // ensureHeaderTrayCSS) forcing display:flex; flex-wrap:nowrap; overflow-x:auto
 // with non-shrinking children, and on modern `flex:1 1 0` (a 0 flex-basis, not a
 // bare flex-shrink:1, so the wrapping MUI Toolbar cannot push the avatar onto a
-// 2nd row) plus an auto inline-start margin on the visually-leading child (the
-// native-tabs order:-1 group when present, else the DOM first child) so the
-// tray's buttons right-align against the avatar while staying reachable when the
-// row overflows. On legacy the resolved `.headerRight` is overridden to
+// 2nd row) plus `justify-content:flex-start` and an auto inline-start margin on
+// the visually-leading child (the native-tabs order:-1 group when present, else
+// the DOM first child) so the tray's buttons right-align against the avatar when
+// it fits yet pack from the scroll origin (staying reachable) when the row
+// overflows — the native MUI action Box is flex-end, which the override beats. On
+// legacy the resolved `.headerRight` is overridden to
 // justify-content:flex-start and its native profile button (.headerUserButton),
 // which lives INSIDE that scrollport, is sticky-pinned to the inline-end edge so
 // it stays put while the icon buttons scroll. Neither alignment path uses the

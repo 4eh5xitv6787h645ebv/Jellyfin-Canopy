@@ -308,8 +308,11 @@ function markHeaderTray<T extends HTMLElement>(el: T): T {
  *     against the avatar with an auto inline-start margin on the visually-leading
  *     child (the native-tabs order:-1 group when present, else the DOM first child)
  *     — a universal mechanism that packs the buttons right when the row fits (no
- *     gap, native look) and resolves to 0 when it overflows so every leading
- *     button stays reachable from the scroll origin. On legacy the resolved
+ *     gap, native look) and resolves to 0 when it overflows; it is paired with a
+ *     justify-content:flex-start override (the native MUI action Box is flex-end,
+ *     which would otherwise strand the leading buttons in unreachable negative
+ *     overflow) so every leading button packs from the scroll origin and stays
+ *     reachable. On legacy the resolved
  *     container is the native `.headerRight` (content-sized, justify-content:
  *     flex-end); it is overridden to flex-start so overflowing leading buttons
  *     pack from the scroll origin and stay reachable (in the fit case there is no
@@ -436,9 +439,23 @@ function ensureHeaderTrayCSS(): void {
            min-width:0 above, which lets it actually collapse during line
            collection): the profile then stays on the same line, and flex-grow:1
            re-expands the tray to consume exactly the space left of the avatar,
-           scrolling its own overflow via the single auto x-axis rule above. */
+           scrolling its own overflow via the single auto x-axis rule above.
+
+           justify-content:flex-start is REQUIRED: the resolved box is the native
+           MUI action Box, whose sx sets justify-content:flex-end. With nowrap, once
+           the row overflows the leading auto-margin resolves to 0 and flex-end then
+           packs the buttons rightward, pushing the leading ones into unreachable
+           negative overflow (left of the scroll origin, which scrollWidth does not
+           count in LTR — so the tray reports scrollWidth==clientWidth and is not
+           actually scrollable). Override to flex-start so overflowing leading buttons
+           pack from the scroll origin and stay reachable — mirroring the legacy
+           override. In the fit case the leading child's auto inline-start margin
+           still absorbs all free space, so the buttons stay right-packed against the
+           avatar (flex-start is inert while an auto margin owns the free space): no
+           gap, no reposition on sheet load, R1-safe. */
         .jc-modern-layout .jc-header-tray {
             flex: 1 1 0 !important;
+            justify-content: flex-start !important;
         }
         /* Modern only: because flex-grow:1 makes the tray wider than its content in
            the fit case, right-align the buttons against the avatar with an auto
@@ -446,8 +463,9 @@ function ensureHeaderTrayCSS(): void {
            positive free space before justify-content, so the buttons pack against
            the profile Box (native look, no gap, no reposition on sheet load — R1
            safe); when the row overflows there is no free space, the margin resolves
-           to 0, and the buttons pack from the scroll origin so every one stays
-           reachable. Universal — no safe/unsafe overflow-alignment keyword.
+           to 0, and the flex-start override above then packs the buttons from the
+           scroll origin so every one stays reachable. Universal — no safe/unsafe
+           overflow-alignment keyword.
 
            The visually-leading child is NOT always the DOM :first-child. native-tabs
            (native-tabs.ts getOrCreateGroup) appends #jc-native-tabs-group as the LAST

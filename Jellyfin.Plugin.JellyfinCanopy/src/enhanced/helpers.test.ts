@@ -200,6 +200,14 @@ describe('header-tray single-row scroll containment (#459)', () => {
         // collection so the avatar stays on the row, then grow to fill the space
         // left of it. Legacy .headerRight shrinks by default and needs no override.
         expect(css).toMatch(/\.jc-modern-layout \.jc-header-tray\s*\{[^}]*flex:\s*1\s+1\s+0/);
+        // Modern-only: the resolved box is the native MUI action Box (justify-content:
+        // flex-end via its sx). With nowrap, flex-end strands the leading buttons in
+        // unreachable negative overflow once the row overflows (scrollWidth==clientWidth
+        // — not actually scrollable). Override to flex-start so overflowing leading
+        // buttons pack from the scroll origin and stay reachable, exactly like legacy;
+        // in the fit case the leading child's auto margin still owns the free space so
+        // the buttons stay right-packed (flex-start inert, R1-safe).
+        expect(css).toMatch(/\.jc-modern-layout \.jc-header-tray\s*\{[^}]*justify-content:\s*flex-start/);
         // Regression guard: the bare flex-shrink:1 form was insufficient (it does
         // not affect flex-line construction), so it must NOT be what ships.
         expect(css).not.toContain('flex-shrink: 1');
