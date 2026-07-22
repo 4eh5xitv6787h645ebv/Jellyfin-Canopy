@@ -994,17 +994,29 @@ and speculative EXTRA requirements the brief never asked for are NOT findings.`
 // reviewers stop re-reporting resolved items — the main convergence lever on
 // every surface, and the difference between 2 rounds and 10 on prose-heavy ones.
 const ledger = [] // { file, line, summary, status: 'fixed'|'refuted'|'advisory', reason, round }
-const ledgerBlock = () =>
-  !ledger.length
-    ? ''
-    : `
+// Render the ledger as compact ONE-LINE entries with an equal-share budget, so
+// EVERY disposition survives (truncated within its own line) rather than the
+// newest rounds vanishing whole. The old `JSON.stringify(ledger).slice(0,6000)`
+// head-slice kept the oldest ~17 entries and silently dropped later rounds on
+// churny (SR-15-scale) runs — re-enabling exactly the re-report noise the ledger
+// exists to suppress (the same defect digest() fixed for explore/plan handoffs).
+const LEDGER_BUDGET = 12000
+const ledgerBlock = () => {
+  if (!ledger.length) return ''
+  const per = Math.max(120, Math.floor(LEDGER_BUDGET / ledger.length))
+  const lines = ledger.map((e) => {
+    const line = `- [${e.status} r${e.round}] ${e.file || '?'}:${e.line || 0} — ${String(e.summary || '')} (${String(e.reason || '')})`
+    return line.length > per ? line.slice(0, per - 1) + '…' : line
+  })
+  return `
 
 FINDING LEDGER (already resolved in earlier rounds of THIS review):
-${JSON.stringify(ledger, null, 1).slice(0, 6000)}
+${lines.join('\n')}
 Do NOT re-report a "fixed", "refuted", or "advisory" item — or a trivial
 rewording of one — unless you bring NEW evidence that the verifier's reason is
 wrong or the fix is incomplete. A re-report without new evidence is noise and
 will be refuted.`
+}
 const reviewCtx = () => reviewContext + ledgerBlock()
 
 // A Claude adversarial reviewer for a scope: lens set → that lens only; lens null

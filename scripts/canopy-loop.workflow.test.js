@@ -795,6 +795,43 @@ test('the finding ledger reaches round-2 reviewers with fixed and refuted dispos
     assert.ok(r.ledger.some((e) => e.status === 'refuted'), 'result exposes the refuted entry');
 });
 
+test('the finding ledger carries EVERY disposition to later rounds (equal-share, not a head-slice)', async () => {
+    // A churny round-1: 40 findings — #1 confirmed+fixed, #2..#40 refuted with long
+    // reasons — produces 40 ledger entries well past the old 6000-char JSON slice.
+    // The round-2 reviewer prompt must still carry the NEWEST dispositions (which a
+    // head-slice dropped), so reviewers don't re-report them.
+    const N = 40;
+    const { agent, calls } = makeAgent((_p, opts) => {
+        const l = opts.label || '';
+        if (l === 'review-r1:1') {
+            return {
+                findings: Array.from({ length: N }, (_, k) => ({
+                    file: `f${k + 1}.js`, line: k + 1, severity: 'major',
+                    summary: `LEDGER_ENTRY_${k + 1}`, failureScenario: 'x'.repeat(40),
+                })),
+            };
+        }
+        const m = /^verify-r1:(\d+)$/.exec(l);
+        if (m) {
+            const idx = Number(m[1]);
+            return idx === 1
+                ? { real: true, reason: 'CONFIRM_1 ' + 'y'.repeat(260) } // forces round 2 + a fixed entry
+                : { real: false, reason: `REFUTE_${idx} ` + 'z'.repeat(260) };
+        }
+        return undefined;
+    });
+    const r = await runWorkflow(baseArgs(), agent, parallel, phase, () => {});
+    assert.ok(r.ledger.length >= N, `all ${N} dispositions recorded (got ${r.ledger.length})`);
+    const round2 = calls.filter((c) => /^(review|sol)-r2:/.test(c.opts.label || ''));
+    assert.ok(round2.length, 'round 2 ran');
+    for (const c of round2) {
+        assert.match(c.prompt, /FINDING LEDGER/, 'ledger present in round 2');
+        assert.match(c.prompt, /REFUTE_2\b/, 'an EARLY refuted disposition survives');
+        assert.match(c.prompt, /REFUTE_40\b/, 'the NEWEST refuted disposition survives (dropped by the old 6000-char head-slice)');
+        assert.match(c.prompt, /LEDGER_ENTRY_1\b/, 'the fixed disposition survives');
+    }
+});
+
 test('round-1 reviewers see no ledger block (nothing resolved yet)', async () => {
     const { agent, calls } = makeAgent(null);
     await runWorkflow(baseArgs(), agent, parallel, phase, () => {});
