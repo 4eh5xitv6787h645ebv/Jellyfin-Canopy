@@ -346,16 +346,35 @@ test.describe('header button tray stays a single scrollable row (#459)', () => {
             await assertBadgeInsideScrollport(page, testCase.layout);
 
             // The profile avatar is a separate, unmarked toolbar child that must
-            // stay pinned to the RIGHT of the scroll region. This shape only
-            // exists on the modern DESKTOP toolbar: on modern mobile the avatar
-            // moves into the drawer (so the tray resolves to the synthetic
-            // fallback and there is no in-row avatar), and the legacy header has
-            // no such sibling. Assert pinning only for the modern-desktop case.
-            if (testCase.layout === 'modern' && testCase.viewport === DESKTOP) {
+            // stay pinned to the RIGHT of the scroll region and, critically, must
+            // NOT be pushed onto a second row when the tray overflows. The tray
+            // resolves off the toolbar's user-menu button, so wherever that button
+            // renders (it is present in the MUI toolbar on BOTH modern mobile and
+            // desktop — the avatar does not move into the drawer) the profile Box
+            // sibling is present. Assert the same-row / on-screen / pinned contract
+            // for EVERY modern case — mobile included — because the reported defect
+            // (avatar shoved to a 2nd row, finding r3f1) reproduces worst at the
+            // ~390px mobile viewport, exactly the case the previous desktop-only
+            // guard never exercised. The legacy header has no such sibling and is
+            // handled by its own block below.
+            if (testCase.layout === 'modern') {
                 await scrollTray(page, 0);
                 const start = await readProfile(page);
-                expect(start?.found, 'modern desktop toolbar exposes the profile avatar').toBe(true);
+                expect(start?.found, 'modern toolbar exposes the profile avatar').toBe(true);
                 expect(start?.visible, 'profile avatar visible before scroll').toBe(true);
+
+                // Same row, not wrapped below: the binding "profile avatar stays
+                // pinned, never pushed to a 2nd row" criterion. flex-shrink alone
+                // did NOT prevent this (the parent MUI Toolbar is flex-wrap:wrap and
+                // collects lines from the tray's hypothetical main size before
+                // shrink resolves); the flex-basis:0 fix keeps the avatar on the
+                // tray's row. Compare the avatar's top against the tray's top band.
+                const trayRow = await readTray(page, stamp);
+                expect(
+                    Math.abs(start!.top - trayRow.trayTop),
+                    `profile avatar must share the tray's row, not wrap below `
+                    + `(avatar.top ${start!.top} vs tray.top ${trayRow.trayTop}). DIAG=${await diag(page)}`,
+                ).toBeLessThanOrEqual(4);
                 // On-screen, not merely rendered: a positive getBoundingClientRect
                 // width/height stays true for an element pushed off the right edge,
                 // so `visible` alone cannot catch a shrink regression (flex-shrink:1
