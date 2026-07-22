@@ -54,6 +54,8 @@ oracle.
        startPhase: "explore",      // resume a paused/limit-killed run with "review" or "verify"
        reviewedHead: "<sha>",      // verify-resume only: certifies the prior clean review when
                                    // verify reports this exact HEAD (record the paused run's headSha)
+       ledger: [/* paused run's result.ledger */],  // review-resume only: seed prior
+                                   // fix/refute dispositions so they are not re-churned
        envSetup: "<shell prelude run before any build/test, e.g. DOTNET_ROOT exports>",
        reviewMode: "spec",         // opt-in for specification authoring (spec lenses)
        solVia:   "codex-cli",      // default; or "agent" (needs a Sol-capable router)
@@ -102,8 +104,10 @@ The loop serves two envelopes:
   is fail-closed (no review ran) unless the pause followed a clean review round:
   pass `reviewedHead:<the returned headSha>` and it certifies iff verify reports
   that exact HEAD. Campaigns over an issue queue relaunch per issue (`issue: N`
-  self-hydrates the brief) and use the returned resume fields as the per-issue
-  checkpoint.
+  self-hydrates the brief) and use the returned resume fields
+  (`resumeFrom`/`headSha`/`loopClean`/`ledger`) as the per-issue checkpoint —
+  pass the persisted `ledger` back on a `startPhase:"review"` resume so the review
+  loop keeps its prior refutations/fixes suppressed instead of re-churning them.
 
 ### Model routing
 

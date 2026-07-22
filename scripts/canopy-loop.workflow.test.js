@@ -1075,6 +1075,28 @@ test('the finding ledger carries EVERY disposition to later rounds (equal-share,
     }
 });
 
+test('a seeded ledger (args.ledger) reaches round-1 reviewers on a review resume', async () => {
+    // A limit-killed run persists its ledger; the launcher passes it back on the
+    // startPhase:"review" resume. Round-1 reviewers must see those prior
+    // dispositions so they do not re-litigate items an earlier session already
+    // fixed or refuted. Only {file,status} entries are seeded, marked round:0.
+    const seeded = [
+        { file: 'x.js', line: 5, summary: 'SEEDED_REFUTED item', status: 'refuted', reason: 'guarded upstream' },
+        { file: 'y.js', line: 8, summary: 'SEEDED_FIXED item', status: 'fixed', reason: 'applied last session' },
+        { garbage: true }, // no file/status → filtered out, never reaches a reviewer
+    ];
+    const { agent, calls } = makeAgent(null);
+    const r = await runWorkflow(baseArgs({ startPhase: 'review', ledger: seeded }), agent, parallel, phase, () => {});
+    const round1 = calls.filter((c) => /^(review|sol)-r1:/.test(c.opts.label || ''));
+    assert.ok(round1.length, 'round 1 reviewers ran on resume');
+    for (const c of round1) {
+        assert.match(c.prompt, /FINDING LEDGER/, 'seeded ledger present in round 1 on resume');
+        assert.match(c.prompt, /SEEDED_REFUTED item/, 'seeded refuted disposition carried to round 1');
+        assert.match(c.prompt, /SEEDED_FIXED item/, 'seeded fixed disposition carried to round 1');
+    }
+    assert.ok(r.ledger.some((e) => /SEEDED_REFUTED/.test(e.summary) && e.round === 0), 'seeded entries persist in the returned ledger marked round:0');
+});
+
 test('round-1 reviewers see no ledger block (nothing resolved yet)', async () => {
     const { agent, calls } = makeAgent(null);
     await runWorkflow(baseArgs(), agent, parallel, phase, () => {});

@@ -1064,7 +1064,24 @@ and speculative EXTRA requirements the brief never asked for are NOT findings.`
 // verifier's reasons). Injected into every reviewer prompt from round 2 on so
 // reviewers stop re-reporting resolved items — the main convergence lever on
 // every surface, and the difference between 2 rounds and 10 on prose-heavy ones.
-const ledger = [] // { file, line, summary, status: 'fixed'|'refuted'|'advisory', reason, round }
+// Seed from the launcher (a.ledger) so a startPhase:'review' resume keeps the
+// refutation/fix suppression it earned last session instead of re-churning items
+// earlier rounds already disposed of. The ledger references file:line in the same
+// committed BASE...HEAD range the resume reviews, so seeding only suppresses
+// re-reports — never invents a disposition. Prior-run entries are marked round:0.
+// Persist the returned `ledger` and pass it back on resume (see SKILL.md/README).
+const ledger = Array.isArray(a.ledger)
+  ? a.ledger
+      .filter((e) => e && e.file && e.status)
+      .map((e) => ({
+        file: e.file,
+        line: e.line || 0,
+        summary: String(e.summary || '').slice(0, 140),
+        status: e.status,
+        reason: String(e.reason || '').slice(0, 200),
+        round: 0,
+      }))
+  : [] // { file, line, summary, status: 'fixed'|'refuted'|'advisory', reason, round }
 // Render the ledger as compact ONE-LINE entries with an equal-share budget, so
 // EVERY disposition survives (truncated within its own line) rather than the
 // newest rounds vanishing whole. The old `JSON.stringify(ledger).slice(0,6000)`

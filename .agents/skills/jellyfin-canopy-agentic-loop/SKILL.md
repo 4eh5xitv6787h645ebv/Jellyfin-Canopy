@@ -85,6 +85,8 @@ Workflow({
     startPhase: "explore",       // "review"/"verify" resume a paused run on the same branch
     reviewedHead: "<sha>",       // with startPhase:"verify" ONLY: the HEAD the paused run was
                                  // clean at — certifies the prior review iff verify reports the same HEAD
+    ledger: [/* the paused run's returned result.ledger */],  // seed the finding ledger on a
+                                 // startPhase:"review" resume so prior fixes/refutations stay suppressed
     envSetup: "<shell prelude every build/test agent runs first (e.g. DOTNET_ROOT exports)>",
     reviewMode: "spec",          // opt-in spec-authoring lenses (acceptance traceability, …)
 
@@ -118,8 +120,10 @@ Workflow({
   certifies iff the verify agent independently reports the same HEAD (proving no
   commit changed since the clean review); any mismatch stays fail-closed. For
   campaigns over an issue queue, relaunch per issue with `issue: N` (self-hydrating
-  brief) and persist each run's returned `resumeFrom`/`headSha`/`loopClean` as the
-  per-issue checkpoint.
+  brief) and persist each run's returned `resumeFrom`/`headSha`/`loopClean`/`ledger`
+  as the per-issue checkpoint. Pass the persisted `ledger` back as `ledger:` on a
+  `startPhase:"review"` resume so the review loop keeps its prior refutations and
+  fixes suppressed instead of re-churning them.
 
 ### Model routing
 
