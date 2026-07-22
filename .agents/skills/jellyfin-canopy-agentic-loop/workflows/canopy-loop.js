@@ -689,7 +689,7 @@ const FINDINGS_SCHEMA = {
       items: {
         type: 'object',
         additionalProperties: true,
-        required: ['file', 'summary', 'failureScenario'],
+        required: ['file', 'summary', 'failureScenario', 'severity'],
         properties: {
           lens: { type: 'string' },
           file: { type: 'string' },
@@ -705,11 +705,11 @@ const FINDINGS_SCHEMA = {
 const VERDICT_SCHEMA = {
   type: 'object',
   additionalProperties: true,
-  required: ['real', 'reason'],
+  required: ['real', 'reason', 'severity'],
   properties: {
     real: { type: 'boolean', description: 'true only if the finding genuinely reproduces / violates a contract' },
     reason: { type: 'string' },
-    severity: { type: 'string', enum: ['blocker', 'major', 'minor'] },
+    severity: { type: 'string', enum: ['blocker', 'major', 'minor'], description: 'your re-judged severity — REQUIRED so the docs/spec severity gate never silently defaults an omitted value to major and churns an extra fix round' },
   },
 }
 const FIX_SCHEMA = {
@@ -1041,7 +1041,15 @@ DOCS/PROSE FINDING BAR: for documentation and specification text, a finding must
 be a FACTUAL defect — a wrong command or code sample, a broken link, a
 contradiction with a repository contract or an acceptance criterion, or an
 invalid example. Wording, tone, style, and restructuring preferences are NOT
-findings.`
+findings.
+SEVERITY (required on EVERY finding — it drives whether a fix round runs):
+  • blocker = following the text causes a wrong/destructive action, or it
+    contradicts a binding repository contract or an acceptance criterion;
+  • major   = a factual error a reader would act on (wrong command/flag/path,
+    broken link, invalid example) but not destructive;
+  • minor   = stale/imprecise phrasing with NO wrong action — reported as an
+    advisory note, never forcing another round.
+Do not inflate a minor to major to force a fix; do not hide a blocker as minor.`
     : ''
 }${
   REVIEW_MODE === 'spec'
@@ -1311,7 +1319,9 @@ while (round < HARD_ROUND_CAP && !cleanRound && !halted() && START_PHASE !== 've
 PHASE: VERIFY FINDING. Try hard to REFUTE this claimed defect. Default to
 real=false when uncertain — only real=true if it genuinely reproduces or truly
 violates a repository contract on a reachable path.
-FINDING (${f.lens || '?'}) ${f.file}:${f.line || '?'} — ${f.summary}
+Return severity (blocker/major/minor) REQUIRED — your own re-judgment of the
+confirmed finding${SEVERITY_GATED ? ' (this surface reports confirmed minors as advisory notes rather than forcing another fix round, so an accurate minor-vs-major call matters)' : ''}.
+FINDING (${f.lens || '?'}) ${f.file}:${f.line || '?'} — ${f.summary} [reviewer severity: ${f.severity || 'unset'}]
 SCENARIO: ${f.failureScenario}`,
         { schema: VERDICT_SCHEMA, agentType: 'code-reviewer', effort: 'medium', phase: 'Review', label: `verify-r${round}:${i + 1}` },
         // In a gpt-only round, finding-verification runs on Sol too (gpt is the

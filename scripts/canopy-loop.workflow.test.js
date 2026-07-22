@@ -949,6 +949,23 @@ test('non-docs surfaces still fix confirmed minors (severity gate is docs/spec-s
     assert.ok(r.confirmedFindingsResolved >= 1);
 });
 
+test('docs/spec reviews carry a severity rubric and verifiers are required to return severity', async () => {
+    // The docs/spec severity gate defaults an omitted severity to major and churns
+    // an extra fix round; the finding bar now ships an explicit rubric and the
+    // verifier prompt (and schema) require severity so it is never omitted.
+    const { agent, calls } = makeAgent((_p, opts) => {
+        if (opts.label === 'review-r1:1')
+            return { findings: [{ file: 'docs/a.md', line: 3, severity: 'minor', summary: 's', failureScenario: 'x' }] };
+        if ((opts.label || '').startsWith('verify-r1')) return { real: true, severity: 'minor', reason: 'cosmetic' };
+        return undefined;
+    });
+    await runWorkflow(baseArgs({ surface: 'docs', runtime: false }), agent, parallel, phase, () => {});
+    const review = calls.find((c) => (c.opts.label || '').startsWith('review-r1'));
+    assert.match(review.prompt, /SEVERITY \(required on EVERY finding/, 'docs finding bar ships the severity rubric');
+    const verify = calls.find((c) => (c.opts.label || '').startsWith('verify-r1'));
+    assert.match(verify.prompt, /Return severity \(blocker\/major\/minor\) REQUIRED/, 'verifier is required to return severity');
+});
+
 test('docs surface: the hard round cap defaults to roundCap+1, not 10', async () => {
     // quick depth → mixed roundCap 2 → docs hard cap 3. A blocker every round
     // with a throwing fixer must stop after 3 rounds instead of churning to 10.
