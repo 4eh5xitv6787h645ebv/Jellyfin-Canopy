@@ -658,6 +658,41 @@ test('a verifier failure alongside a confirmed finding marks coverage incomplete
     assert.ok(r.residualRisks.some((s) => /incomplete coverage/i.test(s)));
 });
 
+test('an infrastructure-empty Verify result re-verifies read-only instead of spawning a code fixer', async () => {
+    // The verify AGENT returns nothing (runner/infra failure), so safely() yields
+    // the sentinel { gates: [], allBlockingPassed: false, failures: ['…did not
+    // return structured output'] }. That is not a code defect a fixer can act on —
+    // the loop must re-run Verify read-only rather than launch a code-writing
+    // verify-fixer against an empty failures list.
+    let verifyRuns = 0;
+    const { agent, calls } = makeAgent((_p, opts) => {
+        const l = opts.label || '';
+        if (opts.phase === 'Verify' && l.startsWith('verify') && !l.startsWith('verify-fix')) {
+            verifyRuns++;
+            return null; // no structured output — infrastructure failure
+        }
+        return undefined;
+    });
+    const r = await runWorkflow(baseArgs(), agent, parallel, phase, () => {});
+    assert.ok(verifyRuns >= 2, 'Verify is retried read-only on an infrastructure failure');
+    assert.ok(!calls.some((c) => (c.opts.label || '').startsWith('verify-fix')), 'no code-writing verify-fixer for an infrastructure-empty result');
+    assert.equal(r.readyForPR, false, 'an unverifiable branch is not ready for PR');
+    assert.equal(r.verifyFixCommitted, false, 'no fixer ran, so nothing is marked as an unreviewed verify-fix commit');
+});
+
+test('a real failed gate (structured evidence) still spawns the verify-fixer', async () => {
+    // Distinct from the infra case: verify returns structured gates naming a
+    // failed blocking gate → a code fixer is the right response.
+    const { agent, calls } = makeAgent((_p, opts) => {
+        const l = opts.label || '';
+        if (l === 'verify') return { gates: [{ name: 'g', pass: false }], allBlockingPassed: false, failures: ['g failed'] };
+        if (l.startsWith('verify-retry')) return { gates: [{ name: 'g', pass: true }], allBlockingPassed: true, e2e: { run: false, pass: true } };
+        return undefined;
+    });
+    await runWorkflow(baseArgs(), agent, parallel, phase, () => {});
+    assert.ok(calls.some((c) => (c.opts.label || '').startsWith('verify-fix')), 'a structured gate failure reaches the verify-fixer');
+});
+
 test('a verify-fix that commits after a clean review round is not ready-for-PR', async () => {
     // Review certifies clean, then a gate fails and VERIFY-FIX commits new code.
     // Those commits never went through adversarial review, so the stale cleanRound

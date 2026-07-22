@@ -1632,6 +1632,17 @@ ALL BLOCKING gates passed, the e2e result if run, and a list of failures.`,
     log('Verify: provider outage — skipping the verify-fix retry (a code-writing fixer is pointless during an outage)')
     break
   }
+  // Distinguish a runner/infrastructure failure (the verify agent returned no
+  // structured gate evidence — the safely() sentinel, or a report with an empty
+  // gates array) from a returned gate failure. Only the latter names something a
+  // code fixer can act on; spawning a writer against "verify did not return
+  // structured output" burns an agent and can dirty the tree. Re-run Verify
+  // read-only instead, bounded by the same verifyFixCap.
+  const verifyReturnedStructured = !!(verify && Array.isArray(verify.gates) && verify.gates.length > 0)
+  if (!verifyReturnedStructured) {
+    log(`Verify: no structured gate results (runner/infrastructure failure, not a code defect) → re-running verify read-only (attempt ${vround}/${SIZING.verifyFixCap}); NOT spawning a code fixer`)
+    continue
+  }
   log(`Verify: failures → fix attempt ${vround}/${SIZING.verifyFixCap}`)
   // Wrap the code-writing verify-fixer in safely(): a StructuredOutput retry-cap
   // throw must NOT abort the workflow — the loop must still re-verify and return
