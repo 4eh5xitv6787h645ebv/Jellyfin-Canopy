@@ -403,6 +403,32 @@ test('a fixer that reports a finding unresolved blocks certification even if a l
     assert.ok(!r.ledger.some((e) => e.status === 'fixed'), 'an unfixed finding is never ledgered as fixed');
 });
 
+test('an unresolved finding is NOT cleared by a later fixer fully applying an UNRELATED finding', async () => {
+    // The persistent-unresolved regression: round 1 leaves finding A unresolved;
+    // round 2 fully applies an UNRELATED finding B; round 3 comes back clean. A
+    // single unfixedConfirmed boolean would be reset to false by B's clean apply
+    // and wrongly certify the branch while A is still in the diff. Per-finding
+    // fingerprint tracking must keep A unresolved until A itself is applied or
+    // independently refuted.
+    const { agent } = makeAgent((_p, opts) => {
+        const l = opts.label || '';
+        if (l === 'review-r1:1') return finding('finding A needs a real fix');
+        if (l === 'verify-r1:1') return { real: true, reason: 'A reproduces' };
+        if (l === 'fix-r1') return { applied: [], unresolved: ['r1f1'], commits: [] }; // A left unresolved
+        if (l === 'review-r2:1')
+            return { findings: [{ file: 'other.js', line: 9, severity: 'major', summary: 'finding B unrelated', failureScenario: 'z' }] };
+        if (l === 'verify-r2:1') return { real: true, reason: 'B reproduces' };
+        if (l === 'fix-r2') return { applied: ['r2f1'], unresolved: [], commits: ['c'] }; // B fully applied
+        return undefined; // round 3 reviewers empty → clean round
+    });
+    const r = await runWorkflow(baseArgs(), agent, parallel, phase, () => {});
+    assert.equal(r.loopClean, true, 'round 3 came back clean');
+    assert.equal(r.reviewIncomplete, false, 'coverage was complete throughout');
+    assert.equal(r.confirmedFindingsResolved, 1, 'only B was actually applied');
+    assert.equal(r.readyForPR, false, 'unresolved finding A must still block certification after B is fixed');
+    assert.ok(r.residualRisks.some((s) => /unapplied\/unresolved/i.test(s)));
+});
+
 test('a fixer that applies only SOME confirmed findings does not certify', async () => {
     // Two confirmed findings; the fixer applies one and silently drops the other
     // (neither in applied nor unresolved). Fail closed on the dropped id.
