@@ -14,11 +14,14 @@ prove how. Modelled on Bun's rewrite, tuned to Canopy's contracts.
    a finding; a finding needs a file/line and a failure scenario (inputs/state →
    wrong output/crash/leak).
 3. **Two or more reviewers per round, across distinct lenses** (below), and
-   **across two model families**: the Claude lens reviewers plus at least one
-   `gpt-5.6-sol` reviewer at **high** effort doing a whole-diff pass. Diversity
-   beats redundancy — different angles *and* different models catch failure modes
-   a single model's blind spots would miss. (In `canopy-loop.js`: `solReviewers`
-   ≥ 1, obtained via the subagent model param or the `codex` CLI per `solVia`.)
+   **across two model families** in every *mixed* round: the Claude lens
+   reviewers plus at least one `gpt-5.6-sol` reviewer at **high** effort doing a
+   whole-diff pass. Diversity beats redundancy — different angles *and* different
+   models catch failure modes a single model's blind spots would miss. (In
+   `canopy-loop.js`: `solReviewers` ≥ 1, obtained via the subagent model param or
+   the `codex` CLI per `solVia`.) *Escalation* rounds past the mixed cap
+   (`roundCap`) run `gpt-5.6-sol` only, up to `hardRoundCap` — a distinct mode,
+   not a mixed round.
 4. **Verify before fixing.** Every finding is adversarially checked by an
    independent verifier that tries to *refute* it. Default to refuted when
    uncertain. Only confirmed findings reach the fixer — this kills
@@ -27,6 +30,12 @@ prove how. Modelled on Bun's rewrite, tuned to Canopy's contracts.
    at their owner, adds regression evidence, and the round repeats. Stop when a
    full round produces no confirmed findings (a clean round), or after the round
    cap — never on "we're probably fine".
+   **Carry a finding ledger between rounds**: what earlier rounds fixed and what
+   the verifier refuted (with reasons) goes into every later reviewer's context,
+   and a resolved item may not be re-reported without NEW evidence. For docs/spec
+   surfaces, gate fixing by severity — confirmed blocker/major findings drive fix
+   rounds; confirmed minors are returned as advisory notes and a minors-only
+   round counts as clean.
 6. **Fix the process, not the instance.** If a class of finding recurs (the same
    lens keeps catching the same kind of mistake), amend the implementer/fixer
    instructions for the next round instead of hand-patching each occurrence.
@@ -45,6 +54,10 @@ Assign each reviewer one lens. Skip lenses the diff cannot touch; add
 task-specific reviewer questions from the brief. For Canopy, the standing lenses
 are:
 
+- **Requirement fidelity** — does it fix the ACTUAL reported defect and satisfy
+  EVERY acceptance criterion in the brief — not an easier semantically-different
+  change primed by the branch name or surrounding code? A change that does not
+  address the reported defect is a blocking finding regardless of its quality.
 - **Correctness & logic** — does it do what the brief says on the happy path and
   every branch? Off-by-one, wrong operator, eager vs. lazy evaluation, error
   paths, `null`/undefined, boundary values.

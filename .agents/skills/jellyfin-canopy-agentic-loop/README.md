@@ -45,12 +45,18 @@ oracle.
        branch:   "<type>/<slug>",
        task:     "<full task / issue / repro>",
        brief:    "<path to task-brief.md>",
+       briefText: "<the brief CONTENTS inlined — preferred; agents may never open the path>",
+       issue:    123,              // commit-subject ref; with NO briefText, a Phase-0 agent
+                                   // fetches the live issue body as the brief (self-hydration)
        surface:  "client" | "server" | "cross" | "docs",
        runtime:  true,
        depth:    "quick" | "standard" | "deep",
+       startPhase: "explore",      // resume a paused/limit-killed run with "review" or "verify"
+       envSetup: "<shell prelude run before any build/test, e.g. DOTNET_ROOT exports>",
+       reviewMode: "spec",         // opt-in for specification authoring (spec lenses)
        solVia:   "codex-cli",      // default; or "agent" (needs a Sol-capable router)
        solEffort: "high",
-       solReviewers: 1
+       solReviewers: 1             // whole-diff Sol reviewers per round (min 1)
      }
    })
    ```
@@ -62,15 +68,36 @@ oracle.
 
 ### Depth
 
-| depth | explorers | planners | review round cap | verify-fix cap |
+| depth | explorers | planners | mixed review round cap | verify-fix cap |
 | --- | --- | --- | --- | --- |
 | quick | 2 | 2 | 2 | 1 |
-| standard | 4 | 3 | 3 | 2 |
-| deep | 6 | 3 | 4 | 3 |
+| standard | 8 | 3 | 4 | 2 |
+| deep | 8 | 3 | 4 | 3 |
 
-`surface` selects which repo-native gates run; `runtime:true` additionally
+The "mixed" cap is the Claude+Sol panel; if the loop is still not clean after
+it, review **continues with `gpt-5.6-sol` as the only reviewer** up to
+`hardRoundCap` (default 10). Docs surfaces and `reviewMode:"spec"` default the
+hard cap to mixed-cap+1 instead — prose does not converge under a ten-round
+escalation, and unresolved docs findings go back to a human.
+
+`surface` selects which repo-native gates run (docs runs also use 4
+docs-specific explore angles and skip Localize); `runtime:true` additionally
 builds the Release DLL and runs `npm run e2e:local` (dockerized
 `jellyfin/jellyfin:unstable`).
+
+### Operating envelopes
+
+The loop serves two envelopes:
+
+- **FIXES** — contained bug fixes and small changes: `depth:"quick"` plus a
+  patch-sized brief (tight acceptance criteria, narrow surface) keeps the run
+  light: 2 explorers, 2 planners, a 2-round mixed cap, surface-scoped gates.
+- **FEATURES** — large multi-day work: run `standard`/`deep`; the loop survives
+  provider outages by returning `status:"paused"` with `pauseReason` +
+  `resumeFrom` instead of burning retries, and a later session re-enters with
+  `startPhase:"review"`/`"verify"` against the same branch. Campaigns over an
+  issue queue relaunch per issue (`issue: N` self-hydrates the brief) and use
+  the returned resume fields as the per-issue checkpoint.
 
 ### Model routing
 
@@ -78,14 +105,21 @@ The loop spreads models by role to spare Claude/Opus budget:
 
 - **Implementation** — the single writer runs on **Fable (high)**, falling back
   to **Opus (high)** if Fable is exhausted (`implementModel` / `implementFallback`).
-- **Read-only steps except implementation** — with `modelSplit: true` (default),
-  explore, plan, the review lenses, finding-verification, and the gate runner
-  alternate **~50/50 Claude / `gpt-5.6-sol` (high)**; an unroutable Sol slot
-  falls back to Claude.
+- **Read-only steps except the gate runner** — with `modelSplit: true` (default):
+  **explore runs 2 Claude + 6 `gpt-5.6-sol`** explorers (`exploreClaudeCount`,
+  Sol slots at `xhigh`); plan (incl. synthesis), the review lenses, and
+  finding-verification alternate **~50/50 Claude / `gpt-5.6-sol`**; an
+  unroutable Sol slot falls back to Claude. After 3 consecutive Sol failures a
+  circuit breaker sends the remaining Sol slots straight to Claude, and the
+  result's `modelCoverage` records requested-vs-actual models per slot class.
+- **Final verify / gate run** — stays on **Claude** (one authoritative model
+  runs the repo gates; never split to Sol).
 - **Fixers** — stay on Claude/Opus (they write code).
 
-Every review round still runs **both** Claude and **≥1 `gpt-5.6-sol` (high)**
-reviewer. The Sol side is obtained one of two ways, chosen with `solVia`:
+Every **mixed** review round (up to the mixed cap) runs **both** Claude and
+**≥1 `gpt-5.6-sol` (high)** reviewer; escalation rounds past the mixed cap are
+`gpt-5.6-sol`-only. The Sol side is obtained one of two ways, chosen with
+`solVia`:
 
 - `"codex-cli"` (default) — a harness subagent shells out to the local `codex`
   CLI (`-a never -s read-only exec -m gpt-5.6-sol`) with

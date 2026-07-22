@@ -76,21 +76,42 @@ Workflow({
     branch:   "<type>/<slug>",
     task:     "<the full task: issue text / feature contract / bug + repro>",
     brief:    "<path to the task-brief.md the main thread wrote>",
+    briefText: "<the brief CONTENTS inlined — preferred; agents may never open the path>",
+    issue:    123,               // commit-subject ref; with NO briefText a Phase-0 agent
+                                 // fetches the live issue body as the brief (self-hydration)
     surface:  "client" | "server" | "cross" | "docs",   // drives which gates run
     runtime:  true,                                       // true → also run e2e:local
     depth:    "standard",                                 // "quick" | "standard" | "deep"
+    startPhase: "explore",       // "review"/"verify" resume a paused run on the same branch
+    envSetup: "<shell prelude every build/test agent runs first (e.g. DOTNET_ROOT exports)>",
+    reviewMode: "spec",          // opt-in spec-authoring lenses (acceptance traceability, …)
 
     // Model routing (see "Model routing" below):
     modelSplit:  true,           // ~50/50 Claude/Sol on read-only steps to spare Opus budget
     solVia:      "codex-cli",    // default; or "agent" (subagent model param, needs a Sol-capable router)
     solModel:    "gpt-5.6-sol",
     solEffort:   "high",
-    solReviewers: 1,             // Sol whole-diff reviewers when modelSplit is off
+    solReviewers: 1,             // whole-diff Sol reviewers per round (min 1, split or not)
     implementModel:    "fable",  // implementer runs on Fable (high) …
     implementFallback: "opus"    // … falling back to Opus (high) if Fable is exhausted
   }
 })
 ```
+
+### Operating envelopes
+
+- **FIXES** (light): for a contained bug fix, use `depth:"quick"` with a
+  patch-sized brief and a narrow `surface` — 2 explorers, 2 planners, 2 mixed
+  review rounds, surface-scoped gates. The safety essentials (requirement
+  fidelity, fail-closed review, gate integrity) stay on.
+- **FEATURES** (multi-day): use `standard`/`deep`. On a terminal provider
+  failure (session/usage limit, quota, credits) the loop STOPS spawning agents
+  and returns `status:"paused"` with `pauseReason` and `resumeFrom`; relaunch
+  later with `startPhase:"review"` (or `"verify"`) on the same branch instead of
+  re-burning explore/plan/implement. A verify-only resume never certifies
+  `readyForPR`. For campaigns over an issue queue, relaunch per issue with
+  `issue: N` (self-hydrating brief) and persist each run's returned
+  `resumeFrom`/`headSha` as the per-issue checkpoint.
 
 ### Model routing
 
@@ -102,12 +123,18 @@ models by role:
   review's finding-verification are spread across Claude and `gpt-5.6-sol`:
   - **Explore** runs 8 explorers (standard/deep depth); the first 2 on Claude/Opus
     and the remaining 6 on `gpt-5.6-sol` (override with `exploreClaudeCount`).
-  - **Explore + plan** (incl. synthesis) run their Sol slots at **`xhigh`** reasoning
-    effort (`solExplorePlanEffort`, default `xhigh`); plan keeps a ~50/50 split.
+  - **Explore + plan** (incl. synthesis) run their Sol slots at **`xhigh`**
+    reasoning effort on the `"agent"` route (`solExplorePlanEffort`, default
+    `xhigh`); on the default `"codex-cli"` route those slots run at
+    `solLightEffort` (default `medium`) — synthesis passes `xhigh` through on
+    either route. Plan keeps a ~50/50 split.
   - **Review** runs the mixed panel (Claude lenses + `gpt-5.6-sol`) for the first
     `roundCap` rounds (standard = 4); if still not clean it CONTINUES with
-    `gpt-5.6-sol` as the ONLY reviewer up to `hardRoundCap` (default 10). Review Sol
-    stays at `solEffort` (high).
+    `gpt-5.6-sol` as the ONLY reviewer up to `hardRoundCap` (default 10; docs
+    surfaces and `reviewMode:"spec"` default to `roundCap`+1 instead). Review Sol
+    stays at `solEffort` (high). Three consecutive Sol failures trip a circuit
+    breaker (remaining Sol slots go straight to Claude); the result's
+    `modelCoverage` shows requested-vs-actual coverage.
   Under `solVia: "codex-cli"` (default) the Sol slots run through a generalized
   `codex` harness; under `solVia: "agent"` they use the subagent model param via a
   router. Any Sol slot that can't be routed **falls back to Claude**, so no slot is
@@ -164,16 +191,22 @@ The engine ([`workflows/canopy-loop.js`](workflows/canopy-loop.js)) runs:
 3. **Implement** (single writer) — build the change at its owner, update every
    affected consumer, add tests that fail before the fix (admin and non-admin,
    negative/fallback paths, concurrency/cache invalidation where relevant), add
-   every locale key with real translations, and update affected docs. Commit
-   coherent conventional units. No `Co-Authored-By` trailers; **include the issue
-   number `#N`** in each commit subject (e.g. end it with ` (#123)`).
+   any new i18n key **only to the base `en.json`** (the Localize phase fans out
+   the translations), and update affected docs. Commit coherent conventional
+   units. No `Co-Authored-By` trailers; **include the issue number `#N`** in
+   each commit subject (e.g. end it with ` (#123)`).
 4. **Review loop** (parallel adversarial, loop-until-clean) — see
    [`references/adversarial-review.md`](references/adversarial-review.md). Each
-   round mixes models on purpose: the Claude lens reviewers **and** at least one
-   `gpt-5.6-sol` (high effort) whole-diff reviewer, all in split context (diff +
-   brief only, told to assume the code is wrong). Findings are deduped and
-   adversarially verified to kill false positives; a single fixer applies
-   confirmed findings; re-review until a clean round. Challenge the design before
+   mixed round runs models on purpose: the Claude lens reviewers **and** at least
+   one `gpt-5.6-sol` (high effort) whole-diff reviewer, all in split context (diff
+   + brief only, told to assume the code is wrong); rounds past the mixed cap are
+   `gpt-5.6-sol`-only up to `hardRoundCap`. Findings are deduped and adversarially
+   verified to kill false positives; a **finding ledger** (fixed + refuted, with
+   verifier reasons) is injected into later rounds so resolved items are not
+   re-reported without new evidence; a single fixer applies confirmed findings;
+   re-review until a clean round. On docs surfaces (and `reviewMode:"spec"`) only
+   confirmed blocker/major findings drive fix rounds — confirmed minors are
+   returned as `advisoryNotes`. Challenge the design before
    a second fix to the same owner/state model. If a workaround needs a
    paragraph-long comment to justify it, the code is wrong — fix the code.
 5. **Localize** (single cheap agent, low effort) — translation busywork, kept off
@@ -182,9 +215,9 @@ The engine ([`workflows/canopy-loop.js`](workflows/canopy-loop.js)) runs:
    files never consume adversarial review) and **before** verify (so
    `validate-translations` passes at parity). It fans the base keys out to every
    locale on a low-effort model (gpt/opus on `low`, `localizeEffort`), commits one
-   `chore(i18n)` unit, and no-ops when no keys changed. Skipped for `server`
-   surfaces. Not adversarially reviewed — translations are mechanical and the
-   `validate-translations` gate enforces parity.
+   `chore(i18n)` unit, and no-ops when no keys changed. Skipped for `server` and
+   `docs` surfaces. Not adversarially reviewed — translations are mechanical and
+   the `validate-translations` gate enforces parity.
 6. **Verify** (single runner) — run the repo-native gates for the surface, and
    for runtime-relevant work build the Release DLL and run `npm run e2e:local`
    (exercise admin and non-admin, assert real DOM/server state, zero

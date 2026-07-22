@@ -176,9 +176,10 @@ const SOL_HEREDOC = 'SOL_PROMPT_' + _fnv1a(TASK + '|' + BRANCH + '|' + WORKTREE)
 // ── multi-model split (token offload) ───────────────────────────────────────
 // Route ~50% of the READ-ONLY reasoning to gpt-5.6-sol so a run doesn't spend
 // all of Claude's budget. The split covers explore, plan, the review lenses,
-// finding-verification, and the verify/gate runner. IMPLEMENTATION and every
-// code-writing fixer always stay Claude — one writer per worktree, and you don't
-// want two models editing the same files. A split-Sol slot runs on Sol under
+// and finding-verification. IMPLEMENTATION and every code-writing fixer always
+// stay Claude — one writer per worktree, and you don't want two models editing
+// the same files — and the FINAL VERIFY/GATE RUN also stays on Claude (one
+// authoritative model runs the repo gates; see the Verify phase). A split-Sol slot runs on Sol under
 // BOTH routes: the 'agent' route uses the subagent model param, and 'codex-cli'
 // runs the slot through the codex harness (codexAgent, requires opts.schema) — so
 // explore/plan/synthesis/finding-verification offload ~50% to Sol on either route,
