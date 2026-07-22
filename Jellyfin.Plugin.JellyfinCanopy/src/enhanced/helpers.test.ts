@@ -184,9 +184,18 @@ describe('header-tray single-row scroll containment (#459)', () => {
         // row fits, fall back to start-alignment when it overflows so the leading
         // buttons never land in unreachable negative overflow.
         expect(css).toContain('justify-content: safe flex-end');
-        // Modern-only: the tray must be allowed to shrink (leave room for the
-        // pinned profile avatar); legacy .headerRight shrinks by default.
-        expect(css).toContain('flex-shrink: 1');
+        // Modern-only: the tray must carry a 0 flex-basis (not merely
+        // flex-shrink:1). The parent MUI Toolbar is flex-wrap:wrap and collects
+        // flex lines from each child's hypothetical main size BEFORE flex-shrink
+        // resolves; an `auto`/content basis makes the tray claim a full line and
+        // pushes the sibling profile avatar onto a 2nd row (#459, worst at 390px).
+        // `flex: 1 1 0` (basis 0 + min-width:0) lets the tray collapse during line
+        // collection so the avatar stays on the row, then grow to fill the space
+        // left of it. Legacy .headerRight shrinks by default and needs no override.
+        expect(css).toMatch(/\.jc-modern-layout \.jc-header-tray\s*\{[^}]*flex:\s*1\s+1\s+0/);
+        // Regression guard: the bare flex-shrink:1 form was insufficient (it does
+        // not affect flex-line construction), so it must NOT be what ships.
+        expect(css).not.toContain('flex-shrink: 1');
 
         // The horizontal scrollbar is suppressed on BOTH engines so an
         // overflowing tray never grows a gutter that would (a) render a

@@ -373,11 +373,22 @@ function ensureHeaderTrayCSS(): void {
         .jc-legacy-layout .jc-header-tray > * {
             flex: 0 0 auto !important;
         }
-        /* Modern only: the tray is a flex-grow sibling of the profile Box, so it
-           must be allowed to shrink (paired with min-width:0) to consume only the
-           space left of the pinned avatar instead of pushing it off the row. */
+        /* Modern only: the tray is a flex sibling of the profile Box inside the MUI
+           Toolbar, which is itself flex-wrap:wrap. flex-shrink alone is NOT enough:
+           the parent collects flex lines from each child's HYPOTHETICAL main size
+           (flex base size clamped by min/max) BEFORE flex-shrink is resolved. With
+           an auto (content) basis the tray's hypothetical size is its large
+           intrinsic button-row width -- clamped only to max-width:100%, i.e. a full
+           line -- so line construction still pushes the sibling profile Box onto a
+           second row (the reported pushed-avatar defect, worst at ~390px), and the
+           later flex-shrink never gets a chance to pull it back. Give the tray a
+           0 flex-basis so its hypothetical main size is 0 (paired with the
+           min-width:0 above, which lets it actually collapse during line
+           collection): the profile then stays on the same line, and flex-grow:1
+           re-expands the tray to consume exactly the space left of the avatar,
+           scrolling its own overflow via the single auto x-axis rule above. */
         .jc-modern-layout .jc-header-tray {
-            flex-shrink: 1 !important;
+            flex: 1 1 0 !important;
         }
         /* Legacy only: the resolved tray IS the native .headerRight, which — unlike
            the modern layout where the avatar is a separate, unmarked sibling Box —
