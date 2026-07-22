@@ -303,23 +303,27 @@ function markHeaderTray<T extends HTMLElement>(el: T): T {
  *     Force the *resolved tray* to a single horizontally-scrollable row with
  *     non-shrinking children, scoped per layout via the jc-modern-layout /
  *     jc-legacy-layout <html> stamps so the modern-only rules never touch the
- *     legacy header and vice-versa. On modern the tray must consume only the
- *     space left of the separate profile Box (safe flex-end keeps the leading
- *     buttons reachable when it overflows); on legacy the native profile button
- *     (.headerUserButton) lives *inside* the resolved tray, so it is sticky-pinned
- *     to the scrollport's right edge (position:sticky; right:0) — the icon buttons
- *     scroll under it while the avatar stays put and visible at rest, matching the
- *     modern pinned-avatar behaviour (where the avatar is a separate sibling Box
- *     outside the tray) and the binding acceptance criterion. Without the pin the
- *     trailing avatar starts off-screen once the row overflows and is reachable
- *     only after scrolling to the end. The horizontal scrollbar
- *     is suppressed
- *     (scrollbar-width:none / ::-webkit-scrollbar) so an overflowing tray never
- *     grows a gutter — keeping the content box a stable button height (no R1
- *     layout shift, no promoted-overflow-y clipping of the .jc-as-sup badge) and
- *     the scroll region native-looking. No fixed tray height and no explicit
- *     overflow-y rule, so absolutely-positioned children like the active-streams
- *     badge (.jc-as-sup) stay inside the scrollport.
+ *     legacy header and vice-versa. On modern the tray consumes only the space
+ *     left of the separate profile Box (flex:1 1 0) and right-aligns its buttons
+ *     against the avatar with an auto inline-start margin on the leading child —
+ *     a universal mechanism that packs the buttons right when the row fits (no
+ *     gap, native look) and resolves to 0 when it overflows so every leading
+ *     button stays reachable from the scroll origin. On legacy the resolved
+ *     container is the native `.headerRight` (content-sized, justify-content:
+ *     flex-end); it is overridden to flex-start so overflowing leading buttons
+ *     pack from the scroll origin and stay reachable (in the fit case there is no
+ *     free space, so flex-start is identical to native flex-end — no R1 jank).
+ *     The native profile button (.headerUserButton) is a plain trailing child
+ *     that scrolls with the row; it is NOT sticky-pinned, because a pin would
+ *     overlay and intercept clicks for the buttons scrolling beneath it. Neither
+ *     alignment path depends on the safe/unsafe overflow-alignment keyword, so
+ *     the single-row tray stays fully scrollable on every engine. The horizontal
+ *     scrollbar is suppressed (scrollbar-width:none / ::-webkit-scrollbar) so an
+ *     overflowing tray never grows a gutter — keeping the content box a stable
+ *     button height (no R1 layout shift, no promoted-overflow-y clipping of the
+ *     .jc-as-sup badge) and the scroll region native-looking. No fixed tray
+ *     height and no explicit overflow-y rule, so absolutely-positioned children
+ *     like the active-streams badge (.jc-as-sup) stay inside the scrollport.
  */
 function ensureHeaderTrayCSS(): void {
     if (muiHeaderButtonCSSInjected) return;
@@ -362,23 +366,6 @@ function ensureHeaderTrayCSS(): void {
                clip. Scrollbar suppression is the single-axis containment
                strategy (no explicit overflow-y, which would itself clip). */
             scrollbar-width: none !important;
-            /* Both layouts natively right-align the tray (flex-end). With nowrap
-               that packs the buttons rightward and pushes the leading ones into
-               unreachable negative space (left of the scroll origin, which
-               scrollWidth does not count in LTR). The safe keyword keeps the
-               native right-alignment when the row fits — so the sheet loading
-               after the native header paints does NOT reposition the already
-               right-packed buttons (no jank / no layout shift, R1) — but falls
-               back to start-alignment once the row overflows, so every button
-               stays reachable. A plain flex-start floor is deliberately NOT
-               emitted: on the fit case it would left-align the grown (flex:1 1 0)
-               modern tray, opening a gap before the avatar and repositioning the
-               native buttons on sheet load — the forbidden layout shift. Engines
-               that do not parse the safe/unsafe keyword simply discard this
-               declaration and keep the native flex-end (right-packed, jank-free);
-               the reachable-when-overflowing refinement is what the safe keyword
-               adds on the engines that support it. */
-            justify-content: safe flex-end !important;
         }
         /* WebKit/Blink counterpart of scrollbar-width:none (see above). */
         .jc-modern-layout .jc-header-tray::-webkit-scrollbar,
@@ -387,28 +374,29 @@ function ensureHeaderTrayCSS(): void {
         }
         /* Non-shrinking children on BOTH layouts keep every button at its intrinsic
            width so the row cannot collapse or wrap — it scrolls instead. On legacy
-           this rule also covers the native profile button (.headerUserButton) so it
-           keeps its intrinsic width; the sticky pin below then holds it at the
-           scrollport's right edge while the icon buttons scroll under it. */
+           this rule also covers the native profile button, which keeps its intrinsic
+           width and scrolls with the row like any other child. */
         .jc-modern-layout .jc-header-tray > *,
         .jc-legacy-layout .jc-header-tray > * {
             flex: 0 0 auto !important;
         }
-        /* Legacy only: the resolved tray IS the native .headerRight, which — unlike
-           the modern layout where the avatar is a separate, unmarked sibling Box
-           OUTSIDE the tray — CONTAINS the native profile button (.headerUserButton)
-           as a trailing child of the one scrollport. Left as an ordinary in-flow
-           child it starts off-screen once the row overflows (safe flex-end packs to
-           flex-start on overflow, so scrollLeft 0 shows the LEADING buttons and the
-           trailing avatar is only reachable after scrolling to the end) — violating
-           the binding pinned-avatar criterion. Sticky-pin it to the scrollport's
-           right edge so it stays visible at rest and stationary while the icon
-           buttons scroll, matching the modern pinned-avatar behaviour. z-index keeps
-           it above the buttons that scroll beneath it. */
-        .jc-legacy-layout .jc-header-tray > .headerUserButton {
-            position: sticky !important;
-            right: 0 !important;
-            z-index: 1 !important;
+        /* Legacy only: the resolved tray IS the native .headerRight (content-sized,
+           justify-content:flex-end). With nowrap, native flex-end packs the buttons
+           rightward and pushes the leading ones into unreachable negative space
+           (left of the scroll origin, which scrollWidth does not count in LTR) once
+           the row overflows. Override to flex-start so the leading buttons pack from
+           the scroll origin and stay reachable. In the fit case .headerRight is
+           content-sized (no flex-grow — .headerLeft owns the grow), so there is no
+           free space to distribute and flex-start is pixel-identical to native
+           flex-end: the sheet loading after the native header paints repositions
+           nothing (no jank / no R1 layout shift). Universal — no safe/unsafe
+           overflow-alignment keyword, so leading buttons are reachable on every
+           engine. The native profile button is a plain trailing child that scrolls
+           with the row: deliberately NOT pinned, because a sticky pin sits over the
+           buttons that scroll beneath it and intercepts their clicks (there is no way
+           to reserve a pinned region for an in-flow child in pure CSS). */
+        .jc-legacy-layout .jc-header-tray {
+            justify-content: flex-start !important;
         }
         /* Modern only: the tray is a flex sibling of the profile Box inside the MUI
            Toolbar, which is itself flex-wrap:wrap. flex-shrink alone is NOT enough:
@@ -426,6 +414,18 @@ function ensureHeaderTrayCSS(): void {
            scrolling its own overflow via the single auto x-axis rule above. */
         .jc-modern-layout .jc-header-tray {
             flex: 1 1 0 !important;
+        }
+        /* Modern only: because flex-grow:1 makes the tray wider than its content in
+           the fit case, right-align the buttons against the avatar with an auto
+           inline-start margin on the LEADING child. Auto margins absorb positive
+           free space before justify-content, so the buttons pack against the profile
+           Box (native look, no gap, no reposition on sheet load — R1 safe); when the
+           row overflows there is no free space, the margin resolves to 0, and the
+           buttons pack from the scroll origin so every one stays reachable. Universal
+           — no safe/unsafe overflow-alignment keyword. (Modern has no order-shuffled
+           tray child, so the DOM :first-child is also the visually leading one.) */
+        .jc-modern-layout .jc-header-tray > *:first-child {
+            margin-inline-start: auto !important;
         }
     `);
     muiHeaderButtonCSSInjected = true;
@@ -468,7 +468,7 @@ function resolveHeaderRightContainer(): HTMLElement | null {
     if (!toolbar) return null;
 
     // Reaching the MUI toolbar IS the modern-layout signal; stamp it so the
-    // modern-scoped tray rules (shrink + safe flex-end) apply immediately.
+    // modern-scoped tray rules (flex:1 1 0 + leading auto-margin) apply immediately.
     stampResolvedLayout('modern');
 
     let userMenuBox: HTMLElement | null = userMenuButton;

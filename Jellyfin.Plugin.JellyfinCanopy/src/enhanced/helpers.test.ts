@@ -180,17 +180,17 @@ describe('header-tray single-row scroll containment (#459)', () => {
         expect(css).toContain('min-width: 0');
         // Direct children never shrink → they cannot collapse or wrap.
         expect(css).toContain('flex: 0 0 auto');
-        // safe flex-end (both layouts): keep the native right-alignment when the
-        // row fits, fall back to start-alignment when it overflows so the leading
-        // buttons never land in unreachable negative overflow.
-        expect(css).toContain('justify-content: safe flex-end');
-        // No `flex-start` floor may precede it (r6f2): on the fit case that floor
-        // left-aligns the grown (flex:1 1 0) modern tray, opening a gap before the
-        // avatar and repositioning the already-right-packed native buttons when the
-        // sheet loads — the forbidden R1 layout shift. safe flex-end alone keeps the
-        // native flex-end on the fit case (no reposition, no jank) and only relaxes
-        // to start-alignment on overflow.
-        expect(css).not.toMatch(/justify-content:\s*flex-start/);
+        // Legacy: the native .headerRight is content-sized with justify-content:
+        // flex-end; override to flex-start so overflowing leading buttons pack from
+        // the scroll origin and stay reachable. In the fit case .headerRight has no
+        // free space (no flex-grow), so flex-start is pixel-identical to native
+        // flex-end — no reposition on sheet load, no R1 jank.
+        expect(css).toMatch(/\.jc-legacy-layout \.jc-header-tray\s*\{[^}]*justify-content:\s*flex-start/);
+        // No dependency on the safe/unsafe overflow-alignment keyword (r7f2/r7f7):
+        // an engine that does not parse `safe flex-end` would keep native flex-end
+        // and strand the leading buttons in unreachable negative overflow, so it
+        // must NOT be what ships on either layout.
+        expect(css).not.toContain('safe flex-end');
         // Modern-only: the tray must carry a 0 flex-basis (not merely
         // flex-shrink:1). The parent MUI Toolbar is flex-wrap:wrap and collects
         // flex lines from each child's hypothetical main size BEFORE flex-shrink
@@ -203,6 +203,14 @@ describe('header-tray single-row scroll containment (#459)', () => {
         // Regression guard: the bare flex-shrink:1 form was insufficient (it does
         // not affect flex-line construction), so it must NOT be what ships.
         expect(css).not.toContain('flex-shrink: 1');
+        // Modern-only: because the grown (flex:1 1 0) tray is wider than its content
+        // in the fit case, the buttons are right-aligned against the avatar with an
+        // auto inline-start margin on the LEADING child — not justify-content. Auto
+        // margins are universal (no safe/unsafe keyword) and resolve to 0 on
+        // overflow, so leading buttons stay reachable on every engine.
+        expect(css).toMatch(
+            /\.jc-modern-layout \.jc-header-tray > \*:first-child\s*\{[^}]*margin-inline-start:\s*auto/,
+        );
 
         // The horizontal scrollbar is suppressed on BOTH engines so an
         // overflowing tray never grows a gutter that would (a) render a
@@ -211,19 +219,13 @@ describe('header-tray single-row scroll containment (#459)', () => {
         // (c) shift the header as it crosses the fit->overflow threshold (R1).
         expect(css).toContain('scrollbar-width: none');
         expect(css).toMatch(/\.jc-(modern|legacy)-layout \.jc-header-tray::-webkit-scrollbar/);
-        // Legacy: the native profile avatar (.headerUserButton) lives INSIDE the
-        // resolved .headerRight scrollport (unlike modern, where it is a separate
-        // sibling Box outside the tray). Left as an ordinary in-flow child it starts
-        // off-screen once the row overflows and is only reachable after scrolling to
-        // the end — violating the binding pinned-avatar criterion (r6f1/r6f3/r6f5).
-        // Sticky-pin it to the scrollport's right edge so it stays visible at rest
-        // and stationary while the icon buttons scroll beneath it.
-        expect(css).toMatch(
-            /\.jc-legacy-layout \.jc-header-tray > \.headerUserButton\s*\{[^}]*position:\s*sticky[^}]*right:\s*0/,
-        );
-        // The pin is legacy-scoped — modern's avatar is a separate sibling Box and
-        // must never receive an avatar-targeted rule.
-        expect(css).not.toMatch(/\.jc-modern-layout \.jc-header-tray > \.headerUserButton/);
+        // The legacy profile button (.headerUserButton) is a plain scrolling child
+        // now — no sticky pin on either layout. A sticky pin sits over the buttons
+        // scrolling beneath it and intercepts their clicks (r7f1); pure CSS cannot
+        // reserve a pinned region for an in-flow child, so the tray ships none. No
+        // avatar-targeted rule at all.
+        expect(css).not.toContain('.headerUserButton');
+        expect(css).not.toContain('position: sticky');
 
         // No broad MUI Box selector (would hit unrelated toolbar boxes / profile).
         expect(css).not.toMatch(/\.MuiBox-root/);
