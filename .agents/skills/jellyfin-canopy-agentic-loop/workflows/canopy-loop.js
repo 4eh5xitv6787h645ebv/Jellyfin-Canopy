@@ -237,9 +237,16 @@ const TERMINAL_FAILURE_RE =
   /session limit|usage limit|quota exceeded|exceeded your (current )?quota|out of credits?|insufficient credits?|credit balance/i
 let systemicFailure = false
 let systemicFailureDetail = ''
-function noteAgentError(e) {
+// scope (optional): 'sol' — an auxiliary gpt-5.6-sol/codex slot; 'implement' — the
+// primary implement model. Both have their OWN fallback onto a healthy Claude
+// path, so a terminal error THERE must NOT pause the whole run: a Sol/codex quota
+// is a separate provider (the Claude session may be fine) and the primary
+// implementer falls back to Opus. Only exhaustion of the ACTIVE session provider
+// (default/unset scope) trips the global breaker and pauses the run.
+function noteAgentError(e, scope) {
   const msg = String(e && e.message ? e.message : e)
   if (!TERMINAL_FAILURE_RE.test(msg)) return false
+  if (scope === 'sol' || scope === 'implement') return true // terminal for THIS route only; caller falls back
   if (!systemicFailure) log(`TERMINAL provider failure ("${msg.slice(0, 90)}") — halting all further agent spawns`)
   systemicFailure = true
   if (!systemicFailureDetail) systemicFailureDetail = msg.slice(0, 160)
@@ -424,11 +431,11 @@ async function splitAgent(i, prompt, opts, ctl) {
       noteSolFailure('null/unavailable result')
       covNote(cls, false, 'sol returned null/unavailable')
     } catch (e) {
-      noteAgentError(e) /* Sol failed → Claude fallback below (unless terminal) */
+      noteAgentError(e, 'sol') /* Sol quota/limit is a separate provider → Claude fallback below */
       noteSolFailure(e && e.message)
       covNote(cls, false, e && e.message)
     }
-    if (systemicFailure) return null // terminal: the fallback would die the same way
+    if (systemicFailure) return null // terminal on the SESSION provider: the fallback would die the same way
   }
   return classified(() => agent(prompt, opts))
 }
@@ -452,7 +459,7 @@ async function soloSolAgent(prompt, opts, solEffort) {
       noteSolFailure('null/unavailable result')
       covNote(cls, false, 'sol returned null/unavailable')
     } catch (e) {
-      noteAgentError(e) /* fall through to Claude (unless terminal) */
+      noteAgentError(e, 'sol') /* Sol quota/limit is a separate provider → Claude fallback below */
       noteSolFailure(e && e.message)
       covNote(cls, false, e && e.message)
     }
@@ -464,12 +471,12 @@ async function soloSolAgent(prompt, opts, solEffort) {
 // Await a CRITICAL singleton agent; on any throw (e.g. a StructuredOutput retry
 // cap) return the fallback instead of aborting the whole workflow. Parallel
 // phases already null-out throwers; this protects the awaited singletons.
-async function safely(makePromise, fallback, what) {
+async function safely(makePromise, fallback, what, scope) {
   try {
     const r = await makePromise()
     return r == null ? fallback : r
   } catch (e) {
-    noteAgentError(e) // classify terminal (quota/limit) failures before falling back
+    noteAgentError(e, scope) // classify terminal (quota/limit) failures before falling back
     log(`${what} failed (${String(e && e.message ? e.message : e).slice(0, 90)}) → using fallback`)
     return fallback
   }
@@ -991,7 +998,8 @@ if (START_PHASE !== 'explore') {
   implemented = await safely(
     () => agent(implementPrompt, { ...implOpts, model: IMPL_MODEL, label: `implement:${IMPL_MODEL}` }),
     null,
-    `Implement (${IMPL_MODEL})`
+    `Implement (${IMPL_MODEL})`,
+    'implement' // a primary-model quota falls back to Opus below, not a whole-run pause
   )
   if (!implemented && !systemicFailure) {
     log(`Implement: ${IMPL_MODEL} unavailable/exhausted → falling back to ${IMPL_FALLBACK} (high)`)
@@ -1165,8 +1173,8 @@ ${solPrompt}
             )
             return r && !r.solUnavailable ? r : null
           } catch (e) {
-            noteAgentError(e)
-            return null // codex harness threw → Claude fallback below (scope never lost)
+            noteAgentError(e, 'sol') // codex/Sol quota is a separate provider → Claude fallback below (scope never lost)
+            return null
           }
         }
       : async () => {
@@ -1174,8 +1182,8 @@ ${solPrompt}
             const r = await agent(solPrompt, { schema: FINDINGS_SCHEMA, model: SOL_MODEL, effort: SOL_EFFORT, phase: 'Review', label: `sol-r${roundNo}:${i + 1}` })
             return r != null ? r : null
           } catch (e) {
-            noteAgentError(e)
-            return null // Sol not routable → Claude fallback below
+            noteAgentError(e, 'sol') // Sol quota/route error is a separate provider → Claude fallback below
+            return null
           }
         }
 

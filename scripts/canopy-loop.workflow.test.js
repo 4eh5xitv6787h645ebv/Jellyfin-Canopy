@@ -124,6 +124,40 @@ test('a terminal session-limit failure pauses the run instead of spawning more a
     assert.ok(r.residualRisks.some((s) => /PAUSED .*resume/i.test(s)), 'the pause residual carries resume instructions');
 });
 
+test('a terminal quota error on the Sol route falls back to Claude instead of pausing the run', async () => {
+    // A codex/Sol quota is a SEPARATE provider from the Claude session — it must
+    // open the Sol breaker and fall back to Claude, NOT pause the whole run.
+    const { agent, calls } = makeAgent((_p, opts) => {
+        if (opts.model === 'gpt-5.6-sol') return { __throw: 'You have exceeded your current quota' };
+        return undefined;
+    });
+    const r = await runWorkflow(baseArgs(), agent, parallel, phase, () => {});
+    assert.equal(r.status, 'complete', 'a Sol-route quota error does not pause the Claude run');
+    assert.equal(r.resumeFrom, null, 'the run is not paused for resume');
+    assert.ok(calls.some((c) => c.opts.phase === 'Verify'), 'the run proceeds through verify on Claude');
+});
+
+test('a terminal quota on the primary implementer falls back to Opus instead of pausing', async () => {
+    const { agent, calls } = makeAgent((_p, opts) => {
+        if ((opts.label || '').startsWith('implement:fable')) return { __throw: 'You have exceeded your current quota' };
+        return undefined; // the Opus fallback and everything else succeed
+    });
+    const r = await runWorkflow(baseArgs(), agent, parallel, phase, () => {});
+    assert.ok(calls.some((c) => (c.opts.label || '').includes('opus-fallback')), 'Opus fallback attempted after a Fable quota');
+    assert.equal(r.status, 'complete', 'a primary-implementer quota does not pause the run');
+    assert.equal(r.readyForPR, true, 'the Opus fallback produced a certifiable implementation');
+});
+
+test('a terminal quota on BOTH implementers pauses the run (session provider exhausted)', async () => {
+    const { agent } = makeAgent((_p, opts) => {
+        if ((opts.label || '').startsWith('implement')) return { __throw: 'You have exceeded your current quota' };
+        return undefined;
+    });
+    const r = await runWorkflow(baseArgs(), agent, parallel, phase, () => {});
+    assert.equal(r.status, 'paused', 'both implementers exhausted → pause');
+    assert.equal(r.resumeFrom.phase, 'explore');
+});
+
 test('an all-null explore batch is treated as a provider outage and pauses before implement', async () => {
     // Nulls carry no error message, but EVERY agent in a batch failing is an
     // infrastructure outage, not N coincidences — pause instead of burning the
