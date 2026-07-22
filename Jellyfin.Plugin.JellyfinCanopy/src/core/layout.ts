@@ -74,6 +74,27 @@ export function resetLayoutCacheForTests(): void {
 }
 
 /**
+ * Stamp a layout the caller has ALREADY determined, without re-detecting.
+ *
+ * `stampLayoutClass()` only runs at import, on navigation, and once during
+ * enhanced activation — all of which can precede the legacy AngularJS header's
+ * first paint, so on a static legacy home (no later navigation) the stamp can
+ * be missed and layout-scoped CSS never applies. The header-tray resolver
+ * (`helpers.ts`) already discriminates the layout from the container it
+ * resolves (`.headerRight` ⇒ legacy, MUI toolbar ⇒ modern), so it hands that
+ * known mode here the moment the tray exists. Idempotent, caches so later
+ * detection is a cheap no-op, and adds NO layout read (the caller supplies the
+ * mode). This keeps core/layout the single owner of the stamp classes.
+ * @param mode The layout the caller resolved.
+ */
+export function stampResolvedLayout(mode: LayoutMode): void {
+    if (!cachedLayout) cachedLayout = mode;
+    const root = document.documentElement;
+    root.classList.toggle('jc-modern-layout', cachedLayout === 'modern');
+    root.classList.toggle('jc-legacy-layout', cachedLayout === 'legacy');
+}
+
+/**
  * Stamp `jc-modern-layout` / `jc-legacy-layout` on <html> from the detected
  * layout. Idempotent and safe to call repeatedly: it is a no-op once the
  * layout has been resolved and stamped, and does nothing while the layout is

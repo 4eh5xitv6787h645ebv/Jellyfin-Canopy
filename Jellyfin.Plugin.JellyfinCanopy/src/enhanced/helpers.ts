@@ -10,10 +10,12 @@
 
 import { JC } from '../globals';
 import { onNavigate } from '../core/navigation';
+import { stampResolvedLayout } from '../core/layout';
 import type { IdentityContext, NavigateCallback, ViewPageCallback, ViewPageOptions } from '../types/jc';
 
-// Tracks whether the MUI-toolbar button-sizing CSS fix has been injected (see
-// getHeaderRightContainer below) so it's only added once.
+// Tracks whether the shared header-tray stylesheet (MUI button sizing + the
+// #459 single-row/scroll-containment rules, see ensureHeaderTrayCSS below) has
+// been injected so it's only added once.
 let muiHeaderButtonCSSInjected = false;
 
 // PERF(R4): per-navigation cache for getHeaderRightContainer. Resolving the
@@ -268,49 +270,126 @@ export function getHeaderRightContainer(): HTMLElement | null {
     return cachedHeaderRightContainer;
 }
 
+/**
+ * Idempotently mark a resolved header-tray container so the shared stylesheet
+ * ({@link ensureHeaderTrayCSS}) can scope its single-row/scroll-containment
+ * rules to exactly the element Canopy injects buttons into — never the sibling
+ * profile/user-menu Box, and never a broad MUI selector. Adds no layout read,
+ * so it stays inside the PERF(R4) boundary; a remounted container is a fresh
+ * node and gets re-marked on the next resolution.
+ */
+function markHeaderTray<T extends HTMLElement>(el: T): T {
+    el.classList.add('jc-header-tray');
+    return el;
+}
+
+/**
+ * Install the one-time header-tray stylesheet. Runs before any resolver early
+ * return so a legacy-only session receives it too. Two concerns share the one
+ * `jc-mui-header-button-fix` sheet and the one `muiHeaderButtonCSSInjected`
+ * boot-local flag:
+ *
+ *  1. MUI button sizing — the legacy .headerButton/.paper-icon-button-light
+ *     classes size themselves with `em` units relative to the *inherited*
+ *     font-size, tuned for the old .skinHeader context. Inside the MUI toolbar
+ *     the ambient font-size differs, so the icons come out oversized/misaligned
+ *     next to native MUI IconButtons. Pin them to MUI's ~48px button / 24px icon
+ *     convention. `!important` beats callers (e.g. active-streams) that set a
+ *     fixed size via an #id selector, which otherwise outranks this by specificity.
+ *
+ *  2. Single-row scroll containment (#459) — Canopy owns no bar element; buttons
+ *     are injected into a native container that inherits Jellyfin's own wrap
+ *     behaviour, so many buttons wrap to 2–3 rows (worst on mobile + modern MUI).
+ *     Force the *resolved tray* to a single horizontally-scrollable row with
+ *     non-shrinking children, scoped per layout via the jc-modern-layout /
+ *     jc-legacy-layout <html> stamps so the modern-only rules never touch the
+ *     legacy header and vice-versa. On modern the tray must consume only the
+ *     space left of the separate profile Box (safe flex-end keeps the leading
+ *     buttons reachable when it overflows). No fixed tray height and no
+ *     descendant overflow rule, so absolutely-positioned children like the
+ *     active-streams badge (.jc-as-sup) stay inside the scrollport.
+ */
+function ensureHeaderTrayCSS(): void {
+    if (muiHeaderButtonCSSInjected) return;
+    addCSS('jc-mui-header-button-fix', `
+        .MuiToolbar-root .headerButton.paper-icon-button-light {
+            display: inline-flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            box-sizing: border-box !important;
+            width: 48px !important;
+            height: 48px !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            font-size: 16px !important;
+        }
+        .MuiToolbar-root .headerButton.paper-icon-button-light > .material-icons {
+            font-size: 24px !important;
+        }
+        .jc-modern-layout .jc-header-tray,
+        .jc-legacy-layout .jc-header-tray {
+            display: flex !important;
+            flex-wrap: nowrap !important;
+            align-items: center !important;
+            min-width: 0 !important;
+            max-width: 100% !important;
+            overflow-x: auto !important;
+            /* Both layouts natively right-align the tray (flex-end). With nowrap
+               that packs the buttons rightward and pushes the leading ones into
+               unreachable negative space (left of the scroll origin, which
+               scrollWidth does not count in LTR). The safe keyword keeps the
+               native right-alignment when the row fits but falls back to
+               start-alignment once it does not, so every button stays reachable. */
+            justify-content: safe flex-end !important;
+        }
+        .jc-modern-layout .jc-header-tray > *,
+        .jc-legacy-layout .jc-header-tray > * {
+            flex: 0 0 auto !important;
+        }
+        /* Modern only: the tray is a flex-grow sibling of the profile Box, so it
+           must be allowed to shrink (paired with min-width:0) to consume only the
+           space left of the pinned avatar instead of pushing it off the row. */
+        .jc-modern-layout .jc-header-tray {
+            flex-shrink: 1 !important;
+        }
+    `);
+    muiHeaderButtonCSSInjected = true;
+}
+
 /** Uncached resolution behind {@link getHeaderRightContainer}. */
 function resolveHeaderRightContainer(): HTMLElement | null {
+    // Install the shared single-row/scroll-containment + MUI-sizing stylesheet
+    // before any early return so a legacy-only session receives the fix too. The
+    // tray rules are layout-scoped, so the modern MUI selectors stay inert on
+    // legacy and the legacy rules stay inert on modern.
+    ensureHeaderTrayCSS();
+
     const legacy = document.querySelector<HTMLElement>('.headerRight');
-    if (legacy && legacy.offsetParent !== null) return legacy;
+    if (legacy && legacy.offsetParent !== null) {
+        // Resolving the visible legacy .headerRight IS the legacy-layout signal;
+        // stamp it now (the html stamp can otherwise be missed on a static legacy
+        // home) so the layout-scoped tray CSS applies. No extra layout read.
+        stampResolvedLayout('legacy');
+        return markHeaderTray(legacy);
+    }
 
     const userMenuButton = document.querySelector<HTMLElement>('[aria-controls="app-user-menu"]');
     const toolbar = userMenuButton?.closest('.MuiToolbar-root') || document.querySelector('.MuiAppBar-root .MuiToolbar-root');
     if (!toolbar) return null;
 
-    // The legacy .headerButton/.paper-icon-button-light classes size themselves
-    // with `em` units relative to the *inherited* font-size, which was tuned for
-    // the old .skinHeader context. Inside the MUI toolbar the ambient font-size is
-    // different, so the icons come out oversized/misaligned next to the native MUI
-    // IconButtons. Pin them to MUI's own ~48px button / 24px icon convention instead.
-    // !important is needed because some callers (e.g. active-streams.js) set their
-    // own fixed-size CSS via an #id selector, which otherwise outranks this rule's
-    // specificity regardless of declaration order.
-    if (!muiHeaderButtonCSSInjected) {
-        addCSS('jc-mui-header-button-fix', `
-            .MuiToolbar-root .headerButton.paper-icon-button-light {
-                display: inline-flex !important;
-                align-items: center !important;
-                justify-content: center !important;
-                box-sizing: border-box !important;
-                width: 48px !important;
-                height: 48px !important;
-                padding: 0 !important;
-                margin: 0 !important;
-                font-size: 16px !important;
-            }
-            .MuiToolbar-root .headerButton.paper-icon-button-light > .material-icons {
-                font-size: 24px !important;
-            }
-        `);
-        muiHeaderButtonCSSInjected = true;
-    }
+    // Reaching the MUI toolbar IS the modern-layout signal; stamp it so the
+    // modern-scoped tray rules (shrink + safe flex-end) apply immediately.
+    stampResolvedLayout('modern');
 
     let userMenuBox: HTMLElement | null = userMenuButton;
     while (userMenuBox && userMenuBox.parentElement !== toolbar) {
         userMenuBox = userMenuBox.parentElement;
     }
+    // The user-menu/profile Box is a SEPARATE toolbar child that must stay
+    // pinned; mark only its previous sibling (the action tray) so the scroll
+    // region ends left of the avatar and never clips it.
     const buttonsTray = userMenuBox?.previousElementSibling;
-    if (buttonsTray) return buttonsTray as HTMLElement;
+    if (buttonsTray) return markHeaderTray(buttonsTray as HTMLElement);
 
     // No user-menu available (e.g. public/video pages) - fall back to a
     // synthetic container appended to the toolbar itself.
@@ -320,7 +399,7 @@ function resolveHeaderRightContainer(): HTMLElement | null {
         container.className = 'headerRight';
         toolbar.appendChild(container);
     }
-    return container;
+    return markHeaderTray(container);
 }
 
 /**
