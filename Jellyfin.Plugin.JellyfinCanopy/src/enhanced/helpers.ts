@@ -246,7 +246,7 @@ export function isElementVisible(element: Element | null | undefined): boolean {
 }
 
 /**
- * Finds (or creates) the container plugin buttons should be injected into.
+ * Finds the container plugin buttons should be injected into.
  *
  * Jellyfin 12's "experimental" layout (now the default) replaces the legacy
  * AngularJS header with a React/MUI AppBar+Toolbar. The legacy `.headerRight`
@@ -258,7 +258,7 @@ export function isElementVisible(element: Element | null | undefined): boolean {
  * injecting into it (rather than next to it) keeps plugin buttons right-aligned
  * with the native ones instead of stranding them as a separate flex item further
  * left in the toolbar.
- * @returns The container, or null if no header is ready yet.
+ * @returns The container, or null if no header is ready yet (retryable).
  */
 export function getHeaderRightContainer(): HTMLElement | null {
     // Serve the per-navigation cache while the node is still attached; failed
@@ -314,11 +314,14 @@ function markHeaderTray<T extends HTMLElement>(el: T): T {
  *     flex-end); it is overridden to flex-start so overflowing leading buttons
  *     pack from the scroll origin and stay reachable (in the fit case there is no
  *     free space, so flex-start is identical to native flex-end — no R1 jank).
- *     The native profile button (.headerUserButton) is a plain trailing child
- *     that scrolls with the row; it is NOT sticky-pinned, because a pin would
- *     overlay and intercept clicks for the buttons scrolling beneath it. Neither
- *     alignment path depends on the safe/unsafe overflow-alignment keyword, so
- *     the single-row tray stays fully scrollable on every engine. The horizontal
+ *     The native profile button (.headerUserButton) lives INSIDE that tray (unlike
+ *     modern, where the avatar is a separate sibling Box outside it), so it is
+ *     sticky-pinned to the scrollport's inline-end edge (position:sticky) — it stays
+ *     visible and stationary at the right while the icon buttons scroll under it,
+ *     the same pinned-avatar contract modern gets for free; a button transiently
+ *     under it is reachable by scrolling it out. Neither alignment path depends on
+ *     the safe/unsafe overflow-alignment keyword, so the single-row tray stays fully
+ *     scrollable on every engine. The horizontal
  *     scrollbar is suppressed (scrollbar-width:none / ::-webkit-scrollbar) so an
  *     overflowing tray never grows a gutter — keeping the content box a stable
  *     button height (no R1 layout shift, no promoted-overflow-y clipping of the
@@ -376,10 +379,32 @@ function ensureHeaderTrayCSS(): void {
         /* Non-shrinking children on BOTH layouts keep every button at its intrinsic
            width so the row cannot collapse or wrap — it scrolls instead. On legacy
            this rule also covers the native profile button, which keeps its intrinsic
-           width and scrolls with the row like any other child. */
+           width; the sticky-pin rule below then holds it at the scrollport's right
+           edge while the icon buttons scroll under it. */
         .jc-modern-layout .jc-header-tray > *,
         .jc-legacy-layout .jc-header-tray > * {
             flex: 0 0 auto !important;
+        }
+        /* Legacy only: the resolved tray IS the native .headerRight, which — unlike
+           modern, where the avatar is a separate sibling Box OUTSIDE the tray —
+           CONTAINS the native profile button (.headerUserButton) as a trailing child
+           of the single scrollport. Left as an ordinary in-flow child it starts
+           off-screen once the row overflows (flex-start packs the leading buttons at
+           the scroll origin, so scrollLeft:0 shows them and the trailing avatar is
+           reachable only after scrolling to the end) — violating the binding
+           pinned-avatar criterion. Sticky-pin it to the scrollport's inline-end edge
+           so it stays visible at rest and stationary while the icon buttons scroll,
+           the same pinned-avatar contract modern gets for free. In the FIT case
+           .headerRight is content-sized (.headerLeft owns the flex-grow), so there is
+           no overflow: sticky is inert and the avatar sits at its natural right-edge
+           position, pixel-identical to native (no reposition on sheet load, no R1
+           shift). z-index keeps the avatar above the buttons that scroll beneath it;
+           a button transiently under the avatar stays reachable by scrolling it out
+           (no button is permanently occluded). */
+        .jc-legacy-layout .jc-header-tray > .headerUserButton {
+            position: sticky !important;
+            inset-inline-end: 0 !important;
+            z-index: 1 !important;
         }
         /* Legacy only: the resolved tray IS the native .headerRight (content-sized,
            justify-content:flex-end). With nowrap, native flex-end packs the buttons
@@ -392,10 +417,9 @@ function ensureHeaderTrayCSS(): void {
            flex-end: the sheet loading after the native header paints repositions
            nothing (no jank / no R1 layout shift). Universal — no safe/unsafe
            overflow-alignment keyword, so leading buttons are reachable on every
-           engine. The native profile button is a plain trailing child that scrolls
-           with the row: deliberately NOT pinned, because a sticky pin sits over the
-           buttons that scroll beneath it and intercepts their clicks (there is no way
-           to reserve a pinned region for an in-flow child in pure CSS). */
+           engine. The native profile button (.headerUserButton) is the trailing
+           child; the sticky-pin rule above holds it at the scrollport's right edge so
+           it stays visible while these leading buttons scroll from the origin. */
         .jc-legacy-layout .jc-header-tray {
             justify-content: flex-start !important;
         }
@@ -486,25 +510,36 @@ function resolveHeaderRightContainer(): HTMLElement | null {
     // modern-scoped tray rules (flex:1 1 0 + leading auto-margin) apply immediately.
     stampResolvedLayout('modern');
 
-    let userMenuBox: HTMLElement | null = userMenuButton;
-    while (userMenuBox && userMenuBox.parentElement !== toolbar) {
-        userMenuBox = userMenuBox.parentElement;
+    // AppToolbar (WEB src/components/toolbar/AppToolbar.tsx) ALWAYS renders the
+    // action-tray Box (`flexGrow:1; justifyContent:flex-end`, holding the native
+    // SyncPlay/RemotePlay/Search buttons) but renders the SEPARATE profile/user-menu
+    // Box (`flexGrow:0`) only once the current user has loaded. Resolve that real
+    // action Box directly in both states:
+    //   • user-menu present → it is the user-menu Box's previousElementSibling.
+    //   • user-menu absent   (the preload window before the user loads, or a public
+    //     path)              → it is the toolbar's last element child (nothing is
+    //     rendered after it until the user-menu Box mounts).
+    // Marking only that Box keeps Canopy's buttons in the same tray as the native
+    // play/cast buttons, with the scroll region ending left of the pinned avatar.
+    //
+    // A synthetic container is deliberately NEVER created: an appended empty
+    // `.headerRight` would be a SECOND `flexGrow` sibling that splits the toolbar
+    // row and shoves the native buttons (R1 jank), and — because it stays connected
+    // once the real tray mounts — the per-navigation cache would pin Canopy's tray
+    // to that fake Box for the whole page, stranding its buttons outside the real
+    // action tray and the pinned-avatar boundary. Returning null until the real Box
+    // exists lets callers' existing wait-and-retry resolve it instead (no race).
+    let actionBox: HTMLElement | null;
+    if (userMenuButton) {
+        let userMenuBox: HTMLElement | null = userMenuButton;
+        while (userMenuBox && userMenuBox.parentElement !== toolbar) {
+            userMenuBox = userMenuBox.parentElement;
+        }
+        actionBox = (userMenuBox?.previousElementSibling as HTMLElement | null) ?? null;
+    } else {
+        actionBox = toolbar.lastElementChild as HTMLElement | null;
     }
-    // The user-menu/profile Box is a SEPARATE toolbar child that must stay
-    // pinned; mark only its previous sibling (the action tray) so the scroll
-    // region ends left of the avatar and never clips it.
-    const buttonsTray = userMenuBox?.previousElementSibling;
-    if (buttonsTray) return markHeaderTray(buttonsTray as HTMLElement);
-
-    // No user-menu available (e.g. public/video pages) - fall back to a
-    // synthetic container appended to the toolbar itself.
-    let container = toolbar.querySelector<HTMLElement>(':scope > .headerRight');
-    if (!container) {
-        container = document.createElement('div');
-        container.className = 'headerRight';
-        toolbar.appendChild(container);
-    }
-    return markHeaderTray(container);
+    return actionBox ? markHeaderTray(actionBox) : null;
 }
 
 /**
