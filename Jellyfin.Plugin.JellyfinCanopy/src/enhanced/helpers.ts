@@ -361,7 +361,17 @@ function ensureHeaderTrayCSS(): void {
                unreachable negative space (left of the scroll origin, which
                scrollWidth does not count in LTR). The safe keyword keeps the
                native right-alignment when the row fits but falls back to
-               start-alignment once it does not, so every button stays reachable. */
+               start-alignment once it does not, so every button stays reachable.
+               Older engines (Safari/iOS < 18, Chromium < 116) do not parse the
+               safe/unsafe overflow-alignment keywords, so they DISCARD the whole
+               "justify-content: safe flex-end" declaration and would fall back to
+               the native flex-end -- reintroducing the unreachable negative
+               overflow. Emit a plain flex-start first as the always-valid floor:
+               engines without safe support keep it (start-aligned, every button
+               reachable, just not right-packed when the row fits), while engines
+               with safe support take the later, more-specific safe flex-end
+               (source-order cascade among equal-!important). */
+            justify-content: flex-start !important;
             justify-content: safe flex-end !important;
         }
         /* WebKit/Blink counterpart of scrollbar-width:none (see above). */

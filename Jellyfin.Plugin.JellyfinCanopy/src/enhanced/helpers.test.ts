@@ -184,6 +184,16 @@ describe('header-tray single-row scroll containment (#459)', () => {
         // row fits, fall back to start-alignment when it overflows so the leading
         // buttons never land in unreachable negative overflow.
         expect(css).toContain('justify-content: safe flex-end');
+        // Fallback floor for engines that do not parse the `safe`/`unsafe`
+        // overflow-alignment keywords (Safari/iOS < 18, Chromium < 116): they
+        // discard the `safe flex-end` declaration entirely, so a plain
+        // `flex-start` MUST precede it as the always-valid value that keeps every
+        // button reachable there. Ordering matters — the plain floor is emitted
+        // first and the `safe` form immediately after (source-order cascade among
+        // equal-!important), so match the two adjacent declarations directly.
+        expect(css).toMatch(
+            /justify-content:\s*flex-start\s*!important;\s*justify-content:\s*safe flex-end\s*!important;/,
+        );
         // Modern-only: the tray must carry a 0 flex-basis (not merely
         // flex-shrink:1). The parent MUI Toolbar is flex-wrap:wrap and collects
         // flex lines from each child's hypothetical main size BEFORE flex-shrink
