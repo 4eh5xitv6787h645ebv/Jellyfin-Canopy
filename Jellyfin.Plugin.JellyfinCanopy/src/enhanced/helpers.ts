@@ -306,8 +306,13 @@ function markHeaderTray<T extends HTMLElement>(el: T): T {
  *     legacy header and vice-versa. On modern the tray must consume only the
  *     space left of the separate profile Box (safe flex-end keeps the leading
  *     buttons reachable when it overflows); on legacy the native profile button
- *     (.headerUserButton) lives inside the resolved tray, so it is sticky-pinned
- *     to the right edge instead. The horizontal scrollbar is suppressed
+ *     (.headerUserButton) lives *inside* the resolved tray, so it is a normal
+ *     in-flow, non-shrinking scrolling child that scrolls with the row (never a
+ *     sticky/overlay pin — a sticky last child inside the single scrollport would
+ *     translate onto the right edge and cover/intercept clicks for whatever button
+ *     scrolls beneath it; a genuine pinned column would need the avatar outside the
+ *     scrollport, which the CSS-only scope does not do). The horizontal scrollbar
+ *     is suppressed
  *     (scrollbar-width:none / ::-webkit-scrollbar) so an overflowing tray never
  *     grows a gutter — keeping the content box a stable button height (no R1
  *     layout shift, no promoted-overflow-y clipping of the .jc-as-sup badge) and
@@ -379,6 +384,17 @@ function ensureHeaderTrayCSS(): void {
         .jc-legacy-layout .jc-header-tray::-webkit-scrollbar {
             display: none !important;
         }
+        /* Non-shrinking children on BOTH layouts keep every button at its intrinsic
+           width so the row cannot collapse or wrap — it scrolls instead. On legacy
+           this rule also covers the native profile button (.headerUserButton), so
+           the avatar is a plain in-flow scrolling child: it rides the row's scroll
+           like any other button and is reachable at the scroll end. It is
+           deliberately NOT sticky-pinned — the avatar shares this one scrollport, so
+           a position:sticky right:0 last child would translate onto the viewport's
+           right edge and overlay (cover + intercept clicks for) whatever button
+           scrolls beneath it. A true pinned column would require the avatar to sit
+           outside the scrollport (as it already does on modern, where it is a
+           separate sibling Box), which the CSS-only scope does not restructure. */
         .jc-modern-layout .jc-header-tray > *,
         .jc-legacy-layout .jc-header-tray > * {
             flex: 0 0 auto !important;
@@ -399,19 +415,6 @@ function ensureHeaderTrayCSS(): void {
            scrolling its own overflow via the single auto x-axis rule above. */
         .jc-modern-layout .jc-header-tray {
             flex: 1 1 0 !important;
-        }
-        /* Legacy only: the resolved tray IS the native .headerRight, which — unlike
-           the modern layout where the avatar is a separate, unmarked sibling Box —
-           CONTAINS the native profile button (.headerUserButton) as a trailing
-           scrolling child. Left as-is it would start off-screen and move with
-           scrollLeft (safe flex-end packs to flex-start once the row overflows).
-           Pin it to the right edge of the scrollport so the avatar stays put while
-           the icon buttons scroll under it, matching the modern pinned-avatar
-           behaviour and the acceptance criterion. */
-        .jc-legacy-layout .jc-header-tray > .headerUserButton {
-            position: sticky !important;
-            right: 0 !important;
-            z-index: 1 !important;
         }
     `);
     muiHeaderButtonCSSInjected = true;

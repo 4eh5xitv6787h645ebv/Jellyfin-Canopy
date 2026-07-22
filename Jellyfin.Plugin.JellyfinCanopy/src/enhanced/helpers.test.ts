@@ -214,13 +214,20 @@ describe('header-tray single-row scroll containment (#459)', () => {
         // (c) shift the header as it crosses the fit->overflow threshold (R1).
         expect(css).toContain('scrollbar-width: none');
         expect(css).toMatch(/\.jc-(modern|legacy)-layout \.jc-header-tray::-webkit-scrollbar/);
-        // Legacy-only: the native profile avatar lives inside the resolved
-        // .headerRight tray, so it must be sticky-pinned to the right edge (on
-        // modern the avatar is a separate, unmarked sibling and needs no pin).
-        expect(css).toContain('.jc-legacy-layout .jc-header-tray > .headerUserButton');
-        expect(css).toContain('position: sticky');
-        // The pin is legacy-scoped only — the modern avatar sibling is untouched.
-        expect(css).not.toMatch(/\.jc-modern-layout \.jc-header-tray > \.headerUserButton/);
+        // Legacy: the native profile avatar (.headerUserButton) lives INSIDE the
+        // resolved .headerRight scrollport, so it must NOT be sticky-pinned. A
+        // `position:sticky;right:0` last child inside the one scroll container is an
+        // overlay — it translates onto the viewport's right edge and covers /
+        // intercepts clicks for whatever button scrolls beneath it (r5f1). Instead
+        // the avatar is a plain in-flow scrolling child, covered by the shared
+        // `> *` non-shrink rule, so it rides the row's scroll like any other button.
+        // Assert no avatar-targeted rule and no sticky/z-index anywhere in the sheet.
+        expect(css).not.toMatch(/\.jc-legacy-layout \.jc-header-tray > \.headerUserButton/);
+        expect(css).not.toContain('position: sticky');
+        expect(css).not.toMatch(/z-index\s*:/);
+        // Neither layout targets the avatar with an overriding rule — it is only
+        // ever styled as a generic non-shrinking child of the scroll row.
+        expect(css).not.toMatch(/\.jc-(modern|legacy)-layout \.jc-header-tray > \.headerUserButton/);
 
         // No broad MUI Box selector (would hit unrelated toolbar boxes / profile).
         expect(css).not.toMatch(/\.MuiBox-root/);
