@@ -536,20 +536,33 @@ or augment the body. If the command fails, return an empty body.`,
   }
 }
 
-// ── codex-cli route preflight (Phase 0) ─────────────────────────────────────
-// Under the default codex-cli route the Sol slots are only discovered dead at
-// RUNTIME, after each of the first explore batch's Sol slots burns a harness
-// agent that finds `codex` absent plus a Claude fallback (the breaker bounds but
-// does not eliminate that tax — ~6 wasted spawns in explore alone). The route is
-// statically known at launch, so one cheap probe short-circuits it: a missing CLI
-// trips the breaker BEFORE any Sol slot spawns. A healthy route costs one tiny
-// agent; only an explicit available:false trips it (a null/ambiguous probe leaves
-// the runtime breaker to catch a mid-run death — fail toward attempting Sol).
+// ── Sol route preflight (Phase 0) ───────────────────────────────────────────
+// Under either route the Sol slots are otherwise only discovered dead at RUNTIME,
+// after each of the first explore batch's Sol slots burns a harness/subagent plus
+// a Claude fallback (the breaker bounds but does not eliminate that tax — ~6
+// wasted spawns in explore alone). The route is statically known at launch, so one
+// cheap probe short-circuits it: a dead route trips the breaker BEFORE any Sol slot
+// spawns. A healthy route costs one tiny agent; only an explicit failure trips it
+// (a null/ambiguous probe leaves the runtime breaker to catch a mid-run death —
+// fail toward attempting Sol). The probe exercises the REAL route end-to-end
+// (an actual gpt-5.6-sol round-trip), not just whether a binary is installed — an
+// installed `codex` with a broken auth/model route would still pass an install
+// check yet fail every real request.
 if (SOL_VIA === 'codex-cli' && MODEL_SPLIT && !halted()) {
   const probe = await safely(
     () =>
       agent(
-        `cd ${WORKTREE} first, then run (read-only, Bash):\n  command -v codex && codex --version\nReport available:true only if BOTH succeed (codex is on PATH and prints a version); otherwise available:false. Return the version string when known.`,
+        `cd ${WORKTREE} first (read-only, Bash). Probe whether the configured gpt-5.6-sol
+route actually WORKS, not merely whether the binary is installed:
+1. If \`command -v codex\` fails, report available:false, version:"command -v codex failed".
+2. Otherwise run ONE minimal real request (it exercises auth + model routing):
+     printf 'Reply with exactly the token OK and nothing else.' | \\
+       codex -a never -s read-only exec -C "${WORKTREE}" --ephemeral --ignore-user-config \\
+         --color never -m "${SOL_MODEL}" - 2>&1 | tail -20
+   Report available:true ONLY if codex exited 0 AND produced model output (a line
+   containing OK) — i.e. the route round-tripped. Report available:false on any
+   auth/model/route/quota error, a non-zero exit, or empty output; put a short
+   reason (first error line) in version. Record \`codex --version\` in version on success.`,
         {
           schema: { type: 'object', additionalProperties: true, required: ['available'], properties: { available: { type: 'boolean' }, version: { type: 'string' } } },
           agentType: 'general-purpose',
@@ -559,14 +572,36 @@ if (SOL_VIA === 'codex-cli' && MODEL_SPLIT && !halted()) {
         }
       ),
     null,
-    'codex preflight'
+    'codex preflight',
+    'sol' // a terminal Sol/codex quota at preflight marks the route dead, never pauses the run
   )
   if (probe && probe.available === false) {
     solDead = true
-    covNote('preflight', false, `codex CLI unavailable at launch (${(probe.version && String(probe.version).slice(0, 40)) || 'command -v codex failed'})`)
-    log('codex-cli preflight: `codex` is unavailable — Sol route marked dead up front; all Sol slots run on Claude')
+    covNote('preflight', false, `codex gpt-5.6-sol route unusable at launch (${(probe.version && String(probe.version).slice(0, 60)) || 'command -v codex failed'})`)
+    log('codex-cli preflight: the gpt-5.6-sol route is unusable — Sol route marked dead up front; all Sol slots run on Claude')
   } else {
-    log(`codex-cli preflight: codex ${probe && probe.version ? `(${String(probe.version).slice(0, 40)}) ` : ''}available`)
+    log(`codex-cli preflight: gpt-5.6-sol route ${probe && probe.version ? `(${String(probe.version).slice(0, 40)}) ` : ''}live`)
+  }
+}
+// Agent (router) route mirror: the codex-cli branch above preflights only the
+// codex route, so an unroutable gpt-5.6-sol on the 'agent' route otherwise burned
+// up-to-3 doomed Sol spawns before the runtime breaker tripped. Send one minimal
+// real request through the subagent model param; only a hard null (unroutable)
+// marks the route dead, matching the codex-cli probe's conservative stance. scope
+// 'sol' keeps a terminal Sol quota from pausing the whole Claude run.
+if (SOL_VIA === 'agent' && MODEL_SPLIT && !halted()) {
+  const p = await safely(
+    () => agent('Reply with the single token OK.', { model: SOL_MODEL, effort: 'low', agentType: 'general-purpose', phase: 'Explore', label: 'sol-agent-preflight' }),
+    null,
+    'sol-agent preflight',
+    'sol'
+  )
+  if (p == null) {
+    solDead = true
+    covNote('preflight', false, 'gpt-5.6-sol router unroutable at launch')
+    log('agent-route preflight: gpt-5.6-sol unroutable — Sol route marked dead up front; all Sol slots run on Claude')
+  } else {
+    log('agent-route preflight: gpt-5.6-sol route live')
   }
 }
 

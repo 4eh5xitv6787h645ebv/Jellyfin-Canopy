@@ -619,10 +619,36 @@ test('codex-cli preflight: a healthy codex CLI leaves the Sol route live', async
     assert.ok(calls.some((c) => (c.opts.label || '').startsWith('sol-cli-r')), 'codex harness runs on a live route');
 });
 
-test('the preflight probe does not run on the agent route', async () => {
+test('the codex preflight does not run on the agent route (the agent-route probe does)', async () => {
     const { agent, calls } = makeAgent(null);
     await runWorkflow(baseArgs({ solVia: 'agent' }), agent, parallel, phase, () => {});
     assert.ok(!calls.some((c) => (c.opts.label || '') === 'codex-preflight'), 'no codex preflight when solVia is agent');
+    const probe = calls.find((c) => (c.opts.label || '') === 'sol-agent-preflight');
+    assert.ok(probe, 'the agent route runs its own gpt-5.6-sol probe');
+    assert.equal(probe.opts.model, 'gpt-5.6-sol', 'the probe exercises the real router model');
+});
+
+test('the codex preflight probes the real route (a minimal gpt-5.6-sol request), not just install', async () => {
+    const { agent, calls } = makeAgent(null);
+    await runWorkflow(baseArgs({ solVia: 'codex-cli' }), agent, parallel, phase, () => {});
+    const probe = calls.find((c) => (c.opts.label || '') === 'codex-preflight');
+    assert.ok(probe, 'codex preflight spawned');
+    assert.match(probe.prompt, /codex -a never -s read-only exec/, 'the probe runs a real codex exec');
+    assert.match(probe.prompt, /-m "gpt-5\.6-sol"/, 'the probe uses the configured model');
+    assert.match(probe.prompt, /auth\/model\/route\/quota error/, 'a broken route (not just a missing binary) fails the probe');
+});
+
+test('an unroutable agent-route Sol at preflight marks the route dead without pausing the run', async () => {
+    // The agent route probe returns null (unroutable). Sol is marked dead up front;
+    // the run continues on Claude fallbacks rather than pausing.
+    const { agent, calls } = makeAgent((_p, opts) => {
+        if ((opts.label || '') === 'sol-agent-preflight') return null;
+        return undefined;
+    });
+    const r = await runWorkflow(baseArgs({ solVia: 'agent' }), agent, parallel, phase, () => {});
+    assert.equal(r.status, 'complete', 'a dead Sol route at preflight does not pause the Claude run');
+    assert.equal(r.modelCoverage.solDead, true, 'the Sol route is marked dead up front');
+    assert.ok(!calls.some((c) => /^sol-r\d+:/.test(c.opts.label || '') && c.opts.model === 'gpt-5.6-sol'), 'no doomed Sol review spawns after the route is known dead');
 });
 
 test('a non-split round still runs at least one whole-diff Sol reviewer at solReviewers:0', async () => {
