@@ -8,9 +8,10 @@
 // ensureHeaderTrayCSS) forcing display:flex; flex-wrap:nowrap; overflow-x:auto
 // with non-shrinking children, and on modern `flex:1 1 0` (a 0 flex-basis, not a
 // bare flex-shrink:1, so the wrapping MUI Toolbar cannot push the avatar onto a
-// 2nd row) plus an auto inline-start margin on the leading child so the tray's
-// buttons right-align against the avatar while staying reachable when the row
-// overflows. On legacy the resolved `.headerRight` is overridden to
+// 2nd row) plus an auto inline-start margin on the visually-leading child (the
+// native-tabs order:-1 group when present, else the DOM first child) so the
+// tray's buttons right-align against the avatar while staying reachable when the
+// row overflows. On legacy the resolved `.headerRight` is overridden to
 // justify-content:flex-start (its native profile button scrolls with the row —
 // no sticky pin). Neither alignment path uses the `safe`/`unsafe` keyword.
 //
@@ -400,4 +401,103 @@ test.describe('header button tray stays a single scrollable row (#459)', () => {
             assertNoRuntimeErrors(consoleErrors);
         });
     }
+
+    // Fit-state coverage for the native-tabs order:-1 group. The overflow cases
+    // above force the auto inline-start margin to resolve to 0, so they cannot
+    // catch a margin placed on the wrong child. native-tabs.ts appends
+    // #jc-native-tabs-group as the DOM-LAST child but with order:-1, making it the
+    // visually-FIRST flex item. When the row FITS, the right-align auto margin must
+    // sit on that group; if it sat on the DOM :first-child instead, free space would
+    // open BETWEEN the reordered group and the remaining buttons — the group
+    // stranded at the tray's left edge, a visible split, not the native contiguous
+    // right-packed tray. Prove the geometry on a roomy modern desktop tray.
+    test('modern fit-state: the native-tabs order:-1 group stays right-packed and contiguous, not split to the left edge', async ({ page, consoleErrors }) => {
+        await page.setViewportSize(DESKTOP);
+        await seedLayout(page, 'modern');
+        await loginAs(page, 'admin', consoleErrors);
+
+        const stamp = LAYOUT_STAMP.modern;
+        const stamped = await page.waitForFunction(
+            (wanted) => document.documentElement.classList.contains(wanted),
+            stamp,
+            { timeout: 20_000 },
+        ).then(() => true, () => false);
+        if (!stamped) throw new Error(`layout stamp ${stamp} missing. DIAG=${await diag(page)}`);
+
+        const geo = await page.evaluate(() => {
+            const helpers = (window as any).JellyfinCanopy?.helpers;
+            const tray: HTMLElement | null = helpers?.getHeaderRightContainer?.() ?? null;
+            if (!tray) return null;
+
+            const mkButton = (id: string): HTMLElement => {
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.id = id;
+                btn.className = 'headerButton headerButtonRight paper-icon-button-light jc-e2e-459-fit';
+                btn.style.cssText = 'box-sizing:border-box;width:48px;min-width:48px;height:48px;padding:0;margin:0;';
+                return btn;
+            };
+
+            // A small number of order-0 action buttons — the row must FIT so the
+            // auto margin is active (non-zero free space) and its placement matters.
+            const actionA = mkButton('jc-e2e-fit-action-a');
+            const actionB = mkButton('jc-e2e-fit-action-b');
+            tray.appendChild(actionA);
+            tray.appendChild(actionB);
+
+            // Mirror native-tabs.getOrCreateGroup: appended LAST, order:-1 → visually
+            // first. Give it real width via a contained 48px button.
+            const group = document.createElement('div');
+            group.id = 'jc-native-tabs-group';
+            group.style.cssText = 'display:flex;align-items:center;order:-1;';
+            group.appendChild(mkButton('jc-e2e-fit-group-btn'));
+            tray.appendChild(group);
+
+            const trayRect = tray.getBoundingClientRect();
+            const groupRect = group.getBoundingClientRect();
+            const aRect = actionA.getBoundingClientRect();
+            const bRect = actionB.getBoundingClientRect();
+            return {
+                fits: tray.scrollWidth <= tray.clientWidth + 1,
+                trayLeft: trayRect.left,
+                trayRight: trayRect.right,
+                groupLeft: groupRect.left,
+                groupRight: groupRect.right,
+                aLeft: aRect.left,
+                aRight: aRect.right,
+                bRight: bRect.right,
+                trayWidth: trayRect.width,
+            };
+        });
+
+        expect(geo, 'resolved modern tray present').not.toBeNull();
+        // The scenario is only meaningful while the row fits (auto margin non-zero).
+        expect(geo!.fits, `tray must fit for the fit-state check (DIAG=${await diag(page)})`).toBe(true);
+
+        // Contiguous: the reordered group sits immediately left of the first order-0
+        // button — no split. A margin on the DOM first child would open a large gap
+        // here (all the tray's free space).
+        expect(
+            geo!.aLeft - geo!.groupRight,
+            `native-tabs group must be contiguous with the following buttons, not split away `
+            + `(gap ${geo!.aLeft - geo!.groupRight}px)`,
+        ).toBeLessThanOrEqual(8);
+
+        // Right-packed: the auto margin sits to the LEFT of the (visually-leading)
+        // group, pushing the whole cluster toward the avatar. So the group's left edge
+        // is far from the tray's left/scroll origin. A margin on the DOM first child
+        // would instead leave the group pinned at the tray's left edge (groupLeft ≈
+        // trayLeft). Require the free space to have moved the cluster well right.
+        expect(
+            geo!.groupLeft - geo!.trayLeft,
+            `native-tabs group must be right-packed (auto margin left of it), not stranded at `
+            + `the tray's left edge (groupLeft-trayLeft ${geo!.groupLeft - geo!.trayLeft}px, trayWidth ${geo!.trayWidth}px)`,
+        ).toBeGreaterThan(100);
+
+        // The cluster packs against the avatar side: last button's right edge near the
+        // tray's right edge (the scroll region ends left of the profile Box).
+        expect(geo!.trayRight - geo!.bRight, 'cluster packs against the tray right edge').toBeLessThanOrEqual(8);
+
+        assertNoRuntimeErrors(consoleErrors);
+    });
 });

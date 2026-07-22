@@ -33,6 +33,7 @@
     "e2e/header-tray-overflow.spec.ts › header button tray stays a single scrollable row (#459) › modern / desktop / non-admin",
     "e2e/header-tray-overflow.spec.ts › header button tray stays a single scrollable row (#459) › legacy / mobile / non-admin",
     "e2e/header-tray-overflow.spec.ts › header button tray stays a single scrollable row (#459) › legacy / desktop / admin",
+    "e2e/header-tray-overflow.spec.ts › header button tray stays a single scrollable row (#459) › modern fit-state: the native-tabs order:-1 group stays right-packed and contiguous, not split to the left edge",
     "e2e/hide-favorites-tab.spec.ts › hide Favorites tab › the settings toggle removes the Home Favorites tab, scoped to Home and reversible",
     "e2e/late-load-resilience.spec.ts › late-load resilience (R9) › media-info chips recover from transient fetch failures",
     "e2e/late-load-resilience.spec.ts › late-load resilience (R9) › report button recovers after its initial status probe fails",
