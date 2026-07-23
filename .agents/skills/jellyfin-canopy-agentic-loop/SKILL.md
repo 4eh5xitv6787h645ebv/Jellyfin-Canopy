@@ -76,21 +76,60 @@ Workflow({
     branch:   "<type>/<slug>",
     task:     "<the full task: issue text / feature contract / bug + repro>",
     brief:    "<path to the task-brief.md the main thread wrote>",
+    briefText: "<the brief CONTENTS inlined — preferred; agents may never open the path>",
+    issue:    123,               // commit-subject ref; with NO briefText a Phase-0 agent
+                                 // fetches the live issue body as the brief (self-hydration)
     surface:  "client" | "server" | "cross" | "docs",   // drives which gates run
     runtime:  true,                                       // true → also run e2e:local
     depth:    "standard",                                 // "quick" | "standard" | "deep"
+    startPhase: "explore",       // "review"/"verify" resume a paused run on the same branch
+    reviewedHead: "<sha>",       // with startPhase:"verify" ONLY: the HEAD the paused run was
+                                 // clean at — certifies the prior review iff verify reports the same HEAD
+    ledger: [/* the paused run's returned result.ledger */],  // seed the finding ledger on a
+                                 // startPhase:"review" resume so prior fixes/refutations stay suppressed
+    envSetup: "<shell prelude every build/test agent runs first (e.g. DOTNET_ROOT exports)>",
+    reviewMode: "spec",          // opt-in spec-authoring lenses (acceptance traceability, …)
+
+    // Review-loop termination (progress-based; see "Review" below):
+    stallPatience: 2,            // consecutive no-progress review rounds → stop as non-converged (default 2)
+    backstopRounds: 25,          // absolute round ceiling (default ~25; docs/spec default roundCap+1)
+    hardRoundCap: 10,            // EXPLICIT OVERRIDE: old fixed-count behavior — pins the backstop AND
+                                 // disables the stall detector (runs to exactly this many rounds)
 
     // Model routing (see "Model routing" below):
     modelSplit:  true,           // ~50/50 Claude/Sol on read-only steps to spare Opus budget
     solVia:      "codex-cli",    // default; or "agent" (subagent model param, needs a Sol-capable router)
     solModel:    "gpt-5.6-sol",
     solEffort:   "high",
-    solReviewers: 1,             // Sol whole-diff reviewers when modelSplit is off
+    solReviewers: 1,             // whole-diff Sol reviewers per round (min 1, split or not)
     implementModel:    "fable",  // implementer runs on Fable (high) …
     implementFallback: "opus"    // … falling back to Opus (high) if Fable is exhausted
   }
 })
 ```
+
+### Operating envelopes
+
+- **FIXES** (light): for a contained bug fix, use `depth:"quick"` with a
+  patch-sized brief and a narrow `surface` — 2 explorers, 2 planners, 2 mixed
+  review rounds, surface-scoped gates. The safety essentials (requirement
+  fidelity, fail-closed review, gate integrity) stay on.
+- **FEATURES** (multi-day): use `standard`/`deep`. On a terminal provider
+  failure (session/usage limit, quota, credits) the loop STOPS spawning agents
+  and returns `status:"paused"` with `pauseReason` and `resumeFrom`; relaunch
+  later with `startPhase:"review"` (or `"verify"`) on the same branch instead of
+  re-burning explore/plan/implement. A verify-only resume normally never certifies
+  `readyForPR` — **except** when the pause came AFTER a certified-clean review
+  round (`resumeFrom.phase==="verify"`, the run's `loopClean` was true): record the
+  paused run's returned `headSha` (or `git -C <worktree> rev-parse HEAD`) and
+  resume with `startPhase:"verify"` **plus** `reviewedHead:<that sha>`. The run
+  certifies iff the verify agent independently reports the same HEAD (proving no
+  commit changed since the clean review); any mismatch stays fail-closed. For
+  campaigns over an issue queue, relaunch per issue with `issue: N` (self-hydrating
+  brief) and persist each run's returned `resumeFrom`/`headSha`/`loopClean`/`ledger`
+  as the per-issue checkpoint. Pass the persisted `ledger` back as `ledger:` on a
+  `startPhase:"review"` resume so the review loop keeps its prior refutations and
+  fixes suppressed instead of re-churning them.
 
 ### Model routing
 
@@ -100,14 +139,31 @@ models by role:
 - **Weighted Claude / `gpt-5.6-sol` split — the whole way, except two roles.** With
   `modelSplit: true`, explore, plan (incl. synthesis), the review lenses, and the
   review's finding-verification are spread across Claude and `gpt-5.6-sol`:
-  - **Explore** runs 8 explorers (standard/deep depth); the first 2 on Claude/Opus
-    and the remaining 6 on `gpt-5.6-sol` (override with `exploreClaudeCount`).
-  - **Explore + plan** (incl. synthesis) run their Sol slots at **`xhigh`** reasoning
-    effort (`solExplorePlanEffort`, default `xhigh`); plan keeps a ~50/50 split.
+  - **Explore** runs 8 explorers on a non-docs standard/deep run; the first 2 on
+    Claude/Opus and the remaining 6 on `gpt-5.6-sol` (override with
+    `exploreClaudeCount`). A `quick` run uses 2 explorers, and a `docs` surface uses
+    its 4 docs-specific angles (2 Claude + 2 Sol) — the "6 Sol" figure is the
+    standard/deep code-surface case, not every run.
+  - **Explore + plan** (incl. synthesis) run their Sol slots at **`xhigh`**
+    reasoning effort on the `"agent"` route (`solExplorePlanEffort`, default
+    `xhigh`); on the default `"codex-cli"` route those slots run at
+    `solLightEffort` (default `medium`) — synthesis passes `xhigh` through on
+    either route. Plan keeps a ~50/50 split.
   - **Review** runs the mixed panel (Claude lenses + `gpt-5.6-sol`) for the first
     `roundCap` rounds (standard = 4); if still not clean it CONTINUES with
-    `gpt-5.6-sol` as the ONLY reviewer up to `hardRoundCap` (default 10). Review Sol
-    stays at `solEffort` (high).
+    `gpt-5.6-sol` as the ONLY reviewer. The loop terminates on **(a)** a clean
+    round, **(b)** a **progress stall** — `stallPatience` consecutive rounds with
+    no progress (default 2), or a round whose confirmed findings are wholly a
+    ledger re-report (pure oscillation) — surfaced for a human as a
+    non-convergence residual, or **(c)** a high runaway **backstop**
+    (`backstopRounds`, default ~25; docs/`reviewMode:"spec"` default `roundCap`+1).
+    This replaces the old fixed 10-round cap: a converging change is never cut off
+    by an arbitrary count, and a stalled one (the #167 config-page.js case) stops
+    fast. `hardRoundCap` still works as an explicit override — it pins the backstop
+    to that fixed count **and** disables the stall detector (old behavior). Review
+    Sol stays at `solEffort` (high). Three consecutive Sol failures trip a circuit
+    breaker (remaining Sol slots go straight to Claude); the result's
+    `modelCoverage` shows requested-vs-actual coverage.
   Under `solVia: "codex-cli"` (default) the Sol slots run through a generalized
   `codex` harness; under `solVia: "agent"` they use the subagent model param via a
   router. Any Sol slot that can't be routed **falls back to Claude**, so no slot is
@@ -127,9 +183,13 @@ Fable→Opus; review still gets ≥1 whole-diff `gpt-5.6-sol` reviewer).
 
 While exploring, agents surface **unrelated pre-existing bugs** they notice (they
 do **not** fix them — no scope creep). The loop returns them as
-`result.incidentalBugs`; the main thread dedupes against open issues and files the
-genuinely-new ones to the **Jellyfin Elevate Bug Inventory (Project 4)** with the
-`bug-inventory` + `no-stale` labels.
+`result.incidentalBugs`. **Only when issue creation, labelling, and Project
+mutation are authorized for this run** does the main thread dedupe against open
+issues and file the genuinely-new ones to the **Jellyfin Elevate Bug Inventory
+(Project 4)** with the `bug-inventory` + `no-stale` labels. Absent that
+authorization, surface the deduped list as a **proposed issue payload for the
+user to disposition** — do not mutate GitHub. Filing issues, like deploys and
+releases, is an outward-facing action, not an implicit step of the loop.
 
 The script fans out agents per phase, loops the review until a clean round, runs
 the repo-native gates, and returns a structured result (diff stat, findings
@@ -164,16 +224,24 @@ The engine ([`workflows/canopy-loop.js`](workflows/canopy-loop.js)) runs:
 3. **Implement** (single writer) — build the change at its owner, update every
    affected consumer, add tests that fail before the fix (admin and non-admin,
    negative/fallback paths, concurrency/cache invalidation where relevant), add
-   every locale key with real translations, and update affected docs. Commit
-   coherent conventional units. No `Co-Authored-By` trailers; **include the issue
-   number `#N`** in each commit subject (e.g. end it with ` (#123)`).
+   any new i18n key **only to the base `en.json`** (the Localize phase fans out
+   the translations), and update affected docs. Commit coherent conventional
+   units. No `Co-Authored-By` trailers; **include the issue number `#N`** in
+   each commit subject (e.g. end it with ` (#123)`).
 4. **Review loop** (parallel adversarial, loop-until-clean) — see
    [`references/adversarial-review.md`](references/adversarial-review.md). Each
-   round mixes models on purpose: the Claude lens reviewers **and** at least one
-   `gpt-5.6-sol` (high effort) whole-diff reviewer, all in split context (diff +
-   brief only, told to assume the code is wrong). Findings are deduped and
-   adversarially verified to kill false positives; a single fixer applies
-   confirmed findings; re-review until a clean round. Challenge the design before
+   mixed round runs models on purpose: the Claude lens reviewers **and** at least
+   one `gpt-5.6-sol` (high effort) whole-diff reviewer, all in split context (diff
+   + brief only, told to assume the code is wrong); rounds past the mixed cap are
+   `gpt-5.6-sol`-only. Findings are deduped and adversarially
+   verified to kill false positives; a **finding ledger** (fixed + refuted, with
+   verifier reasons) is injected into later rounds so resolved items are not
+   re-reported without new evidence; a single fixer applies confirmed findings;
+   re-review until a clean round, a **progress stall** (non-convergence — default 2
+   no-progress rounds, surfaced for a human), or the runaway **backstop**. On docs
+   surfaces (and `reviewMode:"spec"`) only
+   confirmed blocker/major findings drive fix rounds — confirmed minors are
+   returned as `advisoryNotes`. Challenge the design before
    a second fix to the same owner/state model. If a workaround needs a
    paragraph-long comment to justify it, the code is wrong — fix the code.
 5. **Localize** (single cheap agent, low effort) — translation busywork, kept off
@@ -182,8 +250,11 @@ The engine ([`workflows/canopy-loop.js`](workflows/canopy-loop.js)) runs:
    files never consume adversarial review) and **before** verify (so
    `validate-translations` passes at parity). It fans the base keys out to every
    locale on a low-effort model (gpt/opus on `low`, `localizeEffort`), commits one
-   `chore(i18n)` unit, and no-ops when no keys changed. Skipped for `server`
-   surfaces. Not adversarially reviewed — translations are mechanical and the
+   `chore(i18n)` unit, and no-ops when no keys changed. Skipped for `server` and
+   `docs` surfaces. It still runs on a `startPhase:"verify"` resume (a run that
+   paused between the clean review and Localize would otherwise fail
+   `validate-translations` forever). Not adversarially reviewed — translations are
+   mechanical, the commit lands before the first verify, and the
    `validate-translations` gate enforces parity.
 6. **Verify** (single runner) — run the repo-native gates for the surface, and
    for runtime-relevant work build the Release DLL and run `npm run e2e:local`
