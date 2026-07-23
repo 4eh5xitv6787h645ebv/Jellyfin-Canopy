@@ -350,18 +350,36 @@ ui.addSeasonModalStyles = function () {
         .seerr-inline-progress-text { font-size: 0.75rem; color: #94a3b8; font-weight: 500; }
         .seerr-collection-4k-toggle { display: inline-flex; align-items: center; gap: 8px; padding: 10px 16px; margin-bottom: 12px; background: rgba(51, 65, 85, 0.3); border: 1px solid rgba(71, 85, 105, 0.4); border-radius: 12px; font-weight: 600; color: #e2e8f0; cursor: pointer; }
         .seerr-collection-4k-toggle input { width: 20px; height: 20px; accent-color: #4f46e5; border-radius: 4px; cursor: pointer; }
-        .seerr-collection-list { display: grid; gap: 4px; }
+        .seerr-collection-list { display: grid; gap: 6px; min-width: 0; }
         .seerr-collection-header-row { display: grid; grid-template-columns: 40px 1fr auto auto; align-items: center; gap: 16px; padding: 12px 20px; background: rgba(51, 65, 85, 0.3); border: 1px solid rgba(71, 85, 105, 0.4); border-radius: 12px; margin-bottom: 8px; font-weight: 600; color: #e2e8f0; }
         .seerr-collection-header-row .seerr-collection-checkbox { cursor: pointer; }
         .seerr-collection-header-label { font-size: 0.95rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: #cbd5e1; }
-        .seerr-collection-checkbox { width: 20px; height: 20px; accent-color: #4f46e5; border-radius: 4px; cursor: pointer; }
+        .seerr-collection-checkbox { width: 22px; height: 22px; margin: 0; accent-color: var(--theme-primary-color, #4f46e5); border-radius: 4px; cursor: pointer; }
         .seerr-collection-checkbox:disabled { opacity: 0.4; cursor: not-allowed; }
-        .seerr-collection-movie-row { display: grid; grid-template-columns: 40px 46px 1fr auto; align-items: center; gap: 16px; padding: 16px 20px; background: rgba(30, 41, 59, 0.4); border: 1px solid rgba(51, 65, 85, 0.3); border-radius: 8px; transition: all 0.2s ease; }
-        .seerr-collection-movie-row:hover:not(:has(input:disabled)) { background: rgba(30, 41, 59, 0.7); border-color: rgba(59, 130, 246, 0.3); }
-        .seerr-collection-movie-poster { width: 100%; height: 69px; object-fit: cover; border-radius: 4px; }
-        .seerr-collection-movie-details { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-        .seerr-collection-movie-details .title { font-weight: 600; color: #e2e8f0; font-size: 0.95rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .seerr-collection-movie-details .year { font-size: 0.85rem; color: #94a3b8; }
+        .seerr-collection-movie-row { box-sizing: border-box; display: grid; grid-template-columns: 52px minmax(0, 1fr) 22px; align-items: center; gap: 14px; width: 100%; min-width: 0; padding: 12px 14px; background: rgba(30, 41, 59, 0.4); border: 1px solid rgba(71, 85, 105, 0.38); border-radius: 12px; cursor: pointer; touch-action: manipulation; transition: background-color 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease; }
+        .seerr-collection-movie-row:hover:not(:has(.seerr-collection-checkbox:disabled)) { background: rgba(30, 41, 59, 0.7); border-color: rgba(99, 102, 241, 0.52); }
+        .seerr-collection-movie-row:has(.seerr-collection-checkbox:checked:not(:disabled)) { background: rgba(79, 70, 229, 0.14); border-color: var(--theme-primary-color, #6366f1); box-shadow: inset 0 0 0 1px var(--theme-primary-color, #6366f1); }
+        .seerr-collection-movie-row:has(.seerr-collection-checkbox:disabled) { background: rgba(15, 23, 42, 0.58); border-color: rgba(71, 85, 105, 0.24); cursor: not-allowed; opacity: 0.58; }
+        .seerr-collection-movie-row:focus-within { outline: 2px solid var(--theme-primary-color, #6366f1); outline-offset: 2px; }
+        .seerr-collection-movie-poster { display: block; width: 52px; height: 78px; object-fit: cover; border-radius: 7px; background: rgba(15, 23, 42, 0.72); }
+        .seerr-collection-movie-details { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
+        .seerr-collection-movie-details .title { display: block; min-width: 0; font-weight: 700; color: #f1f5f9; font-size: 1rem; line-height: 1.25; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .seerr-collection-movie-meta { display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; color: #94a3b8; white-space: nowrap; }
+        .seerr-collection-movie-meta .year { flex: 0 0 auto; font-size: 0.82rem; line-height: 1; }
+        .seerr-collection-meta-separator { flex: 0 0 auto; color: #64748b; font-size: 0.85rem; line-height: 1; }
+        .seerr-collection-movie-meta .seerr-season-status { flex: 0 1 auto; min-width: 0; max-width: 100%; padding: 3px 8px; border-radius: 999px; font-size: 0.68rem; line-height: 1.2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .seerr-collection-movie-meta .seerr-season-status-not-requested { background: rgba(148, 163, 184, 0.13); color: #cbd5e1; border-color: rgba(148, 163, 184, 0.28); }
+        .seerr-collection-movie-meta .seerr-season-status-available,
+        .seerr-collection-movie-meta .seerr-season-status-partially-available { background: rgba(34, 197, 94, 0.15); color: #4ade80; border-color: rgba(34, 197, 94, 0.32); }
+        .seerr-collection-movie-meta .seerr-season-status-pending,
+        .seerr-collection-movie-meta .seerr-season-status-processing { background: rgba(245, 158, 11, 0.16); color: #fbbf24; border-color: rgba(245, 158, 11, 0.34); }
+        .seerr-collection-movie-meta .seerr-season-status-blocklisted { background: rgba(239, 68, 68, 0.15); color: #f87171; border-color: rgba(239, 68, 68, 0.34); }
+        .seerr-collection-movie-row > .seerr-collection-checkbox { justify-self: end; }
+        @media (max-width: 430px) {
+            .seerr-collection-movie-row { grid-template-columns: 48px minmax(0, 1fr) 22px; gap: 10px; padding: 10px 12px; }
+            .seerr-collection-movie-poster { width: 48px; height: 72px; border-radius: 6px; }
+            .seerr-collection-movie-details .title { font-size: 0.95rem; }
+        }
         .seerr-modal-footer { padding: 20px 24px; background: rgba(15, 23, 42, 0.3); border-top: 1px solid rgba(51, 65, 85, 0.3); display: flex; gap: 12px; justify-content: flex-end; flex-shrink: 0; }
         .seerr-modal-button { padding: 12px 24px; border-radius: 8px; border: none; cursor: pointer; font-weight: 600; font-size: 0.875rem; transition: all 0.2s ease; min-width: 120px; }
         .seerr-modal-button:disabled { opacity: 0.6; cursor: not-allowed; }
