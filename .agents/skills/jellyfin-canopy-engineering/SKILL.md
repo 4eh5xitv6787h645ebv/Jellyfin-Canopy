@@ -222,6 +222,23 @@ identify the failing assertion/command before changing code or rerunning.
   within scope.
 - Treat the aggregate E2E job as a summary; inspect the failed shard first.
 
+While auto-merge waits, run a bounded post-publication watch: enabled auto-merge
+does **not** update the branch when `main` advances, so alongside the checks
+also inspect the PR's mergeability/behind state (e.g.
+`gh pr view --json mergeable,mergeStateStatus`). When `main` has moved and the
+ruleset requires an up-to-date branch:
+
+1. update the branch from current `origin/main` and resolve semantically;
+2. rerun the affected gates;
+3. reconfirm the independent review still applies to the result (request a fresh
+   verdict if the resolution changed reviewed code);
+4. verify the push URL and push;
+5. continue monitoring the NEW head commit's required checks — do not assume the
+   previous green run carries over.
+
+Keep the watch bounded: recheck on check completion or a `main` advance, not in
+a tight poll, and stop once merged.
+
 Merge only when the latest commit has all required blocking checks green and
 the independent review is still applicable. Inspect the current branch ruleset;
 at minimum expect Plugin, Unit tests, Client checks, the E2E aggregate, Manifest
@@ -231,8 +248,10 @@ required check.
 
 ## 9. Merge and prove closure
 
-Immediately before merging, verify the writable push destination again. After
-merge, independently verify:
+Immediately before merging, verify the writable push destination again. If the
+merge is deferred to auto-merge, keep the section-8 behind-state watch running
+until the merge actually lands — a PR left "behind" waits forever. After merge,
+independently verify:
 
 1. the PR state and exact merge commit;
 2. the merge commit is reachable from current `origin/main`;

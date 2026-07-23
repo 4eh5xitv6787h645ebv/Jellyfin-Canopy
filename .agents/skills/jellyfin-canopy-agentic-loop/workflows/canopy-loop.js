@@ -28,12 +28,26 @@ const a = (() => {
 })()
 const WORKTREE = a.worktree || '.'
 const BRANCH = a.branch || '(current branch)'
-const TASK = a.task || 'No task text supplied.'
+// `let` because in the preferred `issue: N`-only launch shape (no task/briefText),
+// a successful Phase-0 issue hydration replaces this placeholder with a real task
+// line derived from the fetched issue title/url — otherwise every agent prompt
+// would open with "TASK: No task text supplied." above the authoritative brief,
+// a confusing signal for the requirement-fidelity reviewers.
+let TASK = a.task || 'No task text supplied.'
 const BRIEF = a.brief || '(no brief path supplied — read AGENTS.md and the task text)'
 // Inlined brief CONTENTS (preferred). The script sandbox cannot read files, so
 // the launcher should read the brief and pass its text here — otherwise agents
 // may never open the path and will infer the task from weaker signals.
-const BRIEF_TEXT = a.briefText || ''
+// `let` because when args.issue is set and no briefText was passed, a Phase-0
+// agent self-hydrates it from the live issue (see "issue self-hydration").
+let BRIEF_TEXT = a.briefText || ''
+// Optional environment prelude every build/test-running agent must execute
+// FIRST (workflow subagents get fresh shells, so the launcher's exports do not
+// propagate — historically the verify agent picked a system dotnet over the
+// $HOME/.dotnet toolchain). Generic hook only: the machine-specific value (e.g.
+// `export DOTNET_ROOT=$HOME/.dotnet; export PATH="$DOTNET_ROOT:$PATH"`) stays
+// on the launcher side.
+const ENV_SETUP = a.envSetup ? String(a.envSetup) : ''
 // client | server | cross | docs. An unknown value (e.g. a launcher typo like
 // "clinet") must NOT silently skip all surface-specific gates — fail closed to
 // 'cross', the superset that runs every surface's verification.
@@ -44,14 +58,37 @@ const SURFACE_COERCED = SURFACE !== SURFACE_INPUT
 const RUNTIME = a.runtime !== false && SURFACE !== 'docs'
 const DEPTH = a.depth || 'standard' // quick | standard | deep
 const BASE = a.base || 'origin/main'
+// Resume support: a run killed mid-flight (e.g. by a session usage limit) has
+// all completed work COMMITTED on the branch, and the review/verify prompts work
+// purely from the committed ${BASE}...HEAD range — so a relaunch can re-enter
+// later instead of re-burning explore/plan/implement:
+//   'explore' (default) — full run, byte-identical to the pre-resume behavior;
+//   'review'  — skip Explore/Plan/Implement, adversarially review the committed
+//               range, then verify (can certify readyForPR — review runs fully);
+//   'verify'  — additionally skip the review loop: Localize (parity fan-out, not
+//               reviewed) then gates. A verify-only resume normally can NEVER
+//               certify readyForPR (fail closed — no review ran), UNLESS the
+//               launcher passes reviewedHead (below).
+const START_PHASE = ['explore', 'review', 'verify'].includes(a.startPhase) ? a.startPhase : 'explore'
+// reviewedHead escape hatch (fail-closed sha match). The primary #454 scenario is
+// a run that dies AFTER a certified-clean review round but during Localize/Verify
+// — it pauses with resumeFrom.phase='verify' and returns headSha. On the resume
+// the launcher passes that exact sha back as reviewedHead; IFF the verify agent
+// INDEPENDENTLY reports HEAD byte-identical to it, the prior clean review still
+// covers this exact commit range and the run certifies without re-reviewing. Any
+// mismatch, absence, or unreadable HEAD keeps the fail-closed default. Launcher
+// protocol: on status:'paused' with resumeFrom.phase==='verify' AND loopClean:true,
+// record `git -C <worktree> rev-parse HEAD` (or reuse the returned headSha) and
+// resume with startPhase:'verify' + reviewedHead:<that sha>.
+const REVIEWED_HEAD = a.reviewedHead ? String(a.reviewedHead).trim() : ''
 // User policy: INCLUDE the issue number in commit messages (traceability). Derived
 // from the branch (fix/issue-<N>) or args.issue. The main thread additionally puts
 // "Closes #<N>" in the PR body so a merge auto-closes the issue + moves the board item.
-const ISSUE_REF = (() => {
+const ISSUE_NUM = (() => {
   const raw = a.issue != null ? String(a.issue) : ((/issue[-/]?(\d+)/i.exec(BRANCH) || [])[1] || '')
-  const n = String(raw).replace(/[^0-9]/g, '')
-  return n ? '#' + n : ''
+  return String(raw).replace(/[^0-9]/g, '')
 })()
+const ISSUE_REF = ISSUE_NUM ? '#' + ISSUE_NUM : ''
 const COMMIT_RULE =
   'Commit hygiene: NO `Co-Authored-By` trailers' +
   (ISSUE_REF ? `, and INCLUDE the issue number ${ISSUE_REF} in each commit subject (end the subject with " (${ISSUE_REF})")` : '') +
@@ -59,9 +96,10 @@ const COMMIT_RULE =
 
 // roundCap here is the MIXED-panel review cap (Claude lenses + gpt-5.6-sol). If
 // the loop still isn't clean after it, review CONTINUES with gpt-5.6-sol as the
-// ONLY reviewer up to HARD_ROUND_CAP (see the review loop). explorers is the
-// TOTAL explorer count; the first EXPLORE_CLAUDE_COUNT run on Claude/Opus and the
-// rest on gpt-5.6-sol (see exploreSol).
+// ONLY reviewer until the loop terminates on a clean round, a progress stall, or
+// the runaway backstop (see the review loop). explorers is the TOTAL explorer
+// count; the first EXPLORE_CLAUDE_COUNT run on Claude/Opus and the rest on
+// gpt-5.6-sol (see exploreSol).
 const SIZING = {
   quick: { explorers: 2, planners: 2, roundCap: 2, verifyFixCap: 1 },
   standard: { explorers: 8, planners: 3, roundCap: 4, verifyFixCap: 2 },
@@ -81,12 +119,31 @@ const ALL_LENSES = [
   'Product semantics & scope',
   'Docs, locale & generated artifacts',
 ]
+// Review mode: 'standard' reviews code/diff correctness. 'spec' (opt-in, for
+// specification/design-doc authoring) swaps in lenses that judge a SPEC — does
+// it trace to the acceptance criteria, agree with itself, name owners that can
+// build it, and state contracts that are verifiable — instead of hunting prose
+// style. Selected by the launcher with args.reviewMode:'spec'.
+const REVIEW_MODE = a.reviewMode === 'spec' ? 'spec' : 'standard'
+const SPEC_LENSES = [
+  'Acceptance traceability (does every acceptance criterion in the brief map to spec text that satisfies it? cite the criterion per finding)',
+  'Internal consistency (do any two statements in the spec contradict each other, a repository contract, or an existing doc?)',
+  'Implementability (does each requirement name a real owner/mechanism that can actually build and enforce it — no ownerless or impossible mandate?)',
+  'Verifiable contracts (is every stated requirement/safety contract testable or measurable as written?)',
+]
 const LENSES =
-  SURFACE === 'docs'
+  REVIEW_MODE === 'spec'
+    ? SPEC_LENSES
+    : SURFACE === 'docs'
     ? ['Correctness & logic', 'Docs, locale & generated artifacts', 'Product semantics & scope']
     : DEPTH === 'quick'
     ? ALL_LENSES.slice(0, 5).concat('Docs, locale & generated artifacts')
     : ALL_LENSES
+// Docs/prose and spec review gate fixing by SEVERITY: blocker/major confirmed
+// findings drive a fix round; confirmed minors are reported as advisory notes
+// and do NOT force another round (prose minors historically drove SR-15 to the
+// 10-round cap while the same machinery converged in 2 rounds on SR-06).
+const SEVERITY_GATED = SURFACE === 'docs' || REVIEW_MODE === 'spec'
 
 // Model mix for review (user policy): every review round runs BOTH the Claude
 // lens reviewers above (≥1) AND ≥1 gpt-5.6-sol whole-diff reviewer at high
@@ -116,31 +173,18 @@ const SOL_VIA = a.solVia || 'codex-cli' // 'codex-cli' | 'agent'
 // the worktree — such as running the loop before this skill is merged to main.
 const CODEX_SCHEMA_PATH =
   a.codexSchema || `${WORKTREE}/.agents/skills/jellyfin-canopy-agentic-loop/references/codex-review-schema.json`
-// Per-run random heredoc delimiter for the codex harness. The reviewer prompt
-// embeds launcher-supplied (untrusted) TASK/BRIEF text; a fixed delimiter could
-// be closed early by a brief line equal to it, spilling the rest into the shell.
-// A random nonce the brief author cannot predict makes that collision infeasible.
-// NOTE: Math.random()/Date.now() THROW in the workflow sandbox (and would break
-// resume), so the nonce is derived deterministically from the run inputs via a
-// tiny FNV-1a hash. It is still unpredictable to a brief author who does not know
-// the exact TASK/BRANCH/WORKTREE, so an untrusted brief line cannot guess and
-// close the heredoc early.
-const _fnv1a = (s) => {
-  let h = 0x811c9dc5 >>> 0
-  for (let i = 0; i < s.length; i++) {
-    h = (h ^ s.charCodeAt(i)) >>> 0
-    h = Math.imul(h, 0x01000193) >>> 0
-  }
-  return h.toString(36)
-}
-const SOL_HEREDOC = 'SOL_PROMPT_' + _fnv1a(TASK + '|' + BRANCH + '|' + WORKTREE) + _fnv1a(BRIEF + '|' + BRIEF_TEXT)
+// NOTE: the codex review harness writes its prompt to a temp file with the Write
+// tool (see solThunk), NOT a shell heredoc, so there is no delimiter for an
+// untrusted brief line to close and no per-run nonce is needed — the injection
+// channel the old FNV-1a heredoc delimiter guarded against is closed at the source.
 
 // ── multi-model split (token offload) ───────────────────────────────────────
 // Route ~50% of the READ-ONLY reasoning to gpt-5.6-sol so a run doesn't spend
 // all of Claude's budget. The split covers explore, plan, the review lenses,
-// finding-verification, and the verify/gate runner. IMPLEMENTATION and every
-// code-writing fixer always stay Claude — one writer per worktree, and you don't
-// want two models editing the same files. A split-Sol slot runs on Sol under
+// and finding-verification. IMPLEMENTATION and every code-writing fixer always
+// stay Claude — one writer per worktree, and you don't want two models editing
+// the same files — and the FINAL VERIFY/GATE RUN also stays on Claude (one
+// authoritative model runs the repo gates; see the Verify phase). A split-Sol slot runs on Sol under
 // BOTH routes: the 'agent' route uses the subagent model param, and 'codex-cli'
 // runs the slot through the codex harness (codexAgent, requires opts.schema) — so
 // explore/plan/synthesis/finding-verification offload ~50% to Sol on either route,
@@ -156,9 +200,21 @@ const solSlot = (i) => MODEL_SPLIT && i % 2 === 1 // odd indices → Sol (~50/50
 // count with args.exploreClaudeCount.
 const EXPLORE_CLAUDE_COUNT = a.exploreClaudeCount == null ? 2 : Math.max(0, a.exploreClaudeCount)
 const exploreSol = (i) => MODEL_SPLIT && i >= EXPLORE_CLAUDE_COUNT
-// The hard review-round ceiling: after the mixed roundCap, gpt-5.6-sol-only
-// review rounds continue up to here (user policy). Override with args.hardRoundCap.
-const HARD_ROUND_CAP = Math.max(1, a.hardRoundCap == null ? 10 : a.hardRoundCap)
+// The review loop no longer terminates on a fixed round count — a crude count
+// (the old default 10) cannot tell "round 9 of genuine steady progress" from
+// "round 3 of hopeless oscillation" (the #167 config-page.js case: 8h / 21M
+// tokens / never converged). Termination is now PROGRESS-BASED: a clean round,
+// a progress STALL (STALL_PATIENCE consecutive no-progress rounds, or a round
+// whose confirmed findings are wholly a ledger re-report — see the review loop),
+// or a high runaway BACKSTOP. HARD_ROUND_CAP survives only as (a) the floor the
+// default backstop never drops below and (b) the OLD fixed-count behavior when a
+// caller passes args.hardRoundCap explicitly (which pins the backstop to that
+// value AND disables the stall detector's early stop — see STALL_DETECT below).
+// Docs/spec keep the low roundCap+1 default; the stall detector usually fires
+// first there anyway, and unresolved prose still goes back to a human fast.
+const HARD_CAP_SET = a.hardRoundCap != null
+const DEFAULT_HARD_CAP = SEVERITY_GATED ? SIZING.roundCap + 1 : 10
+const HARD_ROUND_CAP = Math.max(1, HARD_CAP_SET ? a.hardRoundCap : DEFAULT_HARD_CAP)
 
 // Effort for the non-review Sol phases (explore/plan/finding-verification). High
 // codex effort × many calls gets very slow, so these default to medium; the
@@ -171,6 +227,124 @@ const SOL_EXPLORE_PLAN_EFFORT = a.solExplorePlanEffort || 'xhigh'
 // Effort for the LOCALIZE phase — mechanical translation busywork kept cheap/fast
 // (gpt or opus on low, inheriting the session model). Override with args.localizeEffort.
 const LOCALIZE_EFFORT = a.localizeEffort || 'low'
+
+// ── systemic-failure (quota / usage-limit) circuit breaker ──────────────────
+// A TERMINAL provider failure (Anthropic session/usage limit, exhausted quota
+// or credits) kills every subsequent agent the same way. Without detection the
+// loop keeps spawning doomed reviewers, Localize, Verify, and verify-fix agents
+// (run #454 burned 26 agent errors after "You've hit your session limit").
+// Two triggers set systemic-failure mode:
+//   1. an agent error message matching TERMINAL_FAILURE_RE, or
+//   2. an ENTIRE parallel batch returning null (provider/infrastructure outage —
+//      a single null is a normal per-agent failure and never trips this).
+// Once set, the loop stops spawning agents entirely (no Localize, no Verify, no
+// fixers, no Claude fallbacks) and returns early with status:'paused' plus
+// resumeFrom, so a later run can resume via startPhase instead of re-burning
+// the completed phases. Singleton failures keep the existing fail-closed
+// semantics (reviewIncomplete, verifier-null-is-unresolved, etc.) unchanged.
+const TERMINAL_FAILURE_RE =
+  /session limit|usage limit|quota exceeded|exceeded your (current )?quota|out of credits?|insufficient credits?|credit balance/i
+let systemicFailure = false
+let systemicFailureDetail = ''
+// scope (optional): 'sol' — an auxiliary gpt-5.6-sol/codex slot; 'implement' — the
+// primary implement model. Both have their OWN fallback onto a healthy Claude
+// path, so a terminal error THERE must NOT pause the whole run: a Sol/codex quota
+// is a separate provider (the Claude session may be fine) and the primary
+// implementer falls back to Opus. Only exhaustion of the ACTIVE session provider
+// (default/unset scope) trips the global breaker and pauses the run.
+function noteAgentError(e, scope) {
+  const msg = String(e && e.message ? e.message : e)
+  if (!TERMINAL_FAILURE_RE.test(msg)) return false
+  if (scope === 'sol' || scope === 'implement') return true // terminal for THIS route only; caller falls back
+  if (!systemicFailure) log(`TERMINAL provider failure ("${msg.slice(0, 90)}") — halting all further agent spawns`)
+  systemicFailure = true
+  if (!systemicFailureDetail) systemicFailureDetail = msg.slice(0, 160)
+  return true
+}
+// An all-null parallel batch means every agent in it failed — a provider outage,
+// not N independent accidents. Require a REAL batch (>1): a single-element batch
+// returning null is a normal per-agent failure with correct fail-closed handling
+// downstream (unverified→reviewIncomplete, splitAgent Claude fallback), NOT an
+// outage — misclassifying it pauses the whole run on the common late-round case
+// of one finding whose lone verifier flaked. (results.length ≤ 1 is not a batch.)
+function batchOutage(results, what) {
+  if (results.length > 1 && results.every((r) => r == null)) {
+    if (!systemicFailure) log(`${what}: ALL ${results.length} parallel agents failed — treating as provider outage`)
+    systemicFailure = true
+    if (!systemicFailureDetail) systemicFailureDetail = `${what}: all ${results.length} parallel agents returned null`
+  }
+  return systemicFailure
+}
+// Await an agent promise, classifying any error before rethrowing. parallel()
+// nulls out throwers, which would otherwise DISCARD the error message — this is
+// how terminal failures inside parallel batches reach the classifier.
+async function classified(makePromise) {
+  try {
+    return await makePromise()
+  } catch (e) {
+    noteAgentError(e)
+    throw e
+  }
+}
+
+// Evidence-quorum failure: explore/plan produced too little to implement from,
+// with no terminal provider error to blame. Set only after a consolidated
+// recovery agent also failed; pauses the run BEFORE the writer (same pause
+// contract as systemicFailure, resumable with a fresh full run).
+let quorumFailure = ''
+// Input-validity failure: the launcher pointed at an issue as the brief source but
+// the live fetch failed AND no explicit task/briefText/brief path was supplied, so
+// there are NO authoritative requirements. Running agents anyway would implement
+// and (fail-open) certify work with no acceptance criteria — pause BEFORE Explore
+// instead (same pause contract; resume with a real task source or a working fetch).
+let inputFailure = ''
+const halted = () => systemicFailure || !!quorumFailure || !!inputFailure
+
+// Per-phase agent accounting (attempted / succeeded / null) returned as
+// result.agentStats, so silent `.filter(Boolean)` losses are visible.
+const agentStats = {}
+function statAdd(ph, results) {
+  const s = agentStats[ph] || (agentStats[ph] = { attempted: 0, succeeded: 0, nulls: 0 })
+  s.attempted += results.length
+  const ok = results.filter((r) => r != null).length
+  s.succeeded += ok
+  s.nulls += results.length - ok
+}
+
+// ── Sol route circuit breaker + model-coverage accounting ───────────────────
+// A dead Sol route (codex CLI missing, router down) fails EVERY slot the same
+// way; without a breaker each slot still burns a harness agent plus a Claude
+// fallback (22-23 empty results per production run). After 3 CONSECUTIVE Sol
+// failures the route is declared dead and remaining Sol slots go straight to
+// Claude; any Sol success resets the counter, so a healthy route is unaffected.
+// Fail-closed semantics are preserved — Claude still covers every scope.
+// modelCoverage additionally records requested-vs-actual model per slot class so
+// a run where "mixed-model review" silently became all-Claude is VISIBLE in the
+// result instead of being relabeled as healthy coverage.
+let solConsecutiveFailures = 0
+let solDead = false
+const modelCoverage = {} // per slot class (phase): { requested, ranSol, claudeFallback, reasons[] }
+let solOkThisRound = false // did any Sol reviewer actually run this review round?
+const roundsWithoutSol = [] // review rounds with zero real cross-family coverage
+function covNote(cls, ranSol, reason) {
+  const c = modelCoverage[cls] || (modelCoverage[cls] = { requested: 0, ranSol: 0, claudeFallback: 0, reasons: [] })
+  c.requested++
+  if (ranSol) c.ranSol++
+  else {
+    c.claudeFallback++
+    if (reason && c.reasons.length < 5) c.reasons.push(String(reason).slice(0, 90))
+  }
+}
+function noteSolFailure(reason) {
+  solConsecutiveFailures++
+  if (solConsecutiveFailures >= 3 && !solDead) {
+    solDead = true
+    log(`Sol route DEAD after 3 consecutive failures (${String(reason).slice(0, 60)}) — remaining Sol slots run on Claude`)
+  }
+}
+function noteSolSuccess() {
+  solConsecutiveFailures = 0
+}
 
 // codex forwards --output-schema to OpenAI Structured Outputs in STRICT mode,
 // which requires every object to set additionalProperties:false and list EVERY
@@ -202,6 +376,7 @@ function strictSchema(s) {
 // runs `codex ... exec --output-schema`, then RELAYS the structured result.
 // Returns null when codex is unavailable/errors so the caller falls back to Claude.
 async function codexAgent(prompt, schema, opts) {
+  if (systemicFailure) return null // outage: don't spawn the harness agent
   const eff = (opts && opts.effort) || SOL_LIGHT_EFFORT
   const r = await agent(
     `You are a HARNESS that runs an external gpt-5.6-sol analyst via the codex CLI
@@ -247,47 +422,195 @@ ${prompt}
 // gpt-5.6-sol reasoning effort for the 'agent' route (default SOL_EFFORT);
 // solLightEffort?: codex-cli effort (default SOL_LIGHT_EFFORT) }.
 async function splitAgent(i, prompt, opts, ctl) {
-  const useSol = ctl && typeof ctl.slot === 'function' ? ctl.slot(i) : solSlot(i)
-  if (useSol) {
+  if (systemicFailure) return null // outage: no Sol attempt, no Claude fallback
+  const cls = (opts && opts.phase) || 'other'
+  const wantSol = ctl && typeof ctl.slot === 'function' ? ctl.slot(i) : solSlot(i)
+  if (wantSol && solDead) covNote(cls, false, 'sol route dead (circuit breaker)')
+  if (wantSol && !solDead) {
     try {
       let r = null
       if (SOL_AGENT_OK) r = await agent(prompt, { ...opts, model: SOL_MODEL, effort: (ctl && ctl.solEffort) || SOL_EFFORT })
       else if (opts && opts.schema)
         r = await codexAgent(prompt, opts.schema, { effort: (ctl && ctl.solLightEffort) || SOL_LIGHT_EFFORT, phase: opts.phase, label: (opts.label || '') + ':sol' })
-      if (r != null) return r
-    } catch (_) {
-      /* Sol failed → Claude fallback below */
+      if (r != null) {
+        noteSolSuccess()
+        covNote(cls, true)
+        return r
+      }
+      noteSolFailure('null/unavailable result')
+      covNote(cls, false, 'sol returned null/unavailable')
+    } catch (e) {
+      noteAgentError(e, 'sol') /* Sol quota/limit is a separate provider → Claude fallback below */
+      noteSolFailure(e && e.message)
+      covNote(cls, false, e && e.message)
     }
+    if (systemicFailure) return null // terminal on the SESSION provider: the fallback would die the same way
   }
-  return agent(prompt, opts)
+  return classified(() => agent(prompt, opts))
 }
 // A singleton read-only step we offload to Sol (plan synthesis) to spare Claude
 // tokens; falls back to Claude when Sol isn't routable/available.
 async function soloSolAgent(prompt, opts, solEffort) {
-  if (MODEL_SPLIT) {
+  if (systemicFailure) return null // outage: no Sol attempt, no Claude fallback
+  const cls = (opts && opts.phase) || 'other'
+  if (MODEL_SPLIT && solDead) covNote(cls, false, 'sol route dead (circuit breaker)')
+  if (MODEL_SPLIT && !solDead) {
     try {
       let r = null
       if (SOL_AGENT_OK) r = await agent(prompt, { ...opts, model: SOL_MODEL, effort: solEffort || SOL_EFFORT })
       else if (opts && opts.schema)
         r = await codexAgent(prompt, opts.schema, { effort: solEffort || SOL_LIGHT_EFFORT, phase: opts.phase, label: (opts.label || '') + ':sol' })
-      if (r != null) return r
-    } catch (_) {
-      /* fall through to Claude */
+      if (r != null) {
+        noteSolSuccess()
+        covNote(cls, true)
+        return r
+      }
+      noteSolFailure('null/unavailable result')
+      covNote(cls, false, 'sol returned null/unavailable')
+    } catch (e) {
+      noteAgentError(e, 'sol') /* Sol quota/limit is a separate provider → Claude fallback below */
+      noteSolFailure(e && e.message)
+      covNote(cls, false, e && e.message)
     }
+    if (systemicFailure) return null
   }
-  return agent(prompt, opts)
+  return classified(() => agent(prompt, opts))
 }
 
 // Await a CRITICAL singleton agent; on any throw (e.g. a StructuredOutput retry
 // cap) return the fallback instead of aborting the whole workflow. Parallel
 // phases already null-out throwers; this protects the awaited singletons.
-async function safely(makePromise, fallback, what) {
+async function safely(makePromise, fallback, what, scope) {
   try {
     const r = await makePromise()
     return r == null ? fallback : r
   } catch (e) {
+    noteAgentError(e, scope) // classify terminal (quota/limit) failures before falling back
     log(`${what} failed (${String(e && e.message ? e.message : e).slice(0, 90)}) → using fallback`)
     return fallback
+  }
+}
+
+// ── issue self-hydration (Phase 0) ──────────────────────────────────────────
+// When the launcher passes an issue number but no inlined briefText, ONE cheap
+// agent fetches the LIVE issue and its body becomes the brief — replacing the
+// manual copy-paste that can omit edits or go stale between authoring and
+// launch. Explicit task/briefText always win (the fetch never overrides them);
+// a failed fetch logs a warning and falls back to the existing brief-path
+// behavior unchanged.
+if (a.issue != null && ISSUE_NUM && !BRIEF_TEXT) {
+  const fetched = await safely(
+    () =>
+      agent(
+        `cd ${WORKTREE} first, then run (read-only):
+  gh issue view ${ISSUE_NUM} --json number,title,body,url,updatedAt
+Return the fields VERBATIM in your structured output — do NOT summarize, edit,
+or augment the body. If the command fails, return an empty body.`,
+        {
+          schema: {
+            type: 'object',
+            additionalProperties: true,
+            required: ['title', 'body'],
+            properties: {
+              number: { type: 'integer' },
+              title: { type: 'string' },
+              body: { type: 'string' },
+              url: { type: 'string' },
+              updatedAt: { type: 'string' },
+            },
+          },
+          agentType: 'general-purpose',
+          effort: 'low',
+          phase: 'Explore',
+          label: 'fetch-issue',
+        }
+      ),
+    null,
+    'Issue fetch'
+  )
+  if (fetched && fetched.body) {
+    BRIEF_TEXT = `Issue #${ISSUE_NUM}: ${fetched.title || ''}\n(${fetched.url || 'no url'} · updated ${fetched.updatedAt || 'unknown'})\n\n${fetched.body}`
+    // Give the agent prompts a real TASK line too (only when the launcher supplied
+    // no explicit task) so the requirement-fidelity lens isn't fed the placeholder.
+    if (!a.task)
+      TASK = `Resolve issue #${ISSUE_NUM}: ${fetched.title || '(untitled)'} (${fetched.url || 'no url'}) — full body in the TASK BRIEF below.`
+    log(`Brief self-hydrated from live issue #${ISSUE_NUM} (${fetched.body.length} chars)`)
+  } else if (START_PHASE === 'explore' && !a.task && !a.brief) {
+    // The issue WAS the intended brief source, the fetch failed, and nothing else
+    // authoritative was supplied — fail closed rather than implement on placeholders.
+    inputFailure = `issue #${ISSUE_NUM} hydration failed and no explicit task, briefText, or brief path was supplied — refusing to run agents with no authoritative requirements (fail closed)`
+    log(`Input: ${inputFailure}`)
+  } else {
+    log(`Issue fetch for #${ISSUE_NUM} failed — continuing with the supplied task/brief (existing behavior)`)
+  }
+}
+
+// ── Sol route preflight (Phase 0) ───────────────────────────────────────────
+// Under either route the Sol slots are otherwise only discovered dead at RUNTIME,
+// after each of the first explore batch's Sol slots burns a harness/subagent plus
+// a Claude fallback (the breaker bounds but does not eliminate that tax — ~6
+// wasted spawns in explore alone). The route is statically known at launch, so one
+// cheap probe short-circuits it: a dead route trips the breaker BEFORE any Sol slot
+// spawns. A healthy route costs one tiny agent; only an explicit failure trips it
+// (a null/ambiguous probe leaves the runtime breaker to catch a mid-run death —
+// fail toward attempting Sol). The probe exercises the REAL route end-to-end
+// (an actual gpt-5.6-sol round-trip), not just whether a binary is installed — an
+// installed `codex` with a broken auth/model route would still pass an install
+// check yet fail every real request.
+if (SOL_VIA === 'codex-cli' && MODEL_SPLIT && !halted()) {
+  const probe = await safely(
+    () =>
+      agent(
+        `cd ${WORKTREE} first (read-only, Bash). Probe whether the configured gpt-5.6-sol
+route actually WORKS, not merely whether the binary is installed:
+1. If \`command -v codex\` fails, report available:false, version:"command -v codex failed".
+2. Otherwise run ONE minimal real request (it exercises auth + model routing):
+     printf 'Reply with exactly the token OK and nothing else.' | \\
+       codex -a never -s read-only exec -C "${WORKTREE}" --ephemeral --ignore-user-config \\
+         --color never -m "${SOL_MODEL}" - 2>&1 | tail -20
+   Report available:true ONLY if codex exited 0 AND produced model output (a line
+   containing OK) — i.e. the route round-tripped. Report available:false on any
+   auth/model/route/quota error, a non-zero exit, or empty output; put a short
+   reason (first error line) in version. Record \`codex --version\` in version on success.`,
+        {
+          schema: { type: 'object', additionalProperties: true, required: ['available'], properties: { available: { type: 'boolean' }, version: { type: 'string' } } },
+          agentType: 'general-purpose',
+          effort: 'low',
+          phase: 'Explore',
+          label: 'codex-preflight',
+        }
+      ),
+    null,
+    'codex preflight',
+    'sol' // a terminal Sol/codex quota at preflight marks the route dead, never pauses the run
+  )
+  if (probe && probe.available === false) {
+    solDead = true
+    covNote('preflight', false, `codex gpt-5.6-sol route unusable at launch (${(probe.version && String(probe.version).slice(0, 60)) || 'command -v codex failed'})`)
+    log('codex-cli preflight: the gpt-5.6-sol route is unusable — Sol route marked dead up front; all Sol slots run on Claude')
+  } else {
+    log(`codex-cli preflight: gpt-5.6-sol route ${probe && probe.version ? `(${String(probe.version).slice(0, 40)}) ` : ''}live`)
+  }
+}
+// Agent (router) route mirror: the codex-cli branch above preflights only the
+// codex route, so an unroutable gpt-5.6-sol on the 'agent' route otherwise burned
+// up-to-3 doomed Sol spawns before the runtime breaker tripped. Send one minimal
+// real request through the subagent model param; only a hard null (unroutable)
+// marks the route dead, matching the codex-cli probe's conservative stance. scope
+// 'sol' keeps a terminal Sol quota from pausing the whole Claude run.
+if (SOL_VIA === 'agent' && MODEL_SPLIT && !halted()) {
+  const p = await safely(
+    () => agent('Reply with the single token OK.', { model: SOL_MODEL, effort: 'low', agentType: 'general-purpose', phase: 'Explore', label: 'sol-agent-preflight' }),
+    null,
+    'sol-agent preflight',
+    'sol'
+  )
+  if (p == null) {
+    solDead = true
+    covNote('preflight', false, 'gpt-5.6-sol router unroutable at launch')
+    log('agent-route preflight: gpt-5.6-sol unroutable — Sol route marked dead up front; all Sol slots run on Claude')
+  } else {
+    log('agent-route preflight: gpt-5.6-sol route live')
   }
 }
 
@@ -302,7 +625,7 @@ fail-closed auth/isolation/escaping/disposal/bounded work; coverage & lint caps
 are ratchets; rebuild generated bundles/manifests/snapshots/translations from
 source). Only this repository is writable; the Jellyfin-Enhanced repos are
 read-only. Never deploy to :8099, release, or mutate an external service.
-
+${ENV_SETUP ? `\nENVIRONMENT (run before ANY build/test command in every shell you open):\n  ${ENV_SETUP}\n` : ''}
 REQUIREMENT FIDELITY (binding): The acceptance criteria in the TASK / TASK BRIEF
 below are authoritative. Fix the ACTUAL reported defect and satisfy EVERY
 acceptance criterion. Do NOT infer the intended change from the branch name, and
@@ -316,6 +639,15 @@ ${TASK}
 TASK BRIEF${BRIEF_TEXT ? ' (authoritative — read in full)' : ` — read this file in full FIRST: ${BRIEF}`}:
 ${BRIEF_TEXT || '(brief text not inlined; open the path above before planning)'}
 `
+
+// Equal-share digest for inter-phase handoffs: every item gets budget/n chars,
+// truncating WITHIN items instead of head-slicing the whole array (which showed
+// planners only the first ~3 of 8 pretty-printed explorer maps and threw the
+// rest — including the xhigh-priced Sol fan-out — away).
+const digest = (arr, budget) =>
+  '[' +
+  arr.map((x) => JSON.stringify(x, null, 1).slice(0, Math.floor(budget / Math.max(1, arr.length)))).join(',\n') +
+  ']'
 
 const dedupeKey = (f) => `${f.file || '?'}|${f.line || 0}|${String(f.summary || '').slice(0, 60)}`
 function dedupe(findings) {
@@ -401,7 +733,7 @@ const FINDINGS_SCHEMA = {
       items: {
         type: 'object',
         additionalProperties: true,
-        required: ['file', 'summary', 'failureScenario'],
+        required: ['file', 'summary', 'failureScenario', 'severity'],
         properties: {
           lens: { type: 'string' },
           file: { type: 'string' },
@@ -417,11 +749,11 @@ const FINDINGS_SCHEMA = {
 const VERDICT_SCHEMA = {
   type: 'object',
   additionalProperties: true,
-  required: ['real', 'reason'],
+  required: ['real', 'reason', 'severity'],
   properties: {
     real: { type: 'boolean', description: 'true only if the finding genuinely reproduces / violates a contract' },
     reason: { type: 'string' },
-    severity: { type: 'string', enum: ['blocker', 'major', 'minor'] },
+    severity: { type: 'string', enum: ['blocker', 'major', 'minor'], description: 'your re-judged severity — REQUIRED so the docs/spec severity gate never silently defaults an omitted value to major and churns an extra fix round' },
   },
 }
 const FIX_SCHEMA = {
@@ -441,6 +773,7 @@ const VERIFY_SCHEMA = {
   additionalProperties: true,
   required: ['gates', 'allBlockingPassed'],
   properties: {
+    headSha: { type: 'string', description: 'exact output of `git rev-parse HEAD` in the worktree, read BEFORE running any gate' },
     gates: { type: 'array', items: { type: 'object', additionalProperties: true, required: ['name', 'pass'], properties: { name: { type: 'string' }, pass: { type: 'boolean' }, evidence: { type: 'string' } } } },
     allBlockingPassed: { type: 'boolean', description: 'true if every BLOCKING gate passed (lint is advisory, not blocking)' },
     e2e: { type: 'object', additionalProperties: true, properties: { run: { type: 'boolean' }, pass: { type: 'boolean' }, evidence: { type: 'string' } } },
@@ -476,24 +809,39 @@ function gateCommands() {
 // ═══════════════════════════════════════════════════════════════════════════
 // PHASE 1 — EXPLORE (parallel, read-only)
 // ═══════════════════════════════════════════════════════════════════════════
-phase('Explore')
+if (START_PHASE === 'explore') phase('Explore')
 if (SURFACE_COERCED)
   log(`canopy-loop: unknown surface "${SURFACE_INPUT}" → coerced to "cross" (fail closed: runs all surface gates)`)
 log(`canopy-loop: ${DEPTH} depth · surface=${SURFACE} · runtime=${RUNTIME} · branch ${BRANCH}`)
+if (START_PHASE !== 'explore')
+  log(`canopy-loop: RESUME at "${START_PHASE}" — explore/plan/implement skipped; working from the committed ${BASE}...HEAD range`)
 
-const exploreAngles = [
-  'the OWNING module and the exact functions/types that must change',
-  'every PRODUCER and CONSUMER of the affected behavior (grep the whole tree)',
-  'the nearest ALREADY-IMPLEMENTED analogue and the existing cross-cutting helpers to reuse',
-  'the CONTRACTS at risk (auth/isolation/escaping/disposal/bounded-work/live-config) and the TEST SEAMS',
-  'the CLIENT surface: MUI + legacy layouts, native markup, locale keys, docs impacted',
-  'the SERVER surface: controllers/services/scheduled tasks, .NET tests, generated artifacts',
-  'the DATA/STATE/CONCURRENCY surface: persistence, caches, revisions, invalidation, and the races the change can introduce',
-  'the PERFORMANCE/BOUNDS surface: allocations, N+1 / manager-call counts, unbounded work, and the measurable budgets to assert',
-].slice(0, SIZING.explorers)
+// A docs-surface run gets docs-relevant angles: the standard list's client/
+// server/concurrency/performance explorers have nothing to trace against a
+// markdown-only change (each was also a Sol slot with a codex harness — pure
+// waste on SR-15/#454). Everything else keeps the full standard list.
+const exploreAngles = (SURFACE === 'docs'
+  ? [
+      'the OWNING docs pages and the exact sections/claims that must change',
+      'every PRODUCER and CONSUMER of the documented behavior: the code, gates, and contracts the text describes (grep the whole tree — the docs must not contradict them)',
+      'the nearest ALREADY-WRITTEN analogue page and the repo doc conventions to copy',
+      'the DOCS surface: nav/mkdocs structure, links, code examples, doc-asset policy, and the check:docs / mkdocs gates that validate them',
+    ]
+  : [
+      'the OWNING module and the exact functions/types that must change',
+      'every PRODUCER and CONSUMER of the affected behavior (grep the whole tree)',
+      'the nearest ALREADY-IMPLEMENTED analogue and the existing cross-cutting helpers to reuse',
+      'the CONTRACTS at risk (auth/isolation/escaping/disposal/bounded-work/live-config) and the TEST SEAMS',
+      'the CLIENT surface: MUI + legacy layouts, native markup, locale keys, docs impacted',
+      'the SERVER surface: controllers/services/scheduled tasks, .NET tests, generated artifacts',
+      'the DATA/STATE/CONCURRENCY surface: persistence, caches, revisions, invalidation, and the races the change can introduce',
+      'the PERFORMANCE/BOUNDS surface: allocations, N+1 / manager-call counts, unbounded work, and the measurable budgets to assert',
+    ]
+).slice(0, SIZING.explorers)
 
-const explorations = (
-  await parallel(
+let explorations = []
+if (START_PHASE === 'explore' && !halted()) {
+  const exploreResults = await parallel(
     exploreAngles.map((angle, i) => () =>
       splitAgent(
         i,
@@ -513,24 +861,59 @@ evidence. Only real defects; leave it empty if you see none.`,
       )
     )
   )
-).filter(Boolean)
+  batchOutage(exploreResults, 'Explore')
+  statAdd('explore', exploreResults)
+  explorations = exploreResults.filter(Boolean)
+  log(`Explore: ${explorations.length} maps returned`)
 
-const exploreDigest = JSON.stringify(explorations, null, 1).slice(0, 12000)
-log(`Explore: ${explorations.length} maps returned`)
+  // Evidence quorum: implementing off zero or one map defeats the fan-out's
+  // whole point. Below quorum (and not an outage), spend ONE consolidated
+  // recovery explorer on the direct-Claude route; if still short, pause before
+  // the writer rather than implement on missing evidence.
+  const EXPLORE_QUORUM = Math.min(2, exploreAngles.length)
+  if (!systemicFailure && explorations.length < EXPLORE_QUORUM) {
+    log(`Explore: ${explorations.length}/${exploreAngles.length} maps — below quorum (${EXPLORE_QUORUM}); spawning ONE consolidated recovery explorer (direct Claude)`)
+    const rec = await safely(
+      () =>
+        agent(
+          `${CONTRACTS}
+
+PHASE: EXPLORE (RECOVERY — read-only; do NOT edit any file). Earlier parallel
+explorers failed, so YOU must cover ALL of these angles in ONE consolidated map:
+${exploreAngles.map((s) => '- ' + s).join('\n')}
+Use rg/ls/Read to trace real code. Return where the change lives, who is
+affected, the analogue to copy, helpers to reuse, the contracts touched, and the
+test seams. Cite real paths; never guess.`,
+          { schema: EXPLORE_SCHEMA, agentType: 'Explore', effort: 'high', phase: 'Explore', label: 'explore:recovery' }
+        ),
+      null,
+      'Explore recovery'
+    )
+    statAdd('explore', [rec])
+    if (rec) explorations.push(rec)
+    if (!systemicFailure && explorations.length < EXPLORE_QUORUM) {
+      quorumFailure = `explore produced ${explorations.length}/${EXPLORE_QUORUM} maps even after the recovery agent — refusing to implement on missing evidence`
+      log(`Explore: ${quorumFailure}`)
+    }
+  }
+}
+
+const exploreDigest = digest(explorations, 16000)
 
 // ═══════════════════════════════════════════════════════════════════════════
 // PHASE 2 — PLAN (independent plans → adversarial synthesis into one)
 // ═══════════════════════════════════════════════════════════════════════════
-phase('Plan')
-
 const planAngles = [
   'MINIMAL-CHANGE first: the smallest change at the true owner; delete/delegate state before adding any.',
   'RISK first: identify the failure modes and design the state/failure model that fails closed with fewest moving parts.',
   'REUSE first: maximise use of existing helpers/analogue; avoid any parallel implementation of a shared behavior.',
 ].slice(0, SIZING.planners)
 
-const plans = (
-  await parallel(
+let plans = []
+let canonicalPlan = null
+if (START_PHASE === 'explore' && !halted()) {
+  phase('Plan')
+  const planResults = await parallel(
     planAngles.map((angle, i) => () =>
       splitAgent(
         i,
@@ -550,16 +933,52 @@ docs to update.`,
       )
     )
   )
-).filter(Boolean)
+  batchOutage(planResults, 'Plan')
+  statAdd('plan', planResults)
+  plans = planResults.filter(Boolean)
 
-const canonicalPlan = await safely(
+  // Plan quorum: a single surviving plan collapses the independent-plans
+  // premise. Below quorum (and not an outage), one consolidated recovery
+  // planner on the direct-Claude route; still short → pause before the writer.
+  const PLAN_QUORUM = Math.min(2, planAngles.length)
+  if (!systemicFailure && plans.length < PLAN_QUORUM) {
+    log(`Plan: ${plans.length}/${planAngles.length} plans — below quorum (${PLAN_QUORUM}); spawning ONE consolidated recovery planner (direct Claude)`)
+    const rec = await safely(
+      () =>
+        agent(
+          `${CONTRACTS}
+
+PHASE: PLAN (RECOVERY — read-only). Earlier parallel planners failed. Explore maps (JSON):
+${exploreDigest}
+
+Produce ONE implementation plan that balances ALL of these biases:
+${planAngles.map((s) => '- ' + s).join('\n')}
+Choose the owning layer, reuse-vs-new decisions, the SIMPLEST state/failure
+model, the failing-first tests (admin AND non-admin, negative/fallback), and the
+locale keys + docs to update.`,
+          { schema: PLAN_SCHEMA, effort: 'high', phase: 'Plan', label: 'plan:recovery' }
+        ),
+      null,
+      'Plan recovery'
+    )
+    statAdd('plan', [rec])
+    if (rec) plans.push(rec)
+    if (!systemicFailure && plans.length < PLAN_QUORUM) {
+      quorumFailure = `plan produced ${plans.length}/${PLAN_QUORUM} plans even after the recovery agent — refusing to implement without a plan quorum`
+      log(`Plan: ${quorumFailure}`)
+    }
+  }
+}
+
+if (START_PHASE === 'explore' && !halted()) {
+  canonicalPlan = await safely(
   () =>
     soloSolAgent(
       `${CONTRACTS}
 
 PHASE: PLAN SYNTHESIS (read-only). You are the adversarial judge. Here are ${plans.length}
 independent plans (JSON):
-${JSON.stringify(plans, null, 1).slice(0, 12000)}
+${digest(plans, 12000)}
 
 Score them against the brief and the repository contracts. First (in your own
 reasoning, not as an extra output field) confirm every acceptance criterion in
@@ -575,14 +994,13 @@ and add the least while reusing the most.`,
     ),
   plans[0] || null,
   'Plan synthesis'
-)
-log(`Plan: ${plans.length} plans → 1 canonical (${(canonicalPlan && canonicalPlan.owningLayer) || 'n/a'})`)
+  )
+  log(`Plan: ${plans.length} plans → 1 canonical (${(canonicalPlan && canonicalPlan.owningLayer) || 'n/a'})`)
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // PHASE 3 — IMPLEMENT (single writer)
 // ═══════════════════════════════════════════════════════════════════════════
-phase('Implement')
-
 const implementPrompt = `${CONTRACTS}
 
 PHASE: IMPLEMENT. You are the SOLE writer in this worktree. Follow this canonical
@@ -613,33 +1031,43 @@ self-confidence (high/medium/low) with any open TODOs.`
 const IMPL_MODEL = a.implementModel || 'fable'
 const IMPL_FALLBACK = a.implementFallback || 'opus'
 const implOpts = { schema: IMPLEMENT_SCHEMA, agentType: 'general-purpose', effort: 'high', phase: 'Implement' }
-let implemented = await safely(
-  () => agent(implementPrompt, { ...implOpts, model: IMPL_MODEL, label: `implement:${IMPL_MODEL}` }),
-  null,
-  `Implement (${IMPL_MODEL})`
-)
-if (!implemented) {
-  log(`Implement: ${IMPL_MODEL} unavailable/exhausted → falling back to ${IMPL_FALLBACK} (high)`)
+let implemented = null
+if (START_PHASE !== 'explore') {
+  // Resumed run: the implementation is already COMMITTED on the branch (that is
+  // the premise of resuming). Synthesize a placeholder so the readyForPR logic
+  // works unchanged; reviewers/verify read the real state from BASE...HEAD.
+  implemented = { changedFiles: [], commits: [], selfConfidence: 'medium', openTodos: [], resumed: true }
+} else if (!halted()) {
+  phase('Implement')
   implemented = await safely(
-    () =>
-      agent(
-        `${implementPrompt}
+    () => agent(implementPrompt, { ...implOpts, model: IMPL_MODEL, label: `implement:${IMPL_MODEL}` }),
+    null,
+    `Implement (${IMPL_MODEL})`,
+    'implement' // a primary-model quota falls back to Opus below, not a whole-run pause
+  )
+  if (!implemented && !systemicFailure) {
+    log(`Implement: ${IMPL_MODEL} unavailable/exhausted → falling back to ${IMPL_FALLBACK} (high)`)
+    implemented = await safely(
+      () =>
+        agent(
+          `${implementPrompt}
 
 NOTE: a previous attempt may have left partial changes or commits in the
 worktree. Inspect \`git -C ${WORKTREE} status\` and \`git -C ${WORKTREE} log --oneline ${BASE}..HEAD\`
 and CONTINUE from there rather than restarting from scratch.`,
-        { ...implOpts, model: IMPL_FALLBACK, label: `implement:${IMPL_FALLBACK}-fallback` }
-      ),
-    null,
-    `Implement (${IMPL_FALLBACK})`
-  )
+          { ...implOpts, model: IMPL_FALLBACK, label: `implement:${IMPL_FALLBACK}-fallback` }
+        ),
+      null,
+      `Implement (${IMPL_FALLBACK})`
+    )
+  }
+  log(`Implement: ${(implemented && implemented.changedFiles && implemented.changedFiles.length) || 0} files, confidence ${(implemented && implemented.selfConfidence) || '?'}`)
 }
-log(`Implement: ${(implemented && implemented.changedFiles && implemented.changedFiles.length) || 0} files, confidence ${(implemented && implemented.selfConfidence) || '?'}`)
 
 // ═══════════════════════════════════════════════════════════════════════════
 // PHASE 4 — ADVERSARIAL REVIEW LOOP (parallel review → verify → single fixer)
 // ═══════════════════════════════════════════════════════════════════════════
-phase('Review')
+if (!halted() && START_PHASE !== 'verify') phase('Review')
 
 const reviewContext = `${CONTRACTS}
 
@@ -649,12 +1077,85 @@ The change is on branch ${BRANCH}. Inspect it with:
   git -C ${WORKTREE} status --porcelain   # MUST be empty — a non-empty result is a finding
 The reviewed diff is the COMMITTED range ${BASE}...HEAD; any uncommitted change is
 unreviewed and would be lost on push, so treat a dirty worktree as a real finding.
-You see ONLY the diff and this brief — never the implementer's reasoning.`
+You see ONLY the diff and this brief — never the implementer's reasoning.${
+  SURFACE === 'docs' || REVIEW_MODE === 'spec'
+    ? `
+
+DOCS/PROSE FINDING BAR: for documentation and specification text, a finding must
+be a FACTUAL defect — a wrong command or code sample, a broken link, a
+contradiction with a repository contract or an acceptance criterion, or an
+invalid example. Wording, tone, style, and restructuring preferences are NOT
+findings.
+SEVERITY (required on EVERY finding — it drives whether a fix round runs):
+  • blocker = following the text causes a wrong/destructive action, or it
+    contradicts a binding repository contract or an acceptance criterion;
+  • major   = a factual error a reader would act on (wrong command/flag/path,
+    broken link, invalid example) but not destructive;
+  • minor   = stale/imprecise phrasing with NO wrong action — reported as an
+    advisory note, never forcing another round.
+Do not inflate a minor to major to force a fix; do not hide a blocker as minor.`
+    : ''
+}${
+  REVIEW_MODE === 'spec'
+    ? `
+SPEC REVIEW MODE: every finding MUST cite the acceptance criterion, repository
+contract, or authoritative platform behavior it violates. Editorial preferences
+and speculative EXTRA requirements the brief never asked for are NOT findings.`
+    : ''
+}`
+
+// Finding LEDGER: what previous rounds already fixed or refuted (with the
+// verifier's reasons). Injected into every reviewer prompt from round 2 on so
+// reviewers stop re-reporting resolved items — the main convergence lever on
+// every surface, and the difference between 2 rounds and 10 on prose-heavy ones.
+// Seed from the launcher (a.ledger) so a startPhase:'review' resume keeps the
+// refutation/fix suppression it earned last session instead of re-churning items
+// earlier rounds already disposed of. The ledger references file:line in the same
+// committed BASE...HEAD range the resume reviews, so seeding only suppresses
+// re-reports — never invents a disposition. Prior-run entries are marked round:0.
+// Persist the returned `ledger` and pass it back on resume (see SKILL.md/README).
+const ledger = Array.isArray(a.ledger)
+  ? a.ledger
+      .filter((e) => e && e.file && e.status)
+      .map((e) => ({
+        file: e.file,
+        line: e.line || 0,
+        summary: String(e.summary || '').slice(0, 140),
+        status: e.status,
+        reason: String(e.reason || '').slice(0, 200),
+        round: 0,
+      }))
+  : [] // { file, line, summary, status: 'fixed'|'refuted'|'advisory', reason, round }
+// Render the ledger as compact ONE-LINE entries with an equal-share budget, so
+// EVERY disposition survives (truncated within its own line) rather than the
+// newest rounds vanishing whole. The old `JSON.stringify(ledger).slice(0,6000)`
+// head-slice kept the oldest ~17 entries and silently dropped later rounds on
+// churny (SR-15-scale) runs — re-enabling exactly the re-report noise the ledger
+// exists to suppress (the same defect digest() fixed for explore/plan handoffs).
+const LEDGER_BUDGET = 12000
+const ledgerBlock = () => {
+  if (!ledger.length) return ''
+  const per = Math.max(120, Math.floor(LEDGER_BUDGET / ledger.length))
+  const lines = ledger.map((e) => {
+    const line = `- [${e.status} r${e.round}] ${e.file || '?'}:${e.line || 0} — ${String(e.summary || '')} (${String(e.reason || '')})`
+    return line.length > per ? line.slice(0, per - 1) + '…' : line
+  })
+  return `
+
+FINDING LEDGER (already resolved in earlier rounds of THIS review):
+${lines.join('\n')}
+Do NOT re-report a "fixed", "refuted", or "advisory" item — or a trivial
+rewording of one — unless you bring NEW evidence that the verifier's reason is
+wrong or the fix is incomplete. A re-report without new evidence is noise and
+will be refuted.`
+}
+const reviewCtx = () => reviewContext + ledgerBlock()
 
 // A Claude adversarial reviewer for a scope: lens set → that lens only; lens null
 // → a whole-diff pass. Used both as a first-class reviewer AND as the fallback
 // when a Sol slot can't be routed, so no review scope is ever silently lost.
 function claudeReview(roundNo, i, lens) {
+  if (systemicFailure) return null // outage: don't spawn another doomed reviewer
   const scoped = lens
     ? `PHASE: ADVERSARIAL REVIEW — lens: "${lens}".
 Assume the change is WRONG and prove how, THROUGH THIS LENS ONLY.`
@@ -662,8 +1163,7 @@ Assume the change is WRONG and prove how, THROUGH THIS LENS ONLY.`
 Assume the change is WRONG and prove how, across correctness, security/privacy
 (fail-closed), lifecycle/concurrency, bounds/perf/no-jank, JF12 + MUI/legacy
 compatibility, test strength, product scope, and docs/locale/generated-artifact gaps.`
-  return agent(
-    `${reviewContext}
+  const prompt = `${reviewCtx()}
 
 ${scoped}
 A finding needs a real file/line and a concrete failure scenario (inputs/state →
@@ -672,8 +1172,9 @@ Watch for mechanically-similar-but-semantically-different code (side effects
 inside asserts/guards, eager vs lazy defaults, odd-length buffer truncation,
 bounds checks present in one build only, byte-vs-UTF assumptions, escape/format
 passes over the wrong data). Reject any workaround that needs a paragraph-long
-comment to justify it. Return only real findings (empty array if none).`,
-    { schema: FINDINGS_SCHEMA, agentType: 'code-reviewer', effort: 'medium', phase: 'Review', label: `review-r${roundNo}:${i + 1}${lens ? '' : ':whole'}` }
+comment to justify it. Return only real findings (empty array if none).`
+  return classified(() =>
+    agent(prompt, { schema: FINDINGS_SCHEMA, agentType: 'code-reviewer', effort: 'medium', phase: 'Review', label: `review-r${roundNo}:${i + 1}${lens ? '' : ':whole'}` })
   )
 }
 
@@ -689,7 +1190,7 @@ function solThunk(roundNo, i, lens) {
     : `across correctness, security/privacy (fail-closed), lifecycle/concurrency,
 bounds/perf/no-jank, JF12 + MUI/legacy compatibility, test strength, product
 scope, and docs/locale/generated-artifact gaps.`
-  const solPrompt = `${reviewContext}
+  const solPrompt = `${reviewCtx()}
 
 PHASE: ADVERSARIAL REVIEW (gpt-5.6-sol). Assume the change is WRONG and prove how,
 ${scope}
@@ -710,59 +1211,153 @@ mechanically-similar-but-semantically-different code. Return only real findings
 
 PHASE: gpt-5.6-sol REVIEW via the local \`codex\` CLI. You are a HARNESS — run the
 external reviewer and relay its structured findings; do NOT review yourself.
-Run from ${WORKTREE} (HEAD must be committed and clean):
-  P=$(mktemp); R=$(mktemp); EV=$(mktemp); ER=$(mktemp)
-  trap 'rm -f "$P" "$R" "$EV" "$ER"' EXIT
-  cat > "$P" <<'${SOL_HEREDOC}'
+Work from ${WORKTREE} (HEAD must be committed and clean):
+1. Allocate two unique temp paths P and R by running \`mktemp\` twice (Bash). Do
+   NOT put them under ${WORKTREE}/.git — in a linked worktree (git worktree add)
+   .git is a gitdir POINTER FILE, not a directory, so writing under .git/ fails
+   with ENOTDIR. mktemp's OS-temp paths are outside the worktree and never dirty
+   git status.
+2. Write the REVIEW PROMPT between <<<PROMPT>>> markers VERBATIM to path P with
+   the Write tool (no shell heredoc — so untrusted TASK/BRIEF text embedded in the
+   prompt can never close a delimiter and spill into the shell). Do not paraphrase
+   or summarise it.
+3. Run (Bash), substituting the real P and R paths:
+     codex -a never -s read-only exec -C "${WORKTREE}" --ephemeral --ignore-user-config \\
+       --color never --json -m "${SOL_MODEL}" -c model_reasoning_effort="${SOL_EFFORT}" \\
+       --output-schema "${CODEX_SCHEMA_PATH}" -o R - < P
+4. Read R (JSON conforming to the schema) and RETURN its findings mapped to THIS
+   tool's schema (lens="gpt-5.6-sol", file, line, severity, summary,
+   failureScenario). If \`codex\` is missing OR exits non-zero, the Sol review did
+   NOT run: RETURN {"findings": [], "solUnavailable": true} so the loop covers this
+   scope with Claude instead. Do NOT invent findings and do NOT return a bare empty
+   array on failure — reserve {"findings": []} for a genuine clean codex run.
+5. ALWAYS delete the temp files before you finish — run \`rm -f\` on the real P and
+   R paths whether codex succeeded or failed — so no prompt or result files
+   accumulate in the OS temp directory across runs.
+
+<<<PROMPT>>>
 ${solPrompt}
-${SOL_HEREDOC}
-  codex -a never -s read-only exec -C "${WORKTREE}" --ephemeral --ignore-user-config \\
-    --color never --json -m "${SOL_MODEL}" -c model_reasoning_effort="${SOL_EFFORT}" \\
-    --output-schema "${CODEX_SCHEMA_PATH}" -o "$R" - < "$P" > "$EV" 2> "$ER"
-Then read "$R" (JSON conforming to the schema) and RETURN its findings mapped to
-THIS tool's schema (lens="gpt-5.6-sol", file, line, severity, summary,
-failureScenario). The temp files are cleaned up by the trap on shell exit.
-If \`codex\` is missing OR exits non-zero, the Sol review did NOT run: RETURN
-{"findings": [], "solUnavailable": true} so the loop covers this scope with
-Claude instead. Do NOT invent findings and do NOT return a bare empty array on
-failure — reserve {"findings": []} for a genuine clean codex run.`,
+<<<PROMPT>>>`,
             { schema: FINDINGS_SCHEMA, agentType: 'general-purpose', effort: 'medium', phase: 'Review', label: `sol-cli-r${roundNo}:${i + 1}` }
             )
             return r && !r.solUnavailable ? r : null
-          } catch (_) {
-            return null // codex harness threw → Claude fallback below (scope never lost)
+          } catch (e) {
+            noteAgentError(e, 'sol') // codex/Sol quota is a separate provider → Claude fallback below (scope never lost)
+            return null
           }
         }
       : async () => {
           try {
             const r = await agent(solPrompt, { schema: FINDINGS_SCHEMA, model: SOL_MODEL, effort: SOL_EFFORT, phase: 'Review', label: `sol-r${roundNo}:${i + 1}` })
             return r != null ? r : null
-          } catch (_) {
-            return null // Sol not routable → Claude fallback below
+          } catch (e) {
+            noteAgentError(e, 'sol') // Sol quota/route error is a separate provider → Claude fallback below
+            return null
           }
         }
 
   return async () => {
+    if (systemicFailure) return null // outage: no Sol attempt, no Claude fallback
+    if (solDead) {
+      covNote('Review', false, 'sol route dead (circuit breaker)')
+      return claudeReview(roundNo, i, lens) // scope never lost
+    }
     const r = await runSol()
-    if (r != null) return r
+    if (r != null) {
+      noteSolSuccess()
+      covNote('Review', true)
+      solOkThisRound = true
+      return r
+    }
+    noteSolFailure('review sol slot failed/unavailable')
+    covNote('Review', false, 'sol review slot failed/unavailable')
+    if (systemicFailure) return null // terminal: the fallback would die the same way
     return claudeReview(roundNo, i, lens) // scope never lost
   }
 }
 
 const confirmedAll = []
+// Confirmed-but-minor docs/spec findings reported to the launcher instead of
+// forcing another fix round (see SEVERITY_GATED above).
+const advisoryNotes = []
 let cleanRound = false
 // Set only when a round TERMINATES the loop with incomplete coverage — a reviewer
 // or a finding-verifier failed to return — so we never certify such a round clean.
 let reviewIncomplete = false
+// Confirmed findings a fixer left UNAPPLIED, tracked persistently by stable
+// content fingerprint (dedupeKey: file|line|summary). A single boolean here was
+// unsafe: any later round whose fixer fully applied its OWN (possibly unrelated)
+// findings reset it to false, silently clearing an older still-unresolved finding
+// and certifying a branch that still carries a defect. A fingerprint is removed
+// ONLY when THAT SAME finding is later applied by a fixer or independently refuted
+// by a verifier; readyForPR blocks while the map is non-empty. Distinct from
+// reviewIncomplete (a COVERAGE gap) — here coverage was complete but the fixer's
+// own report says the defect is still in the diff.
+const unresolvedFindings = new Map() // fingerprint → { file, line, summary, round }
 const MIXED_ROUND_CAP = SIZING.roundCap
+
+// ── non-convergence (progress-stall) detector + runaway backstop ─────────────
+// The round loop's real job is non-convergence DETECTION, not budget control
+// (terminal-failure pauses handle budget). A legitimately-converging change must
+// NEVER be cut off by an arbitrary count; a genuinely stalled one must stop ASAP
+// and surface for a human. So, evaluated after each review round from signals
+// already computed:
+//   • PROGRESS = the confirmed-finding count (what survives verification and goes
+//     to the fixer) strictly DECREASED vs the previous round, OR ≥1 confirmed
+//     finding was newly APPLIED this round.
+//   • STALL    = STALL_PATIENCE consecutive rounds with no progress (default 2),
+//     OR a round whose confirmed findings are WHOLLY a re-report of items the
+//     ledger already disposed of in an earlier round (pure oscillation).
+// On a stall the loop stops with the same not-clean / residual-risk shape the old
+// cap-hit produced (loopClean stays false; readyForPR cannot certify) plus a
+// "did not converge" residual so a human can split the change.
+// The BACKSTOP is an absolute ceiling so a pathological entangled file cannot
+// loop forever even while nominally making progress one finding at a time.
+const STALL_PATIENCE = Math.max(1, a.stallPatience != null ? a.stallPatience : 2)
+// An explicit args.hardRoundCap means the caller wants the OLD fixed-count
+// behavior: run up to exactly that many rounds and DISABLE the progress-stall
+// early stop (the backstop IS the hard cap). Otherwise the stall detector is the
+// primary terminator and the backstop is a high ceiling.
+const STALL_DETECT = !HARD_CAP_SET
+// Absolute round ceiling. Explicit hardRoundCap → that fixed count. Else an
+// explicit args.backstopRounds is honored as-is (min 1); the default is a high
+// ceiling floored at the old hard-cap-equivalent (~25 for code, roundCap+1 for
+// docs/spec where the stall detector terminates far sooner anyway).
+const BACKSTOP_ROUNDS = Math.max(
+  1,
+  HARD_CAP_SET
+    ? HARD_ROUND_CAP
+    : a.backstopRounds != null
+    ? a.backstopRounds
+    : SEVERITY_GATED
+    ? HARD_ROUND_CAP
+    : Math.max(HARD_ROUND_CAP, 25)
+)
+// Progress-stall bookkeeping across rounds.
+let prevConfirmedCount = null // confirmed count of the previous fixer round
+let noProgressStreak = 0 // consecutive rounds with no progress
+let reviewStalled = false // the loop stopped on a progress stall (non-convergence)
+let stallOscillation = false // the stall was pure oscillation (all re-reports), not just a streak
 let round = 0
-while (round < HARD_ROUND_CAP && !cleanRound) {
+if (START_PHASE === 'verify') {
+  // Verify-only resume: the review loop is SKIPPED, so by default this run can
+  // never certify the branch clean — readyForPR stays false (fail closed). The
+  // reviewedHead escape hatch may flip this AFTER verify establishes HEAD (see
+  // the post-verify block); use startPhase:'review' (or a full run) otherwise.
+  reviewIncomplete = true
+  if (REVIEWED_HEAD)
+    log(`verify-only resume: review loop skipped — will certify the prior clean review IFF verify reports HEAD === reviewedHead (${REVIEWED_HEAD.slice(0, 12)}…)`)
+  else log('verify-only resume: review loop skipped — this run cannot certify readyForPR (fail closed)')
+}
+while (round < BACKSTOP_ROUNDS && !cleanRound && !halted() && START_PHASE !== 'verify') {
   round++
+  solOkThisRound = false
 
   // Rounds 1..MIXED_ROUND_CAP run the mixed panel (Claude lenses + gpt-5.6-sol).
   // If still not clean after that, review CONTINUES with gpt-5.6-sol as the ONLY
-  // reviewer (user policy) for every remaining round up to HARD_ROUND_CAP: all
-  // lenses run on Sol plus the whole-diff Sol reviewer(s), no Claude lens
+  // reviewer (user policy) for every remaining round until the loop terminates
+  // (clean / stall / backstop): all lenses run on Sol plus the whole-diff Sol
+  // reviewer(s), no Claude lens
   // reviewers. (A Sol slot still falls back to Claude for its scope ONLY if Sol
   // can't be routed at all — fail closed so no lens is left unreviewed.)
   const gptOnly = round > MIXED_ROUND_CAP
@@ -791,9 +1386,19 @@ while (round < HARD_ROUND_CAP && !cleanRound) {
   }
   const claudeLensCount = gptOnly ? 0 : (MODEL_SPLIT ? LENSES.filter((_, i) => !solSlot(i)).length : LENSES.length)
   const solCount = roundThunks.length - claudeLensCount
-  log(`Review round ${round}/${HARD_ROUND_CAP}${gptOnly ? ' [gpt-only]' : ''} — ${claudeLensCount} Claude lens + ${solCount}× ${SOL_MODEL} (${SOL_VIA}, ${SOL_EFFORT})${MODEL_SPLIT && !gptOnly ? ' [50/50 + whole-diff]' : ''}`)
+  log(`Review round ${round}/${BACKSTOP_ROUNDS}${gptOnly ? ' [gpt-only]' : ''}${STALL_DETECT ? ` [stall-patience ${STALL_PATIENCE}]` : ' [fixed-cap]'} — ${claudeLensCount} Claude lens + ${solCount}× ${SOL_MODEL} (${SOL_VIA}, ${SOL_EFFORT})${MODEL_SPLIT && !gptOnly ? ' [50/50 + whole-diff]' : ''}`)
 
   const results = await parallel(roundThunks)
+  statAdd('review', results)
+  if (batchOutage(results, `Review round ${round}`)) {
+    reviewIncomplete = true
+    log(`Review round ${round}: provider outage — pausing instead of spawning more agents`)
+    break
+  }
+  if (!solOkThisRound) {
+    roundsWithoutSol.push(round)
+    log(`Review round ${round}: NO real gpt-5.6-sol coverage — every Sol slot fell back to Claude (route problem, not a clean mixed review)`)
+  }
   const failedWorkers = results.filter((r) => r == null).length
   const raw = results.filter(Boolean).flatMap((r) => (r && r.findings) || [])
 
@@ -822,7 +1427,9 @@ while (round < HARD_ROUND_CAP && !cleanRound) {
 PHASE: VERIFY FINDING. Try hard to REFUTE this claimed defect. Default to
 real=false when uncertain — only real=true if it genuinely reproduces or truly
 violates a repository contract on a reachable path.
-FINDING (${f.lens || '?'}) ${f.file}:${f.line || '?'} — ${f.summary}
+Return severity (blocker/major/minor) REQUIRED — your own re-judgment of the
+confirmed finding${SEVERITY_GATED ? ' (this surface reports confirmed minors as advisory notes rather than forcing another fix round, so an accurate minor-vs-major call matters)' : ''}.
+FINDING (${f.lens || '?'}) ${f.file}:${f.line || '?'} — ${f.summary} [reviewer severity: ${f.severity || 'unset'}]
 SCENARIO: ${f.failureScenario}`,
         { schema: VERDICT_SCHEMA, agentType: 'code-reviewer', effort: 'medium', phase: 'Review', label: `verify-r${round}:${i + 1}` },
         // In a gpt-only round, finding-verification runs on Sol too (gpt is the
@@ -833,10 +1440,40 @@ SCENARIO: ${f.failureScenario}`,
     )
   )
 
+  statAdd('findingVerification', verdicts)
+  if (batchOutage(verdicts, `Review round ${round} finding-verification`)) {
+    reviewIncomplete = true
+    log(`Review round ${round}: provider outage during finding-verification — pausing`)
+    break
+  }
+
   // A missing verdict (verifier agent failed) is NOT a refutation — the finding
   // is unresolved, not cleared. Only a returned real=false counts as refuted.
-  const unverified = deduped.filter((_, i) => verdicts[i] == null).length
-  const confirmed = deduped.filter((f, i) => verdicts[i] && verdicts[i].real)
+  const pairs = deduped.map((f, i) => ({ f, v: verdicts[i] }))
+  const unverified = pairs.filter((p) => p.v == null).length
+  const confirmedPairs = pairs.filter((p) => p.v && p.v.real)
+  // Ledger: refuted findings carry the verifier's reason forward so later
+  // rounds don't re-litigate them. An independent refutation of a finding also
+  // CLEARS any prior unresolved mark for that same fingerprint — it is no longer
+  // a live defect (the verifier proved it does not reproduce).
+  for (const p of pairs)
+    if (p.v && !p.v.real) {
+      ledger.push({ file: p.f.file, line: p.f.line || 0, summary: String(p.f.summary || '').slice(0, 140), status: 'refuted', reason: String(p.v.reason || '').slice(0, 200), round })
+      unresolvedFindings.delete(dedupeKey(p.f))
+    }
+  // Severity gate (docs/spec only): confirmed MINORS become advisory notes for
+  // the launcher; only blocker/major findings reach the fixer. The severity is
+  // the verifier's when it gave one (it re-judged the finding), else the
+  // reviewer's, else major (fail closed toward fixing).
+  const sevOf = (p) => (p.v && p.v.severity) || p.f.severity || 'major'
+  let confirmed = confirmedPairs.map((p) => p.f)
+  if (SEVERITY_GATED) {
+    for (const p of confirmedPairs.filter((p) => sevOf(p) === 'minor')) {
+      advisoryNotes.push(`${p.f.file}:${p.f.line || '?'} — ${p.f.summary} [confirmed minor: ${String(p.v.reason || '').slice(0, 120)}]`)
+      ledger.push({ file: p.f.file, line: p.f.line || 0, summary: String(p.f.summary || '').slice(0, 140), status: 'advisory', reason: 'confirmed minor — reported as an advisory note, not fixed', round })
+    }
+    confirmed = confirmedPairs.filter((p) => sevOf(p) !== 'minor').map((p) => p.f)
+  }
   if (!confirmed.length) {
     if (unverified || failedWorkers) {
       reviewIncomplete = true
@@ -844,10 +1481,13 @@ SCENARIO: ${f.failureScenario}`,
       break
     }
     cleanRound = true
-    log(`Review round ${round}: ${deduped.length} findings, all refuted → clean`)
+    log(
+      `Review round ${round}: ${deduped.length} findings, ${
+        advisoryNotes.length ? `no blocker/major confirmed (${advisoryNotes.length} minor(s) reported as advisory) → clean` : 'all refuted → clean'
+      }`
+    )
     break
   }
-  confirmedAll.push(...confirmed.map((f) => ({ ...f, round })))
   // A finding whose verifier failed to return is neither confirmed nor refuted:
   // that scope is unresolved even though we DID confirm (and will fix) others in
   // the same batch. Don't let the fixed-confirmed path silently drop it — mark the
@@ -857,11 +1497,23 @@ SCENARIO: ${f.failureScenario}`,
     reviewIncomplete = true
     log(`Review round ${round}: ${confirmed.length} confirmed but ${unverified} finding(s) unverified (verifier failure) → coverage incomplete, run cannot certify clean`)
   }
+  if (systemicFailure) {
+    reviewIncomplete = true
+    log(`Review round ${round}: provider outage — not spawning the fixer`)
+    break
+  }
   log(`Review round ${round}: ${confirmed.length} confirmed → fixing`)
 
+  // Stable per-finding ids the fixer reports back in applied/unresolved, so we
+  // trust the fixer's OWN account of what it fixed rather than assuming a non-null
+  // return resolved everything (a fixer that returns applied:[], unresolved:[…]
+  // otherwise got its findings marked fixed and could be certified by the next
+  // empty round — the reproduced fail-open).
+  const fixIds = confirmed.map((_, i) => `r${round}f${i + 1}`)
+  const confirmedForFixer = confirmed.map((f, i) => ({ id: fixIds[i], ...f }))
   // Wrap the code-writing fixer in safely(): a StructuredOutput retry-cap throw
   // must NOT abort the whole workflow — verify still needs to run and report.
-  await safely(
+  const fixResult = await safely(
     () =>
       agent(
         `${CONTRACTS}
@@ -875,20 +1527,100 @@ path — or making a second fix to the same state machine/owner — STOP and try
 deletion, reuse, or single ownership first; simpler is required over another
 guard. Do not fix anything not listed. ${COMMIT_RULE}
 
+REPORT HONESTLY: return \`applied\` = the \`id\`s you FULLY fixed and committed, and
+\`unresolved\` = the \`id\`s you could NOT fix. Every confirmed \`id\` below MUST
+appear in exactly one of the two lists — do not claim an id you did not commit a
+real fix for. A finding you leave out or list in \`unresolved\` blocks certification
+(honest is better than a false clean).
+
 CONFIRMED FINDINGS:
-${JSON.stringify(confirmed, null, 1).slice(0, 10000)}`,
+${JSON.stringify(confirmedForFixer, null, 1).slice(0, 10000)}`,
         { schema: FIX_SCHEMA, agentType: 'general-purpose', effort: 'high', phase: 'Review', label: `fix-r${round}` }
       ),
     null,
     `Review fixer (round ${round})`
   )
+  const appliedSet = new Set(
+    fixResult && Array.isArray(fixResult.applied) ? fixResult.applied.map((x) => String(x).trim()) : []
+  )
+  const reportedUnresolved =
+    fixResult && Array.isArray(fixResult.unresolved) ? fixResult.unresolved.filter((x) => x != null && String(x).trim()) : []
+  // Ledger + resolved-count: ONLY findings the fixer reports applied (by id) count
+  // as fixed/resolved and clear their unresolved mark. Every OTHER confirmed
+  // finding — a reported-unresolved id, or one silently dropped by a null/partial
+  // fixer — is recorded in unresolvedFindings by its stable fingerprint and stays
+  // there across rounds until it is itself applied or independently refuted. This
+  // is what stops a later unrelated fully-applied round (or a non-deterministically
+  // empty clean round) from certifying a branch that still carries this defect.
+  let appliedThisRound = 0
+  confirmed.forEach((f, i) => {
+    const fp = dedupeKey(f)
+    if (fixResult && appliedSet.has(fixIds[i])) {
+      ledger.push({ file: f.file, line: f.line || 0, summary: String(f.summary || '').slice(0, 140), status: 'fixed', reason: `applied by the round-${round} fixer`, round })
+      confirmedAll.push({ ...f, round })
+      unresolvedFindings.delete(fp)
+      appliedThisRound++
+    } else {
+      unresolvedFindings.set(fp, { file: f.file, line: f.line || 0, summary: String(f.summary || '').slice(0, 140), round })
+    }
+  })
+  if (appliedThisRound < fixIds.length || reportedUnresolved.length || !fixResult)
+    log(`Review round ${round}: fixer applied ${appliedThisRound}/${fixIds.length} confirmed finding(s)${reportedUnresolved.length ? `, ${reportedUnresolved.length} reported unresolved` : ''}${fixResult ? '' : ' (fixer returned nothing)'} → ${unresolvedFindings.size} finding(s) still unresolved; run cannot certify until they are fixed`)
+
+  // ── progress-stall check (non-convergence detection) ──────────────────────
+  // Reached only when this round confirmed blocker/major findings and ran a
+  // fixer (clean and coverage-incomplete rounds already broke out above). PURE
+  // OSCILLATION: the confirmed set is wholly a re-report of items the ledger
+  // disposed of in an EARLIER round (fixed/refuted/advisory) — the reviewers are
+  // re-litigating settled findings, the clearest non-convergence signal. STREAK:
+  // STALL_PATIENCE consecutive rounds where the confirmed count did not fall and
+  // the fixer applied nothing new. Either way we stop and surface for a human
+  // rather than churn to the backstop.
+  if (STALL_DETECT) {
+    const priorLedgerFps = new Set(
+      ledger
+        .filter((e) => e.round !== round && (e.status === 'fixed' || e.status === 'refuted' || e.status === 'advisory'))
+        .map(dedupeKey)
+    )
+    const pureOscillation = confirmed.length > 0 && confirmed.every((f) => priorLedgerFps.has(dedupeKey(f)))
+    const progressed = (prevConfirmedCount != null && confirmed.length < prevConfirmedCount) || appliedThisRound > 0
+    if (progressed) noProgressStreak = 0
+    else noProgressStreak++
+    prevConfirmedCount = confirmed.length
+    if (pureOscillation || noProgressStreak >= STALL_PATIENCE) {
+      reviewStalled = true
+      stallOscillation = pureOscillation
+      log(
+        `Review round ${round}: STALL — ${
+          pureOscillation
+            ? 'confirmed findings are wholly a re-report of items already disposed of in the ledger (pure oscillation)'
+            : `${noProgressStreak} consecutive round(s) without progress (STALL_PATIENCE=${STALL_PATIENCE})`
+        }; review is not converging → stopping and surfacing for a human`
+      )
+      break
+    }
+  } else {
+    prevConfirmedCount = confirmed.length
+  }
 }
-if (!cleanRound)
+if (!cleanRound && START_PHASE !== 'verify')
   log(
     reviewIncomplete
       ? `Review: ended without a certified-clean round — coverage incomplete (reviewer/verifier failure); will report as residual risk`
-      : `Review: hit round cap (${HARD_ROUND_CAP}) with unresolved findings — will report as residual risk`
+      : reviewStalled
+      ? `Review: did NOT converge — stopped at round ${round} on a progress ${stallOscillation ? 'oscillation (re-report set)' : `stall (${STALL_PATIENCE} no-progress round(s))`}; surfacing for a human`
+      : `Review: hit the runaway backstop (${BACKSTOP_ROUNDS} rounds) with unresolved findings — will report as residual risk`
   )
+// Mixed-model contract enforcement on the CERTIFYING round. Every round always
+// requests ≥1 gpt-5.6-sol reviewer (Math.max(1, SOL_REVIEWERS)); if the round that
+// went clean had NO real Sol coverage — every Sol slot fell back to Claude because
+// the route was down — it is an all-Claude review, not the documented cross-family
+// one, so it must not certify (roundsWithoutSol already records it, but readyForPR
+// ignored that field). round>0 excludes the reviewedHead escape hatch (no round ran).
+if (cleanRound && round > 0 && !solOkThisRound && START_PHASE !== 'verify') {
+  reviewIncomplete = true
+  log(`Review: the clean round ${round} ran with NO real gpt-5.6-sol coverage (Sol route down) — not a certified cross-family review; fail closed`)
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // PHASE 4.5 — LOCALIZE (cheap, low-effort translation busywork; NOT reviewed)
@@ -897,7 +1629,18 @@ if (!cleanRound)
 // parity. Implementer/fixers add new i18n keys only to the base en.json; one
 // low-effort agent (gpt/opus on low) fans them out to every locale.
 // ═══════════════════════════════════════════════════════════════════════════
-if (SURFACE !== 'server') {
+// Skipped for 'server' (no client locale surface) and 'docs' (docs-only changes
+// never touch js/locales; the validate-translations gate still runs in Verify,
+// so a docs change that somehow touched en.json still fails closed at the gate).
+// RUNS on a verify-resume too: a run that paused between the clean review round
+// and Localize left new en.json keys un-fanned-out, so a verify-only resume that
+// skipped Localize would fail validate-translations forever (or invite the
+// verify-fixer into the mass locale edits the fix prompts forbid). The phase is
+// cheap and self-no-ops when en.json has no new/changed keys, its chore(i18n)
+// commit lands BEFORE the first verify so verifyFixCommitted HEAD tracking is
+// untouched, and it is never adversarially reviewed — so it cannot poison
+// certification. Hence no START_PHASE guard here.
+if (SURFACE !== 'server' && SURFACE !== 'docs' && !halted()) {
   phase('Localize')
   log(`Localize: fanning base-locale keys out to all locales (effort=${LOCALIZE_EFFORT})`)
   await safely(
@@ -926,7 +1669,7 @@ locales, do NOTHING and report "no locale work needed".`,
 // ═══════════════════════════════════════════════════════════════════════════
 // PHASE 5 — VERIFY (single runner; bounded fix-and-reverify)
 // ═══════════════════════════════════════════════════════════════════════════
-phase('Verify')
+if (!halted()) phase('Verify')
 
 const gateList = gateCommands()
 const e2eBlock = RUNTIME
@@ -945,18 +1688,30 @@ let vround = 0
 // cleanRound. Those commits never appeared in any reviewer's diff, so reusing the
 // stale cleanRound to certify them is unsafe. Track whether any verify-fix
 // actually committed; if so the final diff is unreviewed and NOT ready for PR.
+// Detection is TWO-channel (fail closed): the fixer's own commits report, AND an
+// independent HEAD-sha comparison across verify runs — a fixer that commits and
+// then returns null/throws/omits its commits can not slip unreviewed code past
+// the certification. If HEAD cannot be established after a fix attempt, the loop
+// cannot prove nothing was committed, so it also fails closed.
 let verifyFixCommitted = false
-while (vround <= SIZING.verifyFixCap) {
+let lastVerifyHead = null // headSha from the most recent verify run
+let verifyFixAttempted = false // a verify-fix agent ran since that verify
+while (vround <= SIZING.verifyFixCap && !halted()) {
   // FINAL VERIFY stays on Claude (authoritative gate run) — never split to Sol.
   verify = await safely(
     () =>
       agent(
         `${CONTRACTS}
 
-PHASE: VERIFY. Run the repository-native gates for surface="${SURFACE}", in order,
+PHASE: VERIFY. FIRST run \`git -C ${WORKTREE} rev-parse HEAD\` and report the exact
+sha as headSha — the loop uses it to prove no unreviewed commit slipped in after
+review. Then run the repository-native gates for surface="${SURFACE}", in order,
 from ${WORKTREE}. Lint is ADVISORY (findings never block); every other gate is
 BLOCKING. Do not pipe wrappers through tail/grep/tee in a way that hides exit
 status. Do not run a plain suite right before its coverage variant.
+Before any dotnet gate, echo the toolchain (\`command -v dotnet && dotnet --version\`)
+as gate evidence; if DOTNET_ROOT is set, ensure $DOTNET_ROOT precedes the system
+dotnet on PATH so the repository's pinned SDK is the one that runs.
 
 HANDOFF: a non-empty \`git status --porcelain\` is a BLOCKING failure. The reviewed
 and pushable change is the committed range ${BASE}..HEAD, so any uncommitted edit
@@ -975,6 +1730,19 @@ ALL BLOCKING gates passed, the e2e result if run, and a list of failures.`,
     'Verify'
   )
 
+  const reportedHead = verify && typeof verify.headSha === 'string' && verify.headSha.trim() ? verify.headSha.trim() : null
+  if (verifyFixAttempted) {
+    // A fixer ran since the last verify. Any HEAD movement — or an inability to
+    // read HEAD on either side — means possibly-unreviewed commits (fail closed),
+    // regardless of what the fixer itself reported.
+    if (!reportedHead || !lastVerifyHead || reportedHead !== lastVerifyHead) {
+      if (!verifyFixCommitted) log('Verify: HEAD changed (or was unreadable) across a verify-fix attempt — marking the branch as carrying unreviewed commits')
+      verifyFixCommitted = true
+    }
+    verifyFixAttempted = false
+  }
+  if (reportedHead) lastVerifyHead = reportedHead
+
   const gatesOk = verify && verify.allBlockingPassed
   const e2eOk = !RUNTIME || (verify && verify.e2e && verify.e2e.pass)
   if (gatesOk && e2eOk) {
@@ -985,6 +1753,21 @@ ALL BLOCKING gates passed, the e2e result if run, and a list of failures.`,
   if (vround > SIZING.verifyFixCap) {
     log(`Verify: still failing after ${SIZING.verifyFixCap} fix attempts — reporting failures`)
     break
+  }
+  if (systemicFailure) {
+    log('Verify: provider outage — skipping the verify-fix retry (a code-writing fixer is pointless during an outage)')
+    break
+  }
+  // Distinguish a runner/infrastructure failure (the verify agent returned no
+  // structured gate evidence — the safely() sentinel, or a report with an empty
+  // gates array) from a returned gate failure. Only the latter names something a
+  // code fixer can act on; spawning a writer against "verify did not return
+  // structured output" burns an agent and can dirty the tree. Re-run Verify
+  // read-only instead, bounded by the same verifyFixCap.
+  const verifyReturnedStructured = !!(verify && Array.isArray(verify.gates) && verify.gates.length > 0)
+  if (!verifyReturnedStructured) {
+    log(`Verify: no structured gate results (runner/infrastructure failure, not a code defect) → re-running verify read-only (attempt ${vround}/${SIZING.verifyFixCap}); NOT spawning a code fixer`)
+    continue
   }
   log(`Verify: failures → fix attempt ${vround}/${SIZING.verifyFixCap}`)
   // Wrap the code-writing verify-fixer in safely(): a StructuredOutput retry-cap
@@ -1005,7 +1788,26 @@ ${JSON.stringify((verify && verify.failures) || [], null, 1).slice(0, 8000)}`,
     null,
     `Verify fixer (attempt ${vround})`
   )
+  verifyFixAttempted = true
   if (vfix && Array.isArray(vfix.commits) && vfix.commits.length) verifyFixCommitted = true
+}
+
+// reviewedHead escape hatch (resolved here — needs the verify agent's HEAD). A
+// verify-only resume that was paused AFTER a certified-clean review round can now
+// certify IFF the launcher-supplied reviewedHead exactly equals the HEAD the
+// verify agent independently reported: identical shas prove no commit changed
+// since the clean review, so its coverage still holds for this exact range. Any
+// mismatch, missing sha, or unreadable HEAD keeps the fail-closed default above.
+let reviewedHeadCertified = false
+if (START_PHASE === 'verify' && REVIEWED_HEAD) {
+  if (lastVerifyHead && lastVerifyHead === REVIEWED_HEAD) {
+    cleanRound = true
+    reviewIncomplete = false
+    reviewedHeadCertified = true
+    log(`verify-only resume: verify HEAD ${lastVerifyHead.slice(0, 12)}… matches reviewedHead — prior clean review certified, no re-review needed`)
+  } else {
+    log(`verify-only resume: reviewedHead ${REVIEWED_HEAD.slice(0, 12)}… ≠ verify HEAD ${lastVerifyHead ? lastVerifyHead.slice(0, 12) + '…' : '(unreadable)'} — NOT certifying (fail closed)`)
+  }
 }
 
 // ── return structured result for the main thread to relay + act on ──────────
@@ -1018,7 +1820,10 @@ const openTodos = (implemented && implemented.openTodos) || []
 const implementationOk = !!implemented && openTodos.length === 0
 // Incidental (unrelated, pre-existing) bugs surfaced while exploring, deduped by
 // title. The main thread files the genuinely-new ones to the bug inventory
-// (Project 4) after checking they are not already reported.
+// (Project 4) — after checking they are not already reported — ONLY when issue
+// creation/labelling/Project mutation is authorized for the run; otherwise it
+// returns them as a proposed payload for the user and mutates nothing (filing is
+// an outward-facing action, not an implicit loop step). See SKILL.md.
 const incidentalBugs = (() => {
   const seen = new Set()
   const out = []
@@ -1032,31 +1837,110 @@ const incidentalBugs = (() => {
   }
   return out
 })()
+// A paused run tells the launcher exactly where to re-enter: the committed
+// branch state carries everything the later phases need (they work purely from
+// the BASE...HEAD range), so nothing before resumeFrom.phase is re-run.
+const PAUSED = halted()
+const resumeFrom = !PAUSED
+  ? null
+  : !implemented
+  ? { phase: 'explore' }
+  : !cleanRound
+  ? { phase: 'review', round }
+  : { phase: 'verify' }
 const result = {
+  status: PAUSED ? 'paused' : 'complete',
+  pauseReason: PAUSED ? systemicFailureDetail || quorumFailure || inputFailure : null,
+  resumeFrom,
+  startPhase: START_PHASE,
   branch: BRANCH,
   surface: SURFACE,
   depth: DEPTH,
   loopClean: cleanRound,
   reviewRounds: round,
   reviewIncomplete,
+  // Non-convergence signals: the loop stopped on a progress stall (reviewStalled)
+  // — optionally pure oscillation (stallOscillation) — rather than a clean round;
+  // and the absolute round ceiling in effect for this run.
+  reviewStalled,
+  stallOscillation,
+  backstopRounds: BACKSTOP_ROUNDS,
   incidentalBugs,
   confirmedFindingsResolved: confirmedAll.length,
+  // Confirmed-but-minor docs/spec findings (severity-gated surfaces only) for
+  // the launcher/human to disposition — they did not force fix rounds.
+  advisoryNotes,
+  // Every finding disposition across rounds (fixed / refuted / advisory, with
+  // verifier reasons) — also the re-report suppressor injected into reviewers.
+  ledger,
   implement: implemented || null,
   canonicalPlan: canonicalPlan || null,
   verify: verify || null,
   verifyFixCommitted,
-  readyForPR: implementationOk && cleanRound && !reviewIncomplete && !verifyFixCommitted && blockingGreen && e2eGreen,
+  // Requested-vs-actual model per slot class, breaker state, and any review
+  // rounds that silently lost cross-family coverage — a missing Sol pass is a
+  // route problem to FIX, never a healthy mixed review (per README).
+  modelCoverage: { slots: modelCoverage, solDead, roundsWithoutSol },
+  // Per-phase attempted/succeeded/null agent accounting (empty results are no
+  // longer silently filtered away without a trace).
+  agentStats,
+  // Last HEAD sha independently reported by a verify run (null when verify never
+  // ran, e.g. a paused run) — lets the launcher pin resume/PR actions to the
+  // exact commit that was verified.
+  headSha: lastVerifyHead,
+  readyForPR: !PAUSED && implementationOk && cleanRound && !reviewIncomplete && unresolvedFindings.size === 0 && !verifyFixCommitted && blockingGreen && e2eGreen,
   residualRisks: []
-    .concat(implemented ? [] : ['implementation did not complete — both implementer models failed to return a result'])
+    .concat(
+      PAUSED
+        ? [
+            `run PAUSED (${systemicFailureDetail || quorumFailure || inputFailure}) — do NOT blindly retry; ${systemicFailure ? 'once capacity returns, ' : inputFailure ? 'supply a task/briefText (or fix the issue fetch), then ' : ''}resume with startPhase:"${resumeFrom.phase}" against the same branch`,
+          ]
+        : []
+    )
+    .concat(implemented || PAUSED ? [] : ['implementation did not complete — both implementer models failed to return a result'])
     .concat(openTodos.length ? ['implementer left open acceptance-criteria TODOs — change is incomplete'] : [])
-    .concat(reviewIncomplete ? ['adversarial review ended with incomplete coverage (a reviewer or finding-verifier failed) — the round could not be certified clean'] : [])
-    .concat(cleanRound || reviewIncomplete ? [] : ['review loop hit its round cap with unresolved confirmed findings'])
+    .concat(
+      START_PHASE === 'verify' && !reviewedHeadCertified
+        ? ['verify-only resume: the adversarial review loop was SKIPPED — pass reviewedHead:<the paused clean HEAD> to certify, or run startPhase:"review" (or a full run) before opening a PR']
+        : reviewIncomplete
+        ? ['adversarial review ended with incomplete coverage (a reviewer or finding-verifier failed) — the round could not be certified clean']
+        : []
+    )
+    .concat(
+      cleanRound || reviewIncomplete
+        ? []
+        : reviewStalled
+        ? [
+            `review did NOT converge — ${
+              stallOscillation
+                ? 'confirmed findings were wholly a re-report of items already disposed of in the ledger (pure oscillation)'
+                : `${STALL_PATIENCE} consecutive review round(s) made no progress`
+            }; surfacing for a human — consider splitting the change into smaller independent pieces${
+              unresolvedFindings.size ? ` (${unresolvedFindings.size} finding(s) still unresolved)` : ''
+            }`,
+          ]
+        : ['review loop hit the runaway backstop (' + BACKSTOP_ROUNDS + ' rounds) with unresolved confirmed findings — surface for a human']
+    )
+    .concat(
+      unresolvedFindings.size
+        ? [
+            `${unresolvedFindings.size} confirmed finding(s) were left unapplied/unresolved by a fixer and never later applied or refuted (e.g. ${[...unresolvedFindings.values()].slice(0, 3).map((u) => `${u.file}:${u.line}`).join(', ')}) — the branch is NOT certified; re-run the review loop before opening a PR`,
+          ]
+        : []
+    )
     .concat(verifyFixCommitted ? ['verify-fix committed code AFTER the clean review round — those commits were never adversarially reviewed; re-run the review loop before opening a PR'] : [])
     .concat(blockingGreen ? [] : ['one or more BLOCKING gates are failing'])
     .concat(e2eGreen ? [] : ['e2e:local did not pass'])
+    .concat(
+      roundsWithoutSol.length
+        ? [
+            `review round(s) ${roundsWithoutSol.join(', ')} ran WITHOUT real cross-family (gpt-5.6-sol) coverage — every Sol slot fell back to Claude; fix the Sol route (codex CLI / router) before treating this as a fully mixed-model review`,
+          ]
+        : []
+    )
     .concat(openTodos),
 }
 log(
-  `canopy-loop done: readyForPR=${result.readyForPR} · impl=${implementationOk} · rounds=${round} · findings resolved=${confirmedAll.length} · blockingGreen=${blockingGreen}${RUNTIME ? ` · e2e=${e2eGreen}` : ''}`
+  `canopy-loop ${result.status}: readyForPR=${result.readyForPR} · impl=${implementationOk} · rounds=${round} · findings resolved=${confirmedAll.length} · blockingGreen=${blockingGreen}${RUNTIME ? ` · e2e=${e2eGreen}` : ''}${PAUSED ? ` · resumeFrom=${resumeFrom.phase}` : ''}`
 )
 return result

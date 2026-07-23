@@ -14,19 +14,56 @@ prove how. Modelled on Bun's rewrite, tuned to Canopy's contracts.
    a finding; a finding needs a file/line and a failure scenario (inputs/state →
    wrong output/crash/leak).
 3. **Two or more reviewers per round, across distinct lenses** (below), and
-   **across two model families**: the Claude lens reviewers plus at least one
-   `gpt-5.6-sol` reviewer at **high** effort doing a whole-diff pass. Diversity
-   beats redundancy — different angles *and* different models catch failure modes
-   a single model's blind spots would miss. (In `canopy-loop.js`: `solReviewers`
-   ≥ 1, obtained via the subagent model param or the `codex` CLI per `solVia`.)
+   **across two model families** in every *mixed* round: the Claude lens
+   reviewers plus at least one `gpt-5.6-sol` reviewer at **high** effort doing a
+   whole-diff pass. Diversity beats redundancy — different angles *and* different
+   models catch failure modes a single model's blind spots would miss. (In
+   `canopy-loop.js`: `solReviewers` ≥ 1, obtained via the subagent model param or
+   the `codex` CLI per `solVia`.) *Escalation* rounds past the mixed cap
+   (`roundCap`) run `gpt-5.6-sol` only until the loop terminates (clean / stall /
+   backstop, see rule 5) — a distinct mode, not a mixed round. The round that
+   **certifies** the branch clean must have
+   **real** cross-family coverage: if its every Sol slot fell back to Claude (dead
+   route), the run fails closed (`reviewIncomplete`) rather than certifying an
+   all-Claude review as mixed.
 4. **Verify before fixing.** Every finding is adversarially checked by an
    independent verifier that tries to *refute* it. Default to refuted when
    uncertain. Only confirmed findings reach the fixer — this kills
    plausible-but-wrong findings before they cost a change.
 5. **One fixer, then re-review.** A single writer applies the confirmed findings
-   at their owner, adds regression evidence, and the round repeats. Stop when a
-   full round produces no confirmed findings (a clean round), or after the round
-   cap — never on "we're probably fine".
+   at their owner, adds regression evidence, and the round repeats. The loop
+   terminates on one of three signals — **never** on "we're probably fine", and
+   **never** on an arbitrary round count:
+   - **a clean round** (no confirmed blocker/major findings);
+   - **a progress stall** — `stallPatience` consecutive rounds with no progress
+     (default 2), or a round whose confirmed findings are wholly a re-report of
+     ledger-disposed items (pure oscillation). A stall means the review is **not
+     converging**: stop, do not certify, and surface a "did not converge" residual
+     for a human (consider splitting the change). "Progress" = the
+     confirmed-finding count strictly fell vs the previous round, or ≥1 confirmed
+     finding was newly applied this round;
+   - **a runaway backstop** — an absolute ceiling (`backstopRounds`, default ~25;
+     docs/spec default mixed-cap+1) so a pathologically entangled change cannot
+     loop forever even while nominally making progress one finding at a time.
+
+   This replaces the old fixed 10-round cap: a genuinely-converging change is
+   never cut off by a count (the cap's job was non-convergence detection, not
+   budget control — that is now the terminal-failure pause), and a hopeless
+   oscillation stops fast (the #167 config-page.js case). `hardRoundCap` remains
+   an explicit override that pins the backstop to a fixed count **and** disables
+   the stall detector, for callers who want the old behavior.
+
+   The fixer reports back which findings it
+   **applied** and which it left **unresolved** (by id); only applied findings are
+   ledgered as fixed, and a fixer that returns nothing, reports any unresolved id,
+   or does not cover every confirmed id blocks certification — a later empty round
+   cannot certify a defect the fixer said is still there.
+   **Carry a finding ledger between rounds**: what earlier rounds fixed and what
+   the verifier refuted (with reasons) goes into every later reviewer's context,
+   and a resolved item may not be re-reported without NEW evidence. For docs/spec
+   surfaces, gate fixing by severity — confirmed blocker/major findings drive fix
+   rounds; confirmed minors are returned as advisory notes and a minors-only
+   round counts as clean.
 6. **Fix the process, not the instance.** If a class of finding recurs (the same
    lens keeps catching the same kind of mistake), amend the implementer/fixer
    instructions for the next round instead of hand-patching each occurrence.
@@ -45,6 +82,10 @@ Assign each reviewer one lens. Skip lenses the diff cannot touch; add
 task-specific reviewer questions from the brief. For Canopy, the standing lenses
 are:
 
+- **Requirement fidelity** — does it fix the ACTUAL reported defect and satisfy
+  EVERY acceptance criterion in the brief — not an easier semantically-different
+  change primed by the branch name or surrounding code? A change that does not
+  address the reported defect is a blocking finding regardless of its quality.
 - **Correctness & logic** — does it do what the brief says on the happy path and
   every branch? Off-by-one, wrong operator, eager vs. lazy evaluation, error
   paths, `null`/undefined, boundary values.
