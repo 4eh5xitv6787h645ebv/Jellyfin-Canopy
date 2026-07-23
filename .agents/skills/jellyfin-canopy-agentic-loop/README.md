@@ -45,12 +45,25 @@ oracle.
        branch:   "<type>/<slug>",
        task:     "<full task / issue / repro>",
        brief:    "<path to task-brief.md>",
+       briefText: "<the brief CONTENTS inlined — preferred; agents may never open the path>",
+       issue:    123,              // commit-subject ref; with NO briefText, a Phase-0 agent
+                                   // fetches the live issue body as the brief (self-hydration)
        surface:  "client" | "server" | "cross" | "docs",
        runtime:  true,
        depth:    "quick" | "standard" | "deep",
+       startPhase: "explore",      // resume a paused/limit-killed run with "review" or "verify"
+       reviewedHead: "<sha>",      // verify-resume only: certifies the prior clean review when
+                                   // verify reports this exact HEAD (record the paused run's headSha)
+       ledger: [/* paused run's result.ledger */],  // review-resume only: seed prior
+                                   // fix/refute dispositions so they are not re-churned
+       envSetup: "<shell prelude run before any build/test, e.g. DOTNET_ROOT exports>",
+       reviewMode: "spec",         // opt-in for specification authoring (spec lenses)
        solVia:   "codex-cli",      // default; or "agent" (needs a Sol-capable router)
        solEffort: "high",
-       solReviewers: 1
+       solReviewers: 1,            // whole-diff Sol reviewers per round (min 1)
+       stallPatience: 2,           // review-loop non-convergence: no-progress rounds → stop (default 2)
+       backstopRounds: 25,         // review-loop absolute ceiling (default ~25; docs/spec roundCap+1)
+       hardRoundCap: 10            // EXPLICIT OVERRIDE: old fixed cap — pins the backstop AND disables the stall detector
      }
    })
    ```
@@ -62,15 +75,59 @@ oracle.
 
 ### Depth
 
-| depth | explorers | planners | review round cap | verify-fix cap |
+| depth | explorers | planners | mixed review round cap | verify-fix cap |
 | --- | --- | --- | --- | --- |
 | quick | 2 | 2 | 2 | 1 |
-| standard | 4 | 3 | 3 | 2 |
-| deep | 6 | 3 | 4 | 3 |
+| standard | 8 | 3 | 4 | 2 |
+| deep | 8 | 3 | 4 | 3 |
 
-`surface` selects which repo-native gates run; `runtime:true` additionally
+The "mixed" cap is the Claude+Sol panel; if the loop is still not clean after
+it, review **continues with `gpt-5.6-sol` as the only reviewer**. The loop then
+terminates on one of three signals, not an arbitrary count:
+
+- **a clean round** (no confirmed findings);
+- **a progress stall** — `stallPatience` consecutive rounds with no progress
+  (default 2), or a round whose confirmed findings are wholly a re-report of
+  ledger-disposed items (pure oscillation). A stall is **non-convergence**: the
+  run stops, does not certify, and returns a "did not converge" residual asking a
+  human to split the change. "Progress" = the confirmed-finding count strictly
+  fell vs the previous round, or ≥1 confirmed finding was newly applied;
+- **a runaway backstop** — an absolute ceiling (`backstopRounds`, default ~25;
+  docs and `reviewMode:"spec"` default mixed-cap+1) so a pathologically entangled
+  file cannot loop forever even while nominally making progress one finding at a
+  time.
+
+This replaces the old fixed 10-round cap: a legitimately-converging change is
+**never** cut off by a count, and a stalled one (the #167 config-page.js case:
+8 h / 21 M tokens / never converged) stops fast and surfaces for a human.
+`hardRoundCap` still works as an explicit override — it pins the backstop to that
+fixed count **and** disables the stall detector, restoring the old fixed-count
+behavior for callers who want it.
+
+`surface` selects which repo-native gates run (docs runs also use 4
+docs-specific explore angles and skip Localize — `server` runs skip Localize too,
+having no client locale surface); `runtime:true` additionally
 builds the Release DLL and runs `npm run e2e:local` (dockerized
 `jellyfin/jellyfin:unstable`).
+
+### Operating envelopes
+
+The loop serves two envelopes:
+
+- **FIXES** — contained bug fixes and small changes: `depth:"quick"` plus a
+  patch-sized brief (tight acceptance criteria, narrow surface) keeps the run
+  light: 2 explorers, 2 planners, a 2-round mixed cap, surface-scoped gates.
+- **FEATURES** — large multi-day work: run `standard`/`deep`; the loop survives
+  provider outages by returning `status:"paused"` with `pauseReason` +
+  `resumeFrom` instead of burning retries, and a later session re-enters with
+  `startPhase:"review"`/`"verify"` against the same branch. A verify-only resume
+  is fail-closed (no review ran) unless the pause followed a clean review round:
+  pass `reviewedHead:<the returned headSha>` and it certifies iff verify reports
+  that exact HEAD. Campaigns over an issue queue relaunch per issue (`issue: N`
+  self-hydrates the brief) and use the returned resume fields
+  (`resumeFrom`/`headSha`/`loopClean`/`ledger`) as the per-issue checkpoint —
+  pass the persisted `ledger` back on a `startPhase:"review"` resume so the review
+  loop keeps its prior refutations/fixes suppressed instead of re-churning them.
 
 ### Model routing
 
@@ -78,14 +135,23 @@ The loop spreads models by role to spare Claude/Opus budget:
 
 - **Implementation** — the single writer runs on **Fable (high)**, falling back
   to **Opus (high)** if Fable is exhausted (`implementModel` / `implementFallback`).
-- **Read-only steps except implementation** — with `modelSplit: true` (default),
-  explore, plan, the review lenses, finding-verification, and the gate runner
-  alternate **~50/50 Claude / `gpt-5.6-sol` (high)**; an unroutable Sol slot
-  falls back to Claude.
+- **Read-only steps except the gate runner** — with `modelSplit: true` (default):
+  **explore runs 8 explorers on a non-docs standard/deep run — 2 Claude + 6
+  `gpt-5.6-sol`** (`exploreClaudeCount`, Sol slots at `xhigh`; a `quick` run uses 2
+  explorers and a `docs` surface uses its 4 docs-specific angles = 2 Claude + 2
+  Sol); plan (incl. synthesis), the review lenses, and
+  finding-verification alternate **~50/50 Claude / `gpt-5.6-sol`**; an
+  unroutable Sol slot falls back to Claude. After 3 consecutive Sol failures a
+  circuit breaker sends the remaining Sol slots straight to Claude, and the
+  result's `modelCoverage` records requested-vs-actual models per slot class.
+- **Final verify / gate run** — stays on **Claude** (one authoritative model
+  runs the repo gates; never split to Sol).
 - **Fixers** — stay on Claude/Opus (they write code).
 
-Every review round still runs **both** Claude and **≥1 `gpt-5.6-sol` (high)**
-reviewer. The Sol side is obtained one of two ways, chosen with `solVia`:
+Every **mixed** review round (up to the mixed cap) runs **both** Claude and
+**≥1 `gpt-5.6-sol` (high)** reviewer; escalation rounds past the mixed cap are
+`gpt-5.6-sol`-only. The Sol side is obtained one of two ways, chosen with
+`solVia`:
 
 - `"codex-cli"` (default) — a harness subagent shells out to the local `codex`
   CLI (`-a never -s read-only exec -m gpt-5.6-sol`) with
@@ -99,7 +165,10 @@ reviewer. The Sol side is obtained one of two ways, chosen with `solVia`:
 Each Sol slot is fail-closed: if the route/CLI is unavailable, that slot's scope
 (its lens, or the whole diff) is reviewed by Claude instead — the slot is never
 dropped and a round is never certified clean with a lens left unreviewed. Treat a
-missing Sol pass as a signal to fix the route, not as a clean review.
+missing Sol pass as a signal to fix the route, not as a clean review — and the loop
+enforces it: the round that certifies `loopClean` MUST have **real** cross-family
+coverage. A clean round whose every Sol slot fell back to Claude (dead route) sets
+`reviewIncomplete`, so `readyForPR` stays false until the Sol route is fixed.
 
 ## Non–Claude-Code runtimes
 
