@@ -363,7 +363,7 @@ In the **More Info** modal, TV actions use **Request More** as the primary actio
 
 #### Requesting collections
 
-With **Show Collections in Seerr Results** on (the default), TMDB collections — Harry Potter, the Marvel Cinematic Universe and the like — appear in Seerr search results with an option to request the whole collection at once. The collection request modal lists every movie with its current status; titles that are already available, already requested, or blocklisted are pre-disabled, and only the still-requestable movies you select are submitted (one request per movie, matching Seerr's own behavior). When 4K movie requests are available to you, the modal shows a **Request in 4K** toggle that submits the selected movies in 4K and re-evaluates each against its own 4K status.
+With **Show Collections in Seerr Results** on (the default), TMDB collections — Harry Potter, the Marvel Cinematic Universe and the like — appear in Seerr search results with an option to request the whole collection at once. The collection request modal shows each movie as a poster card with its title, year and current status; tap or click anywhere on a requestable card to select it, and the whole card highlights while selected. Titles that are already available, already requested, or blocklisted are pre-disabled, and only the still-requestable movies you select are submitted (one request per movie, matching Seerr's own behavior). When 4K movie requests are available to you, the modal shows a **Request in 4K** toggle that submits the selected movies in 4K and re-evaluates each against its own 4K status.
 
 #### Request options
 

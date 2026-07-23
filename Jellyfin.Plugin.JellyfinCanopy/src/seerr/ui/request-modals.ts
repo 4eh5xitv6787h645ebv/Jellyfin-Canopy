@@ -189,25 +189,30 @@ ui.showCollectionRequestModal = async function (collectionId: any, collectionNam
         const poster = m.posterPath
             ? `https://image.tmdb.org/t/p/w92${m.posterPath}`
             : assetUrl('seerr/poster-fallback.svg');
+        const yearHtml = year
+            ? `<span class="year">${escapeHtml(year)}</span><span class="seerr-collection-meta-separator" aria-hidden="true">·</span>`
+            : '';
 
         return `
-            <div class="seerr-collection-movie-row"
-                 data-status="${Number(status) || 1}"
-                 data-status4k="${Number(status4k) || 1}"
-                 data-has-downloads="${hasActiveDownloads ? '1' : '0'}"
-                 data-has-downloads4k="${hasActiveDownloads4k ? '1' : '0'}">
+            <label class="seerr-collection-movie-row"
+                   data-status="${Number(status) || 1}"
+                   data-status4k="${Number(status4k) || 1}"
+                   data-has-downloads="${hasActiveDownloads ? '1' : '0'}"
+                   data-has-downloads4k="${hasActiveDownloads4k ? '1' : '0'}">
+                <img src="${escapeHtml(poster)}" alt="" class="seerr-collection-movie-poster">
+                <span class="seerr-collection-movie-details">
+                    <span class="title">${escapeHtml(m.title)}</span>
+                    <span class="seerr-collection-movie-meta">
+                        ${yearHtml}
+                        <span class="seerr-season-status seerr-season-status-${escapeHtml(statusClass)}">${escapeHtml(statusText)}</span>
+                    </span>
+                </span>
                 <input type="checkbox"
                        class="seerr-collection-checkbox"
                        id="movie-${escapeHtml(m.id)}"
                        data-tmdb-id="${escapeHtml(m.id)}"
                        ${isDisabled ? 'disabled' : 'checked'}>
-                <img src="${escapeHtml(poster)}" alt="${escapeHtml(m.title)}" class="seerr-collection-movie-poster">
-                <div class="seerr-collection-movie-details">
-                    <div class="title">${escapeHtml(m.title)}</div>
-                    <div class="year">${escapeHtml(year)}</div>
-                </div>
-                <div class="seerr-season-status seerr-season-status-${escapeHtml(statusClass)}">${escapeHtml(statusText)}</div>
-            </div>
+            </label>
         `;
     }).join('');
 
