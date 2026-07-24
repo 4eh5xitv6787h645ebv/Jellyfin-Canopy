@@ -239,6 +239,26 @@ Maintenance Mode temporarily locks users out while you work on the server, and s
 | **Action** | Disable user accounts | What happens to affected users. *Disable user accounts* prevents them from logging in at all; *Disable remote connections* blocks connections from outside the local network while LAN access still works. |
 | **Affected Users** | All non-admin users | Scopes the lockout. Choose *All non-admin users*, or *Select specific users* to pick individual accounts. An empty targeted-user list is treated as all users. |
 
+### Smart Client Refresh
+
+*Admin tab → Smart Client Refresh*
+
+Smart Client Refresh keeps already-open Canopy web sessions and app WebViews on the server's current client generation. It detects three independent changes: the content-addressed Canopy client bundle (including a same-version replacement), a Jellyfin server restart/update, and a Canopy admin-configuration save.
+
+| Setting | Default | What it does |
+|---|---|---|
+| **When an open client needs a fresh page** | Smart | **Smart** reloads any safe page after the inactivity delay. **Home only** waits until the client reaches Home. **Ask** shows a reload action. **Disabled** ignores automatic change signals. |
+| **Refresh when Canopy client files change** | On | Compares the exact client-build content identity, not only Canopy's displayed version. |
+| **Refresh after Jellyfin restarts or updates** | On | Detects the new Jellyfin process generation, including a same-version server replacement. |
+| **Refresh when Canopy admin configuration changes** | On | Gives features that cannot fully hot-reinitialize a clean page after an admin save. |
+| **Visible-session check interval** | 30 seconds | Poll cadence while the client is visible. Range: 5–3600 seconds. Hidden/background clients make no polling requests and check immediately when reopened, focused, or resumed. |
+| **Smart-mode inactivity delay** | 5 seconds | Wait after the user's latest interaction before a safe automatic reload. Range: 0–300 seconds. |
+| **Refresh all open Canopy clients now** | — | Sends an explicit refresh revision. Each open client still waits for its next safe point; a background client handles it when reopened. |
+
+Playback safety is mandatory in every mode, including an explicit admin refresh. Canopy will not reload a video/audio playback route, playing or paused media, picture-in-picture, full screen, a settings/edit route, an open dialog, or an actively edited field. A three-per-minute session budget also stops a bad identity signal from creating a reload loop.
+
+This applies wherever the Canopy web client is actually loaded: desktop/mobile browsers and Jellyfin app WebViews. A fully native client UI that does not execute Canopy has no Canopy page for the plugin to refresh.
+
 ### Client Layout Enforcement
 
 *Display tab → UI Preferences*

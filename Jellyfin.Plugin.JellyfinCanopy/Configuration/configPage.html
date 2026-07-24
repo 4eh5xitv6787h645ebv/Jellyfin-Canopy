@@ -2256,6 +2256,56 @@
                     </fieldset>
 
                     <fieldset>
+                        <legend class="sectionTitle">Smart Client Refresh</legend>
+                        <div class="configSection">
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="clientRefreshMode">When an open client needs a fresh page</label>
+                                <select is="emby-select" id="clientRefreshMode" data-config-key="ClientRefreshMode" data-config-fallback="Smart" name="clientRefreshMode" class="emby-select">
+                                    <option value="Smart">Smart — refresh any safe page after inactivity</option>
+                                    <option value="HomeOnly">Home only — wait until the client reaches Home</option>
+                                    <option value="Notify">Ask — show a reload button</option>
+                                    <option value="Disabled">Disabled — do not react automatically</option>
+                                </select>
+                            </div>
+                            <div class="jc-setting-description" data-desc-for="clientRefreshMode">
+                                <div class="fieldDescription">Keeps already-open browser and app WebView sessions current. Smart mode waits for a safe idle moment. Home only never reloads another page. Ask leaves the choice to the user. Playback, including paused media, is protected in every mode; settings/edit screens and open dialogs are also never reloaded automatically.</div>
+                            </div>
+
+                            <div class="checkboxContainer"><label><input id="clientRefreshOnCanopyUpdate" data-config-key="ClientRefreshOnCanopyUpdate" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Refresh when Canopy client files change</span></label></div>
+                            <div class="jc-setting-description" data-desc-for="clientRefreshOnCanopyUpdate">
+                                <div class="fieldDescription">Uses the content-addressed client build, so same-version Canopy updates are detected too.</div>
+                            </div>
+
+                            <div class="checkboxContainer"><label><input id="clientRefreshOnJellyfinUpdate" data-config-key="ClientRefreshOnJellyfinUpdate" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Refresh after Jellyfin restarts or updates</span></label></div>
+                            <div class="checkboxContainer"><label><input id="clientRefreshOnConfigChange" data-config-key="ClientRefreshOnConfigChange" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Refresh when Canopy admin configuration changes</span></label></div>
+
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="clientRefreshPollSeconds">Visible-session check interval (seconds)</label>
+                                <input is="emby-input" id="clientRefreshPollSeconds" data-config-key="ClientRefreshPollSeconds" data-config-int data-config-fallback="30" type="number" min="5" max="3600" step="1"/>
+                                <div class="fieldDescription">Inactive/background clients do not poll. They check immediately when reopened, focused, or resumed. Range: 5–3600 seconds.</div>
+                            </div>
+
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="clientRefreshIdleSeconds">Smart-mode inactivity delay (seconds)</label>
+                                <input is="emby-input" id="clientRefreshIdleSeconds" data-config-key="ClientRefreshIdleSeconds" data-config-int data-config-fallback="5" type="number" min="0" max="300" step="1"/>
+                                <div class="fieldDescription">How long to wait after the user's latest interaction before a safe automatic reload. Range: 0–300 seconds.</div>
+                            </div>
+
+                            <div class="jc-info-banner">
+                                <div class="jc-info-banner-row">
+                                    <i class="material-icons jc-info-icon" aria-hidden="true">verified_user</i>
+                                    <div><strong>Playback safety cannot be overridden.</strong><br/>A pending refresh waits until video/audio playback, pause state, picture-in-picture, full screen, edits, and dialogs are clear.</div>
+                                </div>
+                            </div>
+
+                            <button type="button" is="emby-button" id="forceClientRefreshBtn" class="raised button-submit emby-button">
+                                <span>Refresh all open Canopy clients now</span>
+                            </button>
+                            <div id="forceClientRefreshStatus" class="fieldDescription" role="status" aria-live="polite"></div>
+                        </div>
+                    </fieldset>
+
+                    <fieldset>
                         <legend class="sectionTitle">Third-Party Assets</legend>
                         <div class="configSection">
                             <div class="checkboxContainer"><label><input id="assetCacheEnabled" data-config-key="AssetCacheEnabled" is="emby-checkbox" type="checkbox"/><span>Serve third-party assets locally (recommended)</span></label></div>

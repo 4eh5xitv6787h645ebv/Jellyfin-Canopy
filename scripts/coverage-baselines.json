@@ -9,24 +9,24 @@
       "scope": "Jellyfin.Plugin.JellyfinCanopy/src/core/**",
       "report": "coverage/coverage-summary.json",
       "measured": {
-        "coveredLines": 1936,
-        "totalLines": 2257
+        "coveredLines": 2117,
+        "totalLines": 2462
       },
       "tolerance": {
         "missingCoveredLines": 1,
-        "rationale": "Issue #459 adds core/layout.ts `stampResolvedLayout(mode)` — a four-line, no-layout-read helper the header-tray resolver calls to stamp the jc-modern-layout/jc-legacy-layout class from the layout it has already discriminated, so the layout-scoped tray CSS applies even on a static legacy home the navigation-driven stamp would miss. The legitimate four-line scope increase (2253→2257) is fully covered by helpers.test.ts, which exercises both the legacy and modern resolver paths, so the reviewed high-water advances 1932→1936 covered lines (85.778%). This high-water and the one-line tolerance are carried onto the changed 2257-line scope on repeated identical-scope evidence, not a single run: three clean local Node 22.20/V8 runs on 2026-07-23 over the new 2257-line scope each passed all 1413 tests across 212 files and measured an identical 1936 covered lines (85.778%) — zero variance across the three runs, so the reproduced instrumentation drift over this scope is currently 0 lines and the retained one-line tolerance is a conservative envelope, not a floor tuned to an anomalous single measurement. (The prior 2253-line scope was likewise established from two clean local Node 22/V8 runs on 2026-07-17 at 1932 covered lines.) The existing one-line tolerance is unchanged; coverage-baseline.test.js retains exact below-floor, above-baseline, scope-change, and broad-tolerance negative boundaries."
+        "rationale": "Smart Client Refresh expands core/live-update.ts from version-only notification into the always-loaded generation/config coordinator, foreground-resume heartbeat, reload-loop budget, Ask-mode action, and mandatory playback/edit safety gate. Real Pixel 5 validation added explicit hidden-visibility and Cordova pause cancellation so an Android WebView cannot poll or reload while its Activity is backgrounded. Independent review then tightened restart revision handling, source reconciliation, route/dialog safety, and required browser coverage. The legitimate core scope increase is 205 instrumented lines (2257→2462); focused state, source, lifecycle, mobile-resume, in-flight follow-up, Ask-mode, paused-playback, safety, and loop-budget tests raise the reviewed high-water by 181 covered lines (1936→2117, 85.987%). A clean Node 22.20/V8 full-suite coverage run on 2026-07-24 passed all 1429 tests across 213 files and reproduced the expanded 2462-line scope after rebasing onto current main. Retaining the one-line tolerance makes the minimum 2116/2462 (85.946%), which is stricter than both the prior 1936/2257 high-water percentage (85.778%) and its 1935/2257 tolerated floor (85.733%). coverage-baseline.test.js retains the exact below-floor, above-baseline, scope-change, and broad-tolerance negative boundaries."
       }
     },
     "server": {
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 20051,
-        "totalLines": 28438
+        "coveredLines": 20148,
+        "totalLines": 28556
       },
       "tolerance": {
         "missingCoveredLines": 4,
-        "rationale": "Anime filler warnings follow-up for partial-library exact-title matching and the explicit four-scenario browser matrix in issues #371 and #378. Three successful local .NET 10.0.9/Coverlet integration runs on 2026-07-19 and one clean GitHub Actions run each passed all 1777 tests over the identical complete 28438-line assembly scope. The local runs measured 20050, 20050, and 20047 covered lines; CI advanced the reviewed high-water to 20051 covered lines (70.508%). A separate local attempt that hit the pre-existing FileLogger shutdown-timeout flake is excluded from these successful measurements. The legitimate 37-line scope increase adds conservative provider-title indexing, ambiguity rejection, and episode-title fallback for libraries that omit earlier seasons; all 37 added lines are covered. The four-line low-side tolerance spans only the reproduced Coverlet concurrency variance and remains far below the policy maximum; coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, and broad-tolerance negative boundaries."
+        "rationale": "Smart Client Refresh adds the authenticated refresh-state contract, content-addressed Canopy and process-generation Jellyfin identities, live configuration policy, explicit admin force revision, and Canopy-device registry touch. The legitimate server scope increase is 118 instrumented lines (28438→28556); focused service and controller behavior/authorization tests raise the reviewed high-water by 97 covered lines (20051→20148, 70.556%). A clean local .NET 10.0.9/Coverlet run on 2026-07-24 passed all 1785 tests across the complete assembly. Retaining the reproduced four-line Coverlet concurrency tolerance makes the minimum 20144/28556 (70.542%), which is stricter than both the prior 20051/28438 high-water percentage (70.508%) and its 20047/28438 tolerated floor (70.494%). coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, and broad-tolerance negative boundaries."
       }
     }
   }

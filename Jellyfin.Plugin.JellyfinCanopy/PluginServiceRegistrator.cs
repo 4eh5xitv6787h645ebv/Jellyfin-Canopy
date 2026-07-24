@@ -84,6 +84,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy
             // Live view over the plugin configuration (re-read per access, never
             // snapshotted) so admin saves take effect immediately in consumers.
             serviceCollection.AddSingleton<Services.IPluginConfigProvider, Services.PluginConfigProvider>();
+            serviceCollection.AddSingleton(serviceProvider =>
+                new Services.ClientRefreshStateService(
+                    serviceProvider.GetRequiredService<Services.IPluginConfigProvider>(),
+                    applicationHost.ApplicationVersionString));
             serviceCollection.AddSingleton<Services.AnimeFiller.IAnimeFillerProvider, Services.AnimeFiller.JikanAnimeFillerProvider>();
             serviceCollection.AddSingleton<Services.AnimeFiller.AnimeFillerService>();
             // Provider-id → item lookups via the supported ILibraryManager query

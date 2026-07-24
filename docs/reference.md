@@ -18,7 +18,7 @@ Every admin option lives on one of the tabs in the plugin config page: **Dashboa
 | **Discovery** | Discovery / Trending feed (requires a Seerr connection). | [Discover & Request](discover.md) |
 | **Extras** | Custom branding, extras/UI-tweak toggles, Active Streams widget, Letterboxd links, splash screen. | [Customization](customization.md) |
 | **Keyboard** | Keyboard shortcuts. | [The Enhanced Experience](enhanced.md) |
-| **Admin** | Maintenance Mode, Third-Party Assets, Developer Mode. | [Customization](customization.md) |
+| **Admin** | Maintenance Mode, Smart Client Refresh, Third-Party Assets, Developer Mode. | [Customization](customization.md) |
 | **Docs** | Links to this documentation site. | — |
 
 !!! tip "Most features start off"

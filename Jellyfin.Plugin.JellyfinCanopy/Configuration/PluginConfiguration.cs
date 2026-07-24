@@ -30,6 +30,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
             // it entirely to the user. See the LayoutEnforcement property below.
             LayoutEnforcement = "None";
 
+            // Smart client refresh. Open Canopy web/WebView clients compare the
+            // content-addressed Canopy bundle, Jellyfin process generation and
+            // this configuration revision, then reload only at a safe point.
+            ClientRefreshMode = "Smart";
+            ClientRefreshOnCanopyUpdate = true;
+            ClientRefreshOnJellyfinUpdate = true;
+            ClientRefreshOnConfigChange = true;
+            ClientRefreshPollSeconds = 30;
+            ClientRefreshIdleSeconds = 5;
+
             // Maintenance Mode
             MaintenanceModeEnabled = false;
             MaintenanceModeMessage = "This server is currently undergoing maintenance. Please try again.";
@@ -384,6 +394,20 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         // is intentionally admin-only (no per-user override): a per-user setting would
         // have no device to attach to.
         public string LayoutEnforcement { get; set; }
+
+        // Cross-device client refresh policy. ClientRefreshMode values:
+        //   "Smart"    — refresh any safe, non-editing page after the idle delay.
+        //   "HomeOnly" — wait until the client reaches Home.
+        //   "Notify"   — show a reload action and leave the choice to the user.
+        //   "Disabled" — ignore automatic change signals. An explicit admin
+        //                "Refresh clients now" signal remains available.
+        // Playback (including paused media) is always protected in every mode.
+        public string ClientRefreshMode { get; set; }
+        public bool ClientRefreshOnCanopyUpdate { get; set; }
+        public bool ClientRefreshOnJellyfinUpdate { get; set; }
+        public bool ClientRefreshOnConfigChange { get; set; }
+        public int ClientRefreshPollSeconds { get; set; }
+        public int ClientRefreshIdleSeconds { get; set; }
 
         // Jellyfin Elsewhere Settings
         public bool ElsewhereEnabled { get; set; }

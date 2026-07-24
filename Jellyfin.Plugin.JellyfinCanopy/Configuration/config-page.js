@@ -2036,6 +2036,24 @@
                     return pollInterval >= 30 ? pollInterval : 30;
                 }
             },
+            ClientRefreshPollSeconds: {
+                load: function (el, v) {
+                    el.value = (v !== undefined && v !== null) ? v : 30;
+                },
+                save: function (el) {
+                    const value = parseInt(el.value, 10);
+                    return isNaN(value) ? 30 : Math.min(3600, Math.max(5, value));
+                }
+            },
+            ClientRefreshIdleSeconds: {
+                load: function (el, v) {
+                    el.value = (v !== undefined && v !== null) ? v : 5;
+                },
+                save: function (el) {
+                    const value = parseInt(el.value, 10);
+                    return isNaN(value) ? 5 : Math.min(300, Math.max(0, value));
+                }
+            },
             PauseScreenDelaySeconds: {
                 save: function (el) {
                     const v = parseInt(el.value, 10);
@@ -2888,6 +2906,33 @@
         page.addEventListener('pageshow', loadConfig);
         form.addEventListener('submit', saveConfig);
         resetAllUserSettingsBtn.addEventListener('click', resetAllUserSettings);
+        const forceClientRefreshBtn = document.getElementById('forceClientRefreshBtn');
+        if (forceClientRefreshBtn) {
+            forceClientRefreshBtn.addEventListener('click', async function () {
+                if (!confirm('Refresh all open Canopy clients?\n\nClients will reload at their next safe point. Active or paused playback is never interrupted.')) {
+                    return;
+                }
+
+                const status = document.getElementById('forceClientRefreshStatus');
+                forceClientRefreshBtn.disabled = true;
+                if (status) status.textContent = 'Sending refresh signal…';
+                try {
+                    await ApiClient.ajax({
+                        type: 'POST',
+                        url: ApiClient.getUrl('/JellyfinCanopy/client-refresh'),
+                        dataType: 'json'
+                    });
+                    if (status) {
+                        status.textContent = 'Refresh signal sent. Visible clients will react within their configured check interval; background clients will react when reopened.';
+                    }
+                } catch (error) {
+                    console.error('[JC] force client refresh failed:', error);
+                    if (status) status.textContent = 'Could not send the refresh signal. Check the server logs and try again.';
+                } finally {
+                    forceClientRefreshBtn.disabled = false;
+                }
+            });
+        }
         initAutoMovieQualityMode();
 
         // Live-update the Requests Page requirements banner AND the dependency

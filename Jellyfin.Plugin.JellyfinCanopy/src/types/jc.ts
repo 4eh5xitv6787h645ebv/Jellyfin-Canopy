@@ -701,6 +701,8 @@ export interface JEGlobal extends JellyfinCanopyPublicApi {
     currentSettings?: UserSettings;
     translations: Record<string, string>;
     pluginVersion: string;
+    /** Content-addressed client bundle loaded by js/plugin.js for this document. */
+    clientBuildId?: string;
     initialized?: boolean;
     escapeHtml: (value: unknown) => string;
     toast?: (html: string, duration?: number) => void;
