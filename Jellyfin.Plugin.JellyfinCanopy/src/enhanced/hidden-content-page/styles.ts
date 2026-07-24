@@ -11,6 +11,9 @@ const CSS_STYLES = `
     .jc-hidden-content-page {
       padding: 2em;
       max-width: 95vw;
+      width: 100%;
+      min-width: 0;
+      box-sizing: border-box;
       margin: 0 auto;
       position: relative;
       z-index: 1;
@@ -41,6 +44,7 @@ const CSS_STYLES = `
 
     .jc-hidden-content-toolbar {
       display: flex;
+      flex-wrap: wrap;
       align-items: center;
       gap: 12px;
       width: 100%;
@@ -415,8 +419,10 @@ const CSS_STYLES = `
       align-items: center;
       gap: 6px;
       margin-left: auto;
-      flex: 0 0 auto;
+      flex: 0 1 auto;
+      min-width: 0;
       padding: 5px 12px;
+      box-sizing: border-box;
       border-radius: 999px;
       font-size: 13px;
       line-height: 1.2;
@@ -431,12 +437,14 @@ const CSS_STYLES = `
     }
     .jc-hidden-admin-viewing-icon {
       font-size: 16px;
+      flex: 0 0 auto;
       color: var(--jc-hc-accent, rgb(180,210,255));
     }
     .jc-hidden-admin-editing .jc-hidden-admin-viewing-icon {
       color: var(--jc-hc-accent, rgb(185,240,200));
     }
     .jc-hidden-admin-viewing-user {
+      min-width: 0;
       font-weight: 600;
       overflow: hidden;
       text-overflow: ellipsis;
@@ -471,6 +479,33 @@ const CSS_STYLES = `
          max-content keeps every card full height; the grid overflows and scrolls instead. */
       grid-auto-rows: max-content;
       align-content: start;
+    }
+
+    /* Once a tablet toolbar wraps, let every control participate in the
+       available rows instead of preserving a desktop intrinsic minimum. */
+    @media (max-width: 900px) {
+      .jc-hidden-content-toolbar {
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .jc-hidden-content-page-search {
+        flex: 1 1 100%;
+        min-width: 0;
+        max-width: none;
+        box-sizing: border-box;
+      }
+
+      .jc-hidden-scoped-filter,
+      .jc-hidden-content-page-unhide-all,
+      .jc-hidden-admin-user-filter,
+      .jc-hidden-admin-edit-toggle,
+      .jc-hidden-admin-add-btn {
+        flex: 1 1 auto;
+        min-width: 0;
+        max-width: 100%;
+        box-sizing: border-box;
+      }
     }
 
     @media (max-width: 768px) {

@@ -186,7 +186,7 @@ export function buildPanelHtml(ctx: PanelContext): string {
                                     <input type="checkbox" id="pauseScreenToggle" ${JC.currentSettings!.pauseScreenEnabled ? 'checked' : ''} style="width:18px; height:18px; accent-color:${toggleAccentColor}; cursor:pointer;">
                                     <div><div style="font-weight:500;">${JC.t!('panel_settings_custom_pause_screen')}</div><div style="font-size:12px; color:rgba(255,255,255,0.6); margin-top:2px;">${JC.t!('panel_settings_custom_pause_screen_desc')}</div></div>
                                 </label>
-                                <div style="margin-top:10px; display:flex; align-items:center; gap:8px; padding-left:30px;">
+                                <div class="jc-pause-delay-row" style="margin-top:10px; display:flex; align-items:center; gap:8px; padding-left:30px;">
                                     <label for="pauseScreenDelayInput" style="font-size:12px; color:rgba(255,255,255,0.7); white-space:nowrap;">${JC.t!('panel_settings_pause_screen_delay_label')}</label>
                                     <input type="number" id="pauseScreenDelayInput" min="1" max="60" value="${Number((JC.currentSettings as any).pauseScreenDelaySeconds ?? 5) || 5}" style="width:60px; padding:4px 6px; background:rgba(255,255,255,0.1); border:1px solid rgba(255,255,255,0.2); border-radius:4px; color:#fff; font-size:12px; text-align:center;">
                                 </div>
@@ -223,18 +223,18 @@ export function buildPanelHtml(ctx: PanelContext): string {
                             <div style="margin-bottom: 16px;"><div style="font-weight: 600; margin-bottom: 8px;">${JC.t!('panel_settings_subtitles_style')}</div><div id="subtitle-style-presets-container" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(70px, 1fr)); gap: 8px;">${generatePresetHTML((JC as any).subtitlePresets, 'style')}</div></div>
                             <div style="margin-bottom: 16px; padding: 12px; background: ${presetBoxBackground}; border-radius: 6px; border-left: 3px solid ${primaryAccentColor};">
                                 <div style="font-weight: 600; margin-bottom: 12px;">${JC.icon!(JC.IconName!.PAINT)}</div>
-                                <div style="display: flex; gap: 12px;">
-                                    <div style="flex: 1; display: flex; flex-direction: column; gap: 12px;">
+                                <div class="jc-subtitle-color-layout" style="display: flex; gap: 12px;">
+                                    <div class="jc-subtitle-color-controls" style="flex: 1; display: flex; flex-direction: column; gap: 12px;">
                                         <div>
                                             <div style="font-size: 13px; margin-bottom: 6px; color: rgba(255,255,255,0.8);">Text</div>
-                                            <div style="display: flex; gap: 8px; align-items: center;">
+                                            <div class="jc-subtitle-color-control-row" style="display: flex; gap: 8px; align-items: center;">
                                                 <input type="color" id="customSubtitleTextColorPicker" value="${escapeHtml((JC.currentSettings as any).customSubtitleTextColor?.substring(0, 7) || '#FFFFFF')}" style="width: 50px; height: 36px; border: 1px solid rgba(255,255,255,0.2); border-radius: 4px; cursor: pointer; background: transparent;">
                                                 <input type="range" id="customSubtitleTextAlpha" min="0" max="255" value="${parseInt((JC.currentSettings as any).customSubtitleTextColor?.substring(7, 9) || 'FF', 16)}" style="flex: 1; accent-color: ${primaryAccentColor};">
                                             </div>
                                         </div>
                                         <div>
                                             <div style="font-size: 13px; margin-bottom: 6px; color: rgba(255,255,255,0.8);">Background</div>
-                                            <div style="display: flex; gap: 8px; align-items: center;">
+                                            <div class="jc-subtitle-color-control-row" style="display: flex; gap: 8px; align-items: center;">
                                                 <input type="color" id="customSubtitleBgColorPicker" value="${escapeHtml((JC.currentSettings as any).customSubtitleBgColor?.substring(0, 7) || '#000000')}" style="width: 50px; height: 36px; border: 1px solid rgba(255,255,255,0.2); border-radius: 4px; cursor: pointer; background: transparent;">
                                                 <input type="range" id="customSubtitleBgAlpha" min="0" max="255" value="${parseInt((JC.currentSettings as any).customSubtitleBgColor?.substring(7, 9) || '00', 16)}" style="flex: 1; accent-color: ${primaryAccentColor};">
                                             </div>

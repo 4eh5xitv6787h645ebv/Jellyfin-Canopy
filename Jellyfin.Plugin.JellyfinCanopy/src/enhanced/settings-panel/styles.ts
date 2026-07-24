@@ -64,6 +64,17 @@ export function injectGlobalStyles(): void {
             .layout-mobile #jellyfin-canopy-panel .close-helptext { display: none; }
             .layout-mobile #jellyfin-canopy-panel .footer-buttons { flex-direction: column; align-items: flex-end !important; width: 100%; gap: 10px; }
             .layout-mobile #jellyfin-canopy-panel .footer-buttons > * { justify-content: center; }
+            #jellyfin-canopy-panel .jc-pause-delay-row,
+            #jellyfin-canopy-panel .jc-subtitle-color-layout,
+            #jellyfin-canopy-panel .jc-subtitle-color-controls,
+            #jellyfin-canopy-panel .jc-subtitle-color-control-row {
+                min-width: 0;
+                box-sizing: border-box;
+            }
+            #jellyfin-canopy-panel .jc-subtitle-color-control-row > input[type="range"] {
+                min-width: 0;
+                width: 100%;
+            }
             @media (max-width: 768px) {
                 /* Fill the viewport width; drop the desktop min-width (350px would
                    overflow a 320px phone) and the 90vw inline max-width. */
@@ -79,6 +90,39 @@ export function injectGlobalStyles(): void {
                 #jellyfin-canopy-panel .close-helptext { display: none; }
                 #jellyfin-canopy-panel .footer-buttons { flex-direction: column; align-items: flex-end !important; width: 100%; gap: 10px; }
                 #jellyfin-canopy-panel .footer-buttons > * { justify-content: center; }
+            }
+            @media (max-width: 420px) {
+                /* The 320px panel leaves roughly 220px inside each settings
+                   card. Let the delay label share or wrap that row, and stack
+                   the subtitle preview below its colour controls instead of
+                   preserving their desktop intrinsic widths. */
+                #jellyfin-canopy-panel .jc-pause-delay-row {
+                    flex-wrap: wrap;
+                    padding-left: 0 !important;
+                }
+                #jellyfin-canopy-panel .jc-pause-delay-row > label {
+                    flex: 1 1 120px;
+                    min-width: 0;
+                    white-space: normal !important;
+                }
+                #jellyfin-canopy-panel .jc-pause-delay-row > input {
+                    flex: 0 0 60px;
+                    width: 60px !important;
+                    box-sizing: border-box;
+                }
+                #jellyfin-canopy-panel .jc-subtitle-color-layout {
+                    flex-direction: column;
+                }
+                #jellyfin-canopy-panel .jc-subtitle-color-controls,
+                #jellyfin-canopy-panel #subtitleColorPreview {
+                    width: 100%;
+                    max-width: 100%;
+                }
+                #jellyfin-canopy-panel #subtitleColorPreview {
+                    flex: 0 0 auto !important;
+                    align-self: stretch !important;
+                    box-sizing: border-box;
+                }
             }
             @keyframes longPressGlow { from { box-shadow: 0 0 5px 2px var(--primary-accent-color, #fff); } to { box-shadow: 0 0 8px 15px transparent; } }
             .headerUserButton.long-press-active { animation: longPressGlow 750ms ease-out; }
@@ -106,6 +150,30 @@ export function injectGlobalStyles(): void {
               -moz-font-feature-settings: 'liga';
               font-feature-settings: 'liga';
               -webkit-font-smoothing: antialiased;
+            }
+            /* Jellyfin 12 modern gives .infoWrapper almost no width between
+               roughly 540–700px because its sibling action row keeps its
+               intrinsic size. Reserve a usable metadata column and let those
+               actions wrap only while Canopy chips are actually mounted. */
+            @media (min-width: 500px) and (max-width: 709px) {
+                .jc-modern-layout #itemDetailPage:not(.hide)
+                .detailRibbon:has(
+                    .mediaInfoItem-watchProgress,
+                    .mediaInfoItem-fileSize,
+                    .mediaInfoItem-audioLanguage
+                ) .infoWrapper {
+                    min-width: 7.5rem !important;
+                }
+                .jc-modern-layout #itemDetailPage:not(.hide)
+                .detailRibbon:has(
+                    .mediaInfoItem-watchProgress,
+                    .mediaInfoItem-fileSize,
+                    .mediaInfoItem-audioLanguage
+                ) .mainDetailButtons {
+                    min-width: 0 !important;
+                    flex-wrap: wrap !important;
+                    margin-block: 0.25em !important;
+                }
             }
             .seerr-issue-radio-group {
               display: flex;
