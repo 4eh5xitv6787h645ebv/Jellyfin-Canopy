@@ -207,6 +207,7 @@
   "seerr_modal_toast_options_missing": "{{icon:warning}} Vänligen välj alla nödvändiga alternativ",
   "seerr_modal_request_collection": "Begär samling",
   "seerr_select_all_movies": "Välj alla filmer",
+  "seerr_collection_movie_count": "Filmer i samlingen: {count}",
   "seerr_modal_toast_select_movie": "{{icon:warning}} Välj minst en film",
   "seerr_toast_collection_requested": "Begärd",
   "seerr_toast_movies": "filmer",

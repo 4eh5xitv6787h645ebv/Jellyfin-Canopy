@@ -207,6 +207,7 @@
   "seerr_modal_toast_options_missing": "{{icon:warning}} Bitte wählen Sie alle erforderlichen Optionen aus",
   "seerr_modal_request_collection": "Sammlung anfordern",
   "seerr_select_all_movies": "Alle Filme auswählen",
+  "seerr_collection_movie_count": "Filme in der Sammlung: {count}",
   "seerr_modal_toast_select_movie": "{{icon:warning}} Bitte wählen Sie mindestens einen Film aus",
   "seerr_toast_collection_requested": "Angefragt",
   "seerr_toast_movies": "Filme",

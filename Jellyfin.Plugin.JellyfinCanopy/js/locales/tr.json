@@ -207,6 +207,7 @@
   "seerr_modal_toast_options_missing": "{{icon:warning}} Lütfen tüm gerekli seçenekleri seçin",
   "seerr_modal_request_collection": "Koleksiyon İsteği",
   "seerr_select_all_movies": "Tüm filmleri seç",
+  "seerr_collection_movie_count": "Koleksiyondaki filmler: {count}",
   "seerr_modal_toast_select_movie": "{{icon:warning}} Lütfen en az bir film seçin",
   "seerr_toast_collection_requested": "İstendi",
   "seerr_toast_movies": "filmler",

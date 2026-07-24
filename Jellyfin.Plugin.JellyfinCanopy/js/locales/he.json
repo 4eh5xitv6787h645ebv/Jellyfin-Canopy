@@ -185,6 +185,7 @@
   "seerr_btn_error": "Error",
   "bookmark_merge_success": "{{icon:success}} המיזוג הושלם — נוצרו {count} סימניות חדשות בגרסה שנבחרה",
   "seerr_select_all_movies": "Select All Movies",
+  "seerr_collection_movie_count": "סרטים באוסף: {count}",
   "hidden_content_filter_calendar_desc": "Hide items from the calendar view",
   "downloads_status_completed": "Completed",
   "panel_settings_ui_quality_tags_desc": "Display 4K, HDR, etc., tags on posters.",

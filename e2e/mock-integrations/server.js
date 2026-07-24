@@ -267,7 +267,11 @@ async function handleSeerr(request, response) {
             name: 'JC Fixture Collection',
             parts: [
                 { ...movieDetail(550), mediaInfo: { status: 5 } },
-                { ...movieDetail(603), mediaInfo: { status: 1 } },
+                {
+                    ...movieDetail(603),
+                    title: 'The Extraordinary Matrix Collection Chronicle With SupercalifragilisticexpialidociousRevisited',
+                    mediaInfo: { status: 1 },
+                },
                 { ...movieDetail(862), mediaInfo: { status: 1 } },
             ],
         });

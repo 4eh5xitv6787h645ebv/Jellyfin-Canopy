@@ -207,6 +207,7 @@
   "seerr_modal_toast_options_missing": "{{icon:warning}} Fill in all required options, matey",
   "seerr_modal_request_collection": "Demand th' Collection",
   "seerr_select_all_movies": "Demand All Films",
+  "seerr_collection_movie_count": "Films in th' collection: {count}",
   "seerr_modal_toast_select_movie": "{{icon:warning}} Pick at least one film, ye landlubber",
   "seerr_toast_collection_requested": "Demanded",
   "seerr_toast_movies": "films",

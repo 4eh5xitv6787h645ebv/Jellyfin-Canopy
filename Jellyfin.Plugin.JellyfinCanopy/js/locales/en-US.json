@@ -208,6 +208,7 @@
   "seerr_modal_toast_options_missing": "{{icon:warning}} Please select all required options",
   "seerr_modal_request_collection": "Request Collection",
   "seerr_select_all_movies": "Select All Movies",
+  "seerr_collection_movie_count": "Movies in collection: {count}",
   "seerr_modal_toast_select_movie": "{{icon:warning}} Please select at least one movie",
   "seerr_toast_collection_requested": "Requested",
   "seerr_toast_movies": "movies",

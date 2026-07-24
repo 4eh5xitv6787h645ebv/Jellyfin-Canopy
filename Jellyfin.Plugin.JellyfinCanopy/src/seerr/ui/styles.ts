@@ -351,9 +351,11 @@ ui.addSeasonModalStyles = function () {
         .seerr-collection-4k-toggle { display: inline-flex; align-items: center; gap: 8px; padding: 10px 16px; margin-bottom: 12px; background: rgba(51, 65, 85, 0.3); border: 1px solid rgba(71, 85, 105, 0.4); border-radius: 12px; font-weight: 600; color: #e2e8f0; cursor: pointer; }
         .seerr-collection-4k-toggle input { width: 20px; height: 20px; accent-color: #4f46e5; border-radius: 4px; cursor: pointer; }
         .seerr-collection-list { display: grid; gap: 6px; min-width: 0; }
-        .seerr-collection-header-row { display: grid; grid-template-columns: 40px 1fr auto auto; align-items: center; gap: 16px; padding: 12px 20px; background: rgba(51, 65, 85, 0.3); border: 1px solid rgba(71, 85, 105, 0.4); border-radius: 12px; margin-bottom: 8px; font-weight: 600; color: #e2e8f0; }
+        .seerr-collection-header-row { display: grid; grid-template-columns: 40px minmax(0, 1fr); align-items: center; gap: 16px; padding: 12px 20px; background: rgba(51, 65, 85, 0.3); border: 1px solid rgba(71, 85, 105, 0.4); border-radius: 12px; margin-bottom: 8px; font-weight: 600; color: #e2e8f0; }
         .seerr-collection-header-row .seerr-collection-checkbox { cursor: pointer; }
+        .seerr-collection-header-copy { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
         .seerr-collection-header-label { font-size: 0.95rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: #cbd5e1; }
+        .seerr-collection-count { color: #94a3b8; font-size: 0.82rem; font-weight: 500; line-height: 1.25; overflow-wrap: anywhere; }
         .seerr-collection-checkbox { width: 22px; height: 22px; margin: 0; accent-color: var(--theme-primary-color, #4f46e5); border-radius: 4px; cursor: pointer; }
         .seerr-collection-checkbox:disabled { opacity: 0.4; cursor: not-allowed; }
         .seerr-collection-movie-row { box-sizing: border-box; display: grid; grid-template-columns: 52px minmax(0, 1fr) 22px; align-items: center; gap: 14px; width: 100%; min-width: 0; padding: 12px 14px; background: rgba(30, 41, 59, 0.4); border: 1px solid rgba(71, 85, 105, 0.38); border-radius: 12px; cursor: pointer; touch-action: manipulation; transition: background-color 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease; }
@@ -363,7 +365,7 @@ ui.addSeasonModalStyles = function () {
         .seerr-collection-movie-row:focus-within { outline: 2px solid var(--theme-primary-color, #6366f1); outline-offset: 2px; }
         .seerr-collection-movie-poster { display: block; width: 52px; height: 78px; object-fit: cover; border-radius: 7px; background: rgba(15, 23, 42, 0.72); }
         .seerr-collection-movie-details { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
-        .seerr-collection-movie-details .title { display: block; min-width: 0; font-weight: 700; color: #f1f5f9; font-size: 1rem; line-height: 1.25; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .seerr-collection-movie-details .title { display: block; min-width: 0; font-weight: 700; color: #f1f5f9; font-size: 1rem; line-height: 1.25; overflow: visible; overflow-wrap: anywhere; text-overflow: clip; white-space: normal; }
         .seerr-collection-movie-meta { display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; color: #94a3b8; white-space: nowrap; }
         .seerr-collection-movie-meta .year { flex: 0 0 auto; font-size: 0.82rem; line-height: 1; }
         .seerr-collection-meta-separator { flex: 0 0 auto; color: #64748b; font-size: 0.85rem; line-height: 1; }

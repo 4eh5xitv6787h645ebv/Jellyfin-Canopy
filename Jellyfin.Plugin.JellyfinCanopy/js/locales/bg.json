@@ -207,6 +207,7 @@
   "seerr_modal_toast_options_missing": "{{icon:warning}} Моля, изберете всички задължителни опции",
   "seerr_modal_request_collection": "Заявка на колекция",
   "seerr_select_all_movies": "Избери всички филми",
+  "seerr_collection_movie_count": "Филми в колекцията: {count}",
   "seerr_modal_toast_select_movie": "{{icon:warning}} Моля, изберете поне един филм",
   "seerr_toast_collection_requested": "Заявена",
   "seerr_toast_movies": "филми",
