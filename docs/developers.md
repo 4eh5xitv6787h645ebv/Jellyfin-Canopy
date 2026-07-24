@@ -26,6 +26,116 @@ The route tree is chosen **once at module init** (`WEB src/RootAppRouter.tsx`), 
 
 **Present ≠ visible.** On the modern layout the entire legacy header block stays in the DOM inside a `display:none` wrapper (`WEB src/components/AppHeader.tsx`). Existence checks silently produce invisible UI. `.skinHeader`/`.MuiAppBar-root` are `position:fixed`, so `offsetParent === null` even when they are visible — check children instead.
 
+### Responsive containment
+
+Responsive correctness is a geometry and reachability contract, not a
+device-name screenshot exercise. Jellyfin's modern and legacy layouts can
+share a route while providing different native containers, fixed headers,
+drawers, and flex constraints. A rule that happens to fit one layout or one
+freshly loaded viewport can still overflow the other layout, hide content
+behind native UI, or retain stale offsets after a resize.
+
+The contributor-facing requirements live under **Responsive UI contract** in
+the repository's `CONTRIBUTING.md`. The baseline CSS-pixel matrix is:
+
+| Boundary | Viewport | Purpose |
+| --- | --- | --- |
+| Narrow-phone stress | `320×568` | Smallest supported width; deliberately outside the popularity roster |
+| Common phones | `360×800`, `390×844`, `430×739` | Budget Android, standard phone, and large-phone widths |
+| Phone landscape | `568×320`, `844×390` | Narrow stress plus common short dynamic viewport pressure |
+| Tablets | `800×1280`, `1024×1366` | Android/iPad-class layouts and intermediate breakpoint islands |
+| Desktop | `1440×900` | Full navigation, rail, toolbar, and multi-column state |
+
+These are browser-content dimensions in CSS pixels, not panel hardware pixels.
+Physical resolution without device-pixel ratio, browser chrome, display zoom,
+and orientation does not identify the available layout width.
+
+Select every family the same owner or CSS rule can affect; a local change does
+not need unrelated form factors. For shared containers, layout primitives, and
+width-generic responsive fixes, also import `POPULAR_MOBILE_DEVICES` from
+`e2e/fixtures/popular-mobile-device-viewports.ts`, deduplicate identical
+`width×height` pairs, and execute every distinct portrait viewport. The roster
+contains 50 researched phone/tablet representatives but intentionally collapses
+to fewer CSS viewport executions: model popularity and layout coverage are
+different facts. Keep the independent `320px` stress case and add
+`breakpoint−1`, `breakpoint`, and `breakpoint+1` whenever a changed media query
+creates a layout transition.
+
+#### What browser tests must measure
+
+Check the document, each non-scrolling owned root, and the descendants that can
+create their intrinsic width. Compare each box with its own containing box;
+`window.innerWidth` can include the vertical scrollbar gutter. Choose the
+strict-child locator deliberately so it excludes content owned by an
+intentional scrollport. Allow a one-pixel rounding tolerance, but do not hide a
+failure with `overflow-x:hidden` on the document:
+
+```ts
+const geometry = await root.evaluate((element) => {
+    const documentRoot =
+        document.scrollingElement || document.documentElement;
+    const owner = element.getBoundingClientRect();
+    const documentOverflow =
+        documentRoot.scrollWidth - documentRoot.clientWidth;
+    const rootOverflow = element.scrollWidth - element.clientWidth;
+    const escaped = [
+        ...element.querySelectorAll<HTMLElement>('[data-containment="strict"]'),
+    ]
+        .map((node) => ({ node, rect: node.getBoundingClientRect() }))
+        .filter(
+            ({ rect }) =>
+                rect.left < owner.left - 1 || rect.right > owner.right + 1,
+        )
+        .map(({ node }) => node.id || node.className);
+    return { documentOverflow, rootOverflow, escaped };
+});
+
+expect(geometry.documentOverflow).toBeLessThanOrEqual(1);
+expect(geometry.rootOverflow).toBeLessThanOrEqual(1);
+expect(geometry.escaped).toEqual([]);
+```
+
+Intentional scrollports need a separate reachability assertion instead of the
+`rootOverflow` assertion above. Scroll to both extremes on each relevant axis
+and assert that the visually leading/trailing owned descendants enter the
+scrollport's visible bounds. This catches unreachable negative overflow and
+works when horizontal offsets have RTL-specific semantics. Offset comparisons
+with the reported scroll range are useful supplementary evidence, but do not
+prove reachability by themselves. Restore the initial position afterward.
+
+Those are only the base checks. The owning spec must also assert the actual
+contract: children remain within their grid/card/toolbar/dialog; page/collection
+titles and collection/item counts that identify the active surface remain fully
+visible; other intentional truncation exposes its full value accessibly without
+requiring hover; buttons have measurable hit boxes and unclipped labels/icons;
+fixed or sticky elements do not intersect native controls; and every dialog
+action and close control is reachable. A scrollable container passes only when
+its complete content can be reached, not merely because `overflow:auto`
+appears in computed CSS.
+
+Use content that can defeat optimistic layouts: a long spaced title, an
+unbroken token, expanded/localized labels, the largest meaningful count or
+badge, every action present, and both populated and empty states. Flex/grid
+children that carry text normally need `min-width:0`; wrapping action rows need
+an explicit wrap or scroll policy; fixed heights are suspect when content can
+wrap.
+
+Resize-sensitive code must be tested in one live page with
+`wide → narrow → landscape → wide-back`. Recreating the page at each size
+cannot detect a stale cached measurement. Use `ResizeObserver` or an owning
+layout signal where geometry genuinely changes, tear it down with the feature
+lifecycle, and assert final geometry after every transition.
+
+Responsive acceptance cases belong in `e2e/required-test-inventory.json`.
+Required Playwright runs disable retries. The six-shard aggregate rejects
+failed/flaky/skipped outcomes, missing/unexpected/duplicate tests, stale
+evidence, and inventory drift. Representative screenshots for every affected
+layout and form factor make review easier, but geometry assertions own the
+pass/fail decision; a screenshot becomes a pixel baseline only when a
+committed snapshot explicitly owns it. Existing examples include
+`e2e/bookmarks-responsive.spec.ts`, `e2e/admin-responsive.spec.ts`, and
+`e2e/maintenance-banner-responsive.spec.ts`.
+
 #### Stable anchors — modern layout
 
 | Surface | Selector (live-verified) |
