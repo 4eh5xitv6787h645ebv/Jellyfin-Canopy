@@ -519,17 +519,24 @@ Jellyfin Canopy keeps open browser sessions in step with the server without manu
 
 | Change on the server | What happens in open sessions |
 |---|---|
-| **Admin saves plugin configuration** | Every open session refetches the plugin config and applies it live — toggles that drive cheap, idempotent surfaces (e.g. tag overlays) re-render in place; everything else picks up the fresh values on its next page mount. No reload needed. |
+| **Admin saves plugin configuration** | Every open session refetches the plugin config and applies cheap/idempotent changes live. When Smart Client Refresh is enabled for config changes, the page also reloads at the configured safe point so heavy page-owned surfaces cannot retain stale state. |
 | **Watch state changes** (played/favorite/progress — from any device) | Watch-state-dependent overlays (rating/user-review tags) are rescanned so they match the new state. |
 | **Library changes** (items added/updated/removed) | Newly mounted cards are tagged as usual; a coalesced rescan picks up data changes behind already-visible cards. The [Sonarr &amp; Radarr](sonarr-radarr.md) Requests page refreshes its list when a monitored download lands in the library. |
-| **The plugin itself is updated** (new DLL while sessions are open) | Sessions still running the old client generation detect the newer server version and show a **one-time toast** prompting a refresh. The toast only fires when the server version is strictly newer than the one the session loaded — never for a same-version session. |
+| **Canopy is updated** | The loaded schema-v2 client-manifest `buildId` is compared with the server's current content-derived build id, so a same-version replacement is detected. The client follows the configured Smart / Home-only / Ask / Disabled policy. |
+| **Jellyfin restarts or updates** | A per-process Jellyfin generation changes even when the visible server version does not. A client left open across the restart catches up on its next visible check. |
+| **Admin requests a client refresh** | `POST /JellyfinCanopy/client-refresh` increments a process-local force revision. Clients honor it even when automatic refresh is disabled, but never bypass the playback/edit safety gate. |
 
 ### Honest limits
 
-- **One reload after a plugin update.** A running page cannot hot-swap its own code; after updating the plugin, each open session needs one refresh (exactly what the update toast asks for). Everything after that reload is current.
-- **Not every feature re-initializes from a config change alone.** The config values update live everywhere, but a few heavy per-page injectors only rebuild their DOM on the next navigation or page mount.
-- **Native surfaces refresh on their own schedule.** Jellyfin's own UI (home rows, item details) updates via its own mechanisms; the plugin only guarantees liveness for the surfaces it draws. Where the native layout provides no refresh path, the plugin does not force one — deliberately, to avoid flicker and layout shift.
+- **One safe reload after a client-generation change.** A running page cannot hot-swap its own code. The coordinator reloads once at a safe point and the new document loads the current content-addressed graph.
+- **Playback is a hard stop.** Playing *or paused* media, the video route, media-session playback, picture-in-picture and full screen all defer every automatic, prompted, and admin-forced reload.
+- **Editing is protected too.** Dashboard/configuration/metadata/profile routes, open dialogs/action sheets, and a focused input/editor defer the reload.
+- **Scope is Canopy web code.** Desktop/mobile browsers and Jellyfin app WebViews execute the coordinator. Fully native clients that do not load Canopy have no plugin-owned page runtime to refresh.
 - **Fails soft.** If the live socket is unavailable, features fall back to polling and manual refresh — nothing breaks, updates are just not instant.
+
+Hidden/background documents do not poll: a hidden `visibilitychange` or Cordova `pause` aborts an in-flight check and cancels pending poll/decision timers. Visible `visibilitychange`, `focus`, `pageshow`, network `online`, and Cordova `resume` all trigger an immediate no-cache state check; this is why an already-open phone app catches up as soon as it is reopened. Tracking Cordova lifecycle separately also protects Android WebViews whose `document.visibilityState` can transiently disagree with the native Activity state. Visible documents use the admin-configured 5–3600 second cadence. A session-storage budget allows at most three committed reloads per minute.
+
+The authenticated `GET /JellyfinCanopy/client-refresh-state` response contains the Canopy build id, Jellyfin process generation, configuration revision, force revision, and current policy. It also refreshes the live-session registry heartbeat. `POST /JellyfinCanopy/client-refresh` is protected by `Policies.RequiresElevation`.
 
 ### Subscribing from a client feature
 
@@ -549,10 +556,10 @@ The server pushes through `ISessionManager` (`Services/LiveNotifierService.cs`),
 
 **The push is scoped to sessions that actually run JC.** The carrier is a playback-shaped `GeneralCommand`, and while jellyfin-web provably ignores it, how a *native* client (Android, Android TV, Kodi, third-party apps) handles an unsolicited playback command is outside the plugin's control — the original broadcast to every session of every user delivered it to all of them on every config save. `Services/LiveSessionRegistry.cs` fixes the targeting:
 
-- Every JC client boot and every hot-reload refetch calls `/JellyfinCanopy/public-config` authenticated, and the 15-minute self-update recheck calls `/JellyfinCanopy/version`. Both record the calling session's **device id** (the `Jellyfin-DeviceId` claim) into a bounded, TTL'd registry.
+- Every JC client boot and every hot-reload refetch calls `/JellyfinCanopy/public-config` authenticated, and every visible smart-refresh state check calls `/JellyfinCanopy/client-refresh-state`. Both record the calling session's **device id** (the `Jellyfin-DeviceId` claim) into a bounded, TTL'd registry.
 - `LiveNotifierService` sends the config-changed command **per registered device** via `SendMessageToUserDeviceSessions`. Native clients never call JC endpoints, so they can never be registered and never receive the carrier.
 - Because the device id claim is ultimately caller-supplied (Jellyfin trusts the auth header's `DeviceId`), the registry also stores the registering **user**, and the notifier only delivers to a device when that user has a **live session on it** — a user can register pushes for their own devices, never someone else's (`SelectDeliverableDeviceIds`, unit-pinned).
-- The registry is **self-healing**: a server restart empties it, open web sessions re-register within one 15-minute recheck (the recheck fetch is deliberately authenticated and keeps running after the one-shot update toast — it doubles as this heartbeat), and a session that misses a push simply picks the new config up on its next load (fail-soft).
+- The registry is **self-healing**: a server restart empties it, visible web sessions re-register on their next state check, and background WebViews re-register immediately when resumed. A session that misses a push still picks up the new config/state on its next visible check (fail-soft).
 
 ---
 
@@ -1013,7 +1020,7 @@ grep -rn "PERF(SE" Jellyfin.Plugin.JellyfinCanopy/
 Known per-server costs the rules above bound — an inventory, not new rules; each entry names the rule that owns it:
 
 - **LiveNotifier config-save fan-out** (`Services/LiveNotifierService.cs:174`): every admin config save enumerates all live sessions to select deliverable devices — `O(sessions)` per save, bounded by the registry cap below (S7's axis, S9's budget discipline).
-- **Version heartbeat**: every open tab calls `/JellyfinCanopy/version` every 15 minutes (the self-update recheck doubling as the live-session heartbeat) — `O(open tabs)` background request load per server (S9).
+- **Smart-refresh heartbeat**: every *visible* open Canopy tab calls `/JellyfinCanopy/client-refresh-state` at the configured 5–3600 second cadence (30 seconds by default); hidden/background tabs make no requests and check once on resume — `O(visible Canopy tabs)` request load per server (S9).
 - **LiveSessionRegistry cap**: the live-session registry is bounded at **500 devices** (`Services/LiveSessionRegistry.cs:55`, `MaxEntries`) — the documented ceiling for push fan-out; the operator-facing limit documentation is owned by SR-11.
 
 ### Measured impact
@@ -1032,7 +1039,7 @@ The jank doctrine is measured, not asserted. The numbers below come from `e2e/pe
 | Live `MutationObserver`s created by JC (idle on home) | 27 | **3** |
 | … of which body-wide | 26 | 3 |
 | … of which body-wide **and attribute-observing** | 24 | **0** |
-| Active `setInterval` timers owned by JC (idle on home) | 2 — a permanent 1 Hz colored-ratings poll + a 30 s requests poll running even on home | **1** — a 15-min, visibility-gated plugin-update recheck |
+| Active `setInterval` timers owned by JC (idle on home) | 2 — a permanent 1 Hz colored-ratings poll + a 30 s requests poll running even on home | **0** — smart refresh uses one visibility-gated, self-rescheduling data timeout |
 | JC requests at boot | 78 | **33** |
 | JC bytes at boot | 3 372 662 B (3.2 MiB) | **1 624 785 B (1.5 MiB)** |
 | Third-party **asset-CDN** requests, whole flow (R6) | 15 across 4 hosts (jsdelivr, cdnjs, googleapis, gstatic) | **0** (only `image.tmdb.org` content) |
@@ -1053,7 +1060,7 @@ The jank doctrine is measured, not asserted. The numbers below come from `e2e/pe
 **Known remainders the benchmark exposes** (each visible in a fresh run's census output):
 
 - **R3 stragglers (resolved):** `src/arr/arr-tag-links.ts`, `src/elsewhere/elsewhere.ts`, and `src/others/letterboxd-links.ts` — once body-wide observers with `attributeFilter: ['class']` — now ride the shared `JC.core.dom.onBodyMutation` multiplexer (childList-only). No feature owns a body-wide attribute-observing observer any more, so the *after* count is **0**. The only `attributeFilter` observers left are player-scoped (`src/enhanced/playback.ts`) and element-scoped (`src/bootstrap/login-image.ts`), neither body-wide.
-- **R5 note:** the one standing JC interval is `src/core/live-update.ts`'s 15-minute version recheck — visibility-gated and push-nudged (config pushes carry the version), but app-scoped rather than page-scoped.
+- **R5 note:** `src/core/live-update.ts` owns one app-scoped, self-rescheduling data timeout for the smart-refresh heartbeat. It makes no request while hidden, is push/foreground nudged, and uses the admin-bounded 5–3600 second cadence. This is the deliberate document-generation liveness exception to page-scoped polling.
 - **Home-page first-tag latency after a cold boot** is higher on the fixed build (median ≈ 2.7 s after card mount vs ≈ 0.7 s before): home cards paint long before client initialization finishes, and first tags wait for the server tag-cache fetch. They fade into absolute overlays, so this costs zero shift — but it is the number to beat next.
 - **Residual JC-attributed shifts** (the 0.0002 above) are micrometric, ≤ 0.0001 each: the Material Symbols icon-font swap reflowing already-injected icons at boot, the `#jc-active-streams` header button's one-time entrance, and the audio-language chip whose reserved width is close-but-not-exact to its final content.
 
@@ -1233,7 +1240,7 @@ Jellyfin.Plugin.JellyfinCanopy/
     │   ├── live.ts          # Live-update hub over the v12 SDK socket (JC.core.live)
     │   ├── live-config.ts   # Config hot-reload (admin saves apply to open sessions)
     │   ├── live-rows.ts     # Library/user-data pushes → coalesced tag rescans
-    │   ├── live-update.ts   # Plugin self-update detection → one-time refresh toast
+    │   ├── live-update.ts   # Smart generation/config refresh + foreground/playback safety
     │   ├── tag-renderer-base.ts  # Factory owning the shared tag-module plumbing
     │   ├── bounded-cache.ts # Size-capped, lazily-TTL-swept LRU — the one item-cache primitive
     │   ├── config-resolve.ts # PascalCase admin-config → camelCase view (admin-default resolution)

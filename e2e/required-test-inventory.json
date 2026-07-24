@@ -55,6 +55,7 @@
     "e2e/list-view-tags.spec.ts › list-view tags › List view row thumbnails carry no tag overlays; grid cards still do",
     "e2e/live-updates.spec.ts › live updates › REST favorite toggle arrives as user-data-changed",
     "e2e/live-updates.spec.ts › live updates › admin config save hot-reloads JC.pluginConfig without a page reload",
+    "e2e/live-updates.spec.ts › live updates › smart refresh reloads at a safe point and defers active playback",
     "e2e/maintenance-banner-responsive.spec.ts › maintenance banner responsive offsets (#466 finding 10) › modern: offsets follow wide, narrow, landscape, and wide-back banner heights",
     "e2e/maintenance-banner-responsive.spec.ts › maintenance banner responsive offsets (#466 finding 10) › legacy: offsets follow wide, narrow, landscape, and wide-back banner heights",
     "e2e/mobile-fits.spec.ts › mobile viewport fits › Hidden Content page: heading clears the header, no horizontal scroll",

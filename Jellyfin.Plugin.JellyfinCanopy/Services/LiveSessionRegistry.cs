@@ -22,10 +22,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
     /// control — broadcasting a playback-shaped command to every session of every
     /// user is exactly how a foreign client ends up acting on (or choking on)
     /// traffic it never asked for. JC can know precisely where it runs: every JC
-    /// boot, every hot-reload refetch AND the 15-minute self-update recheck call
-    /// JC endpoints authenticated, carrying the session's device id claim.
+    /// boot, every hot-reload refetch AND every visible smart-refresh state check
+    /// call JC endpoints authenticated, carrying the session's device id claim.
     /// Recording those ids here makes the registry self-healing: a server restart
-    /// empties it, and each live JC session re-registers within one recheck.
+    /// empties it, visible sessions re-register on their next state check, and
+    /// background WebViews re-register when resumed.
     ///
     /// The registering user is stored because the device id claim is ultimately
     /// caller-supplied (Jellyfin trusts the auth header's DeviceId): the notifier
@@ -45,7 +46,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
     public sealed class LiveSessionRegistry : ILiveSessionRegistry
     {
         // A web session refetches public-config on every boot and on every
-        // config-changed push, and pings /version every 15 minutes, so a
+        // config-changed push, and polls /client-refresh-state while visible, so a
         // generous TTL only has to outlive an idle (but still open) tab
         // between touches.
         internal static readonly TimeSpan EntryTtl = TimeSpan.FromHours(24);

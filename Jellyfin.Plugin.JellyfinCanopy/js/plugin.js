@@ -11,6 +11,9 @@
         userConfig: { settings: {}, shortcuts: { Shortcuts: [] }, bookmark: { bookmarks: {} }, elsewhere: {}, hiddenContent: { items: {}, settings: {} } },
         translations: {},
         pluginVersion: 'unknown',
+        // Set from the validated schema-v2 manifest before the ESM graph loads.
+        // Smart refresh compares this exact content identity with the server.
+        clientBuildId: '',
         // Stub functions that will be overwritten by modules
         icon: (name) => {
             // Fallback icon function until icons.js loads
@@ -1251,6 +1254,7 @@
                     signal: scope?.signal
                 });
                 const manifest = validateClientManifest(await request);
+                window.JellyfinCanopy.clientBuildId = manifest.buildId;
                 let lastError = null;
                 for (let attempt = 0; attempt <= 2; attempt++) {
                     try {

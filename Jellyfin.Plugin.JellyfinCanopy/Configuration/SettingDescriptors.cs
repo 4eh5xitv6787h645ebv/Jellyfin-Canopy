@@ -131,6 +131,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
                 // earliest possible point (see js/plugin.js applyLayoutEnforcement).
                 // It carries no secret — only the enforcement mode string.
                 Public("LayoutEnforcement", c => c.LayoutEnforcement),
+                Public("ClientRefreshMode", c => c.ClientRefreshMode),
+                Public("ClientRefreshOnCanopyUpdate", c => c.ClientRefreshOnCanopyUpdate),
+                Public("ClientRefreshOnJellyfinUpdate", c => c.ClientRefreshOnJellyfinUpdate),
+                Public("ClientRefreshOnConfigChange", c => c.ClientRefreshOnConfigChange),
+                Public("ClientRefreshPollSeconds", c => c.ClientRefreshPollSeconds),
+                Public("ClientRefreshIdleSeconds", c => c.ClientRefreshIdleSeconds),
                 Public("EnableCustomSplashScreen", c => c.EnableCustomSplashScreen),
                 Public("SplashScreenImageUrl", c => c.SplashScreenImageUrl),
                 // Public (incl. pre-login): the client-side asset-url map

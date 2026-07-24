@@ -8,10 +8,29 @@
 //
 // Both flows restore every value they touch: the favorite goes back to its
 // original state, and the plugin configuration is restored verbatim.
-import { test, expect, loginAs, USERS, assertNoRuntimeErrors } from './fixtures/auth';
+import {
+    test,
+    expect,
+    loginAs,
+    USERS,
+    assertNoRuntimeErrors,
+    type ConsoleErrors,
+} from './fixtures/auth';
 import { api, authenticate, PLUGIN_ID } from './fixtures/api';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
+
+const OPTIONAL_DETAIL_IMAGE =
+    /\/Items\/[^/]+\/Images\/(?:Logo|Disc|Backdrop)(?:[/?]|$)/i;
+
+function assertNoSmartRefreshRuntimeErrors(consoleErrors: ConsoleErrors): void {
+    assertNoRuntimeErrors({
+        ...consoleErrors,
+        unexpected4xx: () => consoleErrors.unexpected4xx().filter(
+            ({ method, url }) => method !== 'HEAD' || !OPTIONAL_DETAIL_IMAGE.test(url)
+        ),
+    });
+}
 
 test.describe('live updates', () => {
     test('REST favorite toggle arrives as user-data-changed', async ({ page, consoleErrors, baseURL }) => {
@@ -142,5 +161,118 @@ test.describe('live updates', () => {
         );
 
         assertNoRuntimeErrors(consoleErrors);
+    });
+
+    test('smart refresh reloads at a safe point and defers active playback', async ({ page, consoleErrors, baseURL }) => {
+        await loginAs(page, 'admin', consoleErrors);
+
+        const admin = await authenticate(baseURL!, USERS.admin.username, USERS.admin.password);
+        const state = await api<{
+            SchemaVersion: number;
+            CanopyBuildId: string;
+            JellyfinGeneration: string;
+            ConfigurationRevision: number;
+            ForceRevision: number;
+        }>(baseURL!, '/JellyfinCanopy/client-refresh-state', admin.token);
+        expect(state).toMatchObject({
+            SchemaVersion: 1,
+            ConfigurationRevision: expect.any(Number),
+            ForceRevision: expect.any(Number),
+        });
+        expect(state!.CanopyBuildId).toMatch(/^[a-f0-9]{64}$/);
+        expect(state!.JellyfinGeneration).toMatch(/^[a-f0-9]{64}$/);
+
+        const configPath = `/Plugins/${PLUGIN_ID}/Configuration`;
+        const original = await api<Record<string, unknown>>(baseURL!, configPath, admin.token);
+        expect(original).toBeTruthy();
+        const firstToast = original!.ToastDuration === 4444 ? 3333 : 4444;
+        const accelerated = {
+            ...original,
+            ClientRefreshMode: 'Smart',
+            ClientRefreshPollSeconds: 5,
+            ClientRefreshIdleSeconds: 0,
+            ClientRefreshOnCanopyUpdate: true,
+            ClientRefreshOnJellyfinUpdate: true,
+            ClientRefreshOnConfigChange: true,
+            ToastDuration: firstToast,
+        };
+
+        try {
+            const safeOrigin = await page.evaluate(() => performance.timeOrigin);
+            await api(baseURL!, configPath, admin.token, {
+                method: 'POST',
+                body: JSON.stringify(accelerated),
+            });
+            await page.waitForFunction(
+                (origin) => performance.timeOrigin > origin
+                    && (window as any).JellyfinCanopy?.initialized === true,
+                safeOrigin,
+                { timeout: 30_000 }
+            );
+
+            const items = await api<{ Items: Array<{ Id: string }> }>(
+                baseURL!,
+                `/Items?Recursive=true&SearchTerm=${encodeURIComponent('JC Auto-Skip E2E Fixture')}`
+                    + `&IncludeItemTypes=Movie&Limit=1&userId=${admin.userId}`,
+                admin.token
+            );
+            const itemId = items?.Items?.[0]?.Id;
+            expect(itemId, 'the seeded playback fixture must resolve').toBeTruthy();
+
+            await page.goto(`${baseURL}/web/#/details?id=${itemId}`);
+            await page.locator('button.btnPlay:not(.hide)').click();
+            await page.waitForFunction(
+                () => location.hash.startsWith('#/video')
+                    && [...document.querySelectorAll('video')].some(
+                        (video) => !video.paused && video.currentTime > 0
+                    ),
+                undefined,
+                { timeout: 30_000 }
+            );
+            // The stock details page probes absent optional Logo/Disc/Backdrop
+            // images with HEAD 404s before playback. Clear that host-only phase
+            // while the fixture retains every 5xx as sticky evidence.
+            consoleErrors.reset();
+
+            const playbackOrigin = await page.evaluate(() => performance.timeOrigin);
+            await api(baseURL!, configPath, admin.token, {
+                method: 'POST',
+                body: JSON.stringify({
+                    ...accelerated,
+                    ToastDuration: firstToast === 4444 ? 3333 : 4444,
+                }),
+            });
+
+            await page.waitForSelector('#jc-client-refresh-notice', { timeout: 30_000 });
+            await page.waitForTimeout(2_000);
+            expect(await page.evaluate(() => performance.timeOrigin)).toBe(playbackOrigin);
+            expect(page.url()).toContain('/#/video');
+            expect(await page.locator('video').evaluate((video) =>
+                !video.paused && video.currentTime > 0)).toBe(true);
+
+            await page.evaluate(() => {
+                const video = document.querySelector('video');
+                if (video) {
+                    video.pause();
+                    video.removeAttribute('src');
+                    video.load();
+                }
+                window.location.hash = '#/home';
+            });
+            await page.waitForFunction(
+                (origin) => performance.timeOrigin > origin
+                    && (window as any).JellyfinCanopy?.initialized === true,
+                playbackOrigin,
+                { timeout: 30_000 }
+            );
+
+            assertNoSmartRefreshRuntimeErrors(consoleErrors);
+        } finally {
+            if (!page.isClosed()) await page.close();
+            await api(baseURL!, configPath, admin.token, {
+                method: 'POST',
+                body: JSON.stringify(original),
+            });
+        }
     });
 });

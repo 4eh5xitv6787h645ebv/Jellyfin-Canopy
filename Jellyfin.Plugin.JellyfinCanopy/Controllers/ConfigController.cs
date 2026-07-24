@@ -179,12 +179,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         [HttpGet("version")]
         public ActionResult GetVersion()
         {
-            // A JC session pings this every 15 min (live-update recheck), so it
-            // doubles as the live-push registry heartbeat: a web session that was
-            // already open across a server restart (and therefore never refetched
-            // public-config) re-registers here within one recheck interval and
-            // resumes receiving config-changed pushes. Native clients never call
-            // JC endpoints, so this can only ever register JC sessions.
+            // Boot and pre-login helpers still read this plain-text endpoint.
+            // Long-lived session heartbeats now use the richer authenticated
+            // /client-refresh-state endpoint; keep this touch for compatibility
+            // with an older open Canopy client during a rolling upgrade.
             TouchLiveSessionRegistry();
             return Content(JellyfinCanopy.Instance?.Version.ToString() ?? "unknown");
         }
@@ -273,8 +271,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             // this endpoint authenticated — record the session's device id so
             // LiveNotifierService pushes reach ONLY devices that actually run JC
             // (never native clients). Anonymous login-image fetches carry no
-            // device claim and are skipped. The version endpoint doubles as the
-            // 15-min heartbeat for sessions that outlive a server restart.
+            // device claim and are skipped. Visible long-lived clients also touch
+            // the registry through /client-refresh-state; that endpoint is the
+            // post-restart heartbeat and foreground-resume catch-up path.
             TouchLiveSessionRegistry();
 
             return new JsonResult(BuildPublicConfigPayload(config, isAuthed));
