@@ -10,13 +10,52 @@
         // URL must carry the same baked per-build cache key the config-page.js
         // bootstrap uses — otherwise an upgrade pairs new HTML with stale CSS.
         (function () {
+            /* jc-config-style-loader:start */
+            // Single-link loader (BI-CLIENT-106 / #167): the dashboard re-runs
+            // this inline script on EVERY config-page visit, and appending a
+            // fresh <link> each time accumulated N stylesheet copies in
+            // document.head. Reuse one link and update its href in place — a
+            // plain "already present" bail-out would pin a stale stylesheet
+            // after an in-session plugin upgrade changes the key.
+            //
+            // Match by the css PATH (query stripped), not just our marker
+            // attribute: an in-session upgrade from a PRE-FIX build leaves
+            // UNMARKED config-css links behind in the persistent dashboard
+            // <head>. A marker-only lookup would miss them and append an N+1th
+            // copy, so adopt those links and collapse every match to one.
+            function jcEnsureCanopyConfigStylesheet(doc, href) {
+                var path = String(href).split('?')[0];
+                var links = doc.head.querySelectorAll('link[rel="stylesheet"]');
+                var ours = [];
+                for (var i = 0; i < links.length; i++) {
+                    var candidate = links[i];
+                    var candidatePath = (candidate.getAttribute('href') || '').split('?')[0];
+                    if (candidate.hasAttribute('data-jc-canopy-config-style') || candidatePath === path) {
+                        ours.push(candidate);
+                    }
+                }
+                // Keep the first, drop any duplicates (marked or legacy).
+                for (var j = ours.length - 1; j >= 1; j--) {
+                    if (ours[j].parentNode) ours[j].parentNode.removeChild(ours[j]);
+                }
+                var link = ours[0];
+                if (!link) {
+                    link = doc.createElement('link');
+                    link.rel = 'stylesheet';
+                    link.href = href;
+                    doc.head.appendChild(link);
+                } else if (link.getAttribute('href') !== href) {
+                    link.href = href;
+                }
+                link.setAttribute('data-jc-canopy-config-style', '1');
+                return link;
+            }
+            /* jc-config-style-loader:end */
             var pluginScript = document.querySelector('script[plugin="Jellyfin Canopy"]');
             var cacheKey = (pluginScript && pluginScript.getAttribute('version')) || '';
-            var link = document.createElement('link');
-            link.rel = 'stylesheet';
-            link.href = ApiClient.getUrl('/JellyfinCanopy/Configuration/configPage.css')
-                + (cacheKey ? ('?v=' + encodeURIComponent(cacheKey)) : '');
-            document.head.appendChild(link);
+            jcEnsureCanopyConfigStylesheet(document,
+                ApiClient.getUrl('/JellyfinCanopy/Configuration/configPage.css')
+                + (cacheKey ? ('?v=' + encodeURIComponent(cacheKey)) : ''));
         })();
     </script>
     <style>
@@ -2364,17 +2403,62 @@
         // script with a *synchronous* XHR eval, and a static src attribute can neither
         // resolve the server base path on subpath installs nor carry a cache-busting
         // version. So we build the tag here with ApiClient.getUrl instead.
-        var page = document.querySelector('#JellyfinCanopyPage');
+        //
+        // Resolve OUR OWN view (BI-CLIENT-106 / #167): Jellyfin 12 caches
+        // several routed views in the DOM at once, so a hidden stale copy can
+        // share id="JellyfinCanopyPage" with this freshly-injected one. The
+        // external config-page.js we append must land in THIS view or the
+        // visible page is left unwired. Climb from this bootstrap script to its
+        // owning view. When the anchor is absent — jQuery may execute this inline
+        // body through a detached temporary <script> in <head>, so
+        // document.currentScript is null / outside the view — fall back to the
+        // LAST matching view, not the first: JF12 keeps stale cached views
+        // EARLIER in document order and appends the fresh visible view LAST, so
+        // the first match is frequently the stale hidden copy (#167 finding 4).
+        var bootstrapScript = document.currentScript;
+        var ownView = bootstrapScript && typeof bootstrapScript.closest === 'function'
+                    && bootstrapScript.closest('#JellyfinCanopyPage');
+        var allViews = document.querySelectorAll('#JellyfinCanopyPage');
+        var page = ownView || allViews[allViews.length - 1] || null;
+
+        /* jc-config-bootstrap-guard:start */
+        // Install-once per view (BI-CLIENT-106 / #167 findings 3/4/6/8). The
+        // dashboard can re-run this inline loader against the SAME cached view;
+        // without a guard each run added ANOTHER raw 'pageshow' listener here AND
+        // appended ANOTHER external config-page.js <script>. A view element is
+        // claimed exactly once, permanently: the flag lives on the view node, so
+        // when Jellyfin restores that cached view on Back (without re-running this
+        // loader) it keeps the wiring config-page.js installed the first time, and
+        // a duplicate loader run against an already-claimed view — including one
+        // that fires while the first script is still in flight — bails out. There
+        // is intentionally NO owner-liveness escape hatch: config-page.js never
+        // tears an owner down, so "claimed" is a stable, single-writer fact and a
+        // second run can never race the first over shared page state. The claim is
+        // rolled back ONLY on a genuine script LOAD FAILURE (onerror below), so a
+        // transient fetch error still lets a later visit retry cleanly.
+        function jcClaimConfigBootstrap(pageEl) {
+            if (!pageEl) return false;
+            if (pageEl.dataset.jcConfigBootstrapped === '1') return false;
+            pageEl.dataset.jcConfigBootstrapped = '1';
+            return true;
+        }
+        /* jc-config-bootstrap-guard:end */
+        if (!jcClaimConfigBootstrap(page)) return;
 
         // viewManager fires 'pageshow' on the view element right after the HTML is
         // injected - usually before the external script has finished loading. The
         // script wires 'pageshow' -> loadConfig when it runs, so record any pageshow
-        // that happened while it was still loading and replay it once on load.
+        // that happened while it was still loading and replay it once on load. Only
+        // one loader run reaches this point per view (the permanent claim above),
+        // so exactly one lightweight bootstrap listener is ever added; it is
+        // removed again once the external script has loaded (#167 finding 6).
         var shownBeforeLoad = false;
         var externalLoaded = false;
-        page.addEventListener('pageshow', function () {
+        var onBootstrapPageshow = function () {
             if (!externalLoaded) shownBeforeLoad = true;
-        });
+        };
+        page._jcBootstrapPageshow = onBootstrapPageshow;
+        page.addEventListener('pageshow', onBootstrapPageshow);
 
         // Cache-buster: GetScriptResource serves with immutable caching outside
         // DevMode, so the URL must change when the plugin updates. The BARE
@@ -2394,9 +2478,30 @@
                     shownBeforeLoad = false;
                     page.dispatchEvent(new CustomEvent('pageshow'));
                 }
+                // The IIFE has run and installed its own pageshow -> loadConfig
+                // listener, so retire the one-shot bootstrap listener and drop the
+                // now-inert transient <script> node so neither is retained on the
+                // view across the session (#167 finding 6).
+                if (page._jcBootstrapPageshow) {
+                    page.removeEventListener('pageshow', page._jcBootstrapPageshow);
+                    page._jcBootstrapPageshow = null;
+                }
+                if (script.parentNode) script.parentNode.removeChild(script);
             };
             script.onerror = function () {
                 console.error('[JC] Failed to load config-page.js from ' + script.src);
+                // Fail open (#167 findings 2/4/8): a transient fetch failure must
+                // not permanently strand this view unwired. Roll the install-once
+                // claim fully back so a later loader re-run retries cleanly —
+                // remove the failed script node, drop the bootstrap pageshow
+                // listener, and release the sentinel. The previous loader retried
+                // on a later visit precisely because it left no sticky flag.
+                if (script.parentNode) script.parentNode.removeChild(script);
+                if (page._jcBootstrapPageshow) {
+                    page.removeEventListener('pageshow', page._jcBootstrapPageshow);
+                    page._jcBootstrapPageshow = null;
+                }
+                if (page.dataset) delete page.dataset.jcConfigBootstrapped;
             };
             page.appendChild(script);
         };
