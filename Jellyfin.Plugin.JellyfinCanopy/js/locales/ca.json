@@ -207,6 +207,7 @@
   "seerr_modal_toast_options_missing": "{{icon:warning}} Si us plau, seleccioneu totes les opcions requerides",
   "seerr_modal_request_collection": "Sol·licitar col·lecció",
   "seerr_select_all_movies": "Seleccionar totes les pel·lícules",
+  "seerr_collection_movie_count": "Pel·lícules a la col·lecció: {count}",
   "seerr_modal_toast_select_movie": "{{icon:warning}} Si us plau, selecciona almenys una pel·lícula",
   "seerr_toast_collection_requested": "Sol·licitada",
   "seerr_toast_movies": "pel·lícules",

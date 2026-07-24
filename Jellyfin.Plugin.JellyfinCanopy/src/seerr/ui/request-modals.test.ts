@@ -55,17 +55,24 @@ describe('collection request modal rich cards', () => {
         const jc = window.JellyfinCanopy as unknown as Record<string, any>;
         jc.seerrUI = {};
         jc.pluginConfig = { SeerrShowAdvanced: false };
-        jc.t = (key: string) => ({
-            seerr_season_status_not_requested: 'Not Requested',
-            seerr_btn_available: 'Available',
-            seerr_modal_request_collection: 'Request Collection',
-            seerr_modal_request_selected_movies: 'Request Selected Movies',
-            seerr_select_all_movies: 'Select All',
-            seerr_btn_request_4k: 'Request in 4K',
-            seerr_modal_requesting: 'Requesting',
-            seerr_toast_collection_requested: 'Requested',
-            seerr_toast_movies: 'movies',
-        } as Record<string, string>)[key] ?? key;
+        jc.t = (key: string, params: Record<string, unknown> = {}) => {
+            const template = ({
+                seerr_season_status_not_requested: 'Not Requested',
+                seerr_btn_available: 'Available',
+                seerr_modal_request_collection: 'Request Collection',
+                seerr_modal_request_selected_movies: 'Request Selected Movies',
+                seerr_select_all_movies: 'Select All',
+                seerr_collection_movie_count: 'Movies in collection: {count}',
+                seerr_btn_request_4k: 'Request in 4K',
+                seerr_modal_requesting: 'Requesting',
+                seerr_toast_collection_requested: 'Requested',
+                seerr_toast_movies: 'movies',
+            } as Record<string, string>)[key] ?? key;
+            return Object.entries(params).reduce(
+                (text, [name, value]) => text.replaceAll(`{${name}}`, String(value)),
+                template,
+            );
+        };
         jc.escapeHtml = (value: unknown) => {
             const text = typeof value === 'string' || typeof value === 'number'
                 ? String(value)
@@ -135,6 +142,10 @@ describe('collection request modal rich cards', () => {
         const meta = firstRow.querySelector<HTMLElement>('.seerr-collection-movie-meta')!;
 
         expect(rows).toHaveLength(3);
+        const selectAll = modal.querySelector<HTMLInputElement>('#seerr-select-all-movies')!;
+        const collectionCount = modal.querySelector<HTMLElement>('#seerr-collection-movie-count')!;
+        expect(collectionCount.textContent).toBe('Movies in collection: 3');
+        expect(selectAll.getAttribute('aria-describedby')).toBe(collectionCount.id);
         expect(firstRow.tagName).toBe('LABEL');
         expect(firstCheckbox.labels?.[0]).toBe(firstRow);
         expect(firstRow.querySelector('.title')?.textContent).toBe('A <b>Very Long</b> Movie Title');
@@ -186,9 +197,26 @@ describe('collection request modal rich cards', () => {
         expect(disabledCheckbox.checked).toBe(false);
     });
 
+    it('uses an existing localized movie label when a cached locale predates the count key', async () => {
+        const jc = window.JellyfinCanopy as unknown as Record<string, any>;
+        const translate = jc.t as (key: string, params?: Record<string, unknown>) => string;
+        jc.t = (key: string, params: Record<string, unknown> = {}) => (
+            key === 'seerr_collection_movie_count' ? key : translate(key, params)
+        );
+
+        const modal = await openModal();
+        const selectAll = modal.querySelector<HTMLInputElement>('#seerr-select-all-movies')!;
+        const collectionCount = modal.querySelector<HTMLElement>('#seerr-collection-movie-count')!;
+
+        expect(collectionCount.textContent).toBe('3 movies');
+        expect(collectionCount.textContent).not.toContain('seerr_collection_movie_count');
+        expect(selectAll.getAttribute('aria-describedby')).toBe(collectionCount.id);
+    });
+
     it('re-evaluates 4K state from the existing datasets without restoring manual deselections', async () => {
         const modal = await openModal();
         const rows = modal.querySelectorAll<HTMLLabelElement>('.seerr-collection-movie-row');
+        const collectionCount = modal.querySelector<HTMLElement>('#seerr-collection-movie-count')!;
         const alwaysSelectable = rows[0].querySelector<HTMLInputElement>('.seerr-collection-checkbox')!;
         const enabledOnlyIn4k = rows[1].querySelector<HTMLInputElement>('.seerr-collection-checkbox')!;
         const disabledIn4k = rows[2].querySelector<HTMLInputElement>('.seerr-collection-checkbox')!;
@@ -198,6 +226,7 @@ describe('collection request modal rich cards', () => {
 
         modal.querySelector<HTMLInputElement>('#seerr-collection-4k')!.click();
 
+        expect(collectionCount.textContent).toBe('Movies in collection: 3');
         expect(alwaysSelectable.disabled).toBe(false);
         expect(alwaysSelectable.checked).toBe(false);
         expect(enabledOnlyIn4k.disabled).toBe(false);

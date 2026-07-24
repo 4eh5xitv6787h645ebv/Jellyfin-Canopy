@@ -207,6 +207,7 @@
   "seerr_modal_toast_options_missing": "{{icon:warning}} 請選擇所有必填選項",
   "seerr_modal_request_collection": "申請合集",
   "seerr_select_all_movies": "全選電影",
+  "seerr_collection_movie_count": "合集中的電影：{count} 部",
   "seerr_modal_toast_select_movie": "{{icon:warning}} 請至少選擇一套電影",
   "seerr_toast_collection_requested": "已申請",
   "seerr_toast_movies": "電影",

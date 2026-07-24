@@ -207,6 +207,7 @@
   "seerr_modal_toast_options_missing": "{{icon:warning}} Пожалуйста, выберите все необходимые параметры",
   "seerr_modal_request_collection": "Запросить коллекцию",
   "seerr_select_all_movies": "Выбрать все фильмы",
+  "seerr_collection_movie_count": "Фильмов в коллекции: {count}",
   "seerr_modal_toast_select_movie": "{{icon:warning}} Пожалуйста, выберите хотя бы один фильм",
   "seerr_toast_collection_requested": "Запрошено",
   "seerr_toast_movies": "фильмов",

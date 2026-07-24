@@ -207,6 +207,7 @@
   "seerr_modal_toast_options_missing": "{{icon:warning}} Vyberte všechny požadované možnosti",
   "seerr_modal_request_collection": "Požádat kolekci",
   "seerr_select_all_movies": "Vybrat všechny filmy",
+  "seerr_collection_movie_count": "Filmy v kolekci: {count}",
   "seerr_modal_toast_select_movie": "{{icon:warning}} Vyberte alespoň jeden film",
   "seerr_toast_collection_requested": "Požádáno",
   "seerr_toast_movies": "filmy",

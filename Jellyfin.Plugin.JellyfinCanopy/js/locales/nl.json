@@ -207,6 +207,7 @@
   "seerr_modal_toast_options_missing": "{{icon:warning}} Selecteer alle vereiste opties",
   "seerr_modal_request_collection": "Aanvragen Collectie",
   "seerr_select_all_movies": "Alle films selecteren",
+  "seerr_collection_movie_count": "Films in de collectie: {count}",
   "seerr_modal_toast_select_movie": "{{icon:warning}} Selecteer minstens één film",
   "seerr_toast_collection_requested": "Aangevraagd",
   "seerr_toast_movies": "films",

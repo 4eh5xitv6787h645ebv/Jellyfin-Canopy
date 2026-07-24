@@ -207,6 +207,7 @@
   "seerr_modal_toast_options_missing": "{{icon:warning}} يرجى تحديد جميع الخيارات المطلوبة",
   "seerr_modal_request_collection": "طلب مجموعة",
   "seerr_select_all_movies": "تحديد جميع الأفلام",
+  "seerr_collection_movie_count": "الأفلام في المجموعة: {count}",
   "seerr_modal_toast_select_movie": "{{icon:warning}} يرجى تحديد فيلم واحد على الأقل",
   "seerr_toast_collection_requested": "تم الطلب",
   "seerr_toast_movies": "أفلام",

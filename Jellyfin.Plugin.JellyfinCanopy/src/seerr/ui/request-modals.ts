@@ -162,6 +162,26 @@ ui.showCollectionRequestModal = async function (collectionId: any, collectionNam
         return;
     }
 
+    const collectionMovieCount = collectionDetails.parts.length;
+    const collectionMovieCountKey = 'seerr_collection_movie_count';
+    const translatedCollectionMovieCount = JC.t!(
+        collectionMovieCountKey,
+        { count: collectionMovieCount }
+    );
+    // Translation payloads are cached for 24 hours against the plugin version.
+    // During a same-version dev/live upgrade, an older cached payload can lack
+    // this new key and JC.t() then returns the raw key. Fall back to a label
+    // that already exists in pre-change locale payloads.
+    const moviesLabelKey = 'seerr_toast_movies';
+    const translatedMoviesLabel = JC.t!(moviesLabelKey);
+    const moviesLabel = translatedMoviesLabel && translatedMoviesLabel !== moviesLabelKey
+        ? translatedMoviesLabel
+        : 'movies';
+    const collectionMovieCountText =
+        translatedCollectionMovieCount
+        && translatedCollectionMovieCount !== collectionMovieCountKey
+            ? translatedCollectionMovieCount
+            : `${collectionMovieCount} ${moviesLabel}`;
     const showAdvanced = JC.pluginConfig.SeerrShowAdvanced;
     // Offer a "request the whole collection in 4K" toggle only when 4K requests
     // are actually available to this user (admin toggle AND Seerr 4K capability
@@ -228,10 +248,14 @@ ui.showCollectionRequestModal = async function (collectionId: any, collectionNam
         ${the4kToggleHtml}
         <div class="seerr-collection-list" style="max-height: 600px; overflow-y: auto;">
             <div class="seerr-collection-header-row">
-                <input type="checkbox" class="seerr-collection-checkbox" id="seerr-select-all-movies">
-                <label class="seerr-collection-header-label" for="seerr-select-all-movies">${JC.t!('seerr_select_all_movies') || 'Select All'}</label>
-                <div></div>
-                <div></div>
+                <input type="checkbox"
+                       class="seerr-collection-checkbox"
+                       id="seerr-select-all-movies"
+                       aria-describedby="seerr-collection-movie-count">
+                <div class="seerr-collection-header-copy">
+                    <label class="seerr-collection-header-label" for="seerr-select-all-movies">${JC.t!('seerr_select_all_movies') || 'Select All'}</label>
+                    <span class="seerr-collection-count" id="seerr-collection-movie-count">${escapeHtml(collectionMovieCountText)}</span>
+                </div>
             </div>
             ${movieListHtml}
         </div>

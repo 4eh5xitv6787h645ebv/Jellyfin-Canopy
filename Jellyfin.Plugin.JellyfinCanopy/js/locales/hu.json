@@ -207,6 +207,7 @@
   "seerr_modal_toast_options_missing": "{{icon:warning}} Jelöld be az összes szükséges lehetőséget",
   "seerr_modal_request_collection": "Gyűjtemény kérése",
   "seerr_select_all_movies": "Az összes film kiválasztása",
+  "seerr_collection_movie_count": "Filmek a gyűjteményben: {count}",
   "seerr_modal_toast_select_movie": "{{icon:warning}} Kérjük, válasszon ki legalább egy filmet",
   "seerr_toast_collection_requested": "Kérve",
   "seerr_toast_movies": "filmek",
