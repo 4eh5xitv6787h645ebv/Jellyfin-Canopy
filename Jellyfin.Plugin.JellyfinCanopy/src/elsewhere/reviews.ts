@@ -1114,6 +1114,7 @@ function initializeReviews(): void {
             .tmdb-reviews-section[open] summary .expand-icon { transform: rotate(180deg);}
             .tmdb-review-swipe-container {
                 display: flex;
+                align-items: flex-start;
                 overflow-x: auto;
                 gap: 1.2em;
                 padding: 1em 0.5em;
@@ -1122,6 +1123,8 @@ function initializeReviews(): void {
             .tmdb-review-card {
                 flex: 0 0 85%;
                 max-width: 500px;
+                min-width: 0;
+                box-sizing: border-box;
                 background: rgba(0, 0, 0, 0.3);
                 border-radius: 8px;
                 border-left: 4px solid rgb(1, 180, 228);
@@ -1135,11 +1138,17 @@ function initializeReviews(): void {
                 border-left-color: rgb(94, 213, 95);
                 background: rgba(10, 26, 10, 0.52);
             }
+            @media (max-width: 420px) {
+                .tmdb-review-card {
+                    flex-basis: calc(100% - 1em);
+                    padding: 1em;
+                }
+            }
             @media (min-width: 768px) { .tmdb-review-card { flex-basis: 400px; } }
-            .tmdb-review-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1em; }
-            .jc-user-review-header { align-items: center; gap: 0.75em; }
-            .tmdb-review-author-info { display: flex; flex-direction: column; gap: 0.3em; flex: 1; }
-            .tmdb-review-author { color: #fff; font-size: 1.1em; font-weight: 600; }
+            .tmdb-review-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 0.75em; margin-bottom: 1em; min-width: 0; }
+            .jc-user-review-header { align-items: center; flex-wrap: wrap; }
+            .tmdb-review-author-info { display: flex; flex-direction: column; gap: 0.3em; flex: 1 1 8em; min-width: 0; }
+            .tmdb-review-author { color: #fff; font-size: 1.1em; font-weight: 600; overflow-wrap: anywhere; }
             .tmdb-review-date { color: #aaa; font-size: 0.9em; }
             .tmdb-review-rating { color: #ffd700; background: rgba(255, 215, 0, 0.1); padding: 0.2em 0.5em; border-radius: 4px; }
             .jc-user-review-rating {
@@ -1174,8 +1183,8 @@ function initializeReviews(): void {
             .jc-user-avatar { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; border: 2px solid rgb(94, 213, 95); display: block; }
 
             /* Action bar */
-            .jc-review-action-bar { padding: 0.5em 0.5em 0; display: flex; gap: 0.75em; }
-            .jc-user-review-actions { display: flex; gap: 0.5em; flex-shrink: 0; }
+            .jc-review-action-bar { padding: 0.5em 0.5em 0; display: flex; flex-wrap: wrap; gap: 0.75em; min-width: 0; }
+            .jc-user-review-actions { display: flex; gap: 0.5em; flex: 0 0 auto; margin-left: auto; }
 
             /* Shared button style */
             .jc-review-btn {
@@ -1215,9 +1224,12 @@ function initializeReviews(): void {
                 display: flex;
                 flex-direction: column;
                 gap: 0.75em;
+                min-width: 0;
+                max-width: 100%;
+                box-sizing: border-box;
             }
             .jc-review-form-title { margin: 0; font-size: 1em; color: #fff; font-weight: 600; }
-            .jc-review-star-picker { display: flex; align-items: center; gap: 0.3em; }
+            .jc-review-star-picker { display: flex; align-items: center; flex-wrap: wrap; gap: 0.3em; min-width: 0; }
             .jc-star-btn {
                 background: none;
                 border: none;

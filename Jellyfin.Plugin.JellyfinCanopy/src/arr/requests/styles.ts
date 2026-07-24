@@ -531,7 +531,7 @@ const CSS_STYLES = `
            the width and drop to a single full-width card column. */
         @media (max-width: 768px) {
           .jc-downloads-page { padding: 0.75em; max-width: 100%; }
-          .jc-downloads-grid { grid-template-columns: 1fr; }
+          .jc-downloads-grid { grid-template-columns: minmax(0, 1fr); }
         }
     `;
 

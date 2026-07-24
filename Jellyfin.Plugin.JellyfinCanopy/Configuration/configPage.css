@@ -494,6 +494,8 @@
     transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s;
     font: inherit;
     width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
 }
 .jc-quick-action:hover {
     transform: translateY(-2px);
@@ -780,7 +782,11 @@
     gap: 9px;
     text-align: left;
     transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
-    white-space: nowrap;
+    min-width: 0;
+    box-sizing: border-box;
+    white-space: normal;
+    line-height: 1.25;
+    overflow-wrap: anywhere;
 }
 #JellyfinCanopyPage .jc-group-btn:hover {
     background: var(--jc-surface-3);
@@ -806,6 +812,10 @@
 }
 #JellyfinCanopyPage .jc-group-btn .jc-nav-count {
     margin-left: auto;
+}
+#JellyfinCanopyPage .jc-group-btn .jc-tab-icon,
+#JellyfinCanopyPage .jc-group-btn .jc-nav-count {
+    flex: 0 0 auto;
 }
 
 /* Page header: active group title + purpose, and its sections as a
@@ -1515,6 +1525,13 @@
     flex-direction: column;
     gap: 20px;
 }
+#JellyfinCanopyForm.jc-search-mode > .jellyfin-tab-content,
+#JellyfinCanopyForm.jc-search-mode > .jellyfin-tab-content > fieldset {
+    min-width: 0;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+}
 #JellyfinCanopyForm.jc-search-mode > .jellyfin-tab-content.jc-tab-name-match {
     order: -1;
 }
@@ -1629,8 +1646,23 @@
     border-color: var(--jc-accent-border);
     box-shadow: 0 0 0 2px var(--jc-accent-tint-10);
 }
-.jc-api-row { display: flex; align-items: center; gap: 12px; width: 100%; }
-.jc-api-row .jc-api-input { flex-grow: 1; width: auto; margin: 0; }
+#JellyfinCanopyPage .jc-api-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+}
+#JellyfinCanopyPage .configSection .jc-api-row .jc-api-input {
+    flex: 1 1 0;
+    min-width: 0;
+    width: auto;
+    margin: 0;
+}
+#JellyfinCanopyPage .jc-api-row > :not(.jc-api-input) {
+    flex: 0 0 auto;
+}
 .jc-textarea-tall { height: 120px !important; }
 .jc-textarea-medium { height: 90px !important; }
 .jc-textarea-large { height: 160px !important; }
@@ -2117,13 +2149,36 @@ body.jc-has-kefintweaks  .jc-installed-badge[data-plugin="kefintweaks"]  { displ
 /* Mobile */
 @media (max-width: 768px) {
     .jc-save-dock {
-        flex-direction: column;
-        bottom: 10px;
-        width: 90%;
+        flex-direction: row;
+        bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+        left: 140px;
+        right: 8px;
+        width: auto;
+        transform: none;
         border-radius: 20px;
-        padding: 12px;
+        padding: 8px;
+        box-sizing: border-box;
     }
-    .jc-save-dock .jc-save-dock-btn { width: 100%; justify-content: center; }
+    .jc-save-dock .jc-save-dock-btn {
+        width: 100%;
+        min-width: 0;
+        justify-content: center;
+        padding: 10px 12px !important;
+    }
+    .jc-save-dock.jc-dirty::before {
+        position: absolute;
+        right: 0;
+        bottom: calc(100% + 6px);
+        margin: 0;
+    }
+    .jc-nav-toggle {
+        left: 8px;
+        bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+        padding: 10px 12px;
+    }
+    .jc-quick-actions-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
     .jc-tab-bar { padding: 10px 0; }
     /* Prefix with #JellyfinCanopyPage to match the base rule's specificity
        (1,1,0). Class-only selectors (0,1,0) here lose the cascade to the

@@ -1311,36 +1311,61 @@
      * Injects a maintenance banner at the top of the page.
      */
     function injectMaintenanceBanner(message) {
-        if (document.getElementById('jc-maintenance-banner')) return;
         const text = (message || '').trim() || 'This server is currently undergoing maintenance. Please try again later.';
-        const banner = document.createElement('div');
-        banner.id = 'jc-maintenance-banner';
-        banner.style.cssText = [
-            'position:fixed', 'top:0', 'left:0', 'right:0', 'z-index:99999',
-            'background:#b71c1c', 'color:#fff', 'text-align:center',
-            'padding:10px 16px', 'font-size:14px', 'font-weight:600',
-            'letter-spacing:0.02em', 'box-shadow:0 2px 8px rgba(0,0,0,0.4)',
-            'font-family:inherit'
-        ].join(';');
+        let banner = document.getElementById('jc-maintenance-banner');
+        if (!banner) {
+            banner = document.createElement('div');
+            banner.id = 'jc-maintenance-banner';
+            banner.style.cssText = [
+                'position:fixed', 'top:0', 'left:0', 'right:0', 'z-index:99999',
+                'background:#b71c1c', 'color:#fff', 'text-align:center',
+                'padding:10px 16px', 'font-size:14px', 'font-weight:600',
+                'letter-spacing:0.02em', 'box-shadow:0 2px 8px rgba(0,0,0,0.4)',
+                'font-family:inherit', 'box-sizing:border-box'
+            ].join(';');
+            document.body.appendChild(banner);
+        }
         banner.textContent = text;
-        document.body.appendChild(banner);
-        // Inject a stylesheet that shifts Jellyfin's fixed header + body down by the banner height.
-        // We use a <style> tag so the rule applies even if Jellyfin re-renders its header.
-        requestAnimationFrame(function() {
-            const h = banner.offsetHeight;
-            if (h <= 0) return;
-            const existing = document.getElementById('jc-maintenance-banner-style');
-            if (existing) return;
-            const style = document.createElement('style');
+
+        // Shift both Jellyfin layouts whenever wrapping changes the banner's
+        // height. The style node is stable so app re-renders keep inheriting it.
+        let style = document.getElementById('jc-maintenance-banner-style');
+        if (!style) {
+            style = document.createElement('style');
             style.id = 'jc-maintenance-banner-style';
+            document.head.appendChild(style);
+        }
+
+        let frame = 0;
+        const updateOffset = function() {
+            frame = 0;
+            const rect = banner.getBoundingClientRect();
+            const h = Math.ceil(rect.height || banner.offsetHeight);
+            if (h <= 0) return;
             style.textContent = [
                 'body { padding-top: ' + h + 'px !important; }',
-                '.skinHeader { top: ' + h + 'px !important; }',
-                '.mainDrawer { top: ' + h + 'px !important; }',
+                '.skinHeader, .MuiAppBar-root { top: ' + h + 'px !important; }',
+                '.mainDrawer, .MuiDrawer-paper { top: ' + h + 'px !important; '
+                    + 'max-height: calc(100vh - ' + h + 'px) !important; '
+                    + 'max-height: calc(100dvh - ' + h + 'px) !important; '
+                    + 'box-sizing: border-box !important; }',
                 '.videoOsdBottom { bottom: 0 !important; }'
             ].join('\n');
-            document.head.appendChild(style);
-        });
+        };
+        const scheduleOffsetUpdate = function() {
+            if (frame) return;
+            frame = requestAnimationFrame(updateOffset);
+        };
+
+        if (!banner._jcMaintenanceResizeBound) {
+            banner._jcMaintenanceResizeBound = true;
+            if (typeof ResizeObserver !== 'undefined') {
+                banner._jcMaintenanceResizeObserver = new ResizeObserver(scheduleOffsetUpdate);
+                banner._jcMaintenanceResizeObserver.observe(banner);
+            }
+            window.addEventListener('resize', scheduleOffsetUpdate);
+        }
+        scheduleOffsetUpdate();
     }
 
     // Jellyfin 12 stores the client layout choice in the unprefixed localStorage

@@ -135,6 +135,128 @@ describe('plugin.js loader guards', () => {
         expect(SRC).not.toContain('function loadBundle(');
     });
 
+    it('keeps one maintenance owner and recomputes both-layout offsets after resize', () => {
+        const injectSource = extractFunctionSource('injectMaintenanceBanner');
+        expect(injectSource, 'injectMaintenanceBanner not found').toBeTruthy();
+
+        document.getElementById('jc-maintenance-banner')?.remove();
+        document.getElementById('jc-maintenance-banner-style')?.remove();
+
+        let bannerHeight = 39;
+        const queuedFrames: FrameRequestCallback[] = [];
+        const requestFrame = vi.fn((callback: FrameRequestCallback): number => {
+            queuedFrames.push(callback);
+            return queuedFrames.length;
+        });
+        const flushFrames = (): void => {
+            const pending = queuedFrames.splice(0);
+            pending.forEach((callback) => callback(0));
+        };
+
+        let resizeCallback: ResizeObserverCallback | null = null;
+        const observed: Element[] = [];
+        class TestResizeObserver {
+            constructor(callback: ResizeObserverCallback) {
+                resizeCallback = callback;
+            }
+
+            observe(target: Element): void {
+                observed.push(target);
+            }
+
+            unobserve(): void {
+                // The document-lifetime production owner never unobserves.
+            }
+
+            disconnect(): void {
+                // The document-lifetime production owner never disconnects.
+            }
+        }
+
+        const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+            .mockImplementation(function(this: HTMLElement): DOMRect {
+                if (this.id === 'jc-maintenance-banner') {
+                    return new DOMRect(0, 0, 320, bannerHeight);
+                }
+                return new DOMRect();
+            });
+
+        const resizeListeners: EventListenerOrEventListenerObject[] = [];
+        const originalAdd = window.addEventListener.bind(window);
+        const addListener = vi.spyOn(window, 'addEventListener')
+            .mockImplementation(((
+                type: string,
+                listener: EventListenerOrEventListenerObject,
+                options?: boolean | AddEventListenerOptions,
+            ): void => {
+                if (type === 'resize') resizeListeners.push(listener);
+                originalAdd(type, listener, options);
+            }));
+
+        try {
+            const makeInject = eval(`((requestAnimationFrame, ResizeObserver) => {
+                ${injectSource}
+                return injectMaintenanceBanner;
+            })`) as (
+                requestAnimationFrame: (callback: FrameRequestCallback) => number,
+                ResizeObserver: typeof globalThis.ResizeObserver,
+            ) => (message?: string) => void;
+            const inject = makeInject(
+                requestFrame,
+                TestResizeObserver,
+            );
+
+            inject('First maintenance message');
+            flushFrames();
+
+            expect(document.querySelectorAll('#jc-maintenance-banner')).toHaveLength(1);
+            expect(document.querySelectorAll('#jc-maintenance-banner-style')).toHaveLength(1);
+            expect(observed).toEqual([document.getElementById('jc-maintenance-banner')]);
+            expect(resizeListeners).toHaveLength(1);
+            let css = document.getElementById('jc-maintenance-banner-style')?.textContent ?? '';
+            expect(css).toContain('body { padding-top: 39px !important; }');
+            expect(css).toContain('.skinHeader, .MuiAppBar-root { top: 39px !important; }');
+            expect(css).toContain('.mainDrawer, .MuiDrawer-paper { top: 39px !important;');
+            expect(css).toContain('max-height: calc(100vh - 39px) !important;');
+            expect(css).toContain('max-height: calc(100dvh - 39px) !important;');
+
+            bannerHeight = 96;
+            expect(resizeCallback, 'ResizeObserver callback was captured').toBeTruthy();
+            resizeCallback!([], {} as ResizeObserver);
+            flushFrames();
+            css = document.getElementById('jc-maintenance-banner-style')?.textContent ?? '';
+            expect(css).toContain('body { padding-top: 96px !important; }');
+            expect(css).toContain('.skinHeader, .MuiAppBar-root { top: 96px !important; }');
+
+            // A repeated public-config publication updates the message without
+            // installing another banner, style, observer, or window listener.
+            inject('Updated maintenance message');
+            flushFrames();
+            expect(document.getElementById('jc-maintenance-banner')?.textContent)
+                .toBe('Updated maintenance message');
+            expect(document.querySelectorAll('#jc-maintenance-banner')).toHaveLength(1);
+            expect(document.querySelectorAll('#jc-maintenance-banner-style')).toHaveLength(1);
+            expect(observed).toHaveLength(1);
+            expect(resizeListeners).toHaveLength(1);
+
+            bannerHeight = 39;
+            const resize = resizeListeners[0];
+            if (typeof resize === 'function') resize(new Event('resize'));
+            else resize.handleEvent(new Event('resize'));
+            flushFrames();
+            css = document.getElementById('jc-maintenance-banner-style')?.textContent ?? '';
+            expect(css).toContain('body { padding-top: 39px !important; }');
+        } finally {
+            for (const listener of resizeListeners) {
+                window.removeEventListener('resize', listener);
+            }
+            addListener.mockRestore();
+            rect.mockRestore();
+            document.getElementById('jc-maintenance-banner')?.remove();
+            document.getElementById('jc-maintenance-banner-style')?.remove();
+        }
+    });
+
     it('validates the boot inventory and builds bounded reverse-proxy generation URLs', () => {
         const safeSource = extractFunctionSource('isSafeClientDistPath');
         const validateSource = extractFunctionSource('validateClientManifest');

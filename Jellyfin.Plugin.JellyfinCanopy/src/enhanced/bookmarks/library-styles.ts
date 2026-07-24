@@ -17,6 +17,8 @@ export function injectBookmarksLibraryStyles(): void {
       flex-direction: column;
       gap: 0;
       width: 100%;
+      min-width: 0;
+      box-sizing: border-box;
     }
 
     .jc-bookmark-tabs {
@@ -64,6 +66,8 @@ export function injectBookmarksLibraryStyles(): void {
 
     .bookmarks-container {
       padding: 12px 3vw;
+      min-width: 0;
+      box-sizing: border-box;
     }
 
     .jc-bookmarks-empty {
@@ -90,9 +94,14 @@ export function injectBookmarksLibraryStyles(): void {
 
     .jc-bookmarks-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+      /* A fixed 320px minimum is wider than the content box on 320–360px
+         phones once page padding is applied. min() preserves the 320px card
+         target where it fits while allowing the one-column phone case to
+         shrink to its actual containing block. */
+      grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr));
       gap: 16px;
       width: 100%;
+      min-width: 0;
     }
 
     .jc-bookmark-item {
@@ -102,6 +111,8 @@ export function injectBookmarksLibraryStyles(): void {
       box-shadow: 0 6px 12px rgba(0, 0, 0, 0.35);
       display: flex;
       flex-direction: column;
+      min-width: 0;
+      box-sizing: border-box;
       overflow: hidden;
     }
 
@@ -154,6 +165,10 @@ export function injectBookmarksLibraryStyles(): void {
       display: flex;
       align-items: center;
       justify-content: center;
+      box-sizing: border-box;
+      padding: 16px;
+      overflow-y: auto;
+      overscroll-behavior: contain;
       opacity: 0;
       transition: opacity 0.2s;
     }
@@ -163,6 +178,12 @@ export function injectBookmarksLibraryStyles(): void {
       border-radius: 12px;
       padding: 24px;
       position: relative;
+      box-sizing: border-box;
+      max-width: 100%;
+      max-height: calc(100vh - 32px);
+      max-height: calc(100dvh - 32px);
+      overflow-y: auto;
+      overscroll-behavior: contain;
       box-shadow: 0 8px 32px rgba(0,0,0,0.8);
     }
 
@@ -422,6 +443,7 @@ export function injectBookmarksLibraryStyles(): void {
 
     .jc-bookmark-item-info {
       flex: 1;
+      min-width: 0;
       display: flex;
       flex-direction: column;
       gap: 6px;
@@ -433,6 +455,7 @@ export function injectBookmarksLibraryStyles(): void {
       font-weight: 700;
       text-decoration: none;
       display: block;
+      overflow-wrap: anywhere;
     }
 
     .jc-bookmark-item-title:hover {
@@ -448,6 +471,8 @@ export function injectBookmarksLibraryStyles(): void {
       display: grid;
       gap: 8px;
       padding: 0 14px 12px 14px;
+      min-width: 0;
+      box-sizing: border-box;
     }
 
     .jc-bookmark-row {
@@ -458,12 +483,15 @@ export function injectBookmarksLibraryStyles(): void {
       background: rgba(255, 255, 255, 0.03);
       border-radius: 8px;
       border: 1px solid rgba(255, 255, 255, 0.06);
+      min-width: 0;
+      box-sizing: border-box;
     }
 
     .jc-bookmark-main {
       display: flex;
       align-items: center;
       gap: 16px;
+      min-width: 0;
     }
 
     .jc-bookmark-bar {
@@ -475,12 +503,14 @@ export function injectBookmarksLibraryStyles(): void {
 
     .jc-bookmark-info {
       flex: 1;
+      min-width: 0;
     }
 
     .jc-bookmark-label {
       font-size: 15px;
       color: #eceff1;
       font-weight: 600;
+      overflow-wrap: anywhere;
     }
 
     .jc-bookmark-time {
@@ -500,6 +530,34 @@ export function injectBookmarksLibraryStyles(): void {
       display: flex;
       gap: 6px;
       flex-wrap: wrap;
+      flex: 0 0 auto;
+    }
+
+    @media (max-width: 420px) {
+      .jc-bookmark-main {
+        display: grid;
+        grid-template-columns: 2px minmax(0, 1fr);
+        align-items: start;
+        column-gap: 12px;
+        row-gap: 10px;
+      }
+
+      .jc-bookmark-bar {
+        grid-column: 1;
+        grid-row: 1;
+      }
+
+      .jc-bookmark-info {
+        grid-column: 2;
+        grid-row: 1;
+      }
+
+      .jc-bookmark-actions {
+        grid-column: 1 / -1;
+        grid-row: 2;
+        justify-content: flex-end;
+        width: 100%;
+      }
     }
 
     .jc-btn {
@@ -593,6 +651,7 @@ export function injectBookmarksLibraryStyles(): void {
 
     .jc-bookmark-actions-footer {
       display: flex;
+      flex-wrap: wrap;
       gap: 12px;
       justify-content: center;
       padding: 24px 0 12px 0;
@@ -609,6 +668,10 @@ export function injectBookmarksLibraryStyles(): void {
       cursor: pointer;
       display: inline-flex;
       align-items: center;
+      justify-content: center;
+      min-width: 0;
+      max-width: 100%;
+      box-sizing: border-box;
       gap: 8px;
       font-size: 14px;
       transition: all 0.2s;
