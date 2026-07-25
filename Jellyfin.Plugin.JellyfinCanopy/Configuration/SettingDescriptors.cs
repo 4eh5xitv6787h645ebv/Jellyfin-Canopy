@@ -135,6 +135,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
                 Public("ClientRefreshOnCanopyUpdate", c => c.ClientRefreshOnCanopyUpdate),
                 Public("ClientRefreshOnJellyfinUpdate", c => c.ClientRefreshOnJellyfinUpdate),
                 Public("ClientRefreshOnConfigChange", c => c.ClientRefreshOnConfigChange),
+                Public("ClientRefreshShowNotices", c => c.ClientRefreshShowNotices),
                 Public("ClientRefreshPollSeconds", c => c.ClientRefreshPollSeconds),
                 Public("ClientRefreshIdleSeconds", c => c.ClientRefreshIdleSeconds),
                 Public("EnableCustomSplashScreen", c => c.EnableCustomSplashScreen),

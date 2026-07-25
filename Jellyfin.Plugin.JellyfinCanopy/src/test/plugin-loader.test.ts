@@ -207,6 +207,7 @@ describe('plugin.js loader guards', () => {
                 OnCanopyUpdate: true,
                 OnJellyfinUpdate: true,
                 OnConfigChange: true,
+                ShowNotices: true,
                 PollSeconds: 30,
                 IdleSeconds: 5,
             },
@@ -219,6 +220,13 @@ describe('plugin.js loader guards', () => {
             .toMatchObject({ ServerId: '00112233445566778899aabbccddeeff' });
         expect(helpers.normalizeClientRefreshBootstrap(valid, 'ACTIVE-SERVER', false))
             .toEqual(valid);
+        const legacyPolicy = { ...valid.Policy };
+        delete (legacyPolicy as { ShowNotices?: boolean }).ShowNotices;
+        expect(helpers.normalizeClientRefreshBootstrap(
+            { ...valid, Policy: legacyPolicy },
+            'active-server',
+            false,
+        )?.Policy).toMatchObject({ ShowNotices: true });
         const legacy = { ...valid };
         delete (legacy as { ServerId?: string }).ServerId;
         expect(helpers.normalizeClientRefreshBootstrap(legacy, 'active-server', false))
@@ -236,6 +244,7 @@ describe('plugin.js loader guards', () => {
             { ...valid, ForceRevision: 0.5 },
             { ...valid, Policy: { ...valid.Policy, Mode: 'Automatic' } },
             { ...valid, Policy: { ...valid.Policy, OnConfigChange: 1 } },
+            { ...valid, Policy: { ...valid.Policy, ShowNotices: 'false' } },
             { ...valid, Policy: { ...valid.Policy, PollSeconds: 4 } },
             { ...valid, Policy: { ...valid.Policy, IdleSeconds: 301 } },
         ]) {

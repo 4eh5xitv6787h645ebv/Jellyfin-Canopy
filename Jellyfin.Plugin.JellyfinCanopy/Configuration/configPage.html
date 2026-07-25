@@ -2263,7 +2263,7 @@
                                 <select is="emby-select" id="clientRefreshMode" data-config-key="ClientRefreshMode" data-config-fallback="Smart" name="clientRefreshMode" class="emby-select">
                                     <option value="Smart">Smart — refresh any safe page after inactivity</option>
                                     <option value="HomeOnly">Home only — wait until the client reaches Home</option>
-                                    <option value="Notify">Ask — show a reload button</option>
+                                    <option value="Notify">Ask — wait for a manual page reload</option>
                                     <option value="Disabled">Disabled — do not react automatically</option>
                                 </select>
                             </div>
@@ -2278,6 +2278,10 @@
 
                             <div class="checkboxContainer"><label><input id="clientRefreshOnJellyfinUpdate" data-config-key="ClientRefreshOnJellyfinUpdate" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Refresh after Jellyfin restarts or updates</span></label></div>
                             <div class="checkboxContainer"><label><input id="clientRefreshOnConfigChange" data-config-key="ClientRefreshOnConfigChange" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Refresh when Canopy admin configuration changes</span></label></div>
+                            <div class="checkboxContainer"><label><input id="clientRefreshShowNotices" data-config-key="ClientRefreshShowNotices" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show Smart Refresh notices</span></label></div>
+                            <div class="jc-setting-description" data-desc-for="clientRefreshShowNotices">
+                                <div class="fieldDescription">Shows the reload/wait message with Reload and Dismiss actions. Turn this off to hide every Smart Refresh notice without changing automatic, Home-only, or admin-requested refresh behavior. In Ask mode, pending refreshes then wait silently for a manual page reload.</div>
+                            </div>
 
                             <div class="inputContainer">
                                 <label class="inputLabel inputLabelUnfocused" for="clientRefreshPollSeconds">Visible-session check interval (seconds)</label>

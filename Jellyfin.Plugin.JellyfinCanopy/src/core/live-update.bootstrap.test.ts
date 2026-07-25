@@ -19,6 +19,7 @@ function refreshState(
             OnCanopyUpdate: true,
             OnJellyfinUpdate: true,
             OnConfigChange: true,
+            ShowNotices: true,
             PollSeconds: 30,
             IdleSeconds: 5,
         },

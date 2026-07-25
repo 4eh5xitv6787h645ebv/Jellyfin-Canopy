@@ -37,6 +37,7 @@
   "ClientRefreshOnConfigChange": true,
   "ClientRefreshOnJellyfinUpdate": true,
   "ClientRefreshPollSeconds": 30,
+  "ClientRefreshShowNotices": true,
   "ColoredActivityIconsEnabled": false,
   "ColoredRatingsEnabled": false,
   "DEFAULT_PROVIDERS": "",

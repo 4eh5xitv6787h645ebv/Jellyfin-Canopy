@@ -58,6 +58,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     config.ClientRefreshOnCanopyUpdate,
                     config.ClientRefreshOnJellyfinUpdate,
                     config.ClientRefreshOnConfigChange,
+                    config.ClientRefreshShowNotices,
                     Math.Clamp(config.ClientRefreshPollSeconds, 5, 3600),
                     Math.Clamp(config.ClientRefreshIdleSeconds, 0, 300));
 
@@ -162,10 +163,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         bool OnCanopyUpdate,
         bool OnJellyfinUpdate,
         bool OnConfigChange,
+        bool ShowNotices,
         int PollSeconds,
         int IdleSeconds)
     {
         public static ClientRefreshPolicy Disabled { get; } =
-            new("Disabled", false, false, false, 30, 5);
+            new("Disabled", false, false, false, true, 30, 5);
     }
 }

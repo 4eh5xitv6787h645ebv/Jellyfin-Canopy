@@ -184,6 +184,9 @@ test.describe('live updates', () => {
             JellyfinGeneration: expect.stringMatching(/^[a-f0-9]{64}$/),
             ConfigurationRevision: expect.any(Number),
             ForceRevision: expect.any(Number),
+            Policy: expect.objectContaining({
+                ShowNotices: true,
+            }),
         });
         expect(bootstrap.bootstrapIndex).toBeGreaterThanOrEqual(0);
         expect(bootstrap.loaderIndex).toBeGreaterThan(bootstrap.bootstrapIndex);
@@ -218,6 +221,7 @@ test.describe('live updates', () => {
             ClientRefreshOnCanopyUpdate: true,
             ClientRefreshOnJellyfinUpdate: true,
             ClientRefreshOnConfigChange: true,
+            ClientRefreshShowNotices: true,
             ToastDuration: firstToast,
         };
 
@@ -279,6 +283,17 @@ test.describe('live updates', () => {
             expect(await page.locator('video').evaluate((video) =>
                 !video.paused && video.currentTime > 0)).toBe(true);
 
+            const notice = page.locator('#jc-client-refresh-notice');
+            const dismiss = notice.locator('[data-role="dismiss"]');
+            await expect(dismiss).toHaveAttribute(
+                'aria-label',
+                'Dismiss Smart Refresh notice'
+            );
+            await dismiss.click();
+            await expect(notice).toHaveCount(0);
+            await page.waitForTimeout(1_250);
+            await expect(notice).toHaveCount(0);
+
             await page.evaluate(() => {
                 const video = document.querySelector('video');
                 if (video) {
@@ -294,6 +309,50 @@ test.describe('live updates', () => {
                 playbackOrigin,
                 { timeout: 30_000 }
             );
+
+            // Turning notices off is presentation-only. The config edge still
+            // reloads this safe page, and no transient notice is allowed before
+            // the reload commits.
+            await page.evaluate(() => {
+                sessionStorage.removeItem('jc-e2e-refresh-notice-seen');
+                const observer = new MutationObserver((mutations) => {
+                    for (const mutation of mutations) {
+                        for (const node of mutation.addedNodes) {
+                            if (node instanceof Element
+                                && (node.id === 'jc-client-refresh-notice'
+                                    || node.querySelector('#jc-client-refresh-notice'))) {
+                                sessionStorage.setItem(
+                                    'jc-e2e-refresh-notice-seen',
+                                    'true'
+                                );
+                            }
+                        }
+                    }
+                });
+                observer.observe(document.documentElement, {
+                    childList: true,
+                    subtree: true,
+                });
+            });
+            const silentOrigin = await page.evaluate(() => performance.timeOrigin);
+            await api(baseURL!, configPath, admin.token, {
+                method: 'POST',
+                body: JSON.stringify({
+                    ...accelerated,
+                    ClientRefreshShowNotices: false,
+                    ToastDuration: firstToast,
+                }),
+            });
+            await page.waitForFunction(
+                (origin) => performance.timeOrigin > origin
+                    && (window as any).JellyfinCanopy?.initialized === true,
+                silentOrigin,
+                { timeout: 30_000 }
+            );
+            expect(await page.evaluate(
+                () => sessionStorage.getItem('jc-e2e-refresh-notice-seen')
+            )).toBeNull();
+            expect(await page.locator('#jc-client-refresh-notice').count()).toBe(0);
 
             assertNoSmartRefreshRuntimeErrors(consoleErrors);
         } finally {

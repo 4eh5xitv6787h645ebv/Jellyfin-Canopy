@@ -20,6 +20,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
                 ClientRefreshOnCanopyUpdate = false,
                 ClientRefreshOnJellyfinUpdate = true,
                 ClientRefreshOnConfigChange = false,
+                ClientRefreshShowNotices = false,
                 ClientRefreshPollSeconds = 1,
                 ClientRefreshIdleSeconds = 999,
             });
@@ -39,6 +40,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             Assert.False(first.Policy.OnCanopyUpdate);
             Assert.True(first.Policy.OnJellyfinUpdate);
             Assert.False(first.Policy.OnConfigChange);
+            Assert.False(first.Policy.ShowNotices);
             Assert.Equal(5, first.Policy.PollSeconds);
             Assert.Equal(300, first.Policy.IdleSeconds);
 
@@ -52,6 +54,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
 
             Assert.True(second.ConfigurationRevision > first.ConfigurationRevision);
             Assert.Equal("Notify", second.Policy.Mode);
+            Assert.True(second.Policy.ShowNotices);
             Assert.Equal(45, second.Policy.PollSeconds);
             Assert.Equal(0, second.Policy.IdleSeconds);
         }
@@ -114,6 +117,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             Assert.False(missing.Policy.OnCanopyUpdate);
             Assert.False(missing.Policy.OnJellyfinUpdate);
             Assert.False(missing.Policy.OnConfigChange);
+            Assert.True(missing.Policy.ShowNotices);
 
             var invalid = new ClientRefreshStateService(
                 new SnapshotOnlyProvider(
@@ -123,6 +127,26 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
                 CanopyBuild,
                 JellyfinGeneration).GetState();
             Assert.Equal("Disabled", invalid.Policy.Mode);
+        }
+
+        [Fact]
+        public void LegacyXmlWithoutNoticeSettingKeepsNoticesVisibleByDefault()
+        {
+            const string xml = """
+                <?xml version="1.0" encoding="utf-8"?>
+                <PluginConfiguration xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                                     xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+                  <ClientRefreshMode>Notify</ClientRefreshMode>
+                </PluginConfiguration>
+                """;
+            var serializer = new System.Xml.Serialization.XmlSerializer(
+                typeof(PluginConfiguration));
+            using var reader = new StringReader(xml);
+
+            var configuration = Assert.IsType<PluginConfiguration>(
+                serializer.Deserialize(reader));
+
+            Assert.True(configuration.ClientRefreshShowNotices);
         }
 
         [Theory]
