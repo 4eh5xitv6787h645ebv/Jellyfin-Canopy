@@ -1,8 +1,8 @@
 # Sonarr & Radarr
 
-If you run Sonarr, Radarr, or Bazarr behind Jellyfin, this integration brings them to where you already are. As an administrator you get quick links, search, and library management on every movie, series, season, and episode page, without opening a separate arr tab. Everyone on the server gets a shared **Calendar** of what's coming and a **Requests** page that tracks the download queue in real time. And synced \*arr tags become clickable filters right on the item you're looking at.
+If you run Sonarr, Radarr, or Bazarr behind Jellyfin, this integration brings them to where you already are. As an administrator you get quick links, search, and library management on every movie, series, season, and episode page, without opening a separate arr tab. Authenticated users get a shared **Calendar** of what's coming and, subject to the administrator's server-enforced visibility policy, a **Requests** page that follows downloads through transfer, import processing, and bounded history. And synced \*arr tags become clickable filters right on the item you're looking at.
 
-The integration is deliberately split by audience. The parts that reach into your arr apps — links, Search, Interactive Search, and Manage — are **admin-only** and policy-gated on the server, not merely hidden in the UI. The parts that are safe for everyone — the Calendar page, the Requests page, and synced tag links — are available to all users.
+The integration is deliberately split by audience. The parts that reach into your arr apps — links, Search, Interactive Search, and Manage — are **admin-only** and policy-gated on the server, not merely hidden in the UI. The Calendar page, the Requests route, and synced tag links are available to authenticated users when enabled; the server still decides which download sections and records each non-admin may receive.
 
 !!! warning "Before you connect anything"
 
@@ -16,18 +16,18 @@ New to the plugin? Start with [Getting Started](getting-started.md) to install i
 
 ## What you get
 
-One connection puts links to your Sonarr, Radarr, and Bazarr instances directly on Jellyfin item pages, and can surface arr tags, upcoming releases, and the live download queue alongside them.
+One connection puts links to your Sonarr, Radarr, and Bazarr instances directly on Jellyfin item pages, and can surface arr tags, upcoming releases, and the normalized download/import lifecycle alongside them.
 
 - **Quick links** — jump to Sonarr, Radarr, or Bazarr for any item.
 - **Search & Interactive Search** — trigger an automatic search, or pick a release by hand, straight from the item menu.
 - **Manage (Monitor & Add)** — toggle monitoring, or add a movie or series to Sonarr/Radarr, from Jellyfin.
 - **Tag links** — display synced arr tags as clickable, filterable links.
 - **Calendar page** — upcoming releases from Sonarr and Radarr.
-- **Requests page** — the active download queue with progress and status.
+- **Requests page** — normalized **Downloading**, **Processing & attention**, and bounded **History** activity, with transfer progress kept separate from import and Jellyfin availability.
 
 !!! note "Who sees what"
 
-    \*arr links, Search, Interactive Search, and Manage are visible to **admin users only**. The Calendar page, the Requests page, and synced tag links are available to **all users**.
+    \*arr links, Search, Interactive Search, and Manage are visible to **admin users only**. The Calendar page, the Requests route, and synced tag links are available to authenticated users when enabled. Administrators can independently hide active transfers, processing, warnings, history, provenance, and detailed lifecycle states from regular users; those controls are enforced by the server response.
 
 ## Connecting your instances
 
@@ -161,10 +161,12 @@ Interactive Search is offered for **movies, seasons, and episodes**. Sonarr has 
 The **Manage in Sonarr/Radarr…** item opens a compact panel that:
 
 - toggles **Monitor / Unmonitor** per tracking instance;
-- shows **live download progress** for the item, reusing the same queue as the [Requests page](#the-requests-page) — with a jump link there, so there's no second downloads view;
+- shows the same normalized transfer/import lifecycle used by the [Requests page](#the-requests-page), with a jump link there instead of inventing a second lifecycle model;
 - and, for a movie or series **not yet tracked** by an instance, offers **Add to Sonarr/Radarr** with a quality-profile and root-folder picker, a monitor toggle, and an optional search-on-add.
 
 Manage is gated by its own setting, so you can keep the menu search-only if you don't want changes made to the arr library from Jellyfin.
+
+While the Manage panel is open and visible, its status view polls every 10 seconds for at most 60 refreshes (about 10 minutes). It pauses while the tab is hidden, cancels in-flight work when closed, and keeps the last successful rows with a visible degraded notice after a transport failure. Raw release/downloader names and paths are not sent to this panel.
 
 ### Enabling and using
 
@@ -295,9 +297,60 @@ Found on the **Pages** tab under "Calendar Page".
 
 ## The Requests page
 
-![Requests page showing the active Sonarr/Radarr download queue](images/downloads-page.png)
+![Requests page showing Sonarr/Radarr download activity](images/downloads-page.png)
 
-The Requests page shows the active download queue from Sonarr and Radarr in one place — progress bars and ETA, quality and file size, with filtering and search — so users can watch what they're waiting on without an arr login. It auto-refreshes on a configurable interval. Its route is `#/downloads`.
+The Requests page combines sanitized activity from every enabled Sonarr and Radarr instance. It separates transfer progress from import processing and terminal history, so a download reaching 100% is never presented as imported or available merely because its bytes finished transferring. It supports server-side search, fixed lifecycle tabs, and bounded history paging, and auto-refreshes on a configurable interval. Its route is `#/downloads`.
+
+### Lifecycle sections
+
+The page uses three stable sections instead of making tabs from raw upstream status strings:
+
+| Section | What belongs there |
+|---|---|
+| **Downloading** | Queued, downloading, paused, and delayed transfers. Percentage and ETA describe **transfer only**. |
+| **Processing & attention** | Import pending, importing, downloaded/waiting for import, blocked or failed-pending work, warnings, and unknown future states. |
+| **History** | Terminal imported, failed, or canceled/ignored attempts proven by Sonarr/Radarr history. |
+
+Sonarr/Radarr's raw queue value `Completed` means the download client finished transferring; Canopy presents it as **Waiting for import**. A 100% progress bar carries the same meaning. Only an authoritative tracked import state or history event can move an attempt to **Imported**, and an unknown enum value degrades to **Unknown state** rather than being guessed as success.
+
+!!! important "Imported is not the same as Available"
+
+    **Imported** is Sonarr/Radarr's lifecycle result. **Available** is shown separately and only after the server positively resolves the media to a Jellyfin item the current user may access and verifies that the item has a media file. An imported item with no such user-authorized Jellyfin match says **Availability not confirmed** and has no Jellyfin open button.
+
+### Identity, grouping, and ambiguous transitions
+
+Canopy correlates queue rows and history using a persisted opaque instance identity, a non-empty download ID, and the relevant parent/entity identity. Display names, list positions, titles, percentages, and ETAs are never join keys. Renaming, reordering, disabling, or re-enabling an instance therefore does not reassign its activity.
+
+For a Sonarr pack, the shared strong download identity forms one logical activity while episode identities preserve the expected set. Imported episodes are compared with grabbed episodes; importing only part of that proven set stays in **Processing & attention** as a partial import. A row without a download ID remains an independent event instead of being attached by title. A new grab after a terminal event starts another attempt, so re-grabs remain visible rather than overwriting earlier history—even if an upstream download ID is reused.
+
+When live queue data overlaps a grabbed-only or otherwise non-terminal history prefix, the queue state wins only when that strong identity proves they can be the same attempt. Positive terminal history completes the handoff. A similar title or percentage can do neither.
+
+Queue disappearance alone is ambiguous: the download may be between queue and history, manually removed, or hidden by an upstream failure. Canopy retains a disappeared, previously known row for up to 90 seconds as a visibly stale **Waiting for import** handoff while history catches up. It becomes terminal only on positive history evidence; otherwise the handoff expires without inventing a successful result. At most 500 handoffs are retained per instance; overflow is reported as truncated instead of consuming unbounded memory.
+
+### Provenance and privacy
+
+The browser receives an allowlisted activity projection, not raw queue or history records. It can contain a sanitized media title/subtitle, instance label, normalized lifecycle/reason code, transfer percentage/ETA, event time, grouping counts, and a user-authorized Jellyfin item ID. It does **not** contain API keys, service URLs, download IDs, release/downloader titles, download-client or indexer names, quality/size, filesystem paths, raw status messages, or upstream error text.
+
+**Associated with a Seerr request** appears only when the server has positive TMDB/TVDB evidence in the current user's request history and the configured topology is unambiguous: one Seerr identity domain and one enabled ARR instance for that media type. It describes an association, not proof that Seerr caused that particular grab. With multiple Seerr domains or multiple enabled instances of the same ARR service, Canopy has no explicit server-to-instance mapping, so the association fails closed to **Origin unknown** (and cannot authorize a request-filtered row). Missing, cross-instance, incomplete, or otherwise ambiguous evidence is also **Origin unknown**; Canopy never guesses “direct request” or request ownership from a title.
+
+The activity endpoint requires Jellyfin authentication. Administrators receive the complete sanitized lifecycle view, but a row that cannot be mapped through the administrator's own Jellyfin library scope is reduced to an **Unknown** media label with no subtitle, provider identity, season/episode detail, navigation ID, or availability claim. This preserves useful instance/lifecycle health without turning administrator status into a library-discovery bypass. For regular users:
+
+- With **Filter Downloads by User Requests** on, a row needs a positive match to that user's request history on the exact Seerr identity source.
+- With it off, a row still needs either that positive request association or an unambiguous provider-ID match to a Jellyfin item the current user may access.
+- A missing user, unavailable/incomplete Seerr scope, failed library lookup, zero provider ID, or ambiguous match fails closed. Turning the filter off never exposes the raw server-wide queue.
+- The section/detail controls below are applied by the server after record authorization; hiding a control in the browser is not the security boundary.
+
+Seerr request cards and the sanitized download relations embedded in Seerr media responses share their own status and history policy. When that regular-user policy is off, the server returns empty embedded `downloadStatus` relations as well as refusing the request-list route; cached upstream bodies remain private and unmodified. The complete, caller/source/parental-scoped request collection is also filtered against the current caller's Jellyfin library before totals or paging: a card with a Jellyfin media ID is shown only when that item is accessible to the caller, including for administrators; a genuinely not-yet-linked card remains eligible under its existing Seerr scope. A malformed ID or failed library check rejects the snapshot instead of exposing a partial prefix. A Sonarr/Radarr **Imported** result is not rewritten as Seerr **Available**, and Seerr request provenance is not inferred from temporal proximity.
+
+### History, paging, and source health
+
+History comes from the official Sonarr/Radarr API-v3 history resources. The integration uses the same API-v3 queue/history contract supported by Sonarr v3/v4 and current compatible Radarr v3–v6 releases. If a future release adds an enum Canopy does not know, it remains a non-success unknown state until the normalizer is updated.
+
+History can represent only events ARR actually emits. In particular, a direct manual library import that is not associated with a `NewDownload` may produce no `DownloadFolderImported` history event in current Sonarr/Radarr releases; Canopy cannot invent or display that missing activity. When ARR does emit an import event without a download ID, Canopy retains it as an independent event instead of joining it speculatively.
+
+The administrator chooses a 1–30-day history window (7 days by default). Collection is paged on the server and bounded to the most recent 1,000 history records **per instance**. Mutable history pagination must keep a stable `totalRecords`; a change during collection invalidates the prefix rather than presenting it as complete. The browser requests 20 history activities per page by default and the endpoint permits at most 50. Active responses are capped at 500 logical activities. When a cap is reached, the page says that its data is truncated rather than presenting the prefix as complete.
+
+Every source reports whether it is fresh, stale, unavailable, incomplete, truncated, or misconfigured. A partial instance failure leaves successful instances visible and keeps a persistent source-health notice. After a refresh failure, Canopy may reuse that instance's last complete queue/history snapshot for up to 5 minutes, with the source and cards visibly marked stale; an incomplete queue prefix is never published as a complete empty or partial snapshot. Once no usable server-side last-good snapshot remains, that source is unavailable rather than silently empty. An already-open browser also preserves its last rendered snapshot behind a **Latest refresh failed** notice after a transport error, but only for 5 minutes from receipt; a route with disabled or visibility-paused polling uses the same timer. Recovery cancels the expiry, navigation/account teardown removes it, and expiry clears media-bearing rows into an explicit unavailable error state rather than an empty success.
 
 ### Enabling
 
@@ -318,9 +371,24 @@ Found on the **Pages** tab under "Requests Page".
 | Setting | Default | What it does |
 |---|---|---|
 | **Enable Requests Page** | — | Enables the dedicated page showing active downloads from Sonarr/Radarr. |
-| **Enable Auto-Refresh** | — | Automatically refreshes download status. |
+| **Show Downloads in Requests Page** | On | Includes the normalized Sonarr/Radarr lifecycle sections. |
+| **Enable Auto-Refresh** | On | Automatically refreshes download and request status while the page is active. |
 | **Poll Interval (seconds)** | 30 | How often to refresh, in seconds. Range 30–300. |
-| **Filter Downloads by User Requests** | On | When on, non-admin users only see downloads for content they requested; when off, all authenticated users see the entire download queue, including items requested by others. |
+| **Filter Downloads by User Requests** | On | Requires a positive current-user, source-affine Seerr request match for regular-user activity. Off broadens eligibility only to an unambiguous Jellyfin item the caller may access; it never exposes the entire queue. |
+| **Show active transfers to regular users** | On | Allows already-authorized **Downloading** activity. |
+| **Show import processing to regular users** | On | Allows already-authorized **Processing & attention** activity. |
+| **Show warnings and failures to regular users** | Off | Preserves warning/blocked/failure detail. Off projects a less revealing lifecycle instead. |
+| **Show download history to regular users** | Off | Allows already-authorized, bounded Sonarr/Radarr **History**. Administrators retain the sanitized diagnostic view. |
+| **Show request association to regular users** | Off | Allows the positive-evidence **Associated with a Seerr request** label; otherwise provenance is omitted for regular users. |
+| **Show detailed lifecycle states to regular users** | Off | Allows the complete normalized vocabulary. Off projects simpler Downloading/Waiting/terminal states server-side. |
+| **Download History Window (days)** | 7 | Requests 1–30 days of Sonarr/Radarr history; collection remains subject to the per-instance cap. |
+| **Show Seerr request status and history to regular users** | On | Controls both the server-scoped Seerr request list and sanitized download relations embedded in Seerr media responses. When off, regular-user proxy responses contain empty download relations. Source affinity, ownership, parental limits, and library visibility still apply. |
+
+### Why there is no direct SABnzbd history
+
+Canopy deliberately reads the lifecycle Sonarr and Radarr own. Their queue models collapse the underlying download client's download, verification, unpacking, and handoff details into the signals ARR uses to decide whether import can proceed. A direct SABnzbd integration would not currently have an owner for credential/configuration storage, SSRF-safe connection policy, bounded polling, or deterministic SAB job-to-ARR/media correlation; adding an ad hoc client would jeopardize the lifecycle, privacy, and bounded-work guarantees above.
+
+Future direct SABnzbd work would need server-only credentials, the same guarded outbound-URL policy, authenticated endpoints with a sanitized field allowlist, bounded/cancellable polling and backoff, explicit deterministic correlation rules, and tests for re-grabs, partial packs, failures, unknown states, and source outages. Until that complete contract exists, Canopy does not connect to SABnzbd directly.
 
 ## Security: the SSRF host guard
 
@@ -382,9 +450,9 @@ If the page still won't load, check the browser console for client errors, the s
 
 ### Requests page issues
 
-**Downloads not showing:** verify polling is enabled, check the poll interval, ensure downloads actually exist in the arr, and confirm API connectivity.
+**Downloads not showing:** ensure **Show Downloads in Requests Page** is enabled, verify the current user's request/library match and the regular-user section controls, confirm the item exists in the arr queue or retained history window, and check the page's source-health notice for API or configuration failures.
 
-**Status not updating:** verify polling is enabled, check the poll interval, refresh the page manually, and check the browser console for errors.
+**Status not updating:** verify polling is enabled, check the poll interval, and inspect the persistent stale/degraded source notice. A 100% transfer that says **Waiting for import** is updating correctly; check Sonarr/Radarr's import state rather than expecting transfer completion to mean Jellyfin availability.
 
 ## Getting help
 

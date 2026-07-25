@@ -59,11 +59,18 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             var controller = new ArrRequestsController(
                 factory,
                 NullLogger<ArrRequestsController>.Instance,
-                new StubUserManager(), // empty: IsAdminUser() falls through to the role claim below
+                new StubUserManager(new Jellyfin.Database.Implementations.Entities.User(
+                    "caller",
+                    "provider",
+                    "password-provider")
+                {
+                    Id = Guid.Parse(CallerGuid),
+                }),
                 seerrCache,
                 provider,
                 seerr,
                 new ArrFetchService(factory, NullLogger<ArrFetchService>.Instance),
+                new StubItemLookupService(),
                 new PassthroughParentalFilter());
 
             var claims = new List<Claim> { new("Jellyfin-UserId", CallerGuid) };

@@ -1031,6 +1031,59 @@
                             <div class="jc-setting-description" data-desc-for="downloadsPollIntervalSeconds">
                                 <div class="fieldDescription jc-field-desc-xl">How often to refresh download status automatically. Minimum is 30 seconds and applies only when auto-refresh is enabled.</div>
                             </div>
+
+                            <details class="jc-details-section" data-gated-by="downloadsPageEnabled,showDownloadsInRequests">
+                                <summary>Regular-user download activity visibility</summary>
+                                <div class="jc-details-body">
+                                    <div class="checkboxContainer"><label><input id="downloadsAllowActiveForRegularUsers" data-config-key="DownloadsAllowActiveForRegularUsers" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show active transfers to regular users</span></label></div>
+                                    <div class="jc-setting-description" data-desc-for="downloadsAllowActiveForRegularUsers">
+                                        <div class="fieldDescription jc-field-desc-xl">Allows non-admin users to see their server-authorized active Sonarr/Radarr transfers. Library access and request ownership are still enforced by the server.</div>
+                                    </div>
+
+                                    <div class="checkboxContainer"><label><input id="downloadsAllowProcessingForRegularUsers" data-config-key="DownloadsAllowProcessingForRegularUsers" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show import processing to regular users</span></label></div>
+                                    <div class="jc-setting-description" data-desc-for="downloadsAllowProcessingForRegularUsers">
+                                        <div class="fieldDescription jc-field-desc-xl">Allows non-admin users to see authorized post-transfer states such as import pending and importing. Transfer completion is kept separate from Jellyfin availability.</div>
+                                    </div>
+
+                                    <div class="checkboxContainer"><label><input id="downloadsAllowWarningsForRegularUsers" data-config-key="DownloadsAllowWarningsForRegularUsers" is="emby-checkbox" type="checkbox"/><span>Show warnings and failures to regular users</span></label></div>
+                                    <div class="jc-setting-description" data-desc-for="downloadsAllowWarningsForRegularUsers">
+                                        <div class="fieldDescription jc-field-desc-xl">Allows non-admin users to see authorized warning, blocked and failed activity. Browser responses remain sanitized and never include raw release names, paths or upstream payloads.</div>
+                                    </div>
+
+                                    <div class="checkboxContainer"><label><input id="downloadsAllowHistoryForRegularUsers" data-config-key="DownloadsAllowHistoryForRegularUsers" is="emby-checkbox" type="checkbox"/><span>Show download history to regular users</span></label></div>
+                                    <div class="jc-setting-description" data-desc-for="downloadsAllowHistoryForRegularUsers">
+                                        <div class="fieldDescription jc-field-desc-xl">Allows non-admin users to see their server-authorized, bounded Sonarr/Radarr history. Disabled by default; administrators retain diagnostic access.</div>
+                                    </div>
+
+                                    <div class="checkboxContainer"><label><input id="downloadsAllowProvenanceForRegularUsers" data-config-key="DownloadsAllowProvenanceForRegularUsers" is="emby-checkbox" type="checkbox"/><span>Show request association to regular users</span></label></div>
+                                    <div class="jc-setting-description" data-desc-for="downloadsAllowProvenanceForRegularUsers">
+                                        <div class="fieldDescription jc-field-desc-xl">Allows non-admin users to see sanitized provenance labels only when the server has positive association evidence. Ambiguous or unmatched activity remains unknown.</div>
+                                    </div>
+
+                                    <div class="checkboxContainer"><label><input id="downloadsDetailedLifecycleForRegularUsers" data-config-key="DownloadsDetailedLifecycleForRegularUsers" is="emby-checkbox" type="checkbox"/><span>Show detailed lifecycle states to regular users</span></label></div>
+                                    <div class="jc-setting-description" data-desc-for="downloadsDetailedLifecycleForRegularUsers">
+                                        <div class="fieldDescription jc-field-desc-xl">Shows the detailed normalized lifecycle vocabulary to non-admin users. Off uses a smaller presentation while the server still tracks authoritative state.</div>
+                                    </div>
+
+                                    <div class="inputContainer">
+                                        <label class="inputLabel" for="downloadsHistoryWindowDays">Download History Window (days)</label>
+                                        <input id="downloadsHistoryWindowDays" data-config-key="DownloadsHistoryWindowDays" data-config-int="" data-config-fallback="7" is="emby-input" type="number" min="1" max="30" value="7"/>
+                                    </div>
+                                    <div class="jc-setting-description" data-desc-for="downloadsHistoryWindowDays">
+                                        <div class="fieldDescription jc-field-desc-xl">Maximum age of Sonarr/Radarr history requested by the server. Allowed range is 1–30 days; the default is 7.</div>
+                                    </div>
+                                </div>
+                            </details>
+
+                            <details class="jc-details-section" data-gated-by="downloadsPageEnabled">
+                                <summary>Regular-user Seerr status and history</summary>
+                                <div class="jc-details-body">
+                                    <div class="checkboxContainer"><label><input id="requestsAllowSeerrStatusAndHistoryForRegularUsers" data-config-key="RequestsAllowSeerrStatusAndHistoryForRegularUsers" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show Seerr request status and history to regular users</span></label></div>
+                                    <div class="jc-setting-description" data-desc-for="requestsAllowSeerrStatusAndHistoryForRegularUsers">
+                                        <div class="fieldDescription jc-field-desc-xl">Allows non-admin users to see their server-scoped Seerr request status, history and sanitized download progress embedded in Seerr media responses. When disabled, the server returns empty embedded download relations. Source affinity, ownership, parental limits and library visibility remain server-enforced.</div>
+                                    </div>
+                                </div>
+                            </details>
                         </div>
                     </fieldset>
 

@@ -31,8 +31,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
     public sealed class ArrTargetResolver
     {
         internal static readonly TimeSpan LookupTimeout = TimeSpan.FromSeconds(10);
+        internal const int MaxResolvedInstances = 32;
+        internal const int MaxConcurrentInstanceResolutions = 4;
 
         private readonly ArrFetchService _fetch;
+        private readonly SemaphoreSlim _instanceResolutionGate = new(
+            MaxConcurrentInstanceResolutions,
+            MaxConcurrentInstanceResolutions);
 
         public ArrTargetResolver(ArrFetchService fetch)
         {
@@ -55,16 +60,44 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
             if (!item.HasArrIdentity)
                 return (new List<ArrInstanceMatch>(), new List<ArrErrorDto>());
 
-            var results = await Task.WhenAll(instances.Select(i => ResolveOneAsync(item, i, service, ct))).ConfigureAwait(false);
+            var boundedInstances = instances.Take(MaxResolvedInstances).ToList();
+            var results = await Task.WhenAll(
+                boundedInstances.Select(i => ResolveOneGatedAsync(item, i, service, ct))).ConfigureAwait(false);
 
             var matches = new List<ArrInstanceMatch>();
             var errors = new List<ArrErrorDto>();
+            if (instances.Count > MaxResolvedInstances)
+            {
+                errors.Add(new ArrErrorDto
+                {
+                    InstanceName = service,
+                    Reason = $"resolution is limited to {MaxResolvedInstances} configured instances",
+                });
+            }
+
             foreach (var (match, error, instanceName) in results)
             {
                 if (match != null) matches.Add(match);
                 if (error != null) errors.Add(new ArrErrorDto { InstanceName = instanceName, Reason = error });
             }
             return (matches, errors);
+        }
+
+        private async Task<(ArrInstanceMatch? Match, string? Error, string InstanceName)> ResolveOneGatedAsync(
+            ArrResolvedItem item, ArrInstance instance, string service, CancellationToken ct)
+        {
+            // This service is a DI singleton. Hold one shared permit for the complete instance
+            // resolution (including Sonarr's series + episode sequence), so overlapping HTTP
+            // requests cannot multiply the fan-out beyond this process-wide bound.
+            await _instanceResolutionGate.WaitAsync(ct).ConfigureAwait(false);
+            try
+            {
+                return await ResolveOneAsync(item, instance, service, ct).ConfigureAwait(false);
+            }
+            finally
+            {
+                _instanceResolutionGate.Release();
+            }
         }
 
         private async Task<(ArrInstanceMatch? Match, string? Error, string InstanceName)> ResolveOneAsync(

@@ -8,10 +8,9 @@ import { describe, expect, it } from 'vitest';
 // ui-kit must load before render-cards: it installs the real JC.escapeHtml
 // (the test setup stub is a no-op) which render-cards captures at import.
 import '../../core/ui-kit';
-import { renderDownloadCard, renderIssueCard, renderRequestCard, renderSeasonPackCard } from './render-cards';
+import { renderDownloadCard, renderIssueCard, renderRequestCard } from './render-cards';
 import { state } from './data';
 import type { DownloadItem } from './data';
-import type { DownloadGroup } from './render-helpers';
 
 const HOSTILE = '"><img src=x onerror=alert(1)>';
 
@@ -23,81 +22,121 @@ function renderToDom(html: string): HTMLElement {
 
 function hostileItem(overrides: Partial<DownloadItem> = {}): DownloadItem {
     return {
+        id: 'activity-1',
         source: 'Sonarr',
-        status: HOSTILE,
+        instanceId: 'sonarr-main',
+        instanceName: HOSTILE,
         title: HOSTILE,
         subtitle: HOSTILE,
-        posterUrl: HOSTILE,
-        jellyfinMediaId: HOSTILE,
-        timeRemaining: HOSTILE,
+        mediaType: 'episode',
+        seasonNumber: 1,
+        episodeNumber: 2,
+        section: 'downloading',
+        lifecycle: 'downloading',
         progress: 42,
+        timeRemaining: HOSTILE,
+        occurredAt: null,
+        stale: false,
+        reasonCode: null,
+        terminal: false,
+        groupCount: 1,
+        importedCount: null,
+        expectedCount: null,
+        partial: false,
+        provenance: null,
+        jellyfinItemId: HOSTILE,
+        availability: 'available',
         ...overrides,
     };
 }
 
 describe('renderDownloadCard escaping', () => {
-    it('renders hostile poster/title/subtitle/id/status inert (no element injection)', () => {
+    it('renders allowlisted hostile text and Jellyfin id inert', () => {
         const host = renderToDom(renderDownloadCard(hostileItem()));
 
-        // No injected <img src="x"> anywhere — the payload must stay a string.
         expect(host.querySelector('img[src="x"]')).toBeNull();
-        // The only onerror is the static display-toggle on the poster img.
-        for (const el of host.querySelectorAll('[onerror]')) {
-            expect(el.getAttribute('onerror')).toBe("this.style.display='none'");
-        }
-        // Poster + arr source icon only — nothing extra parsed into existence.
-        expect(host.querySelectorAll('img').length).toBe(2);
+        expect(host.querySelectorAll('[onerror]')).toHaveLength(0);
+        expect(host.querySelectorAll('img')).toHaveLength(1);
+        expect(host.querySelector('.jc-download-source')?.textContent).toContain(HOSTILE);
+        expect(host.querySelector('.jc-download-open-btn')?.getAttribute('data-media-id')).toBe(HOSTILE);
 
-        // Attribute positions hold the payload as a value, not as markup.
-        const card = host.querySelector('.jc-download-card')!;
-        expect(card.getAttribute('data-media-id')).toBe(HOSTILE);
-        const poster = host.querySelector<HTMLImageElement>('.jc-download-poster')!;
-        expect(poster.getAttribute('src')).toBe(HOSTILE);
-
-        // Text positions render the payload as text with no child elements.
         const title = host.querySelector('.jc-download-title')!;
         expect(title.textContent).toBe(HOSTILE);
         expect(title.children.length).toBe(0);
-        expect(title.getAttribute('title')).toBe(HOSTILE);
         const subtitle = host.querySelector('.jc-download-subtitle')!;
         expect(subtitle.textContent).toBe(HOSTILE);
         expect(subtitle.children.length).toBe(0);
+        expect(host.textContent).toContain(HOSTILE);
     });
 
-    it('coerces a non-numeric progress instead of interpolating it into the style attribute', () => {
+    it('omits a non-numeric progress instead of interpolating it into markup', () => {
         const host = renderToDom(renderDownloadCard(hostileItem({
             progress: '"; background:url(javascript:alert(1))' as unknown as number,
         })));
-        const bar = host.querySelector<HTMLElement>('.jc-download-progress-bar')!;
-        expect(bar.getAttribute('style')).toContain('width: 0%');
-        expect(bar.getAttribute('style')).not.toContain('javascript:');
+        expect(host.querySelector('.jc-download-progress-bar')).toBeNull();
+        expect(host.innerHTML).not.toContain('javascript:');
     });
-});
 
-describe('renderSeasonPackCard escaping', () => {
-    it('renders hostile fields inert in the season-pack variant', () => {
-        const group = {
-            type: 'seasonPack',
-            item: hostileItem({ seasonNumber: 1 }),
-            episodes: [hostileItem({ episodeNumber: 1 }), hostileItem({ episodeNumber: 2 }), hostileItem({ episodeNumber: 3 })],
-            episodeRange: HOSTILE,
-            episodeCount: 3,
-        } as Extract<DownloadGroup, { type: 'seasonPack' }>;
+    it('keeps transfer completion distinct from importing and availability', () => {
+        const host = renderToDom(renderDownloadCard(hostileItem({
+            lifecycle: 'importing',
+            progress: 100,
+            availability: 'unknown',
+            jellyfinItemId: null,
+        })));
+        expect(host.querySelector('.jc-download-lifecycle')?.textContent).toBe('Importing');
+        expect(host.querySelector('[role="progressbar"]')?.getAttribute('aria-valuenow')).toBe('100');
+        expect(host.textContent).not.toContain('Available');
+        expect(host.querySelector('.jc-download-open-btn')).toBeNull();
+    });
 
-        const host = renderToDom(renderSeasonPackCard(group));
+    it('labels import and library availability independently', () => {
+        const imported = renderToDom(renderDownloadCard(hostileItem({
+            lifecycle: 'imported',
+            section: 'history',
+            progress: null,
+            availability: 'unavailable',
+            jellyfinItemId: null,
+        })));
+        expect(imported.querySelector('.jc-download-lifecycle')?.textContent).toBe('Imported');
+        expect(imported.textContent).toContain('Availability not confirmed');
+        expect(imported.querySelector('.jc-download-open-btn')).toBeNull();
 
-        expect(host.querySelector('img[src="x"]')).toBeNull();
-        for (const el of host.querySelectorAll('[onerror]')) {
-            expect(el.getAttribute('onerror')).toBe("this.style.display='none'");
-        }
-        const title = host.querySelector('.jc-download-title')!;
-        expect(title.textContent).toBe(HOSTILE);
-        expect(title.children.length).toBe(0);
-        // episodeRange badge stays a text node.
-        const badges = host.querySelectorAll('.jc-download-badge');
-        const rangeBadge = badges[badges.length - 1];
-        expect(rangeBadge.textContent).toBe(HOSTILE);
-        expect(rangeBadge.children.length).toBe(0);
+        const available = renderToDom(renderDownloadCard(hostileItem({
+            lifecycle: 'imported',
+            section: 'history',
+        })));
+        expect(available.textContent).toContain('Available');
+        expect(available.querySelector('.jc-download-open-btn')).not.toBeNull();
+    });
+
+    it('shows only explicit provenance and never exposes an unknown reason code', () => {
+        const absent = renderToDom(renderDownloadCard(hostileItem({
+            lifecycle: 'downloading',
+            reasonCode: 'future-secret-upstream-detail',
+            provenance: null,
+        })));
+        expect(absent.querySelector('.jc-download-provenance')).toBeNull();
+        expect(absent.textContent).toContain('Additional lifecycle details are unavailable.');
+        expect(absent.textContent).not.toContain('future-secret-upstream-detail');
+
+        const explicit = renderToDom(renderDownloadCard(hostileItem({
+            provenance: 'unknown',
+        })));
+        expect(explicit.querySelector('.jc-download-provenance')?.textContent).toBe('Origin unknown');
+    });
+
+    it('renders server-provided group and partial-import metadata', () => {
+        const host = renderToDom(renderDownloadCard(hostileItem({
+            lifecycle: 'attention',
+            section: 'processing',
+            groupCount: 8,
+            partial: true,
+            importedCount: 3,
+            expectedCount: 8,
+        })));
+        expect(host.textContent).toContain('8 items');
+        expect(host.textContent).toContain('3 of 8 imported');
     });
 });
 

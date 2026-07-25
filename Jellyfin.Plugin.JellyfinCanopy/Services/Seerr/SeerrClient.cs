@@ -1446,7 +1446,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
         /// outcome into a result: a bare 403 when a restricted caller reached a
         /// blocked detail/season body, otherwise the (possibly list-filtered) JSON.
         /// </summary>
-        private async Task<IActionResult> ApplyParentalFilterAsync(string body, string apiPath, SeerrCaller caller)
+        private async Task<IActionResult> ApplyParentalFilterAsync(
+            string body,
+            string apiPath,
+            SeerrCaller caller,
+            bool includeSeerrDownloadRelations)
         {
             var result = await _parentalFilter.ApplyAsync(body, apiPath, caller);
             if (result.Block)
@@ -1469,7 +1473,26 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                 { StatusCode = 503 };
             }
 
-            return new ContentResult { Content = result.Body, ContentType = "application/json" };
+            // Seerr embeds raw Arr/downloader queue rows on its Media entity, including
+            // detail, search, slider, collection, and request-shaped responses. Keep the
+            // unmodified body server-side for the existing cache contract, but project
+            // those relations on every browser response (fresh or cached).
+            if (!SeerrDownloadStatusSanitizer.TrySanitize(
+                    result.Body,
+                    DateTimeOffset.UtcNow,
+                    includeSeerrDownloadRelations,
+                    out var sanitizedBody))
+            {
+                return new ObjectResult(new
+                {
+                    error = true,
+                    code = "download_status_projection_unavailable",
+                    message = "Download status could not be prepared safely. Please try again."
+                })
+                { StatusCode = 502 };
+            }
+
+            return new ContentResult { Content = sanitizedBody, ContentType = "application/json" };
         }
 
         /// <summary>
@@ -1663,6 +1686,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             }
 
             var config = integration.Configuration!;
+            // The ARR-feed active/processing/warning switches own the dedicated
+            // normalized download-activity endpoint. Embedded Seerr Media relations
+            // have their own coarse administrator policy: either regular users receive
+            // the sanitized projection, or both relations are empty. Capture the decision
+            // from this request's owned configuration snapshot so fresh and cached reads
+            // apply the same per-caller policy.
+            var includeSeerrDownloadRelations = caller.IsAdmin
+                || config.RequestsAllowSeerrStatusAndHistoryForRegularUsers;
             var requestConfigurationRevision = integration.ConfigurationRevision;
             var requestConfigurationIdentity = BuildConfigurationIdentity(config);
             var requestConfigStamp = SeerrMutationConfigStamp.Capture(
@@ -2011,7 +2042,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                     // Filter per-caller on the way out; the cached body itself stays
                     // user-neutral (never store a per-user-filtered view under a
                     // possibly-shared public: cache key).
-                    var filtered = await ApplyParentalFilterAsync(cachedContent, apiPath, caller).ConfigureAwait(false);
+                    var filtered = await ApplyParentalFilterAsync(
+                        cachedContent,
+                        apiPath,
+                        caller,
+                        includeSeerrDownloadRelations).ConfigureAwait(false);
                     cancellationToken.ThrowIfCancellationRequested();
                     if (!requestConfigStamp.Matches(
                             _configProvider.ConfigurationOrNull,
@@ -2272,7 +2307,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
 
                         // Cache above stores the raw, user-neutral body; the parental
                         // filter runs per-caller on the way out.
-                        var filtered = await ApplyParentalFilterAsync(json, apiPath, caller).ConfigureAwait(false);
+                        var filtered = await ApplyParentalFilterAsync(
+                            json,
+                            apiPath,
+                            caller,
+                            includeSeerrDownloadRelations).ConfigureAwait(false);
                         cancellationToken.ThrowIfCancellationRequested();
                         if (method == HttpMethod.Get
                             && !requestConfigStamp.Matches(

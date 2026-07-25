@@ -398,7 +398,13 @@ public sealed class ArrRequestsEnrichmentConcurrencyTests
         var controller = new ArrRequestsController(
             factory,
             NullLogger<ArrRequestsController>.Instance,
-            new StubUserManager(),
+            new StubUserManager(new Jellyfin.Database.Implementations.Entities.User(
+                "caller",
+                "provider",
+                "password-provider")
+            {
+                Id = Guid.Parse(CallerGuid),
+            }),
             cache,
             provider,
             new FixedSeerrClient(new SeerrUser
@@ -408,6 +414,7 @@ public sealed class ArrRequestsEnrichmentConcurrencyTests
                 Permissions = SeerrPermission.REQUEST_VIEW,
             }),
             new ArrFetchService(factory, NullLogger<ArrFetchService>.Instance),
+            new StubItemLookupService(),
             parentalFilter ?? new PassthroughParentalFilter());
 
         controller.ControllerContext = new ControllerContext

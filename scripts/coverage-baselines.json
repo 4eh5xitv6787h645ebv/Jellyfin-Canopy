@@ -14,19 +14,19 @@
       },
       "tolerance": {
         "missingCoveredLines": 1,
-        "rationale": "Admin-target Canopy User Settings actor/storage-isolation regressions exercise one previously uncovered core line while leaving the instrumented core scope unchanged. The reviewed high-water advances from 2325/2666 (87.209%) to 2326/2666 (87.247%). Two clean Node 22.20/V8 full-suite coverage runs on 2026-07-26 each passed all 1526 tests across 218 files and reproduced exactly 2326/2666. Retaining the one-line tolerance makes the minimum 2325/2666 (87.209%), equal to the prior reviewed high-water and stricter than its 2324/2666 tolerated floor (87.172%). coverage-baseline.test.js retains the exact below-floor, above-baseline, scope-change, and broad-tolerance negative boundaries."
+        "rationale": "Dismissible Smart Refresh notices add a state-watermarked dismissal latch, an additive active-server ShowNotices policy, accessible dual actions, and presentation-only suppression in core/live-update.ts. The legitimate core scope increase is 29 instrumented lines (2637→2666); compatibility, dismissal/retry/re-arm, live suppression, Ask-mode regressions, and download lifecycle regressions raise the reviewed high-water by 30 covered lines (2295→2325, 87.209%). Two clean Node 22.20/V8 full-suite coverage runs on 2026-07-25 each passed all 1524 tests across 223 files and reproduced exactly 2325/2666. Retaining the one-line tolerance makes the minimum 2324/2666 (87.172%), stricter than both the prior 2295/2637 high-water percentage (87.031%) and its 2294/2637 tolerated floor (86.993%). coverage-baseline.test.js retains the exact below-floor, above-baseline, scope-change, and broad-tolerance negative boundaries."
       }
     },
     "server": {
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 20321,
-        "totalLines": 28745
+        "coveredLines": 22047,
+        "totalLines": 30606
       },
       "tolerance": {
         "missingCoveredLines": 5,
-        "rationale": "The elevated admin-target user-settings API adds 140 instrumented lines (28605→28745) for policy enforcement, target resolution, bounded payloads, strong If-Match revisions, conflicts, quarantine, and shared-store semantics. Controller and payload regressions add 121 covered lines (20200→20321), raising the reviewed high-water from 70.617% to 70.694%. Two clean .NET 10.0.9/Coverlet runs on 2026-07-26 each passed all 1814 tests across the complete assembly and reproduced exactly 20321/28745. Retaining the evidence-bounded five-line Coverlet tolerance makes the minimum 20316/28745 (70.677%), stricter than both the prior 20200/28605 high-water (70.617%) and its 20195/28605 tolerated floor (70.600%). coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, and broad-tolerance negative boundaries."
+        "rationale": "The server-owned download lifecycle feature adds bounded Sonarr/Radarr queue and history paging, deterministic O(q+h) reconciliation and normalization, stable persisted instance identity (including pre-edit legacy migration), user/library/Seerr authorization, fail-closed partial-source envelopes, bounded ARR response streaming, Manage-status normalization, configuration controls, and policy-aware recursive allowlisted Seerr download-status projection. The legitimate complete-assembly scope increase is 2001 instrumented lines (28605→30606); focused lifecycle, pagination, transport, identity, authorization, privacy, configuration, concurrency, and boundary regressions raise the reviewed high-water by 1847 covered lines (20200→22047, 72.035%). Two clean .NET 10.0.9/Coverlet runs on 2026-07-25 each passed all 1926 tests and measured 22046 or 22047 covered lines out of 30606, establishing 22047 as the reviewed high-water. Retaining the evidence-bounded five-line Coverlet tolerance makes the minimum 22042/30606 (72.019%), stricter than both the prior 20195/28605 tolerated floor (70.600%) and the prior 20200/28605 high-water (70.617%). coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, and broad-tolerance negative boundaries."
       }
     }
   }

@@ -63,7 +63,7 @@ public class ArrHttpPlumbingTests
     }
 
     [Fact]
-    public async Task FetchAndMapAsync_AppliesCallerTimeout_ToItsOwnClientInstance()
+    public async Task FetchAndMapAsync_UsesLinkedDeadlineInsteadOfHeaderOnlyClientTimeout()
     {
         var handler = new RecordingHttpMessageHandler();
         handler.AddResponse("/api/v3/queue", "[]");
@@ -72,10 +72,11 @@ public class ArrHttpPlumbingTests
 
         await Probe(service, Instance("http://localhost:8989"), TimeSpan.FromSeconds(15));
 
-        // The historical per-endpoint deadline (10s links/requests, 15s calendar)
-        // is preserved on the instance the factory handed out for this call.
+        // ResponseHeadersRead completes when headers arrive, so HttpClient.Timeout
+        // cannot own the body deadline. ArrFetchService uses its linked per-request
+        // token across headers and body instead (covered by response-bound tests).
         var client = Assert.Single(factory.CreatedClients);
-        Assert.Equal(TimeSpan.FromSeconds(15), client.Timeout);
+        Assert.Equal(Timeout.InfiniteTimeSpan, client.Timeout);
     }
 
     [Fact]

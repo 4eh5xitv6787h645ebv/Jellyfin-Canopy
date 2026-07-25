@@ -48,7 +48,7 @@ function activityIconsRoute(routeKey: string): boolean {
 }
 
 function detailsRoute(routeKey: string): boolean {
-    return routeKey.toLowerCase().includes('details');
+    return /details/i.test(routeKey);
 }
 
 function arrSearchEnabled(): boolean {
@@ -177,15 +177,16 @@ export const builtInFeatureDescriptors: readonly ClientFeatureDescriptor[] = Obj
         scope: 'navigation',
         isEnabled: (state) => Boolean(state.identity)
             && JC.pluginConfig?.CalendarPageEnabled === true,
-        isApplicable: (state) => /#\/calendar(?:[?#]|$)/i.test(state.routeKey),
+        isApplicable: (state) => /#\/calendar([?#]|$)/i.test(state.routeKey),
     },
     {
         id: 'requests-page',
         entry: 'requests-page',
         scope: 'navigation',
+        restartOnConfigChange: true,
         isEnabled: (state) => Boolean(state.identity)
             && JC.pluginConfig?.DownloadsPageEnabled === true,
-        isApplicable: (state) => /#\/downloads(?:[?#]|$)/i.test(state.routeKey),
+        isApplicable: (state) => /#\/downloads([?#]|$)/i.test(state.routeKey),
     },
     {
         id: 'hidden-content-runtime',
@@ -203,7 +204,7 @@ export const builtInFeatureDescriptors: readonly ClientFeatureDescriptor[] = Obj
         dependsOn: ['hidden-content-runtime'],
         isEnabled: (state) => Boolean(state.identity)
             && JC.pluginConfig?.HiddenContentEnabled === true,
-        isApplicable: (state) => /#\/hidden-content(?:[?#]|$)/i.test(state.routeKey),
+        isApplicable: (state) => /#\/hidden-content([?#]|$)/i.test(state.routeKey),
     },
     {
         id: 'bookmarks-runtime',
@@ -220,7 +221,7 @@ export const builtInFeatureDescriptors: readonly ClientFeatureDescriptor[] = Obj
         dependsOn: ['bookmarks-runtime'],
         isEnabled: (state) => Boolean(state.identity)
             && JC.pluginConfig?.BookmarksEnabled === true,
-        isApplicable: (state) => /#\/bookmarks(?:[?#]|$)/i.test(state.routeKey),
+        isApplicable: (state) => /#\/bookmarks([?#]|$)/i.test(state.routeKey),
     },
     {
         id: 'playback-controls',

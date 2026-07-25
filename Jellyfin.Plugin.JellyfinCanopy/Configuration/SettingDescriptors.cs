@@ -346,6 +346,25 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
                 Public("DownloadsPagePollingEnabled", c => c.DownloadsPagePollingEnabled),
                 Public("DownloadsPollIntervalSeconds", c => c.DownloadsPollIntervalSeconds),
                 Public("DownloadsFilterByUserRequests", c => c.DownloadsFilterByUserRequests),
+                // The endpoint is intentionally reachable before login for the login-image
+                // bootstrap. Regular-user visibility policy is presentation data only after
+                // authentication; pre-login callers receive conservative redacted values.
+                PublicContextual("DownloadsAllowActiveForRegularUsers", ctx =>
+                    ctx.IsAuthenticated && ctx.Config.DownloadsAllowActiveForRegularUsers),
+                PublicContextual("DownloadsAllowProcessingForRegularUsers", ctx =>
+                    ctx.IsAuthenticated && ctx.Config.DownloadsAllowProcessingForRegularUsers),
+                PublicContextual("DownloadsAllowWarningsForRegularUsers", ctx =>
+                    ctx.IsAuthenticated && ctx.Config.DownloadsAllowWarningsForRegularUsers),
+                PublicContextual("DownloadsAllowHistoryForRegularUsers", ctx =>
+                    ctx.IsAuthenticated && ctx.Config.DownloadsAllowHistoryForRegularUsers),
+                PublicContextual("DownloadsAllowProvenanceForRegularUsers", ctx =>
+                    ctx.IsAuthenticated && ctx.Config.DownloadsAllowProvenanceForRegularUsers),
+                PublicContextual("DownloadsDetailedLifecycleForRegularUsers", ctx =>
+                    ctx.IsAuthenticated && ctx.Config.DownloadsDetailedLifecycleForRegularUsers),
+                PublicContextual("RequestsAllowSeerrStatusAndHistoryForRegularUsers", ctx =>
+                    ctx.IsAuthenticated && ctx.Config.RequestsAllowSeerrStatusAndHistoryForRegularUsers),
+                PublicContextual("DownloadsHistoryWindowDays", ctx =>
+                    ctx.IsAuthenticated ? ctx.Config.DownloadsHistoryWindowDays : 0),
                 Public("RequestApprovalsEnabled", c => c.RequestApprovalsEnabled),
 
                 // Calendar Page Settings
@@ -414,8 +433,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
                 // the config page can render a per-instance toggle and arr-links can filter
                 // disabled instances from the dropdown without a round-trip. ExternalUrl is the
                 // per-instance browser-facing link base (empty = fall back to Url).
-                Private("SonarrInstances", c => c.GetSonarrInstances().Select(i => new { i.Name, i.Url, i.ExternalUrl, i.UrlMappings, i.Enabled })),
-                Private("RadarrInstances", c => c.GetRadarrInstances().Select(i => new { i.Name, i.Url, i.ExternalUrl, i.UrlMappings, i.Enabled })),
+                Private("SonarrInstances", c => c.GetSonarrInstances().Select(i => new { i.InstanceId, i.Name, i.Url, i.ExternalUrl, i.UrlMappings, i.Enabled })),
+                Private("RadarrInstances", c => c.GetRadarrInstances().Select(i => new { i.InstanceId, i.Name, i.Url, i.ExternalUrl, i.UrlMappings, i.Enabled })),
 
                 // Corruption flags so the frontend can surface a toast without waiting for an
                 // action endpoint to round-trip a corruption error envelope.

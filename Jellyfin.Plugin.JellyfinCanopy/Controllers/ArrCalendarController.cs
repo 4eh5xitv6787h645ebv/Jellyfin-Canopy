@@ -206,13 +206,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             var radarrInstances = config.GetEnabledRadarrInstances();
             var ct = HttpContext.RequestAborted;
 
-            var sonarrTasks = sonarrInstances.Select((i, idx) => FetchSonarrCalendar(i, idx, startIso, endIso, startDate, endDate, startDayKey, endDayKey, ParseDate, ct)).ToList();
-            var radarrTasks = radarrInstances.Select((i, idx) => FetchRadarrCalendar(i, idx, startIso, endIso, startDate, endDate, startDayKey, endDayKey, ParseDate, AddRelease, ct)).ToList();
+            var sonarrTasks = sonarrInstances.Select(i => FetchSonarrCalendar(i, startIso, endIso, startDate, endDate, startDayKey, endDayKey, ParseDate, ct)).ToList();
+            var radarrTasks = radarrInstances.Select(i => FetchRadarrCalendar(i, startIso, endIso, startDate, endDate, startDayKey, endDayKey, ParseDate, AddRelease, ct)).ToList();
             var sonarrRootTasks = config.CalendarFilterByLibraryAccess
-                ? sonarrInstances.Select((i, idx) => FetchArrRoots(i, $"sonarr:{idx}", ItemLookupKind.Series, ct)).ToList()
+                ? sonarrInstances.Select(i => FetchArrRoots(i, ArrIdHelper.InstanceKey(nameof(ArrType.Sonarr), i), ItemLookupKind.Series, ct)).ToList()
                 : new List<Task<(List<Services.Arr.ArrRootBinding> Bindings, string? Error)>>();
             var radarrRootTasks = config.CalendarFilterByLibraryAccess
-                ? radarrInstances.Select((i, idx) => FetchArrRoots(i, $"radarr:{idx}", ItemLookupKind.Movie, ct)).ToList()
+                ? radarrInstances.Select(i => FetchArrRoots(i, ArrIdHelper.InstanceKey(nameof(ArrType.Radarr), i), ItemLookupKind.Movie, ct)).ToList()
                 : new List<Task<(List<Services.Arr.ArrRootBinding> Bindings, string? Error)>>();
 
             var sonarrCalResults = await Task.WhenAll(sonarrTasks);
@@ -351,22 +351,28 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         // takes the title fallback. That fallback CANNOT prove two same-title rows are the same item,
         // so it must carry discriminators (instance + year/air-date); otherwise two unmapped same-title
         // shows or same-title movie remakes would collapse into one row and hide content (ARR-CS-2).
+        // Prefer the opaque instance key over the editable display name so duplicate names and
+        // renames cannot merge/split provider-less rows. The name fallback only supports older
+        // synthetic records/tests that predate ArrInstanceKey.
         internal static string BuildDedupKey(ArrItem evt)
         {
+            var instanceKey = string.IsNullOrWhiteSpace(evt.ArrInstanceKey)
+                ? evt.InstanceName
+                : evt.ArrInstanceKey;
             if (evt.Source == nameof(ArrType.Sonarr))
             {
                 var seriesKey = evt.TvdbId?.ToString()
-                    ?? $"title:{evt.Title}|inst:{evt.InstanceName}|date:{evt.ReleaseDateLocal ?? evt.ReleaseDate}";
+                    ?? $"title:{evt.Title}|inst:{instanceKey}|date:{evt.ReleaseDateLocal ?? evt.ReleaseDate}";
                 return $"sonarr|{seriesKey}|S{evt.SeasonNumber}E{evt.EpisodeNumber}";
             }
 
             var movieKey = evt.TmdbId?.ToString()
-                ?? $"title:{evt.Title}|inst:{evt.InstanceName}|year:{evt.Subtitle}";
+                ?? $"title:{evt.Title}|inst:{instanceKey}|year:{evt.Subtitle}";
             return $"radarr|{movieKey}|{evt.ReleaseType}";
         }
 
         private Task<(List<ArrItem> Items, string? Error)> FetchSonarrCalendar(
-            ArrInstance instance, int instanceIndex, string startIso, string endIso,
+            ArrInstance instance, string startIso, string endIso,
             DateTime startDate, DateTime endDate, string startDayKey, string endDayKey,
             Func<object?, DateTime?> parseDate, CancellationToken ct)
         {
@@ -417,10 +423,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
 
                         items.Add(new ArrItem
                         {
-                            // Namespace the per-instance row id by source + the instance's unique
-                            // position so two Sonarr instances that both number episodes from 1 —
-                            // even with an identical or blank display name — can't collide.
-                            Id = ArrIdHelper.NamespacedId(nameof(ArrType.Sonarr), instanceIndex, episode?["id"]),
+                            // Namespace the per-instance row id by the persisted opaque
+                            // identity so it survives rename, reorder and enable/disable.
+                            Id = ArrIdHelper.NamespacedId(nameof(ArrType.Sonarr), instance, episode?["id"]),
                             Source = nameof(ArrType.Sonarr),
                             InstanceName = instance.Name,
                             Type = "Series",
@@ -446,7 +451,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                             EpisodeImdbId = (string?)episode?["imdbId"],
                             RootFolderPath = Services.Arr.ArrFetchService.GetRootFolderFromPath((string?)series?["path"]),
                             MediaPath = (string?)series?["path"],
-                            ArrInstanceKey = $"sonarr:{instanceIndex}"
+                            ArrInstanceKey = ArrIdHelper.InstanceKey(nameof(ArrType.Sonarr), instance)
                         });
                     }
                     return items;
@@ -460,7 +465,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         }
 
         private Task<(List<ArrItem> Items, string? Error)> FetchRadarrCalendar(
-            ArrInstance instance, int instanceIndex, string startIso, string endIso,
+            ArrInstance instance, string startIso, string endIso,
             DateTime startDate, DateTime endDate, string startDayKey, string endDayKey,
             Func<object?, DateTime?> parseDate,
             Action<Dictionary<string, DateTime>, string, object?> addRelease,
@@ -530,10 +535,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                                 continue;
                             items.Add(new ArrItem
                             {
-                                // Namespace the per-instance row id (plus release-type) by source + the
-                                // instance's unique position so two Radarr instances numbering movies
-                                // from 1 — even with an identical or blank display name — can't collide.
-                                Id = ArrIdHelper.NamespacedId(nameof(ArrType.Radarr), instanceIndex, $"{movie?["id"]}-{kvp.Key}"),
+                                // Namespace the per-instance row id (plus release-type) by the
+                                // persisted opaque identity, never list position or display name.
+                                Id = ArrIdHelper.NamespacedId(nameof(ArrType.Radarr), instance, $"{movie?["id"]}-{kvp.Key}"),
                                 Source = nameof(ArrType.Radarr),
                                 InstanceName = instance.Name,
                                 Type = "Movie",
@@ -551,7 +555,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                                 ImdbId = (string?)movie?["imdbId"],
                                 RootFolderPath = Services.Arr.ArrFetchService.GetRootFolderFromPath((string?)movie?["path"]),
                                 MediaPath = (string?)movie?["path"],
-                                ArrInstanceKey = $"radarr:{instanceIndex}"
+                                ArrInstanceKey = ArrIdHelper.InstanceKey(nameof(ArrType.Radarr), instance)
                             });
                         }
                     }

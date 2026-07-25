@@ -145,8 +145,8 @@ public sealed class ArrQueuePaginationTests
         var handler = new QueueHandler(
             total,
             id => service == "sonarr"
-                ? $$"""{"id":{{id}},"seriesId":{{(id == total ? targetArrId : 99)}},"title":"row {{id}}","size":100,"sizeleft":50}"""
-                : $$"""{"id":{{id}},"title":"row {{id}}","size":100,"sizeleft":50}""");
+                ? $$"""{"id":{{id}},"seriesId":{{(id == total ? targetArrId : 99)}},"title":"private row {{id}}","status":"downloading","trackedDownloadState":"downloading","size":100,"sizeleft":50}"""
+                : $$"""{"id":{{id}},"title":"private row {{id}}","status":"downloading","trackedDownloadState":"downloading","size":100,"sizeleft":50}""");
         handler.LookupService = service;
         var fetch = NewFetch(handler);
         var actions = new ArrActionService(fetch, new ArrTargetResolver(fetch), NullLogger<ArrActionService>.Instance);
@@ -161,12 +161,12 @@ public sealed class ArrQueuePaginationTests
         if (service == "sonarr")
         {
             var target = Assert.Single(status.Items);
-            Assert.Equal($"row {total}", target.Title);
+            Assert.Equal("downloading", target.Lifecycle);
         }
         else
         {
             Assert.Equal(total, status.Items.Count);
-            Assert.Equal($"row {total}", status.Items[^1].Title);
+            Assert.All(status.Items, item => Assert.Equal("downloading", item.Lifecycle));
         }
         Assert.Equal(2, handler.QueueRequests);
     }
@@ -186,6 +186,59 @@ public sealed class ArrQueuePaginationTests
         Assert.False(status.IsComplete);
         Assert.Empty(status.Items);
         Assert.Contains(status.Errors, error => error.Reason.Contains("page 2", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ActionStatus_OversizedQueueIsBoundedAndExplicitlyIncomplete()
+    {
+        var handler = new QueueHandler(
+            ArrDownloadActivityService.MaxActivityQueueRecordsPerInstance + 1,
+            id => $$"""{"id":{{id}},"title":"private row {{id}}"}""")
+        {
+            LookupService = "radarr",
+        };
+        var fetch = NewFetch(handler);
+        var actions = new ArrActionService(
+            fetch,
+            new ArrTargetResolver(fetch),
+            NullLogger<ArrActionService>.Instance);
+
+        var status = await actions.GetQueueStatusAsync(
+            Movie(),
+            RadarrConfig(),
+            CancellationToken.None);
+
+        Assert.False(status.IsComplete);
+        Assert.Empty(status.Items);
+        Assert.Contains(status.Errors, error =>
+            error.Reason.Contains("2000-record safety limit", StringComparison.Ordinal));
+        Assert.Equal(1, handler.QueueRequests);
+    }
+
+    [Fact]
+    public async Task ActionStatus_ResponseRowsAreCappedAndMarkedIncomplete()
+    {
+        var handler = new QueueHandler(
+            ArrActionService.MaxStatusResponseItems + 1,
+            id => $$"""{"id":{{id}},"title":"private row {{id}}","status":"downloading","trackedDownloadState":"downloading","size":100,"sizeleft":50}""")
+        {
+            LookupService = "radarr",
+        };
+        var fetch = NewFetch(handler);
+        var actions = new ArrActionService(
+            fetch,
+            new ArrTargetResolver(fetch),
+            NullLogger<ArrActionService>.Instance);
+
+        var status = await actions.GetQueueStatusAsync(
+            Movie(),
+            RadarrConfig(),
+            CancellationToken.None);
+
+        Assert.False(status.IsComplete);
+        Assert.Equal(ArrActionService.MaxStatusResponseItems, status.Items.Count);
+        Assert.Contains(status.Errors, error =>
+            error.Reason.Contains("500 rows", StringComparison.Ordinal));
     }
 
     private static ArrFetchService NewFetch(HttpMessageHandler handler)

@@ -1,4 +1,7 @@
+using System.Text.Json;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
+using Jellyfin.Plugin.JellyfinCanopy.Helpers;
+using Jellyfin.Plugin.JellyfinCanopy.Model.Arr;
 using Xunit;
 
 namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Configuration;
@@ -24,6 +27,7 @@ public class PluginConfigurationArrInstancesTests
         Assert.Single(instances);
         Assert.Equal("TV", instances[0].Name);
         Assert.Equal("http://sonarr:8989", instances[0].Url);
+        Assert.Matches("^[0-9a-f]{32}$", instances[0].InstanceId);
         Assert.True(instances[0].Enabled); // Enabled defaults true for pre-Enabled configs
         Assert.False(config.IsSonarrInstancesCorrupt());
     }
@@ -42,6 +46,7 @@ public class PluginConfigurationArrInstancesTests
         Assert.Equal("Sonarr", instances[0].Name);
         Assert.Equal("http://legacy:8989", instances[0].Url);
         Assert.Equal("legacykey", instances[0].ApiKey);
+        Assert.Matches("^[0-9a-f]{32}$", instances[0].InstanceId);
     }
 
     [Fact]
@@ -193,4 +198,181 @@ public class PluginConfigurationArrInstancesTests
         Assert.Equal("Radarr", config.GetRadarrInstances()[0].Name);
         Assert.False(config.IsRadarrInstancesCorrupt());
     }
+
+    [Fact]
+    public void LegacyInstanceIds_SurviveReorderAndRename()
+    {
+        var config = NewConfig();
+        config.SonarrInstances = """
+            [
+              {"Name":"First","Url":"http://first:8989","ApiKey":"first-key","Enabled":true},
+              {"Name":"Second","Url":"http://second:8989","ApiKey":"second-key","Enabled":true}
+            ]
+            """;
+        var before = config.GetSonarrInstances()
+            .ToDictionary(instance => instance.Url, instance => instance.InstanceId);
+
+        config.SonarrInstances = """
+            [
+              {"Name":"Renamed second","Url":"http://second:8989","ApiKey":"second-key","Enabled":true},
+              {"Name":"Renamed first","Url":"http://first:8989","ApiKey":"first-key","Enabled":true}
+            ]
+            """;
+        var after = config.GetSonarrInstances()
+            .ToDictionary(instance => instance.Url, instance => instance.InstanceId);
+
+        Assert.Equal(before["http://first:8989"], after["http://first:8989"]);
+        Assert.Equal(before["http://second:8989"], after["http://second:8989"]);
+    }
+
+    [Fact]
+    public void PersistedInstanceId_IsPreservedAcrossConnectionAndDisplayEdits()
+    {
+        const string id = "0123456789abcdef0123456789abcdef";
+        var config = NewConfig();
+        config.RadarrInstances =
+            $$"""[{"InstanceId":"{{id}}","Name":"Before","Url":"http://old:7878","ApiKey":"old-key"}]""";
+
+        var before = Assert.Single(config.GetRadarrInstances());
+        config.RadarrInstances =
+            $$"""[{"InstanceId":"{{id}}","Name":"After","Url":"http://new:7878","ApiKey":"new-key"}]""";
+        var after = Assert.Single(config.GetRadarrInstances());
+
+        Assert.Equal(id, before.InstanceId);
+        Assert.Equal(id, after.InstanceId);
+    }
+
+    [Fact]
+    public void EnsurePersistedArrInstanceIds_FreezesLegacyFallbackBeforeFirstEditedSave()
+    {
+        var config = NewConfig();
+        config.SonarrInstances = """
+            [
+              {"Name":"First","Url":"http://first:8989","ApiKey":"first-key","Enabled":true},
+              {"Name":"Second","Url":"http://second:8989","ApiKey":"second-key","Enabled":true}
+            ]
+            """;
+        var preEditIds = config.GetSonarrInstances()
+            .ToDictionary(instance => instance.Name, instance => instance.InstanceId);
+
+        Assert.True(config.EnsurePersistedArrInstanceIds());
+
+        // This is the raw PluginConfiguration value returned by Jellyfin's admin endpoint.
+        // The editor reorders, renames and changes both pieces of connection material while
+        // round-tripping only the opaque server-provided identity.
+        var projected = JsonSerializer.Deserialize<List<ArrInstance>>(config.SonarrInstances)!;
+        projected.Reverse();
+        projected[0].Name = "Renamed second";
+        projected[0].Url = "https://second-new.example.test";
+        projected[0].ApiKey = "second-key-rotated";
+        projected[1].Name = "Renamed first";
+        projected[1].Url = "https://first-new.example.test";
+        projected[1].ApiKey = "first-key-rotated";
+
+        // Prove the edited connection material would produce different legacy fallbacks if
+        // startup had not supplied the pre-edit identities to the admin projection.
+        Assert.NotEqual(
+            preEditIds["Second"],
+            ArrIdHelper.GetStableInstanceId(CloneWithoutIdentity(projected[0])));
+        Assert.NotEqual(
+            preEditIds["First"],
+            ArrIdHelper.GetStableInstanceId(CloneWithoutIdentity(projected[1])));
+
+        config.SonarrInstances = JsonSerializer.Serialize(projected);
+        Assert.False(config.EnsurePersistedArrInstanceIds());
+        var afterSave = config.GetSonarrInstances()
+            .ToDictionary(instance => instance.Name, instance => instance.InstanceId);
+
+        Assert.Equal(preEditIds["Second"], afterSave["Renamed second"]);
+        Assert.Equal(preEditIds["First"], afterSave["Renamed first"]);
+    }
+
+    [Fact]
+    public void EnsurePersistedArrInstanceIds_MaterializesLegacySingletonWithItsPreEditIdentity()
+    {
+        var config = NewConfig();
+        config.RadarrInstances = "[]";
+        config.RadarrUrl = "http://legacy-radarr:7878";
+        config.RadarrExternalUrl = "https://radarr.example.test";
+        config.RadarrApiKey = "legacy-key";
+        config.RadarrUrlMappings = "http://jellyfin|http://legacy-radarr:7878";
+        var expectedId = Assert.Single(config.GetRadarrInstances()).InstanceId;
+
+        Assert.True(config.EnsurePersistedArrInstanceIds());
+        var migratedJson = config.RadarrInstances;
+        var migrated = Assert.Single(JsonSerializer.Deserialize<List<ArrInstance>>(migratedJson)!);
+
+        Assert.Equal(expectedId, migrated.InstanceId);
+        Assert.Equal(config.RadarrUrl, migrated.Url);
+        Assert.Equal(config.RadarrApiKey, migrated.ApiKey);
+        Assert.False(config.EnsurePersistedArrInstanceIds());
+        Assert.Equal(migratedJson, config.RadarrInstances);
+    }
+
+    [Fact]
+    public void EnsurePersistedArrInstanceIds_RepairsDuplicatesOnceAndPreservesTheRepair()
+    {
+        var config = NewConfig();
+        config.RadarrInstances = """
+            [
+              {"Name":"One","Url":"http://same:7878","ApiKey":"same-key","Enabled":true},
+              {"Name":"Two","Url":"http://same:7878","ApiKey":"same-key","Enabled":true}
+            ]
+            """;
+        var reassigned = new List<string>();
+
+        Assert.True(config.EnsurePersistedArrInstanceIds(
+            onRadarrDuplicateReassigned: reassigned.Add));
+        var migratedJson = config.RadarrInstances;
+        var migrated = JsonSerializer.Deserialize<List<ArrInstance>>(migratedJson)!;
+
+        Assert.Equal(new[] { "One", "Two" }, reassigned);
+        Assert.Equal(2, migrated.Select(instance => instance.InstanceId).Distinct().Count());
+
+        reassigned.Clear();
+        Assert.False(config.EnsurePersistedArrInstanceIds(
+            onRadarrDuplicateReassigned: reassigned.Add));
+        Assert.Empty(reassigned);
+        Assert.Equal(migratedJson, config.RadarrInstances);
+    }
+
+    [Fact]
+    public void EnsurePersistedArrInstanceIds_LeavesCorruptModernJsonUntouched()
+    {
+        var config = NewConfig();
+        config.SonarrInstances = "[{not-json";
+        config.SonarrUrl = "http://legacy:8989";
+        config.SonarrApiKey = "legacy-key";
+
+        Assert.False(config.EnsurePersistedArrInstanceIds());
+        Assert.Equal("[{not-json", config.SonarrInstances);
+        Assert.True(config.IsSonarrInstancesCorrupt());
+    }
+
+    [Fact]
+    public void AmbiguousDuplicateIdentity_IsRejectedInsteadOfPublished()
+    {
+        var config = NewConfig();
+        config.SonarrInstances = """
+            [
+              {"Name":"Duplicate one","Url":"http://same:8989","ApiKey":"same-key","Enabled":true},
+              {"Name":"Duplicate two","Url":"http://same:8989","ApiKey":"same-key","Enabled":true}
+            ]
+            """;
+
+        Assert.Empty(config.GetSonarrInstances());
+        Assert.Empty(config.GetEnabledSonarrInstances());
+        Assert.True(config.HasInvalidEnabledSonarrInstances());
+        Assert.False(config.IsSonarrInstancesCorrupt());
+    }
+
+    private static ArrInstance CloneWithoutIdentity(ArrInstance instance) => new()
+    {
+        Name = instance.Name,
+        Url = instance.Url,
+        ExternalUrl = instance.ExternalUrl,
+        ApiKey = instance.ApiKey,
+        UrlMappings = instance.UrlMappings,
+        Enabled = instance.Enabled
+    };
 }

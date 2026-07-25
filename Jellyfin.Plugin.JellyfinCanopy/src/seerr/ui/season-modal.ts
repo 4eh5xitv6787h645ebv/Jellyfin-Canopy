@@ -6,6 +6,7 @@ import { JC } from '../../globals';
 
 
 import { ui, internal } from './internal';
+import { readSeerrDownloadStatuses } from '../download-status';
 const logPrefix = '🪼 Jellyfin Canopy: Seerr UI:';
 const escapeHtml = JC.escapeHtml;
 let refreshModalTimer: ReturnType<typeof setTimeout> | null = null;
@@ -574,8 +575,8 @@ function updateSeasonList(seasonListElement: any, tvDetails: any, partialRequest
         const mediaIsRequestable = JC.seerrStatus!.isRequestable(effectiveMediaStatus);
         const canRequest = relationStateValid && !globallyBlocked && !hasActiveRequest && mediaIsRequestable;
         const rawModeDownloads = is4kMode ? tvDetails.mediaInfo?.downloadStatus4k : tvDetails.mediaInfo?.downloadStatus;
-        const modeDownloads = Array.isArray(rawModeDownloads) ? rawModeDownloads : [];
-        const hasSeasonDownloads = modeDownloads.some((ds: any) => ds.episode?.seasonNumber === seasonNumber);
+        const modeDownloads = readSeerrDownloadStatuses(rawModeDownloads);
+        const hasSeasonDownloads = modeDownloads.some((download) => download.seasonNumber === seasonNumber);
         // Preserve canonical media state. When it is otherwise requestable but
         // an active request exists, synthesize MediaStatus.PENDING for display
         // only; getDisplayInfo then renders Requested/Processing without ever
@@ -628,12 +629,18 @@ function updateSeasonList(seasonListElement: any, tvDetails: any, partialRequest
         if (existingProgress) existingProgress.remove();
 
         if (hasSeasonDownloads && modeDownloads.length > 0) {
-            const seasonDownloads = modeDownloads.filter((ds: any) => ds.episode?.seasonNumber === seasonNumber);
+            const seasonDownloads = modeDownloads.filter((download) => download.seasonNumber === seasonNumber);
             if (seasonDownloads.length > 0) {
-                const totalSize = seasonDownloads.reduce((sum: any, ds: any) => sum + (ds.size || 0), 0);
-                const totalSizeLeft = seasonDownloads.reduce((sum: any, ds: any) => sum + (ds.sizeLeft || 0), 0);
-                if (totalSize > 0) {
-                    const aggregatedStatus = { size: totalSize, sizeLeft: totalSizeLeft, status: `${seasonDownloads.length} episode(s) downloading` };
+                const knownProgress = seasonDownloads
+                    .map((download) => download.progress)
+                    .filter((progress): progress is number => progress != null);
+                if (knownProgress.length > 0) {
+                    const aggregatedStatus = {
+                        lifecycle: seasonDownloads[0].lifecycle,
+                        progress: knownProgress.reduce((sum, progress) => sum + progress, 0) / knownProgress.length,
+                        timeRemaining: null,
+                        seasonNumber,
+                    };
                     const progressElement = internal.createInlineProgress(aggregatedStatus);
                     if (progressElement) seasonItem.appendChild(progressElement);
                 }

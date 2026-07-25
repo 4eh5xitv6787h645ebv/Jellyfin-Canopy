@@ -9,7 +9,6 @@
 
 import { JC } from '../arr-globals';
 import { renderPage } from './render';
-import { describeFetchError } from '../../core/fetch-error';
 import { classifyObjectDetails } from '../../core/cache-policy';
 import { waitForSharedResult } from '../../core/shared-result';
 import type { ApiApi, IdentityContext } from '../../types/jc';
@@ -30,22 +29,94 @@ interface RichApiClient {
 }
 export const richApiClient = ApiClient as unknown as RichApiClient;
 
-/** One entry of the /arr/queue downloads list. */
-export interface DownloadItem {
-    title?: string;
-    subtitle?: string;
-    status?: string;
-    source?: string;
-    instanceName?: string;
-    posterUrl?: string;
-    progress?: number;
-    timeRemaining?: string;
-    totalSize?: number;
-    sizeRemaining?: number;
-    seasonNumber?: number | null;
-    episodeNumber?: number;
-    jellyfinMediaId?: string;
-    [key: string]: unknown;
+export type DownloadSection = 'downloading' | 'processing' | 'history';
+
+export type DownloadLifecycle =
+    | 'queued'
+    | 'downloading'
+    | 'paused'
+    | 'delayed'
+    | 'postProcessing'
+    | 'importPending'
+    | 'importing'
+    | 'waitingForImport'
+    | 'attention'
+    | 'warning'
+    | 'failed'
+    | 'canceled'
+    | 'removed'
+    | 'imported'
+    | 'unknown';
+
+export type DownloadProvenance = 'seerrAssociated' | 'unknown';
+export type DownloadAvailability = 'available' | 'unavailable' | 'unknown';
+export type DownloadSourceState =
+    | 'fresh'
+    | 'stale'
+    | 'unavailable'
+    | 'incomplete'
+    | 'truncated'
+    | 'configuration';
+
+/** One allowlisted lifecycle activity returned by /arr/queue. */
+export interface DownloadActivity {
+    id: string;
+    source: string;
+    instanceId: string;
+    instanceName: string;
+    title: string;
+    subtitle: string | null;
+    mediaType: string | null;
+    seasonNumber: number | null;
+    episodeNumber: number | null;
+    section: DownloadSection;
+    lifecycle: DownloadLifecycle;
+    progress: number | null;
+    timeRemaining: string | null;
+    occurredAt: string | null;
+    stale: boolean;
+    reasonCode: string | null;
+    terminal: boolean;
+    groupCount: number;
+    importedCount: number | null;
+    expectedCount: number | null;
+    partial: boolean;
+    provenance: DownloadProvenance | null;
+    jellyfinItemId: string | null;
+    availability: DownloadAvailability;
+}
+
+/** Compatibility name retained for the existing renderer/test import surface. */
+export type DownloadItem = DownloadActivity;
+
+export interface DownloadSourceStatus {
+    source: string;
+    instanceId: string;
+    instanceName: string;
+    state: DownloadSourceState;
+    capturedAt: string | null;
+}
+
+export interface DownloadCounts {
+    downloading: number;
+    processing: number;
+    history: number;
+}
+
+interface DownloadQueueEnvelope {
+    items?: unknown;
+    history?: unknown;
+    sources?: unknown;
+    degraded?: unknown;
+    stale?: unknown;
+    generatedAt?: unknown;
+    counts?: unknown;
+    historyPage?: unknown;
+    historyPageSize?: unknown;
+    historyTotalItems?: unknown;
+    historyTotalPages?: unknown;
+    historyTruncated?: unknown;
+    activeTruncated?: unknown;
 }
 
 /** One entry of the /arr/requests list. */
@@ -136,15 +207,24 @@ interface IssueMediaDetails {
     [key: string]: unknown;
 }
 
-/** Per-instance error entry surfaced by the backend envelopes. */
-export interface ArrErrorEntry {
-    source?: string;
-    instanceName?: string;
-    reason?: string;
-}
-
 export interface RequestsPageState {
     downloads: DownloadItem[];
+    downloadHistory: DownloadItem[];
+    downloadSources: DownloadSourceStatus[];
+    downloadsCounts: DownloadCounts;
+    downloadsDegraded: boolean;
+    downloadsStale: boolean;
+    downloadsError: boolean;
+    downloadsHasSnapshot: boolean;
+    downloadsLoading: boolean;
+    downloadsGeneratedAt: string | null;
+    historyPage: number;
+    historyAppliedPage: number;
+    historyPageSize: number;
+    historyTotalItems: number;
+    historyTotalPages: number;
+    historyTruncated: boolean;
+    downloadsActiveTruncated: boolean;
     requests: RequestItem[];
     requestsPage: number;
     requestsTotalPages: number;
@@ -158,8 +238,9 @@ export interface RequestsPageState {
     issuesFilter: string;
     issuesPermissionDenied?: boolean;
     isLoading: boolean;
-    downloadsActiveTab: string;
+    downloadsActiveTab: DownloadSection;
     downloadsSearchQuery: string;
+    downloadsAppliedSearchQuery: string;
     downloadsSearchVisible: boolean;
     searchDebounceTimer: ReturnType<typeof setTimeout> | null;
 }
@@ -167,6 +248,22 @@ export interface RequestsPageState {
 // State management
 export const state: RequestsPageState = {
     downloads: [],
+    downloadHistory: [],
+    downloadSources: [],
+    downloadsCounts: { downloading: 0, processing: 0, history: 0 },
+    downloadsDegraded: false,
+    downloadsStale: false,
+    downloadsError: false,
+    downloadsHasSnapshot: false,
+    downloadsLoading: false,
+    downloadsGeneratedAt: null,
+    historyPage: 1,
+    historyAppliedPage: 1,
+    historyPageSize: 20,
+    historyTotalItems: 0,
+    historyTotalPages: 1,
+    historyTruncated: false,
+    downloadsActiveTruncated: false,
     requests: [],
     requestsPage: 1,
     requestsTotalPages: 1,
@@ -179,11 +276,79 @@ export const state: RequestsPageState = {
     issuesError: false,
     issuesFilter: 'open',
     isLoading: false,
-    downloadsActiveTab: 'all',
+    downloadsActiveTab: 'downloading',
     downloadsSearchQuery: '',
+    downloadsAppliedSearchQuery: '',
     downloadsSearchVisible: false,
     searchDebounceTimer: null,
 };
+
+/** A browser-retained last-good activity snapshot may never outlive the server cache bound. */
+export const DOWNLOADS_SNAPSHOT_RETENTION_MS = 5 * 60 * 1000;
+
+let downloadsSnapshotReceivedAt: number | null = null;
+let downloadsSnapshotExpiryTimer: ReturnType<typeof setTimeout> | null = null;
+
+function clearDownloadsSnapshotExpiryTimer(): void {
+    if (downloadsSnapshotExpiryTimer) {
+        clearTimeout(downloadsSnapshotExpiryTimer);
+        downloadsSnapshotExpiryTimer = null;
+    }
+}
+
+/**
+ * Retire media-bearing rows once the bounded last-good handoff expires. Keep the
+ * explicit error/degraded state so an outage can never become a convincing
+ * empty queue.
+ */
+function expireRetainedDownloadsSnapshot(expectedReceivedAt: number): void {
+    if (!state.downloadsHasSnapshot
+        || !state.downloadsError
+        || downloadsSnapshotReceivedAt !== expectedReceivedAt) return;
+
+    clearDownloadsSnapshotExpiryTimer();
+    downloadsSnapshotReceivedAt = null;
+    state.downloads = [];
+    state.downloadHistory = [];
+    state.downloadSources = [];
+    state.downloadsCounts = { downloading: 0, processing: 0, history: 0 };
+    state.downloadsHasSnapshot = false;
+    state.downloadsGeneratedAt = null;
+    state.historyPage = 1;
+    state.historyAppliedPage = 1;
+    state.historyTotalItems = 0;
+    state.historyTotalPages = 1;
+    state.historyTruncated = false;
+    state.downloadsActiveTruncated = false;
+    state.downloadsDegraded = true;
+    state.downloadsStale = true;
+    renderPage();
+}
+
+function scheduleDownloadsSnapshotExpiry(): void {
+    clearDownloadsSnapshotExpiryTimer();
+    if (!state.downloadsHasSnapshot
+        || !state.downloadsError
+        || downloadsSnapshotReceivedAt === null) return;
+
+    const expectedReceivedAt = downloadsSnapshotReceivedAt;
+    const remaining = DOWNLOADS_SNAPSHOT_RETENTION_MS
+        - Math.max(0, Date.now() - expectedReceivedAt);
+    if (remaining <= 0) {
+        expireRetainedDownloadsSnapshot(expectedReceivedAt);
+        return;
+    }
+
+    downloadsSnapshotExpiryTimer = setTimeout(() => {
+        downloadsSnapshotExpiryTimer = null;
+        expireRetainedDownloadsSnapshot(expectedReceivedAt);
+    }, remaining);
+}
+
+// The current route adoption owns this signal. Reads started by delegated
+// controls without an explicit signal still inherit it, so leaving the route
+// cancels filters, pagination, approvals and their follow-up refreshes.
+let activeSignal: AbortSignal | null = null;
 
 const avatarObjectUrlCache = new Map<string, string>();
 const avatarFetchPromises = new Map<string, Promise<string>>();
@@ -344,70 +509,304 @@ export function hydrateAvatarImages(container: HTMLElement): void {
     });
 }
 
+const DOWNLOAD_LIFECYCLES = new Set<DownloadLifecycle>([
+    'queued',
+    'downloading',
+    'paused',
+    'delayed',
+    'postProcessing',
+    'importPending',
+    'importing',
+    'waitingForImport',
+    'attention',
+    'warning',
+    'failed',
+    'canceled',
+    'removed',
+    'imported',
+    'unknown',
+]);
+const DOWNLOAD_SECTIONS = new Set<DownloadSection>(['downloading', 'processing', 'history']);
+const DOWNLOAD_SOURCE_STATES = new Set<DownloadSourceState>([
+    'fresh',
+    'stale',
+    'unavailable',
+    'incomplete',
+    'truncated',
+    'configuration',
+]);
+const DOWNLOAD_AVAILABILITIES = new Set<DownloadAvailability>([
+    'available',
+    'unavailable',
+    'unknown',
+]);
+const DOWNLOAD_PROVENANCE = new Set<DownloadProvenance>(['seerrAssociated', 'unknown']);
+
+function objectValue(value: unknown): Record<string, unknown> | null {
+    return value !== null && typeof value === 'object' && !Array.isArray(value)
+        ? value as Record<string, unknown>
+        : null;
+}
+
+function stringValue(value: unknown, fallback = ''): string {
+    return typeof value === 'string' ? value : fallback;
+}
+
+function nullableString(value: unknown): string | null {
+    return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+function nullableInteger(value: unknown): number | null {
+    return typeof value === 'number' && Number.isInteger(value) ? value : null;
+}
+
+function boundedInteger(value: unknown, fallback: number, minimum = 0): number {
+    return typeof value === 'number' && Number.isSafeInteger(value) && value >= minimum
+        ? value
+        : fallback;
+}
+
+function boundedProgress(value: unknown): number | null {
+    return typeof value === 'number' && Number.isFinite(value)
+        ? Math.max(0, Math.min(100, value))
+        : null;
+}
+
+function normalizeActivity(value: unknown, fallbackSection: DownloadSection): DownloadActivity | null {
+    const item = objectValue(value);
+    if (!item) return null;
+
+    // A missing opaque activity id cannot be repaired safely in the browser:
+    // never synthesize identity from a title, progress value or list position.
+    const id = stringValue(item.id).trim();
+    if (!id) return null;
+
+    const lifecycleValue = stringValue(item.lifecycle) as DownloadLifecycle;
+    const sectionValue = stringValue(item.section) as DownloadSection;
+    const availabilityValue = stringValue(item.availability) as DownloadAvailability;
+    const provenanceValue = stringValue(item.provenance) as DownloadProvenance;
+
+    return {
+        id,
+        source: stringValue(item.source),
+        instanceId: stringValue(item.instanceId),
+        instanceName: stringValue(item.instanceName),
+        title: stringValue(item.title),
+        subtitle: nullableString(item.subtitle),
+        mediaType: nullableString(item.mediaType),
+        seasonNumber: nullableInteger(item.seasonNumber),
+        episodeNumber: nullableInteger(item.episodeNumber),
+        section: DOWNLOAD_SECTIONS.has(sectionValue) ? sectionValue : fallbackSection,
+        lifecycle: DOWNLOAD_LIFECYCLES.has(lifecycleValue) ? lifecycleValue : 'unknown',
+        progress: boundedProgress(item.progress),
+        timeRemaining: nullableString(item.timeRemaining),
+        occurredAt: nullableString(item.occurredAt),
+        stale: item.stale === true,
+        reasonCode: nullableString(item.reasonCode),
+        terminal: item.terminal === true,
+        groupCount: boundedInteger(item.groupCount, 1, 1),
+        importedCount: nullableInteger(item.importedCount),
+        expectedCount: nullableInteger(item.expectedCount),
+        partial: item.partial === true,
+        provenance: DOWNLOAD_PROVENANCE.has(provenanceValue) ? provenanceValue : null,
+        jellyfinItemId: nullableString(item.jellyfinItemId),
+        availability: DOWNLOAD_AVAILABILITIES.has(availabilityValue)
+            ? availabilityValue
+            : 'unknown',
+    };
+}
+
+function normalizeActivities(value: unknown, fallbackSection: DownloadSection): DownloadActivity[] {
+    if (!Array.isArray(value)) return [];
+    const byId = new Map<string, DownloadActivity>();
+    for (const entry of value) {
+        const item = normalizeActivity(entry, fallbackSection);
+        if (item && !byId.has(item.id)) byId.set(item.id, item);
+    }
+    return Array.from(byId.values());
+}
+
+function normalizeSource(value: unknown): DownloadSourceStatus | null {
+    const source = objectValue(value);
+    if (!source) return null;
+    const stateValue = stringValue(source.state) as DownloadSourceState;
+    return {
+        source: stringValue(source.source),
+        instanceId: stringValue(source.instanceId),
+        instanceName: stringValue(source.instanceName),
+        state: DOWNLOAD_SOURCE_STATES.has(stateValue) ? stateValue : 'incomplete',
+        capturedAt: nullableString(source.capturedAt),
+    };
+}
+
+function normalizeSources(value: unknown): DownloadSourceStatus[] {
+    if (!Array.isArray(value)) return [];
+    return value.map(normalizeSource).filter((entry): entry is DownloadSourceStatus => entry !== null);
+}
+
+function normalizeCounts(
+    value: unknown,
+    active: readonly DownloadActivity[],
+    history: readonly DownloadActivity[],
+    historyTotalItems: number
+): DownloadCounts {
+    const counts = objectValue(value);
+    return {
+        downloading: boundedInteger(
+            counts?.downloading,
+            active.filter((item) => item.section === 'downloading').length
+        ),
+        processing: boundedInteger(
+            counts?.processing,
+            active.filter((item) => item.section === 'processing').length
+        ),
+        history: boundedInteger(counts?.history, Math.max(history.length, historyTotalItems)),
+    };
+}
+
+let downloadsRequestController: AbortController | null = null;
+let downloadsRequestSequence = 0;
+let downloadsFailureToasted = false;
+let requestsRequestController: AbortController | null = null;
+let requestsRequestSequence = 0;
+let issuesRequestController: AbortController | null = null;
+let issuesRequestSequence = 0;
+
+function requestsIntentMatches(page: number, filter: string): boolean {
+    return state.requestsPage === page && state.requestsFilter === filter;
+}
+
+function issuesIntentMatches(page: number, filter: string): boolean {
+    return state.issuesPage === page && state.issuesFilter === filter;
+}
+
 /**
- * Fetch download queue from backend
+ * Fetch the normalized activity snapshot. Every call retires the previous
+ * activity read: search, pagination, polling and manual refresh all target the
+ * same state and latest intent must win even if a browser/API abort races.
  */
-async function fetchDownloads(signal?: AbortSignal): Promise<unknown> {
+export async function fetchDownloads(signal?: AbortSignal): Promise<unknown> {
+    if (JC.pluginConfig?.ShowDownloadsInRequests === false) return null;
     const context = JC.identity.capture();
     if (!context) return null;
+    const parentSignal = signal ?? activeSignal ?? undefined;
+    const sequence = ++downloadsRequestSequence;
+    downloadsRequestController?.abort();
+    const controller = new AbortController();
+    downloadsRequestController = controller;
+    const requestedHistoryPage = state.historyPage;
+    const requestedSearch = state.downloadsSearchQuery.trim().slice(0, 100);
+    const abortFromParent = (): void => controller.abort();
+    if (parentSignal?.aborted) controller.abort();
+    else parentSignal?.addEventListener('abort', abortFromParent, { once: true });
+
+    state.downloadsLoading = true;
+    renderPage();
+
     try {
-        const data = await api.plugin('/arr/queue', { signal }) as { items?: DownloadItem[]; errors?: ArrErrorEntry[] };
-        if (!JC.identity.isCurrent(context)) return null;
-        state.downloads = data.items || [];
-        // Surface per-instance queue errors so a 401 / timeout / SSRF-reject on one
-        // instance doesn't silently produce a "looks empty" downloads page.
-        surfaceDownloadsErrors(data.errors);
+        const query = new URLSearchParams({
+            historyPage: String(requestedHistoryPage),
+            historyPageSize: String(state.historyPageSize),
+        });
+        if (requestedSearch) query.set('search', requestedSearch);
+
+        const data = await api.plugin(`/arr/queue?${query.toString()}`, {
+            signal: controller.signal,
+        }) as DownloadQueueEnvelope;
+        if (controller.signal.aborted
+            || sequence !== downloadsRequestSequence
+            || !JC.identity.isCurrent(context)) return null;
+        // Typing can change the controlled input before its debounce starts the
+        // replacement request. Do not publish results for text/page intent that
+        // is no longer visible.
+        if (state.downloadsSearchQuery.trim().slice(0, 100) !== requestedSearch
+            || state.historyPage !== requestedHistoryPage) return null;
+
+        const activeInput = normalizeActivities(data.items, 'processing');
+        const historyInput = normalizeActivities(data.history, 'history');
+        // Trust the server's section assignment, not which JSON array happened
+        // to carry a row. Exact opaque-id overlap is resolved active-first so a
+        // malformed envelope still cannot duplicate one lifecycle across tabs.
+        const active = [...activeInput, ...historyInput]
+            .filter((item) => item.section !== 'history');
+        const activeIds = new Set(active.map((item) => item.id));
+        const history = [...historyInput, ...activeInput]
+            .filter((item) => item.section === 'history' && !activeIds.has(item.id));
+        const uniqueActive = Array.from(new Map(active.map((item) => [item.id, item])).values());
+        const uniqueHistory = Array.from(new Map(history.map((item) => [item.id, item])).values());
+        const sources = normalizeSources(data.sources);
+        const historyTotalItems = boundedInteger(data.historyTotalItems, uniqueHistory.length);
+
+        state.downloads = uniqueActive;
+        state.downloadHistory = uniqueHistory;
+        state.downloadSources = sources;
+        state.downloadsCounts = normalizeCounts(
+            data.counts,
+            uniqueActive,
+            uniqueHistory,
+            historyTotalItems
+        );
+        state.downloadsDegraded = data.degraded === true
+            || data.activeTruncated === true
+            || sources.some((source) => source.state !== 'fresh');
+        state.downloadsStale = data.stale === true
+            || uniqueActive.some((item) => item.stale)
+            || uniqueHistory.some((item) => item.stale)
+            || sources.some((source) => source.state === 'stale');
+        state.downloadsGeneratedAt = nullableString(data.generatedAt);
+        state.downloadsAppliedSearchQuery = requestedSearch;
+        state.historyPage = boundedInteger(data.historyPage, state.historyPage, 1);
+        state.historyAppliedPage = state.historyPage;
+        state.historyPageSize = boundedInteger(data.historyPageSize, state.historyPageSize, 1);
+        state.historyTotalItems = historyTotalItems;
+        state.historyTotalPages = boundedInteger(data.historyTotalPages, 1, 1);
+        state.historyTruncated = data.historyTruncated === true;
+        state.downloadsActiveTruncated = data.activeTruncated === true;
+        state.downloadsError = false;
+        state.downloadsHasSnapshot = true;
+        clearDownloadsSnapshotExpiryTimer();
+        downloadsSnapshotReceivedAt = Date.now();
+        downloadsFailureToasted = false;
         return data;
     } catch (error) {
-        // Teardown, not failure: the adoption drained and aborted the request.
-        if (signal?.aborted || !JC.identity.isCurrent(context)) return null;
-        console.error(`${logPrefix} Failed to fetch downloads:`, error);
-        state.downloads = [];
-        // A total failure (the whole /arr/queue request rejected) has no
-        // per-instance errors[] to surface, so toast once here — otherwise the
-        // page would just show "No active downloads" as if the queue were empty.
-        if (typeof JC.toast === 'function') {
-            JC.toast('⚠ ' + esc(describeFetchError(error, JC.t?.('downloads_load_error') || 'Unable to load downloads')));
+        if (controller.signal.aborted
+            || sequence !== downloadsRequestSequence
+            || !JC.identity.isCurrent(context)
+            || state.downloadsSearchQuery.trim().slice(0, 100) !== requestedSearch
+            || state.historyPage !== requestedHistoryPage) return null;
+        console.error(`${logPrefix} Failed to fetch download activity:`, error);
+        // Retain the last successful snapshot and make its uncertainty visible.
+        // A failed refresh must never become a convincing empty queue.
+        // A failed History page move returns to the applied page so its retained
+        // rows and recovery controls remain usable. A failed search deliberately
+        // keeps its new query intent visible instead of showing mismatched rows.
+        if (state.downloadsHasSnapshot
+            && requestedSearch === state.downloadsAppliedSearchQuery
+            && requestedHistoryPage !== state.historyAppliedPage) {
+            state.historyPage = state.historyAppliedPage;
+        }
+        state.downloadsError = true;
+        state.downloadsDegraded = true;
+        state.downloadsStale = true;
+        scheduleDownloadsSnapshotExpiry();
+        if (!downloadsFailureToasted && typeof JC.toast === 'function') {
+            downloadsFailureToasted = true;
+            JC.toast(JC.t?.('downloads_load_error') || 'Unable to load download activity');
         }
         return null;
+    } finally {
+        parentSignal?.removeEventListener('abort', abortFromParent);
+        if (downloadsRequestController === controller) downloadsRequestController = null;
+        if (sequence === downloadsRequestSequence && JC.identity.isCurrent(context)) {
+            state.downloadsLoading = false;
+            renderPage();
+        }
     }
 }
 
-// Once-per-session dedup. Self-heals: when an error stops appearing in a subsequent fetch
-// the memo entry is dropped so future occurrences re-toast.
-const _toastedDownloadsErrors = new Set<string>();
-// Alias the shared HTML-escape helper (JC.toast uses innerHTML).
-// The inline fallback is a real escaper so XSS is blocked even if helpers.js
-// hasn't loaded yet (e.g. a load-order race on first init).
-const esc = (s: unknown): string => {
-    if (JC.helpers?.escHtml) return JC.helpers.escHtml(s);
-    // eslint-disable-next-line @typescript-eslint/no-base-to-string -- frozen behavior: non-strings coerce via String()
-    return String(s == null ? '' : s)
-        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-};
-function surfaceDownloadsErrors(errors: ArrErrorEntry[] | undefined): void {
-    if (!Array.isArray(errors) || errors.length === 0) {
-        _toastedDownloadsErrors.clear();
-        return;
-    }
-    const seenThisTick = new Set<string>();
-    errors.forEach(function(err) {
-        const key = (err.source || '') + '|' + (err.instanceName || '') + '|' + (err.reason || '');
-        seenThisTick.add(key);
-        if (_toastedDownloadsErrors.has(key)) return;
-        _toastedDownloadsErrors.add(key);
-        if (typeof JC.toast === 'function') {
-            JC.toast(
-                '⚠ ' + esc(err.source || 'Arr') + ' queue "' +
-                esc(err.instanceName || 'unknown') + '" failed: ' + esc(err.reason)
-            );
-        }
-        console.warn(`${logPrefix} ${err.source || 'Arr'} queue "${err.instanceName}" error: ${err.reason}`);
-    });
-    Array.from(_toastedDownloadsErrors).forEach(function(k) {
-        if (!seenThisTick.has(k)) _toastedDownloadsErrors.delete(k);
-    });
+/** Refresh only lifecycle/history data (search and History paging use this). */
+export function refreshDownloads(signal?: AbortSignal): Promise<unknown> {
+    return fetchDownloads(signal ?? activeSignal ?? undefined);
 }
 
 /**
@@ -416,9 +815,20 @@ function surfaceDownloadsErrors(errors: ArrErrorEntry[] | undefined): void {
 export async function fetchRequests(signal?: AbortSignal): Promise<unknown> {
     const context = JC.identity.capture();
     if (!context) return null;
+    const parentSignal = signal ?? activeSignal ?? undefined;
+    const requestedPage = state.requestsPage;
+    const requestedFilter = state.requestsFilter;
+    const sequence = ++requestsRequestSequence;
+    requestsRequestController?.abort();
+    const controller = new AbortController();
+    requestsRequestController = controller;
+    const abortFromParent = (): void => controller.abort();
+    if (parentSignal?.aborted) controller.abort();
+    else parentSignal?.addEventListener('abort', abortFromParent, { once: true });
+
     try {
-        const skip = (state.requestsPage - 1) * 20;
-        const filter = state.requestsFilter !== 'all' ? state.requestsFilter : '';
+        const skip = (requestedPage - 1) * 20;
+        const filter = requestedFilter !== 'all' ? requestedFilter : '';
 
         const query = new URLSearchParams({
             take: '20',
@@ -426,12 +836,17 @@ export async function fetchRequests(signal?: AbortSignal): Promise<unknown> {
             filter: filter,
         });
 
-        const data = await api.plugin(`/arr/requests?${query.toString()}`, { signal }) as {
+        const data = await api.plugin(`/arr/requests?${query.toString()}`, {
+            signal: controller.signal,
+        }) as {
             requests?: RequestItem[];
             totalPages?: number;
             canApproveRequests?: boolean;
         };
-        if (!JC.identity.isCurrent(context)) return null;
+        if (controller.signal.aborted
+            || sequence !== requestsRequestSequence
+            || !JC.identity.isCurrent(context)
+            || !requestsIntentMatches(requestedPage, requestedFilter)) return null;
 
         state.requests = data.requests || [];
         state.requestsTotalPages = data.totalPages || 1;
@@ -440,7 +855,10 @@ export async function fetchRequests(signal?: AbortSignal): Promise<unknown> {
 
         return data;
     } catch (error) {
-        if (signal?.aborted || !JC.identity.isCurrent(context)) return null;
+        if (controller.signal.aborted
+            || sequence !== requestsRequestSequence
+            || !JC.identity.isCurrent(context)
+            || !requestsIntentMatches(requestedPage, requestedFilter)) return null;
         console.error(`${logPrefix} Failed to fetch requests:`, error);
         state.requests = [];
         // Distinguish a backend failure (e.g. the requests proxy's 502 when
@@ -448,6 +866,9 @@ export async function fetchRequests(signal?: AbortSignal): Promise<unknown> {
         // show an ERROR state instead of "No requests found" (CRIT-2).
         state.requestsError = true;
         return null;
+    } finally {
+        parentSignal?.removeEventListener('abort', abortFromParent);
+        if (requestsRequestController === controller) requestsRequestController = null;
     }
 }
 
@@ -506,7 +927,7 @@ export async function fetchIssueMediaDetails(
             cacheNotFound: true,
         }) as Promise<IssueMediaDetails | null>;
         const data = await waitForSharedResult(sharedRequest, signal);
-        if (!JC.identity.isCurrent(context)) return null;
+        if (signal?.aborted || !JC.identity.isCurrent(context)) return null;
         return data || null;
     } catch {
         if (signal?.aborted || !JC.identity.isCurrent(context)) return null;
@@ -520,18 +941,30 @@ export async function fetchIssueMediaDetails(
 export async function fetchIssues(signal?: AbortSignal): Promise<unknown> {
     const context = JC.identity.capture();
     if (!context) return null;
-    if (!JC.pluginConfig?.SeerrEnabled || !JC.pluginConfig?.DownloadsPageShowIssues) {
-        state.issues = [];
-        state.issuesTotalPages = 1;
-        state.issuesError = false;
-        return null;
-    }
-    // Stop trying if we already know the user lacks VIEW_ISSUES permission
-    if (state.issuesPermissionDenied) return null;
+    const parentSignal = signal ?? activeSignal ?? undefined;
+    const requestedPage = state.issuesPage;
+    const requestedFilter = state.issuesFilter;
+    const sequence = ++issuesRequestSequence;
+    issuesRequestController?.abort();
+    const controller = new AbortController();
+    issuesRequestController = controller;
+    const abortFromParent = (): void => controller.abort();
+    if (parentSignal?.aborted) controller.abort();
+    else parentSignal?.addEventListener('abort', abortFromParent, { once: true });
 
     try {
-        const skip = (state.issuesPage - 1) * 20;
-        const filter = state.issuesFilter || 'open';
+        if (controller.signal.aborted || !JC.identity.isCurrent(context)) return null;
+        if (!JC.pluginConfig?.SeerrEnabled || !JC.pluginConfig?.DownloadsPageShowIssues) {
+            state.issues = [];
+            state.issuesTotalPages = 1;
+            state.issuesError = false;
+            return null;
+        }
+        // Stop trying if we already know the user lacks VIEW_ISSUES permission.
+        if (state.issuesPermissionDenied) return null;
+
+        const skip = (requestedPage - 1) * 20;
+        const filter = requestedFilter || 'open';
         const query = new URLSearchParams({
             take: '20',
             skip: String(skip),
@@ -539,12 +972,17 @@ export async function fetchIssues(signal?: AbortSignal): Promise<unknown> {
             sort: 'added',
         });
 
-        const data = await api.plugin(`/seerr/issue?${query.toString()}`, { signal }) as {
+        const data = await api.plugin(`/seerr/issue?${query.toString()}`, {
+            signal: controller.signal,
+        }) as {
             results?: IssueItem[];
             pageInfo?: { pages?: number };
             totalPages?: number;
         } | null;
-        if (!JC.identity.isCurrent(context)) return null;
+        if (controller.signal.aborted
+            || sequence !== issuesRequestSequence
+            || !JC.identity.isCurrent(context)
+            || !issuesIntentMatches(requestedPage, requestedFilter)) return null;
 
         let issues = data?.results || [];
         if (issues.length) {
@@ -552,7 +990,12 @@ export async function fetchIssues(signal?: AbortSignal): Promise<unknown> {
                 issues.map(async (issue) => {
                     const mediaType = getIssueMediaType(issue);
                     const tmdbId = getIssueTmdbId(issue);
-                    const details = await fetchIssueMediaDetails(mediaType, tmdbId, signal, context);
+                    const details = await fetchIssueMediaDetails(
+                        mediaType,
+                        tmdbId,
+                        controller.signal,
+                        context
+                    );
                     return applyIssueMediaDetails(issue, details, mediaType);
                 })
             );
@@ -560,13 +1003,19 @@ export async function fetchIssues(signal?: AbortSignal): Promise<unknown> {
 
         // richApiClient.ajax has no abort plumbing; the drain contract is
         // still honored by refusing to publish anything post-abort.
-        if (signal?.aborted || !JC.identity.isCurrent(context)) return null;
+        if (controller.signal.aborted
+            || sequence !== issuesRequestSequence
+            || !JC.identity.isCurrent(context)
+            || !issuesIntentMatches(requestedPage, requestedFilter)) return null;
         state.issues = issues;
         state.issuesTotalPages = data?.pageInfo?.pages || data?.totalPages || 1;
         state.issuesError = false;
         return data;
     } catch (error) {
-        if (signal?.aborted || !JC.identity.isCurrent(context)) return null;
+        if (controller.signal.aborted
+            || sequence !== issuesRequestSequence
+            || !JC.identity.isCurrent(context)
+            || !issuesIntentMatches(requestedPage, requestedFilter)) return null;
         console.error(`${logPrefix} Failed to fetch issues:`, error);
         state.issues = [];
         state.issuesTotalPages = 1;
@@ -579,6 +1028,9 @@ export async function fetchIssues(signal?: AbortSignal): Promise<unknown> {
             }
         }
         return null;
+    } finally {
+        parentSignal?.removeEventListener('abort', abortFromParent);
+        if (issuesRequestController === controller) issuesRequestController = null;
     }
 }
 
@@ -592,8 +1044,6 @@ let loadQueued = false;
 // The CURRENT adoption's abort signal: fetches completing after the page
 // drained must not commit loading state (renderPage already no-ops on a
 // disconnected container). Only the latest adoption's signal matters.
-let activeSignal: AbortSignal | null = null;
-
 async function loadAllDataOnce(): Promise<void> {
     // Capture THIS run's signal: a new adoption replaces activeSignal, and
     // the old run must keep honoring its own (aborted) one.
@@ -639,6 +1089,8 @@ export async function handleRequestAction(btn: HTMLButtonElement, action: 'appro
     const requestId = btn.getAttribute('data-request-id');
     const sourceToken = btn.getAttribute('data-source-token');
     if (!requestId || !sourceToken) return;
+    const requestSignal = activeSignal ?? undefined;
+    if (requestSignal?.aborted) return;
 
     // Disable BOTH action buttons on this card, not just the clicked one, so the
     // request can't be approved and declined concurrently (two POSTs) before the
@@ -656,8 +1108,9 @@ export async function handleRequestAction(btn: HTMLButtonElement, action: 'appro
         await api.plugin(`/arr/requests/${encodeURIComponent(requestId)}/${action}?sourceToken=${encodeURIComponent(sourceToken)}`, {
             method: 'POST',
             skipRetry: true,
+            ...(requestSignal ? { signal: requestSignal } : {}),
         });
-        if (!JC.identity.isCurrent(context)) return;
+        if (requestSignal?.aborted || !JC.identity.isCurrent(context)) return;
         // Static, param-free localized strings (class (a)) — no interpolation
         // reaches toast()'s innerHTML, so no escaping is required here.
         if (typeof JC.toast === 'function') {
@@ -665,11 +1118,11 @@ export async function handleRequestAction(btn: HTMLButtonElement, action: 'appro
                 ? (JC.t?.('requests_approved_toast') || 'Request approved')
                 : (JC.t?.('requests_declined_toast') || 'Request declined'));
         }
-        await fetchRequests();
-        if (!JC.identity.isCurrent(context)) return;
+        await fetchRequests(requestSignal);
+        if (requestSignal?.aborted || !JC.identity.isCurrent(context)) return;
         renderPage();
     } catch (err) {
-        if (!JC.identity.isCurrent(context)) return;
+        if (requestSignal?.aborted || !JC.identity.isCurrent(context)) return;
         console.error(`${logPrefix} Failed to ${action} request ${requestId}:`, err);
         siblingButtons.forEach((b) => { b.disabled = false; });
         if (icon) icon.textContent = action === 'approve' ? 'check' : 'close';
@@ -681,8 +1134,26 @@ export async function handleRequestAction(btn: HTMLButtonElement, action: 'appro
 
 export function resetRequestsIdentityState(): void {
     if (state.searchDebounceTimer) clearTimeout(state.searchDebounceTimer);
+    clearDownloadsSnapshotExpiryTimer();
+    downloadsSnapshotReceivedAt = null;
     Object.assign(state, {
         downloads: [],
+        downloadHistory: [],
+        downloadSources: [],
+        downloadsCounts: { downloading: 0, processing: 0, history: 0 },
+        downloadsDegraded: false,
+        downloadsStale: false,
+        downloadsError: false,
+        downloadsHasSnapshot: false,
+        downloadsLoading: false,
+        downloadsGeneratedAt: null,
+        historyPage: 1,
+        historyAppliedPage: 1,
+        historyPageSize: 20,
+        historyTotalItems: 0,
+        historyTotalPages: 1,
+        historyTruncated: false,
+        downloadsActiveTruncated: false,
         requests: [],
         requestsPage: 1,
         requestsTotalPages: 1,
@@ -696,13 +1167,23 @@ export function resetRequestsIdentityState(): void {
         issuesFilter: 'open',
         issuesPermissionDenied: undefined,
         isLoading: false,
-        downloadsActiveTab: 'all',
+        downloadsActiveTab: 'downloading',
         downloadsSearchQuery: '',
+        downloadsAppliedSearchQuery: '',
         downloadsSearchVisible: false,
         searchDebounceTimer: null,
     });
+    downloadsRequestSequence++;
+    downloadsRequestController?.abort();
+    downloadsRequestController = null;
+    requestsRequestSequence++;
+    requestsRequestController?.abort();
+    requestsRequestController = null;
+    issuesRequestSequence++;
+    issuesRequestController?.abort();
+    issuesRequestController = null;
+    downloadsFailureToasted = false;
     activeSignal = null;
     loadQueued = false;
-    _toastedDownloadsErrors.clear();
     clearAvatarObjectUrlCache(true);
 }

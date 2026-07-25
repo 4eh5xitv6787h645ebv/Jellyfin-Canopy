@@ -121,7 +121,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
         }
 
         /// <summary>
-        /// Pins the nested instance projection {Name, Url, UrlMappings, Enabled} for valid
+        /// Pins the nested instance projection {InstanceId, Name, Url, UrlMappings, Enabled} for valid
         /// multi-instance JSON. The stored instances carry API keys, so this snapshot is also
         /// the proof that ApiKey never leaks into the private-config payload.
         /// </summary>

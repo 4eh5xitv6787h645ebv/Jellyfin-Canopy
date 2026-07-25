@@ -6,6 +6,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Model.Arr
     public class ArrInstance
     {
         /// <summary>
+        /// Opaque, persisted identity for this configured instance. It is deliberately
+        /// independent of display name, list position, URL and API-key rotation so
+        /// cross-instance event/activity keys survive ordinary configuration edits.
+        /// Legacy rows that predate this property receive a deterministic, non-reversible
+        /// fallback from <c>ArrIdHelper.GetStableInstanceId</c>; the server persists it
+        /// before projecting configuration to the admin editor.
+        /// </summary>
+        public string InstanceId { get; set; } = string.Empty;
+
+        /// <summary>
         /// User-assigned display name (e.g., "TV Shows", "Anime", "4K Movies").
         /// </summary>
         public string Name { get; set; } = string.Empty;

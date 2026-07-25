@@ -1395,6 +1395,28 @@
             return el;
         }
 
+        // Persisted *arr instance identities are opaque 128-bit hexadecimal tokens.
+        // Never derive one in the browser from URL/API-key material: legacy derivation
+        // and validation are server-owned, and credentials must not become client-visible
+        // identity material. New cards receive cryptographic random ids when available;
+        // an empty fallback is safe because the server save hook will fill it.
+        function normalizeArrInstanceId(value) {
+            var normalized = String(value || '').toLowerCase();
+            return /^[0-9a-f]{32}$/.test(normalized) ? normalized : '';
+        }
+
+        function createArrInstanceId() {
+            try {
+                var bytes = new Uint8Array(16);
+                window.crypto.getRandomValues(bytes);
+                return Array.from(bytes, function(b) {
+                    return b.toString(16).padStart(2, '0');
+                }).join('');
+            } catch (_) {
+                return '';
+            }
+        }
+
         function createInstanceCard(type, instance, startOpen) {
             var defaultName = type === 'sonarr' ? 'Sonarr' : 'Radarr';
             var namePlaceholder = type === 'sonarr' ? 'e.g., TV Shows, Anime' : 'e.g., Movies, 4K Movies';
@@ -1483,6 +1505,11 @@
             card.className = 'arr-instance-card';
             if (!initiallyEnabled) card.classList.add('arr-instance-disabled');
             card.dataset.type = type;
+            card.dataset.instanceId = normalizeArrInstanceId(instance.InstanceId)
+                // A blank URL identifies an actually-new card. Legacy populated rows
+                // intentionally stay blank here so the server applies its deterministic
+                // migration rather than inventing a different browser-side scheme.
+                || (!(instance.Url || '').trim() ? createArrInstanceId() : '');
             if (startOpen) card.open = true;
             card.appendChild(summaryEl);
             card.appendChild(body);
@@ -1738,6 +1765,9 @@
                         seen[key] = 1;
                     }
                     out.push({
+                        // Preserve a validated persisted id. Legacy/invalid blanks are
+                        // deterministically repaired by the authoritative server save hook.
+                        InstanceId: normalizeArrInstanceId(card.dataset.instanceId),
                         Name: name,
                         Url: url,
                         ExternalUrl: externalUrl,
@@ -2034,6 +2064,16 @@
                 save: function (el) {
                     const pollInterval = parseInt(el.value, 10);
                     return pollInterval >= 30 ? pollInterval : 30;
+                }
+            },
+            DownloadsHistoryWindowDays: {
+                load: function (el, v) {
+                    var value = parseInt(v, 10);
+                    el.value = isNaN(value) ? 7 : Math.min(30, Math.max(1, value));
+                },
+                save: function (el) {
+                    var value = parseInt(el.value, 10);
+                    return isNaN(value) ? 7 : Math.min(30, Math.max(1, value));
                 }
             },
             ClientRefreshPollSeconds: {
@@ -3353,8 +3393,37 @@
             { parent: 'enableCustomSplashScreen', label: 'Enable Custom Splash Screen', children: ['splashScreenImageUrl'] },
             { parent: 'seerrShowSearchResults', label: 'Show Seerr Results in Search', children: ['showCollectionsInSearch'] },
             { parent: 'seerrShowReportButton', label: 'Show Report Issue button', children: ['seerrShowIssueIndicator'] },
-            { parent: 'downloadsPageEnabled', label: 'Enable Requests Page', children: ['showDownloadsInRequests', 'downloadsPageShowIssues', 'downloadsPagePollingEnabled'] },
-            { parent: 'showDownloadsInRequests', label: 'Show Downloads in Requests Page', children: ['downloadsFilterByUserRequests'] },
+            {
+                parent: 'downloadsPageEnabled',
+                label: 'Enable Requests Page',
+                children: [
+                    'showDownloadsInRequests',
+                    'downloadsPageShowIssues',
+                    'downloadsPagePollingEnabled',
+                    'downloadsAllowActiveForRegularUsers',
+                    'downloadsAllowProcessingForRegularUsers',
+                    'downloadsAllowWarningsForRegularUsers',
+                    'downloadsAllowHistoryForRegularUsers',
+                    'downloadsAllowProvenanceForRegularUsers',
+                    'downloadsDetailedLifecycleForRegularUsers',
+                    'downloadsHistoryWindowDays',
+                    'requestsAllowSeerrStatusAndHistoryForRegularUsers'
+                ]
+            },
+            {
+                parent: 'showDownloadsInRequests',
+                label: 'Show Downloads in Requests Page',
+                children: [
+                    'downloadsFilterByUserRequests',
+                    'downloadsAllowActiveForRegularUsers',
+                    'downloadsAllowProcessingForRegularUsers',
+                    'downloadsAllowWarningsForRegularUsers',
+                    'downloadsAllowHistoryForRegularUsers',
+                    'downloadsAllowProvenanceForRegularUsers',
+                    'downloadsDetailedLifecycleForRegularUsers',
+                    'downloadsHistoryWindowDays'
+                ]
+            },
             { parent: 'downloadsPagePollingEnabled', label: 'Enable Auto-Refresh', children: ['downloadsPollIntervalSeconds'] },
             { parent: 'arrLinksEnabled', label: 'Enable *arr Links', children: ['showArrLinksAsText', 'arrLinksShowStatusSingle'] },
             { parent: 'arrTagsSyncEnabled', label: 'Enable *arr Tags Sync', children: ['arrTagsPrefix', 'arrTagsClearOldTags', 'arrTagsShowAsLinks', 'arrTagsSyncFilter'] },

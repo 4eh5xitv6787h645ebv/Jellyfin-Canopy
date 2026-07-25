@@ -200,6 +200,98 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Data
         }
 
         [Fact]
+        public void BoundedBatch_RejectsProviderOverflowWithoutQuerying()
+        {
+            var library = new CountingLibraryManager
+            {
+                GetItemListHook = _ => throw new Xunit.Sdk.XunitException(
+                    "provider overflow must stop before querying"),
+            };
+
+            var result = new ItemLookupService(library)
+                .GetItemCandidatesByProvidersBatchBounded(
+                    new[] { ("Tmdb", "1"), ("Tmdb", "2") },
+                    maxProviderPairs: 1,
+                    maxCandidates: 10);
+
+            Assert.False(result.IsComplete);
+            Assert.Empty(result.Candidates);
+            Assert.Equal(0, library.GetItemListCallCount);
+        }
+
+        [Fact]
+        public void BoundedBatch_RejectsCandidateSentinelWithoutPublishingPrefix()
+        {
+            var library = new CountingLibraryManager
+            {
+                GetItemListHook = query =>
+                {
+                    Assert.Equal(2, query.Limit);
+                    return new BaseItem[]
+                    {
+                        MovieWith(Guid.NewGuid(), ("Tmdb", "1")),
+                        MovieWith(Guid.NewGuid(), ("Tmdb", "1")),
+                    };
+                },
+            };
+
+            var result = new ItemLookupService(library)
+                .GetItemCandidatesByProvidersBatchBounded(
+                    new[] { ("Tmdb", "1") },
+                    maxProviderPairs: 1,
+                    maxCandidates: 1);
+
+            Assert.False(result.IsComplete);
+            Assert.Empty(result.Candidates);
+            Assert.Equal(1, library.GetItemListCallCount);
+        }
+
+        [Fact]
+        public void BoundedBatch_ExactLimitsReturnCompleteMap()
+        {
+            var movie = MovieWith(Guid.NewGuid(), ("Tmdb", "1"));
+            var library = new CountingLibraryManager
+            {
+                GetItemListHook = query =>
+                {
+                    Assert.Equal(2, query.Limit);
+                    return new BaseItem[] { movie };
+                },
+            };
+
+            var result = new ItemLookupService(library)
+                .GetItemCandidatesByProvidersBatchBounded(
+                    new[] { ("Tmdb", "1") },
+                    maxProviderPairs: 1,
+                    maxCandidates: 1);
+
+            Assert.True(result.IsComplete);
+            Assert.Equal(movie.Id, Assert.Single(result.Candidates[("Tmdb", "1")]).ItemId);
+        }
+
+        [Fact]
+        public void BoundedBatch_RejectsMappedCandidateOverflowWithoutPublishingPrefix()
+        {
+            var movie = MovieWith(
+                Guid.NewGuid(),
+                ("Tmdb", "1"),
+                ("Imdb", "tt1"));
+            var library = new CountingLibraryManager
+            {
+                GetItemListHook = _ => new BaseItem[] { movie },
+            };
+
+            var result = new ItemLookupService(library)
+                .GetItemCandidatesByProvidersBatchBounded(
+                    new[] { ("Tmdb", "1"), ("Imdb", "tt1") },
+                    maxProviderPairs: 2,
+                    maxCandidates: 1);
+
+            Assert.False(result.IsComplete);
+            Assert.Empty(result.Candidates);
+        }
+
+        [Fact]
         public void GetAccessibleItemIdsBatch_ConfiguresUserAccessBeforeSettingItemIds()
         {
             var requested = Guid.NewGuid();

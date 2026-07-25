@@ -148,15 +148,40 @@ public class ArrSearchMappingTests
         var row = ArrSearchMapping.MapQueueRow(node, "sonarr", "test-tv");
         Assert.Equal("test-tv", row.InstanceName);
         Assert.Equal("sonarr", row.Service);
+        Assert.Equal("downloading", row.Lifecycle);
+        Assert.Equal("downloading", row.Section);
         Assert.Equal(75.0, row.Progress);
         Assert.Equal("00:05:00", row.TimeRemaining);
     }
 
     [Fact]
-    public void MapQueueRow_ZeroSize_ProgressZero_NoDivideByZero()
+    public void MapQueueRow_UnknownSize_ProgressRemainsUnknown()
     {
         var row = ArrSearchMapping.MapQueueRow(JsonNode.Parse("""{"size":0,"sizeleft":0}"""), "radarr", "x");
-        Assert.Equal(0, row.Progress);
+        Assert.Null(row.Progress);
+    }
+
+    [Theory]
+    [InlineData("""{"size":1000}""")]
+    [InlineData("""{"size":1000,"sizeleft":"not-a-number"}""")]
+    [InlineData("""{"size":"not-a-number","sizeleft":250}""")]
+    public void MapQueueRow_MissingOrMalformedTransferValuesRemainUnknown(string json)
+    {
+        var row = ArrSearchMapping.MapQueueRow(JsonNode.Parse(json), "radarr", "x");
+
+        Assert.Null(row.Progress);
+    }
+
+    [Fact]
+    public void MapQueueRow_NonFiniteTransferValueRemainsUnknown()
+    {
+        var node = new JsonObject
+        {
+            ["size"] = 1000,
+            ["sizeleft"] = double.NaN,
+        };
+
+        Assert.Null(ArrSearchMapping.MapQueueRow(node, "radarr", "x").Progress);
     }
 
     // ── defensive accessors ──────────────────────────────────────────────────
@@ -168,6 +193,8 @@ public class ArrSearchMappingTests
         Assert.Null(ArrSearchMapping.IntN(null));
         Assert.Equal(1234567890123L, ArrSearchMapping.Long(JsonNode.Parse("\"1234567890123\"")));
         Assert.Equal(3.5, ArrSearchMapping.Dbl(JsonNode.Parse("\"3.5\"")));
+        Assert.Equal(3.5, ArrSearchMapping.DblN(JsonNode.Parse("\"3.5\"")));
+        Assert.Null(ArrSearchMapping.DblN(JsonNode.Parse("\"NaN\"")));
         Assert.True(ArrSearchMapping.Bool(JsonNode.Parse("\"true\"")));
         Assert.False(ArrSearchMapping.Bool(null));
     }

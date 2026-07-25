@@ -35,10 +35,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
         private static readonly TimeSpan CommandTimeout = TimeSpan.FromSeconds(20);
         private static readonly TimeSpan MutateTimeout = TimeSpan.FromSeconds(30);
         private static readonly TimeSpan QueueTimeout = TimeSpan.FromSeconds(15);
+        internal const int MaxStatusInstances = ArrTargetResolver.MaxResolvedInstances;
+        internal const int MaxStatusResponseItems = ArrDownloadActivityService.MaxActiveResponseItems;
+        internal const int MaxConcurrentStatusCollections = 4;
 
         private readonly ArrFetchService _fetch;
         private readonly ArrTargetResolver _targets;
         private readonly ILogger<ArrActionService> _logger;
+        private readonly SemaphoreSlim _statusCollectionGate = new(
+            MaxConcurrentStatusCollections,
+            MaxConcurrentStatusCollections);
 
         public ArrActionService(ArrFetchService fetch, ArrTargetResolver targets, ILogger<ArrActionService> logger)
         {
@@ -54,6 +60,18 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
 
         private static List<ArrInstance> EnabledInstances(string service, PluginConfiguration config)
             => service == "radarr" ? config.GetEnabledRadarrInstances() : config.GetEnabledSonarrInstances();
+
+        private static List<ArrInstance> SelectNamedInstance(
+            List<ArrInstance> instances,
+            string? instanceName)
+        {
+            if (instanceName == null)
+                return instances;
+
+            var instance = instances.FirstOrDefault(
+                candidate => string.Equals(candidate.Name, instanceName, StringComparison.Ordinal));
+            return instance == null ? new List<ArrInstance>() : new List<ArrInstance> { instance };
+        }
 
         // ── context ──────────────────────────────────────────────────────────
 
@@ -100,7 +118,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
             if (item.Kind is ArrMediaKind.Movie or ArrMediaKind.Series)
             {
                 var present = new HashSet<string>(matches.Select(m => m.Instance.Name), StringComparer.Ordinal);
+                // The resolver reports an explicit degraded result beyond its central instance
+                // cap. Never present an unresolved overflow instance as safely addable.
                 dto.AddableInstances = instances
+                    .Take(ArrTargetResolver.MaxResolvedInstances)
                     .Select(i => i.Name)
                     .Where(name => !present.Contains(name))
                     .Distinct(StringComparer.Ordinal)
@@ -118,15 +139,21 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
         {
             var result = new ArrDispatchResultDto();
             var service = ServiceOf(item);
-            var instances = EnabledInstances(item, config);
+            var instances = SelectNamedInstance(EnabledInstances(item, config), instanceName);
+            if (instanceName != null && instances.Count == 0)
+            {
+                result.Errors.Add(new ArrErrorDto
+                {
+                    InstanceName = instanceName,
+                    Reason = "instance not found",
+                });
+                return result;
+            }
+
             var (matches, errors) = await _targets.ResolveMatchesAsync(item, instances, service, ct).ConfigureAwait(false);
             result.Errors.AddRange(errors);
 
-            var targets = instanceName != null
-                ? matches.Where(m => string.Equals(m.Instance.Name, instanceName, StringComparison.Ordinal))
-                : matches;
-
-            foreach (var m in targets)
+            foreach (var m in matches)
             {
                 var command = ArrSearchMapping.AutoSearchCommand(item, m.ArrId, m.EpisodeId);
                 if (command == null)
@@ -166,9 +193,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
             var service = ServiceOf(item);
             var dto = new ArrReleaseListDto { InstanceName = instanceName, Service = service };
 
-            var instances = EnabledInstances(item, config);
+            var instances = SelectNamedInstance(EnabledInstances(item, config), instanceName);
             var (matches, _) = await _targets.ResolveMatchesAsync(item, instances, service, ct).ConfigureAwait(false);
-            var match = matches.FirstOrDefault(m => string.Equals(m.Instance.Name, instanceName, StringComparison.Ordinal));
+            var match = matches.FirstOrDefault();
             if (match == null)
             {
                 dto.Error = "not tracked in this instance";
@@ -231,15 +258,21 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
         {
             var result = new ArrDispatchResultDto();
             var service = ServiceOf(item);
-            var instances = EnabledInstances(item, config);
+            var instances = SelectNamedInstance(EnabledInstances(item, config), instanceName);
+            if (instanceName != null && instances.Count == 0)
+            {
+                result.Errors.Add(new ArrErrorDto
+                {
+                    InstanceName = instanceName,
+                    Reason = "instance not found",
+                });
+                return result;
+            }
+
             var (matches, errors) = await _targets.ResolveMatchesAsync(item, instances, service, ct).ConfigureAwait(false);
             result.Errors.AddRange(errors);
 
-            var targets = instanceName != null
-                ? matches.Where(m => string.Equals(m.Instance.Name, instanceName, StringComparison.Ordinal))
-                : matches;
-
-            foreach (var m in targets)
+            foreach (var m in matches)
             {
                 var error = await SetMonitoredOnInstanceAsync(item, m, monitored, ct).ConfigureAwait(false);
                 if (error != null)
@@ -403,10 +436,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
             var (matches, resolutionErrors) = await _targets.ResolveMatchesAsync(item, instances, service, ct).ConfigureAwait(false);
             status.Errors.AddRange(resolutionErrors);
 
-            var perInstance = await Task.WhenAll(matches.Select(m => QueueForInstanceAsync(m, service, ct))).ConfigureAwait(false);
+            var perInstance = await Task.WhenAll(
+                matches.Select(m => QueueForInstanceGatedAsync(m, service, ct))).ConfigureAwait(false);
+            var responseTruncated = false;
             foreach (var instanceResult in perInstance)
             {
-                status.Items.AddRange(instanceResult.Items);
+                var remaining = Math.Max(0, MaxStatusResponseItems - status.Items.Count);
+                status.Items.AddRange(instanceResult.Items.Take(remaining));
+                responseTruncated |= instanceResult.Items.Count > remaining;
                 if (instanceResult.Error != null)
                 {
                     status.Errors.Add(new ArrErrorDto
@@ -417,8 +454,36 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
                 }
             }
 
+            if (responseTruncated)
+            {
+                status.Errors.Add(new ArrErrorDto
+                {
+                    InstanceName = service,
+                    Reason = $"status response is limited to {MaxStatusResponseItems} rows",
+                });
+            }
+
             status.IsComplete = status.Errors.Count == 0;
             return status;
+        }
+
+        internal async Task<(List<ArrQueueRowDto> Items, string? Error, string InstanceName)> QueueForInstanceGatedAsync(
+            ArrInstanceMatch match,
+            string service,
+            CancellationToken ct)
+        {
+            // ArrActionService is a DI singleton. Keep the permit for every page in this one
+            // instance's queue collection so concurrent status requests cannot amplify upstream
+            // work by releasing/reacquiring capacity between pages.
+            await _statusCollectionGate.WaitAsync(ct).ConfigureAwait(false);
+            try
+            {
+                return await QueueForInstanceAsync(match, service, ct).ConfigureAwait(false);
+            }
+            finally
+            {
+                _statusCollectionGate.Release();
+            }
         }
 
         private async Task<(List<ArrQueueRowDto> Items, string? Error, string InstanceName)> QueueForInstanceAsync(ArrInstanceMatch m, string service, CancellationToken ct)
@@ -442,7 +507,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
                 },
                 requestTimeout: QueueTimeout,
                 contextLabel: $"{service} queue status",
-                ct: ct).ConfigureAwait(false);
+                ct: ct,
+                maxRecords: ArrDownloadActivityService.MaxActivityQueueRecordsPerInstance).ConfigureAwait(false);
 
             return result.IsComplete
                 ? (result.Items, null, m.Instance.Name)

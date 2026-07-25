@@ -87,14 +87,39 @@ export interface ArrAddOptions {
     error?: string | null;
 }
 
+export type ArrDownloadSection = 'downloading' | 'processing' | 'history';
+export type ArrDownloadLifecycle =
+    | 'queued'
+    | 'downloading'
+    | 'paused'
+    | 'delayed'
+    | 'postProcessing'
+    | 'importPending'
+    | 'importing'
+    | 'waitingForImport'
+    | 'attention'
+    | 'warning'
+    | 'failed'
+    | 'canceled'
+    | 'removed'
+    | 'imported'
+    | 'unknown';
+
 export interface ArrQueueRow {
     instanceName: string;
     service: ArrService;
-    title?: string | null;
-    status?: string | null;
-    trackedDownloadState?: string | null;
-    progress: number;
+    lifecycle: ArrDownloadLifecycle;
+    section: ArrDownloadSection;
+    reasonCode?: string | null;
+    progress: number | null;
     timeRemaining?: string | null;
+}
+
+/** A usable queue snapshot can be partial; callers must retain items when isComplete is false. */
+export interface ArrQueueStatus {
+    items: ArrQueueRow[];
+    errors: ArrError[];
+    isComplete: boolean;
 }
 
 /** What the capture layer records at menu-trigger time (the only moment the source item is known). */

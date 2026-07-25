@@ -7,6 +7,12 @@ import { JC } from '../../globals';
 
 import { ui, internal } from './internal';
 import { seerrStatus } from '../seerr-status';
+import {
+    formatSeerrDownloadTimeRemaining,
+    readSeerrDownloadStatuses,
+    seerrDownloadLifecycleLabel,
+    type SeerrDownloadStatus,
+} from '../download-status';
 const logPrefix = '🪼 Jellyfin Canopy: Seerr UI:';
 const DisplayStatus = seerrStatus.DISPLAY;
 const state = internal.state;
@@ -54,33 +60,11 @@ function ensureHoverPopover() {
 
 /**
  * Format ETA text for download status.
- * @param {Object} downloadStatus - Download status object with estimatedCompletionTime.
+ * @param {Object} downloadStatus - Sanitized download status object.
  * @returns {string|null} - Formatted ETA string or null.
  */
-function formatEtaText(downloadStatus: any) {
-    try {
-        const rawEta = downloadStatus?.estimatedCompletionTime;
-        if (!rawEta) return null;
-
-        const etaTime = new Date(rawEta);
-        const now = new Date();
-        const timeUntilMs = etaTime.getTime() - now.getTime();
-        if (isNaN(timeUntilMs)) return null;
-        if (timeUntilMs <= 0) return 'Estimated soon';
-
-        const totalMinutesRemaining = Math.round(timeUntilMs / 60000);
-        if (totalMinutesRemaining >= 1440) {
-            const daysRemaining = Math.round(totalMinutesRemaining / 1440);
-            return `Estimated in ${daysRemaining} day${daysRemaining !== 1 ? 's' : ''}`;
-        }
-        if (totalMinutesRemaining >= 60) {
-            const hoursRemaining = Math.round(totalMinutesRemaining / 60);
-            return `Estimated in ${hoursRemaining} hour${hoursRemaining !== 1 ? 's' : ''}`;
-        }
-        return `Estimated in ${totalMinutesRemaining} min`;
-    } catch (_: any) {
-        return null;
-    }
+function formatEtaText(downloadStatus: SeerrDownloadStatus) {
+    return formatSeerrDownloadTimeRemaining(downloadStatus.timeRemaining, JC.t);
 }
 
 /**
@@ -91,12 +75,10 @@ function formatEtaText(downloadStatus: any) {
 function fillHoverPopover(item: any) {
 
     const allDownloads = [
-        ...(item.mediaInfo?.downloadStatus || []),
-        ...(item.mediaInfo?.downloadStatus4k || [])
+        ...readSeerrDownloadStatuses(item.mediaInfo?.downloadStatus),
+        ...readSeerrDownloadStatuses(item.mediaInfo?.downloadStatus4k),
     ];
 
-    // Download status fields originate from the Seerr API and must be
-    // escaped before interpolation into HTML to prevent stored XSS.
     if (allDownloads.length === 0) {
         console.debug(`${logPrefix} No download status found`);
         return null;
@@ -106,45 +88,22 @@ function fillHoverPopover(item: any) {
     if (!popover) return null;
     let popoverHTML = '';
 
-    allDownloads.forEach((downloadStatus: any) => {
-        const hasValidSizeData = (typeof downloadStatus.size === 'number' &&
-                                typeof downloadStatus.sizeLeft === 'number' &&
-                                downloadStatus.size > 0);
-
-        const isQueued = (downloadStatus.status && downloadStatus.status.toLowerCase() === 'queued');
-        const isWarning = (downloadStatus.status && downloadStatus.status.toLowerCase() === 'warning');
-
-        if (!hasValidSizeData && !isQueued && !isWarning) {
-            return; // Skip this item
-        }
-
-        if (isQueued || downloadStatus.size <= 0) {
-            // For queued items, show 0% progress
-            popoverHTML += `
-                <div class="seerr-popover-item">
-                    <div class="title">${escapeHtml(downloadStatus.title) || JC.t!('seerr_popover_downloading')}</div>
-                    <div class="seerr-hover-progress"><div class="bar" style="width:0%;"></div></div>
-                    <div class="row">
-                        <div>0%</div>
-                        <div class="status">Queued</div>
-                    </div>
-                </div>`;
-        } else {
-            // For downloading/warning items, show actual progress
-            const percentage = Math.max(0, Math.min(100, Math.round(100 * (1 - downloadStatus.sizeLeft / downloadStatus.size))));
-            const statusDisplay = isWarning ? 'Warning' : (downloadStatus.status || 'Downloading').toString().replace(/^./, (c: any) => c.toUpperCase());
-            const etaText = formatEtaText(downloadStatus);
-            popoverHTML += `
-                <div class="seerr-popover-item">
-                    <div class="title">${escapeHtml(downloadStatus.title) || JC.t!('seerr_popover_downloading')}</div>
-                    <div class="seerr-hover-progress"><div class="bar" style="width:${percentage}%;"></div></div>
-                    <div class="row">
-                        <div>${percentage}%</div>
-                        <div class="status">${escapeHtml(statusDisplay)}</div>
-                        ${etaText ? `<div class="eta">${escapeHtml(etaText)}</div>` : ''}
-                    </div>
-                </div>`;
-        }
+    allDownloads.forEach((downloadStatus) => {
+        const percentage = downloadStatus.progress == null
+            ? null
+            : Math.round(downloadStatus.progress);
+        const statusDisplay = seerrDownloadLifecycleLabel(downloadStatus.lifecycle, JC.t);
+        const etaText = formatEtaText(downloadStatus);
+        popoverHTML += `
+            <div class="seerr-popover-item">
+                <div class="title">${escapeHtml(JC.t!('seerr_popover_downloading'))}</div>
+                ${percentage == null ? '' : `<div class="seerr-hover-progress"><div class="bar" style="width:${percentage}%;"></div></div>`}
+                <div class="row">
+                    ${percentage == null ? '' : `<div>${percentage}%</div>`}
+                    <div class="status">${escapeHtml(statusDisplay)}</div>
+                    ${etaText ? `<div class="eta">${escapeHtml(etaText)}</div>` : ''}
+                </div>
+            </div>`;
     });
 
     popover.innerHTML = popoverHTML;
@@ -193,16 +152,16 @@ ui.toggleHoverPopoverLock = function (lockState: any) {
  * @param {Object} downloadStatus - Download status object.
  * @returns {HTMLElement|null} - Progress element or null.
  */
-function createInlineProgress(downloadStatus: any) {
-    if (!downloadStatus || typeof downloadStatus.size !== 'number' || typeof downloadStatus.sizeLeft !== 'number' || downloadStatus.size <= 0) {
-        return null;
-    }
-    const percentage = Math.max(0, Math.min(100, Math.round(100 * (1 - downloadStatus.sizeLeft / downloadStatus.size))));
+function createInlineProgress(downloadStatus: unknown) {
+    const normalized = readSeerrDownloadStatuses([downloadStatus])[0];
+    if (!normalized || normalized.progress == null) return null;
+    const percentage = Math.round(normalized.progress);
+    const statusDisplay = seerrDownloadLifecycleLabel(normalized.lifecycle, JC.t);
     const progressContainer = document.createElement('div');
     progressContainer.className = 'seerr-inline-progress';
     progressContainer.innerHTML = `
         <div class="seerr-inline-progress-bar"><div class="seerr-inline-progress-fill" style="width: ${percentage}%"></div></div>
-        <div class="seerr-inline-progress-text">${percentage}% • ${escapeHtml((downloadStatus.status || 'downloading').replace(/^./, (c: any) => c.toUpperCase()))}</div>`;
+        <div class="seerr-inline-progress-text">${percentage}% • ${escapeHtml(statusDisplay)}</div>`;
     return progressContainer;
 }
 

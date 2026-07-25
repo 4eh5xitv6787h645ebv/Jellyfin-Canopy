@@ -55,10 +55,10 @@ describe('season modal status domains', () => {
                 jellyfinMediaId: options.is4kMode ? null : options.jellyfinMediaId,
                 jellyfinMediaId4k: options.is4kMode ? options.jellyfinMediaId : null,
                 downloadStatus: options.downloads && !options.is4kMode
-                    ? [{ episode: { seasonNumber: 1 } }]
+                    ? [{ lifecycle: 'downloading', progress: 50, timeRemaining: null, seasonNumber: 1 }]
                     : [],
                 downloadStatus4k: options.downloads && options.is4kMode
-                    ? [{ episode: { seasonNumber: 1 } }]
+                    ? [{ lifecycle: 'downloading', progress: 50, timeRemaining: null, seasonNumber: 1 }]
                     : [],
             },
         };

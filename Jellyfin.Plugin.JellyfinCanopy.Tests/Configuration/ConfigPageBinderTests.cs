@@ -93,6 +93,29 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Configuration
             Assert.Contains("PauseScreenDelaySeconds:", js, StringComparison.Ordinal);
         }
 
+        [Fact]
+        public void DownloadsHistoryWindow_IsBoundAsAOneToThirtyDayClampedInt()
+        {
+            var html = ConfigPageSource.Html;
+            var js = ConfigPageSource.Js;
+
+            Assert.Matches(
+                "<input[^>]*id=\"downloadsHistoryWindowDays\"[^>]*data-config-key=\"DownloadsHistoryWindowDays\"[^>]*data-config-int[^>]*data-config-fallback=\"7\"[^>]*min=\"1\"[^>]*max=\"30\"",
+                html);
+            Assert.Contains("DownloadsHistoryWindowDays:", js, StringComparison.Ordinal);
+            Assert.Contains("Math.min(30, Math.max(1, value))", js, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void ArrInstanceEditor_PreservesOpaqueInstanceId()
+        {
+            var js = ConfigPageSource.Js;
+
+            Assert.Contains("card.dataset.instanceId = normalizeArrInstanceId(instance.InstanceId)", js, StringComparison.Ordinal);
+            Assert.Contains("InstanceId: normalizeArrInstanceId(card.dataset.instanceId)", js, StringComparison.Ordinal);
+            Assert.DoesNotContain("InstanceId: apiKey", js, StringComparison.Ordinal);
+        }
+
         private static HashSet<string> ReadPinnedKeys()
         {
             var path = Path.Combine(AppContext.BaseDirectory, "Snapshots", "configpage-save-keys.json");

@@ -35,6 +35,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Data
             IReadOnlyCollection<(string Provider, string Value)> providers);
 
         /// <summary>
+        /// Batch-resolves provider pairs with explicit input and result bounds. A result that
+        /// exceeds either bound is returned as incomplete with no partial candidate map.
+        /// </summary>
+        ItemLookupBatchResult GetItemCandidatesByProvidersBatchBounded(
+            IReadOnlyCollection<(string Provider, string Value)> providers,
+            int maxProviderPairs,
+            int maxCandidates);
+
+        /// <summary>
         /// Projects a set of item ids through Jellyfin's supported user-scoped query surface.
         /// The whole set is resolved in one query so calendar access checks never become N+1.
         /// </summary>
@@ -42,7 +51,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Data
     }
 
     /// <summary>The minimum identity needed to choose a type-correct Jellyfin edition.</summary>
-    public sealed record ItemLookupCandidate(Guid ItemId, ItemLookupKind Kind, string? MediaPath = null);
+    public sealed record ItemLookupCandidate(
+        Guid ItemId,
+        ItemLookupKind Kind,
+        string? MediaPath = null,
+        bool HasMediaFile = false);
+
+    /// <summary>A complete bounded provider lookup, or an empty fail-closed result.</summary>
+    public sealed record ItemLookupBatchResult(
+        Dictionary<(string Provider, string Value), IReadOnlyList<ItemLookupCandidate>> Candidates,
+        bool IsComplete);
 
     public enum ItemLookupKind
     {
