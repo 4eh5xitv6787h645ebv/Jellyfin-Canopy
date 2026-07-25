@@ -322,7 +322,7 @@ test.describe('Requests download lifecycle', () => {
                             instanceId: 'sonarr-west-id',
                             instanceName: 'Sonarr West',
                             state: 'incomplete',
-                            capturedAt: '2026-07-25T06:10:00Z',
+                            capturedAt: '2026-07-25T06:00:00Z',
                         }],
                         historyTruncated: false,
                         activeTruncated: false,
