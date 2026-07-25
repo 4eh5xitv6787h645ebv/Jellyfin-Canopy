@@ -247,15 +247,18 @@ Smart Client Refresh keeps already-open Canopy web sessions and app WebViews on 
 
 | Setting | Default | What it does |
 |---|---|---|
-| **When an open client needs a fresh page** | Smart | **Smart** reloads any safe page after the inactivity delay. **Home only** waits until the client reaches Home. **Ask** shows a reload action. **Disabled** ignores automatic change signals. |
+| **When an open client needs a fresh page** | Smart | **Smart** reloads any safe page after the inactivity delay. **Home only** waits until the client reaches Home. **Ask** never reloads automatically and, when notices are shown, offers a reload action. **Disabled** ignores automatic change signals. |
 | **Refresh when Canopy modules change** | On | Compares the active server's exact module-graph content identity, not only Canopy's displayed version. |
 | **Refresh after Jellyfin restarts or updates** | On | Detects the new Jellyfin process generation, including a same-version server replacement. |
 | **Refresh when Canopy admin configuration changes** | On | Gives features that cannot fully hot-reinitialize a clean page after an admin save. |
+| **Show Smart Refresh notices** | On | Shows the persistent wait/reload message, including its **Reload when safe** and **Dismiss** actions. Turn this off to hide every Smart Refresh notice without changing automatic, Home-only, or admin-requested refresh behavior. In **Ask** mode, pending refreshes then wait silently for a manual page reload. |
 | **Visible-session check interval** | 30 seconds | Poll cadence while the client is visible. Range: 5–3600 seconds. Hidden/background clients make no polling requests and check immediately when reopened, focused, or resumed. |
 | **Smart-mode inactivity delay** | 5 seconds | Wait after the user's latest interaction before a safe automatic reload. Range: 0–300 seconds. Even at 0, Canopy keeps a 1-second dispatch grace so Jellyfin actions such as Favorite and Played can start before reloading. |
 | **Refresh all open Canopy clients now** | — | Sends an explicit refresh revision. Each open client still waits for its next safe point; a background client handles it when reopened. |
 
 Playback and data-entry safety are mandatory in every mode, including an explicit admin refresh. Canopy will not reload a video/audio playback route, loaded playing or paused media (including a paused first frame), picture-in-picture, full screen, a Jellyfin settings/edit route, an open Jellyfin or Canopy dialog, an actively edited field, or an in-flight settings/mutation transaction. The current server policy is rechecked before a resumed client acts. A durable three-per-minute budget (session storage with a local-storage fallback) stops a bad identity signal from creating a reload loop.
+
+Dismiss hides the current message without cancelling its pending refresh. Rechecks for that same server state keep it closed; a genuinely newer build, Jellyfin generation, configuration revision, or administrator refresh request may show a new message. Disabling notices suppresses all of these messages, including reload-loop and failed-reload warnings, but the same safety and loop limits still apply.
 
 If a settings, shortcuts, Elsewhere, or Hidden Content write ends without proof of whether its dirty local intent reached the server, Smart Refresh deliberately stays suspended instead of discarding the in-memory change. A later acknowledged save, signing out, or leaving the page clears the safety owner; a manual page reload is the explicit choice to discard the unsaved state.
 

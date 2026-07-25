@@ -37,6 +37,7 @@ function state(overrides: Partial<ClientRefreshState> = {}): ClientRefreshState 
             OnCanopyUpdate: true,
             OnJellyfinUpdate: true,
             OnConfigChange: true,
+            ShowNotices: true,
             PollSeconds: 30,
             IdleSeconds: 5,
         },
@@ -63,6 +64,7 @@ describe('smart refresh state validation', () => {
             { ...validPolicy, OnCanopyUpdate: 'true' },
             { ...validPolicy, OnJellyfinUpdate: null },
             { ...validPolicy, OnConfigChange: 1 },
+            { ...validPolicy, ShowNotices: 'false' },
             { ...validPolicy, PollSeconds: 4 },
             { ...validPolicy, PollSeconds: 30.5 },
             { ...validPolicy, PollSeconds: 3601 },
@@ -72,6 +74,20 @@ describe('smart refresh state validation', () => {
         ]) {
             expect(normalizeRefreshState({ ...state(), Policy })).toBeNull();
         }
+    });
+
+    it('defaults an absent additive notice flag on and preserves an explicit false', () => {
+        const legacy = state();
+        const legacyPolicy = { ...legacy.Policy } as Partial<ClientRefreshState['Policy']>;
+        delete legacyPolicy.ShowNotices;
+
+        expect(normalizeRefreshState({
+            ...legacy,
+            Policy: legacyPolicy,
+        })?.Policy.ShowNotices).toBe(true);
+        expect(normalizeRefreshState(state({
+            Policy: { ...state().Policy, ShowNotices: false },
+        }))?.Policy.ShowNotices).toBe(false);
     });
 
     it('binds state to its source Jellyfin server without case sensitivity', () => {
@@ -1019,12 +1035,140 @@ describe('foreground lifecycle checks', () => {
         Object.defineProperty(video, 'currentTime', { configurable: true, value: 30 });
         Object.defineProperty(video, 'paused', { configurable: true, value: true });
         document.body.appendChild(video);
-        document.querySelector<HTMLButtonElement>('#jc-client-refresh-notice button')?.click();
+        document.querySelector<HTMLButtonElement>(
+            '#jc-client-refresh-notice [data-role="reload"]',
+        )?.click();
         expect(document.getElementById('jc-client-refresh-notice')?.textContent)
             .toMatch(/media element is clear/i);
 
         JC.identity.transition(original.serverId, original.userId, 'notify-test-restore');
         expect(document.getElementById('jc-client-refresh-notice')).toBeNull();
+    });
+
+    it('dismisses one notice across retries but re-arms for a newer state edge', async () => {
+        const original = JC.identity.capture()!;
+        const first = state({
+            Policy: { ...state().Policy, IdleSeconds: 0 },
+        });
+        const changed = state({
+            ConfigurationRevision: 2,
+            Policy: { ...state().Policy, IdleSeconds: 0 },
+        });
+        const newer = state({
+            ConfigurationRevision: 3,
+            Policy: { ...state().Policy, IdleSeconds: 0 },
+        });
+        const plugin = vi.fn()
+            .mockResolvedValueOnce(first)
+            .mockResolvedValueOnce(changed)
+            .mockResolvedValueOnce(changed)
+            .mockResolvedValue(newer);
+        JC.core.api = { plugin } as unknown as NonNullable<typeof JC.core.api>;
+        const releaseModal = acquireRefreshSafetyHold('modal');
+
+        try {
+            const next = JC.identity.transition(
+                defaultServerId,
+                'dismiss-user',
+                'dismiss-test',
+            )!;
+            await JC.identity.activate(next);
+            await vi.waitFor(() => expect(plugin).toHaveBeenCalledTimes(1));
+
+            emit(LIVE.CONFIG_CHANGED, {});
+            const dismiss = await vi.waitFor(() => {
+                expect(plugin).toHaveBeenCalledTimes(2);
+                const button = document.querySelector<HTMLButtonElement>(
+                    '#jc-client-refresh-notice [data-role="dismiss"]',
+                );
+                expect(button).not.toBeNull();
+                return button!;
+            });
+            expect(dismiss.getAttribute('aria-label'))
+                .toBe('Dismiss Smart Refresh notice');
+            dismiss.click();
+            expect(document.getElementById('jc-client-refresh-notice')).toBeNull();
+
+            await new Promise((resolve) => setTimeout(resolve, 1_100));
+            expect(document.getElementById('jc-client-refresh-notice')).toBeNull();
+
+            window.dispatchEvent(new Event('focus'));
+            await vi.waitFor(() => expect(plugin).toHaveBeenCalledTimes(3));
+            expect(document.getElementById('jc-client-refresh-notice')).toBeNull();
+
+            emit(LIVE.CONFIG_CHANGED, {});
+            await vi.waitFor(() => {
+                expect(plugin).toHaveBeenCalledTimes(4);
+                expect(document.getElementById('jc-client-refresh-notice')).not.toBeNull();
+            });
+        } finally {
+            JC.identity.transition(original.serverId, original.userId, 'dismiss-test-restore');
+            releaseModal();
+        }
+    });
+
+    it('removes an Ask notice live and stays non-automatic while notices are disabled', async () => {
+        const original = JC.identity.capture()!;
+        const first = state({
+            Policy: {
+                ...state().Policy,
+                Mode: 'Notify',
+                IdleSeconds: 0,
+            },
+        });
+        const pending = state({
+            ConfigurationRevision: 2,
+            Policy: {
+                ...state().Policy,
+                Mode: 'Notify',
+                IdleSeconds: 0,
+            },
+        });
+        const hidden = state({
+            ConfigurationRevision: 3,
+            Policy: {
+                ...state().Policy,
+                Mode: 'Notify',
+                ShowNotices: false,
+                IdleSeconds: 0,
+            },
+        });
+        const plugin = vi.fn()
+            .mockResolvedValueOnce(first)
+            .mockResolvedValueOnce(pending)
+            .mockResolvedValue(hidden);
+        JC.core.api = { plugin } as unknown as NonNullable<typeof JC.core.api>;
+
+        const next = JC.identity.transition(
+            defaultServerId,
+            'silent-notify-user',
+            'silent-notify-test',
+        )!;
+        await JC.identity.activate(next);
+        await vi.waitFor(() => expect(plugin).toHaveBeenCalledTimes(1));
+
+        const budgetWrite = vi.spyOn(JC.storage.session, 'write');
+        emit(LIVE.CONFIG_CHANGED, {});
+        await vi.waitFor(() => {
+            expect(plugin).toHaveBeenCalledTimes(2);
+            expect(document.getElementById('jc-client-refresh-notice')).not.toBeNull();
+        });
+
+        emit(LIVE.CONFIG_CHANGED, {});
+        await vi.waitFor(() => {
+            expect(plugin).toHaveBeenCalledTimes(3);
+            expect(document.getElementById('jc-client-refresh-notice')).toBeNull();
+        });
+        await new Promise((resolve) => setTimeout(resolve, 1_100));
+
+        expect(document.getElementById('jc-client-refresh-notice')).toBeNull();
+        expect(budgetWrite).not.toHaveBeenCalled();
+
+        JC.identity.transition(
+            original.serverId,
+            original.userId,
+            'silent-notify-test-restore',
+        );
     });
 
     it('drops an already-pending source when a newer policy disables it', async () => {

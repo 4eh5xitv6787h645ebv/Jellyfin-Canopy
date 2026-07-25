@@ -38,6 +38,7 @@ export interface ClientRefreshPolicy {
     OnCanopyUpdate: boolean;
     OnJellyfinUpdate: boolean;
     OnConfigChange: boolean;
+    ShowNotices: boolean;
     PollSeconds: number;
     IdleSeconds: number;
 }
@@ -57,6 +58,7 @@ const FAIL_CLOSED_POLICY: ClientRefreshPolicy = Object.freeze({
     OnCanopyUpdate: false,
     OnJellyfinUpdate: false,
     OnConfigChange: false,
+    ShowNotices: true,
     PollSeconds: 30,
     IdleSeconds: 5,
 });
@@ -78,6 +80,7 @@ let retryTimer: number | null = null;
 let lastInteractionAt = Date.now();
 let reloadCommitted = false;
 let notice: HTMLElement | null = null;
+let dismissedNoticeStateKey: string | null = null;
 let listenersInstalled = false;
 let foregroundStateFresh = false;
 let reloadRecoveryTimer: number | null = null;
@@ -150,6 +153,8 @@ export function normalizeRefreshState(
     if (typeof policyValue.OnCanopyUpdate !== 'boolean'
         || typeof policyValue.OnJellyfinUpdate !== 'boolean'
         || typeof policyValue.OnConfigChange !== 'boolean'
+        || (policyValue.ShowNotices !== undefined
+            && typeof policyValue.ShowNotices !== 'boolean')
         || !Number.isSafeInteger(policyValue.PollSeconds)
         || (policyValue.PollSeconds as number) < 5
         || (policyValue.PollSeconds as number) > 3600
@@ -173,6 +178,11 @@ export function normalizeRefreshState(
             OnCanopyUpdate: policyValue.OnCanopyUpdate,
             OnJellyfinUpdate: policyValue.OnJellyfinUpdate,
             OnConfigChange: policyValue.OnConfigChange,
+            // Additive schema-1 compatibility: pre-notice-control servers did
+            // not send this field and retain the original visible behavior.
+            ShowNotices: policyValue.ShowNotices === undefined
+                ? true
+                : policyValue.ShowNotices,
             PollSeconds: policyValue.PollSeconds as number,
             IdleSeconds: policyValue.IdleSeconds as number,
         },
@@ -356,6 +366,18 @@ function removeNotice(): void {
     notice = null;
 }
 
+function noticeStateKey(): string {
+    return baseline
+        ? JSON.stringify([
+            canonicalServerId(baseline.ServerId),
+            baseline.CanopyBuildId,
+            baseline.JellyfinGeneration,
+            baseline.ConfigurationRevision,
+            baseline.ForceRevision,
+        ])
+        : 'no-refresh-state';
+}
+
 function pendingLabel(): string {
     const labels: string[] = [];
     if (pendingSources.has('canopy')) labels.push('Canopy updated');
@@ -366,12 +388,23 @@ function pendingLabel(): string {
 }
 
 function showNotice(detail?: string): void {
+    if (!policy.ShowNotices) {
+        removeNotice();
+        return;
+    }
+    const stateKey = noticeStateKey();
+    if (dismissedNoticeStateKey === stateKey) {
+        removeNotice();
+        return;
+    }
+    // A genuinely newer build/generation/revision is a new notice event. The
+    // same unchanged Canopy mismatch is detected on every poll, so the full
+    // state watermark—not DOM existence—owns dismissal.
+    dismissedNoticeStateKey = null;
     if (!document.body) return;
     if (!notice?.isConnected) {
         const root = document.createElement('div');
         root.id = 'jc-client-refresh-notice';
-        root.setAttribute('role', 'status');
-        root.setAttribute('aria-live', 'polite');
         root.style.cssText = [
             'position:fixed',
             'left:max(16px,env(safe-area-inset-left))',
@@ -379,6 +412,7 @@ function showNotice(detail?: string): void {
             'bottom:max(16px,env(safe-area-inset-bottom))',
             'z-index:100000',
             'display:flex',
+            'flex-wrap:wrap',
             'align-items:center',
             'justify-content:space-between',
             'gap:12px',
@@ -394,22 +428,45 @@ function showNotice(detail?: string): void {
 
         const message = document.createElement('span');
         message.dataset.role = 'message';
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.textContent = 'Reload when safe';
-        button.style.cssText = 'border:0;border-radius:6px;padding:8px 12px;background:#00a4dc;color:#fff;font:inherit;font-weight:600;cursor:pointer;white-space:nowrap';
-        button.addEventListener('click', () => {
+        message.setAttribute('role', 'status');
+        message.setAttribute('aria-live', 'polite');
+        message.setAttribute('aria-atomic', 'true');
+        message.style.cssText = 'flex:1 1 260px';
+
+        const actions = document.createElement('span');
+        actions.style.cssText = 'display:flex;flex-wrap:wrap;align-items:center;gap:8px';
+
+        const reloadButton = document.createElement('button');
+        reloadButton.type = 'button';
+        reloadButton.dataset.role = 'reload';
+        reloadButton.textContent = 'Reload when safe';
+        reloadButton.style.cssText = 'min-height:44px;border:0;border-radius:6px;padding:8px 12px;background:#007ea8;color:#fff;font:inherit;font-weight:600;cursor:pointer;white-space:nowrap';
+        reloadButton.addEventListener('click', () => {
             pendingSources.add('force');
             evaluatePending();
         });
-        root.append(message, button);
+
+        const dismissButton = document.createElement('button');
+        dismissButton.type = 'button';
+        dismissButton.dataset.role = 'dismiss';
+        dismissButton.textContent = 'Dismiss';
+        dismissButton.setAttribute('aria-label', 'Dismiss Smart Refresh notice');
+        dismissButton.style.cssText = 'min-height:44px;border:1px solid rgba(255,255,255,.72);border-radius:6px;padding:8px 12px;background:transparent;color:#fff;font:inherit;font-weight:600;cursor:pointer;white-space:nowrap';
+        dismissButton.addEventListener('click', () => {
+            dismissedNoticeStateKey = noticeStateKey();
+            removeNotice();
+        });
+
+        actions.append(reloadButton, dismissButton);
+        root.append(message, actions);
         document.body.appendChild(root);
         notice = root;
     }
 
     const message = notice.querySelector<HTMLElement>('[data-role="message"]');
-    if (message) {
-        message.textContent = detail || `A fresh page is ready: ${pendingLabel()}.`;
+    const nextMessage = detail || `A fresh page is ready: ${pendingLabel()}.`;
+    if (message && message.textContent !== nextMessage) {
+        message.textContent = nextMessage;
     }
 }
 
@@ -477,6 +534,7 @@ function evaluatePending(): void {
         return;
     }
     if (pendingSources.size === 0 || reloadCommitted) {
+        if (pendingSources.size === 0) dismissedNoticeStateKey = null;
         removeNotice();
         return;
     }
@@ -488,6 +546,7 @@ function evaluatePending(): void {
     const force = pendingSources.has('force');
     if (!force && policy.Mode === 'Disabled') {
         pendingSources.clear();
+        dismissedNoticeStateKey = null;
         removeNotice();
         return;
     }
@@ -718,6 +777,7 @@ function stop(): void {
     activeContext = null;
     foregroundStateFresh = false;
     reloadCommitted = false;
+    dismissedNoticeStateKey = null;
     if (reloadRecoveryTimer !== null) window.clearTimeout(reloadRecoveryTimer);
     reloadRecoveryTimer = null;
     checkController?.abort();

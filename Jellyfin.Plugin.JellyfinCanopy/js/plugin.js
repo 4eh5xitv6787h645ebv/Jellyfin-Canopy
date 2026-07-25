@@ -1192,6 +1192,8 @@
             || typeof candidatePolicy.OnCanopyUpdate !== 'boolean'
             || typeof candidatePolicy.OnJellyfinUpdate !== 'boolean'
             || typeof candidatePolicy.OnConfigChange !== 'boolean'
+            || (candidatePolicy.ShowNotices !== undefined
+                && typeof candidatePolicy.ShowNotices !== 'boolean')
             || !Number.isSafeInteger(candidatePolicy.PollSeconds)
             || candidatePolicy.PollSeconds < 5
             || candidatePolicy.PollSeconds > 3600
@@ -1211,6 +1213,10 @@
                 OnCanopyUpdate: candidatePolicy.OnCanopyUpdate,
                 OnJellyfinUpdate: candidatePolicy.OnJellyfinUpdate,
                 OnConfigChange: candidatePolicy.OnConfigChange,
+                // Additive schema-1 field: old servers keep notices visible.
+                ShowNotices: candidatePolicy.ShowNotices === undefined
+                    ? true
+                    : candidatePolicy.ShowNotices,
                 PollSeconds: candidatePolicy.PollSeconds,
                 IdleSeconds: candidatePolicy.IdleSeconds
             }

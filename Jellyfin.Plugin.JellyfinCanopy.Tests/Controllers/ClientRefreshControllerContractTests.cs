@@ -100,6 +100,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                     "OnConfigChange",
                     "OnJellyfinUpdate",
                     "PollSeconds",
+                    "ShowNotices",
                 },
                 policyKeys);
             var state = JsonSerializer.Deserialize<ClientRefreshState>(json);

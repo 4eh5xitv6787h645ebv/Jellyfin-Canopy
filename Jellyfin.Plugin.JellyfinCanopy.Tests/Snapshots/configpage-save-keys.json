@@ -57,6 +57,7 @@
   "ClientRefreshOnConfigChange",
   "ClientRefreshOnJellyfinUpdate",
   "ClientRefreshPollSeconds",
+  "ClientRefreshShowNotices",
   "ColoredActivityIconsEnabled",
   "ColoredRatingsEnabled",
   "CustomPluginLinks",

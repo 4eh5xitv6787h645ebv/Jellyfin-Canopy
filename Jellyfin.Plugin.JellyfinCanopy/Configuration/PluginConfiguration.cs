@@ -37,6 +37,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
             ClientRefreshOnCanopyUpdate = true;
             ClientRefreshOnJellyfinUpdate = true;
             ClientRefreshOnConfigChange = true;
+            ClientRefreshShowNotices = true;
             ClientRefreshPollSeconds = 30;
             ClientRefreshIdleSeconds = 5;
 
@@ -398,7 +399,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         // Cross-device client refresh policy. ClientRefreshMode values:
         //   "Smart"    — refresh any safe, non-editing page after the idle delay.
         //   "HomeOnly" — wait until the client reaches Home.
-        //   "Notify"   — show a reload action and leave the choice to the user.
+        //   "Notify"   — never reload automatically; an optional notice offers
+        //                the manual reload action.
         //   "Disabled" — ignore automatic change signals. An explicit admin
         //                "Refresh clients now" signal remains available.
         // Playback (including paused media) is always protected in every mode.
@@ -406,6 +408,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         public bool ClientRefreshOnCanopyUpdate { get; set; }
         public bool ClientRefreshOnJellyfinUpdate { get; set; }
         public bool ClientRefreshOnConfigChange { get; set; }
+        public bool ClientRefreshShowNotices { get; set; }
         public int ClientRefreshPollSeconds { get; set; }
         public int ClientRefreshIdleSeconds { get; set; }
 
