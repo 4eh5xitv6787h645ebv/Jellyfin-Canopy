@@ -7,6 +7,7 @@
     {
       "Enabled": true,
       "ExternalUrl": "",
+      "InstanceId": "c11db5eb1251a5111f773162351ce20c",
       "Name": "Radarr Main",
       "Url": "http://radarr:7878",
       "UrlMappings": ""
@@ -20,6 +21,7 @@
     {
       "Enabled": true,
       "ExternalUrl": "https://sonarr.example.com",
+      "InstanceId": "290f7841e980f23108f0b48fb936cb34",
       "Name": "Sonarr Main",
       "Url": "http://sonarr:8989",
       "UrlMappings": "internal=external"
@@ -27,6 +29,7 @@
     {
       "Enabled": false,
       "ExternalUrl": "",
+      "InstanceId": "65872f17403ac056f4e3ffe4e5056236",
       "Name": "Sonarr 4K",
       "Url": "http://sonarr-4k:8989",
       "UrlMappings": ""
