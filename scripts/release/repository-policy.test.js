@@ -96,9 +96,9 @@ test('release reuses exact-SHA Build/Test and Security gates after ancestry proo
     assert.match(release, /security-gates:[\s\S]*?needs: provenance[\s\S]*?uses: \.\/\.github\/workflows\/security-scan\.yml/);
     assert.match(release, /needs: \[provenance, quality-gates, security-gates\]/);
     assert.match(security, /pull_request:[\s\S]*?workflow_call:[\s\S]*?verify_repository_policy:/);
+    assert.match(security, /pull_request:[\s\S]*?workflow_dispatch:\s*\n\s+workflow_call:/);
     assert.match(release, /security-gates:[\s\S]*?with:\n\s+verify_repository_policy: true/);
     assert.match(security, /workflow_call:[\s\S]*?secrets:\n\s+REPOSITORY_POLICY_TOKEN:[\s\S]*?required: true/);
-    assert.doesNotMatch(security, /workflow_dispatch/);
     assert.match(security, /repository-policy:\n\s+name: Repository Policy[\s\S]*?if: github\.event_name == 'schedule' \|\| inputs\.verify_repository_policy[\s\S]*?actions: read\n\s+contents: read[\s\S]*?verify-repository-policy\.js/);
     assert.match(security, /Checkout reviewed source[\s\S]*?persist-credentials: false/);
     assert.match(security, /Verify live release policy matches the committed contract\n\s+env:\n\s+GH_TOKEN: \$\{\{ github\.token \}\}\n\s+RULESET_TOKEN: \$\{\{ secrets\.REPOSITORY_POLICY_TOKEN \}\}/);

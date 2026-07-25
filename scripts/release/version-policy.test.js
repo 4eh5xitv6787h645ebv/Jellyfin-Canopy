@@ -15,12 +15,21 @@ const {
     requirePluginReleaseLine,
     validateReleaseVersion,
 } = require('./version-policy.js');
+const { compareVersions } = require('./validate-manifest.js');
 const { writeZipFixture } = require('../lib/zip-test-fixture.js');
 
 const ROOT = path.resolve(__dirname, '../..');
 const MANIFEST = path.join(ROOT, 'manifest.json');
 const PROJECT = path.join(ROOT, 'Jellyfin.Plugin.JellyfinCanopy', 'JellyfinCanopy.csproj');
 const SCRIPT = path.join(__dirname, 'version-policy.js');
+
+function readCatalogBefore(version) {
+    const manifest = JSON.parse(fs.readFileSync(MANIFEST, 'utf8'));
+    return manifest.map(plugin => ({
+        ...plugin,
+        versions: plugin.versions.filter(entry => compareVersions(entry.version, version) < 0),
+    }));
+}
 
 test('plugin tags normalize independently from the Jellyfin target ABI', () => {
     const policy = readVersionPolicy();
@@ -34,7 +43,7 @@ test('plugin tags normalize independently from the Jellyfin target ABI', () => {
     );
 });
 
-test('the documented next tag is monotonic and remains in the configured release line', () => {
+test('the documented tag example is monotonic against an older catalog fixture', () => {
     const releasing = fs.readFileSync(path.join(ROOT, 'RELEASING.md'), 'utf8');
     const example = releasing.match(/git tag (\d+\.\d+\.\d+\.\d+)/)?.[1];
     assert.ok(example, 'RELEASING.md must contain a four-part git tag example');
@@ -47,7 +56,8 @@ test('the documented next tag is monotonic and remains in the configured release
         version: '2.0.1.0',
         targetAbi: '12.0.0.0',
     });
-    const manifest = JSON.parse(fs.readFileSync(MANIFEST, 'utf8'));
+    const manifest = readCatalogBefore(result.version);
+    assert.ok(manifest.some(plugin => plugin.versions.length > 0));
     assert.doesNotThrow(() => requireNewPluginVersion(result.version, manifest));
 });
 
@@ -128,7 +138,7 @@ test('manifest generation writes plugin version 2.0.1.0 with ABI 12 independentl
         const zipName = 'Jellyfin.Plugin.JellyfinCanopy_12.0.0.zip';
         const zipPath = path.join(temporary, zipName);
         const wrongZipPath = path.join(temporary, 'Jellyfin.Plugin.JellyfinCanopy_13.0.0.zip');
-        const manifest = JSON.parse(fs.readFileSync(MANIFEST, 'utf8'));
+        const manifest = readCatalogBefore('2.0.1.0');
         fs.writeFileSync(manifestPath, JSON.stringify(manifest));
         fs.writeFileSync(changelogPath, 'Version-policy fixture');
         writeZipFixture(zipPath, [
