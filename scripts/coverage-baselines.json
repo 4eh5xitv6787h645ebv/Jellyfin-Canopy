@@ -21,12 +21,12 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 22047,
-        "totalLines": 30606
+        "coveredLines": 22077,
+        "totalLines": 30621
       },
       "tolerance": {
         "missingCoveredLines": 5,
-        "rationale": "The server-owned download lifecycle feature adds bounded Sonarr/Radarr queue and history paging, deterministic O(q+h) reconciliation and normalization, stable persisted instance identity (including pre-edit legacy migration), user/library/Seerr authorization, fail-closed partial-source envelopes, bounded ARR response streaming, Manage-status normalization, configuration controls, and policy-aware recursive allowlisted Seerr download-status projection. The legitimate complete-assembly scope increase is 2001 instrumented lines (28605→30606); focused lifecycle, pagination, transport, identity, authorization, privacy, configuration, concurrency, and boundary regressions raise the reviewed high-water by 1847 covered lines (20200→22047, 72.035%). Two clean .NET 10.0.9/Coverlet runs on 2026-07-25 each passed all 1926 tests and measured 22046 or 22047 covered lines out of 30606, establishing 22047 as the reviewed high-water. Retaining the evidence-bounded five-line Coverlet tolerance makes the minimum 22042/30606 (72.019%), stricter than both the prior 20195/28605 tolerated floor (70.600%) and the prior 20200/28605 high-water (70.617%). coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, and broad-tolerance negative boundaries."
+        "rationale": "The server-owned download lifecycle feature adds bounded Sonarr/Radarr queue and history paging, deterministic O(q+h) reconciliation and normalization, stable persisted instance identity (including pre-edit legacy migration), user/library/Seerr authorization, fail-closed partial-source envelopes, bounded ARR response streaming, Manage-status normalization, configuration controls, and policy-aware recursive allowlisted Seerr download-status projection. Exact-episode privacy hardening additionally records sanitized episode-detail evidence so an inaccessible or malformed Sonarr episode can never inherit authorization from its parent Series. That correction adds 15 instrumented lines to the reviewed complete-assembly scope (30606→30621); queue/history, request-policy, administrator-minimization, and malformed-title regressions raise the high-water by 30 covered lines (22047→22077, 72.098%). Three clean .NET 10.0.9/Coverlet runs on 2026-07-25 each passed all 1942 tests and measured 22076, 22076, or 22077 covered lines out of 30621, establishing 22077 as the reviewed high-water. Retaining the evidence-bounded five-line Coverlet tolerance makes the minimum 22072/30621 (72.081%), stricter than both the prior 22042/30606 tolerated floor (72.019%) and the prior 22047/30606 high-water (72.035%). coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, and broad-tolerance negative boundaries."
       }
     }
   }
