@@ -38,6 +38,28 @@ const LIFECYCLES = new Set<string>(SEERR_DOWNLOAD_LIFECYCLES);
 const DURATION_PATTERN = /^(?:(\d{1,3})\.)?(\d{2}):(\d{2}):(\d{2})$/;
 const MAX_DURATION_MINUTES = 365 * 24 * 60;
 
+// Mirrors the server reconciliation strength: actionable/failure evidence
+// outranks ambiguous handoff/import stages, which outrank transfer-only hints
+// and terminal success. Values are unique so aggregation is input-order
+// independent even for mixed terminal rows.
+const LIFECYCLE_PRIORITY: Record<SeerrDownloadLifecycle, number> = {
+    failed: 160,
+    attention: 150,
+    warning: 140,
+    unknown: 130,
+    waitingForImport: 120,
+    postProcessing: 115,
+    importPending: 110,
+    importing: 100,
+    delayed: 90,
+    paused: 80,
+    queued: 70,
+    downloading: 60,
+    canceled: 50,
+    removed: 45,
+    imported: 40,
+};
+
 const LIFECYCLE_LABELS: Record<SeerrDownloadLifecycle, readonly [string, string]> = {
     queued: ['downloads_lifecycle_queued', 'Queued'],
     downloading: ['downloads_lifecycle_downloading', 'Downloading'],
@@ -101,6 +123,39 @@ export function readSeerrDownloadStatuses(value: unknown): SeerrDownloadStatus[]
     return value
         .map(normalizeStatus)
         .filter((status): status is SeerrDownloadStatus => status !== null);
+}
+
+/**
+ * Combines one season pack without treating array order as lifecycle truth.
+ * Transfer progress remains separate: an unweighted per-row mean is emitted
+ * only when every member has authoritative progress; a partially-known set is
+ * left unknown rather than presenting a subset average as whole-pack progress.
+ */
+export function aggregateSeerrDownloadStatuses(
+    statuses: readonly SeerrDownloadStatus[]
+): SeerrDownloadStatus | null {
+    if (statuses.length === 0) return null;
+
+    const strongest = statuses.reduce((current, candidate) =>
+        LIFECYCLE_PRIORITY[candidate.lifecycle] > LIFECYCLE_PRIORITY[current.lifecycle]
+            ? candidate
+            : current);
+    const hasCompleteProgress = statuses.every((status) => status.progress != null);
+    const progress = hasCompleteProgress
+        ? statuses.reduce((sum, status) => sum + status.progress!, 0) / statuses.length
+        : null;
+    const seasonNumber = statuses.every(
+        (status) => status.seasonNumber === statuses[0].seasonNumber
+    )
+        ? statuses[0].seasonNumber
+        : null;
+
+    return {
+        lifecycle: strongest.lifecycle,
+        progress,
+        timeRemaining: statuses.length === 1 ? strongest.timeRemaining : null,
+        seasonNumber,
+    };
 }
 
 export function seerrDownloadLifecycleLabel(

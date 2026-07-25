@@ -131,8 +131,37 @@ public sealed class ArrQueuePaginationTests
 
         Assert.False(result.IsComplete);
         Assert.Empty(result.Items);
-        Assert.Equal("page 1: invalid response", result.Error);
+        Assert.Equal(
+            scalarRecord
+                ? "page 1: invalid queue pagination metadata"
+                : "page 1: invalid response",
+            result.Error);
         Assert.Equal(1, handler.QueueRequests);
+    }
+
+    [Fact]
+    public async Task NullRecordCannotMasqueradeAsAnEmptyCompleteQueue()
+    {
+        var handler = new RecordingHttpMessageHandler();
+        handler.AddResponse(
+            "/api/v3/queue",
+            """{"page":1,"pageSize":100,"totalRecords":0,"records":[null]}""");
+        var fetch = NewFetch(handler);
+
+        var result = await fetch.FetchQueueCollectionAsync<string>(
+            Instance("radarr"),
+            (page, size) => $"/api/v3/queue?page={page}&pageSize={size}",
+            pageSize: 100,
+            identity: row => row["id"]?.ToJsonString(),
+            projector: row => row["id"]!.ToJsonString(),
+            requestTimeout: TimeSpan.FromSeconds(2),
+            contextLabel: "Radarr queue",
+            ct: CancellationToken.None);
+
+        Assert.False(result.IsComplete);
+        Assert.Empty(result.Items);
+        Assert.Equal("page 1: invalid queue pagination metadata", result.Error);
+        Assert.Single(handler.Requests);
     }
 
     [Theory]
@@ -186,6 +215,33 @@ public sealed class ArrQueuePaginationTests
         Assert.False(status.IsComplete);
         Assert.Empty(status.Items);
         Assert.Contains(status.Errors, error => error.Reason.Contains("page 2", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ActionStatus_MalformedRecordIdFailsClosed()
+    {
+        var handler = new QueueHandler(
+            1,
+            _ => """{"id":{},"movieId":7,"title":"private row"}""")
+        {
+            LookupService = "radarr",
+        };
+        var fetch = NewFetch(handler);
+        var actions = new ArrActionService(
+            fetch,
+            new ArrTargetResolver(fetch),
+            NullLogger<ArrActionService>.Instance);
+
+        var status = await actions.GetQueueStatusAsync(
+            Movie(),
+            RadarrConfig(),
+            CancellationToken.None);
+
+        Assert.False(status.IsComplete);
+        Assert.Empty(status.Items);
+        Assert.Contains(status.Errors, error =>
+            error.Reason.Contains("stable identity", StringComparison.Ordinal));
+        Assert.Equal(1, handler.QueueRequests);
     }
 
     [Fact]

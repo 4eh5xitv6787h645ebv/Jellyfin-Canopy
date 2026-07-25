@@ -130,6 +130,70 @@ describe('season modal status domains', () => {
         expect(row.status.textContent).toBe('seerr_season_status_processing');
     });
 
+    it.each([
+        { first: 'downloading', second: 'failed', expected: 'failed' },
+        { first: 'failed', second: 'downloading', expected: 'failed' },
+        { first: 'downloading', second: 'attention', expected: 'attention' },
+        { first: 'attention', second: 'downloading', expected: 'attention' },
+        { first: 'downloading', second: 'importPending', expected: 'importPending' },
+        { first: 'importPending', second: 'downloading', expected: 'importPending' },
+    ])('aggregates mixed season lifecycle $first + $second as $expected', ({
+        first,
+        second,
+        expected,
+    }) => {
+        const createInlineProgress = vi.fn((status: Record<string, unknown>) => {
+            const progress = document.createElement('div');
+            progress.className = 'seerr-inline-progress';
+            progress.dataset.lifecycle = String(status.lifecycle);
+            return progress;
+        });
+        internal.createInlineProgress = createInlineProgress;
+
+        renderSeason({
+            rawMediaInfo: {
+                status: 1,
+                status4k: 1,
+                seasons: [{ seasonNumber: 1, status: 1, status4k: 1 }],
+                requests: [],
+                downloadStatus: [
+                    { lifecycle: first, progress: 20, timeRemaining: null, seasonNumber: 1 },
+                    { lifecycle: second, progress: 80, timeRemaining: null, seasonNumber: 1 },
+                ],
+                downloadStatus4k: [],
+            },
+        });
+
+        expect(createInlineProgress).toHaveBeenCalledTimes(1);
+        expect(createInlineProgress).toHaveBeenCalledWith({
+            lifecycle: expected,
+            progress: 50,
+            timeRemaining: null,
+            seasonNumber: 1,
+        });
+    });
+
+    it('does not present a subset average as whole-season transfer progress', () => {
+        const createInlineProgress = vi.fn(() => document.createElement('div'));
+        internal.createInlineProgress = createInlineProgress;
+
+        renderSeason({
+            rawMediaInfo: {
+                status: 1,
+                status4k: 1,
+                seasons: [{ seasonNumber: 1, status: 1, status4k: 1 }],
+                requests: [],
+                downloadStatus: [
+                    { lifecycle: 'downloading', progress: 20, timeRemaining: null, seasonNumber: 1 },
+                    { lifecycle: 'failed', progress: null, timeRemaining: null, seasonNumber: 1 },
+                ],
+                downloadStatus4k: [],
+            },
+        });
+
+        expect(createInlineProgress).not.toHaveBeenCalled();
+    });
+
     it('keeps raw AVAILABLE fail-closed even when Jellyfin link metadata is missing', () => {
         const row = renderSeason({ mediaStatus: 5 });
 

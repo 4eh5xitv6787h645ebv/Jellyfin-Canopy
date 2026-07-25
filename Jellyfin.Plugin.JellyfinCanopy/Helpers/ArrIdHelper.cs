@@ -5,6 +5,7 @@ using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Jellyfin.Plugin.JellyfinCanopy.Model.Arr;
 
 namespace Jellyfin.Plugin.JellyfinCanopy.Helpers
@@ -28,6 +29,18 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Helpers
         /// <summary>Provider-map value string, or null for absent/0 (so it never becomes a ("Tvdb","0") pair).</summary>
         public static string? ToProviderValue(int? raw)
             => raw is > 0 ? raw.Value.ToString(CultureInfo.InvariantCulture) : null;
+
+        /// <summary>
+        /// Canonical identity for a Sonarr/Radarr queue or history record. Those APIs expose
+        /// positive 32-bit integer record ids; every other JSON shape is untrustworthy and must
+        /// make complete-snapshot pagination fail closed.
+        /// </summary>
+        public static string? ToStableRecordIdentity(JsonNode? raw)
+            => raw is JsonValue value
+                && value.TryGetValue<int>(out var id)
+                && id > 0
+                    ? id.ToString(CultureInfo.InvariantCulture)
+                    : null;
 
         /// <summary>
         /// Returns this instance's stable opaque id. Valid persisted ids are normalized to

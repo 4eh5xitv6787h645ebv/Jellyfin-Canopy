@@ -114,17 +114,30 @@ describe('download lifecycle page rendering', () => {
     });
 
     it('returns to the applied History page when the next page fails', async () => {
-        data.state.downloadHistory = [activity('retained-history', {
+        const retainedHistory = activity('retained-history', {
             title: 'Retained page-one history',
             section: 'history',
             lifecycle: 'imported',
-        })];
+        });
+        plugin.mockResolvedValueOnce({
+            items: [],
+            history: [retainedHistory],
+            sources: [{
+                source: 'Sonarr',
+                instanceId: 'sonarr-main',
+                instanceName: 'Main Sonarr',
+                state: 'fresh',
+                capturedAt: new Date().toISOString(),
+            }],
+            counts: { downloading: 0, processing: 0, history: 41 },
+            generatedAt: new Date().toISOString(),
+            historyPage: 1,
+            historyPageSize: 20,
+            historyTotalItems: 41,
+            historyTotalPages: 3,
+        });
+        await data.fetchDownloads();
         data.state.downloadsActiveTab = 'history';
-        data.state.historyPage = 1;
-        data.state.historyAppliedPage = 1;
-        data.state.historyTotalPages = 3;
-        data.state.historyTotalItems = 41;
-        data.state.downloadsAppliedSearchQuery = '';
         plugin.mockRejectedValueOnce(new Error('page two unavailable'));
         const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 

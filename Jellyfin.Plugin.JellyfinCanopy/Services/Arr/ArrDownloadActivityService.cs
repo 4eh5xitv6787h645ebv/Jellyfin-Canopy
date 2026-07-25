@@ -81,30 +81,36 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
             var cutoff = now.AddDays(-historyDays);
             var sources = new List<ArrDownloadSourceStatusDto>();
             var instanceTasks = new List<Task<InstanceSnapshot>>();
+            var sonarrInstances = config.GetSonarrInstancesForAuthoritativeSnapshot();
+            var radarrInstances = config.GetRadarrInstancesForAuthoritativeSnapshot();
+            var enabledSonarrInstances =
+                config.GetEnabledSonarrInstancesForAuthoritativeSnapshot();
+            var enabledRadarrInstances =
+                config.GetEnabledRadarrInstancesForAuthoritativeSnapshot();
 
             AddConfigurationStatus(
                 sources,
                 "Sonarr",
                 config.IsSonarrInstancesCorrupt()
                     || config.HasInvalidEnabledSonarrInstances(),
-                config.GetSonarrInstances().Count,
-                config.GetEnabledSonarrInstances().Count);
+                sonarrInstances.Count,
+                enabledSonarrInstances.Count);
             AddConfigurationStatus(
                 sources,
                 "Radarr",
                 config.IsRadarrInstancesCorrupt()
                     || config.HasInvalidEnabledRadarrInstances(),
-                config.GetRadarrInstances().Count,
-                config.GetEnabledRadarrInstances().Count);
+                radarrInstances.Count,
+                enabledRadarrInstances.Count);
 
-            var enabledInstances = config.GetEnabledSonarrInstances()
+            var enabledInstances = enabledSonarrInstances
                 .Select(instance => (Source: "Sonarr", Instance: instance))
-                .Concat(config.GetEnabledRadarrInstances()
+                .Concat(enabledRadarrInstances
                     .Select(instance => (Source: "Radarr", Instance: instance)))
                 .Take(MaxConfiguredInstances)
                 .ToList();
-            var totalEnabledInstances = config.GetEnabledSonarrInstances().Count
-                + config.GetEnabledRadarrInstances().Count;
+            var totalEnabledInstances = enabledSonarrInstances.Count
+                + enabledRadarrInstances.Count;
             if (totalEnabledInstances > MaxConfiguredInstances)
             {
                 sources.Add(new ArrDownloadSourceStatusDto
@@ -136,7 +142,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
             }
 
             var snapshots = await Task.WhenAll(instanceTasks).ConfigureAwait(false);
-            sources.AddRange(snapshots.Select(snapshot => snapshot.Status));
+            var responseCompletedAt = _utcNow();
+            var responseCutoff = responseCompletedAt.AddDays(-historyDays);
+            var snapshotsAtCollectionEnd = snapshots
+                .Select(snapshot => RetainSnapshotAt(snapshot, responseCompletedAt))
+                .ToList();
             if (!access.IsAdmin && !access.SeerrScopeComplete)
             {
                 sources.Add(new ArrDownloadSourceStatusDto
@@ -149,9 +159,24 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
                 });
             }
 
-            var queue = snapshots.SelectMany(snapshot => snapshot.Queue).ToList();
-            var history = snapshots.SelectMany(snapshot => snapshot.History).ToList();
+            // Expired terminal queue evidence cannot be allowed to consume provider-resolution
+            // work or poison an otherwise valid authorization batch. Apply the same retention
+            // boundary before authorization and reconciliation.
+            var queue = QueueRecordsWithinHistoryWindow(
+                snapshotsAtCollectionEnd.SelectMany(snapshot => snapshot.Queue),
+                static record => record,
+                responseCutoff);
+            var history = snapshotsAtCollectionEnd
+                .SelectMany(snapshot => snapshot.History)
+                .Where(record => record.OccurredAt >= responseCutoff)
+                .ToList();
             var authorization = Authorize(queue, history, access);
+            var postAuthorizationAt = _utcNow();
+            var postAuthorizationCutoff = postAuthorizationAt.AddDays(-historyDays);
+            var retainedSnapshots = snapshots
+                .Select(snapshot => RetainSnapshotAt(snapshot, postAuthorizationAt))
+                .ToList();
+            sources.AddRange(retainedSnapshots.Select(snapshot => snapshot.Status));
             if (!authorization.LibraryResolutionComplete)
             {
                 sources.Add(new ArrDownloadSourceStatusDto
@@ -166,9 +191,25 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
                 });
             }
 
+            // Authorization can remove inaccessible members from a logical pack.
+            // Re-evaluate the published subset so it cannot become terminal after
+            // filtering and bypass the cache-owned terminal observation window.
+            // Library resolution can itself be slow, so enforce both cache and
+            // history retention again using a clock sampled after authorization.
+            var authorizedRecords = authorization.Records
+                .Where(row => IsSnapshotRetained(row.Record, postAuthorizationAt))
+                .ToList();
+            var authorizedQueue = QueueRecordsWithinHistoryWindow(
+                authorizedRecords.Where(row => row.IsQueue),
+                static row => row.Record,
+                postAuthorizationCutoff);
+            var authorizedHistory = authorizedRecords
+                .Where(row => !row.IsQueue
+                    && row.Record.OccurredAt >= postAuthorizationCutoff)
+                .ToList();
             var reconciled = ArrDownloadActivityReconciler.Reconcile(
-                authorization.Records.Where(row => row.IsQueue).ToList(),
-                authorization.Records.Where(row => !row.IsQueue).ToList());
+                authorizedQueue,
+                authorizedHistory);
             var active = reconciled.Active
                 .Select(item => ApplyVisibility(item, access))
                 .Where(item => item != null)
@@ -188,11 +229,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
                 .ThenBy(item => item.Id, StringComparer.Ordinal)
                 .ToList();
 
+            // Staleness is envelope metadata, so derive it from the complete visible
+            // result before active caps and history paging hide stale evidence.
+            var stale = active.Any(item => item.Stale)
+                || visibleHistory.Any(item => item.Stale)
+                || sources.Any(source => source.State == ArrDownloadSourceStates.Stale);
             var downloadingCount = active.Count(item =>
                 item.Section == ArrDownloadSections.Downloading);
             var processingCount = active.Count(item =>
                 item.Section == ArrDownloadSections.Processing);
-            var handoffTruncated = snapshots.Any(snapshot => snapshot.ActiveTruncated);
+            var handoffTruncated =
+                retainedSnapshots.Any(snapshot => snapshot.ActiveTruncated);
             var activeTruncated = active.Count > MaxActiveResponseItems || handoffTruncated;
             if (activeTruncated)
             {
@@ -211,14 +258,18 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
                 .Skip((historyPage - 1) * historyPageSize)
                 .Take(historyPageSize)
                 .ToList();
-            var sourceTruncated = snapshots.Any(snapshot => snapshot.HistoryTruncated);
-            var stale = active.Any(item => item.Stale)
-                || pagedHistory.Any(item => item.Stale)
-                || sources.Any(source => source.State == ArrDownloadSourceStates.Stale);
+            var sourceTruncated =
+                retainedSnapshots.Any(snapshot => snapshot.HistoryTruncated);
             var degraded = stale
                 || activeTruncated
                 || sourceTruncated
                 || sources.Any(source => source.State != ArrDownloadSourceStates.Fresh);
+            var generatedAt = sources
+                .Where(source => source.CapturedAt.HasValue)
+                .Select(source => source.CapturedAt!.Value)
+                .Append(now)
+                .Append(_utcNow())
+                .Max();
 
             return new ArrDownloadActivityResponseDto
             {
@@ -231,7 +282,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
                     .ToList(),
                 Degraded = degraded,
                 Stale = stale,
-                GeneratedAt = now,
+                GeneratedAt = generatedAt,
                 Counts = new ArrDownloadActivityCountsDto
                 {
                     Downloading = downloadingCount,
@@ -256,7 +307,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
         {
             var instanceId = ArrIdHelper.GetStableInstanceId(instance);
             var key = string.Concat(source, "|", instanceId);
-            var fingerprint = ConfigurationFingerprint(source, instance, historyDays);
+            var fingerprint = ConfigurationFingerprint(source, instance);
             var cache = _cache.GetOrAdd(key, _ => new InstanceCache());
             await cache.Gate.WaitAsync(ct).ConfigureAwait(false);
             try
@@ -264,7 +315,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
                 var now = _utcNow();
                 if (!string.Equals(cache.Fingerprint, fingerprint, StringComparison.Ordinal))
                 {
-                    cache.Reset(fingerprint);
+                    cache.Reset(fingerprint, historyDays);
+                }
+                else if (cache.HistoryWindowDays != historyDays)
+                {
+                    cache.ResetHistoryWindow(historyDays);
                 }
 
                 if (cache.LastAttemptAt.HasValue
@@ -276,7 +331,6 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
                     return cache.ToSnapshot(source, instance, now);
                 }
 
-                cache.LastAttemptAt = now;
                 await _instanceFetchGate.WaitAsync(ct).ConfigureAwait(false);
                 ArrQueueCollection<ArrDownloadActivityRecord> queueResult;
                 ArrHistoryCollection<ArrDownloadActivityRecord> historyResult;
@@ -293,10 +347,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
                     _instanceFetchGate.Release();
                 }
 
+                var completionNow = _utcNow();
                 var queueFailed = !queueResult.IsComplete;
                 var historyFailed = historyResult.Error != null;
                 var cachedHistoryFreshEnough = cache.HistoryCapturedAt.HasValue
-                    && now - cache.HistoryCapturedAt.Value <= StaleSnapshotLifetime;
+                    && completionNow - cache.HistoryCapturedAt.Value
+                        <= StaleSnapshotLifetime;
                 IReadOnlyCollection<ArrDownloadActivityRecord> historyForHandoff =
                     !historyFailed
                         ? historyResult.Items
@@ -309,14 +365,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
                     cache.ApplyFreshQueue(
                         queueResult.Items,
                         historyForHandoff,
-                        now,
+                        completionNow,
                         QueueHistoryHandoffLifetime);
                 }
 
                 if (!historyFailed)
                 {
                     cache.History = historyResult.Items;
-                    cache.HistoryCapturedAt = now;
+                    cache.HistoryCapturedAt = completionNow;
                     cache.HistoryTruncated = historyResult.IsTruncated;
                 }
 
@@ -326,12 +382,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
                     queueFailed,
                     historyFailed,
                     cache,
-                    historyResult.IsTruncated || cache.IsHandoffTruncated(now),
-                    now);
+                    historyResult.IsTruncated
+                        || cache.IsHandoffTruncated(completionNow),
+                    completionNow);
                 cache.LastStateCapturedAt = cache.LastState == ArrDownloadSourceStates.Stale
                     ? OldestCapture(cache)
-                    : now;
-                return cache.ToSnapshot(source, instance, now);
+                    : completionNow;
+                var snapshot = cache.ToSnapshot(source, instance, completionNow);
+                cache.LastAttemptAt = completionNow;
+                return snapshot;
             }
             finally
             {
@@ -351,7 +410,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
                     ? $"/api/v3/queue?includeUnknownSeriesItems=true&includeEpisode=true&includeSeries=true&page={page}&pageSize={pageSize}&sortKey=timeleft&sortDirection=ascending"
                     : $"/api/v3/queue?includeUnknownMovieItems=true&includeMovie=true&page={page}&pageSize={pageSize}&sortKey=timeleft&sortDirection=ascending",
                 pageSize: ArrFetchService.MaxHistoryPageSize,
-                identity: record => StableJsonIdentity(record["id"]),
+                identity: record => ArrIdHelper.ToStableRecordIdentity(record["id"]),
                 projector: record => ParseQueueRecord(source, instance, record),
                 requestTimeout: QueueRequestTimeout,
                 contextLabel: $"{source} download activity queue",
@@ -372,7 +431,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
                     ? $"/api/v3/history?includeSeries=true&includeEpisode=true&page={page}&pageSize={pageSize}&sortKey=date&sortDirection=descending"
                     : $"/api/v3/history?includeMovie=true&page={page}&pageSize={pageSize}&sortKey=date&sortDirection=descending",
                 cutoff,
-                identity: record => StableJsonIdentity(record["id"]),
+                identity: record => ArrIdHelper.ToStableRecordIdentity(record["id"]),
                 timestamp: record => ReadDate(record["date"]),
                 projector: record => ParseHistoryRecord(source, instance, record),
                 requestTimeout: HistoryRequestTimeout,
@@ -385,7 +444,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
             ArrInstance instance,
             JsonNode record)
         {
-            var recordId = StableJsonIdentity(record["id"]);
+            var recordId = ArrIdHelper.ToStableRecordIdentity(record["id"]);
             if (recordId == null)
             {
                 return null;
@@ -462,7 +521,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
             ArrInstance instance,
             JsonNode record)
         {
-            var recordId = StableJsonIdentity(record["id"]);
+            var recordId = ArrIdHelper.ToStableRecordIdentity(record["id"]);
             var occurredAt = ReadDate(record["date"]);
             if (recordId == null || !occurredAt.HasValue)
             {
@@ -673,12 +732,35 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
             out bool requiresAccessibleLibraryCandidate)
         {
             var exactEpisode = IsExactEpisodeRecord(record);
-            var candidates = record.Providers
-                .SelectMany(provider => itemMap.TryGetValue(
+            var candidateGroups = record.Providers
+                .DistinctBy(provider => (provider.Provider, provider.Value, provider.Kind))
+                .Where(provider => !exactEpisode || provider.Kind == ItemLookupKind.Episode)
+                .Select(provider => itemMap.TryGetValue(
                     (provider.Provider, provider.Value),
                     out var matches)
-                        ? matches.Where(candidate => candidate.Kind == provider.Kind)
-                        : Array.Empty<ItemLookupCandidate>())
+                        ? matches
+                            .Where(candidate => candidate.Kind == provider.Kind)
+                            .DistinctBy(candidate => candidate.ItemId)
+                            .ToList()
+                        : new List<ItemLookupCandidate>())
+                .ToList();
+            var resolvedCandidateGroups = candidateGroups
+                .Where(matches => matches.Count != 0)
+                .ToList();
+
+            // All-zero mappings are a valid not-yet-in-library shape and may still
+            // be authorized by positive Seerr scope. Once any supplied mapping
+            // resolves, however, an unresolved peer is conflicting identity
+            // evidence rather than permission to trust the resolved side alone.
+            if (resolvedCandidateGroups.Count > 0
+                && resolvedCandidateGroups.Count != candidateGroups.Count)
+            {
+                requiresAccessibleLibraryCandidate = true;
+                return null;
+            }
+
+            var candidates = resolvedCandidateGroups
+                .SelectMany(matches => matches)
                 .DistinctBy(candidate => candidate.ItemId)
                 .ToList();
 
@@ -690,6 +772,32 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
             {
                 candidates = candidates
                     .Where(candidate => candidate.Kind == ItemLookupKind.Episode)
+                    .ToList();
+            }
+
+            if (resolvedCandidateGroups.Count > 1)
+            {
+                // Different provider ids on one Arr row must converge on at
+                // least one Jellyfin item. Selection is restricted to that
+                // intersection: a candidate present on only one side remains
+                // conflicting identity evidence even when another item proves
+                // that the groups are not wholly disjoint.
+                var convergentIds = resolvedCandidateGroups[0]
+                    .Select(candidate => candidate.ItemId)
+                    .ToHashSet();
+                foreach (var group in resolvedCandidateGroups.Skip(1))
+                {
+                    convergentIds.IntersectWith(group.Select(candidate => candidate.ItemId));
+                }
+
+                if (convergentIds.Count == 0)
+                {
+                    requiresAccessibleLibraryCandidate = true;
+                    return null;
+                }
+
+                candidates = candidates
+                    .Where(candidate => convergentIds.Contains(candidate.ItemId))
                     .ToList();
             }
 
@@ -753,13 +861,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
             AddUnambiguousScope(
                 scopes,
                 "Sonarr",
-                config.GetEnabledSonarrInstances(),
+                config.GetEnabledSonarrInstancesForAuthoritativeSnapshot(),
                 config.IsSonarrInstancesCorrupt()
                     || config.HasInvalidEnabledSonarrInstances());
             AddUnambiguousScope(
                 scopes,
                 "Radarr",
-                config.GetEnabledRadarrInstances(),
+                config.GetEnabledRadarrInstancesForAuthoritativeSnapshot(),
                 config.IsRadarrInstancesCorrupt()
                     || config.HasInvalidEnabledRadarrInstances());
             return scopes;
@@ -824,6 +932,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
                 clone.ReasonCode = null;
             }
 
+            if (!access.AllowWarnings)
+            {
+                HideImportDetail(clone);
+            }
+
             if (!access.DetailedLifecycle)
             {
                 clone.Lifecycle = clone.Section switch
@@ -843,9 +956,18 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
                 {
                     clone.ReasonCode = null;
                 }
+
+                HideImportDetail(clone);
             }
 
             return clone;
+        }
+
+        private static void HideImportDetail(ArrDownloadActivityDto item)
+        {
+            item.Partial = false;
+            item.ImportedCount = null;
+            item.ExpectedCount = null;
         }
 
         private static ArrDownloadActivityDto Clone(ArrDownloadActivityDto source)
@@ -956,6 +1078,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
                 || error.Contains("incomplete", StringComparison.OrdinalIgnoreCase)
                 || error.Contains("limit", StringComparison.OrdinalIgnoreCase)
                 || error.Contains("advance", StringComparison.OrdinalIgnoreCase)
+                || error.Contains("identity", StringComparison.OrdinalIgnoreCase)
+                || error.Contains("timestamp", StringComparison.OrdinalIgnoreCase)
+                || error.Contains("ordered", StringComparison.OrdinalIgnoreCase)
                 ? ArrDownloadSourceStates.Incomplete
                 : error.Contains("URL rejected", StringComparison.OrdinalIgnoreCase)
                     ? ArrDownloadSourceStates.Configuration
@@ -1016,6 +1141,103 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
                 _ => 0,
             };
 
+        private static InstanceSnapshot RetainSnapshotAt(
+            InstanceSnapshot snapshot,
+            DateTimeOffset now)
+        {
+            var queueReuseExpired = snapshot.QueueReuse is { } queueReuse
+                && queueReuse.ExpiresAt <= now;
+            var historyReuseExpired = snapshot.HistoryReuse is { } historyReuse
+                && historyReuse.ExpiresAt <= now;
+            var reuseExpired = queueReuseExpired || historyReuseExpired;
+            var remainingReuseCaptures = new[]
+                {
+                    snapshot.QueueReuse,
+                    snapshot.HistoryReuse,
+                }
+                .Where(lease => lease != null && lease.ExpiresAt > now)
+                .Select(lease => lease!.CapturedAt)
+                .ToList();
+            var state = snapshot.Status.State;
+            if (reuseExpired
+                && state is ArrDownloadSourceStates.Fresh
+                    or ArrDownloadSourceStates.Stale
+                    or ArrDownloadSourceStates.Truncated)
+            {
+                state = ArrDownloadSourceStates.Unavailable;
+            }
+
+            return snapshot with
+            {
+                Queue = snapshot.Queue
+                    .Where(record => IsSnapshotRetained(record, now))
+                    .ToList(),
+                History = snapshot.History
+                    .Where(record => IsSnapshotRetained(record, now))
+                    .ToList(),
+                Status = new ArrDownloadSourceStatusDto
+                {
+                    Source = snapshot.Status.Source,
+                    InstanceId = snapshot.Status.InstanceId,
+                    InstanceName = snapshot.Status.InstanceName,
+                    State = state,
+                    CapturedAt = reuseExpired
+                        ? remainingReuseCaptures
+                            .Cast<DateTimeOffset?>()
+                            .DefaultIfEmpty()
+                            .Min()
+                        : snapshot.Status.CapturedAt,
+                },
+                HistoryTruncated =
+                    snapshot.HistoryTruncated || historyReuseExpired,
+                ActiveTruncated =
+                    snapshot.ActiveTruncated || queueReuseExpired,
+            };
+        }
+
+        private static bool IsSnapshotRetained(
+            ArrDownloadActivityRecord record,
+            DateTimeOffset now)
+            => !record.SnapshotExpiresAt.HasValue
+                || record.SnapshotExpiresAt.Value > now;
+
+        private static List<T> QueueRecordsWithinHistoryWindow<T>(
+            IEnumerable<T> values,
+            Func<T, ArrDownloadActivityRecord> recordSelector,
+            DateTimeOffset cutoff)
+        {
+            var retained = new List<T>();
+            foreach (var group in values.GroupBy(
+                value => ArrDownloadActivityReconciler.QueueGroupIdentity(
+                    recordSelector(value)),
+                StringComparer.Ordinal))
+            {
+                var valuesInGroup = group.ToList();
+                var rows = valuesInGroup
+                    .Select(recordSelector)
+                    .ToList();
+                var lifecycle =
+                    ArrDownloadActivityReconciler.NormalizeQueueGroupEvidence(rows);
+                // A terminal logical queue group can remain stuck indefinitely. ARR's
+                // `added` value is download-start time, so retention is bounded by the
+                // cache-owned time at which Canopy first observed the logical group as terminal.
+                // ApplyFreshQueue owns that invariant; a missing observation fails closed.
+                var allObserved = rows.All(row =>
+                    row.TerminalFirstObservedAt.HasValue);
+                var groupObservedAt = allObserved
+                    ? rows.Max(row => row.TerminalFirstObservedAt)
+                    : null;
+                if (!lifecycle.Terminal
+                    || (groupObservedAt.HasValue
+                        && groupObservedAt.Value >= cutoff))
+                {
+                    retained.AddRange(valuesInGroup);
+                }
+            }
+
+            return retained;
+        }
+
         private void PruneCache(DateTimeOffset now, IReadOnlySet<string> activeKeys)
         {
             foreach (var pair in _cache)
@@ -1046,29 +1268,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
 
         private static string ConfigurationFingerprint(
             string source,
-            ArrInstance instance,
-            int historyDays)
+            ArrInstance instance)
         {
             var material = string.Concat(
                 source,
                 "\0",
                 instance.Url?.Trim(),
                 "\0",
-                instance.ApiKey?.Trim(),
-                "\0",
-                historyDays.ToString(CultureInfo.InvariantCulture));
+                instance.ApiKey?.Trim());
             return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(material)));
-        }
-
-        private static string? StableJsonIdentity(JsonNode? node)
-        {
-            if (node == null)
-            {
-                return null;
-            }
-
-            var value = node.ToJsonString();
-            return value.Length is > 0 and <= 128 ? value : null;
         }
 
         private static string? SafeCorrelationId(string? value)
@@ -1186,17 +1394,32 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
             List<ArrDownloadActivityRecord> History,
             ArrDownloadSourceStatusDto Status,
             bool HistoryTruncated,
-            bool ActiveTruncated);
+            bool ActiveTruncated,
+            ReusedCollectionLease? QueueReuse,
+            ReusedCollectionLease? HistoryReuse);
+
+        private sealed record ReusedCollectionLease(
+            DateTimeOffset CapturedAt,
+            DateTimeOffset ExpiresAt);
 
         private sealed record Handoff(
             ArrDownloadActivityRecord Record,
             DateTimeOffset ExpiresAt);
+
+        private sealed record TerminalMemberObservation(
+            DateTimeOffset FirstObservedAt,
+            DateTimeOffset? ValidAddedAt);
+
+        private sealed record TerminalObservation(
+            Dictionary<string, TerminalMemberObservation> Members);
 
         private sealed class InstanceCache
         {
             public SemaphoreSlim Gate { get; } = new(1, 1);
 
             public string Fingerprint { get; private set; } = string.Empty;
+
+            public int HistoryWindowDays { get; private set; }
 
             public List<ArrDownloadActivityRecord> Queue { get; private set; } = new();
 
@@ -1209,6 +1432,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
             public bool HistoryTruncated { get; set; }
 
             public Dictionary<string, Handoff> Handoffs { get; } = new(StringComparer.Ordinal);
+
+            public Dictionary<string, TerminalObservation> TerminalObservations { get; }
+                = new(StringComparer.Ordinal);
 
             public DateTimeOffset? HandoffTruncatedUntil { get; private set; }
 
@@ -1225,18 +1451,32 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
             public bool HasPublishedSnapshot
                 => QueueCapturedAt.HasValue || HistoryCapturedAt.HasValue;
 
-            public void Reset(string fingerprint)
+            public void Reset(string fingerprint, int historyWindowDays)
             {
                 Fingerprint = fingerprint;
+                HistoryWindowDays = historyWindowDays;
                 Queue = new List<ArrDownloadActivityRecord>();
                 QueueCapturedAt = null;
                 History = new List<ArrDownloadActivityRecord>();
                 HistoryCapturedAt = null;
                 HistoryTruncated = false;
                 Handoffs.Clear();
+                TerminalObservations.Clear();
                 HandoffTruncatedUntil = null;
                 LastAttemptAt = null;
                 LastQueueError = null;
+                LastHistoryError = null;
+                LastState = ArrDownloadSourceStates.Unavailable;
+                LastStateCapturedAt = null;
+            }
+
+            public void ResetHistoryWindow(int historyWindowDays)
+            {
+                HistoryWindowDays = historyWindowDays;
+                History = new List<ArrDownloadActivityRecord>();
+                HistoryCapturedAt = null;
+                HistoryTruncated = false;
+                LastAttemptAt = null;
                 LastHistoryError = null;
                 LastState = ArrDownloadSourceStates.Unavailable;
                 LastStateCapturedAt = null;
@@ -1317,6 +1557,119 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
                     HandoffTruncatedUntil = now.Add(handoffLifetime);
                 }
 
+                // Terminal age belongs to the complete logical group that will be
+                // published, including active disappearance handoffs. A partial/live
+                // pack carries no terminal clock; its clock begins only after the
+                // logical group itself becomes terminal.
+                var observationByRecord = new Dictionary<string, DateTimeOffset?>(
+                    StringComparer.Ordinal);
+                var currentTerminalObservationKeys = new HashSet<string>(
+                    StringComparer.Ordinal);
+                foreach (var group in fresh
+                    .Concat(Handoffs.Values.Select(handoff => handoff.Record))
+                    .GroupBy(
+                        ArrDownloadActivityReconciler.QueueGroupIdentity,
+                        StringComparer.Ordinal))
+                {
+                    var rows = group.ToList();
+                    TerminalObservation? observation = null;
+                    if (ArrDownloadActivityReconciler
+                        .NormalizeQueueGroupEvidence(rows).Terminal)
+                    {
+                        var observationKey =
+                            ArrDownloadActivityReconciler.QueueGroupIdentity(rows[0]);
+                        var memberIdentities = rows
+                            .ToDictionary(
+                                TerminalMemberIdentity,
+                                record => record,
+                                StringComparer.Ordinal);
+                        currentTerminalObservationKeys.Add(observationKey);
+                        TerminalObservations.TryGetValue(
+                            observationKey,
+                            out var previousObservation);
+                        var members =
+                            new Dictionary<string, TerminalMemberObservation>(
+                                StringComparer.Ordinal);
+                        foreach (var pair in memberIdentities)
+                        {
+                            if (previousObservation == null
+                                || !previousObservation.Members.TryGetValue(
+                                    pair.Key,
+                                    out var previousMember))
+                            {
+                                members[pair.Key] = new TerminalMemberObservation(
+                                    now,
+                                    pair.Value.OccurredAt);
+                                continue;
+                            }
+
+                            // Retention is member-owned, not group-owned. A newly
+                            // observed or strictly newer member keeps the complete raw
+                            // group visible, but must not renew an older peer after
+                            // authorization removes that new member.
+                            var newerAdded = pair.Value.OccurredAt.HasValue
+                                && previousMember.ValidAddedAt.HasValue
+                                && pair.Value.OccurredAt.Value
+                                    > previousMember.ValidAddedAt.Value;
+                            var validAddedAt = previousMember.ValidAddedAt;
+                            if (pair.Value.OccurredAt.HasValue
+                                && (!validAddedAt.HasValue
+                                    || pair.Value.OccurredAt.Value > validAddedAt.Value))
+                            {
+                                validAddedAt = pair.Value.OccurredAt;
+                            }
+
+                            members[pair.Key] = new TerminalMemberObservation(
+                                newerAdded
+                                    ? now
+                                    : previousMember.FirstObservedAt,
+                                validAddedAt);
+                        }
+
+                        observation = new TerminalObservation(members);
+                        TerminalObservations[observationKey] = observation;
+                    }
+
+                    foreach (var record in rows)
+                    {
+                        observationByRecord[RecordIdentity(record)] =
+                            observation != null
+                            && observation.Members.TryGetValue(
+                                TerminalMemberIdentity(record),
+                                out var member)
+                                ? member.FirstObservedAt
+                                : null;
+                    }
+                }
+
+                fresh = fresh
+                    .Select(record => record with
+                    {
+                        TerminalFirstObservedAt =
+                            observationByRecord.GetValueOrDefault(RecordIdentity(record)),
+                    })
+                    .ToList();
+                foreach (var identity in Handoffs.Keys.ToList())
+                {
+                    var handoff = Handoffs[identity];
+                    Handoffs[identity] = handoff with
+                    {
+                        Record = handoff.Record with
+                        {
+                            TerminalFirstObservedAt =
+                                observationByRecord.GetValueOrDefault(identity),
+                        },
+                    };
+                }
+
+                var retainedObservationKeys = currentTerminalObservationKeys;
+                foreach (var observationKey in TerminalObservations.Keys
+                    .Where(key => !retainedObservationKeys.Contains(key))
+                    .ToList())
+                {
+                    TerminalObservations.Remove(observationKey);
+                }
+
                 Queue = fresh;
                 QueueCapturedAt = now;
             }
@@ -1334,14 +1687,29 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
                     && now - QueueCapturedAt.Value <= StaleSnapshotLifetime;
                 var historyFreshEnough = HistoryCapturedAt.HasValue
                     && now - HistoryCapturedAt.Value <= StaleSnapshotLifetime;
-                var staleState = LastState == ArrDownloadSourceStates.Stale;
+                // Keep expired reuse metadata on the 5-second coalesced return path.
+                // RetainSnapshotAt owns the response-time transition to unavailable
+                // and the relevant truncation flag even after rows are no longer usable.
+                var queueReuse = LastQueueError != null && QueueCapturedAt.HasValue
+                    ? new ReusedCollectionLease(
+                        QueueCapturedAt!.Value,
+                        QueueCapturedAt.Value.Add(StaleSnapshotLifetime))
+                    : null;
+                var historyReuse = LastHistoryError != null && HistoryCapturedAt.HasValue
+                    ? new ReusedCollectionLease(
+                        HistoryCapturedAt!.Value,
+                        HistoryCapturedAt.Value.Add(StaleSnapshotLifetime))
+                    : null;
+                var queueReused = queueFreshEnough && queueReuse != null;
+                var historyReused = historyFreshEnough && historyReuse != null;
                 var queue = queueFreshEnough
                     ? Queue
                         .Select(record => record with
                         {
                             Instance = instance,
                             InstanceName = currentInstanceName,
-                            Stale = staleState || record.Stale,
+                            Stale = queueReused || record.Stale,
+                            SnapshotExpiresAt = queueReuse?.ExpiresAt,
                         })
                         .Concat(Handoffs.Values
                             .Where(handoff => handoff.ExpiresAt > now)
@@ -1349,6 +1717,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
                             {
                                 Instance = instance,
                                 InstanceName = currentInstanceName,
+                                SnapshotExpiresAt = handoff.ExpiresAt,
                             }))
                         .ToList()
                     : new List<ArrDownloadActivityRecord>();
@@ -1358,10 +1727,20 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
                         {
                             Instance = instance,
                             InstanceName = currentInstanceName,
-                            Stale = staleState || record.Stale,
+                            Stale = historyReused || record.Stale,
+                            SnapshotExpiresAt = historyReuse?.ExpiresAt,
                         })
                         .ToList()
                     : new List<ArrDownloadActivityRecord>();
+                var reusedCapture = new[]
+                    {
+                        queueReused ? QueueCapturedAt : null,
+                        historyReused ? HistoryCapturedAt : null,
+                    }
+                    .Where(value => value.HasValue)
+                    .Select(value => value!.Value)
+                    .DefaultIfEmpty()
+                    .Min();
                 return new InstanceSnapshot(
                     queue,
                     history,
@@ -1371,10 +1750,18 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
                         InstanceId = ArrIdHelper.GetStableInstanceId(instance),
                         InstanceName = currentInstanceName,
                         State = LastState,
-                        CapturedAt = LastStateCapturedAt,
+                        CapturedAt = reusedCapture == default
+                            ? LastState is ArrDownloadSourceStates.Fresh
+                                or ArrDownloadSourceStates.Stale
+                                or ArrDownloadSourceStates.Truncated
+                                    ? LastStateCapturedAt
+                                    : null
+                            : reusedCapture,
                     },
                     HistoryTruncated,
-                    IsHandoffTruncated(now));
+                    IsHandoffTruncated(now),
+                    queueReuse,
+                    historyReuse);
             }
 
             private static bool HasTerminalHistory(
@@ -1438,6 +1825,25 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
                     record.InstanceId,
                     "|",
                     record.RecordId);
+
+            private static string TerminalMemberIdentity(
+                ArrDownloadActivityRecord record)
+            {
+                var material = new StringBuilder();
+                AppendIdentitySegment(material, RecordIdentity(record));
+                AppendIdentitySegment(material, record.DownloadId ?? string.Empty);
+                AppendIdentitySegment(material, record.ParentEntityKey);
+                AppendIdentitySegment(material, record.EntityKey);
+                return Convert.ToHexString(
+                    SHA256.HashData(Encoding.UTF8.GetBytes(material.ToString())));
+            }
+
+            private static void AppendIdentitySegment(StringBuilder material, string value)
+            {
+                material.Append(value.Length.ToString(CultureInfo.InvariantCulture))
+                    .Append(':')
+                    .Append(value);
+            }
         }
     }
 }

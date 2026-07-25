@@ -101,6 +101,36 @@ public sealed class ArrHistoryPaginationTests
         Assert.Equal(2, handler.Requests);
     }
 
+    [Fact]
+    public async Task HistoryPaginator_ValidatesRestOfPageAfterRetentionCutoff()
+    {
+        var handler = new HistoryHandler(total: 3, outOfOrderAfterCutoff: true);
+        var result = await Fetch(handler, Start.AddMinutes(-1));
+
+        Assert.False(result.IsWindowComplete);
+        Assert.False(result.IsTruncated);
+        Assert.Empty(result.Items);
+        Assert.Contains("not ordered", result.Error, StringComparison.Ordinal);
+        Assert.Equal(1, handler.Requests);
+    }
+
+    [Fact]
+    public async Task NullRecordCannotMasqueradeAsAnEmptyCompleteHistoryWindow()
+    {
+        var handler = new RecordingHttpMessageHandler();
+        handler.AddResponse(
+            "/api/v3/history",
+            """{"page":1,"pageSize":200,"totalRecords":0,"records":[null]}""");
+
+        var result = await Fetch(handler, Start.AddDays(-1));
+
+        Assert.False(result.IsWindowComplete);
+        Assert.False(result.IsTruncated);
+        Assert.Empty(result.Items);
+        Assert.Contains("invalid history pagination metadata", result.Error, StringComparison.Ordinal);
+        Assert.Single(handler.Requests);
+    }
+
     private static Task<ArrHistoryCollection<string>> Fetch(
         HttpMessageHandler handler,
         DateTimeOffset cutoff)
@@ -136,19 +166,22 @@ public sealed class ArrHistoryPaginationTests
         private readonly int? _malformedDateId;
         private readonly int? _changedTotalOnPage;
         private readonly int? _duplicateBoundaryOnPage;
+        private readonly bool _outOfOrderAfterCutoff;
 
         public HistoryHandler(
             int total,
             int? failPage = null,
             int? malformedDateId = null,
             int? changedTotalOnPage = null,
-            int? duplicateBoundaryOnPage = null)
+            int? duplicateBoundaryOnPage = null,
+            bool outOfOrderAfterCutoff = false)
         {
             _total = total;
             _failPage = failPage;
             _malformedDateId = malformedDateId;
             _changedTotalOnPage = changedTotalOnPage;
             _duplicateBoundaryOnPage = duplicateBoundaryOnPage;
+            _outOfOrderAfterCutoff = outOfOrderAfterCutoff;
         }
 
         public int Requests { get; private set; }
@@ -189,7 +222,11 @@ public sealed class ArrHistoryPaginationTests
                 var id = firstId + offset;
                 var date = id == _malformedDateId
                     ? "not-a-date"
-                    : Start.AddMinutes(-(id - 1)).ToString("O");
+                    : _outOfOrderAfterCutoff && id == 2
+                        ? Start.AddMinutes(-2).ToString("O")
+                        : _outOfOrderAfterCutoff && id == 3
+                            ? Start.AddMinutes(-1).ToString("O")
+                            : Start.AddMinutes(-(id - 1)).ToString("O");
                 body.Append("{\"id\":").Append(id)
                     .Append(",\"date\":\"").Append(date).Append("\"}");
             }

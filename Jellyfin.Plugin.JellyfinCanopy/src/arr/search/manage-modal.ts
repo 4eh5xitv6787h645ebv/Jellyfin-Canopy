@@ -83,7 +83,14 @@ class ManageView {
             this.applyStatus(queueResult.status);
             this.statusTransportError = queueResult.failed;
         } catch (e) {
-            if (!this.modal.isActive() || controller.signal.aborted || isAbortError(e)) return;
+            const canceled = !this.modal.isActive()
+                || controller.signal.aborted
+                || isAbortError(e);
+            // Context and status are one transaction. If either terminal path
+            // fails, abort the shared signal before clearing read ownership so
+            // the sibling request cannot run orphaned until its timeout.
+            controller.abort();
+            if (canceled) return;
             this.modal.body.replaceChildren(centered(message('error', errorMessage(e))));
             return;
         } finally {

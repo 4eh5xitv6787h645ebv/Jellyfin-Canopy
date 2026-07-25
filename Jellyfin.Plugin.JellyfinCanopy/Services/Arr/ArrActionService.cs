@@ -6,6 +6,7 @@ using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
+using Jellyfin.Plugin.JellyfinCanopy.Helpers;
 using Jellyfin.Plugin.JellyfinCanopy.Helpers.Arr;
 using Jellyfin.Plugin.JellyfinCanopy.Model.Arr;
 using Microsoft.Extensions.Logging;
@@ -496,7 +497,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
                     ? $"/api/v3/queue?movieIds={m.ArrId}&page={page}&pageSize={size}"
                     : $"/api/v3/queue?includeSeries=false&includeEpisode=false&page={page}&pageSize={size}",
                 pageSize,
-                identity: record => record["id"]?.ToJsonString(),
+                identity: record => ArrIdHelper.ToStableRecordIdentity(record["id"]),
                 projector: record =>
                 {
                     // Sonarr's queue isn't reliably server-filterable by series across versions —

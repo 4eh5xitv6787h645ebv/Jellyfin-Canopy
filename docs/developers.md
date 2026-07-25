@@ -1445,10 +1445,13 @@ Jellyfin.Plugin.JellyfinCanopy/
 #### Download-activity lifecycle owner
 
 `GET /JellyfinCanopy/arr/queue` is an authenticated, UI-internal endpoint. It
-returns only when both the Requests page and its downloads section are enabled;
-the route cannot bypass those configuration gates. `ArrDownloadActivityService`
-is the single owner for fetching, normalizing, reconciling, authorizing, caching,
-and paging its response. Raw Sonarr/Radarr JSON never becomes a wire DTO.
+returns only when both the Requests page and its downloads section are enabled.
+The page master also gates `GET /arr/requests` and the approve/decline mutation
+routes; the latter rechecks the complete configuration generation after caller
+resolution, so a live disable fences an already-issued token before any upstream
+mutation. `ArrDownloadActivityService` is the single owner for fetching,
+normalizing, reconciling, authorizing, caching, and paging its response. Raw
+Sonarr/Radarr JSON never becomes a wire DTO.
 
 The collector uses the official API-v3 queue and history resources. That
 contract covers Sonarr v3/v4 and the compatible Radarr v3–v6 releases. Queue
@@ -1467,8 +1470,12 @@ expected/imported sets. It never joins on title, display name, list order,
 percentage, or ETA. Missing download ids stay uncorrelated. A grabbed event
 after a terminal event starts a distinct attempt even when the upstream reuses
 the download id, so re-grabs retain their earlier history. A pack is Imported
-only when every positively known grabbed entity is imported; a strict imported
-subset remains non-terminal `partialImport` attention.
+only when every positively known grabbed entity is imported. The import numerator
+is the intersection of imported and grabbed entity keys: unrelated extra imports
+cannot inflate it, zero overlap claims neither partial nor success, and a strict
+non-zero subset remains `partialImport`. That synthetic attention state never
+masks stronger failed or import-blocked queue evidence, although its bounded
+counts remain attached to the pack.
 
 For an exact strong-key overlap, a live queue row wins over grabbed-only or
 other non-terminal history; positive terminal history completes the handoff.
@@ -1484,23 +1491,61 @@ Queue/history transition and outage behavior are explicit:
 - One complete queue/history result is reusable for 5 seconds to coalesce
   callers. After a source refresh failure, the last complete queue and/or
   history snapshot may be served for at most 5 minutes and is marked stale.
+  Queue and History own independent capture leases, including when a complete
+  reused collection is empty. Reused rows and 90-second handoffs are filtered
+  again after instance fan-out and after authorization, so work by a slower
+  peer or Jellyfin library lookup cannot carry them past their deadline.
+  Expiring one collection preserves a younger reusable peer but makes the
+  combined source unavailable and marks the lost response slice truncated.
   Failed or malformed page prefixes are never published as fresh or silently
   converted to empty.
-- After a total browser transport failure, the Requests client may retain its
-  last rendered snapshot for no more than 5 minutes from receipt. A route-owned
-  timer enforces the same limit when polling is disabled or the document is
-  hidden; recovery cancels it, teardown clears it, and expiry removes all
-  media/source rows while preserving an explicit unavailable error state.
+- The Requests client maintains an independent absolute stale deadline even
+  when polling is disabled or the document is hidden. Transport failure retains
+  a fresh snapshot for no more than 5 minutes from receipt. For a successful
+  server-stale envelope, it derives a separate lease for each affected source
+  from server `generatedAt - capturedAt`, clamps that lease accordingly, and
+  never moves it later on repeated polls. Expiry removes only that source's
+  stale rows, preserves healthy peers, marks the affected source unavailable,
+  and labels any retained History slice truncated because global paging is no
+  longer knowable. Handoff-only stale rows over a fresh source have independent
+  per-activity leases, retained across page/cap/search projection absence, so
+  projection changes or unrelated handoff churn cannot renew a survivor.
+  Explicitly stale sources with missing, invalid, or inverted capture timestamps
+  expire immediately. A simultaneous transport failure keeps its own whole-
+  snapshot deadline, so healthy retained rows still expire within 5 minutes of
+  the last successful receipt. Response-level stale metadata has another
+  non-renewing five-minute deadline: it covers stale rows hidden beyond the
+  active cap or on another History page. Its expiry evicts visible stale
+  evidence, preserves visible healthy rows, collapses counts/paging to that
+  known-safe slice, and marks both global slices truncated. A filtered non-stale
+  search is not proof that hidden stale evidence recovered; only a successful
+  unfiltered non-stale envelope resets the global gate and preserved item
+  leases. Teardown clears them.
 - History reads 200-record upstream pages for at most 10 pages, 1,000 stable
   records, or 20 seconds per instance, and stops at the administrator's
-  1–30-day cutoff (7 days by default). The response page is 20 activities by
-  default and 50 maximum. Active queue collection is capped at 2,000 records
-  per instance and the response at 500 logical activities. Truncation is part
-  of the envelope rather than hidden. A changing history `totalRecords`
-  invalidates the mutable offset-paged prefix.
+  1–30-day cutoff (7 days by default). Terminal tracked states still present in
+  queue are routed to History. ARR `added` is download-start/generation evidence,
+  not completion time; the cache stamps the complete logical group when Canopy
+  first observes it as terminal, publishes the newest member observation time,
+  and applies the cutoff to it. Each member owns its clock: a new or genuinely
+  newer member keeps the complete raw group current without renewing an older
+  member that authorization later leaves on its own. Polling, missing/restored
+  `added`, and history-window changes do not renew a member; a genuinely newer
+  valid `added` value or never-before-seen queue generation can start a new one.
+  The clock is in-memory and source-cache scoped, so a
+  process restart or source URL/API-identity reset starts a new observation
+  window. Missing cache-owned observation data fails closed. The response page
+  is 20 activities by default and 50 maximum. Active
+  queue collection is capped at 2,000 records per instance and the response at
+  500 logical activities. Truncation is part of the envelope rather than hidden.
+  A changing history `totalRecords`, non-object record, non-positive/non-integral
+  record id, invalid timestamp, or out-of-order page invalidates the complete
+  mutable offset-paged prefix.
 - At most 32 enabled ARR instances are considered, four instance fetches run
   concurrently, and the instance cache is capped at 64 entries. Each queue or
-  history HTTP request has a 10-second timeout.
+  history HTTP request has a 10-second timeout. A nonempty modern instance array
+  is authoritative even when every row is disabled or invalid; retained legacy
+  singleton credentials are never revived for fan-out or Seerr provenance.
 - Provider enrichment accepts at most 10,000 distinct provider pairs and
   10,000 mapped candidates. Jellyfin queries use a one-row sentinel limit; an
   overflow returns no partial candidate map, marks library resolution
@@ -1509,7 +1554,8 @@ Queue/history transition and outage behavior are explicit:
 - Each source reports `fresh`, `stale`, `unavailable`, `incomplete`,
   `truncated`, or `configuration`. Successful sources survive a peer failure;
   the response-level `degraded`/`stale` flags make partial truth persistent in
-  the client.
+  the client. `stale` is computed from the complete authorized, visible,
+  search-filtered result before active caps and History paging.
 
 Authorization occurs before reconciliation and paging. Administrators receive
 sanitized lifecycle/source activity, but records without a positively
@@ -1522,8 +1568,16 @@ for that media type. Multiple Seerr domains or same-service ARR instances have
 no explicit mapping and therefore fail closed. With the setting disabled,
 eligibility broadens only to a positive unambiguous association or an
 unambiguous provider-id match in the caller's accessible Jellyfin library.
-Incomplete Seerr scope, absent/zero provider ids, failed library resolution,
-and ambiguous matches fail closed. `available` and `jellyfinItemId` are
+When multiple non-empty provider mappings are supplied, every positively
+resolved mapping must have a non-empty intersection, and mixed resolved and
+unresolved identity evidence fails closed. Candidate selection is restricted
+to that intersection; a candidate found by only one provider cannot authorize
+the row. Duplicate editions remain eligible when every resolved mapping
+converges on them. When every supplied mapping resolves to zero Jellyfin
+candidates, a positive Seerr association can still represent media not yet in
+the library. Incomplete Seerr scope, absent/zero provider ids, failed library
+resolution, and ambiguous matches fail closed.
+`available` and `jellyfinItemId` are
 projected only after the accessible candidate is positively resolved and has a
 media file; ARR `imported` remains a separate fact.
 
@@ -1548,6 +1602,15 @@ owns sanitized `downloadStatus` relations recursively embedded in proxied
 Seerr media responses: regular callers receive empty arrays when it is off,
 admins retain the allowlisted projection, and the raw cached body is never
 published.
+
+The request-list library gate is edition-specific. A literal `is4k` selects
+`jellyfinMediaId4k` or `jellyfinMediaId`; only that effective ID is sent through
+the deduplicated caller-scoped batch lookup and projected into the generic wire
+field. The inactive sibling never authorizes or becomes a navigation fallback.
+Both recognized ID fields and `is4k` are schema-validated before filtering;
+malformed data or a failed/null lookup rejects the complete snapshot. An absent
+effective ID remains an eligible unlinked request. Filtering occurs before
+totals and local paging.
 
 The wire allowlist contains sanitized media/instance labels, normalized
 lifecycle/reason codes, transfer percentage/ETA, event time, grouping counts,

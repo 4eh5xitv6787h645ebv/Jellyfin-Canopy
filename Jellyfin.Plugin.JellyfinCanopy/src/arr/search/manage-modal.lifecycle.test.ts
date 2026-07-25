@@ -127,6 +127,41 @@ describe('arr Manage normalized lifecycle status', () => {
         expect(modal.textContent).not.toContain('0%');
     });
 
+    it('aborts the pending status sibling when the initial context read fails', async () => {
+        let statusSignal: AbortSignal | undefined;
+        const plugin = vi.fn((
+            path: string,
+            options?: { signal?: AbortSignal }
+        ) => {
+            if (path.startsWith('/arr/search/context')) {
+                return Promise.reject(new Error('context unavailable'));
+            }
+
+            if (path.startsWith('/arr/search/status')) {
+                statusSignal = options?.signal;
+                return new Promise((_resolve, reject) => {
+                    options?.signal?.addEventListener(
+                        'abort',
+                        () => reject(new DOMException('Aborted', 'AbortError')),
+                        { once: true }
+                    );
+                });
+            }
+
+            return Promise.reject(new Error(`Unexpected request: ${path}`));
+        });
+        JC.core.api = { plugin } as unknown as NonNullable<typeof JC.core.api>;
+
+        await openManage('item-context-failure');
+
+        expect(statusSignal).toBeDefined();
+        expect(statusSignal?.aborted).toBe(true);
+        expect(document.querySelector('.jc-arr-modal')?.textContent)
+            .toContain('context unavailable');
+        document.querySelector<HTMLButtonElement>('.jc-arr-modal-close')!.click();
+        expect(statusSignal?.aborted).toBe(true);
+    });
+
     it('pauses while hidden, aborts an active status read on close, and stops its timer', async () => {
         vi.useFakeTimers();
         let statusCalls = 0;

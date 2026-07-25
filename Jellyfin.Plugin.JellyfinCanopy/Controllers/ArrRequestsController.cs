@@ -276,6 +276,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             take = Math.Clamp(take, 1, 200);
             skip = Math.Max(0, skip);
 
+            var pageConfig = _configProvider.ConfigurationOrNull;
+            if (pageConfig == null)
+                return StatusCode(500, "Plugin configuration not available");
+            if (!pageConfig.DownloadsPageEnabled)
+                return NotFound();
+
             var integration = SeerrIntegrationPolicy.Capture(_configProvider);
             if (integration.State == SeerrIntegrationState.Disabled)
             {
@@ -309,6 +315,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             var config = integration.Configuration;
             if (!integration.IsActive || config == null)
                 return StatusCode(500, "Plugin configuration not available");
+            if (!config.DownloadsPageEnabled)
+                return NotFound();
 
             if (!IsAdminUser() && !config.RequestsAllowSeerrStatusAndHistoryForRegularUsers)
             {
@@ -716,6 +724,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
 
                         int? reqStatus = (int?)req?["status"];
                         var is4kRequest = ReadJsonBoolean(req?["is4k"]);
+                        var jellyfinMediaId = ReadJsonString(
+                            media?[is4kRequest ? "jellyfinMediaId4k" : "jellyfinMediaId"]);
+                        if (string.IsNullOrWhiteSpace(jellyfinMediaId))
+                        {
+                            jellyfinMediaId = null;
+                        }
+
                         var mediaStatusProperty = is4kRequest ? "status4k" : "status";
                         var downloadStatusProperty = is4kRequest ? "downloadStatus4k" : "downloadStatus";
                         int? mediaStatusVal = (int?)media?[mediaStatusProperty];
@@ -846,7 +861,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                             requestedBy = displayName ?? username ?? "Unknown",
                             requestedByAvatar = avatarUrl,
                             createdAt = createdAtStr,
-                            jellyfinMediaId = (string?)media?["jellyfinMediaId"],
+                            // Only the already-authorized request edition is projected.
+                            // The sibling edition must never become a navigation fallback.
+                            jellyfinMediaId = jellyfinMediaId,
                             digitalReleaseDate = digitalReleaseDate,
                             theatricalReleaseDate = theatricalReleaseDate,
                             initialAirDate = initialAirDate,
@@ -1547,11 +1564,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
 
         /// <summary>
         /// Applies Jellyfin library visibility to one already-complete, caller/parental-scoped
-        /// Seerr request collection. A missing/blank media id means the title is not yet linked
-        /// to Jellyfin and remains eligible under Seerr scope. A present id must parse and be
-        /// positively returned by one complete caller-scoped batch lookup. Any malformed id,
-        /// missing caller, or lookup failure rejects the whole snapshot rather than publishing
-        /// a convincing filtered prefix.
+        /// Seerr request collection. Normal and 4K requests are independent visibility domains:
+        /// only the selected edition's media id authorizes that request, and a missing/blank
+        /// selected id means that edition is not yet linked and remains eligible under Seerr
+        /// scope. Both recognized id fields are still schema-validated before any lookup. A
+        /// present selected id must be positively returned by one complete caller-scoped batch
+        /// lookup. Any malformed id, invalid edition flag, missing caller, or lookup failure
+        /// rejects the whole snapshot rather than publishing a convincing filtered prefix.
         /// </summary>
         internal static bool TryApplyRequestLibraryScope(
             JsonArray source,
@@ -1565,7 +1584,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 return false;
             }
 
-            var rows = new List<(JsonNode Row, Guid? JellyfinId)>(source.Count);
+            var rows = new List<(
+                JsonObject Row,
+                Guid? EffectiveJellyfinId,
+                bool Is4k)>(source.Count);
             var itemIds = new HashSet<Guid>();
 
             foreach (var node in source)
@@ -1575,30 +1597,20 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                     return false;
                 }
 
-                Guid? jellyfinId = null;
-                if (media.TryGetPropertyValue("jellyfinMediaId", out var idNode)
-                    && idNode != null)
+                if (!TryReadOptionalJellyfinId(media, "jellyfinMediaId", out var standardId)
+                    || !TryReadOptionalJellyfinId(media, "jellyfinMediaId4k", out var fourKId)
+                    || !TryReadRequestEdition(row, out var is4k))
                 {
-                    if (idNode is not JsonValue idValue
-                        || !idValue.TryGetValue<string>(out var idText))
-                    {
-                        return false;
-                    }
-
-                    if (!string.IsNullOrWhiteSpace(idText))
-                    {
-                        if (!Guid.TryParse(idText, out var parsed)
-                            || parsed == Guid.Empty)
-                        {
-                            return false;
-                        }
-
-                        jellyfinId = parsed;
-                        itemIds.Add(parsed);
-                    }
+                    return false;
                 }
 
-                rows.Add((row, jellyfinId));
+                var effectiveId = is4k ? fourKId : standardId;
+                if (effectiveId.HasValue)
+                {
+                    itemIds.Add(effectiveId.Value);
+                }
+
+                rows.Add((row, effectiveId, is4k));
             }
 
             IReadOnlySet<Guid> accessibleIds;
@@ -1613,6 +1625,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                     accessibleIds = itemLookup.GetAccessibleItemIdsBatch(
                         itemIds.ToList(),
                         user);
+                    if (accessibleIds == null)
+                    {
+                        return false;
+                    }
                 }
             }
             catch
@@ -1620,15 +1636,67 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 return false;
             }
 
-            foreach (var (row, jellyfinId) in rows)
+            foreach (var (row, effectiveJellyfinId, is4k) in rows)
             {
-                if (!jellyfinId.HasValue || accessibleIds.Contains(jellyfinId.Value))
+                if (!effectiveJellyfinId.HasValue
+                    || accessibleIds.Contains(effectiveJellyfinId.Value))
                 {
-                    filtered.Add(row.DeepClone());
+                    var clone = (JsonObject)row.DeepClone();
+                    if (clone["media"] is not JsonObject cloneMedia)
+                    {
+                        return false;
+                    }
+
+                    // Bind projection to the exact normalized id that passed the
+                    // selected-edition access check. The inactive sibling never
+                    // becomes a fallback.
+                    cloneMedia[is4k ? "jellyfinMediaId4k" : "jellyfinMediaId"] =
+                        effectiveJellyfinId?.ToString();
+                    filtered.Add(clone);
                 }
             }
 
             return true;
+        }
+
+        private static bool TryReadOptionalJellyfinId(
+            JsonObject media,
+            string propertyName,
+            out Guid? jellyfinId)
+        {
+            jellyfinId = null;
+            if (!media.TryGetPropertyValue(propertyName, out var idNode)
+                || idNode == null)
+            {
+                return true;
+            }
+
+            if (idNode is not JsonValue idValue
+                || !idValue.TryGetValue<string>(out var idText))
+            {
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(idText))
+            {
+                return true;
+            }
+
+            if (!Guid.TryParse(idText, out var parsed) || parsed == Guid.Empty)
+            {
+                return false;
+            }
+
+            jellyfinId = parsed;
+            return true;
+        }
+
+        private static bool TryReadRequestEdition(JsonObject row, out bool is4k)
+        {
+            is4k = false;
+            return row.TryGetPropertyValue("is4k", out var is4kNode)
+                && is4kNode is JsonValue value
+                && value.TryGetValue<bool>(out is4k);
         }
 
         private static string? ReadJsonString(JsonNode? node)
@@ -1664,6 +1732,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         {
             var action = HttpContext.Request.Path.Value?.Contains("/approve", StringComparison.OrdinalIgnoreCase) == true ? "approve" : "decline";
 
+            var pageConfig = _configProvider.ConfigurationOrNull;
+            if (pageConfig == null)
+                return StatusCode(500, "Plugin configuration not available");
+            if (!pageConfig.DownloadsPageEnabled)
+                return NotFound();
+
             var integration = SeerrIntegrationPolicy.Capture(_configProvider);
             if (!integration.IsActive)
             {
@@ -1681,6 +1755,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             }
 
             var config = integration.Configuration!;
+            if (!config.DownloadsPageEnabled)
+                return NotFound();
 
             // The admin feature toggle gates the action server-side too — the
             // client hides the buttons when it's off, but the server still
@@ -1740,6 +1816,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                     _configProvider.ConfigurationRevision)
                 || currentConfig == null
                 || !SeerrIntegrationPolicy.HasUsableSavedConfiguration(currentConfig)
+                || !currentConfig.DownloadsPageEnabled
                 || !currentConfig.RequestApprovalsEnabled)
             {
                 return StatusCode(409, new

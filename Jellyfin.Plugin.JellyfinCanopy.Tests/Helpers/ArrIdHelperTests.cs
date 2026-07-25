@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Jellyfin.Plugin.JellyfinCanopy.Helpers;
 using Jellyfin.Plugin.JellyfinCanopy.Model.Arr;
 using Xunit;
@@ -29,6 +30,26 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Helpers
         public void ToProviderValue_ZeroAbsentOrNegative_IsNull(int? raw, string? expected)
         {
             Assert.Equal(expected, ArrIdHelper.ToProviderValue(raw));
+        }
+
+        [Theory]
+        [InlineData("1", "1")]
+        [InlineData("2147483647", "2147483647")]
+        [InlineData("0", null)]
+        [InlineData("-1", null)]
+        [InlineData("1.5", null)]
+        [InlineData("2147483648", null)]
+        [InlineData("false", null)]
+        [InlineData("\"1\"", null)]
+        [InlineData("{}", null)]
+        [InlineData("[]", null)]
+        public void ToStableRecordIdentity_RequiresPositiveInt32Scalar(
+            string json,
+            string? expected)
+        {
+            Assert.Equal(
+                expected,
+                ArrIdHelper.ToStableRecordIdentity(JsonNode.Parse(json)));
         }
 
         [Fact]

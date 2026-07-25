@@ -6,7 +6,10 @@ import { JC } from '../../globals';
 
 
 import { ui, internal } from './internal';
-import { readSeerrDownloadStatuses } from '../download-status';
+import {
+    aggregateSeerrDownloadStatuses,
+    readSeerrDownloadStatuses,
+} from '../download-status';
 const logPrefix = '🪼 Jellyfin Canopy: Seerr UI:';
 const escapeHtml = JC.escapeHtml;
 let refreshModalTimer: ReturnType<typeof setTimeout> | null = null;
@@ -631,16 +634,8 @@ function updateSeasonList(seasonListElement: any, tvDetails: any, partialRequest
         if (hasSeasonDownloads && modeDownloads.length > 0) {
             const seasonDownloads = modeDownloads.filter((download) => download.seasonNumber === seasonNumber);
             if (seasonDownloads.length > 0) {
-                const knownProgress = seasonDownloads
-                    .map((download) => download.progress)
-                    .filter((progress): progress is number => progress != null);
-                if (knownProgress.length > 0) {
-                    const aggregatedStatus = {
-                        lifecycle: seasonDownloads[0].lifecycle,
-                        progress: knownProgress.reduce((sum, progress) => sum + progress, 0) / knownProgress.length,
-                        timeRemaining: null,
-                        seasonNumber,
-                    };
+                const aggregatedStatus = aggregateSeerrDownloadStatuses(seasonDownloads);
+                if (aggregatedStatus?.progress != null) {
                     const progressElement = internal.createInlineProgress(aggregatedStatus);
                     if (progressElement) seasonItem.appendChild(progressElement);
                 }

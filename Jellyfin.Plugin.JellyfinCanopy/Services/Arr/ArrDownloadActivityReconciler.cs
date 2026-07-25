@@ -119,12 +119,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
                 .ToList();
             return new Result(
                 retainedQueue
+                    .Where(activity => activity.Dto.Section != ArrDownloadSections.History)
                     .Concat(retainedHistory.Where(activity =>
                         activity.Dto.Section != ArrDownloadSections.History))
                     .Select(activity => activity.Dto)
                     .ToList(),
-                retainedHistory
+                retainedQueue
                     .Where(activity => activity.Dto.Section == ArrDownloadSections.History)
+                    .Concat(retainedHistory.Where(activity =>
+                        activity.Dto.Section == ArrDownloadSections.History))
                     .Select(activity => activity.Dto)
                     .ToList())
             {
@@ -138,9 +141,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
         {
             var grouped = records
                 .GroupBy(
-                    item => string.IsNullOrEmpty(item.Record.StrongJobKey)
-                        ? $"record:{item.Record.Source}|{item.Record.InstanceId}|{item.Record.RecordId}"
-                        : $"job:{item.Record.StrongJobKey}",
+                    item => QueueGroupIdentity(item.Record),
                     StringComparer.Ordinal);
             var result = new List<BuiltActivity>();
 
@@ -153,42 +154,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
                     .ToList();
                 var first = rows[0];
                 var normalized = rows
-                    .Select(row => ArrDownloadLifecycleNormalizer.NormalizeQueue(new ArrDownloadQueueSignal
-                    {
-                        RawStatus = row.Record.RawStatus,
-                        TrackedState = row.Record.TrackedState,
-                        TrackedStatus = row.Record.TrackedStatus,
-                        Size = row.Record.Size,
-                        SizeLeft = row.Record.SizeLeft,
-                        TimeLeft = row.Record.TimeLeft,
-                    }))
+                    .Select(row => NormalizeQueueEvidence(row.Record))
                     .ToList();
                 var importedCount = normalized.Count(state =>
                     state.Lifecycle == ArrDownloadLifecycles.Imported);
                 var partial = importedCount > 0 && importedCount < rows.Count;
-                ArrNormalizedLifecycle lifecycle;
-                if (rows.Any(row => row.Record.TransitionPending))
-                {
-                    lifecycle = new ArrNormalizedLifecycle(
-                        ArrDownloadLifecycles.WaitingForImport,
-                        ArrDownloadSections.Processing,
-                        ArrDownloadReasonCodes.TransitionPending,
-                        false);
-                }
-                else if (partial)
-                {
-                    lifecycle = new ArrNormalizedLifecycle(
-                        ArrDownloadLifecycles.Attention,
-                        ArrDownloadSections.Processing,
-                        ArrDownloadReasonCodes.PartialImport,
-                        false);
-                }
-                else
-                {
-                    lifecycle = normalized
-                        .OrderByDescending(LifecyclePriority)
-                        .First();
-                }
+                var lifecycle = NormalizeQueueGroupEvidence(
+                    rows.Select(row => row.Record));
 
                 var progress = AggregateProgress(rows.Select(row => row.Record));
                 var startedAt = rows
@@ -198,6 +170,21 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
                     .DefaultIfEmpty()
                     .Min();
                 DateTimeOffset? nullableStartedAt = startedAt == default ? null : startedAt;
+                // A terminal history event may suppress the live group only when every
+                // member has temporal evidence proving that it predates the event. One
+                // missing queue timestamp keeps a reused-id retry ambiguous.
+                DateTimeOffset? latestObservedAt = rows.All(row =>
+                    row.Record.OccurredAt.HasValue)
+                        ? rows.Max(row => row.Record.OccurredAt)
+                        : null;
+                var terminalObservedAt = rows
+                    .Select(row => row.Record.TerminalFirstObservedAt)
+                    .Where(value => value.HasValue)
+                    .Select(value => value!.Value)
+                    .DefaultIfEmpty()
+                    .Max();
+                DateTimeOffset? nullableTerminalObservedAt =
+                    terminalObservedAt == default ? null : terminalObservedAt;
                 var seed = !string.IsNullOrEmpty(first.Record.StrongJobKey)
                     ? string.Concat(
                         first.Record.StrongJobKey,
@@ -215,7 +202,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
                     .Select(row => ArrDownloadLifecycleNormalizer.SanitizeTimeRemaining(
                         row.Record.TimeLeft))
                     .FirstOrDefault(value => value != null);
-                dto.OccurredAt = nullableStartedAt;
+                // For terminal queue evidence, publish the cache observation time rather
+                // than ARR's `added` value (which is the download-start time).
+                dto.OccurredAt = lifecycle.Terminal
+                    ? nullableTerminalObservedAt
+                    : nullableStartedAt;
                 dto.GroupCount = rows.Count;
                 dto.ImportedCount = importedCount > 0 ? importedCount : null;
                 dto.ExpectedCount = rows.Count > 1 ? rows.Count : null;
@@ -226,7 +217,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
                     dto,
                     first.Record.StrongJobKey,
                     nullableStartedAt,
-                    null,
+                    latestObservedAt,
                     seed));
             }
 
@@ -308,10 +299,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
 
             ArrNormalizedLifecycle? lifecycle = null;
             var expectedCount = grabbed.Count;
-            var importedCount = imported.Count;
+            // When a grabbed set exists, only imports of those expected entities
+            // belong in the "x of y imported" numerator. Extra/manual entities can
+            // share an upstream download id but must never produce 3 of 2 (or mask
+            // a missing expected episode as 2 of 2).
+            var importedCount = expectedCount > 0
+                ? grabbed.Intersect(imported).Count()
+                : imported.Count;
             var partial = expectedCount > 0
                 && importedCount > 0
-                && !grabbed.IsSubsetOf(imported);
+                && importedCount < expectedCount;
 
             if (latestTerminalEvent == "downloadfolderimported" && partial)
             {
@@ -490,7 +487,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
                 return false;
             }
 
-            if (!queue.StartedAt.HasValue || !history.EndedAt.HasValue)
+            var latestQueueObservation = queue.EndedAt;
+            if (!latestQueueObservation.HasValue || !history.EndedAt.HasValue)
             {
                 // A shared downloader id is insufficient when either side lacks temporal
                 // evidence: the id may have been reused for a later retry or upgrade. Preserve
@@ -503,14 +501,84 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
             // timestamps originate in the same Arr service, so a post-terminal tolerance would
             // let an old completion erase an immediate retry while its new grabbed event lags.
             // Preserve the active row on equality as the conservative ambiguity rule.
-            return queue.StartedAt.Value < history.EndedAt.Value;
+            // A pack can contain an old member and a live retry member under a
+            // reused downloader id. Suppress the group only when every observed
+            // queue member predates the terminal history event.
+            return latestQueueObservation.Value < history.EndedAt.Value;
         }
+
+        internal static ArrNormalizedLifecycle NormalizeQueueEvidence(
+            ArrDownloadActivityRecord record)
+        {
+            var normalized = ArrDownloadLifecycleNormalizer.NormalizeQueue(
+                new ArrDownloadQueueSignal
+                {
+                    RawStatus = record.RawStatus,
+                    TrackedState = record.TrackedState,
+                    TrackedStatus = record.TrackedStatus,
+                    Size = record.Size,
+                    SizeLeft = record.SizeLeft,
+                    TimeLeft = record.TimeLeft,
+                });
+            if (!record.TransitionPending)
+            {
+                return normalized;
+            }
+
+            // Disappearance is additional ambiguous handoff evidence, not a replacement
+            // for a failure, warning, import block, or terminal state already present on
+            // the last queue row.
+            if (normalized.Terminal)
+            {
+                return normalized;
+            }
+
+            var transition = new ArrNormalizedLifecycle(
+                ArrDownloadLifecycles.WaitingForImport,
+                ArrDownloadSections.Processing,
+                ArrDownloadReasonCodes.TransitionPending,
+                false);
+            return new[] { normalized, transition }
+                .OrderByDescending(LifecyclePriority)
+                .ThenBy(state => state.Lifecycle, StringComparer.Ordinal)
+                .ThenBy(state => state.ReasonCode, StringComparer.Ordinal)
+                .First();
+        }
+
+        internal static ArrNormalizedLifecycle NormalizeQueueGroupEvidence(
+            IEnumerable<ArrDownloadActivityRecord> records)
+        {
+            var normalized = records
+                .Select(NormalizeQueueEvidence)
+                .ToList();
+            var importedCount = normalized.Count(state =>
+                state.Lifecycle == ArrDownloadLifecycles.Imported);
+            var evidence = importedCount > 0 && importedCount < normalized.Count
+                ? normalized.Append(new ArrNormalizedLifecycle(
+                    ArrDownloadLifecycles.Attention,
+                    ArrDownloadSections.Processing,
+                    ArrDownloadReasonCodes.PartialImport,
+                    false))
+                : normalized;
+            return evidence
+                .OrderByDescending(LifecyclePriority)
+                .ThenBy(state => state.Lifecycle, StringComparer.Ordinal)
+                .ThenBy(state => state.ReasonCode, StringComparer.Ordinal)
+                .First();
+        }
+
+        internal static string QueueGroupIdentity(ArrDownloadActivityRecord record)
+            => string.IsNullOrEmpty(record.StrongJobKey)
+                ? $"record:{record.Source}|{record.InstanceId}|{record.RecordId}"
+                : $"job:{record.StrongJobKey}";
 
         private static int LifecyclePriority(ArrNormalizedLifecycle lifecycle)
             => lifecycle.Lifecycle switch
             {
                 ArrDownloadLifecycles.Failed => 100,
-                ArrDownloadLifecycles.Attention => 90,
+                ArrDownloadLifecycles.Attention
+                    when lifecycle.ReasonCode != ArrDownloadReasonCodes.PartialImport => 90,
+                ArrDownloadLifecycles.Attention => 85,
                 ArrDownloadLifecycles.Warning => 80,
                 ArrDownloadLifecycles.Unknown => 70,
                 ArrDownloadLifecycles.WaitingForImport => 60,

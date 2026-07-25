@@ -354,7 +354,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
                         return result;
                     }
 
-                    var newRecords = 0;
+                    var validatedRecords =
+                        new List<(JsonNode Record, string Identity, DateTimeOffset Timestamp)>(
+                            page.Records.Count);
                     foreach (var record in page.Records)
                     {
                         string? recordIdentity;
@@ -391,10 +393,24 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
                         }
 
                         previousTimestamp = recordTimestamp;
-                        if (recordTimestamp.Value < cutoff)
+                        validatedRecords.Add((
+                            record,
+                            recordIdentity,
+                            recordTimestamp.Value));
+                    }
+
+                    // Validate the entire fetched page before treating a cutoff as
+                    // complete. Returning at the first old row would accept a
+                    // malformed [recent, old, recent] page and silently omit the
+                    // later in-window event.
+                    var newRecords = 0;
+                    var reachedCutoff = false;
+                    foreach (var (record, recordIdentity, recordTimestamp) in validatedRecords)
+                    {
+                        if (recordTimestamp < cutoff)
                         {
-                            result.IsWindowComplete = true;
-                            return result;
+                            reachedCutoff = true;
+                            continue;
                         }
 
                         if (!identities.Add(recordIdentity))
@@ -428,6 +444,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
                             result.Items.Clear();
                             return result;
                         }
+                    }
+
+                    if (reachedCutoff)
+                    {
+                        result.IsWindowComplete = true;
+                        return result;
                     }
 
                     var reachedUpstreamEnd = page.Records.Count == 0
@@ -486,8 +508,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
             var rows = new List<JsonNode>(records.Count);
             foreach (var record in records)
             {
-                if (record != null)
-                    rows.Add(record);
+                if (record is not JsonObject)
+                {
+                    return null;
+                }
+
+                rows.Add(record);
             }
 
             return new ArrQueuePage(page, pageSize, totalRecords, rows);

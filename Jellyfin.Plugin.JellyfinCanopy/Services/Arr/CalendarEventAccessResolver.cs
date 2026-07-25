@@ -111,6 +111,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
                     winner = item;
                     loser = existing;
                 }
+                else if (newAccess == existingAccess
+                    && existing.HasFile == item.HasFile
+                    && CompareStableIdentity(item, existing) < 0)
+                {
+                    // Configured instance order is editable. Equal-access/equal-file
+                    // duplicates therefore use persisted instance identity and then
+                    // the already-namespaced public row id as their stable winner.
+                    winner = item;
+                    loser = existing;
+                }
                 else
                 {
                     winner = existing;
@@ -129,6 +139,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
                 .ToList();
         }
 
+        private static int CompareStableIdentity(ArrItem left, ArrItem right)
+        {
+            var instanceComparison = StringComparer.Ordinal.Compare(
+                left.ArrInstanceKey,
+                right.ArrInstanceKey);
+            return instanceComparison != 0
+                ? instanceComparison
+                : StringComparer.Ordinal.Compare(left.Id, right.Id);
+        }
+
         private static void MergeInstanceNames(ArrItem winner, ArrItem loser)
         {
             if (!string.IsNullOrEmpty(loser.InstanceName)
@@ -140,7 +160,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
             }
 
             if (loser.AlsoInInstances == null)
+            {
+                winner.AlsoInInstances?.Sort(StringComparer.Ordinal);
                 return;
+            }
 
             winner.AlsoInInstances ??= new List<string>();
             foreach (var name in loser.AlsoInInstances)
@@ -149,6 +172,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
                     && !winner.AlsoInInstances.Contains(name))
                     winner.AlsoInInstances.Add(name);
             }
+
+            winner.AlsoInInstances.Sort(StringComparer.Ordinal);
         }
     }
 }

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+    aggregateSeerrDownloadStatuses,
     formatSeerrDownloadTimeRemaining,
     readSeerrDownloadStatuses,
     seerrDownloadLifecycleLabel,
@@ -49,6 +50,51 @@ describe('Seerr download status projection', () => {
         expect(seerrDownloadLifecycleLabel('warning', translate))
             .toBe('translated:downloads_lifecycle_warning');
         expect(translate).toHaveBeenCalledWith('downloads_lifecycle_warning');
+    });
+
+    it('aggregates lifecycle by strength and progress only from a complete set', () => {
+        const statuses = readSeerrDownloadStatuses([
+            {
+                lifecycle: 'downloading',
+                progress: 20,
+                timeRemaining: '00:10:00',
+                seasonNumber: 1,
+            },
+            {
+                lifecycle: 'failed',
+                progress: 80,
+                timeRemaining: '00:01:00',
+                seasonNumber: 1,
+            },
+        ]);
+
+        expect(aggregateSeerrDownloadStatuses(statuses)).toEqual({
+            lifecycle: 'failed',
+            progress: 50,
+            timeRemaining: null,
+            seasonNumber: 1,
+        });
+        expect(aggregateSeerrDownloadStatuses([
+            statuses[0],
+            { ...statuses[1], progress: null, seasonNumber: 2 },
+        ])).toEqual({
+            lifecycle: 'failed',
+            progress: null,
+            timeRemaining: null,
+            seasonNumber: null,
+        });
+    });
+
+    it('preserves a single status and rejects an empty aggregate', () => {
+        const status = readSeerrDownloadStatuses([{
+            lifecycle: 'importPending',
+            progress: 100,
+            timeRemaining: '00:01:00',
+            seasonNumber: 3,
+        }])[0];
+
+        expect(aggregateSeerrDownloadStatuses([])).toBeNull();
+        expect(aggregateSeerrDownloadStatuses([status])).toEqual(status);
     });
 
     it.each([

@@ -145,6 +145,7 @@ public sealed class ArrRequestsGenerationFenceTests
         SeerrEnabled = true,
         SeerrUrls = source,
         SeerrApiKey = apiKey,
+        DownloadsPageEnabled = true,
     };
 
     private static SeerrUser User() => new()

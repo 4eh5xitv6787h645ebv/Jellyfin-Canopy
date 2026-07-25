@@ -50,10 +50,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             RecordingHttpMessageHandler handler,
             RecordingSeerrClient seerr,
             bool isAdmin,
-            string? requestPath = null)
+            string? requestPath = null,
+            FakePluginConfigProvider? providerOverride = null)
         {
             var factory = new RecordingHttpClientFactory(handler);
-            var provider = new FakePluginConfigProvider(config);
+            var provider = providerOverride ?? new FakePluginConfigProvider(config);
             var seerrCache = new SeerrCache(provider);
 
             var controller = new ArrRequestsController(
@@ -100,6 +101,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             SeerrEnabled = seerrEnabled,
             SeerrUrls = urls,
             SeerrApiKey = "key",
+            DownloadsPageEnabled = true,
             RequestApprovalsEnabled = approvalsEnabled,
         };
 
@@ -137,6 +139,93 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
         }
 
         // ── 1. ActOnRequest is gated server-side, even for an admin ───────────
+
+        [Theory]
+        [InlineData(false)]
+        [InlineData(true)]
+        public async Task GetRequests_PageMasterDisabledReturnsNotFoundWithoutUpstreamWork(
+            bool isAdmin)
+        {
+            var config = Config(approvalsEnabled: true);
+            config.DownloadsPageEnabled = false;
+            var handler = new RecordingHttpMessageHandler();
+            var seerr = new RecordingSeerrClient(new SeerrUser
+            {
+                Id = CallerSeerrId,
+                Permissions = SeerrPermission.ADMIN,
+                SourceUrl = "http://seerr:5055",
+            });
+            var controller = BuildController(
+                config,
+                SeerrPermission.ADMIN,
+                handler,
+                seerr,
+                isAdmin);
+
+            Assert.IsType<NotFoundResult>(await controller.GetRequests());
+            Assert.Empty(seerr.Resolutions);
+            Assert.Empty(handler.Sent);
+        }
+
+        [Fact]
+        public async Task ActOnRequest_PageMasterDisabledRejectsIssuedTokenWithoutUpstreamWork()
+        {
+            var config = Config(approvalsEnabled: true);
+            config.DownloadsPageEnabled = false;
+            var handler = new RecordingHttpMessageHandler();
+            var seerr = new RecordingSeerrClient(new SeerrUser
+            {
+                Id = CallerSeerrId,
+                Permissions = SeerrPermission.ADMIN,
+                SourceUrl = "http://seerr:5055",
+            });
+            var controller = BuildController(
+                config,
+                SeerrPermission.ADMIN,
+                handler,
+                seerr,
+                isAdmin: true,
+                requestPath: "/JellyfinCanopy/arr/requests/9/approve");
+
+            Assert.IsType<NotFoundResult>(
+                await controller.ActOnRequest(9, ActionToken(9)));
+            Assert.Empty(seerr.Resolutions);
+            Assert.Empty(handler.Sent);
+        }
+
+        [Fact]
+        public async Task ActOnRequest_PageDisabledDuringResolutionFencesMutation()
+        {
+            var initial = Config(approvalsEnabled: true);
+            var provider = new FakePluginConfigProvider(initial);
+            var replacement = Config(approvalsEnabled: true);
+            replacement.DownloadsPageEnabled = false;
+            var handler = new RecordingHttpMessageHandler();
+            var seerr = new RecordingSeerrClient(
+                new SeerrUser
+                {
+                    Id = CallerSeerrId,
+                    Permissions = SeerrPermission.ADMIN,
+                    SourceUrl = "http://seerr:5055",
+                },
+                () => provider.Current = replacement);
+            var controller = BuildController(
+                initial,
+                SeerrPermission.ADMIN,
+                handler,
+                seerr,
+                isAdmin: true,
+                requestPath: "/JellyfinCanopy/arr/requests/9/approve",
+                providerOverride: provider);
+
+            var result = Assert.IsType<ObjectResult>(
+                await controller.ActOnRequest(9, ActionToken(9)));
+
+            Assert.Equal(409, result.StatusCode);
+            Assert.Equal("mutation_configuration_changed", (string?)BodyOf(result)["code"]);
+            Assert.Single(seerr.Resolutions);
+            Assert.Empty(handler.Sent);
+        }
 
         [Fact]
         public async Task ActOnRequest_ApprovalsDisabled_Returns403_EvenForAdmin()
@@ -566,8 +655,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
         private sealed class RecordingSeerrClient : ISeerrClient
         {
             private readonly SeerrUser _user;
+            private readonly Action? _onResolution;
 
-            public RecordingSeerrClient(SeerrUser user) => _user = user;
+            public RecordingSeerrClient(SeerrUser user, Action? onResolution = null)
+            {
+                _user = user;
+                _onResolution = onResolution;
+            }
 
             public List<(int TmdbId, string MediaType)> Evictions { get; } = new();
 
@@ -578,6 +672,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             public Task<SeerrUser?> GetSeerrUser(string jellyfinUserId, bool bypassCache = false, bool allowAutoImport = true)
             {
                 Resolutions.Add((bypassCache, allowAutoImport));
+                _onResolution?.Invoke();
                 return Task.FromResult<SeerrUser?>(_user);
             }
 

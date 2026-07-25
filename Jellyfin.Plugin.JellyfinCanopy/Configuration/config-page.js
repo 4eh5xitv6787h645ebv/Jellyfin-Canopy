@@ -1584,7 +1584,8 @@
                 return parsed;
             } catch (e) {
                 _arrParseOK[type] = false;
-                console.error('[JC Config] Failed to parse ' + type + 'Instances — refusing to overwrite on save:', e, raw);
+                var errorClass = e instanceof SyntaxError ? 'SyntaxError' : 'InvalidShape';
+                console.error('[JC Config] Failed to parse ' + type + 'Instances (' + errorClass + ') — refusing to overwrite on save.');
                 insertCorruptBanner(container, type);
                 return [];
             }

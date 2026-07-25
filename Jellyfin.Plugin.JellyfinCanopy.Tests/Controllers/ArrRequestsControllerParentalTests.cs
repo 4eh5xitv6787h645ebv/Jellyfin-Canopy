@@ -47,6 +47,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
         private static readonly Guid RestrictedJellyfinId =
             Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
+        private static readonly Guid AccessibleFourKJellyfinId =
+            Guid.Parse("cccccccc-cccc-cccc-cccc-cccccccccccc");
 
         private static string MovieDetail(string cert) =>
             $@"{{ ""releases"": {{ ""results"": [ {{ ""iso_3166_1"": ""US"", ""release_dates"": [ {{ ""type"": 3, ""certification"": ""{cert}"" }} ] }} ] }} }}";
@@ -76,6 +78,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             {
                 SeerrEnabled = true,
                 SeerrRespectParentalRatings = true,
+                DownloadsPageEnabled = true,
                 SeerrUrls = "http://seerr:5055",
                 SeerrApiKey = "key",
                 DEFAULT_REGION = "US",
@@ -166,8 +169,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             // is inert — this isolates the parental filter. Row for R-rated tmdb 200
             // must be dropped; PG-13 tmdb 100 must survive.
             const string list = @"{ ""results"": [
-                { ""id"": 1, ""type"": ""movie"", ""requestedBy"": { ""id"": 7 }, ""media"": { ""tmdbId"": 100, ""mediaType"": ""movie"" } },
-                { ""id"": 2, ""type"": ""movie"", ""requestedBy"": { ""id"": 7 }, ""media"": { ""tmdbId"": 200, ""mediaType"": ""movie"" } } ],
+                { ""id"": 1, ""type"": ""movie"", ""is4k"": false, ""requestedBy"": { ""id"": 7 }, ""media"": { ""tmdbId"": 100, ""mediaType"": ""movie"" } },
+                { ""id"": 2, ""type"": ""movie"", ""is4k"": false, ""requestedBy"": { ""id"": 7 }, ""media"": { ""tmdbId"": 200, ""mediaType"": ""movie"" } } ],
                 ""pageInfo"": { ""results"": 2 } }";
 
             var controller = BuildController(list, SeerrPermission.REQUEST_VIEW, out _);
@@ -187,6 +190,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                     {
                       "id": 1,
                       "type": "movie",
+                      "is4k": false,
                       "requestedBy": { "id": 7 },
                       "media": {
                         "tmdbId": 100,
@@ -197,6 +201,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                     {
                       "id": 2,
                       "type": "movie",
+                      "is4k": false,
                       "requestedBy": { "id": 7 },
                       "media": {
                         "tmdbId": 200,
@@ -207,6 +212,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                     {
                       "id": 3,
                       "type": "movie",
+                      "is4k": false,
                       "requestedBy": { "id": 7 },
                       "media": {
                         "tmdbId": 100,
@@ -246,6 +252,373 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
         }
 
         [Fact]
+        public async Task GetRequests_AppliesEditionSpecificLibraryScopeBeforePagingAndProjection()
+        {
+            var list = $$"""
+                {
+                  "results": [
+                    {
+                      "id": 1,
+                      "type": "movie",
+                      "is4k": true,
+                      "requestedBy": { "id": 7 },
+                      "media": {
+                        "tmdbId": 100,
+                        "mediaType": "movie",
+                        "jellyfinMediaId4k": "{{AccessibleFourKJellyfinId}}"
+                      }
+                    },
+                    {
+                      "id": 2,
+                      "type": "movie",
+                      "is4k": true,
+                      "requestedBy": { "id": 7 },
+                      "media": {
+                        "tmdbId": 100,
+                        "mediaType": "movie",
+                        "jellyfinMediaId4k": "{{RestrictedJellyfinId}}"
+                      }
+                    },
+                    {
+                      "id": 3,
+                      "type": "movie",
+                      "is4k": false,
+                      "requestedBy": { "id": 7 },
+                      "media": {
+                        "tmdbId": 100,
+                        "mediaType": "movie",
+                        "jellyfinMediaId": "{{AccessibleJellyfinId}}",
+                        "jellyfinMediaId4k": "{{RestrictedJellyfinId}}"
+                      }
+                    },
+                    {
+                      "id": 4,
+                      "type": "movie",
+                      "is4k": true,
+                      "requestedBy": { "id": 7 },
+                      "media": {
+                        "tmdbId": 100,
+                        "mediaType": "movie",
+                        "jellyfinMediaId": "{{RestrictedJellyfinId}}",
+                        "jellyfinMediaId4k": "{{AccessibleFourKJellyfinId}}"
+                      }
+                    },
+                    {
+                      "id": 5,
+                      "type": "movie",
+                      "is4k": false,
+                      "requestedBy": { "id": 7 },
+                      "media": {
+                        "tmdbId": 100,
+                        "mediaType": "movie",
+                        "jellyfinMediaId": "{{RestrictedJellyfinId}}",
+                        "jellyfinMediaId4k": "{{AccessibleFourKJellyfinId}}"
+                      }
+                    },
+                    {
+                      "id": 6,
+                      "type": "movie",
+                      "is4k": true,
+                      "requestedBy": { "id": 7 },
+                      "media": {
+                        "tmdbId": 100,
+                        "mediaType": "movie",
+                        "jellyfinMediaId": "{{AccessibleJellyfinId}}",
+                        "jellyfinMediaId4k": "{{RestrictedJellyfinId}}"
+                      }
+                    },
+                    {
+                      "id": 7,
+                      "type": "movie",
+                      "is4k": false,
+                      "requestedBy": { "id": 7 },
+                      "media": {
+                        "tmdbId": 100,
+                        "mediaType": "movie",
+                        "jellyfinMediaId": null,
+                        "jellyfinMediaId4k": "{{RestrictedJellyfinId}}"
+                      }
+                    },
+                    {
+                      "id": 8,
+                      "type": "movie",
+                      "is4k": true,
+                      "requestedBy": { "id": 7 },
+                      "media": {
+                        "tmdbId": 100,
+                        "mediaType": "movie",
+                        "jellyfinMediaId": "{{AccessibleJellyfinId}}",
+                        "jellyfinMediaId4k": "{{AccessibleJellyfinId}}"
+                      }
+                    }
+                  ],
+                  "pageInfo": { "results": 8 }
+                }
+                """;
+            var queriedIds = new List<IReadOnlyCollection<Guid>>();
+            var lookup = new StubItemLookupService((itemIds, _) =>
+            {
+                queriedIds.Add(itemIds.ToArray());
+                return itemIds
+                    .Where(id => id is var value
+                        && (value == AccessibleJellyfinId
+                            || value == AccessibleFourKJellyfinId))
+                    .ToHashSet();
+            });
+            var controller = BuildController(
+                list,
+                SeerrPermission.REQUEST_VIEW,
+                out _,
+                parentalFilterOverride: new PassthroughParentalFilter(),
+                itemLookup: lookup);
+
+            var paged = ResponseBody(await controller.GetRequests(take: 2));
+            Assert.Equal(5, (int?)paged["totalResults"]);
+            Assert.Equal(3, (int?)paged["totalPages"]);
+            Assert.Equal(
+                new[] { 1, 3 },
+                Assert.IsType<JsonArray>(paged["requests"])
+                    .Select(row => (int)row!["id"]!)
+                    .ToArray());
+
+            var complete = ResponseBody(await controller.GetRequests(take: 20));
+            var requests = Assert.IsType<JsonArray>(complete["requests"]);
+            Assert.Equal(
+                new[] { 1, 3, 4, 7, 8 },
+                requests.Select(row => (int)row!["id"]!).ToArray());
+            Assert.Equal(
+                AccessibleFourKJellyfinId.ToString(),
+                (string?)requests.Single(row => (int)row!["id"]! == 1)!["jellyfinMediaId"]);
+            Assert.Equal(
+                AccessibleJellyfinId.ToString(),
+                (string?)requests.Single(row => (int)row!["id"]! == 3)!["jellyfinMediaId"]);
+            Assert.Equal(
+                AccessibleFourKJellyfinId.ToString(),
+                (string?)requests.Single(row => (int)row!["id"]! == 4)!["jellyfinMediaId"]);
+            Assert.Null(requests.Single(row => (int)row!["id"]! == 7)!["jellyfinMediaId"]);
+            Assert.Equal(
+                AccessibleJellyfinId.ToString(),
+                (string?)requests.Single(row => (int)row!["id"]! == 8)!["jellyfinMediaId"]);
+            Assert.Equal(2, lookup.AccessQueryCount);
+            Assert.All(queriedIds, ids => Assert.Equal(
+                new[]
+                {
+                    AccessibleJellyfinId,
+                    RestrictedJellyfinId,
+                    AccessibleFourKJellyfinId,
+                }.OrderBy(id => id),
+                ids.OrderBy(id => id)));
+        }
+
+        [Fact]
+        public async Task GetRequests_AdminDoesNotBypassRestrictedFourKEdition()
+        {
+            var list = $$"""
+                {
+                  "results": [{
+                    "id": 1,
+                    "type": "movie",
+                    "is4k": true,
+                    "requestedBy": { "id": 7 },
+                    "media": {
+                      "tmdbId": 100,
+                      "mediaType": "movie",
+                      "jellyfinMediaId": "{{AccessibleJellyfinId}}",
+                      "jellyfinMediaId4k": "{{RestrictedJellyfinId}}"
+                    }
+                  }],
+                  "pageInfo": { "results": 1 }
+                }
+                """;
+            var controller = BuildController(
+                list,
+                SeerrPermission.REQUEST_VIEW,
+                out _,
+                parentalFilterOverride: new PassthroughParentalFilter(),
+                isAdmin: true,
+                itemLookup: new StubItemLookupService(
+                    (itemIds, _) => itemIds
+                        .Where(id => id == AccessibleJellyfinId)
+                        .ToHashSet()));
+
+            var body = ResponseBody(await controller.GetRequests());
+
+            Assert.Empty(Assert.IsType<JsonArray>(body["requests"]));
+            Assert.Equal(0, (int?)body["totalResults"]);
+        }
+
+        [Fact]
+        public async Task GetRequests_AllUnlinkedEditionsNeedNoLibraryQuery()
+        {
+            const string list = """
+                {
+                  "results": [{
+                    "id": 1,
+                    "type": "movie",
+                    "is4k": true,
+                    "requestedBy": { "id": 7 },
+                    "media": {
+                      "tmdbId": 100,
+                      "mediaType": "movie",
+                      "jellyfinMediaId": "",
+                      "jellyfinMediaId4k": " "
+                    }
+                  }],
+                  "pageInfo": { "results": 1 }
+                }
+                """;
+            var lookup = new StubItemLookupService();
+            var controller = BuildController(
+                list,
+                SeerrPermission.REQUEST_VIEW,
+                out _,
+                parentalFilterOverride: new PassthroughParentalFilter(),
+                itemLookup: lookup);
+
+            var body = ResponseBody(await controller.GetRequests());
+
+            var request = Assert.Single(Assert.IsType<JsonArray>(body["requests"]));
+            Assert.Null(request!["jellyfinMediaId"]);
+            Assert.Equal(0, lookup.AccessQueryCount);
+        }
+
+        [Theory]
+        [InlineData("\"true\"", "\"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\"", "\"cccccccc-cccc-cccc-cccc-cccccccccccc\"")]
+        [InlineData("null", "\"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\"", "\"cccccccc-cccc-cccc-cccc-cccccccccccc\"")]
+        [InlineData("true", "\"not-a-guid\"", "\"cccccccc-cccc-cccc-cccc-cccccccccccc\"")]
+        [InlineData("false", "\"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\"", "{}")]
+        [InlineData("true", "\"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\"", "\"00000000-0000-0000-0000-000000000000\"")]
+        [InlineData("false", "42", "null")]
+        public async Task GetRequests_MalformedEditionOrEitherKnownIdPublishesNoPrefix(
+            string is4kJson,
+            string standardIdJson,
+            string fourKIdJson)
+        {
+            var list = $$"""
+                {
+                  "results": [
+                    {
+                      "id": 1,
+                      "type": "movie",
+                      "is4k": false,
+                      "requestedBy": { "id": 7 },
+                      "media": { "tmdbId": 100, "mediaType": "movie" }
+                    },
+                    {
+                      "id": 2,
+                      "type": "movie",
+                      "is4k": {{is4kJson}},
+                      "requestedBy": { "id": 7 },
+                      "media": {
+                        "tmdbId": 100,
+                        "mediaType": "movie",
+                        "jellyfinMediaId": {{standardIdJson}},
+                        "jellyfinMediaId4k": {{fourKIdJson}}
+                      }
+                    }
+                  ],
+                  "pageInfo": { "results": 2 }
+                }
+                """;
+            var lookup = new StubItemLookupService();
+            var controller = BuildController(
+                list,
+                SeerrPermission.REQUEST_VIEW,
+                out _,
+                parentalFilterOverride: new PassthroughParentalFilter(),
+                itemLookup: lookup);
+
+            var result = Assert.IsAssignableFrom<ObjectResult>(
+                await controller.GetRequests());
+            var body = ResponseBody(result);
+
+            Assert.Equal(502, result.StatusCode);
+            Assert.Equal("library_scope_incomplete", (string?)body["code"]);
+            Assert.Empty(Assert.IsType<JsonArray>(body["requests"]));
+            Assert.Equal(0, (int?)body["totalResults"]);
+            Assert.Equal(0, lookup.AccessQueryCount);
+        }
+
+        [Fact]
+        public async Task GetRequests_MissingEditionFlagPublishesNoPrefix()
+        {
+            const string list = """
+                {
+                  "results": [{
+                    "id": 1,
+                    "type": "movie",
+                    "requestedBy": { "id": 7 },
+                    "media": {
+                      "tmdbId": 100,
+                      "mediaType": "movie",
+                      "jellyfinMediaId": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+                    }
+                  }],
+                  "pageInfo": { "results": 1 }
+                }
+                """;
+            var lookup = new StubItemLookupService();
+            var controller = BuildController(
+                list,
+                SeerrPermission.REQUEST_VIEW,
+                out _,
+                parentalFilterOverride: new PassthroughParentalFilter(),
+                itemLookup: lookup);
+
+            var result = Assert.IsAssignableFrom<ObjectResult>(
+                await controller.GetRequests());
+            var body = ResponseBody(result);
+
+            Assert.Equal(502, result.StatusCode);
+            Assert.Equal("library_scope_incomplete", (string?)body["code"]);
+            Assert.Empty(Assert.IsType<JsonArray>(body["requests"]));
+            Assert.Equal(0, lookup.AccessQueryCount);
+        }
+
+        [Theory]
+        [InlineData(false)]
+        [InlineData(true)]
+        public async Task GetRequests_FourKLibraryLookupFailurePublishesNoPrefix(
+            bool returnNull)
+        {
+            const string list = """
+                {
+                  "results": [{
+                    "id": 1,
+                    "type": "movie",
+                    "is4k": true,
+                    "requestedBy": { "id": 7 },
+                    "media": {
+                      "tmdbId": 100,
+                      "mediaType": "movie",
+                      "jellyfinMediaId4k": "cccccccc-cccc-cccc-cccc-cccccccccccc"
+                    }
+                  }],
+                  "pageInfo": { "results": 1 }
+                }
+                """;
+            var lookup = new StubItemLookupService((_, _) =>
+                returnNull
+                    ? null!
+                    : throw new InvalidOperationException("library unavailable"));
+            var controller = BuildController(
+                list,
+                SeerrPermission.REQUEST_VIEW,
+                out _,
+                parentalFilterOverride: new PassthroughParentalFilter(),
+                itemLookup: lookup);
+
+            var result = Assert.IsAssignableFrom<ObjectResult>(
+                await controller.GetRequests());
+            var body = ResponseBody(result);
+
+            Assert.Equal(502, result.StatusCode);
+            Assert.Equal("library_scope_incomplete", (string?)body["code"]);
+            Assert.Empty(Assert.IsType<JsonArray>(body["requests"]));
+            Assert.Equal(1, lookup.AccessQueryCount);
+        }
+
+        [Fact]
         public async Task GetRequests_AdminDoesNotBypassJellyfinLibraryScope()
         {
             var list = $$"""
@@ -254,6 +627,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                     {
                       "id": 1,
                       "type": "movie",
+                      "is4k": false,
                       "requestedBy": { "id": 7 },
                       "media": {
                         "tmdbId": 200,
@@ -264,6 +638,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                     {
                       "id": 2,
                       "type": "movie",
+                      "is4k": false,
                       "requestedBy": { "id": 99 },
                       "media": {
                         "tmdbId": 100,
@@ -303,6 +678,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                     {
                       "id": 1,
                       "type": "movie",
+                      "is4k": false,
                       "requestedBy": { "id": 7 },
                       "media": {
                         "tmdbId": 100,
@@ -313,6 +689,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                     {
                       "id": 2,
                       "type": "movie",
+                      "is4k": false,
                       "requestedBy": { "id": 7 },
                       "media": {
                         "tmdbId": 100,
@@ -352,6 +729,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                     {
                       "id": 1,
                       "type": "movie",
+                      "is4k": false,
                       "requestedBy": { "id": 7 },
                       "media": {
                         "tmdbId": 100,
@@ -381,8 +759,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
         public async Task GetCompleteUserRequestSnapshot_FiltersOnlyAfterCompleteCollection()
         {
             const string list = @"{ ""results"": [
-                { ""id"": 1, ""type"": ""movie"", ""requestedBy"": { ""id"": 7 }, ""media"": { ""tmdbId"": 100, ""mediaType"": ""movie"" } },
-                { ""id"": 2, ""type"": ""movie"", ""requestedBy"": { ""id"": 7 }, ""media"": { ""tmdbId"": 200, ""mediaType"": ""movie"" } } ],
+                { ""id"": 1, ""type"": ""movie"", ""is4k"": false, ""requestedBy"": { ""id"": 7 }, ""media"": { ""tmdbId"": 100, ""mediaType"": ""movie"" } },
+                { ""id"": 2, ""type"": ""movie"", ""is4k"": false, ""requestedBy"": { ""id"": 7 }, ""media"": { ""tmdbId"": 200, ""mediaType"": ""movie"" } } ],
                 ""pageInfo"": { ""page"": 1, ""pages"": 1, ""pageSize"": 2, ""results"": 2 } }";
 
             var controller = BuildController(list, SeerrPermission.NONE, out var handler);
@@ -410,8 +788,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
         public async Task GetCompleteUserRequestSnapshot_DropsForeignRowsFromCalendarProjection()
         {
             const string list = @"{ ""results"": [
-                { ""id"": 1, ""type"": ""movie"", ""requestedBy"": { ""id"": 7 }, ""media"": { ""tmdbId"": 100, ""mediaType"": ""movie"" } },
-                { ""id"": 2, ""type"": ""movie"", ""requestedBy"": { ""id"": 99 }, ""media"": { ""tmdbId"": 100, ""mediaType"": ""movie"" } } ],
+                { ""id"": 1, ""type"": ""movie"", ""is4k"": false, ""requestedBy"": { ""id"": 7 }, ""media"": { ""tmdbId"": 100, ""mediaType"": ""movie"" } },
+                { ""id"": 2, ""type"": ""movie"", ""is4k"": false, ""requestedBy"": { ""id"": 99 }, ""media"": { ""tmdbId"": 100, ""mediaType"": ""movie"" } } ],
                 ""pageInfo"": { ""page"": 1, ""pages"": 1, ""pageSize"": 2, ""results"": 2 } }";
             var controller = BuildController(list, SeerrPermission.NONE, out _);
 
@@ -426,8 +804,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
         public async Task GetCompleteUserRequestSnapshot_RequestViewerRetainsAuthorizedForeignRows()
         {
             const string list = @"{ ""results"": [
-                { ""id"": 1, ""type"": ""movie"", ""requestedBy"": { ""id"": 7 }, ""media"": { ""tmdbId"": 100, ""mediaType"": ""movie"" } },
-                { ""id"": 2, ""type"": ""movie"", ""requestedBy"": { ""id"": 99 }, ""media"": { ""tmdbId"": 100, ""mediaType"": ""movie"" } } ],
+                { ""id"": 1, ""type"": ""movie"", ""is4k"": false, ""requestedBy"": { ""id"": 7 }, ""media"": { ""tmdbId"": 100, ""mediaType"": ""movie"" } },
+                { ""id"": 2, ""type"": ""movie"", ""is4k"": false, ""requestedBy"": { ""id"": 99 }, ""media"": { ""tmdbId"": 100, ""mediaType"": ""movie"" } } ],
                 ""pageInfo"": { ""page"": 1, ""pages"": 1, ""pageSize"": 2, ""results"": 2 } }";
             var controller = BuildController(list, SeerrPermission.REQUEST_VIEW, out var handler);
 
@@ -455,8 +833,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
         public async Task GetCompleteUserRequestSnapshot_JellyfinAdminGlobalRead_OmitsApiUserAndOwnerScope()
         {
             const string list = @"{ ""results"": [
-                { ""id"": 1, ""type"": ""movie"", ""requestedBy"": { ""id"": 7 }, ""media"": { ""tmdbId"": 100, ""mediaType"": ""movie"" } },
-                { ""id"": 2, ""type"": ""movie"", ""requestedBy"": { ""id"": 99 }, ""media"": { ""tmdbId"": 200, ""mediaType"": ""movie"" } } ],
+                { ""id"": 1, ""type"": ""movie"", ""is4k"": false, ""requestedBy"": { ""id"": 7 }, ""media"": { ""tmdbId"": 100, ""mediaType"": ""movie"" } },
+                { ""id"": 2, ""type"": ""movie"", ""is4k"": false, ""requestedBy"": { ""id"": 99 }, ""media"": { ""tmdbId"": 200, ""mediaType"": ""movie"" } } ],
                 ""pageInfo"": { ""page"": 1, ""pages"": 1, ""pageSize"": 2, ""results"": 2 } }";
             var controller = BuildController(
                 list,
@@ -483,8 +861,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
         public async Task GetCompleteUserRequestSnapshot_UserOnlyOverridesRequestViewPermission()
         {
             const string list = @"{ ""results"": [
-                { ""id"": 1, ""type"": ""movie"", ""requestedBy"": { ""id"": 7 }, ""media"": { ""tmdbId"": 100, ""mediaType"": ""movie"" } },
-                { ""id"": 2, ""type"": ""movie"", ""requestedBy"": { ""id"": 99 }, ""media"": { ""tmdbId"": 100, ""mediaType"": ""movie"" } } ],
+                { ""id"": 1, ""type"": ""movie"", ""is4k"": false, ""requestedBy"": { ""id"": 7 }, ""media"": { ""tmdbId"": 100, ""mediaType"": ""movie"" } },
+                { ""id"": 2, ""type"": ""movie"", ""is4k"": false, ""requestedBy"": { ""id"": 99 }, ""media"": { ""tmdbId"": 100, ""mediaType"": ""movie"" } } ],
                 ""pageInfo"": { ""page"": 1, ""pages"": 1, ""pageSize"": 2, ""results"": 2 } }";
             var controller = BuildController(list, SeerrPermission.REQUEST_VIEW, out var handler);
 
@@ -515,6 +893,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                     {
                       "id": 1,
                       "type": "movie",
+                      "is4k": false,
                       "requestedBy": {
                         "id": 7,
                         "email": "requester-private@example.test",
@@ -586,6 +965,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                     {
                       "id": 1,
                       "type": "movie",
+                      "is4k": false,
                       "requestedBy": { "id": 7 },
                       "media": {
                         "tmdbId": 100,
@@ -598,6 +978,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                     {
                       "id": 2,
                       "type": "tv",
+                      "is4k": false,
                       "requestedBy": { "id": 7 },
                       "media": {
                         "tmdbId": 200,
@@ -636,7 +1017,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
         public async Task GetCompleteUserRequestSnapshot_MalformedParentalOutputReturns502()
         {
             const string list = @"{ ""results"": [
-                { ""id"": 1, ""type"": ""movie"", ""requestedBy"": { ""id"": 7 }, ""media"": { ""tmdbId"": 100, ""mediaType"": ""movie"" } } ],
+                { ""id"": 1, ""type"": ""movie"", ""is4k"": false, ""requestedBy"": { ""id"": 7 }, ""media"": { ""tmdbId"": 100, ""mediaType"": ""movie"" } } ],
                 ""pageInfo"": { ""page"": 1, ""pages"": 1, ""pageSize"": 1, ""results"": 1 } }";
             var controller = BuildController(
                 list,
@@ -700,7 +1081,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
         public async Task GetCompleteUserRequestSnapshot_InvalidOwnedRow_Returns502WithoutPrefix()
         {
             const string list = @"{ ""results"": [
-                { ""id"": 1, ""type"": ""movie"", ""media"": { ""tmdbId"": 100, ""mediaType"": ""movie"" } } ],
+                { ""id"": 1, ""type"": ""movie"", ""is4k"": false, ""media"": { ""tmdbId"": 100, ""mediaType"": ""movie"" } } ],
                 ""pageInfo"": { ""page"": 1, ""pages"": 1, ""pageSize"": 1, ""results"": 1 } }";
             var controller = BuildController(list, SeerrPermission.NONE, out _);
 
@@ -716,7 +1097,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
         public async Task GetCompleteUserRequestSnapshot_MissingRequestId_ReturnsIncompleteWithoutPrefix()
         {
             const string list = @"{ ""results"": [
-                { ""type"": ""movie"", ""requestedBy"": { ""id"": 7 }, ""media"": { ""tmdbId"": 100, ""mediaType"": ""movie"" } } ],
+                { ""type"": ""movie"", ""is4k"": false, ""requestedBy"": { ""id"": 7 }, ""media"": { ""tmdbId"": 100, ""mediaType"": ""movie"" } } ],
                 ""pageInfo"": { ""page"": 1, ""pages"": 1, ""pageSize"": 1, ""results"": 1 } }";
             var controller = BuildController(list, SeerrPermission.NONE, out _);
 
@@ -732,7 +1113,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
         public async Task GetCompleteUserRequestSnapshot_ParentalFilterThrows_Returns502WithoutRows()
         {
             const string list = @"{ ""results"": [
-                { ""id"": 1, ""type"": ""movie"", ""requestedBy"": { ""id"": 7 }, ""media"": { ""tmdbId"": 100, ""mediaType"": ""movie"" } } ],
+                { ""id"": 1, ""type"": ""movie"", ""is4k"": false, ""requestedBy"": { ""id"": 7 }, ""media"": { ""tmdbId"": 100, ""mediaType"": ""movie"" } } ],
                 ""pageInfo"": { ""page"": 1, ""pages"": 1, ""pageSize"": 1, ""results"": 1 } }";
             var controller = BuildController(
                 list,
@@ -755,7 +1136,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             // rating (PG-13) but is owned by a different Seerr user (99), simulating a
             // dropped/ignored requestedBy scoping. The backstop must drop it.
             const string list = @"{ ""results"": [
-                { ""id"": 1, ""type"": ""movie"", ""requestedBy"": { ""id"": 99 }, ""media"": { ""tmdbId"": 100, ""mediaType"": ""movie"" } } ],
+                { ""id"": 1, ""type"": ""movie"", ""is4k"": false, ""requestedBy"": { ""id"": 99 }, ""media"": { ""tmdbId"": 100, ""mediaType"": ""movie"" } } ],
                 ""pageInfo"": { ""results"": 1 } }";
 
             var controller = BuildController(list, SeerrPermission.NONE, out _);
@@ -771,8 +1152,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             // A user with no parental limit (and view permission) sees every row,
             // proving the gate is per-caller and not a blanket filter.
             const string list = @"{ ""results"": [
-                { ""id"": 1, ""type"": ""movie"", ""requestedBy"": { ""id"": 7 }, ""media"": { ""tmdbId"": 100, ""mediaType"": ""movie"" } },
-                { ""id"": 2, ""type"": ""movie"", ""requestedBy"": { ""id"": 7 }, ""media"": { ""tmdbId"": 200, ""mediaType"": ""movie"" } } ],
+                { ""id"": 1, ""type"": ""movie"", ""is4k"": false, ""requestedBy"": { ""id"": 7 }, ""media"": { ""tmdbId"": 100, ""mediaType"": ""movie"" } },
+                { ""id"": 2, ""type"": ""movie"", ""is4k"": false, ""requestedBy"": { ""id"": 7 }, ""media"": { ""tmdbId"": 200, ""mediaType"": ""movie"" } } ],
                 ""pageInfo"": { ""results"": 2 } }";
 
             var handler = new RecordingHttpMessageHandler();
@@ -785,6 +1166,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             {
                 SeerrEnabled = true,
                 SeerrRespectParentalRatings = true,
+                DownloadsPageEnabled = true,
                 SeerrUrls = "http://seerr:5055",
                 SeerrApiKey = "key",
                 DEFAULT_REGION = "US",

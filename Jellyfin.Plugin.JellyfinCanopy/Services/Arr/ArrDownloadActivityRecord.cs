@@ -70,6 +70,19 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
 
         public DateTimeOffset? OccurredAt { get; init; }
 
+        /// <summary>
+        /// Cache-owned time at which Canopy first observed a terminal state in the live queue.
+        /// ARR's queue <c>added</c> value is the download-start time, not terminal-event time,
+        /// so it must not be used to age terminal queue evidence.
+        /// </summary>
+        public DateTimeOffset? TerminalFirstObservedAt { get; init; }
+
+        /// <summary>
+        /// Server-internal retention boundary for reused collection rows and queue
+        /// disappearance handoffs. This is deliberately not projected onto the wire.
+        /// </summary>
+        public DateTimeOffset? SnapshotExpiresAt { get; init; }
+
         public bool TransitionPending { get; init; }
 
         public bool Stale { get; init; }

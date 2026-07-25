@@ -157,6 +157,42 @@ public class CalendarEventAccessResolverTests
     }
 
     [Fact]
+    public void DeduplicateAndFilter_EqualCandidatesHaveSameWinnerAfterInstanceReorder()
+    {
+        static ArrItem Winner(bool reverse)
+        {
+            var first = Movie("radarr:bbbb", "/movies-b/Foo", tmdb: 42);
+            first.Id = "Radarr|bbbb|2-DigitalRelease";
+            first.InstanceName = "Movies B";
+            first.ItemId = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
+            first.HasFile = true;
+            var second = Movie("radarr:aaaa", "/movies-a/Foo", tmdb: 42);
+            second.Id = "Radarr|aaaa|1-DigitalRelease";
+            second.InstanceName = "Movies A";
+            second.ItemId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+            second.HasFile = true;
+            var states = new Dictionary<ArrItem, CalendarAccessState>
+            {
+                [first] = CalendarAccessState.Accessible,
+                [second] = CalendarAccessState.Accessible,
+            };
+
+            return Assert.Single(CalendarEventAccessResolver.DeduplicateAndFilter(
+                reverse ? new[] { second, first } : new[] { first, second },
+                states,
+                true,
+                ArrCalendarController.BuildDedupKey));
+        }
+
+        var configuredOrder = Winner(reverse: false);
+        var reordered = Winner(reverse: true);
+
+        Assert.Equal("Radarr|aaaa|1-DigitalRelease", configuredOrder.Id);
+        Assert.Equal(configuredOrder.Id, reordered.Id);
+        Assert.Equal(configuredOrder.ItemId, reordered.ItemId);
+    }
+
+    [Fact]
     public void DeduplicateAndFilter_FinalFilterHidesLoneInaccessibleAndUnresolvedEvents()
     {
         var inaccessible = Movie("radarr:0", "/vault/Foo", tmdb: 1);

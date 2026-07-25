@@ -160,6 +160,255 @@ public sealed class ArrDownloadLifecycleTests
     }
 
     [Fact]
+    public void Reconcile_MismatchedImportedEntitiesCountOnlyExpectedMembers()
+    {
+        var at = DateTimeOffset.Parse("2026-07-25T10:00:00Z");
+        var history = new[]
+        {
+            Authorized(History("h1", "pack", "episode:1", at, "grabbed")),
+            Authorized(History("h2", "pack", "episode:2", at, "grabbed")),
+            Authorized(History("h3", "pack", "episode:2", at.AddMinutes(1), "downloadFolderImported")),
+            Authorized(History("h4", "pack", "episode:3", at.AddMinutes(2), "downloadFolderImported")),
+        };
+
+        var result = ArrDownloadActivityReconciler.Reconcile(
+            Array.Empty<ArrAuthorizedRecord>(),
+            history);
+
+        var partial = Assert.Single(result.Active);
+        Assert.Equal(ArrDownloadReasonCodes.PartialImport, partial.ReasonCode);
+        Assert.Equal(1, partial.ImportedCount);
+        Assert.Equal(2, partial.ExpectedCount);
+        Assert.True(partial.Partial);
+    }
+
+    [Fact]
+    public void Reconcile_ExtraImportedEntitiesNeverExceedExpectedCount()
+    {
+        var at = DateTimeOffset.Parse("2026-07-25T10:00:00Z");
+        var history = new[]
+        {
+            Authorized(History("h1", "pack", "episode:1", at, "grabbed")),
+            Authorized(History("h2", "pack", "episode:2", at, "grabbed")),
+            Authorized(History("h3", "pack", "episode:1", at.AddMinutes(1), "downloadFolderImported")),
+            Authorized(History("h4", "pack", "episode:2", at.AddMinutes(2), "downloadFolderImported")),
+            Authorized(History("h5", "pack", "episode:3", at.AddMinutes(3), "downloadFolderImported")),
+        };
+
+        var result = ArrDownloadActivityReconciler.Reconcile(
+            Array.Empty<ArrAuthorizedRecord>(),
+            history);
+
+        var imported = Assert.Single(result.History);
+        Assert.Equal(ArrDownloadLifecycles.Imported, imported.Lifecycle);
+        Assert.Equal(2, imported.ImportedCount);
+        Assert.Equal(2, imported.ExpectedCount);
+        Assert.False(imported.Partial);
+    }
+
+    [Fact]
+    public void Reconcile_ImportsOutsideExpectedSetNeverClaimPartialOrSuccess()
+    {
+        var at = DateTimeOffset.Parse("2026-07-25T10:00:00Z");
+        var history = new[]
+        {
+            Authorized(History("h1", "pack", "episode:1", at, "grabbed")),
+            Authorized(History("h2", "pack", "episode:2", at, "grabbed")),
+            Authorized(History(
+                "h3",
+                "pack",
+                "episode:3",
+                at.AddMinutes(1),
+                "downloadFolderImported")),
+        };
+
+        var result = ArrDownloadActivityReconciler.Reconcile(
+            Array.Empty<ArrAuthorizedRecord>(),
+            history);
+
+        Assert.Empty(result.Active);
+        Assert.Empty(result.History);
+    }
+
+    [Theory]
+    [InlineData("failed", "error", ArrDownloadLifecycles.Failed, ArrDownloadReasonCodes.DownloadFailed)]
+    [InlineData("importBlocked", "ok", ArrDownloadLifecycles.Attention, ArrDownloadReasonCodes.ImportBlocked)]
+    [InlineData("downloading", "warning", ArrDownloadLifecycles.Warning, ArrDownloadReasonCodes.DownloadWarning)]
+    public void Reconcile_TransitionPeerNeverMasksStrongerLivePackEvidence(
+        string trackedState,
+        string trackedStatus,
+        string expectedLifecycle,
+        string expectedReason)
+    {
+        var at = DateTimeOffset.Parse("2026-07-25T10:00:00Z");
+        var transition = Queue("q1", "pack", "episode:1", at, "downloading") with
+        {
+            TransitionPending = true,
+            Stale = true,
+        };
+        var live = Queue("q2", "pack", "episode:2", at, trackedState) with
+        {
+            TrackedStatus = trackedStatus,
+        };
+
+        var result = ArrDownloadActivityReconciler.Reconcile(
+            new[] { Authorized(transition), Authorized(live) },
+            Array.Empty<ArrAuthorizedRecord>());
+
+        var activity = Assert.Single(result.Active);
+        Assert.Equal(expectedLifecycle, activity.Lifecycle);
+        Assert.Equal(expectedReason, activity.ReasonCode);
+    }
+
+    [Theory]
+    [InlineData("failed", "error", ArrDownloadLifecycles.Failed, ArrDownloadReasonCodes.DownloadFailed)]
+    [InlineData("importBlocked", "ok", ArrDownloadLifecycles.Attention, ArrDownloadReasonCodes.ImportBlocked)]
+    public void Reconcile_TransitionFallbackNeverMasksItsOwnActionableEvidence(
+        string trackedState,
+        string trackedStatus,
+        string expectedLifecycle,
+        string expectedReason)
+    {
+        var record = Queue(
+            "q1",
+            "job",
+            "episode:1",
+            DateTimeOffset.Parse("2026-07-25T10:00:00Z"),
+            trackedState) with
+        {
+            TrackedStatus = trackedStatus,
+            TransitionPending = true,
+            Stale = true,
+        };
+
+        var result = ArrDownloadActivityReconciler.Reconcile(
+            new[] { Authorized(record) },
+            Array.Empty<ArrAuthorizedRecord>());
+
+        var activity = Assert.Single(result.Active);
+        Assert.Equal(expectedLifecycle, activity.Lifecycle);
+        Assert.Equal(expectedReason, activity.ReasonCode);
+    }
+
+    [Fact]
+    public void Reconcile_TransitionPeerAndImportedSubsetRemainPartialAttention()
+    {
+        var at = DateTimeOffset.Parse("2026-07-25T10:00:00Z");
+        var transition = Queue("q1", "pack", "episode:1", at, "downloading") with
+        {
+            TransitionPending = true,
+            Stale = true,
+        };
+        var imported = Queue("q2", "pack", "episode:2", at, "imported");
+
+        var result = ArrDownloadActivityReconciler.Reconcile(
+            new[] { Authorized(transition), Authorized(imported) },
+            Array.Empty<ArrAuthorizedRecord>());
+
+        var activity = Assert.Single(result.Active);
+        Assert.Equal(ArrDownloadLifecycles.Attention, activity.Lifecycle);
+        Assert.Equal(ArrDownloadReasonCodes.PartialImport, activity.ReasonCode);
+        Assert.Equal(1, activity.ImportedCount);
+        Assert.Equal(2, activity.ExpectedCount);
+        Assert.True(activity.Partial);
+    }
+
+    [Theory]
+    [InlineData("failed", "error", false, ArrDownloadLifecycles.Failed, ArrDownloadReasonCodes.DownloadFailed)]
+    [InlineData("importBlocked", "ok", false, ArrDownloadLifecycles.Attention, ArrDownloadReasonCodes.ImportBlocked)]
+    [InlineData("failed", "error", true, ArrDownloadLifecycles.Failed, ArrDownloadReasonCodes.DownloadFailed)]
+    [InlineData("importBlocked", "ok", true, ArrDownloadLifecycles.Attention, ArrDownloadReasonCodes.ImportBlocked)]
+    public void Reconcile_PartialImportNeverMasksStrongerActionablePackEvidence(
+        string trackedState,
+        string trackedStatus,
+        bool includeTransition,
+        string expectedLifecycle,
+        string expectedReason)
+    {
+        var at = DateTimeOffset.Parse("2026-07-25T10:00:00Z");
+        var rows = new List<ArrAuthorizedRecord>
+        {
+            Authorized(Queue("q1", "pack", "episode:1", at, "imported")),
+            Authorized(Queue("q2", "pack", "episode:2", at, trackedState) with
+            {
+                TrackedStatus = trackedStatus,
+            }),
+        };
+        if (includeTransition)
+        {
+            rows.Add(Authorized(Queue("q3", "pack", "episode:3", at, "downloading") with
+            {
+                TransitionPending = true,
+                Stale = true,
+            }));
+        }
+
+        var result = ArrDownloadActivityReconciler.Reconcile(
+            rows,
+            Array.Empty<ArrAuthorizedRecord>());
+
+        var activity = Assert.Single(result.Active);
+        Assert.Equal(expectedLifecycle, activity.Lifecycle);
+        Assert.Equal(expectedReason, activity.ReasonCode);
+        Assert.Equal(1, activity.ImportedCount);
+        Assert.Equal(includeTransition ? 3 : 2, activity.ExpectedCount);
+        Assert.True(activity.Partial);
+    }
+
+    [Theory]
+    [InlineData("imported", ArrDownloadLifecycles.Imported)]
+    [InlineData("ignored", ArrDownloadLifecycles.Canceled)]
+    public void Reconcile_TerminalQueueSignalsAreRoutedToHistory(
+        string trackedState,
+        string expectedLifecycle)
+    {
+        var queue = Authorized(Queue(
+            "q1",
+            "job",
+            "episode:1",
+            DateTimeOffset.Parse("2026-07-25T10:00:00Z"),
+            trackedState));
+
+        var result = ArrDownloadActivityReconciler.Reconcile(
+            new[] { queue },
+            Array.Empty<ArrAuthorizedRecord>());
+
+        Assert.Empty(result.Active);
+        var terminal = Assert.Single(result.History);
+        Assert.Equal(expectedLifecycle, terminal.Lifecycle);
+        Assert.True(terminal.Terminal);
+    }
+
+    [Fact]
+    public void Reconcile_MixedDatedAndUndatedPackCannotBeErasedByOldTerminalHistory()
+    {
+        var at = DateTimeOffset.Parse("2026-07-25T10:00:00Z");
+        var queue = new[]
+        {
+            Authorized(Queue("q1", "reused", "episode:1", at, "importing")),
+            Authorized(Queue("q2", "reused", "episode:2", at, "importing") with
+            {
+                OccurredAt = null,
+            }),
+        };
+        var history = new[]
+        {
+            Authorized(History("h1", "reused", "episode:1", at.AddMinutes(1), "grabbed")),
+            Authorized(History(
+                "h2",
+                "reused",
+                "episode:1",
+                at.AddMinutes(2),
+                "downloadFolderImported")),
+        };
+
+        var result = ArrDownloadActivityReconciler.Reconcile(queue, history);
+
+        Assert.Single(result.Active);
+        Assert.Single(result.History);
+    }
+
+    [Fact]
     public void Reconcile_RegrabWithReusedDownloadIdPreservesBothAttempts()
     {
         var at = DateTimeOffset.Parse("2026-07-25T10:00:00Z");
@@ -313,6 +562,50 @@ public sealed class ArrDownloadLifecycleTests
     }
 
     [Fact]
+    public void Reconcile_MixedTimestampPackRetainsLiveRetryAfterTerminalEvent()
+    {
+        var terminalAt = DateTimeOffset.Parse("2026-07-25T10:00:00Z");
+        var history = new[]
+        {
+            Authorized(History(
+                "h1",
+                "reused-pack",
+                "episode:1",
+                terminalAt.AddMinutes(-2),
+                "grabbed")),
+            Authorized(History(
+                "h2",
+                "reused-pack",
+                "episode:1",
+                terminalAt,
+                "downloadFolderImported")),
+        };
+        var queue = new[]
+        {
+            Authorized(Queue(
+                "q1",
+                "reused-pack",
+                "episode:1",
+                terminalAt.AddMinutes(-1),
+                "downloading")),
+            Authorized(Queue(
+                "q2",
+                "reused-pack",
+                "episode:2",
+                terminalAt.AddMinutes(1),
+                "downloading")),
+        };
+
+        var result = ArrDownloadActivityReconciler.Reconcile(queue, history);
+
+        var active = Assert.Single(result.Active);
+        Assert.Equal(2, active.GroupCount);
+        var terminal = Assert.Single(result.History);
+        Assert.Equal(ArrDownloadLifecycles.Imported, terminal.Lifecycle);
+        Assert.NotEqual(active.Id, terminal.Id);
+    }
+
+    [Fact]
     public void Reconcile_StrongKeyJoinWorkRemainsLinearAtLargeScale()
     {
         const int activityCount = 4_096;
@@ -363,6 +656,11 @@ public sealed class ArrDownloadLifecycleTests
 
         Assert.Equal(2, result.History.Count);
         Assert.Equal(2, result.History.Select(item => item.Id).Distinct().Count());
+        Assert.All(result.History, item =>
+        {
+            Assert.Null(item.ExpectedCount);
+            Assert.Equal(1, item.ImportedCount);
+        });
     }
 
     [Fact]
@@ -512,6 +810,9 @@ public sealed class ArrDownloadLifecycleTests
         var input = Activity(ArrDownloadSections.Processing, ArrDownloadLifecycles.Attention);
         input.ReasonCode = ArrDownloadReasonCodes.ImportBlocked;
         input.Provenance = ArrDownloadProvenance.SeerrAssociated;
+        input.Partial = true;
+        input.ImportedCount = 1;
+        input.ExpectedCount = 2;
         var projected = ArrDownloadActivityService.ApplyVisibility(
             input,
             new ArrDownloadAccessContext
@@ -526,7 +827,36 @@ public sealed class ArrDownloadLifecycleTests
         Assert.Equal(ArrDownloadLifecycles.WaitingForImport, projected.Lifecycle);
         Assert.Null(projected.ReasonCode);
         Assert.Null(projected.Provenance);
+        Assert.False(projected.Partial);
+        Assert.Null(projected.ImportedCount);
+        Assert.Null(projected.ExpectedCount);
         Assert.NotEqual(ArrDownloadLifecycles.Imported, projected.Lifecycle);
+    }
+
+    [Fact]
+    public void VisibilityPolicy_SimplifiedLifecycleHidesPartialCountDetail()
+    {
+        var input = Activity(ArrDownloadSections.Processing, ArrDownloadLifecycles.Attention);
+        input.ReasonCode = ArrDownloadReasonCodes.PartialImport;
+        input.Partial = true;
+        input.ImportedCount = 1;
+        input.ExpectedCount = 3;
+
+        var projected = ArrDownloadActivityService.ApplyVisibility(
+            input,
+            new ArrDownloadAccessContext
+            {
+                AllowProcessing = true,
+                AllowWarnings = true,
+                DetailedLifecycle = false,
+            });
+
+        Assert.NotNull(projected);
+        Assert.Equal(ArrDownloadLifecycles.Attention, projected.Lifecycle);
+        Assert.Equal(ArrDownloadReasonCodes.PartialImport, projected.ReasonCode);
+        Assert.False(projected.Partial);
+        Assert.Null(projected.ImportedCount);
+        Assert.Null(projected.ExpectedCount);
     }
 
     [Fact]

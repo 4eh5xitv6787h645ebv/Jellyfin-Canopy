@@ -384,6 +384,7 @@ public sealed class ArrRequestsEnrichmentConcurrencyTests
             SeerrUrls = seerrUrls,
             SeerrApiKey = "key",
             SeerrDisableCache = false,
+            DownloadsPageEnabled = true,
         });
 
     private static ArrRequestsController BuildController(

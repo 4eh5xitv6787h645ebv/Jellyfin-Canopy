@@ -283,10 +283,23 @@ export const state: RequestsPageState = {
     searchDebounceTimer: null,
 };
 
-/** A browser-retained last-good activity snapshot may never outlive the server cache bound. */
+/** A browser-retained stale activity snapshot may never outlive the server cache bound. */
 export const DOWNLOADS_SNAPSHOT_RETENTION_MS = 5 * 60 * 1000;
 
-let downloadsSnapshotReceivedAt: number | null = null;
+interface DownloadsStaleLease {
+    signature: string;
+    expiresAt: number;
+    scope: string;
+    itemId: string | null;
+}
+
+const downloadsStaleScopeLeases = new Map<string, DownloadsStaleLease>();
+let downloadsLastSuccessfulExpiresAt: number | null = null;
+let downloadsWholeSnapshotExpiresAt: number | null = null;
+let downloadsStaleMetadataExpiresAt: number | null = null;
+let downloadsStaleMetadataInvalidated = false;
+let downloadsCurrentEnvelopeStale = false;
+let downloadsScheduledExpiryAt: number | null = null;
 let downloadsSnapshotExpiryTimer: ReturnType<typeof setTimeout> | null = null;
 
 function clearDownloadsSnapshotExpiryTimer(): void {
@@ -294,20 +307,16 @@ function clearDownloadsSnapshotExpiryTimer(): void {
         clearTimeout(downloadsSnapshotExpiryTimer);
         downloadsSnapshotExpiryTimer = null;
     }
+    downloadsScheduledExpiryAt = null;
 }
 
-/**
- * Retire media-bearing rows once the bounded last-good handoff expires. Keep the
- * explicit error/degraded state so an outage can never become a convincing
- * empty queue.
- */
-function expireRetainedDownloadsSnapshot(expectedReceivedAt: number): void {
-    if (!state.downloadsHasSnapshot
-        || !state.downloadsError
-        || downloadsSnapshotReceivedAt !== expectedReceivedAt) return;
-
-    clearDownloadsSnapshotExpiryTimer();
-    downloadsSnapshotReceivedAt = null;
+function clearRetainedDownloadsSnapshot(): void {
+    downloadsStaleScopeLeases.clear();
+    downloadsLastSuccessfulExpiresAt = null;
+    downloadsWholeSnapshotExpiresAt = null;
+    downloadsStaleMetadataExpiresAt = null;
+    downloadsStaleMetadataInvalidated = false;
+    downloadsCurrentEnvelopeStale = false;
     state.downloads = [];
     state.downloadHistory = [];
     state.downloadSources = [];
@@ -320,28 +329,339 @@ function expireRetainedDownloadsSnapshot(expectedReceivedAt: number): void {
     state.historyTotalPages = 1;
     state.historyTruncated = false;
     state.downloadsActiveTruncated = false;
+    state.downloadsError = true;
     state.downloadsDegraded = true;
     state.downloadsStale = true;
-    renderPage();
+}
+
+function downloadScopeKey(source: string, instanceId: string): string {
+    return `${String(source.length)}:${source}${String(instanceId.length)}:${instanceId}`;
+}
+
+function serverCaptureLease(
+    source: DownloadSourceStatus | undefined,
+    generatedAt: string | null,
+    scope: string,
+    requestStartedAt: number
+): DownloadsStaleLease {
+    const generatedAtMs = generatedAt === null ? Number.NaN : Date.parse(generatedAt);
+    const capturedAtMs = source?.capturedAt
+        ? Date.parse(source.capturedAt)
+        : Number.NaN;
+    if (!Number.isFinite(generatedAtMs)
+        || !Number.isFinite(capturedAtMs)
+        || capturedAtMs > generatedAtMs) {
+        return {
+            signature: `invalid:${source?.capturedAt ?? 'missing'}`,
+            expiresAt: requestStartedAt,
+            scope,
+            itemId: null,
+        };
+    }
+
+    const ageAtGeneration = generatedAtMs - capturedAtMs;
+    return {
+        signature: `capture:${String(capturedAtMs)}`,
+        expiresAt: requestStartedAt
+            + Math.max(0, DOWNLOADS_SNAPSHOT_RETENTION_MS - ageAtGeneration),
+        scope,
+        itemId: null,
+    };
+}
+
+function nextStaleScopeLeases(
+    sources: readonly DownloadSourceStatus[],
+    active: readonly DownloadActivity[],
+    history: readonly DownloadActivity[],
+    generatedAt: string | null,
+    requestStartedAt: number
+): Map<string, DownloadsStaleLease> {
+    const sourceByScope = new Map(
+        sources.map((source) => [
+            downloadScopeKey(source.source, source.instanceId),
+            source,
+        ])
+    );
+    const serverStaleScopes = new Set<string>();
+    for (const source of sources.filter((entry) =>
+        entry.state === 'stale'
+        || (entry.capturedAt !== null
+            && entry.state !== 'fresh'
+            && entry.state !== 'truncated'))) {
+        serverStaleScopes.add(downloadScopeKey(source.source, source.instanceId));
+    }
+
+    const next = new Map<string, DownloadsStaleLease>();
+    const currentItemByLeaseKey = new Map<string, DownloadActivity>();
+    const addServerLease = (scope: string): void => {
+        const source = sourceByScope.get(scope);
+        const leaseKey = `source:${scope}`;
+        const candidate = serverCaptureLease(
+            source,
+            generatedAt,
+            scope,
+            requestStartedAt
+        );
+        const previous = downloadsStaleScopeLeases.get(leaseKey);
+        next.set(leaseKey, previous?.signature === candidate.signature
+            ? {
+                ...candidate,
+                expiresAt: Math.min(previous.expiresAt, candidate.expiresAt),
+            }
+            : candidate);
+    };
+    serverStaleScopes.forEach(addServerLease);
+
+    for (const item of [...active, ...history]) {
+        const scope = downloadScopeKey(item.source, item.instanceId);
+        const leaseKey = `item:${scope}:${String(item.id.length)}:${item.id}`;
+        currentItemByLeaseKey.set(leaseKey, item);
+        if (!item.stale) continue;
+
+        const source = sourceByScope.get(scope);
+        if (source?.state !== 'fresh' && source?.state !== 'truncated') {
+            if (!serverStaleScopes.has(scope)) {
+                serverStaleScopes.add(scope);
+                addServerLease(scope);
+            }
+            continue;
+        }
+
+        const candidate: DownloadsStaleLease = {
+            signature: `handoff:${item.id}`,
+            expiresAt: requestStartedAt + DOWNLOADS_SNAPSHOT_RETENTION_MS,
+            scope,
+            itemId: item.id,
+        };
+        const previous = downloadsStaleScopeLeases.get(leaseKey);
+        next.set(leaseKey, previous?.signature === candidate.signature
+            ? {
+                ...candidate,
+                expiresAt: Math.min(previous.expiresAt, candidate.expiresAt),
+            }
+            : candidate);
+    }
+
+    // Paging, response caps, and filtered search can temporarily project a
+    // handoff out of the envelope. Keep its original absolute deadline while
+    // absent; a visible non-stale row is the only item-level recovery proof.
+    for (const [leaseKey, previous] of downloadsStaleScopeLeases) {
+        if (previous.itemId === null || next.has(leaseKey)) continue;
+        const current = currentItemByLeaseKey.get(leaseKey);
+        if (current && !current.stale) continue;
+        next.set(leaseKey, previous);
+    }
+
+    return next;
+}
+
+function expireStaleEvidence(
+    expiredScopes: ReadonlySet<string>,
+    expiredItemsByScope: ReadonlyMap<string, ReadonlySet<string>>
+): void {
+    const isExpired = (item: DownloadActivity): boolean => {
+        const scope = downloadScopeKey(item.source, item.instanceId);
+        return expiredScopes.has(scope)
+            || expiredItemsByScope.get(scope)?.has(item.id) === true;
+    };
+    const activeBefore = state.downloads.length;
+    const historyBefore = state.downloadHistory.length;
+    const previousHistoryCount = state.downloadsCounts.history;
+    state.downloads = state.downloads.filter((item) => !item.stale || !isExpired(item));
+    state.downloadHistory = state.downloadHistory
+        .filter((item) => !item.stale || !isExpired(item));
+    state.downloadSources = state.downloadSources.map((source) =>
+        expiredScopes.has(downloadScopeKey(source.source, source.instanceId))
+            ? {
+                ...source,
+                state: source.state === 'stale' ? 'unavailable' : source.state,
+                capturedAt: null,
+            }
+            : source);
+
+    const removedActive = activeBefore - state.downloads.length;
+    const removedHistory = historyBefore - state.downloadHistory.length;
+    const historyMetadataInvalid =
+        expiredScopes.size > 0 || removedHistory > 0;
+    state.downloadsCounts = {
+        downloading: state.downloads.filter((item) => item.section === 'downloading').length,
+        processing: state.downloads.filter((item) => item.section === 'processing').length,
+        history: historyMetadataInvalid
+            ? state.downloadHistory.length
+            : previousHistoryCount,
+    };
+    if (historyMetadataInvalid) {
+        // The retained rows are a known-safe slice, not proof of the newest
+        // complete page: stale scopes may own unknown rows on any server page.
+        state.historyPage = 1;
+        state.historyAppliedPage = 1;
+        state.historyTotalItems = state.downloadHistory.length;
+        state.historyTotalPages = 1;
+        state.historyTruncated = true;
+    }
+    state.downloadsActiveTruncated =
+        state.downloadsActiveTruncated
+        || expiredScopes.size > 0
+        || removedActive > 0;
+    state.downloadsStale = state.downloads.some((item) => item.stale)
+        || state.downloadHistory.some((item) => item.stale)
+        || state.downloadSources.some((source) => source.state === 'stale');
+    state.downloadsError = true;
+    state.downloadsDegraded = true;
+    state.downloadsHasSnapshot = state.downloads.length > 0
+        || state.downloadHistory.length > 0
+        || downloadsStaleScopeLeases.size > 0
+        || state.downloadSources.some((source) =>
+            source.state === 'fresh' || source.state === 'truncated');
+    if (!state.downloadsHasSnapshot) {
+        state.downloadsGeneratedAt = null;
+    }
+
+}
+
+function invalidateStaleEnvelopeMetadata(): void {
+    state.downloadsCounts = {
+        downloading: state.downloads.filter((item) =>
+            item.section === 'downloading').length,
+        processing: state.downloads.filter((item) =>
+            item.section === 'processing').length,
+        history: state.downloadHistory.length,
+    };
+    state.historyPage = 1;
+    state.historyAppliedPage = 1;
+    state.historyTotalItems = state.downloadHistory.length;
+    state.historyTotalPages = 1;
+    state.historyTruncated = true;
+    state.downloadsActiveTruncated = true;
+    state.downloadsStale = state.downloads.some((item) => item.stale)
+        || state.downloadHistory.some((item) => item.stale)
+        || state.downloadSources.some((source) => source.state === 'stale');
+    state.downloadsError = true;
+    state.downloadsDegraded = true;
+}
+
+function invalidateCurrentStaleEnvelope(): void {
+    const expiredScopes = new Set(
+        state.downloadSources
+            .filter((source) => source.state === 'stale'
+                || (source.capturedAt !== null
+                    && source.state !== 'fresh'
+                    && source.state !== 'truncated'))
+            .map((source) => downloadScopeKey(source.source, source.instanceId))
+    );
+    const expiredItemsByScope = new Map<string, Set<string>>();
+    for (const item of [...state.downloads, ...state.downloadHistory]
+        .filter((entry) => entry.stale)) {
+        const scope = downloadScopeKey(item.source, item.instanceId);
+        const ids = expiredItemsByScope.get(scope) ?? new Set<string>();
+        ids.add(item.id);
+        expiredItemsByScope.set(scope, ids);
+    }
+
+    // The global metadata deadline is the conservative backstop for stale
+    // evidence hidden by paging/caps/search, so it also dominates any younger
+    // visible item lease.
+    downloadsStaleScopeLeases.clear();
+    expireStaleEvidence(expiredScopes, expiredItemsByScope);
+    invalidateStaleEnvelopeMetadata();
+}
+
+function clearItemStaleLeases(): void {
+    for (const [leaseKey, lease] of downloadsStaleScopeLeases) {
+        if (lease.itemId !== null) {
+            downloadsStaleScopeLeases.delete(leaseKey);
+        }
+    }
+}
+
+function expireDownloadsRetention(expectedExpiresAt: number): void {
+    if (downloadsScheduledExpiryAt !== expectedExpiresAt) return;
+
+    downloadsSnapshotExpiryTimer = null;
+    downloadsScheduledExpiryAt = null;
+    const now = Date.now();
+    if (downloadsWholeSnapshotExpiresAt !== null
+        && downloadsWholeSnapshotExpiresAt <= now) {
+        clearRetainedDownloadsSnapshot();
+        renderPage();
+        return;
+    }
+
+    let changed = false;
+    const expiredLeases = [...downloadsStaleScopeLeases]
+        .filter(([, lease]) => lease.expiresAt <= now);
+    if (expiredLeases.length > 0) {
+        const expiredScopes = new Set(
+            expiredLeases
+                .map(([, lease]) => lease)
+                .filter((lease) => lease.itemId === null)
+                .map((lease) => lease.scope)
+        );
+        const visibleStaleItems = new Map(
+            [...state.downloads, ...state.downloadHistory]
+                .filter((item) => item.stale)
+                .map((item) => [
+                    `item:${downloadScopeKey(item.source, item.instanceId)}:`
+                        + `${String(item.id.length)}:${item.id}`,
+                    item,
+                ])
+        );
+        const expiredItemsByScope = new Map<string, Set<string>>();
+        for (const [leaseKey, lease] of expiredLeases.filter(([, entry]) =>
+            entry.itemId !== null)) {
+            if (!visibleStaleItems.has(leaseKey)) continue;
+            const ids = expiredItemsByScope.get(lease.scope) ?? new Set<string>();
+            ids.add(lease.itemId as string);
+            expiredItemsByScope.set(lease.scope, ids);
+        }
+        expiredLeases.forEach(([key]) => downloadsStaleScopeLeases.delete(key));
+        if (expiredScopes.size > 0 || expiredItemsByScope.size > 0) {
+            expireStaleEvidence(expiredScopes, expiredItemsByScope);
+            changed = true;
+        }
+    }
+
+    if (!downloadsStaleMetadataInvalidated
+        && downloadsStaleMetadataExpiresAt !== null
+        && downloadsStaleMetadataExpiresAt <= now) {
+        downloadsStaleMetadataInvalidated = true;
+        if (downloadsCurrentEnvelopeStale) {
+            invalidateCurrentStaleEnvelope();
+            changed = true;
+        } else {
+            clearItemStaleLeases();
+        }
+    }
+
+    if (changed) renderPage();
+    scheduleDownloadsSnapshotExpiry();
 }
 
 function scheduleDownloadsSnapshotExpiry(): void {
     clearDownloadsSnapshotExpiryTimer();
-    if (!state.downloadsHasSnapshot
-        || !state.downloadsError
-        || downloadsSnapshotReceivedAt === null) return;
 
-    const expectedReceivedAt = downloadsSnapshotReceivedAt;
-    const remaining = DOWNLOADS_SNAPSHOT_RETENTION_MS
-        - Math.max(0, Date.now() - expectedReceivedAt);
+    const deadlines = [...downloadsStaleScopeLeases.values()]
+        .map((lease) => lease.expiresAt);
+    if (downloadsWholeSnapshotExpiresAt !== null) {
+        deadlines.push(downloadsWholeSnapshotExpiresAt);
+    }
+    if (!downloadsStaleMetadataInvalidated
+        && downloadsStaleMetadataExpiresAt !== null) {
+        deadlines.push(downloadsStaleMetadataExpiresAt);
+    }
+    if (deadlines.length === 0) return;
+
+    const expectedExpiresAt = Math.min(...deadlines);
+    downloadsScheduledExpiryAt = expectedExpiresAt;
+    const remaining = expectedExpiresAt - Date.now();
     if (remaining <= 0) {
-        expireRetainedDownloadsSnapshot(expectedReceivedAt);
+        expireDownloadsRetention(expectedExpiresAt);
         return;
     }
 
     downloadsSnapshotExpiryTimer = setTimeout(() => {
         downloadsSnapshotExpiryTimer = null;
-        expireRetainedDownloadsSnapshot(expectedReceivedAt);
+        expireDownloadsRetention(expectedExpiresAt);
     }, remaining);
 }
 
@@ -710,6 +1030,7 @@ export async function fetchDownloads(signal?: AbortSignal): Promise<unknown> {
         });
         if (requestedSearch) query.set('search', requestedSearch);
 
+        const requestStartedAt = Date.now();
         const data = await api.plugin(`/arr/queue?${query.toString()}`, {
             signal: controller.signal,
         }) as DownloadQueueEnvelope;
@@ -753,7 +1074,8 @@ export async function fetchDownloads(signal?: AbortSignal): Promise<unknown> {
             || uniqueActive.some((item) => item.stale)
             || uniqueHistory.some((item) => item.stale)
             || sources.some((source) => source.state === 'stale');
-        state.downloadsGeneratedAt = nullableString(data.generatedAt);
+        const generatedAt = nullableString(data.generatedAt);
+        state.downloadsGeneratedAt = generatedAt;
         state.downloadsAppliedSearchQuery = requestedSearch;
         state.historyPage = boundedInteger(data.historyPage, state.historyPage, 1);
         state.historyAppliedPage = state.historyPage;
@@ -764,8 +1086,42 @@ export async function fetchDownloads(signal?: AbortSignal): Promise<unknown> {
         state.downloadsActiveTruncated = data.activeTruncated === true;
         state.downloadsError = false;
         state.downloadsHasSnapshot = true;
-        clearDownloadsSnapshotExpiryTimer();
-        downloadsSnapshotReceivedAt = Date.now();
+        downloadsCurrentEnvelopeStale = data.stale === true;
+        downloadsLastSuccessfulExpiresAt =
+            Date.now() + DOWNLOADS_SNAPSHOT_RETENTION_MS;
+        downloadsWholeSnapshotExpiresAt = null;
+        const nextLeases = nextStaleScopeLeases(
+            sources,
+            uniqueActive,
+            uniqueHistory,
+            generatedAt,
+            requestStartedAt
+        );
+        downloadsStaleScopeLeases.clear();
+        nextLeases.forEach((lease, scope) => {
+            downloadsStaleScopeLeases.set(scope, lease);
+        });
+        if (data.stale === true) {
+            const metadataDeadline =
+                requestStartedAt + DOWNLOADS_SNAPSHOT_RETENTION_MS;
+            downloadsStaleMetadataExpiresAt =
+                downloadsStaleMetadataExpiresAt === null
+                    ? metadataDeadline
+                    : Math.min(
+                        downloadsStaleMetadataExpiresAt,
+                        metadataDeadline
+                    );
+            if (downloadsStaleMetadataInvalidated
+                || downloadsStaleMetadataExpiresAt <= Date.now()) {
+                downloadsStaleMetadataInvalidated = true;
+                invalidateCurrentStaleEnvelope();
+            }
+        } else if (!state.downloadsStale && requestedSearch.length === 0) {
+            downloadsStaleMetadataExpiresAt = null;
+            downloadsStaleMetadataInvalidated = false;
+            clearItemStaleLeases();
+        }
+        scheduleDownloadsSnapshotExpiry();
         downloadsFailureToasted = false;
         return data;
     } catch (error) {
@@ -788,6 +1144,14 @@ export async function fetchDownloads(signal?: AbortSignal): Promise<unknown> {
         state.downloadsError = true;
         state.downloadsDegraded = true;
         state.downloadsStale = true;
+        if (state.downloadsHasSnapshot) {
+            const transportDeadline =
+                downloadsLastSuccessfulExpiresAt ?? Date.now();
+            downloadsWholeSnapshotExpiresAt =
+                downloadsWholeSnapshotExpiresAt === null
+                    ? transportDeadline
+                    : Math.min(downloadsWholeSnapshotExpiresAt, transportDeadline);
+        }
         scheduleDownloadsSnapshotExpiry();
         if (!downloadsFailureToasted && typeof JC.toast === 'function') {
             downloadsFailureToasted = true;
@@ -1135,7 +1499,12 @@ export async function handleRequestAction(btn: HTMLButtonElement, action: 'appro
 export function resetRequestsIdentityState(): void {
     if (state.searchDebounceTimer) clearTimeout(state.searchDebounceTimer);
     clearDownloadsSnapshotExpiryTimer();
-    downloadsSnapshotReceivedAt = null;
+    downloadsStaleScopeLeases.clear();
+    downloadsLastSuccessfulExpiresAt = null;
+    downloadsWholeSnapshotExpiresAt = null;
+    downloadsStaleMetadataExpiresAt = null;
+    downloadsStaleMetadataInvalidated = false;
+    downloadsCurrentEnvelopeStale = false;
     Object.assign(state, {
         downloads: [],
         downloadHistory: [],
