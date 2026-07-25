@@ -418,15 +418,26 @@ namespace Jellyfin.Plugin.JellyfinCanopy
             }
         }
 
-        // The single source of truth for the client-script tag. Consumed both by the
+        // The single source of truth for the ordered client-script tags. Consumed both by the
         // request-time injection middleware (ScriptInjectionStartupFilter) and by the
-        // legacy on-disk index.html rewrite, so the two never drift. plugin.js reads
-        // the plugin/version/dev attributes off this tag.
+        // legacy on-disk index.html rewrite, so the two never drift. The no-store
+        // bootstrap captures a document baseline before plugin.js imports the ESM
+        // runtime. plugin.js reads the plugin/version/dev attributes off either tag.
         internal string BuildScriptTag()
         {
             var cacheKey = ScriptCacheKey;
             var devMode = Configuration?.DevMode == true;
-            return $"<script plugin=\"{Name}\" version=\"{cacheKey}\" dev=\"{(devMode ? "true" : "false")}\" src=\"../JellyfinCanopy/script?v={cacheKey}\" defer></script>";
+            return BuildScriptTags(Name, cacheKey, devMode);
+        }
+
+        internal static string BuildScriptTags(
+            string pluginName,
+            string cacheKey,
+            bool devMode)
+        {
+            var attributes = $"plugin=\"{pluginName}\" version=\"{cacheKey}\" dev=\"{(devMode ? "true" : "false")}\"";
+            return $"<script {attributes} data-jc-refresh-bootstrap=\"true\" src=\"../JellyfinCanopy/client-refresh-bootstrap.js?v={cacheKey}\" defer></script>\n"
+                + $"<script {attributes} src=\"../JellyfinCanopy/script?v={cacheKey}\" defer></script>";
         }
 
         // Matches this plugin's injected script tag under its current name AND its

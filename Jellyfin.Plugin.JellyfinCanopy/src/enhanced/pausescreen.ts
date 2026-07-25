@@ -427,7 +427,10 @@ function initializePauseScreen(): void {
         // Idempotent: remove any pre-existing overlay so re-init never stacks a
         // second #pause-screen-overlay (belt-and-braces with the singleton guard).
         const existingOverlay = document.getElementById('pause-screen-overlay');
-        if (existingOverlay) existingOverlay.remove();
+        if (existingOverlay) {
+          JC.core.refreshSafety!.releaseElement(existingOverlay);
+          existingOverlay.remove();
+        }
 
         // Root overlay
         this.overlay = document.createElement("div");
@@ -753,12 +756,14 @@ function initializePauseScreen(): void {
           this.prevFocused = document.activeElement;
           document.documentElement.classList.add('pause-screen-active');
           this.overlay.setAttribute('aria-hidden', 'false');
+          JC.core.refreshSafety!.holdElement(this.overlay, 'modal');
           this.overlayContent.focus();
           }
 
       hideOverlay(dismissed = false) {
           document.documentElement.classList.remove('pause-screen-active');
           this.overlay.setAttribute('aria-hidden', 'true');
+          JC.core.refreshSafety!.releaseElement(this.overlay);
           if (dismissed) {
               this._dismissedThisPause = true;
           }
@@ -1058,6 +1063,7 @@ function initializePauseScreen(): void {
         this.imgBlobCache.clear();
         this.imgProbeCache.clear();
         this.itemCache.clear();
+        if (this.overlay) JC.core.refreshSafety!.releaseElement(this.overlay);
         if (this.overlay?.parentNode) this.overlay.parentNode.removeChild(this.overlay);
         const css = document.getElementById("pause-screen-style");
         if (css) css.remove();

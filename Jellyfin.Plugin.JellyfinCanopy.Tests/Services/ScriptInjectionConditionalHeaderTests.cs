@@ -118,5 +118,38 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             Assert.Equal(200, context.Response.StatusCode);
             Assert.Contains("<body>", body, StringComparison.Ordinal);
         }
+
+        [Fact]
+        public void ReplaceOwnedScriptTags_UpgradesAnIncompleteLegacyLoaderAtomically()
+        {
+            const string legacy =
+                "<script plugin=\"Jellyfin Canopy\" version=\"old\" src=\"../JellyfinCanopy/script?v=old\" defer></script>";
+            const string other =
+                "<script plugin=\"Some Other Plugin\" src=\"other.js\"></script>";
+            var current = JellyfinCanopy.BuildScriptTags(
+                "Jellyfin Canopy",
+                "2.0.0.0-current",
+                devMode: false);
+            var html = $"<html><body>{legacy}{other}</body></html>";
+
+            var rewritten = ScriptInjectionStartupFilter.ReplaceOwnedScriptTags(
+                html,
+                current);
+
+            Assert.DoesNotContain("version=\"old\"", rewritten, StringComparison.Ordinal);
+            Assert.Contains(other, rewritten, StringComparison.Ordinal);
+            Assert.Equal(
+                2,
+                System.Text.RegularExpressions.Regex.Matches(
+                    rewritten,
+                    "plugin=\"Jellyfin Canopy\"").Count);
+            Assert.True(
+                rewritten.IndexOf(
+                    "/client-refresh-bootstrap.js",
+                    StringComparison.Ordinal)
+                < rewritten.IndexOf(
+                    "/JellyfinCanopy/script",
+                    StringComparison.Ordinal));
+        }
     }
 }

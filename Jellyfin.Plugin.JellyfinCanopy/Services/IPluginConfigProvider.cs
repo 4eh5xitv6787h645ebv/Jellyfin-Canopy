@@ -3,6 +3,14 @@ using Jellyfin.Plugin.JellyfinCanopy.Configuration;
 namespace Jellyfin.Plugin.JellyfinCanopy.Services
 {
     /// <summary>
+    /// One atomic view of the live plugin configuration and the process-local
+    /// revision assigned to that exact object.
+    /// </summary>
+    public readonly record struct PluginConfigurationSnapshot(
+        PluginConfiguration? Configuration,
+        long Revision);
+
+    /// <summary>
     /// Injectable seam over the plugin's live configuration, replacing scattered
     /// static <c>JellyfinCanopy.Instance?.Configuration</c> reads so consumers
     /// can be unit-tested with a fake provider.
@@ -13,6 +21,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
     /// </summary>
     public interface IPluginConfigProvider
     {
+        /// <summary>
+        /// Capture the current configuration object and its revision under one
+        /// provider-owned synchronization boundary.
+        /// </summary>
+        PluginConfigurationSnapshot GetSnapshot();
+
         /// <summary>
         /// The live plugin configuration. Throws if the plugin instance is not
         /// loaded yet — only use on paths that cannot run before plugin init.

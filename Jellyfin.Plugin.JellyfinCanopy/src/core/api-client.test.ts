@@ -8,6 +8,7 @@ import {
     isRetryable,
 } from './api-client';
 import { classifyObjectDetails } from './cache-policy';
+import { getRefreshSafetyHoldCount } from './lifecycle';
 import { waitForSharedResult } from './shared-result';
 import { JC } from '../globals';
 import type { IdentityApi, IdentityContext, RetryConfig } from '../types/jc';
@@ -693,6 +694,44 @@ describe('coreFetch identity fencing', () => {
         releases[1](responseJson({ transport: 'untimed' }));
         await expect(timed).resolves.toEqual({ transport: 'timed' });
         await expect(untimed).resolves.toEqual({ transport: 'untimed' });
+    });
+
+    it('holds Smart Refresh from mutation submission through transport settlement', async () => {
+        installIdentity('server-a', 'user-a');
+        installApiClient('user-a', 'token-a', 'server-a');
+        let release!: (response: Response) => void;
+        vi.spyOn(globalThis, 'fetch').mockImplementation(() =>
+            new Promise<Response>((resolve) => { release = resolve; })
+        );
+
+        const mutation = JC.core.api!.fetch('http://jellyfin.test/mutation', {
+            method: 'POST',
+            body: { value: true },
+            skipRetry: true,
+        });
+        await vi.waitFor(() =>
+            expect(getRefreshSafetyHoldCount('pending-write')).toBe(1));
+
+        release(responseJson({ ok: true }));
+        await expect(mutation).resolves.toEqual({ ok: true });
+        expect(getRefreshSafetyHoldCount('pending-write')).toBe(0);
+    });
+
+    it('does not acquire a mutation hold when request serialization fails', async () => {
+        installIdentity('server-a', 'user-a');
+        installApiClient('user-a', 'token-a', 'server-a');
+        const cyclic: Record<string, unknown> = {};
+        cyclic.self = cyclic;
+        const fetchSpy = vi.spyOn(globalThis, 'fetch');
+
+        await expect(JC.core.api!.fetch('http://jellyfin.test/mutation', {
+            method: 'POST',
+            body: cyclic,
+            skipRetry: true,
+        })).rejects.toThrow();
+
+        expect(getRefreshSafetyHoldCount('pending-write')).toBe(0);
+        expect(fetchSpy).not.toHaveBeenCalled();
     });
 
     it('fails closed when the canonical authenticated server is unresolved', async () => {

@@ -18,6 +18,7 @@ import {
 } from './bookmark-identity';
 
 const replacementModalTimers = new Set<number>();
+const replacementModalTimerCleanups = new Map<number, () => void>();
 export const SERIES_ENRICHMENT_CHUNK_SIZE = 50;
 export const SERIES_ENRICHMENT_MAX_URL_LENGTH = 2048;
 const REPLACEMENT_PAGE_SIZE = 500;
@@ -198,12 +199,23 @@ function currentImageApiClient(): ImageApiClient | null {
   return manager?.currentApiClient?.() ?? null;
 }
 
-function scheduleReplacementTask(context: IdentityContext, callback: () => void, delay: number): void {
+function scheduleReplacementTask(
+  context: IdentityContext,
+  callback: () => void,
+  delay: number,
+  cleanup?: () => void
+): void {
   const timer = window.setTimeout(() => {
     replacementModalTimers.delete(timer);
-    if (JC.identity.isCurrent(context)) callback();
+    replacementModalTimerCleanups.delete(timer);
+    try {
+      if (JC.identity.isCurrent(context)) callback();
+    } finally {
+      cleanup?.();
+    }
   }, delay);
   replacementModalTimers.add(timer);
+  if (cleanup) replacementModalTimerCleanups.set(timer, cleanup);
 }
 
 function ownReplacementModal(modal: HTMLElement): void {
@@ -212,6 +224,7 @@ function ownReplacementModal(modal: HTMLElement): void {
 }
 
 function closeReplacementModal(modal: HTMLElement): void {
+  JC.core.refreshSafety!.releaseElement(modal);
   if (!modal.isConnected) return;
   modal.style.opacity = '0';
   const timer = window.setTimeout(() => {
@@ -224,7 +237,12 @@ function closeReplacementModal(modal: HTMLElement): void {
 export function resetBookmarksLibraryReplacementModals(): void {
   for (const timer of replacementModalTimers) window.clearTimeout(timer);
   replacementModalTimers.clear();
-  document.querySelectorAll('[data-jc-bookmark-library-modal="true"]').forEach((modal) => modal.remove());
+  for (const cleanup of replacementModalTimerCleanups.values()) cleanup();
+  replacementModalTimerCleanups.clear();
+  document.querySelectorAll('[data-jc-bookmark-library-modal="true"]').forEach((modal) => {
+    JC.core.refreshSafety!.releaseElement(modal);
+    modal.remove();
+  });
 }
 
 function throwReplacementCancelled(): never {
@@ -500,6 +518,7 @@ function showReplacementSelectionModal(
   `;
 
   document.body.appendChild(modal);
+  JC.core.refreshSafety!.holdElement(modal, 'modal');
 
   let selectedItem: JellyfinReplacementItem | null = null;
 
@@ -738,6 +757,7 @@ function showOrphanedSummaryModal(replacementResults: ReplacementResult[], conte
   `;
 
   document.body.appendChild(modal);
+  JC.core.refreshSafety!.holdElement(modal, 'modal');
 
   const closeDialog = () => closeReplacementModal(modal);
   // Body-level modal: the page's dispose bag closes it on drain.
@@ -755,10 +775,14 @@ function showOrphanedSummaryModal(replacementResults: ReplacementResult[], conte
       if (!JC.identity.isCurrent(context)) return;
       const idx = parseInt(btn.dataset.resultIndex!);
       const result = replacementResults[idx];
+      // This is one uninterrupted user flow: transfer a temporary safety hold
+      // before releasing the summary overlay, then release it only after the
+      // selection overlay has synchronously acquired its own modal hold.
+      const releaseHandoff = JC.core.refreshSafety!.acquireHold('interaction');
       closeDialog();
       scheduleReplacementTask(context, () => {
         showReplacementSelectionModal(result.group, result.matches, context);
-      }, 300);
+      }, 300, releaseHandoff);
     });
   });
 

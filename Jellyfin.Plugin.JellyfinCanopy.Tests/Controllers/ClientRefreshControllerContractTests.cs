@@ -1,5 +1,7 @@
 using System.Security.Claims;
 using System.Reflection;
+using System.Text.Json;
+using System.Linq;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
 using Jellyfin.Plugin.JellyfinCanopy.Controllers;
 using Jellyfin.Plugin.JellyfinCanopy.Services;
@@ -45,6 +47,87 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
         }
 
         [Fact]
+        public void BootstrapEndpoint_IsAnonymousNoStoreJavascriptWithOnlyTheRefreshContract()
+        {
+            var method = typeof(ClientRefreshController).GetMethod(
+                nameof(ClientRefreshController.GetBootstrap));
+            Assert.NotNull(method);
+            Assert.Equal(
+                "client-refresh-bootstrap.js",
+                method!.GetCustomAttribute<HttpGetAttribute>()?.Template);
+            Assert.NotNull(method.GetCustomAttribute<AllowAnonymousAttribute>());
+
+            var controller = CreateController(new RecordingLiveSessionRegistry());
+            var result = Assert.IsType<ContentResult>(controller.GetBootstrap());
+            Assert.Equal("no-store", controller.Response.Headers.CacheControl);
+            Assert.Equal("nosniff", controller.Response.Headers["X-Content-Type-Options"]);
+            Assert.Equal("text/javascript; charset=utf-8", result.ContentType);
+            Assert.StartsWith(
+                "window.__JellyfinCanopyRefreshBootstrap=",
+                result.Content,
+                StringComparison.Ordinal);
+
+            const string prefix = "window.__JellyfinCanopyRefreshBootstrap=";
+            var json = result.Content![prefix.Length..^1];
+            using var document = JsonDocument.Parse(json);
+            var rootKeys = document.RootElement.EnumerateObject()
+                .Select(property => property.Name)
+                .OrderBy(name => name)
+                .ToArray();
+            Assert.Equal(
+                new[]
+                {
+                    "CanopyBuildId",
+                    "ConfigurationRevision",
+                    "ForceRevision",
+                    "JellyfinGeneration",
+                    "Policy",
+                    "SchemaVersion",
+                    "ServerId",
+                },
+                rootKeys);
+            var policyKeys = document.RootElement.GetProperty("Policy")
+                .EnumerateObject()
+                .Select(property => property.Name)
+                .OrderBy(name => name)
+                .ToArray();
+            Assert.Equal(
+                new[]
+                {
+                    "IdleSeconds",
+                    "Mode",
+                    "OnCanopyUpdate",
+                    "OnConfigChange",
+                    "OnJellyfinUpdate",
+                    "PollSeconds",
+                },
+                policyKeys);
+            var state = JsonSerializer.Deserialize<ClientRefreshState>(json);
+            Assert.NotNull(state);
+            Assert.Equal(1, state!.SchemaVersion);
+            Assert.Equal("cccccccccccccccccccccccccccccccc", state.ServerId);
+            Assert.Matches("^[a-f0-9]{64}$", state.CanopyBuildId);
+            Assert.Matches("^[a-f0-9]{64}$", state.JellyfinGeneration);
+        }
+
+        [Theory]
+        [InlineData("1", true)]
+        [InlineData("1720000000000", true)]
+        [InlineData("", false)]
+        [InlineData("-1", false)]
+        [InlineData("1.0", false)]
+        [InlineData("not-a-heartbeat", false)]
+        public void LegacyHeartbeatQuery_IsAcceptedOnlyForTheOldNumericProbe(
+            string value,
+            bool expected)
+        {
+            Assert.Equal(
+                expected,
+                ConfigController.IsLegacyRefreshHeartbeat(
+                    new Microsoft.Extensions.Primitives.StringValues(value)));
+        }
+
+        [Fact]
         public void StateEndpoint_ReturnsNoStoreSnapshotAndRegistersCanopyDevice()
         {
             var userId = Guid.Parse("11111111-1111-1111-1111-111111111111");
@@ -80,6 +163,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
         {
             var state = new ClientRefreshStateService(
                 new FakePluginConfigProvider(new PluginConfiguration()),
+                "cccccccccccccccccccccccccccccccc",
                 "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
             var claims = new List<Claim>();

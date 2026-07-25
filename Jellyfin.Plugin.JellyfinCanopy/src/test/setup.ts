@@ -233,11 +233,19 @@ function testStorageAdapter(getStorage: () => Storage): BrowserStorageAdapter {
 }
 
 const bootstrapJE = {
-    core: { identity },
+    core: {
+        identity,
+        refreshSafety: {
+            acquireHold: () => () => undefined,
+            holdElement: () => () => undefined,
+            releaseElement: () => undefined,
+        },
+    },
     identity,
     pluginConfig: {},
     translations: {},
     pluginVersion: 'test',
+    clientBuildId: 'a'.repeat(64),
     escapeHtml: (value: unknown) => (typeof value === 'string' ? value : ''),
     storage: {
         local: testStorageAdapter(() => window.localStorage),

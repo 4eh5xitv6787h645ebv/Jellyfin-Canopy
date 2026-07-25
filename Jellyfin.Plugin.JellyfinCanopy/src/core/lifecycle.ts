@@ -11,13 +11,229 @@
 
 import { JC } from '../globals';
 import { onNavigate } from './navigation';
-import type { LifecycleApi, LifecycleHandle } from '../types/jc';
+import type {
+    LifecycleApi,
+    LifecycleHandle,
+    RefreshSafetyApi,
+    RefreshSafetyHoldReason,
+} from '../types/jc';
 
 JC.core = JC.core || {};
 
 const logPrefix = '🪼 Jellyfin Canopy: Lifecycle:';
 
 const registry = new Map<string, LifecycleHandle>();
+
+// Document-lifetime Smart Refresh safety is colocated with the core lifecycle
+// owner so it is present in the existing boot graph without another request.
+type SafetyListener = () => void;
+
+const refreshHoldCounts = new Map<RefreshSafetyHoldReason, number>();
+const refreshElementHolds = new WeakMap<HTMLElement, () => void>();
+const refreshSafetyListeners = new Set<SafetyListener>();
+const foregroundListeners = new Set<SafetyListener>();
+let nativeAppPaused = false;
+
+function notifySafetyListeners(listeners: ReadonlySet<SafetyListener>): void {
+    for (const listener of [...listeners]) {
+        try { listener(); } catch (error) {
+            console.warn(`${logPrefix} client-safety listener failed:`, error);
+        }
+    }
+}
+
+function notifyRefreshSafety(): void {
+    notifySafetyListeners(refreshSafetyListeners);
+}
+
+function notifyRefreshSafetyAfterCurrentTurn(): void {
+    // Two microtask hops let a confirmation Promise's already-queued
+    // continuation acquire its write hold first, without leaving an unowned
+    // timer behind during page/feature teardown.
+    queueMicrotask(() => queueMicrotask(notifyRefreshSafety));
+}
+
+export function isClientForeground(documentValue: Document = document): boolean {
+    return !nativeAppPaused && documentValue.visibilityState !== 'hidden';
+}
+
+export function isNativeAppPaused(): boolean {
+    return nativeAppPaused;
+}
+
+export function onClientForegroundSignal(listener: SafetyListener): () => void {
+    foregroundListeners.add(listener);
+    return () => foregroundListeners.delete(listener);
+}
+
+export function onRefreshSafetyChange(listener: SafetyListener): () => void {
+    refreshSafetyListeners.add(listener);
+    return () => refreshSafetyListeners.delete(listener);
+}
+
+export function acquireRefreshSafetyHold(reason: RefreshSafetyHoldReason): () => void {
+    refreshHoldCounts.set(reason, (refreshHoldCounts.get(reason) || 0) + 1);
+    notifyRefreshSafety();
+    let released = false;
+    return () => {
+        if (released) return;
+        released = true;
+        const next = Math.max(0, (refreshHoldCounts.get(reason) || 0) - 1);
+        if (next === 0) refreshHoldCounts.delete(reason);
+        else refreshHoldCounts.set(reason, next);
+        // Closing a confirmation often resolves a Promise whose continuation
+        // begins the confirmed write. Reconsider reloads only after that
+        // continuation has had a chance to acquire its mutation hold.
+        notifyRefreshSafetyAfterCurrentTurn();
+    };
+}
+
+export function holdRefreshSafetyForElement(
+    element: HTMLElement,
+    reason: RefreshSafetyHoldReason = 'modal',
+): () => void {
+    refreshElementHolds.get(element)?.();
+    const releaseCount = acquireRefreshSafetyHold(reason);
+    let released = false;
+    const release = (): void => {
+        if (released) return;
+        released = true;
+        if (refreshElementHolds.get(element) === release) refreshElementHolds.delete(element);
+        releaseCount();
+    };
+    refreshElementHolds.set(element, release);
+    return release;
+}
+
+export function releaseRefreshSafetyForElement(element: Element): void {
+    if (element instanceof HTMLElement) refreshElementHolds.get(element)?.();
+}
+
+export function getRefreshSafetyHoldCount(reason?: RefreshSafetyHoldReason): number {
+    if (reason) return refreshHoldCounts.get(reason) || 0;
+    let total = 0;
+    for (const count of refreshHoldCounts.values()) total += count;
+    return total;
+}
+
+function activeRefreshHoldReason(): string | null {
+    if ((refreshHoldCounts.get('settings-write') || 0) > 0) return 'settings-write';
+    if ((refreshHoldCounts.get('pending-write') || 0) > 0) return 'pending-write';
+    if ((refreshHoldCounts.get('modal') || 0) > 0) return 'dialog';
+    if ((refreshHoldCounts.get('interaction') || 0) > 0) return 'interaction';
+    return null;
+}
+
+const EDITING_ROUTES = new Set([
+    'dashboard',
+    'configurationpage',
+    'metadata',
+    'edititemmetadata',
+    'settings',
+    'profile',
+    'userprofile',
+    'mypreferencesmenu',
+    'mypreferencescontrols',
+    'mypreferencesdisplay',
+    'mypreferenceshome',
+    'mypreferencesplayback',
+    'mypreferencessubtitles',
+]);
+
+export function jellyfinTopLevelRoute(href: string): string {
+    try {
+        const url = new URL(href, window.location.href);
+        const hashMatch = /^#!?\/([^/?#]+)/i.exec(url.hash);
+        const pathSegments = url.pathname.split('/').filter(Boolean);
+        const normalizedSegments = pathSegments.map(
+            (segment) => segment.toLowerCase().replace(/\.html$/i, ''),
+        );
+        const webIndex = normalizedSegments.lastIndexOf('web');
+        const dashboardIndex = normalizedSegments.indexOf('dashboard');
+        const pathRoute = webIndex >= 0
+            ? pathSegments[webIndex + 1]
+            : dashboardIndex >= 0 ? pathSegments[dashboardIndex] : pathSegments.at(-1);
+        const raw = hashMatch?.[1]
+            ?? pathRoute
+            ?? '';
+        return decodeURIComponent(raw).toLowerCase().replace(/\.html$/i, '');
+    } catch {
+        return '';
+    }
+}
+
+export function isEditingRoute(href: string): boolean {
+    return EDITING_ROUTES.has(jellyfinTopLevelRoute(href));
+}
+
+function hasLoadedMedia(element: HTMLMediaElement): boolean {
+    const source = element.currentSrc
+        || element.getAttribute('src')
+        || element.querySelector('source[src]')?.getAttribute('src')
+        || '';
+    return Boolean(source)
+        && !element.ended
+        && (!element.paused
+            || element.readyState > HTMLMediaElement.HAVE_NOTHING);
+}
+
+export function clientRefreshSafetyBlockReason(
+    documentValue: Document = document,
+    href: string = window.location.href,
+    nativePaused: boolean = nativeAppPaused,
+): string | null {
+    if (nativePaused || documentValue.visibilityState === 'hidden') return 'background';
+    const held = activeRefreshHoldReason();
+    if (held) return held;
+    if (isEditingRoute(href)) return 'editing-route';
+    if (jellyfinTopLevelRoute(href) === 'video') return 'playback-route';
+    if (documentValue.fullscreenElement || documentValue.pictureInPictureElement) return 'fullscreen-media';
+
+    const dialogs = documentValue.querySelectorAll<HTMLElement>(
+        '.dialog.opened, .actionSheet.opened, [role="dialog"], [aria-modal="true"]',
+    );
+    if ([...dialogs].some((element) =>
+        !element.closest('[aria-hidden="true"], [hidden]'))) {
+        return 'dialog';
+    }
+
+    const mediaSessionState = navigator.mediaSession?.playbackState;
+    if (mediaSessionState === 'playing' || mediaSessionState === 'paused') return 'media-session';
+    if ([...documentValue.querySelectorAll<HTMLMediaElement>('video, audio')].some(hasLoadedMedia)) {
+        return 'media-element';
+    }
+
+    const active = documentValue.activeElement;
+    if (active instanceof HTMLElement
+        && (active.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName))) {
+        return 'active-editor';
+    }
+    return null;
+}
+
+function foregroundSignal(): void {
+    if (isClientForeground()) notifySafetyListeners(foregroundListeners);
+    // Foreground owners synchronously lower their fresh-state barriers before
+    // safety listeners are allowed to reconsider a pending irreversible action.
+    notifyRefreshSafety();
+}
+
+if (typeof document !== 'undefined' && typeof window !== 'undefined') {
+    document.addEventListener('pause', (event) => {
+        if (event.target !== document) return;
+        nativeAppPaused = true;
+        notifyRefreshSafety();
+    }, true);
+    document.addEventListener('resume', (event) => {
+        if (event.target !== document) return;
+        nativeAppPaused = false;
+        foregroundSignal();
+    }, true);
+    document.addEventListener('visibilitychange', foregroundSignal);
+    for (const type of ['focus', 'online', 'pageshow'] as const) {
+        window.addEventListener(type, foregroundSignal);
+    }
+}
 
 /**
  * Dispose a single tracked resource. Never throws.
@@ -217,6 +433,13 @@ const lifecycle: LifecycleApi = {
     getFeatures: () => [...registry.keys()]
 };
 
+const refreshSafety: RefreshSafetyApi = {
+    acquireHold: acquireRefreshSafetyHold,
+    holdElement: holdRefreshSafetyForElement,
+    releaseElement: releaseRefreshSafetyForElement,
+};
+
 JC.core.lifecycle = lifecycle;
+JC.core.refreshSafety = refreshSafety;
 
 console.log(`${logPrefix} initialized`);

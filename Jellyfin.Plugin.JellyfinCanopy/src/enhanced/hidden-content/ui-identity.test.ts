@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JC } from '../../globals';
+import { getRefreshSafetyHoldCount } from '../../core/lifecycle';
 import type { IdentityContext } from '../../types/jc';
 import { addLibraryHideButtons } from './buttons';
 import { confirmAndHide, showUndoToast } from './dialogs';
@@ -58,9 +59,11 @@ describe('hidden-content identity-owned UI', () => {
         confirmAndHide({ itemId: 'a', name: 'A' });
         const overlayA = document.querySelector<HTMLElement>('.jc-hide-confirm-overlay')!;
         expect(overlayA).toBeTruthy();
+        expect(getRefreshSafetyHoldCount('modal')).toBe(1);
         const suppress = overlayA.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
         suppress.checked = true;
         overlayA.querySelector<HTMLButtonElement>('.jc-hide-confirm-hide')!.click();
+        expect(getRefreshSafetyHoldCount('modal')).toBe(0);
 
         expect(localStorage.getItem('jc_hide_confirm_suppressed_until')).toBeNull();
         expect(localStorage.getItem('jc_hide_confirm_suppressed_until:servera:usera')).toBeTruthy();
@@ -71,6 +74,7 @@ describe('hidden-content identity-owned UI', () => {
 
         // Same normalized user id on another server must not inherit A's 15-minute choice.
         expect(document.querySelector('.jc-hide-confirm-overlay')).toBeTruthy();
+        expect(getRefreshSafetyHoldCount('modal')).toBe(1);
     });
 
     it('synchronously removes A overlays/buttons and makes retained controls inert', async () => {

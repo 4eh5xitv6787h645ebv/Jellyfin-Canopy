@@ -655,6 +655,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services.Seerr
             public PluginConfiguration? ConfigurationOrNull => throw new InvalidOperationException("configuration read failed");
 
             public long ConfigurationRevision => throw new InvalidOperationException("configuration read failed");
+
+            public Jellyfin.Plugin.JellyfinCanopy.Services.PluginConfigurationSnapshot GetSnapshot()
+                => throw new InvalidOperationException("configuration read failed");
         }
 
     }

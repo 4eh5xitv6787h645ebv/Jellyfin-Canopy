@@ -221,5 +221,8 @@ public sealed class SeerrDispatchFenceTests
             Interlocked.Increment(ref _configurationReads) == 1 ? first : second;
 
         public long ConfigurationRevision => 2;
+
+        public Jellyfin.Plugin.JellyfinCanopy.Services.PluginConfigurationSnapshot GetSnapshot()
+            => new(ConfigurationOrNull, ConfigurationRevision);
     }
 }

@@ -50,7 +50,11 @@ let activeElsewhereCleanup: (() => void) | null = null;
 export function resetElsewhereIdentity(): void {
     activeElsewhereCleanup?.();
     activeElsewhereCleanup = null;
-    document.getElementById('streaming-settings-modal')?.remove();
+    const modal = document.getElementById('streaming-settings-modal');
+    if (modal) {
+        JC.core.refreshSafety!.releaseElement(modal);
+        modal.remove();
+    }
     document.querySelectorAll('.streaming-lookup-container').forEach((node) => node.remove());
     document.querySelectorAll('style[data-jellyfin-elsewhere]').forEach((node) => node.remove());
 }
@@ -440,7 +444,11 @@ function initializeElsewhereImpl(): void {
     // Create settings modal
     function createSettingsModal(): void {
         if (!isInitializerCurrent()) return;
-        document.getElementById('streaming-settings-modal')?.remove();
+        const staleModal = document.getElementById('streaming-settings-modal');
+        if (staleModal) {
+            JC.core.refreshSafety!.releaseElement(staleModal);
+            staleModal.remove();
+        }
         const modal = fenceInteractiveRoot(document.createElement('div'));
         modal.id = 'streaming-settings-modal';
         modal.style.cssText = `
@@ -500,6 +508,10 @@ function initializeElsewhereImpl(): void {
 
         modal.appendChild(content);
         document.body.appendChild(modal);
+        const hideSettingsModal = (): void => {
+            JC.core.refreshSafety!.releaseElement(modal);
+            modal.style.display = 'none';
+        };
 
         // Add autocomplete for regions
         const regionsContainer = content.querySelector<HTMLElement>('#regions-autocomplete')!;
@@ -524,7 +536,7 @@ function initializeElsewhereImpl(): void {
 
         document.getElementById('cancel-settings')!.onclick = (event) => {
             if (rejectStaleEvent(event)) return;
-            modal.style.display = 'none';
+            hideSettingsModal();
         };
 
         document.getElementById('save-settings')!.onclick = (event) => {
@@ -559,7 +571,7 @@ function initializeElsewhereImpl(): void {
                 userRegions = selectedRegions;
                 userServices = selectedServices;
                 JC.userConfig.elsewhere = elsewhereSettings;
-                modal.style.display = 'none';
+                hideSettingsModal();
             }).catch(() => undefined).finally(() => {
                 if (isInitializerCurrent()) saveButton.disabled = false;
             });
@@ -569,7 +581,7 @@ function initializeElsewhereImpl(): void {
         modal.onclick = (e) => {
             if (rejectStaleEvent(e)) return;
             if (e.target === modal) {
-                modal.style.display = 'none';
+                hideSettingsModal();
             }
         };
     }
@@ -880,6 +892,7 @@ function initializeElsewhereImpl(): void {
             const modal = document.getElementById('streaming-settings-modal');
             if (modal) {
                 modal.style.display = 'flex';
+                JC.core.refreshSafety!.holdElement(modal, 'modal');
             }
         };
 

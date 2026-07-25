@@ -3,6 +3,7 @@ using Jellyfin.Plugin.JellyfinCanopy.Services;
 using MediaBrowser.Common.Api;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using System.Text.Json;
 
 namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
 {
@@ -29,6 +30,23 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             Response.Headers.CacheControl = "no-store";
             TouchLiveSessionRegistry();
             return Ok(_state.GetState());
+        }
+
+        /// <summary>
+        /// Publish the document's refresh baseline before the classic loader
+        /// imports the ESM runtime. This contains only the same non-secret
+        /// contract as the authenticated state endpoint.
+        /// </summary>
+        [HttpGet("client-refresh-bootstrap.js")]
+        [AllowAnonymous]
+        public ActionResult GetBootstrap()
+        {
+            Response.Headers.CacheControl = "no-store";
+            Response.Headers["X-Content-Type-Options"] = "nosniff";
+            var state = JsonSerializer.Serialize(_state.GetState());
+            return Content(
+                $"window.__JellyfinCanopyRefreshBootstrap={state};",
+                "text/javascript; charset=utf-8");
         }
 
         [HttpPost("client-refresh")]

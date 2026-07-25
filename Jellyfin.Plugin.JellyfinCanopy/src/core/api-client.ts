@@ -814,7 +814,12 @@ async function coreFetch(
         timeoutMs
     } = options;
 
-    const isGet = method.toUpperCase() === 'GET';
+    const normalizedMethod = method.toUpperCase();
+    const isGet = normalizedMethod === 'GET';
+    const isMutation = normalizedMethod === 'POST'
+        || normalizedMethod === 'PUT'
+        || normalizedMethod === 'PATCH'
+        || normalizedMethod === 'DELETE';
     const context = snapshotIdentity(auth);
     const capturedAuthHeaders = auth
         ? authHeadersFor(requestApiClient)
@@ -871,25 +876,12 @@ async function coreFetch(
     }
 
     // One controller exists for every request, regardless of whether the caller
-    // supplied a signal or timeout. It is registered before queueing so a reset
-    // can reject pending A work as well as active A transport.
+    // supplied a signal or timeout. Registration and mutation-safety ownership
+    // begin at the queue boundary after all synchronous request serialization.
     const controller = new AbortController();
-    activeRequestControllers.add(controller);
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
     let unchain: (() => void) | null = null;
-
-    if (signal) {
-        if (signal.aborted) {
-            controller.abort();
-        } else {
-            const onAbort = (): void => controller.abort();
-            signal.addEventListener('abort', onAbort, { once: true });
-            unchain = () => signal.removeEventListener('abort', onAbort);
-        }
-    }
-    if (timeoutMs && timeoutMs > 0) {
-        timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-    }
+    let releaseMutationHold: (() => void) | null = null;
 
     const init: RequestInit = {
         method,
@@ -906,6 +898,19 @@ async function coreFetch(
                 requestHeaders['Content-Type'] = 'application/json';
             }
         }
+    }
+
+    if (signal) {
+        if (signal.aborted) {
+            controller.abort();
+        } else {
+            const onAbort = (): void => controller.abort();
+            signal.addEventListener('abort', onAbort, { once: true });
+            unchain = () => signal.removeEventListener('abort', onAbort);
+        }
+    }
+    if (timeoutMs && timeoutMs > 0) {
+        timeoutId = setTimeout(() => controller.abort(), timeoutMs);
     }
 
     const guard = (): void => assertIdentityCurrent(context, controller.signal, auth);
@@ -968,6 +973,10 @@ async function coreFetch(
     // abort an otherwise-independent waiter for the same cache key.
     const deduplicationSignal = signal || (timeoutMs && timeoutMs > 0 ? controller.signal : undefined);
     try {
+        activeRequestControllers.add(controller);
+        releaseMutationHold = isMutation
+            ? JC.core.refreshSafety!.acquireHold('pending-write')
+            : null;
         const result = await withConcurrencyLimit(
             () => (isGet && identityCacheKey)
                 ? deduplicatedFetch(identityCacheKey, fetchFn, deduplicationSignal)
@@ -981,6 +990,7 @@ async function coreFetch(
         if (timeoutId) clearTimeout(timeoutId);
         if (unchain) unchain();
         activeRequestControllers.delete(controller);
+        releaseMutationHold?.();
     }
 }
 

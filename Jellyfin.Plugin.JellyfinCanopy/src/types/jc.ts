@@ -271,6 +271,21 @@ export interface LifecycleHandle {
     teardownOn(eventName: 'navigate'): () => void;
 }
 
+export type RefreshSafetyHoldReason =
+    | 'modal'
+    | 'pending-write'
+    | 'settings-write'
+    | 'interaction';
+
+export interface RefreshSafetyApi {
+    acquireHold(reason: RefreshSafetyHoldReason): () => void;
+    holdElement(
+        element: HTMLElement,
+        reason?: RefreshSafetyHoldReason
+    ): () => void;
+    releaseElement(element: Element): void;
+}
+
 export interface LifecycleApi {
     register(name: string): LifecycleHandle;
     get(name: string): LifecycleHandle | null;
@@ -662,6 +677,8 @@ export interface JECore {
     identity?: IdentityApi;
     navigation?: NavigationApi;
     lifecycle?: LifecycleApi;
+    /** Document-lifetime Smart Refresh modal/write safety coordination. */
+    refreshSafety?: RefreshSafetyApi;
     dom?: DomApi;
     ui?: UiApi;
     api?: ApiApi;
@@ -701,8 +718,12 @@ export interface JEGlobal extends JellyfinCanopyPublicApi {
     currentSettings?: UserSettings;
     translations: Record<string, string>;
     pluginVersion: string;
-    /** Content-addressed client bundle loaded by js/plugin.js for this document. */
+    /** Content-addressed module graph loaded from the active server. */
     clientBuildId?: string;
+    /** No-store server state captured before the ESM runtime loads. */
+    clientRefreshBootstrap?: unknown;
+    /** Active server whose pre-owner refresh watermark could not be captured. */
+    clientRefreshBootstrapUnavailableServerId?: string;
     initialized?: boolean;
     escapeHtml: (value: unknown) => string;
     toast?: (html: string, duration?: number) => void;

@@ -109,7 +109,10 @@ export function resetHiddenContentPageState(): void {
     pageTimeouts.clear();
     activeUnhideClose?.();
     activeUnhideClose = null;
-    document.querySelectorAll('[data-jc-hidden-page-owner="true"]').forEach((node) => node.remove());
+    document.querySelectorAll('[data-jc-hidden-page-owner="true"]').forEach((node) => {
+        JC.core.refreshSafety!.releaseElement(node);
+        node.remove();
+    });
 
     state.searchQuery = '';
     state.adminLoadToken += 1;
@@ -174,6 +177,7 @@ export function showUnhideConfirmation(message: string, onConfirm: () => void, i
     }
 
     const closeDialog = (): void => {
+        JC.core.refreshSafety!.releaseElement(overlay);
         overlay.remove();
         document.removeEventListener('keydown', escHandler);
         pageHandle?.untrack(closeDialog);
@@ -212,6 +216,7 @@ export function showUnhideConfirmation(message: string, onConfirm: () => void, i
     document.addEventListener('keydown', escHandler);
 
     document.body.appendChild(overlay);
+    JC.core.refreshSafety!.holdElement(overlay, 'modal');
     // Body-level overlay: navigating away must never strand it — the page's
     // dispose bag closes it on drain (closeDialog is idempotent).
     pageHandle?.track(closeDialog);

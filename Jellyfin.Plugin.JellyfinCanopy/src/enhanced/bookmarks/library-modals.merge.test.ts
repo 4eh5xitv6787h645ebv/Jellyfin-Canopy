@@ -4,6 +4,7 @@
 // gated on the durable result of syncBookmarks.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JC } from '../../globals';
+import { getRefreshSafetyHoldCount } from '../../core/lifecycle';
 import { resetBookmarksLibraryModals, showDuplicatesSyncModal } from './library-modals';
 import type { IdentityContext } from '../../types/jc';
 
@@ -93,6 +94,15 @@ describe('bookmarks duplicate merge modal', () => {
     expect(window.confirm).not.toHaveBeenCalled();
     expect(syncBookmarks).not.toHaveBeenCalled();
     expect(modal.isConnected).toBe(true);
+  });
+
+  it('holds Smart Refresh while the custom bookmark overlay is open', () => {
+    showDuplicatesSyncModal(duplicateStore(), context);
+    const modal = modalElement();
+    expect(getRefreshSafetyHoldCount('modal')).toBe(1);
+
+    modal.querySelector<HTMLButtonElement>('.jc-bookmark-btn-cancel')!.click();
+    expect(getRefreshSafetyHoldCount('modal')).toBe(0);
   });
 
   it('labels versions neutrally before selection and target/source only after it', () => {

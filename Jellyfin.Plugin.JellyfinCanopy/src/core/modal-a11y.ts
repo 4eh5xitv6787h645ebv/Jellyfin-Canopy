@@ -8,6 +8,8 @@
 // open-modal counter + the `jc-modal-open` body class — the signal the global
 // key listener reads to suppress shortcuts while any modal is open.
 
+import { JC } from '../globals';
+
 let openModalCount = 0; // the single INT-1 chokepoint
 
 export interface ModalA11yOptions {
@@ -46,6 +48,7 @@ export function installModalA11y(root: HTMLElement, opts: ModalA11yOptions = {})
     else if (opts.label) root.setAttribute('aria-label', opts.label);
 
     const prevFocused = document.activeElement as HTMLElement | null;
+    const releaseRefreshSafety = JC.core.refreshSafety!.holdElement(root, 'modal');
 
     openModalCount++;
     document.body.classList.add('jc-modal-open'); // read by the global key listener (INT-1)
@@ -87,6 +90,7 @@ export function installModalA11y(root: HTMLElement, opts: ModalA11yOptions = {})
             if (released) return;
             released = true;
             document.removeEventListener('keydown', keydown, true);
+            releaseRefreshSafety();
             openModalCount = Math.max(0, openModalCount - 1);
             if (openModalCount === 0) document.body.classList.remove('jc-modal-open');
             if (prevFocused && document.contains(prevFocused)) prevFocused.focus();

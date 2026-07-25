@@ -21,10 +21,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
     /// the web folder (the legacy on-disk rewrite needs a writable web folder /
     /// root container and is wiped on every jellyfin-web update).
     ///
-    /// The filter is deliberately defensive and additive:
+    /// The filter is deliberately defensive and convergent:
     ///   - only ever touches the web index.html response;
-    ///   - idempotent: no-ops if the script tag is already present (e.g. a legacy
-    ///     on-disk rewrite already added it);
+    ///   - removes any legacy/stale Canopy-owned response tags and inserts exactly
+    ///     one current bootstrap+loader pair;
+    ///   - repeated rewrites are idempotent;
     ///   - on any error it serves the original response unchanged, never throwing
     ///     into the pipeline;
     ///   - can be disabled via the DisableScriptInjectionMiddleware config flag.
@@ -133,15 +134,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 // instance is non-null; the enclosing try/catch covers the impossible
                 // case where it isn't.
                 var plugin = JellyfinCanopy.Instance!;
-                // Idempotency guard keyed on the controller endpoint, so we never
-                // double-inject alongside a legacy on-disk tag.
-                var alreadyInjected = html.IndexOf("/JellyfinCanopy/script", StringComparison.OrdinalIgnoreCase) >= 0;
                 var bodyClose = html.LastIndexOf("</body>", StringComparison.OrdinalIgnoreCase);
 
-                if (!alreadyInjected && bodyClose >= 0)
+                if (bodyClose >= 0)
                 {
+                    // A legacy on-disk install may contribute only the classic
+                    // loader, or an immutable stale URL, especially when the web
+                    // root is no longer writable. Replace every owned response tag
+                    // with the complete current bootstrap+loader pair atomically.
                     var tag = plugin.BuildScriptTag();
-                    html = html.Substring(0, bodyClose) + tag + "\n" + html.Substring(bodyClose);
+                    html = ReplaceOwnedScriptTags(html, tag);
 
                     if (System.Threading.Interlocked.Exchange(ref _loggedOnce, 1) == 0)
                     {
@@ -165,6 +167,22 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             context.Response.Headers.Remove("Last-Modified");
             context.Response.Headers.Remove("Accept-Ranges");
             await originalBody.WriteAsync(bytes, 0, bytes.Length).ConfigureAwait(false);
+        }
+
+        internal static string ReplaceOwnedScriptTags(string html, string currentTags)
+        {
+            var bodyClose = html.LastIndexOf("</body>", StringComparison.OrdinalIgnoreCase);
+            if (bodyClose < 0)
+            {
+                return html;
+            }
+
+            var scrubbed = JellyfinCanopy.OwnScriptTagRegex().Replace(html, string.Empty);
+            bodyClose = scrubbed.LastIndexOf("</body>", StringComparison.OrdinalIgnoreCase);
+            return scrubbed.Substring(0, bodyClose)
+                + currentTags
+                + "\n"
+                + scrubbed.Substring(bodyClose);
         }
 
         // Matches the web app shell however it is requested: bare "/web", "/web/"

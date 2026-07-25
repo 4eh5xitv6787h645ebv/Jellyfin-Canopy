@@ -211,18 +211,20 @@ on(LIVE.CONFIG_CHANGED, () => {
     const context = JC.identity.capture();
     if (!context) return;
     const policyState = beginTagPolicyRefresh(context);
+
+    // Invalidate the old configuration generation synchronously. boot.ts
+    // registers this listener before Smart Refresh, so the refresh-state check
+    // triggered by this same push starts only after the blanket abort. Waiting
+    // for the config reads to settle would let that abort cancel the new state
+    // check and defer detection until the next (possibly hourly) policy poll.
+    try {
+        JC.core.api?.manager?.abortAllRequests();
+        JC.core.api?.manager?.clearCache();
+    } catch { /* request manager unavailable — config refresh still proceeds */ }
+
     void (async () => {
         const refreshed = await refreshPluginConfig(context);
         if (!refreshed || refreshed.seq !== refreshSeq || !JC.identity.isCurrent(context)) return;
-
-        // Discovery/Arr responses can depend on Seerr URL, credentials and
-        // feature policy. Once the new configuration generation is current,
-        // cancel old-generation work and drop its shared response cache before
-        // feature listeners re-render.
-        try {
-            JC.core.api?.manager?.abortAllRequests();
-            JC.core.api?.manager?.clearCache();
-        } catch { /* request manager unavailable — feature refresh still proceeds */ }
 
         const observationGeneration = observeTagPolicy(
             policyState,

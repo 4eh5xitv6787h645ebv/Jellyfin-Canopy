@@ -41,6 +41,17 @@ public class LiveNotifierServiceTests
         Assert.Equal(LiveNotifierService.ConfigChangedValue, command.Arguments[LiveNotifierService.MarkerKey]);
     }
 
+    [Fact]
+    public void LegacyConfigChangedCommand_UsesTheSameNumericSuccessorAsHeartbeat()
+    {
+        var command = LiveNotifierService.BuildLegacyConfigChangedCommand("2.0.0.0");
+
+        Assert.Equal("2.0.0.0.1", command.Arguments["Version"]);
+        Assert.Equal(
+            ClientRefreshStateService.CreateLegacyCompatibilityVersion("2.0.0.0"),
+            command.Arguments["Version"]);
+    }
+
     /// <summary>
     /// The <see cref="GeneralCommandType"/> values jellyfin-web's <c>GeneralCommand</c>
     /// handler acts on (mirrors the <c>processGeneralCommand</c> switch + the inputManager

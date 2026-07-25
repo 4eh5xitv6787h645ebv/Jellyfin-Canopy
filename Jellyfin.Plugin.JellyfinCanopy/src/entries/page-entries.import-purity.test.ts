@@ -180,6 +180,15 @@ describe('route page entries', () => {
         );
     });
 
+    it('invalidates old config-generation work before Smart Refresh handles the same push', () => {
+        const bootSource = ts.sys.readFile(`${SRC_ROOT}entries/boot.ts`) ?? '';
+        const configImport = bootSource.indexOf("import '../core/live-config';");
+        const refreshImport = bootSource.indexOf("import '../core/live-update';");
+
+        expect(configImport).toBeGreaterThanOrEqual(0);
+        expect(refreshImport).toBeGreaterThan(configImport);
+    });
+
     it('route-only modules have no top-level DOM, listener, timer, request, or identity calls', () => {
         const cold = new Set(runtimeGraph(`${SRC_ROOT}entries/boot.ts`));
         for (const entry of entries) {

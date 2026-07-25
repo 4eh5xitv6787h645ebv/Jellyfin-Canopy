@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JC } from '../../globals';
+import { getRefreshSafetyHoldCount } from '../../core/lifecycle';
 import type { IdentityContext } from '../../types/jc';
 import { loadUserFileCaseTransform } from '../../test/plugin-loader-harness';
 import { getHiddenData, hiddenIdSet, refresh, resetFromUserConfig, updateSettings } from './data';
 import { hiddenContentRuntimeFeature } from '../../entries/hidden-content-runtime';
 import { createTestFeatureScope, type TestFeatureScope } from '../../test/feature-scope';
+import { adminUnhideForUser, cancelAllPersistence } from './save';
 
 const originalTransformUserFileCase = JC.transformUserFileCase;
 let featureScope: TestFeatureScope | null = null;
@@ -45,6 +47,7 @@ describe('hidden-content identity fencing', () => {
     it('cancels A debounce work synchronously on account transition', async () => {
         const ajax = vi.spyOn(ApiClient, 'ajax').mockResolvedValue({});
         updateSettings({ filterSearch: true });
+        expect(getRefreshSafetyHoldCount('settings-write')).toBe(1);
 
         const ownerB = JC.identity.transition('test-server-id', 'user-b', 'account-switch')!;
         vi.spyOn(ApiClient, 'getCurrentUserId').mockReturnValue('user-b');
@@ -52,6 +55,7 @@ describe('hidden-content identity fencing', () => {
         await vi.advanceTimersByTimeAsync(1_000);
 
         expect(ajax).not.toHaveBeenCalled();
+        expect(getRefreshSafetyHoldCount('settings-write')).toBe(0);
         expect(hiddenIdSet.has('item-a')).toBe(false);
         expect(hiddenIdSet.has('item-b')).toBe(true);
     });
@@ -63,12 +67,14 @@ describe('hidden-content identity fencing', () => {
 
         await vi.advanceTimersByTimeAsync(500);
         expect(ajax).toHaveBeenCalledTimes(1);
+        expect(getRefreshSafetyHoldCount('settings-write')).toBe(1);
 
         JC.identity.transition('test-server-id', 'user-b', 'account-switch');
         vi.spyOn(ApiClient, 'getCurrentUserId').mockReturnValue('user-b');
         await vi.advanceTimersByTimeAsync(30_000);
 
         expect(ajax).toHaveBeenCalledTimes(1);
+        expect(getRefreshSafetyHoldCount('settings-write')).toBe(0);
     });
 
     it('does not reconcile or retry an A request that completes after B activates', async () => {
@@ -90,6 +96,40 @@ describe('hidden-content identity fencing', () => {
 
         expect(ajax).toHaveBeenCalledTimes(1);
         expect(JC.identity.isOwned(getHiddenData(), ownerB)).toBe(true);
+    });
+
+    it('holds refresh from debounce intent through a slow persistence acknowledgement', async () => {
+        let resolvePost!: (value: unknown) => void;
+        const pendingPost = new Promise((resolve) => { resolvePost = resolve; });
+        const ajax = vi.spyOn(ApiClient, 'ajax').mockReturnValue(pendingPost);
+
+        updateSettings({ filterSearch: true });
+        expect(getRefreshSafetyHoldCount('settings-write')).toBe(1);
+        await vi.advanceTimersByTimeAsync(499);
+        expect(ajax).not.toHaveBeenCalled();
+        expect(getRefreshSafetyHoldCount('settings-write')).toBe(1);
+
+        await vi.advanceTimersByTimeAsync(1);
+        expect(ajax).toHaveBeenCalledTimes(1);
+        expect(getRefreshSafetyHoldCount('settings-write')).toBe(1);
+
+        resolvePost({});
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(getRefreshSafetyHoldCount('settings-write')).toBe(0);
+    });
+
+    it('holds refresh through a direct admin mutation', async () => {
+        let resolvePost!: (value: unknown) => void;
+        const pendingPost = new Promise((resolve) => { resolvePost = resolve; });
+        vi.spyOn(ApiClient, 'ajax').mockReturnValue(pendingPost);
+
+        const mutation = adminUnhideForUser('target-user', ['item-key']);
+        expect(getRefreshSafetyHoldCount('pending-write')).toBe(1);
+
+        resolvePost({});
+        await expect(mutation).resolves.toBe(true);
+        expect(getRefreshSafetyHoldCount('pending-write')).toBe(0);
     });
 
     it('does not let a late A retry completion erase B retry state', async () => {
@@ -120,6 +160,77 @@ describe('hidden-content identity fencing', () => {
         await vi.advanceTimersByTimeAsync(1_000);
 
         expect(ajax).toHaveBeenCalledTimes(4);
+    });
+
+    it('keeps dirty data fail-closed after the bounded retry ladder is exhausted', async () => {
+        const ajax = vi.spyOn(ApiClient, 'ajax').mockRejectedValue(new Error('offline'));
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        vi.spyOn(console, 'error').mockImplementation(() => undefined);
+        updateSettings({ filterSearch: true });
+
+        await vi.advanceTimersByTimeAsync(22_000);
+
+        expect(ajax).toHaveBeenCalledTimes(4);
+        expect(getRefreshSafetyHoldCount('settings-write')).toBe(1);
+        cancelAllPersistence();
+        expect(getRefreshSafetyHoldCount('settings-write')).toBe(0);
+    });
+
+    it('keeps dirty data fail-closed when ApiClient disappears before a retry', async () => {
+        const apiClient = globalThis.ApiClient;
+        const ajax = vi.spyOn(ApiClient, 'ajax').mockRejectedValue(new Error('offline'));
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        vi.spyOn(console, 'error').mockImplementation(() => undefined);
+        updateSettings({ filterSearch: true });
+
+        await vi.advanceTimersByTimeAsync(500);
+        expect(ajax).toHaveBeenCalledTimes(1);
+        expect(getRefreshSafetyHoldCount('settings-write')).toBe(1);
+
+        (globalThis as { ApiClient?: JellyfinApiClient }).ApiClient = undefined;
+        try {
+            await vi.advanceTimersByTimeAsync(1_000);
+        } finally {
+            globalThis.ApiClient = apiClient;
+        }
+
+        expect(getRefreshSafetyHoldCount('settings-write')).toBe(1);
+        cancelAllPersistence();
+        expect(getRefreshSafetyHoldCount('settings-write')).toBe(0);
+    });
+
+    it('cancels intent safety while retaining transport safety until an in-flight POST settles', async () => {
+        let resolvePost!: (value: unknown) => void;
+        const pendingPost = new Promise((resolve) => { resolvePost = resolve; });
+        vi.spyOn(ApiClient, 'ajax').mockReturnValue(pendingPost);
+        updateSettings({ filterSearch: true });
+
+        await vi.advanceTimersByTimeAsync(500);
+        expect(getRefreshSafetyHoldCount('settings-write')).toBe(1);
+        expect(getRefreshSafetyHoldCount('pending-write')).toBe(1);
+
+        cancelAllPersistence();
+        expect(getRefreshSafetyHoldCount('settings-write')).toBe(0);
+        expect(getRefreshSafetyHoldCount('pending-write')).toBe(1);
+
+        resolvePost({});
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(getRefreshSafetyHoldCount('pending-write')).toBe(0);
+    });
+
+    it('preserves dirty persistence ownership across a BFCache pagehide', async () => {
+        const ajax = vi.spyOn(ApiClient, 'ajax').mockResolvedValue({});
+        updateSettings({ filterSearch: true });
+        expect(getRefreshSafetyHoldCount('settings-write')).toBe(1);
+
+        window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true }));
+        expect(getRefreshSafetyHoldCount('settings-write')).toBe(1);
+
+        window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }));
+        await vi.advanceTimersByTimeAsync(500);
+        expect(ajax).toHaveBeenCalledTimes(1);
+        expect(getRefreshSafetyHoldCount('settings-write')).toBe(0);
     });
 
     it('drops a late A refresh response instead of publishing it into B', async () => {

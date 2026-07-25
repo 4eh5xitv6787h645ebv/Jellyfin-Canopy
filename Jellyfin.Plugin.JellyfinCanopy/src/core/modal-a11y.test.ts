@@ -1,5 +1,6 @@
 // Unit tests for src/core/modal-a11y.ts (A11Y-1/2/3/5 + INT-1 chokepoint).
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { getRefreshSafetyHoldCount } from './lifecycle';
 import { installModalA11y, isAnyModalOpen } from './modal-a11y';
 
 function modalWithButtons(): { root: HTMLElement; first: HTMLButtonElement; last: HTMLButtonElement } {
@@ -33,10 +34,12 @@ describe('installModalA11y', () => {
         expect(root.getAttribute('aria-labelledby')).toBe('x-title');
         expect(document.body.classList.contains('jc-modal-open')).toBe(true);
         expect(isAnyModalOpen()).toBe(true);
+        expect(getRefreshSafetyHoldCount('modal')).toBe(1);
 
         handle.release();
         expect(document.body.classList.contains('jc-modal-open')).toBe(false);
         expect(isAnyModalOpen()).toBe(false);
+        expect(getRefreshSafetyHoldCount('modal')).toBe(0);
         expect(document.activeElement).toBe(trigger); // focus restored
     });
 

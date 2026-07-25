@@ -141,6 +141,11 @@ export interface ConsoleErrors {
     /** Every HTTP 5xx response. Callers may narrowly classify proven host defects. */
     unexpected5xx(): FailedResponse[];
     /**
+     * Remove only these exact collected 4xx objects after a test has independently
+     * proved their request provenance. Object identity prevents lookalike bypasses.
+     */
+    acknowledgeExpected4xx(responses: readonly FailedResponse[]): void;
+    /**
      * Remove only these exact collected 5xx objects after a test has proved
      * they came from an intentional route. Object identity prevents callers
      * from fabricating a lookalike response to bypass the teardown gate.
@@ -216,6 +221,15 @@ export const test = base.extend<Fixtures>({
                     (r) => r.status < 500 && !ALLOWED_4XX_URL.some((rx) => rx.test(r.url))
                 ),
             unexpected5xx: () => failed.filter((r) => r.status >= 500),
+            acknowledgeExpected4xx: (responses) => {
+                const acknowledged = new Set(responses);
+                for (let index = failed.length - 1; index >= 0; index--) {
+                    const response = failed[index];
+                    if (response.status < 500 && acknowledged.has(response)) {
+                        failed.splice(index, 1);
+                    }
+                }
+            },
             acknowledgeExpected5xx: (responses) => {
                 const acknowledged = new Set(responses);
                 for (let index = failed.length - 1; index >= 0; index--) {

@@ -166,9 +166,32 @@ test.describe('live updates', () => {
     test('smart refresh reloads at a safe point and defers active playback', async ({ page, consoleErrors, baseURL }) => {
         await loginAs(page, 'admin', consoleErrors);
 
+        const bootstrap = await page.evaluate(() => {
+            const JC = (window as any).JellyfinCanopy;
+            const scripts = [...document.querySelectorAll<HTMLScriptElement>(
+                'script[plugin="Jellyfin Canopy"]'
+            )].map(script => script.src);
+            return {
+                state: JC.clientRefreshBootstrap,
+                bootstrapIndex: scripts.findIndex(src => src.includes('/client-refresh-bootstrap.js')),
+                loaderIndex: scripts.findIndex(src => /\/JellyfinCanopy\/script(?:\?|$)/.test(src)),
+            };
+        });
+        expect(bootstrap.state).toMatchObject({
+            SchemaVersion: 1,
+            ServerId: expect.stringMatching(/^[a-f0-9]{32}$/),
+            CanopyBuildId: expect.stringMatching(/^[a-f0-9]{64}$/),
+            JellyfinGeneration: expect.stringMatching(/^[a-f0-9]{64}$/),
+            ConfigurationRevision: expect.any(Number),
+            ForceRevision: expect.any(Number),
+        });
+        expect(bootstrap.bootstrapIndex).toBeGreaterThanOrEqual(0);
+        expect(bootstrap.loaderIndex).toBeGreaterThan(bootstrap.bootstrapIndex);
+
         const admin = await authenticate(baseURL!, USERS.admin.username, USERS.admin.password);
         const state = await api<{
             SchemaVersion: number;
+            ServerId: string;
             CanopyBuildId: string;
             JellyfinGeneration: string;
             ConfigurationRevision: number;
@@ -181,6 +204,7 @@ test.describe('live updates', () => {
         });
         expect(state!.CanopyBuildId).toMatch(/^[a-f0-9]{64}$/);
         expect(state!.JellyfinGeneration).toMatch(/^[a-f0-9]{64}$/);
+        expect(state!.ServerId).toBe(bootstrap.state.ServerId);
 
         const configPath = `/Plugins/${PLUGIN_ID}/Configuration`;
         const original = await api<Record<string, unknown>>(baseURL!, configPath, admin.token);
@@ -235,6 +259,11 @@ test.describe('live updates', () => {
             consoleErrors.reset();
 
             const playbackOrigin = await page.evaluate(() => performance.timeOrigin);
+            const postChangeState = page.waitForResponse(
+                response => response.url().includes('/JellyfinCanopy/client-refresh-state')
+                    && response.status() === 200,
+                { timeout: 30_000 }
+            );
             await api(baseURL!, configPath, admin.token, {
                 method: 'POST',
                 body: JSON.stringify({
@@ -244,7 +273,7 @@ test.describe('live updates', () => {
             });
 
             await page.waitForSelector('#jc-client-refresh-notice', { timeout: 30_000 });
-            await page.waitForTimeout(2_000);
+            await postChangeState;
             expect(await page.evaluate(() => performance.timeOrigin)).toBe(playbackOrigin);
             expect(page.url()).toContain('/#/video');
             expect(await page.locator('video').evaluate((video) =>

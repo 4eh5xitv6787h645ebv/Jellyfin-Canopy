@@ -440,6 +440,11 @@ test('account switching scopes logout Axios noise to the phase-local response cl
     assert.match(source, /isExpectedSignedOutHomeAxios401\(detail, evidence, hasAllowedHost401\)/);
     assert.match(source, /response\.status === 401\s*&& isExpectedSignedOutHostLogout4xx\(response, evidence\)/);
     assert.match(source, /failed\.filter\(\(response\) => !isExpectedSignedOutHostLogout4xx\(response, evidence\)\)/);
+    assert.match(source, /tokenMatchesRevokedA2:\s*authorizationToken\(/);
+    assert.match(source, /isExactDelayedBitrateProbe\(failedResponse,\s*logoutA2\)/);
+    assert.match(source, /consoleErrors\.acknowledgeExpected4xx\(observedB2Failures\)/);
+    assert.match(source, /consoleErrors\.acknowledgeExpected4xx\(observedB2Failures\);\s*assertNoRuntimeErrors\(consoleErrors\)/);
+    assert.doesNotMatch(source, /'B2 \/ delayed Jellyfin logout probes'/);
     assert.doesNotMatch(source, /HOST_LOGOUT_NOISE[\s\S]*AxiosError/);
 });
 
