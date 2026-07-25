@@ -15,7 +15,6 @@ const {
     requirePluginReleaseLine,
     validateReleaseVersion,
 } = require('./version-policy.js');
-const { compareVersions } = require('./validate-manifest.js');
 const { writeZipFixture } = require('../lib/zip-test-fixture.js');
 
 const ROOT = path.resolve(__dirname, '../..');
@@ -23,12 +22,12 @@ const MANIFEST = path.join(ROOT, 'manifest.json');
 const PROJECT = path.join(ROOT, 'Jellyfin.Plugin.JellyfinCanopy', 'JellyfinCanopy.csproj');
 const SCRIPT = path.join(__dirname, 'version-policy.js');
 
-function readCatalogBefore(version) {
+function readHistoricalCatalogFixture() {
     const manifest = JSON.parse(fs.readFileSync(MANIFEST, 'utf8'));
-    return manifest.map(plugin => ({
-        ...plugin,
-        versions: plugin.versions.filter(entry => compareVersions(entry.version, version) < 0),
-    }));
+    assert.equal(manifest.length, 1, 'version-policy fixture expects Canopy as the sole catalog plugin');
+    const historical = manifest[0].versions.find(entry => entry.version === '2.0.0.0');
+    assert.ok(historical, 'version-policy fixture requires the retained 2.0.0.0 catalog entry');
+    return [{ ...manifest[0], versions: [historical] }];
 }
 
 test('plugin tags normalize independently from the Jellyfin target ABI', () => {
@@ -43,7 +42,7 @@ test('plugin tags normalize independently from the Jellyfin target ABI', () => {
     );
 });
 
-test('the documented tag example is monotonic against an older catalog fixture', () => {
+test('the documented tag example is monotonic against the explicit 2.0.0.0 fixture', () => {
     const releasing = fs.readFileSync(path.join(ROOT, 'RELEASING.md'), 'utf8');
     const example = releasing.match(/git tag (\d+\.\d+\.\d+\.\d+)/)?.[1];
     assert.ok(example, 'RELEASING.md must contain a four-part git tag example');
@@ -56,8 +55,8 @@ test('the documented tag example is monotonic against an older catalog fixture',
         version: '2.0.1.0',
         targetAbi: '12.0.0.0',
     });
-    const manifest = readCatalogBefore(result.version);
-    assert.ok(manifest.some(plugin => plugin.versions.length > 0));
+    const manifest = readHistoricalCatalogFixture();
+    assert.deepEqual(manifest[0].versions.map(entry => entry.version), ['2.0.0.0']);
     assert.doesNotThrow(() => requireNewPluginVersion(result.version, manifest));
 });
 
@@ -138,7 +137,7 @@ test('manifest generation writes plugin version 2.0.1.0 with ABI 12 independentl
         const zipName = 'Jellyfin.Plugin.JellyfinCanopy_12.0.0.zip';
         const zipPath = path.join(temporary, zipName);
         const wrongZipPath = path.join(temporary, 'Jellyfin.Plugin.JellyfinCanopy_13.0.0.zip');
-        const manifest = readCatalogBefore('2.0.1.0');
+        const manifest = readHistoricalCatalogFixture();
         fs.writeFileSync(manifestPath, JSON.stringify(manifest));
         fs.writeFileSync(changelogPath, 'Version-policy fixture');
         writeZipFixture(zipPath, [

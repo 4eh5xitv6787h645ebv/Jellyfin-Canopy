@@ -99,11 +99,19 @@ test('release reuses exact-SHA Build/Test and Security gates after ancestry proo
     assert.match(security, /pull_request:[\s\S]*?workflow_dispatch:\s*\n\s+workflow_call:/);
     assert.match(release, /security-gates:[\s\S]*?with:\n\s+verify_repository_policy: true/);
     assert.match(security, /workflow_call:[\s\S]*?secrets:\n\s+REPOSITORY_POLICY_TOKEN:[\s\S]*?required: true/);
+    const repositoryPolicyCondition = security.match(
+        /  repository-policy:\n[\s\S]*?\n    if: ([^\n]+)\n/
+    )?.[1];
+    assert.equal(
+        repositoryPolicyCondition,
+        "github.event_name == 'schedule' || inputs.verify_repository_policy"
+    );
     assert.match(security, /repository-policy:\n\s+name: Repository Policy[\s\S]*?if: github\.event_name == 'schedule' \|\| inputs\.verify_repository_policy[\s\S]*?actions: read\n\s+contents: read[\s\S]*?verify-repository-policy\.js/);
     assert.match(security, /Checkout reviewed source[\s\S]*?persist-credentials: false/);
     assert.match(security, /Verify live release policy matches the committed contract\n\s+env:\n\s+GH_TOKEN: \$\{\{ github\.token \}\}\n\s+RULESET_TOKEN: \$\{\{ secrets\.REPOSITORY_POLICY_TOKEN \}\}/);
     assert.match(release, /security-gates:[\s\S]*?secrets:\n\s+REPOSITORY_POLICY_TOKEN: \$\{\{ secrets\.REPOSITORY_POLICY_TOKEN \}\}[\s\S]*?actions: read\n\s+contents: read/);
     assert.match(release, /actions: write # dispatch required checks for the generated manifest PR/);
+    assert.match(release, /for workflow in build\.yml security-scan\.yml; do/);
     assert.match(release, /gh workflow run "\$workflow" --ref "\$BRANCH"/);
     assert.match(release, /node scripts\/release\/check-dispatch\.js/);
     assert.match(release, /did not start for exact proposal \$head_sha/);
