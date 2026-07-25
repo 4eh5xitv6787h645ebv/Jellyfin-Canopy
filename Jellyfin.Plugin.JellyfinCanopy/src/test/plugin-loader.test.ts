@@ -16,8 +16,11 @@ const SRC = ts.sys.readFile(PLUGIN_JS_PATH) ?? '';
 
 /** Extract a top-level `function name(...) { … }` source via brace matching. */
 function extractFunctionSource(name: string): string | null {
-    const start = SRC.indexOf(`function ${name}(`);
-    if (start < 0) return null;
+    const functionStart = SRC.indexOf(`function ${name}(`);
+    if (functionStart < 0) return null;
+    const start = SRC.slice(Math.max(0, functionStart - 6), functionStart) === 'async '
+        ? functionStart - 6
+        : functionStart;
     const braceStart = SRC.indexOf('{', start);
     if (braceStart < 0) return null;
     let depth = 0;
@@ -133,6 +136,169 @@ describe('plugin.js loader guards', () => {
     it('loaded the loader source', () => {
         expect(SRC.length).toBeGreaterThan(0);
         expect(SRC).not.toContain('function loadBundle(');
+    });
+
+    it('adopts the pre-runtime refresh bootstrap into document-scoped state', () => {
+        const capture = SRC.indexOf(
+            'const clientRefreshBootstrap = window.__JellyfinCanopyRefreshBootstrap;',
+        );
+        const namespace = SRC.indexOf('window.JellyfinCanopy = {');
+        expect(capture).toBeGreaterThan(0);
+        expect(capture).toBeLessThan(namespace);
+        expect(SRC).toContain('clientRefreshBootstrap,');
+        expect(SRC).toContain('delete window.__JellyfinCanopyRefreshBootstrap');
+    });
+
+    it('captures a remote active-server refresh baseline before owner configuration reads', () => {
+        const capture = SRC.indexOf(
+            'await captureActiveClientRefreshBaseline(client, context, scope);',
+        );
+        const ownerReads = SRC.indexOf(
+            'const userConfigPromise = fetchUserConfig(client, context, scope);',
+        );
+        const functionSource = extractFunctionSource('captureActiveClientRefreshBaseline');
+
+        expect(functionSource, 'active-server baseline capture not found').toBeTruthy();
+        expect(functionSource).toContain('/JellyfinCanopy/client-refresh-state?_jc=');
+        expect(functionSource).toContain('normalizeClientRefreshBootstrap');
+        expect(functionSource).toContain('requireCurrentIdentity(context);');
+        expect(functionSource).toContain('JC.clientRefreshBootstrap = activeBootstrap;');
+        expect(functionSource).toContain('JC.clientRefreshBootstrapUnavailableServerId');
+        expect(capture).toBeGreaterThan(0);
+        expect(capture).toBeLessThan(ownerReads);
+    });
+
+    it('binds only an absent authenticated server id and validates the full refresh contract', () => {
+        const canonicalSource = extractFunctionSource('canonicalRefreshServerId');
+        const belongsSource = extractFunctionSource('refreshBootstrapBelongsToServer');
+        const bindSource = extractFunctionSource('bindRefreshBootstrapToServer');
+        const normalizeSource = extractFunctionSource('normalizeClientRefreshBootstrap');
+        expect(canonicalSource, 'refresh server canonicalizer not found').toBeTruthy();
+        expect(belongsSource, 'refresh server provenance check not found').toBeTruthy();
+        expect(bindSource, 'legacy refresh server binder not found').toBeTruthy();
+        expect(normalizeSource, 'refresh baseline validator not found').toBeTruthy();
+
+        const helpers = eval(`(() => {
+            ${canonicalSource}
+            ${belongsSource}
+            ${bindSource}
+            ${normalizeSource}
+            return { bindRefreshBootstrapToServer, normalizeClientRefreshBootstrap };
+        })()`) as {
+            bindRefreshBootstrapToServer(
+                value: Record<string, unknown>,
+                serverId: string,
+            ): Record<string, unknown> | null;
+            normalizeClientRefreshBootstrap(
+                value: Record<string, unknown>,
+                serverId: string,
+                allowAbsentServerId: boolean,
+            ): Record<string, unknown> | null;
+        };
+        const valid = {
+            SchemaVersion: 1,
+            ServerId: 'active-server',
+            CanopyBuildId: 'a'.repeat(64),
+            JellyfinGeneration: 'b'.repeat(64),
+            ConfigurationRevision: 1,
+            ForceRevision: 0,
+            Policy: {
+                Mode: 'Smart',
+                OnCanopyUpdate: true,
+                OnJellyfinUpdate: true,
+                OnConfigChange: true,
+                PollSeconds: 30,
+                IdleSeconds: 5,
+            },
+        };
+
+        expect(helpers.bindRefreshBootstrapToServer(
+            { SchemaVersion: 1 },
+            '00112233-4455-6677-8899-aabbccddeeff',
+        ))
+            .toMatchObject({ ServerId: '00112233445566778899aabbccddeeff' });
+        expect(helpers.normalizeClientRefreshBootstrap(valid, 'ACTIVE-SERVER', false))
+            .toEqual(valid);
+        const legacy = { ...valid };
+        delete (legacy as { ServerId?: string }).ServerId;
+        expect(helpers.normalizeClientRefreshBootstrap(legacy, 'active-server', false))
+            .toBeNull();
+        expect(helpers.normalizeClientRefreshBootstrap(legacy, 'active-server', true))
+            .toMatchObject({ ServerId: 'activeserver' });
+
+        for (const malformed of [
+            { ...valid, SchemaVersion: 2 },
+            { ...valid, ServerId: '' },
+            { ...valid, ServerId: 'other-server' },
+            { ...valid, CanopyBuildId: 'A'.repeat(64) },
+            { ...valid, JellyfinGeneration: 'short' },
+            { ...valid, ConfigurationRevision: -1 },
+            { ...valid, ForceRevision: 0.5 },
+            { ...valid, Policy: { ...valid.Policy, Mode: 'Automatic' } },
+            { ...valid, Policy: { ...valid.Policy, OnConfigChange: 1 } },
+            { ...valid, Policy: { ...valid.Policy, PollSeconds: 4 } },
+            { ...valid, Policy: { ...valid.Policy, IdleSeconds: 301 } },
+        ]) {
+            expect(helpers.normalizeClientRefreshBootstrap(
+                malformed,
+                'active-server',
+                true,
+            )).toBeNull();
+        }
+        expect(helpers.normalizeClientRefreshBootstrap(
+            [] as unknown as Record<string, unknown>,
+            'active-server',
+            true,
+        )).toBeNull();
+    });
+
+    it('keeps owner boot available when a pre-Smart remote has no refresh endpoint', async () => {
+        const canonicalSource = extractFunctionSource('canonicalRefreshServerId')!;
+        const belongsSource = extractFunctionSource('refreshBootstrapBelongsToServer')!;
+        const bindSource = extractFunctionSource('bindRefreshBootstrapToServer')!;
+        const normalizeSource = extractFunctionSource('normalizeClientRefreshBootstrap')!;
+        const captureSource = extractFunctionSource('captureActiveClientRefreshBaseline')!;
+        const requireCurrentIdentity = vi.fn();
+        const jc: {
+            clientRefreshBootstrap?: unknown;
+            clientRefreshBootstrapUnavailableServerId: string;
+        } = { clientRefreshBootstrapUnavailableServerId: '' };
+        const makeCapture = eval(`((JC, requireCurrentIdentity) => {
+            ${canonicalSource}
+            ${belongsSource}
+            ${bindSource}
+            ${normalizeSource}
+            ${captureSource}
+            return captureActiveClientRefreshBaseline;
+        })`) as (
+            jcValue: typeof jc,
+            requireCurrent: () => void,
+        ) => (
+            client: { getUrl(path: string): string; ajax(): Promise<unknown> },
+            context: IdentityContext,
+            scope: InitializationScope,
+        ) => Promise<unknown>;
+        const capture = makeCapture(jc, requireCurrentIdentity);
+        const controller = new AbortController();
+        const scope: InitializationScope = {
+            epoch: 1,
+            signal: controller.signal,
+            race: (value) => Promise.resolve(value),
+            cancel: () => controller.abort(),
+        };
+        const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+        await expect(capture(
+            {
+                getUrl: (path) => `http://remote.test${path}`,
+                ajax: () => Promise.reject(Object.assign(new Error('not found'), { status: 404 })),
+            },
+            { serverId: 'remote-server', userId: 'remote-user', epoch: 1 },
+            scope,
+        )).resolves.toBeNull();
+        expect(jc.clientRefreshBootstrapUnavailableServerId).toBe('remoteserver');
+        expect(requireCurrentIdentity).toHaveBeenCalled();
+        expect(warning).toHaveBeenCalledWith(expect.stringContaining('conservative polling'));
     });
 
     it('keeps one maintenance owner and recomputes both-layout offsets after resize', () => {
@@ -582,6 +748,23 @@ describe('plugin.js loader guards', () => {
             setAuthenticationInfo(_token: string | null, _userId: string | null) { return undefined; },
             ajax: (options: { url: string }) => {
                 const path = new URL(options.url).pathname;
+                if (path.endsWith('/client-refresh-state')) {
+                    return Promise.resolve({
+                        SchemaVersion: 1,
+                        CanopyBuildId: 'a'.repeat(64),
+                        JellyfinGeneration: 'b'.repeat(64),
+                        ConfigurationRevision: 1,
+                        ForceRevision: 0,
+                        Policy: {
+                            Mode: 'Smart',
+                            OnCanopyUpdate: true,
+                            OnJellyfinUpdate: true,
+                            OnConfigChange: true,
+                            PollSeconds: 30,
+                            IdleSeconds: 5,
+                        },
+                    });
+                }
                 if (path.endsWith('/public-config')) return Promise.resolve({ AssetCacheEnabled: false });
                 if (path.endsWith('/private-config')) return Promise.resolve({});
                 if (path.endsWith('/version')) return Promise.resolve('test-version');
@@ -641,6 +824,8 @@ describe('plugin.js loader guards', () => {
 
         type LoaderGlobal = {
             initialized?: boolean;
+            clientRefreshBootstrap?: { ServerId?: string };
+            clientRefreshBootstrapUnavailableServerId?: string;
             identity: IdentitySession;
             bootDiagnostics: {
                 snapshot(): { entries: Array<Record<string, unknown>> };
@@ -707,6 +892,8 @@ describe('plugin.js loader guards', () => {
         expect(legacyActivation).not.toHaveBeenCalled();
         expect(laterRegisteredActivation).toHaveBeenCalledTimes(1);
         expect(jc.initialized).toBe(true);
+        expect(jc.clientRefreshBootstrap?.ServerId).toBe('loaderserver');
+        expect(jc.clientRefreshBootstrapUnavailableServerId).toBe('');
         expect(event.detail).toEqual({ serverId: 'loaderserver', userId: 'loaderuser', epoch: 1 });
         // Early script load paints immediately; authenticated boot refreshes it
         // once more after publishing the owner snapshot.
@@ -1225,7 +1412,7 @@ describe('plugin.js loader guards', () => {
         const { transformUserFileCase } = caseTransforms();
         const makeFetch = eval(
             '(function(isNotFoundError, requireCurrentIdentity, emptyUserConfig, defaultUserFile, transformUserFileCase) {'
-            + 'async ' + fetchSource
+            + fetchSource
             + '; return fetchUserConfig; })',
         ) as (
             isNotFoundError: (error: unknown) => boolean,

@@ -155,5 +155,28 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests
 
             Assert.Equal(html, JellyfinCanopy.OwnScriptTagRegex().Replace(html, string.Empty));
         }
+
+        [Fact]
+        public void RefreshBootstrapPrecedesTheDeferredClassicLoaderAndBothAreOwned()
+        {
+            var tags = JellyfinCanopy.BuildScriptTags(
+                "Jellyfin Canopy",
+                "2.0.0.0-123",
+                devMode: false);
+
+            var bootstrap = tags.IndexOf(
+                "/client-refresh-bootstrap.js",
+                StringComparison.Ordinal);
+            var loader = tags.IndexOf(
+                "/JellyfinCanopy/script",
+                StringComparison.Ordinal);
+            Assert.True(bootstrap >= 0 && loader > bootstrap);
+            Assert.Equal(
+                2,
+                System.Text.RegularExpressions.Regex.Matches(
+                    tags,
+                    "plugin=\"Jellyfin Canopy\"").Count);
+            Assert.Equal(string.Empty, JellyfinCanopy.OwnScriptTagRegex().Replace(tags, string.Empty));
+        }
     }
 }

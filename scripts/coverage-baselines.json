@@ -9,24 +9,24 @@
       "scope": "Jellyfin.Plugin.JellyfinCanopy/src/core/**",
       "report": "coverage/coverage-summary.json",
       "measured": {
-        "coveredLines": 2117,
-        "totalLines": 2462
+        "coveredLines": 2295,
+        "totalLines": 2637
       },
       "tolerance": {
         "missingCoveredLines": 1,
-        "rationale": "Smart Client Refresh expands core/live-update.ts from version-only notification into the always-loaded generation/config coordinator, foreground-resume heartbeat, reload-loop budget, Ask-mode action, and mandatory playback/edit safety gate. Real Pixel 5 validation added explicit hidden-visibility and Cordova pause cancellation so an Android WebView cannot poll or reload while its Activity is backgrounded. Independent review then tightened restart revision handling, source reconciliation, route/dialog safety, and required browser coverage. The legitimate core scope increase is 205 instrumented lines (2257→2462); focused state, source, lifecycle, mobile-resume, in-flight follow-up, Ask-mode, paused-playback, safety, and loop-budget tests raise the reviewed high-water by 181 covered lines (1936→2117, 85.987%). A clean Node 22.20/V8 full-suite coverage run on 2026-07-24 passed all 1429 tests across 213 files and reproduced the expanded 2462-line scope after rebasing onto current main. Retaining the one-line tolerance makes the minimum 2116/2462 (85.946%), which is stricter than both the prior 1936/2257 high-water percentage (85.778%) and its 1935/2257 tolerated floor (85.733%). coverage-baseline.test.js retains the exact below-floor, above-baseline, scope-change, and broad-tolerance negative boundaries."
+        "rationale": "Smart Client Refresh hardening adds a server-bound bootstrap baseline, atomic foreground-policy barrier, document-lifetime native pause and modal/write safety, interaction/media-settle idle tracking, monotonic state validation, stale-build reconciliation, config-push request ordering, and fail-closed reload-budget storage fallback across core/live-update.ts, core/lifecycle.ts, core/live-config.ts, and core/api-client.ts. The legitimate core scope increase is 175 instrumented lines (2462→2637); protocol, lifecycle, bootstrap-runtime, failed-capture generation/config/force fallback, mutation, modal, settings-transaction, storage, route, BFCache, accessibility, playback, and mobile event-order tests raise the reviewed high-water by 178 covered lines (2117→2295, 87.031%). A clean Node 22.20/V8 full-suite coverage run on 2026-07-25 passed all 1480 tests across 214 files and reproduced the expanded 2637-line scope. Retaining the one-line tolerance makes the minimum 2294/2637 (86.993%), which is stricter than both the prior 2117/2462 high-water percentage (85.987%) and its 2116/2462 tolerated floor (85.946%). coverage-baseline.test.js retains the exact below-floor, above-baseline, scope-change, and broad-tolerance negative boundaries."
       }
     },
     "server": {
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 20148,
-        "totalLines": 28556
+        "coveredLines": 20195,
+        "totalLines": 28600
       },
       "tolerance": {
-        "missingCoveredLines": 4,
-        "rationale": "Smart Client Refresh adds the authenticated refresh-state contract, content-addressed Canopy and process-generation Jellyfin identities, live configuration policy, explicit admin force revision, and Canopy-device registry touch. The legitimate server scope increase is 118 instrumented lines (28438→28556); focused service and controller behavior/authorization tests raise the reviewed high-water by 97 covered lines (20051→20148, 70.556%). A clean local .NET 10.0.9/Coverlet run on 2026-07-24 passed all 1785 tests across the complete assembly. Retaining the reproduced four-line Coverlet concurrency tolerance makes the minimum 20144/28556 (70.542%), which is stricter than both the prior 20051/28438 high-water percentage (70.508%) and its 20047/28438 tolerated floor (70.494%). coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, and broad-tolerance negative boundaries."
+        "missingCoveredLines": 5,
+        "rationale": "Smart Client Refresh hardening adds an allocation-free atomic configuration/revision snapshot, a server-bound no-store pre-loader bootstrap contract, strict fail-closed policy projection, current-tag middleware convergence, and a numeric compatibility successor for already-open legacy clients. The legitimate server scope increase is 44 instrumented lines (28556→28600); controller, service, anonymous-contract, loader-order, compatibility, and notifier tests raise the reviewed high-water by 47 covered lines (20148→20195, 70.612%). Local .NET 10.0.9/Coverlet runs on 2026-07-24 and 2026-07-25 passed all 1803 tests across the complete assembly and measured 20194–20195 covered lines; the GitHub runner passed the same 1803 tests while reproducing a 20190-line concurrency low. The evidence-bounded five-line Coverlet tolerance therefore makes the minimum 20190/28600 (70.594%), which remains stricter than both the prior 20148/28556 high-water percentage (70.556%) and its 20144/28556 tolerated floor (70.542%). coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, and broad-tolerance negative boundaries."
       }
     }
   }

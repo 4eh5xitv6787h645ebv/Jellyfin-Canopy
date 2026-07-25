@@ -335,7 +335,11 @@ export function openAdminAddModal(): void {
     // The open overlay normally blocks re-opening, but if a stale one is somehow present, note it so
     // we don't later "restore" the page overflow to its already-locked 'hidden' value (a perma-lock).
     const hadStaleOverlay = !!document.querySelector('.jc-hidden-admin-add-overlay');
-    document.querySelector('.jc-hidden-admin-add-overlay')?.remove();
+    const staleOverlay = document.querySelector('.jc-hidden-admin-add-overlay');
+    if (staleOverlay) {
+        JC.core.refreshSafety!.releaseElement(staleOverlay);
+        staleOverlay.remove();
+    }
     const overlay = document.createElement('div');
     overlay.className = 'jc-hidden-management-overlay jc-hidden-admin-add-overlay';
     overlay.dataset.jcIdentityOwned = 'true';
@@ -388,6 +392,7 @@ export function openAdminAddModal(): void {
         searchToken += 1;
         cancelPageTimeout(searchTimer);
         searchTimer = null;
+        JC.core.refreshSafety!.releaseElement(overlay);
         overlay.remove();
         document.removeEventListener('keydown', esc);
         document.body.style.overflow = prevBodyOverflow;
@@ -553,6 +558,7 @@ export function openAdminAddModal(): void {
     document.body.style.overflow = 'hidden';
     document.documentElement.style.overflow = 'hidden';
     document.body.appendChild(overlay);
+    JC.core.refreshSafety!.holdElement(overlay, 'modal');
     // Body-level overlay with a scroll lock: register on the page's dispose
     // bag so a drain (navigation) closes it and restores the scroll owners.
     pageHandle?.track(close);

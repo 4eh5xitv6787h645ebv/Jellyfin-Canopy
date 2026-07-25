@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JC } from '../globals';
+import { getRefreshSafetyHoldCount } from '../core/lifecycle';
 import type { IdentityContext } from '../types/jc';
 import { UserSettingsPersistenceError } from './config';
 
@@ -117,6 +118,24 @@ describe('acknowledged user-settings persistence', () => {
         expect(ajax).toHaveBeenCalledTimes(2);
         expect(JSON.parse(String(ajax.mock.calls[1][0].data))).toEqual({ Revision: 1, Mode: 'third' });
         expect(settings).toEqual({ Revision: 2, Mode: 'third' });
+    });
+
+    it('keeps a settings transaction unsafe until the complete queue settles', async () => {
+        const settings = own({ Revision: 0, Mode: 'old' });
+        JC.rememberUserSettingsSnapshot!('settings.json', settings);
+        let release!: (value: ReturnType<typeof acknowledged>) => void;
+        vi.spyOn(ApiClient, 'ajax').mockImplementation(() =>
+            new Promise((resolve) => { release = resolve; })
+        );
+
+        settings.Mode = 'new';
+        const save = JC.saveUserSettings!('settings.json', settings);
+        await vi.waitFor(() =>
+            expect(getRefreshSafetyHoldCount('settings-write')).toBe(1));
+
+        release(acknowledged('settings.json', 1, { Mode: 'new' }));
+        await expect(save).resolves.toMatchObject({ revision: 1 });
+        expect(getRefreshSafetyHoldCount('settings-write')).toBe(0);
     });
 
     it('queues a revert to acknowledged content while a different write is in flight', async () => {
@@ -389,12 +408,35 @@ describe('acknowledged user-settings persistence', () => {
         const elsewhere = own({ Revision: 0, Region: 'AU', Regions: [], Services: [] });
         JC.rememberUserSettingsSnapshot!('elsewhere.json', elsewhere);
         elsewhere.Region = 'NZ';
-        vi.spyOn(ApiClient, 'ajax').mockRejectedValue(new TypeError('Failed to fetch'));
+        const ajax = vi.spyOn(ApiClient, 'ajax').mockRejectedValue(new TypeError('Failed to fetch'));
 
         await expect(JC.saveUserSettings!('elsewhere.json', elsewhere)).rejects.toMatchObject({
             kind: 'unavailable', ambiguous: true
         });
         expect(elsewhere.Region).toBe('NZ');
+        expect(getRefreshSafetyHoldCount('settings-write')).toBe(1);
+
+        ajax.mockResolvedValueOnce(acknowledged('elsewhere.json', 1, {
+            Region: 'NZ', Regions: [], Services: []
+        }));
+        await expect(JC.saveUserSettings!('elsewhere.json', elsewhere))
+            .resolves.toMatchObject({ revision: 1 });
+        expect(getRefreshSafetyHoldCount('settings-write')).toBe(0);
+    });
+
+    it('releases a retained ambiguous-write hold when the identity resets', async () => {
+        const settings = own({ Revision: 0, Mode: 'old' });
+        JC.rememberUserSettingsSnapshot!('settings.json', settings);
+        settings.Mode = 'new';
+        vi.spyOn(ApiClient, 'ajax').mockRejectedValue(new TypeError('Failed to fetch'));
+
+        await expect(JC.saveUserSettings!('settings.json', settings)).rejects.toMatchObject({
+            kind: 'unavailable', ambiguous: true
+        });
+        expect(getRefreshSafetyHoldCount('settings-write')).toBe(1);
+
+        startSession();
+        expect(getRefreshSafetyHoldCount('settings-write')).toBe(0);
     });
 
     it('rejects malformed 200 responses and never records them as saved', async () => {

@@ -11,7 +11,14 @@
 // A reload is committed only after a final playback/edit/dialog safety check.
 
 import { JC } from '../globals';
-import { register } from './lifecycle';
+import {
+    clientRefreshSafetyBlockReason,
+    isClientForeground,
+    jellyfinTopLevelRoute,
+    onClientForegroundSignal,
+    onRefreshSafetyChange,
+    register,
+} from './lifecycle';
 import { LIVE, on } from './live';
 import { onNavigate } from './navigation';
 import type { IdentityContext } from '../types/jc';
@@ -20,6 +27,8 @@ const logPrefix = '🪼 Jellyfin Canopy: Smart Refresh:';
 const RELOAD_BUDGET_KEY = 'jc-smart-refresh-budget-v1';
 const RELOAD_BUDGET_WINDOW_MS = 60_000;
 const RELOAD_BUDGET_LIMIT = 3;
+const RELOAD_SURVIVAL_WATCHDOG_MS = 3_000;
+const MIN_INTERACTION_SETTLE_MS = 1_000;
 
 export type ClientRefreshMode = 'Smart' | 'HomeOnly' | 'Notify' | 'Disabled';
 export type RefreshSource = 'canopy' | 'jellyfin' | 'config' | 'force';
@@ -35,6 +44,7 @@ export interface ClientRefreshPolicy {
 
 export interface ClientRefreshState {
     SchemaVersion: 1;
+    ServerId: string;
     CanopyBuildId: string;
     JellyfinGeneration: string;
     ConfigurationRevision: number;
@@ -42,11 +52,11 @@ export interface ClientRefreshState {
     Policy: ClientRefreshPolicy;
 }
 
-const DEFAULT_POLICY: ClientRefreshPolicy = Object.freeze({
-    Mode: 'Smart',
-    OnCanopyUpdate: true,
-    OnJellyfinUpdate: true,
-    OnConfigChange: true,
+const FAIL_CLOSED_POLICY: ClientRefreshPolicy = Object.freeze({
+    Mode: 'Disabled',
+    OnCanopyUpdate: false,
+    OnJellyfinUpdate: false,
+    OnConfigChange: false,
     PollSeconds: 30,
     IdleSeconds: 5,
 });
@@ -57,10 +67,11 @@ const handle = register('live-update');
 
 let activeContext: IdentityContext | null = null;
 let baseline: ClientRefreshState | null = null;
-let policy: ClientRefreshPolicy = DEFAULT_POLICY;
+let baselineServerId: string | null = null;
+let policy: ClientRefreshPolicy = FAIL_CLOSED_POLICY;
 let checkController: AbortController | null = null;
-let checkFlight: Promise<void> | null = null;
-let checkAgain = false;
+let checkDrain: Promise<void> | null = null;
+let checkRequested = false;
 let pollTimer: number | null = null;
 let decisionTimer: number | null = null;
 let retryTimer: number | null = null;
@@ -68,27 +79,31 @@ let lastInteractionAt = Date.now();
 let reloadCommitted = false;
 let notice: HTMLElement | null = null;
 let listenersInstalled = false;
-// Android's Jellyfin WebView keeps document.visibilityState="visible" after
-// the Activity is backgrounded. Cordova's pause/resume events are the
-// authoritative lifecycle signal there.
-let nativeAppPaused = false;
+let foregroundStateFresh = false;
+let reloadRecoveryTimer: number | null = null;
+let conservativeFirstStateServerId: string | null = null;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
-function clampInteger(value: unknown, fallback: number, minimum: number, maximum: number): number {
-    const parsed = typeof value === 'number' && Number.isFinite(value)
-        ? Math.trunc(value)
-        : fallback;
-    return Math.min(maximum, Math.max(minimum, parsed));
+function canonicalServerId(value: unknown): string | null {
+    if (typeof value !== 'string') return null;
+    const normalized = value.trim().replaceAll('-', '').toLowerCase();
+    return normalized.length > 0 && normalized.length <= 256
+        ? normalized
+        : null;
 }
 
-function normalizeMode(value: unknown): ClientRefreshMode {
-    return value === 'Smart' || value === 'HomeOnly'
-        || value === 'Notify' || value === 'Disabled'
-        ? value
-        : 'Smart';
+export function refreshStateBelongsToServer(
+    state: ClientRefreshState,
+    serverId: unknown,
+): boolean {
+    const stateServerId = canonicalServerId(state.ServerId);
+    const contextServerId = canonicalServerId(serverId);
+    return stateServerId !== null
+        && contextServerId !== null
+        && stateServerId === contextServerId;
 }
 
 /**
@@ -96,33 +111,97 @@ function normalizeMode(value: unknown): ClientRefreshMode {
  * responses are ignored rather than accidentally turning an error body into a
  * reload loop.
  */
-export function normalizeRefreshState(value: unknown): ClientRefreshState | null {
+export function normalizeRefreshState(
+    value: unknown,
+    authenticatedSourceServerId?: unknown,
+): ClientRefreshState | null {
     if (!isRecord(value) || value.SchemaVersion !== 1
         || typeof value.CanopyBuildId !== 'string'
         || !/^[a-f0-9]{64}$/.test(value.CanopyBuildId)
         || typeof value.JellyfinGeneration !== 'string'
         || !/^[a-f0-9]{64}$/.test(value.JellyfinGeneration)
         || !Number.isSafeInteger(value.ConfigurationRevision)
+        || (value.ConfigurationRevision as number) < 0
         || !Number.isSafeInteger(value.ForceRevision)
+        || (value.ForceRevision as number) < 0
         || !isRecord(value.Policy)) {
+        return null;
+    }
+
+    // ServerId was added to the schema-1 contract after Smart Refresh shipped.
+    // An authenticated poll may therefore receive an otherwise-valid legacy
+    // response from a staggered-rollout server. Bind only a truly absent field
+    // to the already-authenticated transport context; bootstrap remains strict,
+    // and any present malformed/mismatched value is rejected.
+    const responseServerId = canonicalServerId(value.ServerId);
+    const sourceServerId = value.ServerId === undefined
+        ? canonicalServerId(authenticatedSourceServerId)
+        : null;
+    const normalizedServerId = responseServerId ?? sourceServerId;
+    if (normalizedServerId === null) return null;
+
+    const policyValue = value.Policy;
+    if (policyValue.Mode !== 'Smart'
+        && policyValue.Mode !== 'HomeOnly'
+        && policyValue.Mode !== 'Notify'
+        && policyValue.Mode !== 'Disabled') {
+        return null;
+    }
+    if (typeof policyValue.OnCanopyUpdate !== 'boolean'
+        || typeof policyValue.OnJellyfinUpdate !== 'boolean'
+        || typeof policyValue.OnConfigChange !== 'boolean'
+        || !Number.isSafeInteger(policyValue.PollSeconds)
+        || (policyValue.PollSeconds as number) < 5
+        || (policyValue.PollSeconds as number) > 3600
+        || !Number.isSafeInteger(policyValue.IdleSeconds)
+        || (policyValue.IdleSeconds as number) < 0
+        || (policyValue.IdleSeconds as number) > 300) {
         return null;
     }
 
     return {
         SchemaVersion: 1,
+        ServerId: responseServerId
+            ? (value.ServerId as string).trim()
+            : normalizedServerId,
         CanopyBuildId: value.CanopyBuildId,
         JellyfinGeneration: value.JellyfinGeneration,
         ConfigurationRevision: value.ConfigurationRevision as number,
         ForceRevision: value.ForceRevision as number,
         Policy: {
-            Mode: normalizeMode(value.Policy.Mode),
-            OnCanopyUpdate: value.Policy.OnCanopyUpdate !== false,
-            OnJellyfinUpdate: value.Policy.OnJellyfinUpdate !== false,
-            OnConfigChange: value.Policy.OnConfigChange !== false,
-            PollSeconds: clampInteger(value.Policy.PollSeconds, 30, 5, 3600),
-            IdleSeconds: clampInteger(value.Policy.IdleSeconds, 5, 0, 300),
+            Mode: policyValue.Mode,
+            OnCanopyUpdate: policyValue.OnCanopyUpdate,
+            OnJellyfinUpdate: policyValue.OnJellyfinUpdate,
+            OnConfigChange: policyValue.OnConfigChange,
+            PollSeconds: policyValue.PollSeconds as number,
+            IdleSeconds: policyValue.IdleSeconds as number,
         },
     };
+}
+
+const bootstrapState = normalizeRefreshState(JC.clientRefreshBootstrap);
+if (bootstrapState) {
+    baseline = bootstrapState;
+    baselineServerId = canonicalServerId(bootstrapState.ServerId);
+    policy = bootstrapState.Policy;
+}
+
+function activeBootstrapForServer(serverId: unknown): ClientRefreshState | null {
+    const candidate = normalizeRefreshState(JC.clientRefreshBootstrap);
+    return candidate && refreshStateBelongsToServer(candidate, serverId)
+        ? candidate
+        : null;
+}
+
+/** Reject rollback within one process; a new generation is the reset boundary. */
+export function isMonotonicRefreshTransition(
+    previous: ClientRefreshState | null,
+    next: ClientRefreshState,
+): boolean {
+    return !previous
+        || next.JellyfinGeneration !== previous.JellyfinGeneration
+        || (next.ConfigurationRevision >= previous.ConfigurationRevision
+            && next.ForceRevision >= previous.ForceRevision);
 }
 
 /** Pure source comparison used by both runtime behavior and unit tests. */
@@ -138,34 +217,34 @@ export function detectRefreshSources(
         sources.add('jellyfin');
         // ConfigurationRevision and ForceRevision are intentionally scoped to
         // one server process. Comparing them across generations would treat
-        // their restart reset as a new config/force signal.
+        // their restart reset as a new config signal. A positive force revision
+        // is different: it proves an administrator requested a refresh after
+        // the new process started, so it must survive the restart boundary.
+        if (current.ForceRevision > 0) sources.add('force');
         return sources;
     }
-    if (current.ConfigurationRevision !== previous.ConfigurationRevision) sources.add('config');
-    if (current.ForceRevision !== previous.ForceRevision) sources.add('force');
+    if (current.ConfigurationRevision > previous.ConfigurationRevision) sources.add('config');
+    if (current.ForceRevision > previous.ForceRevision) sources.add('force');
+    return sources;
+}
+
+/** First valid state after a failed pre-runtime capture must prefer one safe extra refresh. */
+export function detectConservativeFirstStateSources(
+    current: ClientRefreshState,
+    loadedBuildId: string,
+): ReadonlySet<RefreshSource> {
+    const sources = new Set(detectRefreshSources(null, current, loadedBuildId));
+    // Capture failure also means the current Jellyfin process generation is
+    // unknowable. Prefer one policy-filtered refresh when the endpoint later
+    // becomes valid instead of silently adopting that generation.
+    sources.add('jellyfin');
+    if (current.ConfigurationRevision > 0) sources.add('config');
+    if (current.ForceRevision > 0) sources.add('force');
     return sources;
 }
 
 export function isHomeRoute(href: string): boolean {
-    const route = href.toLowerCase();
-    return /#\/home(?:\.html)?(?:[/?#]|$)/.test(route)
-        || /(?:^|\/)home(?:[?#]|$)/.test(route);
-}
-
-function isEditingRoute(href: string): boolean {
-    const route = href.toLowerCase();
-    return /(?:#\/|\/)(?:dashboard|configurationpage|metadata|edititemmetadata|mypreferences(?:menu|home)?|settings|profile)(?:\.html)?(?:[/?#]|$)/
-        .test(route);
-}
-
-function hasLoadedMedia(element: HTMLMediaElement): boolean {
-    const source = element.currentSrc
-        || element.getAttribute('src')
-        || element.querySelector('source[src]')?.getAttribute('src')
-        || '';
-    return Boolean(source) && !element.ended
-        && (!element.paused || element.currentTime > 0)
-        && (element.readyState > HTMLMediaElement.HAVE_NOTHING || element.currentTime > 0);
+    return jellyfinTopLevelRoute(href) === 'home';
 }
 
 /**
@@ -176,32 +255,13 @@ function hasLoadedMedia(element: HTMLMediaElement): boolean {
 export function refreshSafetyBlockReason(
     documentValue: Document = document,
     href: string = window.location.href,
-    nativePaused: boolean = nativeAppPaused,
+    nativePaused?: boolean,
 ): string | null {
-    if (nativePaused || documentValue.visibilityState === 'hidden') return 'background';
-    if (isEditingRoute(href)) return 'editing-route';
-    if (/(?:#\/|\/)video(?:[/?#]|$)/i.test(href)) return 'playback-route';
-    if (documentValue.fullscreenElement || documentValue.pictureInPictureElement) return 'fullscreen-media';
-    const dialogs = documentValue.querySelectorAll<HTMLElement>(
-        '.dialog.opened, .actionSheet.opened, [role="dialog"], [aria-modal="true"]',
+    return clientRefreshSafetyBlockReason(
+        documentValue,
+        href,
+        nativePaused,
     );
-    if ([...dialogs].some((element) =>
-        !element.closest('[aria-hidden="true"], [hidden]'))) {
-        return 'dialog';
-    }
-
-    const mediaSessionState = navigator.mediaSession?.playbackState;
-    if (mediaSessionState === 'playing' || mediaSessionState === 'paused') return 'media-session';
-    if ([...documentValue.querySelectorAll<HTMLMediaElement>('video, audio')].some(hasLoadedMedia)) {
-        return 'media-element';
-    }
-
-    const active = documentValue.activeElement;
-    if (active instanceof HTMLElement
-        && (active.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName))) {
-        return 'active-editor';
-    }
-    return null;
 }
 
 export function mayCommitRefresh(
@@ -230,8 +290,10 @@ export function nextReloadBudget(
     return { allowed: true, history: [...live, now] };
 }
 
-function readReloadBudget(): number[] {
-    const result = JC.storage.session.readJson<number[]>(
+function readReloadBudget(
+    storage: typeof JC.storage.session,
+): number[] | null {
+    const result = storage.readJson<number[]>(
         'live-update',
         RELOAD_BUDGET_KEY,
         (value): value is number[] => Array.isArray(value)
@@ -239,18 +301,46 @@ function readReloadBudget(): number[] {
             && value.every((entry) => typeof entry === 'number' && Number.isFinite(entry)),
         'reload-budget',
     );
-    return result.state === 'Valid' ? result.value : [];
+    if (result.state === 'Valid') return result.value;
+    if (result.state === 'Missing') return [];
+    return null;
 }
 
-function reserveReload(): boolean {
-    const budget = nextReloadBudget(readReloadBudget(), Date.now());
+export function reserveReload(): boolean {
+    const readable = [JC.storage.session, JC.storage.local]
+        .map((storage) => ({ storage, history: readReloadBudget(storage) }))
+        .filter((entry): entry is {
+            storage: typeof JC.storage.session;
+            history: number[];
+        } => entry.history !== null);
+    if (readable.length === 0) return false;
+
+    // Both adapters normally contain the same reservation. De-duplicate exact
+    // stamps so mirroring cannot consume the budget twice.
+    const combined = [...new Set(readable.flatMap((entry) => entry.history))];
+    const budget = nextReloadBudget(combined, Date.now());
     if (!budget.allowed) return false;
-    return JC.storage.session.write(
-        'live-update',
-        RELOAD_BUDGET_KEY,
-        JSON.stringify(budget.history),
-        'reload-budget',
-    ).state === 'Valid';
+    const serialized = JSON.stringify(budget.history);
+    let persisted = false;
+    for (const { storage } of readable) {
+        if (storage.write(
+            'live-update',
+            RELOAD_BUDGET_KEY,
+            serialized,
+            'reload-budget',
+        ).state === 'Valid') {
+            // Some embedded WebViews accept setItem without throwing but drop
+            // the value. Only a read-after-write match proves this reload was
+            // durably counted.
+            const verified = readReloadBudget(storage);
+            if (verified
+                && verified.length === budget.history.length
+                && verified.every((stamp, index) => stamp === budget.history[index])) {
+                persisted = true;
+            }
+        }
+    }
+    return persisted;
 }
 
 function clearTimer(name: 'poll' | 'decision' | 'retry'): void {
@@ -331,6 +421,31 @@ function scheduleRetry(delayMs: number): void {
     }, Math.max(250, delayMs));
 }
 
+export function beginReloadAttempt(
+    reload: () => void,
+    onDocumentSurvived: () => void,
+    watchdogMs = RELOAD_SURVIVAL_WATCHDOG_MS,
+): number | null {
+    try {
+        reload();
+    } catch {
+        onDocumentSurvived();
+        return null;
+    }
+    return window.setTimeout(onDocumentSurvived, watchdogMs);
+}
+
+function recoverFailedReload(): void {
+    reloadRecoveryTimer = null;
+    if (!reloadCommitted) return;
+    reloadCommitted = false;
+    if (activeContext
+        && JC.identity.isCurrent(activeContext)
+        && pendingSources.size > 0) {
+        showNotice('Canopy could not complete the automatic reload. Reload this page manually when ready.');
+    }
+}
+
 function commitReload(): void {
     if (reloadCommitted) return;
     // The final guard is intentionally repeated here, immediately before the
@@ -347,14 +462,26 @@ function commitReload(): void {
     }
 
     reloadCommitted = true;
-    window.location.reload();
+    if (reloadRecoveryTimer !== null) window.clearTimeout(reloadRecoveryTimer);
+    reloadRecoveryTimer = beginReloadAttempt(
+        () => window.location.reload(),
+        recoverFailedReload,
+    );
 }
 
 function evaluatePending(): void {
     if (typeof window === 'undefined') return;
     clearTimer('decision');
+    if (!activeContext || !JC.identity.isCurrent(activeContext)) {
+        removeNotice();
+        return;
+    }
     if (pendingSources.size === 0 || reloadCommitted) {
         removeNotice();
+        return;
+    }
+    if (!foregroundStateFresh) {
+        showNotice('A fresh page is ready. Canopy is checking the latest server refresh policy first.');
         return;
     }
 
@@ -384,7 +511,13 @@ function evaluatePending(): void {
         return;
     }
 
-    const idleMs = policy.IdleSeconds * 1000;
+    // Even a legacy/admin policy of zero needs one task for the host's click
+    // handler and a short dispatch window for Jellyfin-owned fire-and-forget
+    // Favorite/Played mutations, which cannot acquire a Canopy transport hold.
+    const idleMs = Math.max(
+        policy.IdleSeconds * 1000,
+        MIN_INTERACTION_SETTLE_MS,
+    );
     const remaining = Math.max(0, lastInteractionAt + idleMs - Date.now());
     const allowed = mayCommitRefresh(policy.Mode, force, true, home, remaining === 0);
     if (!allowed) {
@@ -406,7 +539,6 @@ function queueSources(sources: ReadonlySet<RefreshSource>): void {
             pendingSources.add(source);
         }
     }
-    evaluatePending();
 }
 
 function isSourceEnabled(source: RefreshSource): boolean {
@@ -429,131 +561,169 @@ function schedulePoll(context: IdentityContext): void {
     if (!JC.identity.isCurrent(context) || !isClientForeground()) return;
     pollTimer = window.setTimeout(() => {
         pollTimer = null;
-        if (isClientForeground()) void checkNow(context);
+        if (isClientForeground()) void requestStateCheck(context);
     }, policy.PollSeconds * 1000);
 }
 
-async function checkNow(context: IdentityContext): Promise<void> {
+async function performStateCheck(context: IdentityContext): Promise<boolean> {
     const api = JC.core.api;
-    if (!JC.identity.isCurrent(context) || !api || !isClientForeground()) return;
-    if (checkFlight) {
-        checkAgain = true;
-        return checkFlight;
-    }
+    if (!JC.identity.isCurrent(context) || !api || !isClientForeground()) return false;
 
     const controller = new AbortController();
     checkController = controller;
-    const flight = (async () => {
-        try {
-            const raw = await api.plugin(
-                `/client-refresh-state?_jc=${Date.now()}`,
-                {
-                    signal: controller.signal,
-                    skipCache: true,
-                    skipRetry: true,
-                    timeoutMs: 10_000,
-                },
-            );
-            if (!JC.identity.isCurrent(context)) return;
-            const next = normalizeRefreshState(raw);
-            if (!next || !JC.identity.isCurrent(context)) return;
-
-            const previous = baseline;
-            baseline = next;
-            policy = next.Policy;
-            reconcilePendingSources();
-            queueSources(detectRefreshSources(previous, next, loadedCanopyBuildId));
-        } catch (error) {
-            if (!controller.signal.aborted && JC.identity.isCurrent(context)) {
-                console.debug(`${logPrefix} state check failed:`, error);
-            }
-        } finally {
-            if (checkController === controller) {
-                checkController = null;
-                checkFlight = null;
-            }
-            if (checkAgain && JC.identity.isCurrent(context)) {
-                checkAgain = false;
-                void checkNow(context);
-            } else {
-                schedulePoll(context);
-            }
+    try {
+        const raw = await api.plugin(
+            `/client-refresh-state?_jc=${Date.now()}`,
+            {
+                signal: controller.signal,
+                skipCache: true,
+                skipRetry: true,
+                timeoutMs: 10_000,
+            },
+        );
+        if (!JC.identity.isCurrent(context) || !isClientForeground()) return false;
+        const next = normalizeRefreshState(raw, context.serverId);
+        if (!next
+            || !JC.identity.isCurrent(context)
+            || !refreshStateBelongsToServer(next, context.serverId)) {
+            return false;
         }
-    })();
-    checkFlight = flight;
-    return flight;
+
+        const previous = baseline;
+        const contextServerId = canonicalServerId(context.serverId);
+        const conservativeFirstState = previous === null
+            && contextServerId !== null
+            && conservativeFirstStateServerId === contextServerId;
+        if (!isMonotonicRefreshTransition(previous, next)) {
+            console.debug(`${logPrefix} ignored a non-monotonic same-generation state response`);
+            return false;
+        }
+
+        // Apply state and policy atomically before reconciling old intent or
+        // admitting newly-detected sources.
+        baseline = next;
+        policy = next.Policy;
+        reconcilePendingSources();
+        if (next.CanopyBuildId === loadedCanopyBuildId) {
+            pendingSources.delete('canopy');
+        }
+        queueSources(conservativeFirstState
+            ? detectConservativeFirstStateSources(next, loadedCanopyBuildId)
+            : detectRefreshSources(previous, next, loadedCanopyBuildId));
+        if (conservativeFirstState) {
+            conservativeFirstStateServerId = null;
+            JC.clientRefreshBootstrapUnavailableServerId = '';
+        }
+        return true;
+    } catch (error) {
+        if (!controller.signal.aborted && JC.identity.isCurrent(context)) {
+            console.debug(`${logPrefix} state check failed:`, error);
+        }
+        return false;
+    } finally {
+        if (checkController === controller) checkController = null;
+    }
+}
+
+/**
+ * Coalesce state requests into one active fetch plus one requested rerun. The
+ * resulting policy barrier covers the complete drain, so no foreground event
+ * can evaluate pending intent between an old and a newly-requested response.
+ */
+function requestStateCheck(context: IdentityContext): Promise<void> {
+    if (!JC.identity.isCurrent(context) || !isClientForeground()) {
+        return Promise.resolve();
+    }
+    checkRequested = true;
+    foregroundStateFresh = false;
+    if (checkDrain) return checkDrain;
+
+    const drain = (async () => {
+        let finalResponseApplied = false;
+        while (checkRequested
+            && JC.identity.isCurrent(context)
+            && isClientForeground()) {
+            checkRequested = false;
+            finalResponseApplied = await performStateCheck(context);
+        }
+        if (JC.identity.isCurrent(context) && isClientForeground()) {
+            foregroundStateFresh = finalResponseApplied;
+            if (finalResponseApplied) evaluatePending();
+        }
+    })().finally(() => {
+        if (checkDrain !== drain) return;
+        checkDrain = null;
+        schedulePoll(context);
+    });
+    checkDrain = drain;
+    return drain;
 }
 
 function markInteraction(): void {
     lastInteractionAt = Date.now();
-    if (pendingSources.size > 0) evaluatePending();
-}
-
-function isClientForeground(): boolean {
-    return !nativeAppPaused && document.visibilityState !== 'hidden';
+    if (pendingSources.size > 0) {
+        // Capture-phase interaction runs before the target handler can begin a
+        // write, open a modal, or start playback. Let that handler establish its
+        // safety owner before reconsidering a zero-idle refresh.
+        clearTimer('decision');
+        decisionTimer = window.setTimeout(() => {
+            decisionTimer = null;
+            evaluatePending();
+        }, 0);
+    }
 }
 
 function checkOnForeground(): void {
     const context = activeContext;
     if (!context || !isClientForeground()) return;
-    void checkNow(context);
-    if (pendingSources.size > 0) evaluatePending();
+    void requestStateCheck(context);
 }
 
 function suspendBackgroundWork(): void {
+    foregroundStateFresh = false;
+    checkRequested = false;
     checkController?.abort();
     clearTimer('poll');
     clearTimer('decision');
     clearTimer('retry');
 }
 
-function onVisibilityChange(): void {
-    if (document.visibilityState === 'hidden') {
+function handleSafetyChange(): void {
+    if (!isClientForeground()) {
         suspendBackgroundWork();
-        return;
     }
-    checkOnForeground();
-}
-
-function onNativePause(): void {
-    nativeAppPaused = true;
-    suspendBackgroundWork();
     if (pendingSources.size > 0) evaluatePending();
-}
-
-function onNativeResume(): void {
-    nativeAppPaused = false;
-    checkOnForeground();
 }
 
 function installListeners(): void {
     if (listenersInstalled) return;
     listenersInstalled = true;
-    for (const type of ['pointerdown', 'keydown', 'input', 'change'] as const) {
-        handle.addListener(document, type, markInteraction, { capture: true, passive: type === 'pointerdown' });
+    for (const type of ['pointerdown', 'keydown', 'input', 'change', 'click'] as const) {
+        handle.addListener(document, type, markInteraction, {
+            capture: true,
+            passive: type === 'pointerdown' || type === 'click',
+        });
     }
+    for (const type of ['pointermove', 'wheel', 'touchstart', 'touchmove'] as const) {
+        handle.addListener(document, type, markInteraction, { capture: true, passive: true });
+    }
+    // scroll does not bubble, so capture it from nested Jellyfin scrollers.
+    handle.addListener(document, 'scroll', markInteraction, { capture: true, passive: true });
     for (const type of ['play', 'pause', 'ended', 'emptied'] as const) {
-        handle.addListener(document, type, evaluatePending, true);
+        handle.addListener(document, type, markInteraction, { capture: true, passive: true });
     }
-    handle.addListener(document, 'visibilitychange', onVisibilityChange);
-    handle.addListener(document, 'pause', onNativePause);
-    handle.addListener(document, 'resume', onNativeResume);
-    handle.addListener(window, 'focus', checkOnForeground);
-    handle.addListener(window, 'online', checkOnForeground);
-    handle.addListener(window, 'pageshow', checkOnForeground);
 }
 
 function stop(): void {
     activeContext = null;
-    baseline = null;
-    pendingSources.clear();
-    policy = DEFAULT_POLICY;
+    foregroundStateFresh = false;
     reloadCommitted = false;
-    nativeAppPaused = false;
+    if (reloadRecoveryTimer !== null) window.clearTimeout(reloadRecoveryTimer);
+    reloadRecoveryTimer = null;
     checkController?.abort();
     checkController = null;
-    checkFlight = null;
-    checkAgain = false;
+    checkDrain = null;
+    checkRequested = false;
     clearTimer('poll');
     clearTimer('decision');
     clearTimer('retry');
@@ -565,10 +735,30 @@ function stop(): void {
 function start(context: IdentityContext): void {
     if (!JC.identity.isCurrent(context)) return;
     stop();
+    const nextServerId = canonicalServerId(context.serverId);
+    const activeBootstrap = activeBootstrapForServer(context.serverId);
+    const captureUnavailable = nextServerId !== null
+        && canonicalServerId(JC.clientRefreshBootstrapUnavailableServerId) === nextServerId;
+    if (baselineServerId && baselineServerId !== nextServerId) {
+        pendingSources.clear();
+        // The classic loader captures this active server's authenticated state
+        // before it reads owner configuration. Adopt that load-coupled watermark
+        // on a remote switch so the first runtime poll can detect every edge
+        // that occurred while the new epoch initialized.
+        baseline = activeBootstrap;
+        policy = activeBootstrap?.Policy ?? FAIL_CLOSED_POLICY;
+    } else if (!baseline && activeBootstrap) {
+        baseline = activeBootstrap;
+        policy = activeBootstrap.Policy;
+    }
+    conservativeFirstStateServerId = !baseline && captureUnavailable
+        ? nextServerId
+        : null;
+    baselineServerId = nextServerId;
     activeContext = context;
     lastInteractionAt = Date.now();
     installListeners();
-    if (isClientForeground()) void checkNow(context);
+    if (isClientForeground()) void requestStateCheck(context);
 }
 
 onNavigate(() => {
@@ -576,8 +766,10 @@ onNavigate(() => {
 });
 on(LIVE.CONFIG_CHANGED, () => {
     const context = activeContext;
-    if (context && isClientForeground()) void checkNow(context);
+    if (context && isClientForeground()) void requestStateCheck(context);
 });
+onClientForegroundSignal(checkOnForeground);
+onRefreshSafetyChange(handleSafetyChange);
 
 handle.onTeardown(() => {
     listenersInstalled = false;

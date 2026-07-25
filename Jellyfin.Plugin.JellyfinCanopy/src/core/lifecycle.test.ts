@@ -1,7 +1,17 @@
 // Unit tests for src/core/lifecycle.ts — registry identity and the
 // track/teardown bookkeeping across every supported resource shape.
 import { describe, expect, it, vi } from 'vitest';
-import { get, register, teardownAll } from './lifecycle';
+import {
+    acquireRefreshSafetyHold,
+    get,
+    getRefreshSafetyHoldCount,
+    holdRefreshSafetyForElement,
+    isClientForeground,
+    onRefreshSafetyChange,
+    register,
+    releaseRefreshSafetyForElement,
+    teardownAll,
+} from './lifecycle';
 
 describe('registry', () => {
     it('returns the same handle for repeated register() calls', () => {
@@ -196,5 +206,92 @@ describe('teardownOn / teardownAll', () => {
         teardownAll();
         expect(cleanupA).toHaveBeenCalledTimes(1);
         expect(cleanupB).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('document refresh safety', () => {
+    it('counts nested holds and releases each handle idempotently', () => {
+        const releaseModal = acquireRefreshSafetyHold('modal');
+        const releaseWrite = acquireRefreshSafetyHold('settings-write');
+        expect(getRefreshSafetyHoldCount()).toBe(2);
+
+        releaseModal();
+        releaseModal();
+        expect(getRefreshSafetyHoldCount()).toBe(1);
+        releaseWrite();
+        expect(getRefreshSafetyHoldCount()).toBe(0);
+    });
+
+    it('lets any cleanup owner release an element-scoped hold', () => {
+        const modal = document.createElement('div');
+        const firstRelease = holdRefreshSafetyForElement(modal);
+        expect(getRefreshSafetyHoldCount('modal')).toBe(1);
+
+        // Re-adopting the same root replaces rather than stacks its hold.
+        holdRefreshSafetyForElement(modal);
+        expect(getRefreshSafetyHoldCount('modal')).toBe(1);
+        firstRelease();
+        expect(getRefreshSafetyHoldCount('modal')).toBe(1);
+
+        releaseRefreshSafetyForElement(modal);
+        expect(getRefreshSafetyHoldCount('modal')).toBe(0);
+    });
+
+    it('keeps native pause state outside feature teardown', () => {
+        document.dispatchEvent(new Event('resume'));
+        expect(isClientForeground()).toBe(true);
+
+        document.dispatchEvent(new Event('pause'));
+        expect(isClientForeground()).toBe(false);
+        teardownAll();
+        expect(isClientForeground()).toBe(false);
+
+        document.dispatchEvent(new Event('resume'));
+        expect(isClientForeground()).toBe(true);
+    });
+
+    it('does not treat a media pause event as a native app pause', () => {
+        document.dispatchEvent(new Event('resume'));
+        const video = document.createElement('video');
+        document.body.appendChild(video);
+
+        video.dispatchEvent(new Event('pause', { bubbles: false }));
+
+        expect(isClientForeground()).toBe(true);
+        video.remove();
+    });
+
+    it('defers a release notification until a confirmed write can acquire its hold', async () => {
+        vi.useFakeTimers();
+        const observed: number[] = [];
+        const unsubscribe = onRefreshSafetyChange(() => {
+            observed.push(getRefreshSafetyHoldCount());
+        });
+        const releaseModal = acquireRefreshSafetyHold('modal');
+        observed.length = 0;
+
+        let confirm!: () => void;
+        let releaseWrite: (() => void) | null = null;
+        const confirmed = new Promise<void>((resolve) => { confirm = resolve; });
+        const writeStarted = confirmed.then(() => {
+            releaseWrite = acquireRefreshSafetyHold('pending-write');
+        });
+
+        releaseModal();
+        confirm();
+        await writeStarted;
+        expect(getRefreshSafetyHoldCount()).toBe(1);
+
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(observed).not.toContain(0);
+
+        releaseWrite!();
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(observed.at(-1)).toBe(0);
+
+        unsubscribe();
+        vi.useRealTimers();
     });
 });

@@ -184,8 +184,26 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             // /client-refresh-state endpoint; keep this touch for compatibility
             // with an older open Canopy client during a rolling upgrade.
             TouchLiveSessionRegistry();
-            return Content(JellyfinCanopy.Instance?.Version.ToString() ?? "unknown");
+            var version = JellyfinCanopy.Instance?.Version.ToString()
+                ?? typeof(JellyfinCanopy).Assembly.GetName().Version?.ToString()
+                ?? "unknown";
+            if (IsLegacyRefreshHeartbeat(Request.Query["_je"]))
+            {
+                // Pre-Smart-Refresh bundles poll this exact query and understand
+                // only a dotted numeric "newer version" prompt. Preserve that
+                // migration lane for same-version replacements.
+                Response.Headers.CacheControl = "no-store";
+                version = ClientRefreshStateService.CreateLegacyCompatibilityVersion(version);
+            }
+
+            return Content(version);
         }
+
+        internal static bool IsLegacyRefreshHeartbeat(
+            Microsoft.Extensions.Primitives.StringValues value)
+            => value.Count == 1
+                && value[0] is { Length: > 0 } text
+                && text.All(char.IsAsciiDigit);
 
         /// <summary>
         /// Record the calling session's device id as running the JC client (no-op

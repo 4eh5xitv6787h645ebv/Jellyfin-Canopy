@@ -29,26 +29,18 @@ public sealed class FakePluginConfigProvider : IPluginConfigProvider
     }
 
     public PluginConfiguration Configuration =>
-        Observe(_current) ?? throw new InvalidOperationException("Plugin configuration not available (simulated unloaded plugin).");
+        GetSnapshot().Configuration
+        ?? throw new InvalidOperationException("Plugin configuration not available (simulated unloaded plugin).");
 
-    public PluginConfiguration? ConfigurationOrNull => Observe(_current);
+    public PluginConfiguration? ConfigurationOrNull => GetSnapshot().Configuration;
 
-    public long ConfigurationRevision
-    {
-        get
-        {
-            Observe(_current);
-            lock (_revisionLock)
-            {
-                return _revision;
-            }
-        }
-    }
+    public long ConfigurationRevision => GetSnapshot().Revision;
 
-    private PluginConfiguration? Observe(PluginConfiguration? configuration)
+    public PluginConfigurationSnapshot GetSnapshot()
     {
         lock (_revisionLock)
         {
+            var configuration = _current;
             if (!_hasObserved || !ReferenceEquals(_lastObserved, configuration))
             {
                 _lastObserved = configuration;
@@ -56,7 +48,7 @@ public sealed class FakePluginConfigProvider : IPluginConfigProvider
                 _revision++;
             }
 
-            return configuration;
+            return new PluginConfigurationSnapshot(configuration, _revision);
         }
     }
 }

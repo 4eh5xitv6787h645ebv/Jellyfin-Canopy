@@ -13,6 +13,29 @@ import { hiddenIdentityStatus } from './media-identity';
 
 let saveTimeout: number | null = null;
 let pendingDebounceContext: IdentityContext | null = null;
+let persistenceSafetyOwner: {
+    context: IdentityContext;
+    release: () => void;
+} | null = null;
+
+function beginPersistenceSafety(context: IdentityContext): void {
+    if (persistenceSafetyOwner?.context === context) return;
+    persistenceSafetyOwner?.release();
+    persistenceSafetyOwner = {
+        context,
+        release: JC.core.refreshSafety!.acquireHold('settings-write'),
+    };
+}
+
+function endPersistenceSafety(context?: IdentityContext): void {
+    if (!persistenceSafetyOwner
+        || (context && persistenceSafetyOwner.context !== context)) {
+        return;
+    }
+    const owner = persistenceSafetyOwner;
+    persistenceSafetyOwner = null;
+    owner.release();
+}
 
 class StaleHiddenContentIdentityError extends Error {
     constructor() {
@@ -47,6 +70,7 @@ const SAVE_DEBOUNCE_MS = 500;
 export function debouncedSave(): void {
     const context = currentDataContext();
     if (!context) return;
+    beginPersistenceSafety(context);
     if (saveTimeout) clearTimeout(saveTimeout);
     pendingDebounceContext = context;
     saveTimeout = window.setTimeout(() => {
@@ -54,14 +78,20 @@ export function debouncedSave(): void {
             const scheduledContext = pendingDebounceContext;
             saveTimeout = null;
             pendingDebounceContext = null;
-            if (!isUsableContext(scheduledContext)) return;
+            if (!isUsableContext(scheduledContext)) {
+                if (scheduledContext) endPersistenceSafety(scheduledContext);
+                return;
+            }
             try {
                 // Hidden Content has its own merge/retry protocol and server-side
                 // promoter reconciliation, so keep it on the dedicated transport.
                 const sent = await directSaveHiddenContent(scheduledContext);
                 reconcileAfterSave(sent, scheduledContext);
             } catch (e) {
-                if (e instanceof StaleHiddenContentIdentityError || !JC.identity.isCurrent(scheduledContext)) return;
+                if (e instanceof StaleHiddenContentIdentityError || !JC.identity.isCurrent(scheduledContext)) {
+                    endPersistenceSafety(scheduledContext);
+                    return;
+                }
                 console.warn('🪼 Jellyfin Canopy: debouncedSave failed; scheduling background retry', e);
                 if (pendingRetryHandle == null) scheduleFlushRetry(0, scheduledContext);
             }
@@ -146,6 +176,7 @@ export async function fetchUserHiddenItemsForAdmin(targetUserId: string): Promis
  */
 export async function adminUnhideForUser(targetUserId: string, keys: string[]): Promise<boolean> {
     if (!targetUserId || !Array.isArray(keys) || keys.length === 0) return false;
+    const releaseSafety = JC.core.refreshSafety!.acquireHold('pending-write');
     try {
         await ApiClient.ajax({
             type: 'POST',
@@ -157,6 +188,8 @@ export async function adminUnhideForUser(targetUserId: string, keys: string[]): 
     } catch (e: any) {
         if (e && e.status === 403) console.warn('🪼 Jellyfin Canopy: Hidden Content admin unhide denied (not an admin).');
         return false;
+    } finally {
+        releaseSafety();
     }
 }
 
@@ -169,6 +202,7 @@ export async function adminUnhideForUser(targetUserId: string, keys: string[]): 
  */
 export async function adminHideForUser(targetUserId: string, items: HiddenItem[]): Promise<number | boolean> {
     if (!targetUserId || !Array.isArray(items) || items.length === 0) return false;
+    const releaseSafety = JC.core.refreshSafety!.acquireHold('pending-write');
     try {
         const res: any = await ApiClient.ajax({
             type: 'POST',
@@ -180,6 +214,8 @@ export async function adminHideForUser(targetUserId: string, items: HiddenItem[]
     } catch (e: any) {
         if (e && e.status === 403) console.warn('🪼 Jellyfin Canopy: Hidden Content admin hide denied (not an admin / disabled).');
         return false;
+    } finally {
+        releaseSafety();
     }
 }
 
@@ -203,12 +239,17 @@ async function directSaveHiddenContent(context: IdentityContext): Promise<string
     // Keep the last identity check adjacent to invocation. No task can switch
     // authentication between these two synchronous statements.
     if (!JC.identity.isCurrent(context)) throw new StaleHiddenContentIdentityError();
-    await ApiClient.ajax({
-        type: 'POST',
-        url: ApiClient.getUrl(`/JellyfinCanopy/user-settings/${context.userId}/hidden-content.json`),
-        data: wireSnapshot,
-        contentType: 'application/json'
-    });
+    const releaseTransportSafety = JC.core.refreshSafety!.acquireHold('pending-write');
+    try {
+        await ApiClient.ajax({
+            type: 'POST',
+            url: ApiClient.getUrl(`/JellyfinCanopy/user-settings/${context.userId}/hidden-content.json`),
+            data: wireSnapshot,
+            contentType: 'application/json'
+        });
+    } finally {
+        releaseTransportSafety();
+    }
     if (!JC.identity.isCurrent(context)) throw new StaleHiddenContentIdentityError();
     return localSnapshot;
 }
@@ -222,6 +263,7 @@ function reconcileAfterSave(snapshotSent: string, context: IdentityContext): voi
     if (!isUsableContext(context)) return;
     if (snapshotSent === JSON.stringify(getHiddenData())) {
         cancelPendingRetry();
+        endPersistenceSafety(context);
     } else {
         debouncedSave();
     }
@@ -252,7 +294,10 @@ function cancelPendingRetry(): void {
 }
 
 function scheduleFlushRetry(attempt: number, context: IdentityContext): void {
-    if (!isUsableContext(context)) return;
+    if (!isUsableContext(context)) {
+        endPersistenceSafety(context);
+        return;
+    }
     if (attempt >= FLUSH_RETRY_DELAYS_MS.length) {
         console.error('🪼 Jellyfin Canopy: hidden-content save retries exhausted; local change may be lost on reload');
         // User-visible toast — the bulk-save endpoint is genuinely down at this point.
@@ -261,6 +306,10 @@ function scheduleFlushRetry(attempt: number, context: IdentityContext): void {
         } catch (_) { /* toast helper unavailable, console.error above is best-effort */ }
         pendingRetryHandle = null;
         pendingRetryContext = null;
+        // Keep the document-level intent hold while this current identity still
+        // owns unsaved in-memory state. Automatic refresh must not turn a
+        // transport outage into deterministic data loss; success, identity
+        // teardown/pagehide, or an explicit manual reload are the release paths.
         return;
     }
     pendingRetryContext = context;
@@ -268,6 +317,7 @@ function scheduleFlushRetry(attempt: number, context: IdentityContext): void {
         void (async () => {
             if (pendingRetryContext !== context || !isUsableContext(context)) {
                 clearRetryStateFor(context);
+                endPersistenceSafety(context);
                 return;
             }
             pendingRetryHandle = RETRY_INFLIGHT; // mark in-flight so a concurrent debouncedSave failure doesn't spawn a parallel ladder
@@ -290,6 +340,7 @@ function scheduleFlushRetry(attempt: number, context: IdentityContext): void {
             } catch (err) {
                 if (err instanceof StaleHiddenContentIdentityError || !JC.identity.isCurrent(context)) {
                     clearRetryStateFor(context);
+                    endPersistenceSafety(context);
                     return;
                 }
                 console.warn(`🪼 Jellyfin Canopy: hidden-content save retry ${attempt + 1} failed`, err);
@@ -307,7 +358,10 @@ export async function flushPendingSave(): Promise<void> {
     clearTimeout(saveTimeout);
     saveTimeout = null;
     pendingDebounceContext = null;
-    if (!isUsableContext(context)) throw new StaleHiddenContentIdentityError();
+    if (!isUsableContext(context)) {
+        if (context) endPersistenceSafety(context);
+        throw new StaleHiddenContentIdentityError();
+    }
     try {
         const sent = await directSaveHiddenContent(context);
         reconcileAfterSave(sent, context);
@@ -330,13 +384,20 @@ export function cancelAllPersistence(): void {
     // fail the post-await fence and therefore cannot reconcile or retry.
     pendingRetryHandle = null;
     pendingRetryContext = null;
+    endPersistenceSafety();
 }
 
 /** Install the pagehide fence for one lazy-feature activation. */
 export function installPersistenceLifecycle(): () => void {
-    window.addEventListener('pagehide', cancelAllPersistence);
+    const onPageHide = (event: PageTransitionEvent): void => {
+        // A persisted pagehide freezes this same document in BFCache. Keep its
+        // dirty intent/retry owner so pageshow can resume without exposing the
+        // in-memory edit to an automatic Smart Refresh.
+        if (!event.persisted) cancelAllPersistence();
+    };
+    window.addEventListener('pagehide', onPageHide);
     return () => {
-        window.removeEventListener('pagehide', cancelAllPersistence);
+        window.removeEventListener('pagehide', onPageHide);
         cancelAllPersistence();
     };
 }

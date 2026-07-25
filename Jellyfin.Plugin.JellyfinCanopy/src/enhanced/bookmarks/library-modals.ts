@@ -30,6 +30,7 @@ function ownModal(modal: HTMLElement): void {
 }
 
 function closeModal(modal: HTMLElement): void {
+  JC.core.refreshSafety!.releaseElement(modal);
   if (!modal.isConnected) return;
   modal.style.opacity = '0';
   const timer = window.setTimeout(() => {
@@ -42,7 +43,10 @@ function closeModal(modal: HTMLElement): void {
 export function resetBookmarksLibraryModals(): void {
   for (const timer of modalTimers) window.clearTimeout(timer);
   modalTimers.clear();
-  document.querySelectorAll('[data-jc-bookmark-library-modal="true"]').forEach((modal) => modal.remove());
+  document.querySelectorAll('[data-jc-bookmark-library-modal="true"]').forEach((modal) => {
+    JC.core.refreshSafety!.releaseElement(modal);
+    modal.remove();
+  });
 }
 
 /**
@@ -110,6 +114,7 @@ export function showOffsetAdjustmentModal(
   `;
 
   document.body.appendChild(modal);
+  JC.core.refreshSafety!.holdElement(modal, 'modal');
 
   const closeDialog = () => closeModal(modal);
   // Body-level modal: the page's dispose bag closes it on drain.
@@ -375,6 +380,7 @@ export function showDuplicatesSyncModal(
   `;
 
   document.body.appendChild(modal);
+  JC.core.refreshSafety!.holdElement(modal, 'modal');
 
   const closeDialog = () => closeModal(modal);
   // Body-level modal: the page's dispose bag closes it on drain.

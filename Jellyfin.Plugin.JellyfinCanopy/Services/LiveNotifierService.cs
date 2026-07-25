@@ -156,8 +156,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
             try
             {
-                var version = JellyfinCanopy.Instance?.Version?.ToString() ?? string.Empty;
-                var command = BuildConfigChangedCommand(version);
+                var command = BuildLegacyConfigChangedCommand(
+                    JellyfinCanopy.Instance?.Version?.ToString());
 
                 // Target ONLY devices that registered as running the JC client
                 // (via authenticated JC endpoint calls). The old broadcast to
@@ -237,5 +237,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             command.Arguments["Version"] = version ?? string.Empty;
             return command;
         }
+
+        internal static GeneralCommand BuildLegacyConfigChangedCommand(string? version)
+            => BuildConfigChangedCommand(
+                ClientRefreshStateService.CreateLegacyCompatibilityVersion(version));
     }
 }

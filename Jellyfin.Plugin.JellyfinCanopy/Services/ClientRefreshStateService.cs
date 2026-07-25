@@ -17,15 +17,18 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             "Jellyfin.Plugin.JellyfinCanopy.dist.client-manifest.json";
 
         private readonly IPluginConfigProvider _configProvider;
+        private readonly string _serverId;
         private readonly string _canopyBuildId;
         private readonly string _jellyfinGeneration;
         private long _forceRevision;
 
         public ClientRefreshStateService(
             IPluginConfigProvider configProvider,
+            string serverId,
             string jellyfinVersion)
             : this(
                 configProvider,
+                serverId,
                 ResolveCanopyBuildId(typeof(ClientRefreshStateService).Assembly),
                 CreateJellyfinGeneration(jellyfinVersion, Guid.NewGuid().ToString("N")))
         {
@@ -33,10 +36,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
         internal ClientRefreshStateService(
             IPluginConfigProvider configProvider,
+            string serverId,
             string canopyBuildId,
             string jellyfinGeneration)
         {
             _configProvider = configProvider;
+            _serverId = serverId;
             _canopyBuildId = canopyBuildId;
             _jellyfinGeneration = jellyfinGeneration;
         }
@@ -44,9 +49,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         /// <summary>Build one no-cache state snapshot from the current config.</summary>
         public ClientRefreshState GetState()
         {
-            var config = _configProvider.ConfigurationOrNull;
+            var snapshot = _configProvider.GetSnapshot();
+            var config = snapshot.Configuration;
             var policy = config == null
-                ? ClientRefreshPolicy.Default
+                ? ClientRefreshPolicy.Disabled
                 : new ClientRefreshPolicy(
                     NormalizeMode(config.ClientRefreshMode),
                     config.ClientRefreshOnCanopyUpdate,
@@ -57,9 +63,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
             return new ClientRefreshState(
                 SchemaVersion: 1,
+                ServerId: _serverId,
                 CanopyBuildId: _canopyBuildId,
                 JellyfinGeneration: _jellyfinGeneration,
-                ConfigurationRevision: _configProvider.ConfigurationRevision,
+                ConfigurationRevision: snapshot.Revision,
                 ForceRevision: Interlocked.Read(ref _forceRevision),
                 Policy: policy);
         }
@@ -78,7 +85,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 "homeonly" => "HomeOnly",
                 "notify" => "Notify",
                 "disabled" => "Disabled",
-                _ => "Smart",
+                _ => "Disabled",
             };
 
         internal static string ResolveCanopyBuildId(Assembly assembly)
@@ -119,6 +126,21 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     Encoding.UTF8.GetBytes($"{version ?? "unknown"}\n{processNonce}")))
                 .ToLowerInvariant();
 
+        /// <summary>
+        /// Dotted-numeric successor understood by the pre-Smart-Refresh client.
+        /// Ordinary version consumers continue to receive the real assembly
+        /// version; this is only used by the legacy heartbeat/push lane.
+        /// </summary>
+        internal static string CreateLegacyCompatibilityVersion(string? version)
+        {
+            var normalized = version?.Trim() ?? string.Empty;
+            return normalized.Length > 0
+                && normalized.Split('.').All(static part =>
+                    part.Length > 0 && part.All(char.IsAsciiDigit))
+                ? $"{normalized}.1"
+                : normalized;
+        }
+
         private static bool IsLowerHexSha256(string? value)
             => value?.Length == 64
                 && value.All(static character =>
@@ -128,6 +150,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
     public sealed record ClientRefreshState(
         int SchemaVersion,
+        string ServerId,
         string CanopyBuildId,
         string JellyfinGeneration,
         long ConfigurationRevision,
@@ -142,7 +165,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         int PollSeconds,
         int IdleSeconds)
     {
-        public static ClientRefreshPolicy Default { get; } =
-            new("Smart", true, true, true, 30, 5);
+        public static ClientRefreshPolicy Disabled { get; } =
+            new("Disabled", false, false, false, 30, 5);
     }
 }

@@ -87,6 +87,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy
             serviceCollection.AddSingleton(serviceProvider =>
                 new Services.ClientRefreshStateService(
                     serviceProvider.GetRequiredService<Services.IPluginConfigProvider>(),
+                    applicationHost.SystemId,
                     applicationHost.ApplicationVersionString));
             serviceCollection.AddSingleton<Services.AnimeFiller.IAnimeFillerProvider, Services.AnimeFiller.JikanAnimeFillerProvider>();
             serviceCollection.AddSingleton<Services.AnimeFiller.AnimeFillerService>();

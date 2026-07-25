@@ -20,5 +20,10 @@ JC.identity.registerReset('core-platform', () => {
     // Modules may stamp ephemeral nodes that are not attached to a feature
     // lifecycle yet. This is intentionally narrow: global shared observers and
     // process-lifetime styles remain intact and are re-used by B.
-    document.querySelectorAll('[data-jc-identity-owned="true"]').forEach((node) => node.remove());
+    document.querySelectorAll('[data-jc-identity-owned="true"]').forEach((node) => {
+        // A feature reset may run after this platform owner. Release any
+        // document-lifetime refresh hold before detaching the only lookup key.
+        JC.core.refreshSafety?.releaseElement(node);
+        node.remove();
+    });
 });

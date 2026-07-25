@@ -136,6 +136,8 @@ interface SaveQueue {
     active: SaveIntent | null;
     pending: SaveIntent | null;
     latestSeq: number;
+    retainSafetyForDirtyIntent: boolean;
+    releaseSafetyHold: (() => void) | null;
 }
 
 // TypeScript retains the synchronous `queue.pending = null` narrowing across
@@ -156,6 +158,11 @@ const _lastErrorToastAt = new Map<string, number>();
 let saveSequence = 0;
 
 function clearSaveState(): void {
+    for (const queue of _queues.values()) {
+        queue.retainSafetyForDirtyIntent = false;
+        queue.releaseSafetyHold?.();
+        queue.releaseSafetyHold = null;
+    }
     _ackedWire.clear();
     _ackedSerialized.clear();
     _ackedHash.clear();
@@ -589,6 +596,7 @@ async function drainQueue(queue: SaveQueue): Promise<void> {
                     delete pending.desiredWire['revision'];
                 }
                 if (!currentPending(queue) && queue.latestSeq === intent.seq) {
+                    queue.retainSafetyForDirtyIntent = false;
                     _latestIntentWire.set(intent.cacheKey, cloneRecord(ack.data));
                     restoreTarget(intent, ack.data);
                     reconcileSettledUserSettings(intent, ack.data);
@@ -628,6 +636,8 @@ async function drainQueue(queue: SaveQueue): Promise<void> {
                     }
                 }
                 if (!currentPending(queue) && queue.latestSeq === intent.seq) {
+                    queue.retainSafetyForDirtyIntent =
+                        error.ambiguous && JC.identity.isCurrent(intent.owner);
                     try {
                         if (error.kind === 'conflict') _conflictedKeys.add(intent.cacheKey);
                         const rollback = error.authoritative || _ackedWire.get(intent.cacheKey);
@@ -638,6 +648,7 @@ async function drainQueue(queue: SaveQueue): Promise<void> {
                         _latestIntentWire.set(intent.cacheKey, cloneRecord(rollback || intent.desiredWire));
                         if (rollbackApplied && rollback) reconcileSettledUserSettings(intent, rollback);
                     } catch (rollbackError) {
+                        queue.retainSafetyForDirtyIntent = JC.identity.isCurrent(intent.owner);
                         console.error(`🪼 Jellyfin Canopy: Failed to restore ${intent.fileName} after rejection:`, rollbackError);
                     }
                 }
@@ -650,6 +661,10 @@ async function drainQueue(queue: SaveQueue): Promise<void> {
         }
     } finally {
         queue.running = false;
+        if (!queue.retainSafetyForDirtyIntent) {
+            queue.releaseSafetyHold?.();
+            queue.releaseSafetyHold = null;
+        }
     }
 }
 
@@ -722,7 +737,14 @@ JC.saveUserSettings = (fileName: string, settings: unknown): Promise<UserSetting
         }
 
         if (!queue) {
-            queue = { running: false, active: null, pending: null, latestSeq: 0 };
+            queue = {
+                running: false,
+                active: null,
+                pending: null,
+                latestSeq: 0,
+                retainSafetyForDirtyIntent: false,
+                releaseSafetyHold: null,
+            };
             _queues.set(key, queue);
         }
         const saveQueue = queue;
@@ -752,6 +774,8 @@ JC.saveUserSettings = (fileName: string, settings: unknown): Promise<UserSetting
             saveQueue.pending = intent;
             saveQueue.latestSeq = intent.seq;
             _latestIntentWire.set(key, cloneRecord(desiredWire));
+            saveQueue.releaseSafetyHold ??=
+                JC.core.refreshSafety!.acquireHold('settings-write');
             void drainQueue(saveQueue);
         });
     } catch (error) {

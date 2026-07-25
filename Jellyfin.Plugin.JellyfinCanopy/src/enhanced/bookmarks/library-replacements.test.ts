@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JC } from '../../globals';
+import { getRefreshSafetyHoldCount } from '../../core/lifecycle';
 import type { ApiApi, IdentityContext } from '../../types/jc';
 
 const mocks = vi.hoisted(() => ({
@@ -25,6 +26,7 @@ vi.mock('../../core/ui-kit', async (importOriginal) => {
 import {
   findAllOrphanedAndOfferMigration,
   findAndOfferReplacement,
+  resetBookmarksLibraryReplacementModals,
   searchForReplacementItem
 } from './library-replacements';
 
@@ -144,7 +146,9 @@ describe('bookmark replacement library search', () => {
   });
 
   afterEach(() => {
+    resetBookmarksLibraryReplacementModals();
     document.body.innerHTML = '';
+    vi.useRealTimers();
   });
 
   // AC1: a replacement sorting after item 500 is found on page two — 500 is a
@@ -523,5 +527,28 @@ describe('bookmark replacement library search', () => {
 
     expect(mocks.toast.mock.calls).toEqual([['bookmark_orphaned_no_replacement:1', 4000]]);
     expect(document.querySelector('[data-jc-bookmark-library-modal="true"]')).toBeNull();
+  });
+
+  it('keeps one refresh-safety owner across the summary-to-selection modal handoff', async () => {
+    vi.useFakeTimers();
+    const orphan = bookmark({ itemId: 'missing-orphan' });
+    mocks.getItemCached.mockRejectedValue(Object.assign(new Error('not found'), { status: 404 }));
+    installApi(vi.fn().mockResolvedValue(page([item('replacement', 'target-tmdb')], 1, 0)));
+    const context = captureIdentity('orphan-handoff-user');
+
+    await findAllOrphanedAndOfferMigration({ orphan }, context);
+    expect(getRefreshSafetyHoldCount()).toBe(1);
+
+    document.querySelector<HTMLButtonElement>('.btnMigrateOrphaned')!.click();
+    expect(getRefreshSafetyHoldCount()).toBe(1);
+    expect(getRefreshSafetyHoldCount('interaction')).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(299);
+    expect(getRefreshSafetyHoldCount()).toBe(1);
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(getRefreshSafetyHoldCount()).toBe(1);
+    expect(getRefreshSafetyHoldCount('interaction')).toBe(0);
+    expect(getRefreshSafetyHoldCount('modal')).toBe(1);
   });
 });

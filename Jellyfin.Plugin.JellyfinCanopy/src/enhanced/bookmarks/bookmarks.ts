@@ -1684,6 +1684,7 @@ import {
 
     if (!isIdentityCurrent(captured)) return;
     document.body.appendChild(modal);
+    JC.core.refreshSafety!.holdElement(modal, 'modal');
 
     const modalTimers = new Set<number>();
     let removalTimer: number | null = null;
@@ -1707,6 +1708,7 @@ import {
       removalTimer = null;
       document.removeEventListener('viewshow', requestClose);
       activeModalDisposers.delete(modal);
+      JC.core.refreshSafety!.releaseElement(modal);
       modal.remove();
     };
 
@@ -2035,7 +2037,10 @@ import {
         disposeActiveModals();
         invalidateBookmarkMarkerOutput();
         removeOwnedBookmarkButtons();
-        document.querySelectorAll('.jc-bm-player-modal-overlay').forEach((node) => node.remove());
+        document.querySelectorAll('.jc-bm-player-modal-overlay').forEach((node) => {
+          JC.core.refreshSafety!.releaseElement(node);
+          node.remove();
+        });
         initialized = false;
         console.log(`${logPrefix} Cleaned up`);
       };
@@ -2061,7 +2066,10 @@ import {
     forceCleanupBookmarks = null;
     cleanupBookmarks = (): void => undefined;
     removeOwnedBookmarkButtons();
-    document.querySelectorAll('.jc-bm-player-modal-overlay').forEach((node) => node.remove());
+    document.querySelectorAll('.jc-bm-player-modal-overlay').forEach((node) => {
+      JC.core.refreshSafety!.releaseElement(node);
+      node.remove();
+    });
   }
 
   const stableBookmarks = createStableMethodFacade<BookmarksApi>({

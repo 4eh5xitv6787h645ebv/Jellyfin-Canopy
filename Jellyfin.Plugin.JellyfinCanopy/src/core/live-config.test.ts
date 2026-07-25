@@ -65,6 +65,26 @@ describe('config hot-reload reaction', () => {
         await vi.waitFor(() => expect(consoleError).toHaveBeenCalled());
     });
 
+    it('invalidates old-generation requests before starting the pushed config refetch', async () => {
+        const order: string[] = [];
+        const plugin = vi.fn((path: string) => {
+            order.push(path.startsWith('/public-config') ? 'public' : 'private');
+            return Promise.resolve({});
+        });
+        JC.core.api = {
+            plugin,
+            manager: {
+                abortAllRequests: () => { order.push('abort'); },
+                clearCache: () => { order.push('clear'); },
+            },
+        } as unknown as NonNullable<typeof JC.core.api>;
+
+        emit(LIVE.CONFIG_CHANGED, {});
+
+        expect(order.slice(0, 3)).toEqual(['abort', 'clear', 'public']);
+        await vi.waitFor(() => expect(plugin).toHaveBeenCalledTimes(2));
+    });
+
     it('rebuilds the personalized tag projection when admin spoiler policy changes', async () => {
         JC.pluginConfig.SpoilerStripRatings = false;
         JC.core.api = {

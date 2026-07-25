@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JC } from '../globals';
+import { getRefreshSafetyHoldCount } from '../core/lifecycle';
 import '../enhanced/config';
 import { installElsewhere, resetElsewhereIdentity } from './elsewhere';
 
@@ -128,5 +129,40 @@ describe('Elsewhere account ownership', () => {
         expect(bModal.style.display).toBe('none');
         expect(staleSearch.disabled).toBe(false);
         expect(apiFetch).toHaveBeenCalledTimes(requestsBeforeSwitch);
+    });
+
+    it('holds Smart Refresh for the real Elsewhere settings modal until close', async () => {
+        document.body.innerHTML = `
+            <div class="detailSectionContent">
+                <a href="https://www.themoviedb.org/movie/123">TMDB</a>
+            </div>`;
+        vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
+            const url = input instanceof Request
+                ? input.url
+                : input instanceof URL ? input.href : input;
+            return Promise.resolve({
+                ok: true,
+                status: 200,
+                text: () => Promise.resolve(
+                    url.includes('providers.txt') ? 'Netflix' : 'US\tUnited States',
+                ),
+                clone() { return this; },
+            } as unknown as Response);
+        }));
+        JC.core.api = {
+            fetch: vi.fn().mockResolvedValue({ results: { US: { flatrate: [] } } }),
+        } as unknown as typeof JC.core.api;
+
+        (JC as typeof JC & { initializeElsewhereScript: () => void }).initializeElsewhereScript();
+        await vi.advanceTimersByTimeAsync(2_500);
+        await Promise.resolve();
+        await Promise.resolve();
+
+        document.querySelector<HTMLButtonElement>('.elsewhere-settings-button')!.click();
+        expect(document.getElementById('streaming-settings-modal')?.style.display).toBe('flex');
+        expect(getRefreshSafetyHoldCount('modal')).toBe(1);
+
+        document.getElementById('cancel-settings')!.click();
+        expect(getRefreshSafetyHoldCount('modal')).toBe(0);
     });
 });

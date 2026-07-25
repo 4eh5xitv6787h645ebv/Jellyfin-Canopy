@@ -84,6 +84,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             public PluginConfiguration? ConfigurationOrNull => _get();
 
             public long ConfigurationRevision => 1;
+
+            public PluginConfigurationSnapshot GetSnapshot()
+                => new(_get(), 1);
         }
 
         private void SeedSettings(long revision = 0, string mode = "percentage")

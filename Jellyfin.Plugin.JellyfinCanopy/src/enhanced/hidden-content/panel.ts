@@ -51,7 +51,10 @@ export function resetPanelUi(): void {
     activeManagementClose = null;
     for (const handle of panelTimeouts) clearTimeout(handle);
     panelTimeouts.clear();
-    document.querySelectorAll('.jc-hidden-management-overlay').forEach((node) => node.remove());
+    document.querySelectorAll('.jc-hidden-management-overlay').forEach((node) => {
+        JC.core.refreshSafety!.releaseElement(node);
+        node.remove();
+    });
 }
 
 // ============================================================
@@ -306,6 +309,7 @@ export function showManagementPanel(): void {
     const closeOverlay = (): void => {
         for (const handle of overlayTimers) cancelPanelTimeout(handle);
         overlayTimers.clear();
+        JC.core.refreshSafety!.releaseElement(overlay);
         overlay.remove();
         document.removeEventListener('keydown', escHandler);
         if (activeManagementClose === closeOverlay) activeManagementClose = null;
@@ -406,6 +410,7 @@ export function showManagementPanel(): void {
     document.addEventListener('keydown', escHandler);
 
     document.body.appendChild(overlay);
+    JC.core.refreshSafety!.holdElement(overlay, 'modal');
 }
 
 /**

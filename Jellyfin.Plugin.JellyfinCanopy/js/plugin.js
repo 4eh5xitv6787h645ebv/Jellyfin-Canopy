@@ -2,6 +2,14 @@
 (function() {
     'use strict';
 
+    // The ordered no-store bootstrap script executes before this loader. It
+    // seeds the document's refresh baseline; a remote identity epoch replaces
+    // it with that authenticated active server's load-coupled watermark.
+    const clientRefreshBootstrap = window.__JellyfinCanopyRefreshBootstrap;
+    try { delete window.__JellyfinCanopyRefreshBootstrap; } catch (_) {
+        window.__JellyfinCanopyRefreshBootstrap = undefined;
+    }
+
     // Create the global namespace immediately with placeholders
     window.JellyfinCanopy = {
         // Shared core layer, populated by js/core/*.js (navigation, lifecycle,
@@ -14,6 +22,10 @@
         // Set from the validated schema-v2 manifest before the ESM graph loads.
         // Smart refresh compares this exact content identity with the server.
         clientBuildId: '',
+        clientRefreshBootstrap,
+        // Set only when the active server's pre-owner watermark could not be
+        // captured. The runtime treats its first later valid state conservatively.
+        clientRefreshBootstrapUnavailableServerId: '',
         // Stub functions that will be overwritten by modules
         icon: (name) => {
             // Fallback icon function until icons.js loads
@@ -1130,6 +1142,135 @@
         return {};
     }
 
+    function canonicalRefreshServerId(value) {
+        if (typeof value !== 'string') return '';
+        const normalized = value.trim().replaceAll('-', '').toLowerCase();
+        return normalized.length > 0 && normalized.length <= 256 ? normalized : '';
+    }
+
+    function refreshBootstrapBelongsToServer(value, serverId) {
+        return !!value
+            && typeof value === 'object'
+            && !Array.isArray(value)
+            && canonicalRefreshServerId(value.ServerId) !== ''
+            && canonicalRefreshServerId(value.ServerId) === canonicalRefreshServerId(serverId);
+    }
+
+    function bindRefreshBootstrapToServer(value, serverId) {
+        const canonicalServerId = canonicalRefreshServerId(serverId);
+        if (!value || typeof value !== 'object' || Array.isArray(value)
+            || canonicalServerId === '') return null;
+        if (refreshBootstrapBelongsToServer(value, canonicalServerId)) return value;
+        // ServerId was added to schema 1 after Smart Refresh shipped. Only a
+        // truly absent field may inherit the already-authenticated transport
+        // server; present malformed or mismatched provenance remains fatal.
+        return value.ServerId === undefined
+            ? { ...value, ServerId: canonicalServerId }
+            : null;
+    }
+
+    function normalizeClientRefreshBootstrap(value, serverId, allowAbsentServerId) {
+        const candidate = allowAbsentServerId
+            ? bindRefreshBootstrapToServer(value, serverId)
+            : (refreshBootstrapBelongsToServer(value, serverId) ? value : null);
+        if (!candidate
+            || candidate.SchemaVersion !== 1
+            || typeof candidate.CanopyBuildId !== 'string'
+            || !/^[a-f0-9]{64}$/.test(candidate.CanopyBuildId)
+            || typeof candidate.JellyfinGeneration !== 'string'
+            || !/^[a-f0-9]{64}$/.test(candidate.JellyfinGeneration)
+            || !Number.isSafeInteger(candidate.ConfigurationRevision)
+            || candidate.ConfigurationRevision < 0
+            || !Number.isSafeInteger(candidate.ForceRevision)
+            || candidate.ForceRevision < 0
+            || !candidate.Policy
+            || typeof candidate.Policy !== 'object'
+            || Array.isArray(candidate.Policy)) return null;
+
+        const candidatePolicy = candidate.Policy;
+        if (!['Smart', 'HomeOnly', 'Notify', 'Disabled'].includes(candidatePolicy.Mode)
+            || typeof candidatePolicy.OnCanopyUpdate !== 'boolean'
+            || typeof candidatePolicy.OnJellyfinUpdate !== 'boolean'
+            || typeof candidatePolicy.OnConfigChange !== 'boolean'
+            || !Number.isSafeInteger(candidatePolicy.PollSeconds)
+            || candidatePolicy.PollSeconds < 5
+            || candidatePolicy.PollSeconds > 3600
+            || !Number.isSafeInteger(candidatePolicy.IdleSeconds)
+            || candidatePolicy.IdleSeconds < 0
+            || candidatePolicy.IdleSeconds > 300) return null;
+
+        return {
+            SchemaVersion: 1,
+            ServerId: String(candidate.ServerId).trim(),
+            CanopyBuildId: candidate.CanopyBuildId,
+            JellyfinGeneration: candidate.JellyfinGeneration,
+            ConfigurationRevision: candidate.ConfigurationRevision,
+            ForceRevision: candidate.ForceRevision,
+            Policy: {
+                Mode: candidatePolicy.Mode,
+                OnCanopyUpdate: candidatePolicy.OnCanopyUpdate,
+                OnJellyfinUpdate: candidatePolicy.OnJellyfinUpdate,
+                OnConfigChange: candidatePolicy.OnConfigChange,
+                PollSeconds: candidatePolicy.PollSeconds,
+                IdleSeconds: candidatePolicy.IdleSeconds
+            }
+        };
+    }
+
+    /**
+     * Capture the authenticated active server's refresh watermark before any
+     * owner configuration is read. The ordered document bootstrap is already
+     * earlier than those reads when it belongs to this server; a remote server
+     * needs its own load-coupled baseline so a config/force edge during boot is
+     * compared by the runtime's first poll instead of absorbed as its baseline.
+     */
+    async function captureActiveClientRefreshBaseline(client, context, scope) {
+        // The anonymous document bootstrap must carry explicit provenance.
+        // Absent-only legacy binding is reserved for the authenticated request
+        // below, matching the runtime trust-boundary contract.
+        const documentBootstrap = normalizeClientRefreshBootstrap(
+            JC.clientRefreshBootstrap,
+            context.serverId,
+            false
+        );
+        if (documentBootstrap) {
+            JC.clientRefreshBootstrap = documentBootstrap;
+            JC.clientRefreshBootstrapUnavailableServerId = '';
+            return documentBootstrap;
+        }
+        let activeBootstrap = null;
+        try {
+            const request = client.ajax({
+                type: 'GET',
+                url: client.getUrl(`/JellyfinCanopy/client-refresh-state?_jc=${Date.now()}`),
+                dataType: 'json',
+                signal: scope.signal
+            });
+            activeBootstrap = normalizeClientRefreshBootstrap(
+                await scope.race(request),
+                context.serverId,
+                true
+            );
+        } catch (error) {
+            // A pre-Smart remote server legitimately has no endpoint. Preserve
+            // owner boot; if a valid state becomes available later, the runtime
+            // conservatively treats its unknown generation and positive
+            // revisions as first-seen edges.
+            requireCurrentIdentity(context);
+            if (scope.signal.aborted) throw error;
+        }
+        requireCurrentIdentity(context);
+        if (!activeBootstrap) {
+            JC.clientRefreshBootstrapUnavailableServerId =
+                canonicalRefreshServerId(context.serverId);
+            console.warn('🪼 Jellyfin Canopy: active-server refresh baseline unavailable; continuing with conservative polling.');
+            return null;
+        }
+        JC.clientRefreshBootstrap = activeBootstrap;
+        JC.clientRefreshBootstrapUnavailableServerId = '';
+        return activeBootstrap;
+    }
+
      /**
      * Fetches plugin configuration and version from the server.
      * @returns {Promise<[object, string]>} A promise that resolves with config and version.
@@ -1853,6 +1994,9 @@
 
     async function runInitialization(context, client, scope) {
         try {
+            requireCurrentIdentity(context);
+
+            await captureActiveClientRefreshBaseline(client, context, scope);
             requireCurrentIdentity(context);
 
             // Start every independent owner read in one wave. Nothing is

@@ -91,7 +91,10 @@ export function resetDialogUi(): void {
     for (const handle of dialogFrames) cancelAnimationFrame(handle);
     dialogTimeouts.clear();
     dialogFrames.clear();
-    document.querySelectorAll('.jc-undo-toast, .jc-hide-confirm-overlay').forEach((node) => node.remove());
+    document.querySelectorAll('.jc-undo-toast, .jc-hide-confirm-overlay').forEach((node) => {
+        JC.core.refreshSafety!.releaseElement(node);
+        node.remove();
+    });
 }
 
 function suppressionStorageKey(context: IdentityContext | null): string {
@@ -435,6 +438,7 @@ function showHideConfirmation(itemName: string, onConfirm: () => void, dialogOpt
     dialog.appendChild(body);
 
     const closeDialog = (): void => {
+        JC.core.refreshSafety!.releaseElement(overlay);
         overlay.remove();
         document.removeEventListener('keydown', escHandler);
         if (activeConfirmClose === closeDialog) activeConfirmClose = null;
@@ -471,6 +475,7 @@ function showHideConfirmation(itemName: string, onConfirm: () => void, dialogOpt
     document.addEventListener('keydown', escHandler);
 
     document.body.appendChild(overlay);
+    JC.core.refreshSafety!.holdElement(overlay, 'modal');
 }
 
 /**

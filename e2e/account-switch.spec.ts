@@ -15,7 +15,7 @@ import {
     type ConsoleErrors,
     type FailedResponse,
 } from './fixtures/auth';
-import type { Page, Request, Route } from 'playwright/test';
+import type { Page, Request, Response, Route } from 'playwright/test';
 import {
     hasValidConcurrentLogoutResponses,
     isExpectedSignedOutHomeAxios401,
@@ -127,6 +127,10 @@ interface UserFileRequest {
     authorization: string;
     explicitUserId: string;
     postData: string;
+}
+
+interface DelayedLogoutProbeEvidence extends FailedResponse {
+    tokenMatchesRevokedA2: boolean;
 }
 
 function bPayloadSentinel(segment: BSegment, file: (typeof USER_FILES)[number]): string {
@@ -713,6 +717,24 @@ function authorizationParameter(authorization: string, name: 'Token' | 'DeviceId
     return match?.[1] || '';
 }
 
+function isExactDelayedBitrateProbe(
+    response: FailedResponse,
+    evidence: LogoutEvidence
+): boolean {
+    if (!isExpectedSignedOutHostLogout4xx(response, evidence)
+        || response.status !== 401
+        || response.method !== 'GET') return false;
+    const parsed = new URL(response.url);
+    return (parsed.pathname === '/System/Endpoint' && parsed.search === '')
+        || (parsed.pathname === '/Playback/BitrateTest'
+            && parsed.searchParams.size === 1
+            && parsed.searchParams.get('Size') === '500000');
+}
+
+function failedResponseKey(response: FailedResponse): string {
+    return `${response.method}\n${response.status}\n${response.url}`;
+}
+
 function assertOnlyHostLogoutNoise(
     consoleErrors: ConsoleErrors,
     label: string,
@@ -1037,6 +1059,26 @@ test.describe('no-reload account identity switching', () => {
         assertOnlyHostLogoutNoise(consoleErrors, 'A2 logout / held-loader abort', logoutA2);
         consoleErrors.reset();
 
+        // Stock Jellyfin Web leaves one six-second bitrate timer alive across
+        // logout. Correlate any late 401 pair to the revoked A2 credential; URL
+        // shape alone is insufficient once the authenticated B2 phase begins.
+        const delayedA2ProbeResponses: DelayedLogoutProbeEvidence[] = [];
+        const recordDelayedA2Probe = (response: Response): void => {
+            const failedResponse: FailedResponse = {
+                url: response.url(),
+                status: response.status(),
+                method: response.request().method(),
+            };
+            if (!isExactDelayedBitrateProbe(failedResponse, logoutA2)) return;
+            delayedA2ProbeResponses.push({
+                ...failedResponse,
+                tokenMatchesRevokedA2: authorizationToken(
+                    response.request().headers().authorization || ''
+                ) === a2Login.token,
+            });
+        };
+        page.on('response', recordDelayedA2Probe);
+
         segment = 'b2';
         const b2Login = await beginSpaLogin(page, 'user', documentIdentity);
         const b2 = await finishSpaLogin(page, b2Login, documentIdentity);
@@ -1081,6 +1123,15 @@ test.describe('no-reload account identity switching', () => {
             }
         );
         await expectSameDocument(page, documentIdentity);
+        page.off('response', recordDelayedA2Probe);
+        const observedB2Failures = consoleErrors.unexpected4xx();
+        const provenDelayedA2Failures = delayedA2ProbeResponses
+            .filter(({ tokenMatchesRevokedA2 }) => tokenMatchesRevokedA2);
+        expect(
+            observedB2Failures.map(failedResponseKey).sort(),
+            'B2 has no 4xx except exact stock bitrate probes carrying the revoked A2 token'
+        ).toEqual(provenDelayedA2Failures.map(failedResponseKey).sort());
+        consoleErrors.acknowledgeExpected4xx(observedB2Failures);
         assertNoRuntimeErrors(consoleErrors);
     });
 });

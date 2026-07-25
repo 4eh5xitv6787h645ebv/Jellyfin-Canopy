@@ -15,26 +15,19 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         private long _configurationRevision;
         private bool _hasObservedConfiguration;
 
-        public PluginConfiguration Configuration => Observe(JellyfinCanopy.Instance!.Configuration)!;
+        public PluginConfiguration Configuration =>
+            GetSnapshot().Configuration
+            ?? throw new InvalidOperationException("Plugin configuration is not available.");
 
-        public PluginConfiguration? ConfigurationOrNull => Observe(JellyfinCanopy.Instance?.Configuration);
+        public PluginConfiguration? ConfigurationOrNull => GetSnapshot().Configuration;
 
-        public long ConfigurationRevision
-        {
-            get
-            {
-                Observe(JellyfinCanopy.Instance?.Configuration);
-                lock (_revisionLock)
-                {
-                    return _configurationRevision;
-                }
-            }
-        }
+        public long ConfigurationRevision => GetSnapshot().Revision;
 
-        private PluginConfiguration? Observe(PluginConfiguration? configuration)
+        public PluginConfigurationSnapshot GetSnapshot()
         {
             lock (_revisionLock)
             {
+                var configuration = JellyfinCanopy.Instance?.Configuration;
                 if (!_hasObservedConfiguration
                     || !ReferenceEquals(_lastObservedConfiguration, configuration))
                 {
@@ -43,7 +36,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     _configurationRevision++;
                 }
 
-                return configuration;
+                return new PluginConfigurationSnapshot(
+                    configuration,
+                    _configurationRevision);
             }
         }
     }

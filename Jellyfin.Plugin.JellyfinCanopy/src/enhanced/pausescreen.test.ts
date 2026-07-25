@@ -2,6 +2,7 @@
 // (THEME-3 duplicate stacking, THEME-4 leaked capturing keydown, THEME-5
 // blob-URL leak on item change).
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { getRefreshSafetyHoldCount } from '../core/lifecycle';
 import { installPauseScreen } from './pausescreen';
 
 interface PauseApi {
@@ -73,6 +74,29 @@ describe('pause-screen singleton + teardown', () => {
         initPauseScreen(); // destroys the first instance
 
         expect(removeSpy).toHaveBeenCalledWith('keydown', expect.any(Function), { capture: true });
+    });
+
+    it('releases a held stale overlay when prior teardown throws during re-init', () => {
+        initPauseScreen();
+        const stale = jc()._pauseScreenInstance as {
+            destroy: () => void;
+            showOverlay: () => void;
+        };
+        stale.showOverlay();
+        expect(getRefreshSafetyHoldCount('modal')).toBe(1);
+
+        const destroyStale = stale.destroy.bind(stale);
+        stale.destroy = () => { throw new Error('teardown failed'); };
+        try {
+            initPauseScreen();
+            const replacement = jc()._pauseScreenInstance as { showOverlay: () => void };
+            replacement.showOverlay();
+
+            expect(document.querySelectorAll('#pause-screen-overlay').length).toBe(1);
+            expect(getRefreshSafetyHoldCount('modal')).toBe(1);
+        } finally {
+            destroyStale();
+        }
     });
 
     it('THEME-5: a video change revokes the outgoing item blob URLs and clears the cache', async () => {
