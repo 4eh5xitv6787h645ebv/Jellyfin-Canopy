@@ -6,7 +6,7 @@ It's an independent fork of [Jellyfin Enhanced](about.md), rebuilt from the grou
 
 ## New here? Start with setup
 
-Installing takes a few minutes: add the repository, install from the catalog, restart, and the Enhanced Panel appears. From there, a short first-run checklist points you at the handful of things worth turning on.
+Installing takes a few minutes: add the repository, install from the catalog, restart, and Canopy User Settings appears. From there, a short first-run checklist points you at the handful of things worth turning on.
 
 [Get started →](getting-started.md)
 

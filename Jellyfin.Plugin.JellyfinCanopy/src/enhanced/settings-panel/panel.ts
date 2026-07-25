@@ -17,6 +17,22 @@ import { wireLanguageControls } from './language';
 import { resetLanguageControls } from './language';
 import { resetReleaseNotes } from './release-notes';
 import type { IdentityContext } from '../../types/jc';
+import { toast } from '../../core/ui-kit';
+import {
+    AdminTargetPersistenceError,
+    createPanelEditorContext,
+    type PanelEditorContext,
+} from './editor-context';
+import {
+    parseSettingsPreferencesRoute,
+    type SettingsPanelLaunchContext,
+} from './launch-context';
+
+// Keep the HTML safety analyzer at this explicit UI boundary: the template
+// escapes every editor-derived text value and coerces all non-text controls.
+const panelEditorBoundary = {
+    openIsolatedPanelEditorContext: createPanelEditorContext,
+};
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -27,8 +43,10 @@ import type { IdentityContext } from '../../types/jc';
 export interface PanelContext {
     help: HTMLElement;
     identityContext: IdentityContext;
+    editor: PanelEditorContext;
     registerCleanup: (cleanup: () => void) => void;
     trackTimer: (timer: number) => void;
+    reconcileAfterSaveFailure: () => Promise<void>;
     pluginShortcuts: any[];
     resetAutoCloseTimer: () => void;
     panelBgColor: string;
@@ -56,6 +74,7 @@ type PanelPhase = 'opening' | 'open' | 'disposed';
 
 interface PanelOwner {
     readonly identityContext: IdentityContext;
+    readonly launch: SettingsPanelLaunchContext | null;
     readonly abortController: AbortController;
     phase: PanelPhase;
     root: HTMLElement | null;
@@ -69,11 +88,15 @@ interface PanelOwner {
 let currentPanelOwner: PanelOwner | null = null;
 let openingPromise: Promise<void> | null = null;
 
-function createPanelOwner(identityContext: IdentityContext): PanelOwner {
+function createPanelOwner(
+    identityContext: IdentityContext,
+    launch: SettingsPanelLaunchContext | null,
+): PanelOwner {
     const cleanups: Array<() => void> = [];
     const timers = new Set<number>();
     const owner: PanelOwner = {
         identityContext,
+        launch,
         abortController: new AbortController(),
         phase: 'opening',
         root: null,
@@ -119,7 +142,7 @@ function createPanelOwner(identityContext: IdentityContext): PanelOwner {
 type OwnedPanelElement = HTMLElement & { _identityCleanup?: () => void };
 
 /** Toggle the main settings panel, joining calls made during the same open. */
-export function showEnhancedPanel(): Promise<void> {
+export function showEnhancedPanel(launch: SettingsPanelLaunchContext | null = null): Promise<void> {
     if (currentPanelOwner?.phase === 'open') {
         currentPanelOwner.dispose();
         return Promise.resolve();
@@ -138,14 +161,30 @@ export function showEnhancedPanel(): Promise<void> {
     }
     document.getElementById(BACKDROP_ID)?.remove();
 
-    const identityContext = JC.identity.capture();
+    const identityContext = launch?.actor || JC.identity.capture();
     if (!identityContext) return Promise.resolve();
-    const owner = createPanelOwner(identityContext);
+    if (!JC.identity.isCurrent(identityContext)) return Promise.resolve();
+    const owner = createPanelOwner(identityContext, launch);
     currentPanelOwner = owner;
 
     const opening = openPanel(owner).catch((error: unknown) => {
+        const wasCurrent = owner.isCurrent();
         owner.dispose();
-        throw error;
+        if (!wasCurrent
+            || (error as Error | null)?.name === 'AbortError'
+            || (error instanceof AdminTargetPersistenceError && error.kind === 'cancelled')) {
+            return;
+        }
+        if (!(error instanceof AdminTargetPersistenceError)) throw error;
+        const classified = error;
+        const key = classified?.kind === 'authorization'
+            ? 'panel_admin_target_unauthorized'
+            : 'panel_admin_target_load_error';
+        console.warn('🪼 Jellyfin Canopy: Could not open Canopy User Settings:', error);
+        const translated = JC.t?.(key);
+        toast(!translated || translated === key ? (classified?.kind === 'authorization'
+            ? 'You are not authorized to edit this user’s Canopy settings.'
+            : 'Could not load this user’s Canopy settings.') : translated);
     }).finally(() => {
         if (openingPromise === opening) openingPromise = null;
         // Every early/stale return leaves the reservation in opening state.
@@ -157,9 +196,22 @@ export function showEnhancedPanel(): Promise<void> {
 
 async function openPanel(owner: PanelOwner): Promise<void> {
     const { identityContext } = owner;
+    const launchRoute = owner.launch
+        ? parseSettingsPreferencesRoute(new URL(owner.launch.url))
+        : { kind: 'preferences' as const, targetUserId: null };
+    if (launchRoute.kind !== 'preferences') {
+        throw new AdminTargetPersistenceError(
+            'The selected Jellyfin preferences route is invalid.',
+            { kind: 'validation' },
+        );
+    }
+    const requestedTargetUserId = launchRoute.targetUserId;
+    const normalizedRequestedTarget = String(requestedTargetUserId || '').replace(/-/g, '').toLowerCase();
+    const isSelfLaunch = !normalizedRequestedTarget
+        || normalizedRequestedTarget === identityContext.userId;
     // Refresh user settings when panel opens to ensure correct user's settings are displayed
     const currentUserId = identityContext.userId;
-    if (currentUserId) {
+    if (currentUserId && isSelfLaunch) {
         try {
             // Fetch fresh settings for the current user
             const settingsResponse = JC.core.api?.plugin
@@ -196,10 +248,18 @@ async function openPanel(owner: PanelOwner): Promise<void> {
 
     if (!owner.isCurrent()) return;
 
-    // Re-initialize shortcuts to ensure they're populated before building the panel
-    if (typeof JC.initializeShortcuts === 'function') {
+    // Re-initialize actor shortcuts only for the actor's own editor.
+    if (isSelfLaunch && typeof JC.initializeShortcuts === 'function') {
         JC.initializeShortcuts();
     }
+
+    const editor = await panelEditorBoundary.openIsolatedPanelEditorContext({
+        actor: identityContext,
+        requestedTargetUserId,
+        signal: owner.abortController.signal,
+        isLaunchCurrent: () => owner.isCurrent(),
+    });
+    if (!owner.isCurrent()) return;
 
     // Get theme-appropriate styles
     const themeVars: any = (JC as any).themer.getThemeVariables();
@@ -273,7 +333,8 @@ async function openPanel(owner: PanelOwner): Promise<void> {
     const pluginShortcuts = Array.isArray(JC.pluginConfig.Shortcuts) ? JC.pluginConfig.Shortcuts : [];
 
     // Ensure activeShortcuts is initialized before building the panel
-    if (!JC.state!.activeShortcuts || Object.keys(JC.state!.activeShortcuts).length === 0) {
+    if (editor.appliesToActor
+        && (!JC.state!.activeShortcuts || Object.keys(JC.state!.activeShortcuts).length === 0)) {
         console.warn('🪼 Jellyfin Canopy: activeShortcuts not initialized, initializing now...');
         if (typeof JC.initializeShortcuts === 'function') {
             JC.initializeShortcuts();
@@ -382,8 +443,15 @@ async function openPanel(owner: PanelOwner): Promise<void> {
     const ctx: PanelContext = {
         help,
         identityContext,
+        editor,
         registerCleanup: (cleanup) => owner.registerCleanup(cleanup),
         trackTimer: (timer) => owner.trackTimer(timer),
+        reconcileAfterSaveFailure: async () => {
+            if (!owner.isCurrent()) return;
+            const launch = owner.launch;
+            owner.dispose();
+            await showEnhancedPanel(launch);
+        },
         pluginShortcuts,
         resetAutoCloseTimer,
         panelBgColor,
@@ -452,9 +520,9 @@ async function openPanel(owner: PanelOwner): Promise<void> {
             items.forEach(b => b.classList.toggle('active', b.dataset.tab === pane.dataset.pane));
             body.classList.add('jc-pane-open');
             syncLayerFocus(persist);
-            if (persist) {
-                (JC.currentSettings as any).lastOpenedTab = pane.dataset.pane;
-                void JC.saveUserSettings!('settings.json', JC.currentSettings).catch(() => undefined);
+            if (persist && editor.appliesToActor) {
+                (editor.settings as any).lastOpenedTab = pane.dataset.pane;
+                void editor.saveSettings().catch(() => undefined);
             }
             resetAutoCloseTimer();
         };
@@ -501,7 +569,7 @@ async function openPanel(owner: PanelOwner): Promise<void> {
 
         // Initial view: desktop restores the last-open section; a phone-sized
         // viewport starts on the section list (nothing pre-opened).
-        const lastTab = (JC.currentSettings as any).lastOpenedTab;
+        const lastTab = (editor.settings as any).lastOpenedTab;
         const initial = panes.find(p => p.dataset.pane === lastTab) || panes[0];
         if (phoneMedia.matches) {
             panes.forEach(p => p.classList.remove('active'));
@@ -552,7 +620,12 @@ async function openPanel(owner: PanelOwner): Promise<void> {
     // restore, and the jc-modal-open gate that suppresses JC.keyListener while
     // it is open (INT-1) — replacing the former manual remove/re-add dance.
     const a11y = installModalA11y(help, {
-        label: JC.t!('panel_settings_tab'),
+        label: (() => {
+            const translated = JC.t?.('panel_title');
+            return !translated || translated === 'panel_title'
+                ? 'Canopy User Settings'
+                : translated;
+        })(),
         onEscape: () => closeHelp({ type: 'keydown', key: 'Escape' }),
     });
     owner.registerCleanup(() => a11y.release());
@@ -562,8 +635,10 @@ async function openPanel(owner: PanelOwner): Promise<void> {
     ctx.createToast = createToast;
 
     wireSettingsListeners(ctx);
-    wireHiddenContentListeners(ctx);
-    wireSpoilerGuardListeners(ctx.resetAutoCloseTimer);
+    if (editor.appliesToActor) {
+        wireHiddenContentListeners(ctx);
+        wireSpoilerGuardListeners(ctx.resetAutoCloseTimer);
+    }
     wireMiscSettingsControls(ctx);
     wireLanguageControls(ctx);
     if (!owner.isCurrent()) return;

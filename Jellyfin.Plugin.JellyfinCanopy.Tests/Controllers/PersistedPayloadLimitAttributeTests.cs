@@ -27,6 +27,14 @@ public sealed class PersistedPayloadLimitAttributeTests
             PersistedPayloadPolicy.StandardRequestBytes);
         AssertLimit(
             typeof(UserSettingsController),
+            nameof(UserSettingsController.SaveAdminTargetUserSettings),
+            PersistedPayloadPolicy.StandardRequestBytes);
+        AssertLimit(
+            typeof(UserSettingsController),
+            nameof(UserSettingsController.SaveAdminTargetUserShortcuts),
+            PersistedPayloadPolicy.StandardRequestBytes);
+        AssertLimit(
+            typeof(UserSettingsController),
             nameof(UserSettingsController.SaveUserSettingsElsewhere),
             PersistedPayloadPolicy.StandardRequestBytes);
         AssertLimit(

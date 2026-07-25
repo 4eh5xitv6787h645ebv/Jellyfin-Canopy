@@ -12,6 +12,7 @@ using System.Threading.Tasks;
 using System.Threading;
 using System.Collections.Generic;
 using System.Collections.Concurrent;
+using System.Globalization;
 using System.Security.Cryptography;
 using Jellyfin.Data;
 using Jellyfin.Data.Enums;
@@ -79,6 +80,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 return authorizationResult;
             }
 
+            return ReadUserSettingsFile(authorizedUserId);
+        }
+
+        private IActionResult ReadUserSettingsFile(
+            string authorizedUserId,
+            string? targetUserId = null,
+            string? targetDisplayName = null)
+        {
             UserConfigReadResult<UserSettings> read;
             try
             {
@@ -123,6 +132,20 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
 
             StampServerManagedFields(authorizedUserId, userConfig);
             SetUserFileEvidence(userConfig);
+            if (targetUserId != null && targetDisplayName != null)
+            {
+                return Ok(new UserFileMutationResponse<UserSettings>
+                {
+                    Success = true,
+                    File = "settings.json",
+                    Revision = userConfig.Revision,
+                    ContentHash = ContentHash(userConfig),
+                    Data = userConfig,
+                    TargetUserId = targetUserId,
+                    TargetDisplayName = targetDisplayName
+                });
+            }
+
             return Ok(userConfig);
         }
 
@@ -172,6 +195,81 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             };
         }
 
+        [HttpGet("admin/user-settings/{targetUserId}/settings.json")]
+        [Authorize(Policy = Policies.RequiresElevation)]
+        [Produces("application/json")]
+        public IActionResult GetAdminTargetUserSettings(string targetUserId)
+        {
+            var targetResult = ResolveAdminTargetUser(
+                targetUserId,
+                out var canonicalTargetUserId,
+                out var targetUser);
+            if (targetResult != null)
+            {
+                return targetResult;
+            }
+
+            return ReadUserSettingsFile(
+                canonicalTargetUserId,
+                canonicalTargetUserId,
+                targetUser.Username);
+        }
+
+        [HttpGet("admin/user-settings/{targetUserId}/shortcuts.json")]
+        [Authorize(Policy = Policies.RequiresElevation)]
+        [Produces("application/json")]
+        public IActionResult GetAdminTargetUserShortcuts(string targetUserId)
+        {
+            var targetResult = ResolveAdminTargetUser(
+                targetUserId,
+                out var canonicalTargetUserId,
+                out var targetUser);
+            if (targetResult != null)
+            {
+                return targetResult;
+            }
+
+            return ReadUserFileEvidence<UserShortcuts>(
+                canonicalTargetUserId,
+                "shortcuts.json",
+                canonicalTargetUserId,
+                targetUser.Username);
+        }
+
+        [HttpGet("admin/user-settings/{targetUserId}/{fileName}/evidence")]
+        [Authorize(Policy = Policies.RequiresElevation)]
+        [Produces("application/json")]
+        public IActionResult GetAdminTargetUserFileEvidence(string targetUserId, string fileName)
+        {
+            var targetResult = ResolveAdminTargetUser(
+                targetUserId,
+                out var canonicalTargetUserId,
+                out var targetUser);
+            if (targetResult != null)
+            {
+                return targetResult;
+            }
+
+            return fileName switch
+            {
+                "settings.json" => ReadUserSettingsFile(
+                    canonicalTargetUserId,
+                    canonicalTargetUserId,
+                    targetUser.Username),
+                "shortcuts.json" => ReadUserFileEvidence<UserShortcuts>(
+                    canonicalTargetUserId,
+                    fileName,
+                    canonicalTargetUserId,
+                    targetUser.Username),
+                _ => NotFound(new
+                {
+                    success = false,
+                    code = "unsupported_user_settings_file",
+                    message = "Unsupported admin-target user settings file."
+                })
+            };
+        }
+
         [HttpPost("user-settings/{userId}/settings.json")]
         [Authorize]
         [Produces("application/json")]
@@ -202,6 +300,58 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             return CommitUserFile(authorizedUserId, "shortcuts.json", userConfiguration, "shortcuts");
         }
 
+        [HttpPost("admin/user-settings/{targetUserId}/settings.json")]
+        [Authorize(Policy = Policies.RequiresElevation)]
+        [Produces("application/json")]
+        [PersistedPayloadLimit(PersistedPayloadPolicy.StandardRequestBytes)]
+        public IActionResult SaveAdminTargetUserSettings(
+            string targetUserId,
+            [FromBody] UserSettings userConfiguration)
+        {
+            var targetResult = ResolveAdminTargetUser(
+                targetUserId,
+                out var canonicalTargetUserId,
+                out var targetUser);
+            if (targetResult != null)
+            {
+                return targetResult;
+            }
+
+            return CommitUserFile(
+                canonicalTargetUserId,
+                "settings.json",
+                userConfiguration,
+                "settings",
+                canonicalTargetUserId,
+                targetUser.Username);
+        }
+
+        [HttpPost("admin/user-settings/{targetUserId}/shortcuts.json")]
+        [Authorize(Policy = Policies.RequiresElevation)]
+        [Produces("application/json")]
+        [PersistedPayloadLimit(PersistedPayloadPolicy.StandardRequestBytes)]
+        public IActionResult SaveAdminTargetUserShortcuts(
+            string targetUserId,
+            [FromBody] UserShortcuts userConfiguration)
+        {
+            var targetResult = ResolveAdminTargetUser(
+                targetUserId,
+                out var canonicalTargetUserId,
+                out var targetUser);
+            if (targetResult != null)
+            {
+                return targetResult;
+            }
+
+            return CommitUserFile(
+                canonicalTargetUserId,
+                "shortcuts.json",
+                userConfiguration,
+                "shortcuts",
+                canonicalTargetUserId,
+                targetUser.Username);
+        }
+
         private enum UserFileCommitStatus
         {
             Success,
@@ -222,6 +372,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             public long Revision { get; set; }
             public string ContentHash { get; set; } = string.Empty;
             public T? Data { get; set; }
+
+            [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+            public string? TargetUserId { get; set; }
+
+            [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+            public string? TargetDisplayName { get; set; }
         }
 
         private sealed class UserFileCommitResult<T>
@@ -236,7 +392,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             string authorizedUserId,
             string fileName,
             T? candidate,
-            string displayName)
+            string displayName,
+            string? targetUserId = null,
+            string? targetDisplayName = null)
             where T : class, IRevisionedUserConfiguration, new()
         {
             if (candidate != null)
@@ -251,6 +409,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 {
                     Code = validation.Code,
                     File = fileName,
+                    TargetUserId = targetUserId,
+                    TargetDisplayName = targetDisplayName,
                     Message = validation.Status == PersistedPayloadStatus.TooLarge
                         ? $"The {displayName} payload exceeds the supported size limit."
                         : $"The {displayName} payload is invalid."
@@ -268,6 +428,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                     Data = candidate,
                     Revision = candidate.Revision,
                     ContentHash = ContentHash(candidate),
+                    TargetUserId = targetUserId,
+                    TargetDisplayName = targetDisplayName,
                     Message = $"Saving {displayName} requires If-Match: \"<revision>\" from the latest GET."
                 });
             }
@@ -280,6 +442,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                     Data = candidate,
                     Revision = candidate.Revision,
                     ContentHash = ContentHash(candidate),
+                    TargetUserId = targetUserId,
+                    TargetDisplayName = targetDisplayName,
                     Message = "The body Revision must match the If-Match revision."
                 });
             }
@@ -303,7 +467,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                     File = fileName,
                     Revision = result.State?.Revision ?? 0,
                     ContentHash = result.State == null ? string.Empty : ContentHash(result.State),
-                    Data = result.State
+                    Data = result.State,
+                    TargetUserId = targetUserId,
+                    TargetDisplayName = targetDisplayName
                 };
 
                 if (result.Status == UserFileCommitStatus.Success)
@@ -328,6 +494,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 var response = new UserFileMutationResponse<T>
                 {
                     File = fileName,
+                    TargetUserId = targetUserId,
+                    TargetDisplayName = targetDisplayName,
                     Message = ex is UserStoreUnhealthyException
                         ? $"The {displayName} store is quarantined. Retry alone cannot recover it; an administrator must inspect and reset or repair it."
                         : $"The {displayName} store is unavailable; no write was acknowledged."
@@ -482,7 +650,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             }
         }
 
-        private IActionResult ReadUserFileEvidence<T>(string authorizedUserId, string fileName)
+        private IActionResult ReadUserFileEvidence<T>(
+            string authorizedUserId,
+            string fileName,
+            string? targetUserId = null,
+            string? targetDisplayName = null)
             where T : class, IRevisionedUserConfiguration, new()
         {
             lock (_userConfigurationManager.GetUserFileLock(authorizedUserId, fileName))
@@ -501,7 +673,61 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                     File = fileName,
                     Revision = read.Value.Revision,
                     ContentHash = ContentHash(read.Value),
-                    Data = read.Value
+                    Data = read.Value,
+                    TargetUserId = targetUserId,
+                    TargetDisplayName = targetDisplayName
+                });
+            }
+        }
+
+        private IActionResult? ResolveAdminTargetUser(
+            string targetUserId,
+            out string canonicalTargetUserId,
+            out JUser targetUser)
+        {
+            canonicalTargetUserId = string.Empty;
+            targetUser = null!;
+
+            if (string.IsNullOrWhiteSpace(targetUserId)
+                || (!Guid.TryParseExact(targetUserId, "N", out var parsedTargetUserId)
+                    && !Guid.TryParseExact(targetUserId, "D", out parsedTargetUserId))
+                || parsedTargetUserId == Guid.Empty)
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    code = "invalid_target_user_id",
+                    message = "targetUserId must be a non-empty GUID in dashed or 32-character format."
+                });
+            }
+
+            canonicalTargetUserId = parsedTargetUserId.ToString("N");
+            try
+            {
+                var resolved = _userManager.GetUserById(parsedTargetUserId);
+                if (resolved == null || resolved.Id != parsedTargetUserId)
+                {
+                    return NotFound(new
+                    {
+                        success = false,
+                        code = "target_user_not_found",
+                        message = "The selected Jellyfin user does not exist."
+                    });
+                }
+
+                targetUser = resolved;
+                return null;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(
+                    $"Failed to resolve admin-target Jellyfin user {canonicalTargetUserId} " +
+                    $"(exception={ex.GetType().Name}).");
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, new
+                {
+                    success = false,
+                    code = "target_user_directory_unavailable",
+                    message = "The Jellyfin user directory is temporarily unavailable."
                 });
             }
         }
@@ -1389,7 +1615,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             if (raw.StartsWith("W/", StringComparison.OrdinalIgnoreCase)) return false;
             if (raw.Length < 2 || raw[0] != '"' || raw[^1] != '"') return false;
             raw = raw.Substring(1, raw.Length - 2);
-            return long.TryParse(raw, out revision) && revision >= 0;
+            return long.TryParse(
+                    raw,
+                    NumberStyles.None,
+                    CultureInfo.InvariantCulture,
+                    out revision)
+                && revision >= 0
+                && string.Equals(
+                    raw,
+                    revision.ToString(CultureInfo.InvariantCulture),
+                    StringComparison.Ordinal);
         }
 
         private IActionResult PreconditionRequired()

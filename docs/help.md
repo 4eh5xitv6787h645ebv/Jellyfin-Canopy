@@ -20,11 +20,17 @@ It does **not** work on Android TV or other native TV apps, because those client
 
 #### Can I customize the keyboard shortcuts?
 
-Yes. Open the Jellyfin Canopy panel — click its item in the sidebar or press `?` — then go to the **Shortcuts** tab. Click any key to set a custom shortcut. Changes save automatically. See [The Enhanced Experience](enhanced.md) for the full shortcut list.
+Yes. Open Canopy User Settings — click its item in the sidebar or press `?` — then go to the **Shortcuts** tab. Click any key to set a custom shortcut. Changes save automatically. See [The Enhanced Experience](enhanced.md) for the full shortcut list.
 
 #### How do I change the plugin's language?
 
 The plugin automatically follows the language set in your Jellyfin user profile. If your language isn't available yet, it falls back to English. If you'd like to add or improve a language, see [Translate Jellyfin Canopy](#translate-jellyfin-canopy).
+
+#### How can an administrator edit another user's Canopy settings?
+
+Open **Dashboard** → **Users**, select the user, open the page for editing their profile and personal preferences, then click **Canopy User Settings**. The panel displays an **Editing settings for _name_** banner so you can confirm which account is being edited.
+
+The editable settings, display-language choice, and shortcut overrides are saved server-side for the selected user only. They normally take effect after that user refreshes or reloads their client; the administrator's own settings and active shortcuts do not change. Hidden Content and Spoiler Guard controls are unavailable in this cross-user panel, and browser-local actions such as clearing the translation cache cannot be applied to another user's browser. See [The Enhanced Experience](enhanced.md) for details.
 
 #### Is Jellyfin Canopy affiliated with Seerr?
 
@@ -127,7 +133,7 @@ If it still won't connect, check the logs from three places: the browser console
 
 First, make sure the tags are enabled and your browser isn't serving a stale cache:
 
-1. Open the Enhanced panel (press `?`) and go to the **Settings** tab.
+1. Open Canopy User Settings (press `?`) and go to the **Settings** tab.
 2. Enable the tags you want — **Quality Tags**, **Genre Tags**, **Language Tags**, **Rating Tags** — and adjust their position if needed.
 3. Hard-refresh the browser with ++ctrl+f5++, clear the browser cache, and restart the browser if tags still look stale.
 
@@ -146,18 +152,21 @@ Finally, remember that tags need the underlying metadata to draw from: quality t
 
 #### Bookmarks aren't syncing across devices
 
-The same user account should reach the same bookmarks from any device, because bookmark *data* is stored on the server. Your *settings*, however, are stored per-browser — so behavior can differ between browsers even for the same user.
+The same user account should reach the same bookmarks and Canopy preferences from any device because their authoritative data is stored on the server. Browser-local cache and temporary UI state can still differ between browsers.
 
 !!! info "What lives where"
 
     **Stored on the Jellyfin server (syncs across devices):**
 
     - Bookmark data — `bookmark.json` (see [Developer Guide](developers.md))
+    - Canopy settings and shortcut overrides — `settings.json` and `shortcuts.json`
+    - Hidden Content state — `hidden-content.json`
     - [Spoiler Guard](spoiler-guard.md) per-user list and override preferences — `spoilerblur.json`
 
     **Stored in each browser's `localStorage` (independent per browser):**
 
-    - Your Canopy settings (see [The Enhanced Experience](enhanced.md))
+    - The translation cache and browser-only UI state
+    - Short-lived confirmation suppressions
 
 To troubleshoot missing bookmarks:
 
@@ -167,7 +176,7 @@ To troubleshoot missing bookmarks:
 
 #### The custom pause screen won't appear
 
-Two things need to be true. First, enable the feature: open the Enhanced panel, go to the **Settings** tab, turn on **Enable Custom Pause Screen**, and adjust the options to taste. Second, be in the right playback mode — the pause screen only shows in fullscreen or theater mode. Pause the video (press Space) and the screen appears after a brief delay.
+Two things need to be true. First, enable the feature: open Canopy User Settings, go to the **Settings** tab, turn on **Enable Custom Pause Screen**, and adjust the options to taste. Second, be in the right playback mode — the pause screen only shows in fullscreen or theater mode. Pause the video (press Space) and the screen appears after a brief delay.
 
 To hide or restyle individual elements of the pause screen, see the pause-screen CSS in the [Reference](reference.md).
 
@@ -254,9 +263,9 @@ For best results, use PNG or SVG with transparent backgrounds for logos, at dime
 
 #### Can I move tags to a different corner?
 
-Yes, from the Enhanced panel:
+Yes, from Canopy User Settings:
 
-1. Open the Enhanced panel (press `?`) and go to the **Settings** tab.
+1. Open Canopy User Settings (press `?`) and go to the **Settings** tab.
 2. Find the tag position options.
 3. Choose a position — top-left, top-right, bottom-left, or bottom-right.
 4. Changes apply immediately.

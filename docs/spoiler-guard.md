@@ -176,7 +176,7 @@ Two optional, admin-controlled toggles save you from opting in manually for ever
 
 ## Making it yours — per-user overrides
 
-Your admin decides which spoiler surfaces get stripped, but you can relax any of them for yourself. Open the JC settings panel (gear icon → **Jellyfin Canopy**, part of the [Enhanced experience](enhanced.md)) and expand the **Spoiler Guard** section. Under **"Show me this even with Spoiler Guard on"** there's a checkbox per category:
+Your admin decides which spoiler surfaces get stripped, but you can relax any of them for yourself. Open **Canopy User Settings** (under the **Jellyfin Canopy** sidebar heading, part of the [Enhanced experience](enhanced.md)) and expand the **Spoiler Guard** section. Under **"Show me this even with Spoiler Guard on"** there's a checkbox per category:
 
 > Episode descriptions · Episode titles · Chapter names · Cast list · Ratings · Air date · Taglines · Tags · Reviews
 

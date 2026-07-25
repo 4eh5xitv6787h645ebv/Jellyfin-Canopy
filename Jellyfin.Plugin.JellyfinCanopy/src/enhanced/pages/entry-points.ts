@@ -2,7 +2,7 @@
 //
 // Registry-driven entry points for every surface, and the SINGLE owner of
 // the '.jellyfinCanopySection' drawer section (settings-panel registers its
-// Enhanced Panel link through ensureCanopySection — two independent creators
+// Canopy User Settings link through ensureCanopySection — two independent creators
 // previously produced nondeterministic drawer ordering).
 //
 // Surfaces:
@@ -52,7 +52,7 @@ function activate(descriptor: PageDescriptor, event: Event, context: IdentityCon
 
 /**
  * Get or create the Canopy drawer section inside the given sidebar. Exposed
- * for settings-panel (its Enhanced Panel link is pinned LAST, after the
+ * for settings-panel (its Canopy User Settings link is pinned LAST, after the
  * page entries, via the 'jc-pinned-last' marker).
  */
 export function ensureCanopySection(sidebar: HTMLElement): HTMLElement {

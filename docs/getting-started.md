@@ -1,6 +1,6 @@
 # Getting Started
 
-Jellyfin Canopy layers a richer, faster front-end and a set of opt-in power features on top of your Jellyfin server. This guide takes you from a fresh Jellyfin 12 install to a working Enhanced Panel, then points you at the one-time setup that turns on the features you care about. Budget about ten minutes.
+Jellyfin Canopy layers a richer, faster front-end and a set of opt-in power features on top of your Jellyfin server. This guide takes you from a fresh Jellyfin 12 install to working Canopy User Settings, then points you at the one-time setup that turns on the features you care about. Budget about ten minutes.
 
 !!! info "Prerequisites"
 
@@ -48,9 +48,9 @@ After the restart:
 
 1. Refresh your browser with a hard reload (++ctrl+f5++ or ++command+shift+r++).
 2. Open the Jellyfin Canopy settings panel — either route works:
-    - In the sidebar, under the **Jellyfin Canopy** heading, click **Enhanced Panel**.
+    - In the sidebar, under the **Jellyfin Canopy** heading, click **Canopy User Settings**.
     - Or press `?`.
-3. If the **Enhanced Panel** opens, the install worked.
+3. If **Canopy User Settings** opens, the install worked.
 
 If nothing appears, jump to [Troubleshooting the install](#troubleshooting-the-install).
 

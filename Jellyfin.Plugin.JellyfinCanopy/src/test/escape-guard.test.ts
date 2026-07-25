@@ -183,13 +183,13 @@ const ALLOWLIST: AllowlistEntry[] = [
     {
         file: 'enhanced/settings-panel/template.ts',
         expr: 'preset.size',
-        line: 54,
+        line: 70,
         why: 'plugin-defined font-size preset tables (legacy js/ tree) — fixed numeric em values',
     },
     {
         file: 'enhanced/settings-panel/template.ts',
         expr: 'preset.family',
-        line: 56,
+        line: 72,
         why: 'plugin-defined font-family preset tables (legacy js/ tree) — fixed font-family literals',
     },
 ];

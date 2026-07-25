@@ -13,7 +13,7 @@ declare module '../../types/jc' {
         isVideoPage?: () => boolean;
         /** ui-entry-points: true when on an item details page. */
         isDetailsPage?: () => boolean;
-        /** ui-entry-points: adds the sidebar "Enhanced Panel" menu button. */
+        /** ui-entry-points: adds the sidebar "Canopy User Settings" menu button. */
         addPluginMenuButton?: () => void;
         /** ui-entry-points: injects the settings button into the video OSD. */
         addOsdSettingsButton?: () => void;

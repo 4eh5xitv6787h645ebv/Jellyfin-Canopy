@@ -53,7 +53,7 @@ test.describe('non-admin session', () => {
         assertNoRuntimeErrors(consoleErrors);
     });
 
-    test('the enhanced panel opens with the section nav and closes on Escape', async ({ page, consoleErrors }) => {
+    test('Canopy User Settings opens with the section nav and closes on Escape', async ({ page, consoleErrors }) => {
         await loginAs(page, 'user', consoleErrors);
 
         await page.evaluate(() => { (window as any).JellyfinCanopy.showEnhancedPanel(); });

@@ -253,6 +253,7 @@ Jellyfin Canopy exposes its own REST controllers under `/JellyfinCanopy/*` for e
 
 !!! note "Scope of this section"
     This documents the **external-integration surface** of the `/JellyfinCanopy/*` API — the endpoints meant to be called by external applications and scripts. Many additional admin- and UI-internal endpoints exist and are intentionally omitted here.
+    The elevated admin-target settings endpoints are documented as an explicit exception because their authorization, identity-separation, and concurrency contract is security-sensitive.
 
 [Reference](reference.md) maps where each backing setting lives in the admin config page.
 
@@ -314,6 +315,45 @@ Complete replacements for `settings.json`, `shortcuts.json`, `elsewhere.json`, a
 Known settings/shortcut/Elsewhere free-text fields are capped at 512 characters. Hidden Content keys are capped at 256 characters; display fields at 512; identifiers and type/timestamp fields use narrower 32–128 character limits. Season and episode numbers accept `0` through `100000`. Legacy `series` hide scope remains accepted alongside `global`, `continuewatching`, `nextup`, and `homesections`.
 
 Forward-compatible `[JsonExtensionData]` remains supported, but unknown JSON is recursively bounded across the complete extension map: property names 256 characters, string values 4,096 characters, depth 16, and 20,000 JSON nodes. Finally, the shared user-configuration store refuses every serialized file over 8 MiB as a caller-independent backstop. Successful logs contain metadata such as file, revision, hash, item count, and byte count—not old/new values or supplied secrets.
+
+### Elevated admin-target settings API
+
+Canopy User Settings uses a dedicated UI-internal surface when an administrator edits another user's `settings.json` or `shortcuts.json`:
+
+```http
+GET  /JellyfinCanopy/admin/user-settings/{targetUserId}/settings.json
+POST /JellyfinCanopy/admin/user-settings/{targetUserId}/settings.json
+GET  /JellyfinCanopy/admin/user-settings/{targetUserId}/shortcuts.json
+POST /JellyfinCanopy/admin/user-settings/{targetUserId}/shortcuts.json
+GET  /JellyfinCanopy/admin/user-settings/{targetUserId}/{fileName}/evidence
+```
+
+Every route is protected by `Policies.RequiresElevation`. The authenticated token defines the **actor** and is never replaced or impersonated. `{targetUserId}` defines the **target** only: it accepts a dashed GUID or 32-character `N` form, is canonicalized to lowercase `N` form, and must resolve to an existing Jellyfin user through `IUserManager`. A malformed or empty id returns `400`; an unknown or deleted user returns `404` without creating a configuration directory or default file; a failed Jellyfin user-directory lookup returns `503`. Missing/invalid authentication and a non-administrator retain Jellyfin's bare `401`/`403` responses with empty bodies.
+
+Successful reads return an acknowledgement envelope containing `Success`, `File`, `Revision`, `ContentHash`, `Data`, `TargetUserId`, and `TargetDisplayName`. `TargetDisplayName` is resolved by the server rather than copied from route or page text. `Data.Revision` equals the envelope revision, `ContentHash` is the 64-character lowercase SHA-256 content hash, and the response also carries the matching strong `ETag` and `X-JC-Content-Hash` headers. For `settings.json`, server-managed fields such as `IsAdmin` describe the **target**, not the administrator who made the request.
+
+Writes are complete, revision-aware replacements and use the same validation, payload budgets, atomic persistence, and corruption handling as self-service writes:
+
+```http
+POST /JellyfinCanopy/admin/user-settings/{targetUserId}/settings.json
+Authorization: MediaBrowser Token="{admin-api-key}"
+Content-Type: application/json
+If-Match: "7"
+```
+
+The request body is the complete `Data` object returned by the latest GET, with the intended fields changed—not a partial object containing only the property being changed. Exactly one quoted numeric strong `If-Match` value is accepted, and the body `Revision` must match it. A missing, weak, wildcard, unquoted, or multi-value precondition returns `428`; a body/header revision mismatch returns `400`; a stale revision returns `409` with the current authoritative revision/hash/data so the caller can rebase deliberately. A successful changed write advances the revision once and returns the committed target state; a content-identical write is an acknowledged no-op. Invalid or oversized payloads return `400` or `413`, and an unreadable, corrupt, or quarantined store fails closed with `503` rather than publishing an empty replacement. The `/evidence` route returns the same authoritative envelope and is used to resolve an ambiguous or lost write acknowledgement.
+
+The browser editor preserves the same separation. The normal preferences route without a different `userId` remains self-service. Admin-target mode is selected only from the currently visible user's preferences view, including Jellyfin 12's modern and legacy route forms:
+
+```text
+/web/#/mypreferencesmenu?userId=<target>
+/web/#/mypreferencesmenu.html?userId=<target>
+/web/mypreferencesmenu?userId=<target>
+```
+
+The route target is captured with the authenticated actor epoch and panel generation. Navigation to another target, panel close, logout/account change, server change, or a replacement panel makes older reads, writes, and retained controls stale and inert. Target snapshots and save queues never replace the actor's `JC.userConfig`, `JC.currentSettings`, active shortcuts, identity context, or browser storage.
+
+Only `settings.json` and `shortcuts.json` controls that use this target-aware adapter are mutable in admin-target mode. Hidden Content and Spoiler Guard panes remain unavailable there until their state and actions are fully target-scoped. Browser-local actions, including clearing the translation cache and temporary confirmation suppressions, are omitted or disabled because they belong to the administrator's current browser, not the selected user's server profile. Changing the target's display-language setting does not reload or rewrite the administrator's browser.
 
 ### Bookmark API
 

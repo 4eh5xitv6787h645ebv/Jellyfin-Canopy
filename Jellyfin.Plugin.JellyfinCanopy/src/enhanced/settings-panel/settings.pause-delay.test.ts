@@ -9,6 +9,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JC } from '../../globals';
 import { wireSettingsListeners } from './settings';
 import type { PanelContext } from './panel';
+import {
+    createPanelEditorContext,
+    type PanelEditorContext,
+} from './editor-context';
+import type { UserSettingsSaveResult } from '../config';
 import '../config'; // registers the real JC.saveUserSettings
 
 // Captured before any test overrides JC.saveUserSettings with a spy.
@@ -45,10 +50,12 @@ function buildSettingsDom(): HTMLInputElement {
     return delayInput;
 }
 
-function makeCtx(): PanelContext {
+function makeCtx(editor?: PanelEditorContext): PanelContext {
     return {
         createToast: () => '',
         resetAutoCloseTimer: () => undefined,
+        editor,
+        identityContext: editor?.actor,
     } as unknown as PanelContext;
 }
 
@@ -124,6 +131,41 @@ describe('pause-screen delay persistence (ENH-1)', () => {
 
         await vi.waitFor(() => expect(appliedValues).toEqual([false, true]));
         expect(document.getElementById('jellyfin-canopy-panel')).toBeNull();
+        expect(JC.currentSettings.hideFavoritesTab).toBe(true);
+    });
+
+    it('reapplies actor side effects when a started self save rejects after its panel lease ends', async () => {
+        buildSettingsDom();
+        JC.identity.transition('server-a', 'user-a', 'self-panel-close-regression');
+        const actor = JC.identity.capture()!;
+        JC.currentSettings = { hideFavoritesTab: true };
+        const appliedValues: boolean[] = [];
+        JC.applyHideFavoritesTab = vi.fn(() => {
+            appliedValues.push(JC.currentSettings?.hideFavoritesTab === true);
+        });
+        let rejectSave!: () => void;
+        JC.saveUserSettings = vi.fn(() => new Promise<UserSettingsSaveResult>((_resolve, reject) => {
+            rejectSave = () => {
+                JC.currentSettings!.hideFavoritesTab = true;
+                reject(Object.assign(new Error('unavailable'), { status: 503 }));
+            };
+        }));
+        let panelCurrent = true;
+        const editor = await createPanelEditorContext({
+            actor,
+            signal: new AbortController().signal,
+            isLaunchCurrent: () => panelCurrent,
+        });
+        wireSettingsListeners(makeCtx(editor));
+
+        const toggle = document.getElementById('hideFavoritesTabToggle') as HTMLInputElement;
+        toggle.checked = false;
+        toggle.dispatchEvent(new Event('change'));
+        panelCurrent = false;
+        rejectSave();
+
+        await vi.waitFor(() => expect(appliedValues).toEqual([false, true]));
+        expect(JC.identity.isCurrent(actor)).toBe(true);
         expect(JC.currentSettings.hideFavoritesTab).toBe(true);
     });
 });

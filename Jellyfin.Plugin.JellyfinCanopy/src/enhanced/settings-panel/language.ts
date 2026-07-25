@@ -6,9 +6,13 @@
 // (Converted from js/enhanced/ui-panel-language.js — bodies semantically identical.)
 
 import { JC } from '../../globals';
-import { toast } from '../../core/ui-kit';
+import { escapeHtml, toast } from '../../core/ui-kit';
 import type { PanelContext } from './panel';
 import type { IdentityContext } from '../../types/jc';
+import {
+    AdminTargetPersistenceError,
+    createSelfPanelEditorContext,
+} from './editor-context';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -28,8 +32,14 @@ function scheduleReload(context: IdentityContext, delay: number): void {
  */
 export function wireLanguageControls(ctx: PanelContext): void {
     const { resetAutoCloseTimer } = ctx;
-    const context = JC.identity.capture();
+    const context = ctx.identityContext || JC.identity.capture();
     if (!context) return;
+    const editor = ctx.editor || createSelfPanelEditorContext(context);
+    const settings = editor.settings as Record<string, any>;
+    const appliesToActor = editor.appliesToActor;
+    const canSettleSave = () => editor.mode === 'admin-target'
+        ? editor.isCurrent()
+        : appliesToActor && JC.identity.isCurrent(editor.actor);
 
     // --- Language Settings ---
     const displayLanguageSelect = document.getElementById('displayLanguageSelect') as HTMLSelectElement | null;
@@ -40,16 +50,20 @@ export function wireLanguageControls(ctx: PanelContext): void {
         const scopedLanguageKey = `jc-display-language:${context.serverId}:${context.userId}`;
 
         // Get saved language from localStorage as well
-        const storedLanguage = JC.storage.local.read('settings-language', scopedLanguageKey, 'scoped-language');
-        const localStorageLang = storedLanguage.state === 'Valid' ? storedLanguage.value : null;
-        const savedLanguage = (JC.currentSettings as any).displayLanguage || localStorageLang || '';
+        const storedLanguage = appliesToActor
+            ? JC.storage.local.read('settings-language', scopedLanguageKey, 'scoped-language')
+            : null;
+        const localStorageLang = storedLanguage?.state === 'Valid' ? storedLanguage.value : null;
+        const savedLanguage = settings.displayLanguage || localStorageLang || '';
         let acknowledgedDisplayLanguage = String(savedLanguage);
 
-        console.log('🪼 Jellyfin Canopy: Current language setting:', {
-            fromSettings: (JC.currentSettings as any).displayLanguage,
-            fromLocalStorage: localStorageLang,
-            willUse: savedLanguage
-        });
+        if (appliesToActor) {
+            console.log('🪼 Jellyfin Canopy: Current language setting:', {
+                fromSettings: settings.displayLanguage,
+                fromLocalStorage: localStorageLang,
+                willUse: savedLanguage
+            });
+        }
 
         // Populate language options from server-side locale enumeration
         void (async () => {
@@ -72,7 +86,7 @@ export function wireLanguageControls(ctx: PanelContext): void {
                     JC.core.api!.plugin('/locales'),
                     JC.core.api!.jf('/Localization/Cultures'),
                 ]);
-                if (!JC.identity.isCurrent(context) || !displayLanguageSelect.isConnected) return;
+                if (!editor.isCurrent() || !displayLanguageSelect.isConnected) return;
 
                 const cultureMap: Record<string, any> = {};
                 cultures.forEach((c: any) => {
@@ -106,11 +120,11 @@ export function wireLanguageControls(ctx: PanelContext): void {
                     displayLanguageSelect.appendChild(option);
                 });
             } catch (err) {
-                if (!JC.identity.isCurrent(context)) return;
+                if (!editor.isCurrent()) return;
                 console.warn('🪼 Jellyfin Canopy: Failed to load language options:', err);
             }
 
-            if (!JC.identity.isCurrent(context) || !displayLanguageSelect.isConnected) return;
+            if (!editor.isCurrent() || !displayLanguageSelect.isConnected) return;
 
             // Normalize saved language code with region support (e.g., zh-HK) when available
             let normalizedLanguage = '';
@@ -130,12 +144,14 @@ export function wireLanguageControls(ctx: PanelContext): void {
                 displayLanguageSelect.value = normalizedLanguage;
             }
             acknowledgedDisplayLanguage = displayLanguageSelect.value;
-            console.log('🪼 Jellyfin Canopy: Set language dropdown to:', savedLanguage || 'Auto', 'Normalized to:', normalizedLanguage, 'Select element value is now:', displayLanguageSelect.value);
+            if (appliesToActor) {
+                console.log('🪼 Jellyfin Canopy: Set language dropdown to:', savedLanguage || 'Auto', 'Normalized to:', normalizedLanguage, 'Select element value is now:', displayLanguageSelect.value);
+            }
         })();
 
         // Save language on change
         displayLanguageSelect.addEventListener('change', (e) => { void (async () => {
-            if (!JC.identity.isCurrent(context)) return;
+            if (!editor.isCurrent()) return;
             const newLang = (e.target as HTMLSelectElement).value;
             const previousLang = acknowledgedDisplayLanguage;
 
@@ -154,33 +170,50 @@ export function wireLanguageControls(ctx: PanelContext): void {
             const translationExists = true;
 
             // Save to settings.json (use base language code)
-            (JC.currentSettings as any).displayLanguage = newLang;
+            settings.displayLanguage = newLang;
             try {
-                await JC.saveUserSettings!('settings.json', JC.currentSettings);
+                await editor.saveSettings();
             } catch (error) {
-                if (!JC.identity.isCurrent(context)) return;
+                if (!editor.isCurrent()
+                    || (error instanceof Error && error.name === 'AbortError')
+                    || (error instanceof AdminTargetPersistenceError
+                        && error.kind === 'cancelled')) return;
                 (e.target as HTMLSelectElement).value = previousLang;
+                if (editor.mode === 'admin-target') {
+                    const key = 'panel_admin_target_save_error';
+                    const translated = JC.t?.(key);
+                    toast(!translated || translated === key
+                        ? 'Could not save this user’s Canopy settings.'
+                        : translated);
+                }
+                await ctx.reconcileAfterSaveFailure?.();
                 return;
             }
-            if (!JC.identity.isCurrent(context)) return;
+            if (!canSettleSave()) return;
             acknowledgedDisplayLanguage = newLang;
 
             // Save to localStorage (use the same code)
-            if (fullCultureCode) {
+            if (appliesToActor && fullCultureCode) {
                 JC.storage.local.write('settings-language', scopedLanguageKey, fullCultureCode, 'scoped-language');
                 JC.storage.local.write('settings-language', languageKey, fullCultureCode, 'compatibility-language');
-            } else {
+            } else if (appliesToActor) {
                 // Set empty value instead of removing key
                 JC.storage.local.write('settings-language', scopedLanguageKey, '', 'scoped-language');
                 JC.storage.local.write('settings-language', languageKey, '', 'compatibility-language');
             }
 
-            if (newLang && !translationExists) {
+            if (editor.mode === 'admin-target') {
+                const key = 'panel_admin_target_refresh_notice';
+                const translated = JC.t?.(key);
+                toast(escapeHtml(!translated || translated === key
+                    ? 'Saved. It applies after that user refreshes their client.'
+                    : translated));
+            } else if (newLang && !translationExists) {
                 toast(`${JC.icon!(JC.IconName!.WARNING)} Translation file not available for selected language. Falling back to English.`);
             } else {
                 toast(JC.t!('toast_language_changed'));
             }
-            scheduleReload(context, 1500);
+            if (appliesToActor) scheduleReload(context, 1500);
         })(); });
     }
 
@@ -188,7 +221,7 @@ export function wireLanguageControls(ctx: PanelContext): void {
     const clearTranslationCacheButton = document.getElementById('clearTranslationCacheButton');
     if (clearTranslationCacheButton) {
         clearTranslationCacheButton.addEventListener('click', () => {
-            if (!JC.identity.isCurrent(context)) return;
+            if (!editor.isCurrent() || !appliesToActor) return;
             const cacheKeys = [];
             const CACHE_PREFIX = 'JC_translation_';
             const CACHE_TIMESTAMP_PREFIX = 'JC_translation_ts_';

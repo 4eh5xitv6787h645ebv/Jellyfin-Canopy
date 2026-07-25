@@ -13,6 +13,8 @@ import {
     shortcutsEqual,
 } from '../shortcut-codec';
 import type { PanelContext } from './panel';
+import { toast } from '../../core/ui-kit';
+import { AdminTargetPersistenceError, createSelfPanelEditorContext } from './editor-context';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -21,14 +23,39 @@ import type { PanelContext } from './panel';
  * @param {object} ctx Shared panel context assembled in settings-panel/panel.ts.
  */
 export function wireShortcutEditor(ctx: PanelContext): void {
-    const { help, pluginShortcuts, primaryAccentColor, kbdBackground, identityContext, trackTimer } = ctx;
-    const isCurrent = () => JC.identity.isCurrent(identityContext);
+    const { help, pluginShortcuts, primaryAccentColor, kbdBackground, trackTimer } = ctx;
+    const editor = ctx.editor || createSelfPanelEditorContext(ctx.identityContext);
+    const shortcuts = editor.shortcuts as { Shortcuts?: any[] } & Record<string, unknown>;
+    if (!Array.isArray(shortcuts.Shortcuts)) shortcuts.Shortcuts = [];
+    const activeShortcuts = editor.activeShortcuts;
+    const isCurrent = () => editor.isCurrent();
+    const canSettleSave = () => editor.mode === 'admin-target'
+        ? isCurrent()
+        : editor.appliesToActor && JC.identity.isCurrent(editor.actor);
+    const handleSaveFailure = async (error: unknown, keyElement: HTMLElement) => {
+        const classified = error instanceof AdminTargetPersistenceError ? error : null;
+        if (classified?.kind === 'cancelled' || !isCurrent()) return;
+        if (editor.mode === 'admin-target') {
+            const key = classified?.kind === 'conflict'
+                ? 'panel_admin_target_conflict_error'
+                : classified?.kind === 'authorization'
+                    ? 'panel_admin_target_unauthorized'
+                    : 'panel_admin_target_save_error';
+            const fallback = classified?.kind === 'conflict'
+                ? 'These settings changed elsewhere. Reload and try again.'
+                : 'Could not save this user’s Canopy settings.';
+            const translated = JC.t?.(key);
+            toast(!translated || translated === key ? fallback : translated);
+        }
+        keyElement.blur();
+        await ctx.reconcileAfterSaveFailure?.();
+    };
 
     // --- Shortcut Key Binding Logic ---
     if (!JC.pluginConfig.DisableAllShortcuts) {
         const shortcutKeys = help.querySelectorAll<HTMLElement>('.shortcut-key');
         shortcutKeys.forEach(keyElement => {
-            const getOriginalKey = () => formatShortcut(JC.state!.activeShortcuts[keyElement.dataset.action!]);
+            const getOriginalKey = () => formatShortcut(activeShortcuts[keyElement.dataset.action!]);
 
             keyElement.addEventListener('click', () => { if (isCurrent()) keyElement.focus(); });
 
@@ -58,30 +85,31 @@ export function wireShortcutEditor(ctx: PanelContext): void {
                     const defaultConfig = pluginShortcuts.find((s: any) => s.Name === action);
                     const defaultKey = formatShortcut(defaultConfig ? defaultConfig.Key : '');
 
-                    const shortcutIndex = (JC.userConfig as any).shortcuts.Shortcuts.findIndex((s: any) => s.Name === action);
+                    const shortcutIndex = shortcuts.Shortcuts!.findIndex((s: any) => s.Name === action);
                     if (shortcutIndex > -1) {
-                        (JC.userConfig as any).shortcuts.Shortcuts.splice(shortcutIndex, 1);
+                        shortcuts.Shortcuts!.splice(shortcutIndex, 1);
                     }
-                    normalizeShortcutEntries((JC.userConfig as any).shortcuts.Shortcuts);
+                    normalizeShortcutEntries(shortcuts.Shortcuts);
 
-                    void JC.saveUserSettings!('shortcuts.json', (JC.userConfig as any).shortcuts).then(() => {
+                    void editor.saveShortcuts().then(() => {
+                        if (!canSettleSave()) return;
+                        // Publish an actor shortcut after acknowledgement even
+                        // if its initiating panel has since closed.
+                        activeShortcuts[action] = defaultKey;
                         if (!isCurrent()) return;
-                        // Publish the shortcut and success UI only after the
-                        // server acknowledges the matching revision.
-                        JC.state!.activeShortcuts[action] = defaultKey;
                         keyElement.textContent = defaultKey;
                         labelWrapper?.querySelector('.modified-indicator')?.remove();
                         keyElement.blur();
-                    }).catch(() => {
-                        if (isCurrent()) keyElement.blur();
+                    }).catch((error: unknown) => {
+                        void handleSaveFailure(error, keyElement);
                     });
                     return;
                 }
 
                 const combo = shortcutFromEvent(e);
                 if (!combo) return; // Don't allow setting only a modifier key.
-                const existingAction = Object.keys(JC.state!.activeShortcuts)
-                    .find(name => name !== action && shortcutsEqual(JC.state!.activeShortcuts[name], combo));
+                const existingAction = Object.keys(activeShortcuts)
+                    .find(name => name !== action && shortcutsEqual(activeShortcuts[name], combo));
                 if (existingAction) {
                     keyElement.style.background = 'rgb(255 0 0 / 60%)';
                     keyElement.classList.add('shake-error');
@@ -98,17 +126,18 @@ export function wireShortcutEditor(ctx: PanelContext): void {
                 }
 
                 // Update or add the shortcut override
-                const userShortcut = (JC.userConfig as any).shortcuts.Shortcuts.find((s: any) => s.Name === action);
+                const userShortcut = shortcuts.Shortcuts!.find((s: any) => s.Name === action);
                 if (userShortcut) {
                     userShortcut.Key = combo;
                 } else {
                     const defaultConfig = pluginShortcuts.find((s: any) => s.Name === action);
-                    (JC.userConfig as any).shortcuts.Shortcuts.push({ ...defaultConfig, Key: combo });
+                    shortcuts.Shortcuts!.push({ ...defaultConfig, Key: combo });
                 }
-                normalizeShortcutEntries((JC.userConfig as any).shortcuts.Shortcuts);
-                void JC.saveUserSettings!('shortcuts.json', (JC.userConfig as any).shortcuts).then(() => {
+                normalizeShortcutEntries(shortcuts.Shortcuts);
+                void editor.saveShortcuts().then(() => {
+                    if (!canSettleSave()) return;
+                    activeShortcuts[action] = combo;
                     if (!isCurrent()) return;
-                    JC.state!.activeShortcuts[action] = combo;
                     keyElement.textContent = combo;
                     if (labelWrapper && !labelWrapper.querySelector('.modified-indicator')) {
                         const indicator = document.createElement('span');
@@ -119,8 +148,8 @@ export function wireShortcutEditor(ctx: PanelContext): void {
                         labelWrapper.prepend(indicator);
                     }
                     keyElement.blur();
-                }).catch(() => {
-                    if (isCurrent()) keyElement.blur();
+                }).catch((error: unknown) => {
+                    void handleSaveFailure(error, keyElement);
                 });
             });
         });

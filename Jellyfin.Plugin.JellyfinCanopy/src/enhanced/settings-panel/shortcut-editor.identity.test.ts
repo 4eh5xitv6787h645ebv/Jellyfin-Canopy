@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { JC } from '../../globals';
 import { wireShortcutEditor } from './shortcut-editor';
 import type { PanelContext } from './panel';
+import type { PanelEditorContext } from './editor-context';
 
 describe('settings shortcut editor identity ownership', () => {
     const ownedTimers = new Set<number>();
@@ -141,5 +142,68 @@ describe('settings shortcut editor identity ownership', () => {
         ]);
         expect(save).toHaveBeenCalledWith('shortcuts.json', JC.userConfig.shortcuts);
         await vi.waitFor(() => expect(JC.state!.activeShortcuts.play).toBe('Meta+Ctrl+K'));
+    });
+
+    it('publishes an acknowledged self shortcut after its panel lease ends', async () => {
+        JC.identity.transition('server-a', 'user-a', 'shortcut-panel-close');
+        const actor = JC.identity.capture()!;
+        const help = document.createElement('div');
+        help.innerHTML = '<span class="shortcut-key" data-action="play">P</span><span></span>';
+        const key = help.querySelector<HTMLElement>('.shortcut-key')!;
+        const shortcuts = { Shortcuts: [] as Array<{ Name: string; Key: string }> };
+        const activeShortcuts = { play: 'P' };
+        JC.pluginConfig = { DisableAllShortcuts: false };
+        JC.state = { activeShortcuts } as unknown as NonNullable<typeof JC.state>;
+        let resolveSave!: () => void;
+        const saving = new Promise<{
+            acknowledged: true;
+            deduplicated: false;
+            file: string;
+            revision: number;
+            contentHash: string;
+        }>(resolve => {
+            resolveSave = () => resolve({
+                acknowledged: true,
+                deduplicated: false,
+                file: 'shortcuts.json',
+                revision: 2,
+                contentHash: 'a'.repeat(64),
+            });
+        });
+        let panelCurrent = true;
+        const editor: PanelEditorContext = {
+            mode: 'self',
+            actor,
+            targetUserId: actor.userId,
+            targetDisplayName: '',
+            appliesToActor: true,
+            settings: {},
+            shortcuts,
+            activeShortcuts,
+            isCurrent: () => panelCurrent && JC.identity.isCurrent(actor),
+            saveSettings: () => saving,
+            saveShortcuts: () => saving,
+        };
+        wireShortcutEditor({
+            help,
+            pluginShortcuts: [{ Name: 'play', Key: 'P' }],
+            primaryAccentColor: '#0ff',
+            kbdBackground: '#111',
+            identityContext: actor,
+            editor,
+            trackTimer,
+        } as unknown as PanelContext);
+
+        key.dispatchEvent(new KeyboardEvent('keydown', {
+            key: 'k',
+            ctrlKey: true,
+            bubbles: true,
+        }));
+        panelCurrent = false;
+        resolveSave();
+
+        await vi.waitFor(() => expect(JC.state!.activeShortcuts.play).toBe('Ctrl+K'));
+        expect(key.textContent).toBe('P');
+        expect(JC.identity.isCurrent(actor)).toBe(true);
     });
 });
