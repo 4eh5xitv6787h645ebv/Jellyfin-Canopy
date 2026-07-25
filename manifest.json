@@ -9,6 +9,14 @@
     "imageUrl": "https://raw.githubusercontent.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/main/docs/images/icon.png",
     "versions": [
       {
+        "changelog": "- Packaging: restores the Jellyfin-installable `Jellyfin.Plugin.JellyfinCanopy_12.0.0.zip`, containing the plugin DLL at the ZIP root. This release supersedes the notes-only 2.0.1.0 release.\n- New: Smart Client Refresh detects Canopy, Jellyfin-server, and live configuration updates, waits for playback/editing safety, and supports Smart, Home-only, Ask, and Disabled modes.\n- Smart Refresh notices can now be dismissed for the current update or disabled completely without disabling safe automatic refreshes.\n- UI: redesigned Seerr collection request cards, wrapped long collection titles, visible totals, a horizontally scrollable header action tray, and broader mobile/responsive fixes.\n- Security and maintenance: includes the complete 2.0.1.0 hardening set, including Anime Filler warnings, optional Favorites-tab removal, lifecycle, privacy, paging, cache, and performance fixes.\n- Breaking for custom integrations: Jellyseerr-era API routes, config/client identifiers, and CSS/i18n names are now Seerr names; legacy PluginPages and Custom Tabs delivery flags were retired.\n- Upgrade/migration: ordinary installations upgrade in place from 2.0.0.0 with lossless saved-state migration and automatic cleanup of Canopy-owned legacy page entries. Jellyfin 12.x only.\n\nFull release notes: https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/releases/tag/2.0.1.1",
+        "targetAbi": "12.0.0.0",
+        "version": "2.0.1.1",
+        "sourceUrl": "https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/releases/download/2.0.1.1/Jellyfin.Plugin.JellyfinCanopy_12.0.0.zip",
+        "checksum": "AA18A480D1F0FBD94F296613CA09195B",
+        "timestamp": "2026-07-25T11:51:24"
+      },
+      {
         "changelog": "- Jellyfin Elevate is now Jellyfin Canopy, with a redesigned admin app and per-user settings panel.\n- Adds Discovery, live session control, Auto-Skip v2, Sonarr/Radarr item actions, and deeper Seerr request support.\n- Security and reliability: hardens authorization, privacy failure modes, reverse-proxy identity, secret scanning, and cache/state handling.\n- Breaking for custom integrations: the browser facade is `window.JellyfinCanopy`, API routes use `/JellyfinCanopy/*`, and settings DOM hooks changed.\n- Migration: the unchanged plugin GUID makes this an in-place upgrade; server and browser state migrate automatically and rollback leaves legacy files intact.\n- Requires Jellyfin 12 (`targetAbi` 12.0.0.0).\n\nFull release notes: https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/releases/tag/2.0.0.0",
         "targetAbi": "12.0.0.0",
         "version": "2.0.0.0",
