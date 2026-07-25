@@ -1527,6 +1527,13 @@ and ambiguous matches fail closed. `available` and `jellyfinItemId` are
 projected only after the accessible candidate is positively resolved and has a
 media file; ARR `imported` remains a separate fact.
 
+Exact Sonarr episode rows are stricter: regular-user detail requires a
+positively resolved, caller-accessible Jellyfin `Episode` candidate. An
+accessible parent `Series` candidate or series-level Seerr association never
+authorizes an exact episode, and a missing/unresolved episode candidate fails
+closed. Administrators receive only the existing minimized unknown-media
+projection when their own episode scope cannot be established.
+
 Provenance is likewise evidence-based: `seerrAssociated` renders as
 **Associated with a Seerr request** only after a positive source-pinned
 TMDB/TVDB match in that unambiguous ARR topology; everything else is

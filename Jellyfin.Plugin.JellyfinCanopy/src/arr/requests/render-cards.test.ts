@@ -126,17 +126,26 @@ describe('renderDownloadCard escaping', () => {
         expect(explicit.querySelector('.jc-download-provenance')?.textContent).toBe('Origin unknown');
     });
 
-    it('renders server-provided group and partial-import metadata', () => {
-        const host = renderToDom(renderDownloadCard(hostileItem({
-            lifecycle: 'attention',
-            section: 'processing',
-            groupCount: 8,
-            partial: true,
-            importedCount: 3,
-            expectedCount: 8,
-        })));
-        expect(host.textContent).toContain('8 items');
-        expect(host.textContent).toContain('3 of 8 imported');
+    it('renders structured group metadata through localized client labels', () => {
+        const priorTranslate = window.JellyfinCanopy.t;
+        window.JellyfinCanopy.t = (key: string) =>
+            key === 'downloads_group_count' ? 'localized group: {count}' : '';
+        try {
+            const host = renderToDom(renderDownloadCard(hostileItem({
+                lifecycle: 'attention',
+                section: 'processing',
+                subtitle: null,
+                groupCount: 8,
+                partial: true,
+                importedCount: 3,
+                expectedCount: 8,
+            })));
+            expect(host.querySelector('.jc-download-subtitle')).toBeNull();
+            expect(host.textContent).toContain('localized group: 8');
+            expect(host.textContent).toContain('3 of 8 imported');
+        } finally {
+            window.JellyfinCanopy.t = priorTranslate;
+        }
     });
 });
 

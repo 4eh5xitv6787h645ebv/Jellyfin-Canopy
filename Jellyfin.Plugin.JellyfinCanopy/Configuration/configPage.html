@@ -1008,7 +1008,7 @@
                             </div>
                             <div class="checkboxContainer"><label><input id="downloadsFilterByUserRequests" data-config-key="DownloadsFilterByUserRequests" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Filter Downloads by User Requests</span></label></div>
                             <div class="jc-setting-description" data-desc-for="downloadsFilterByUserRequests">
-                                <div class="fieldDescription jc-field-desc-xl">When enabled, non-admin users only see downloads for content they requested. When disabled, all authenticated users can see every item in the download queue, including content requested by other users.</div>
+                                <div class="fieldDescription jc-field-desc-xl">When enabled, regular users need a positive match to their own source-affine Seerr request. When disabled, eligibility broadens only to that match or a uniquely mapped Jellyfin item the current user may access; it never exposes the server-wide queue.</div>
                             </div>
                             <div class="checkboxContainer"><label><input id="downloadsPageShowIssues" data-config-key="DownloadsPageShowIssues" is="emby-checkbox" type="checkbox"/><span>Show Seerr Issues Section</span></label></div>
                             <div class="jc-setting-description" data-desc-for="downloadsPageShowIssues">

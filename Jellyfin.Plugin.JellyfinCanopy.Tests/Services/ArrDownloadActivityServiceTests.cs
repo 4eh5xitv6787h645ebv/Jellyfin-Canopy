@@ -15,6 +15,9 @@ public sealed class ArrDownloadActivityServiceTests
 {
     private static readonly Guid AvailableItemId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
     private static readonly Guid RestrictedItemId = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
+    private static readonly Guid AccessibleSeriesId = Guid.Parse("cccccccc-cccc-cccc-cccc-cccccccccccc");
+    private static readonly Guid AccessibleEpisodeId = Guid.Parse("dddddddd-dddd-dddd-dddd-dddddddddddd");
+    private static readonly Guid RestrictedEpisodeId = Guid.Parse("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee");
 
     [Fact]
     public async Task RegularUser_BroaderPolicyStillRequiresOwnRequestOrAccessibleLibrary()
@@ -107,6 +110,252 @@ public sealed class ArrDownloadActivityServiceTests
 
         var item = Assert.Single(response.Items);
         Assert.Equal("Requested movie", item.Title);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ExactEpisode_NeverInheritsAccessibleParentSeriesScope(
+        bool filterByUserRequests)
+    {
+        var service = NewService(
+            new SonarrActivityHandler(exactEpisode: true),
+            () => DateTimeOffset.Parse("2026-07-25T12:00:00Z"),
+            new EpisodeAccessLookup(
+                includeEpisodeCandidate: true,
+                episodeAccessible: false));
+        var access = SonarrAccess(
+            new User("viewer", "provider", "password-provider")) with
+        {
+            FilterByUserRequests = filterByUserRequests,
+            SeerrTvTvdbIds = new HashSet<int> { 1001 },
+        };
+
+        var response = await service.GetActivityAsync(
+            SonarrConfig(),
+            access,
+            CancellationToken.None);
+
+        Assert.Empty(response.Items);
+    }
+
+    [Fact]
+    public async Task ExactEpisodeHistory_NeverInheritsAccessibleParentSeriesScope()
+    {
+        var service = NewService(
+            new SonarrActivityHandler(
+                exactEpisode: true,
+                historyOnly: true),
+            () => DateTimeOffset.Parse("2026-07-25T12:00:00Z"),
+            new EpisodeAccessLookup(
+                includeEpisodeCandidate: true,
+                episodeAccessible: false));
+
+        var response = await service.GetActivityAsync(
+            SonarrConfig(),
+            SonarrAccess(new User("viewer", "provider", "password-provider")) with
+            {
+                FilterByUserRequests = true,
+                SeerrTvTvdbIds = new HashSet<int> { 1001 },
+            },
+            CancellationToken.None);
+
+        Assert.Empty(response.Items);
+        Assert.Empty(response.History);
+    }
+
+    [Fact]
+    public async Task AdminExactEpisode_WithRestrictedEpisodeGetsOnlyGenericSummary()
+    {
+        var service = NewService(
+            new SonarrActivityHandler(exactEpisode: true),
+            () => DateTimeOffset.Parse("2026-07-25T12:00:00Z"),
+            new EpisodeAccessLookup(
+                includeEpisodeCandidate: true,
+                episodeAccessible: false));
+
+        var response = await service.GetActivityAsync(
+            SonarrConfig(),
+            SonarrAccess(new User("admin", "provider", "password-provider")) with
+            {
+                IsAdmin = true,
+            },
+            CancellationToken.None);
+
+        var item = Assert.Single(response.Items);
+        Assert.Equal(string.Empty, item.Title);
+        Assert.Null(item.Subtitle);
+        Assert.Null(item.SeasonNumber);
+        Assert.Null(item.EpisodeNumber);
+        Assert.Null(item.JellyfinItemId);
+        Assert.Equal(ArrDownloadAvailability.Unknown, item.Availability);
+    }
+
+    [Fact]
+    public async Task ExactEpisode_UsesAccessibleEpisodeInsteadOfParentSeries()
+    {
+        var service = NewService(
+            new SonarrActivityHandler(exactEpisode: true),
+            () => DateTimeOffset.Parse("2026-07-25T12:00:00Z"),
+            new EpisodeAccessLookup(
+                includeEpisodeCandidate: true,
+                episodeAccessible: true));
+
+        var response = await service.GetActivityAsync(
+            SonarrConfig(),
+            SonarrAccess(new User("viewer", "provider", "password-provider")) with
+            {
+                FilterByUserRequests = false,
+            },
+            CancellationToken.None);
+
+        var item = Assert.Single(response.Items);
+        Assert.Equal("Example series", item.Title);
+        Assert.Equal(AccessibleEpisodeId.ToString("N"), item.JellyfinItemId);
+        Assert.Equal(ArrDownloadAvailability.Available, item.Availability);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, true)]
+    public async Task AccessibleExactEpisode_RequestFilterStillRequiresOwnAssociation(
+        bool associated,
+        bool expectedVisible)
+    {
+        var service = NewService(
+            new SonarrActivityHandler(exactEpisode: true),
+            () => DateTimeOffset.Parse("2026-07-25T12:00:00Z"),
+            new EpisodeAccessLookup(
+                includeEpisodeCandidate: true,
+                episodeAccessible: true));
+
+        var response = await service.GetActivityAsync(
+            SonarrConfig(),
+            SonarrAccess(new User("viewer", "provider", "password-provider")) with
+            {
+                FilterByUserRequests = true,
+                SeerrTvTvdbIds = associated
+                    ? new HashSet<int> { 1001 }
+                    : new HashSet<int>(),
+            },
+            CancellationToken.None);
+
+        Assert.Equal(expectedVisible ? 1 : 0, response.Items.Count);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ExactEpisode_WithoutCandidateFailsClosedEvenWithRequestScope(
+        bool includeEpisodeProvider)
+    {
+        var service = NewService(
+            new SonarrActivityHandler(
+                exactEpisode: true,
+                includeEpisodeProvider: includeEpisodeProvider),
+            () => DateTimeOffset.Parse("2026-07-25T12:00:00Z"),
+            new EpisodeAccessLookup(
+                includeEpisodeCandidate: false,
+                episodeAccessible: false));
+
+        var response = await service.GetActivityAsync(
+            SonarrConfig(),
+            SonarrAccess(new User("viewer", "provider", "password-provider")) with
+            {
+                FilterByUserRequests = true,
+                SeerrTvTvdbIds = new HashSet<int> { 1001 },
+            },
+            CancellationToken.None);
+
+        Assert.Empty(response.Items);
+    }
+
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(false, false)]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    public async Task EpisodeTitleWithoutIdentity_NeverInheritsParentSeriesScope(
+        bool historyOnly,
+        bool filterByUserRequests)
+    {
+        var service = NewService(
+            new SonarrActivityHandler(
+                exactEpisode: false,
+                historyOnly: historyOnly,
+                titleOnlyEpisode: true),
+            () => DateTimeOffset.Parse("2026-07-25T12:00:00Z"),
+            new EpisodeAccessLookup(
+                includeEpisodeCandidate: false,
+                episodeAccessible: false));
+
+        var response = await service.GetActivityAsync(
+            SonarrConfig(),
+            SonarrAccess(new User("viewer", "provider", "password-provider")) with
+            {
+                FilterByUserRequests = filterByUserRequests,
+                SeerrTvTvdbIds = new HashSet<int> { 1001 },
+            },
+            CancellationToken.None);
+
+        Assert.Empty(response.Items);
+        Assert.Empty(response.History);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AdminEpisodeTitleWithoutIdentity_GetsOnlyGenericSummary(
+        bool historyOnly)
+    {
+        var service = NewService(
+            new SonarrActivityHandler(
+                exactEpisode: false,
+                historyOnly: historyOnly,
+                titleOnlyEpisode: true),
+            () => DateTimeOffset.Parse("2026-07-25T12:00:00Z"),
+            new EpisodeAccessLookup(
+                includeEpisodeCandidate: false,
+                episodeAccessible: false));
+
+        var response = await service.GetActivityAsync(
+            SonarrConfig(),
+            SonarrAccess(new User("admin", "provider", "password-provider")) with
+            {
+                IsAdmin = true,
+            },
+            CancellationToken.None);
+
+        var item = Assert.Single(response.Items.Concat(response.History));
+        Assert.Equal(string.Empty, item.Title);
+        Assert.Null(item.Subtitle);
+        Assert.Null(item.SeasonNumber);
+        Assert.Null(item.EpisodeNumber);
+        Assert.Null(item.JellyfinItemId);
+        Assert.Equal(ArrDownloadAvailability.Unknown, item.Availability);
+    }
+
+    [Fact]
+    public async Task SeriesLevelActivity_StillUsesAccessibleSeriesScope()
+    {
+        var service = NewService(
+            new SonarrActivityHandler(exactEpisode: false),
+            () => DateTimeOffset.Parse("2026-07-25T12:00:00Z"),
+            new EpisodeAccessLookup(
+                includeEpisodeCandidate: false,
+                episodeAccessible: false));
+
+        var response = await service.GetActivityAsync(
+            SonarrConfig(),
+            SonarrAccess(new User("viewer", "provider", "password-provider")) with
+            {
+                FilterByUserRequests = false,
+            },
+            CancellationToken.None);
+
+        var item = Assert.Single(response.Items);
+        Assert.Equal(AccessibleSeriesId.ToString("N"), item.JellyfinItemId);
+        Assert.Equal(ArrDownloadAvailability.Unavailable, item.Availability);
     }
 
     [Fact]
@@ -437,6 +686,15 @@ public sealed class ArrDownloadActivityServiceTests
             """[{"InstanceId":"11111111111111111111111111111111","Name":"Movies","Url":"http://localhost:7878","ApiKey":"secret","Enabled":true}]""",
     };
 
+    private static PluginConfiguration SonarrConfig() => new()
+    {
+        DownloadsPageEnabled = true,
+        ShowDownloadsInRequests = true,
+        DownloadsHistoryWindowDays = 7,
+        SonarrInstances =
+            """[{"InstanceId":"22222222222222222222222222222222","Name":"TV","Url":"http://localhost:8989","ApiKey":"secret","Enabled":true}]""",
+    };
+
     private static ArrDownloadAccessContext Access(User user) => new()
     {
         User = user,
@@ -452,6 +710,15 @@ public sealed class ArrDownloadActivityServiceTests
         AllowProvenance = true,
         DetailedLifecycle = true,
     };
+
+    private static ArrDownloadAccessContext SonarrAccess(User user)
+        => Access(user) with
+        {
+            SeerrArrScopes = new HashSet<(string, string)>
+            {
+                ("Sonarr", "22222222222222222222222222222222"),
+            },
+        };
 
     private static ArrDownloadAccessContext Admin(User user)
         => Access(user) with { IsAdmin = true };
@@ -541,6 +808,175 @@ public sealed class ArrDownloadActivityServiceTests
             User user)
             => throw new Xunit.Sdk.XunitException(
                 "an incomplete candidate lookup must not authorize a prefix");
+    }
+
+    private sealed class EpisodeAccessLookup : IItemLookupService
+    {
+        private readonly bool _includeEpisodeCandidate;
+        private readonly bool _episodeAccessible;
+
+        public EpisodeAccessLookup(
+            bool includeEpisodeCandidate,
+            bool episodeAccessible)
+        {
+            _includeEpisodeCandidate = includeEpisodeCandidate;
+            _episodeAccessible = episodeAccessible;
+        }
+
+        public IReadOnlyList<Guid> GetItemIdsByProviders(
+            IDictionary<string, string>? providers,
+            User? user = null)
+            => Array.Empty<Guid>();
+
+        public Dictionary<(string Provider, string Value), IReadOnlyList<ItemLookupCandidate>>
+            GetItemCandidatesByProvidersBatch(
+                IReadOnlyCollection<(string Provider, string Value)> providers)
+        {
+            var result =
+                new Dictionary<(string, string), IReadOnlyList<ItemLookupCandidate>>();
+            if (providers.Contains(("Tvdb", "1001")))
+            {
+                result[("Tvdb", "1001")] = new[]
+                {
+                    new ItemLookupCandidate(
+                        AccessibleSeriesId,
+                        ItemLookupKind.Series),
+                };
+            }
+
+            if (_includeEpisodeCandidate && providers.Contains(("Tvdb", "2001")))
+            {
+                result[("Tvdb", "2001")] = new[]
+                {
+                    new ItemLookupCandidate(
+                        _episodeAccessible
+                            ? AccessibleEpisodeId
+                            : RestrictedEpisodeId,
+                        ItemLookupKind.Episode,
+                        _episodeAccessible
+                            ? "/media/example-s01e02.mkv"
+                            : "/restricted/example-s01e02.mkv",
+                        HasMediaFile: true),
+                };
+            }
+
+            return result;
+        }
+
+        public ItemLookupBatchResult GetItemCandidatesByProvidersBatchBounded(
+            IReadOnlyCollection<(string Provider, string Value)> providers,
+            int maxProviderPairs,
+            int maxCandidates)
+            => providers.Count > maxProviderPairs
+                ? new ItemLookupBatchResult(
+                    new Dictionary<(string, string), IReadOnlyList<ItemLookupCandidate>>(),
+                    false)
+                : new ItemLookupBatchResult(
+                    GetItemCandidatesByProvidersBatch(providers),
+                    true);
+
+        public IReadOnlySet<Guid> GetAccessibleItemIdsBatch(
+            IReadOnlyCollection<Guid> itemIds,
+            User user)
+        {
+            var accessible = new HashSet<Guid>();
+            if (itemIds.Contains(AccessibleSeriesId))
+            {
+                accessible.Add(AccessibleSeriesId);
+            }
+
+            if (_episodeAccessible && itemIds.Contains(AccessibleEpisodeId))
+            {
+                accessible.Add(AccessibleEpisodeId);
+            }
+
+            return accessible;
+        }
+    }
+
+    private sealed class SonarrActivityHandler : HttpMessageHandler
+    {
+        private readonly bool _exactEpisode;
+        private readonly bool _includeEpisodeProvider;
+        private readonly bool _historyOnly;
+        private readonly bool _titleOnlyEpisode;
+
+        public SonarrActivityHandler(
+            bool exactEpisode,
+            bool includeEpisodeProvider = true,
+            bool historyOnly = false,
+            bool titleOnlyEpisode = false)
+        {
+            _exactEpisode = exactEpisode;
+            _includeEpisodeProvider = includeEpisodeProvider;
+            _historyOnly = historyOnly;
+            _titleOnlyEpisode = titleOnlyEpisode;
+        }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            if (request.RequestUri!.AbsolutePath.EndsWith(
+                "/api/v3/history",
+                StringComparison.Ordinal))
+            {
+                return _historyOnly
+                    ? Page("[" + BuildRecord(history: true) + "]", 1)
+                    : Page("[]", 0);
+            }
+
+            if (!request.RequestUri.AbsolutePath.EndsWith(
+                "/api/v3/queue",
+                StringComparison.Ordinal))
+            {
+                return Json("{}", HttpStatusCode.NotFound);
+            }
+
+            return _historyOnly
+                ? Page("[]", 0)
+                : Page("[" + BuildRecord(history: false) + "]", 1);
+        }
+
+        private string BuildRecord(bool history)
+        {
+            var episode = _titleOnlyEpisode
+                ? ",\"episode\":{\"title\":\"Restricted episode\"}"
+                : _exactEpisode
+                    ? string.Concat(
+                        ",\"episodeId\":11,\"episode\":{\"id\":11",
+                        _includeEpisodeProvider ? ",\"tvdbId\":2001" : string.Empty,
+                        ",\"seasonNumber\":1,\"episodeNumber\":2,"
+                        + "\"title\":\"Restricted episode\"}")
+                    : ",\"seasonNumber\":1";
+            var lifecycle = history
+                ? "\"eventType\":\"downloadFolderImported\","
+                    + "\"date\":\"2026-07-25T11:00:00Z\","
+                : "\"status\":\"downloading\",\"trackedDownloadState\":\"downloading\","
+                    + "\"trackedDownloadStatus\":\"ok\",\"size\":100,\"sizeleft\":50,"
+                    + "\"added\":\"2026-07-25T11:00:00Z\",";
+            return
+                "{\"id\":1,\"seriesId\":10,\"downloadId\":\"sonarr-job-1\","
+                + lifecycle
+                + "\"series\":{\"id\":10,\"tvdbId\":1001,\"tmdbId\":5001,"
+                + "\"title\":\"Example series\"}"
+                + episode
+                + "}";
+        }
+
+        private static Task<HttpResponseMessage> Page(
+            string records,
+            int total)
+            => Json(
+                $$"""{"page":1,"pageSize":200,"totalRecords":{{total}},"records":{{records}}}""");
+
+        private static Task<HttpResponseMessage> Json(
+            string body,
+            HttpStatusCode status = HttpStatusCode.OK)
+            => Task.FromResult(new HttpResponseMessage(status)
+            {
+                Content = new StringContent(body, Encoding.UTF8, "application/json"),
+            });
     }
 
     private enum ActivityMode

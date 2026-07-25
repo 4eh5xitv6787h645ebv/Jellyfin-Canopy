@@ -156,6 +156,7 @@ public sealed class ArrDownloadLifecycleTests
         Assert.Equal(2, partial.ExpectedCount);
         Assert.True(partial.Partial);
         Assert.False(partial.Terminal);
+        Assert.Null(partial.Subtitle);
     }
 
     [Fact]

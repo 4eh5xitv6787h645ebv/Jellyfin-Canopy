@@ -337,6 +337,7 @@ The activity endpoint requires Jellyfin authentication. Administrators receive t
 
 - With **Filter Downloads by User Requests** on, a row needs a positive match to that user's request history on the exact Seerr identity source.
 - With it off, a row still needs either that positive request association or an unambiguous provider-ID match to a Jellyfin item the current user may access.
+- An exact Sonarr episode always requires a positively resolved, caller-accessible Jellyfin **episode** candidate for regular-user detail. Access to its parent series and a series-level Seerr association cannot substitute; unresolved or restricted episodes fail closed.
 - A missing user, unavailable/incomplete Seerr scope, failed library lookup, zero provider ID, or ambiguous match fails closed. Turning the filter off never exposes the raw server-wide queue.
 - The section/detail controls below are applied by the server after record authorization; hiding a control in the browser is not the security boundary.
 

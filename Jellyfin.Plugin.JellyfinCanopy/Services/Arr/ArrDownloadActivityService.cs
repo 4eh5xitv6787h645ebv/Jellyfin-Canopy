@@ -407,6 +407,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
                 ? ReadInt(episode?["seasonNumber"]) ?? ReadInt(record["seasonNumber"])
                 : null;
             var episodeNumber = sonarr ? ReadInt(episode?["episodeNumber"]) : null;
+            var episodeTitle = sonarr
+                ? SafeLabelOrNull(ReadString(episode?["title"]), 256)
+                : null;
             var parentEntityKey = sonarr
                 ? seriesId.HasValue ? $"series:{seriesId.Value}" : string.Empty
                 : movieId.HasValue ? $"movie:{movieId.Value}" : string.Empty;
@@ -419,7 +422,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
                 ? BuildEpisodeSubtitle(
                     seasonNumber,
                     episodeNumber,
-                    SafeLabelOrNull(ReadString(episode?["title"]), 256))
+                    episodeTitle)
                 : SafeYear(ReadInt(media?["year"]));
 
             return new ArrDownloadActivityRecord
@@ -437,6 +440,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
                 TvdbId = tvdbId,
                 SeasonNumber = seasonNumber,
                 EpisodeNumber = episodeNumber,
+                HasEpisodeDetail = episodeId.HasValue
+                    || episodeNumber.HasValue
+                    || episodeTvdbId.HasValue
+                    || episodeTitle != null,
                 Title = title,
                 Subtitle = subtitle,
                 Providers = BuildProviders(sonarr, tmdbId, tvdbId, episodeTvdbId),
@@ -476,6 +483,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
             var episodeTvdbId = ArrIdHelper.ToNullableId(ReadInt(episode?["tvdbId"]));
             var seasonNumber = sonarr ? ReadInt(episode?["seasonNumber"]) : null;
             var episodeNumber = sonarr ? ReadInt(episode?["episodeNumber"]) : null;
+            var episodeTitle = sonarr
+                ? SafeLabelOrNull(ReadString(episode?["title"]), 256)
+                : null;
             var parentEntityKey = sonarr
                 ? seriesId.HasValue ? $"series:{seriesId.Value}" : string.Empty
                 : movieId.HasValue ? $"movie:{movieId.Value}" : string.Empty;
@@ -499,12 +509,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
                 TvdbId = tvdbId,
                 SeasonNumber = seasonNumber,
                 EpisodeNumber = episodeNumber,
+                HasEpisodeDetail = episodeId.HasValue
+                    || episodeNumber.HasValue
+                    || episodeTvdbId.HasValue
+                    || episodeTitle != null,
                 Title = SafeLabel(ReadString(media?["title"]), fallbackTitle, 256),
                 Subtitle = sonarr
                     ? BuildEpisodeSubtitle(
                         seasonNumber,
                         episodeNumber,
-                        SafeLabelOrNull(ReadString(episode?["title"]), 256))
+                        episodeTitle)
                     : SafeYear(ReadInt(media?["year"])),
                 Providers = BuildProviders(sonarr, tmdbId, tvdbId, episodeTvdbId),
                 HistoryEventType = SafeEnum(ReadString(record["eventType"])),
@@ -578,16 +592,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
                     record,
                     itemMap,
                     accessibleIds,
-                    out var hasMatchingLibraryCandidate);
+                    out var requiresAccessibleLibraryCandidate);
                 var visibleRecord = access.IsAdmin && candidate == null
                     ? MinimizeUnmappedAdminRecord(record)
                     : record;
                 // A Seerr association proves request scope, not Jellyfin library scope.
-                // Full metadata is safe for a regular user only after the complete
-                // candidate set proves either that the item is not yet in Jellyfin, or
-                // that at least one matching Jellyfin item is accessible to the caller.
+                // Full metadata is safe for a regular user only after a complete lookup
+                // and any required Jellyfin candidate is accessible to the caller.
+                // Exact episodes always require their own accessible Episode candidate.
                 var libraryScopeSafe = resolutionComplete
-                    && (!hasMatchingLibraryCandidate || candidate != null);
+                    && (!requiresAccessibleLibraryCandidate || candidate != null);
                 var allowed = access.IsAdmin
                     || (libraryScopeSafe
                         && (access.FilterByUserRequests
@@ -656,8 +670,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
             ArrDownloadActivityRecord record,
             IReadOnlyDictionary<(string Provider, string Value), IReadOnlyList<ItemLookupCandidate>> itemMap,
             IReadOnlySet<Guid> accessibleIds,
-            out bool hasMatchingLibraryCandidate)
+            out bool requiresAccessibleLibraryCandidate)
         {
+            var exactEpisode = IsExactEpisodeRecord(record);
             var candidates = record.Providers
                 .SelectMany(provider => itemMap.TryGetValue(
                     (provider.Provider, provider.Value),
@@ -666,7 +681,23 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
                         : Array.Empty<ItemLookupCandidate>())
                 .DistinctBy(candidate => candidate.ItemId)
                 .ToList();
-            hasMatchingLibraryCandidate = candidates.Count != 0;
+
+            // Jellyfin access can be narrower for one episode than for its parent
+            // series. An exact Sonarr episode must therefore resolve through an
+            // episode candidate; an accessible series is correlation context, not
+            // authorization for the episode's title, number, or availability.
+            if (exactEpisode)
+            {
+                candidates = candidates
+                    .Where(candidate => candidate.Kind == ItemLookupKind.Episode)
+                    .ToList();
+            }
+
+            // A series-level Seerr association cannot prove access to one exact
+            // episode. If Jellyfin cannot positively resolve that episode, fail
+            // closed instead of interpreting a missing provider/candidate as proof
+            // that the episode is not yet present.
+            requiresAccessibleLibraryCandidate = exactEpisode || candidates.Count != 0;
             return candidates
                 .Where(candidate => accessibleIds.Contains(candidate.ItemId))
                 .OrderByDescending(candidate => candidate.HasMediaFile)
@@ -674,6 +705,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
                 .ThenBy(candidate => candidate.ItemId)
                 .FirstOrDefault();
         }
+
+        private static bool IsExactEpisodeRecord(ArrDownloadActivityRecord record)
+            => string.Equals(record.MediaType, "tv", StringComparison.Ordinal)
+                && (record.HasEpisodeDetail
+                    || record.EpisodeNumber.HasValue
+                    || record.Providers.Any(provider =>
+                        provider.Kind == ItemLookupKind.Episode)
+                    || record.EntityKey.StartsWith(
+                        "episode:",
+                        StringComparison.Ordinal));
 
         internal static bool IsSeerrAssociated(
             ArrDownloadActivityRecord record,

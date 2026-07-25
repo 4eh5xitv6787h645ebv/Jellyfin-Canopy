@@ -449,25 +449,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
         }
 
         private static string? BuildSubtitle(IReadOnlyList<ArrDownloadActivityRecord> rows)
-        {
-            if (rows.Count == 1)
-            {
-                return rows[0].Subtitle;
-            }
-
-            var seasons = rows
-                .Select(row => row.SeasonNumber)
-                .Where(value => value.HasValue)
-                .Select(value => value!.Value)
-                .Distinct()
-                .OrderBy(value => value)
-                .ToList();
-            return seasons.Count == 1
-                ? string.Create(
-                    CultureInfo.InvariantCulture,
-                    $"Season {seasons[0]} · {rows.Count} episodes")
-                : string.Create(CultureInfo.InvariantCulture, $"{rows.Count} episodes");
-        }
+            // Multi-row summaries are structured through GroupCount.
+            // The localized client owns their presentation; never put English
+            // prose into an otherwise locale-neutral wire DTO.
+            => rows.Count == 1 ? rows[0].Subtitle : null;
 
         private static double? AggregateProgress(
             IEnumerable<ArrDownloadActivityRecord> records)

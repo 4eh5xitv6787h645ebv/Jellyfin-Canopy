@@ -45,6 +45,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Arr
 
         public int? EpisodeNumber { get; init; }
 
+        public bool HasEpisodeDetail { get; init; }
+
         public string Title { get; init; } = string.Empty;
 
         public string? Subtitle { get; init; }
