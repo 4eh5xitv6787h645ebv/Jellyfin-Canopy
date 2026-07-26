@@ -99,11 +99,6 @@ let _lastUpdated: Date | null = null;
 // the first injection (boot / toggle-on, post-paint by architecture) gets the
 // one-time width-expand entrance; re-mount re-injections attach instantly.
 let _headerInjectedOnce = false;
-// The 500ms header-injection retry (fired when the header tray isn't mounted
-// yet). Stored so both teardown paths (stopObserver + destroy) can cancel a
-// pending retry — otherwise a disable racing the retry window re-injects the
-// full button + panel + poll after teardown (zombie UI).
-let _headerRetryTimer: ReturnType<typeof setTimeout> | null = null;
 // ── Live-update resources (only alive while the panel is open) ──────────────
 let _liveTimer: ReturnType<typeof setInterval> | null = null;
 let _liveUnsub: (() => void) | null = null;
@@ -1823,16 +1818,14 @@ const injectPanel = (context: IdentityContext): void => {
 };
 
 // ── Header button ────────────────────────────────────────────────────────
-const tryInjectHeader = (attempts: number, context: IdentityContext): void => {
+const tryInjectHeader = (context: IdentityContext): void => {
     if (!isCurrentContext(context)) return;
     if (document.getElementById('jc-active-streams')) return;
-    if (attempts > 20) return;
 
     const headerRight = JC.helpers.getHeaderRightContainer();
-    if (!headerRight) {
-        _headerRetryTimer = setTimeout(() => tryInjectHeader(attempts + 1, context), 500);
-        return;
-    }
+    // PERF(R9): readiness belongs to the durable body observer below. A slow
+    // host mount remains eligible without a capped give-up or polling timer.
+    if (!headerRight) return;
 
     const btn = stampOwner(document.createElement('button'), context);
     btn.id = 'jc-active-streams';
@@ -1879,7 +1872,7 @@ const startObserver = (context: IdentityContext): void => {
     if (_observer) return;
     const callback = (): void => {
         if (!isCurrentContext(context)) return;
-        if (!document.getElementById('jc-active-streams')) tryInjectHeader(0, context);
+        if (!document.getElementById('jc-active-streams')) tryInjectHeader(context);
     };
     if (JC?.helpers?.onBodyMutation) {
         _observer = JC.helpers.onBodyMutation('active-streams', callback);
@@ -1892,9 +1885,6 @@ const startObserver = (context: IdentityContext): void => {
 
 const stopObserver = (): void => {
     if (_observer) { _observer.unsubscribe(); _observer = null; }
-    // The observer callback re-invokes tryInjectHeader; cancel any pending
-    // header-injection retry so it can't re-inject after teardown.
-    if (_headerRetryTimer) { clearTimeout(_headerRetryTimer); _headerRetryTimer = null; }
 };
 
 // ── Public API ───────────────────────────────────────────────────────────
@@ -1918,7 +1908,7 @@ const activeStreamsApi = {
         console.log(`${LOG} Active Streams: initializing.`);
         injectStyles();
         startObserver(context);
-        tryInjectHeader(0, context);
+        tryInjectHeader(context);
         // Re-apply theme vars on every navigation (hashchange, popstate
         // and pushState — the old raw hashchange listener missed the
         // latter). Tracked via a lifecycle handle so destroy() removes it.
@@ -1934,7 +1924,6 @@ const activeStreamsApi = {
         if (_lifecycle) { _lifecycle.teardown(); _lifecycle = null; }
         if (_outsideClickListener) { document.removeEventListener('click', _outsideClickListener); _outsideClickListener = null; }
         if (_broadcastCollapseTimer) { clearTimeout(_broadcastCollapseTimer); _broadcastCollapseTimer = null; }
-        if (_headerRetryTimer) { clearTimeout(_headerRetryTimer); _headerRetryTimer = null; }
         document.getElementById('jc-active-streams')?.remove();
         document.getElementById('jc-active-streams-panel')?.remove();
         document.getElementById('jc-active-streams-styles')?.remove();

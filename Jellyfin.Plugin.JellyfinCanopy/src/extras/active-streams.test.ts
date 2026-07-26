@@ -1,10 +1,8 @@
-// Teardown test for src/extras/active-streams.ts (MISC-6).
+// Header-readiness and teardown tests for src/extras/active-streams.ts.
 //
-// When the header tray isn't mounted, tryInjectHeader schedules a 500ms retry.
-// Pre-fix that timer id was never stored, so destroy() couldn't cancel it — a
-// disable racing the retry window let a pending retry re-run the full injection
-// after teardown. The fix stores the id and clears it on both teardown paths
-// (stopObserver + destroy).
+// The shared body observer is the durable readiness owner: a slow Jellyfin
+// header must remain eligible until it mounts, without a capped polling ladder,
+// and teardown must invalidate the observer callback before it can inject.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 interface StreamsApi {
@@ -15,17 +13,26 @@ function api(): StreamsApi {
     return window.JellyfinCanopy as unknown as StreamsApi;
 }
 
+let headerContainer: HTMLElement | null;
+let bodyMutationCallback: (() => void) | null;
+let unsubscribe = vi.fn();
+
 function stubEnvironment(): void {
+    headerContainer = null;
+    bodyMutationCallback = null;
+    unsubscribe = vi.fn();
     const JC = window.JellyfinCanopy as unknown as Record<string, unknown>;
     JC.pluginConfig = { ActiveStreamsEnabled: true };
     JC.currentUser = { Policy: { IsAdministrator: true } };
-    // Header tray never mounts → tryInjectHeader always takes the retry branch.
     JC.helpers = {
-        getHeaderRightContainer: () => null,
-        onBodyMutation: () => ({ unsubscribe() { /* no-op */ } }),
+        getHeaderRightContainer: () => headerContainer,
+        onBodyMutation: (_id: string, callback: () => void) => {
+            bodyMutationCallback = callback;
+            return { unsubscribe };
+        },
     };
     JC.core = {
-        api: {},
+        api: { plugin: vi.fn().mockResolvedValue([]) },
         lifecycle: { register: () => ({ track: <T>(r: T): T => r, teardown() { /* no-op */ } }) },
         navigation: { onNavigate: () => () => { /* unsubscribe */ } },
     };
@@ -38,33 +45,49 @@ async function loadFresh(): Promise<void> {
     installActiveStreams();
 }
 
-describe('active-streams header-retry teardown', () => {
+describe('active-streams header readiness ownership', () => {
     beforeEach(() => {
         vi.useFakeTimers();
         document.body.innerHTML = '';
     });
 
     afterEach(() => {
+        try { api().activeStreams.destroy(); } catch { /* not initialized */ }
         vi.clearAllTimers();
         vi.useRealTimers();
     });
 
-    it('cancels the pending header-injection retry on destroy so it cannot fire post-teardown', async () => {
+    it('waits on the body observer until a delayed header mounts without a give-up timer', async () => {
         await loadFresh();
 
         api().activeStreams.initialize();
-        // The tray container is null, so a 500ms retry is pending.
-        expect(vi.getTimerCount()).toBe(1);
-
-        api().activeStreams.destroy();
-        // Pre-fix the retry timer was untracked, so destroy() left it pending (1).
+        expect(document.getElementById('jc-active-streams')).toBeNull();
+        expect(bodyMutationCallback).not.toBeNull();
         expect(vi.getTimerCount()).toBe(0);
 
-        // And nothing re-schedules or re-injects after teardown.
-        const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
-        vi.advanceTimersByTime(600);
-        expect(setTimeoutSpy).not.toHaveBeenCalled();
+        for (let probe = 0; probe < 25; probe++) bodyMutationCallback!();
         expect(document.getElementById('jc-active-streams')).toBeNull();
-        setTimeoutSpy.mockRestore();
+        expect(vi.getTimerCount()).toBe(0);
+
+        headerContainer = document.createElement('div');
+        document.body.appendChild(headerContainer);
+        bodyMutationCallback!();
+
+        expect(headerContainer.querySelector('#jc-active-streams')).not.toBeNull();
+        expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it('invalidates the body-observer readiness callback on destroy', async () => {
+        await loadFresh();
+        api().activeStreams.initialize();
+
+        api().activeStreams.destroy();
+        expect(unsubscribe).toHaveBeenCalledTimes(1);
+
+        headerContainer = document.createElement('div');
+        document.body.appendChild(headerContainer);
+        bodyMutationCallback!();
+
+        expect(document.getElementById('jc-active-streams')).toBeNull();
     });
 });
