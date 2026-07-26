@@ -522,7 +522,7 @@ Keep watchlists in step between Seerr and Jellyfin, in either direction. Configu
 
 **Seerr → Jellyfin** *(requires the [KefinTweaks plugin](https://github.com/ranaldsgift/KefinTweaks) to provide watchlist functionality)*
 
-- Adds requested items to the Jellyfin watchlist when they become available in the library.
+- Adds items requested in any configured Seerr instance to the requesting user's Jellyfin watchlist when they become available in the library, including requests created outside Canopy.
 - Syncs Seerr watchlist items to Jellyfin.
 - Remembers previously removed items so they aren't re-added.
 - Runs via the **Sync Watchlist from Seerr to Jellyfin** scheduled task.
@@ -536,7 +536,7 @@ Keep watchlists in step between Seerr and Jellyfin, in either direction. Configu
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| **Add requested media to Watchlist** | — | Auto-adds requested items when they become available (needs KefinTweaks). |
+| **Add requested media to Watchlist** | — | Auto-adds items from any configured Seerr instance when they become available, including requests created outside Canopy (needs KefinTweaks). |
 | **Sync Seerr Watchlist → Jellyfin** | — | Syncs Seerr watchlist items to Jellyfin. |
 | **Sync Jellyfin Watchlist → Seerr** | — | Syncs each user's Jellyfin watchlist to their linked Seerr account. |
 | **Prevent re-adding removed items** | — | Remembers removed items so they aren't re-added. |
