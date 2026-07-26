@@ -102,6 +102,66 @@ reviewed budget adjustment, and completed E2E proof for the contributor.
 5. **Proof = an `e2e/` spec.**
    Extend the stub: log in with the `loginAs` fixture, drive the feature, assert what the user sees, and assert `consoleErrors.real()` is empty. Specs must be idempotent and restore any server state they touch.
 
+### Responsive UI contract
+
+Every change that creates or modifies visible UI — including CSS-only changes,
+injected controls, cards, dialogs, banners, drawers, and admin surfaces — must
+prove responsive containment. One screenshot from one emulated phone is not
+acceptance evidence.
+
+1. **Exercise every affected Jellyfin layout.** Run shared surfaces in the
+   modern MUI layout and the user-selectable legacy layout. For an intentionally
+   layout-specific surface, prove the other layout is absent or unaffected and
+   state that boundary in the PR. Do not infer the layout from viewport width
+   or the generic `layout-desktop` class; use the repository's layout helpers
+   and fixtures.
+2. **Cover the affected boundaries.** Reproduce a responsive bug at its
+   original CSS viewport, and exercise the pixel immediately below, at, and
+   above every changed media-query breakpoint. Select every form-factor family
+   the same owner or CSS rule can reach from the baseline matrix:
+   `320×568` narrow-phone stress, `360×800` and `390×844` phones, a `430×739`
+   large phone, `568×320` narrow and `844×390` common phone landscapes,
+   `800×1280` and `1024×1366` tablets, and a `1440×900` desktop.
+   Phone-affecting work always includes the independent `320px` stress case.
+   Shared containers/layout primitives and width-generic responsive fixes must
+   additionally sweep the 50-device popularity proxy in
+   `e2e/fixtures/popular-mobile-device-viewports.ts`, deduplicated to its
+   distinct portrait CSS viewports. A local change need not run unrelated form
+   factors, but its PR must list the selected matrix and why it bounds the
+   affected owner.
+3. **Stress real content, not placeholders.** Include long spaced and
+   unbroken titles/names, translated or deliberately expanded labels, the
+   largest meaningful count/badge, every action, and populated plus empty
+   states. Page/collection titles and collection/item counts that identify the
+   active surface must remain fully visible. Other intentional truncation
+   needs an accessible way to obtain the full value without requiring hover,
+   must not resize or hide adjacent controls, and must be stated in the owning
+   acceptance contract.
+4. **Assert geometry and reachability directly.** Browser tests must prove the
+   document and owned root do not gain unintended horizontal overflow; owned
+   children stay inside their intended container and viewport; text and
+   controls do not intersect fixed, sticky, or native UI; actions and close
+   controls remain reachable by touch/keyboard; and a scrollable region can
+   actually reach every clipped edge. Screenshots supplement these assertions;
+   they do not replace them.
+5. **Exercise dynamic layout.** Fixed/sticky UI, drawers, banners, dialogs,
+   and code that reads geometry must survive a
+   `wide → narrow → landscape → wide-back` sequence in one page session. This
+   catches stale offsets that a fresh page at each size cannot expose.
+6. **Make the proof durable.** Put externally meaningful responsive cases in
+   `e2e/required-test-inventory.json`, run them with retries disabled for
+   acceptance evidence, and include representative screenshots for every
+   affected layout and form factor when layout behavior changes. Screenshots
+   are review artifacts, not pixel baselines unless a committed snapshot
+   explicitly owns that contract. Removing or weakening an owning case
+   requires an explicit replacement rationale; merely updating the inventory
+   is not proof that coverage remains equivalent.
+
+The implementation patterns and geometry checks are documented in
+[Responsive containment](docs/developers.md#responsive-containment).
+Required CI is Chromium-based; when a change relies on browser-sensitive CSS
+or input behavior, also perform the existing Firefox and Edge manual checks.
+
 ### Performance rules
 
 Injected UI must never jank the host client — and must never silently fail to appear on a slow server or connection. The full doctrine — each rule with its reasoning and the pattern to copy — is in the [performance rules](docs/developers.md#performance-rules); the implementation sites are marked `// PERF(Rn):` in the source. Check your PR against all nine:
@@ -307,9 +367,11 @@ JF_BASE_URL=http://127.0.0.1:8100 npm run e2e
 docker compose -f e2e/docker/compose.yml down -v
 ```
 
-CI runs the same stack on every PR across six isolated native Playwright shards
-(advisory while the infrastructure earns trust). Each CI server is explicitly
-capped at two CPUs and verifies Docker applied that quota before seeding.
+CI runs the same stack on every PR across six isolated native Playwright
+shards. The shard aggregate and exact required-test inventory are blocking on
+pull requests, `main` pushes, and reusable release calls. Each CI server is
+explicitly capped at two CPUs and verifies Docker applied that quota before
+seeding.
 
 For a faster whole-suite run on a Linux development machine, use the opt-in
 local sharding runner:
@@ -1097,7 +1159,7 @@ Before submitting a PR, ensure you've tested:
 - [ ] Compatible with Jellyfin 12.x — **both** the modern (MUI) layout and the legacy layout (`localStorage.layout`)
 - [ ] Works on different browsers (Chrome, Firefox, Edge)
 - [ ] Doesn't break existing functionality
-- [ ] Mobile compatibility (if applicable)
+- [ ] Any visible UI change satisfies the [responsive UI contract](#responsive-ui-contract), including long-content and dynamic-resize proof
 - [ ] Injected UI survives navigation and the `/video` round trip (see the [React re-render survival guide](docs/developers.md#react-re-render-survival))
 
 ## 📋 Feature Request Guidelines
@@ -1130,8 +1192,9 @@ If you have questions or need help:
 For UI changes:
 
 - Use the ui-kit (`JC.core.ui`) so injected UI matches native markup and follows the active theme
-- Test with different Jellyfin themes and both layouts
-- Provide before/after screenshots
+- Follow the [responsive UI contract](#responsive-ui-contract)
+- Test with different Jellyfin themes and every affected layout
+- Provide representative before/after screenshots for every affected form factor
 
 ---
 

@@ -25,6 +25,13 @@ If applicable, add screenshots to help explain your problem.
  - Theme being used: [e.g. Jellyfish, Zesty, etc.,]
  - [ ] [FileTransformation](https://github.com/IAmParadox27/jellyfin-plugin-file-transformation) Installed
 
+**Visual/layout details (complete when the bug affects rendered UI):**
+ - Client and Version: [e.g. Firefox 142, Jellyfin Android 2.x]
+ - Jellyfin Layout: [modern MUI or legacy; does it reproduce in both?]
+ - CSS Viewport: [open the browser console and report `innerWidth × innerHeight`, e.g. 390 × 844]
+ - Orientation: [portrait or landscape]
+ - Browser Zoom / OS Display Scaling: [e.g. 100% / 125%]
+ - Content State: [e.g. long title, unbroken name, item count, every action visible, empty/populated]
 
 **Logs**
 

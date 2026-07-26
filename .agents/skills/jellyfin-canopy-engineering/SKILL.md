@@ -97,6 +97,12 @@ Preserve these repository contracts:
 
 - Jellyfin 12 and .NET 10 are the supported server/runtime boundary.
 - Modern MUI and legacy web layouts must both remain valid when UI is touched.
+- Every visible UI change must satisfy the repository's
+  [responsive UI contract](../../../CONTRIBUTING.md#responsive-ui-contract):
+  prove containment and reachability in every affected layout and across the
+  relevant phone, landscape, tablet, desktop, breakpoint-neighbor,
+  long-content, and resize boundaries. A single screenshot or one emulated
+  phone is not acceptance evidence.
 - Authentication, authorization, per-user isolation, escaping, cancellation,
   disposal, bounded memory/work, and live-configuration generation ownership
   must fail closed.
@@ -142,6 +148,14 @@ Select proportionately:
 - Client behavior: focused Vitest while iterating, then `typecheck:src`, legacy
   `typecheck`, full client coverage, bundle, syntax, and relevant
   layout/navigation E2E.
+- Visible client UI: follow the
+  [responsive UI contract](../../../CONTRIBUTING.md#responsive-ui-contract),
+  add direct geometry/reachability assertions for every affected surface,
+  register production acceptance cases in `e2e/required-test-inventory.json`,
+  and capture representative evidence for every affected layout and form
+  factor when layout behavior changes. For shared layout primitives or
+  width-generic responsive fixes, run the permanent 50-device popularity proxy
+  after deduplicating it to its distinct CSS viewports.
 - Server behavior: focused xUnit while iterating, then release build and full
   server coverage.
 - Cross-surface or generated resources: run both client and server owners plus
