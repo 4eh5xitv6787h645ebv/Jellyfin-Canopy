@@ -8,13 +8,19 @@
 import { JC } from '../../globals';
 import type { ArrPluginConfig } from '../arr-globals';
 import type {
-    ArrContext, ArrReleaseList, ArrDispatchResult, ArrAddOptions, ArrQueueRow, ArrService,
+    ArrContext, ArrReleaseList, ArrDispatchResult, ArrAddOptions, ArrQueueStatus, ArrService,
 } from './types';
 
 const logPrefix = '🪼 Jellyfin Canopy: arr Search:';
 
 interface PluginApi {
-    plugin(path: string, options?: { method?: string; body?: unknown; skipRetry?: boolean }): Promise<unknown>;
+    plugin(path: string, options?: {
+        method?: string;
+        body?: unknown;
+        skipRetry?: boolean;
+        signal?: AbortSignal;
+        timeoutMs?: number;
+    }): Promise<unknown>;
 }
 
 function api(): PluginApi | null {
@@ -28,8 +34,11 @@ export function errorMessage(err: unknown): string {
     return e?.responseJSON?.message || e?.responseJSON?.Message || e?.message || JC.t!('unknown_error');
 }
 
-export async function fetchContext(itemId: string): Promise<ArrContext> {
-    const result = await api()!.plugin(`/arr/search/context?itemId=${encodeURIComponent(itemId)}`);
+export async function fetchContext(itemId: string, signal?: AbortSignal): Promise<ArrContext> {
+    const result = await api()!.plugin(
+        `/arr/search/context?itemId=${encodeURIComponent(itemId)}`,
+        { signal }
+    );
     return result as ArrContext;
 }
 
@@ -60,9 +69,13 @@ export async function setMonitored(itemId: string, monitored: boolean, instanceN
     return result as ArrDispatchResult;
 }
 
-export async function fetchAddOptions(service: ArrService, instanceName: string): Promise<ArrAddOptions> {
+export async function fetchAddOptions(
+    service: ArrService,
+    instanceName: string,
+    signal?: AbortSignal
+): Promise<ArrAddOptions> {
     const q = new URLSearchParams({ service, instanceName });
-    const result = await api()!.plugin(`/arr/search/add-options?${q.toString()}`);
+    const result = await api()!.plugin(`/arr/search/add-options?${q.toString()}`, { signal });
     return result as ArrAddOptions;
 }
 
@@ -81,9 +94,17 @@ export async function addItem(body: AddBody): Promise<{ ok: boolean; arrId?: num
     return result as { ok: boolean; arrId?: number | null };
 }
 
-export async function fetchStatus(itemId: string): Promise<ArrQueueRow[]> {
-    const result = await api()!.plugin(`/arr/search/status?itemId=${encodeURIComponent(itemId)}`) as { items?: ArrQueueRow[] };
-    return result?.items ?? [];
+export async function fetchStatus(itemId: string, signal?: AbortSignal): Promise<ArrQueueStatus> {
+    const result = await api()!.plugin(
+        `/arr/search/status?itemId=${encodeURIComponent(itemId)}`,
+        { signal, timeoutMs: 15_000 }
+    ) as Partial<ArrQueueStatus> | null;
+    return {
+        items: Array.isArray(result?.items) ? result.items : [],
+        errors: Array.isArray(result?.errors) ? result.errors : [],
+        // Missing metadata is degraded/unknown, never convincing success.
+        isComplete: result?.isComplete === true,
+    };
 }
 
 // ── toasts (JC.toast renders innerHTML — every dynamic value is escaped) ─────
@@ -110,17 +131,20 @@ export function toastError(message: string): void { toast('error', message, 6000
 /** Whether the existing Downloads page exists to link to. */
 export function downloadsPageAvailable(): boolean {
     const cfg = (JC.pluginConfig || {}) as ArrPluginConfig;
-    return cfg.DownloadsPageEnabled === true;
+    return cfg.DownloadsPageEnabled === true
+        && cfg.ShowDownloadsInRequests !== false;
 }
 
-/**
- * Navigates to the existing Downloads page by clicking its registered nav link (the same one the
- * Requests/Downloads tab uses). Best-effort: if the link isn't in the DOM (page disabled or not yet
- * rendered) it does nothing, and the caller keeps the plain toast.
- */
+/** Navigates through the document-lifetime Downloads-page facade. */
 export function navigateToDownloads(): boolean {
-    const link = document.querySelector<HTMLElement>(
-        'a[is="emby-linkbutton"][data-itemid="Jellyfin.Plugin.JellyfinCanopy.DownloadsPage"]');
-    if (link) { link.click(); return true; }
-    return false;
+    const downloadsPage = (JC as typeof JC & {
+        downloadsPage?: { showPage?: () => void };
+    }).downloadsPage;
+    if (typeof downloadsPage?.showPage !== 'function') return false;
+    try {
+        downloadsPage.showPage();
+        return true;
+    } catch {
+        return false;
+    }
 }

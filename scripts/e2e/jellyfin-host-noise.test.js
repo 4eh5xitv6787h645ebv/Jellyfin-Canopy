@@ -11,6 +11,7 @@ const {
     HOME_TAB_PREFIX,
     SCROLL_HANDLER_ERROR,
     hasValidConcurrentLogoutResponses,
+    isExpectedCanopyPauseScreenImageProbe404,
     isKnownHiddenContentHostNoise,
     isKnownJellyfinWebScrollHandlerError,
     isKnownJellyfinWebHostNoise,
@@ -33,6 +34,11 @@ const OBSERVED_SCROLL_HANDLER_RACE = {
 
 const LOGOUT_ORIGIN = 'http://127.0.0.1:8100';
 const OLD_USER_ID = '92bdc95c7381435689451ad246198f74';
+const OBSERVED_DISC_IMAGE_PROBE = {
+    url: `${LOGOUT_ORIGIN}/Items/fce5e076e062d7f2e0b2cc8f8b331b54/Images/Disc`,
+    status: 404,
+    method: 'HEAD',
+};
 const OBSERVED_LOGOUT_401 = {
     source: 'console',
     url: `${LOGOUT_ORIGIN}/web/hometab.0ec3d9a22cad691c217e.chunk.js`,
@@ -256,6 +262,75 @@ test('selectedIndex host race requires an immutable Jellyfin-web stack without a
     );
 });
 
+test('optional-image host probes accept only exact same-origin HEAD 404s', () => {
+    for (const imageType of ['Logo', 'Disc', 'Backdrop']) {
+        assert.equal(
+            isExpectedCanopyPauseScreenImageProbe404(
+                {
+                    ...OBSERVED_DISC_IMAGE_PROBE,
+                    url: OBSERVED_DISC_IMAGE_PROBE.url.replace('/Disc', `/${imageType}`),
+                },
+                `${LOGOUT_ORIGIN}/web/#/home`
+            ),
+            true,
+            imageType
+        );
+    }
+});
+
+test('optional-image host probes reject method, status, route, origin, and URL drift', () => {
+    const rejected = [
+        { response: { ...OBSERVED_DISC_IMAGE_PROBE, method: 'GET' } },
+        { response: { ...OBSERVED_DISC_IMAGE_PROBE, status: 403 } },
+        {
+            response: {
+                ...OBSERVED_DISC_IMAGE_PROBE,
+                url: OBSERVED_DISC_IMAGE_PROBE.url.replace('/Images/Disc', '/Images/Primary'),
+            },
+        },
+        {
+            response: {
+                ...OBSERVED_DISC_IMAGE_PROBE,
+                url: OBSERVED_DISC_IMAGE_PROBE.url.replace('/Items/', '/JellyfinCanopy/Items/'),
+            },
+        },
+        {
+            response: {
+                ...OBSERVED_DISC_IMAGE_PROBE,
+                url: OBSERVED_DISC_IMAGE_PROBE.url.replace(
+                    'fce5e076e062d7f2e0b2cc8f8b331b54',
+                    'not-an-item-id'
+                ),
+            },
+        },
+        { response: { ...OBSERVED_DISC_IMAGE_PROBE, url: `${OBSERVED_DISC_IMAGE_PROBE.url}?tag=1` } },
+        { response: { ...OBSERVED_DISC_IMAGE_PROBE, url: `${OBSERVED_DISC_IMAGE_PROBE.url}#disc` } },
+        { response: { ...OBSERVED_DISC_IMAGE_PROBE, url: `${OBSERVED_DISC_IMAGE_PROBE.url}/0` } },
+        {
+            response: {
+                ...OBSERVED_DISC_IMAGE_PROBE,
+                url: OBSERVED_DISC_IMAGE_PROBE.url.replace(LOGOUT_ORIGIN, 'http://attacker.invalid'),
+            },
+        },
+        {
+            response: OBSERVED_DISC_IMAGE_PROBE,
+            hostUrl: 'http://attacker.invalid/web/#/home',
+        },
+        {
+            response: OBSERVED_DISC_IMAGE_PROBE,
+            hostUrl: 'about:blank',
+        },
+    ];
+
+    for (const { response, hostUrl = `${LOGOUT_ORIGIN}/web/#/home` } of rejected) {
+        assert.equal(
+            isExpectedCanopyPauseScreenImageProbe404(response, hostUrl),
+            false,
+            JSON.stringify({ response, hostUrl })
+        );
+    }
+});
+
 test('logout Axios 401 requires the exact host bundle plus complete signed-out evidence', () => {
     assert.equal(
         isExpectedSignedOutHomeAxios401(OBSERVED_LOGOUT_401, COMPLETE_SIGNED_OUT, true),
@@ -475,4 +550,13 @@ test('every former scroll-handler E2E consumer delegates to the shared fixture',
     assert.match(fixture, /source: 'pageerror'/);
     assert.match(fixture, /stack: String\(error\.stack \|\| ''\)/);
     assert.match(fixture, /!isKnownJellyfinWebHostNoise\(detail\)/);
+    assert.match(
+        fixture,
+        /!isExpectedCanopyPauseScreenImageProbe404\(r, baseURL \|\| ''\)/
+    );
+
+    const liveUpdates = fs.readFileSync(path.join(ROOT, 'e2e/live-updates.spec.ts'), 'utf8');
+    assert.match(liveUpdates, /assertNoRuntimeErrors\(consoleErrors\)/);
+    assert.doesNotMatch(liveUpdates, /assertNoSmartRefreshRuntimeErrors|OPTIONAL_DETAIL_IMAGE/);
+    assert.doesNotMatch(liveUpdates, /consoleErrors\.reset\(\)/);
 });

@@ -60,6 +60,59 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Data
         }
 
         /// <inheritdoc />
+        public ItemLookupBatchResult GetItemCandidatesByProvidersBatchBounded(
+            IReadOnlyCollection<(string Provider, string Value)> providers,
+            int maxProviderPairs,
+            int maxCandidates)
+        {
+            if (maxProviderPairs < 1 || maxCandidates < 1 || maxCandidates == int.MaxValue)
+            {
+                return new ItemLookupBatchResult(
+                    new Dictionary<(string, string), IReadOnlyList<ItemLookupCandidate>>(),
+                    false);
+            }
+
+            var pairs = NormalizePairs(providers);
+            if (pairs.Count > maxProviderPairs)
+            {
+                return new ItemLookupBatchResult(
+                    new Dictionary<(string, string), IReadOnlyList<ItemLookupCandidate>>(),
+                    false);
+            }
+
+            if (pairs.Count == 0)
+            {
+                return new ItemLookupBatchResult(
+                    new Dictionary<(string, string), IReadOnlyList<ItemLookupCandidate>>(),
+                    true);
+            }
+
+            var query = BuildBatchQuery(pairs);
+            // The sentinel proves whether the candidate-item result was complete. Never
+            // authorize against a capped prefix whose omitted edition might be the only one
+            // accessible to the caller.
+            query.Limit = maxCandidates + 1;
+            var items = _libraryManager.GetItemList(query);
+            if (items.Count > maxCandidates)
+            {
+                return new ItemLookupBatchResult(
+                    new Dictionary<(string, string), IReadOnlyList<ItemLookupCandidate>>(),
+                    false);
+            }
+
+            var mapped = MapProviderPairsCore(
+                items,
+                pairs,
+                maxCandidates,
+                out var mappingComplete);
+            return mappingComplete
+                ? new ItemLookupBatchResult(mapped, true)
+                : new ItemLookupBatchResult(
+                    new Dictionary<(string, string), IReadOnlyList<ItemLookupCandidate>>(),
+                    false);
+        }
+
+        /// <inheritdoc />
         public IReadOnlySet<Guid> GetAccessibleItemIdsBatch(IReadOnlyCollection<Guid> itemIds, JUser user)
         {
             if (itemIds.Count == 0)
@@ -138,9 +191,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Data
         internal static Dictionary<(string Provider, string Value), IReadOnlyList<ItemLookupCandidate>> MapProviderPairs(
             IEnumerable<BaseItem> items,
             IReadOnlyCollection<(string Provider, string Value)> pairs)
+            => MapProviderPairsCore(items, pairs, int.MaxValue, out _);
+
+        private static Dictionary<(string Provider, string Value), IReadOnlyList<ItemLookupCandidate>> MapProviderPairsCore(
+            IEnumerable<BaseItem> items,
+            IReadOnlyCollection<(string Provider, string Value)> pairs,
+            int maxCandidates,
+            out bool complete)
         {
             var requested = new HashSet<(string, string)>(pairs);
             var map = new Dictionary<(string Provider, string Value), List<ItemLookupCandidate>>();
+            var candidateCount = 0;
 
             foreach (var item in items)
             {
@@ -163,10 +224,23 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Data
                     }
 
                     if (candidates.All(candidate => candidate.ItemId != item.Id))
-                        candidates.Add(new ItemLookupCandidate(item.Id, GetItemKind(item), item.Path));
+                    {
+                        if (candidateCount >= maxCandidates)
+                        {
+                            complete = false;
+                            return new Dictionary<(string, string), IReadOnlyList<ItemLookupCandidate>>();
+                        }
+
+                        var kind = GetItemKind(item);
+                        var hasMediaFile = kind is ItemLookupKind.Movie or ItemLookupKind.Episode
+                            && !string.IsNullOrWhiteSpace(item.Path);
+                        candidates.Add(new ItemLookupCandidate(item.Id, kind, item.Path, hasMediaFile));
+                        candidateCount++;
+                    }
                 }
             }
 
+            complete = true;
             return map.ToDictionary(
                 pair => pair.Key,
                 pair => (IReadOnlyList<ItemLookupCandidate>)pair.Value

@@ -1,20 +1,19 @@
 // src/arr/requests/render-cards.ts
-// Requests Page — download, request, issue and season-pack card rendering
+// Requests Page — download, request and issue card rendering
 // (split from requests-page.js).
 
 import { assetUrl } from '../../core/asset-urls';
 import { JC } from '../arr-globals';
-import { richApiClient, state, getIssueMediaType, getIssueTmdbId } from './data';
+import { state, getIssueMediaType, getIssueTmdbId } from './data';
 import {
-    formatDownloadStats,
+    downloadLifecycleLabel,
+    downloadLifecycleTone,
+    downloadReasonLabel,
     formatRelativeDate,
-    formatTimeRemaining,
     getReleaseDateLabel,
-    getStatusColors,
     resolveRequestStatus
 } from './render-helpers';
 import type { DownloadItem, IssueItem, RequestItem } from './data';
-import type { DownloadGroup } from './render-helpers';
 
 const escapeHtml = JC.escapeHtml;
 
@@ -23,47 +22,129 @@ const SONARR_ICON_URL = assetUrl('icons/sonarr.svg');
 const RADARR_ICON_URL = assetUrl('icons/radarr-light-hybrid-light.svg');
 
 /**
- * Render a download card
+ * Render one server-normalized lifecycle activity. The server owns grouping,
+ * lifecycle classification and availability; the client never reconstructs
+ * any of those signals from titles, progress values or raw ARR statuses.
  */
 export function renderDownloadCard(item: DownloadItem): string {
-    const STATUS_COLORS = getStatusColors();
-    const statusColor = STATUS_COLORS[item.status as string] || STATUS_COLORS.Unknown;
-    const sourceIcon = item.source === 'Sonarr' ? SONARR_ICON_URL : RADARR_ICON_URL;
-    const sourceLabel = escapeHtml(item.instanceName || item.source);
+    const interpolate = (key: string, fallback: string, values: Record<string, string | number>): string => {
+        let value = JC.t?.(key) || fallback;
+        for (const [name, replacement] of Object.entries(values)) {
+            value = value.replace(`{${name}}`, String(replacement));
+        }
+        return value;
+    };
 
-    const posterHtml = item.posterUrl
-        ? `<img class="jc-download-poster" src="${escapeHtml(item.posterUrl)}" alt="" loading="lazy" onerror="this.style.display='none'">`
-        : `<div class="jc-download-poster placeholder"></div>`;
-
-    const progress = Number(item.progress) || 0;
-    const progressHtml = `
-      <div class="jc-download-progress-container">
-        <div class="jc-download-progress">
-          <div class="jc-download-progress-bar" style="width: ${progress}%; background: ${statusColor}"></div>
-        </div>
-        <div class="jc-download-stats">
-          <span>${progress}%</span>
-          ${item.timeRemaining ? `<span>ETA: ${escapeHtml(formatTimeRemaining(item.timeRemaining))}</span>` : ''}
-          ${item.totalSize ? `<span>${formatDownloadStats(item.totalSize, item.sizeRemaining)}</span>` : ''}
-        </div>
-      </div>
-    `;
+    const normalizedSource = item.source.toLowerCase();
+    const sourceIcon = normalizedSource.includes('sonarr')
+        ? SONARR_ICON_URL
+        : normalizedSource.includes('radarr')
+            ? RADARR_ICON_URL
+            : null;
+    const sourceLabel = item.instanceName || item.source || (JC.t?.('requests_unknown') || 'Unknown');
+    const lifecycleLabel = downloadLifecycleLabel(item.lifecycle);
+    const reasonLabel = downloadReasonLabel(item.reasonCode, item.lifecycle, item.partial);
+    const progress = typeof item.progress === 'number' && Number.isFinite(item.progress)
+        ? Math.max(0, Math.min(100, item.progress))
+        : null;
+    const progressLabel = progress === null
+        ? null
+        : interpolate(
+            'downloads_transfer_progress',
+            'Transfer progress: {progress}%',
+            { progress }
+        );
+    const progressHtml = progress === null
+        ? ''
+        : `
+          <div class="jc-download-progress-block">
+            <div class="jc-download-progress-label">${escapeHtml(progressLabel || '')}</div>
+            <div class="jc-download-progress"
+                 role="progressbar"
+                 aria-label="${escapeHtml(progressLabel || '')}"
+                 aria-valuemin="0"
+                 aria-valuemax="100"
+                 aria-valuenow="${progress}">
+              <div class="jc-download-progress-bar" style="width:${progress}%"></div>
+            </div>
+          </div>`;
+    const timeRemainingHtml = item.timeRemaining
+        ? `<span>${escapeHtml(interpolate(
+            'downloads_time_remaining',
+            'Time remaining: {time}',
+            { time: item.timeRemaining }
+        ))}</span>`
+        : '';
+    const groupHtml = item.groupCount > 1
+        ? `<span>${escapeHtml(interpolate(
+            'downloads_group_count',
+            '{count} items',
+            { count: item.groupCount }
+        ))}</span>`
+        : '';
+    const partialHtml = item.partial
+        ? `<div class="jc-download-detail jc-download-partial">${
+            item.importedCount !== null && item.expectedCount !== null
+                ? escapeHtml(interpolate(
+                    'downloads_partial_count',
+                    '{imported} of {expected} imported',
+                    { imported: item.importedCount, expected: item.expectedCount }
+                ))
+                : escapeHtml(JC.t?.('downloads_partial') || 'Partially imported')
+        }</div>`
+        : '';
+    const occurredAt = item.occurredAt ? formatRelativeDate(item.occurredAt) : '';
+    const provenanceHtml = item.provenance
+        ? `<div class="jc-download-detail jc-download-provenance">${
+            escapeHtml(item.provenance === 'seerrAssociated'
+                ? (JC.t?.('downloads_provenance_seerr') || 'Associated with a Seerr request')
+                : (JC.t?.('downloads_provenance_unknown') || 'Origin unknown'))
+        }</div>`
+        : '';
+    const availabilityHtml = item.availability === 'available'
+        ? `<span class="jc-download-availability is-available">${
+            escapeHtml(JC.t?.('downloads_available') || 'Available')
+        }</span>`
+        : item.lifecycle === 'imported'
+            ? `<span class="jc-download-availability">${
+                escapeHtml(JC.t?.('downloads_availability_unconfirmed') || 'Availability not confirmed')
+            }</span>`
+            : '';
+    const openButton = item.availability === 'available' && item.jellyfinItemId
+        ? `<button type="button"
+                   class="jc-download-open-btn emby-button"
+                   data-media-id="${escapeHtml(item.jellyfinItemId)}"
+                   aria-label="${escapeHtml(JC.t?.('downloads_open_in_jellyfin') || 'Open in Jellyfin')}">
+             <span class="material-icons" aria-hidden="true">open_in_new</span>
+             <span>${escapeHtml(JC.t?.('downloads_open_in_jellyfin') || 'Open in Jellyfin')}</span>
+           </button>`
+        : '';
 
     return `
-      <div class="jc-download-card" ${item.jellyfinMediaId ? `data-media-id="${escapeHtml(item.jellyfinMediaId)}"` : ''}>
-        <div class="jc-download-card-content">
-          ${posterHtml}
-          <div class="jc-download-info">
-            <div class="jc-download-title" title="${escapeHtml(item.title || '')}">${escapeHtml(item.title || JC.t?.('requests_unknown') || 'Unknown')}</div>
-            ${item.subtitle ? `<div class="jc-download-subtitle" title="${escapeHtml(item.subtitle)}">${escapeHtml(item.subtitle)}</div>` : ''}
-            <div class="jc-download-meta">
-                <span class="jc-download-badge jc-arr-badge" title="${sourceLabel}"><img src="${sourceIcon}" alt="${sourceLabel}" loading="lazy"></span>
-              <span class="jc-download-badge" style="background: ${statusColor}">${escapeHtml(item.status)}</span>
-            </div>
+      <article class="jc-download-card${item.stale ? ' is-stale' : ''}">
+        <div class="jc-download-card-header">
+          <div class="jc-download-source">
+            ${sourceIcon ? `<img src="${sourceIcon}" alt="" aria-hidden="true" loading="lazy">` : '<span class="material-icons" aria-hidden="true">storage</span>'}
+            <span>${escapeHtml(sourceLabel)}</span>
           </div>
+          <span class="jc-download-lifecycle is-${downloadLifecycleTone(item.lifecycle)}">${escapeHtml(lifecycleLabel)}</span>
         </div>
-        ${progressHtml}
-      </div>
+        <div class="jc-download-info">
+          <h3 class="jc-download-title">${escapeHtml(item.title || JC.t?.('requests_unknown') || 'Unknown')}</h3>
+          ${item.subtitle ? `<div class="jc-download-subtitle">${escapeHtml(item.subtitle)}</div>` : ''}
+          <div class="jc-download-summary">
+            ${groupHtml}
+            ${timeRemainingHtml}
+            ${occurredAt ? `<time datetime="${escapeHtml(item.occurredAt || '')}">${escapeHtml(occurredAt)}</time>` : ''}
+            ${item.stale ? `<span>${escapeHtml(JC.t?.('downloads_item_stale') || 'Stale snapshot')}</span>` : ''}
+          </div>
+          ${progressHtml}
+          ${partialHtml}
+          ${reasonLabel ? `<div class="jc-download-detail jc-download-reason">${escapeHtml(reasonLabel)}</div>` : ''}
+          ${provenanceHtml}
+          ${(availabilityHtml || openButton) ? `<div class="jc-download-actions">${availabilityHtml}${openButton}</div>` : ''}
+        </div>
+      </article>
     `;
 }
 
@@ -261,68 +342,6 @@ export function renderIssueCard(issue: IssueItem): string {
             </button>
           </div>
         </div>
-      </div>
-    `;
-}
-
-/**
- * Render a season pack card (collapsed view of multiple episodes)
- */
-export function renderSeasonPackCard(group: Extract<DownloadGroup, { type: 'seasonPack' }>): string {
-    const STATUS_COLORS = getStatusColors();
-    const item = group.item;
-    const statusColor = STATUS_COLORS[item.status as string] || STATUS_COLORS.Unknown;
-
-    const posterHtml = item.posterUrl
-        ? `<img class="jc-download-poster" src="${escapeHtml(item.posterUrl)}" alt="" loading="lazy" onerror="this.style.display='none'">`
-        : `<div class="jc-download-poster placeholder"></div>`;
-
-    // Calculate total size for the pack
-    // Check if all episodes have identical sizes (season pack download)
-    const firstSize = group.episodes[0]?.totalSize || 0;
-    const firstRemaining = group.episodes[0]?.sizeRemaining || 0;
-    const isSeasonPackDownload = group.episodes.every(
-        (ep) => ep.totalSize === firstSize && ep.sizeRemaining === firstRemaining
-    );
-
-    // If it's a season pack download (same size for all), use the size once
-    // Otherwise, sum individual episode sizes
-    const totalSize = isSeasonPackDownload
-        ? firstSize
-        : group.episodes.reduce((sum, ep) => sum + (ep.totalSize || 0), 0);
-    const sizeRemaining = isSeasonPackDownload
-        ? firstRemaining
-        : group.episodes.reduce((sum, ep) => sum + (ep.sizeRemaining || 0), 0);
-
-    const progress = Number(item.progress) || 0;
-    const progressHtml = `
-      <div class="jc-download-progress-container">
-        <div class="jc-download-progress">
-          <div class="jc-download-progress-bar" style="width: ${progress}%; background: ${statusColor}"></div>
-        </div>
-        <div class="jc-download-stats">
-          <span>${progress}%</span>
-          ${item.timeRemaining ? `<span>ETA: ${escapeHtml(formatTimeRemaining(item.timeRemaining))}</span>` : ''}
-          ${totalSize ? `<span>${formatDownloadStats(totalSize, sizeRemaining)}</span>` : ''}
-        </div>
-      </div>
-    `;
-
-    return `
-      <div class="jc-download-card jc-season-pack" ${item.jellyfinMediaId ? `data-media-id="${escapeHtml(item.jellyfinMediaId)}"` : ''}>
-        <div class="jc-download-card-content">
-          ${posterHtml}
-          <div class="jc-download-info">
-            <div class="jc-download-title" title="${escapeHtml(item.title || '')}">${escapeHtml(item.title || JC.t?.('requests_unknown') || 'Unknown')}</div>
-            <div class="jc-download-subtitle">${JC.t?.('requests_season') || 'Season'} ${Number(item.seasonNumber) || 0} (${Number(group.episodeCount) || 0} ${JC.t?.('requests_episodes') || 'episodes'})</div>
-            <div class="jc-download-meta">
-              <span class="jc-download-badge jc-arr-badge" title="Sonarr"><img src="${SONARR_ICON_URL}" alt="Sonarr" loading="lazy"></span>
-              <span class="jc-download-badge" style="background: ${statusColor}">${escapeHtml(item.status)}</span>
-              <span class="jc-download-badge" style="background: rgba(128,128,128,0.4)">${escapeHtml(group.episodeRange)}</span>
-            </div>
-          </div>
-        </div>
-        ${progressHtml}
       </div>
     `;
 }

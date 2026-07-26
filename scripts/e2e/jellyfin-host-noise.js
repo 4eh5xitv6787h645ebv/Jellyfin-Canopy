@@ -247,6 +247,39 @@ function isKnownJellyfinWebHostNoise(detail) {
 }
 
 /**
+ * Exact optional detail-art existence probes emitted by Canopy's pause screen
+ * against the Jellyfin host. A missing Logo, Disc, or Backdrop image is
+ * expected, but only for the configured Jellyfin origin and only for a
+ * query-free HEAD request. Every GET, plugin route, other image type, malformed
+ * item ID, or different status stays fatal.
+ *
+ * @param {{url: string, status: number, method: string}} response
+ * @param {string} hostUrl
+ */
+function isExpectedCanopyPauseScreenImageProbe404(response, hostUrl) {
+    let host;
+    let parsed;
+    try {
+        host = new URL(String(hostUrl || ''));
+        parsed = new URL(String(response?.url || ''));
+    } catch {
+        return false;
+    }
+
+    return (host.protocol === 'http:' || host.protocol === 'https:')
+        && host.username === ''
+        && host.password === ''
+        && parsed.origin === host.origin
+        && parsed.username === ''
+        && parsed.password === ''
+        && parsed.search === ''
+        && parsed.hash === ''
+        && response.status === 404
+        && response.method === 'HEAD'
+        && /^\/Items\/[A-Fa-f0-9]{32}\/Images\/(?:Logo|Disc|Backdrop)$/.test(parsed.pathname);
+}
+
+/**
  * Classifies the exact Jellyfin Web console error observed when a Home query
  * settles after logout has revoked its token. This is intentionally not part
  * of the global host-noise filter: callers must supply complete signed-out
@@ -301,6 +334,7 @@ module.exports = {
     HOME_TAB_PREFIX,
     SCROLL_HANDLER_ERROR,
     hasValidConcurrentLogoutResponses,
+    isExpectedCanopyPauseScreenImageProbe404,
     isKnownHiddenContentHostNoise,
     isKnownJellyfinWebScrollHandlerError,
     isKnownJellyfinWebHostNoise,

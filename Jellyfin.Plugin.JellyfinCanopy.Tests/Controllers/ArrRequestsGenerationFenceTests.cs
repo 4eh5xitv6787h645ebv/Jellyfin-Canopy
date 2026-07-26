@@ -78,8 +78,12 @@ public sealed class ArrRequestsGenerationFenceTests
     public async Task GetDownloadQueue_ConfigChangesDuringPinnedUserRequestRead_ReturnsConflict()
     {
         var initial = Configuration(SourceA, "key-a");
+        initial.DownloadsPageEnabled = true;
+        initial.ShowDownloadsInRequests = true;
         initial.DownloadsFilterByUserRequests = true;
         var replacement = Configuration(SourceB, "key-b");
+        replacement.DownloadsPageEnabled = true;
+        replacement.ShowDownloadsInRequests = true;
         replacement.DownloadsFilterByUserRequests = true;
         var provider = new FakePluginConfigProvider(initial);
         var cache = new SeerrCache(provider);
@@ -111,11 +115,18 @@ public sealed class ArrRequestsGenerationFenceTests
         var controller = new ArrRequestsController(
             factory,
             NullLogger<ArrRequestsController>.Instance,
-            new StubUserManager(),
+            new StubUserManager(new Jellyfin.Database.Implementations.Entities.User(
+                "caller",
+                "provider",
+                "password-provider")
+            {
+                Id = Guid.Parse(JellyfinUserId),
+            }),
             cache,
             provider,
             seerr,
             new ArrFetchService(factory, NullLogger<ArrFetchService>.Instance),
+            new StubItemLookupService(),
             parentalFilter);
         controller.ControllerContext = new ControllerContext
         {
@@ -134,6 +145,7 @@ public sealed class ArrRequestsGenerationFenceTests
         SeerrEnabled = true,
         SeerrUrls = source,
         SeerrApiKey = apiKey,
+        DownloadsPageEnabled = true,
     };
 
     private static SeerrUser User() => new()

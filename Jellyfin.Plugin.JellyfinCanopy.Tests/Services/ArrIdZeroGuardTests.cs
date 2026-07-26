@@ -115,11 +115,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
                 "Per-instance arr row id(s) handed to the client without ArrIdHelper.NamespacedId:\n"
                 + string.Join("\n", offenders) + "\n"
                 + "episode/movie/record[\"id\"] is unique only within one instance; two same-source "
-                + "instances can collide. Namespace it via ArrIdHelper.NamespacedId(source, instanceIndex, id).");
+                + "instances can collide. Namespace it via ArrIdHelper.NamespacedId(source, instance, id).");
         }
 
         [Fact]
-        public void ArrEventAndQueueIdsUseAUniqueInstanceKeyNotTheDisplayName()
+        public void ArrEventAndQueueIdsUsePersistedIdentityNotDisplayNameOrPosition()
         {
             var offenders = new List<string>();
             foreach (var file in SourceFiles().Where(f => ArrIdControllers.Contains(Path.GetFileName(f)!)))
@@ -127,18 +127,28 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
                 var lines = File.ReadAllLines(file);
                 for (var i = 0; i < lines.Length; i++)
                 {
-                    if (lines[i].Contains("ArrIdHelper.NamespacedId(") && lines[i].Contains("instance.Name"))
+                    if (lines[i].Contains("ArrIdHelper.NamespacedId(")
+                        && (lines[i].Contains("instance.Name")
+                            || lines[i].Contains("instanceIndex")
+                            || lines[i].Contains(", idx,")))
+                    {
                         offenders.Add($"{Path.GetFileName(file)}:{i + 1}  {lines[i].Trim()}");
+                    }
+
+                    if (lines[i].Contains("ArrInstanceKey =")
+                        && (lines[i].Contains("instanceIndex") || lines[i].Contains("{idx}")))
+                    {
+                        offenders.Add($"{Path.GetFileName(file)}:{i + 1}  {lines[i].Trim()}");
+                    }
                 }
             }
 
             Assert.True(
                 offenders.Count == 0,
-                "Arr event/queue id(s) namespaced by instance.Name (display text, not unique):\n"
+                "Arr event/queue identity still depends on display name or configured-list position:\n"
                 + string.Join("\n", offenders) + "\n"
-                + "Two instances can share a name (or be blank) and would then collide on a global key. "
-                + "Namespace by a STABLE UNIQUE key — the instance's position in the configured list "
-                + "(the ArrIdHelper.NamespacedId overload taking an int index).");
+                + "Use ArrIdHelper.NamespacedId(source, instance, rawId) for client ids and "
+                + "ArrIdHelper.InstanceKey(source, instance) for server bindings.");
         }
 
         [Fact]

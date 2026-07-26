@@ -39,6 +39,7 @@ using Jellyfin.Database.Implementations.Enums;
 using Microsoft.EntityFrameworkCore;
 using Jellyfin.Plugin.JellyfinCanopy.Services.Seerr;
 using Jellyfin.Plugin.JellyfinCanopy.Services;
+using Jellyfin.Plugin.JellyfinCanopy.Data;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
@@ -59,8 +60,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             MaxConcurrentRequestEnrichments);
 
         private readonly ISeerrClient _seerr;
-        private readonly Services.Arr.ArrFetchService _arrFetch;
+        private readonly Services.Arr.ArrDownloadActivityService? _downloadActivity;
         private readonly ISeerrParentalFilter _parentalFilter;
+        private readonly IItemLookupService _itemLookup;
 
         private bool IsReadConfigurationCurrent(SeerrMutationConfigStamp stamp)
             => stamp.Matches(
@@ -83,179 +85,167 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             IPluginConfigProvider configProvider,
             ISeerrClient seerr,
             Services.Arr.ArrFetchService arrFetch,
-            ISeerrParentalFilter parentalFilter)
+            IItemLookupService itemLookup,
+            ISeerrParentalFilter parentalFilter,
+            Services.Arr.ArrDownloadActivityService? downloadActivity = null)
             : base(httpClientFactory, logger, userManager, seerrCache, configProvider)
         {
             _seerr = seerr;
-            _arrFetch = arrFetch;
+            _ = arrFetch;
+            _downloadActivity = downloadActivity;
             _parentalFilter = parentalFilter;
+            _itemLookup = itemLookup;
         }
 
         [HttpGet("arr/queue")]
         [Authorize]
-        public async Task<IActionResult> GetDownloadQueue()
+        public async Task<IActionResult> GetDownloadQueue(
+            [FromQuery] int historyPage = 1,
+            [FromQuery] int historyPageSize = 20,
+            [FromQuery] string? search = null)
         {
             var config = _configProvider.ConfigurationOrNull;
             if (config == null)
                 return StatusCode(500, "Plugin configuration not available");
 
+            // These are authorization gates, not only navigation preferences. An authenticated
+            // caller cannot bypass a disabled surface by calling the route directly.
+            if (!config.DownloadsPageEnabled || !config.ShowDownloadsInRequests)
+                return NotFound();
+
             var configurationRevision = _configProvider.ConfigurationRevision;
             var configStamp = SeerrMutationConfigStamp.Capture(config, configurationRevision);
-            var integration = SeerrIntegrationPolicy.Capture(_configProvider);
+            var isAdmin = IsAdminUser();
             var seerrEnabled = SeerrIntegrationPolicy.HasUsableSavedConfiguration(config);
             var seerrApiKey = config.SeerrApiKey;
             var configuredUrls = SeerrClient.GetConfiguredUrls(config.SeerrUrls);
             if (!IsReadConfigurationCurrent(configStamp))
                 return ReadConfigurationChanged("the download queue");
 
-            // Non-admin users can only see downloads for items they requested via Seerr
-            // unless the admin has disabled per-user filtering
-            HashSet<(int TmdbId, string MediaType)>? allowedRequests = null;
-            HashSet<int>? allowedTvTvdb = null;
-            if (!IsAdminUser() && config.DownloadsFilterByUserRequests)
+            var allowedRequests = new HashSet<(int TmdbId, string MediaType)>();
+            var allowedTvTvdb = new HashSet<int>();
+            // With no usable Seerr integration, an empty association set is authoritative:
+            // origin remains Unknown, but the optional provenance source is not "down".
+            // A configured integration becomes incomplete until the current user's pinned
+            // source and complete request collection are positively resolved below.
+            var seerrScopeComplete = isAdmin
+                || !seerrEnabled
+                || configuredUrls.Length == 0
+                || string.IsNullOrWhiteSpace(seerrApiKey);
+            if (!isAdmin)
             {
-                if (!seerrEnabled || configuredUrls.Length == 0 || string.IsNullOrWhiteSpace(seerrApiKey))
+                seerrScopeComplete = !seerrEnabled
+                    || configuredUrls.Length == 0
+                    || string.IsNullOrWhiteSpace(seerrApiKey);
+                var jellyfinUserId = UserHelper.GetCurrentUserId(User);
+                if (jellyfinUserId.HasValue
+                    && seerrEnabled
+                    && configuredUrls.Length > 0
+                    && !string.IsNullOrWhiteSpace(seerrApiKey))
                 {
-                    return Ok(new { items = new List<object>(), errors = new List<object>() });
-                }
+                    var userResolution = await _seerr.ResolveSeerrUser(
+                        jellyfinUserId.Value.ToString(),
+                        bypassCache: true,
+                        allowAutoImport: false,
+                        cancellationToken: HttpContext.RequestAborted).ConfigureAwait(false);
+                    if (!IsReadConfigurationCurrent(configStamp))
+                        return ReadConfigurationChanged("the download queue");
 
-                var jellyfinUserId = UserHelper.GetCurrentUserId(User)?.ToString();
-                if (string.IsNullOrEmpty(jellyfinUserId))
-                {
-                    return Ok(new { items = new List<object>(), errors = new List<object>() });
-                }
-
-                var userResolution = await _seerr.ResolveSeerrUser(
-                    jellyfinUserId,
-                    bypassCache: true,
-                    allowAutoImport: false,
-                    cancellationToken: HttpContext.RequestAborted).ConfigureAwait(false);
-                if (!IsReadConfigurationCurrent(configStamp))
-                    return ReadConfigurationChanged("the download queue");
-
-                var seerrUser = userResolution.User;
-                if (seerrUser == null)
-                {
-                    if (userResolution.Status is SeerrUserResolutionStatus.Incomplete or SeerrUserResolutionStatus.Unavailable)
+                    var seerrUser = userResolution.User;
+                    if (seerrUser == null)
                     {
-                        return StatusCode(502, new
-                        {
-                            error = true,
-                            code = "user_lookup_incomplete",
-                            message = "Seerr user lookup was incomplete. No partial download queue was published.",
-                            items = Array.Empty<object>(),
-                            errors = Array.Empty<object>(),
-                        });
+                        // A conclusive "not linked" result is a complete empty request scope.
+                        // Transient/incomplete resolution remains visibly degraded.
+                        seerrScopeComplete = userResolution.Status is not
+                            (SeerrUserResolutionStatus.Incomplete
+                            or SeerrUserResolutionStatus.Unavailable);
                     }
-
-                    return Ok(new { items = new List<object>(), errors = new List<object>() });
-                }
-
-                var configuredSource = configuredUrls.FirstOrDefault(url => string.Equals(
-                        url,
-                        SeerrUrlIdentity.Normalize(seerrUser.SourceUrl),
-                        StringComparison.Ordinal));
-                if (configuredSource == null)
-                {
-                    return StatusCode(502, new
+                    else
                     {
-                        error = true,
-                        code = "source_affinity_unavailable",
-                        message = "The linked Seerr instance could not be verified. No download queue was published.",
-                        items = Array.Empty<object>(),
-                        errors = Array.Empty<object>(),
-                    });
+                        var configuredSource = configuredUrls.FirstOrDefault(url =>
+                            string.Equals(
+                                url,
+                                SeerrUrlIdentity.Normalize(seerrUser.SourceUrl),
+                                StringComparison.Ordinal));
+                        if (configuredSource != null)
+                        {
+                            var userRequests = await _seerr.GetRequestsForUser(
+                                seerrUser.Id.ToString(CultureInfo.InvariantCulture),
+                                configuredSource,
+                                config,
+                                configurationRevision,
+                                seerrApiKey,
+                                configuredUrls,
+                                HttpContext.RequestAborted).ConfigureAwait(false);
+                            if (!IsReadConfigurationCurrent(configStamp))
+                                return ReadConfigurationChanged("the download queue");
+
+                            if (userRequests != null)
+                            {
+                                seerrScopeComplete = true;
+                                allowedRequests = new HashSet<(int, string)>(userRequests
+                                    .Where(request => request.TmdbId > 0)
+                                    .Select(request => (request.TmdbId, request.MediaType)));
+                                allowedTvTvdb = new HashSet<int>(userRequests
+                                    .Where(request => request.MediaType == "tv"
+                                        && request.TvdbId is > 0)
+                                    .Select(request => request.TvdbId!.Value));
+                            }
+                        }
+                    }
                 }
-
-                var userRequests = await _seerr.GetRequestsForUser(
-                    seerrUser.Id.ToString(),
-                    configuredSource,
-                    config,
-                    configurationRevision,
-                    seerrApiKey,
-                    configuredUrls,
-                    HttpContext.RequestAborted).ConfigureAwait(false);
-                if (!IsReadConfigurationCurrent(configStamp))
-                    return ReadConfigurationChanged("the download queue");
-
-                if (userRequests == null)
-                {
-                    return StatusCode(502, new
-                    {
-                        error = true,
-                        code = "upstream_collection_incomplete",
-                        message = "Seerr returned an incomplete request collection. No partial download queue was published.",
-                        items = Array.Empty<object>(),
-                        errors = Array.Empty<object>(),
-                    });
-                }
-
-                if (userRequests.Count == 0)
-                {
-                    return Ok(new { items = new List<object>(), errors = new List<object>() });
-                }
-
-                allowedRequests = new HashSet<(int, string)>(userRequests.Select(r => (r.TmdbId, r.MediaType)));
-
-                // Sonarr is TVDB-native and routinely reports series.tmdbId 0 for its download
-                // records, so a TV request must also be matchable by TVDB id — otherwise the user's
-                // own TV download is silently dropped.
-                allowedTvTvdb = new HashSet<int>(userRequests
-                    .Where(r => r.MediaType == "tv" && r.TvdbId is > 0)
-                    .Select(r => r.TvdbId!.Value));
             }
+
+            var currentUserId = UserHelper.GetCurrentUserId(User);
+            var currentUser = currentUserId.HasValue
+                ? _userManager.GetUserById(currentUserId.Value)
+                : null;
+            if (!isAdmin && currentUser == null)
+                return Forbid();
+
+            if (_downloadActivity == null)
+                return StatusCode(500, new
+                {
+                    error = true,
+                    code = "download_activity_unavailable",
+                    message = "Download activity is temporarily unavailable.",
+                });
 
             WarnIfArrInstancesCorrupt(config);
-            var sonarrInstances = config.GetEnabledSonarrInstances();
-            var radarrInstances = config.GetEnabledRadarrInstances();
-
-            var ct = HttpContext.RequestAborted;
-            var sonarrTasks = sonarrInstances.Select((i, idx) => FetchSonarrQueue(i, idx, allowedRequests, allowedTvTvdb, ct)).ToList();
-            var radarrTasks = radarrInstances.Select((i, idx) => FetchRadarrQueue(i, idx, allowedRequests, ct)).ToList();
-
-            var sonarrResults = await Task.WhenAll(sonarrTasks);
-            var radarrResults = await Task.WhenAll(radarrTasks);
+            var response = await _downloadActivity.GetActivityAsync(
+                config,
+                new Services.Arr.ArrDownloadAccessContext
+                {
+                    IsAdmin = isAdmin,
+                    User = currentUser,
+                    SeerrScopeComplete = seerrScopeComplete,
+                    SeerrRequests = allowedRequests,
+                    SeerrTvTvdbIds = allowedTvTvdb,
+                    SeerrArrScopes =
+                        Services.Arr.ArrDownloadActivityService.GetUnambiguousSeerrArrScopes(
+                            config,
+                            configuredUrls.Length),
+                    FilterByUserRequests = config.DownloadsFilterByUserRequests,
+                    AllowActive = isAdmin || config.DownloadsAllowActiveForRegularUsers,
+                    AllowProcessing = isAdmin || config.DownloadsAllowProcessingForRegularUsers,
+                    AllowWarnings = isAdmin || config.DownloadsAllowWarningsForRegularUsers,
+                    AllowHistory = isAdmin || config.DownloadsAllowHistoryForRegularUsers,
+                    AllowProvenance = isAdmin || config.DownloadsAllowProvenanceForRegularUsers,
+                    DetailedLifecycle = isAdmin || config.DownloadsDetailedLifecycleForRegularUsers,
+                    HistoryPage = Math.Max(1, historyPage),
+                    HistoryPageSize = Math.Clamp(
+                        historyPageSize,
+                        1,
+                        Services.Arr.ArrDownloadActivityService.MaxHistoryPageSize),
+                    Search = (search ?? string.Empty).Trim()[..Math.Min(
+                        (search ?? string.Empty).Trim().Length,
+                        100)],
+                },
+                HttpContext.RequestAborted).ConfigureAwait(false);
             if (!IsReadConfigurationCurrent(configStamp))
                 return ReadConfigurationChanged("the download queue");
 
-            var items = new List<object>();
-            var errors = new List<object>();
-            if (config.IsSonarrInstancesCorrupt())
-                errors.Add(new { instanceName = "Sonarr", source = "Sonarr", reason = "config corrupt — see server logs" });
-            else if (sonarrInstances.Count == 0 && config.GetSonarrInstances().Count > 0)
-                errors.Add(new { instanceName = "Sonarr", source = "Sonarr", reason = "all Sonarr instances are disabled" });
-            if (config.IsRadarrInstancesCorrupt())
-                errors.Add(new { instanceName = "Radarr", source = "Radarr", reason = "config corrupt — see server logs" });
-            else if (radarrInstances.Count == 0 && config.GetRadarrInstances().Count > 0)
-                errors.Add(new { instanceName = "Radarr", source = "Radarr", reason = "all Radarr instances are disabled" });
-            for (int i = 0; i < sonarrResults.Length; i++)
-            {
-                items.AddRange(sonarrResults[i].Items);
-                if (sonarrResults[i].Error != null)
-                    errors.Add(new { instanceName = sonarrInstances[i].Name, source = "Sonarr", reason = sonarrResults[i].Error });
-            }
-            for (int i = 0; i < radarrResults.Length; i++)
-            {
-                items.AddRange(radarrResults[i].Items);
-                if (radarrResults[i].Error != null)
-                    errors.Add(new { instanceName = radarrInstances[i].Name, source = "Radarr", reason = radarrResults[i].Error });
-            }
-
-            if (!IsReadConfigurationCurrent(configStamp))
-                return ReadConfigurationChanged("the download queue");
-
-            return Ok(new { items, errors });
-        }
-
-        private static string? PosterFromImages(JsonNode? images)
-        {
-            if (images is not JsonArray imageArray) return null;
-            foreach (var img in imageArray)
-            {
-                if ((string?)img?["coverType"] == "poster")
-                    return (string?)img?["remoteUrl"] ?? (string?)img?["url"];
-            }
-            return null;
+            return Ok(response);
         }
 
         // Per-user download-queue match for a Sonarr record. A Seerr TV request carries both a TMDB
@@ -279,111 +269,18 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             return tmdbOk || tvdbOk;
         }
 
-        private async Task<(List<object> Items, string? Error)> FetchSonarrQueue(ArrInstance instance, int instanceIndex, HashSet<(int TmdbId, string MediaType)>? allowedRequests, HashSet<int>? allowedTvTvdb, CancellationToken ct)
-        {
-            var result = await _arrFetch.FetchQueueCollectionAsync<object>(
-                instance,
-                (page, pageSize) => $"/api/v3/queue?includeEpisode=true&includeSeries=true&sortKey=timeleft&sortDirection=ascending&page={page}&pageSize={pageSize}",
-                pageSize: Services.Arr.ArrFetchService.MaxQueuePageSize,
-                identity: record => record["id"]?.ToJsonString(),
-                projector: record =>
-                {
-                    var series = record["series"];
-                    var episode = record["episode"];
-                    int? tmdbId = ArrIdHelper.ToNullableId((int?)series?["tmdbId"]);
-                    int? tvdbId = ArrIdHelper.ToNullableId((int?)series?["tvdbId"]);
-                    if (!IsSonarrQueueItemAllowed(tmdbId, tvdbId, allowedRequests, allowedTvTvdb))
-                        return null;
-
-                    var seasonNumber = (int?)episode?["seasonNumber"];
-                    var episodeNumber = (int?)episode?["episodeNumber"];
-                    return new
-                    {
-                        // Namespace the per-instance queue id by source + the instance's unique
-                        // position so two Sonarr instances that both number queue records from 1 —
-                        // even with an identical or blank display name — can't collide.
-                        id = ArrIdHelper.NamespacedId(nameof(ArrType.Sonarr), instanceIndex, record["id"]),
-                        source = nameof(ArrType.Sonarr),
-                        instanceName = instance.Name,
-                        title = (string?)series?["title"] ?? "Unknown",
-                        subtitle = $"S{seasonNumber:D2}E{episodeNumber:D2} - {(string?)episode?["title"]}",
-                        seasonNumber = seasonNumber,
-                        episodeNumber = episodeNumber,
-                        status = (string?)record["status"] ?? "Unknown",
-                        progress = CalculateProgress((double?)record["size"], (double?)record["sizeleft"]),
-                        totalSize = (long?)record["size"],
-                        sizeRemaining = (long?)record["sizeleft"],
-                        timeRemaining = (string?)record["timeleft"],
-                        posterUrl = PosterFromImages(series?["images"]),
-                        tmdbId = tmdbId
-                    };
-                },
-                requestTimeout: TimeSpan.FromSeconds(10),
-                contextLabel: "Sonarr queue",
-                ct: ct).ConfigureAwait(false);
-
-            return result.IsComplete
-                ? (result.Items, null)
-                : (new List<object>(), result.Error ?? "incomplete queue collection");
-        }
-
-        private async Task<(List<object> Items, string? Error)> FetchRadarrQueue(ArrInstance instance, int instanceIndex, HashSet<(int TmdbId, string MediaType)>? allowedRequests, CancellationToken ct)
-        {
-            var result = await _arrFetch.FetchQueueCollectionAsync<object>(
-                instance,
-                (page, pageSize) => $"/api/v3/queue?includeMovie=true&page={page}&pageSize={pageSize}",
-                pageSize: Services.Arr.ArrFetchService.MaxQueuePageSize,
-                identity: record => record["id"]?.ToJsonString(),
-                projector: record =>
-                {
-                    var movie = record["movie"];
-                    int? tmdbId = ArrIdHelper.ToNullableId((int?)movie?["tmdbId"]);
-                    if (allowedRequests != null && (!tmdbId.HasValue || !allowedRequests.Contains((tmdbId.Value, "movie"))))
-                        return null;
-
-                    return new
-                    {
-                        // Namespace the per-instance queue id by source + the instance's unique
-                        // position so two Radarr instances that both number queue records from 1 —
-                        // even with an identical or blank display name — can't collide.
-                        id = ArrIdHelper.NamespacedId(nameof(ArrType.Radarr), instanceIndex, record["id"]),
-                        source = nameof(ArrType.Radarr),
-                        instanceName = instance.Name,
-                        title = (string?)movie?["title"] ?? "Unknown",
-                        subtitle = movie?["year"]?.ToString(),
-                        seasonNumber = (int?)null,
-                        episodeNumber = (int?)null,
-                        status = (string?)record["status"] ?? "Unknown",
-                        progress = CalculateProgress((double?)record["size"], (double?)record["sizeleft"]),
-                        totalSize = (long?)record["size"],
-                        sizeRemaining = (long?)record["sizeleft"],
-                        timeRemaining = (string?)record["timeleft"],
-                        posterUrl = PosterFromImages(movie?["images"]),
-                        tmdbId = tmdbId
-                    };
-                },
-                requestTimeout: TimeSpan.FromSeconds(10),
-                contextLabel: "Radarr queue",
-                ct: ct).ConfigureAwait(false);
-
-            return result.IsComplete
-                ? (result.Items, null)
-                : (new List<object>(), result.Error ?? "incomplete queue collection");
-        }
-
-        private static double CalculateProgress(double? size, double? sizeleft)
-        {
-            if (size == null || size == 0) return 0;
-            if (sizeleft == null) return 100;
-            return Math.Round((1 - (sizeleft.Value / size.Value)) * 100, 1);
-        }
-
         [HttpGet("arr/requests")]
         [Authorize]
         public async Task<IActionResult> GetRequests([FromQuery] int take = 20, [FromQuery] int skip = 0, [FromQuery] string? filter = null, [FromQuery] bool userOnly = false)
         {
             take = Math.Clamp(take, 1, 200);
             skip = Math.Max(0, skip);
+
+            var pageConfig = _configProvider.ConfigurationOrNull;
+            if (pageConfig == null)
+                return StatusCode(500, "Plugin configuration not available");
+            if (!pageConfig.DownloadsPageEnabled)
+                return NotFound();
 
             var integration = SeerrIntegrationPolicy.Capture(_configProvider);
             if (integration.State == SeerrIntegrationState.Disabled)
@@ -418,6 +315,22 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             var config = integration.Configuration;
             if (!integration.IsActive || config == null)
                 return StatusCode(500, "Plugin configuration not available");
+            if (!config.DownloadsPageEnabled)
+                return NotFound();
+
+            if (!IsAdminUser() && !config.RequestsAllowSeerrStatusAndHistoryForRegularUsers)
+            {
+                return Ok(new
+                {
+                    error = false,
+                    code = "seerr_status_history_hidden",
+                    disabled = false,
+                    requests = Array.Empty<object>(),
+                    totalPages = 0,
+                    totalResults = 0,
+                    canApproveRequests = false,
+                });
+            }
 
             var configurationRevision = integration.ConfigurationRevision;
             var configStamp = SeerrMutationConfigStamp.Capture(config, configurationRevision);
@@ -447,7 +360,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 client.Timeout = TimeSpan.FromSeconds(15);
                 bool hasRequestViewPermission = false;
 
-                var jellyfinUserId = UserHelper.GetCurrentUserId(User)?.ToString();
+                var jellyfinUserGuid = UserHelper.GetCurrentUserId(User);
+                var jellyfinUserId = jellyfinUserGuid?.ToString();
 
                 if (string.IsNullOrEmpty(jellyfinUserId))
                 {
@@ -736,6 +650,29 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                     }
                 }
 
+                var jellyfinCaller = jellyfinUserGuid.HasValue
+                    ? _userManager.GetUserById(jellyfinUserGuid.Value)
+                    : null;
+                if (!TryApplyRequestLibraryScope(
+                    results,
+                    jellyfinCaller,
+                    _itemLookup,
+                    out var libraryScopedResults))
+                {
+                    _logger.LogWarning(
+                        "Could not prove the complete caller-scoped Jellyfin library projection for the Seerr request list; refusing partial output.");
+                    return StatusCode(502, new
+                    {
+                        error = true,
+                        code = "library_scope_incomplete",
+                        message = "Jellyfin library access could not be verified. Please try again.",
+                        requests = Array.Empty<object>(),
+                        totalPages = 0,
+                        totalResults = 0,
+                    });
+                }
+
+                results = libraryScopedResults;
                 var normalFilteredTotal = 0;
                 if (!isComingSoonFilter)
                 {
@@ -787,6 +724,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
 
                         int? reqStatus = (int?)req?["status"];
                         var is4kRequest = ReadJsonBoolean(req?["is4k"]);
+                        var jellyfinMediaId = ReadJsonString(
+                            media?[is4kRequest ? "jellyfinMediaId4k" : "jellyfinMediaId"]);
+                        if (string.IsNullOrWhiteSpace(jellyfinMediaId))
+                        {
+                            jellyfinMediaId = null;
+                        }
+
                         var mediaStatusProperty = is4kRequest ? "status4k" : "status";
                         var downloadStatusProperty = is4kRequest ? "downloadStatus4k" : "downloadStatus";
                         int? mediaStatusVal = (int?)media?[mediaStatusProperty];
@@ -917,7 +861,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                             requestedBy = displayName ?? username ?? "Unknown",
                             requestedByAvatar = avatarUrl,
                             createdAt = createdAtStr,
-                            jellyfinMediaId = (string?)media?["jellyfinMediaId"],
+                            // Only the already-authorized request edition is projected.
+                            // The sibling edition must never become a navigation fallback.
+                            jellyfinMediaId = jellyfinMediaId,
                             digitalReleaseDate = digitalReleaseDate,
                             theatricalReleaseDate = theatricalReleaseDate,
                             initialAirDate = initialAirDate,
@@ -1087,14 +1033,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         }
 
         /// <summary>
-        /// Returns one complete request snapshot for collection consumers. Callers
-        /// without request-view permission (or callers that set <paramref name="userOnly"/>)
-        /// receive only their own rows; authorized request viewers retain the broader
-        /// season-status visibility exposed by Seerr. Raw rows serve season-status
-        /// checks while compact media keys serve the calendar's "requested" filter.
+        /// Returns one complete, allowlisted media-key snapshot for the calendar.
+        /// Callers without request-view permission (or callers that set
+        /// <paramref name="userOnly"/>) are scoped to their own rows before projection.
         /// Pagination and parental filtering are intentionally server-owned: filtering
-        /// individual upstream pages makes visible row counts and totals unsuitable as
-        /// continuation data.
+        /// individual upstream pages would make the compact key set incomplete.
+        /// Raw Seerr request rows are never returned from this endpoint.
         /// </summary>
         [HttpGet("arr/request-snapshot")]
         [Authorize]
@@ -1127,10 +1071,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             {
                 return Ok(new
                 {
-                    results = Array.Empty<object>(),
-                    pageInfo = new { page = 1, pages = 0, pageSize = 0, results = 0 },
                     requests = Array.Empty<object>(),
-                    totalResults = 0,
                     requestKeyCount = 0,
                     complete = true,
                 });
@@ -1239,7 +1180,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
 
             // Apply the caller's parental policy once to the complete collection.
             // This avoids publishing a successfully filtered prefix when a later
-            // upstream page fails and keeps the post-filter total authoritative.
+            // upstream page fails and keeps the post-filter key set authoritative.
             var completeJson = JsonSerializer.Serialize(new
             {
                 results = snapshot.Items,
@@ -1279,23 +1220,28 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 return ParentalFilterIncomplete();
             }
 
-            var data = JsonNode.Parse(parental.Body)?.AsObject();
-            var results = data?["results"] as JsonArray;
+            JsonArray? results;
+            try
+            {
+                var data = JsonNode.Parse(parental.Body) as JsonObject;
+                results = data?["results"] as JsonArray;
+            }
+            catch (JsonException ex)
+            {
+                _logger.LogWarning(
+                    ex,
+                    "Strict request-snapshot parental filtering returned malformed JSON; refusing output.");
+                return InvalidRequestKeyCollection();
+            }
+
             if (results == null)
             {
-                return StatusCode(502, new
-                {
-                    error = true,
-                    code = "upstream_collection_invalid",
-                    message = "Seerr returned an invalid request collection. Please try again.",
-                    requests = Array.Empty<object>(),
-                });
+                return InvalidRequestKeyCollection();
             }
 
             var keys = new List<object>();
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var seenRequestIds = new HashSet<int>();
-            var scopedResults = new JsonArray();
             foreach (var row in results)
             {
                 var request = row as JsonObject;
@@ -1341,8 +1287,6 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 {
                     keys.Add(new { tmdbId = tmdbId.Value, type = mediaType });
                 }
-
-                scopedResults.Add(row?.DeepClone());
             }
 
             if (!IsReadConfigurationCurrent(configStamp))
@@ -1350,20 +1294,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
 
             return Ok(new
             {
-                // Full raw rows retain Seerr's season request details for the
-                // more-info modal. Compact keys avoid making the calendar know
-                // that upstream schema. Both projections come from this same
-                // complete, post-filter snapshot.
-                results = scopedResults,
-                pageInfo = new
-                {
-                    page = 1,
-                    pages = scopedResults.Count == 0 ? 0 : 1,
-                    pageSize = scopedResults.Count,
-                    results = scopedResults.Count,
-                },
+                // This is an output allowlist, not a redaction pass. Unknown
+                // upstream fields (including raw download-status payloads) have
+                // no path into the calendar response.
                 requests = keys,
-                totalResults = scopedResults.Count,
                 requestKeyCount = keys.Count,
                 complete = true,
             });
@@ -1371,7 +1305,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             ObjectResult InvalidRequestKeyCollection()
             {
                 _logger.LogWarning(
-                    "Complete calendar request-key collection from {Url} contained an invalid self-scoped row; refusing a partial result.",
+                    "Complete calendar request-key collection from {Url} contained an invalid visible row or response shape; refusing a partial result.",
                     snapshot.SourceUrl);
                 return StatusCode(502, new
                 {
@@ -1628,6 +1562,143 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 ? ArrIdHelper.ToNullableId(parsed)
                 : null;
 
+        /// <summary>
+        /// Applies Jellyfin library visibility to one already-complete, caller/parental-scoped
+        /// Seerr request collection. Normal and 4K requests are independent visibility domains:
+        /// only the selected edition's media id authorizes that request, and a missing/blank
+        /// selected id means that edition is not yet linked and remains eligible under Seerr
+        /// scope. Both recognized id fields are still schema-validated before any lookup. A
+        /// present selected id must be positively returned by one complete caller-scoped batch
+        /// lookup. Any malformed id, invalid edition flag, missing caller, or lookup failure
+        /// rejects the whole snapshot rather than publishing a convincing filtered prefix.
+        /// </summary>
+        internal static bool TryApplyRequestLibraryScope(
+            JsonArray source,
+            Jellyfin.Database.Implementations.Entities.User? user,
+            IItemLookupService itemLookup,
+            out JsonArray filtered)
+        {
+            filtered = new JsonArray();
+            if (user == null)
+            {
+                return false;
+            }
+
+            var rows = new List<(
+                JsonObject Row,
+                Guid? EffectiveJellyfinId,
+                bool Is4k)>(source.Count);
+            var itemIds = new HashSet<Guid>();
+
+            foreach (var node in source)
+            {
+                if (node is not JsonObject row || row["media"] is not JsonObject media)
+                {
+                    return false;
+                }
+
+                if (!TryReadOptionalJellyfinId(media, "jellyfinMediaId", out var standardId)
+                    || !TryReadOptionalJellyfinId(media, "jellyfinMediaId4k", out var fourKId)
+                    || !TryReadRequestEdition(row, out var is4k))
+                {
+                    return false;
+                }
+
+                var effectiveId = is4k ? fourKId : standardId;
+                if (effectiveId.HasValue)
+                {
+                    itemIds.Add(effectiveId.Value);
+                }
+
+                rows.Add((row, effectiveId, is4k));
+            }
+
+            IReadOnlySet<Guid> accessibleIds;
+            try
+            {
+                if (itemIds.Count == 0)
+                {
+                    accessibleIds = new HashSet<Guid>();
+                }
+                else
+                {
+                    accessibleIds = itemLookup.GetAccessibleItemIdsBatch(
+                        itemIds.ToList(),
+                        user);
+                    if (accessibleIds == null)
+                    {
+                        return false;
+                    }
+                }
+            }
+            catch
+            {
+                return false;
+            }
+
+            foreach (var (row, effectiveJellyfinId, is4k) in rows)
+            {
+                if (!effectiveJellyfinId.HasValue
+                    || accessibleIds.Contains(effectiveJellyfinId.Value))
+                {
+                    var clone = (JsonObject)row.DeepClone();
+                    if (clone["media"] is not JsonObject cloneMedia)
+                    {
+                        return false;
+                    }
+
+                    // Bind projection to the exact normalized id that passed the
+                    // selected-edition access check. The inactive sibling never
+                    // becomes a fallback.
+                    cloneMedia[is4k ? "jellyfinMediaId4k" : "jellyfinMediaId"] =
+                        effectiveJellyfinId?.ToString();
+                    filtered.Add(clone);
+                }
+            }
+
+            return true;
+        }
+
+        private static bool TryReadOptionalJellyfinId(
+            JsonObject media,
+            string propertyName,
+            out Guid? jellyfinId)
+        {
+            jellyfinId = null;
+            if (!media.TryGetPropertyValue(propertyName, out var idNode)
+                || idNode == null)
+            {
+                return true;
+            }
+
+            if (idNode is not JsonValue idValue
+                || !idValue.TryGetValue<string>(out var idText))
+            {
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(idText))
+            {
+                return true;
+            }
+
+            if (!Guid.TryParse(idText, out var parsed) || parsed == Guid.Empty)
+            {
+                return false;
+            }
+
+            jellyfinId = parsed;
+            return true;
+        }
+
+        private static bool TryReadRequestEdition(JsonObject row, out bool is4k)
+        {
+            is4k = false;
+            return row.TryGetPropertyValue("is4k", out var is4kNode)
+                && is4kNode is JsonValue value
+                && value.TryGetValue<bool>(out is4k);
+        }
+
         private static string? ReadJsonString(JsonNode? node)
             => node is JsonValue value && value.TryGetValue<string>(out var parsed)
                 ? parsed
@@ -1661,6 +1732,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         {
             var action = HttpContext.Request.Path.Value?.Contains("/approve", StringComparison.OrdinalIgnoreCase) == true ? "approve" : "decline";
 
+            var pageConfig = _configProvider.ConfigurationOrNull;
+            if (pageConfig == null)
+                return StatusCode(500, "Plugin configuration not available");
+            if (!pageConfig.DownloadsPageEnabled)
+                return NotFound();
+
             var integration = SeerrIntegrationPolicy.Capture(_configProvider);
             if (!integration.IsActive)
             {
@@ -1678,6 +1755,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             }
 
             var config = integration.Configuration!;
+            if (!config.DownloadsPageEnabled)
+                return NotFound();
 
             // The admin feature toggle gates the action server-side too — the
             // client hides the buttons when it's off, but the server still
@@ -1737,6 +1816,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                     _configProvider.ConfigurationRevision)
                 || currentConfig == null
                 || !SeerrIntegrationPolicy.HasUsableSavedConfiguration(currentConfig)
+                || !currentConfig.DownloadsPageEnabled
                 || !currentConfig.RequestApprovalsEnabled)
             {
                 return StatusCode(409, new

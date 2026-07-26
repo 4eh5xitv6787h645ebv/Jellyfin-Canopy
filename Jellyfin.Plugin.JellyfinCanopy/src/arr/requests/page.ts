@@ -12,11 +12,14 @@ import { injectStyles } from './styles';
 import { clearAvatarObjectUrlCache, loadAllData, resetRequestsIdentityState, state } from './data';
 import { handleRequestsClick, renderPage, setActiveContainer } from './render';
 import {
+    applyDownloadsSearch,
     filterDownloads,
     filterIssues,
     filterRequests,
+    nextHistoryPage,
     nextIssuesPage,
     nextPage,
+    prevHistoryPage,
     prevIssuesPage,
     prevPage,
     searchDownloads
@@ -70,9 +73,12 @@ function startPolling(handle: LifecycleHandle): void {
     const rawSeconds = config.DownloadsPollIntervalSeconds !== undefined
         ? config.DownloadsPollIntervalSeconds
         : 30;
-    // Clamp to a 5s floor at the point of use — the stored config can legitimately
-    // contain 0, which would otherwise spin a tight loop.
-    const intervalMs = Math.max(5, rawSeconds) * 1000;
+    // Match the administrator contract at the point of use as a final defense
+    // against stale/manual configuration values.
+    const safeSeconds = Number.isFinite(Number(rawSeconds))
+        ? Math.max(30, Math.min(300, Number(rawSeconds)))
+        : 30;
+    const intervalMs = safeSeconds * 1000;
 
     handle.track(setInterval(() => {
         // Skip while the browser tab is hidden (user switched tabs / minimised).
@@ -101,6 +107,7 @@ function render({ host, handle, signal }: PageContext): void {
     setActiveContainer(container);
     handle.track(() => setActiveContainer(null));
     handle.track(() => clearAvatarObjectUrlCache(true));
+    let searchIntentGeneration = 0;
 
     const stopOwnedEvent = (event: Event): void => {
         event.preventDefault();
@@ -143,8 +150,28 @@ function render({ host, handle, signal }: PageContext): void {
         if (target?.closest('.jc-downloads-search-toggle')) {
             stopOwnedEvent(event);
             state.downloadsSearchVisible = !state.downloadsSearchVisible;
-            if (!state.downloadsSearchVisible) state.downloadsSearchQuery = '';
+            if (!state.downloadsSearchVisible) {
+                searchIntentGeneration++;
+                // Closing search is a new authoritative intent. Retire a
+                // not-yet-fired input debounce before it can restore a hidden
+                // query after the unfiltered refresh has started.
+                if (state.searchDebounceTimer) {
+                    clearTimeout(state.searchDebounceTimer);
+                    state.searchDebounceTimer = null;
+                }
+                state.downloadsSearchQuery = '';
+                state.historyPage = 1;
+            }
             renderPage();
+            if (!state.downloadsSearchVisible) void applyDownloadsSearch('', signal);
+            return;
+        }
+
+        const historyPage = target?.closest<HTMLElement>('[data-history-page]')?.dataset.historyPage;
+        if (historyPage) {
+            stopOwnedEvent(event);
+            if (historyPage === 'next') void nextHistoryPage(signal);
+            if (historyPage === 'prev') void prevHistoryPage(signal);
             return;
         }
 
@@ -189,19 +216,48 @@ function render({ host, handle, signal }: PageContext): void {
         const input = (event.target as Element | null)?.closest<HTMLInputElement>('.jc-downloads-search-input');
         if (!input) return;
         state.downloadsSearchQuery = input.value;
+        const requestedQuery = input.value;
+        const cursorPosition = input.selectionStart ?? requestedQuery.length;
+        const intentGeneration = ++searchIntentGeneration;
         if (state.searchDebounceTimer) clearTimeout(state.searchDebounceTimer);
-        state.searchDebounceTimer = window.setTimeout(() => {
-            if (!JC.identity.isCurrent(context)) return;
-            const currentInput = host.querySelector<HTMLInputElement>('.jc-downloads-search-input');
-            const cursorPosition = currentInput?.selectionStart ?? 0;
-            renderPage();
-            if (!JC.identity.isCurrent(context)) return;
+        state.searchDebounceTimer = window.setTimeout(async () => {
+            state.searchDebounceTimer = null;
+            if (signal.aborted || !JC.identity.isCurrent(context)) return;
+            await applyDownloadsSearch(requestedQuery, signal);
+            const normalizedQuery = requestedQuery.trim().slice(0, 100);
+            if (signal.aborted
+                || !JC.identity.isCurrent(context)
+                || intentGeneration !== searchIntentGeneration
+                || state.downloadsSearchQuery !== normalizedQuery) return;
             const nextInput = host.querySelector<HTMLInputElement>('.jc-downloads-search-input');
-            nextInput?.focus();
-            nextInput?.setSelectionRange(cursorPosition, cursorPosition);
+            if (!nextInput || nextInput.value !== normalizedQuery) return;
+            nextInput.focus();
+            nextInput.setSelectionRange(cursorPosition, cursorPosition);
         }, 300);
     });
+
+    handle.addListener(host, 'keydown', (event: Event) => {
+        if (!JC.identity.isCurrent(context)) return;
+        const keyboard = event as KeyboardEvent;
+        const tab = (keyboard.target as Element | null)?.closest<HTMLButtonElement>(
+            '.jc-downloads-tab[role="tab"][data-tab]'
+        );
+        if (!tab) return;
+        const order = ['downloading', 'processing', 'history'] as const;
+        const current = order.indexOf(tab.dataset.tab as typeof order[number]);
+        if (current < 0) return;
+        let next = current;
+        if (keyboard.key === 'ArrowRight') next = (current + 1) % order.length;
+        else if (keyboard.key === 'ArrowLeft') next = (current + order.length - 1) % order.length;
+        else if (keyboard.key === 'Home') next = 0;
+        else if (keyboard.key === 'End') next = order.length - 1;
+        else return;
+        keyboard.preventDefault();
+        filterDownloads(order[next]);
+        host.querySelector<HTMLButtonElement>(`.jc-downloads-tab[data-tab="${order[next]}"]`)?.focus();
+    });
     handle.track(() => {
+        searchIntentGeneration++;
         if (state.searchDebounceTimer) {
             clearTimeout(state.searchDebounceTimer);
             state.searchDebounceTimer = null;

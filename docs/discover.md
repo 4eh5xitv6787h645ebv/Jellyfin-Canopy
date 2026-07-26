@@ -431,7 +431,7 @@ Auto-Requests place a request on your users' behalf based on what they watch —
 
 ### The Requests page
 
-The Requests page brings active downloads from Sonarr/Radarr together with Seerr requests and issues in one place, so people can watch a request move from *pending* to *available* without hopping between apps.
+The Requests page brings Sonarr/Radarr download activity together with Seerr requests and issues in one place. These remain independent sources: Seerr shows the request workflow, while Sonarr/Radarr show transfer, import processing, and bounded terminal history. Canopy does not infer that an ARR import made a title available to a user.
 
 ![The Requests page showing pending, approved, and available requests](images/seerr-requests-page.png)
 
@@ -447,21 +447,33 @@ The Requests page brings active downloads from Sonarr/Radarr together with Seerr
 
 1. Go to **Dashboard → Plugins → Jellyfin Canopy → Pages** tab (look for the "Requests Page" section).
 2. Check **Enable Requests Page**.
-3. Optionally check **Show Downloads in Requests Page** to display active \*arr downloads (enabled by default).
+3. Optionally check **Show Downloads in Requests Page** to display normalized \*arr download activity (enabled by default).
 4. Optionally check **Show Seerr Issues Section** to display Seerr issues.
 5. Optionally check **Enable In-App Request Approvals** to show Approve / Decline buttons on pending requests (enabled by default — see [In-app approvals](#in-app-request-approvals)).
-6. Configure the polling settings (below).
-7. Click **Save**.
+6. Review **Regular-user download activity visibility** and **Regular-user Seerr history**. Download history, warning detail, provenance, and detailed lifecycle states are off for regular users by default.
+7. Configure the polling settings (below).
+8. Click **Save**.
 
-The Requests page is a routed destination with automatic entry points — a link in the **Jellyfin Canopy** sidebar-drawer section, plus a header-tray icon button and a user-preferences-menu link on the modern layout, ordered by the admin **Pages order** setting. Reach it directly at `/web/index.html#/downloads`; browser back/forward, refresh, and deep links all work. See [Sonarr & Radarr](sonarr-radarr.md) for the full Requests page details.
+The Requests page is a routed destination with automatic entry points — a link in the **Jellyfin Canopy** sidebar-drawer section, plus a header-tray icon button and a user-preferences-menu link on the modern layout, ordered by the admin **Pages order** setting. Reach it directly at `/web/index.html#/downloads`; browser back/forward, refresh, and deep links all work. **Enable Requests Page** is also a server-side gate for the Seerr list and in-page approval actions, so disabling it cannot be bypassed with a direct API call and fences already-issued approval tokens. See [Sonarr & Radarr](sonarr-radarr.md) for the full Requests page details.
 
 #### What's on it
 
-The page shows active downloads with progress bars, ETA, quality and size; Seerr requests with status chips (Pending Approval, Requested, Processing, Declined); and reported issues. You can filter by status and search.
+Sonarr/Radarr activity uses fixed **Downloading**, **Processing & attention**, and **History** tabs. Progress and ETA describe the transfer only: 100% or an upstream queue status of `Completed` becomes **Waiting for import**, not Imported or Available. Terminal ARR history can prove Imported, Failed, or Canceled; **Available** appears separately only after a positive current-user Jellyfin library/file lookup. The sanitized cards omit raw release names, quality/size, client/indexer details, paths, and upstream error text.
+
+Seerr requests keep their own status chips (Pending Approval, Requested, Processing, Declined, and Available), and reported issues stay in their own section. Download search is applied by the server and History is paged; the Seerr list controls remain independent. See [Sonarr & Radarr](sonarr-radarr.md#the-requests-page) for the full lifecycle, correlation, bounds, and source-health contract.
 
 !!! note "Complete lists and per-user filtering"
     - The request list is filtered by **each caller's own Jellyfin parental-rating limit** (see [Parental-rating & tag filtering](#parental-rating-tag-filtering)), and a user who can only see their own requests never receives another user's rows.
+    - Normal and 4K request cards use the Jellyfin item ID for the selected request edition only. The inactive sibling edition never authorizes or becomes a navigation fallback; an unlinked selected edition remains eligible, while malformed edition/ID data or an incomplete library lookup rejects the complete list before totals and paging.
     - The **Coming Soon** view reads *all* pages of Seerr's non-terminal processing collection before filtering future dates and paging locally, so it doesn't stop at the first page and its totals reflect the full future-dated set.
+    - Download activity is filtered server-side too. With **Filter Downloads by User Requests** on, a regular user's row needs positive media-ID evidence from that user's exact Seerr source. With it off, the row still needs that evidence or an unambiguous match to a Jellyfin item the caller may access. Missing or incomplete identity/library evidence fails closed.
+    - Exact Sonarr episode detail additionally requires an accessible Jellyfin episode match. Parent-series access and series-level request evidence never substitute for per-episode access.
+    - **Associated with a Seerr request** is shown only for that positive source-affine association. It does not claim Seerr caused the grab; all ambiguous provenance is **Origin unknown** (or omitted when the admin disables provenance for regular users).
+    - The separate **Show Seerr request status and history to regular users** control defaults on. Turning it off suppresses the regular user's request list at the server while administrators retain access; ownership, source affinity, parental limits, and library visibility apply either way.
+
+!!! note "Partial and stale sources stay visible"
+
+    A failed Sonarr/Radarr instance does not erase successful instances or turn the page into a convincing empty result. The page names stale, unavailable, incomplete, truncated, and configuration-failed sources. Queue and History freshness are independent, and a last complete collection can be reused for up to 5 minutes with only its rows marked stale. The server rechecks those deadlines after instance fan-out and library authorization. The browser independently expires each stale source from its original capture age, removes only that source's stale rows, and preserves healthy peers; repeated stale polls or page/search projection changes cannot renew either row leases or the separate deadline that bounds off-page/off-cap stale totals when ordinary polling is disabled or visibility-paused. Filtered empty results are not treated as global recovery. A total transport outage has its own whole-snapshot deadline. A queue row that disappears before history catches up can remain for up to 90 seconds as stale **Waiting for import** (at most 500 retained handoffs per instance). History—including terminal tracked states still stuck in queue—is limited to the configured 1–30-day window (7 days by default), 1,000 fetched records per ARR instance, and server-side response pages (20 by default, 50 maximum). A terminal queue group's displayed time is the newest per-member observation from this in-memory source cache—not ARR's download-start time. A newly observed terminal member, Jellyfin restart, or source identity change starts a new observation window without renewing an older member hidden by authorization.
 
 #### Polling
 

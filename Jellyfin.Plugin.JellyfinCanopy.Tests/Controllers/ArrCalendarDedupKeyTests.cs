@@ -76,12 +76,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             var a = new ArrItem
             {
                 Source = nameof(ArrType.Sonarr), TvdbId = null, Title = "The News",
-                InstanceName = "Anime", SeasonNumber = 1, EpisodeNumber = 1, ReleaseDateLocal = "2026-07-10",
+                InstanceName = "Same display name", ArrInstanceKey = "sonarr:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                SeasonNumber = 1, EpisodeNumber = 1, ReleaseDateLocal = "2026-07-10",
             };
             var b = new ArrItem
             {
                 Source = nameof(ArrType.Sonarr), TvdbId = null, Title = "The News",
-                InstanceName = "Docs", SeasonNumber = 1, EpisodeNumber = 1, ReleaseDateLocal = "2026-07-10",
+                InstanceName = "Same display name", ArrInstanceKey = "sonarr:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                SeasonNumber = 1, EpisodeNumber = 1, ReleaseDateLocal = "2026-07-10",
             };
 
             Assert.NotEqual(ArrCalendarController.BuildDedupKey(a), ArrCalendarController.BuildDedupKey(b));

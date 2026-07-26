@@ -134,15 +134,18 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Model.Arr
         [JsonPropertyName("freeSpace")] public long FreeSpace { get; set; }
     }
 
-    /// <summary>One active-download row for the post-action progress feedback (mirrors the Downloads page).</summary>
+    /// <summary>
+    /// One sanitized active-download row for post-action progress feedback. Raw downloader
+    /// title/status/message/path fields are deliberately absent.
+    /// </summary>
     public sealed class ArrQueueRowDto
     {
         [JsonPropertyName("instanceName")] public string InstanceName { get; set; } = string.Empty;
         [JsonPropertyName("service")] public string Service { get; set; } = string.Empty;
-        [JsonPropertyName("title")] public string? Title { get; set; }
-        [JsonPropertyName("status")] public string? Status { get; set; }
-        [JsonPropertyName("trackedDownloadState")] public string? TrackedDownloadState { get; set; }
-        [JsonPropertyName("progress")] public double Progress { get; set; }
+        [JsonPropertyName("lifecycle")] public string Lifecycle { get; set; } = ArrDownloadLifecycles.Unknown;
+        [JsonPropertyName("section")] public string Section { get; set; } = ArrDownloadSections.Processing;
+        [JsonPropertyName("reasonCode")] public string? ReasonCode { get; set; }
+        [JsonPropertyName("progress")] public double? Progress { get; set; }
         [JsonPropertyName("timeRemaining")] public string? TimeRemaining { get; set; }
     }
 

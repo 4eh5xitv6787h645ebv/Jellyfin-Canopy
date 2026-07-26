@@ -140,7 +140,11 @@ public sealed class SeerrIntegrationEntryPointGuardTests
         ["Controllers/ItemInfoController.cs:GetTmdbPersonData"] = new(1, "CreateTmdbClient", "https://api.themoviedb.org", "httpClient.GetAsync(tmdbUrl)"),
         ["Controllers/SeerrProxyController.cs:ProxyTmdbRequest"] = new(1, "CreateTmdbClient", "https://api.themoviedb.org", ".GetAsync(requestUri, HttpContext.RequestAborted)"),
         ["Controllers/SeerrProxyController.cs:ValidateTmdb"] = new(1, "CreateTmdbClient", "https://api.themoviedb.org", "httpClient.GetAsync(requestUri)"),
-        ["Services/Arr/ArrFetchService.cs:SendAndMapAsync"] = new(1, "CreateArrClient", "client.SendAsync(request, ct)"),
+        ["Services/Arr/ArrFetchService.cs:SendAndMapAsync"] = new(
+            1,
+            "CreateArrClient",
+            "HttpCompletionOption.ResponseHeadersRead",
+            "requestDeadline.Token"),
         ["Services/Arr/ArrTagService.cs:FetchTagsAndItemsAsync"] = new(2, "CreateArrClient", "httpClient.SendAsync(tagsRequest, ct)", "httpClient.SendAsync(mediaRequest, ct)"),
         ["Services/AssetCacheService.cs:FetchAssetAsync"] = new(1, "CreateAssetsClient", "new HttpRequestMessage(HttpMethod.Get, asset.UpstreamUrl)", "client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct)"),
         ["Services/AutoMovieRequestService.cs:GetTmdbCollectionIdAsync"] = new(1, "CreateTmdbClient", "https://api.themoviedb.org", "httpClient.GetAsync(requestUrl)"),

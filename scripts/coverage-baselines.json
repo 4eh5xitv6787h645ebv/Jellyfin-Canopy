@@ -14,19 +14,19 @@
       },
       "tolerance": {
         "missingCoveredLines": 1,
-        "rationale": "Admin-target Canopy User Settings actor/storage-isolation regressions exercise one previously uncovered core line while leaving the instrumented core scope unchanged. The reviewed high-water advances from 2325/2666 (87.209%) to 2326/2666 (87.247%). Two clean Node 22.20/V8 full-suite coverage runs on 2026-07-26 each passed all 1526 tests across 218 files and reproduced exactly 2326/2666. Retaining the one-line tolerance makes the minimum 2325/2666 (87.209%), equal to the prior reviewed high-water and stricter than its 2324/2666 tolerated floor (87.172%). coverage-baseline.test.js retains the exact below-floor, above-baseline, scope-change, and broad-tolerance negative boundaries."
+        "rationale": "The rebased branch combines the server-owned ARR download lifecycle regressions with the actor-isolated admin-target Canopy User Settings editor. The admin-target tests exercise one additional existing core line without changing the 2666-line client/core scope, advancing the reviewed high-water from 2325/2666 (87.209%) to 2326/2666 (87.247%). Two clean combined Node 22.20/V8 runs on 2026-07-26 each passed all 1603 tests across 227 files and reproduced exactly 2326/2666. Retaining the one-line tolerance makes the minimum 2325/2666 (87.209%), equal to the prior reviewed high-water and stricter than its 2324/2666 tolerated floor (87.172%). coverage-baseline.test.js retains the exact below-floor, above-baseline, scope-change, and broad-tolerance negative boundaries."
       }
     },
     "server": {
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 20321,
-        "totalLines": 28745
+        "coveredLines": 22637,
+        "totalLines": 31176
       },
       "tolerance": {
         "missingCoveredLines": 5,
-        "rationale": "The elevated admin-target user-settings API adds 140 instrumented lines (28605→28745) for policy enforcement, target resolution, bounded payloads, strong If-Match revisions, conflicts, quarantine, and shared-store semantics. Controller and payload regressions add 121 covered lines (20200→20321), raising the reviewed high-water from 70.617% to 70.694%. Two clean .NET 10.0.9/Coverlet runs on 2026-07-26 each passed all 1814 tests across the complete assembly and reproduced exactly 20321/28745. Retaining the evidence-bounded five-line Coverlet tolerance makes the minimum 20316/28745 (70.677%), stricter than both the prior 20200/28605 high-water (70.617%) and its 20195/28605 tolerated floor (70.600%). coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, and broad-tolerance negative boundaries."
+        "rationale": "The rebased branch combines the completed server-owned ARR download lifecycle with the elevated, actor-isolated admin-target Canopy User Settings API. The admin-target API adds 140 instrumented lines over the reviewed lifecycle head (31036→31176) for elevation and target resolution, bounded payloads, strong If-Match revisions, conflict evidence, quarantine handling, and shared-store semantics. The combined controller, isolation, lifecycle, pagination, authorization, privacy, concurrency, and boundary regressions add 122 covered lines at the high-water (22515→22637), raising coverage from 72.545% to 72.610%. Two clean .NET 10.0.9/Coverlet runs on 2026-07-26 each passed all 2034 tests and measured 22636 or 22637 covered lines out of 31176, establishing 22637 as the reviewed high-water. Retaining the evidence-bounded five-line Coverlet tolerance makes the minimum 22632/31176 (72.594%), stricter than both the prior 22515/31036 high-water (72.545%) and its 22510/31036 tolerated floor (72.529%). coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, and broad-tolerance negative boundaries."
       }
     }
   }

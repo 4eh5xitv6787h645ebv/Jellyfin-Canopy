@@ -4,6 +4,8 @@ using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Collections.Generic;
+using System.Security.Cryptography;
+using System.Text;
 using MediaBrowser.Controller.Library;
 using Jellyfin.Data;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
@@ -174,24 +176,30 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         {
             if (config.IsSonarrInstancesCorrupt())
             {
-                var key = "sonarr:" + (config.SonarrInstances ?? "");
+                var key = CorruptConfigurationKey("sonarr", config.SonarrInstances);
                 bool firstSeen;
                 lock (_loggedCorruptArrConfigLock) firstSeen = _loggedCorruptArrConfig.Add(key);
                 if (firstSeen)
                     _logger.LogError("SonarrInstances config is corrupt JSON — instance list is effectively empty. "
                         + "Endpoints will return no Sonarr data until the admin opens the config page and resets it. "
-                        + $"Raw value (first 200 chars): {(config.SonarrInstances ?? "").Substring(0, Math.Min(200, (config.SonarrInstances ?? "").Length))}");
+                        + "The raw value was omitted because instance configuration can contain credentials.");
             }
             if (config.IsRadarrInstancesCorrupt())
             {
-                var key = "radarr:" + (config.RadarrInstances ?? "");
+                var key = CorruptConfigurationKey("radarr", config.RadarrInstances);
                 bool firstSeen;
                 lock (_loggedCorruptArrConfigLock) firstSeen = _loggedCorruptArrConfig.Add(key);
                 if (firstSeen)
                     _logger.LogError("RadarrInstances config is corrupt JSON — instance list is effectively empty. "
                         + "Endpoints will return no Radarr data until the admin opens the config page and resets it. "
-                        + $"Raw value (first 200 chars): {(config.RadarrInstances ?? "").Substring(0, Math.Min(200, (config.RadarrInstances ?? "").Length))}");
+                        + "The raw value was omitted because instance configuration can contain credentials.");
             }
+        }
+
+        private static string CorruptConfigurationKey(string source, string? rawValue)
+        {
+            var digest = SHA256.HashData(Encoding.UTF8.GetBytes(rawValue ?? string.Empty));
+            return string.Concat(source, ":", Convert.ToHexString(digest));
         }
 
         protected static HiddenContentSettings BuildHcDefaultSettings(PluginConfiguration src)

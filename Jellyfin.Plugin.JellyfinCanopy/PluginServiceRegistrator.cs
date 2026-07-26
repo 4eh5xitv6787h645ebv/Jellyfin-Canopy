@@ -112,6 +112,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy
             serviceCollection.AddSingleton<Services.Seerr.ISeerrClient, Services.Seerr.SeerrClient>();
             // Shared SSRF-guarded Sonarr/Radarr fetch plumbing for the Arr controllers.
             serviceCollection.AddSingleton<Services.Arr.ArrFetchService>();
+            // Bounded, privacy-safe lifecycle/history owner shared by Requests and admin status.
+            serviceCollection.AddSingleton<Services.Arr.ArrDownloadActivityService>();
             // Search / Interactive Search feature: itemId → arr identity resolution, instance
             // discovery, and the search/grab/monitor/add orchestration behind ArrSearchController.
             serviceCollection.AddSingleton<Services.Arr.IArrItemResolver, Services.Arr.ArrItemResolver>();

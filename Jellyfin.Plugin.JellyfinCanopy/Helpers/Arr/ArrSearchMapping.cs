@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Text.Json.Nodes;
 using Jellyfin.Plugin.JellyfinCanopy.Model.Arr;
+using Jellyfin.Plugin.JellyfinCanopy.Services.Arr;
 
 namespace Jellyfin.Plugin.JellyfinCanopy.Helpers.Arr
 {
@@ -51,6 +52,30 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Helpers.Arr
             {
                 if (double.TryParse(n.ToString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var v)) return v;
                 return 0;
+            }
+        }
+
+        internal static double? DblN(JsonNode? n)
+        {
+            if (n == null) return null;
+            try
+            {
+                var value = n.GetValue<double>();
+                return double.IsFinite(value) ? value : null;
+            }
+            catch
+            {
+                if (double.TryParse(
+                        n.ToString(),
+                        NumberStyles.Float,
+                        CultureInfo.InvariantCulture,
+                        out var value)
+                    && double.IsFinite(value))
+                {
+                    return value;
+                }
+
+                return null;
             }
         }
 
@@ -123,18 +148,28 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Helpers.Arr
         /// <summary>Maps one Sonarr/Radarr <c>/queue</c> record into a progress row.</summary>
         public static ArrQueueRowDto MapQueueRow(JsonNode? node, string service, string instanceName)
         {
-            var size = Dbl(node?["size"]);
-            var sizeleft = Dbl(node?["sizeleft"]);
-            double progress = size > 0 ? Math.Clamp((size - sizeleft) / size * 100.0, 0, 100) : 0;
+            var size = DblN(node?["size"]);
+            var sizeleft = DblN(node?["sizeleft"] ?? node?["sizeLeft"]);
+            var lifecycle = ArrDownloadLifecycleNormalizer.NormalizeQueue(
+                new ArrDownloadQueueSignal
+                {
+                    RawStatus = Str(node?["status"]) ?? string.Empty,
+                    TrackedState = Str(node?["trackedDownloadState"]) ?? string.Empty,
+                    TrackedStatus = Str(node?["trackedDownloadStatus"]) ?? string.Empty,
+                    Size = size,
+                    SizeLeft = sizeleft,
+                    TimeLeft = Str(node?["timeleft"]),
+                });
             return new ArrQueueRowDto
             {
                 InstanceName = instanceName,
                 Service = service,
-                Title = Str(node?["title"]),
-                Status = Str(node?["status"]),
-                TrackedDownloadState = Str(node?["trackedDownloadState"]),
-                Progress = Math.Round(progress, 1),
-                TimeRemaining = Str(node?["timeleft"]),
+                Lifecycle = lifecycle.Lifecycle,
+                Section = lifecycle.Section,
+                ReasonCode = lifecycle.ReasonCode,
+                Progress = ArrDownloadLifecycleNormalizer.CalculateTransferProgress(size, sizeleft),
+                TimeRemaining = ArrDownloadLifecycleNormalizer.SanitizeTimeRemaining(
+                    Str(node?["timeleft"])),
             };
         }
 

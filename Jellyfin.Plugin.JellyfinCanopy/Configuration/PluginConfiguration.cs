@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Jellyfin.Plugin.JellyfinCanopy.Helpers;
 using Jellyfin.Plugin.JellyfinCanopy.Model.Arr;
 using MediaBrowser.Model.Plugins;
 
@@ -271,6 +272,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
             DownloadsPageShowIssues = false;
             ShowDownloadsInRequests = true;
             DownloadsFilterByUserRequests = true;
+            DownloadsAllowActiveForRegularUsers = true;
+            DownloadsAllowProcessingForRegularUsers = true;
+            DownloadsAllowWarningsForRegularUsers = false;
+            DownloadsAllowHistoryForRegularUsers = false;
+            DownloadsAllowProvenanceForRegularUsers = false;
+            DownloadsDetailedLifecycleForRegularUsers = false;
+            RequestsAllowSeerrStatusAndHistoryForRegularUsers = true;
+            DownloadsHistoryWindowDays = 7;
             RequestApprovalsEnabled = true;
 
             // Calendar Page Settings (Sonarr/Radarr Releases)
@@ -720,6 +729,40 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         public bool ShowDownloadsInRequests { get; set; }
         public bool DownloadsFilterByUserRequests { get; set; }
 
+        /// <summary>Whether regular users may see active transfer rows.</summary>
+        public bool DownloadsAllowActiveForRegularUsers { get; set; }
+
+        /// <summary>Whether regular users may see post-transfer/import-processing rows.</summary>
+        public bool DownloadsAllowProcessingForRegularUsers { get; set; }
+
+        /// <summary>Whether regular users may see warning, blocked and failed activity rows.</summary>
+        public bool DownloadsAllowWarningsForRegularUsers { get; set; }
+
+        /// <summary>Whether regular users may see bounded Sonarr/Radarr activity history.</summary>
+        public bool DownloadsAllowHistoryForRegularUsers { get; set; }
+
+        /// <summary>Whether regular users may see sanitized request/source association labels.</summary>
+        public bool DownloadsAllowProvenanceForRegularUsers { get; set; }
+
+        /// <summary>Whether regular users receive the detailed normalized lifecycle vocabulary.</summary>
+        public bool DownloadsDetailedLifecycleForRegularUsers { get; set; }
+
+        /// <summary>Whether regular users may see Seerr request status and history.</summary>
+        public bool RequestsAllowSeerrStatusAndHistoryForRegularUsers { get; set; }
+
+        private int _downloadsHistoryWindowDays = 7;
+
+        /// <summary>
+        /// Maximum age of download history requested from Sonarr/Radarr. The setter is
+        /// authoritative for direct configuration API writes; the dashboard mirrors the
+        /// same one-to-thirty-day bound.
+        /// </summary>
+        public int DownloadsHistoryWindowDays
+        {
+            get => _downloadsHistoryWindowDays;
+            set => _downloadsHistoryWindowDays = Math.Clamp(value, 1, 30);
+        }
+
         /// <summary>
         /// Enables the in-app Approve/Decline affordances on pending Seerr
         /// requests in the Requests page. When disabled, the approval buttons are
@@ -870,6 +913,39 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         public string SpoilerOverviewPlaceholder { get; set; } = "Spoiler Guard activated";
 
         /// <summary>
+        /// Ensures the raw admin configuration projection contains a persisted opaque identity
+        /// for every Sonarr/Radarr row. Jellyfin's dashboard reads this configuration object
+        /// directly, so this must run during plugin startup before an administrator can edit a
+        /// legacy row's URL or API key. The browser can then round-trip the pre-edit identity
+        /// without ever deriving an id from credential or connection material.
+        ///
+        /// Empty modern arrays backed by the legacy singleton fields are materialized here as
+        /// one modern row. Corrupt JSON remains byte-for-byte untouched; nonempty invalid arrays
+        /// retain their rows and are never replaced by the singleton fallback, preserving the
+        /// existing recovery semantics.
+        /// </summary>
+        /// <returns><see langword="true"/> when either stored JSON value changed.</returns>
+        internal bool EnsurePersistedArrInstanceIds(
+            Action<string>? onSonarrDuplicateReassigned = null,
+            Action<string>? onRadarrDuplicateReassigned = null)
+        {
+            var normalizedSonarr = EnsurePersistedInstanceIdsJson(
+                SonarrInstances,
+                CreateLegacySonarrInstance(),
+                onSonarrDuplicateReassigned);
+            var normalizedRadarr = EnsurePersistedInstanceIdsJson(
+                RadarrInstances,
+                CreateLegacyRadarrInstance(),
+                onRadarrDuplicateReassigned);
+            var changed = !string.Equals(SonarrInstances, normalizedSonarr, StringComparison.Ordinal)
+                || !string.Equals(RadarrInstances, normalizedRadarr, StringComparison.Ordinal);
+
+            SonarrInstances = normalizedSonarr;
+            RadarrInstances = normalizedRadarr;
+            return changed;
+        }
+
+        /// <summary>
         /// Returns configured Sonarr instances, falling back to legacy single-instance fields for migration.
         /// Legacy fallback runs ONLY when the stored JSON is explicitly empty; if it is corrupt (unparseable),
         /// returns an empty list without synthesizing an instance from legacy fields — the caller should
@@ -881,20 +957,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
             if (parsed.Count > 0)
                 return parsed;
 
-            if (parseResult == InstanceParseResult.ExplicitlyEmpty
-                && !string.IsNullOrWhiteSpace(SonarrUrl)
-                && !string.IsNullOrWhiteSpace(SonarrApiKey))
+            var legacy = CreateLegacySonarrInstance();
+            if (parseResult == InstanceParseResult.ExplicitlyEmpty && legacy != null)
             {
                 return new List<ArrInstance>
                 {
-                    new ArrInstance
-                    {
-                        Name = "Sonarr",
-                        Url = SonarrUrl,
-                        ExternalUrl = SonarrExternalUrl ?? "",
-                        ApiKey = SonarrApiKey,
-                        UrlMappings = SonarrUrlMappings ?? ""
-                    }
+                    legacy
                 };
             }
 
@@ -911,20 +979,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
             if (parsed.Count > 0)
                 return parsed;
 
-            if (parseResult == InstanceParseResult.ExplicitlyEmpty
-                && !string.IsNullOrWhiteSpace(RadarrUrl)
-                && !string.IsNullOrWhiteSpace(RadarrApiKey))
+            var legacy = CreateLegacyRadarrInstance();
+            if (parseResult == InstanceParseResult.ExplicitlyEmpty && legacy != null)
             {
                 return new List<ArrInstance>
                 {
-                    new ArrInstance
-                    {
-                        Name = "Radarr",
-                        Url = RadarrUrl,
-                        ExternalUrl = RadarrExternalUrl ?? "",
-                        ApiKey = RadarrApiKey,
-                        UrlMappings = RadarrUrlMappings ?? ""
-                    }
+                    legacy
                 };
             }
 
@@ -1020,6 +1080,69 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
                 : getWithLegacyFallback();
         }
 
+        private ArrInstance? CreateLegacySonarrInstance()
+            => CreateLegacyInstance(
+                "Sonarr",
+                SonarrUrl,
+                SonarrExternalUrl,
+                SonarrApiKey,
+                SonarrUrlMappings);
+
+        private ArrInstance? CreateLegacyRadarrInstance()
+            => CreateLegacyInstance(
+                "Radarr",
+                RadarrUrl,
+                RadarrExternalUrl,
+                RadarrApiKey,
+                RadarrUrlMappings);
+
+        private static ArrInstance? CreateLegacyInstance(
+            string name,
+            string? url,
+            string? externalUrl,
+            string? apiKey,
+            string? urlMappings)
+        {
+            if (string.IsNullOrWhiteSpace(url) || string.IsNullOrWhiteSpace(apiKey))
+            {
+                return null;
+            }
+
+            var legacy = new ArrInstance
+            {
+                Name = name,
+                Url = url,
+                ExternalUrl = externalUrl ?? string.Empty,
+                ApiKey = apiKey,
+                UrlMappings = urlMappings ?? string.Empty
+            };
+            legacy.InstanceId = ArrIdHelper.GetStableInstanceId(legacy);
+            return legacy;
+        }
+
+        private static string EnsurePersistedInstanceIdsJson(
+            string json,
+            ArrInstance? legacyInstance,
+            Action<string>? onDuplicateReassigned)
+        {
+            _ = TryDeserializeInstances(
+                json,
+                out var parseResult,
+                out _,
+                out var hadStoredRows);
+            if (parseResult == InstanceParseResult.Corrupt)
+            {
+                return json;
+            }
+
+            if (!hadStoredRows && legacyInstance != null)
+            {
+                return JsonSerializer.Serialize(new[] { legacyInstance });
+            }
+
+            return ArrIdHelper.EnsureInstanceIdsJson(json, onDuplicateReassigned);
+        }
+
         private enum InstanceParseResult { ExplicitlyEmpty, Parsed, Corrupt }
 
         private static List<ArrInstance> TryDeserializeInstances(string? json, out InstanceParseResult result)
@@ -1075,7 +1198,35 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
                         && !string.IsNullOrWhiteSpace(i.Url)
                         && !string.IsNullOrWhiteSpace(i.ApiKey))
                     .ToList();
-                result = filtered.Count == 0 ? InstanceParseResult.ExplicitlyEmpty : InstanceParseResult.Parsed;
+                foreach (var instance in filtered)
+                {
+                    instance.InstanceId = ArrIdHelper.GetStableInstanceId(instance);
+                }
+
+                // A copied persisted id or truly identical legacy rows cannot safely share
+                // a browser-visible identity. Fail every ambiguous row closed on reads; the
+                // save hook re-keys the colliding rows with distinct opaque persisted ids.
+                var ambiguousIds = filtered
+                    .GroupBy(i => i.InstanceId, StringComparer.Ordinal)
+                    .Where(group => group.Count() > 1)
+                    .Select(group => group.Key)
+                    .ToHashSet(StringComparer.Ordinal);
+                if (ambiguousIds.Count > 0)
+                {
+                    hasInvalidEnabledRows |= filtered.Any(i =>
+                        i.Enabled && ambiguousIds.Contains(i.InstanceId));
+                    filtered = filtered
+                        .Where(i => !ambiguousIds.Contains(i.InstanceId))
+                        .ToList();
+                }
+
+                // Valid-but-ambiguous stored rows are not "explicitly empty": doing so would
+                // revive the legacy singleton fields behind an invalid modern source set.
+                result = instances.Any(i => i != null
+                        && !string.IsNullOrWhiteSpace(i.Url)
+                        && !string.IsNullOrWhiteSpace(i.ApiKey))
+                    ? InstanceParseResult.Parsed
+                    : InstanceParseResult.ExplicitlyEmpty;
                 return filtered;
             }
             catch (JsonException)

@@ -65,6 +65,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy
             // suppressor below: saving the defaults-loaded configuration would
             // permanently overwrite the legacy values the retry depends on.
             _configWritesSuspendedByFailedMigration |= !MigrateLegacySeerrElementNamesCore(ConfigurationFilePath, msg => _logger.LogInformation(msg), msg => _logger.LogError(msg));
+            if (!_configWritesSuspendedByFailedMigration)
+            {
+                PersistArrInstanceIdentitiesBeforeAdminProjection();
+            }
             _logger.LogInformation($"{PluginName} v{Version} initialized. Plugin logs will be written to: {fileLogProvider.CurrentLogFilePath}");
             // Set the User-Agent used by every Seerr/TMDB outbound HTTP call.
             // Cloudflare's Browser Integrity Check / Bot Fight Mode flags
@@ -250,6 +254,41 @@ namespace Jellyfin.Plugin.JellyfinCanopy
             base.SaveConfiguration(config);
         }
 
+        /// <summary>
+        /// Jellyfin's admin dashboard obtains <see cref="PluginConfiguration"/> through the core
+        /// plugin configuration endpoint, not through Canopy's descriptor projection. Normalize
+        /// legacy instance identities during construction so that first response already contains
+        /// the server-derived pre-edit token. A later URL/API-key edit therefore round-trips that
+        /// token instead of deriving a new identity from the edited connection material.
+        /// </summary>
+        private void PersistArrInstanceIdentitiesBeforeAdminProjection()
+        {
+            try
+            {
+                var config = Configuration;
+                if (!config.EnsurePersistedArrInstanceIds(
+                        _ => _logger.LogWarning("Reassigned an ambiguous Sonarr instance identity during startup configuration migration."),
+                        _ => _logger.LogWarning("Reassigned an ambiguous Radarr instance identity during startup configuration migration.")))
+                {
+                    return;
+                }
+
+                SaveConfiguration(config);
+                _logger.LogInformation("Persisted stable Sonarr/Radarr instance identities before exposing the admin configuration.");
+            }
+            catch (IOException ex)
+            {
+                // Keep the normalized in-memory projection even if persistence fails. An admin
+                // page loaded in this process still receives the pre-edit identity and can safely
+                // round-trip it on the next successful save.
+                _logger.LogError($"Failed to persist stable Sonarr/Radarr instance identities (will retry next startup): {ex}");
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                _logger.LogError($"Permission denied persisting stable Sonarr/Radarr instance identities (will retry next startup): {ex}");
+            }
+        }
+
         private void SanitizeExternalUrlFields(PluginConfiguration config)
         {
             static void Sanitize(string? value, Action<string> assign, string field, ILogger<JellyfinCanopy> logger)
@@ -279,6 +318,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy
             config.RadarrInstances = Helpers.ServiceUrlResolver.SanitizeInstanceExternalUrlsJson(
                 config.RadarrInstances,
                 (name, value) => _logger.LogWarning($"Dropped malformed external URL for RadarrInstances instance \"{name}\" on save (must be an absolute http:// or https:// URL without credentials/query/fragment): {value}"));
+
+            // Keep the startup projection invariant on direct configuration API writes as well.
+            // Copied/duplicate ids are repaired without logging ids, URLs or API keys.
+            config.EnsurePersistedArrInstanceIds(
+                _ => _logger.LogWarning("Reassigned an ambiguous Sonarr instance identity while saving configuration."),
+                _ => _logger.LogWarning("Reassigned an ambiguous Radarr instance identity while saving configuration."));
         }
 
         // Dedupes Shortcuts (XmlSerializer appends to constructor-initialized lists, doubling on each restart)

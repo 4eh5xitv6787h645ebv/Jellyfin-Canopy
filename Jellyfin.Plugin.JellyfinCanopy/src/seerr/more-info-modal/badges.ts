@@ -6,6 +6,10 @@ import { JC } from '../../globals';
 
 
 import { internal } from './internal';
+import {
+    readSeerrDownloadStatuses,
+    seerrDownloadLifecycleLabel,
+} from '../download-status';
 const escapeHtml = JC.escapeHtml;
 
 /**
@@ -204,35 +208,29 @@ return { text: with4k(JC.t!(chipLabelKey) || chipLabelKey), className: chipCssCl
 }
 
 function buildDownloadBars(downloads: any = [], downloads4k: any = []) {
-const all = [...downloads, ...downloads4k];
+const all = [
+    ...readSeerrDownloadStatuses(downloads),
+    ...readSeerrDownloadStatuses(downloads4k),
+];
 if (!all.length) return null;
-
-// Group downloads by downloadId
-const grouped: any = {};
-all.forEach((dl: any) => {
-    const downloadId = dl.downloadId || 'unknown';
-    if (!grouped[downloadId]) {
-        grouped[downloadId] = dl;
-    }
-});
 
 const wrapper = document.createElement('div');
 wrapper.className = 'jc-download-bars';
 
-Object.values(grouped).forEach((dl: any) => {
-    if (typeof dl.size !== 'number' || typeof dl.sizeLeft !== 'number' || dl.size <= 0) return;
-    const pct = Math.max(0, Math.min(100, Math.round(100 * (1 - dl.sizeLeft / dl.size))));
+all.forEach((dl) => {
+    const pct = dl.progress == null ? null : Math.round(dl.progress);
     const etaText = JC.seerrUI?.formatEtaText?.(dl);
+    const statusText = seerrDownloadLifecycleLabel(dl.lifecycle, JC.t);
 
     const row = document.createElement('div');
     row.className = 'jc-download-row';
     row.innerHTML = `
-        <div class="jc-download-title">${escapeHtml(dl.title || JC.t!('seerr_popover_downloading'))}</div>
-        <div class="jc-download-progress"><div class="fill" style="width:${pct}%"></div></div>
+        <div class="jc-download-title">${escapeHtml(JC.t!('seerr_popover_downloading'))}</div>
+        ${pct == null ? '' : `<div class="jc-download-progress"><div class="fill" style="width:${pct}%"></div></div>`}
         <div class="jc-download-meta">
-            <span>${pct}%</span>
-            <span>${escapeHtml((dl.status || 'Downloading').toString())}</span>
-            ${etaText ? `<span class="jc-download-eta">${etaText}</span>` : ''}
+            ${pct == null ? '' : `<span>${pct}%</span>`}
+            <span>${escapeHtml(statusText)}</span>
+            ${etaText ? `<span class="jc-download-eta">${escapeHtml(etaText)}</span>` : ''}
         </div>
     `;
     wrapper.appendChild(row);

@@ -86,7 +86,7 @@ At-a-glance badges on your library cards — each family individually toggleable
 Four new pages living right in Jellyfin's navigation, reorderable, native on desktop and mobile:
 
 - **Calendar** — upcoming episodes and releases from Sonarr/Radarr.
-- **Requests** — request status and the live download queue.
+- **Requests** — Seerr request status plus server-authorized Sonarr/Radarr **Downloading**, **Processing & attention**, and bounded **History** activity; 100% transfer is kept separate from import and Jellyfin availability.
 - **Bookmarks** — every saved moment across your library.
 - **Hidden Content** — manage everything you've hidden.
 
@@ -96,7 +96,7 @@ Four new pages living right in Jellyfin's navigation, reorderable, native on des
 
 - **A real settings app** — plugin settings organized into seven task-oriented areas with live search across every option, on desktop and phone.
 - **Session control** — see active streams from the header, and stop or message any remote-control-capable session without opening the dashboard.
-- **Sonarr/Radarr in the item menu** — trigger an automatic search on movies, series, seasons, or episodes; hand-pick a release (quality, size, seeders, rejection reasons — with one-tap Grab) for movies, seasons, and episodes; monitor/unmonitor and add missing movies or series with live download progress.
+- **Sonarr/Radarr in the item menu** — trigger an automatic search on movies, series, seasons, or episodes; hand-pick a release (quality, size, seeders, rejection reasons — with one-tap Grab) for movies, seasons, and episodes; monitor/unmonitor and add missing movies or series with bounded, normalized download/import progress.
 - **Layout enforcement** — default or force the modern Jellyfin layout on your users' desktop and mobile web devices (TV-mode devices are deliberately exempt).
 - **Maintenance mode** — temporarily lock users out with a friendly banner while you work on the server.
 - **Custom branding** — your own logos, banners, login image, and favicon; plus a theme selector and deep CSS customization.
@@ -160,7 +160,7 @@ Four new pages living right in Jellyfin's navigation, reorderable, native on des
 > [!TIP]
 > Canopy's default request-time script and branding middleware do not need write access to Jellyfin's web or installation tree. [File Transformation](https://github.com/IAmParadox27/jellyfin-plugin-file-transformation), [Plugin Pages](https://github.com/IAmParadox27/jellyfin-plugin-pages), and [Custom Tabs](https://github.com/IAmParadox27/jellyfin-plugin-custom-tabs) are separate optional plugins; Canopy does not use them on Jellyfin 12. See the [least-privilege guidance](https://4eh5xitv6787h645ebv.github.io/Jellyfin-Canopy/getting-started/#permission-issues) before enabling any legacy web-file modification.
 
-Optional integrations — connect what you use, skip what you don't: **Seerr** (requests & discovery), **Sonarr / Radarr / Bazarr** (calendar, queue, item-menu search), a **media-segment provider** like Intro Skipper (auto-skip), and a free **TMDB API key** (Elsewhere, TMDB reviews, release dates, richer cast info).
+Optional integrations — connect what you use, skip what you don't: **Seerr** (requests & discovery), **Sonarr / Radarr / Bazarr** (calendar, normalized download lifecycle/history, item-menu search), a **media-segment provider** like Intro Skipper (auto-skip), and a free **TMDB API key** (Elsewhere, TMDB reviews, release dates, richer cast info).
 
 → Step-by-step: [Getting Started](https://4eh5xitv6787h645ebv.github.io/Jellyfin-Canopy/getting-started/)
 

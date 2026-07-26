@@ -1,22 +1,17 @@
 // src/arr/requests/render-helpers.ts
-// Requests Page — status colors, formatting, filtering and download grouping
-// helpers shared by the card and page renderers (split from requests-page.js).
+// Requests Page — normalized lifecycle labels and request-card formatting
+// shared by the card and page renderers (split from requests-page.js).
 
 import { formatDate, getDisplayLocale, ordinalSuffix } from '../../core/locale';
 import { JC } from '../arr-globals';
 import { state } from './data';
-import type { DownloadItem, RequestItem } from './data';
-
-/** A downloads-grid entry: a single item or a collapsed season pack. */
-export type DownloadGroup =
-    | { type: 'single'; item: DownloadItem }
-    | {
-        type: 'seasonPack';
-        item: DownloadItem;
-        episodes: DownloadItem[];
-        episodeRange: string;
-        episodeCount: number;
-    };
+import type {
+    DownloadActivity,
+    DownloadLifecycle,
+    DownloadSection,
+    DownloadSourceState,
+    RequestItem,
+} from './data';
 
 export interface ReleaseDateLabel {
     label: string | { isHtml: boolean; text: string };
@@ -24,159 +19,140 @@ export interface ReleaseDateLabel {
     isHtml: boolean;
 }
 
-// Status color mapping - using theme-aware colors
-export const getStatusColors = (): Record<string, string> => {
-    const themeVars = JC.themer?.getThemeVariables?.() || {};
-    const primaryAccent = themeVars.primaryAccent || '#00a4dc';
-    return {
-        downloading: primaryAccent,
-        importing: '#4caf50',
-        queued: 'rgba(128,128,128,0.6)',
-        paused: '#ff9800',
-        delayed: '#ff9800',
-        warning: '#ff9800', // Stalled
-        failed: '#f44336',
-        completed: '#4caf50',
-        unknown: 'rgba(128,128,128,0.5)',
-        pending: '#ff9800',
-        processing: primaryAccent,
-        available: '#4caf50',
-        approved: '#4caf50',
-        declined: '#f44336',
-        downloadclientunavailable: '#f44336',
-        fallbackmode: '#ff9800',
-        delay: '#ff9800'
+export const DOWNLOAD_SECTION_ORDER: readonly DownloadSection[] = [
+    'downloading',
+    'processing',
+    'history',
+];
+
+export function downloadSectionLabel(section: DownloadSection): string {
+    const labels: Record<DownloadSection, string> = {
+        downloading: JC.t?.('downloads_tab_downloading') || 'Downloading',
+        processing: JC.t?.('downloads_tab_processing') || 'Processing & attention',
+        history: JC.t?.('downloads_tab_history') || 'History',
     };
-};
+    return labels[section];
+}
 
-/**
- * Translate download status to localized label
- */
-export function translateStatus(status: string): string {
-    const translations: Record<string, string> = {
-        'All': JC.t?.('seerr_discover_all') || 'All',
-        'downloading': JC.t?.('downloads_status_downloading') || 'Downloading',
-        'queued': JC.t?.('downloads_status_queued') || 'Queued',
-        'paused': JC.t?.('downloads_status_paused') || 'Paused',
-        'importing': JC.t?.('downloads_status_importing') || 'Importing',
-        'completed': JC.t?.('downloads_status_completed') || 'Completed',
-        'warning': JC.t?.('downloads_status_warning') || 'Warning',
-        'failed': JC.t?.('downloads_status_failed') || 'Failed',
-        'unknown': JC.t?.('downloads_status_unknown') || 'Unknown'
+export function downloadSectionEmptyLabel(section: DownloadSection): string {
+    const labels: Record<DownloadSection, string> = {
+        downloading: JC.t?.('downloads_empty_downloading') || 'No downloads in progress',
+        processing: JC.t?.('downloads_empty_processing') || 'Nothing is processing or needs attention',
+        history: JC.t?.('downloads_empty_history') || 'No download history',
     };
-    return translations[status] || status;
+    return labels[section];
 }
 
-/**
- * Get unique statuses from downloads
- * Counts season packs as 1 download instead of counting each episode
- */
-export function getDownloadStatuses(): [string, number][] {
-    const statuses = new Map<string, number>();
-    const statusOrder = ['Downloading', 'Queued', 'Paused', 'Importing', 'Completed', 'Warning', 'Failed', 'Unknown'];
-
-    // Group downloads first so season packs are counted as 1
-    const groupedDownloads = groupDownloads(state.downloads);
-
-    for (const group of groupedDownloads) {
-        const item = group.type === 'seasonPack' ? group.item : group.item;
-        const status = item.status || 'Unknown';
-        if (!statuses.has(status)) {
-            statuses.set(status, 0);
-        }
-        statuses.set(status, (statuses.get(status) as number) + 1);
-    }
-
-    // Sort by defined order (case-insensitive comparison)
-    const sorted = Array.from(statuses.entries()).sort((a, b) => {
-        const indexA = statusOrder.findIndex(s => s.toLowerCase() === a[0].toLowerCase());
-        const indexB = statusOrder.findIndex(s => s.toLowerCase() === b[0].toLowerCase());
-        return (indexA === -1 ? statusOrder.length : indexA) - (indexB === -1 ? statusOrder.length : indexB);
-    });
-
-    return sorted;
+export function downloadSectionCount(section: DownloadSection): number {
+    return Number(state.downloadsCounts[section]) || 0;
 }
 
-/**
- * Filter downloads based on active tab and search query
- */
-export function getFilteredDownloads(): DownloadItem[] {
-    let filtered = state.downloads;
-
-    // Filter hidden content
-    if (JC.hiddenContent?.filterRequestItems) filtered = JC.hiddenContent.filterRequestItems(filtered);
-
-    // Filter by status tab
-    if (state.downloadsActiveTab !== 'all') {
-        filtered = filtered.filter(d => d.status === state.downloadsActiveTab);
-    }
-
-    // Filter by search query
-    if (state.downloadsSearchQuery.trim()) {
-        const query = state.downloadsSearchQuery.toLowerCase();
-        filtered = filtered.filter(d =>
-            (d.title && d.title.toLowerCase().includes(query)) ||
-            (d.subtitle && d.subtitle.toLowerCase().includes(query)) ||
-            (d.instanceName && d.instanceName.toLowerCase().includes(query))
-        );
-    }
-
-    return filtered;
+export function activitiesForSelectedSection(): DownloadActivity[] {
+    if (state.downloadsActiveTab === 'history') return state.downloadHistory;
+    return state.downloads.filter((item) => item.section === state.downloadsActiveTab);
 }
 
-/**
- * Format bytes to human readable
- */
-function formatBytes(bytes: number): string {
-    if (!bytes || bytes === 0) return '0 B';
-    const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+export function downloadLifecycleLabel(lifecycle: DownloadLifecycle): string {
+    const labels: Record<DownloadLifecycle, string> = {
+        queued: JC.t?.('downloads_lifecycle_queued') || 'Queued',
+        downloading: JC.t?.('downloads_lifecycle_downloading') || 'Downloading',
+        paused: JC.t?.('downloads_lifecycle_paused') || 'Paused',
+        delayed: JC.t?.('downloads_lifecycle_delayed') || 'Delayed',
+        postProcessing: JC.t?.('downloads_lifecycle_post_processing') || 'Post-processing',
+        importPending: JC.t?.('downloads_lifecycle_import_pending') || 'Import pending',
+        importing: JC.t?.('downloads_lifecycle_importing') || 'Importing',
+        waitingForImport: JC.t?.('downloads_lifecycle_waiting_for_import') || 'Waiting for import',
+        attention: JC.t?.('downloads_lifecycle_attention') || 'Needs attention',
+        warning: JC.t?.('downloads_lifecycle_warning') || 'Warning',
+        failed: JC.t?.('downloads_lifecycle_failed') || 'Failed',
+        canceled: JC.t?.('downloads_lifecycle_canceled') || 'Canceled',
+        removed: JC.t?.('downloads_lifecycle_removed') || 'Removed',
+        imported: JC.t?.('downloads_lifecycle_imported') || 'Imported',
+        unknown: JC.t?.('downloads_lifecycle_unknown') || 'Unknown state',
+    };
+    return labels[lifecycle] || labels.unknown;
 }
 
-/**
- * Format time remaining
- */
-export function formatTimeRemaining(timeStr: string): string {
-    if (!timeStr) return '';
-
-    // Handle HH:MM:SS format
-    const match = /^(\d+):(\d+):(\d+)$/.exec(timeStr);
-    if (match) {
-        const hours = parseInt(match[1]);
-        const minutes = parseInt(match[2]);
-        const seconds = parseInt(match[3]);
-
-        if (hours > 0) {
-            return `${hours}h ${minutes}m ${seconds}s`;
-        } else if (minutes > 0) {
-            return `${minutes}m ${seconds}s`;
-        } else {
-            return `${seconds}s`;
-        }
+export function downloadLifecycleTone(lifecycle: DownloadLifecycle): string {
+    switch (lifecycle) {
+        case 'downloading':
+            return 'downloading';
+        case 'queued':
+            return 'queued';
+        case 'paused':
+        case 'delayed':
+            return 'paused';
+        case 'postProcessing':
+        case 'importPending':
+        case 'importing':
+        case 'waitingForImport':
+            return 'processing';
+        case 'attention':
+        case 'warning':
+            return 'attention';
+        case 'failed':
+            return 'failed';
+        case 'imported':
+            return 'imported';
+        case 'canceled':
+        case 'removed':
+            return 'terminal';
+        default:
+            return 'unknown';
     }
+}
 
-    // Handle day format like 1.02:30:45
-    const dayMatch = /^(\d+)\.(\d+):(\d+):(\d+)$/.exec(timeStr);
-    if (dayMatch) {
-        const days = parseInt(dayMatch[1]);
-        const hours = parseInt(dayMatch[2]);
-        const minutes = parseInt(dayMatch[3]);
-        const seconds = parseInt(dayMatch[4]);
-
-        if (days > 0) {
-            return `${days}d ${hours}h ${minutes}m`;
-        } else if (hours > 0) {
-            return `${hours}h ${minutes}m ${seconds}s`;
-        } else if (minutes > 0) {
-            return `${minutes}m ${seconds}s`;
-        } else {
-            return `${seconds}s`;
-        }
+export function downloadReasonLabel(
+    reasonCode: string | null,
+    lifecycle: DownloadLifecycle,
+    partial: boolean
+): string | null {
+    const labels: Record<string, string> = {
+        downloadClientUnavailable: JC.t?.('downloads_reason_download_client_unavailable')
+            || 'The download client is unavailable.',
+        fallback: JC.t?.('downloads_reason_fallback')
+            || 'Only limited lifecycle information is available.',
+        importBlocked: JC.t?.('downloads_reason_import_blocked')
+            || 'Import is blocked and may need administrator attention.',
+        failedPending: JC.t?.('downloads_reason_failed_pending')
+            || 'A failure is still being reconciled.',
+        downloadWarning: JC.t?.('downloads_reason_download_warning')
+            || 'The download has an upstream warning.',
+        downloadFailed: JC.t?.('downloads_reason_download_failed')
+            || 'The download failed.',
+        downloadIgnored: JC.t?.('downloads_reason_download_ignored')
+            || 'The download was ignored by the library manager.',
+        partialImport: JC.t?.('downloads_reason_partial_import')
+            || 'Only part of this download has been imported.',
+        transitionPending: JC.t?.('downloads_reason_transition_pending')
+            || 'Waiting for authoritative lifecycle confirmation.',
+        unknownState: JC.t?.('downloads_reason_unknown_state')
+            || 'The upstream lifecycle state is not yet supported.',
+    };
+    if (reasonCode && Object.hasOwn(labels, reasonCode)) return labels[reasonCode];
+    if (reasonCode) {
+        return JC.t?.('downloads_reason_generic') || 'Additional lifecycle details are unavailable.';
     }
+    const needsDetail = partial
+        || lifecycle === 'attention'
+        || lifecycle === 'warning'
+        || lifecycle === 'failed'
+        || lifecycle === 'unknown';
+    return needsDetail
+        ? (JC.t?.('downloads_reason_generic') || 'Additional lifecycle details are unavailable.')
+        : null;
+}
 
-    return timeStr;
+export function downloadSourceStateLabel(sourceState: DownloadSourceState): string {
+    const labels: Record<DownloadSourceState, string> = {
+        fresh: JC.t?.('downloads_source_fresh') || 'Fresh',
+        stale: JC.t?.('downloads_source_stale') || 'Stale',
+        unavailable: JC.t?.('downloads_source_unavailable') || 'Unavailable',
+        incomplete: JC.t?.('downloads_source_incomplete') || 'Incomplete',
+        truncated: JC.t?.('downloads_source_truncated') || 'Truncated',
+        configuration: JC.t?.('downloads_source_configuration') || 'Configuration issue',
+    };
+    return labels[sourceState];
 }
 
 /**
@@ -300,16 +276,6 @@ export function getReleaseDateLabel(item: RequestItem): ReleaseDateLabel | null 
 }
 
 /**
- * Format downloaded/total stats with clamping
- */
-export function formatDownloadStats(totalSize: number | undefined, sizeRemaining: number | undefined): string {
-    if (!totalSize || totalSize <= 0) return '';
-    const remaining = Math.max(0, Math.min(totalSize, sizeRemaining || 0));
-    const downloaded = Math.max(0, Math.min(totalSize, totalSize - remaining));
-    return `${formatBytes(downloaded)} / ${formatBytes(totalSize)}`;
-}
-
-/**
  * Seerr like chips
  */
 export function resolveRequestStatus(status: string | undefined, item: RequestItem | null = null): { label: string; className: string } {
@@ -357,57 +323,4 @@ export function resolveRequestStatus(status: string | undefined, item: RequestIt
         default:
             return { label: status || labelRequested, className: 'jc-chip-requested' };
     }
-}
-
-/**
- * Group downloads by season pack (same show + season + same progress indicates season pack)
- * Returns array of items where season packs are collapsed into single entries
- */
-export function groupDownloads(downloads: DownloadItem[]): DownloadGroup[] {
-    const grouped: DownloadGroup[] = [];
-    const seasonPackMap = new Map<string, DownloadItem[]>(); // key: "title|season|progress" -> episodes[]
-
-    for (const item of downloads) {
-        // Only group sonarr items with season numbers
-        if (item.source === 'Sonarr' && item.seasonNumber != null) {
-            // Group by show title + season + progress (same progress = likely season pack)
-            const key = `${item.title}|${item.seasonNumber}|${item.progress}|${item.instanceName || ''}`;
-
-            if (!seasonPackMap.has(key)) {
-                seasonPackMap.set(key, []);
-            }
-            (seasonPackMap.get(key) as DownloadItem[]).push(item);
-        } else {
-            // Movies or items without season info - add directly
-            grouped.push({ type: 'single', item });
-        }
-    }
-
-    // Process season groups
-    for (const [, episodes] of seasonPackMap) {
-        if (episodes.length >= 3) {
-            // 3+ episodes with same progress = season pack, collapse them
-            const first = episodes[0];
-            const episodeNums = episodes
-                .map((e) => e.episodeNumber)
-                .sort((a, b) => (a as number) - (b as number));
-            const minEp = episodeNums[0];
-            const maxEp = episodeNums[episodeNums.length - 1];
-
-            grouped.push({
-                type: 'seasonPack',
-                item: first,
-                episodes: episodes,
-                episodeRange: `E${String(minEp).padStart(2, '0')}-E${String(maxEp).padStart(2, '0')}`,
-                episodeCount: episodes.length,
-            });
-        } else {
-            // Few episodes - show individually
-            for (const ep of episodes) {
-                grouped.push({ type: 'single', item: ep });
-            }
-        }
-    }
-
-    return grouped;
 }

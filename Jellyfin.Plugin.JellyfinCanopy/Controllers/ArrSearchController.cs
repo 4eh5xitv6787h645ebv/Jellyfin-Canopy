@@ -172,15 +172,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         // ── queue status (feedback — shares the Downloads-page data source) ──
 
         [HttpGet("arr/search/status")]
-        public async Task<IActionResult> GetStatus([FromQuery] Guid itemId)
+        public async Task<ActionResult<ArrQueueStatusDto>> GetStatus([FromQuery] Guid itemId)
         {
             var config = _configProvider.ConfigurationOrNull;
             if (config == null) return StatusCode(503, new { message = "Plugin configuration unavailable." });
-            if (!config.ArrSearchEnabled) return Ok(new { items = Array.Empty<object>(), errors = Array.Empty<object>(), isComplete = true });
+            if (!config.ArrSearchEnabled) return Ok(new ArrQueueStatusDto());
 
             var item = _resolver.Resolve(itemId);
             var status = await _actions.GetQueueStatusAsync(item, config, HttpContext.RequestAborted).ConfigureAwait(false);
-            return status.IsComplete ? Ok(status) : StatusCode(502, status);
+            // A failed instance makes this a degraded snapshot, not a failed HTTP request. Keeping
+            // the typed 200 envelope lets the client retain successful rows from other instances.
+            return Ok(status);
         }
 
         // ── helpers ──────────────────────────────────────────────────────────
