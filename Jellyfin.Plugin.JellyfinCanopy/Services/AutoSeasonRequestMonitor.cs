@@ -47,42 +47,111 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             _sessionManager.PlaybackProgress -= OnPlaybackProgress;
         }
 
-        // Handle playback stopped events to check if we should request next season.
-        // async void handler: the catch below is double-guarded so an exception escaping it
-        // (e.g. a logging failure) can't crash the host. See PlaybackWatcherBase.
-        private async void OnPlaybackStopped(object? sender, PlaybackStopEventArgs e)
+        // PERF(S7): Jellyfin raises this synchronously on its session-event pump. Keep
+        // the subscribed callback O(1); all config and integration work starts on the
+        // observed worker boundary owned by PlaybackWatcherBase.
+        private void OnPlaybackStopped(object? sender, PlaybackStopEventArgs e)
         {
-            try
+            _ = DispatchPlaybackEvent(
+                nameof(OnPlaybackStopped),
+                () => HandlePlaybackStoppedAsync(e));
+        }
+
+        private async Task HandlePlaybackStoppedAsync(PlaybackStopEventArgs e)
+        {
+            // Check if auto-season-request is enabled
+            var integration = GetEnabledIntegration();
+            if (integration?.Configuration is not PluginConfiguration config)
             {
-                // Check if auto-season-request is enabled
-                var integration = GetEnabledIntegration();
-                if (integration?.Configuration is not PluginConfiguration config)
+                return;
+            }
+
+            // Only process TV episodes
+            if (e.Item?.GetBaseItemKind() != BaseItemKind.Episode)
+            {
+                return;
+            }
+
+            _logger.LogDebug($"[Auto-Season-Request] PlaybackStopped event fired for episode: {e.Item?.Name}");
+
+            // Check if the episode was watched (at least 90% completion)
+            var playedToCompletion = e.PlayedToCompletion;
+            var completionPercentage = 0.0;
+            if (e.Item != null && e.PlaybackPositionTicks.HasValue && e.Item.RunTimeTicks.HasValue && e.Item.RunTimeTicks.Value > 0)
+            {
+                completionPercentage = (double)e.PlaybackPositionTicks.Value / e.Item.RunTimeTicks.Value;
+            }
+            //This probably can be removed but leaving it for now as a debug log
+
+            _logger.LogInformation($"[Auto-Season-Request] Episode '{e.Item?.Name ?? "Unknown"}' - PlayedToCompletion: {playedToCompletion}, Completion: {completionPercentage:P1}");
+
+            if (playedToCompletion || completionPercentage >= 0.9)
+            {
+                // Deduplicate stop events for the same user+item (same pattern as OnPlaybackProgress)
+                var session = e.Session;
+                var item = e.Item;
+                if (session == null || item == null)
                 {
                     return;
                 }
 
-                // Only process TV episodes
-                if (e.Item?.GetBaseItemKind() != BaseItemKind.Episode)
+                var userId = session.UserId;
+                var sessionItemKey = $"stopped_{userId}_{item.Id}";
+                var executed = await ExecuteDeduplicatedAsync(
+                    integration,
+                    sessionItemKey,
+                    async () =>
+                    {
+                        _logger.LogInformation($"[Auto-Season-Request] Episode '{item.Name}' completed by {session.UserName ?? "Unknown"}, checking threshold");
+                        return await _autoSeasonRequestService
+                            .CheckEpisodeCompletionAsync(item, userId, integration)
+                            .ConfigureAwait(false);
+                    }).ConfigureAwait(false);
+                if (!executed)
                 {
-                    return;
+                    _logger.LogDebug($"[Auto-Season-Request] PlaybackStopped already processed for '{item.Name}', skipping duplicate");
                 }
+            }
+            //This probably can be removed but leaving it for now as a debug log
+            else
+            {
+                _logger.LogDebug($"[Auto-Season-Request] Episode not completed enough ({completionPercentage:P1}), skipping");
+            }
+        }
 
-                _logger.LogDebug($"[Auto-Season-Request] PlaybackStopped event fired for episode: {e.Item?.Name}");
+        // PERF(S7): this delegate only dispatches; see OnPlaybackStopped.
+        private void OnPlaybackProgress(object? sender, PlaybackProgressEventArgs e)
+        {
+            _ = DispatchPlaybackEvent(
+                nameof(OnPlaybackProgress),
+                () => HandlePlaybackProgressAsync(e));
+        }
 
-                // Check if the episode was watched (at least 90% completion)
-                var playedToCompletion = e.PlayedToCompletion;
-                var completionPercentage = 0.0;
-                if (e.Item != null && e.PlaybackPositionTicks.HasValue && e.Item.RunTimeTicks.HasValue && e.Item.RunTimeTicks.Value > 0)
+        private async Task HandlePlaybackProgressAsync(PlaybackProgressEventArgs e)
+        {
+            // Check if auto-season-request is enabled
+            var integration = GetEnabledIntegration();
+            if (integration?.Configuration is not PluginConfiguration config)
+            {
+                return;
+            }
+
+            // Only process TV episodes
+            if (e.Item?.GetBaseItemKind() != BaseItemKind.Episode)
+            {
+                return;
+            }
+
+            // Only check when episode just started (within first 2 minutes)
+            if (e.PlaybackPositionTicks.HasValue && e.Item.RunTimeTicks.HasValue && e.Item.RunTimeTicks.Value > 0)
+            {
+                var progressPercentage = (double)e.PlaybackPositionTicks.Value / e.Item.RunTimeTicks.Value;
+                var progressMinutes = TimeSpan.FromTicks(e.PlaybackPositionTicks.Value).TotalMinutes;
+
+                // Only trigger on episode start (less than 2 minutes in)
+                if (progressMinutes <= 2 && progressPercentage < 0.05)
                 {
-                    completionPercentage = (double)e.PlaybackPositionTicks.Value / e.Item.RunTimeTicks.Value;
-                }
-                //This probably can be removed but leaving it for now as a debug log
-
-                _logger.LogInformation($"[Auto-Season-Request] Episode '{e.Item?.Name ?? "Unknown"}' - PlayedToCompletion: {playedToCompletion}, Completion: {completionPercentage:P1}");
-
-                if (playedToCompletion || completionPercentage >= 0.9)
-                {
-                    // Deduplicate stop events for the same user+item (same pattern as OnPlaybackProgress)
+                    // Create a unique key using userId and item ID
                     var session = e.Session;
                     var item = e.Item;
                     if (session == null || item == null)
@@ -91,96 +160,19 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     }
 
                     var userId = session.UserId;
-                    var sessionItemKey = $"stopped_{userId}_{item.Id}";
-                    var executed = await ExecuteDeduplicatedAsync(
+                    var sessionItemKey = $"{userId}_{item.Id}";
+
+                    await ExecuteDeduplicatedAsync(
                         integration,
                         sessionItemKey,
                         async () =>
                         {
-                            _logger.LogInformation($"[Auto-Season-Request] Episode '{item.Name}' completed by {session.UserName ?? "Unknown"}, checking threshold");
+                            _logger.LogInformation($"[Auto-Season-Request] Episode '{item.Name}' started by {session.UserName ?? "Unknown"}, checking threshold");
                             return await _autoSeasonRequestService
                                 .CheckEpisodeCompletionAsync(item, userId, integration)
                                 .ConfigureAwait(false);
                         }).ConfigureAwait(false);
-                    if (!executed)
-                    {
-                        _logger.LogDebug($"[Auto-Season-Request] PlaybackStopped already processed for '{item.Name}', skipping duplicate");
-                    }
                 }
-                //This probably can be removed but leaving it for now as a debug log
-                else
-                {
-                    _logger.LogDebug($"[Auto-Season-Request] Episode not completed enough ({completionPercentage:P1}), skipping");
-                }
-            }
-            catch (Exception ex)
-            {
-                // async void: an exception escaping this catch would become an unobserved exception
-                // that crashes the host, so guard the logging call itself.
-                try { _logger.LogError($"[Auto-Season-Request] Error in OnPlaybackStopped: {ex.Message}"); }
-                catch { /* never let a logging failure crash the host from an async void handler */ }
-            }
-        }
-
-        // Handle playback progress events to detect when user starts watching a new episode.
-        // async void handler: the catch below is double-guarded so an exception escaping it
-        // (e.g. a logging failure) can't crash the host. See PlaybackWatcherBase.
-        private async void OnPlaybackProgress(object? sender, PlaybackProgressEventArgs e)
-        {
-            try
-            {
-                // Check if auto-season-request is enabled
-                var integration = GetEnabledIntegration();
-                if (integration?.Configuration is not PluginConfiguration config)
-                {
-                    return;
-                }
-
-                // Only process TV episodes
-                if (e.Item?.GetBaseItemKind() != BaseItemKind.Episode)
-                {
-                    return;
-                }
-
-                // Only check when episode just started (within first 2 minutes)
-                if (e.PlaybackPositionTicks.HasValue && e.Item.RunTimeTicks.HasValue && e.Item.RunTimeTicks.Value > 0)
-                {
-                    var progressPercentage = (double)e.PlaybackPositionTicks.Value / e.Item.RunTimeTicks.Value;
-                    var progressMinutes = TimeSpan.FromTicks(e.PlaybackPositionTicks.Value).TotalMinutes;
-
-                    // Only trigger on episode start (less than 2 minutes in)
-                    if (progressMinutes <= 2 && progressPercentage < 0.05)
-                    {
-                        // Create a unique key using userId and item ID
-                        var session = e.Session;
-                        var item = e.Item;
-                        if (session == null || item == null)
-                        {
-                            return;
-                        }
-
-                        var userId = session.UserId;
-                        var sessionItemKey = $"{userId}_{item.Id}";
-
-                        await ExecuteDeduplicatedAsync(
-                            integration,
-                            sessionItemKey,
-                            async () =>
-                            {
-                                _logger.LogInformation($"[Auto-Season-Request] Episode '{item.Name}' started by {session.UserName ?? "Unknown"}, checking threshold");
-                                return await _autoSeasonRequestService
-                                    .CheckEpisodeCompletionAsync(item, userId, integration)
-                                    .ConfigureAwait(false);
-                            }).ConfigureAwait(false);
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                // async void: an exception escaping this catch would become an unobserved exception
-                // that crashes the host, so guard the logging call itself.
-                try { _logger.LogError($"[Auto-Season-Request] Error in OnPlaybackProgress: {ex.Message}"); }
-                catch { /* never let a logging failure crash the host from an async void handler */ }
             }
         }
     }
