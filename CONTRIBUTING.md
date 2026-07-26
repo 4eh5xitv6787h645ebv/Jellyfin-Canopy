@@ -307,9 +307,10 @@ JF_BASE_URL=http://127.0.0.1:8100 npm run e2e
 docker compose -f e2e/docker/compose.yml down -v
 ```
 
-CI runs the same stack on every PR across six isolated native Playwright shards
-(advisory while the infrastructure earns trust). Each CI server is explicitly
-capped at two CPUs and verifies Docker applied that quota before seeding.
+CI runs the same stack across six isolated native Playwright shards. The shards
+and their aggregate are blocking checks for pull requests, `main` pushes, and
+reusable release calls. Each CI server is explicitly capped at two CPUs and
+verifies Docker applied that quota before seeding.
 
 For a faster whole-suite run on a Linux development machine, use the opt-in
 local sharding runner:
