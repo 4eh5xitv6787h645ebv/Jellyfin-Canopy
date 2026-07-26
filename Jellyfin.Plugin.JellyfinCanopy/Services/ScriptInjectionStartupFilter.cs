@@ -109,14 +109,6 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 return;
             }
 
-            // A transformed entity cannot honor a byte range over the source entity.
-            // Let Jellyfin own range and If-Range processing in one untouched pass.
-            if (context.Request.Headers.ContainsKey("Range"))
-            {
-                await nextMw().ConfigureAwait(false);
-                return;
-            }
-
             var config = _configProvider.ConfigurationOrNull;
             if (config == null || config.DisableScriptInjectionMiddleware)
             {
@@ -142,10 +134,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 context.Request.Path.Value ?? string.Empty,
                 context.Request.Headers["Accept-Encoding"],
                 scriptTags);
+            var isRangeRequest = context.Request.Headers.ContainsKey("Range");
             var representationGate = _representationGates[cacheKey[0] % RepresentationGateCount];
             await representationGate.WaitAsync(context.RequestAborted).ConfigureAwait(false);
             var ownsRepresentationGate = true;
-            var cached = GetCached(cacheKey);
+            // Range and If-Range must first be interpreted by Static Files. A genuine
+            // 206/416 is passed through; a stale/ignored range that becomes a full 200
+            // is still eligible for injection. Do not let a warm source revalidation
+            // turn the range into our cached full representation before the host has
+            // made that decision.
+            var cached = isRangeRequest ? null : GetCached(cacheKey);
 
             try
             {
@@ -164,22 +162,26 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 // compression middleware therefore selects the representation that lands
                 // in our bounded response stream; after injection we restore that same
                 // encoding and cache the rewritten representation.
-                requestHeaders.Remove("If-Match");
-                requestHeaders.Remove("If-Unmodified-Since");
-
-                // Jellyfin's validators describe the source index, whereas browsers
-                // know only the rewritten representation. Translate a warm entry back
-                // to source validators for a bodyless host revalidation. A cold request
-                // suppresses client validators because they cannot validate the source.
-                if (cached != null)
+                // Preserve every request precondition while Static Files decides a
+                // Range/If-Range request. For ordinary full responses, Jellyfin's
+                // validators describe the source index whereas browsers know only the
+                // rewritten representation. Translate a warm entry back to source
+                // validators for a bodyless host revalidation; a cold request suppresses
+                // client validators because they cannot validate the source.
+                if (!isRangeRequest)
                 {
-                    SetOrRemove(requestHeaders, "If-None-Match", cached.SourceETag);
-                    SetOrRemove(requestHeaders, "If-Modified-Since", cached.SourceLastModified);
-                }
-                else
-                {
-                    requestHeaders.Remove("If-None-Match");
-                    requestHeaders.Remove("If-Modified-Since");
+                    requestHeaders.Remove("If-Match");
+                    requestHeaders.Remove("If-Unmodified-Since");
+                    if (cached != null)
+                    {
+                        SetOrRemove(requestHeaders, "If-None-Match", cached.SourceETag);
+                        SetOrRemove(requestHeaders, "If-Modified-Since", cached.SourceLastModified);
+                    }
+                    else
+                    {
+                        requestHeaders.Remove("If-None-Match");
+                        requestHeaders.Remove("If-Modified-Since");
+                    }
                 }
 
                 var originalBody = context.Response.Body;
@@ -565,7 +567,18 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             context.Response.ContentLength = null;
             context.Response.Headers.Remove("Content-Encoding");
             context.Response.Headers.Remove("Content-Range");
-            context.Response.Headers.Remove("Accept-Ranges");
+            context.Response.Headers.Remove("Vary");
+            if (statusCode == StatusCodes.Status412PreconditionFailed)
+            {
+                // Static Files applies entity metadata only to responses below 400.
+                // The downstream 200 collected for same-pass fallback already added
+                // these fields, so remove them when reproducing its native 412.
+                context.Response.ContentType = null;
+                context.Response.Headers.Remove("ETag");
+                context.Response.Headers.Remove("Last-Modified");
+                context.Response.Headers.Remove("Accept-Ranges");
+            }
+
             return false;
         }
 
@@ -577,35 +590,68 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             string sourceETag,
             string sourceLastModified)
         {
-            if (!StringValues.IsNullOrEmpty(ifMatch))
+            var sourceTag = EntityTagHeaderValue.TryParse(
+                new StringSegment(sourceETag),
+                out var parsedSourceTag)
+                ? parsedSourceTag
+                : null;
+            var ifMatchState = SourcePrecondition.Unspecified;
+            var parsedIfMatch = ParseEntityTags(ifMatch);
+            if (parsedIfMatch.Count > 0)
             {
-                if (!IfMatchSatisfied(ifMatch, sourceETag))
-                {
-                    return StatusCodes.Status412PreconditionFailed;
-                }
-            }
-            else if (TryParseHttpDate(ifUnmodifiedSince, out var unmodifiedSince)
-                && TryParseHttpDate(sourceLastModified, out var lastModified)
-                && lastModified > unmodifiedSince)
-            {
-                return StatusCodes.Status412PreconditionFailed;
-            }
-
-            if (!StringValues.IsNullOrEmpty(ifNoneMatch))
-            {
-                if (IfNoneMatchSatisfied(ifNoneMatch, sourceETag))
-                {
-                    return StatusCodes.Status304NotModified;
-                }
-            }
-            else if (TryParseHttpDate(ifModifiedSince, out var modifiedSince)
-                && TryParseHttpDate(sourceLastModified, out var lastModified)
-                && lastModified <= modifiedSince)
-            {
-                return StatusCodes.Status304NotModified;
+                ifMatchState = parsedIfMatch.Any(candidate =>
+                    candidate.Equals(EntityTagHeaderValue.Any)
+                    || candidate.Compare(sourceTag, useStrongComparison: true))
+                    ? SourcePrecondition.ShouldProcess
+                    : SourcePrecondition.Failed;
             }
 
-            return StatusCodes.Status200OK;
+            var ifNoneMatchState = SourcePrecondition.Unspecified;
+            var parsedIfNoneMatch = ParseEntityTags(ifNoneMatch);
+            if (parsedIfNoneMatch.Count > 0)
+            {
+                ifNoneMatchState = parsedIfNoneMatch.Any(candidate =>
+                    candidate.Equals(EntityTagHeaderValue.Any)
+                    || candidate.Compare(sourceTag, useStrongComparison: true))
+                    ? SourcePrecondition.NotModified
+                    : SourcePrecondition.ShouldProcess;
+            }
+
+            var now = DateTimeOffset.UtcNow;
+            var ifModifiedSinceState = SourcePrecondition.Unspecified;
+            var ifUnmodifiedSinceState = SourcePrecondition.Unspecified;
+            if (TryParseHttpDate(sourceLastModified, out var lastModified))
+            {
+                if (TryParseHttpDate(ifModifiedSince, out var modifiedSince)
+                    && modifiedSince <= now)
+                {
+                    ifModifiedSinceState = modifiedSince < lastModified
+                        ? SourcePrecondition.ShouldProcess
+                        : SourcePrecondition.NotModified;
+                }
+
+                if (TryParseHttpDate(ifUnmodifiedSince, out var unmodifiedSince)
+                    && unmodifiedSince <= now)
+                {
+                    ifUnmodifiedSinceState = unmodifiedSince >= lastModified
+                        ? SourcePrecondition.ShouldProcess
+                        : SourcePrecondition.Failed;
+                }
+            }
+
+            var state = new[]
+            {
+                ifMatchState,
+                ifNoneMatchState,
+                ifModifiedSinceState,
+                ifUnmodifiedSinceState,
+            }.Max();
+            return state switch
+            {
+                SourcePrecondition.NotModified => StatusCodes.Status304NotModified,
+                SourcePrecondition.Failed => StatusCodes.Status412PreconditionFailed,
+                _ => StatusCodes.Status200OK,
+            };
         }
 
         private static bool TryParseHttpDate(StringValues value, out DateTimeOffset parsed) =>
@@ -619,15 +665,23 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             StringValues ifNoneMatch,
             CachedRepresentation representation)
         {
-            if (!StringValues.IsNullOrEmpty(ifMatch)
-                && !IfMatchSatisfied(ifMatch, representation.ETag))
+            var parsedIfMatch = ParseEntityTags(ifMatch);
+            if (parsedIfMatch.Count > 0
+                && !EntityTagSatisfied(
+                    parsedIfMatch,
+                    representation.ETag,
+                    useStrongComparison: true))
             {
                 return ClientPrecondition.Failed;
             }
 
-            if (!StringValues.IsNullOrEmpty(ifNoneMatch))
+            var parsedIfNoneMatch = ParseEntityTags(ifNoneMatch);
+            if (parsedIfNoneMatch.Count > 0)
             {
-                return IfNoneMatchSatisfied(ifNoneMatch, representation.ETag)
+                return EntityTagSatisfied(
+                    parsedIfNoneMatch,
+                    representation.ETag,
+                    useStrongComparison: false)
                     ? ClientPrecondition.NotModified
                     : ClientPrecondition.ShouldProcess;
             }
@@ -639,69 +693,44 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             StringValues ifMatch,
             StringValues ifNoneMatch)
         {
-            if (!StringValues.IsNullOrEmpty(ifMatch) && !HeaderContainsWildcard(ifMatch))
+            var parsedIfMatch = ParseEntityTags(ifMatch);
+            if (parsedIfMatch.Count > 0
+                && !parsedIfMatch.Any(candidate => candidate.Equals(EntityTagHeaderValue.Any)))
             {
                 return StatusCodes.Status412PreconditionFailed;
             }
 
-            return !StringValues.IsNullOrEmpty(ifNoneMatch) && HeaderContainsWildcard(ifNoneMatch)
+            var parsedIfNoneMatch = ParseEntityTags(ifNoneMatch);
+            return parsedIfNoneMatch.Any(candidate => candidate.Equals(EntityTagHeaderValue.Any))
                 ? StatusCodes.Status304NotModified
                 : StatusCodes.Status200OK;
         }
 
-        private static bool HeaderContainsWildcard(StringValues header) =>
-            header
-                .SelectMany(value => (value ?? string.Empty).Split(','))
-                .Any(value => value.Trim() == "*");
-
-        private static bool IfMatchSatisfied(StringValues header, string etag)
+        private static IList<EntityTagHeaderValue> ParseEntityTags(StringValues header)
         {
-            foreach (var value in header)
-            {
-                if (string.IsNullOrEmpty(value))
-                {
-                    continue;
-                }
-
-                foreach (var candidate in value.Split(',').Select(part => part.Trim()))
-                {
-                    if (candidate == "*"
-                        || (!candidate.StartsWith("W/", StringComparison.OrdinalIgnoreCase)
-                            && string.Equals(candidate, etag, StringComparison.Ordinal)))
-                    {
-                        return true;
-                    }
-                }
-            }
-
-            return false;
+            var values = header
+                .Where(value => value != null)
+                .Select(value => value!)
+                .ToArray();
+            return EntityTagHeaderValue.TryParseList(values, out var parsed)
+                ? parsed
+                : Array.Empty<EntityTagHeaderValue>();
         }
 
-        private static bool IfNoneMatchSatisfied(StringValues header, string etag)
+        private static bool EntityTagSatisfied(
+            IList<EntityTagHeaderValue> candidates,
+            string etag,
+            bool useStrongComparison)
         {
-            var bare = Unweaken(etag);
-            foreach (var value in header)
+            if (!EntityTagHeaderValue.TryParse(new StringSegment(etag), out var parsedETag))
             {
-                if (string.IsNullOrEmpty(value))
-                {
-                    continue;
-                }
-
-                foreach (var candidate in value.Split(',').Select(part => part.Trim()))
-                {
-                    if (candidate == "*"
-                        || string.Equals(Unweaken(candidate), bare, StringComparison.Ordinal))
-                    {
-                        return true;
-                    }
-                }
+                return candidates.Any(candidate => candidate.Equals(EntityTagHeaderValue.Any));
             }
 
-            return false;
+            return candidates.Any(candidate =>
+                candidate.Equals(EntityTagHeaderValue.Any)
+                || candidate.Compare(parsedETag, useStrongComparison));
         }
-
-        private static string Unweaken(string etag) =>
-            etag.StartsWith("W/", StringComparison.OrdinalIgnoreCase) ? etag.Substring(2) : etag;
 
         private static bool TryDecode(byte[] body, StringValues contentEncoding, out byte[] decoded)
         {
@@ -877,6 +906,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         {
             ShouldProcess,
             NotModified,
+            Failed,
+        }
+
+        // Numeric ordering intentionally matches StaticFileContext.PreconditionState:
+        // its native implementation resolves simultaneous fields by taking the
+        // highest state.
+        private enum SourcePrecondition
+        {
+            Unspecified,
+            NotModified,
+            ShouldProcess,
             Failed,
         }
 

@@ -8,9 +8,11 @@ using Jellyfin.Plugin.JellyfinCanopy.Configuration;
 using Jellyfin.Plugin.JellyfinCanopy.Services;
 using Jellyfin.Plugin.JellyfinCanopy.Tests.TestDoubles;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.ResponseCompression;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
@@ -107,6 +109,61 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             context.Response.Body = responseBody;
             await pipeline(context);
             return (context, responseBody.ToArray());
+        }
+
+        private static async Task<(HttpContext Context, byte[] Body)> RunWithRealStaticFilesAsync(
+            ScriptInjectionStartupFilter filter,
+            string source,
+            string? method = null,
+            string? range = null,
+            string? ifRange = null)
+        {
+            var root = Path.Combine(
+                Path.GetTempPath(),
+                "canopy-static-range-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(root);
+            try
+            {
+                await File.WriteAllTextAsync(
+                    Path.Combine(root, "index.html"),
+                    source,
+                    new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+                using var fileProvider = new PhysicalFileProvider(root);
+                using var services = new ServiceCollection()
+                    .AddLogging()
+                    .AddSingleton<IWebHostEnvironment>(
+                        new StaticFileHostEnvironment(root, fileProvider))
+                    .BuildServiceProvider();
+                var appBuilder = new ApplicationBuilder(services);
+                filter.Configure(app => app.UseStaticFiles(new StaticFileOptions
+                {
+                    FileProvider = fileProvider,
+                    RequestPath = "/web",
+                }))(appBuilder);
+                var pipeline = appBuilder.Build();
+
+                var context = new DefaultHttpContext();
+                context.Request.Method = method ?? HttpMethods.Get;
+                context.Request.Path = "/web/index.html";
+                if (range != null)
+                {
+                    context.Request.Headers["Range"] = range;
+                }
+
+                if (ifRange != null)
+                {
+                    context.Request.Headers["If-Range"] = ifRange;
+                }
+
+                using var responseBody = new MemoryStream();
+                context.Response.Body = responseBody;
+                await pipeline(context);
+                return (context, responseBody.ToArray());
+            }
+            finally
+            {
+                Directory.Delete(root, recursive: true);
+            }
         }
 
         [Fact]
@@ -692,7 +749,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
         }
 
         [Fact]
-        public async Task InvokeAsync_OversizedFallback_PreservesDatePreconditionsAndPrecedence()
+        public async Task InvokeAsync_OversizedFallback_MatchesStaticFilePreconditionStates()
         {
             var filter = BuildFilter();
             var source = "<html><body>"
@@ -719,21 +776,50 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
                 StaticHandler,
                 ifNoneMatch: "\"different\"",
                 ifModifiedSince: LastModified);
-            var ifMatchTakesPrecedence = await RunAsync(
+            var conflictingIfMatchAndDate = await RunAsync(
                 filter,
                 StaticHandler,
                 ifMatch: SourceETag,
                 ifUnmodifiedSince: "Tue, 20 Oct 2015 07:28:00 GMT");
+            var malformedIfMatch = await RunAsync(
+                filter,
+                StaticHandler,
+                ifMatch: "garbage");
+            var futureIfModifiedSince = await RunAsync(
+                filter,
+                StaticHandler,
+                ifModifiedSince: "Wed, 21 Oct 2099 07:28:00 GMT");
+            var weakIfNoneMatch = await RunAsync(
+                filter,
+                StaticHandler,
+                ifNoneMatch: "W/" + SourceETag);
 
             Assert.Equal(StatusCodes.Status304NotModified, notModified.Context.Response.StatusCode);
             Assert.Empty(notModified.Body);
+            Assert.Equal("text/html; charset=utf-8", notModified.Context.Response.ContentType);
+            Assert.Equal(SourceETag, notModified.Context.Response.Headers["ETag"].ToString());
+            Assert.Equal(LastModified, notModified.Context.Response.Headers["Last-Modified"].ToString());
+            Assert.Equal("bytes", notModified.Context.Response.Headers["Accept-Ranges"].ToString());
+            Assert.False(notModified.Context.Response.Headers.ContainsKey("Content-Encoding"));
+            Assert.False(notModified.Context.Response.Headers.ContainsKey("Vary"));
+            Assert.Null(notModified.Context.Response.ContentLength);
             Assert.Equal(StatusCodes.Status412PreconditionFailed, failed.Context.Response.StatusCode);
             Assert.Empty(failed.Body);
+            Assert.Null(failed.Context.Response.ContentType);
+            Assert.False(failed.Context.Response.Headers.ContainsKey("ETag"));
+            Assert.False(failed.Context.Response.Headers.ContainsKey("Last-Modified"));
+            Assert.False(failed.Context.Response.Headers.ContainsKey("Accept-Ranges"));
             Assert.Equal(StatusCodes.Status200OK, ifNoneMatchTakesPrecedence.Context.Response.StatusCode);
             Assert.Equal(source, Encoding.UTF8.GetString(ifNoneMatchTakesPrecedence.Body));
-            Assert.Equal(StatusCodes.Status200OK, ifMatchTakesPrecedence.Context.Response.StatusCode);
-            Assert.Equal(source, Encoding.UTF8.GetString(ifMatchTakesPrecedence.Body));
-            Assert.Equal(4, downstreamCalls);
+            Assert.Equal(StatusCodes.Status412PreconditionFailed, conflictingIfMatchAndDate.Context.Response.StatusCode);
+            Assert.Empty(conflictingIfMatchAndDate.Body);
+            Assert.Equal(StatusCodes.Status200OK, malformedIfMatch.Context.Response.StatusCode);
+            Assert.Equal(source, Encoding.UTF8.GetString(malformedIfMatch.Body));
+            Assert.Equal(StatusCodes.Status200OK, futureIfModifiedSince.Context.Response.StatusCode);
+            Assert.Equal(source, Encoding.UTF8.GetString(futureIfModifiedSince.Body));
+            Assert.Equal(StatusCodes.Status200OK, weakIfNoneMatch.Context.Response.StatusCode);
+            Assert.Equal(source, Encoding.UTF8.GetString(weakIfNoneMatch.Body));
+            Assert.Equal(7, downstreamCalls);
         }
 
         [Fact]
@@ -772,30 +858,80 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
         }
 
         [Fact]
-        public async Task InvokeAsync_RangeRequest_BypassesInjectionWithoutChangingHeaders()
+        public async Task InvokeAsync_RealStaticFile_SingleRangePassesThrough()
         {
             var filter = BuildFilter();
-            var downstreamCalls = 0;
-
-            var response = await RunAsync(
+            var response = await RunWithRealStaticFilesAsync(
                 filter,
-                async context =>
-                {
-                    downstreamCalls++;
-                    Assert.Equal("bytes=0-3", context.Request.Headers["Range"].ToString());
-                    Assert.Equal(SourceETag, context.Request.Headers["If-Range"].ToString());
-                    context.Response.StatusCode = StatusCodes.Status206PartialContent;
-                    context.Response.Headers["Content-Range"] = "bytes 0-3/8";
-                    await context.Response.WriteAsync("part");
-                },
-                range: "bytes=0-3",
-                ifRange: SourceETag);
+                IndexHtml,
+                range: "bytes=0-3");
 
-            Assert.Equal(1, downstreamCalls);
             Assert.Equal(StatusCodes.Status206PartialContent, response.Context.Response.StatusCode);
-            Assert.Equal("bytes 0-3/8", response.Context.Response.Headers["Content-Range"].ToString());
-            Assert.Equal("part", Encoding.UTF8.GetString(response.Body));
+            Assert.Equal(
+                $"bytes 0-3/{Encoding.UTF8.GetByteCount(IndexHtml)}",
+                response.Context.Response.Headers["Content-Range"].ToString());
+            Assert.Equal("<htm", Encoding.UTF8.GetString(response.Body));
             Assert.DoesNotContain(InjectedTags, Encoding.UTF8.GetString(response.Body), StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public async Task InvokeAsync_RealStaticFile_UnsatisfiableRangePassesThrough()
+        {
+            var response = await RunWithRealStaticFilesAsync(
+                BuildFilter(),
+                IndexHtml,
+                range: "bytes=999999-");
+
+            Assert.Equal(StatusCodes.Status416RangeNotSatisfiable, response.Context.Response.StatusCode);
+            Assert.Equal(
+                $"bytes */{Encoding.UTF8.GetByteCount(IndexHtml)}",
+                response.Context.Response.Headers["Content-Range"].ToString());
+            Assert.Empty(response.Body);
+        }
+
+        [Fact]
+        public async Task InvokeAsync_RealStaticFile_StaleIfRangeTransformsFullResponse()
+        {
+            var response = await RunWithRealStaticFilesAsync(
+                BuildFilter(),
+                IndexHtml,
+                range: "bytes=0-3",
+                ifRange: "\"stale-source\"");
+
+            Assert.Equal(StatusCodes.Status200OK, response.Context.Response.StatusCode);
+            Assert.Contains(InjectedTags, Encoding.UTF8.GetString(response.Body), StringComparison.Ordinal);
+            Assert.False(response.Context.Response.Headers.ContainsKey("Content-Range"));
+            Assert.False(response.Context.Response.Headers.ContainsKey("Accept-Ranges"));
+        }
+
+        [Fact]
+        public async Task InvokeAsync_RealStaticFile_IgnoredMultiRangeStillTransforms()
+        {
+            var response = await RunWithRealStaticFilesAsync(
+                BuildFilter(),
+                IndexHtml,
+                range: "bytes=0-1,3-4");
+
+            Assert.Equal(StatusCodes.Status200OK, response.Context.Response.StatusCode);
+            Assert.Contains(InjectedTags, Encoding.UTF8.GetString(response.Body), StringComparison.Ordinal);
+            Assert.False(response.Context.Response.Headers.ContainsKey("Content-Range"));
+        }
+
+        [Fact]
+        public async Task InvokeAsync_RealStaticFile_HeadRangeStaysBodylessAndHidesSourceMetadata()
+        {
+            var response = await RunWithRealStaticFilesAsync(
+                BuildFilter(),
+                IndexHtml,
+                method: HttpMethods.Head,
+                range: "bytes=0-3");
+
+            Assert.Equal(StatusCodes.Status200OK, response.Context.Response.StatusCode);
+            Assert.Empty(response.Body);
+            Assert.False(response.Context.Response.Headers.ContainsKey("ETag"));
+            Assert.False(response.Context.Response.Headers.ContainsKey("Last-Modified"));
+            Assert.False(response.Context.Response.Headers.ContainsKey("Accept-Ranges"));
+            Assert.Null(response.Context.Response.ContentLength);
         }
 
         [Fact]
@@ -1103,6 +1239,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             context.Response.Headers["Cache-Control"] = "no-cache";
             context.Response.Headers["ETag"] = etag;
             context.Response.Headers["Last-Modified"] = LastModified;
+            context.Response.Headers["Accept-Ranges"] = "bytes";
             await context.Response.WriteAsync(html);
         }
 
@@ -1160,6 +1297,30 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
                     _cancellation.Cancel();
                 }
             }
+        }
+
+        private sealed class StaticFileHostEnvironment : IWebHostEnvironment
+        {
+            public StaticFileHostEnvironment(string root, IFileProvider fileProvider)
+            {
+                ContentRootPath = root;
+                ContentRootFileProvider = fileProvider;
+                WebRootPath = root;
+                WebRootFileProvider = fileProvider;
+            }
+
+            public string ApplicationName { get; set; } =
+                typeof(ScriptInjectionConditionalHeaderTests).Assembly.FullName!;
+
+            public string EnvironmentName { get; set; } = "Test";
+
+            public string ContentRootPath { get; set; }
+
+            public IFileProvider ContentRootFileProvider { get; set; }
+
+            public string WebRootPath { get; set; }
+
+            public IFileProvider WebRootFileProvider { get; set; }
         }
     }
 }

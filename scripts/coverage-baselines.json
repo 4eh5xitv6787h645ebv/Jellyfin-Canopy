@@ -21,12 +21,12 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 27434,
-        "totalLines": 36167
+        "coveredLines": 27486,
+        "totalLines": 36205
       },
       "tolerance": {
         "missingCoveredLines": 5,
-        "rationale": "The final #453 injected-shell HTTP boundary pass keeps four fixed admission stripes and bodyless cold/changed HEAD responses, then replaces downstream replay with a 2 MiB one-pass threshold stream, evaluates source preconditions before fallback bytes commit, bypasses host-owned ranges, and keys the cache by ASP.NET Core's finite selected identity/gzip/Brotli representation. The resulting callback, cancellation, date-validator, write-surface, wildcard/duplicate negotiation, and real compression regressions add 129 instrumented lines and cover 113 of them. Six clean .NET 10.0.9/Coverlet runs on 2026-07-27 each passed all 2,306 tests: the first measured the reviewed high-water at 27,434/36,167 instrumented lines (75.854%), and all five immediate repeats reproduced 27,433/36,167 exactly, a one-line instrumentation variation. Retaining the existing evidence-bounded five-line Coverlet tolerance makes the minimum 27,429/36,167 (75.840%), stricter than the prior 27,316/36,038 tolerated floor (75.798%). coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, and broad-tolerance negative boundaries."
+        "rationale": "The final #453 host-semantics review pass lets Static Files decide Range/If-Range before passing through genuine 206/416 responses or injecting ignored full responses, parses conditional entity tags with the installed typed parser, combines source preconditions with Static Files' native state ordering, ignores future dates, and normalizes fallback 304/412 metadata. Real Static Files plus malformed, future-date, weak-tag, and conflicting-precondition regressions advance the reviewed high-water by 52 covered lines while adding 38 instrumented lines. Six clean .NET 10.0.9/Coverlet runs on 2026-07-27 each passed all 2,310 tests at the same 36,205-line scope: the first measured the reviewed high-water at 27,486 covered lines (75.918%), one repeat measured 27,485, and four repeats measured 27,484. Retaining the existing evidence-bounded five-line Coverlet tolerance makes the minimum 27,481/36,205 (75.904%), stricter than the prior 27,429/36,167 tolerated floor (75.840%). coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, and broad-tolerance negative boundaries."
       }
     }
   }
