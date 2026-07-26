@@ -6,6 +6,10 @@ export const HOME_LOGOUT_AXIOS_401: 'AxiosError: Request failed with status code
 export function hasValidConcurrentLogoutResponses(
     responses: Array<{ requestIndex: number; status: number; bodyBytes: number }>
 ): boolean;
+export function isExpectedCanopyPauseScreenImageProbe404(
+    response: { url: string; status: number; method: string },
+    hostUrl: string
+): boolean;
 export function isKnownHiddenContentHostNoise(text: string): boolean;
 export function isKnownJellyfinWebScrollHandlerError(
     detail: { text: string; stack?: string; source?: string }

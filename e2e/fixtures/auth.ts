@@ -17,7 +17,10 @@ import {
     type AuthSessionPhase,
     type AuthSessionSnapshot,
 } from '../../scripts/e2e/auth-session-state';
-import { isKnownJellyfinWebHostNoise } from '../../scripts/e2e/jellyfin-host-noise';
+import {
+    isExpectedCanopyPauseScreenImageProbe404,
+    isKnownJellyfinWebHostNoise,
+} from '../../scripts/e2e/jellyfin-host-noise';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -160,7 +163,7 @@ interface Fixtures {
 }
 
 export const test = base.extend<Fixtures>({
-    consoleErrors: async ({ page }, use) => {
+    consoleErrors: async ({ page, baseURL }, use) => {
         const all: string[] = [];
         const details: ConsoleErrorDetail[] = [];
         const failed: FailedResponse[] = [];
@@ -218,7 +221,9 @@ export const test = base.extend<Fixtures>({
             ),
             unexpected4xx: () =>
                 failed.filter(
-                    (r) => r.status < 500 && !ALLOWED_4XX_URL.some((rx) => rx.test(r.url))
+                    (r) => r.status < 500
+                        && !ALLOWED_4XX_URL.some((rx) => rx.test(r.url))
+                        && !isExpectedCanopyPauseScreenImageProbe404(r, baseURL || '')
                 ),
             unexpected5xx: () => failed.filter((r) => r.status >= 500),
             acknowledgeExpected4xx: (responses) => {

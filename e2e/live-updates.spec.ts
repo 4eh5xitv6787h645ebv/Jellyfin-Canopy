@@ -14,23 +14,10 @@ import {
     loginAs,
     USERS,
     assertNoRuntimeErrors,
-    type ConsoleErrors,
 } from './fixtures/auth';
 import { api, authenticate, PLUGIN_ID } from './fixtures/api';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-
-const OPTIONAL_DETAIL_IMAGE =
-    /\/Items\/[^/]+\/Images\/(?:Logo|Disc|Backdrop)(?:[/?]|$)/i;
-
-function assertNoSmartRefreshRuntimeErrors(consoleErrors: ConsoleErrors): void {
-    assertNoRuntimeErrors({
-        ...consoleErrors,
-        unexpected4xx: () => consoleErrors.unexpected4xx().filter(
-            ({ method, url }) => method !== 'HEAD' || !OPTIONAL_DETAIL_IMAGE.test(url)
-        ),
-    });
-}
 
 test.describe('live updates', () => {
     test('REST favorite toggle arrives as user-data-changed', async ({ page, consoleErrors, baseURL }) => {
@@ -257,11 +244,6 @@ test.describe('live updates', () => {
                 undefined,
                 { timeout: 30_000 }
             );
-            // The stock details page probes absent optional Logo/Disc/Backdrop
-            // images with HEAD 404s before playback. Clear that host-only phase
-            // while the fixture retains every 5xx as sticky evidence.
-            consoleErrors.reset();
-
             const playbackOrigin = await page.evaluate(() => performance.timeOrigin);
             const postChangeState = page.waitForResponse(
                 response => response.url().includes('/JellyfinCanopy/client-refresh-state')
@@ -354,7 +336,7 @@ test.describe('live updates', () => {
             )).toBeNull();
             expect(await page.locator('#jc-client-refresh-notice').count()).toBe(0);
 
-            assertNoSmartRefreshRuntimeErrors(consoleErrors);
+            assertNoRuntimeErrors(consoleErrors);
         } finally {
             if (!page.isClosed()) await page.close();
             await api(baseURL!, configPath, admin.token, {
