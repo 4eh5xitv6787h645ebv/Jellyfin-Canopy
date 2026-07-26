@@ -19,6 +19,7 @@ import localeManifest from '../../locale-manifest.json';
     // strings. Only used as the last-resort fallback when AssetCacheEnabled === false.
     const GITHUB_RAW_BASE = 'https://raw.githubusercontent.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/main/Jellyfin.Plugin.JellyfinCanopy/js/locales';
     const CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
+    const CLEAR_TIMESTAMP_KEY = 'JC_translation_clear_ts';
     const SUPPORTED_LOCALES = new Set(localeManifest.locales);
 
     type LangResult = { translations: Record<string, string>; usedLang: string };
@@ -78,11 +79,41 @@ import localeManifest from '../../locale-manifest.json';
         return 'unknown';
     }
 
-    function cleanOldTranslationCache(pluginVersion: string): void {
+    async function getTranslationRevision(): Promise<string> {
+        const scriptElement = document.querySelector<HTMLScriptElement>(
+            'script[plugin="Jellyfin Canopy"]',
+        );
+        if (scriptElement?.getAttribute('dev') === 'true') {
+            return `dev-${Date.now()}`;
+        }
+
+        // The injected script revision contains the plugin version plus the
+        // deployed DLL timestamp. Unlike the bare assembly version, it changes
+        // for every hot deployment and is already the canonical cache-buster
+        // for the loader scripts.
+        const revisionCandidate = scriptElement?.getAttribute('version')?.trim() || '';
+        const deployedRevision = revisionCandidate.length <= 128
+            && /^[A-Za-z0-9._-]+$/.test(revisionCandidate)
+            ? revisionCandidate
+            : '';
+        return deployedRevision || await getPluginVersion();
+    }
+
+    function bundledLocaleUrl(code: string, revision: string): string {
+        return ApiClient.getUrl(
+            `/JellyfinCanopy/locales/${code}.json?v=${encodeURIComponent(revision)}`,
+        );
+    }
+
+    function cleanOldTranslationCache(revision: string): void {
         const storedKeys = JC.storage.local.keys('translations', 'translation-cache-prefix');
         for (const key of storedKeys.value || []) {
+            // This is the durable acknowledgement of the server-side
+            // Refresh Translation Cache task, not a locale payload. Removing it
+            // here would replay the same clear signal on every later boot.
+            if (key === CLEAR_TIMESTAMP_KEY) continue;
             if (key.startsWith('JC_translation_') || key.startsWith('JC_translation_ts_')) {
-                if (!key.includes(`_${pluginVersion}`)) {
+                if (!key.endsWith(`_${revision}`)) {
                     JC.storage.local.remove('translations', key, 'translation-cache-entry');
                     console.log(`🪼 Jellyfin Canopy: Removed old translation cache: ${key}`);
                 }
@@ -90,9 +121,9 @@ import localeManifest from '../../locale-manifest.json';
         }
     }
 
-    async function tryLoadSingleLanguage(code: string, pluginVersion: string): Promise<LangResult> {
-        const cacheKey = `JC_translation_${code}_${pluginVersion}`;
-        const timestampKey = `JC_translation_ts_${code}_${pluginVersion}`;
+    async function tryLoadSingleLanguage(code: string, revision: string): Promise<LangResult> {
+        const cacheKey = `JC_translation_${code}_${revision}`;
+        const timestampKey = `JC_translation_ts_${code}_${revision}`;
         const cachedTranslations = JC.storage.local.readJson(
             'translations', cacheKey, isTranslationRecord, 'translation-cache-payload',
         );
@@ -103,19 +134,19 @@ import localeManifest from '../../locale-manifest.json';
         if (cachedTranslations.state === 'Valid' && cachedTimestamp.state === 'Valid') {
             const age = Date.now() - cachedTimestamp.value;
             if (age < CACHE_DURATION) {
-                console.log(`🪼 Jellyfin Canopy: Using cached translations for ${code} (age: ${Math.round(age / 1000 / 60)} minutes, version: ${pluginVersion})`);
+                console.log(`🪼 Jellyfin Canopy: Using cached translations for ${code} (age: ${Math.round(age / 1000 / 60)} minutes, revision: ${revision})`);
                 return { translations: cachedTranslations.value, usedLang: code };
             }
         }
 
         console.log(`🪼 Jellyfin Canopy: Loading bundled translations for ${code}...`);
         try {
-            const bundledResponse = await fetch(ApiClient.getUrl(`/JellyfinCanopy/locales/${code}.json`));
+            const bundledResponse = await fetch(bundledLocaleUrl(code, revision));
             if (bundledResponse.ok) {
                 const translations = await bundledResponse.json() as Record<string, string>;
                 JC.storage.local.write('translations', cacheKey, JSON.stringify(translations), 'translation-cache-payload');
                 JC.storage.local.write('translations', timestampKey, Date.now().toString(), 'translation-cache-timestamp');
-                console.log(`🪼 Jellyfin Canopy: Successfully loaded and cached bundled translations for ${code} (version: ${pluginVersion})`);
+                console.log(`🪼 Jellyfin Canopy: Successfully loaded and cached bundled translations for ${code} (revision: ${revision})`);
                 return { translations, usedLang: code };
             }
         } catch (bundledError) {
@@ -146,7 +177,7 @@ import localeManifest from '../../locale-manifest.json';
                 const payloadWrite = JC.storage.local.write('translations', cacheKey, JSON.stringify(translations), 'translation-cache-payload');
                 const timestampWrite = JC.storage.local.write('translations', timestampKey, Date.now().toString(), 'translation-cache-timestamp');
                 if (payloadWrite.state === 'Valid' && timestampWrite.state === 'Valid') {
-                    console.log(`🪼 Jellyfin Canopy: Successfully fetched and cached translations for ${code} from GitHub (version: ${pluginVersion})`);
+                    console.log(`🪼 Jellyfin Canopy: Successfully fetched and cached translations for ${code} from GitHub (revision: ${revision})`);
                 }
                 return { translations, usedLang: code };
             }
@@ -161,8 +192,8 @@ import localeManifest from '../../locale-manifest.json';
 
                 if (englishResponse.ok) {
                     const translations = await englishResponse.json() as Record<string, string>;
-                    const enCacheKey = `JC_translation_en_${pluginVersion}`;
-                    const enTimestampKey = `JC_translation_ts_en_${pluginVersion}`;
+                    const enCacheKey = `JC_translation_en_${revision}`;
+                    const enTimestampKey = `JC_translation_ts_en_${revision}`;
                     JC.storage.local.write('translations', enCacheKey, JSON.stringify(translations), 'translation-cache-payload');
                     JC.storage.local.write('translations', enTimestampKey, Date.now().toString(), 'translation-cache-timestamp');
                     return { translations, usedLang: 'en' };
@@ -181,7 +212,7 @@ import localeManifest from '../../locale-manifest.json';
         }
 
         console.log(`🪼 Jellyfin Canopy: Loading bundled translations for ${code}...`);
-        let response = await fetch(ApiClient.getUrl(`/JellyfinCanopy/locales/${code}.json`));
+        let response = await fetch(bundledLocaleUrl(code, revision));
 
         if (response.ok) {
             const translations = await response.json() as Record<string, string>;
@@ -191,7 +222,7 @@ import localeManifest from '../../locale-manifest.json';
         }
 
         console.warn(`🪼 Jellyfin Canopy: Bundled ${code} not found, falling back to bundled English`);
-        response = await fetch(ApiClient.getUrl('/JellyfinCanopy/locales/en.json'));
+        response = await fetch(bundledLocaleUrl('en', revision));
         if (response.ok) {
             return { translations: await response.json() as Record<string, string>, usedLang: 'en' };
         }
@@ -201,7 +232,7 @@ import localeManifest from '../../locale-manifest.json';
 
     JC.loadTranslations = async function (): Promise<Record<string, string>> {
         try {
-            const pluginVersion = await getPluginVersion();
+            const revision = await getTranslationRevision();
 
             let user: unknown = ApiClient.getCurrentUser ? ApiClient.getCurrentUser() : null;
             if (user instanceof Promise) {
@@ -227,12 +258,12 @@ import localeManifest from '../../locale-manifest.json';
                 }
             }
 
-            cleanOldTranslationCache(pluginVersion);
+            cleanOldTranslationCache(revision);
 
             const langCodes = buildLanguageChain(lang);
             for (const code of langCodes) {
                 try {
-                    const result = await tryLoadSingleLanguage(code, pluginVersion);
+                    const result = await tryLoadSingleLanguage(code, revision);
                     if (result && result.translations) {
                         return result.translations;
                     }
