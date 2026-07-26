@@ -5,7 +5,74 @@
 // re-injection checks instead of one MutationObserver per feature).
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JC } from '../globals';
-import { ensureInjected, onSidebarRebuild, waitForElement } from './dom-observer';
+import {
+    createObserver,
+    disconnectObserver,
+    ensureInjected,
+    onBodyMutation,
+    onSidebarRebuild,
+    waitForElement
+} from './dom-observer';
+
+describe('body subscriber replacement ownership', () => {
+    beforeEach(() => {
+        document.body.innerHTML = '';
+    });
+    afterEach(() => {
+        document.body.innerHTML = '';
+        vi.restoreAllMocks();
+    });
+
+    const flushMutation = async (): Promise<void> => {
+        document.body.appendChild(document.createElement('div'));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+    };
+
+    it('does not let a stale direct handle remove its replacement', async () => {
+        const first = vi.fn();
+        const replacement = vi.fn();
+        const staleHandle = onBodyMutation('test-direct-replacement', first);
+        const liveHandle = onBodyMutation('test-direct-replacement', replacement);
+
+        try {
+            staleHandle.disconnect();
+            await flushMutation();
+
+            expect(first).not.toHaveBeenCalled();
+            expect(replacement).toHaveBeenCalled();
+        } finally {
+            liveHandle.disconnect();
+        }
+    });
+
+    it('does not let a stale body-observer proxy remove its replacement', async () => {
+        const first = vi.fn();
+        const replacement = vi.fn();
+        const config = { childList: true, subtree: true };
+        const staleObserver = createObserver(
+            'test-proxy-replacement',
+            first,
+            document.body,
+            config
+        );
+        createObserver(
+            'test-proxy-replacement',
+            replacement,
+            document.body,
+            config
+        );
+
+        try {
+            staleObserver.disconnect();
+            await flushMutation();
+
+            expect(first).not.toHaveBeenCalled();
+            expect(replacement).toHaveBeenCalled();
+        } finally {
+            disconnectObserver('test-proxy-replacement');
+        }
+    });
+});
 
 describe('ensureInjected', () => {
     beforeEach(() => {
