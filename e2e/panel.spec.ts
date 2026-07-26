@@ -1,4 +1,4 @@
-// Enhanced settings panel: opens via the public JC.showEnhancedPanel()
+// Canopy User Settings panel: opens via the public JC.showEnhancedPanel()
 // surface (the same call every entry point makes), renders its section nav
 // (built from the panes), switches sections, and closes on Escape.
 import { test, expect, loginAs } from './fixtures/auth';

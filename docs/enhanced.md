@@ -1,21 +1,21 @@
 # The Enhanced Experience
 
-The Enhanced area is the part of Jellyfin Canopy you touch every day: sharper playback controls, subtitles you can actually read, poster tags that tell you at a glance what a title is, bookmarks that stick, and a tidy home screen with nothing you don't want to see. Almost everything here is a **per-user** preference you set in the **Enhanced Panel** — and almost every one of those has a matching **admin default** so a server owner can pick sensible starting values for everyone.
+The Enhanced area is the part of Jellyfin Canopy you touch every day: sharper playback controls, subtitles you can actually read, poster tags that tell you at a glance what a title is, bookmarks that stick, and a tidy home screen with nothing you don't want to see. Almost everything here is a **per-user** preference you set in **Canopy User Settings** — and almost every one of those has a matching **admin default** so a server owner can pick sensible starting values for everyone.
 
 This guide walks through the whole Enhanced experience: the panel itself, the playback and control features, and everything that shapes how you browse your library. If you haven't installed the plugin yet, start with [Getting Started](getting-started.md); for a map of which config tab every admin setting lives on, see the [Reference](reference.md).
 
 ---
 
-## The Enhanced Panel
+## Canopy User Settings
 
-The Enhanced Panel is your control center. It's where you turn features on and off, customize keyboard shortcuts, and tune things like subtitle styling and tag positions — all without leaving the page you're on.
+**Canopy User Settings** is your control center. It's where you turn features on and off, customize keyboard shortcuts, and tune things like subtitle styling and tag positions — all without leaving the page you're on.
 
 **Open it two ways:**
 
 - Press `?` anywhere in the web client.
-- Click **Jellyfin Canopy** in the sidebar.
+- Click **Canopy User Settings** under the **Jellyfin Canopy** heading in the sidebar.
 
-![Enhanced panel — settings sections](images/enhanced-panel-settings.png)
+![Canopy User Settings — settings sections](images/enhanced-panel-settings.png)
 
 The panel is a settings view with a section list on the left (full-screen with tap-through sections on phones) and a search box that filters the sections:
 
@@ -26,15 +26,29 @@ Toggling a feature applies **immediately** — no restart, no page reload. The t
 
 ### Settings persistence
 
-Your preferences follow you. Everything you set in the Enhanced Panel is saved **server-side, per Jellyfin user** — stored in the plugin's per-user `settings.json` (via the `/JellyfinCanopy/user-settings/{userId}/settings.json` endpoint). Because the settings live on the server keyed to your account, they sync automatically across every device and browser where you log in as the same user.
+Your preferences follow you. Settings and shortcut overrides from Canopy User Settings are saved **server-side, per Jellyfin user** in the plugin's per-user `settings.json` and `shortcuts.json` files. Because these files are keyed to your Jellyfin account, they sync automatically across devices and browsers where you log in as the same user. Browser-only actions, such as clearing the translation cache or temporarily suppressing a confirmation, remain local to that browser.
 
 ### Admin defaults vs. per-user settings
 
 Nearly every per-user toggle in the panel also exists as an **admin default** on the plugin config page (**Dashboard** → **Plugins** → **Jellyfin Canopy**). The admin default is the value a user starts with; the moment a user changes that setting in their own panel, their choice takes over for them. A handful of settings are **admin-only** (server-wide), and a few are noted below as such. The [Reference](reference.md) guide maps every admin setting to the config tab it lives on.
 
+### Editing another user's settings as an administrator
+
+An administrator can edit another user's server-side Canopy preferences from that user's Jellyfin profile:
+
+1. Open **Dashboard** → **Users**.
+2. Select the user, then open the page for editing their profile, image, and personal preferences.
+3. Click **Canopy User Settings**.
+
+The panel shows an **Editing settings for _name_** banner using the user name resolved by the server. Check that banner before changing anything. Settings, display-language choice, and shortcut overrides shown as editable are saved only to the selected user's `settings.json` or `shortcuts.json`; opening or saving this panel does not change the administrator's own settings, active shortcuts, or current browser behavior.
+
+The selected user normally sees the new values after refreshing or reloading their client. The cross-user editor does not reload that user's active devices.
+
+Hidden Content and Spoiler Guard controls are deliberately unavailable in this panel because those panes are not safely target-scoped by the cross-user editor. Sign in as the selected user to manage them. Browser-local actions, including clearing the translation cache and temporary confirmation suppressions, are also unavailable because they apply to the administrator's current browser rather than to the selected user's server profile.
+
 ### Default Language
 
-You can run the plugin's interface in your own language. Jellyfin Canopy auto-detects your Jellyfin profile language, but you can override it per user from the language selector in the Enhanced Panel's **Settings** tab. The list of available languages is served by the plugin's own `/JellyfinCanopy/locales` endpoint, so language discovery works on isolated networks and doesn't depend on GitHub.
+You can run the plugin's interface in your own language. Jellyfin Canopy auto-detects your Jellyfin profile language, but you can override it per user from the language selector in the **Settings** tab of Canopy User Settings. The list of available languages is served by the plugin's own `/JellyfinCanopy/locales` endpoint, so language discovery works on isolated networks and doesn't depend on GitHub.
 
 | Setting | Scope | Default | What it does |
 | --- | --- | --- | --- |
@@ -54,7 +68,7 @@ These features make the player itself better — faster to drive from the keyboa
 
 Drive Jellyfin without reaching for the mouse: a comprehensive set of hotkeys covers navigation and playback, and every shortcut is remappable per user.
 
-![Enhanced panel — Shortcuts tab](images/enhanced-panel-shortcuts.png)
+![Canopy User Settings — Shortcuts tab](images/enhanced-panel-shortcuts.png)
 
 **Global shortcuts** (available anywhere):
 
@@ -88,7 +102,7 @@ Drive Jellyfin without reaching for the mouse: a comprehensive set of hotkeys co
 
 **To customize a shortcut:**
 
-1. Press `?` to open the Enhanced Panel.
+1. Press `?` to open Canopy User Settings.
 2. Go to the **Shortcuts** tab.
 3. Click any key to set a custom binding.
 4. Changes save automatically, per user.
@@ -105,7 +119,7 @@ semantic key combination, even when its stored spelling or order differs.
     An administrator can turn off **all** keyboard shortcuts for every user with
     the **Disable Keyboard Shortcuts** toggle in **Dashboard** → **Plugins** →
     **Jellyfin Canopy** → **Keyboard** tab. When enabled, the shortcuts stop
-    working and the **Shortcuts** tab is removed from the Enhanced Panel.
+    working and the **Shortcuts** tab is removed from Canopy User Settings.
 
 ### Customizable subtitles
 
@@ -125,7 +139,7 @@ Fine-tune how subtitles look with presets, custom colors, and a draggable positi
 
 **To customize:**
 
-1. Open the Enhanced Panel → **Settings**.
+1. Open Canopy User Settings → **Settings**.
 2. Find the subtitle presets section and pick your style, size, and font.
 3. Or open custom colors: choose a text color, adjust its alpha, choose a background color, adjust its alpha, and watch the live preview.
 4. Drag on the position grid to place the captions (reset returns to the defaults).
@@ -149,7 +163,7 @@ Pause a video and, after a short delay, a full overlay fades in with the title's
 
 **It shows:** the media title and logo; year, rating, and runtime; the plot/description; your current progress with time remaining; a spinning-disc animation; and a blurred backdrop.
 
-**The delay** controls how many seconds of pause pass before the overlay appears. Each user can set their own delay in the Enhanced Panel (it persists across reloads), while the admin sets the default for everyone.
+**The delay** controls how many seconds of pause pass before the overlay appears. Each user can set their own delay in Canopy User Settings (it persists across reloads), while the admin sets the default for everyone.
 
 | Setting | Scope | Default | What it does |
 | --- | --- | --- | --- |
@@ -163,7 +177,7 @@ Pause a video and, after a short delay, a full overlay fades in with the title's
 
 Skip past the parts you don't watch. Intro and outro skipping are **two independent toggles**, so you can auto-skip recaps but sit through end-credit scenes, or vice versa.
 
-Both are per-user settings in the Enhanced Panel's **Settings** tab, each with a matching admin default on the config page (**Playback**). Auto-skip reads Jellyfin 12's native **Media Segments** and jumps to the segment's exact end boundary.
+Both are per-user settings in the **Settings** tab of Canopy User Settings, each with a matching admin default on the config page (**Playback**). Auto-skip reads Jellyfin 12's native **Media Segments** and jumps to the segment's exact end boundary.
 
 | Setting | Scope | Default | What it does |
 | --- | --- | --- | --- |
@@ -189,9 +203,9 @@ Smart playback is a handful of small conveniences that make the player feel awar
 - **Auto-resume** — resumes when you return to the tab.
 - **Auto Picture-in-Picture** — enters PiP mode when you switch tabs, so the video keeps playing in a floating window.
 - **Playback speed control** — adjust speed with the keyboard shortcuts (`+`, `-`, and `R` to reset).
-- **Long press / hold for 2× speed** (beta, touch devices only) — long-press anywhere on the player to temporarily play at 2× speed; release to return to normal. A per-user toggle in the Enhanced Panel with a matching admin default.
+- **Long press / hold for 2× speed** (beta, touch devices only) — long-press anywhere on the player to temporarily play at 2× speed; release to return to normal. A per-user toggle in Canopy User Settings with a matching admin default.
 
-Enable or disable these in the Enhanced Panel → **Settings** tab. Auto-skip intros and outros are part of the same smart-playback family — see [Auto-skip intros and outros](#auto-skip-intros-and-outros).
+Enable or disable these in Canopy User Settings → **Settings** tab. Auto-skip intros and outros are part of the same smart-playback family — see [Auto-skip intros and outros](#auto-skip-intros-and-outros).
 
 ### Watch progress
 
@@ -217,7 +231,7 @@ Everything in this section shapes what you see while browsing: the tags layered 
 
 Media tags layer at-a-glance information straight onto your poster art — resolution and codec, genre, audio language, ratings — plus richer detail for cast members. Each family is an independent, positionable per-user overlay with an admin default, and all of them are served instantly by the [server-side tag cache](#the-tag-cache).
 
-Enable and position tags from the Enhanced Panel → **Settings**: turn on the families you want and set each one's position (top-left, top-right, and so on).
+Enable and position tags from Canopy User Settings → **Settings**: turn on the families you want and set each one's position (top-left, top-right, and so on).
 
 #### Quality Tags
 
@@ -389,7 +403,7 @@ Hide titles you never want to see — content you've finished, things that aren'
 
 Every action shows an undo toast, and you can always reverse it from the management panel.
 
-**The management panel** lists everything you've hidden. Open it from the Enhanced Panel → **Settings** → **Hidden Content**, or from the Hidden Content page's automatic entry points — the **Jellyfin Canopy** sidebar-drawer link, the modern-layout header-tray button, or the user-preferences-menu link. There you can view all hidden items, search them, unhide items individually or all at once, group by series/movies, and filter by scope.
+**The management panel** lists everything you've hidden. Open it from Canopy User Settings → **Settings** → **Hidden Content**, or from the Hidden Content page's automatic entry points — the **Jellyfin Canopy** sidebar-drawer link, the modern-layout header-tray button, or the user-preferences-menu link. There you can view all hidden items, search them, unhide items individually or all at once, group by series/movies, and filter by scope.
 
 #### Configuring Hidden Content
 
@@ -402,7 +416,7 @@ The **server-wide enable** and the **integration method** are admin-only and liv
 
 When enabled, the Hidden Content management page is a routed destination reachable at `/web/index.html#/hidden-content`, with entry points added automatically on every layout (the **Jellyfin Canopy** sidebar-drawer link, the modern-layout header-tray button, and the user-preferences-menu link). Its position among the pages follows the admin **Pages order** setting.
 
-**Per-user** — Enhanced Panel (press `?`) → **Settings** → **Hidden Content**. Each toggle has a matching admin default:
+**Per-user** — Canopy User Settings (press `?`) → **Settings** → **Hidden Content**. Each toggle has a matching admin default:
 
 - Show hide buttons on Seerr items
 - Show hide buttons in library views
@@ -486,13 +500,13 @@ Clean up the home screen without losing anything: this adds a lightweight, **non
 
 ![Bulk removal confirmation listing each item and its row](images/remove-confirm.png)
 
-**Enable it:** Enhanced Panel (press `?`) → **Settings** → **Add Remove from Continue Watching & Next Up Buttons**.
+**Enable it:** Canopy User Settings (press `?`) → **Settings** → **Add Remove from Continue Watching & Next Up Buttons**.
 
 ### Hiding the Favorites tab
 
 Don't use the Home page's **Favorites** tab? You can remove it. This hides the native **Favorites** tab (the one next to **Home** at the top of the Home page) so the Home page opens straight to your main feed. It only hides that tab — your favorites are still saved, still marked with the star, and still reachable everywhere else (the sidebar, search, and item pages). The change is scoped to the Home page, so the second tab on library pages is never affected. It applies on both the modern and legacy layouts.
 
-**Enable it (per-user):** Enhanced Panel (press `?`) → **Settings** → **UI** → **Hide the Favorites Tab**. The change takes effect immediately, without a reload.
+**Enable it (per-user):** Canopy User Settings (press `?`) → **Settings** → **UI** → **Hide the Favorites Tab**. The change takes effect immediately, without a reload.
 
 **Admin default** (**Dashboard** → **Plugins** → **Jellyfin Canopy** → **Display** tab → **Hide the Home "Favorites" tab**): sets the starting value for new users, who can still override it in their own settings.
 

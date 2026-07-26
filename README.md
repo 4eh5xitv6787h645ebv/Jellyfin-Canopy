@@ -109,7 +109,7 @@ Four new pages living right in Jellyfin's navigation, reorderable, native on des
 
 <table>
   <tr>
-    <th>Settings panel</th>
+    <th>Canopy User Settings</th>
     <th>Shortcuts</th>
   </tr>
   <tr>

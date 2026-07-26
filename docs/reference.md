@@ -27,7 +27,7 @@ Every admin option lives on one of the tabs in the plugin config page: **Dashboa
 
 ## Custom CSS
 
-Jellyfin Canopy draws a lot of on-screen furniture — pause-screen panels, media tags, an in-player rating overlay, tag links, the Enhanced Panel itself — and every piece carries a stable id, class, or data attribute you can target. That means you can recolor, resize, or hide almost anything with a few lines of CSS, without waiting for a setting to exist.
+Jellyfin Canopy draws a lot of on-screen furniture — pause-screen panels, media tags, an in-player rating overlay, tag links, Canopy User Settings itself — and every piece carries a stable id, class, or data attribute you can target. That means you can recolor, resize, or hide almost anything with a few lines of CSS, without waiting for a setting to exist.
 
 !!! note "Admin-supplied colours are validated"
 
@@ -322,13 +322,13 @@ Data attributes on both the link and text spans:
 .itemExternalLinks a.arr-tag-link[data-id="3-admin"] { background: #0c1a38; color: #8dd0ff; }
 ```
 
-### Enhanced Panel and toasts
+### Canopy User Settings and toasts
 
-The [Enhanced Panel](enhanced.md) is the settings and shortcuts overlay the plugin opens with `?`. It styles itself to your theme automatically, so in most cases you don't need any CSS at all — but every part of it is targetable if you want to go further.
+[Canopy User Settings](enhanced.md) is the settings and shortcuts overlay the plugin opens with `?`. It styles itself to your theme automatically, so in most cases you don't need any CSS at all — but every part of it is targetable if you want to go further.
 
 !!! note "Automatic theme detection"
 
-    The Enhanced Panel automatically detects your active theme using unique CSS variables and styles itself to match — no configuration needed. It detects most popular Jellyfin themes:
+    Canopy User Settings automatically detects your active theme using unique CSS variables and styles itself to match — no configuration needed. It detects most popular Jellyfin themes:
 
     - **Jellyfish** — uses the theme's accent colors and blur effects
     - **ElegantFin** — matches the theme's header and accent color

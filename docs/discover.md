@@ -690,7 +690,7 @@ detail-page behaviour is unchanged for large community libraries.
 5. Click **Save**.
 
 !!! note
-    The poster tag also requires each user to have **Rating Tags** enabled in the [Enhanced Panel](enhanced.md) (Settings tab).
+    The poster tag also requires each user to have **Rating Tags** enabled in [Canopy User Settings](enhanced.md) (Settings tab).
 
 #### Moderation
 

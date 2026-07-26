@@ -48,7 +48,7 @@ The **Extras** tab collects a set of optional cosmetic tweaks — small touches 
 |---|---|---|
 | **Colored Dashboard Icons** | Off | Replaces the Dashboard activity icons with colored Material Design icons |
 | **Colored Ratings Backgrounds** | Off | Color-codes rating chips on detail pages (TMDB, IMDb, Rotten Tomatoes) by value and type |
-| **Theme Selector (Jellyfish)** | Off | Adds a theme selector to the Enhanced panel for switching between Jellyfish color themes |
+| **Theme Selector (Jellyfish)** | Off | Adds a theme selector to Jellyfin's native user preferences page for switching between Jellyfish color themes |
 | **Profile Picture on Login** | Off | Shows each user's avatar on the manual login screen instead of their name |
 | **Custom Plugin Menu Icons** | Off | Replaces default plugin folder icons in the Dashboard sidebar with Material icons; enables the **Sidebar Custom Links** field |
 | **Enable Metadata Icons (Druidblack)** | Off | Swaps text metadata labels — and the plugin's own Letterboxd and \*arr links — for icons |
@@ -67,17 +67,16 @@ Adds value-based colored backgrounds to the rating chips on detail pages, with d
 
 ### Theme Selector (Jellyfish)
 
-Turns on a theme picker in the Enhanced panel, letting each user switch between Jellyfish color palettes — Aurora, Jellyblue, Ocean, Peach, Forest, and more — with an option to rotate the theme automatically each day.
+Turns on a theme picker in Jellyfin's native user preferences, letting each user switch between Jellyfish color palettes — Aurora, Jellyblue, Ocean, Peach, Forest, and more — with an option to rotate the theme automatically each day.
 
 ![Theme Selector](images/theme-selector.png)
 
-Once the setting is on, users pick a theme from the Enhanced panel:
+Once the setting is on, users pick a theme from Jellyfin's user preferences:
 
-1. Open the Enhanced panel.
-2. Go to the **Settings** tab.
-3. Find the **Theme Selector** section.
-4. Choose a theme from the dropdown.
-5. Optionally enable **Randomize Daily** for a fresh palette each day.
+1. Open the profile menu and select Jellyfin's **Settings** entry.
+2. Find the **Theme Selector** beneath the user profile section.
+3. Choose a theme from the dropdown.
+4. Optionally enable **Randomize Daily** for a fresh palette each day.
 
 ### Profile Picture on Login
 
@@ -216,7 +215,7 @@ Jellyfin Canopy speaks 26 bundled languages and picks the right one automaticall
 - Select a language from the dropdown to apply it to the plugin UI for all users.
 - Choose **System Default** (or leave it empty) to keep each user on their own Jellyfin profile language.
 
-There is no config-page button for clearing translation caches. They are refreshed for every client by the **Refresh Translation Cache** scheduled task (see [Cache management](#cache-management)). An individual user can also clear their own browser's translation cache from the language section of the Enhanced settings panel — that only affects their local browser.
+There is no config-page button for clearing translation caches. They are refreshed for every client by the **Refresh Translation Cache** scheduled task (see [Cache management](#cache-management)). An individual user can also clear their own browser's translation cache from the language section of **Canopy User Settings** — that only affects their local browser.
 
 !!! tip "Adding or improving a translation"
     Translations are maintained as locale JSON files in the repository and bundled with the plugin as embedded resources. To contribute a new language or fix an existing one, see the [Help & Community](help.md) guide.

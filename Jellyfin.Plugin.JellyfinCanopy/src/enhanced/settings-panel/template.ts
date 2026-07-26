@@ -17,10 +17,14 @@ import type { PanelContext } from './panel';
 
 // JC.t returns the raw key on miss; substitute the inline fallback. Mirrors elsewhere/reviews.js.
 const _tFallbackWarned = new Set<string>();
-function tWithFallback(key: string, fallback?: string): string {
+function tWithFallback(
+    key: string,
+    fallback?: string,
+    params?: Record<string, unknown>,
+): string {
     let result;
     try {
-        result = JC.t!(key);
+        result = JC.t!(key, params);
     } catch (err) {
         console.warn(`🪼 Jellyfin Canopy: JC.t('${key}') threw, using fallback:`, err);
         result = null;
@@ -44,6 +48,18 @@ export function buildPanelHtml(ctx: PanelContext): string {
     const { panelBgColor, headerFooterBg, detailsBackground, primaryAccentColor,
             toggleAccentColor, kbdBackground, presetBoxBackground, githubButtonBg,
             releaseNotesTextColor, logoUrl, brandGradient } = ctx;
+    const settings = ctx.editor.settings as Record<string, any>;
+    const shortcuts = ctx.editor.shortcuts;
+    const activeShortcuts = ctx.editor.activeShortcuts;
+    const targetBanner = ctx.editor.mode === 'admin-target'
+        ? `<div class="jc-admin-target-banner" role="status" style="font-size:12px; color:rgba(255,255,255,0.88); padding:5px 9px; border-radius:999px; background:rgba(47,128,255,0.22); border:1px solid rgba(0,212,255,0.34);">${escapeHtml(
+            tWithFallback(
+                'panel_admin_target_banner',
+                `Editing settings for ${ctx.editor.targetDisplayName}`,
+                { name: ctx.editor.targetDisplayName },
+            )
+        )}</div>`
+        : '';
 
     const generatePresetHTML = (presets: any[], type: string) => {
         const html = presets.map((preset: any, index: number) => {
@@ -63,10 +79,13 @@ export function buildPanelHtml(ctx: PanelContext): string {
         return html;
     };
 
-    const userShortcuts = ((JC.userConfig as any).shortcuts.Shortcuts || []).reduce((acc: Record<string, any>, s: any) => {
-        acc[s.Name] = s;
-        return acc;
-    }, {});
+    const userShortcutNames = new Set<string>();
+    const shortcutEntries = (shortcuts as any).Shortcuts;
+    if (Array.isArray(shortcutEntries)) {
+        for (const shortcut of shortcutEntries) {
+            if (typeof shortcut?.Name === 'string') userShortcutNames.add(shortcut.Name);
+        }
+    }
 
     return `
             <style>
@@ -99,8 +118,9 @@ export function buildPanelHtml(ctx: PanelContext): string {
                 .shake-error { animation: shake 0.5s ease-in-out; }
             </style>
             <div class="jc-panel-header" style="padding: 14px 20px; border-bottom: 1px solid rgba(255,255,255,0.1); background: ${headerFooterBg}; display: flex; align-items: baseline; gap: 10px; cursor: grab;">
-                <div style="font-size: 20px; font-weight: 700;"><img src="${escapeHtml(assetUrl('branding/canopy-mark.svg'))}" alt="" width="24" height="21" style="vertical-align: -3px; margin-right: 8px;"><span style="background: ${brandGradient}; -webkit-background-clip: text; -webkit-text-fill-color: transparent;">Jellyfin Canopy</span></div>
+                <div style="font-size: 20px; font-weight: 700;"><img src="${escapeHtml(assetUrl('branding/canopy-mark.svg'))}" alt="" width="24" height="21" style="vertical-align: -3px; margin-right: 8px;"><span style="background: ${brandGradient}; -webkit-background-clip: text; -webkit-text-fill-color: transparent;">${escapeHtml(tWithFallback('panel_title', 'Canopy User Settings'))}</span></div>
                 <div style="font-size: 12px; color: rgba(255,255,255,0.7);">${escapeHtml(JC.t!('panel_version', { version: JC.pluginVersion }))}</div>
+                ${targetBanner}
             </div>
             <div class="jc-panel-body">
                 <nav class="jc-panel-nav" aria-label="${escapeHtml(JC.t!('panel_settings_tab'))}">
@@ -117,9 +137,9 @@ export function buildPanelHtml(ctx: PanelContext): string {
                             <div style="display: grid; gap: 8px; font-size: 14px;">
                                 ${((JC.pluginConfig.Shortcuts as any[]) || []).filter((s: any, index: number, self: any[]) => s.Category === 'Global' && index === self.findIndex((t: any) => t.Name === s.Name)).map((action: any) => `
                                     <div style="display: flex; justify-content: space-between; align-items: center;">
-                                        <span class="shortcut-key" tabindex="0" data-action="${escapeHtml(action.Name)}" style="background:${kbdBackground}; padding:2px 8px; border-radius:3px; cursor:pointer; transition: all 0.2s;">${escapeHtml(formatShortcut(JC.state!.activeShortcuts[action.Name]))}</span>
+                                        <span class="shortcut-key" tabindex="0" data-action="${escapeHtml(action.Name)}" style="background:${kbdBackground}; padding:2px 8px; border-radius:3px; cursor:pointer; transition: all 0.2s;">${escapeHtml(formatShortcut(activeShortcuts[action.Name]))}</span>
                                         <div style="display: flex; align-items: center; gap: 8px;">
-                                            ${userShortcuts.hasOwnProperty(action.Name) ? `<span title="Modified by user" class="modified-indicator" style="color:${primaryAccentColor}; font-size: 20px; line-height: 1;">•</span>` : ''}
+                                            ${userShortcutNames.has(action.Name) ? `<span title="Modified by user" class="modified-indicator" style="color:${primaryAccentColor}; font-size: 20px; line-height: 1;">•</span>` : ''}
                                             <span>${escapeHtml(tWithFallback('shortcut_' + action.Name, action.Label))}</span>
                                         </div>
                                     </div>
@@ -134,9 +154,9 @@ export function buildPanelHtml(ctx: PanelContext): string {
                                     const fallbackLabel = a?.Label || action;
                                     return `
                                     <div style="display: flex; justify-content: space-between; align-items: center;">
-                                        <span class="shortcut-key" tabindex="0" data-action="${escapeHtml(action)}" style="background:${kbdBackground}; padding:2px 8px; border-radius:3px; cursor:pointer; transition: all 0.2s;">${escapeHtml(formatShortcut(JC.state!.activeShortcuts[action]))}</span>
+                                        <span class="shortcut-key" tabindex="0" data-action="${escapeHtml(action)}" style="background:${kbdBackground}; padding:2px 8px; border-radius:3px; cursor:pointer; transition: all 0.2s;">${escapeHtml(formatShortcut(activeShortcuts[action]))}</span>
                                         <div style="display: flex; align-items: center; gap: 8px;">
-                                            ${userShortcuts.hasOwnProperty(action) ? `<span class="modified-indicator" title="Modified by user" style="color:${primaryAccentColor}; font-size: 20px; line-height: 1;">•</span>` : ''}
+                                            ${userShortcutNames.has(action) ? `<span class="modified-indicator" title="Modified by user" style="color:${primaryAccentColor}; font-size: 20px; line-height: 1;">•</span>` : ''}
                                             <span>${escapeHtml(tWithFallback('shortcut_' + action, fallbackLabel))}${action === 'OpenEpisodePreview' ? ' <span style="font-size: 11px; opacity: 0.7;" title="Requires InPlayerEpisodePreview plugin from https://github.com/Namo2/InPlayerEpisodePreview/">ⓘ</span>' : ''}</span>
                                         </div>
                                     </div>
@@ -159,36 +179,36 @@ export function buildPanelHtml(ctx: PanelContext): string {
                         <div style="padding: 0 16px 16px 16px;">
                             <div style="margin-bottom: 16px; padding: 12px; background: ${presetBoxBackground}; border-radius: 6px; border-left: 3px solid ${toggleAccentColor};">
                                 <label style="display: flex; align-items: center; gap: 12px; cursor: pointer;">
-                                    <input type="checkbox" id="autoPauseToggle" ${JC.currentSettings!.autoPauseEnabled ? 'checked' : ''} style="width:18px; height:18px; accent-color:${toggleAccentColor}; cursor:pointer;">
+                                    <input type="checkbox" id="autoPauseToggle" ${settings.autoPauseEnabled ? 'checked' : ''} style="width:18px; height:18px; accent-color:${toggleAccentColor}; cursor:pointer;">
                                     <div><div style="font-weight:500;">${JC.t!('panel_settings_auto_pause')}</div><div style="font-size:12px; color:rgba(255,255,255,0.6); margin-top:2px;">${JC.t!('panel_settings_auto_pause_desc')}</div></div>
                                 </label>
                             </div>
                            <div style="margin-bottom: 16px; padding: 12px; background: ${presetBoxBackground}; border-radius: 6px; border-left: 3px solid ${toggleAccentColor};">
                                 <label style="display: flex; align-items: center; gap: 12px; cursor: pointer;">
-                                    <input type="checkbox" id="autoResumeToggle" ${JC.currentSettings!.autoResumeEnabled ? 'checked' : ''} style="width:18px; height:18px; accent-color:${toggleAccentColor}; cursor:pointer;">
+                                    <input type="checkbox" id="autoResumeToggle" ${settings.autoResumeEnabled ? 'checked' : ''} style="width:18px; height:18px; accent-color:${toggleAccentColor}; cursor:pointer;">
                                     <div><div style="font-weight:500;">${JC.t!('panel_settings_auto_resume')}</div><div style="font-size:12px; color:rgba(255,255,255,0.6); margin-top:2px;">${JC.t!('panel_settings_auto_resume_desc')}</div></div>
                                 </label>
                             </div>
                             <div style="margin-bottom: 16px; padding: 12px; background: ${presetBoxBackground}; border-radius: 6px; border-left: 3px solid ${toggleAccentColor};">
                                 <label style="display: flex; align-items: center; gap: 12px; cursor: pointer;">
-                                    <input type="checkbox" id="autoPipToggle" ${JC.currentSettings!.autoPipEnabled ? 'checked' : ''} style="width:18px; height:18px; accent-color:${toggleAccentColor}; cursor:pointer;">
+                                    <input type="checkbox" id="autoPipToggle" ${settings.autoPipEnabled ? 'checked' : ''} style="width:18px; height:18px; accent-color:${toggleAccentColor}; cursor:pointer;">
                                     <div><div style="font-weight:500;">${JC.t!('panel_settings_auto_pip')}</div><div style="font-size:12px; color:rgba(255,255,255,0.6); margin-top:2px;">${JC.t!('panel_settings_auto_pip_desc')}</div></div>
                                 </label>
                             </div>
                             <div style="margin-bottom: 16px; padding: 12px; background: ${presetBoxBackground}; border-radius: 6px; border-left: 3px solid ${toggleAccentColor};">
                                 <label style="display: flex; align-items: center; gap: 12px; cursor: pointer;">
-                                    <input type="checkbox" id="longPress2xEnabled" ${JC.currentSettings!.longPress2xEnabled ? 'checked' : ''} style="width:18px; height:18px; accent-color:${toggleAccentColor}; cursor:pointer;">
+                                    <input type="checkbox" id="longPress2xEnabled" ${settings.longPress2xEnabled ? 'checked' : ''} style="width:18px; height:18px; accent-color:${toggleAccentColor}; cursor:pointer;">
                                     <div><div style="font-weight:500;">${JC.t!('panel_settings_long_press_2x_speed')}</div><div style="font-size:12px; color:rgba(255,255,255,0.6); margin-top:2px;">${JC.t!('panel_settings_long_press_desc')}</div></div>
                                 </label>
                             </div>
                             <div style="margin-bottom: 16px; padding: 12px; background: ${presetBoxBackground}; border-radius: 6px; border-left: 3px solid ${toggleAccentColor};">
                                 <label style="display: flex; align-items: center; gap: 12px; cursor: pointer;">
-                                    <input type="checkbox" id="pauseScreenToggle" ${JC.currentSettings!.pauseScreenEnabled ? 'checked' : ''} style="width:18px; height:18px; accent-color:${toggleAccentColor}; cursor:pointer;">
+                                    <input type="checkbox" id="pauseScreenToggle" ${settings.pauseScreenEnabled ? 'checked' : ''} style="width:18px; height:18px; accent-color:${toggleAccentColor}; cursor:pointer;">
                                     <div><div style="font-weight:500;">${JC.t!('panel_settings_custom_pause_screen')}</div><div style="font-size:12px; color:rgba(255,255,255,0.6); margin-top:2px;">${JC.t!('panel_settings_custom_pause_screen_desc')}</div></div>
                                 </label>
                                 <div class="jc-pause-delay-row" style="margin-top:10px; display:flex; align-items:center; gap:8px; padding-left:30px;">
                                     <label for="pauseScreenDelayInput" style="font-size:12px; color:rgba(255,255,255,0.7); white-space:nowrap;">${JC.t!('panel_settings_pause_screen_delay_label')}</label>
-                                    <input type="number" id="pauseScreenDelayInput" min="1" max="60" value="${Number((JC.currentSettings as any).pauseScreenDelaySeconds ?? 5) || 5}" style="width:60px; padding:4px 6px; background:rgba(255,255,255,0.1); border:1px solid rgba(255,255,255,0.2); border-radius:4px; color:#fff; font-size:12px; text-align:center;">
+                                    <input type="number" id="pauseScreenDelayInput" min="1" max="60" value="${Number(settings.pauseScreenDelaySeconds ?? 5) || 5}" style="width:60px; padding:4px 6px; background:rgba(255,255,255,0.1); border:1px solid rgba(255,255,255,0.2); border-radius:4px; color:#fff; font-size:12px; text-align:center;">
                                 </div>
                             </div>
                         </div>
@@ -199,13 +219,13 @@ export function buildPanelHtml(ctx: PanelContext): string {
                         <div style="padding: 0 16px 16px 16px;">
                             <div style="margin-bottom: 16px; padding: 12px; background: ${presetBoxBackground}; border-radius: 6px; border-left: 3px solid ${toggleAccentColor};">
                                 <label style="display: flex; align-items: center; gap: 12px; cursor: pointer;">
-                                    <input type="checkbox" id="autoSkipIntroToggle" ${JC.currentSettings!.autoSkipIntro ? 'checked' : ''} style="width:18px; height:18px; accent-color:${toggleAccentColor}; cursor:pointer;">
+                                    <input type="checkbox" id="autoSkipIntroToggle" ${settings.autoSkipIntro ? 'checked' : ''} style="width:18px; height:18px; accent-color:${toggleAccentColor}; cursor:pointer;">
                                     <div><div style="font-weight:500;">${JC.t!('panel_settings_auto_skip_intro')}</div></div>
                                 </label>
                             </div>
                             <div style="padding: 12px; background: ${presetBoxBackground}; border-radius: 6px; border-left: 3px solid ${toggleAccentColor};">
                                 <label style="display: flex; align-items: center; gap: 12px; cursor: pointer;">
-                                    <input type="checkbox" id="autoSkipOutroToggle" ${JC.currentSettings!.autoSkipOutro ? 'checked' : ''} style="width:18px; height:18px; accent-color:${toggleAccentColor}; cursor:pointer;">
+                                    <input type="checkbox" id="autoSkipOutroToggle" ${settings.autoSkipOutro ? 'checked' : ''} style="width:18px; height:18px; accent-color:${toggleAccentColor}; cursor:pointer;">
                                     <div><div style="font-weight:500;">${JC.t!('panel_settings_auto_skip_outro')}</div></div>
                                 </label>
                             </div>
@@ -216,7 +236,7 @@ export function buildPanelHtml(ctx: PanelContext): string {
                         <div style="padding: 0 16px 16px 16px;">
                             <div style="margin-bottom: 16px; padding: 12px; background: ${presetBoxBackground}; border-radius: 6px; border-left: 3px solid ${toggleAccentColor};">
                                 <label style="display: flex; align-items: center; gap: 12px; cursor: pointer;">
-                                    <input type="checkbox" id="disableCustomSubtitleStyles" ${JC.currentSettings!.disableCustomSubtitleStyles ? 'checked' : ''} style="width:18px; height:18px; accent-color:${toggleAccentColor}; cursor:pointer;">
+                                    <input type="checkbox" id="disableCustomSubtitleStyles" ${settings.disableCustomSubtitleStyles ? 'checked' : ''} style="width:18px; height:18px; accent-color:${toggleAccentColor}; cursor:pointer;">
                                     <div><div style="font-weight:500;">${JC.t!('panel_settings_disable_custom_styles')}</div><div style="font-size:12px; color:rgba(255,255,255,0.6); margin-top:2px;">${JC.t!('panel_settings_disable_custom_styles_desc')}</div></div>
                                 </label>
                             </div>
@@ -228,19 +248,19 @@ export function buildPanelHtml(ctx: PanelContext): string {
                                         <div>
                                             <div style="font-size: 13px; margin-bottom: 6px; color: rgba(255,255,255,0.8);">Text</div>
                                             <div class="jc-subtitle-color-control-row" style="display: flex; gap: 8px; align-items: center;">
-                                                <input type="color" id="customSubtitleTextColorPicker" value="${escapeHtml((JC.currentSettings as any).customSubtitleTextColor?.substring(0, 7) || '#FFFFFF')}" style="width: 50px; height: 36px; border: 1px solid rgba(255,255,255,0.2); border-radius: 4px; cursor: pointer; background: transparent;">
-                                                <input type="range" id="customSubtitleTextAlpha" min="0" max="255" value="${parseInt((JC.currentSettings as any).customSubtitleTextColor?.substring(7, 9) || 'FF', 16)}" style="flex: 1; accent-color: ${primaryAccentColor};">
+                                                <input type="color" id="customSubtitleTextColorPicker" value="${escapeHtml(settings.customSubtitleTextColor?.substring(0, 7) || '#FFFFFF')}" style="width: 50px; height: 36px; border: 1px solid rgba(255,255,255,0.2); border-radius: 4px; cursor: pointer; background: transparent;">
+                                                <input type="range" id="customSubtitleTextAlpha" min="0" max="255" value="${parseInt(settings.customSubtitleTextColor?.substring(7, 9) || 'FF', 16)}" style="flex: 1; accent-color: ${primaryAccentColor};">
                                             </div>
                                         </div>
                                         <div>
                                             <div style="font-size: 13px; margin-bottom: 6px; color: rgba(255,255,255,0.8);">Background</div>
                                             <div class="jc-subtitle-color-control-row" style="display: flex; gap: 8px; align-items: center;">
-                                                <input type="color" id="customSubtitleBgColorPicker" value="${escapeHtml((JC.currentSettings as any).customSubtitleBgColor?.substring(0, 7) || '#000000')}" style="width: 50px; height: 36px; border: 1px solid rgba(255,255,255,0.2); border-radius: 4px; cursor: pointer; background: transparent;">
-                                                <input type="range" id="customSubtitleBgAlpha" min="0" max="255" value="${parseInt((JC.currentSettings as any).customSubtitleBgColor?.substring(7, 9) || '00', 16)}" style="flex: 1; accent-color: ${primaryAccentColor};">
+                                                <input type="color" id="customSubtitleBgColorPicker" value="${escapeHtml(settings.customSubtitleBgColor?.substring(0, 7) || '#000000')}" style="width: 50px; height: 36px; border: 1px solid rgba(255,255,255,0.2); border-radius: 4px; cursor: pointer; background: transparent;">
+                                                <input type="range" id="customSubtitleBgAlpha" min="0" max="255" value="${parseInt(settings.customSubtitleBgColor?.substring(7, 9) || '00', 16)}" style="flex: 1; accent-color: ${primaryAccentColor};">
                                             </div>
                                         </div>
                                     </div>
-                                    <div id="subtitleColorPreview" style="display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: 600; border-radius: 6px; background: rgba(0,0,0,0.3); color: ${cssColorOr((JC.currentSettings as any).customSubtitleTextColor, '#FFFFFFFF')}; background-color: ${cssColorOr((JC.currentSettings as any).customSubtitleBgColor, '#00000000')}; padding: 12px 20px; flex: 0.5; align-self: center;">AaBbCcDd</div>
+                                    <div id="subtitleColorPreview" style="display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: 600; border-radius: 6px; background: rgba(0,0,0,0.3); color: ${cssColorOr(settings.customSubtitleTextColor, '#FFFFFFFF')}; background-color: ${cssColorOr(settings.customSubtitleBgColor, '#00000000')}; padding: 12px 20px; flex: 0.5; align-self: center;">AaBbCcDd</div>
                                 </div>
                             </div>
                             <div style="margin-bottom: 16px;"><div style="font-weight: 600; margin-bottom: 8px;">${JC.t!('panel_settings_subtitles_size')}</div><div id="font-size-presets-container" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(70px, 1fr)); gap: 8px;">${generatePresetHTML((JC as any).fontSizePresets, 'font-size')}</div></div>
@@ -257,7 +277,7 @@ export function buildPanelHtml(ctx: PanelContext): string {
                                         <div style="position:absolute;top:50%;left:0;right:0;height:1px;background:rgba(255,255,255,0.08);transform:translateY(-50%);"></div>
                                     </div>
                                     <!-- Subtitle preview text -->
-                                    <div id="subtitlePositionPreview" style="position:absolute; transform:translate(-50%,-50%); pointer-events:none; white-space:nowrap; font-size:clamp(8px,1.5vw,13px); font-weight:600; color:${cssColorOr((JC.currentSettings as any).customSubtitleTextColor?.substring(0,7), '#ffffff')}; background-color:${cssColorOr((JC.currentSettings as any).customSubtitleBgColor, 'transparent')}; padding:2px 6px; border-radius:3px; text-shadow:0 0 4px #000; left:${Number((JC.currentSettings as any).subtitleHorizontalPosition ?? 50) || 0}%; top:${Number((JC.currentSettings as any).subtitleVerticalPosition ?? 85) || 0}%;">AaBbCcDd</div>
+                                    <div id="subtitlePositionPreview" style="position:absolute; transform:translate(-50%,-50%); pointer-events:none; white-space:nowrap; font-size:clamp(8px,1.5vw,13px); font-weight:600; color:${cssColorOr(settings.customSubtitleTextColor?.substring(0,7), '#ffffff')}; background-color:${cssColorOr(settings.customSubtitleBgColor, 'transparent')}; padding:2px 6px; border-radius:3px; text-shadow:0 0 4px #000; left:${Number(settings.subtitleHorizontalPosition ?? 50) || 0}%; top:${Number(settings.subtitleVerticalPosition ?? 85) || 0}%;">AaBbCcDd</div>
                                 </div>
                                 <div style="margin-top:6px; font-size:11px; color:rgba(255,255,255,0.4); text-align:center;">${JC.t!('panel_settings_subtitles_position_note') || 'Requires Jellyfin subtitle style set to <b>Custom</b> in Subtitle settings'}</div>
                             </div>
@@ -267,14 +287,14 @@ export function buildPanelHtml(ctx: PanelContext): string {
                         <h3 class="jc-pane-title">${JC.icon!(JC.IconName!.RANDOM)} ${JC.t!('panel_settings_random_button')}</h3>
                         <div style="padding: 0 16px 16px 16px;">
                             <div style="margin-bottom:16px; padding:12px; background:${presetBoxBackground}; border-radius:6px; border-left:3px solid ${toggleAccentColor};">
-                                <label style="display: flex; align-items: center; gap: 12px; cursor: pointer;"><input type="checkbox" id="randomButtonToggle" ${JC.currentSettings!.randomButtonEnabled ? 'checked' : ''} style="width:18px; height:18px; accent-color:${toggleAccentColor}; cursor:pointer;"><div><div style="font-weight:500;">${JC.t!('panel_settings_random_button_enable')}</div><div style="font-size:12px; color:rgba(255,255,255,0.6); margin-top:2px;">${JC.t!('panel_settings_random_button_enable_desc')}</div></div></label>
+                                <label style="display: flex; align-items: center; gap: 12px; cursor: pointer;"><input type="checkbox" id="randomButtonToggle" ${settings.randomButtonEnabled ? 'checked' : ''} style="width:18px; height:18px; accent-color:${toggleAccentColor}; cursor:pointer;"><div><div style="font-weight:500;">${JC.t!('panel_settings_random_button_enable')}</div><div style="font-size:12px; color:rgba(255,255,255,0.6); margin-top:2px;">${JC.t!('panel_settings_random_button_enable_desc')}</div></div></label>
                                 <br>
-                                <label style="display: flex; align-items: center; gap: 12px; cursor: pointer;"><input type="checkbox" id="randomUnwatchedOnly" ${JC.currentSettings!.randomUnwatchedOnly ? 'checked' : ''} style="width:18px; height:18px; accent-color:${toggleAccentColor}; cursor:pointer;"><div><div style="font-weight:500;">${JC.t!('panel_settings_random_button_unwatched')}</div><div style="font-size:12px; color:rgba(255,255,255,0.6); margin-top:2px;">${JC.t!('panel_settings_random_button_unwatched_desc')}</div></div></label>
+                                <label style="display: flex; align-items: center; gap: 12px; cursor: pointer;"><input type="checkbox" id="randomUnwatchedOnly" ${settings.randomUnwatchedOnly ? 'checked' : ''} style="width:18px; height:18px; accent-color:${toggleAccentColor}; cursor:pointer;"><div><div style="font-weight:500;">${JC.t!('panel_settings_random_button_unwatched')}</div><div style="font-size:12px; color:rgba(255,255,255,0.6); margin-top:2px;">${JC.t!('panel_settings_random_button_unwatched_desc')}</div></div></label>
                             </div>
                             <div style="font-weight:500; margin-bottom:8px;">${JC.t!('panel_settings_random_button_types')}</div>
                             <div style="display:flex; gap:16px; padding:12px; background:${presetBoxBackground}; border-radius:6px; border-left:3px solid ${toggleAccentColor};">
-                                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;"><input type="checkbox" id="randomIncludeMovies" ${JC.currentSettings!.randomIncludeMovies ? 'checked' : ''} style="width:18px; height:18px; accent-color:${toggleAccentColor}; cursor:pointer;"><span>${JC.t!('panel_settings_random_button_movies')}</span></label>
-                                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;"><input type="checkbox" id="randomIncludeShows" ${JC.currentSettings!.randomIncludeShows ? 'checked' : ''} style="width:18px; height:18px; accent-color:${toggleAccentColor}; cursor:pointer;"><span>${JC.t!('panel_settings_random_button_shows')}</span></label>
+                                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;"><input type="checkbox" id="randomIncludeMovies" ${settings.randomIncludeMovies ? 'checked' : ''} style="width:18px; height:18px; accent-color:${toggleAccentColor}; cursor:pointer;"><span>${JC.t!('panel_settings_random_button_movies')}</span></label>
+                                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;"><input type="checkbox" id="randomIncludeShows" ${settings.randomIncludeShows ? 'checked' : ''} style="width:18px; height:18px; accent-color:${toggleAccentColor}; cursor:pointer;"><span>${JC.t!('panel_settings_random_button_shows')}</span></label>
                             </div>
                         </div>
                     </section>
@@ -283,41 +303,41 @@ export function buildPanelHtml(ctx: PanelContext): string {
                         <div style="padding: 0 16px 16px 16px;">
                             <div style="margin-bottom: 16px; padding: 12px; background: ${presetBoxBackground}; border-radius: 6px; border-left: 3px solid ${toggleAccentColor};">
                                 <label style="display: flex; align-items: center; gap: 12px; cursor: pointer;">
-                                    <input type="checkbox" id="showWatchProgressToggle" ${JC.currentSettings!.showWatchProgress ? 'checked' : ''} style="width:18px; height:18px; accent-color:${toggleAccentColor}; cursor:pointer;">
+                                    <input type="checkbox" id="showWatchProgressToggle" ${settings.showWatchProgress ? 'checked' : ''} style="width:18px; height:18px; accent-color:${toggleAccentColor}; cursor:pointer;">
                                     <div><div style="font-weight:500;">${JC.t!('panel_settings_ui_watch_progress')}</div><div style="font-size:12px; color:rgba(255,255,255,0.6); margin-top:2px;">${JC.t!('panel_settings_ui_watch_progress_desc')}</div></div>
                                 </label>
                                 <div style="display:flex; gap:12px; margin-top:10px;">
                                     <div style="flex:1;">
                                         <select id="watchProgressModeSelect" style="width:100%; background:${detailsBackground}; color:#fff; border:1px solid rgba(255,255,255,0.2); border-radius:6px; padding:6px;">
-                                            <option value="percentage" ${JC.currentSettings!.watchProgressMode === 'percentage' ? 'selected' : ''}>Percentage</option>
-                                            <option value="time" ${JC.currentSettings!.watchProgressMode === 'time' ? 'selected' : ''}>Time Watched</option>
-                                            <option value="remaining" ${JC.currentSettings!.watchProgressMode === 'remaining' ? 'selected' : ''}>Time Remaining</option>
+                                            <option value="percentage" ${settings.watchProgressMode === 'percentage' ? 'selected' : ''}>Percentage</option>
+                                            <option value="time" ${settings.watchProgressMode === 'time' ? 'selected' : ''}>Time Watched</option>
+                                            <option value="remaining" ${settings.watchProgressMode === 'remaining' ? 'selected' : ''}>Time Remaining</option>
                                         </select>
                                     </div>
                                     <div style="flex:1;">
                                         <select id="watchProgressTimeFormatSelect" style="width:100%; background:${detailsBackground}; color:#fff; border:1px solid rgba(255,255,255,0.2); border-radius:6px; padding:6px;">
-                                            <option value="hours" ${JC.currentSettings!.watchProgressTimeFormat === 'hours' ? 'selected' : ''}>h:m</option>
-                                            <option value="full" ${JC.currentSettings!.watchProgressTimeFormat === 'full' ? 'selected' : ''}>y:mo:d:h:m</option>
+                                            <option value="hours" ${settings.watchProgressTimeFormat === 'hours' ? 'selected' : ''}>h:m</option>
+                                            <option value="full" ${settings.watchProgressTimeFormat === 'full' ? 'selected' : ''}>y:mo:d:h:m</option>
                                         </select>
                                     </div>
                                 </div>
                             </div>
                             <div style="margin-bottom: 16px; padding: 12px; background: ${presetBoxBackground}; border-radius: 6px; border-left: 3px solid ${toggleAccentColor};">
                                 <label style="display: flex; align-items: center; gap: 12px; cursor: pointer;">
-                                    <input type="checkbox" id="showFileSizesToggle" ${JC.currentSettings!.showFileSizes ? 'checked' : ''} style="width:18px; height:18px; accent-color:${toggleAccentColor}; cursor:pointer;">
+                                    <input type="checkbox" id="showFileSizesToggle" ${settings.showFileSizes ? 'checked' : ''} style="width:18px; height:18px; accent-color:${toggleAccentColor}; cursor:pointer;">
                                     <div><div style="font-weight:500;">${JC.t!('panel_settings_ui_file_sizes')}</div><div style="font-size:12px; color:rgba(255,255,255,0.6); margin-top:2px;">${JC.t!('panel_settings_ui_file_sizes_desc')}</div></div>
                                 </label>
                             </div>
                             <div style="margin-bottom: 16px; padding: 12px; background: ${presetBoxBackground}; border-radius: 6px; border-left: 3px solid ${toggleAccentColor};">
                                 <label style="display: flex; align-items: center; gap: 12px; cursor: pointer;">
-                                    <input type="checkbox" id="showAudioLanguagesToggle" ${JC.currentSettings!.showAudioLanguages ? 'checked' : ''} style="width:18px; height:18px; accent-color:${toggleAccentColor}; cursor:pointer;">
+                                    <input type="checkbox" id="showAudioLanguagesToggle" ${settings.showAudioLanguages ? 'checked' : ''} style="width:18px; height:18px; accent-color:${toggleAccentColor}; cursor:pointer;">
                                     <div><div style="font-weight:500;">${JC.t!('panel_settings_ui_audio_languages')}</div><div style="font-size:12px; color:rgba(255,255,255,0.6); margin-top:2px;">${JC.t!('panel_settings_ui_audio_languages_desc')}</div></div>
                                 </label>
                             </div>
                             <div style="margin-bottom: 16px; padding: 12px; background: ${presetBoxBackground}; border-radius: 6px; border-left: 3px solid ${toggleAccentColor};">
                                 <label style="display: flex; align-items: center; justify-content: space-between; cursor: pointer;">
                                     <div style="display: flex; align-items: center; gap: 12px;">
-                                        <input type="checkbox" id="qualityTagsToggle" ${JC.currentSettings!.qualityTagsEnabled ? 'checked' : ''} style="width:18px; height:18px; accent-color:${toggleAccentColor}; cursor:pointer;">
+                                        <input type="checkbox" id="qualityTagsToggle" ${settings.qualityTagsEnabled ? 'checked' : ''} style="width:18px; height:18px; accent-color:${toggleAccentColor}; cursor:pointer;">
                                         <div><div style="font-weight:500;">${JC.t!('panel_settings_ui_quality_tags')}</div><div style="font-size:12px; color:rgba(255,255,255,0.6); margin-top:2px;">${JC.t!('panel_settings_ui_quality_tags_desc')}</div></div>
                                     </div>
                                     <div class="position-selector" data-setting="qualityTagsPosition" style="display:grid; grid-template-columns:1fr 1fr; grid-template-rows:1fr 1fr; gap:2px; width:32px; height:32px; border:1px solid rgba(255,255,255,0.3); border-radius:4px; padding:3px; cursor:pointer; flex-shrink:0;" title="Click to change position">
@@ -327,7 +347,7 @@ export function buildPanelHtml(ctx: PanelContext): string {
                                         <div data-pos="bottom-right" style="border-radius:2px; transition:background 0.2s;"></div>
                                     </div>
                                 </label>
-                                <div id="qualityTagsSubWrap" class="jc-quality-cat-wrap" style="display: ${JC.currentSettings!.qualityTagsEnabled ? 'block' : 'none'};">
+                                <div id="qualityTagsSubWrap" class="jc-quality-cat-wrap" style="display: ${settings.qualityTagsEnabled ? 'block' : 'none'};">
                                     <button type="button" id="qualityTagsSubToggleExpander" class="jc-quality-cat-expander" aria-expanded="false">
                                         <span class="material-icons jc-cat-chevron" aria-hidden="true">chevron_right</span>
                                         <span>${JC.t!('panel_settings_ui_quality_tags_categories_label')}</span>
@@ -347,13 +367,13 @@ export function buildPanelHtml(ctx: PanelContext): string {
                                         // so the panel reflects what's actually rendering, even when the user has
                                         // never customized and inherits the admin value.
                                         const effEnable = (c: any) => {
-                                            const u = (JC.currentSettings as any)[c.settingKey];
+                                            const u = settings[c.settingKey];
                                             if (typeof u === 'boolean') return u;
                                             const a = JC.pluginConfig?.[c.pluginKey];
                                             return typeof a === 'boolean' ? a : true;
                                         };
                                         const effOrder = (c: any) => {
-                                            const u = (JC.currentSettings as any)[c.orderKey];
+                                            const u = settings[c.orderKey];
                                             if (Number.isFinite(u)) return u;
                                             const a = JC.pluginConfig?.[c.orderPluginKey];
                                             return Number.isFinite(a) ? a : c.defaultOrder;
@@ -385,7 +405,7 @@ export function buildPanelHtml(ctx: PanelContext): string {
                             <div style="margin-bottom: 16px; padding: 12px; background: ${presetBoxBackground}; border-radius: 6px; border-left: 3px solid ${toggleAccentColor};">
                                 <label style="display: flex; align-items: center; justify-content: space-between; cursor: pointer;">
                                     <div style="display: flex; align-items: center; gap: 12px;">
-                                        <input type="checkbox" id="genreTagsToggle" ${JC.currentSettings!.genreTagsEnabled ? 'checked' : ''} style="width:18px; height:18px; accent-color:${toggleAccentColor}; cursor:pointer;">
+                                        <input type="checkbox" id="genreTagsToggle" ${settings.genreTagsEnabled ? 'checked' : ''} style="width:18px; height:18px; accent-color:${toggleAccentColor}; cursor:pointer;">
                                         <div><div style="font-weight:500;">${JC.t!('panel_settings_ui_genre_tags')}</div><div style="font-size:12px; color:rgba(255,255,255,0.6); margin-top:2px;">${JC.t!('panel_settings_ui_genre_tags_desc')}</div></div>
                                     </div>
                                     <div class="position-selector" data-setting="genreTagsPosition" style="display:grid; grid-template-columns:1fr 1fr; grid-template-rows:1fr 1fr; gap:2px; width:32px; height:32px; border:1px solid rgba(255,255,255,0.3); border-radius:4px; padding:3px; cursor:pointer; flex-shrink:0;" title="Click to change position">
@@ -399,7 +419,7 @@ export function buildPanelHtml(ctx: PanelContext): string {
                             <div style="margin-bottom: 16px; padding: 12px; background: ${presetBoxBackground}; border-radius: 6px; border-left: 3px solid ${toggleAccentColor};">
                                 <label style="display: flex; align-items: center; justify-content: space-between; cursor: pointer;">
                                     <div style="display: flex; align-items: center; gap: 12px;">
-                                        <input type="checkbox" id="languageTagsToggle" ${JC.currentSettings!.languageTagsEnabled ? 'checked' : ''} style="width:18px; height:18px; accent-color:${toggleAccentColor}; cursor:pointer;">
+                                        <input type="checkbox" id="languageTagsToggle" ${settings.languageTagsEnabled ? 'checked' : ''} style="width:18px; height:18px; accent-color:${toggleAccentColor}; cursor:pointer;">
                                         <div><div style="font-weight:500;">${JC.t!('panel_settings_ui_language_tags')}</div><div style="font-size:12px; color:rgba(255,255,255,0.6); margin-top:2px;">${JC.t!('panel_settings_ui_language_tags_desc')}</div></div>
                                     </div>
                                     <div class="position-selector" data-setting="languageTagsPosition" style="display:grid; grid-template-columns:1fr 1fr; grid-template-rows:1fr 1fr; gap:2px; width:32px; height:32px; border:1px solid rgba(255,255,255,0.3); border-radius:4px; padding:3px; cursor:pointer; flex-shrink:0;" title="Click to change position">
@@ -413,7 +433,7 @@ export function buildPanelHtml(ctx: PanelContext): string {
                                 <div style="margin-bottom: 16px; padding: 12px; background: ${presetBoxBackground}; border-radius: 6px; border-left: 3px solid ${toggleAccentColor};">
                                     <label style="display: flex; align-items: center; justify-content: space-between; cursor: pointer;">
                                         <div style="display: flex; align-items: center; gap: 12px;">
-                                            <input type="checkbox" id="ratingTagsToggle" ${JC.currentSettings!.ratingTagsEnabled ? 'checked' : ''} style="width:18px; height:18px; accent-color:${toggleAccentColor}; cursor:pointer;">
+                                            <input type="checkbox" id="ratingTagsToggle" ${settings.ratingTagsEnabled ? 'checked' : ''} style="width:18px; height:18px; accent-color:${toggleAccentColor}; cursor:pointer;">
                                             <div><div style="font-weight:500;">${JC.t!('panel_settings_ui_rating_tags')}</div><div style="font-size:12px; color:rgba(255,255,255,0.6); margin-top:2px;">${JC.t!('panel_settings_ui_rating_tags_desc')}</div></div>
                                         </div>
                                         <div class="position-selector" data-setting="ratingTagsPosition" style="display:grid; grid-template-columns:1fr 1fr; grid-template-rows:1fr 1fr; gap:2px; width:32px; height:32px; border:1px solid rgba(255,255,255,0.3); border-radius:4px; padding:3px; cursor:pointer; flex-shrink:0;" title="Click to change position">
@@ -426,39 +446,48 @@ export function buildPanelHtml(ctx: PanelContext): string {
                                 </div>
                             <div style="margin-bottom: 16px; padding: 12px; background: ${presetBoxBackground}; border-radius: 6px; border-left: 3px solid ${toggleAccentColor};">
                                 <label style="display: flex; align-items: center; gap: 12px; cursor: pointer;">
-                                    <input type="checkbox" id="peopleTagsToggle" ${JC.currentSettings!.peopleTagsEnabled ? 'checked' : ''} style="width:18px; height:18px; accent-color:${toggleAccentColor}; cursor:pointer;">
+                                    <input type="checkbox" id="peopleTagsToggle" ${settings.peopleTagsEnabled ? 'checked' : ''} style="width:18px; height:18px; accent-color:${toggleAccentColor}; cursor:pointer;">
                                     <div><div style="font-weight:500;">${JC.t!('panel_settings_ui_people_tags')}</div><div style="font-size:12px; color:rgba(255,255,255,0.6); margin-top:2px;">${JC.t!('panel_settings_ui_people_tags_desc')}</div></div>
                                 </label>
                             </div>
                             <div style="margin-bottom: 16px; padding: 12px; background: ${presetBoxBackground}; border-radius: 6px; border-left: 3px solid ${toggleAccentColor};">
                                 <label style="display: flex; align-items: center; gap: 12px; cursor: pointer;">
-                                    <input type="checkbox" id="tagsHideOnHoverToggle" ${JC.currentSettings!.tagsHideOnHover ? 'checked' : ''} style="width:18px; height:18px; accent-color:${toggleAccentColor}; cursor:pointer;">
+                                    <input type="checkbox" id="tagsHideOnHoverToggle" ${settings.tagsHideOnHover ? 'checked' : ''} style="width:18px; height:18px; accent-color:${toggleAccentColor}; cursor:pointer;">
                                     <div><div style="font-weight:500;">${JC.t!('panel_settings_ui_hide_tags_on_hover')}</div><div style="font-size:12px; color:rgba(255,255,255,0.6); margin-top:2px;">${JC.t!('panel_settings_ui_hide_tags_on_hover_desc')}</div></div>
                                 </label>
                             </div>
                             <div style="margin-bottom: 16px; padding: 12px; background: ${presetBoxBackground}; border-radius: 6px; border-left: 3px solid ${toggleAccentColor};">
                                 <label style="display: flex; align-items: center; gap: 12px; cursor: pointer;">
-                                    <input type="checkbox" id="removeContinueWatchingToggle" ${JC.currentSettings!.removeContinueWatchingEnabled ? 'checked' : ''} style="width:18px; height:18px; accent-color:${toggleAccentColor}; cursor:pointer;">
+                                    <input type="checkbox" id="removeContinueWatchingToggle" ${settings.removeContinueWatchingEnabled ? 'checked' : ''} style="width:18px; height:18px; accent-color:${toggleAccentColor}; cursor:pointer;">
                                     <div><div style="font-weight:500;">${JC.t!('panel_settings_ui_remove_continue_watching')}</div><div style="font-size:12px; color:rgba(255,255,255,0.6); margin-top:2px;">${JC.t!('panel_settings_ui_remove_continue_watching_desc')}</div></div>
                                 </label>
                             </div>
                             <div style="padding: 12px; background: ${presetBoxBackground}; border-radius: 6px; border-left: 3px solid ${toggleAccentColor};">
                                 <label style="display: flex; align-items: center; gap: 12px; cursor: pointer;">
-                                    <input type="checkbox" id="hideFavoritesTabToggle" ${JC.currentSettings!.hideFavoritesTab ? 'checked' : ''} style="width:18px; height:18px; accent-color:${toggleAccentColor}; cursor:pointer;">
+                                    <input type="checkbox" id="hideFavoritesTabToggle" ${settings.hideFavoritesTab ? 'checked' : ''} style="width:18px; height:18px; accent-color:${toggleAccentColor}; cursor:pointer;">
                                     <div><div style="font-weight:500;">${JC.t!('panel_settings_ui_hide_favorites_tab')}</div><div style="font-size:12px; color:rgba(255,255,255,0.6); margin-top:2px;">${JC.t!('panel_settings_ui_hide_favorites_tab_desc')}</div></div>
                                 </label>
                             </div>
                             ${JC.pluginConfig.AnimeFillerWarningsEnabled === true ? `
                             <div style="margin-top: 16px; padding: 12px; background: ${presetBoxBackground}; border-radius: 6px; border-left: 3px solid ${toggleAccentColor};">
                                 <label style="display: flex; align-items: center; gap: 12px; cursor: pointer;">
-                                    <input type="checkbox" id="animeFillerWarningsToggle" ${JC.currentSettings!.animeFillerWarningsEnabled !== false ? 'checked' : ''} style="width:18px; height:18px; accent-color:${toggleAccentColor}; cursor:pointer;">
+                                    <input type="checkbox" id="animeFillerWarningsToggle" ${settings.animeFillerWarningsEnabled !== false ? 'checked' : ''} style="width:18px; height:18px; accent-color:${toggleAccentColor}; cursor:pointer;">
                                     <div><div style="font-weight:500;">${JC.t!('anime_filler_setting')}</div><div style="font-size:12px; color:rgba(255,255,255,0.6); margin-top:2px;">${JC.t!('anime_filler_setting_desc')}</div></div>
                                 </label>
                             </div>` : ''}
                         </div>
                     </section>
                     ${/* Hidden Content settings — only rendered when the module is initialized (controlled by HiddenContentEnabled config) */ ''}
-                    ${(JC as any).hiddenContent ? `<section class="jc-pane" data-pane="hidden-content">
+                    ${ctx.editor.mode === 'admin-target' ? `
+                    <section class="jc-pane" data-pane="hidden-content">
+                        <h3 class="jc-pane-title">${JC.icon!(JC.IconName!.EYE)} ${JC.t!('hidden_content_settings_title')}</h3>
+                        <div style="padding:12px; background:${presetBoxBackground}; border-radius:6px; border-left:3px solid ${toggleAccentColor}; color:rgba(255,255,255,0.72);">
+                            ${escapeHtml(tWithFallback(
+                                'panel_admin_target_hidden_content_unavailable',
+                                'Hidden Content controls are unavailable while editing another user. Sign in as that user to manage them.',
+                            ))}
+                        </div>
+                    </section>` : (JC as any).hiddenContent ? `<section class="jc-pane" data-pane="hidden-content">
                         <h3 class="jc-pane-title">${JC.icon!(JC.IconName!.EYE)} ${JC.t!('hidden_content_settings_title')}</h3>
                         <div style="padding: 0 16px 16px 16px;">
                             <div style="margin-bottom: 12px; padding: 12px; background: ${presetBoxBackground}; border-radius: 6px; border-left: 3px solid ${toggleAccentColor};">
@@ -580,7 +609,16 @@ export function buildPanelHtml(ctx: PanelContext): string {
                         </div>
                     </section>` : ''}
                     ${/* Spoiler Guard user-side override panel — only rendered when the admin master switch is on. */ ''}
-                    ${JC.pluginConfig?.SpoilerBlurEnabled === true && JC.spoilerGuard ? (() => {
+                    ${ctx.editor.mode === 'admin-target' ? `
+                    <section class="jc-pane" data-pane="spoiler-guard">
+                        <h3 class="jc-pane-title">${JC.icon!(JC.IconName!.MASK)} ${JC.t!('panel_settings_spoiler_guard')}</h3>
+                        <div style="padding:12px; background:${presetBoxBackground}; border-radius:6px; border-left:3px solid ${toggleAccentColor}; color:rgba(255,255,255,0.72);">
+                            ${escapeHtml(tWithFallback(
+                                'panel_admin_target_spoiler_guard_unavailable',
+                                'Spoiler Guard controls are unavailable while editing another user. Sign in as that user to manage them.',
+                            ))}
+                        </div>
+                    </section>` : JC.pluginConfig?.SpoilerBlurEnabled === true && JC.spoilerGuard ? (() => {
                         const sbPrefs = JC.spoilerGuard.getUserPrefs ? JC.spoilerGuard.getUserPrefs() : {};
                         // Each row only renders when the admin has the underlying
                         // strip enabled — a user can't opt out of a category the
@@ -644,12 +682,19 @@ export function buildPanelHtml(ctx: PanelContext): string {
                                 </select>
                                 <div style="font-size:12px; color:rgba(255,255,255,0.6); margin-top:8px;">${JC.t!('panel_settings_language_display_desc')}</div>
                             </div>
+                            ${ctx.editor.mode === 'admin-target' ? `
+                            <div style="padding:12px; background:${presetBoxBackground}; border-radius:6px; border-left:3px solid ${toggleAccentColor}; color:rgba(255,255,255,0.72);">
+                                ${escapeHtml(tWithFallback(
+                                    'panel_admin_target_translation_cache_unavailable',
+                                    'Translation cache controls apply to this browser and cannot be edited for another user.',
+                                ))}
+                            </div>` : `
                             <div style="padding: 12px; background: ${presetBoxBackground}; border-radius: 6px; border-left: 3px solid ${toggleAccentColor};">
                                 <button id="clearTranslationCacheButton" style="width: 100%; padding: 12px; background: ${toggleAccentColor}; color: white; border: none; border-radius: 6px; font-size: 14px; font-weight: 600; cursor: pointer; font-family: inherit; transition: opacity 0.2s;" onmouseover="this.style.opacity='0.8'" onmouseout="this.style.opacity='1'">
                                     ${JC.t!('panel_settings_language_clear_cache')}
                                 </button>
                                 <div style="font-size:12px; color:rgba(255,255,255,0.6); margin-top:8px;">${JC.t!('panel_settings_language_clear_cache_desc')}</div>
-                            </div>
+                            </div>`}
                         </div>
                     </section>
                     <section class="jc-pane" data-pane="about">

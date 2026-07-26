@@ -24,6 +24,7 @@ describe('JC.addUserPreferencesLink', () => {
     beforeEach(() => {
         document.body.innerHTML = '';
         resetViewRootTrackingForTests();
+        history.replaceState({}, '', '/web/#/mypreferencesmenu.html');
     });
 
     afterEach(() => {
@@ -54,6 +55,8 @@ describe('JC.addUserPreferencesLink', () => {
         const links = document.querySelectorAll('#jellyfinCanopyUserPrefsLink');
         expect(links.length).toBe(1);
         expect(links[0].closest('.verticalSection')).not.toBeNull();
+        expect(links[0].querySelector('.listItemBodyText')?.textContent)
+            .toBe('Canopy User Settings');
     });
 
     it('does not add the link into a hidden (cached) preferences page', () => {
@@ -85,7 +88,7 @@ describe('JC.addUserPreferencesLink', () => {
         // Simulate the legacy viewManager re-showing the cached page (class
         // flip, no structural mutation) followed by the nav dispatch.
         page.classList.remove('hide');
-        history.pushState({}, '', '/test-prefs-link-reshow');
+        history.pushState({}, '', '/web/#/mypreferencesmenu.html?instance=reshown');
 
         expect(document.getElementById('jellyfinCanopyUserPrefsLink')).not.toBeNull();
     });

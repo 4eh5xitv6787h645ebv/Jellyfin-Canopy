@@ -8,10 +8,18 @@
 import { JC } from '../../globals';
 import { createStableMethodFacade } from '../../core/feature-loader';
 import { onBodyMutation } from '../../core/dom-observer';
-import { onNavigate, onViewPage } from '../../core/navigation';
-import { queryElementsById, resolveCurrentViewRoot } from '../../core/view-root';
+import {
+    onNavigate,
+    onViewBeforeShow,
+    onViewPage,
+} from '../../core/navigation';
+import {
+    queryElementsById,
+    resolveCurrentViewRoot,
+} from '../../core/view-root';
 import { getSidebarContainer } from '../helpers';
 import { ensureCanopySection, insertSectionEntry } from '../pages/entry-points';
+import type { SettingsPanelLaunchContext } from './launch-context';
 import { injectGlobalStyles, resetGlobalStyles } from './styles';
 
 let menuButtonHandle: { disconnect(): void } | null = null;
@@ -20,17 +28,22 @@ let panelModule: typeof import('./panel') | null = null;
 let panelPromise: Promise<typeof import('./panel')> | null = null;
 let launcherGeneration = 0;
 
+function retirePanel(): void {
+    launcherGeneration++;
+    panelModule?.resetSettingsPanel();
+}
+
 /**
  * Helper function to determine if the current page is the video player.
  * @returns {boolean} True if the current page is the video player.
  */
-export const isVideoPage = (): boolean => window.location.hash.startsWith('#/video');
+export const isVideoPage = (): boolean => location.hash.indexOf('#/video') === 0;
 
 /**
  * Helper function to determine if the current page is an item details page.
  * @returns {boolean} True if on an item details page.
  */
-export const isDetailsPage = (): boolean => window.location.hash.includes('/details?id=');
+export const isDetailsPage = (): boolean => location.hash.indexOf('/details?id=') >= 0;
 
 // JC.toast moved to js/core/ui-kit.js (JC.core.ui.toast); the JC.toast
 // alias is assigned there. Callers are unchanged.
@@ -39,46 +52,30 @@ export const isDetailsPage = (): boolean => window.location.hash.includes('/deta
  * Adds the "Jellyfin Canopy" menu button to the sidebar.
  */
 export function addPluginMenuButton(): void {
-    const addMenuButton = (sidebar: HTMLElement) => {
+    const ensureMenuButton = (): void => {
+        const sidebar = getSidebarContainer();
+        if (!sidebar) return;
         // pages/entry-points.ts is the single owner of the drawer section;
         // the panel link registers through it, pinned after the page entries.
         const jellyfinCanopySection = ensureCanopySection(sidebar);
-
-        if (!jellyfinCanopySection.querySelector('#jellyfinCanopySettingsLink')) {
-            const jellyfinCanopyLink = document.createElement('a');
-            jellyfinCanopyLink.setAttribute('is', 'emby-linkbutton');
-            jellyfinCanopyLink.className = 'lnkMediaFolder navMenuOption emby-button';
-            jellyfinCanopyLink.href = '#';
-            jellyfinCanopyLink.id = 'jellyfinCanopySettingsLink';
-            jellyfinCanopyLink.innerHTML = `
+        if (jellyfinCanopySection.querySelector('#jellyfinCanopySettingsLink')) return;
+        const jellyfinCanopyLink = document.createElement('a');
+        jellyfinCanopyLink.setAttribute('is', 'emby-linkbutton');
+        jellyfinCanopyLink.className = 'lnkMediaFolder navMenuOption emby-button';
+        jellyfinCanopyLink.href = '#';
+        jellyfinCanopyLink.id = 'jellyfinCanopySettingsLink';
+        jellyfinCanopyLink.innerHTML = `
                     <span class="material-icons navMenuOptionIcon" aria-hidden="true">tune</span>
-                    <span class="sectionName navMenuOptionText">Enhanced Panel</span>
+                    <span class="sectionName navMenuOptionText">Canopy User Settings</span>
                 `;
-
-            jellyfinCanopyLink.addEventListener('click', (e) => {
-                e.preventDefault();
-                void JC.showEnhancedPanel!();
-            });
-
-            insertSectionEntry(jellyfinCanopySection, jellyfinCanopyLink, true);
-        }
-    };
-
-    const ensureMenuButton = (): void => {
-        // getSidebarContainer() falls back to the new MUI drawer (mobile only)
-        // when the legacy sidebar is hidden under Jellyfin 12's experimental
-        // layout. Every other module that looks for `.jellyfinCanopySection`
-        // queries it unscoped, so creating it here - wherever it ends up - is
-        // the only choke point that needs to know about the new drawer.
-        const sidebar = getSidebarContainer();
-        if (sidebar && !sidebar.querySelector('#jellyfinCanopySettingsLink')) {
-            addMenuButton(sidebar);
-        }
+        jellyfinCanopyLink.addEventListener('click', (e) => {
+            e.preventDefault();
+            void JC.showEnhancedPanel!();
+        });
+        insertSectionEntry(jellyfinCanopySection, jellyfinCanopyLink, true);
     };
     ensureMenuButton();
-    if (!menuButtonHandle) {
-        menuButtonHandle = onBodyMutation('ui-menu-button', ensureMenuButton);
-    }
+    menuButtonHandle ??= onBodyMutation('ui-menu-button', ensureMenuButton);
 }
 
 /**
@@ -95,7 +92,7 @@ export function addOsdSettingsButton(): void {
     enhancedSettingsBtn.id = 'enhancedSettingsBtn';
     enhancedSettingsBtn.setAttribute('is', 'paper-icon-button-light');
     enhancedSettingsBtn.className = 'autoSize paper-icon-button-light';
-    enhancedSettingsBtn.title = 'Jellyfin Canopy';
+    enhancedSettingsBtn.title = 'Canopy User Settings';
     enhancedSettingsBtn.innerHTML = '<span class="largePaperIconButton material-icons" aria-hidden="true">tune</span>';
 
     enhancedSettingsBtn.onclick = (e) => {
@@ -114,7 +111,7 @@ let prefsLinkNavHooksWired = false;
  * Adds the preferences-menu link when the preferences page is visible.
  * Cheap non-layout probes (getElementById + classList) make this safe to call
  * on every structural mutation batch and navigation event.
- * @returns True when the link exists (or was just added).
+ * @returns True when the current preferences root owns or awaits the link.
  */
 function addPrefsLinkIfOnPage(): boolean {
     const current = resolveCurrentViewRoot('myPreferencesMenuPage');
@@ -122,7 +119,7 @@ function addPrefsLinkIfOnPage(): boolean {
     const page = current.root;
 
     const menuContainer = page.querySelector('.verticalSection');
-    if (!menuContainer) return false;
+    if (!menuContainer) return true;
 
     // Cached native views can retain the same page/link ids. Ownership follows
     // the current view root: remove stale/duplicate copies, then gate only on a
@@ -139,30 +136,36 @@ function addPrefsLinkIfOnPage(): boolean {
     const enhancedLink = document.createElement('a');
     enhancedLink.id = 'jellyfinCanopyUserPrefsLink';
     enhancedLink.setAttribute('is', 'emby-linkbutton');
-    enhancedLink.setAttribute('data-ripple', 'false');
+    enhancedLink.dataset.ripple = 'false';
     enhancedLink.href = '#';
     enhancedLink.className = 'listItem-border emby-button';
-    enhancedLink.style.display = 'block';
-    enhancedLink.style.padding = '0';
-    enhancedLink.style.margin = '0';
+    enhancedLink.style.cssText = 'display:block;padding:0;margin:0';
 
     enhancedLink.innerHTML = `
             <div class="listItem">
                 <span class="material-icons listItemIcon listItemIcon-transparent tune" aria-hidden="true"></span>
                 <div class="listItemBody">
-                    <div class="listItemBodyText">Advanced Settings (Jellyfin Canopy)</div>
+                    <div class="listItemBodyText">Canopy User Settings</div>
                 </div>
             </div>
         `;
 
     enhancedLink.addEventListener('click', (e) => {
         e.preventDefault();
-        void JC.showEnhancedPanel!();
+        void openEnhancedPanel(page);
     });
 
     // Insert at the end of the first vertical section
     menuContainer.appendChild(enhancedLink);
     return true;
+}
+
+function reconcilePreferencesView(): void {
+    // A same-URL replacement of the native preferences root invalidates the
+    // click-time target/view lease even when Jellyfin emits no history event.
+    // An unrelated late Home lifecycle returns false and cannot cancel an
+    // immediate panel open while its lazy chunk is still loading.
+    if (addPrefsLinkIfOnPage()) retirePanel();
 }
 
 /**
@@ -180,8 +183,9 @@ export function addUserPreferencesLink(): void {
         // (no structural mutation for the body observer to see); onNavigate
         // covers the modern router where viewshow never fires.
         prefsLinkNavCleanups = [
-            onNavigate(() => { addPrefsLinkIfOnPage(); }),
-            onViewPage(() => { addPrefsLinkIfOnPage(); }),
+            onNavigate(addPrefsLinkIfOnPage),
+            onViewPage(reconcilePreferencesView),
+            onViewBeforeShow(reconcilePreferencesView),
         ];
     }
 
@@ -201,31 +205,40 @@ async function loadPanel(): Promise<typeof import('./panel')> {
 }
 
 /** Load the large settings panel graph only after an explicit user gesture. */
-export async function openEnhancedPanel(): Promise<void> {
+export async function openEnhancedPanel(
+    preferencesRoot?: HTMLElement,
+): Promise<void> {
     const context = JC.identity.capture();
     if (!context) return;
+    if (preferencesRoot
+        && resolveCurrentViewRoot('myPreferencesMenuPage')?.root !== preferencesRoot) return;
+    const launchContext: SettingsPanelLaunchContext | null = preferencesRoot
+        ? {
+            actor: context,
+            url: location.href,
+        }
+        : null;
     const generation = launcherGeneration;
     try {
         const module = await loadPanel();
         if (generation !== launcherGeneration || !JC.identity.isCurrent(context)) return;
-        await module.showEnhancedPanel();
+        await module.showEnhancedPanel(launchContext);
     } catch (error) {
         if (generation === launcherGeneration && JC.identity.isCurrent(context)) {
-            console.warn('🪼 Jellyfin Canopy: Could not load the Enhanced Panel:', error);
+            console.warn(error);
         }
     }
 }
 
 export function resetSettingsLauncher(): void {
-    launcherGeneration += 1;
+    retirePanel();
     menuButtonHandle?.disconnect();
     menuButtonHandle = null;
     prefsLinkNavCleanups.forEach((cleanup) => cleanup());
     prefsLinkNavCleanups = [];
     prefsLinkNavHooksWired = false;
-    panelModule?.resetSettingsPanel();
     document.getElementById('jellyfinCanopySettingsLink')?.remove();
-    document.getElementById('jellyfinCanopyUserPrefsLink')?.remove();
+    queryElementsById('jellyfinCanopyUserPrefsLink').forEach((link) => link.remove());
     document.getElementById('enhancedSettingsBtn')?.remove();
     resetGlobalStyles();
 }
@@ -264,10 +277,7 @@ export function installSettingsLauncher(): () => void {
     // Retire both a pending dynamic import/settings refresh and an active panel
     // on same-identity SPA navigation. This subscription is activation-owned,
     // so importing the lazy panel graph remains side-effect free.
-    const unregisterNavigation = onNavigate(() => {
-        launcherGeneration += 1;
-        panelModule?.resetSettingsPanel();
-    });
+    const unregisterNavigation = onNavigate(retirePanel);
     let disposed = false;
     return () => {
         if (disposed) return;

@@ -9,10 +9,13 @@ import { JC } from '../../globals';
 import { escapeHtml, toast } from '../../core/ui-kit';
 import { showReleaseNotesNotification } from './release-notes';
 import type { PanelContext } from './panel';
+import {
+    AdminTargetPersistenceError,
+    createSelfPanelEditorContext,
+    type PanelEditorContext,
+} from './editor-context';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-
-let reconcileInFlight: Promise<void> | null = null;
 
 function reapplyAcknowledgedSideEffects(): void {
     for (const name of [
@@ -31,40 +34,61 @@ function reapplyAcknowledgedSideEffects(): void {
     }
 }
 
-/** Rebuild the open panel from the rolled-back snapshot and undo optimistic page effects. */
-function reconcileSettingsPanelAfterFailure(): Promise<void> {
-    if (reconcileInFlight) return reconcileInFlight;
-    const context = JC.identity.capture();
-    const panel = document.getElementById('jellyfin-canopy-panel');
-    if (!context || !panel || typeof JC.showEnhancedPanel !== 'function') return Promise.resolve();
+let legacyReconcileInFlight: Promise<void> | null = null;
 
-    reconcileInFlight = (async () => {
+async function reconcileAfterFailure(ctx: PanelContext, editor: PanelEditorContext): Promise<void> {
+    if (typeof ctx.reconcileAfterSaveFailure === 'function') {
+        await ctx.reconcileAfterSaveFailure();
+        return;
+    }
+    if (legacyReconcileInFlight) {
+        await legacyReconcileInFlight;
+        return;
+    }
+    const panel = document.getElementById('jellyfin-canopy-panel');
+    if (!panel || typeof JC.showEnhancedPanel !== 'function') return;
+    legacyReconcileInFlight = (async () => {
         try {
-            // showEnhancedPanel is a toggle. The first call refreshes and closes
-            // the stale optimistic controls; the second builds them again from
-            // the authoritative snapshot restored by the persistence queue.
             await JC.showEnhancedPanel!();
-            if (!JC.identity.isCurrent(context)) return;
+            if (!editor.isCurrent()) return;
             await JC.showEnhancedPanel!();
-            if (!JC.identity.isCurrent(context)) return;
         } finally {
-            reconcileInFlight = null;
+            legacyReconcileInFlight = null;
         }
     })();
-    return reconcileInFlight;
+    await legacyReconcileInFlight;
 }
 
-function persistSettings(): Promise<boolean> {
-    const context = JC.identity.capture();
-    return Promise.resolve(JC.saveUserSettings!('settings.json', JC.currentSettings)).then(
+/** Persist through the editor that owns this panel; target failures rebuild only target-local UI. */
+function persistEditorSettings(ctx: PanelContext, editor: PanelEditorContext): Promise<boolean> {
+    return Promise.resolve(editor.saveSettings()).then(
         () => true,
-        async () => {
-            await reconcileSettingsPanelAfterFailure();
-            // Persistence restores JC.currentSettings before rejecting. Reapply
-            // optimistic page effects even when the user already closed the
-            // panel, because panel rebuilding is optional UI reconciliation.
-            // A stale panel save must not mutate the next active identity's UI.
-            if (!context || JC.identity.isCurrent(context)) reapplyAcknowledgedSideEffects();
+        async (error: unknown) => {
+            const classified = error instanceof AdminTargetPersistenceError ? error : null;
+            if (classified?.kind === 'cancelled' || !editor.isCurrent()) {
+                if (editor.appliesToActor && JC.identity.isCurrent(editor.actor)) {
+                    reapplyAcknowledgedSideEffects();
+                }
+                return false;
+            }
+            if (editor.mode === 'admin-target') {
+                const key = classified?.kind === 'authorization'
+                    ? 'panel_admin_target_unauthorized'
+                    : classified?.kind === 'conflict'
+                        ? 'panel_admin_target_conflict_error'
+                        : 'panel_admin_target_save_error';
+                const fallback = classified?.kind === 'conflict'
+                    ? 'These settings changed elsewhere. Reload and try again.'
+                    : classified?.kind === 'authorization'
+                        ? 'You are not authorized to edit this user’s Canopy settings.'
+                        : 'Could not save this user’s Canopy settings.';
+                const translated = JC.t?.(key);
+                toast(!translated || translated === key ? fallback : translated);
+            }
+            await reconcileAfterFailure(ctx, editor);
+            if (editor.appliesToActor && JC.identity.isCurrent(editor.actor)) {
+                reapplyAcknowledgedSideEffects();
+            }
             return false;
         }
     );
@@ -77,15 +101,20 @@ function persistSettings(): Promise<boolean> {
  */
 export function wireSettingsListeners(ctx: PanelContext): void {
     const { createToast, resetAutoCloseTimer, identityContext, registerCleanup } = ctx;
+    const editor = ctx.editor || createSelfPanelEditorContext(identityContext || JC.identity.capture()!);
+    const settings = editor.settings as Record<string, any>;
+    const appliesToActor = editor.appliesToActor;
+    const persistSettings = () => persistEditorSettings(ctx, editor);
 
     const addSettingToggleListener = (id: string, settingKey: string, featureKey: string, requiresRefresh = false) => {
         document.getElementById(id)!.addEventListener('change', (e) => {
-            (JC.currentSettings as any)[settingKey] = (e.target as HTMLInputElement).checked;
+            settings[settingKey] = (e.target as HTMLInputElement).checked;
             const save = persistSettings();
             let toastMessage = createToast!(featureKey, (e.target as HTMLInputElement).checked);
 
-            // Handle tag features with dynamic re-initialization
-            if (id === 'qualityTagsToggle') {
+            // Runtime/page side effects belong only to the acting user's own
+            // editor. Target edits remain server-side until that user loads them.
+            if (appliesToActor && id === 'qualityTagsToggle') {
                 if ((e.target as HTMLInputElement).checked) {
                     // Initialize for the first time if enabling
                     if (typeof (JC as any).initializeQualityTags === 'function') {
@@ -96,7 +125,7 @@ export function wireSettingsListeners(ctx: PanelContext): void {
                     document.querySelectorAll('.quality-overlay-container').forEach(el => el.remove());
                 }
                 requiresRefresh = false; // No longer needs refresh
-            } else if (id === 'genreTagsToggle') {
+            } else if (appliesToActor && id === 'genreTagsToggle') {
                 if ((e.target as HTMLInputElement).checked) {
                     if (typeof (JC as any).initializeGenreTags === 'function') {
                         (JC as any).initializeGenreTags();
@@ -105,7 +134,7 @@ export function wireSettingsListeners(ctx: PanelContext): void {
                     document.querySelectorAll('.genre-overlay-container').forEach(el => el.remove());
                 }
                 requiresRefresh = false;
-            } else if (id === 'languageTagsToggle') {
+            } else if (appliesToActor && id === 'languageTagsToggle') {
                 if ((e.target as HTMLInputElement).checked) {
                     if (typeof (JC as any).initializeLanguageTags === 'function') {
                         (JC as any).initializeLanguageTags();
@@ -114,7 +143,7 @@ export function wireSettingsListeners(ctx: PanelContext): void {
                     document.querySelectorAll('.language-overlay-container').forEach(el => el.remove());
                 }
                 requiresRefresh = false;
-            } else if (id === 'ratingTagsToggle') {
+            } else if (appliesToActor && id === 'ratingTagsToggle') {
                 if ((e.target as HTMLInputElement).checked) {
                     if (typeof (JC as any).initializeRatingTags === 'function') {
                         (JC as any).initializeRatingTags();
@@ -123,7 +152,7 @@ export function wireSettingsListeners(ctx: PanelContext): void {
                     document.querySelectorAll('.rating-overlay-container').forEach(el => el.remove());
                 }
                 requiresRefresh = false;
-            } else if (id === 'peopleTagsToggle') {
+            } else if (appliesToActor && id === 'peopleTagsToggle') {
                 if ((e.target as HTMLInputElement).checked) {
                     if (typeof (JC as any).initializePeopleTags === 'function') {
                         (JC as any).initializePeopleTags();
@@ -137,20 +166,29 @@ export function wireSettingsListeners(ctx: PanelContext): void {
             }
 
             if (requiresRefresh) {
-                toastMessage += ".<br> Refresh page to apply.";
+                if (editor.mode === 'admin-target') {
+                    const key = 'panel_admin_target_refresh_notice';
+                    const translated = JC.t?.(key);
+                    const notice = !translated || translated === key
+                        ? 'Saved. It applies after that user refreshes their client.'
+                        : translated;
+                    toastMessage += `<br>${escapeHtml(notice)}`;
+                } else {
+                    toastMessage += ".<br> Refresh page to apply.";
+                }
             }
             void save.then(async saved => {
                 if (!saved) return;
-                if (id === 'animeFillerWarningsToggle' && identityContext) {
+                if (appliesToActor && id === 'animeFillerWarningsToggle' && identityContext) {
                     await JC.core.clientRuntime?.reconcileUserSettings(identityContext);
                 }
                 toast(toastMessage);
             });
-            if (id === 'randomButtonToggle') (JC as any).addRandomButton();
-            if (id === 'hideFavoritesTabToggle') (JC as any).applyHideFavoritesTab?.();
-            if (id === 'showWatchProgressToggle' && !(e.target as HTMLInputElement).checked) document.querySelectorAll('.mediaInfoItem-watchProgress').forEach(el => el.remove());
-            if (id === 'showFileSizesToggle' && !(e.target as HTMLInputElement).checked) document.querySelectorAll('.mediaInfoItem-fileSize').forEach(el => el.remove());
-            if (id === 'showAudioLanguagesToggle' && !(e.target as HTMLInputElement).checked) document.querySelectorAll('.mediaInfoItem-audioLanguage').forEach(el => el.remove());
+            if (appliesToActor && id === 'randomButtonToggle') (JC as any).addRandomButton();
+            if (appliesToActor && id === 'hideFavoritesTabToggle') (JC as any).applyHideFavoritesTab?.();
+            if (appliesToActor && id === 'showWatchProgressToggle' && !(e.target as HTMLInputElement).checked) document.querySelectorAll('.mediaInfoItem-watchProgress').forEach(el => el.remove());
+            if (appliesToActor && id === 'showFileSizesToggle' && !(e.target as HTMLInputElement).checked) document.querySelectorAll('.mediaInfoItem-fileSize').forEach(el => el.remove());
+            if (appliesToActor && id === 'showAudioLanguagesToggle' && !(e.target as HTMLInputElement).checked) document.querySelectorAll('.mediaInfoItem-audioLanguage').forEach(el => el.remove());
             resetAutoCloseTimer();
         });
     };
@@ -168,14 +206,14 @@ export function wireSettingsListeners(ctx: PanelContext): void {
             const fmtSel = document.getElementById('watchProgressTimeFormatSelect');
             if (modeSel) {
                 modeSel.addEventListener('change', (e) => {
-                    (JC.currentSettings as any).watchProgressMode = (e.target as HTMLSelectElement).value;
+                    settings.watchProgressMode = (e.target as HTMLSelectElement).value;
                     void persistSettings();
                     resetAutoCloseTimer();
                 });
             }
             if (fmtSel) {
                 fmtSel.addEventListener('change', (e) => {
-                    (JC.currentSettings as any).watchProgressTimeFormat = (e.target as HTMLSelectElement).value;
+                    settings.watchProgressTimeFormat = (e.target as HTMLSelectElement).value;
                     void persistSettings();
                     resetAutoCloseTimer();
                 });
@@ -223,9 +261,9 @@ export function wireSettingsListeners(ctx: PanelContext): void {
             if (!row) return;
             const settingKey = row.dataset.catKey;
             if (!settingKey) return;
-            (JC.currentSettings as any)[settingKey] = target.checked;
+            settings[settingKey] = target.checked;
             void persistSettings();
-            if (typeof (JC as any).reinitializeQualityTags === 'function' && JC.currentSettings!.qualityTagsEnabled) {
+            if (appliesToActor && typeof (JC as any).reinitializeQualityTags === 'function' && settings.qualityTagsEnabled) {
                 (JC as any).reinitializeQualityTags();
             }
             resetAutoCloseTimer();
@@ -253,12 +291,12 @@ export function wireSettingsListeners(ctx: PanelContext): void {
             const allRows = qualitySubGroup.querySelectorAll<HTMLElement>('.jc-quality-cat-row');
             allRows.forEach((r, idx) => {
                 const orderKey = r.dataset.orderKey;
-                if (orderKey) (JC.currentSettings as any)[orderKey] = idx + 1;
+                if (orderKey) settings[orderKey] = idx + 1;
             });
             void persistSettings();
 
             refreshQualityCatArrowStates(qualitySubGroup);
-            if (typeof (JC as any).reinitializeQualityTags === 'function' && JC.currentSettings!.qualityTagsEnabled) {
+            if (appliesToActor && typeof (JC as any).reinitializeQualityTags === 'function' && settings.qualityTagsEnabled) {
                 (JC as any).reinitializeQualityTags();
             }
             resetAutoCloseTimer();
@@ -296,7 +334,7 @@ export function wireSettingsListeners(ctx: PanelContext): void {
         pauseScreenDelayInput.addEventListener('change', () => {
             const val = Math.max(1, Math.min(60, parseInt(pauseScreenDelayInput.value, 10) || 5));
             pauseScreenDelayInput.value = String(val);
-            (JC.currentSettings as any).pauseScreenDelaySeconds = val;
+            settings.pauseScreenDelaySeconds = val;
             void persistSettings();
         });
     }
@@ -308,7 +346,9 @@ export function wireSettingsListeners(ctx: PanelContext): void {
     const hideOnHoverCheckbox = document.getElementById('tagsHideOnHoverToggle') as HTMLInputElement | null;
     if (hideOnHoverCheckbox) {
         hideOnHoverCheckbox.addEventListener('change', () => {
-            document.body.classList.toggle('jc-tags-hide-on-hover', hideOnHoverCheckbox.checked);
+            if (appliesToActor) {
+                document.body.classList.toggle('jc-tags-hide-on-hover', hideOnHoverCheckbox.checked);
+            }
         });
     }
     addSettingToggleListener('disableCustomSubtitleStyles', 'disableCustomSubtitleStyles', 'feature_disable_custom_subtitle_styles', true);
@@ -324,9 +364,9 @@ export function wireSettingsListeners(ctx: PanelContext): void {
         const textColor = customTextColorPicker!.value + parseInt(customTextAlpha!.value).toString(16).padStart(2, '0').toUpperCase();
         const bgColor = customBgColorPicker!.value + parseInt(customBgAlpha!.value).toString(16).padStart(2, '0').toUpperCase();
 
-        (JC.currentSettings as any).customSubtitleTextColor = textColor;
-        (JC.currentSettings as any).customSubtitleBgColor = bgColor;
-        (JC.currentSettings as any).usingCustomColors = true;
+        settings.customSubtitleTextColor = textColor;
+        settings.customSubtitleBgColor = bgColor;
+        settings.usingCustomColors = true;
 
         // Remove border from all style presets
         const styleContainer = document.getElementById('subtitle-style-presets-container');
@@ -344,7 +384,7 @@ export function wireSettingsListeners(ctx: PanelContext): void {
         }
 
         void persistSettings();
-        (JC as any).applySavedStylesWhenReady();
+        if (appliesToActor) (JC as any).applySavedStylesWhenReady();
         resetAutoCloseTimer();
     };
 
@@ -360,16 +400,16 @@ export function wireSettingsListeners(ctx: PanelContext): void {
 
     if (posGrid) {
         const updatePosition = (xPct: number, yPct: number) => {
-            if (!JC.identity.isCurrent(identityContext)) return;
+            if (!editor.isCurrent()) return;
             xPct = Math.max(2, Math.min(98, xPct));
             yPct = Math.max(2, Math.min(98, yPct));
             if (posPreview) {
                 posPreview.style.left = `${xPct}%`;
                 posPreview.style.top = `${yPct}%`;
             }
-            (JC.currentSettings as any).subtitleHorizontalPosition = Math.round(xPct);
-            (JC.currentSettings as any).subtitleVerticalPosition = Math.round(yPct);
-            if (typeof (JC as any).applySubtitlePosition === 'function') (JC as any).applySubtitlePosition();
+            settings.subtitleHorizontalPosition = Math.round(xPct);
+            settings.subtitleVerticalPosition = Math.round(yPct);
+            if (appliesToActor && typeof (JC as any).applySubtitlePosition === 'function') (JC as any).applySubtitlePosition();
         };
 
         const getPctFromEvent = (e: any) => {
@@ -385,7 +425,7 @@ export function wireSettingsListeners(ctx: PanelContext): void {
         let dragging = false;
 
         posGrid.addEventListener('mousedown', (e) => {
-            if (!JC.identity.isCurrent(identityContext)) return;
+            if (!editor.isCurrent()) return;
             const { x, y } = getPctFromEvent(e);
             updatePosition(x, y);
             dragging = true;
@@ -393,7 +433,7 @@ export function wireSettingsListeners(ctx: PanelContext): void {
         });
 
         const handlePositionMouseMove = (e: MouseEvent) => {
-            if (!JC.identity.isCurrent(identityContext)) return;
+            if (!editor.isCurrent()) return;
             if (!dragging) return;
             const { x, y } = getPctFromEvent(e);
             updatePosition(x, y);
@@ -401,14 +441,14 @@ export function wireSettingsListeners(ctx: PanelContext): void {
         };
 
         const handlePositionMouseUp = () => {
-            if (!JC.identity.isCurrent(identityContext)) return;
+            if (!editor.isCurrent()) return;
             if (!dragging) return;
             dragging = false;
             void persistSettings();
         };
 
         posGrid.addEventListener('touchstart', (e) => {
-            if (!JC.identity.isCurrent(identityContext)) return;
+            if (!editor.isCurrent()) return;
             const { x, y } = getPctFromEvent(e);
             updatePosition(x, y);
             dragging = true;
@@ -416,7 +456,7 @@ export function wireSettingsListeners(ctx: PanelContext): void {
         }, { passive: false });
 
         const handlePositionTouchMove = (e: TouchEvent) => {
-            if (!JC.identity.isCurrent(identityContext)) return;
+            if (!editor.isCurrent()) return;
             if (!dragging) return;
             const { x, y } = getPctFromEvent(e);
             updatePosition(x, y);
@@ -424,7 +464,7 @@ export function wireSettingsListeners(ctx: PanelContext): void {
         };
 
         const handlePositionTouchEnd = () => {
-            if (!JC.identity.isCurrent(identityContext)) return;
+            if (!editor.isCurrent()) return;
             if (!dragging) return;
             dragging = false;
             void persistSettings();
@@ -445,10 +485,10 @@ export function wireSettingsListeners(ctx: PanelContext): void {
 
     if (posResetBtn) {
         posResetBtn.addEventListener('click', () => {
-            (JC.currentSettings as any).subtitleHorizontalPosition = 50;
-            (JC.currentSettings as any).subtitleVerticalPosition = 85;
+            settings.subtitleHorizontalPosition = 50;
+            settings.subtitleVerticalPosition = 85;
             if (posPreview) { posPreview.style.left = '50%'; posPreview.style.top = '85%'; }
-            if (typeof (JC as any).applySubtitlePosition === 'function') (JC as any).applySubtitlePosition();
+            if (appliesToActor && typeof (JC as any).applySubtitlePosition === 'function') (JC as any).applySubtitlePosition();
             void persistSettings();
             resetAutoCloseTimer();
         });
@@ -462,6 +502,10 @@ export function wireSettingsListeners(ctx: PanelContext): void {
  */
 export function wireMiscSettingsControls(ctx: PanelContext): void {
     const { help, primaryAccentColor, resetAutoCloseTimer } = ctx;
+    const editor = ctx.editor || createSelfPanelEditorContext(ctx.identityContext || JC.identity.capture()!);
+    const settings = editor.settings as Record<string, any>;
+    const appliesToActor = editor.appliesToActor;
+    const persistSettings = () => persistEditorSettings(ctx, editor);
 
     const wireRandomType = (id: string, otherId: string, settingKey: string, label: string) => {
         document.getElementById(id)!.addEventListener('change', (e) => {
@@ -471,7 +515,7 @@ export function wireMiscSettingsControls(ctx: PanelContext): void {
                 toast(JC.t!('toast_at_least_one_item_type'));
                 return;
             }
-            (JC.currentSettings as any)[settingKey] = target.checked;
+            settings[settingKey] = target.checked;
             const successMessage = JC.t!('toast_random_selection_status', {
                 item_type: label,
                 status: target.checked ? JC.t!('selection_included') : JC.t!('selection_excluded')
@@ -493,7 +537,7 @@ export function wireMiscSettingsControls(ctx: PanelContext): void {
 
         // Highlight current position
         const updateHighlight = () => {
-            const currentPos = (JC.currentSettings as any)[settingKey] || 'top-left';
+            const currentPos = settings[settingKey] || 'top-left';
             cells.forEach(cell => {
                 if (cell.dataset.pos === currentPos) {
                     cell.style.background = primaryAccentColor;
@@ -512,24 +556,24 @@ export function wireMiscSettingsControls(ctx: PanelContext): void {
             if (!cell) return;
 
             const newPos = cell.dataset.pos;
-            (JC.currentSettings as any)[settingKey] = newPos;
+            settings[settingKey] = newPos;
             const save = persistSettings();
             updateHighlight();
 
             // Reinitialize tags dynamically based on which position changed
-            if (settingKey === 'qualityTagsPosition' && JC.currentSettings!.qualityTagsEnabled) {
+            if (appliesToActor && settingKey === 'qualityTagsPosition' && settings.qualityTagsEnabled) {
                 if (typeof (JC as any).reinitializeQualityTags === 'function') {
                     (JC as any).reinitializeQualityTags();
                 }
-            } else if (settingKey === 'genreTagsPosition' && JC.currentSettings!.genreTagsEnabled) {
+            } else if (appliesToActor && settingKey === 'genreTagsPosition' && settings.genreTagsEnabled) {
                 if (typeof (JC as any).reinitializeGenreTags === 'function') {
                     (JC as any).reinitializeGenreTags();
                 }
-            } else if (settingKey === 'languageTagsPosition' && JC.currentSettings!.languageTagsEnabled) {
+            } else if (appliesToActor && settingKey === 'languageTagsPosition' && settings.languageTagsEnabled) {
                 if (typeof (JC as any).reinitializeLanguageTags === 'function') {
                     (JC as any).reinitializeLanguageTags();
                 }
-            } else if (settingKey === 'ratingTagsPosition' && JC.currentSettings!.ratingTagsEnabled) {
+            } else if (appliesToActor && settingKey === 'ratingTagsPosition' && settings.ratingTagsEnabled) {
                 if (typeof (JC as any).reinitializeRatingTags === 'function') {
                     (JC as any).reinitializeRatingTags();
                 }
@@ -554,10 +598,10 @@ export function wireMiscSettingsControls(ctx: PanelContext): void {
             if (selectedPreset) {
                 let successMessage = '';
                 if (type === 'style') {
-                    (JC.currentSettings as any).selectedStylePresetIndex = presetIndex;
-                    (JC.currentSettings as any).usingCustomColors = false;
-                    (JC.currentSettings as any).customSubtitleTextColor = selectedPreset.textColor;
-                    (JC.currentSettings as any).customSubtitleBgColor = selectedPreset.bgColor;
+                    settings.selectedStylePresetIndex = presetIndex;
+                    settings.usingCustomColors = false;
+                    settings.customSubtitleTextColor = selectedPreset.textColor;
+                    settings.customSubtitleBgColor = selectedPreset.bgColor;
 
                     // Update UI inputs
                     const textColorPicker = document.getElementById('customSubtitleTextColorPicker') as HTMLInputElement | null;
@@ -579,39 +623,39 @@ export function wireMiscSettingsControls(ctx: PanelContext): void {
                         preview.style.backgroundColor = selectedPreset.bgColor;
                     }
 
-                    const fontSizeIndex = (JC.currentSettings as any).selectedFontSizePresetIndex ?? 2;
-                    const fontFamilyIndex = (JC.currentSettings as any).selectedFontFamilyPresetIndex ?? 0;
+                    const fontSizeIndex = settings.selectedFontSizePresetIndex ?? 2;
+                    const fontFamilyIndex = settings.selectedFontFamilyPresetIndex ?? 0;
                     const fontSize = (JC as any).fontSizePresets[fontSizeIndex].size;
                     const fontFamily = (JC as any).fontFamilyPresets[fontFamilyIndex].family;
-                    (JC as any).applySubtitleStyles(selectedPreset.textColor, selectedPreset.bgColor, fontSize, fontFamily, selectedPreset.textShadow);
+                    if (appliesToActor) (JC as any).applySubtitleStyles(selectedPreset.textColor, selectedPreset.bgColor, fontSize, fontFamily, selectedPreset.textShadow);
                     successMessage = JC.t!('toast_subtitle_style', { style: escapeHtml(selectedPreset.name) });
                 } else if (type === 'font-size') {
-                    (JC.currentSettings as any).selectedFontSizePresetIndex = presetIndex;
-                    const fontFamilyIndex = (JC.currentSettings as any).selectedFontFamilyPresetIndex ?? 0;
+                    settings.selectedFontSizePresetIndex = presetIndex;
+                    const fontFamilyIndex = settings.selectedFontFamilyPresetIndex ?? 0;
                     const fontFamily = (JC as any).fontFamilyPresets[fontFamilyIndex].family;
 
                     // Use saved custom colors
-                    const textColor = (JC.currentSettings as any).customSubtitleTextColor || '#FFFFFFFF';
-                    const bgColor = (JC.currentSettings as any).customSubtitleBgColor || '#00000000';
+                    const textColor = settings.customSubtitleTextColor || '#FFFFFFFF';
+                    const bgColor = settings.customSubtitleBgColor || '#00000000';
                     const textShadow = bgColor === 'transparent' || bgColor === '#00000000'
                         ? '0 0 4px #000, 0 0 8px #000, 1px 1px 2px #000'
                         : 'none';
 
-                    (JC as any).applySubtitleStyles(textColor, bgColor, selectedPreset.size, fontFamily, textShadow);
+                    if (appliesToActor) (JC as any).applySubtitleStyles(textColor, bgColor, selectedPreset.size, fontFamily, textShadow);
                     successMessage = JC.t!('toast_subtitle_size', { size: escapeHtml(selectedPreset.name) });
                 } else if (type === 'font-family') {
-                    (JC.currentSettings as any).selectedFontFamilyPresetIndex = presetIndex;
-                    const fontSizeIndex = (JC.currentSettings as any).selectedFontSizePresetIndex ?? 2;
+                    settings.selectedFontFamilyPresetIndex = presetIndex;
+                    const fontSizeIndex = settings.selectedFontSizePresetIndex ?? 2;
                     const fontSize = (JC as any).fontSizePresets[fontSizeIndex].size;
 
                     // Use saved custom colors
-                    const textColor = (JC.currentSettings as any).customSubtitleTextColor || '#FFFFFFFF';
-                    const bgColor = (JC.currentSettings as any).customSubtitleBgColor || '#00000000';
+                    const textColor = settings.customSubtitleTextColor || '#FFFFFFFF';
+                    const bgColor = settings.customSubtitleBgColor || '#00000000';
                     const textShadow = bgColor === 'transparent' || bgColor === '#00000000'
                         ? '0 0 4px #000, 0 0 8px #000, 1px 1px 2px #000'
                         : 'none';
 
-                    (JC as any).applySubtitleStyles(textColor, bgColor, fontSize, selectedPreset.family, textShadow);
+                    if (appliesToActor) (JC as any).applySubtitleStyles(textColor, bgColor, fontSize, selectedPreset.family, textShadow);
                     successMessage = JC.t!('toast_subtitle_font', { font: escapeHtml(selectedPreset.name) });
                 }
 
@@ -628,22 +672,22 @@ export function wireMiscSettingsControls(ctx: PanelContext): void {
 
         let currentIndex;
         if (type === 'style') {
-            currentIndex = (JC.currentSettings as any).selectedStylePresetIndex ?? 0;
+            currentIndex = settings.selectedStylePresetIndex ?? 0;
             // Only highlight if not using custom colors
-            if (!JC.currentSettings!.usingCustomColors) {
+            if (!settings.usingCustomColors) {
                 const activeBox = container.querySelector<HTMLElement>(`[data-preset-index="${currentIndex}"]`);
                 if (activeBox) {
                     activeBox.style.border = `2px solid ${primaryAccentColor}`;
                 }
             }
         } else if (type === 'font-size') {
-            currentIndex = (JC.currentSettings as any).selectedFontSizePresetIndex ?? 2;
+            currentIndex = settings.selectedFontSizePresetIndex ?? 2;
             const activeBox = container.querySelector<HTMLElement>(`[data-preset-index="${currentIndex}"]`);
             if (activeBox) {
                 activeBox.style.border = `2px solid ${primaryAccentColor}`;
             }
         } else if (type === 'font-family') {
-            currentIndex = (JC.currentSettings as any).selectedFontFamilyPresetIndex ?? 0;
+            currentIndex = settings.selectedFontFamilyPresetIndex ?? 0;
             const activeBox = container.querySelector<HTMLElement>(`[data-preset-index="${currentIndex}"]`);
             if (activeBox) {
                 activeBox.style.border = `2px solid ${primaryAccentColor}`;
