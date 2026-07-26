@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Net.Http;
 using System.Text.Json;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
@@ -12,6 +13,7 @@ using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
+using MediaBrowser.Common.Api;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -59,6 +61,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         }
 
         private const string SpoilerFileName = "spoilerblur.json";
+        private const string SpoilerPrefsResource = "spoiler-guard-prefs.json";
+        private const string SpoilerOverridesResource = "spoiler-guard-overrides.json";
 
         private static bool IsCorruptStoreException(Exception exception)
             => exception is UserStoreUnhealthyException or InvalidDataException or JsonException;
@@ -76,6 +80,43 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             });
         }
 
+        private IActionResult SpoilerConfigurationUnavailable()
+            => StatusCode(StatusCodes.Status503ServiceUnavailable, new
+            {
+                success = false,
+                message = "Spoiler Guard configuration is temporarily unavailable; no default state was assumed."
+            });
+
+        private UserConfigReadStatus RequireSpoilerMutationRead(
+            string userId,
+            UserConfigReadResult<UserSpoilerBlur> read)
+        {
+            if (read.HasUsableValue && read.Value != null)
+            {
+                return read.Status;
+            }
+
+            if (string.Equals(
+                read.FaultDetail,
+                "quarantined-recovery-required",
+                StringComparison.Ordinal))
+            {
+                throw new UserStoreUnhealthyException(
+                    SpoilerFileName,
+                    newlyQuarantined: false);
+            }
+
+            if (read.Status == UserConfigReadStatus.Unavailable)
+            {
+                throw new IOException("Spoiler Guard state is temporarily unavailable.");
+            }
+
+            _userConfigurationManager.GetUserConfigurationStrict<UserSpoilerBlur>(
+                userId,
+                SpoilerFileName);
+            throw new InvalidDataException("Spoiler Guard state is corrupt.");
+        }
+
         // ─── Self-or-admin spoilerblur.json accessor pair ───────────────────────
         // Mirrors the other per-user JC files so an administrator can inspect or
         // repair a user's Spoiler Guard state remotely.
@@ -89,6 +130,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             if (authorizationResult != null)
             {
                 return authorizationResult;
+            }
+            var targetResult = ResolveExistingTargetUser(
+                authorizedUserId,
+                out authorizedUserId,
+                out _);
+            if (targetResult != null)
+            {
+                return targetResult;
             }
 
             var read = _userConfigurationManager.ReadUserConfiguration<UserSpoilerBlur>(
@@ -108,14 +157,32 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 });
             }
 
-            return Ok(read.Value);
+            if (read.Status == UserConfigReadStatus.Missing
+                && _configProvider.ConfigurationOrNull == null)
+            {
+                return SpoilerConfigurationUnavailable();
+            }
+
+            var responseState = ClonePersisted(read.Value);
+            PersistedPayloadPolicy.NormalizeLegacyRuntimeState(responseState);
+            if (!PersistedPayloadPolicy.Validate(responseState).IsValid)
+            {
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, new
+                {
+                    success = false,
+                    message = "Spoiler Guard state is invalid. No replacement state was published."
+                });
+            }
+
+            return Ok(responseState);
         }
 
         // Hard cap per spoiler-list dict on the raw full-state save endpoint: the
         // image/field-strip filters iterate this file every request (a Collections
         // key drives a library lookup per key), so an unbounded payload amplifies
         // into millions of lookups per library view. Mirrors the pending path cap.
-        private const int MaxSpoilerEntriesPerDict = 1000;
+        private const int MaxSpoilerEntriesPerDict
+            = PersistedPayloadPolicy.MaximumSpoilerEntriesPerDictionary;
 
         [HttpPost("user-settings/{userId}/spoilerblur.json")]
         [Authorize]
@@ -130,6 +197,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             if (authorizationResult != null)
             {
                 return authorizationResult;
+            }
+            var targetResult = ResolveExistingTargetUser(
+                authorizedUserId,
+                out authorizedUserId,
+                out _);
+            if (targetResult != null)
+            {
+                return targetResult;
             }
 
             if (userConfiguration == null)
@@ -147,19 +222,44 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 _logger.LogWarning($"Rejecting oversized Spoiler Guard payload for {ResolveUserDisplay(authorizedUserId)} (series={userConfiguration.Series.Count}, movies={userConfiguration.Movies.Count}, collections={userConfiguration.Collections.Count}, pending={userConfiguration.PendingTmdb.Count}; cap {MaxSpoilerEntriesPerDict}).");
                 return StatusCode(413, new { success = false, message = $"Spoiler Guard list exceeds the maximum of {MaxSpoilerEntriesPerDict} entries per category." });
             }
+            if (userConfiguration.Prefs == null
+                || !PersistedPayloadPolicy.Validate(userConfiguration.Prefs).IsValid
+                || userConfiguration.OverridesRevision < 0)
+            {
+                return BadRequest(new { success = false, message = "Invalid Spoiler Guard state." });
+            }
 
-            // Snapshot pre-write pending keys to diff the promoter gate after save:
-            // this endpoint is a pending writer too and must keep the gate in sync.
-            HashSet<string> priorPending;
-            try
+            // Never retain or mutate MVC's bound object graph. This full-state
+            // compatibility endpoint deliberately replaces the dictionaries,
+            // but its preference subsection still participates in the same CAS
+            // protocol as self and elevated preference-only writers.
+            var candidate = ClonePersisted(userConfiguration);
+            var submittedOverrides = SnapshotOverridesForCompatibility(candidate);
+            PersistedPayloadPolicy.NormalizeLegacyRuntimeState(submittedOverrides);
+            var submittedOverrideValidation = PersistedPayloadPolicy.Validate(submittedOverrides);
+            if (submittedOverrideValidation.Status == PersistedPayloadStatus.TooLarge)
             {
-                var prior = _userConfigurationManager.GetUserConfiguration<UserSpoilerBlur>(authorizedUserId, SpoilerFileName);
-                priorPending = new HashSet<string>(prior.PendingTmdb.Keys, StringComparer.OrdinalIgnoreCase);
+                return StatusCode(StatusCodes.Status413PayloadTooLarge, new
+                {
+                    success = false,
+                    message = "The Spoiler Guard override payload exceeds the supported limit."
+                });
             }
-            catch
+            if (!submittedOverrideValidation.IsValid)
             {
-                priorPending = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                return BadRequest(new
+                {
+                    success = false,
+                    message = "Invalid Spoiler Guard override payload."
+                });
             }
+            ApplyOverrides(
+                candidate,
+                PersistedPayloadPolicy.CloneValidated(submittedOverrides));
+
+            // Snapshot under the exact write lock below; a pre-lock read would
+            // race pending changes and could unregister a freshly added gate.
+            var priorPending = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             try
             {
@@ -169,8 +269,98 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                     // instead of being silently overwritten (same as hidden-content).
                     try
                     {
-                        _userConfigurationManager.GetUserConfigurationStrict<UserSpoilerBlur>(
+                        var current = _userConfigurationManager.GetUserConfigurationStrict<UserSpoilerBlur>(
                             authorizedUserId, SpoilerFileName);
+                        var currentPrefs = current.Prefs ?? new SpoilerBlurUserPrefs();
+                        if (!PersistedPayloadPolicy.Validate(currentPrefs).IsValid)
+                        {
+                            throw new InvalidDataException("Spoiler Guard preferences are invalid.");
+                        }
+                        if (current.OverridesRevision < 0)
+                        {
+                            throw new InvalidDataException("Spoiler Guard override revision is invalid.");
+                        }
+                        var currentOverrides =
+                            SnapshotOverridesForCompatibility(current);
+                        var currentHadLegacyMetadata =
+                            PersistedPayloadPolicy.NormalizeLegacyRuntimeState(
+                                currentOverrides);
+                        if (!PersistedPayloadPolicy.Validate(currentOverrides).IsValid)
+                        {
+                            throw new InvalidDataException(
+                                "Spoiler Guard override state is invalid.");
+                        }
+                        currentOverrides = PersistedPayloadPolicy.CloneValidated(
+                            currentOverrides);
+                        if (candidate.Prefs.Revision != currentPrefs.Revision)
+                        {
+                            return Conflict(new
+                            {
+                                success = false,
+                                conflict = true,
+                                message = "Spoiler Guard preferences changed. Reload and retry.",
+                                prefs = currentPrefs
+                            });
+                        }
+                        if (candidate.OverridesRevision != current.OverridesRevision)
+                        {
+                            return Conflict(new
+                            {
+                                success = false,
+                                conflict = true,
+                                message = "Spoiler Guard overrides changed. Reload and retry.",
+                                prefs = currentPrefs,
+                                overrides = currentOverrides
+                            });
+                        }
+
+                        // Older full-state clients know nothing about the
+                        // override resource's forward-compatible metadata. An
+                        // omitted/empty value must not erase fields written by
+                        // the elevated resource.
+                        if ((candidate.OverridesExtensionData?.Count ?? 0) == 0
+                            && (current.OverridesExtensionData?.Count ?? 0) > 0)
+                        {
+                            candidate.OverridesExtensionData = ClonePersisted(
+                                current.OverridesExtensionData!);
+                        }
+
+                        candidate.Prefs.Revision = string.Equals(
+                            PreferenceContentHash(currentPrefs),
+                            PreferenceContentHash(candidate.Prefs),
+                            StringComparison.Ordinal)
+                            ? currentPrefs.Revision
+                            : checked(currentPrefs.Revision + 1);
+                        var candidateOverrides = SnapshotOverridesForCompatibility(candidate);
+                        var finalOverrideValidation = PersistedPayloadPolicy.Validate(
+                            candidateOverrides);
+                        if (!finalOverrideValidation.IsValid)
+                        {
+                            throw new InvalidDataException(
+                                "Spoiler Guard override state is invalid.");
+                        }
+                        candidateOverrides = PersistedPayloadPolicy.CloneValidated(
+                            candidateOverrides);
+                        candidate.OverridesRevision = current.OverridesRevision;
+                        if (currentHadLegacyMetadata
+                            || !string.Equals(
+                                PreferenceContentHash(currentOverrides),
+                                PreferenceContentHash(candidateOverrides),
+                                StringComparison.Ordinal))
+                        {
+                            SpoilerGuardOverridesRevision.Advance(candidate);
+                        }
+                        candidateOverrides.Revision = candidate.OverridesRevision;
+                        ApplyOverrides(candidate, candidateOverrides);
+                        if (!PersistedPayloadPolicy.Validate(candidate).IsValid)
+                        {
+                            throw new InvalidDataException(
+                                "Spoiler Guard state is invalid.");
+                        }
+
+                        priorPending = new HashSet<string>(
+                            current.PendingTmdb.Keys,
+                            StringComparer.OrdinalIgnoreCase);
                     }
                     catch (Exception strictEx) when (IsCorruptStoreException(strictEx))
                     {
@@ -182,7 +372,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                         return StatusCode(500, new { success = false, message = "Spoiler Guard store is temporarily unavailable. Please retry." });
                     }
 
-                    _userConfigurationManager.SaveUserConfiguration(authorizedUserId, SpoilerFileName, userConfiguration);
+                    _userConfigurationManager.SaveUserConfiguration(authorizedUserId, SpoilerFileName, candidate);
                 }
 
                 // Drop the cross-request state cache so the image/strip filters
@@ -192,23 +382,29 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 // Reconcile the promoter's fast-path gate with the new PendingTmdb
                 // set: register keys the payload added, unregister keys it removed.
                 // Registration is idempotent, so re-registering survivors is harmless.
-                if (Guid.TryParseExact(authorizedUserId, "N", out var gateUserId))
-                {
-                    foreach (var key in userConfiguration.PendingTmdb.Keys)
-                    {
-                        SpoilerSeerrPendingPromoter.RegisterPending(key, gateUserId);
-                    }
-                    foreach (var stale in priorPending)
-                    {
-                        if (!userConfiguration.PendingTmdb.ContainsKey(stale))
-                        {
-                            SpoilerSeerrPendingPromoter.UnregisterPending(stale, gateUserId);
-                        }
-                    }
-                }
+                ReconcilePendingGate(
+                    authorizedUserId,
+                    priorPending,
+                    candidate.PendingTmdb.Keys);
 
-                _logger.LogInformation($"Saved Spoiler Guard state for {ResolveUserDisplay(authorizedUserId)} to {SpoilerFileName}");
-                return Ok(new { success = true, file = SpoilerFileName });
+                if (!LogCrossUserFileMutationIfNeeded(
+                        authorizedUserId,
+                        SpoilerFileName,
+                        $"prefsRevision={candidate.Prefs.Revision.ToString(CultureInfo.InvariantCulture)}," +
+                        $"overridesRevision={candidate.OverridesRevision.ToString(CultureInfo.InvariantCulture)}",
+                        "saved"))
+                {
+                    _logger.LogInformation(
+                        $"Saved Spoiler Guard state for {ResolveUserDisplay(authorizedUserId)} " +
+                        $"to {SpoilerFileName}");
+                }
+                return Ok(new
+                {
+                    success = true,
+                    file = SpoilerFileName,
+                    prefs = candidate.Prefs,
+                    overrides = SnapshotOverridesForCompatibility(candidate)
+                });
             }
             catch (Exception ex)
             {
@@ -291,22 +487,42 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             if (userId == null || userId == Guid.Empty) return Forbid();
             var userKey = userId.Value.ToString("N");
 
-            // Distinguish "file missing" (empty + 200, normal first-time state) from
-            // "corrupt/unreadable" (503 + backup-made hint). A lenient read would
-            // silently return empty on parse error — the user would think their list
-            // was wiped.
-            if (!_userConfigurationManager.UserConfigurationExists(userKey, SpoilerFileName))
-            {
-                return Ok(new UserSpoilerBlur());
-            }
             try
             {
-                var state = _userConfigurationManager.GetUserConfigurationStrict<UserSpoilerBlur>(userKey, SpoilerFileName);
-                return Ok(state);
+                lock (_userConfigurationManager.GetUserFileLock(userKey, SpoilerFileName))
+                {
+                    // Distinguish a true first-run Missing state from every
+                    // persistence fault; File.Exists-style probes are not proof
+                    // that configured defaults are safe to assume.
+                    var classified = _userConfigurationManager.ReadUserConfiguration<UserSpoilerBlur>(
+                        userKey,
+                        SpoilerFileName);
+                    var status = RequireSpoilerMutationRead(userKey, classified);
+                    if (status == UserConfigReadStatus.Missing
+                        && _configProvider.ConfigurationOrNull == null)
+                    {
+                        return SpoilerConfigurationUnavailable();
+                    }
+
+                    var state = status == UserConfigReadStatus.Missing
+                        ? classified.Value!
+                        : _userConfigurationManager.GetUserConfigurationStrict<UserSpoilerBlur>(
+                            userKey,
+                            SpoilerFileName);
+                    return Ok(state);
+                }
             }
             catch (Exception strictEx) when (IsCorruptStoreException(strictEx))
             {
                 return CorruptStore(userKey, strictEx);
+            }
+            catch (IOException)
+            {
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, new
+                {
+                    success = false,
+                    message = "Spoiler Guard state is temporarily unavailable."
+                });
             }
         }
 
@@ -322,18 +538,52 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             if (userId == null || userId == Guid.Empty) return Forbid();
             var userKey = userId.Value.ToString("N");
 
-            if (!_userConfigurationManager.UserConfigurationExists(userKey, SpoilerFileName))
-            {
-                return Ok(new SpoilerBlurUserPrefs());
-            }
             try
             {
-                var state = _userConfigurationManager.GetUserConfigurationStrict<UserSpoilerBlur>(userKey, SpoilerFileName);
-                return Ok(state.Prefs ?? new SpoilerBlurUserPrefs());
+                lock (_userConfigurationManager.GetUserFileLock(userKey, SpoilerFileName))
+                {
+                    var classified = _userConfigurationManager.ReadUserConfiguration<UserSpoilerBlur>(
+                        userKey,
+                        SpoilerFileName);
+                    var status = RequireSpoilerMutationRead(userKey, classified);
+                    if (status == UserConfigReadStatus.Missing
+                        && _configProvider.ConfigurationOrNull == null)
+                    {
+                        return SpoilerConfigurationUnavailable();
+                    }
+
+                    var state = status == UserConfigReadStatus.Missing
+                        ? classified.Value!
+                        : _userConfigurationManager.GetUserConfigurationStrict<UserSpoilerBlur>(
+                            userKey,
+                            SpoilerFileName);
+                    if (!PersistedPayloadPolicy
+                        .ValidateMutationSource(state).IsValid)
+                    {
+                        throw new InvalidDataException(
+                            "Spoiler Guard state is invalid.");
+                    }
+                    var prefs = ClonePreference(
+                        state.Prefs ?? new SpoilerBlurUserPrefs());
+                    if (!PersistedPayloadPolicy.Validate(prefs).IsValid)
+                    {
+                        throw new InvalidDataException(
+                            "Spoiler Guard preferences are invalid.");
+                    }
+                    return Ok(prefs);
+                }
             }
             catch (Exception strictEx) when (IsCorruptStoreException(strictEx))
             {
                 return CorruptStore(userKey, strictEx);
+            }
+            catch (IOException)
+            {
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, new
+                {
+                    success = false,
+                    message = "Spoiler Guard preferences are temporarily unavailable."
+                });
             }
         }
 
@@ -346,31 +596,68 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         {
             var userId = UserHelper.GetCurrentUserId(User);
             if (userId == null || userId == Guid.Empty) return Forbid();
-            if (body == null) return BadRequest(new { success = false, message = "Missing body." });
+            if (body == null || !PersistedPayloadPolicy.Validate(body).IsValid)
+            {
+                return BadRequest(new { success = false, message = "Invalid Spoiler Guard preference payload." });
+            }
 
             var userKey = userId.Value.ToString("N");
+            var candidate = ClonePreference(body);
             try
             {
+                var changed = false;
+                SpoilerBlurUserPrefs? acknowledged = null;
                 _userConfigurationManager.RmwUserConfiguration<UserSpoilerBlur>(
                     userKey, SpoilerFileName, state =>
                     {
-                        state.Prefs = new SpoilerBlurUserPrefs
+                        var current = state.Prefs ?? new SpoilerBlurUserPrefs();
+                        if (!PersistedPayloadPolicy.Validate(current).IsValid)
                         {
-                            HideEpisodeDescriptions = body.HideEpisodeDescriptions,
-                            HideTags = body.HideTags,
-                            HideChapterNames = body.HideChapterNames,
-                            HideTaglines = body.HideTaglines,
-                            HideRatings = body.HideRatings,
-                            HideAirDate = body.HideAirDate,
-                            ReplaceEpisodeTitles = body.ReplaceEpisodeTitles,
-                            HideCast = body.HideCast,
-                            HideReviews = body.HideReviews,
-                            SkipDisableConfirm = body.SkipDisableConfirm,
-                        };
+                            throw new InvalidDataException("Spoiler Guard preferences are invalid.");
+                        }
+                        if (candidate.Revision != current.Revision)
+                        {
+                            throw new PreferenceRevisionConflictException(ClonePreference(current));
+                        }
+                        if (string.Equals(
+                            PreferenceContentHash(current),
+                            PreferenceContentHash(candidate),
+                            StringComparison.Ordinal))
+                        {
+                            acknowledged = ClonePreference(current);
+                            return 0;
+                        }
+
+                        candidate.Revision = checked(current.Revision + 1);
+                        state.Prefs = candidate;
+                        var size = PersistedPayloadPolicy.ValidateSerializedSize(
+                            state,
+                            PersistedPayloadPolicy.AbsolutePersistedBytes);
+                        if (!size.IsValid) throw new PreferencePayloadTooLargeException();
+                        changed = true;
+                        acknowledged = ClonePreference(candidate);
                         return 1;
                     });
-                SpoilerUserResolver.InvalidateUser(userKey);
-                return Ok(new { success = true, prefs = body });
+                if (changed) SpoilerUserResolver.InvalidateUser(userKey);
+                return Ok(new { success = true, prefs = acknowledged ?? candidate });
+            }
+            catch (PreferenceRevisionConflictException conflict)
+            {
+                return Conflict(new
+                {
+                    success = false,
+                    conflict = true,
+                    message = "Spoiler Guard preferences changed. Reload and retry.",
+                    prefs = conflict.Current
+                });
+            }
+            catch (PreferencePayloadTooLargeException)
+            {
+                return StatusCode(StatusCodes.Status413PayloadTooLarge, new
+                {
+                    success = false,
+                    message = "The resulting Spoiler Guard state exceeds the supported limit."
+                });
             }
             catch (Exception strictEx) when (IsCorruptStoreException(strictEx))
             {
@@ -380,6 +667,617 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             {
                 _logger.LogError($"Failed to save Spoiler Guard user prefs for {ResolveUserDisplay(userKey)}: {ex.GetType().Name}: {ex.Message}");
                 return StatusCode(500, new { success = false, message = "Failed to save user prefs." });
+            }
+        }
+
+        private sealed class PreferenceRevisionConflictException : Exception
+        {
+            public PreferenceRevisionConflictException(SpoilerBlurUserPrefs current)
+            {
+                Current = current;
+            }
+
+            public SpoilerBlurUserPrefs Current { get; }
+        }
+
+        private sealed class PreferencePayloadTooLargeException : Exception
+        {
+        }
+
+        private IActionResult SpoilerOverrideCapacityExceeded(string category)
+            => StatusCode(StatusCodes.Status429TooManyRequests, new
+            {
+                success = false,
+                code = "spoiler_override_cap_exceeded",
+                category,
+                maximum = SpoilerGuardOverrideCapacity.MaximumEntriesPerDictionary,
+                message =
+                    $"Spoiler Guard already has the maximum of " +
+                    $"{SpoilerGuardOverrideCapacity.MaximumEntriesPerDictionary} {category} entries. " +
+                    "Remove an entry before adding another."
+            });
+
+        // ─── Revisioned preference-subsection administration ─────────────────
+        // Prefs and the four opt-in dictionaries are separate revisioned
+        // resources. Editing either one cannot replace or conflict with the other.
+
+        [HttpGet("admin/user-settings/{targetUserId}/spoiler-guard-prefs.json")]
+        [HttpGet("admin/user-settings/{targetUserId}/spoiler-guard-prefs.json/evidence")]
+        [Authorize(Policy = Policies.RequiresElevation)]
+        [Produces("application/json")]
+        public IActionResult GetTargetSpoilerGuardPreferences(string targetUserId)
+        {
+            var targetError = ResolveExistingTargetUser(
+                targetUserId,
+                out var targetKey,
+                out var targetUser);
+            if (targetError != null) return targetError;
+
+            try
+            {
+                lock (_userConfigurationManager.GetUserFileLock(targetKey, SpoilerFileName))
+                {
+                    var classified = _userConfigurationManager.ReadUserConfiguration<UserSpoilerBlur>(
+                        targetKey,
+                        SpoilerFileName);
+                    if (!classified.HasUsableValue || classified.Value == null)
+                    {
+                        return StatusCode(StatusCodes.Status503ServiceUnavailable, new
+                        {
+                            success = false,
+                            message = "Spoiler Guard preferences are corrupt or temporarily unavailable."
+                        });
+                    }
+                    if (classified.Status == UserConfigReadStatus.Missing
+                        && _configProvider.ConfigurationOrNull == null)
+                    {
+                        return SpoilerConfigurationUnavailable();
+                    }
+
+                    // The typed read is side-effect-free and already owns the
+                    // complete bounded snapshot. A GET must never invoke the
+                    // strict mutation reader, which quarantines corrupt bytes.
+                    var state = classified.Value;
+                    // Prefs share a durable file with the override resource. Do
+                    // not acknowledge a partial view of a malformed/over-cap
+                    // file: an admin could otherwise rewrite Prefs while
+                    // silently carrying invalid override state forward.
+                    if (!PersistedPayloadPolicy.ValidateMutationSource(state).IsValid)
+                    {
+                        throw new InvalidDataException(
+                            "Spoiler Guard state is invalid.");
+                    }
+                    var prefs = ClonePreference(
+                        state.Prefs ?? new SpoilerBlurUserPrefs());
+                    if (!PersistedPayloadPolicy.Validate(prefs).IsValid)
+                    {
+                        throw new InvalidDataException("Spoiler Guard preferences are invalid.");
+                    }
+
+                    return Ok(PreferenceResponse(
+                        SpoilerPrefsResource,
+                        targetKey,
+                        targetUser.Username,
+                        prefs,
+                        success: true));
+                }
+            }
+            catch (Exception ex) when (IsCorruptStoreException(ex)
+                                      || ex is IOException
+                                      || ex is UnauthorizedAccessException)
+            {
+                _logger.LogWarning(
+                    $"Admin Spoiler Guard preference read failed for target {ResolveUserDisplay(targetKey)} " +
+                    $"(exception={ex.GetType().Name}).");
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, new
+                {
+                    success = false,
+                    message = "Spoiler Guard preferences are corrupt or temporarily unavailable."
+                });
+            }
+        }
+
+        [HttpPost("admin/user-settings/{targetUserId}/spoiler-guard-prefs.json")]
+        [Authorize(Policy = Policies.RequiresElevation)]
+        [Produces("application/json")]
+        [Consumes("application/json")]
+        [RequestSizeLimit(8 * 1024)]
+        public IActionResult SaveTargetSpoilerGuardPreferences(
+            string targetUserId,
+            [FromBody] SpoilerBlurUserPrefs? body)
+        {
+            var targetError = ResolveExistingTargetUser(
+                targetUserId,
+                out var targetKey,
+                out var targetUser);
+            if (targetError != null) return targetError;
+            if (body == null || !PersistedPayloadPolicy.Validate(body).IsValid)
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message = "Invalid Spoiler Guard preference payload."
+                });
+            }
+            var candidate = ClonePreference(body);
+
+            if (!TryParsePreferenceIfMatch(Request, out var expectedRevision))
+            {
+                return StatusCode(StatusCodes.Status428PreconditionRequired, new
+                {
+                    success = false,
+                    message = "Saving Spoiler Guard preferences requires one strong quoted If-Match revision from the latest GET."
+                });
+            }
+            if (candidate.Revision != expectedRevision)
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message = "The body Revision must match If-Match."
+                });
+            }
+
+            try
+            {
+                TargetPreferenceResponse<SpoilerBlurUserPrefs> response;
+                var changed = false;
+                lock (_userConfigurationManager.GetUserFileLock(targetKey, SpoilerFileName))
+                {
+                    var classified = _userConfigurationManager.ReadUserConfiguration<UserSpoilerBlur>(
+                        targetKey,
+                        SpoilerFileName);
+                    var status = RequireSpoilerMutationRead(targetKey, classified);
+                    if (status == UserConfigReadStatus.Missing
+                        && _configProvider.ConfigurationOrNull == null)
+                    {
+                        return SpoilerConfigurationUnavailable();
+                    }
+
+                    var state = status == UserConfigReadStatus.Missing
+                        ? classified.Value!
+                        : _userConfigurationManager.GetUserConfigurationStrict<UserSpoilerBlur>(
+                            targetKey,
+                            SpoilerFileName);
+                    // Validate a detached compatibility view of the complete
+                    // co-resident override resource before conflict, no-op, or
+                    // success acknowledgement. Preference-only writes preserve
+                    // legitimate legacy server names in the raw graph; override
+                    // resource mutations are the paths that repair them.
+                    if (!PersistedPayloadPolicy
+                        .ValidateMutationSource(state).IsValid)
+                    {
+                        throw new InvalidDataException(
+                            "Spoiler Guard state is invalid.");
+                    }
+                    var current = state.Prefs ?? new SpoilerBlurUserPrefs();
+                    if (!PersistedPayloadPolicy.Validate(current).IsValid)
+                    {
+                        throw new InvalidDataException("Spoiler Guard preferences are invalid.");
+                    }
+                    if (current.Revision != expectedRevision)
+                    {
+                        response = PreferenceResponse(
+                            SpoilerPrefsResource,
+                            targetKey,
+                            targetUser.Username,
+                            current,
+                            success: false,
+                            conflict: true,
+                            message: "Spoiler Guard preferences changed. Rebase on the returned state.");
+                        return Conflict(response);
+                    }
+                    // Admin-target preference controls edit only schema-owned
+                    // fields. Preserve the exact server-held opaque members so
+                    // native browser JSON numbers cannot corrupt future data.
+                    candidate.ExtensionData =
+                        PersistedPayloadPolicy.PreserveExistingExtensionData(
+                            candidate.ExtensionData,
+                            current.ExtensionData);
+                    if (string.Equals(
+                        PreferenceContentHash(current),
+                        PreferenceContentHash(candidate),
+                        StringComparison.Ordinal))
+                    {
+                        return Ok(PreferenceResponse(
+                            SpoilerPrefsResource,
+                            targetKey,
+                            targetUser.Username,
+                            current,
+                            success: true));
+                    }
+
+                    candidate.Revision = checked(current.Revision + 1);
+                    state.Prefs = candidate;
+                    var fullValidation = PersistedPayloadPolicy
+                        .ValidateMutationSource(state);
+                    if (fullValidation.Status == PersistedPayloadStatus.TooLarge)
+                    {
+                        return StatusCode(StatusCodes.Status413PayloadTooLarge, new
+                        {
+                            success = false,
+                            message = "The resulting Spoiler Guard state exceeds the supported limit."
+                        });
+                    }
+                    if (!fullValidation.IsValid)
+                    {
+                        throw new InvalidDataException(
+                            "Spoiler Guard state is invalid.");
+                    }
+
+                    _userConfigurationManager.SaveUserConfiguration(
+                        targetKey,
+                        SpoilerFileName,
+                        state);
+                    changed = true;
+                    response = PreferenceResponse(
+                        SpoilerPrefsResource,
+                        targetKey,
+                        targetUser.Username,
+                        candidate,
+                        success: true);
+                }
+
+                if (changed) SpoilerUserResolver.InvalidateUser(targetKey);
+                var actor = UserHelper.GetCurrentUserId(User)?.ToString("N") ?? "elevated-principal";
+                _logger.LogInformation(
+                    $"Admin {ResolveUserDisplay(actor)} updated Spoiler Guard preferences for " +
+                    $"{ResolveUserDisplay(targetKey)} at revision {response.Revision}.");
+                return Ok(response);
+            }
+            catch (Exception ex) when (IsCorruptStoreException(ex)
+                                      || ex is IOException
+                                      || ex is UnauthorizedAccessException
+                                      || ex is OverflowException)
+            {
+                _logger.LogWarning(
+                    $"Admin Spoiler Guard preference write failed for target {ResolveUserDisplay(targetKey)} " +
+                    $"(exception={ex.GetType().Name}).");
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, new
+                {
+                    success = false,
+                    message = "Spoiler Guard preferences are unavailable; no write was acknowledged."
+                });
+            }
+        }
+
+        // ─── Revisioned persistent-override administration ───────────────────
+
+        [HttpGet("admin/user-settings/{targetUserId}/spoiler-guard-overrides.json")]
+        [HttpGet("admin/user-settings/{targetUserId}/spoiler-guard-overrides.json/evidence")]
+        [Authorize(Policy = Policies.RequiresElevation)]
+        [Produces("application/json")]
+        public IActionResult GetTargetSpoilerGuardOverrides(string targetUserId)
+        {
+            var targetError = ResolveExistingTargetUser(
+                targetUserId,
+                out var targetKey,
+                out var targetUser);
+            if (targetError != null) return targetError;
+
+            try
+            {
+                lock (_userConfigurationManager.GetUserFileLock(targetKey, SpoilerFileName))
+                {
+                    var classified = _userConfigurationManager.ReadUserConfiguration<UserSpoilerBlur>(
+                        targetKey,
+                        SpoilerFileName);
+                    if (!classified.HasUsableValue || classified.Value == null)
+                    {
+                        return StatusCode(StatusCodes.Status503ServiceUnavailable, new
+                        {
+                            success = false,
+                            message = "Spoiler Guard overrides are corrupt or temporarily unavailable."
+                        });
+                    }
+                    if (classified.Status == UserConfigReadStatus.Missing
+                        && _configProvider.ConfigurationOrNull == null)
+                    {
+                        return SpoilerConfigurationUnavailable();
+                    }
+
+                    var state = classified.Value;
+                    // Overrides and preferences share one durable file. Refuse
+                    // to expose an apparently valid override snapshot while
+                    // carrying malformed preferences beside it: a later
+                    // override edit must never legitimize those bytes.
+                    if (!PersistedPayloadPolicy.ValidateMutationSource(state).IsValid)
+                    {
+                        throw new InvalidDataException("Spoiler Guard state is invalid.");
+                    }
+                    var overrides = SnapshotOverrides(state);
+                    return Ok(PreferenceResponse(
+                        SpoilerOverridesResource,
+                        targetKey,
+                        targetUser.Username,
+                        overrides,
+                        success: true));
+                }
+            }
+            catch (Exception ex) when (IsCorruptStoreException(ex)
+                                      || ex is IOException
+                                      || ex is UnauthorizedAccessException)
+            {
+                _logger.LogWarning(
+                    $"Admin Spoiler Guard override read failed for target {ResolveUserDisplay(targetKey)} " +
+                    $"(exception={ex.GetType().Name}).");
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, new
+                {
+                    success = false,
+                    message = "Spoiler Guard overrides are corrupt or temporarily unavailable."
+                });
+            }
+        }
+
+        [HttpPost("admin/user-settings/{targetUserId}/spoiler-guard-overrides.json")]
+        [Authorize(Policy = Policies.RequiresElevation)]
+        [Produces("application/json")]
+        [Consumes("application/json")]
+        [RequestSizeLimit(PersistedPayloadPolicy.SpoilerOverridesRequestBytes)]
+        public IActionResult SaveTargetSpoilerGuardOverrides(
+            string targetUserId,
+            [FromBody] SpoilerGuardOverrides? body)
+        {
+            var targetError = ResolveExistingTargetUser(
+                targetUserId,
+                out var targetKey,
+                out var targetUser);
+            if (targetError != null) return targetError;
+
+            var bodyValidation = PersistedPayloadPolicy.Validate(body);
+            if (bodyValidation.Status == PersistedPayloadStatus.TooLarge)
+            {
+                return StatusCode(StatusCodes.Status413PayloadTooLarge, new
+                {
+                    success = false,
+                    message = "The Spoiler Guard override payload exceeds the supported limit."
+                });
+            }
+            if (!bodyValidation.IsValid || body == null)
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message = "Invalid Spoiler Guard override payload."
+                });
+            }
+            var candidate = PersistedPayloadPolicy.CloneValidated(body);
+
+            if (!TryParsePreferenceIfMatch(Request, out var expectedRevision))
+            {
+                return StatusCode(StatusCodes.Status428PreconditionRequired, new
+                {
+                    success = false,
+                    message = "Saving Spoiler Guard overrides requires one strong quoted If-Match revision from the latest GET."
+                });
+            }
+            if (candidate.Revision != expectedRevision)
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message = "The body Revision must match If-Match."
+                });
+            }
+
+            try
+            {
+                var changed = false;
+                HashSet<string>? priorPending = null;
+                SpoilerGuardOverrides? acknowledged = null;
+                var result = _userConfigurationManager
+                    .TransactUserConfiguration<UserSpoilerBlur, IActionResult>(
+                        targetKey,
+                        SpoilerFileName,
+                        state =>
+                        {
+                            // The transaction owns the exact store lock before
+                            // existence is classified, preventing a missing-file
+                            // default from racing another writer.
+                            var classified = _userConfigurationManager
+                                .ReadUserConfiguration<UserSpoilerBlur>(
+                                    targetKey,
+                                    SpoilerFileName);
+                            var status = RequireSpoilerMutationRead(targetKey, classified);
+                            if (status == UserConfigReadStatus.Missing
+                                && _configProvider.ConfigurationOrNull == null)
+                            {
+                                return SpoilerConfigurationUnavailable();
+                            }
+
+                            // Validate the complete co-resident preference
+                            // resource before conflict, no-op, or success
+                            // acknowledgement. This keeps override-only writes
+                            // fail-closed and byte-preserving when Prefs is
+                            // malformed.
+                            if (!PersistedPayloadPolicy
+                                .ValidateMutationSource(state).IsValid)
+                            {
+                                throw new InvalidDataException(
+                                    "Spoiler Guard state is invalid.");
+                            }
+                            var current = SnapshotOverrides(state);
+                            if (current.Revision != expectedRevision)
+                            {
+                                return Conflict(PreferenceResponse(
+                                    SpoilerOverridesResource,
+                                    targetKey,
+                                    targetUser.Username,
+                                    current,
+                                    success: false,
+                                    conflict: true,
+                                    message: "Spoiler Guard overrides changed. Rebase on the returned state."));
+                            }
+                            PreserveAdminTargetOverrideExtensions(
+                                current,
+                                candidate);
+                            if (string.Equals(
+                                PreferenceContentHash(current),
+                                PreferenceContentHash(candidate),
+                                StringComparison.Ordinal))
+                            {
+                                acknowledged = current;
+                                return Ok(PreferenceResponse(
+                                    SpoilerOverridesResource,
+                                    targetKey,
+                                    targetUser.Username,
+                                    current,
+                                    success: true));
+                            }
+
+                            var trustedCandidate =
+                                PersistedPayloadPolicy.CloneValidated(candidate);
+                            var targetValidation = ValidateChangedTargetLocalOverrides(
+                                current,
+                                trustedCandidate,
+                                targetUser);
+                            if (targetValidation != null)
+                            {
+                                return targetValidation;
+                            }
+
+                            // Keep the post-validation equality check as an exact-ACK
+                            // invariant: validation is deliberately non-mutating.
+                            trustedCandidate.Revision = current.Revision;
+                            if (string.Equals(
+                                PreferenceContentHash(current),
+                                PreferenceContentHash(trustedCandidate),
+                                StringComparison.Ordinal))
+                            {
+                                acknowledged = current;
+                                return Ok(PreferenceResponse(
+                                    SpoilerOverridesResource,
+                                    targetKey,
+                                    targetUser.Username,
+                                    current,
+                                    success: true));
+                            }
+
+                            trustedCandidate.Revision = checked(current.Revision + 1);
+                            var candidateValidation = PersistedPayloadPolicy.Validate(
+                                trustedCandidate);
+                            if (candidateValidation.Status == PersistedPayloadStatus.TooLarge)
+                            {
+                                return StatusCode(StatusCodes.Status413PayloadTooLarge, new
+                                {
+                                    success = false,
+                                    message = "The Spoiler Guard override payload exceeds the supported limit."
+                                });
+                            }
+                            if (!candidateValidation.IsValid)
+                            {
+                                throw new InvalidDataException(
+                                    "Spoiler Guard overrides became invalid during the write.");
+                            }
+
+                            priorPending = new HashSet<string>(
+                                state.PendingTmdb.Keys,
+                                StringComparer.OrdinalIgnoreCase);
+                            ApplyOverrides(state, trustedCandidate);
+                            var fullValidation =
+                                PersistedPayloadPolicy.Validate(state);
+                            if (fullValidation.Status ==
+                                PersistedPayloadStatus.TooLarge)
+                            {
+                                return StatusCode(StatusCodes.Status413PayloadTooLarge, new
+                                {
+                                    success = false,
+                                    message = "The resulting Spoiler Guard state exceeds the supported limit."
+                                });
+                            }
+                            if (!fullValidation.IsValid)
+                            {
+                                throw new InvalidDataException(
+                                    "Spoiler Guard state is invalid.");
+                            }
+
+                            _userConfigurationManager.SaveUserConfiguration(
+                                targetKey,
+                                SpoilerFileName,
+                                state);
+                            changed = true;
+                            acknowledged = trustedCandidate;
+                            return Ok(PreferenceResponse(
+                                SpoilerOverridesResource,
+                                targetKey,
+                                targetUser.Username,
+                                trustedCandidate,
+                                success: true));
+                        });
+
+                if (changed && acknowledged != null)
+                {
+                    var actor = UserHelper.GetCurrentUserId(User)?.ToString("N")
+                        ?? "elevated-principal";
+                    try
+                    {
+                        _logger.LogInformation(
+                            $"Admin {ResolveUserDisplay(actor)} updated Spoiler Guard overrides for " +
+                            $"{ResolveUserDisplay(targetKey)} at revision {acknowledged.Revision}.");
+                    }
+                    catch
+                    {
+                        // Persistence is already committed. Logging must never
+                        // turn an acknowledged write into a misleading failure.
+                    }
+
+                    try
+                    {
+                        SpoilerUserResolver.InvalidateUser(targetKey);
+                    }
+                    catch (Exception ex)
+                    {
+                        try
+                        {
+                            _logger.LogWarning(
+                                $"Committed Spoiler Guard override revision {acknowledged.Revision} for " +
+                                $"{ResolveUserDisplay(targetKey)}, but cache invalidation failed " +
+                                $"(exception={ex.GetType().Name}).");
+                        }
+                        catch
+                        {
+                            // Best effort after a durable commit.
+                        }
+                    }
+
+                    try
+                    {
+                        ReconcilePendingGate(
+                            targetKey,
+                            priorPending ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+                            acknowledged.PendingTmdb.Keys);
+                    }
+                    catch (Exception ex)
+                    {
+                        try
+                        {
+                            _logger.LogWarning(
+                                $"Committed Spoiler Guard override revision {acknowledged.Revision} for " +
+                                $"{ResolveUserDisplay(targetKey)}, but pending-gate reconciliation failed " +
+                                $"(exception={ex.GetType().Name}).");
+                        }
+                        catch
+                        {
+                            // Best effort after a durable commit.
+                        }
+                    }
+                }
+
+                return result;
+            }
+            catch (Exception ex) when (IsCorruptStoreException(ex)
+                                      || ex is IOException
+                                      || ex is UnauthorizedAccessException
+                                      || ex is OverflowException)
+            {
+                _logger.LogWarning(
+                    $"Admin Spoiler Guard override write failed for target {ResolveUserDisplay(targetKey)} " +
+                    $"(exception={ex.GetType().Name}).");
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, new
+                {
+                    success = false,
+                    message = "Spoiler Guard overrides are unavailable; no write was acknowledged."
+                });
             }
         }
 
@@ -422,6 +1320,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             var userKey = userId.Value.ToString("N");
             try
             {
+                var capacityExceeded = false;
                 _userConfigurationManager.RmwUserConfiguration<UserSpoilerBlur>(
                     userKey, SpoilerFileName, state =>
                     {
@@ -430,22 +1329,39 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                         // truly unchanged so a re-toggle doesn't burn a disk write.
                         if (state.Series.TryGetValue(key, out var existing))
                         {
-                            var newName = series.Name ?? existing.SeriesName;
+                            var newName = PersistedPayloadPolicy
+                                .ClampPersistedDisplayName(
+                                    series.Name ?? existing.SeriesName);
                             if (string.Equals(existing.SeriesName, newName, StringComparison.Ordinal))
                             {
                                 return 0;
                             }
                             existing.SeriesName = newName;
+                            SpoilerGuardOverridesRevision.Advance(state);
                             return 1;
+                        }
+                        if (!SpoilerGuardOverrideCapacity.CanInsert(state.Series, key))
+                        {
+                            capacityExceeded = true;
+                            return 0;
                         }
                         state.Series[key] = new SpoilerBlurSeriesEntry
                         {
                             SeriesId = key,
-                            SeriesName = series.Name ?? string.Empty,
+                            SeriesName = PersistedPayloadPolicy
+                                .ClampPersistedDisplayName(series.Name),
                             EnabledAt = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture),
                         };
+                        SpoilerGuardOverridesRevision.Advance(state);
                         return 1;
                     });
+                if (capacityExceeded)
+                {
+                    _logger.LogWarning(
+                        $"Spoiler Guard series cap reached for {ResolveUserDisplay(userKey)}; " +
+                        $"rejecting new series {key}.");
+                    return SpoilerOverrideCapacityExceeded("series");
+                }
                 SpoilerUserResolver.InvalidateUser(userKey);
                 _logger.LogInformation($"Spoiler Guard enabled for series '{series.Name}' ({key}) by {ResolveUserDisplay(userKey)}");
                 return Ok(new { success = true, seriesId = key, name = series.Name });
@@ -483,6 +1399,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                     userKey, SpoilerFileName, state =>
                     {
                         removed = state.Series.Remove(key);
+                        if (removed) SpoilerGuardOverridesRevision.Advance(state);
                         return removed ? 1 : 0;
                     });
                 SpoilerUserResolver.InvalidateUser(userKey);
@@ -552,6 +1469,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
 
             try
             {
+                var capacityExceeded = false;
                 _userConfigurationManager.RmwUserConfiguration<UserSpoilerBlur>(
                     userKey, SpoilerFileName, state =>
                     {
@@ -562,7 +1480,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                                 return 0;
                             }
                             existing.MovieName = movieNameSanitized;
+                            SpoilerGuardOverridesRevision.Advance(state);
                             return 1;
+                        }
+                        if (!SpoilerGuardOverrideCapacity.CanInsert(state.Movies, key))
+                        {
+                            capacityExceeded = true;
+                            return 0;
                         }
                         state.Movies[key] = new SpoilerBlurMovieEntry
                         {
@@ -570,8 +1494,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                             MovieName = movieNameSanitized,
                             EnabledAt = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture),
                         };
+                        SpoilerGuardOverridesRevision.Advance(state);
                         return 1;
                     });
+                if (capacityExceeded)
+                {
+                    _logger.LogWarning(
+                        $"Spoiler Guard movie cap reached for {ResolveUserDisplay(userKey)}; " +
+                        $"rejecting new movie {key}.");
+                    return SpoilerOverrideCapacityExceeded("movies");
+                }
                 SpoilerUserResolver.InvalidateUser(userKey);
                 _logger.LogInformation($"Spoiler Guard enabled for movie '{movie.Name}' ({key}) by {ResolveUserDisplay(userKey)}");
                 return Ok(new { success = true, movieId = key, name = movie.Name });
@@ -609,6 +1541,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                     userKey, SpoilerFileName, state =>
                     {
                         removed = state.Movies.Remove(key);
+                        if (removed) SpoilerGuardOverridesRevision.Advance(state);
                         return removed ? 1 : 0;
                     });
                 SpoilerUserResolver.InvalidateUser(userKey);
@@ -725,6 +1658,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
 
             try
             {
+                var capacityExceeded = false;
                 _userConfigurationManager.RmwUserConfiguration<UserSpoilerBlur>(
                     userKey, SpoilerFileName, state =>
                     {
@@ -735,7 +1669,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                                 return 0;
                             }
                             existing.CollectionName = collNameSanitized;
+                            SpoilerGuardOverridesRevision.Advance(state);
                             return 1;
+                        }
+                        if (!SpoilerGuardOverrideCapacity.CanInsert(state.Collections, key))
+                        {
+                            capacityExceeded = true;
+                            return 0;
                         }
                         state.Collections[key] = new SpoilerBlurCollectionEntry
                         {
@@ -743,8 +1683,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                             CollectionName = collNameSanitized,
                             EnabledAt = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture),
                         };
+                        SpoilerGuardOverridesRevision.Advance(state);
                         return 1;
                     });
+                if (capacityExceeded)
+                {
+                    _logger.LogWarning(
+                        $"Spoiler Guard collection cap reached for {ResolveUserDisplay(userKey)}; " +
+                        $"rejecting new collection {key}.");
+                    return SpoilerOverrideCapacityExceeded("collections");
+                }
                 SpoilerUserResolver.InvalidateUser(userKey);
                 _logger.LogInformation($"Spoiler Guard enabled for collection '{boxSet.Name}' ({key}) by {ResolveUserDisplay(userKey)}");
                 return Ok(new { success = true, collectionId = key, name = boxSet.Name });
@@ -782,6 +1730,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                     userKey, SpoilerFileName, state =>
                     {
                         removed = state.Collections.Remove(key);
+                        if (removed) SpoilerGuardOverridesRevision.Advance(state);
                         return removed ? 1 : 0;
                     });
                 SpoilerUserResolver.InvalidateUser(userKey);
@@ -833,12 +1782,23 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 var summary = _pendingService.AddPending(userId.Value, jUser, normalizedType, canonicalTmdb, displayName);
                 if (summary.Promoted == "cap-exceeded")
                 {
-                    return StatusCode(429, new
+                    if (string.Equals(
+                        summary.CapacityCategory,
+                        "pending",
+                        StringComparison.Ordinal))
                     {
-                        success = false,
-                        code = "pending_cap_exceeded",
-                        message = $"You already have the maximum of {SpoilerPendingService.MaxPendingTmdbPerUser} pending spoiler-blur entries. Remove some via the management UI before adding more."
-                    });
+                        return StatusCode(StatusCodes.Status429TooManyRequests, new
+                        {
+                            success = false,
+                            code = "pending_cap_exceeded",
+                            category = "pending",
+                            maximum = SpoilerPendingService.MaxPendingTmdbPerUser,
+                            message = $"You already have the maximum of {SpoilerPendingService.MaxPendingTmdbPerUser} pending spoiler-blur entries. Remove some via the management UI before adding more."
+                        });
+                    }
+
+                    return SpoilerOverrideCapacityExceeded(
+                        summary.CapacityCategory ?? "override");
                 }
                 return Ok(new { success = true, promoted = summary.Promoted, jellyfinId = summary.JellyfinId, name = summary.Name });
             }
@@ -891,12 +1851,19 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                         if (seriesRemoved) resultBox[0] = (true, "series", seriesKeyToRemove);
                         else if (movieRemoved) resultBox[0] = (true, "movie", movieKeyToRemove);
                         else if (pendingRemoved) resultBox[0] = (true, "pending", null);
+                        if (resultBox[0].Removed)
+                        {
+                            SpoilerGuardOverridesRevision.Advance(state);
+                        }
                         return resultBox[0].Removed ? 1 : 0;
                     });
                 SpoilerUserResolver.InvalidateUser(userKey);
                 // Either way the key is no longer pending for this user — keep the
                 // promoter's gate consistent so it stops sweeping this user.
-                SpoilerSeerrPendingPromoter.UnregisterPending(pendingKey, userId.Value);
+                SpoilerSeerrPendingPromoter.ReconcilePendingKeys(
+                    _userConfigurationManager,
+                    userKey,
+                    new[] { pendingKey });
                 var (removedAnything, removedFrom, removedJellyfinId) = resultBox[0];
                 if (!removedAnything)
                 {
@@ -917,6 +1884,281 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         }
 
         // ─── Shared helpers ──────────────────────────────────────────────────────
+
+        private IActionResult? ValidateChangedTargetLocalOverrides(
+            SpoilerGuardOverrides current,
+            SpoilerGuardOverrides candidate,
+            JUser targetUser)
+        {
+            // Admin writes replace the whole resource, but they must obey the same
+            // 500-row admission ceiling as the ordinary pending writer.  A legacy
+            // store may already exceed that older operational limit, so allow
+            // unchanged rows, edits to existing rows, and progressive removals
+            // while it remains over-cap.  A write that introduces a new pending
+            // identity may only leave the resulting resource at or below 500.
+            if (candidate.PendingTmdb.Count > SpoilerPendingService.MaxPendingTmdbPerUser
+                && candidate.PendingTmdb.Keys.Any(
+                    key => !current.PendingTmdb.ContainsKey(key)))
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    code = "pending_cap_exceeded",
+                    category = "pending",
+                    maximum = SpoilerPendingService.MaxPendingTmdbPerUser,
+                    message =
+                        $"New pending overrides may not leave more than " +
+                        $"{SpoilerPendingService.MaxPendingTmdbPerUser} entries."
+                });
+            }
+
+            foreach (var pair in candidate.Series)
+            {
+                if (current.Series.TryGetValue(pair.Key, out var existing)
+                    && PersistedEntryEqual(existing, pair.Value))
+                {
+                    continue;
+                }
+
+                var itemId = Guid.ParseExact(pair.Key, "N");
+                var resolveError = ResolveTargetOverrideItem(
+                    itemId,
+                    targetUser,
+                    "series",
+                    out var item);
+                if (resolveError != null) return resolveError;
+                if (item is not Series)
+                {
+                    return BadRequest(new
+                    {
+                        success = false,
+                        code = "spoiler_override_item_type_mismatch",
+                        category = "series",
+                        message = "A changed series override does not reference a Series."
+                    });
+                }
+
+            }
+
+            foreach (var pair in candidate.Movies)
+            {
+                if (current.Movies.TryGetValue(pair.Key, out var existing)
+                    && PersistedEntryEqual(existing, pair.Value))
+                {
+                    continue;
+                }
+
+                var itemId = Guid.ParseExact(pair.Key, "N");
+                var resolveError = ResolveTargetOverrideItem(
+                    itemId,
+                    targetUser,
+                    "movies",
+                    out var item);
+                if (resolveError != null) return resolveError;
+                if (item is not Movie)
+                {
+                    return BadRequest(new
+                    {
+                        success = false,
+                        code = "spoiler_override_item_type_mismatch",
+                        category = "movies",
+                        message = "A changed movie override does not reference a Movie."
+                    });
+                }
+
+            }
+
+            foreach (var pair in candidate.Collections)
+            {
+                if (current.Collections.TryGetValue(pair.Key, out var existing)
+                    && PersistedEntryEqual(existing, pair.Value))
+                {
+                    continue;
+                }
+
+                var itemId = Guid.ParseExact(pair.Key, "N");
+                var resolveError = ResolveTargetOverrideItem(
+                    itemId,
+                    targetUser,
+                    "collections",
+                    out var item);
+                if (resolveError != null) return resolveError;
+                if (item is not BoxSet)
+                {
+                    return BadRequest(new
+                    {
+                        success = false,
+                        code = "spoiler_override_item_type_mismatch",
+                        category = "collections",
+                        message = "A changed collection override does not reference a BoxSet."
+                    });
+                }
+
+            }
+
+            return null;
+        }
+
+        private IActionResult? ResolveTargetOverrideItem(
+            Guid itemId,
+            JUser targetUser,
+            string category,
+            out BaseItem item)
+        {
+            item = null!;
+            BaseItem? resolved;
+            try
+            {
+                resolved = _libraryManager.GetItemById<BaseItem>(itemId, targetUser);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(
+                    $"Admin Spoiler Guard {category} validation failed closed for " +
+                    $"{ResolveUserDisplay(targetUser.Id.ToString("N"))} " +
+                    $"(exception={ex.GetType().Name}).");
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, new
+                {
+                    success = false,
+                    code = "spoiler_override_item_lookup_unavailable",
+                    category,
+                    message = "A changed local override could not be validated."
+                });
+            }
+
+            if (resolved == null || resolved.Id != itemId)
+            {
+                return NotFound(new
+                {
+                    success = false,
+                    code = "spoiler_override_item_unavailable",
+                    category,
+                    message =
+                        "A changed local override item was not found or is not accessible to the target user."
+                });
+            }
+
+            item = resolved;
+            return null;
+        }
+
+        private static bool PersistedEntryEqual<T>(T left, T right)
+            where T : class
+            => JsonElement.DeepEquals(
+                JsonSerializer.SerializeToElement(
+                    left,
+                    left.GetType(),
+                    PersistedJson.WriteOptions),
+                JsonSerializer.SerializeToElement(
+                    right,
+                    right.GetType(),
+                    PersistedJson.WriteOptions));
+
+        private static SpoilerGuardOverrides SnapshotOverrides(UserSpoilerBlur state)
+        {
+            if (state == null || state.OverridesRevision < 0)
+            {
+                throw new InvalidDataException("Spoiler Guard override state is invalid.");
+            }
+
+            var snapshot = SnapshotOverridesForCompatibility(state);
+            PersistedPayloadPolicy.NormalizeLegacyRuntimeState(snapshot);
+            if (!PersistedPayloadPolicy.Validate(snapshot).IsValid)
+            {
+                throw new InvalidDataException("Spoiler Guard override state is invalid.");
+            }
+
+            return PersistedPayloadPolicy.CloneValidated(snapshot);
+        }
+
+        private static SpoilerGuardOverrides SnapshotOverridesForCompatibility(
+            UserSpoilerBlur state)
+            => ClonePersisted(new SpoilerGuardOverrides
+            {
+                Revision = state.OverridesRevision,
+                Series = state.Series,
+                Movies = state.Movies,
+                Collections = state.Collections,
+                PendingTmdb = state.PendingTmdb,
+                ExtensionData = state.OverridesExtensionData
+                    ?? new Dictionary<string, JsonElement>(StringComparer.Ordinal)
+            });
+
+        private static void ApplyOverrides(
+            UserSpoilerBlur state,
+            SpoilerGuardOverrides overrides)
+        {
+            var detached = PersistedPayloadPolicy.CloneValidated(overrides);
+            state.Series = detached.Series;
+            state.Movies = detached.Movies;
+            state.Collections = detached.Collections;
+            state.PendingTmdb = detached.PendingTmdb;
+            state.OverridesRevision = detached.Revision;
+            state.OverridesExtensionData = detached.ExtensionData;
+        }
+
+        private static void PreserveAdminTargetOverrideExtensions(
+            SpoilerGuardOverrides current,
+            SpoilerGuardOverrides candidate)
+        {
+            candidate.ExtensionData =
+                PersistedPayloadPolicy.PreserveExistingExtensionData(
+                    candidate.ExtensionData,
+                    current.ExtensionData);
+
+            foreach (var pair in candidate.Series)
+            {
+                if (current.Series.TryGetValue(pair.Key, out var existing))
+                {
+                    pair.Value.ExtensionData =
+                        PersistedPayloadPolicy.PreserveExistingExtensionData(
+                            pair.Value.ExtensionData,
+                            existing.ExtensionData);
+                }
+            }
+
+            foreach (var pair in candidate.Movies)
+            {
+                if (current.Movies.TryGetValue(pair.Key, out var existing))
+                {
+                    pair.Value.ExtensionData =
+                        PersistedPayloadPolicy.PreserveExistingExtensionData(
+                            pair.Value.ExtensionData,
+                            existing.ExtensionData);
+                }
+            }
+
+            foreach (var pair in candidate.Collections)
+            {
+                if (current.Collections.TryGetValue(pair.Key, out var existing))
+                {
+                    pair.Value.ExtensionData =
+                        PersistedPayloadPolicy.PreserveExistingExtensionData(
+                            pair.Value.ExtensionData,
+                            existing.ExtensionData);
+                }
+            }
+
+            foreach (var pair in candidate.PendingTmdb)
+            {
+                if (current.PendingTmdb.TryGetValue(pair.Key, out var existing))
+                {
+                    pair.Value.ExtensionData =
+                        PersistedPayloadPolicy.PreserveExistingExtensionData(
+                            pair.Value.ExtensionData,
+                            existing.ExtensionData);
+                }
+            }
+        }
+
+        private void ReconcilePendingGate(
+            string userKey,
+            IEnumerable<string> priorPending,
+            IEnumerable<string> currentPending)
+            => SpoilerSeerrPendingPromoter.ReconcilePendingKeys(
+                _userConfigurationManager,
+                userKey,
+                priorPending.Concat(currentPending));
 
         // Validates the {mediaType}/{tmdbId} route pair shared by the pending
         // POST/DELETE. mediaType must be tv|movie; tmdbId a positive integer.
@@ -951,11 +2193,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         // override the fallback when something usable remains.
         private static string SanitizeDisplayName(string fallback, string? clientName)
         {
-            if (clientName is not string raw || string.IsNullOrEmpty(raw)) return fallback;
+            var boundedFallback = PersistedPayloadPolicy
+                .ClampPersistedDisplayName(fallback);
+            if (clientName is not string raw || string.IsNullOrEmpty(raw))
+            {
+                return boundedFallback;
+            }
             var cleaned = System.Text.RegularExpressions.Regex.Replace(raw, "<[^>]+>", string.Empty);
             cleaned = cleaned.Replace("<", string.Empty).Replace(">", string.Empty);
             if (cleaned.Length > 200) cleaned = cleaned.Substring(0, 200);
-            return string.IsNullOrWhiteSpace(cleaned) ? fallback : cleaned;
+            return string.IsNullOrWhiteSpace(cleaned) ? boundedFallback : cleaned;
         }
     }
 }

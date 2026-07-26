@@ -165,6 +165,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Configuration
             Assert.NotNull(hc.Settings);
             Assert.True(hc.Settings.Enabled);
             Assert.False(hc.Settings.FilterSearch);
+            Assert.Equal(0, hc.ItemsRevision);
         }
 
         /// <summary>All ISO 8601 shapes historically written to disk keep parsing
@@ -442,6 +443,50 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Configuration
 
             var back = _manager.GetUserConfiguration<UserSettings>(UserId, "settings.json");
             Assert.Equal("updated", back.LastOpenedTab);
+        }
+
+        [Fact]
+        public void StrictRead_SpoilerNullPrefsKeepsDefaultAndPreferenceRmwSaves()
+        {
+            SeedUserFileRaw(
+                "spoilerblur.json",
+                """
+                {
+                  "Prefs": null,
+                  "OverridesRevision": 4,
+                  "Series": {},
+                  "Movies": {},
+                  "Collections": {},
+                  "PendingTmdb": {}
+                }
+                """);
+
+            var strict = _manager.GetUserConfigurationStrict<UserSpoilerBlur>(
+                UserId,
+                "spoilerblur.json");
+            Assert.NotNull(strict.Prefs);
+            Assert.Equal(0, strict.Prefs.Revision);
+            Assert.True(
+                PersistedPayloadPolicy.ValidateMutationSource(strict).IsValid);
+
+            var changed = _manager.RmwUserConfiguration<UserSpoilerBlur>(
+                UserId,
+                "spoilerblur.json",
+                state =>
+                {
+                    state.Prefs.HideTags = true;
+                    state.Prefs.Revision++;
+                    return 1;
+                });
+
+            Assert.Equal(1, changed);
+            var stored =
+                _manager.GetUserConfigurationStrict<UserSpoilerBlur>(
+                    UserId,
+                    "spoilerblur.json");
+            Assert.Equal(1, stored.Prefs.Revision);
+            Assert.True(stored.Prefs.HideTags);
+            Assert.Equal(4, stored.OverridesRevision);
         }
 
         [Fact]

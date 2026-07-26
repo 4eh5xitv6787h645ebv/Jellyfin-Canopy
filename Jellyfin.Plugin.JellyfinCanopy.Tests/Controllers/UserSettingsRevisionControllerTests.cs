@@ -221,6 +221,46 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
         }
 
         [Fact]
+        public void MissingSettings_WithUnavailablePluginConfiguration_FailGetAndTransactionWithoutAFile()
+        {
+            _provider.Current = null;
+
+            var get = Assert.IsType<ObjectResult>(
+                Controller().GetUserSettingsSettings(UserId));
+            var save = Assert.IsType<ObjectResult>(
+                Controller(0).SaveUserSettingsSettings(
+                    UserId,
+                    new UserSettings
+                    {
+                        Revision = 0,
+                        WatchProgressMode = "percentage"
+                    }));
+
+            Assert.Equal(StatusCodes.Status503ServiceUnavailable, get.StatusCode);
+            Assert.Equal(StatusCodes.Status503ServiceUnavailable, save.StatusCode);
+            Assert.False(File.Exists(FilePath("settings.json")));
+        }
+
+        [Fact]
+        public void UnavailableSettingsPath_CannotProduceANoOpTransactionSuccess()
+        {
+            Directory.CreateDirectory(FilePath("settings.json"));
+
+            var save = Assert.IsType<ObjectResult>(
+                Controller(0).SaveUserSettingsSettings(
+                    UserId,
+                    new UserSettings
+                    {
+                        Revision = 0,
+                        WatchProgressMode = "percentage"
+                    }));
+
+            Assert.Equal(StatusCodes.Status503ServiceUnavailable, save.StatusCode);
+            Assert.True(Directory.Exists(FilePath("settings.json")));
+            Assert.False(File.Exists(FilePath("settings.json")));
+        }
+
+        [Fact]
         public async Task FirstGetPausedAfterMissing_PostQueuesThenWinsDurably()
         {
             using var defaultFactoryEntered = new ManualResetEventSlim();
@@ -284,8 +324,20 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
         [Fact]
         public void PostCommittedBeforeFirstGet_GetReturnsPostWithoutConsultingDefaults()
         {
+            var providerReads = 0;
             var provider = new DelegatingConfigProvider(() =>
-                throw new InvalidOperationException("Defaults must not be read after POST committed."));
+            {
+                if (Interlocked.Increment(ref providerReads) == 1)
+                {
+                    return new PluginConfiguration
+                    {
+                        WatchProgressDefaultMode = "percentage"
+                    };
+                }
+
+                throw new InvalidOperationException(
+                    "Defaults must not be read after POST committed.");
+            });
             var post = Controller(0, provider).SaveUserSettingsSettings(
                 UserId,
                 new UserSettings { Revision = 0, WatchProgressMode = "time" });
@@ -299,6 +351,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             var durable = _manager.GetUserConfigurationStrict<UserSettings>(UserId, "settings.json");
             Assert.Equal("time", durable.WatchProgressMode);
             Assert.Equal(1, durable.Revision);
+            Assert.Equal(1, providerReads);
         }
 
         [Fact]

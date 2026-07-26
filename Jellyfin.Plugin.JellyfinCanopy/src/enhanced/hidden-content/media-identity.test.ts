@@ -294,6 +294,45 @@ describe('versioned hidden-content media identity', () => {
         }));
     });
 
+    it('adopts scoped-write revisions even when the local item row is already identical', () => {
+        const itemId = '11111111-2222-3333-4444-555555555555';
+        install({
+            [itemId]: {
+                itemId,
+                name: 'Already scoped',
+                hideScope: 'continuewatching',
+            },
+        });
+        getHiddenData().itemsRevision = 2;
+        getHiddenData().settings.revision = 1;
+        getHiddenData().settings.enabled = false;
+
+        markScopedHidden(itemId, 'continuewatching', 3, 4, true);
+
+        expect(getHiddenData().itemsRevision).toBe(3);
+        expect(getHiddenData().settings.revision).toBe(4);
+        expect(getHiddenData().settings.enabled).toBe(true);
+        expect(Object.keys(getHiddenData().items)).toEqual([itemId]);
+    });
+
+    it('never regresses revisions when scoped acknowledgements resolve out of order', () => {
+        const first = '11111111-2222-3333-4444-555555555555';
+        const second = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+        getHiddenData().itemsRevision = 5;
+        getHiddenData().settings.revision = 2;
+
+        // B committed after A but its response arrived first.
+        markScopedHidden(second, 'nextup', 7, 4, true);
+        markScopedHidden(first, 'continuewatching', 6, 3, true);
+
+        expect(getHiddenData().itemsRevision).toBe(7);
+        expect(getHiddenData().settings.revision).toBe(4);
+        expect(getHiddenData().items).toMatchObject({
+            [first]: { itemId: first, hideScope: 'continuewatching' },
+            [second]: { itemId: second, hideScope: 'nextup' },
+        });
+    });
+
     it('deduplicates a resolved provider-only legacy row without removing distinct exact ids', () => {
         install({
             legacy: { name: 'Legacy 550', tmdbId: '550', hideScope: 'global' },

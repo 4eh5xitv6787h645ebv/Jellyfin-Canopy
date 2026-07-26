@@ -17,6 +17,8 @@ public sealed class StubUserManager : IUserManager
 
     public StubUserManager(params User[] users) => _users = users.ToList();
 
+    public Func<Guid, User?>? GetUserByIdHook { get; set; }
+
     /// <summary>Mutates the fixed user set — used by identity-cache invalidation tests.</summary>
     public void AddUser(User user) => _users.Add(user);
 
@@ -37,7 +39,10 @@ public sealed class StubUserManager : IUserManager
 
     public IEnumerable<User> GetUsers() => _users;
 
-    public User? GetUserById(Guid id) => _users.FirstOrDefault(u => u.Id == id);
+    public User? GetUserById(Guid id)
+        => GetUserByIdHook != null
+            ? GetUserByIdHook(id)
+            : _users.FirstOrDefault(u => u.Id == id);
 
     // ---- Everything below is an unused NotImplemented stub (per the repo convention). ----
 

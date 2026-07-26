@@ -62,6 +62,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         public UserConfigReadResult<T> ReadUserConfiguration<T>(string userId, string fileName) where T : new()
             => _store.ReadUserConfiguration<T>(userId, fileName);
 
+        // Side-effect-free typed read for bounded enumeration; unlike the
+        // ordinary policy read, it never creates a missing per-user directory.
+        public UserConfigReadResult<T> ReadExistingUserConfiguration<T>(
+            string userId,
+            string fileName)
+            where T : new()
+            => _store.ReadExistingUserConfiguration<T>(userId, fileName);
+
         /// <summary>
         /// Atomically reads or initializes a user file under the store-owned
         /// per-user/per-file lock.
@@ -92,8 +100,92 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         }
 
         // Locked read-modify-write: holds GetUserFileLock, strict-reads, mutates, and saves when the mutator returns > 0.
+        // Hidden Content and Spoiler Guard are policy-bearing graphs: validate their
+        // complete co-resident state both before mutation and before persistence so
+        // a narrow runtime writer cannot carry unrelated invalid fields forward.
         public int RmwUserConfiguration<T>(string userId, string fileName, Func<T, int> mutate) where T : class, new()
-            => _store.RmwUserConfiguration(userId, fileName, mutate);
+            => _store.TransactUserConfiguration<T, int>(userId, fileName, state =>
+            {
+                var resourceRevision = GetPolicyResourceRevision(state);
+                EnsureValidPolicyState(
+                    state,
+                    fileName,
+                    allowLegacyServerMetadata: true);
+                var changed = mutate(state);
+                if (changed > 0)
+                {
+                    var currentResourceRevision = GetPolicyResourceRevision(state);
+                    var resourceRevisionAdvanced = resourceRevision.HasValue
+                        && currentResourceRevision.HasValue
+                        && currentResourceRevision.Value > resourceRevision.Value;
+                    if (resourceRevisionAdvanced)
+                    {
+                        NormalizeLegacyPolicyMetadata(state);
+                    }
+
+                    EnsureValidPolicyState(
+                        state,
+                        fileName,
+                        // A preference-only write must preserve a compatible
+                        // legacy item/override resource byte-for-byte. Only a
+                        // matching resource revision advance repairs the real
+                        // metadata graph before candidate validation.
+                        allowLegacyServerMetadata:
+                            !resourceRevisionAdvanced,
+                        allowBoundedFutureHiddenIdentity:
+                            resourceRevisionAdvanced);
+                    _store.SaveUserConfiguration(userId, fileName, state);
+                }
+
+                return changed;
+            });
+
+        private static bool NormalizeLegacyPolicyMetadata<T>(T state)
+            where T : class
+            => state switch
+            {
+                UserHiddenContent hidden =>
+                    PersistedPayloadPolicy.NormalizeLegacyRuntimeState(hidden),
+                UserSpoilerBlur spoiler =>
+                    PersistedPayloadPolicy.NormalizeLegacyRuntimeState(spoiler),
+                _ => false
+            };
+
+        private static long? GetPolicyResourceRevision<T>(T state)
+            where T : class
+            => state switch
+            {
+                UserHiddenContent hidden => hidden.ItemsRevision,
+                UserSpoilerBlur spoiler => spoiler.OverridesRevision,
+                _ => null
+            };
+
+        private static void EnsureValidPolicyState<T>(
+            T state,
+            string fileName,
+            bool allowLegacyServerMetadata,
+            bool allowBoundedFutureHiddenIdentity = false)
+            where T : class
+        {
+            PersistedPayloadValidation? validation = state switch
+            {
+                UserHiddenContent hidden => allowLegacyServerMetadata
+                    ? PersistedPayloadPolicy.ValidateMutationSource(hidden)
+                    : allowBoundedFutureHiddenIdentity
+                        ? PersistedPayloadPolicy.ValidateMutationCandidate(hidden)
+                        : PersistedPayloadPolicy.Validate(hidden),
+                UserSpoilerBlur spoiler => allowLegacyServerMetadata
+                    ? PersistedPayloadPolicy.ValidateMutationSource(spoiler)
+                    : PersistedPayloadPolicy.Validate(spoiler),
+                _ => null
+            };
+            if (validation.HasValue && !validation.Value.IsValid)
+            {
+                throw new InvalidDataException(
+                    $"Refusing to mutate invalid user configuration '{fileName}' " +
+                    $"({validation.Value.Code}).");
+            }
+        }
 
         // Atomic save via temp file + File.Move(overwrite). RMW callers must hold GetUserFileLock.
         public void SaveUserConfiguration(string userId, string fileName, object config)

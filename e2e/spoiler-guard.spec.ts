@@ -431,10 +431,20 @@ test.describe('Spoiler Guard', () => {
 
             assertNoRuntimeErrors(consoleErrors);
         } finally {
-            // Restore the exact prior prefs (POST replaces the whole prefs object).
+            // Restore the exact prior preference content against the current
+            // optimistic-concurrency revision. The UI mutation above advances
+            // Revision, so replaying the stale snapshot must correctly 409.
+            const current = await getUserPrefs(user);
+            const revision = current.Revision ?? current.revision;
+            const restored = { ...original };
+            if ('revision' in restored && !('Revision' in restored)) {
+                restored.revision = revision;
+            } else {
+                restored.Revision = revision;
+            }
             await api(BASE, '/JellyfinCanopy/spoiler-blur/user-prefs', user.token, {
                 method: 'POST',
-                body: JSON.stringify(original),
+                body: JSON.stringify(restored),
             });
         }
     });

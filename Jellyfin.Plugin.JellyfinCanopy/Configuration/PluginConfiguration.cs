@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Jellyfin.Plugin.JellyfinCanopy.Helpers;
 using Jellyfin.Plugin.JellyfinCanopy.Model.Arr;
 using MediaBrowser.Model.Plugins;
@@ -11,6 +12,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         public string Key { get; set; } = string.Empty;
         public string Label { get; set; } = string.Empty;
         public string Category { get; set; } = string.Empty;
+
+        [System.Xml.Serialization.XmlIgnore]
+        [JsonExtensionData]
+        public Dictionary<string, JsonElement> ExtensionData { get; set; } = new(StringComparer.Ordinal);
     }
     public class PluginConfiguration : BasePluginConfiguration
     {

@@ -61,6 +61,82 @@ export const REMOVE_SURFACES: Record<string, RemoveSurfaceConfig> = {
 // ~150ms of a menu opening; this bounds how stale a context can be before we ignore it.
 const REMOVE_CONTEXT_TTL_MS = 5000;
 
+interface ScopedSettingsIntent {
+    root: Record<string, unknown>;
+    settings: Record<string, unknown>;
+    signature: string;
+    enabled: unknown;
+    enabledGeneration: number | null;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+    return value !== null && typeof value === 'object'
+        ? value as Record<string, unknown>
+        : null;
+}
+
+function captureScopedSettingsIntent(context: IdentityContext): ScopedSettingsIntent | null {
+    const root = asRecord(JC.userConfig?.hiddenContent);
+    const settings = asRecord(root?.settings);
+    if (!root || !settings || !JC.identity.isOwned(root, context)) return null;
+    try {
+        const generation = JC.hiddenContent?.getSettingsMutationGeneration?.('enabled');
+        return {
+            root,
+            settings,
+            signature: JSON.stringify(settings),
+            enabled: settings.enabled,
+            enabledGeneration: typeof generation === 'number' ? generation : null,
+        };
+    } catch {
+        return null;
+    }
+}
+
+function currentScopedSettings(context: IdentityContext): {
+    root: Record<string, unknown>;
+    settings: Record<string, unknown>;
+} | null {
+    if (!JC.identity.isCurrent(context)) return null;
+    const root = asRecord(JC.userConfig?.hiddenContent);
+    const settings = asRecord(root?.settings);
+    return root && settings && JC.identity.isOwned(root, context)
+        ? { root, settings }
+        : null;
+}
+
+function isScopedSettingsIntentCurrent(
+    context: IdentityContext,
+    intent: ScopedSettingsIntent | null,
+): boolean {
+    if (!intent) return false;
+    const current = currentScopedSettings(context);
+    if (!current) return false;
+    try {
+        // Item-only mutations replace the root while retaining the exact
+        // Settings object, so they may still consume the server acknowledgement.
+        // A Settings edit replaces that object; the signature also catches
+        // legacy/in-place edits that retain object identity.
+        return JSON.stringify(current.settings) === intent.signature
+            && (current.root === intent.root || current.settings === intent.settings);
+    } catch {
+        return false;
+    }
+}
+
+function isScopedEnabledIntentCurrent(
+    context: IdentityContext,
+    intent: ScopedSettingsIntent | null,
+): boolean {
+    if (!intent) return false;
+    const current = currentScopedSettings(context);
+    if (!current || !Object.is(current.settings.enabled, intent.enabled)) return false;
+    const generation = JC.hiddenContent?.getSettingsMutationGeneration?.('enabled');
+    return intent.enabledGeneration === null || typeof generation !== 'number'
+        ? isScopedSettingsIntentCurrent(context, intent)
+        : generation === intent.enabledGeneration;
+}
+
 /**
  * Determines which home-screen surface a card belongs to through the shared,
  * identity-scoped Jellyfin 12 row resolver. Unresolved rows deliberately
@@ -128,9 +204,11 @@ export async function removeFromHomeSurface(itemId: string, surface: string, car
         showNotification(JC.t!('remove_continue_watching_error_api', { error: JC.escapeHtml(e?.statusText || '') || JC.t!('unknown_error') }), "error");
         return false;
     }
+    const settingsIntent = captureScopedSettingsIntent(context);
+    const releaseScopedWrite = JC.hiddenContent?.beginScopedWrite?.() || null;
 
     try {
-        await JC.core.api!.plugin(`/${config.path}/hide/${encodeURIComponent(itemId)}`, {
+        const response = await JC.core.api!.plugin(`/${config.path}/hide/${encodeURIComponent(itemId)}`, {
             method: 'POST',
             body: {},
             skipRetry: true,
@@ -141,7 +219,48 @@ export async function removeFromHomeSurface(itemId: string, surface: string, car
 
         // Local-cache mirror only — server already wrote the canonical entry; a refetch would risk a clobber.
         try {
-            (JC as any).hiddenContent?.markScopedHidden?.(itemId, surface);
+            const revision = Number(
+                (response as { itemsRevision?: unknown; ItemsRevision?: unknown } | null)
+                    ?.itemsRevision
+                    ?? (response as { ItemsRevision?: unknown } | null)?.ItemsRevision,
+            );
+            const preferenceRevision = Number(
+                (response as { settingsRevision?: unknown; SettingsRevision?: unknown } | null)
+                    ?.settingsRevision
+                    ?? (response as { SettingsRevision?: unknown } | null)?.SettingsRevision,
+            );
+            const enabled = (
+                response as {
+                    hiddenContentEnabled?: unknown;
+                    HiddenContentEnabled?: unknown;
+                } | null
+            )?.hiddenContentEnabled
+                ?? (response as { HiddenContentEnabled?: unknown } | null)
+                    ?.HiddenContentEnabled;
+            const settingsChanged = (
+                response as {
+                    settingsChanged?: unknown;
+                    SettingsChanged?: unknown;
+                } | null
+            )?.settingsChanged
+                ?? (response as { SettingsChanged?: unknown } | null)
+                    ?.SettingsChanged;
+            const acknowledgeSettings = isScopedSettingsIntentCurrent(context, settingsIntent);
+            const acknowledgeRevision = acknowledgeSettings
+                || (settingsChanged === true && !!currentScopedSettings(context));
+            const acknowledgeEnabled = acknowledgeSettings
+                || (settingsChanged === true
+                    && isScopedEnabledIntentCurrent(context, settingsIntent));
+            (JC as any).hiddenContent?.markScopedHidden?.(
+                itemId,
+                surface,
+                Number.isSafeInteger(revision) && revision >= 0 ? revision : undefined,
+                acknowledgeRevision
+                    && Number.isSafeInteger(preferenceRevision) && preferenceRevision >= 0
+                    ? preferenceRevision
+                    : undefined,
+                acknowledgeEnabled && typeof enabled === 'boolean' ? enabled : undefined,
+            );
         } catch (e) {
             console.warn('🪼 Jellyfin Canopy: markScopedHidden mirror failed', e);
         }
@@ -155,6 +274,8 @@ export async function removeFromHomeSurface(itemId: string, surface: string, car
             || '') || JC.t!('unknown_error');
         showNotification(JC.t!('remove_continue_watching_error_api', { error: errorMessage }), "error");
         return false;
+    } finally {
+        releaseScopedWrite?.();
     }
 }
 

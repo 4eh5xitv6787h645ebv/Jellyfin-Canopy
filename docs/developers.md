@@ -303,7 +303,7 @@ curl -X GET \
 
 ### User configuration payload budgets
 
-Complete replacements for `settings.json`, `shortcuts.json`, `elsewhere.json`, and `hidden-content.json` share one server-side payload policy. The request body is bounded **before JSON model binding** for both `Content-Length` and chunked uploads; an oversized body returns HTTP `413` with `{"success":false,"code":"payload_too_large",...}` and is never deserialized, logged, cached, or written. Field/count/range failures return HTTP `400` with a stable non-value-bearing reason code. A rejection leaves the existing file and Hidden Content cache untouched.
+Complete replacements for `settings.json`, `shortcuts.json`, `elsewhere.json`, and `hidden-content.json`, plus the elevated combined `spoiler-guard-overrides.json` resource, use one server-side payload-policy system. The request body is bounded **before JSON model binding** for both `Content-Length` and chunked uploads; an oversized body returns HTTP `413` and is never deserialized, logged, cached, or written. Field/count/range failures return HTTP `400` with a non-value-bearing reason. A rejection leaves the existing persisted state and related caches untouched.
 
 | Payload | HTTP body | Persisted JSON | Collection limits |
 | --- | ---: | ---: | --- |
@@ -311,6 +311,7 @@ Complete replacements for `settings.json`, `shortcuts.json`, `elsewhere.json`, a
 | `shortcuts.json` | 1 MiB | 1 MiB | Up to 1,000 shortcuts and 1,000 extension properties |
 | `elsewhere.json` | 1 MiB | 1 MiB | Up to 500 regions, 500 services, and 1,000 extension properties |
 | `hidden-content.json` | 8 MiB | 7 MiB | Up to **10,000 hidden items** (intentionally sized and tested with realistic populated records for large supported libraries) |
+| `spoiler-guard-overrides.json` | 2 MiB | 2 MiB | Up to **1,000 entries in each** of `Series`, `Movies`, `Collections`, and `PendingTmdb` |
 
 Known settings/shortcut/Elsewhere free-text fields are capped at 512 characters. Hidden Content keys are capped at 256 characters; display fields at 512; identifiers and type/timestamp fields use narrower 32–128 character limits. Season and episode numbers accept `0` through `100000`. Legacy `series` hide scope remains accepted alongside `global`, `continuewatching`, `nextup`, and `homesections`.
 
@@ -318,19 +319,25 @@ Forward-compatible `[JsonExtensionData]` remains supported, but unknown JSON is 
 
 ### Elevated admin-target settings API
 
-Canopy User Settings uses a dedicated UI-internal surface when an administrator edits another user's `settings.json` or `shortcuts.json`:
+Canopy User Settings uses dedicated UI-internal resources when an administrator edits another user's server-persisted preferences:
 
 ```http
 GET  /JellyfinCanopy/admin/user-settings/{targetUserId}/settings.json
 POST /JellyfinCanopy/admin/user-settings/{targetUserId}/settings.json
 GET  /JellyfinCanopy/admin/user-settings/{targetUserId}/shortcuts.json
 POST /JellyfinCanopy/admin/user-settings/{targetUserId}/shortcuts.json
+GET  /JellyfinCanopy/admin/user-settings/{targetUserId}/hidden-content-settings.json
+POST /JellyfinCanopy/admin/user-settings/{targetUserId}/hidden-content-settings.json
+GET  /JellyfinCanopy/admin/user-settings/{targetUserId}/spoiler-guard-prefs.json
+POST /JellyfinCanopy/admin/user-settings/{targetUserId}/spoiler-guard-prefs.json
+GET  /JellyfinCanopy/admin/user-settings/{targetUserId}/spoiler-guard-overrides.json
+POST /JellyfinCanopy/admin/user-settings/{targetUserId}/spoiler-guard-overrides.json
 GET  /JellyfinCanopy/admin/user-settings/{targetUserId}/{fileName}/evidence
 ```
 
 Every route is protected by `Policies.RequiresElevation`. The authenticated token defines the **actor** and is never replaced or impersonated. `{targetUserId}` defines the **target** only: it accepts a dashed GUID or 32-character `N` form, is canonicalized to lowercase `N` form, and must resolve to an existing Jellyfin user through `IUserManager`. A malformed or empty id returns `400`; an unknown or deleted user returns `404` without creating a configuration directory or default file; a failed Jellyfin user-directory lookup returns `503`. Missing/invalid authentication and a non-administrator retain Jellyfin's bare `401`/`403` responses with empty bodies.
 
-Successful reads return an acknowledgement envelope containing `Success`, `File`, `Revision`, `ContentHash`, `Data`, `TargetUserId`, and `TargetDisplayName`. `TargetDisplayName` is resolved by the server rather than copied from route or page text. `Data.Revision` equals the envelope revision, `ContentHash` is the 64-character lowercase SHA-256 content hash, and the response also carries the matching strong `ETag` and `X-JC-Content-Hash` headers. For `settings.json`, server-managed fields such as `IsAdmin` describe the **target**, not the administrator who made the request.
+Successful reads return an acknowledgement envelope containing `Success`, `File`, `Revision`, `ContentHash`, `Data`, `TargetUserId`, and `TargetDisplayName`. `TargetDisplayName` is resolved by the server rather than copied from route or page text. `Data.Revision` equals the envelope revision, `ContentHash` is the 64-character lowercase SHA-256 content hash, and the response also carries the matching strong `ETag` and `X-JC-Content-Hash` headers. The Hidden Content resource also returns the current bounded `ItemCount`, but never sends the item dictionary through the preferences editor. For `settings.json`, server-managed fields such as `IsAdmin` describe the **target**, not the administrator who made the request.
 
 Writes are complete, revision-aware replacements and use the same validation, payload budgets, atomic persistence, and corruption handling as self-service writes:
 
@@ -343,6 +350,20 @@ If-Match: "7"
 
 The request body is the complete `Data` object returned by the latest GET, with the intended fields changed—not a partial object containing only the property being changed. Exactly one quoted numeric strong `If-Match` value is accepted, and the body `Revision` must match it. A missing, weak, wildcard, unquoted, or multi-value precondition returns `428`; a body/header revision mismatch returns `400`; a stale revision returns `409` with the current authoritative revision/hash/data so the caller can rebase deliberately. A successful changed write advances the revision once and returns the committed target state; a content-identical write is an acknowledged no-op. Invalid or oversized payloads return `400` or `413`, and an unreadable, corrupt, or quarantined store fails closed with `503` rather than publishing an empty replacement. The `/evidence` route returns the same authoritative envelope and is used to resolve an ambiguous or lost write acknowledgement.
 
+“Complete replacement” applies to schema-owned fields. Existing unknown extension members are server-owned opaque data: after the CAS match, the server overlays their exact current JSON values (including existing shortcut and override-entry metadata) before no-op hashing, validation, and persistence. The browser editor therefore cannot change or remove an existing unknown member, and a number that JavaScript cannot represent exactly cannot corrupt unrelated future data.
+
+The three feature-specific resources are deliberately narrower than their persistence files:
+
+- `hidden-content-settings.json` accepts only the revisioned `Settings` subsection. The controller locks `hidden-content.json`, validates the complete file, replaces only `Settings`, and preserves the potentially large `Items` dictionary. Target-item hide and unhide actions continue through the bounded, `ItemsRevision`-preconditioned `admin/hidden-content/{targetUserId}/hide` and `/unhide` read-modify-write endpoints.
+- `spoiler-guard-prefs.json` accepts only the revisioned `Prefs` subsection. The controller locks `spoilerblur.json` and preserves the target's `Series`, `Movies`, `Collections`, and `PendingTmdb` dictionaries.
+- `spoiler-guard-overrides.json` is the deliberate administrative surface for those four persistent opt-in dictionaries. It replaces `Series`, `Movies`, `Collections`, and `PendingTmdb` together while preserving `Prefs` and unrelated top-level state. Its independent monotonic `OverridesRevision` is the combined CAS token: target-editor writes and the ordinary self-service detail-page, collection, and Seerr/pending mutations all advance the same token, so a stale whole-dictionary replacement receives authoritative `409` evidence instead of losing a concurrent toggle. An unchanged replacement is a stable no-op.
+
+The complete Hidden Content state carries a separate monotonic `ItemsRevision`. A self-service full-state save must match the current item-set revision or receives `409` with the authoritative state. Exact admin hide/unhide RMWs require the same current token in a strong `If-Match`, then advance and return it only when membership changes; preference-only saves never advance it. Because every remove and re-add advances the token, a stale client cannot mistake the same key's return for an unchanged snapshot (the ABA case). This also prevents a stale full-state client from resurrecting an item that an administrator just unhid, without making the small admin item operations upload the whole dictionary.
+
+The Hidden Content and Spoiler Guard preference-subsection payloads are capped at 8 KiB before the owning persistence service applies the complete-file bound. The combined Spoiler Guard override resource has a 2 MiB request and serialized-payload ceiling, a 1,000-entry storage-shape ceiling per dictionary, 128-character keys, and 512-character display names. Installed Series, Movie, and Collection keys must be canonical non-zero Jellyfin GUIDs; pending keys must be `tv:<positive-tmdb-id>` or `movie:<positive-tmdb-id>`. A new unique pending identity is admitted only while the resulting `PendingTmdb` dictionary remains at or below 500 entries, matching the ordinary pending writer. The higher 1,000-entry shape ceiling remains so an over-cap legacy store can be read, left unchanged, edited without admitting another identity, or progressively repaired by removal.
+
+For every added or changed Series, Movie, or Collection entry, the server resolves the submitted ID under the **target user's** library access and requires the exact Jellyfin type (`Series`, `Movie`, or `BoxSet`). Missing, inaccessible, or wrong-type items reject the complete write without advancing its revision. The target editor collects the Jellyfin ID and display name as explicit fields; it does not treat an administrator-scoped library result as target evidence. The bounded submitted display name is preserved so the response remains an exact acknowledgement of the accepted resource. Validation is delta-aware: an unchanged inaccessible or orphaned legacy row may remain, and removals never require the old item to be resolvable, so administrators can still repair historical state. None of these endpoints accepts an actor id in a header or body; the authenticated principal remains the actor, and the route id remains the explicit target.
+
 The browser editor preserves the same separation. The normal preferences route without a different `userId` remains self-service. Admin-target mode is selected only from the currently visible user's preferences view, including Jellyfin 12's modern and legacy route forms:
 
 ```text
@@ -353,7 +374,9 @@ The browser editor preserves the same separation. The normal preferences route w
 
 The route target is captured with the authenticated actor epoch and panel generation. Navigation to another target, panel close, logout/account change, server change, or a replacement panel makes older reads, writes, and retained controls stale and inert. Target snapshots and save queues never replace the actor's `JC.userConfig`, `JC.currentSettings`, active shortcuts, identity context, or browser storage.
 
-Only `settings.json` and `shortcuts.json` controls that use this target-aware adapter are mutable in admin-target mode. Hidden Content and Spoiler Guard panes remain unavailable there until their state and actions are fully target-scoped. Browser-local actions, including clearing the translation cache and temporary confirmation suppressions, are omitted or disabled because they belong to the administrator's current browser, not the selected user's server profile. Changing the target's display-language setting does not reload or rewrite the administrator's browser.
+All server-backed controls in the Hidden Content and Spoiler Guard panes use the same target-aware adapter. Hidden Content preference changes use the subsection resource, while **Manage Hidden Content** hands the explicit actor/target pair to the existing bounded admin item endpoints; it never falls back to the administrator's own store. Spoiler Guard preference changes use the target's `Prefs` subsection and leave all unrelated opt-in dictionaries intact. The separate persistent-title manager adds or removes Series, Movies, Collections, pending TV, and pending Movie entries through its own queue and combined CAS resource. It sorts the combined view and renders at most **50 rows per page**; page navigation replaces the current rows instead of accumulating an unbounded DOM. Pending changes also reconcile the promoter gate, so removed intents cannot be promoted later and newly added intents are immediately eligible under the normal gate. Each save surface exposes polite `saving`, `saved`, and refresh/reconciliation status without treating an unacknowledged write as success; validation and persistence failures switch the manager's live region to an assertive alert.
+
+The exception is intentionally narrow: browser-local actions are omitted or disabled because they cannot affect another user's device. This includes clearing the administrator browser's translation cache and short-lived confirmation suppression or acknowledgement state. The server-persisted Spoiler Guard **Don't ask again** preference remains editable because it belongs to the selected user's `Prefs`; a temporary snooze held only in the current browser does not. Changing the target's display-language setting likewise does not reload or rewrite the administrator's browser.
 
 ### Bookmark API
 
@@ -549,13 +572,15 @@ or item navigation aborts obsolete requests and prevents stale DOM publication.
 
 These admin-only endpoints let an administrator view and manage what **other** users have hidden. Every endpoint requires a Jellyfin **administrator** token (enforced server-side via the `RequiresElevation` policy) **and** the **Let admins view and manage other users' hidden content** toggle (**Pages → Hidden Content → Admin Controls**) to be enabled; otherwise it returns a bare `403` (empty body). `<USER_ID>` is the 32-character hex (`"N"` format) Jellyfin user id.
 
-**List users with hidden content.** Returns each user (except the caller) who has hidden at least one item, with their hidden-item count — used to populate the admin user-filter dropdown:
+**List users with hidden content.** Returns one bounded cursor page of users (except the caller) who have hidden at least one item, with their hidden-item count — used to populate the admin user-filter dropdown:
 
 ```bash
 curl -X GET \
   -H "Authorization: MediaBrowser Token=\"<ADMIN_API_KEY>\"" \
-  "<JELLYFIN_URL>/JellyfinCanopy/admin/hidden-content-users"
+  "<JELLYFIN_URL>/JellyfinCanopy/admin/hidden-content-users?limit=100&cursor=<OPAQUE_NEXT_CURSOR>"
 ```
+
+`limit` defaults to and is capped at **100**. Omit `cursor` for the first page; pass the exact canonical `nextCursor` only when `truncated` is true. The response contains `users`, `limit`, `scanned`, `truncated`, and `nextCursor`. The cursor advances through Jellyfin's authoritative user-directory order, so a page can contain fewer `users` than `scanned` when some candidates have no hidden items. The client retains and renders only the current page and exposes **First page** / **Next page** navigation; it never concatenates pages into an unbounded selector. Invalid, stale, or non-canonical cursors return `400`, and a corrupt candidate store fails the whole page closed with `503`.
 
 **Get a user's hidden content** (read-only):
 
@@ -565,12 +590,15 @@ curl -X GET \
   "<JELLYFIN_URL>/JellyfinCanopy/admin/hidden-content/<USER_ID>"
 ```
 
+The response's `HiddenContent.ItemsRevision` and strong `ETag: "<ITEMS_REVISION>"` carry the same item-set revision. Use that revision only for mutations of this exact target; do not reuse a token read for another user.
+
 **Unhide items for a user.** Removes one or more items from a user's hidden list. The body is a JSON array of item keys (an `itemId`, or `tmdb-<id>` for items not in the library):
 
 ```bash
 curl -X POST \
   -H "Authorization: MediaBrowser Token=\"<ADMIN_API_KEY>\"" \
   -H "Content-Type: application/json" \
+  -H 'If-Match: "<ITEMS_REVISION>"' \
   -d '["a1b2c3d4e5f6...", "tmdb-27205"]' \
   "<JELLYFIN_URL>/JellyfinCanopy/admin/hidden-content/<USER_ID>/unhide"
 ```
@@ -581,9 +609,12 @@ curl -X POST \
 curl -X POST \
   -H "Authorization: MediaBrowser Token=\"<ADMIN_API_KEY>\"" \
   -H "Content-Type: application/json" \
+  -H 'If-Match: "<ITEMS_REVISION>"' \
   -d '[{"TmdbId": "27205", "Name": "Inception", "Type": "Movie", "PosterPath": "/edv5CZvWj09upOsy2Y6IwDhK8bt.jpg"}]' \
   "<JELLYFIN_URL>/JellyfinCanopy/admin/hidden-content/<USER_ID>/hide"
 ```
+
+Both mutation endpoints require exactly one canonical strong quoted `If-Match` value from the latest exact-target GET. A missing, weak, wildcard, unquoted, or multi-value precondition returns `428`. If the item set changed—including a remove followed by re-adding the same key—the stale request returns `409` with the current `ItemsRevision`, matching `ETag`, and exact target identity, but not the private item dictionary. Refetch the target, rebase the intended keys against that state, show the conflict to the administrator, and retry only after an explicit decision. A successful membership change advances the revision exactly once; a valid no-op keeps it unchanged. The response's `added` or `removed` count must match the local effect before a client reports success or prunes rows.
 
 ---
 

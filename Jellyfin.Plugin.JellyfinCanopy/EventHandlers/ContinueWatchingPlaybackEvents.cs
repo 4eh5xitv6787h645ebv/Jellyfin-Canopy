@@ -187,7 +187,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.EventHandlers
                         {
                             if (hidden.Items.TryGetValue(k, out var e) && e != null) e.HideScope = "nextup";
                         }
-                        return keysToDrop.Count + keysToDemote.Count;
+                        var mutationCount = keysToDrop.Count + keysToDemote.Count;
+                        if (mutationCount > 0)
+                        {
+                            HiddenContentRevision.AdvanceItems(hidden);
+                        }
+                        return mutationCount;
                     });
                 }
                 catch (UserStoreUnhealthyException)
@@ -708,6 +713,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.EventHandlers
             }
 
             foreach (var key in keysToDrop) hidden.Items.Remove(key);
+            if (keysToDrop.Count > 0)
+            {
+                HiddenContentRevision.AdvanceItems(hidden);
+            }
             return keysToDrop.Count;
         }
 

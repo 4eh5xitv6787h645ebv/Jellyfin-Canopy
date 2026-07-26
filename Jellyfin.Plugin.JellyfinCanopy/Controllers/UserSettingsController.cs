@@ -124,10 +124,29 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 return UserFileReadFailure<UserSettings>("settings.json", read.Status, read.FaultDetail);
             }
 
+            if (read.Status == UserConfigReadStatus.Missing && !read.WasCreated)
+            {
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, new UserFileMutationResponse<UserSettings>
+                {
+                    File = "settings.json",
+                    TargetUserId = targetUserId,
+                    TargetDisplayName = targetDisplayName,
+                    Message = "Configured settings defaults are unavailable; no implicit default state was returned."
+                });
+            }
+
             var userConfig = read.Value;
             if (read.WasCreated)
             {
-                _logger.LogInformation($"Saved default settings.json for new user {ResolveUserDisplay(authorizedUserId)} from plugin configuration.");
+                if (!LogCrossUserFileMutationIfNeeded(
+                        authorizedUserId,
+                        "settings.json",
+                        userConfig.Revision.ToString(CultureInfo.InvariantCulture),
+                        "created default",
+                        targetUserId))
+                {
+                    _logger.LogInformation($"Saved default settings.json for new user {ResolveUserDisplay(authorizedUserId)} from plugin configuration.");
+                }
             }
 
             StampServerManagedFields(authorizedUserId, userConfig);
@@ -420,6 +439,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                     : BadRequest(response);
             }
 
+            // Shortcut entries carry forward-compatible extension members.
+            // Detach the validated request graph before it can cross the
+            // transaction/write boundary, cloning every nested JsonElement.
+            if (candidate is UserShortcuts shortcuts)
+            {
+                candidate = (T)(object)PersistedPayloadPolicy.CloneValidated(shortcuts);
+            }
+
             if (!TryParseIfMatchRevision(out var expectedRevision))
             {
                 return StatusCode(StatusCodes.Status428PreconditionRequired, new UserFileMutationResponse<T>
@@ -450,7 +477,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
 
             try
             {
-                var result = CommitUserFileState(authorizedUserId, fileName, expectedRevision, candidate);
+                var result = CommitUserFileState(
+                    authorizedUserId,
+                    fileName,
+                    expectedRevision,
+                    candidate,
+                    preserveAdminTargetExtensions: targetUserId != null);
                 if (result.State != null)
                 {
                     SetUserFileEvidence(result.State);
@@ -474,9 +506,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
 
                 if (result.Status == UserFileCommitStatus.Success)
                 {
-                    _logger.LogInformation(
-                        $"Saved user {displayName} for {ResolveUserDisplay(authorizedUserId)} " +
-                        $"to {fileName} at revision {response.Revision} ({response.ContentHash}).");
+                    if (!LogCrossUserFileMutationIfNeeded(
+                            authorizedUserId,
+                            fileName,
+                            response.Revision.ToString(CultureInfo.InvariantCulture),
+                            "saved",
+                            targetUserId))
+                    {
+                        _logger.LogInformation(
+                            $"Saved user {displayName} for {ResolveUserDisplay(authorizedUserId)} " +
+                            $"to {fileName} at revision {response.Revision} ({response.ContentHash}).");
+                    }
                 }
 
                 return result.Status switch
@@ -519,11 +559,42 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             }
         }
 
+        private UserConfigReadStatus RequireUserFileMutationRead<T>(
+            string authorizedUserId,
+            string fileName,
+            UserConfigReadResult<T> read)
+            where T : class, new()
+        {
+            if (read.HasUsableValue && read.Value != null)
+            {
+                return read.Status;
+            }
+
+            if (string.Equals(
+                read.FaultDetail,
+                "quarantined-recovery-required",
+                StringComparison.Ordinal))
+            {
+                throw new UserStoreUnhealthyException(fileName, newlyQuarantined: false);
+            }
+
+            if (read.Status == UserConfigReadStatus.Unavailable)
+            {
+                throw new IOException($"{fileName} is temporarily unavailable.");
+            }
+
+            _userConfigurationManager.GetUserConfigurationStrict<T>(
+                authorizedUserId,
+                fileName);
+            throw new InvalidDataException($"{fileName} is corrupt.");
+        }
+
         private UserFileCommitResult<T> CommitUserFileState<T>(
             string authorizedUserId,
             string fileName,
             long? expectedRevision,
-            T candidate)
+            T candidate,
+            bool preserveAdminTargetExtensions)
             where T : class, IRevisionedUserConfiguration, new()
         {
             return _userConfigurationManager.TransactUserConfiguration<T, UserFileCommitResult<T>>(
@@ -531,6 +602,31 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 fileName,
                 current =>
             {
+                var readStatus = RequireUserFileMutationRead(
+                    authorizedUserId,
+                    fileName,
+                    _userConfigurationManager.ReadUserConfiguration<T>(
+                        authorizedUserId,
+                        fileName));
+                if (readStatus == UserConfigReadStatus.Missing
+                    && typeof(T) == typeof(UserSettings))
+                {
+                    if (_configProvider.ConfigurationOrNull is not PluginConfiguration defaults)
+                    {
+                        throw new InvalidDataException(
+                            "Configured settings defaults are unavailable.");
+                    }
+
+                    var configured = BuildDefaultUserSettings(defaults);
+                    if (!PersistedPayloadPolicy.Validate(configured).IsValid)
+                    {
+                        throw new InvalidDataException(
+                            "Configured settings defaults are invalid.");
+                    }
+
+                    current = (T)(object)configured;
+                }
+
                 StampServerManagedFields(authorizedUserId, current);
                 StampServerManagedFields(authorizedUserId, candidate);
                 if (!IsValidUserFileState(current))
@@ -558,6 +654,20 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                     };
                 }
 
+                if (preserveAdminTargetExtensions)
+                {
+                    if (!TryPreserveAdminTargetExtensions(current, candidate))
+                    {
+                        return new UserFileCommitResult<T>
+                        {
+                            Status = UserFileCommitStatus.Invalid,
+                            State = current,
+                            Message =
+                                "Duplicate shortcut rows made opaque extension preservation ambiguous."
+                        };
+                    }
+                }
+
                 if (string.Equals(ContentHash(current), ContentHash(candidate), StringComparison.Ordinal))
                 {
                     return new UserFileCommitResult<T> { Status = UserFileCommitStatus.Success, State = current };
@@ -582,6 +692,180 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 _userConfigurationManager.SaveUserConfiguration(authorizedUserId, fileName, candidate);
                 return new UserFileCommitResult<T> { Status = UserFileCommitStatus.Success, State = candidate };
             });
+        }
+
+        private static bool TryPreserveAdminTargetExtensions<T>(
+            T current,
+            T candidate)
+            where T : class, IRevisionedUserConfiguration
+        {
+            if (current is UserSettings currentSettings
+                && candidate is UserSettings candidateSettings)
+            {
+                candidateSettings.ExtensionData =
+                    PersistedPayloadPolicy.PreserveExistingExtensionData(
+                        candidateSettings.ExtensionData,
+                        currentSettings.ExtensionData);
+                return true;
+            }
+
+            if (current is not UserShortcuts currentShortcuts
+                || candidate is not UserShortcuts candidateShortcuts)
+            {
+                return true;
+            }
+
+            candidateShortcuts.ExtensionData =
+                PersistedPayloadPolicy.PreserveExistingExtensionData(
+                    candidateShortcuts.ExtensionData,
+                    currentShortcuts.ExtensionData);
+            var used = new bool[currentShortcuts.Shortcuts.Count];
+            var matched = new bool[candidateShortcuts.Shortcuts.Count];
+
+            // If a mutation removes one of several schema-identical rows with
+            // distinct opaque data, no known field can identify the survivor.
+            // Reject instead of grafting one row's future data onto another.
+            var checkedGroups = new bool[currentShortcuts.Shortcuts.Count];
+            for (var currentIndex = 0;
+                 currentIndex < currentShortcuts.Shortcuts.Count;
+                 currentIndex++)
+            {
+                if (checkedGroups[currentIndex]) continue;
+                var exemplar = currentShortcuts.Shortcuts[currentIndex];
+                var currentGroup = new List<int>();
+                for (var sibling = currentIndex;
+                     sibling < currentShortcuts.Shortcuts.Count;
+                     sibling++)
+                {
+                    if (SameShortcutFields(
+                        exemplar,
+                        currentShortcuts.Shortcuts[sibling]))
+                    {
+                        checkedGroups[sibling] = true;
+                        currentGroup.Add(sibling);
+                    }
+                }
+
+                var candidateCount = candidateShortcuts.Shortcuts.Count(
+                    shortcut => SameShortcutFields(exemplar, shortcut));
+                if (candidateCount < currentGroup.Count
+                    && currentGroup.Skip(1).Any(index =>
+                        !ExtensionDataEqual(
+                            currentShortcuts.Shortcuts[currentGroup[0]]
+                                .ExtensionData,
+                            currentShortcuts.Shortcuts[index].ExtensionData)))
+                {
+                    return false;
+                }
+            }
+
+            // Match complete schema tuples first. This keeps a shifted
+            // duplicate-name row attached to its own opaque data after a
+            // different sibling is removed or the list is reordered.
+            for (var candidateIndex = 0;
+                 candidateIndex < candidateShortcuts.Shortcuts.Count;
+                 candidateIndex++)
+            {
+                var candidateShortcut = candidateShortcuts.Shortcuts[candidateIndex];
+                var matchIndex = -1;
+                if (candidateIndex < currentShortcuts.Shortcuts.Count
+                    && !used[candidateIndex]
+                    && SameShortcutFields(
+                        candidateShortcut,
+                        currentShortcuts.Shortcuts[candidateIndex]))
+                {
+                    matchIndex = candidateIndex;
+                }
+                else
+                {
+                    for (var currentIndex = 0;
+                         currentIndex < currentShortcuts.Shortcuts.Count;
+                         currentIndex++)
+                    {
+                        if (!used[currentIndex]
+                            && SameShortcutFields(
+                                candidateShortcut,
+                                currentShortcuts.Shortcuts[currentIndex]))
+                        {
+                            matchIndex = currentIndex;
+                            break;
+                        }
+                    }
+                }
+
+                if (matchIndex >= 0 && !used[matchIndex])
+                {
+                    used[matchIndex] = true;
+                    matched[candidateIndex] = true;
+                    candidateShortcut.ExtensionData =
+                        PersistedPayloadPolicy.PreserveExistingExtensionData(
+                            candidateShortcut.ExtensionData,
+                            currentShortcuts.Shortcuts[matchIndex].ExtensionData);
+                }
+            }
+
+            // A changed row may no longer have an exact tuple. Name is the
+            // editor's stable key only when one unused current row has that
+            // name; duplicate leftovers are deliberately fail-closed.
+            for (var candidateIndex = 0;
+                 candidateIndex < candidateShortcuts.Shortcuts.Count;
+                 candidateIndex++)
+            {
+                if (matched[candidateIndex]) continue;
+                var candidateShortcut = candidateShortcuts.Shortcuts[candidateIndex];
+                var matches = Enumerable.Range(
+                        0,
+                        currentShortcuts.Shortcuts.Count)
+                    .Where(index => !used[index]
+                        && string.Equals(
+                            candidateShortcut.Name,
+                            currentShortcuts.Shortcuts[index].Name,
+                            StringComparison.Ordinal))
+                    .ToList();
+                if (matches.Count > 1) return false;
+                if (matches.Count == 0) continue;
+
+                var matchIndex = matches[0];
+                used[matchIndex] = true;
+                candidateShortcut.ExtensionData =
+                    PersistedPayloadPolicy.PreserveExistingExtensionData(
+                        candidateShortcut.ExtensionData,
+                        currentShortcuts.Shortcuts[matchIndex].ExtensionData);
+            }
+
+            return true;
+        }
+
+        private static bool SameShortcutFields(Shortcut left, Shortcut right)
+            => string.Equals(left.Name, right.Name, StringComparison.Ordinal)
+                && string.Equals(left.Key, right.Key, StringComparison.Ordinal)
+                && string.Equals(left.Label, right.Label, StringComparison.Ordinal)
+                && string.Equals(left.Category, right.Category, StringComparison.Ordinal);
+
+        private static bool ExtensionDataEqual(
+            IReadOnlyDictionary<string, JsonElement> left,
+            IReadOnlyDictionary<string, JsonElement> right)
+        {
+            if (left.Count != right.Count) return false;
+            using var leftEntries = left.GetEnumerator();
+            using var rightEntries = right.GetEnumerator();
+            while (leftEntries.MoveNext())
+            {
+                if (!rightEntries.MoveNext()
+                    || !string.Equals(
+                        leftEntries.Current.Key,
+                        rightEntries.Current.Key,
+                        StringComparison.Ordinal)
+                    || !string.Equals(
+                        leftEntries.Current.Value.GetRawText(),
+                        rightEntries.Current.Value.GetRawText(),
+                        StringComparison.Ordinal))
+                {
+                    return false;
+                }
+            }
+
+            return !rightEntries.MoveNext();
         }
 
         private static bool IsValidUserFileState<T>(T state)
@@ -1763,7 +2047,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                     _userConfigurationManager.RmwUserConfiguration<UserHiddenContent>(
                         userId, "hidden-content.json", hc =>
                         {
-                            hc.Settings = BuildHcDefaultSettings(defaultConfig);
+                            var replacement = BuildHcDefaultSettings(defaultConfig);
+                            replacement.Revision = checked((hc.Settings?.Revision ?? 0) + 1);
+                            hc.Settings = replacement;
                             return 1;
                         });
                     Services.HiddenContentResponseFilter.InvalidateUser(userId);

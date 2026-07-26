@@ -56,6 +56,14 @@ Inside a partly-watched movie, chapter names, chapter thumbnails, and trickplay 
 
 Spoiler Guard preferences are strictly per user. Your spoiler list never affects anyone else on the server, and theirs never affects yours — including two people on the same home network seeing different blur states of the same image.
 
+An administrator can open **Canopy User Settings** from another user's Jellyfin profile and edit that user's server-persisted Spoiler Guard state without impersonating them. The authenticated administrator remains the actor and the selected profile is the explicit target.
+
+There are two intentionally separate save surfaces. Policy checkboxes and the permanent confirmation choice replace only the target's small `Prefs` subsection and preserve every persistent title entry. When Spoiler Guard is enabled, **Persistent title overrides** deliberately manages the four opt-in dictionaries—Series, Movies, Collections, and pending TMDB intents, with both TV and Movie types—while preserving `Prefs`. For a local Series, Movie, or Collection, the administrator enters its Jellyfin item ID and display name. On save, the server resolves that ID under the selected user's library access, requires the correct type, and preserves the bounded submitted name in its exact acknowledgement. An unchanged historical row can remain and can always be removed even if its old item is no longer available, so stale state never blocks repair. New pending identities are admitted up to 500 per user across both ordinary and administrative writers; the 1,000-entry persisted-shape ceiling remains for legacy and removal compatibility. The combined manager is sorted and paged at **50 rows at a time**, so a large list never becomes an unbounded page.
+
+All four persistent dictionaries share one independent revision token. Ordinary detail-page, collection, and Seerr/pending actions advance that same token, so an administrator saving a stale combined view gets authoritative conflict evidence and rebases safely rather than erasing a user's concurrent toggle. Adding or removing a pending intent also updates the pending-promotion gate: a removed request cannot later promote into a guarded library item, while a current intent remains eligible for normal promotion when the title arrives.
+
+The only exceptions are state that exists solely in one browser session. A temporary snooze or acknowledgement cannot be set for another user's device. The permanent **Don't ask again** preference is stored on the server, so it remains available in the cross-user editor.
+
 Image fetches are anonymous in Jellyfin, so to know *which* user a request belongs to, the plugin embeds a small per-user **identity marker** in the image URLs each user receives (part of the image's `tag` value). Every client — web, Android TV, iOS, Roku — echoes that value back on fetch, letting Spoiler Guard apply exactly your blur state without depending on your device's IP address. This works out of the box behind reverse proxies, VPNs, and shared/NAT networks. The marker is not a credential: at worst a hand-crafted request could opt itself *into* another user's blur policy, never bypass authentication.
 
 When a request arrives with no marker — for example a native client replaying an image URL it cached before this feature existed — the server falls back down a ladder:
@@ -174,7 +182,7 @@ Two optional, admin-controlled toggles save you from opting in manually for ever
 
 ---
 
-## Making it yours — per-user overrides
+## Making it yours — per-user policy overrides
 
 Your admin decides which spoiler surfaces get stripped, but you can relax any of them for yourself. Open **Canopy User Settings** (under the **Jellyfin Canopy** sidebar heading, part of the [Enhanced experience](enhanced.md)) and expand the **Spoiler Guard** section. Under **"Show me this even with Spoiler Guard on"** there's a checkbox per category:
 
@@ -189,6 +197,8 @@ A few rules keep this from becoming a way around admin policy:
 - **Images always stay protected.** Image replacement is not user-overridable — how unwatched cards look is admin policy.
 
 The same panel section holds a per-user **"Don't ask me to confirm when turning Spoiler Guard off"** checkbox. Unlike the dialog's own 15-minute snooze, this one never expires.
+
+These policy overrides are distinct from the administrator's **Persistent title overrides** manager described above. The former changes what metadata your guarded titles reveal; the latter deliberately changes which Series, Movies, Collections, or pending requests are on your guarded list.
 
 ---
 

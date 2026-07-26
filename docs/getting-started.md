@@ -47,7 +47,7 @@ Restart your Jellyfin server to finish the install — the plugin doesn't take e
 After the restart:
 
 1. Refresh your browser with a hard reload (++ctrl+f5++ or ++command+shift+r++).
-2. Open the Jellyfin Canopy settings panel — either route works:
+2. Open **Canopy User Settings** — either route works:
     - In the sidebar, under the **Jellyfin Canopy** heading, click **Canopy User Settings**.
     - Or press `?`.
 3. If **Canopy User Settings** opens, the install worked.

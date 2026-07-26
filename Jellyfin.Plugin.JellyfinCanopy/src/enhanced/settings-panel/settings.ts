@@ -77,13 +77,7 @@ function persistEditorSettings(ctx: PanelContext, editor: PanelEditorContext): P
                     : classified?.kind === 'conflict'
                         ? 'panel_admin_target_conflict_error'
                         : 'panel_admin_target_save_error';
-                const fallback = classified?.kind === 'conflict'
-                    ? 'These settings changed elsewhere. Reload and try again.'
-                    : classified?.kind === 'authorization'
-                        ? 'You are not authorized to edit this user’s Canopy settings.'
-                        : 'Could not save this user’s Canopy settings.';
-                const translated = JC.t?.(key);
-                toast(!translated || translated === key ? fallback : translated);
+                toast(JC.t!(key));
             }
             await reconcileAfterFailure(ctx, editor);
             if (editor.appliesToActor && JC.identity.isCurrent(editor.actor)) {
@@ -167,12 +161,9 @@ export function wireSettingsListeners(ctx: PanelContext): void {
 
             if (requiresRefresh) {
                 if (editor.mode === 'admin-target') {
-                    const key = 'panel_admin_target_refresh_notice';
-                    const translated = JC.t?.(key);
-                    const notice = !translated || translated === key
-                        ? 'Saved. It applies after that user refreshes their client.'
-                        : translated;
-                    toastMessage += `<br>${escapeHtml(notice)}`;
+                    toastMessage += `<br>${escapeHtml(
+                        JC.t!('panel_admin_target_refresh_notice'),
+                    )}`;
                 } else {
                     toastMessage += ".<br> Refresh page to apply.";
                 }

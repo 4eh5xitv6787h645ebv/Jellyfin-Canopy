@@ -54,13 +54,35 @@ test.describe('admin authorization', () => {
         // and restore it afterwards.
         const admin = await authenticate(baseURL!, USERS.admin.username, USERS.admin.password);
         const user = await authenticate(baseURL!, USERS.user.username, USERS.user.password);
+        const originalResponse = await apiRaw(
+            baseURL!,
+            `/JellyfinCanopy/admin/hidden-content/${user.userId}`,
+            admin.token
+        );
+        expect(originalResponse.status).toBe(200);
+        const original = await originalResponse.json() as Record<string, any>;
+        const hiddenContent = original.hiddenContent || original.HiddenContent || {};
+        const originalRevision =
+            hiddenContent.ItemsRevision ?? hiddenContent.itemsRevision;
+        expect(Number.isSafeInteger(originalRevision)).toBe(true);
+        expect(originalResponse.headers.get('etag')).toBe(`"${originalRevision}"`);
+        const hiddenItems =
+            (hiddenContent.Items || hiddenContent.items || {}) as
+                Record<string, { ItemId?: string; itemId?: string }>;
+        const originalIds = new Set([
+            ...Object.keys(hiddenItems),
+            ...Object.values(hiddenItems)
+                .map(item => item?.ItemId || item?.itemId || ''),
+        ].map(value => value.replace(/-/g, '').toLowerCase()));
         const items = await apiRaw(
             baseURL!,
-            `/Items?Recursive=true&IncludeItemTypes=Movie&Limit=1&userId=${user.userId}`,
+            `/Items?Recursive=true&IncludeItemTypes=Movie&Limit=25&userId=${user.userId}`,
             admin.token
         ).then((response) => response.json() as Promise<{ Items: Array<{ Id: string; Name: string }> }>);
-        const movie = items.Items?.[0];
-        expect(movie, 'server must have at least one movie').toBeTruthy();
+        const movie = items.Items?.find(
+            item => !originalIds.has(item.Id.replace(/-/g, '').toLowerCase())
+        );
+        expect(movie, 'server must have at least one unhidden movie').toBeTruthy();
 
         const hide = await apiRaw(
             baseURL!,
@@ -68,6 +90,7 @@ test.describe('admin authorization', () => {
             admin.token,
             {
                 method: 'POST',
+                headers: { 'If-Match': `"${originalRevision}"` },
                 body: JSON.stringify([{
                     ItemId: movie!.Id,
                     Name: movie!.Name,
@@ -78,6 +101,15 @@ test.describe('admin authorization', () => {
             }
         );
         expect(hide.status).toBe(200);
+        const hideAcknowledgement = await hide.json() as {
+            success: boolean;
+            added: number;
+            itemsRevision: number;
+        };
+        expect(hideAcknowledgement.success).toBe(true);
+        expect(hideAcknowledgement.added).toBe(1);
+        expect(hideAcknowledgement.itemsRevision).toBe(Number(originalRevision) + 1);
+        expect(hide.headers.get('etag')).toBe(`"${hideAcknowledgement.itemsRevision}"`);
 
         try {
             await loginAs(page, 'admin', consoleErrors);
@@ -100,11 +132,29 @@ test.describe('admin authorization', () => {
             assertNoHiddenContentRuntimeErrors(consoleErrors);
         } finally {
             // Leave the user's hidden-content store as found.
-            await apiRaw(
+            const unhide = await apiRaw(
                 baseURL!,
                 `/JellyfinCanopy/admin/hidden-content/${user.userId}/unhide`,
                 admin.token,
-                { method: 'POST', body: JSON.stringify([movie!.Id]) }
+                {
+                    method: 'POST',
+                    headers: { 'If-Match': `"${hideAcknowledgement.itemsRevision}"` },
+                    body: JSON.stringify([movie!.Id]),
+                }
+            );
+            expect(unhide.status).toBe(200);
+            const unhideAcknowledgement = await unhide.json() as {
+                success: boolean;
+                removed: number;
+                itemsRevision: number;
+            };
+            expect(unhideAcknowledgement.success).toBe(true);
+            expect(unhideAcknowledgement.removed).toBe(1);
+            expect(unhideAcknowledgement.itemsRevision).toBe(
+                hideAcknowledgement.itemsRevision + 1
+            );
+            expect(unhide.headers.get('etag')).toBe(
+                `"${unhideAcknowledgement.itemsRevision}"`
             );
         }
     });

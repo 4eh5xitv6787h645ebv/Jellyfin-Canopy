@@ -51,8 +51,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         /// <summary>
         /// Structured outcome shared by the HTTP layer and the fire-and-forget log layer.
         /// <c>Promoted</c> is one of "series", "movie", "pending" or "cap-exceeded".
+        /// <c>CapacityCategory</c> identifies which dictionary refused a new entry.
         /// </summary>
-        public sealed record SpoilerBlurPendingResult(string Promoted, string? JellyfinId, string? Name, bool WroteSomething);
+        public sealed record SpoilerBlurPendingResult(
+            string Promoted,
+            string? JellyfinId,
+            string? Name,
+            bool WroteSomething,
+            string? CapacityCategory = null);
 
         // ─── Shared core (manual POST + auto-on-Seerr-request) ───────────────────
         // Library lookup + RMW. Strict-read corruption (InvalidDataException /
@@ -73,20 +79,48 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             if (existingItem is Series existingSeries)
             {
                 var seriesKey = existingSeries.Id.ToString("N");
+                var capacityExceeded = false;
                 var changed = _userConfigurationManager.RmwUserConfiguration<UserSpoilerBlur>(
                     userKey, fileName, state =>
                     {
-                        var pendingRemoved = state.PendingTmdb.Remove(pendingKey);
-                        if (state.Series.ContainsKey(seriesKey)) return pendingRemoved ? 1 : 0;
+                        if (state.Series.ContainsKey(seriesKey))
+                        {
+                            var pendingRemoved = state.PendingTmdb.Remove(pendingKey);
+                            if (pendingRemoved) SpoilerGuardOverridesRevision.Advance(state);
+                            return pendingRemoved ? 1 : 0;
+                        }
+                        if (!SpoilerGuardOverrideCapacity.CanInsert(state.Series, seriesKey))
+                        {
+                            capacityExceeded = true;
+                            return 0;
+                        }
+                        state.PendingTmdb.Remove(pendingKey);
                         state.Series[seriesKey] = new SpoilerBlurSeriesEntry
                         {
                             SeriesId = seriesKey,
-                            SeriesName = existingSeries.Name ?? string.Empty,
+                            SeriesName = PersistedPayloadPolicy
+                                .ClampPersistedDisplayName(existingSeries.Name),
                             EnabledAt = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture),
                         };
+                        SpoilerGuardOverridesRevision.Advance(state);
                         return 1;
                     });
-                SpoilerSeerrPendingPromoter.UnregisterPending(pendingKey, userId);
+                if (capacityExceeded)
+                {
+                    _logger.LogWarning(
+                        $"Spoiler Guard pending could not promote {pendingKey} for " +
+                        $"{ResolveUserDisplay(userKey)} because the series list is at capacity.");
+                    return new SpoilerBlurPendingResult(
+                        "cap-exceeded",
+                        null,
+                        null,
+                        false,
+                        "series");
+                }
+                SpoilerSeerrPendingPromoter.ReconcilePendingKeys(
+                    _userConfigurationManager,
+                    userKey,
+                    new[] { pendingKey });
                 SpoilerUserResolver.InvalidateUser(userKey); // F7: state changed (Series/Movies)
                 _logger.LogInformation($"Spoiler Guard pending resolved to existing series '{existingSeries.Name}' ({seriesKey}) for {ResolveUserDisplay(userKey)}");
                 return new SpoilerBlurPendingResult("series", seriesKey, existingSeries.Name, changed > 0);
@@ -94,20 +128,48 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             if (existingItem is Movie existingMovie)
             {
                 var movieKey = existingMovie.Id.ToString("N");
+                var capacityExceeded = false;
                 var changed = _userConfigurationManager.RmwUserConfiguration<UserSpoilerBlur>(
                     userKey, fileName, state =>
                     {
-                        var pendingRemoved = state.PendingTmdb.Remove(pendingKey);
-                        if (state.Movies.ContainsKey(movieKey)) return pendingRemoved ? 1 : 0;
+                        if (state.Movies.ContainsKey(movieKey))
+                        {
+                            var pendingRemoved = state.PendingTmdb.Remove(pendingKey);
+                            if (pendingRemoved) SpoilerGuardOverridesRevision.Advance(state);
+                            return pendingRemoved ? 1 : 0;
+                        }
+                        if (!SpoilerGuardOverrideCapacity.CanInsert(state.Movies, movieKey))
+                        {
+                            capacityExceeded = true;
+                            return 0;
+                        }
+                        state.PendingTmdb.Remove(pendingKey);
                         state.Movies[movieKey] = new SpoilerBlurMovieEntry
                         {
                             MovieId = movieKey,
-                            MovieName = existingMovie.Name ?? string.Empty,
+                            MovieName = PersistedPayloadPolicy
+                                .ClampPersistedDisplayName(existingMovie.Name),
                             EnabledAt = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture),
                         };
+                        SpoilerGuardOverridesRevision.Advance(state);
                         return 1;
                     });
-                SpoilerSeerrPendingPromoter.UnregisterPending(pendingKey, userId);
+                if (capacityExceeded)
+                {
+                    _logger.LogWarning(
+                        $"Spoiler Guard pending could not promote {pendingKey} for " +
+                        $"{ResolveUserDisplay(userKey)} because the movie list is at capacity.");
+                    return new SpoilerBlurPendingResult(
+                        "cap-exceeded",
+                        null,
+                        null,
+                        false,
+                        "movies");
+                }
+                SpoilerSeerrPendingPromoter.ReconcilePendingKeys(
+                    _userConfigurationManager,
+                    userKey,
+                    new[] { pendingKey });
                 SpoilerUserResolver.InvalidateUser(userKey); // F7: state changed (Series/Movies)
                 _logger.LogInformation($"Spoiler Guard pending resolved to existing movie '{existingMovie.Name}' ({movieKey}) for {ResolveUserDisplay(userKey)}");
                 return new SpoilerBlurPendingResult("movie", movieKey, existingMovie.Name, changed > 0);
@@ -125,9 +187,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                             return 0;
                         }
                         existing.DisplayName = sanitized;
+                        SpoilerGuardOverridesRevision.Advance(state);
                         return 1;
                     }
-                    if (state.PendingTmdb.Count >= MaxPendingTmdbPerUser)
+                    if (state.PendingTmdb.Count >= MaxPendingTmdbPerUser
+                        || !SpoilerGuardOverrideCapacity.CanInsert(
+                            state.PendingTmdb,
+                            pendingKey))
                     {
                         capExceeded[0] = true;
                         return 0;
@@ -139,6 +205,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                         DisplayName = sanitized,
                         RequestedAt = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture),
                     };
+                    SpoilerGuardOverridesRevision.Advance(state);
                     return 1;
                 });
             // The strict RMW above proved spoilerblur.json is currently readable and
@@ -149,11 +216,19 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             if (capExceeded[0])
             {
                 _logger.LogWarning($"Spoiler Guard pending: cap of {MaxPendingTmdbPerUser} reached for {ResolveUserDisplay(userKey)} — rejecting new {pendingKey}");
-                return new SpoilerBlurPendingResult("cap-exceeded", null, null, false);
+                return new SpoilerBlurPendingResult(
+                    "cap-exceeded",
+                    null,
+                    null,
+                    false,
+                    "pending");
             }
             // Prime the promoter's fast-path gate so the next ItemAdded matching this
             // TMDB id sweeps THIS user instead of bailing.
-            SpoilerSeerrPendingPromoter.RegisterPending(pendingKey, userId);
+            SpoilerSeerrPendingPromoter.ReconcilePendingKeys(
+                _userConfigurationManager,
+                userKey,
+                new[] { pendingKey });
             _logger.LogInformation($"Spoiler Guard pending recorded {pendingKey} for {ResolveUserDisplay(userKey)} (not yet in library)");
 
             // TOCTOU recovery: the scanner may have added the item between the
@@ -165,11 +240,35 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 var raceItem = FindLibraryItemByTmdb(jUser, mediaType, canonicalTmdb);
                 if (raceItem is Series rs)
                 {
-                    return PromotePendingToSeries(userId, userKey, fileName, rs, pendingKey);
+                    var promotion = PromotePendingToSeries(
+                        userId,
+                        userKey,
+                        fileName,
+                        rs,
+                        pendingKey);
+                    return promotion.Promoted == "cap-exceeded"
+                        ? new SpoilerBlurPendingResult(
+                            "pending",
+                            null,
+                            null,
+                            pendingChanged > 0)
+                        : promotion;
                 }
                 if (raceItem is Movie rm)
                 {
-                    return PromotePendingToMovie(userId, userKey, fileName, rm, pendingKey);
+                    var promotion = PromotePendingToMovie(
+                        userId,
+                        userKey,
+                        fileName,
+                        rm,
+                        pendingKey);
+                    return promotion.Promoted == "cap-exceeded"
+                        ? new SpoilerBlurPendingResult(
+                            "pending",
+                            null,
+                            null,
+                            pendingChanged > 0)
+                        : promotion;
                 }
             }
             catch (Exception ex)
@@ -183,46 +282,110 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             Guid userId, string userKey, string fileName, Series series, string pendingKey)
         {
             var seriesKey = series.Id.ToString("N");
-            _userConfigurationManager.RmwUserConfiguration<UserSpoilerBlur>(
+            var capacityExceeded = false;
+            var changed = _userConfigurationManager.RmwUserConfiguration<UserSpoilerBlur>(
                 userKey, fileName, state =>
                 {
-                    var pendingRemoved = state.PendingTmdb.Remove(pendingKey);
-                    if (state.Series.ContainsKey(seriesKey)) return pendingRemoved ? 1 : 0;
+                    if (state.Series.ContainsKey(seriesKey))
+                    {
+                        var pendingRemoved = state.PendingTmdb.Remove(pendingKey);
+                        if (pendingRemoved) SpoilerGuardOverridesRevision.Advance(state);
+                        return pendingRemoved ? 1 : 0;
+                    }
+                    if (!SpoilerGuardOverrideCapacity.CanInsert(state.Series, seriesKey))
+                    {
+                        capacityExceeded = true;
+                        return 0;
+                    }
+                    state.PendingTmdb.Remove(pendingKey);
                     state.Series[seriesKey] = new SpoilerBlurSeriesEntry
                     {
                         SeriesId = seriesKey,
-                        SeriesName = series.Name ?? string.Empty,
+                        SeriesName = PersistedPayloadPolicy
+                            .ClampPersistedDisplayName(series.Name),
                         EnabledAt = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture),
                     };
+                    SpoilerGuardOverridesRevision.Advance(state);
                     return 1;
                 });
-            SpoilerSeerrPendingPromoter.UnregisterPending(pendingKey, userId);
+            if (capacityExceeded)
+            {
+                _logger.LogWarning(
+                    $"Spoiler Guard pending TOCTOU promotion retained {pendingKey} for " +
+                    $"{ResolveUserDisplay(userKey)} because the series list is at capacity.");
+                return new SpoilerBlurPendingResult(
+                    "cap-exceeded",
+                    null,
+                    null,
+                    false,
+                    "series");
+            }
+            SpoilerSeerrPendingPromoter.ReconcilePendingKeys(
+                _userConfigurationManager,
+                userKey,
+                new[] { pendingKey });
             SpoilerUserResolver.InvalidateUser(userKey); // F7: state changed (Series)
             _logger.LogInformation($"Spoiler Guard pending TOCTOU-promoted to series '{series.Name}' ({seriesKey}) for {ResolveUserDisplay(userKey)}");
-            return new SpoilerBlurPendingResult("series", seriesKey, series.Name, true);
+            return new SpoilerBlurPendingResult(
+                "series",
+                seriesKey,
+                series.Name,
+                changed > 0);
         }
 
         private SpoilerBlurPendingResult PromotePendingToMovie(
             Guid userId, string userKey, string fileName, Movie movie, string pendingKey)
         {
             var movieKey = movie.Id.ToString("N");
-            _userConfigurationManager.RmwUserConfiguration<UserSpoilerBlur>(
+            var capacityExceeded = false;
+            var changed = _userConfigurationManager.RmwUserConfiguration<UserSpoilerBlur>(
                 userKey, fileName, state =>
                 {
-                    var pendingRemoved = state.PendingTmdb.Remove(pendingKey);
-                    if (state.Movies.ContainsKey(movieKey)) return pendingRemoved ? 1 : 0;
+                    if (state.Movies.ContainsKey(movieKey))
+                    {
+                        var pendingRemoved = state.PendingTmdb.Remove(pendingKey);
+                        if (pendingRemoved) SpoilerGuardOverridesRevision.Advance(state);
+                        return pendingRemoved ? 1 : 0;
+                    }
+                    if (!SpoilerGuardOverrideCapacity.CanInsert(state.Movies, movieKey))
+                    {
+                        capacityExceeded = true;
+                        return 0;
+                    }
+                    state.PendingTmdb.Remove(pendingKey);
                     state.Movies[movieKey] = new SpoilerBlurMovieEntry
                     {
                         MovieId = movieKey,
-                        MovieName = movie.Name ?? string.Empty,
+                        MovieName = PersistedPayloadPolicy
+                            .ClampPersistedDisplayName(movie.Name),
                         EnabledAt = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture),
                     };
+                    SpoilerGuardOverridesRevision.Advance(state);
                     return 1;
                 });
-            SpoilerSeerrPendingPromoter.UnregisterPending(pendingKey, userId);
+            if (capacityExceeded)
+            {
+                _logger.LogWarning(
+                    $"Spoiler Guard pending TOCTOU promotion retained {pendingKey} for " +
+                    $"{ResolveUserDisplay(userKey)} because the movie list is at capacity.");
+                return new SpoilerBlurPendingResult(
+                    "cap-exceeded",
+                    null,
+                    null,
+                    false,
+                    "movies");
+            }
+            SpoilerSeerrPendingPromoter.ReconcilePendingKeys(
+                _userConfigurationManager,
+                userKey,
+                new[] { pendingKey });
             SpoilerUserResolver.InvalidateUser(userKey); // F7: state changed (Movies)
             _logger.LogInformation($"Spoiler Guard pending TOCTOU-promoted to movie '{movie.Name}' ({movieKey}) for {ResolveUserDisplay(userKey)}");
-            return new SpoilerBlurPendingResult("movie", movieKey, movie.Name, true);
+            return new SpoilerBlurPendingResult(
+                "movie",
+                movieKey,
+                movie.Name,
+                changed > 0);
         }
 
         /// <summary>

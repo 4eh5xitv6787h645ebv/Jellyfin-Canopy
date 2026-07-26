@@ -39,6 +39,40 @@ function targetEditor(overrides: Partial<PanelEditorContext> = {}): PanelEditorC
         },
         shortcuts: { Revision: 1, Shortcuts: [{ Name: 'play', Key: 'P' }] },
         activeShortcuts: { play: 'P' },
+        hiddenContentSettings: {
+            revision: 3,
+            enabled: false,
+            showHideButtons: true,
+            showHideConfirmation: false,
+            showButtonSeerr: true,
+            showButtonLibrary: false,
+            showButtonDetails: true,
+            showButtonCast: true,
+            filterLibrary: true,
+            filterDiscovery: false,
+            filterSearch: true,
+            filterCalendar: true,
+            filterUpcoming: true,
+            filterRecommendations: false,
+            filterRequests: true,
+            filterNextUp: false,
+            filterContinueWatching: true,
+            experimentalHideCollections: false,
+        },
+        hiddenContentCount: 4,
+        spoilerGuardPrefs: {
+            revision: 2,
+            HideEpisodeDescriptions: false,
+            ReplaceEpisodeTitles: null,
+            HideChapterNames: null,
+            HideCast: null,
+            HideRatings: null,
+            HideAirDate: null,
+            HideTaglines: null,
+            HideTags: null,
+            HideReviews: null,
+            SkipDisableConfirm: true,
+        },
         isCurrent: () => true,
         saveSettings: vi.fn().mockResolvedValue({
             acknowledged: true,
@@ -53,6 +87,20 @@ function targetEditor(overrides: Partial<PanelEditorContext> = {}): PanelEditorC
             file: 'shortcuts.json',
             revision: 2,
             contentHash: 'b'.repeat(64),
+        }),
+        saveHiddenContentSettings: vi.fn().mockResolvedValue({
+            acknowledged: true,
+            deduplicated: false,
+            file: 'hidden-content-settings.json',
+            revision: 4,
+            contentHash: 'c'.repeat(64),
+        }),
+        saveSpoilerGuardPrefs: vi.fn().mockResolvedValue({
+            acknowledged: true,
+            deduplicated: false,
+            file: 'spoiler-guard-prefs.json',
+            revision: 3,
+            contentHash: 'd'.repeat(64),
         }),
         ...overrides,
     };
@@ -125,8 +173,6 @@ describe('admin target pane isolation', () => {
         JC.t = (key: string, params?: Record<string, unknown>) => {
             if (key === 'panel_title') return 'Canopy User Settings';
             if (key === 'panel_admin_target_banner') return `Editing settings for ${String(params?.name)}`;
-            if (key === 'panel_admin_target_hidden_content_unavailable') return 'Hidden local unavailable';
-            if (key === 'panel_admin_target_spoiler_guard_unavailable') return 'Spoiler local unavailable';
             if (key === 'panel_admin_target_translation_cache_unavailable') return 'Cache local unavailable';
             if (key === 'panel_admin_target_refresh_notice') {
                 return 'Saved. It applies after that user refreshes their client.';
@@ -156,7 +202,7 @@ describe('admin target pane isolation', () => {
         vi.restoreAllMocks();
     });
 
-    it('renders target settings, an escaped server name, and explicit local-control explanations', () => {
+    it('renders target settings, Hidden Content, Spoiler Guard, and an escaped server name', () => {
         const editor = targetEditor();
         const html = buildPanelHtml(context(editor, document.createElement('div')));
         const host = document.createElement('div');
@@ -166,11 +212,57 @@ describe('admin target pane isolation', () => {
         expect(host.textContent).toContain('Editing settings for Target <script>alert(1)</script>');
         expect(host.querySelector('.jc-admin-target-banner script')).toBeNull();
         expect(host.querySelector<HTMLInputElement>('#autoPauseToggle')?.checked).toBe(true);
-        expect(host.querySelector('#hiddenContentEnabledToggle')).toBeNull();
-        expect(host.querySelector('[data-pref="HideEpisodeDescriptions"]')).toBeNull();
+        const expectedHiddenChecks: Record<string, boolean> = {
+            hiddenContentEnabledToggle: false,
+            hiddenShowHideButtons: true,
+            hiddenShowConfirmation: false,
+            hiddenShowButtonSeerr: true,
+            hiddenShowButtonLibrary: false,
+            hiddenShowButtonDetails: true,
+            hiddenShowButtonCast: true,
+            hiddenFilterLibrary: true,
+            hiddenFilterDiscovery: false,
+            hiddenFilterSearch: true,
+            hiddenFilterCalendar: true,
+            hiddenFilterUpcoming: true,
+            hiddenFilterRecommendations: false,
+            hiddenFilterRequests: true,
+            hiddenFilterNextUp: false,
+            hiddenFilterContinueWatching: true,
+            hiddenExperimentalCollections: false,
+        };
+        for (const [id, checked] of Object.entries(expectedHiddenChecks)) {
+            expect(host.querySelector<HTMLInputElement>(`#${id}`)?.checked, id).toBe(checked);
+        }
+        expect(host.querySelector('#manageHiddenContentBtn')?.textContent).toContain('(4)');
+        const nullableSpoilerPrefs = [
+            'HideEpisodeDescriptions',
+            'ReplaceEpisodeTitles',
+            'HideChapterNames',
+            'HideCast',
+            'HideRatings',
+            'HideAirDate',
+            'HideTaglines',
+            'HideTags',
+            'HideReviews',
+        ];
+        for (const pref of nullableSpoilerPrefs) {
+            expect(
+                host.querySelector<HTMLInputElement>(`[data-pref="${pref}"]`)?.checked,
+                pref,
+            ).toBe(pref !== 'HideEpisodeDescriptions');
+        }
+        expect(host.querySelector<HTMLInputElement>('#sbPrefSkipDisableConfirm')?.checked).toBe(true);
+        for (const id of ['hiddenContentSaveStatus', 'spoilerGuardSaveStatus']) {
+            const status = host.querySelector<HTMLElement>(`#${id}`)!;
+            expect(status.getAttribute('role')).toBe('status');
+            expect(status.getAttribute('aria-live')).toBe('polite');
+            expect(status.style.position).not.toBe('absolute');
+            expect(status.style.minHeight).toBe('18px');
+        }
         expect(host.querySelector('#clearTranslationCacheButton')).toBeNull();
-        expect(host.textContent).toContain('Hidden local unavailable');
-        expect(host.textContent).toContain('Spoiler local unavailable');
+        expect(host.textContent).not.toContain('Hidden local unavailable');
+        expect(host.textContent).not.toContain('Spoiler local unavailable');
         expect(host.textContent).toContain('Cache local unavailable');
     });
 

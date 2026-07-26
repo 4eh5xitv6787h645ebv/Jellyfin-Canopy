@@ -13,6 +13,7 @@ using MediaBrowser.Common.Api;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
@@ -212,13 +213,21 @@ public sealed class AdminTargetUserSettingsControllerTests : IDisposable
 
         var shortcutController = Controller(ifMatch: 7);
         using var shortcutExtensionDocument = JsonDocument.Parse("""{"preserved":true}""");
+        using var shortcutEntryExtensionDocument = JsonDocument.Parse(
+            """{"futureEntry":["kept",3]}""");
+        var shortcutEntry = new Shortcut
+        {
+            Name = "Pause",
+            Key = "Space",
+            Label = "Pause",
+            Category = "Playback"
+        };
+        shortcutEntry.ExtensionData["FutureShortcutEntry"] =
+            shortcutEntryExtensionDocument.RootElement.Clone();
         var shortcutCandidate = new UserShortcuts
         {
             Revision = 7,
-            Shortcuts = new List<Shortcut>
-            {
-                new() { Name = "Pause", Key = "Space", Label = "Pause", Category = "Playback" }
-            }
+            Shortcuts = new List<Shortcut> { shortcutEntry }
         };
         shortcutCandidate.ExtensionData["FutureShortcutSetting"] =
             shortcutExtensionDocument.RootElement.Clone();
@@ -234,6 +243,391 @@ public sealed class AdminTargetUserSettingsControllerTests : IDisposable
             storedShortcuts.ExtensionData["FutureShortcutSetting"]
                 .GetProperty("preserved")
                 .GetBoolean());
+        Assert.Equal(
+            "kept",
+            Assert.Single(storedShortcuts.Shortcuts)
+                .ExtensionData["FutureShortcutEntry"]
+                .GetProperty("futureEntry")[0]
+                .GetString());
+
+        var roundTrip = AssertResponse<UserShortcuts>(
+            Controller().GetAdminTargetUserShortcuts(TargetId));
+        Assert.Equal(
+            3,
+            Assert.Single(roundTrip.Data!.Shortcuts)
+                .ExtensionData["FutureShortcutEntry"]
+                .GetProperty("futureEntry")[1]
+                .GetInt32());
+    }
+
+    [Fact]
+    public void AdminWrites_PreserveExactOpaqueNumbersFromBrowserLossyEchoes()
+    {
+        const string exactNumbers = """{"big":9007199254740993,"huge":1e400}""";
+        using var exactDocument = JsonDocument.Parse(exactNumbers);
+        using var lossyDocument = JsonDocument.Parse(
+            """{"big":9007199254740992,"huge":null}""");
+        using var markerDocument = JsonDocument.Parse("""{"marker":"kept"}""");
+        _manager.SaveUserConfiguration(TargetId, "settings.json", new UserSettings
+        {
+            Revision = 1,
+            WatchProgressMode = "percentage",
+            ExtensionData = new Dictionary<string, JsonElement>
+            {
+                ["zOpaque"] = exactDocument.RootElement.Clone(),
+                ["aOpaque"] = markerDocument.RootElement.Clone()
+            }
+        });
+
+        var settingsCandidate = new UserSettings
+        {
+            Revision = 1,
+            WatchProgressMode = "time",
+            ExtensionData = new Dictionary<string, JsonElement>
+            {
+                ["zOpaque"] = lossyDocument.RootElement.Clone(),
+                ["aOpaque"] = markerDocument.RootElement.Clone()
+            }
+        };
+        var settingsResult = AssertResponse<UserSettings>(
+            Controller(ifMatch: 1).SaveAdminTargetUserSettings(
+                TargetId,
+                settingsCandidate));
+        Assert.Equal(2, settingsResult.Revision);
+        var storedSettings = _manager.GetUserConfigurationStrict<UserSettings>(
+            TargetId,
+            "settings.json");
+        Assert.Equal(exactNumbers, storedSettings.ExtensionData["zOpaque"].GetRawText());
+
+        // A lossy echo with no schema-owned edit is an exact no-op: it must not
+        // rewrite the file or advance its CAS revision.
+        var noOpResult = AssertResponse<UserSettings>(
+            Controller(ifMatch: 2).SaveAdminTargetUserSettings(
+                TargetId,
+                new UserSettings
+                {
+                    Revision = 2,
+                    WatchProgressMode = "time",
+                    ExtensionData = new Dictionary<string, JsonElement>
+                    {
+                        ["zOpaque"] = lossyDocument.RootElement.Clone(),
+                        ["aOpaque"] = markerDocument.RootElement.Clone()
+                    }
+                }));
+        Assert.Equal(2, noOpResult.Revision);
+        storedSettings = _manager.GetUserConfigurationStrict<UserSettings>(
+            TargetId,
+            "settings.json");
+        Assert.Equal(2, storedSettings.Revision);
+        Assert.Equal(exactNumbers, storedSettings.ExtensionData["zOpaque"].GetRawText());
+
+        _manager.SaveUserConfiguration(TargetId, "shortcuts.json", new UserShortcuts
+        {
+            Revision = 4,
+            ExtensionData = new Dictionary<string, JsonElement>
+            {
+                ["zOpaque"] = exactDocument.RootElement.Clone(),
+                ["aOpaque"] = markerDocument.RootElement.Clone()
+            },
+            Shortcuts = new List<Shortcut>
+            {
+                new()
+                {
+                    Name = "Pause",
+                    Key = "Space",
+                    ExtensionData = new Dictionary<string, JsonElement>
+                    {
+                        ["zOpaque"] = exactDocument.RootElement.Clone(),
+                        ["aOpaque"] = markerDocument.RootElement.Clone()
+                    }
+                }
+            }
+        });
+        var shortcutResult = AssertResponse<UserShortcuts>(
+            Controller(ifMatch: 4).SaveAdminTargetUserShortcuts(
+                TargetId,
+                new UserShortcuts
+                {
+                    Revision = 4,
+                    ExtensionData = new Dictionary<string, JsonElement>
+                    {
+                        ["zOpaque"] = lossyDocument.RootElement.Clone(),
+                        ["aOpaque"] = markerDocument.RootElement.Clone()
+                    },
+                    Shortcuts = new List<Shortcut>
+                    {
+                        new()
+                        {
+                            Name = "Pause",
+                            Key = "P",
+                            ExtensionData = new Dictionary<string, JsonElement>
+                            {
+                                ["zOpaque"] = lossyDocument.RootElement.Clone(),
+                                ["aOpaque"] = markerDocument.RootElement.Clone()
+                            }
+                        }
+                    }
+                }));
+        Assert.Equal(5, shortcutResult.Revision);
+        var storedShortcuts = _manager.GetUserConfigurationStrict<UserShortcuts>(
+            TargetId,
+            "shortcuts.json");
+        Assert.Equal(
+            exactNumbers,
+            storedShortcuts.ExtensionData["zOpaque"].GetRawText());
+        Assert.Equal(
+            exactNumbers,
+            Assert.Single(storedShortcuts.Shortcuts)
+                .ExtensionData["zOpaque"]
+                .GetRawText());
+        var shortcutNoOp = AssertResponse<UserShortcuts>(
+            Controller(ifMatch: 5).SaveAdminTargetUserShortcuts(
+                TargetId,
+                new UserShortcuts
+                {
+                    Revision = 5,
+                    ExtensionData = new Dictionary<string, JsonElement>
+                    {
+                        ["zOpaque"] = lossyDocument.RootElement.Clone(),
+                        ["aOpaque"] = markerDocument.RootElement.Clone()
+                    },
+                    Shortcuts = new List<Shortcut>
+                    {
+                        new()
+                        {
+                            Name = "Pause",
+                            Key = "P",
+                            ExtensionData = new Dictionary<string, JsonElement>
+                            {
+                                ["zOpaque"] = lossyDocument.RootElement.Clone(),
+                                ["aOpaque"] = markerDocument.RootElement.Clone()
+                            }
+                        }
+                    }
+                }));
+        Assert.Equal(5, shortcutNoOp.Revision);
+        storedShortcuts = _manager.GetUserConfigurationStrict<UserShortcuts>(
+            TargetId,
+            "shortcuts.json");
+        Assert.Equal(5, storedShortcuts.Revision);
+        Assert.Equal(
+            exactNumbers,
+            Assert.Single(storedShortcuts.Shortcuts)
+                .ExtensionData["zOpaque"]
+                .GetRawText());
+
+        _manager.SaveUserConfiguration(TargetId, "shortcuts.json", new UserShortcuts
+        {
+            Revision = 8,
+            Shortcuts = new List<Shortcut>
+            {
+                new()
+                {
+                    Name = "Duplicate",
+                    Key = "X",
+                    ExtensionData = new Dictionary<string, JsonElement>
+                    {
+                        ["Opaque"] = markerDocument.RootElement.Clone()
+                    }
+                },
+                new()
+                {
+                    Name = "Duplicate",
+                    Key = "Y",
+                    ExtensionData = new Dictionary<string, JsonElement>
+                    {
+                        ["Opaque"] = exactDocument.RootElement.Clone()
+                    }
+                }
+            }
+        });
+        var shiftedDuplicate = AssertResponse<UserShortcuts>(
+            Controller(ifMatch: 8).SaveAdminTargetUserShortcuts(
+                TargetId,
+                new UserShortcuts
+                {
+                    Revision = 8,
+                    Shortcuts = new List<Shortcut>
+                    {
+                        new()
+                        {
+                            Name = "Duplicate",
+                            Key = "Y",
+                            ExtensionData = new Dictionary<string, JsonElement>
+                            {
+                                ["Opaque"] = lossyDocument.RootElement.Clone()
+                            }
+                        }
+                    }
+                }));
+        Assert.Equal(9, shiftedDuplicate.Revision);
+        Assert.Equal(
+            exactNumbers,
+            Assert.Single(
+                    _manager.GetUserConfigurationStrict<UserShortcuts>(
+                        TargetId,
+                        "shortcuts.json").Shortcuts)
+                .ExtensionData["Opaque"]
+                .GetRawText());
+
+        using var integerDocument = JsonDocument.Parse("1");
+        using var decimalDocument = JsonDocument.Parse("1.0");
+        _manager.SaveUserConfiguration(TargetId, "shortcuts.json", new UserShortcuts
+        {
+            Revision = 10,
+            Shortcuts = new List<Shortcut>
+            {
+                new()
+                {
+                    Name = "Indistinguishable",
+                    Key = "I",
+                    ExtensionData = new Dictionary<string, JsonElement>
+                    {
+                        ["Opaque"] = integerDocument.RootElement.Clone()
+                    }
+                },
+                new()
+                {
+                    Name = "Indistinguishable",
+                    Key = "I",
+                    ExtensionData = new Dictionary<string, JsonElement>
+                    {
+                        ["Opaque"] = decimalDocument.RootElement.Clone()
+                    }
+                }
+            }
+        });
+        Assert.IsType<BadRequestObjectResult>(
+            Controller(ifMatch: 10).SaveAdminTargetUserShortcuts(
+                TargetId,
+                new UserShortcuts
+                {
+                    Revision = 10,
+                    Shortcuts = new List<Shortcut>
+                    {
+                        new()
+                        {
+                            Name = "Indistinguishable",
+                            Key = "I",
+                            ExtensionData = new Dictionary<string, JsonElement>
+                            {
+                                ["Opaque"] = integerDocument.RootElement.Clone()
+                            }
+                        }
+                    }
+                }));
+        var ambiguousStored = _manager.GetUserConfigurationStrict<UserShortcuts>(
+            TargetId,
+            "shortcuts.json");
+        Assert.Equal(10, ambiguousStored.Revision);
+        Assert.Equal(2, ambiguousStored.Shortcuts.Count);
+        Assert.Equal(
+            "1.0",
+            ambiguousStored.Shortcuts[1]
+                .ExtensionData["Opaque"]
+                .GetRawText());
+    }
+
+    [Fact]
+    public void AdminWriteSuccessLogsActorTargetFileAndRevisionWithoutContentOrHash()
+    {
+        const string secretMode = "SECRET-PREFERENCE-CONTENT";
+        const string secretShortcut = "SECRET-SHORTCUT-CONTENT";
+        const string legacySecret = "SECRET-LEGACY-ROUTE-CONTENT";
+        const string elevatedSecret = "SECRET-ELEVATED-PRINCIPAL-CONTENT";
+        _manager.SaveUserConfiguration(TargetId, "settings.json", new UserSettings
+        {
+            Revision = 1,
+            WatchProgressMode = "percentage"
+        });
+        _manager.SaveUserConfiguration(TargetId, "shortcuts.json", new UserShortcuts
+        {
+            Revision = 2
+        });
+        var logger = new CollectingLogger<UserSettingsController>();
+
+        var settings = AssertResponse<UserSettings>(
+            Controller(ifMatch: 1, logger: logger).SaveAdminTargetUserSettings(
+                TargetId,
+                new UserSettings
+                {
+                    Revision = 1,
+                    WatchProgressMode = secretMode
+                }));
+        var shortcuts = AssertResponse<UserShortcuts>(
+            Controller(ifMatch: 2, logger: logger).SaveAdminTargetUserShortcuts(
+                TargetId,
+                new UserShortcuts
+                {
+                    Revision = 2,
+                    Shortcuts = new List<Shortcut>
+                    {
+                        new()
+                        {
+                            Name = secretShortcut,
+                            Key = "K",
+                            Label = "Secret",
+                            Category = "Global"
+                        }
+                    }
+                }));
+        var legacyCrossUser = AssertResponse<UserSettings>(
+            Controller(ifMatch: 2, logger: logger).SaveUserSettingsSettings(
+                TargetId,
+                new UserSettings
+                {
+                    Revision = 2,
+                    WatchProgressMode = legacySecret
+                }));
+        var elevatedCrossUser = AssertResponse<UserSettings>(
+            Controller(
+                ifMatch: 3,
+                logger: logger,
+                includeActorIdClaim: false).SaveUserSettingsSettings(
+                    TargetId,
+                    new UserSettings
+                    {
+                        Revision = 3,
+                        WatchProgressMode = elevatedSecret
+                    }));
+        var newlyInitializedTarget = new User(
+            "New target",
+            "Provider",
+            "PasswordProvider");
+        _userManager.AddUser(newlyInitializedTarget);
+        AssertResponse<UserSettings>(
+            Controller(logger: logger).GetAdminTargetUserSettings(
+                newlyInitializedTarget.Id.ToString("N")));
+
+        var log = string.Join('\n', logger.Messages);
+        Assert.Contains(
+            $"Admin {_actor.Username} ({ActorId}) saved settings.json for target " +
+            $"{_target.Username} ({TargetId}) at revision 2.",
+            log);
+        Assert.Contains(
+            $"Admin {_actor.Username} ({ActorId}) saved shortcuts.json for target " +
+            $"{_target.Username} ({TargetId}) at revision 3.",
+            log);
+        Assert.Contains(
+            $"Admin {_actor.Username} ({ActorId}) saved settings.json for target " +
+            $"{_target.Username} ({TargetId}) at revision 3.",
+            log);
+        Assert.Contains(
+            $"Admin elevated-principal saved settings.json for target " +
+            $"{_target.Username} ({TargetId}) at revision 4.",
+            log);
+        Assert.Contains(
+            $"Admin {_actor.Username} ({ActorId}) created default settings.json for target " +
+            $"{newlyInitializedTarget.Username} ({newlyInitializedTarget.Id:N}) at revision 0.",
+            log);
+        Assert.DoesNotContain(secretMode, log, StringComparison.Ordinal);
+        Assert.DoesNotContain(secretShortcut, log, StringComparison.Ordinal);
+        Assert.DoesNotContain(legacySecret, log, StringComparison.Ordinal);
+        Assert.DoesNotContain(elevatedSecret, log, StringComparison.Ordinal);
+        Assert.DoesNotContain(settings.ContentHash, log, StringComparison.Ordinal);
+        Assert.DoesNotContain(shortcuts.ContentHash, log, StringComparison.Ordinal);
+        Assert.DoesNotContain(legacyCrossUser.ContentHash, log, StringComparison.Ordinal);
+        Assert.DoesNotContain(elevatedCrossUser.ContentHash, log, StringComparison.Ordinal);
     }
 
     [Theory]
@@ -346,6 +740,74 @@ public sealed class AdminTargetUserSettingsControllerTests : IDisposable
     }
 
     [Fact]
+    public void LegacyCrossUserRoutes_RejectUnknownAndEmptyTargetsBeforeAnyFileAccess()
+    {
+        var unknown = Guid.NewGuid();
+        var unknownId = unknown.ToString("N");
+
+        Assert.IsType<NotFoundObjectResult>(
+            Controller().GetUserSettingsSettings(unknownId));
+        Assert.IsType<NotFoundObjectResult>(
+            Controller().GetUserSettingsShortcuts(unknownId));
+        Assert.IsType<NotFoundObjectResult>(
+            Controller().GetUserFileEvidence(unknownId, "settings.json"));
+        Assert.IsType<NotFoundObjectResult>(
+            Controller().GetUserFileEvidence(unknownId, "shortcuts.json"));
+        Assert.IsType<NotFoundObjectResult>(
+            Controller(ifMatch: 0).SaveUserSettingsSettings(
+                unknownId,
+                new UserSettings { Revision = 0 }));
+        Assert.IsType<NotFoundObjectResult>(
+            Controller(ifMatch: 0).SaveUserSettingsShortcuts(
+                unknownId,
+                new UserShortcuts { Revision = 0 }));
+
+        var emptyId = Guid.Empty.ToString("N");
+        Assert.IsType<BadRequestObjectResult>(
+            Controller().GetUserSettingsSettings(emptyId));
+        Assert.IsType<BadRequestObjectResult>(
+            Controller(ifMatch: 0).SaveUserSettingsShortcuts(
+                emptyId,
+                new UserShortcuts { Revision = 0 }));
+        Assert.False(Directory.Exists(UserDirectory(unknown)));
+        Assert.False(Directory.Exists(UserDirectory(Guid.Empty)));
+    }
+
+    [Fact]
+    public void LegacyCrossUserRoutes_Return503WhenTargetDirectoryLookupThrows()
+    {
+        var unknown = Guid.NewGuid();
+        var unknownId = unknown.ToString("N");
+        _userManager.GetUserByIdHook = id =>
+            id == unknown
+                ? throw new IOException("User directory unavailable.")
+                : (id == _actor.Id
+                    ? _actor
+                    : (id == _target.Id ? _target : null));
+
+        var results = new IActionResult[]
+        {
+            Controller().GetUserSettingsSettings(unknownId),
+            Controller().GetUserSettingsShortcuts(unknownId),
+            Controller().GetUserFileEvidence(unknownId, "settings.json"),
+            Controller().GetUserFileEvidence(unknownId, "shortcuts.json"),
+            Controller(ifMatch: 0).SaveUserSettingsSettings(
+                unknownId,
+                new UserSettings { Revision = 0 }),
+            Controller(ifMatch: 0).SaveUserSettingsShortcuts(
+                unknownId,
+                new UserShortcuts { Revision = 0 })
+        };
+
+        Assert.All(
+            results,
+            result => Assert.Equal(
+                StatusCodes.Status503ServiceUnavailable,
+                Assert.IsType<ObjectResult>(result).StatusCode));
+        Assert.False(Directory.Exists(UserDirectory(unknown)));
+    }
+
+    [Fact]
     public void CorruptTargetStore_FailsClosedAndAdminWriteUsesNormalQuarantine()
     {
         _manager.SaveUserConfiguration(ActorId, "settings.json", new UserSettings
@@ -393,11 +855,15 @@ public sealed class AdminTargetUserSettingsControllerTests : IDisposable
     private string UserFile(Guid userId, string fileName)
         => Path.Combine(UserDirectory(userId), fileName);
 
-    private UserSettingsController Controller(long? ifMatch = null, string? rawIfMatch = null)
+    private UserSettingsController Controller(
+        long? ifMatch = null,
+        string? rawIfMatch = null,
+        ILogger<UserSettingsController>? logger = null,
+        bool includeActorIdClaim = true)
     {
         var controller = new UserSettingsController(
             new RecordingHttpClientFactory(new HttpClientHandler()),
-            NullLogger<UserSettingsController>.Instance,
+            logger ?? NullLogger<UserSettingsController>.Instance,
             _userManager,
             new SeerrCache(_provider),
             _provider,
@@ -408,11 +874,16 @@ public sealed class AdminTargetUserSettingsControllerTests : IDisposable
             HttpContext = new DefaultHttpContext
             {
                 User = new ClaimsPrincipal(new ClaimsIdentity(
-                    new[]
-                    {
-                        new Claim("Jellyfin-UserId", _actor.Id.ToString()),
-                        new Claim(ClaimTypes.Role, "Administrator")
-                    },
+                    includeActorIdClaim
+                        ? new[]
+                        {
+                            new Claim("Jellyfin-UserId", _actor.Id.ToString()),
+                            new Claim(ClaimTypes.Role, "Administrator")
+                        }
+                        : new[]
+                        {
+                            new Claim(ClaimTypes.Role, "Administrator")
+                        },
                     "TestAuth"))
             }
         };
@@ -426,6 +897,25 @@ public sealed class AdminTargetUserSettingsControllerTests : IDisposable
         }
 
         return controller;
+    }
+
+    private sealed class CollectingLogger<T> : ILogger<T>
+    {
+        public List<string> Messages { get; } = new();
+
+        public IDisposable? BeginScope<TState>(TState state)
+            where TState : notnull
+            => null;
+
+        public bool IsEnabled(LogLevel logLevel) => logLevel != LogLevel.None;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+            => Messages.Add(formatter(state, exception));
     }
 
     private static UserSettingsController.UserFileMutationResponse<T> AssertResponse<T>(

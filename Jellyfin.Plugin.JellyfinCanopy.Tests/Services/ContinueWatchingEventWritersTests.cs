@@ -81,6 +81,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
 
                 // The write happened (entry dropped) → the cache for this user must be gone.
                 Assert.False(HiddenContentResponseFilter.IsCachedForTest(userIdN));
+                var stored = ucm.GetUserConfigurationStrict<UserHiddenContent>(
+                    userIdN,
+                    "hidden-content.json");
+                Assert.Empty(stored.Items);
+                Assert.Equal(1, stored.ItemsRevision);
             }
             finally
             {
@@ -183,6 +188,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             var removed = ContinueWatchingLibraryHook.PruneOrphansCore(hidden, index);
 
             Assert.Equal(3, removed);
+            Assert.Equal(1, hidden.ItemsRevision);
             Assert.Equal(new[] { "keep-guid", "keep-opaque" }, hidden.Items.Keys.OrderBy(key => key));
             Assert.Equal(3, index.Count);
             Assert.Equal(4, index.RemovedIdentifierNormalizations);
@@ -190,6 +196,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             Assert.Equal(5, index.EntryIdentifierNormalizations);
             Assert.Equal(5, index.EntryGuidParseAttempts);
             Assert.Equal(5, index.MembershipComparisons);
+
+            Assert.Equal(0, ContinueWatchingLibraryHook.PruneOrphansCore(hidden, index));
+            Assert.Equal(1, hidden.ItemsRevision);
         }
 
         [Fact]
@@ -699,6 +708,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
 
                 var stored = ucm.GetUserConfigurationStrict<UserHiddenContent>(userId, "hidden-content.json");
                 Assert.Equal(new[] { "unrelated" }, stored.Items.Keys);
+                Assert.Equal(1, stored.ItemsRevision);
                 Assert.Equal(0, Volatile.Read(ref scanChecks));
                 Assert.Equal(0, Volatile.Read(ref itemLookups));
                 Assert.Equal(1, hook.RejectedRemovalCountForTest);

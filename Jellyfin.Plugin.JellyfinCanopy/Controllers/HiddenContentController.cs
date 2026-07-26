@@ -10,6 +10,7 @@ using System.Text.Json.Serialization;
 using System.Threading.Tasks;
 using System.Collections.Generic;
 using System.Collections.Concurrent;
+using System.Globalization;
 using System.Security.Cryptography;
 using Jellyfin.Data;
 using Jellyfin.Data.Enums;
@@ -52,6 +53,61 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
     {
         private readonly UserConfigurationManager _userConfigurationManager;
         private readonly ILibraryManager _libraryManager;
+        private const string HiddenContentFileName = "hidden-content.json";
+        private const string HiddenSettingsResource = "hidden-content-settings.json";
+        private const int MaximumAdminItemBatch = 200;
+
+        private sealed class HiddenAdminPayloadTooLargeException : Exception
+        {
+        }
+
+        private sealed class HiddenItemCapacityExceededException : Exception
+        {
+        }
+
+        private IActionResult HiddenItemCapacityExceeded()
+            => StatusCode(StatusCodes.Status413PayloadTooLarge, new
+            {
+                success = false,
+                code = "hidden_content_cap_exceeded",
+                maximum = PersistedPayloadPolicy.MaximumHiddenItems,
+                message =
+                    $"Hidden Content already has the maximum of " +
+                    $"{PersistedPayloadPolicy.MaximumHiddenItems} entries. " +
+                    "Remove an entry before adding another."
+            });
+
+        private void SetAdminHiddenItemsEvidence(long itemsRevision)
+            => Response.Headers.ETag =
+                $"\"{itemsRevision.ToString(CultureInfo.InvariantCulture)}\"";
+
+        private IActionResult AdminHiddenItemsConflict(
+            string targetUserId,
+            string targetDisplayName,
+            long itemsRevision)
+        {
+            SetAdminHiddenItemsEvidence(itemsRevision);
+            return Conflict(new
+            {
+                success = false,
+                conflict = true,
+                code = "hidden_content_items_conflict",
+                message =
+                    "Hidden Content items changed. Reload the returned target evidence and retry.",
+                userId = targetUserId,
+                userName = targetDisplayName,
+                targetUserId,
+                targetDisplayName,
+                itemsRevision
+            });
+        }
+
+        private static bool HiddenItemsEqual(
+            Dictionary<string, HiddenContentItem> left,
+            Dictionary<string, HiddenContentItem> right)
+            => JsonElement.DeepEquals(
+                JsonSerializer.SerializeToElement(left, PersistedJson.WriteOptions),
+                JsonSerializer.SerializeToElement(right, PersistedJson.WriteOptions));
 
         private IActionResult QuarantinedHiddenStore()
             => StatusCode(StatusCodes.Status503ServiceUnavailable, new
@@ -59,6 +115,57 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 success = false,
                 message = "Hidden-content state is quarantined. Retry alone cannot recover it; an administrator must inspect and reset or repair the store."
             });
+
+        private IActionResult HiddenConfigurationUnavailable()
+            => StatusCode(StatusCodes.Status503ServiceUnavailable, new
+            {
+                success = false,
+                message = "Hidden Content configuration is temporarily unavailable; no default state was assumed."
+            });
+
+        private IActionResult? AuthorizeHiddenAdminConfiguration()
+        {
+            var configuration = _configProvider.ConfigurationOrNull;
+            if (configuration == null)
+            {
+                return HiddenConfigurationUnavailable();
+            }
+
+            return configuration.HiddenContentAdmin ? null : Forbid();
+        }
+
+        private UserConfigReadStatus RequireHiddenMutationRead(
+            string userId,
+            UserConfigReadResult<UserHiddenContent> read)
+        {
+            if (read.HasUsableValue && read.Value != null)
+            {
+                return read.Status;
+            }
+
+            if (string.Equals(
+                read.FaultDetail,
+                "quarantined-recovery-required",
+                StringComparison.Ordinal))
+            {
+                throw new UserStoreUnhealthyException(
+                    HiddenContentFileName,
+                    newlyQuarantined: false);
+            }
+
+            if (read.Status == UserConfigReadStatus.Unavailable)
+            {
+                throw new IOException("Hidden-content state is temporarily unavailable.");
+            }
+
+            // Preserve strict-writer recovery semantics for confirmed corrupt
+            // bytes. This call is made while the same file lock is held and is
+            // expected to publish quarantine state and throw.
+            _userConfigurationManager.GetUserConfigurationStrict<UserHiddenContent>(
+                userId,
+                HiddenContentFileName);
+            throw new InvalidDataException("Hidden-content state is corrupt.");
+        }
 
         public HiddenContentController(
             IHttpClientFactory httpClientFactory,
@@ -84,31 +191,48 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             {
                 return authorizationResult;
             }
-
-            // First-time init: seed Settings from admin defaults under RMW so a parallel CW hide can't clobber it.
-            var defaultConfig = _configProvider.ConfigurationOrNull;
-            if (defaultConfig != null
-                && !_userConfigurationManager.UserConfigurationExists(authorizedUserId, "hidden-content.json"))
+            var targetResult = ResolveExistingTargetUser(
+                authorizedUserId,
+                out authorizedUserId,
+                out _);
+            if (targetResult != null)
             {
-                try
-                {
-                    _userConfigurationManager.RmwUserConfiguration<UserHiddenContent>(
-                        authorizedUserId, "hidden-content.json", hc =>
-                        {
-                            // Re-check inside the lock: another writer may have created the file in the meantime.
-                            if (hc.Items.Count > 0) return 0;
-                            hc.Settings = BuildHcDefaultSettings(defaultConfig);
-                            _logger.LogInformation($"Seeded default hidden-content.json for new user {ResolveUserDisplay(authorizedUserId)} from plugin configuration.");
-                            return 1;
-                        });
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning($"Failed to seed hidden-content.json for {ResolveUserDisplay(authorizedUserId)}: {ex.Message}");
-                }
+                return targetResult;
             }
 
-            var read = _userConfigurationManager.ReadUserConfiguration<UserHiddenContent>(authorizedUserId, "hidden-content.json");
+            UserConfigReadResult<UserHiddenContent> read;
+            try
+            {
+                read = _userConfigurationManager.GetOrCreateUserConfiguration<UserHiddenContent>(
+                    authorizedUserId,
+                    HiddenContentFileName,
+                    () =>
+                    {
+                        if (_configProvider.ConfigurationOrNull is not PluginConfiguration defaults)
+                        {
+                            return null;
+                        }
+
+                        return new UserHiddenContent
+                        {
+                            Settings = BuildHcDefaultSettings(defaults)
+                        };
+                    },
+                    state => PersistedPayloadPolicy
+                        .ValidateMutationSource(state).IsValid);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(
+                    $"Failed to initialize hidden-content.json for {ResolveUserDisplay(authorizedUserId)} " +
+                    $"(exception={ex.GetType().Name}).");
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, new
+                {
+                    success = false,
+                    message = "Hidden-content state or configured defaults are unavailable; initialization was not acknowledged."
+                });
+            }
+
             if (!read.HasUsableValue || read.Value == null)
             {
                 return string.Equals(read.FaultDetail, "quarantined-recovery-required", StringComparison.Ordinal)
@@ -120,7 +244,40 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                     });
             }
 
-            return Ok(read.Value);
+            var responseState = ClonePersisted(read.Value);
+            PersistedPayloadPolicy.NormalizeLegacyRuntimeState(responseState);
+            if (!PersistedPayloadPolicy
+                .ValidateMutationCandidate(responseState).IsValid)
+            {
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, new
+                {
+                    success = false,
+                    message = "Hidden-content state is invalid. No replacement state was published."
+                });
+            }
+
+            if (read.Status == UserConfigReadStatus.Missing && !read.WasCreated)
+            {
+                return HiddenConfigurationUnavailable();
+            }
+
+            if (read.WasCreated)
+            {
+                var crossUserLogged = LogCrossUserFileMutationIfNeeded(
+                    authorizedUserId,
+                    HiddenContentFileName,
+                    $"settingsRevision={read.Value.Settings.Revision.ToString(CultureInfo.InvariantCulture)}," +
+                    $"itemsRevision={read.Value.ItemsRevision.ToString(CultureInfo.InvariantCulture)}",
+                    "seeded defaults in");
+                if (!crossUserLogged)
+                {
+                    _logger.LogInformation(
+                        $"Seeded default hidden-content.json for new user " +
+                        $"{ResolveUserDisplay(authorizedUserId)} from plugin configuration.");
+                }
+            }
+
+            return Ok(responseState);
         }
 
         [HttpPost("user-settings/{userId}/hidden-content.json")]
@@ -134,26 +291,40 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             {
                 return authorizationResult;
             }
+            var targetResult = ResolveExistingTargetUser(
+                authorizedUserId,
+                out authorizedUserId,
+                out _);
+            if (targetResult != null)
+            {
+                return targetResult;
+            }
 
-            var validation = PersistedPayloadPolicy.Validate(userConfiguration);
-            if (!validation.IsValid)
+            // Never mutate or retain MVC's bound graph. A normal global-hide
+            // client submits Jellyfin-derived title/index metadata through this
+            // full resource, so normalize those narrow fields on a detached copy
+            // before applying the durable policy.
+            var sourceValidation = PersistedPayloadPolicy
+                .ValidateMutationSource(userConfiguration);
+            if (!sourceValidation.IsValid)
             {
                 var response = new PersistedPayloadErrorResponse
                 {
-                    Code = validation.Code,
-                    Message = validation.Status == PersistedPayloadStatus.TooLarge
-                        ? "The hidden-content payload exceeds the supported size limit."
-                        : "The hidden-content payload is invalid."
+                    Code = sourceValidation.Code,
+                    Message = sourceValidation.Status
+                        == PersistedPayloadStatus.TooLarge
+                        ? "The normalized hidden-content payload exceeds the supported size limit."
+                        : "The normalized hidden-content payload is invalid."
                 };
-                return validation.Status == PersistedPayloadStatus.TooLarge
+                return sourceValidation.Status == PersistedPayloadStatus.TooLarge
                     ? StatusCode(StatusCodes.Status413PayloadTooLarge, response)
                     : BadRequest(response);
             }
 
-            // Never mutate or retain MVC's bound graph. The validated copy is the
-            // only object allowed to cross the lock/write boundary.
-            var validatedCopy = PersistedPayloadPolicy.CloneValidated(userConfiguration);
-            validation = PersistedPayloadPolicy.Validate(validatedCopy);
+            var validatedCopy = PersistedPayloadPolicy.CloneValidated(
+                userConfiguration);
+            PersistedPayloadPolicy.NormalizeLegacyRuntimeState(validatedCopy);
+            var validation = PersistedPayloadPolicy.Validate(validatedCopy);
             if (!validation.IsValid)
             {
                 var response = new PersistedPayloadErrorResponse
@@ -176,8 +347,63 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                     // and returns 503 instead of being overwritten.
                     try
                     {
-                        _userConfigurationManager.GetUserConfigurationStrict<UserHiddenContent>(
+                        var current = _userConfigurationManager.GetUserConfigurationStrict<UserHiddenContent>(
                             authorizedUserId, "hidden-content.json");
+                        if (!PersistedPayloadPolicy.ValidateMutationSource(current).IsValid)
+                        {
+                            throw new InvalidDataException("Hidden-content state is invalid.");
+                        }
+                        if (validatedCopy.Settings.Revision != current.Settings.Revision)
+                        {
+                            return Conflict(new
+                            {
+                                success = false,
+                                conflict = true,
+                                message = "Hidden Content preferences changed. Reload and retry.",
+                                settings = current.Settings,
+                                itemsRevision = current.ItemsRevision,
+                                hiddenContent = current
+                            });
+                        }
+                        if (validatedCopy.ItemsRevision != current.ItemsRevision)
+                        {
+                            return Conflict(new
+                            {
+                                success = false,
+                                conflict = true,
+                                message = "Hidden Content items changed. Reload and retry.",
+                                settings = current.Settings,
+                                itemsRevision = current.ItemsRevision,
+                                hiddenContent = current
+                            });
+                        }
+
+                        var settingsChanged = !string.Equals(
+                            PreferenceContentHash(current.Settings),
+                            PreferenceContentHash(validatedCopy.Settings),
+                            StringComparison.Ordinal);
+                        validatedCopy.Settings.Revision = settingsChanged
+                            ? checked(current.Settings.Revision + 1)
+                            : current.Settings.Revision;
+                        validatedCopy.ItemsRevision = current.ItemsRevision;
+                        if (!HiddenItemsEqual(current.Items, validatedCopy.Items))
+                        {
+                            HiddenContentRevision.AdvanceItems(validatedCopy);
+                        }
+                        validation = PersistedPayloadPolicy.Validate(validatedCopy);
+                        if (!validation.IsValid)
+                        {
+                            var response = new PersistedPayloadErrorResponse
+                            {
+                                Code = validation.Code,
+                                Message = validation.Status == PersistedPayloadStatus.TooLarge
+                                    ? "The revisioned hidden-content payload exceeds the supported size limit."
+                                    : "The revisioned hidden-content payload is invalid."
+                            };
+                            return validation.Status == PersistedPayloadStatus.TooLarge
+                                ? StatusCode(StatusCodes.Status413PayloadTooLarge, response)
+                                : BadRequest(response);
+                        }
                     }
                     catch (UserStoreUnhealthyException)
                     {
@@ -202,10 +428,24 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                     _userConfigurationManager.SaveUserConfiguration(authorizedUserId, "hidden-content.json", validatedCopy);
                 }
                 Services.HiddenContentResponseFilter.InvalidateUser(authorizedUserId);
-                _logger.LogInformation(
-                    $"Saved hidden content for {ResolveUserDisplay(authorizedUserId)} to hidden-content.json " +
-                    $"(items={validatedCopy.Items.Count}, bytes={validation.SerializedBytes}).");
-                return Ok(new { success = true, file = "hidden-content.json" });
+                if (!LogCrossUserFileMutationIfNeeded(
+                        authorizedUserId,
+                        "hidden-content.json",
+                        $"settingsRevision={validatedCopy.Settings.Revision.ToString(CultureInfo.InvariantCulture)}," +
+                        $"itemsRevision={validatedCopy.ItemsRevision.ToString(CultureInfo.InvariantCulture)}",
+                        "saved"))
+                {
+                    _logger.LogInformation(
+                        $"Saved hidden content for {ResolveUserDisplay(authorizedUserId)} to hidden-content.json " +
+                        $"(items={validatedCopy.Items.Count}, bytes={validation.SerializedBytes}).");
+                }
+                return Ok(new
+                {
+                    success = true,
+                    file = "hidden-content.json",
+                    settings = validatedCopy.Settings,
+                    itemsRevision = validatedCopy.ItemsRevision
+                });
             }
             catch (UserStoreUnhealthyException)
             {
@@ -217,6 +457,272 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                     $"Failed to save hidden content for {ResolveUserDisplay(authorizedUserId)} " +
                     $"(exception={ex.GetType().Name}).");
                 return StatusCode(500, new { success = false, message = "Failed to save hidden content." });
+            }
+        }
+
+        // ─── Revisioned preference-subsection administration ───
+        // These endpoints never accept the hidden item dictionary. They perform a
+        // strict, locked RMW of Settings only and therefore preserve concurrent
+        // hide/unhide mutations and every unrelated item.
+
+        [HttpGet("admin/user-settings/{targetUserId}/hidden-content-settings.json")]
+        [HttpGet("admin/user-settings/{targetUserId}/hidden-content-settings.json/evidence")]
+        [Authorize(Policy = Policies.RequiresElevation)]
+        [Produces("application/json")]
+        public IActionResult GetTargetHiddenContentSettings(string targetUserId)
+        {
+            var adminConfiguration = AuthorizeHiddenAdminConfiguration();
+            if (adminConfiguration != null) return adminConfiguration;
+            var targetError = ResolveExistingTargetUser(
+                targetUserId,
+                out var targetKey,
+                out var targetUser);
+            if (targetError != null) return targetError;
+
+            try
+            {
+                lock (_userConfigurationManager.GetUserFileLock(targetKey, HiddenContentFileName))
+                {
+                    HiddenContentSettings settings;
+                    var itemCount = 0;
+                    var read = _userConfigurationManager.ReadUserConfiguration<UserHiddenContent>(
+                        targetKey,
+                        HiddenContentFileName);
+                    if (read.Status == UserConfigReadStatus.Missing)
+                    {
+                        if (_configProvider.ConfigurationOrNull is not PluginConfiguration defaults)
+                        {
+                            return HiddenConfigurationUnavailable();
+                        }
+
+                        settings = BuildHcDefaultSettings(defaults);
+                    }
+                    else
+                    {
+                        if (read.Status != UserConfigReadStatus.Valid || read.Value == null)
+                        {
+                            _logger.LogWarning(
+                                $"Admin hidden-content preference read failed closed for target " +
+                                $"{ResolveUserDisplay(targetKey)} (status={read.Status}).");
+                            return string.Equals(
+                                read.FaultDetail,
+                                "quarantined-recovery-required",
+                                StringComparison.Ordinal)
+                                ? QuarantinedHiddenStore()
+                                : StatusCode(StatusCodes.Status503ServiceUnavailable, new
+                                {
+                                    success = false,
+                                    message = "Hidden-content preferences are corrupt or temporarily unavailable."
+                                });
+                        }
+
+                        var state = read.Value;
+                        settings = state.Settings ?? throw new InvalidDataException(
+                            "Hidden-content settings are missing.");
+                        itemCount = state.Items?.Count ?? 0;
+                        if (!PersistedPayloadPolicy.ValidateMutationSource(state).IsValid)
+                        {
+                            throw new InvalidDataException("Hidden-content state is invalid.");
+                        }
+                    }
+
+                    if (!PersistedPayloadPolicy.Validate(settings).IsValid)
+                    {
+                        throw new InvalidDataException("Hidden-content settings are invalid.");
+                    }
+
+                    return Ok(PreferenceResponse(
+                        HiddenSettingsResource,
+                        targetKey,
+                        targetUser.Username,
+                        ClonePreference(settings),
+                        success: true,
+                        itemCount: itemCount));
+                }
+            }
+            catch (UserStoreUnhealthyException)
+            {
+                return QuarantinedHiddenStore();
+            }
+            catch (Exception ex) when (ex is InvalidDataException or JsonException or IOException)
+            {
+                _logger.LogWarning(
+                    $"Admin hidden-content preference read failed for target {ResolveUserDisplay(targetKey)} " +
+                    $"(exception={ex.GetType().Name}).");
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, new
+                {
+                    success = false,
+                    message = "Hidden-content preferences are corrupt or temporarily unavailable."
+                });
+            }
+        }
+
+        [HttpPost("admin/user-settings/{targetUserId}/hidden-content-settings.json")]
+        [Authorize(Policy = Policies.RequiresElevation)]
+        [Produces("application/json")]
+        [Consumes("application/json")]
+        [RequestSizeLimit(8 * 1024)]
+        public IActionResult SaveTargetHiddenContentSettings(
+            string targetUserId,
+            [FromBody] HiddenContentSettings? body)
+        {
+            var adminConfiguration = AuthorizeHiddenAdminConfiguration();
+            if (adminConfiguration != null) return adminConfiguration;
+            var targetError = ResolveExistingTargetUser(
+                targetUserId,
+                out var targetKey,
+                out var targetUser);
+            if (targetError != null) return targetError;
+            if (body == null || !PersistedPayloadPolicy.Validate(body).IsValid)
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message = "Invalid Hidden Content preference payload."
+                });
+            }
+            var candidate = ClonePreference(body);
+
+            if (!TryParsePreferenceIfMatch(Request, out var expectedRevision))
+            {
+                return StatusCode(StatusCodes.Status428PreconditionRequired, new
+                {
+                    success = false,
+                    message = "Saving Hidden Content preferences requires one strong quoted If-Match revision from the latest GET."
+                });
+            }
+            if (candidate.Revision != expectedRevision)
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message = "The body Revision must match If-Match."
+                });
+            }
+
+            try
+            {
+                TargetPreferenceResponse<HiddenContentSettings> response;
+                var changed = false;
+                lock (_userConfigurationManager.GetUserFileLock(targetKey, HiddenContentFileName))
+                {
+                    var classified = _userConfigurationManager.ReadUserConfiguration<UserHiddenContent>(
+                        targetKey,
+                        HiddenContentFileName);
+                    var missing = RequireHiddenMutationRead(targetKey, classified)
+                        == UserConfigReadStatus.Missing;
+                    var state = _userConfigurationManager.GetUserConfigurationStrict<UserHiddenContent>(
+                        targetKey,
+                        HiddenContentFileName);
+                    if (missing)
+                    {
+                        if (_configProvider.ConfigurationOrNull is not PluginConfiguration defaults)
+                        {
+                            throw new InvalidDataException(
+                                "Configured Hidden Content defaults are unavailable.");
+                        }
+
+                        state.Settings = BuildHcDefaultSettings(defaults);
+                    }
+
+                    var current = state.Settings ?? throw new InvalidDataException(
+                        "Hidden-content settings are missing.");
+                    if (!PersistedPayloadPolicy.Validate(current).IsValid
+                        || !PersistedPayloadPolicy
+                            .ValidateMutationSource(state).IsValid)
+                    {
+                        throw new InvalidDataException("Hidden-content state is invalid.");
+                    }
+                    if (current.Revision != expectedRevision)
+                    {
+                        response = PreferenceResponse(
+                            HiddenSettingsResource,
+                            targetKey,
+                            targetUser.Username,
+                            current,
+                            success: false,
+                            conflict: true,
+                            message: "Hidden Content preferences changed. Rebase on the returned state.",
+                            itemCount: state.Items.Count);
+                        return Conflict(response);
+                    }
+                    // Admin-target preference controls edit only schema-owned
+                    // fields. Unknown extension members are opaque persisted
+                    // data and must never be replaced by the browser's lossy
+                    // JSON number projection.
+                    candidate.ExtensionData =
+                        PersistedPayloadPolicy.PreserveExistingExtensionData(
+                            candidate.ExtensionData,
+                            current.ExtensionData);
+                    if (string.Equals(
+                        PreferenceContentHash(current),
+                        PreferenceContentHash(candidate),
+                        StringComparison.Ordinal))
+                    {
+                        return Ok(PreferenceResponse(
+                            HiddenSettingsResource,
+                            targetKey,
+                            targetUser.Username,
+                            current,
+                            success: true,
+                            itemCount: state.Items.Count));
+                    }
+
+                    candidate.Revision = checked(current.Revision + 1);
+                    state.Settings = candidate;
+                    var validation = PersistedPayloadPolicy
+                        .ValidateMutationSource(state);
+                    if (!validation.IsValid)
+                    {
+                        return validation.Status == PersistedPayloadStatus.TooLarge
+                            ? StatusCode(StatusCodes.Status413PayloadTooLarge, new
+                            {
+                                success = false,
+                                message = "The resulting hidden-content state exceeds the supported limit."
+                            })
+                            : BadRequest(new
+                            {
+                                success = false,
+                                message = "The resulting hidden-content state is invalid."
+                            });
+                    }
+
+                    _userConfigurationManager.SaveUserConfiguration(
+                        targetKey,
+                        HiddenContentFileName,
+                        state);
+                    changed = true;
+                    response = PreferenceResponse(
+                        HiddenSettingsResource,
+                        targetKey,
+                        targetUser.Username,
+                        candidate,
+                        success: true,
+                        itemCount: state.Items.Count);
+                }
+
+                if (changed) HiddenContentResponseFilter.InvalidateUser(targetKey);
+                var actor = UserHelper.GetCurrentUserId(User)?.ToString("N") ?? "elevated-principal";
+                _logger.LogInformation(
+                    $"Admin {ResolveUserDisplay(actor)} updated Hidden Content preferences for " +
+                    $"{ResolveUserDisplay(targetKey)} at revision {response.Revision}.");
+                return Ok(response);
+            }
+            catch (UserStoreUnhealthyException)
+            {
+                return QuarantinedHiddenStore();
+            }
+            catch (Exception ex) when (ex is InvalidDataException or JsonException or IOException
+                                      or UnauthorizedAccessException or OverflowException)
+            {
+                _logger.LogWarning(
+                    $"Admin Hidden Content preference write failed for target {ResolveUserDisplay(targetKey)} " +
+                    $"(exception={ex.GetType().Name}).");
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, new
+                {
+                    success = false,
+                    message = "Hidden-content preferences are unavailable; no write was acknowledged."
+                });
             }
         }
 
@@ -233,56 +739,166 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         /// The calling admin is excluded because their own list is shown via the default view.
         /// </summary>
         /// <remarks>
-        /// Cost: O(users-with-a-config-dir) — deserialises each such user's hidden-content.json to read
-        /// its item count. The client caches the result, but it re-fetches after a cache invalidation.
-        /// Fine for typical user counts; revisit (cache counts / pre-filter on file size) if it grows.
+        /// Candidate directory enumeration is cheap, but full hidden-content
+        /// payloads are deserialized for at most one bounded page. The returned
+        /// cursor is opaque to clients and pagination never accumulates state on
+        /// the server.
         /// </remarks>
         [HttpGet("admin/hidden-content-users")]
         [Authorize(Policy = Policies.RequiresElevation)]
         [Produces("application/json")]
-        public IActionResult GetHiddenContentUsers()
+        public IActionResult GetHiddenContentUsers(
+            [FromQuery] int? limit = null,
+            [FromQuery] string? cursor = null)
         {
             // Honour the admin config toggle: the whole cross-user feature can be disabled.
-            if (_configProvider.ConfigurationOrNull?.HiddenContentAdmin != true)
-                return Forbid();
+            var adminConfiguration = AuthorizeHiddenAdminConfiguration();
+            if (adminConfiguration != null) return adminConfiguration;
+
+            const int maximumPageSize = 100;
+            var pageSize = limit ?? maximumPageSize;
+            if (pageSize is < 1 or > maximumPageSize)
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message = $"limit must be between 1 and {maximumPageSize}."
+                });
+            }
+
+            string? cursorKey = null;
+            if (!string.IsNullOrEmpty(cursor))
+            {
+                if (!Guid.TryParseExact(cursor, "N", out var cursorGuid)
+                    || cursorGuid == Guid.Empty
+                    || !string.Equals(
+                        cursor,
+                        cursorGuid.ToString("N"),
+                        StringComparison.Ordinal))
+                {
+                    return BadRequest(new
+                    {
+                        success = false,
+                        message = "Invalid cursor."
+                    });
+                }
+
+                cursorKey = cursor;
+            }
 
             // The caller's own list is reachable through the default "My hidden content" option,
             // so omit them here to avoid a confusing duplicate entry.
             var currentUserIdN = UserHelper.GetCurrentUserId(User)?.ToString("N");
 
-            // Enumerate only users that already have a config directory (GetAllUserIds), rather than
-            // every Jellyfin user, so a pure read here never creates empty per-user folders as a side
-            // effect. Anyone with hidden content necessarily already has a directory. This mirrors the
-            // reset-all-users admin endpoint.
-            var users = new List<(string UserId, string UserName, int Count)>();
-            foreach (var userIdN in _userConfigurationManager.GetAllUserIds())
+            // Preserve IUserManager's authoritative user order, seek the opaque
+            // cursor, and stop after one bounded page plus lookahead. No complete
+            // user/config-directory snapshot is allocated or sorted.
+            var window = new List<(string UserId, string UserName)>(pageSize + 1);
+            try
             {
-                if (string.Equals(userIdN, currentUserIdN, StringComparison.OrdinalIgnoreCase))
-                    continue;
+                var afterCursor = cursorKey == null;
+                foreach (var user in _userManager.GetUsers())
+                {
+                    if (user == null || user.Id == Guid.Empty) continue;
+                    var userIdN = user.Id.ToString("N");
+                    if (string.Equals(
+                        userIdN,
+                        currentUserIdN,
+                        StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
 
+                    if (!afterCursor)
+                    {
+                        if (string.Equals(userIdN, cursorKey, StringComparison.Ordinal))
+                        {
+                            afterCursor = true;
+                        }
+
+                        continue;
+                    }
+
+                    window.Add((userIdN, user.Username));
+                    if (window.Count > pageSize) break;
+                }
+
+                if (!afterCursor)
+                {
+                    return BadRequest(new
+                    {
+                        success = false,
+                        message = "The cursor is no longer present in the Jellyfin user directory."
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(
+                    $"Unable to enumerate Hidden Content users: {ex.GetType().Name}: {ex.Message}");
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, new
+                {
+                    success = false,
+                    message = "Hidden Content users are temporarily unavailable."
+                });
+            }
+
+            var truncated = window.Count > pageSize;
+            var page = window.Take(pageSize).ToList();
+            var nextCursor = truncated && page.Count > 0 ? page[^1].UserId : null;
+
+            var users = new List<(string UserId, string UserName, int Count)>();
+            foreach (var candidate in page)
+            {
+                var userIdN = candidate.UserId;
                 try
                 {
-                    // Skip stale directories left by deleted users — only surface current accounts.
-                    if (!Guid.TryParseExact(userIdN, "N", out var userGuid))
+                    var read = _userConfigurationManager
+                        .ReadExistingUserConfiguration<UserHiddenContent>(
+                            userIdN,
+                            HiddenContentFileName);
+                    if (read.Status == UserConfigReadStatus.Missing)
                         continue;
-                    var user = _userManager.GetUserById(userGuid);
-                    if (user == null)
-                        continue;
+                    if (read.IsFault || !read.HasUsableValue || read.Value == null)
+                    {
+                        _logger.LogWarning(
+                            $"Hidden Content user page failed closed for " +
+                            $"{ResolveUserDisplay(userIdN)} (status={read.Status}).");
+                        return StatusCode(StatusCodes.Status503ServiceUnavailable, new
+                        {
+                            success = false,
+                            message = "A Hidden Content user record is corrupt or temporarily unavailable."
+                        });
+                    }
+                    if (!PersistedPayloadPolicy
+                        .ValidateMutationSource(read.Value).IsValid)
+                    {
+                        _logger.LogWarning(
+                            $"Hidden Content user page rejected invalid persisted state for " +
+                            $"{ResolveUserDisplay(userIdN)}.");
+                        return StatusCode(StatusCodes.Status503ServiceUnavailable, new
+                        {
+                            success = false,
+                            message = "A Hidden Content user record is invalid."
+                        });
+                    }
 
-                    // GetUserConfiguration returns an empty default when the file is missing or
-                    // unreadable, so a user who never hid anything simply reports a count of 0.
-                    var cfg = _userConfigurationManager
-                        .GetUserConfiguration<UserHiddenContent>(userIdN, "hidden-content.json");
-                    var count = cfg?.Items?.Count ?? 0;
+                    var count = read.Value.Items?.Count ?? 0;
                     if (count == 0)
                         continue;
 
-                    users.Add((userIdN, user.Username, count));
+                    users.Add((userIdN, candidate.UserName, count));
                 }
                 catch (Exception ex)
                 {
-                    // Per-user guard: one unreadable config must not break the whole list.
-                    _logger.LogWarning($"Skipping user {ResolveUserDisplay(userIdN)} in hidden-content-users: {ex.Message}");
+                    _logger.LogWarning(
+                        $"Hidden Content user page failed for {ResolveUserDisplay(userIdN)}: " +
+                        $"{ex.GetType().Name}: {ex.Message}");
+                    return StatusCode(StatusCodes.Status503ServiceUnavailable, new
+                    {
+                        success = false,
+                        message = "Hidden Content users are temporarily unavailable."
+                    });
                 }
             }
 
@@ -291,7 +907,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 .Select(u => new { userId = u.UserId, userName = u.UserName, count = u.Count })
                 .ToList();
 
-            return Ok(new { users = result });
+            return Ok(new
+            {
+                users = result,
+                limit = pageSize,
+                scanned = page.Count,
+                truncated,
+                nextCursor
+            });
         }
 
         /// <summary>
@@ -304,8 +927,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         public IActionResult GetUserHiddenContentForAdmin(string userId)
         {
             // Honour the admin config toggle.
-            if (_configProvider.ConfigurationOrNull?.HiddenContentAdmin != true)
-                return Forbid();
+            var adminConfiguration = AuthorizeHiddenAdminConfiguration();
+            if (adminConfiguration != null) return adminConfiguration;
 
             // Match the AdminUpsertReview contract: expect a 32-char hex (N-format) id. This also
             // guards the filesystem path independently of GetUserConfigDir()'s canonicalization.
@@ -314,22 +937,94 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
 
             // Resolve the user before touching the config store: this returns a clean 404 for an
             // unknown id and avoids creating an empty per-user directory as a read side effect.
-            var user = _userManager.GetUserById(userGuid);
-            if (user == null)
-                return NotFound(new { success = false, message = "User not found." });
+            var targetError = ResolveExistingTargetUser(
+                userGuid.ToString("N"),
+                out var userIdN,
+                out var user);
+            if (targetError != null) return targetError;
 
             try
             {
-                // Read-only: GetUserConfiguration yields an empty default for a missing/corrupt
-                // file, so this never throws for a valid-but-empty user.
-                var config = _userConfigurationManager
-                    .GetUserConfiguration<UserHiddenContent>(userId, "hidden-content.json");
+                lock (_userConfigurationManager.GetUserFileLock(userIdN, HiddenContentFileName))
+                {
+                    // Only a classified Missing result is a legitimate empty
+                    // state. File.Exists-style probes collapse I/O failures to
+                    // false and could otherwise present an unavailable store as
+                    // a convincing empty list.
+                    var read = _userConfigurationManager.ReadUserConfiguration<UserHiddenContent>(
+                        userIdN,
+                        HiddenContentFileName);
+                    if (read.IsFault || !read.HasUsableValue || read.Value == null)
+                    {
+                        _logger.LogWarning(
+                            $"Admin hidden-content read failed closed for " +
+                            $"{ResolveUserDisplay(userIdN)} (status={read.Status}).");
+                        return string.Equals(
+                            read.FaultDetail,
+                            "quarantined-recovery-required",
+                            StringComparison.Ordinal)
+                            ? QuarantinedHiddenStore()
+                            : StatusCode(StatusCodes.Status503ServiceUnavailable, new
+                            {
+                                success = false,
+                                message = "Hidden-content state is corrupt or temporarily unavailable."
+                            });
+                    }
 
-                return Ok(new { userId, userName = user.Username, hiddenContent = config });
+                    UserHiddenContent config;
+                    if (read.Status == UserConfigReadStatus.Missing)
+                    {
+                        if (_configProvider.ConfigurationOrNull is not PluginConfiguration defaults)
+                        {
+                            return HiddenConfigurationUnavailable();
+                        }
+
+                        config = new UserHiddenContent
+                        {
+                            Settings = BuildHcDefaultSettings(defaults)
+                        };
+                    }
+                    else
+                    {
+                        config = read.Value;
+                    }
+
+                    var responseConfig = ClonePersisted(config);
+                    PersistedPayloadPolicy.NormalizeLegacyRuntimeState(
+                        responseConfig);
+                    if (!PersistedPayloadPolicy
+                        .ValidateMutationCandidate(responseConfig).IsValid)
+                    {
+                        throw new InvalidDataException("Hidden-content state is invalid.");
+                    }
+
+                    SetAdminHiddenItemsEvidence(responseConfig.ItemsRevision);
+                    return Ok(new
+                    {
+                        userId = userIdN,
+                        userName = user.Username,
+                        hiddenContent = responseConfig
+                    });
+                }
+            }
+            catch (UserStoreUnhealthyException)
+            {
+                return QuarantinedHiddenStore();
+            }
+            catch (Exception ex) when (ex is InvalidDataException or JsonException)
+            {
+                _logger.LogWarning(
+                    $"Admin hidden-content read failed closed for {ResolveUserDisplay(userIdN)} " +
+                    $"(exception={ex.GetType().Name}).");
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, new
+                {
+                    success = false,
+                    message = "Hidden-content state is corrupt and requires administrator recovery."
+                });
             }
             catch (Exception ex)
             {
-                _logger.LogWarning($"Admin hidden-content read failed for {ResolveUserDisplay(userId)}: {ex.Message}");
+                _logger.LogWarning($"Admin hidden-content read failed for {ResolveUserDisplay(userIdN)}: {ex.Message}");
                 return StatusCode(500, new { success = false, message = "Failed to load hidden content." });
             }
         }
@@ -343,51 +1038,130 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         [HttpPost("admin/hidden-content/{userId}/unhide")]
         [Authorize(Policy = Policies.RequiresElevation)]
         [Produces("application/json")]
+        [Consumes("application/json")]
+        [RequestSizeLimit(64 * 1024)]
         public IActionResult AdminUnhideForUser(string userId, [FromBody] List<string> keys)
         {
             // Honour the admin config toggle: cross-user management can be disabled.
-            if (_configProvider.ConfigurationOrNull?.HiddenContentAdmin != true)
-                return Forbid();
+            var adminConfiguration = AuthorizeHiddenAdminConfiguration();
+            if (adminConfiguration != null) return adminConfiguration;
 
             if (string.IsNullOrWhiteSpace(userId) || !Guid.TryParseExact(userId, "N", out var userGuid) || userGuid == Guid.Empty)
                 return BadRequest(new { success = false, message = "Invalid userId (expected 32-char hex)." });
 
-            var user = _userManager.GetUserById(userGuid);
-            if (user == null)
-                return NotFound(new { success = false, message = "User not found." });
+            var targetError = ResolveExistingTargetUser(
+                userGuid.ToString("N"),
+                out var userIdN,
+                out var user);
+            if (targetError != null) return targetError;
+
+            if (!TryParsePreferenceIfMatch(Request, out var expectedRevision))
+            {
+                return StatusCode(StatusCodes.Status428PreconditionRequired, new
+                {
+                    success = false,
+                    message = "Admin Hidden Content item changes require one strong quoted If-Match items revision from the latest GET."
+                });
+            }
 
             if (keys == null || keys.Count == 0)
                 return BadRequest(new { success = false, message = "No item keys provided." });
-
-            // Canonical N-format id for every store / log call, mirroring SaveUserHiddenContent.
-            var userIdN = userGuid.ToString("N");
+            if (keys.Count > MaximumAdminItemBatch)
+                return BadRequest(new { success = false, message = $"Too many item keys (max {MaximumAdminItemBatch})." });
+            if (keys.Any(static key => string.IsNullOrEmpty(key) || key.Length > PersistedPayloadPolicy.MaximumHiddenKeyLength))
+                return BadRequest(new { success = false, message = "One or more item keys are invalid." });
+            var boundedKeys = keys.Distinct(StringComparer.Ordinal).ToArray();
 
             try
             {
                 var removed = 0;
+                var itemsRevision = 0L;
+                var conflict = false;
                 // RMW holds the per-user file lock, strict-reads (corruption → quarantine + throw), applies
                 // the mutation, and persists only when it reports a change (returns > 0).
                 _userConfigurationManager.RmwUserConfiguration<UserHiddenContent>(userIdN, "hidden-content.json", cfg =>
                 {
-                    var count = 0;
-                    foreach (var key in keys)
+                    RequireHiddenMutationRead(
+                        userIdN,
+                        _userConfigurationManager.ReadUserConfiguration<UserHiddenContent>(
+                            userIdN,
+                            HiddenContentFileName));
+                    if (!PersistedPayloadPolicy.ValidateMutationSource(cfg).IsValid)
                     {
-                        // Keys are dictionary lookups (never used as filesystem paths); the length cap is
-                        // light defence against pathological payloads.
-                        if (!string.IsNullOrEmpty(key) && key.Length <= 256 && cfg.Items.Remove(key)) count++;
+                        throw new InvalidDataException("Hidden-content state is invalid.");
+                    }
+                    itemsRevision = cfg.ItemsRevision;
+                    if (itemsRevision != expectedRevision)
+                    {
+                        conflict = true;
+                        return 0;
+                    }
+
+                    var count = 0;
+                    foreach (var key in boundedKeys)
+                    {
+                        if (cfg.Items.Remove(key)) count++;
+                    }
+                    if (count > 0)
+                    {
+                        HiddenContentRevision.AdvanceItems(cfg);
+                        PersistedPayloadPolicy.NormalizeLegacyRuntimeState(cfg);
+                    }
+                    if (count > 0)
+                    {
+                        var validation = PersistedPayloadPolicy
+                            .ValidateMutationCandidate(cfg);
+                        if (!validation.IsValid)
+                        {
+                            if (validation.Status == PersistedPayloadStatus.TooLarge)
+                                throw new HiddenAdminPayloadTooLargeException();
+                            throw new InvalidDataException("Hidden-content state is invalid.");
+                        }
                     }
                     removed = count;
+                    itemsRevision = cfg.ItemsRevision;
                     return count;
                 });
 
+                if (conflict)
+                {
+                    return AdminHiddenItemsConflict(
+                        userIdN,
+                        user.Username,
+                        itemsRevision);
+                }
+
                 if (removed > 0)
                     Services.HiddenContentResponseFilter.InvalidateUser(userIdN);
-                _logger.LogInformation($"Admin unhid {removed} item(s) for {ResolveUserDisplay(userIdN)}.");
-                return Ok(new { success = true, removed });
+                LogCrossUserFileMutationIfNeeded(
+                    userIdN,
+                    HiddenContentFileName,
+                    $"itemsRevision={itemsRevision.ToString(CultureInfo.InvariantCulture)}",
+                    "unhid items in",
+                    explicitTargetUserId: userIdN);
+                SetAdminHiddenItemsEvidence(itemsRevision);
+                return Ok(new
+                {
+                    success = true,
+                    removed,
+                    itemsRevision,
+                    userId = userIdN,
+                    userName = user.Username,
+                    targetUserId = userIdN,
+                    targetDisplayName = user.Username
+                });
             }
             catch (UserStoreUnhealthyException)
             {
                 return QuarantinedHiddenStore();
+            }
+            catch (HiddenAdminPayloadTooLargeException)
+            {
+                return StatusCode(StatusCodes.Status413PayloadTooLarge, new
+                {
+                    success = false,
+                    message = "The resulting hidden-content state exceeds the supported limit."
+                });
             }
             catch (Exception ex) when (ex is InvalidDataException || ex is System.Text.Json.JsonException)
             {
@@ -397,7 +1171,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             catch (IOException ioEx)
             {
                 _logger.LogWarning($"hidden-content.json temporarily unreadable for {ResolveUserDisplay(userIdN)}: {ioEx.Message}");
-                return StatusCode(500, new { success = false, message = "Hidden-content store is temporarily unavailable. Please retry." });
+                return StatusCode(503, new { success = false, message = "Hidden-content store is temporarily unavailable. Please retry." });
             }
             catch (Exception ex)
             {
@@ -415,25 +1189,36 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         [HttpPost("admin/hidden-content/{userId}/hide")]
         [Authorize(Policy = Policies.RequiresElevation)]
         [Produces("application/json")]
+        [Consumes("application/json")]
+        [RequestSizeLimit(512 * 1024)]
         public IActionResult AdminHideForUser(string userId, [FromBody] List<HiddenContentItem> items)
         {
             // Adding is a management operation: gated by the admin config toggle.
-            if (_configProvider.ConfigurationOrNull?.HiddenContentAdmin != true)
-                return Forbid();
+            var adminConfiguration = AuthorizeHiddenAdminConfiguration();
+            if (adminConfiguration != null) return adminConfiguration;
 
             if (string.IsNullOrWhiteSpace(userId) || !Guid.TryParseExact(userId, "N", out var userGuid) || userGuid == Guid.Empty)
                 return BadRequest(new { success = false, message = "Invalid userId (expected 32-char hex)." });
 
-            var user = _userManager.GetUserById(userGuid);
-            if (user == null)
-                return NotFound(new { success = false, message = "User not found." });
+            var targetError = ResolveExistingTargetUser(
+                userGuid.ToString("N"),
+                out var userIdN,
+                out var user);
+            if (targetError != null) return targetError;
+
+            if (!TryParsePreferenceIfMatch(Request, out var expectedRevision))
+            {
+                return StatusCode(StatusCodes.Status428PreconditionRequired, new
+                {
+                    success = false,
+                    message = "Admin Hidden Content item changes require one strong quoted If-Match items revision from the latest GET."
+                });
+            }
 
             if (items == null || items.Count == 0)
                 return BadRequest(new { success = false, message = "No items provided." });
-            if (items.Count > 200)
-                return BadRequest(new { success = false, message = "Too many items (max 200)." });
-
-            var userIdN = userGuid.ToString("N");
+            if (items.Count > MaximumAdminItemBatch)
+                return BadRequest(new { success = false, message = $"Too many items (max {MaximumAdminItemBatch})." });
 
             // Trim any admin-supplied string to a sane maximum before it is written to another user's store.
             static string Clamp(string? s, int max) =>
@@ -469,62 +1254,280 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 return new HiddenContentIdentity { Version = 1, Provider = "tmdb", MediaType = mediaType, Id = id };
             }
 
+            static HiddenContentItem BuildTrustedLocalItem(
+                BaseItem libraryItem,
+                string? requestedScope)
+            {
+                var typeName = libraryItem.GetType().Name;
+                var tmdbId = libraryItem.ProviderIds.TryGetValue("Tmdb", out var providerTmdbId)
+                    ? providerTmdbId
+                    : string.Empty;
+                var mediaType = string.Equals(typeName, "Movie", StringComparison.Ordinal)
+                    ? "movie"
+                    : (string.Equals(typeName, "Series", StringComparison.Ordinal) ? "tv" : null);
+                HiddenContentIdentity? identity = null;
+                if (mediaType != null
+                    && !string.IsNullOrEmpty(tmdbId)
+                    && tmdbId.Length <= 32
+                    && tmdbId.All(static c => c >= '0' && c <= '9')
+                    && tmdbId.Any(static c => c != '0'))
+                {
+                    identity = new HiddenContentIdentity
+                    {
+                        Version = 1,
+                        Provider = "tmdb",
+                        MediaType = mediaType,
+                        Id = tmdbId
+                    };
+                }
+
+                var entry = new HiddenContentItem
+                {
+                    ItemId = libraryItem.Id.ToString("N"),
+                    Name = PersistedPayloadPolicy.ClampPersistedDisplayName(
+                        libraryItem.Name),
+                    Type = Clamp(typeName, 64),
+                    TmdbId = identity?.Id ?? string.Empty,
+                    Identity = identity,
+                    HiddenAt = DateTime.UtcNow.ToString(
+                        "o",
+                        System.Globalization.CultureInfo.InvariantCulture),
+                    HideScope = requestedScope is "global" or "continuewatching" or "nextup" or "homesections"
+                        ? requestedScope
+                        : "global"
+                };
+
+                if (libraryItem is MediaBrowser.Controller.Entities.TV.Episode episode)
+                {
+                    entry.SeriesId = episode.SeriesId == Guid.Empty
+                        ? string.Empty
+                        : episode.SeriesId.ToString("N");
+                    entry.SeriesName = PersistedPayloadPolicy
+                        .ClampPersistedDisplayName(episode.SeriesName);
+                    entry.SeasonNumber = PersistedPayloadPolicy.NormalizeHiddenIndex(
+                        episode.ParentIndexNumber);
+                    entry.EpisodeNumber = PersistedPayloadPolicy.NormalizeHiddenIndex(
+                        episode.IndexNumber);
+                }
+
+                return entry;
+            }
+
+            static bool HasLocalItem(UserHiddenContent config, Guid itemId)
+                => config.Items.Any(pair =>
+                    (Guid.TryParse(pair.Key, out var keyId) && keyId == itemId)
+                    || (pair.Value != null
+                        && Guid.TryParse(pair.Value.ItemId, out var valueId)
+                        && valueId == itemId));
+
             try
             {
-                var added = 0;
-                _userConfigurationManager.RmwUserConfiguration<UserHiddenContent>(userIdN, "hidden-content.json", cfg =>
+                // Treat every non-empty ItemId as a local Jellyfin identity. Resolve
+                // it in the TARGET user's library projection and derive persisted
+                // metadata from that authoritative item. An administrator's own
+                // visibility must never grant the target a hidden row for content
+                // they cannot access. Empty ItemId remains the separate provider-
+                // only (Seerr/TMDB) path.
+                var preparedItems = new List<HiddenContentItem>(items.Count);
+                foreach (var source in items)
                 {
-                    var count = 0;
-                    foreach (var it in items)
+                    if (source == null) continue;
+                    if (string.IsNullOrEmpty(source.ItemId))
                     {
-                        if (it == null) continue;
-                        var identity = ResolveIdentity(it);
-                        // An explicit identity is authoritative. Unknown versions and malformed
-                        // values must not be silently downgraded to an exact-only or legacy row.
-                        if (it.Identity != null && identity == null) continue;
-                        // Exact local identity wins. Provider-only rows use the same
-                        // versioned key as the browser; ambiguous legacy rows are refused.
-                        var key = !string.IsNullOrEmpty(it.ItemId)
-                            ? it.ItemId
-                            : (identity != null ? $"hc1:tmdb:{identity.MediaType}:{identity.Id}" : null);
-                        if (string.IsNullOrEmpty(key) || key.Length > 256) continue;
-                        if (cfg.Items.ContainsKey(key)) continue; // never clobber the user's own hide
-                        if (identity != null && string.IsNullOrEmpty(it.ItemId) && cfg.Items.Values.Any(existing =>
-                        {
-                            if (existing == null) return false;
-                            var current = ResolveIdentity(existing);
-                            return current != null
-                                && string.Equals(current.Provider, identity.Provider, StringComparison.Ordinal)
-                                && string.Equals(current.MediaType, identity.MediaType, StringComparison.Ordinal)
-                                && string.Equals(current.Id, identity.Id, StringComparison.Ordinal);
-                        })) continue;
-                        // Cross-user write path: bound the admin-supplied free-text fields and constrain
-                        // HideScope to the known set, so a compromised admin token can't persist multi-MB
-                        // strings or an unrecognised scope into another user's store.
-                        it.Name = Clamp(it.Name, 512);
-                        it.SeriesName = Clamp(it.SeriesName, 512);
-                        it.PosterPath = Clamp(it.PosterPath, 512);
-                        it.SeriesId = Clamp(it.SeriesId, 128);
-                        it.Type = Clamp(it.Type, 64);
-                        it.TmdbId = Clamp(it.TmdbId, 32);
-                        it.Identity = identity;
-                        it.HiddenAt = string.IsNullOrEmpty(it.HiddenAt) ? DateTime.UtcNow.ToString("o") : Clamp(it.HiddenAt, 64);
-                        it.HideScope = it.HideScope is "global" or "continuewatching" or "nextup" or "homesections" ? it.HideScope : "global";
-                        cfg.Items[key] = it;
-                        count++;
+                        preparedItems.Add(ClonePersisted(source));
+                        continue;
                     }
-                    added = count;
-                    return count;
-                });
+
+                    if ((!Guid.TryParseExact(source.ItemId, "N", out var localItemId)
+                            && !Guid.TryParseExact(source.ItemId, "D", out localItemId))
+                        || localItemId == Guid.Empty)
+                    {
+                        return BadRequest(new
+                        {
+                            success = false,
+                            message = "A local ItemId is invalid."
+                        });
+                    }
+
+                    var libraryItem = _libraryManager.GetItemById<BaseItem>(localItemId, user);
+                    if (libraryItem == null || libraryItem.Id != localItemId)
+                    {
+                        return NotFound(new
+                        {
+                            success = false,
+                            message = "A local item was not found or is not accessible to the target user."
+                        });
+                    }
+
+                    preparedItems.Add(BuildTrustedLocalItem(libraryItem, source.HideScope));
+                }
+
+                var added = 0;
+                var itemsRevision = 0L;
+                var conflict = false;
+                _userConfigurationManager.TransactUserConfiguration<UserHiddenContent, int>(
+                    userIdN,
+                    HiddenContentFileName,
+                    cfg =>
+                    {
+                        // Classify existence only after the transaction owns the
+                        // exact file lock. A zero-item file is an existing
+                        // preference store and must not be reseeded, while an I/O
+                        // fault must never be collapsed into a missing store.
+                        var missing = RequireHiddenMutationRead(
+                            userIdN,
+                            _userConfigurationManager.ReadUserConfiguration<UserHiddenContent>(
+                                userIdN,
+                                HiddenContentFileName))
+                            == UserConfigReadStatus.Missing;
+                        if (!PersistedPayloadPolicy.ValidateMutationSource(cfg).IsValid)
+                        {
+                            throw new InvalidDataException("Hidden-content state is invalid.");
+                        }
+                        itemsRevision = cfg.ItemsRevision;
+                        if (itemsRevision != expectedRevision)
+                        {
+                            conflict = true;
+                            return 0;
+                        }
+
+                        if (missing)
+                        {
+                            if (_configProvider.ConfigurationOrNull is not PluginConfiguration defaults)
+                            {
+                                throw new InvalidDataException(
+                                    "Configured Hidden Content defaults are unavailable.");
+                            }
+
+                            // Admin item management follows configured first-user
+                            // defaults exactly; unlike a user's scoped hide action,
+                            // it does not implicitly enable Hidden Content.
+                            cfg.Settings = BuildHcDefaultSettings(defaults);
+                        }
+
+                        var count = 0;
+                        foreach (var source in preparedItems)
+                        {
+                            var it = source;
+                            var identity = ResolveIdentity(it);
+                            // An explicit identity is authoritative. Unknown versions and malformed
+                            // values must not be silently downgraded to an exact-only or legacy row.
+                            if (it.Identity != null && identity == null) continue;
+                            // Exact local identity wins. Provider-only rows use the same
+                            // versioned key as the browser; ambiguous legacy rows are refused.
+                            var key = !string.IsNullOrEmpty(it.ItemId)
+                                ? it.ItemId
+                                : (identity != null ? $"hc1:tmdb:{identity.MediaType}:{identity.Id}" : null);
+                            if (string.IsNullOrEmpty(key) || key.Length > 256) continue;
+                            if (cfg.Items.ContainsKey(key)) continue; // never clobber the user's own hide
+                            if (Guid.TryParse(it.ItemId, out var exactItemId)
+                                && HasLocalItem(cfg, exactItemId)) continue;
+                            if (identity != null && string.IsNullOrEmpty(it.ItemId) && cfg.Items.Values.Any(existing =>
+                            {
+                                if (existing == null) return false;
+                                var current = ResolveIdentity(existing);
+                                return current != null
+                                    && string.Equals(current.Provider, identity.Provider, StringComparison.Ordinal)
+                                    && string.Equals(current.MediaType, identity.MediaType, StringComparison.Ordinal)
+                                    && string.Equals(current.Id, identity.Id, StringComparison.Ordinal);
+                            })) continue;
+                            // Cross-user write path: bound the admin-supplied free-text fields and constrain
+                            // HideScope to the known set, so a compromised admin token can't persist multi-MB
+                            // strings or an unrecognised scope into another user's store.
+                            it.Name = PersistedPayloadPolicy.ClampPersistedDisplayName(
+                                it.Name);
+                            it.SeriesName = PersistedPayloadPolicy
+                                .ClampPersistedDisplayName(it.SeriesName);
+                            it.PosterPath = Clamp(it.PosterPath, 512);
+                            it.SeriesId = Clamp(it.SeriesId, 128);
+                            it.Type = Clamp(it.Type, 64);
+                            it.TmdbId = Clamp(it.TmdbId, 32);
+                            it.Identity = identity;
+                            it.HiddenAt = string.IsNullOrEmpty(it.HiddenAt) ? DateTime.UtcNow.ToString("o") : Clamp(it.HiddenAt, 64);
+                            it.SeasonNumber = PersistedPayloadPolicy.NormalizeHiddenIndex(
+                                it.SeasonNumber);
+                            it.EpisodeNumber = PersistedPayloadPolicy.NormalizeHiddenIndex(
+                                it.EpisodeNumber);
+                            it.HideScope = it.HideScope is "global" or "continuewatching" or "nextup" or "homesections" ? it.HideScope : "global";
+                            if (cfg.Items.Count >= PersistedPayloadPolicy.MaximumHiddenItems)
+                            {
+                                throw new HiddenItemCapacityExceededException();
+                            }
+                            cfg.Items[key] = it;
+                            count++;
+                        }
+                        if (count > 0)
+                        {
+                            HiddenContentRevision.AdvanceItems(cfg);
+                            PersistedPayloadPolicy.NormalizeLegacyRuntimeState(cfg);
+                        }
+                        if (count > 0)
+                        {
+                            var validation = PersistedPayloadPolicy
+                                .ValidateMutationCandidate(cfg);
+                            if (!validation.IsValid)
+                            {
+                                if (validation.Status == PersistedPayloadStatus.TooLarge)
+                                    throw new HiddenAdminPayloadTooLargeException();
+                                throw new InvalidDataException("Hidden-content state is invalid.");
+                            }
+                        }
+                        added = count;
+                        itemsRevision = cfg.ItemsRevision;
+                        if (count > 0)
+                        {
+                            _userConfigurationManager.SaveUserConfiguration(
+                                userIdN,
+                                HiddenContentFileName,
+                                cfg);
+                        }
+
+                        return count;
+                    });
+
+                if (conflict)
+                {
+                    return AdminHiddenItemsConflict(
+                        userIdN,
+                        user.Username,
+                        itemsRevision);
+                }
 
                 if (added > 0)
                     Services.HiddenContentResponseFilter.InvalidateUser(userIdN);
-                _logger.LogInformation($"Admin hid {added} item(s) for {ResolveUserDisplay(userIdN)}.");
-                return Ok(new { success = true, added });
+                LogCrossUserFileMutationIfNeeded(
+                    userIdN,
+                    HiddenContentFileName,
+                    $"itemsRevision={itemsRevision.ToString(CultureInfo.InvariantCulture)}",
+                    "hid items in",
+                    explicitTargetUserId: userIdN);
+                SetAdminHiddenItemsEvidence(itemsRevision);
+                return Ok(new
+                {
+                    success = true,
+                    added,
+                    itemsRevision,
+                    userId = userIdN,
+                    userName = user.Username,
+                    targetUserId = userIdN,
+                    targetDisplayName = user.Username
+                });
             }
             catch (UserStoreUnhealthyException)
             {
                 return QuarantinedHiddenStore();
+            }
+            catch (HiddenAdminPayloadTooLargeException)
+            {
+                return StatusCode(StatusCodes.Status413PayloadTooLarge, new
+                {
+                    success = false,
+                    message = "The resulting hidden-content state exceeds the supported limit."
+                });
+            }
+            catch (HiddenItemCapacityExceededException)
+            {
+                return HiddenItemCapacityExceeded();
             }
             catch (Exception ex) when (ex is InvalidDataException || ex is System.Text.Json.JsonException)
             {
@@ -534,7 +1537,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             catch (IOException ioEx)
             {
                 _logger.LogWarning($"hidden-content.json temporarily unreadable for {ResolveUserDisplay(userIdN)}: {ioEx.Message}");
-                return StatusCode(500, new { success = false, message = "Hidden-content store is temporarily unavailable. Please retry." });
+                return StatusCode(503, new { success = false, message = "Hidden-content store is temporarily unavailable. Please retry." });
             }
             catch (Exception ex)
             {
@@ -664,16 +1667,19 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             var entry = new HiddenContentItem
             {
                 ItemId = itemGuid.ToString(),
-                Name = jfItem.Name ?? string.Empty,
+                Name = PersistedPayloadPolicy.ClampPersistedDisplayName(jfItem.Name),
                 Type = typeName,
                 TmdbId = providerIdentity?.Id ?? string.Empty,
                 Identity = providerIdentity,
                 HiddenAt = DateTime.UtcNow.ToString("o", System.Globalization.CultureInfo.InvariantCulture),
                 PosterPath = string.Empty,
                 SeriesId = seriesId ?? string.Empty,
-                SeriesName = seriesName ?? string.Empty,
-                SeasonNumber = seasonNumber,
-                EpisodeNumber = episodeNumber,
+                SeriesName = PersistedPayloadPolicy.ClampPersistedDisplayName(
+                    seriesName),
+                SeasonNumber = PersistedPayloadPolicy.NormalizeHiddenIndex(
+                    seasonNumber),
+                EpisodeNumber = PersistedPayloadPolicy.NormalizeHiddenIndex(
+                    episodeNumber),
                 HideScope = targetScope
             };
 
@@ -683,25 +1689,68 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             try
             {
                 var keyN = itemGuid.ToString("N");
-                // Seed Settings from admin defaults if this RMW creates the file (Remove-from-CW before any HC UI was opened).
-                var preExistedHc = _userConfigurationManager.UserConfigurationExists(authorizedUserId, "hidden-content.json");
-                var hcDefaults = _configProvider.ConfigurationOrNull;
+                var itemsRevision = 0L;
+                var settingsRevision = 0L;
+                var hiddenContentEnabled = true;
+                var settingsChanged = false;
+                var capacityExceeded = false;
 
-                _userConfigurationManager.RmwUserConfiguration<UserHiddenContent>(
-                    authorizedUserId, "hidden-content.json", h =>
+                _userConfigurationManager.TransactUserConfiguration<UserHiddenContent, int>(
+                    authorizedUserId,
+                    HiddenContentFileName,
+                    h =>
                     {
-                        if (!preExistedHc && hcDefaults != null && h.Items.Count == 0)
+                        // Classify existence only after the transaction owns the
+                        // exact file lock. An existing zero-item file is still an
+                        // existing user preference store; an I/O fault is never
+                        // proof that configured defaults should be seeded.
+                        var missing = RequireHiddenMutationRead(
+                            authorizedUserId,
+                            _userConfigurationManager.ReadUserConfiguration<UserHiddenContent>(
+                                authorizedUserId,
+                                HiddenContentFileName))
+                            == UserConfigReadStatus.Missing;
+                        if (!PersistedPayloadPolicy
+                            .ValidateMutationSource(h).IsValid)
                         {
-                            h.Settings = BuildHcDefaultSettings(hcDefaults);
+                            throw new InvalidDataException(
+                                "Hidden-content state is invalid.");
+                        }
+                        if (missing)
+                        {
+                            if (_configProvider.ConfigurationOrNull is not PluginConfiguration defaults)
+                            {
+                                throw new InvalidDataException(
+                                    "Configured Hidden Content defaults are unavailable.");
+                            }
+
+                            h.Settings = BuildHcDefaultSettings(defaults);
                             // The user just performed a hide via the Remove feature, so filtering
                             // must be active for it to take effect — even if the admin's HC default
                             // is disabled. (Existing files keep whatever the user chose.)
-                            h.Settings.Enabled = true;
+                            if (!h.Settings.Enabled)
+                            {
+                                h.Settings.Enabled = true;
+                                h.Settings.Revision = checked(h.Settings.Revision + 1);
+                                settingsChanged = true;
+                            }
+                        }
+
+                        if (h.Items.Count > PersistedPayloadPolicy.MaximumHiddenItems)
+                        {
+                            throw new HiddenItemCapacityExceededException();
                         }
 
                         // Merge with existing entries (under either hyphenated or N-format key) — pick the wider scope.
                         h.Items.TryGetValue(key, out var hyphenEntry);
                         h.Items.TryGetValue(keyN, out var nEntry);
+                        if (hyphenEntry == null
+                            && nEntry == null
+                            && h.Items.Count >= PersistedPayloadPolicy.MaximumHiddenItems)
+                        {
+                            capacityExceeded = true;
+                            return 0;
+                        }
 
                         // Reconcile provider metadata as one atomic pair. A stored typed identity
                         // outranks fresh library metadata, which outranks an untyped legacy TMDB id.
@@ -712,13 +1761,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                             : (nEntry?.Identity != null ? nEntry : null);
                         if (identityEntry?.Identity != null)
                         {
-                            entry.Identity = new HiddenContentIdentity
-                            {
-                                Version = identityEntry.Identity.Version,
-                                Provider = identityEntry.Identity.Provider ?? string.Empty,
-                                MediaType = identityEntry.Identity.MediaType ?? string.Empty,
-                                Id = identityEntry.Identity.Id ?? string.Empty
-                            };
+                            entry.Identity = ClonePersisted(
+                                identityEntry.Identity);
                             var supportedTmdbIdentity = entry.Identity.Version == 1
                                 && string.Equals(entry.Identity.Provider, "tmdb", StringComparison.Ordinal)
                                 && (string.Equals(entry.Identity.MediaType, "movie", StringComparison.Ordinal)
@@ -757,18 +1801,71 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
 
                         h.Items.Remove(keyN);
                         h.Items[key] = entry;
+                        itemsRevision = HiddenContentRevision.AdvanceItems(h);
+                        PersistedPayloadPolicy.NormalizeLegacyRuntimeState(h);
+                        settingsRevision = h.Settings.Revision;
+                        hiddenContentEnabled = h.Settings.Enabled;
+                        var validation = PersistedPayloadPolicy
+                            .ValidateMutationCandidate(h);
+                        if (!validation.IsValid)
+                        {
+                            if (validation.Status == PersistedPayloadStatus.TooLarge)
+                            {
+                                throw new HiddenAdminPayloadTooLargeException();
+                            }
+
+                            throw new InvalidDataException(
+                                "Hidden-content candidate state is invalid.");
+                        }
+                        _userConfigurationManager.SaveUserConfiguration(
+                            authorizedUserId,
+                            HiddenContentFileName,
+                            h);
                         return 1;
                     });
+                if (capacityExceeded)
+                {
+                    return HiddenItemCapacityExceeded();
+                }
                 Services.HiddenContentResponseFilter.InvalidateUser(authorizedUserId);
-                return Ok(new { success = true, key, entry });
+                return Ok(new
+                {
+                    success = true,
+                    key,
+                    entry,
+                    itemsRevision,
+                    settingsRevision,
+                    hiddenContentEnabled,
+                    settingsChanged
+                });
             }
             catch (UserStoreUnhealthyException)
             {
                 return QuarantinedHiddenStore();
             }
+            catch (HiddenAdminPayloadTooLargeException)
+            {
+                return StatusCode(StatusCodes.Status413PayloadTooLarge, new
+                {
+                    success = false,
+                    message = "The resulting hidden-content state exceeds the supported limit."
+                });
+            }
+            catch (HiddenItemCapacityExceededException)
+            {
+                return HiddenItemCapacityExceeded();
+            }
             catch (Exception ex) when (ex is InvalidDataException || ex is System.Text.Json.JsonException)
             {
                 return StatusCode(503, new { success = false, message = "Hidden-content store is corrupt and requires administrator recovery." });
+            }
+            catch (IOException)
+            {
+                return StatusCode(503, new
+                {
+                    success = false,
+                    message = "Hidden-content store is temporarily unavailable. Please retry."
+                });
             }
             catch (Exception ex)
             {
@@ -806,6 +1903,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
 
             try
             {
+                var itemsRevision = 0L;
                 var dropped = _userConfigurationManager.RmwUserConfiguration<UserHiddenContent>(
                     authorizedUserId, "hidden-content.json", h =>
                 {
@@ -825,12 +1923,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                         }
                     }
                     foreach (var k in dropKeys) h.Items.Remove(k);
+                    if (dropKeys.Count > 0)
+                    {
+                        itemsRevision = HiddenContentRevision.AdvanceItems(h);
+                    }
+                    else itemsRevision = h.ItemsRevision;
                     return dropKeys.Count;
                 });
 
                 if (dropped == 0) return NotFound(new { success = false, message = "No matching hidden-content entry." });
                 Services.HiddenContentResponseFilter.InvalidateUser(authorizedUserId);
-                return Ok(new { success = true });
+                return Ok(new { success = true, itemsRevision });
             }
             catch (UserStoreUnhealthyException)
             {

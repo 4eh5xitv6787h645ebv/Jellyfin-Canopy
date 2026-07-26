@@ -21,6 +21,13 @@ describe('Continue Watching removal identity ownership', () => {
     beforeEach(() => {
         document.body.innerHTML = '';
         JC.identity.transition('test-server-id', 'user-a', 'remove-home-test-start');
+        const context = JC.identity.capture()!;
+        const hiddenContent = JC.identity.own({
+            items: {},
+            itemsRevision: 0,
+            settings: { enabled: true, revision: 0 },
+        }, context);
+        JC.userConfig = JC.identity.own({ hiddenContent }, context);
         JC.t = (key: string) => key;
         JC.escapeHtml = (value: unknown) => typeof value === 'string' ? value : '';
         disposeFeature = installRemoveHome();
@@ -54,17 +61,168 @@ describe('Continue Watching removal identity ownership', () => {
         expect(markScopedHidden).not.toHaveBeenCalled();
     });
 
-    it('reverses an A-owned optimistic hide synchronously on transition', async () => {
-        JC.core.api = { plugin: vi.fn().mockResolvedValue({}) } as unknown as ApiApi;
+    it('does not let a held scoped acknowledgement overwrite newer local Settings intent', async () => {
+        const context = JC.identity.capture()!;
+        const dispatchedSettings = { enabled: true, revision: 5 };
+        const dispatchedRoot = JC.identity.own({
+            items: {},
+            itemsRevision: 4,
+            settings: dispatchedSettings,
+        }, context);
+        JC.userConfig = JC.identity.own({ hiddenContent: dispatchedRoot }, context);
+        const held = deferred<unknown>();
+        const plugin = vi.fn(() => held.promise);
+        JC.core.api = { plugin } as unknown as ApiApi;
+        const markScopedHidden = vi.fn((
+            _itemId: string,
+            _surface: string,
+            itemsRevision?: number,
+            settingsRevision?: number,
+            enabled?: boolean,
+        ) => {
+            const root = JC.userConfig?.hiddenContent as {
+                itemsRevision?: number;
+                settings: { enabled: boolean; revision: number };
+            };
+            if (itemsRevision !== undefined) root.itemsRevision = itemsRevision;
+            if (settingsRevision !== undefined) root.settings.revision = settingsRevision;
+            if (enabled !== undefined) root.settings.enabled = enabled;
+        });
         JC.hiddenContent = {
             flushPendingSave: vi.fn().mockResolvedValue(undefined),
-            markScopedHidden: vi.fn(),
+            markScopedHidden,
+        } as unknown as NonNullable<typeof JC.hiddenContent>;
+        const card = document.createElement('div');
+        document.body.appendChild(card);
+
+        const result = removeFromHomeSurface('item-a', 'continuewatching', card);
+        await vi.waitFor(() => expect(plugin).toHaveBeenCalledTimes(1));
+
+        const newerSettings = { ...dispatchedSettings, enabled: false };
+        const newerRoot = JC.identity.own({
+            ...dispatchedRoot,
+            settings: newerSettings,
+        }, context);
+        JC.userConfig.hiddenContent = newerRoot;
+        held.resolve({
+            itemsRevision: 6,
+            settingsRevision: 6,
+            hiddenContentEnabled: true,
+            settingsChanged: true,
+        });
+
+        await expect(result).resolves.toBe(true);
+        expect(markScopedHidden).toHaveBeenCalledWith(
+            'item-a',
+            'continuewatching',
+            6,
+            6,
+            undefined,
+        );
+        expect(newerRoot.itemsRevision).toBe(6);
+        expect(newerRoot.settings).toEqual({ enabled: false, revision: 6 });
+    });
+
+    it('merges a forced-enable acknowledgement with a newer unrelated Settings edit', async () => {
+        const context = JC.identity.capture()!;
+        const dispatchedSettings = {
+            enabled: false,
+            filterSearch: false,
+            revision: 0,
+        };
+        const dispatchedRoot = JC.identity.own({
+            items: {},
+            itemsRevision: 0,
+            settings: dispatchedSettings,
+        }, context);
+        JC.userConfig = JC.identity.own({ hiddenContent: dispatchedRoot }, context);
+        const held = deferred<unknown>();
+        const plugin = vi.fn(() => held.promise);
+        JC.core.api = { plugin } as unknown as ApiApi;
+        const markScopedHidden = vi.fn((
+            _itemId: string,
+            _surface: string,
+            itemsRevision?: number,
+            settingsRevision?: number,
+            enabled?: boolean,
+        ) => {
+            const root = JC.userConfig?.hiddenContent as {
+                itemsRevision?: number;
+                settings: {
+                    enabled: boolean;
+                    filterSearch: boolean;
+                    revision: number;
+                };
+            };
+            if (itemsRevision !== undefined) root.itemsRevision = itemsRevision;
+            if (settingsRevision !== undefined) root.settings.revision = settingsRevision;
+            if (enabled !== undefined) root.settings.enabled = enabled;
+        });
+        JC.hiddenContent = {
+            flushPendingSave: vi.fn().mockResolvedValue(undefined),
+            getSettingsMutationGeneration: vi.fn(() => 0),
+            markScopedHidden,
+        } as unknown as NonNullable<typeof JC.hiddenContent>;
+
+        const result = removeFromHomeSurface('item-a', 'continuewatching');
+        await vi.waitFor(() => expect(plugin).toHaveBeenCalledTimes(1));
+
+        const newerRoot = JC.identity.own({
+            ...dispatchedRoot,
+            settings: {
+                ...dispatchedSettings,
+                filterSearch: true,
+            },
+        }, context);
+        JC.userConfig.hiddenContent = newerRoot;
+        held.resolve({
+            itemsRevision: 1,
+            settingsRevision: 1,
+            hiddenContentEnabled: true,
+            settingsChanged: true,
+        });
+
+        await expect(result).resolves.toBe(true);
+        expect(markScopedHidden).toHaveBeenCalledWith(
+            'item-a',
+            'continuewatching',
+            1,
+            1,
+            true,
+        );
+        expect(newerRoot.settings).toEqual({
+            enabled: true,
+            filterSearch: true,
+            revision: 1,
+        });
+    });
+
+    it('reverses an A-owned optimistic hide synchronously on transition', async () => {
+        const markScopedHidden = vi.fn();
+        JC.core.api = {
+            plugin: vi.fn().mockResolvedValue({
+                itemsRevision: 7,
+                settingsRevision: 3,
+                hiddenContentEnabled: true,
+                settingsChanged: false,
+            }),
+        } as unknown as ApiApi;
+        JC.hiddenContent = {
+            flushPendingSave: vi.fn().mockResolvedValue(undefined),
+            markScopedHidden,
         } as unknown as NonNullable<typeof JC.hiddenContent>;
         const card = document.createElement('div');
         document.body.appendChild(card);
 
         await expect(removeFromHomeSurface('item-a', 'continuewatching', card)).resolves.toBe(true);
         expect(card.style.display).toBe('none');
+        expect(markScopedHidden).toHaveBeenCalledWith(
+            'item-a',
+            'continuewatching',
+            7,
+            3,
+            true,
+        );
 
         JC.identity.transition('test-server-id', 'user-b', 'account-switch');
         expect(card.style.display).toBe('');

@@ -18,6 +18,7 @@ import {
 } from './state';
 import {
     handleUnhide, handleUnhideMany, maybeInitAdminFilter, onAdminUserChange,
+    onAdminUserPageChange,
     toOpaqueColor, applyAdminThemeVars, createAdminViewingBadge,
     openAdminAddModal
 } from './admin';
@@ -50,6 +51,8 @@ interface ToolbarRefs {
     scopedToggle: HTMLButtonElement;
     unhideAllBtn: HTMLButtonElement;
     adminUserSelect: HTMLSelectElement | null;
+    adminUsersFirstPage: HTMLButtonElement | null;
+    adminUsersNextPage: HTMLButtonElement | null;
     adminEditToggle: HTMLButtonElement | null;
     adminAddBtn: HTMLButtonElement | null;
 }
@@ -77,10 +80,15 @@ function createToolbar(): ToolbarRefs {
     // their hidden content. Only rendered once admin status is confirmed and there is at least one
     // other user with hidden items; the server still gates the underlying data.
     let adminUserSelect: HTMLSelectElement | null = null;
+    let adminUsersFirstPage: HTMLButtonElement | null = null;
+    let adminUsersNextPage: HTMLButtonElement | null = null;
     let adminEditToggle: HTMLButtonElement | null = null;
     let adminAddBtn: HTMLButtonElement | null = null;
     const adminAllowed = !(JC.pluginConfig && JC.pluginConfig.HiddenContentAdmin === false);
-    if (adminAllowed && state.adminIsAdmin === true && Array.isArray(state.adminUsers) && state.adminUsers.length > 0) {
+    if (adminAllowed && state.adminIsAdmin === true && Array.isArray(state.adminUsers)
+        && (state.adminUsers.length > 0
+            || !!state.adminUsersCursor
+            || !!state.adminUsersNextCursor)) {
         // A plain native <select> styled to match the page's own toolbar controls (search / scoped
         // toggle), so it follows the dark theme instead of the browser default. The option pop-up is
         // themed too — options must be OPAQUE because a translucent colour lets the OS white show through.
@@ -109,6 +117,43 @@ function createToolbar(): ToolbarRefs {
         }
         toolbar.appendChild(adminUserSelect);
 
+        if (state.adminUsersCursor || state.adminUsersNextCursor) {
+            const pager = document.createElement('div');
+            pager.style.display = 'flex';
+            pager.style.alignItems = 'center';
+            pager.style.gap = '6px';
+            const pageStatus = document.createElement('span');
+            pageStatus.setAttribute('role', 'status');
+            pageStatus.setAttribute('aria-live', 'polite');
+            pageStatus.setAttribute('aria-atomic', 'true');
+            pageStatus.style.fontSize = '11px';
+            pageStatus.textContent = JC.t!(
+                state.adminUsersCursor
+                    ? 'hidden_content_admin_users_next_page'
+                    : 'hidden_content_admin_users_first_page',
+            );
+            if (state.adminUsersCursor) {
+                adminUsersFirstPage = document.createElement('button');
+                adminUsersFirstPage.type = 'button';
+                adminUsersFirstPage.className = 'jc-hidden-admin-edit-toggle';
+                adminUsersFirstPage.textContent = JC.t!(
+                    'hidden_content_admin_users_first_page',
+                );
+                pager.appendChild(adminUsersFirstPage);
+            }
+            pager.appendChild(pageStatus);
+            if (state.adminUsersNextCursor) {
+                adminUsersNextPage = document.createElement('button');
+                adminUsersNextPage.type = 'button';
+                adminUsersNextPage.className = 'jc-hidden-admin-edit-toggle';
+                adminUsersNextPage.textContent = JC.t!(
+                    'hidden_content_admin_users_next_page',
+                );
+                pager.appendChild(adminUsersNextPage);
+            }
+            toolbar.appendChild(pager);
+        }
+
         // Edit toggle: only while viewing another user (admin access is already allowed at this point).
         if (state.selectedAdminUserId) {
             adminEditToggle = document.createElement("button");
@@ -133,7 +178,17 @@ function createToolbar(): ToolbarRefs {
     unhideAllBtn.textContent = JC.t!('hidden_content_clear_all');
     toolbar.appendChild(unhideAllBtn);
 
-    return { element: toolbar, searchInput, scopedToggle, unhideAllBtn, adminUserSelect, adminEditToggle, adminAddBtn };
+    return {
+        element: toolbar,
+        searchInput,
+        scopedToggle,
+        unhideAllBtn,
+        adminUserSelect,
+        adminUsersFirstPage,
+        adminUsersNextPage,
+        adminEditToggle,
+        adminAddBtn,
+    };
 }
 
 /**
@@ -282,25 +337,42 @@ export function renderPage(): void {
         state.adminEditMode = false;
         state.adminItems = null;
         state.adminItemsUserId = null;
+        state.adminItemsRevision = null;
+        state.adminItemsRevisionUserId = null;
+        state.adminMutationError = false;
+        state.adminMutationErrorKind = null;
+        state.adminMutationToken += 1;
         state.adminUserName = '';
     }
 
     // If admin cross-user access was disabled in config, drop the selected user and edit mode so the
     // page returns to the admin's own list (the server also refuses the admin endpoints when off).
     if (JC.pluginConfig && JC.pluginConfig.HiddenContentAdmin === false) {
+        const hadAdminTargetState = state.selectedAdminUserId !== null
+            || state.adminItemsUserId !== null
+            || state.adminItemsRevisionUserId !== null;
         state.adminEditMode = false;
         state.selectedAdminUserId = null;
         state.adminItems = null;
         state.adminItemsUserId = null;
+        state.adminItemsRevision = null;
+        state.adminItemsRevisionUserId = null;
         state.adminUserName = '';
         state.adminLoadError = false;
+        state.adminMutationError = false;
+        state.adminMutationErrorKind = null;
+        if (hadAdminTargetState) state.adminMutationToken += 1;
     }
 
     // When an admin has selected another user, render that user's items (read-only) instead of own.
     const viewingOther = !!state.selectedAdminUserId;
     // Only surface fetched items once they belong to the currently-selected user, so an in-flight
     // switch never briefly shows the previous user's items under the new user's name/badge.
-    const adminReady = viewingOther && state.adminItemsUserId === state.selectedAdminUserId;
+    const adminReady = viewingOther
+        && state.adminItemsUserId === state.selectedAdminUserId
+        && state.adminItemsRevisionUserId === state.selectedAdminUserId
+        && Number.isSafeInteger(state.adminItemsRevision)
+        && (state.adminItemsRevision ?? -1) >= 0;
     const allItems: any[] = viewingOther
         ? (adminReady ? (state.adminItems || []) : [])
         : (JC as any).hiddenContent.getAllHiddenItems();
@@ -332,6 +404,19 @@ export function renderPage(): void {
 
     const toolbar = createToolbar();
     container.appendChild(toolbar.element);
+    if (viewingOther && state.adminMutationError) {
+        const mutationStatus = document.createElement('div');
+        mutationStatus.className = 'jc-hidden-admin-mutation-status is-error';
+        mutationStatus.setAttribute('role', 'alert');
+        mutationStatus.setAttribute('aria-live', 'assertive');
+        mutationStatus.setAttribute('aria-atomic', 'true');
+        mutationStatus.textContent = JC.t!(
+            state.adminMutationErrorKind === 'conflict'
+                ? 'panel_admin_target_conflict_error'
+                : 'panel_admin_target_save_error',
+        );
+        container.appendChild(mutationStatus);
+    }
 
     // Wire the admin user-filter dropdown.
     // IMPORTANT (Android): onAdminUserChange() re-renders, which rebuilds the toolbar and removes
@@ -343,8 +428,26 @@ export function renderPage(): void {
             if (!isPageFenceCurrent(fence)) return;
             const value = (e.target as HTMLSelectElement).value;
             try { (e.target as HTMLSelectElement).blur(); } catch (_) {}
-            schedulePageTimeout(() => { void onAdminUserChange(value); }, 0, fence);
+            schedulePageTimeout(() => {
+                void onAdminUserChange(value);
+            }, 0, fence);
         });
+    }
+    const pageUsers = (cursor: string | null): void => {
+        state.adminUsersFocusAfterPage = true;
+        onAdminUserPageChange(cursor);
+    };
+    toolbar.adminUsersFirstPage?.addEventListener(
+        'click',
+        () => pageUsers(null),
+    );
+    toolbar.adminUsersNextPage?.addEventListener(
+        'click',
+        () => pageUsers(state.adminUsersNextCursor),
+    );
+    if (state.adminUsersFocusAfterPage && toolbar.adminUserSelect) {
+        state.adminUsersFocusAfterPage = false;
+        toolbar.adminUserSelect.focus();
     }
 
     // Wire the admin edit-mode toggle: flips read-only ↔ editable for the viewed user.
@@ -352,6 +455,8 @@ export function renderPage(): void {
         toolbar.adminEditToggle.addEventListener('click', () => {
             if (!isPageFenceCurrent(fence)) return;
             state.adminEditMode = !state.adminEditMode;
+            state.adminMutationError = false;
+            state.adminMutationErrorKind = null;
             renderPage();
         });
     }

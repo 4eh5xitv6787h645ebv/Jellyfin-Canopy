@@ -111,6 +111,71 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         internal static int RegisteredUserCountForTest(string pendingKey)
             => _pendingUsersByKey.TryGetValue(pendingKey, out var users) ? users.Count : 0;
 
+        // AsyncLocal keeps deterministic race/fault hooks isolated when xUnit
+        // runs controller classes in parallel. Task.Run carries the originating
+        // test's execution context, while an unrelated test can install its own
+        // hook without overwriting this one.
+        private static readonly AsyncLocal<Action<string, IReadOnlyCollection<string>>?>
+            _beforeAuthoritativeGateReconcileForTests = new();
+
+        internal static Action<string, IReadOnlyCollection<string>>?
+            BeforeAuthoritativeGateReconcileForTests
+        {
+            get => _beforeAuthoritativeGateReconcileForTests.Value;
+            set => _beforeAuthoritativeGateReconcileForTests.Value = value;
+        }
+
+        /// <summary>
+        /// Reconciles only the affected pending keys from the authoritative
+        /// store state while owning the same user/file lock as all writers.
+        /// A delayed remove can therefore never unregister a key that a newer
+        /// writer has already restored.
+        /// </summary>
+        internal static void ReconcilePendingKeys(
+            UserConfigurationManager configManager,
+            string userKey,
+            IEnumerable<string> affectedKeys)
+        {
+            if (!Guid.TryParseExact(userKey, "N", out var userId)
+                || userId == Guid.Empty)
+            {
+                return;
+            }
+
+            var keys = affectedKeys
+                .Where(static key => !string.IsNullOrEmpty(key))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            if (keys.Length == 0) return;
+
+            BeforeAuthoritativeGateReconcileForTests?.Invoke(userKey, keys);
+            lock (configManager.GetUserFileLock(
+                userKey,
+                SpoilerBlurImageFilter.SpoilerBlurFileName))
+            {
+                var read = configManager.ReadExistingUserConfiguration<UserSpoilerBlur>(
+                    userKey,
+                    SpoilerBlurImageFilter.SpoilerBlurFileName);
+                if (read.IsFault || !read.HasUsableValue || read.Value == null)
+                {
+                    throw new IOException(
+                        $"Unable to reconcile pending gate from store status {read.Status}.");
+                }
+
+                foreach (var key in keys)
+                {
+                    if (read.Value.PendingTmdb.ContainsKey(key))
+                    {
+                        RegisterPending(key, userId);
+                    }
+                    else
+                    {
+                        UnregisterPending(key, userId);
+                    }
+                }
+            }
+        }
+
         private readonly ILibraryManager _libraryManager;
         private readonly IUserManager _userManager;
         private readonly UserConfigurationManager _configManager;
@@ -298,7 +363,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                         // Promoted, already gone, or user deleted — either way
                         // this user no longer holds the pending key, so stop
                         // sweeping them for it.
-                        UnregisterPending(pendingKey, userId);
+                        ReconcilePendingKeys(
+                            _configManager,
+                            userId.ToString("N"),
+                            new[] { pendingKey });
                     }
                 }
                 catch (Exception ex)
@@ -352,37 +420,67 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             var userKey = userId.ToString("N");
             var fileName = SpoilerBlurImageFilter.SpoilerBlurFileName;
             var itemKey = itemId.ToString("N");
+            var persistedItemName = PersistedPayloadPolicy
+                .ClampPersistedDisplayName(itemName);
 
             try
             {
                 var stillHadPending = new[] { false };
+                var capacityExceeded = new[] { false };
                 _configManager.RmwUserConfiguration<UserSpoilerBlur>(
                     userKey, fileName, state =>
                     {
-                        if (!state.PendingTmdb.Remove(pendingKey)) return 0;
+                        if (!state.PendingTmdb.ContainsKey(pendingKey)) return 0;
                         stillHadPending[0] = true;
                         if (isSeries)
                         {
+                            if (!state.Series.ContainsKey(itemKey)
+                                && !SpoilerGuardOverrideCapacity.CanInsert(
+                                    state.Series,
+                                    itemKey))
+                            {
+                                capacityExceeded[0] = true;
+                                return 0;
+                            }
+                            state.PendingTmdb.Remove(pendingKey);
+                            SpoilerGuardOverridesRevision.Advance(state);
                             if (state.Series.ContainsKey(itemKey)) return 1;
                             state.Series[itemKey] = new SpoilerBlurSeriesEntry
                             {
                                 SeriesId = itemKey,
-                                SeriesName = itemName,
+                                SeriesName = persistedItemName,
                                 EnabledAt = DateTime.UtcNow.ToString("o", System.Globalization.CultureInfo.InvariantCulture),
                             };
                         }
                         else
                         {
+                            if (!state.Movies.ContainsKey(itemKey)
+                                && !SpoilerGuardOverrideCapacity.CanInsert(
+                                    state.Movies,
+                                    itemKey))
+                            {
+                                capacityExceeded[0] = true;
+                                return 0;
+                            }
+                            state.PendingTmdb.Remove(pendingKey);
+                            SpoilerGuardOverridesRevision.Advance(state);
                             if (state.Movies.ContainsKey(itemKey)) return 1;
                             state.Movies[itemKey] = new SpoilerBlurMovieEntry
                             {
                                 MovieId = itemKey,
-                                MovieName = itemName,
+                                MovieName = persistedItemName,
                                 EnabledAt = DateTime.UtcNow.ToString("o", System.Globalization.CultureInfo.InvariantCulture),
                             };
                         }
                         return 1;
                     });
+                if (capacityExceeded[0])
+                {
+                    _logger.LogWarning(
+                        $"SpoilerSeerrPromoter: retained {pendingKey} for user {userId}; " +
+                        $"{(isSeries ? "series" : "movie")} list is at capacity.");
+                    return PromotionOutcome.StillPending;
+                }
                 if (stillHadPending[0])
                 {
                     // F7: Series/Movies changed — drop the user's cached state so

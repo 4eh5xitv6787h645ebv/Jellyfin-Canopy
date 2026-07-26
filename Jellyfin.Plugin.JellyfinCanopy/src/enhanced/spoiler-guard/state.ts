@@ -16,6 +16,7 @@ const logPrefix = '🪼 Jellyfin Canopy [SpoilerGuard]:';
 
 /** Per-user override prefs (mirrors the server SpoilerBlurUserPrefs). */
 export interface SpoilerUserPrefs {
+    Revision?: number;
     // Each strip toggle is a nullable bool: undefined/null = inherit admin,
     // false = user opted out (show the field even under Spoiler Guard).
     HideEpisodeDescriptions?: boolean | null;
@@ -29,7 +30,7 @@ export interface SpoilerUserPrefs {
     HideReviews?: boolean | null;
     /** Direct boolean: true = skip the disable-confirm dialog. */
     SkipDisableConfirm?: boolean;
-    [key: string]: boolean | null | undefined;
+    [key: string]: boolean | number | null | undefined;
 }
 
 /** The in-memory guarded-id sets plus the pending→promoted id map. */
@@ -404,9 +405,9 @@ export function setUserPrefs(next: SpoilerUserPrefs): Promise<SpoilerUserPrefs> 
     return runOwned((context) => JC.core.api!.plugin('/spoiler-blur/user-prefs', {
         method: 'POST', body: JC.identity.own(payload, context), skipRetry: true,
     })).then((res: unknown) => {
-        userPrefs = { ...payload };
         const r = res as { prefs?: SpoilerUserPrefs } | undefined;
-        return r?.prefs ?? userPrefs;
+        userPrefs = { ...(r?.prefs ?? payload) };
+        return { ...userPrefs };
     }).catch((err: unknown) => {
         console.error(`${logPrefix} setUserPrefs failed:`, err);
         throw err;

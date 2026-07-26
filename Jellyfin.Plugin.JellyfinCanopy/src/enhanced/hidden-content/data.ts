@@ -53,11 +53,14 @@ export interface HiddenItem {
 /** The hidden-content data blob persisted per user. */
 export interface HiddenContentData {
     items: Record<string, HiddenItem>;
+    /** Optimistic-concurrency revision for the complete items dictionary. */
+    itemsRevision?: number;
     settings: Record<string, unknown>;
 }
 
 /** Merged settings object (defaults + user overrides). */
 export interface HiddenContentSettings {
+    revision?: number;
     enabled: boolean;
     filterLibrary: boolean;
     filterDiscovery: boolean;
@@ -85,9 +88,16 @@ export interface HiddenContentSettings {
 export const hiddenIdSet = new Set<string>();
 const hiddenProviderIdentitySet = new Set<string>();
 let hiddenData: HiddenContentData | null = null;
+let settingsMutationSequence = 0;
+const settingsMutationGenerations = new Map<string, number>();
 
 function emptyHiddenData(): HiddenContentData {
-    return { items: {}, settings: {} };
+    return { items: {}, itemsRevision: 0, settings: {} };
+}
+
+function resetSettingsMutationGenerations(): void {
+    settingsMutationSequence = 0;
+    settingsMutationGenerations.clear();
 }
 
 function upgradeSafeLegacyIdentities(data: HiddenContentData): { data: HiddenContentData; changed: boolean } {
@@ -142,6 +152,7 @@ export function clearIdentityData(): void {
     hiddenData = null;
     hiddenIdSet.clear();
     hiddenProviderIdentitySet.clear();
+    resetSettingsMutationGenerations();
 }
 
 // ============================================================
@@ -282,7 +293,7 @@ export function emitChange(): void {
 }
 
 // Re-fetch from server and replace local cache. Don't call immediately after a server-direct write from THIS tab — use markScopedHidden().
-export async function refresh(): Promise<boolean> {
+export async function refresh(expectedCurrent?: HiddenContentData): Promise<boolean> {
     const context = JC.identity?.capture?.() || null;
     if (context && !JC.identity.isCurrent(context)) return false;
     try {
@@ -302,6 +313,11 @@ export async function refresh(): Promise<boolean> {
             : emptyHiddenData();
         const upgraded = upgradeSafeLegacyIdentities(loaded);
         const next = upgraded.data;
+        // Conflict recovery may hold this GET while the user makes a newer
+        // local edit. Every local mutation replaces the owned root object, so
+        // object identity is a deterministic mutation fence: never publish an
+        // older recovery read over a newer in-memory intent.
+        if (expectedCurrent && getHiddenData() !== expectedCurrent) return false;
         if (context) {
             if (!replaceHiddenData(next, context)) return false;
         } else {
@@ -309,6 +325,7 @@ export async function refresh(): Promise<boolean> {
             JC.userConfig.hiddenContent = next;
             hiddenData = next;
         }
+        resetSettingsMutationGenerations();
         rebuildSets();
         if (upgraded.changed) debouncedSave();
         emitChange();
@@ -383,7 +400,13 @@ function mergeHiddenRows(preferred: HiddenItem, additional: HiddenItem): HiddenI
 
 // Local-cache mirror of a server-side hide write — preserves existing metadata + merges scopes via mergeCwScope.
 // Looks up under hyphenated AND N-format keys (server canonical is hyphenated; some callers pass N-format from data-id).
-export function markScopedHidden(itemId: string, scope?: string): void {
+export function markScopedHidden(
+    itemId: string,
+    scope?: string,
+    itemsRevision?: number,
+    settingsRevision?: number,
+    hiddenContentEnabled?: boolean,
+): void {
     if (!itemId) return;
     const _scope = (scope || 'continuewatching').toLowerCase();
     const data = getHiddenData();
@@ -401,7 +424,40 @@ export function markScopedHidden(itemId: string, scope?: string): void {
     const finalScope = mergeCwScope(widestExisting, _scope);
     const existing = variants[0] || null;
     const altPresent = (hyphenated !== itemId && items[hyphenated]) || (noHyphen !== itemId && items[noHyphen]);
-    if (items[itemId] && items[itemId].hideScope === finalScope && !altPresent) return;
+    const monotonicRevision = (current: unknown, acknowledged: unknown): number | undefined => {
+        if (typeof acknowledged !== 'number'
+            || !Number.isSafeInteger(acknowledged)
+            || acknowledged < 0) {
+            return undefined;
+        }
+        return typeof current === 'number'
+            && Number.isSafeInteger(current)
+            && current >= 0
+            ? Math.max(current, acknowledged)
+            : acknowledged;
+    };
+    const revision = monotonicRevision(data.itemsRevision, itemsRevision);
+    const preferenceRevision = monotonicRevision(data.settings.revision, settingsRevision);
+    const withAcknowledgement = (nextItems: HiddenContentData['items']): HiddenContentData => ({
+        ...data,
+        items: nextItems,
+        ...(revision !== undefined
+            ? { itemsRevision: revision }
+            : {}),
+        settings: {
+            ...data.settings,
+            ...(preferenceRevision !== undefined
+                ? { revision: preferenceRevision }
+                : {}),
+            ...(typeof hiddenContentEnabled === 'boolean'
+                ? { enabled: hiddenContentEnabled }
+                : {}),
+        },
+    });
+    if (items[itemId] && items[itemId].hideScope === finalScope && !altPresent) {
+        commitHiddenData(withAcknowledgement(items), data);
+        return;
+    }
     // Pick the earliest hiddenAt across variants so re-affirming doesn't reset history.
     let earliestHiddenAt = '';
     for (const v of variants) {
@@ -422,7 +478,7 @@ export function markScopedHidden(itemId: string, scope?: string): void {
     const nextItems = { ...items, [itemId]: merged };
     if (hyphenated !== itemId) delete nextItems[hyphenated];
     if (noHyphen !== itemId) delete nextItems[noHyphen];
-    if (!commitHiddenData({ ...data, items: nextItems }, data)) return;
+    if (!commitHiddenData(withAcknowledgement(nextItems), data)) return;
     rebuildSets();
     emitChange();
 }
@@ -625,9 +681,20 @@ export function updateSettings(partial: Record<string, unknown>): void {
         settings: { ...data.settings, ...partial }
     };
     if (!commitHiddenData(nextData, data)) return;
+    for (const key of Object.keys(partial)) {
+        settingsMutationSequence = settingsMutationSequence >= Number.MAX_SAFE_INTEGER
+            ? 1
+            : settingsMutationSequence + 1;
+        settingsMutationGenerations.set(key, settingsMutationSequence);
+    }
     debouncedSave();
     emitChange();
     refreshNativeCardVisibility();
+}
+
+/** Opaque per-field intent generation used to fence same-value async acknowledgements. */
+export function getSettingsMutationGeneration(field: string): number {
+    return settingsMutationGenerations.get(field) || 0;
 }
 
 /**
@@ -758,6 +825,7 @@ export function resetFromUserConfig(): void {
         hiddenData = upgraded.data;
         if (JC.userConfig) JC.userConfig.hiddenContent = hiddenData;
     }
+    resetSettingsMutationGenerations();
     rebuildSets();
     if (upgraded.changed && hiddenData === upgraded.data) debouncedSave();
 }

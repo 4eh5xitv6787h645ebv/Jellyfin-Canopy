@@ -181,10 +181,7 @@ export function showEnhancedPanel(launch: SettingsPanelLaunchContext | null = nu
             ? 'panel_admin_target_unauthorized'
             : 'panel_admin_target_load_error';
         console.warn('🪼 Jellyfin Canopy: Could not open Canopy User Settings:', error);
-        const translated = JC.t?.(key);
-        toast(!translated || translated === key ? (classified?.kind === 'authorization'
-            ? 'You are not authorized to edit this user’s Canopy settings.'
-            : 'Could not load this user’s Canopy settings.') : translated);
+        toast(JC.t!(key));
     }).finally(() => {
         if (openingPromise === opening) openingPromise = null;
         // Every early/stale return leaves the reservation in opening state.
@@ -635,9 +632,9 @@ async function openPanel(owner: PanelOwner): Promise<void> {
     ctx.createToast = createToast;
 
     wireSettingsListeners(ctx);
-    if (editor.appliesToActor) {
-        wireHiddenContentListeners(ctx);
-        wireSpoilerGuardListeners(ctx.resetAutoCloseTimer);
+    if (editor.hiddenContentSettings) wireHiddenContentListeners(ctx);
+    if (editor.spoilerGuardPrefs || editor.spoilerGuardOverrides) {
+        wireSpoilerGuardListeners(ctx);
     }
     wireMiscSettingsControls(ctx);
     wireLanguageControls(ctx);

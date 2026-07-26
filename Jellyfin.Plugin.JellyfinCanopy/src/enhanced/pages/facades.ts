@@ -24,7 +24,7 @@ const fallbacks: Record<PageId, Facade> = {
         prevIssuesPage: noop, renderPage: noop, injectStyles: noop,
     },
     'hidden-content': {
-        showPage: () => { openPage('hidden-content'); }, renderPage: noop, injectStyles: noop,
+        showPage: () => openPage('hidden-content'), renderPage: noop, injectStyles: noop,
     },
     bookmarks: {
         showPage: () => { openPage('bookmarks'); }, refresh: noop,

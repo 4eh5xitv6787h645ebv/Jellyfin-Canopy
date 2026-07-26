@@ -180,11 +180,7 @@ export function wireLanguageControls(ctx: PanelContext): void {
                         && error.kind === 'cancelled')) return;
                 (e.target as HTMLSelectElement).value = previousLang;
                 if (editor.mode === 'admin-target') {
-                    const key = 'panel_admin_target_save_error';
-                    const translated = JC.t?.(key);
-                    toast(!translated || translated === key
-                        ? 'Could not save this user’s Canopy settings.'
-                        : translated);
+                    toast(JC.t!('panel_admin_target_save_error'));
                 }
                 await ctx.reconcileAfterSaveFailure?.();
                 return;
@@ -203,11 +199,7 @@ export function wireLanguageControls(ctx: PanelContext): void {
             }
 
             if (editor.mode === 'admin-target') {
-                const key = 'panel_admin_target_refresh_notice';
-                const translated = JC.t?.(key);
-                toast(escapeHtml(!translated || translated === key
-                    ? 'Saved. It applies after that user refreshes their client.'
-                    : translated));
+                toast(escapeHtml(JC.t!('panel_admin_target_refresh_notice')));
             } else if (newLang && !translationExists) {
                 toast(`${JC.icon!(JC.IconName!.WARNING)} Translation file not available for selected language. Falling back to English.`);
             } else {

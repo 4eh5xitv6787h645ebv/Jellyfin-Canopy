@@ -27,9 +27,11 @@ import {
     unhideAll,
     refresh,
     markScopedHidden,
+    getSettingsMutationGeneration,
     resolveLegacyIdentity,
 } from './data';
 import {
+    beginScopedWrite,
     flushPendingSave,
     fetchHiddenContentUsers,
     fetchUserHiddenItemsForAdmin,
@@ -107,6 +109,8 @@ const hiddenContentApi = {
     removeLibraryHideButtons,
     refresh,
     markScopedHidden,
+    getSettingsMutationGeneration,
+    beginScopedWrite,
     resolveLegacyIdentity,
     flushPendingSave,
     fetchHiddenContentUsers,

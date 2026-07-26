@@ -33,7 +33,9 @@
       "HideScope": "series"
     }
   },
+  "ItemsRevision": 0,
   "Settings": {
+    "Revision": 0,
     "Enabled": true,
     "FilterLibrary": true,
     "FilterDiscovery": true,

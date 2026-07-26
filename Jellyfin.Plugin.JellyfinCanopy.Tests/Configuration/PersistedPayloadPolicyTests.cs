@@ -163,6 +163,40 @@ public sealed class PersistedPayloadPolicyTests
     }
 
     [Fact]
+    public void ShortcutEntryExtensionData_IsBoundedAndDeepCloned()
+    {
+        using var exactDocument = JsonDocument.Parse(
+            JsonSerializer.Serialize(
+                new string('x', PersistedPayloadPolicy.MaximumExtensionStringLength)));
+        using var overDocument = JsonDocument.Parse(
+            JsonSerializer.Serialize(
+                new string('x', PersistedPayloadPolicy.MaximumExtensionStringLength + 1)));
+        var shortcut = new Shortcut { Name = "Open", Key = "O" };
+        shortcut.ExtensionData["FutureShortcutEntry"] =
+            exactDocument.RootElement.Clone();
+        var payload = new UserShortcuts
+        {
+            Revision = 7,
+            Shortcuts = new List<Shortcut> { shortcut }
+        };
+
+        AssertValid(payload);
+        var clone = PersistedPayloadPolicy.CloneValidated(payload);
+        Assert.NotSame(payload, clone);
+        Assert.NotSame(payload.Shortcuts, clone.Shortcuts);
+        Assert.NotSame(shortcut, Assert.Single(clone.Shortcuts));
+        Assert.Equal(
+            PersistedPayloadPolicy.MaximumExtensionStringLength,
+            clone.Shortcuts[0].ExtensionData["FutureShortcutEntry"]
+                .GetString()!
+                .Length);
+
+        shortcut.ExtensionData["FutureShortcutEntry"] =
+            overDocument.RootElement.Clone();
+        AssertInvalid(payload);
+    }
+
+    [Fact]
     public void HiddenContent_FieldsRangesScopesAndLargeLibraryCount_AreBounded()
     {
         var stringFields = new (int Maximum, Action<HiddenContentItem, string> Set)[]
@@ -242,16 +276,24 @@ public sealed class PersistedPayloadPolicyTests
         };
         var payload = new UserHiddenContent
         {
+            ItemsRevision = 7,
             Items = new Dictionary<string, HiddenContentItem> { ["key"] = source }
         };
 
         Assert.True(PersistedPayloadPolicy.Validate(payload).IsValid);
         var clone = PersistedPayloadPolicy.CloneValidated(payload);
+        Assert.Equal(7, clone.ItemsRevision);
         Assert.Equal(string.Empty, clone.Items["key"].Name);
         Assert.Equal("global", clone.Items["key"].HideScope);
         Assert.Null(source.Name);
         Assert.Null(source.HideScope);
     }
+
+    [Fact]
+    public void HiddenContent_NegativeItemsRevision_IsInvalid()
+        => Assert.Equal(
+            PersistedPayloadStatus.Invalid,
+            PersistedPayloadPolicy.Validate(new UserHiddenContent { ItemsRevision = -1 }).Status);
 
     [Fact]
     public void HiddenContent_VersionedIdentity_IsValidatedAndClonedWithoutAliasing()
@@ -288,6 +330,149 @@ public sealed class PersistedPayloadPolicyTests
         AssertHiddenInvalid("key", new HiddenContentItem { TmdbId = "movie-550", Identity = identity });
         identity.Id = "551";
         AssertHiddenInvalid("key", new HiddenContentItem { TmdbId = "550", Identity = identity });
+    }
+
+    [Fact]
+    public void HiddenContent_MutationCompatibilityAcceptsOnlyBoundedFutureIdentityVersions()
+    {
+        var payload = new UserHiddenContent
+        {
+            Items = new Dictionary<string, HiddenContentItem>
+            {
+                ["future"] = new HiddenContentItem
+                {
+                    TmdbId = "550",
+                    Identity = new HiddenContentIdentity
+                    {
+                        Version = 2,
+                        Provider = "imdb",
+                        MediaType = "movie",
+                        Id = "tt123"
+                    }
+                }
+            }
+        };
+
+        Assert.False(PersistedPayloadPolicy.Validate(payload).IsValid);
+        Assert.True(
+            PersistedPayloadPolicy.ValidateMutationSource(payload).IsValid);
+        Assert.True(
+            PersistedPayloadPolicy.ValidateMutationCandidate(payload).IsValid);
+        Assert.Equal(2, payload.Items["future"].Identity?.Version);
+
+        payload.Items["future"].Identity!.Id = new string('x', 129);
+        Assert.False(
+            PersistedPayloadPolicy.ValidateMutationSource(payload).IsValid);
+        payload.Items["future"].Identity!.Id = "tt123";
+        payload.Items["future"].Identity!.Version = 1;
+        Assert.False(
+            PersistedPayloadPolicy.ValidateMutationSource(payload).IsValid);
+    }
+
+    [Fact]
+    public void SpoilerOverrides_AllSectionsAreBoundedAndDeepCloned()
+    {
+        var seriesKey = Guid.NewGuid().ToString("N");
+        var movieKey = Guid.NewGuid().ToString("N");
+        var collectionKey = Guid.NewGuid().ToString("N");
+        using var extension = JsonDocument.Parse("""{"nested":["kept",2]}""");
+        var payload = new SpoilerGuardOverrides
+        {
+            Revision = 9,
+            Series = new Dictionary<string, SpoilerBlurSeriesEntry>
+            {
+                [seriesKey] = new()
+                {
+                    SeriesId = seriesKey,
+                    SeriesName = "Series",
+                    ExtensionData = new Dictionary<string, JsonElement>
+                    {
+                        ["FutureSeries"] = extension.RootElement.Clone()
+                    }
+                }
+            },
+            Movies = new Dictionary<string, SpoilerBlurMovieEntry>
+            {
+                [movieKey] = new() { MovieId = movieKey, MovieName = "Movie" }
+            },
+            Collections = new Dictionary<string, SpoilerBlurCollectionEntry>
+            {
+                [collectionKey] = new()
+                {
+                    CollectionId = collectionKey,
+                    CollectionName = "Collection"
+                }
+            },
+            PendingTmdb = new Dictionary<string, SpoilerBlurPendingEntry>
+            {
+                ["tv:123"] = new()
+                {
+                    MediaType = "tv",
+                    TmdbId = "123",
+                    DisplayName = "Pending"
+                }
+            },
+            ExtensionData = new Dictionary<string, JsonElement>
+            {
+                ["FutureOverrides"] = extension.RootElement.Clone()
+            }
+        };
+
+        AssertValid(payload);
+        var clone = PersistedPayloadPolicy.CloneValidated(payload);
+        Assert.Equal(9, clone.Revision);
+        Assert.NotSame(payload.Series, clone.Series);
+        Assert.NotSame(payload.Series[seriesKey], clone.Series[seriesKey]);
+        Assert.Equal(
+            "kept",
+            clone.Series[seriesKey].ExtensionData["FutureSeries"]
+                .GetProperty("nested")[0]
+                .GetString());
+        payload.Series[seriesKey].SeriesName = "Mutated";
+        payload.Series[seriesKey].ExtensionData.Clear();
+        payload.ExtensionData.Clear();
+        Assert.Equal("Series", clone.Series[seriesKey].SeriesName);
+        Assert.True(clone.Series[seriesKey].ExtensionData.ContainsKey("FutureSeries"));
+        Assert.True(clone.ExtensionData.ContainsKey("FutureOverrides"));
+
+        var mismatched = PersistedPayloadPolicy.CloneValidated(clone);
+        mismatched.Series[seriesKey].SeriesId = Guid.NewGuid().ToString("N");
+        AssertInvalid(mismatched);
+
+        var badPending = PersistedPayloadPolicy.CloneValidated(clone);
+        badPending.PendingTmdb["tv:123"].TmdbId = "124";
+        AssertInvalid(badPending);
+
+        foreach (var invalidTmdbId in new[] { "0001", "2147483648" })
+        {
+            var nonCanonicalPending = PersistedPayloadPolicy.CloneValidated(clone);
+            nonCanonicalPending.PendingTmdb.Clear();
+            nonCanonicalPending.PendingTmdb[$"tv:{invalidTmdbId}"] = new()
+            {
+                MediaType = "tv",
+                TmdbId = invalidTmdbId
+            };
+            AssertInvalid(nonCanonicalPending);
+        }
+
+        var maximumTmdb = PersistedPayloadPolicy.CloneValidated(clone);
+        maximumTmdb.PendingTmdb.Clear();
+        maximumTmdb.PendingTmdb["movie:2147483647"] = new()
+        {
+            MediaType = "movie",
+            TmdbId = "2147483647"
+        };
+        AssertValid(maximumTmdb);
+
+        var tooMany = new SpoilerGuardOverrides();
+        for (var i = 0;
+             i <= PersistedPayloadPolicy.MaximumSpoilerEntriesPerDictionary;
+             i++)
+        {
+            var key = Guid.NewGuid().ToString("N");
+            tooMany.Series[key] = new SpoilerBlurSeriesEntry { SeriesId = key };
+        }
+        AssertInvalid(tooMany);
     }
 
     [Fact]
