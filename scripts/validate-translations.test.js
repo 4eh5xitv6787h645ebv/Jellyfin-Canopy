@@ -266,9 +266,10 @@ test('translation deployment docs stay aligned with the bundled-first runtime co
     assert.ok(bundledFetch >= 0, 'runtime must request the installed bundled locale');
     assert.ok(fallbackGate > bundledFetch, 'remote fallback gate must follow bundled loading');
     assert.ok(remoteFetch > fallbackGate, 'GitHub must remain a gated last-resort fallback');
-    assert.match(loader, /JC_translation_\$\{code\}_\$\{pluginVersion\}/);
+    assert.match(loader, /JC_translation_\$\{code\}_\$\{revision\}/);
+    assert.match(loader, /locales\/\$\{code\}\.json\?v=\$\{encodeURIComponent\(revision\)\}/);
     assert.match(loader, /const CACHE_DURATION = 24 \* 60 \* 60 \* 1000/);
-    assert.match(loader, /cleanOldTranslationCache\(pluginVersion\)/);
+    assert.match(loader, /cleanOldTranslationCache\(revision\)/);
     assert.match(loader, /Jellyfin-Canopy\/main\/Jellyfin\.Plugin\.JellyfinCanopy\/js\/locales/);
     assert.doesNotMatch(loader, /n00bcodr\/Jellyfin-Enhanced/);
 

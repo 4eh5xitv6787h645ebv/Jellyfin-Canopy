@@ -208,7 +208,7 @@ Both values are **advisory only** — the input enforces no minimum or maximum, 
 
 ## Internationalization
 
-Jellyfin Canopy speaks 26 bundled languages and picks the right one automatically, so most users never touch a language setting. It detects each user's Jellyfin profile language, loads the matching translation from the plugin's bundled locale files on first load, and caches it for 24 hours. Only when the [third-party asset cache](#third-party-assets) is disabled does it fall back to fetching translations from GitHub. Outdated caches are cleared automatically when the plugin updates.
+Jellyfin Canopy speaks 26 bundled languages and picks the right one automatically, so most users never touch a language setting. It detects each user's Jellyfin profile language, loads the matching translation from the plugin's bundled locale files on first load, and caches it for 24 hours. Each deployed plugin build uses its own locale URL and browser-cache namespace, including same-version hot deployments, so an older catalog is never reused for a newer DLL. Only when the [third-party asset cache](#third-party-assets) is disabled does it fall back to fetching translations from GitHub. Outdated caches are cleared automatically when the plugin updates.
 
 **Default UI Language** (on the **Display** tab) overrides the automatic detection for everyone:
 

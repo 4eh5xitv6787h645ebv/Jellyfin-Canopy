@@ -20,6 +20,7 @@ describe('translation loader deployment ownership', () => {
     beforeEach(() => {
         localStorage.clear();
         document.documentElement.lang = '';
+        document.querySelectorAll('script[plugin="Jellyfin Canopy"]').forEach((node) => node.remove());
         window.JellyfinCanopy.pluginVersion = '2.0.0.0';
         window.JellyfinCanopy.pluginConfig = {};
         vi.spyOn(console, 'log').mockImplementation(() => undefined);
@@ -44,7 +45,7 @@ describe('translation loader deployment ownership', () => {
 
         expect(fetchMock).toHaveBeenCalledTimes(1);
         expect(fetchMock.mock.calls.map(([input]) => requestUrl(input))).toEqual([
-            'http://jellyfin.test/JellyfinCanopy/locales/en.json',
+            'http://jellyfin.test/JellyfinCanopy/locales/en.json?v=2.0.0.0',
         ]);
     });
 
@@ -65,12 +66,12 @@ describe('translation loader deployment ownership', () => {
 
         await expect(loadTranslations()).resolves.toEqual({ greeting: 'remote fallback' });
         expect(fallbackFetch.mock.calls.map(([input]) => requestUrl(input))).toEqual([
-            'http://jellyfin.test/JellyfinCanopy/locales/en.json',
+            'http://jellyfin.test/JellyfinCanopy/locales/en.json?v=2.0.0.0',
             expect.stringContaining('4eh5xitv6787h645ebv/Jellyfin-Canopy/main/'),
         ]);
     });
 
-    it('uses a 24-hour plugin-version cache and retires entries from older builds', async () => {
+    it('uses a 24-hour deployment-revision cache and retires entries from older builds', async () => {
         localStorage.setItem('JC_translation_en_1.9.0.0', JSON.stringify({ greeting: 'old build' }));
         localStorage.setItem('JC_translation_ts_en_1.9.0.0', String(Date.now()));
         const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(response(true, { greeting: 'current build' }));
@@ -90,5 +91,43 @@ describe('translation loader deployment ownership', () => {
         fetchMock.mockResolvedValue(response(true, { greeting: 'refreshed' }));
         await expect(loadTranslations()).resolves.toEqual({ greeting: 'refreshed' });
         expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('bypasses a same-version locale cache after a hot deployment', async () => {
+        const script = document.createElement('script');
+        script.setAttribute('plugin', 'Jellyfin Canopy');
+        script.setAttribute('version', '2.0.0.0-639206738759190300');
+        document.head.appendChild(script);
+
+        localStorage.setItem('JC_translation_en_2.0.0.0', JSON.stringify({ greeting: 'stale' }));
+        localStorage.setItem('JC_translation_ts_en_2.0.0.0', String(Date.now()));
+        const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(response(true, { greeting: 'fresh' }));
+        globalThis.fetch = fetchMock;
+
+        await expect(loadTranslations()).resolves.toEqual({ greeting: 'fresh' });
+
+        expect(fetchMock.mock.calls.map(([input]) => requestUrl(input))).toEqual([
+            'http://jellyfin.test/JellyfinCanopy/locales/en.json?v=2.0.0.0-639206738759190300',
+        ]);
+        expect(localStorage.getItem('JC_translation_en_2.0.0.0')).toBeNull();
+        expect(localStorage.getItem('JC_translation_ts_en_2.0.0.0')).toBeNull();
+        expect(JSON.parse(
+            localStorage.getItem('JC_translation_en_2.0.0.0-639206738759190300')!,
+        )).toEqual({ greeting: 'fresh' });
+    });
+
+    it('preserves the acknowledged server cache-clear watermark', async () => {
+        localStorage.setItem('JC_translation_clear_ts', '639206738759190300');
+        localStorage.setItem('JC_translation_en_1.9.0.0', JSON.stringify({ greeting: 'old build' }));
+        localStorage.setItem('JC_translation_ts_en_1.9.0.0', String(Date.now()));
+        globalThis.fetch = vi.fn<typeof fetch>().mockResolvedValue(
+            response(true, { greeting: 'current build' }),
+        );
+
+        await expect(loadTranslations()).resolves.toEqual({ greeting: 'current build' });
+
+        expect(localStorage.getItem('JC_translation_clear_ts')).toBe('639206738759190300');
+        expect(localStorage.getItem('JC_translation_en_1.9.0.0')).toBeNull();
+        expect(localStorage.getItem('JC_translation_ts_en_1.9.0.0')).toBeNull();
     });
 });
