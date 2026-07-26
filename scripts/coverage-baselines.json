@@ -21,12 +21,12 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 27321,
-        "totalLines": 36038
+        "coveredLines": 27434,
+        "totalLines": 36167
       },
       "tolerance": {
         "missingCoveredLines": 5,
-        "rationale": "The final #453 injected-shell HTTP boundary pass replaces the larger overflow stream with bounded buffering plus untouched host replay, uses four fixed admission stripes to single-flight cold fills and source invalidations, makes cold/changed HEAD bodyless, and collapses Accept-Encoding keys to the finite identity/gzip/Brotli negotiation state. That refactor removes 22 obsolete instrumented lines while adding covered fallback, concurrency, HEAD, finite-key, and real response-compression regressions. Six clean .NET 10.0.9/Coverlet runs on 2026-07-27 each passed all 2,300 tests; runs 3 through 6 reproduced the reviewed high-water exactly at 27,321/36,038 instrumented lines (75.812%). Retaining the existing evidence-bounded five-line Coverlet tolerance makes the minimum 27,316/36,038 (75.798%), stricter than the prior 27,311/36,060 tolerated floor (75.738%). coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, and broad-tolerance negative boundaries."
+        "rationale": "The final #453 injected-shell HTTP boundary pass keeps four fixed admission stripes and bodyless cold/changed HEAD responses, then replaces downstream replay with a 2 MiB one-pass threshold stream, evaluates source preconditions before fallback bytes commit, bypasses host-owned ranges, and keys the cache by ASP.NET Core's finite selected identity/gzip/Brotli representation. The resulting callback, cancellation, date-validator, write-surface, wildcard/duplicate negotiation, and real compression regressions add 129 instrumented lines and cover 113 of them. Six clean .NET 10.0.9/Coverlet runs on 2026-07-27 each passed all 2,306 tests: the first measured the reviewed high-water at 27,434/36,167 instrumented lines (75.854%), and all five immediate repeats reproduced 27,433/36,167 exactly, a one-line instrumentation variation. Retaining the existing evidence-bounded five-line Coverlet tolerance makes the minimum 27,429/36,167 (75.840%), stricter than the prior 27,316/36,038 tolerated floor (75.798%). coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, and broad-tolerance negative boundaries."
       }
     }
   }

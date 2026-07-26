@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Globalization;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
@@ -13,6 +12,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Primitives;
+using Microsoft.Net.Http.Headers;
 
 namespace Jellyfin.Plugin.JellyfinCanopy.Services
 {
@@ -43,10 +43,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         // validator-only static-file revalidation plus O(1) bounded cache work; it
         // does not buffer or rewrite the shell again. Four fixed admission stripes
         // single-flight each representation key and bound aggregate cold/source-change
-        // work. Encoded buffering and decoded/re-encoded transforms stop at 2 MiB
-        // before replaying the untouched host response. The singleton retains at most
-        // 12 representations / 8 MiB, covering the three route spellings and normal
-        // identity/gzip/br negotiation without scaling with users or requests.
+        // work. Encoded buffering and decoded/re-encoded transforms stop at 2 MiB;
+        // larger or untransformable responses switch to the original host bytes in the
+        // same downstream pass. The singleton retains at most 12 representations /
+        // 8 MiB, covering the three route spellings and finite identity/gzip/br
+        // negotiation without scaling with users or requests.
         internal const int MaxCachedRepresentations = 12;
         internal const int MaxCachedBodyBytes = 8 * 1024 * 1024;
         internal const int MaxCacheableRepresentationBytes = 2 * 1024 * 1024;
@@ -108,6 +109,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 return;
             }
 
+            // A transformed entity cannot honor a byte range over the source entity.
+            // Let Jellyfin own range and If-Range processing in one untouched pass.
+            if (context.Request.Headers.ContainsKey("Range"))
+            {
+                await nextMw().ConfigureAwait(false);
+                return;
+            }
+
             var config = _configProvider.ConfigurationOrNull;
             if (config == null || config.DisableScriptInjectionMiddleware)
             {
@@ -146,22 +155,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 var clientIfNoneMatch = requestHeaders["If-None-Match"];
                 var originalIfUnmodifiedSince = requestHeaders["If-Unmodified-Since"];
                 var originalIfModifiedSince = requestHeaders["If-Modified-Since"];
-                var originalRange = requestHeaders["Range"];
-                var originalIfRange = requestHeaders["If-Range"];
                 var hadIfMatch = requestHeaders.ContainsKey("If-Match");
                 var hadIfNoneMatch = requestHeaders.ContainsKey("If-None-Match");
                 var hadIfUnmodifiedSince = requestHeaders.ContainsKey("If-Unmodified-Since");
                 var hadIfModifiedSince = requestHeaders.ContainsKey("If-Modified-Since");
-                var hadRange = requestHeaders.ContainsKey("Range");
-                var hadIfRange = requestHeaders.ContainsKey("If-Range");
 
                 // Accept-Encoding deliberately stays untouched. Jellyfin's own response
                 // compression middleware therefore selects the representation that lands
-                // in our buffer; after injection we restore that same encoding and cache
-                // the rewritten representation. Range is intentionally unsupported for a
-                // rewritten app shell and is normalized to a complete response.
-                requestHeaders.Remove("Range");
-                requestHeaders.Remove("If-Range");
+                // in our bounded response stream; after injection we restore that same
+                // encoding and cache the rewritten representation.
                 requestHeaders.Remove("If-Match");
                 requestHeaders.Remove("If-Unmodified-Since");
 
@@ -181,18 +183,19 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 }
 
                 var originalBody = context.Response.Body;
-                using var buffer = new BoundedMemoryStream(MaxTransformBodyBytes);
-                var transformLimitExceeded = false;
+                using var buffer = new BoundedPassthroughStream(
+                    originalBody,
+                    MaxTransformBodyBytes,
+                    () => PrepareSourceFallback(
+                        context,
+                        clientIfMatch,
+                        clientIfNoneMatch,
+                        originalIfUnmodifiedSince,
+                        originalIfModifiedSince));
                 context.Response.Body = buffer;
                 try
                 {
                     await nextMw().ConfigureAwait(false);
-                }
-                catch (BodyLimitExceededException)
-                {
-                    // Nothing reached the transport. Restore the untouched request and
-                    // replay it below so the host owns fallback validators and streaming.
-                    transformLimitExceeded = true;
                 }
                 finally
                 {
@@ -210,8 +213,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                         "If-Modified-Since",
                         originalIfModifiedSince,
                         hadIfModifiedSince);
-                    RestoreHeader(requestHeaders, "Range", originalRange, hadRange);
-                    RestoreHeader(requestHeaders, "If-Range", originalIfRange, hadIfRange);
+                }
+
+                // The bounded stream already committed or discarded the original source
+                // response. In either case Jellyfin's downstream pipeline ran exactly once.
+                if (buffer.IsPassthrough)
+                {
+                    ReleaseRepresentationGate(ref ownsRepresentationGate, representationGate);
+                    return;
                 }
 
                 // A canceled static-file send can be swallowed by ASP.NET Core.
@@ -219,14 +228,6 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 // second response producer.
                 if (context.RequestAborted.IsCancellationRequested)
                 {
-                    return;
-                }
-
-                if (transformLimitExceeded)
-                {
-                    context.Response.Clear();
-                    ReleaseRepresentationGate(ref ownsRepresentationGate, representationGate);
-                    await nextMw().ConfigureAwait(false);
                     return;
                 }
 
@@ -248,9 +249,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 {
                     if (context.Response.StatusCode != StatusCodes.Status200OK)
                     {
-                        context.Response.Clear();
                         ReleaseRepresentationGate(ref ownsRepresentationGate, representationGate);
-                        await nextMw().ConfigureAwait(false);
+                        await WriteSourceFallbackAsync(
+                            context,
+                            buffer,
+                            clientIfMatch,
+                            clientIfNoneMatch,
+                            originalIfUnmodifiedSince,
+                            originalIfModifiedSince,
+                            originalBody).ConfigureAwait(false);
                         return;
                     }
 
@@ -276,9 +283,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
                 if (!isHtml)
                 {
-                    context.Response.Clear();
                     ReleaseRepresentationGate(ref ownsRepresentationGate, representationGate);
-                    await nextMw().ConfigureAwait(false);
+                    await WriteSourceFallbackAsync(
+                        context,
+                        buffer,
+                        clientIfMatch,
+                        clientIfNoneMatch,
+                        originalIfUnmodifiedSince,
+                        originalIfModifiedSince,
+                        originalBody).ConfigureAwait(false);
                     return;
                 }
 
@@ -342,12 +355,18 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
                 if (representation == null)
                 {
-                    // The buffered response is still uncommitted. Replay with the
-                    // original request so unknown encodings, malformed HTML, and decoded
-                    // size limits retain the host's complete conditional semantics.
-                    context.Response.Clear();
+                    // Commit the buffered source representation from this same downstream
+                    // pass. Source preconditions are evaluated before any bytes reach the
+                    // transport because the host saw transformed-representation validators.
                     ReleaseRepresentationGate(ref ownsRepresentationGate, representationGate);
-                    await nextMw().ConfigureAwait(false);
+                    await WriteSourceFallbackAsync(
+                        context,
+                        buffer,
+                        clientIfMatch,
+                        clientIfNoneMatch,
+                        originalIfUnmodifiedSince,
+                        originalIfModifiedSince,
+                        originalBody).ConfigureAwait(false);
                     return;
                 }
 
@@ -374,7 +393,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         private static string CreateCacheKey(string path, StringValues acceptEncoding, string scriptTags)
         {
             var material = Encoding.UTF8.GetBytes(
-                path + "\0" + CanonicalizeAcceptEncoding(acceptEncoding) + "\0" + scriptTags);
+                path + "\0" + SelectResponseEncoding(acceptEncoding) + "\0" + scriptTags);
             return Convert.ToHexString(SHA256.HashData(material));
         }
 
@@ -486,6 +505,114 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     context.RequestAborted).ConfigureAwait(false);
             }
         }
+
+        private static async Task WriteSourceFallbackAsync(
+            HttpContext context,
+            BoundedPassthroughStream bufferedSource,
+            StringValues ifMatch,
+            StringValues ifNoneMatch,
+            StringValues ifUnmodifiedSince,
+            StringValues ifModifiedSince,
+            Stream responseBody)
+        {
+            if (!PrepareSourceFallback(
+                context,
+                ifMatch,
+                ifNoneMatch,
+                ifUnmodifiedSince,
+                ifModifiedSince))
+            {
+                return;
+            }
+
+            await bufferedSource.CopyBufferedToAsync(
+                responseBody,
+                context.RequestAborted).ConfigureAwait(false);
+        }
+
+        private static bool PrepareSourceFallback(
+            HttpContext context,
+            StringValues ifMatch,
+            StringValues ifNoneMatch,
+            StringValues ifUnmodifiedSince,
+            StringValues ifModifiedSince)
+        {
+            if (context.RequestAborted.IsCancellationRequested)
+            {
+                return false;
+            }
+
+            if (context.Response.StatusCode != StatusCodes.Status200OK)
+            {
+                return !HttpMethods.IsHead(context.Request.Method);
+            }
+
+            var sourceETag = context.Response.Headers["ETag"].ToString();
+            var sourceLastModified = context.Response.Headers["Last-Modified"].ToString();
+            var statusCode = EvaluateSourcePreconditions(
+                ifMatch,
+                ifNoneMatch,
+                ifUnmodifiedSince,
+                ifModifiedSince,
+                sourceETag,
+                sourceLastModified);
+            if (statusCode == StatusCodes.Status200OK)
+            {
+                return !HttpMethods.IsHead(context.Request.Method);
+            }
+
+            context.Response.StatusCode = statusCode;
+            context.Response.ContentLength = null;
+            context.Response.Headers.Remove("Content-Encoding");
+            context.Response.Headers.Remove("Content-Range");
+            context.Response.Headers.Remove("Accept-Ranges");
+            return false;
+        }
+
+        private static int EvaluateSourcePreconditions(
+            StringValues ifMatch,
+            StringValues ifNoneMatch,
+            StringValues ifUnmodifiedSince,
+            StringValues ifModifiedSince,
+            string sourceETag,
+            string sourceLastModified)
+        {
+            if (!StringValues.IsNullOrEmpty(ifMatch))
+            {
+                if (!IfMatchSatisfied(ifMatch, sourceETag))
+                {
+                    return StatusCodes.Status412PreconditionFailed;
+                }
+            }
+            else if (TryParseHttpDate(ifUnmodifiedSince, out var unmodifiedSince)
+                && TryParseHttpDate(sourceLastModified, out var lastModified)
+                && lastModified > unmodifiedSince)
+            {
+                return StatusCodes.Status412PreconditionFailed;
+            }
+
+            if (!StringValues.IsNullOrEmpty(ifNoneMatch))
+            {
+                if (IfNoneMatchSatisfied(ifNoneMatch, sourceETag))
+                {
+                    return StatusCodes.Status304NotModified;
+                }
+            }
+            else if (TryParseHttpDate(ifModifiedSince, out var modifiedSince)
+                && TryParseHttpDate(sourceLastModified, out var lastModified)
+                && lastModified <= modifiedSince)
+            {
+                return StatusCodes.Status304NotModified;
+            }
+
+            return StatusCodes.Status200OK;
+        }
+
+        private static bool TryParseHttpDate(StringValues value, out DateTimeOffset parsed) =>
+            HeaderUtilities.TryParseDate(new StringSegment(value.ToString()), out parsed);
+
+        private static bool TryParseHttpDate(string value, out DateTimeOffset parsed) =>
+            HeaderUtilities.TryParseDate(new StringSegment(value), out parsed);
 
         private static ClientPrecondition EvaluateClientPreconditions(
             StringValues ifMatch,
@@ -651,67 +778,60 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             return true;
         }
 
-        private static string CanonicalizeAcceptEncoding(StringValues acceptEncoding)
+        private static string SelectResponseEncoding(StringValues acceptEncoding)
         {
-            var qualities = new Dictionary<string, decimal>(StringComparer.Ordinal);
-            foreach (var token in acceptEncoding.SelectMany(value => (value ?? string.Empty).Split(',')))
+            var input = acceptEncoding
+                .Where(value => value != null)
+                .Select(value => value!)
+                .ToArray();
+            if (!StringWithQualityHeaderValue.TryParseList(input, out var parsedValues))
             {
-                var segments = token.Split(';');
-                var coding = segments[0].Trim().ToLowerInvariant();
-                if (coding != "br" && coding != "gzip" && coding != "identity" && coding != "*")
+                return "identity";
+            }
+
+            // Mirror ResponseCompressionProvider's finite candidate selection for
+            // Jellyfin's default Brotli/Gzip providers: the first duplicate wins,
+            // zero-quality candidates are skipped, and a wildcard adds missing
+            // providers then terminates parsing. Keying the selected representation
+            // prevents both cross-encoding cache reuse and arbitrary quality-value churn.
+            var candidates = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+            foreach (var parsedValue in parsedValues)
+            {
+                var coding = parsedValue.Value.ToString();
+                var quality = parsedValue.Quality ?? 1.0;
+                if (quality < double.Epsilon)
                 {
                     continue;
                 }
 
-                var quality = 1m;
-                var valid = true;
-                for (var index = 1; index < segments.Length; index++)
+                if (coding.Equals("br", StringComparison.OrdinalIgnoreCase)
+                    || coding.Equals("gzip", StringComparison.OrdinalIgnoreCase)
+                    || coding.Equals("identity", StringComparison.OrdinalIgnoreCase))
                 {
-                    var pair = segments[index].Split(new[] { '=' }, 2);
-                    if (pair.Length != 2
-                        || !pair[0].Trim().Equals("q", StringComparison.OrdinalIgnoreCase)
-                        || !decimal.TryParse(
-                            pair[1].Trim(),
-                            NumberStyles.AllowDecimalPoint,
-                            CultureInfo.InvariantCulture,
-                            out quality)
-                        || quality < 0
-                        || quality > 1)
-                    {
-                        valid = false;
-                        break;
-                    }
+                    candidates.TryAdd(coding, quality);
+                    continue;
                 }
 
-                if (valid && (!qualities.TryGetValue(coding, out var previous) || quality > previous))
+                if (coding.Equals("*", StringComparison.Ordinal))
                 {
-                    qualities[coding] = quality;
+                    candidates.TryAdd("br", quality);
+                    candidates.TryAdd("gzip", quality);
+                    break;
                 }
             }
 
-            // Only relative quality order, zero exclusion, and presence can affect
-            // identity/gzip/Brotli negotiation. Collapsing absolute q values to ranks
-            // yields a finite semantic key space instead of one cache variant per
-            // attacker-chosen decimal spelling.
-            var ranks = qualities.Values
-                .Where(value => value > 0)
-                .Distinct()
-                .OrderByDescending(value => value)
-                .Select((value, index) => (Value: value, Rank: index))
-                .ToDictionary(pair => pair.Value, pair => pair.Rank);
-            return string.Join(
-                ";",
-                new[] { "br", "gzip", "identity", "*" }.Select(coding =>
+            var selected = "identity";
+            var selectedQuality = 0.0;
+            foreach (var coding in new[] { "br", "gzip", "identity" })
+            {
+                if (candidates.TryGetValue(coding, out var quality) && quality > selectedQuality)
                 {
-                    if (!qualities.TryGetValue(coding, out var quality))
-                    {
-                        return coding + "=missing";
-                    }
+                    selected = coding;
+                    selectedQuality = quality;
+                }
+            }
 
-                    return quality == 0
-                        ? coding + "=zero"
-                        : coding + "=rank" + ranks[quality].ToString(CultureInfo.InvariantCulture);
-                }));
+            return selected;
         }
 
         private static void ReleaseRepresentationGate(
@@ -818,6 +938,180 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
         private sealed class BodyLimitExceededException : Exception
         {
+        }
+
+        private sealed class BoundedPassthroughStream : MemoryStream
+        {
+            public delegate bool PreparePassthroughCallback();
+
+            private readonly Stream _destination;
+            private readonly int _limit;
+            private readonly PreparePassthroughCallback _preparePassthrough;
+            private bool _writeToDestination;
+
+            public BoundedPassthroughStream(
+                Stream destination,
+                int limit,
+                PreparePassthroughCallback preparePassthrough)
+            {
+                _destination = destination;
+                _limit = limit;
+                _preparePassthrough = preparePassthrough;
+            }
+
+            public bool IsPassthrough { get; private set; }
+
+            public async Task CopyBufferedToAsync(Stream destination, CancellationToken cancellationToken)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                Position = 0;
+                await CopyToAsync(destination, cancellationToken).ConfigureAwait(false);
+            }
+
+            public override void Flush()
+            {
+                // Deliberately hold flushes while the response remains under the cap.
+                // The static app shell is a finite response, and committing a flush
+                // would make a later safe rewrite impossible.
+                if (IsPassthrough && _writeToDestination)
+                {
+                    _destination.Flush();
+                }
+            }
+
+            public override Task FlushAsync(CancellationToken cancellationToken)
+            {
+                if (IsPassthrough && _writeToDestination)
+                {
+                    return _destination.FlushAsync(cancellationToken);
+                }
+
+                cancellationToken.ThrowIfCancellationRequested();
+                return Task.CompletedTask;
+            }
+
+            public override void Write(byte[] buffer, int offset, int count)
+            {
+                if (!IsPassthrough && count <= _limit - Length)
+                {
+                    base.Write(buffer, offset, count);
+                    return;
+                }
+
+                EnsurePassthrough();
+                if (_writeToDestination)
+                {
+                    _destination.Write(buffer, offset, count);
+                }
+            }
+
+            public override void Write(ReadOnlySpan<byte> buffer)
+            {
+                if (!IsPassthrough && buffer.Length <= _limit - Length)
+                {
+                    base.Write(buffer);
+                    return;
+                }
+
+                EnsurePassthrough();
+                if (_writeToDestination)
+                {
+                    _destination.Write(buffer);
+                }
+            }
+
+            public override void WriteByte(byte value)
+            {
+                if (!IsPassthrough && Length < _limit)
+                {
+                    base.WriteByte(value);
+                    return;
+                }
+
+                EnsurePassthrough();
+                if (_writeToDestination)
+                {
+                    _destination.WriteByte(value);
+                }
+            }
+
+            public override async Task WriteAsync(
+                byte[] buffer,
+                int offset,
+                int count,
+                CancellationToken cancellationToken)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!IsPassthrough && count <= _limit - Length)
+                {
+                    await base.WriteAsync(
+                        buffer.AsMemory(offset, count),
+                        cancellationToken).ConfigureAwait(false);
+                    return;
+                }
+
+                await EnsurePassthroughAsync(cancellationToken).ConfigureAwait(false);
+                if (_writeToDestination)
+                {
+                    await _destination.WriteAsync(
+                        buffer.AsMemory(offset, count),
+                        cancellationToken).ConfigureAwait(false);
+                }
+            }
+
+            public override async ValueTask WriteAsync(
+                ReadOnlyMemory<byte> buffer,
+                CancellationToken cancellationToken = default)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!IsPassthrough && buffer.Length <= _limit - Length)
+                {
+                    await base.WriteAsync(buffer, cancellationToken).ConfigureAwait(false);
+                    return;
+                }
+
+                await EnsurePassthroughAsync(cancellationToken).ConfigureAwait(false);
+                if (_writeToDestination)
+                {
+                    await _destination.WriteAsync(buffer, cancellationToken).ConfigureAwait(false);
+                }
+            }
+
+            private void EnsurePassthrough()
+            {
+                if (IsPassthrough)
+                {
+                    return;
+                }
+
+                _writeToDestination = _preparePassthrough();
+                IsPassthrough = true;
+                if (_writeToDestination)
+                {
+                    Position = 0;
+                    CopyTo(_destination);
+                }
+
+                SetLength(0);
+            }
+
+            private async Task EnsurePassthroughAsync(CancellationToken cancellationToken)
+            {
+                if (IsPassthrough)
+                {
+                    return;
+                }
+
+                _writeToDestination = _preparePassthrough();
+                IsPassthrough = true;
+                if (_writeToDestination)
+                {
+                    Position = 0;
+                    await CopyToAsync(_destination, cancellationToken).ConfigureAwait(false);
+                }
+
+                SetLength(0);
+            }
         }
 
         private sealed class CachedRepresentation

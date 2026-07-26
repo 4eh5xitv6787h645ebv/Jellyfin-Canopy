@@ -11,6 +11,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.ResponseCompression;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
@@ -29,14 +30,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
         private const string SourceETag = "\"source-v1\"";
         private const string LastModified = "Wed, 21 Oct 2015 07:28:00 GMT";
 
-        private static ScriptInjectionStartupFilter BuildFilter(Func<string>? scriptTagProvider = null)
+        private static ScriptInjectionStartupFilter BuildFilter(
+            Func<string>? scriptTagProvider = null,
+            ILogger<ScriptInjectionStartupFilter>? logger = null)
         {
             var provider = new FakePluginConfigProvider(new PluginConfiguration
             {
                 DisableScriptInjectionMiddleware = false,
             });
             return new ScriptInjectionStartupFilter(
-                NullLogger<ScriptInjectionStartupFilter>.Instance,
+                logger ?? NullLogger<ScriptInjectionStartupFilter>.Instance,
                 provider,
                 scriptTagProvider ?? (() => InjectedTags));
         }
@@ -50,8 +53,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             string? method = null,
             string? ifMatch = null,
             string? ifNoneMatch = null,
+            string? ifUnmodifiedSince = null,
             string? ifModifiedSince = null,
-            CancellationToken requestAborted = default)
+            CancellationToken requestAborted = default,
+            string? range = null,
+            string? ifRange = null)
         {
             using var services = new ServiceCollection().BuildServiceProvider();
             var appBuilder = new ApplicationBuilder(services);
@@ -80,6 +86,21 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             if (ifModifiedSince != null)
             {
                 context.Request.Headers["If-Modified-Since"] = ifModifiedSince;
+            }
+
+            if (ifUnmodifiedSince != null)
+            {
+                context.Request.Headers["If-Unmodified-Since"] = ifUnmodifiedSince;
+            }
+
+            if (range != null)
+            {
+                context.Request.Headers["Range"] = range;
+            }
+
+            if (ifRange != null)
+            {
+                context.Request.Headers["If-Range"] = ifRange;
             }
 
             using var responseBody = new MemoryStream();
@@ -143,7 +164,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
         }
 
         [Fact]
-        public async Task Configure_OversizedDecodedBody_ReplaysThroughRealResponseCompression()
+        public async Task Configure_OversizedDecodedBody_UsesOneRealResponseCompressionPass()
         {
             var filter = BuildFilter();
             var source = "<html><body>"
@@ -179,11 +200,169 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
 
             await pipeline(context);
 
-            Assert.Equal(2, downstreamCalls);
+            Assert.Equal(1, downstreamCalls);
             Assert.Equal("gzip", context.Response.Headers["Content-Encoding"].ToString());
             Assert.Equal(
                 source,
                 Encoding.UTF8.GetString(Decompress(responseBody.ToArray(), "gzip")));
+        }
+
+        [Fact]
+        public async Task Configure_OversizedBody_DoesNotRepeatExceptionOrCallbackMiddleware()
+        {
+            var filter = BuildFilter();
+            var source = "<html><body>"
+                + new string('x', ScriptInjectionStartupFilter.MaxTransformBodyBytes)
+                + "</body></html>";
+            var terminalCalls = 0;
+            var falseErrorResponses = 0;
+            var callbackRegistrations = 0;
+            using var services = new ServiceCollection().BuildServiceProvider();
+            var appBuilder = new ApplicationBuilder(services);
+            filter.Configure(app =>
+            {
+                app.Use(async (context, next) =>
+                {
+                    try
+                    {
+                        await next();
+                    }
+                    catch
+                    {
+                        falseErrorResponses++;
+                        context.Response.StatusCode = StatusCodes.Status500InternalServerError;
+                    }
+                });
+                app.Use(async (context, next) =>
+                {
+                    callbackRegistrations++;
+                    context.Response.OnStarting(() => Task.CompletedTask);
+                    await next();
+                });
+                app.Run(async context =>
+                {
+                    terminalCalls++;
+                    await WriteSourceAsync(context, source, SourceETag);
+                });
+            })(appBuilder);
+            var pipeline = appBuilder.Build();
+
+            var context = new DefaultHttpContext();
+            context.Request.Method = "GET";
+            context.Request.Path = "/web/index.html";
+            using var responseBody = new MemoryStream();
+            context.Response.Body = responseBody;
+
+            await pipeline(context);
+
+            Assert.Equal(1, terminalCalls);
+            Assert.Equal(0, falseErrorResponses);
+            Assert.Equal(1, callbackRegistrations);
+            Assert.Equal(source, Encoding.UTF8.GetString(responseBody.ToArray()));
+        }
+
+        [Fact]
+        public async Task InvokeAsync_PassthroughSupportsHostStreamWriteSurfacesWithoutReplay()
+        {
+            var filter = BuildFilter();
+            var prefix = new byte[ScriptInjectionStartupFilter.MaxTransformBodyBytes];
+            var downstreamCalls = 0;
+
+            var synchronous = await RunAsync(
+                filter,
+                context =>
+                {
+                    downstreamCalls++;
+                    context.Response.StatusCode = StatusCodes.Status200OK;
+                    context.Response.ContentType = "text/html; charset=utf-8";
+                    context.Response.Headers["ETag"] = SourceETag;
+                    context.Response.Body.Write(prefix.AsSpan());
+                    context.Response.Body.WriteByte((byte)'a');
+                    context.Response.Body.Write(new byte[] { (byte)'b' }, 0, 1);
+                    context.Response.Body.Flush();
+                    return context.Response.Body.FlushAsync();
+                });
+
+            var asynchronous = await RunAsync(
+                filter,
+                async context =>
+                {
+                    downstreamCalls++;
+                    context.Response.StatusCode = StatusCodes.Status200OK;
+                    context.Response.ContentType = "text/html; charset=utf-8";
+                    context.Response.Headers["ETag"] = SourceETag;
+                    await context.Response.Body.WriteAsync(
+                        prefix,
+                        0,
+                        prefix.Length,
+                        CancellationToken.None);
+                    await context.Response.Body.WriteAsync(
+                        new byte[] { (byte)'c' },
+                        0,
+                        1,
+                        CancellationToken.None);
+                    await context.Response.Body.WriteAsync(
+                        new byte[] { (byte)'d' }.AsMemory(),
+                        CancellationToken.None);
+                    await context.Response.Body.FlushAsync(CancellationToken.None);
+                });
+
+            Assert.Equal(2, downstreamCalls);
+            Assert.Equal(prefix.Length + 2, synchronous.Body.Length);
+            Assert.Equal((byte)'a', synchronous.Body[^2]);
+            Assert.Equal((byte)'b', synchronous.Body[^1]);
+            Assert.Equal(prefix.Length + 2, asynchronous.Body.Length);
+            Assert.Equal((byte)'c', asynchronous.Body[^2]);
+            Assert.Equal((byte)'d', asynchronous.Body[^1]);
+        }
+
+        [Fact]
+        public async Task Configure_RealCompressionDuplicateAndWildcardOrdering_CannotCrossReuse()
+        {
+            var filter = BuildFilter();
+            var fullBodyWrites = 0;
+            var services = new ServiceCollection();
+            services.AddLogging();
+            services.AddResponseCompression();
+            using var serviceProvider = services.BuildServiceProvider();
+            var appBuilder = new ApplicationBuilder(serviceProvider);
+            filter.Configure(app =>
+            {
+                app.UseResponseCompression();
+                app.Run(async context =>
+                {
+                    fullBodyWrites++;
+                    await WriteSourceAsync(context, IndexHtml, SourceETag);
+                });
+            })(appBuilder);
+            var pipeline = appBuilder.Build();
+
+            async Task<(string Encoding, byte[] Body)> SendAsync(string acceptEncoding)
+            {
+                var context = new DefaultHttpContext();
+                context.Request.Method = "GET";
+                context.Request.Path = "/web/index.html";
+                context.Request.Headers["Accept-Encoding"] = acceptEncoding;
+                using var responseBody = new MemoryStream();
+                context.Response.Body = responseBody;
+                await pipeline(context);
+                return (context.Response.Headers["Content-Encoding"].ToString(), responseBody.ToArray());
+            }
+
+            var gzip = await SendAsync("gzip;q=0,br;q=0.5,*;q=1");
+            var brotli = await SendAsync("*;q=1,gzip;q=0,br;q=0.5");
+
+            Assert.Equal("gzip", gzip.Encoding);
+            Assert.Equal("br", brotli.Encoding);
+            Assert.Contains(
+                InjectedTags,
+                Encoding.UTF8.GetString(Decompress(gzip.Body, gzip.Encoding)),
+                StringComparison.Ordinal);
+            Assert.Contains(
+                InjectedTags,
+                Encoding.UTF8.GetString(Decompress(brotli.Body, brotli.Encoding)),
+                StringComparison.Ordinal);
+            Assert.Equal(2, fullBodyWrites);
         }
 
         [Theory]
@@ -374,6 +553,35 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
         }
 
         [Fact]
+        public async Task InvokeAsync_CancellationDuringTransformFailure_DoesNotCommitFallback()
+        {
+            using var canceledRequest = new CancellationTokenSource();
+            var logger = new CancelOnWarningLogger(canceledRequest);
+            var filter = BuildFilter(logger: logger);
+            var downstreamCalls = 0;
+
+            var canceled = await RunAsync(
+                filter,
+                async context =>
+                {
+                    downstreamCalls++;
+                    context.Response.StatusCode = StatusCodes.Status200OK;
+                    context.Response.ContentType = "text/html; charset=utf-8";
+                    context.Response.Headers["Content-Encoding"] = "gzip";
+                    context.Response.Headers["ETag"] = SourceETag;
+                    await context.Response.Body.WriteAsync(
+                        Encoding.UTF8.GetBytes("definitely-not-a-gzip-stream"));
+                },
+                acceptEncoding: "gzip",
+                requestAborted: canceledRequest.Token);
+
+            Assert.True(canceledRequest.IsCancellationRequested);
+            Assert.Equal(1, logger.WarningCount);
+            Assert.Equal(1, downstreamCalls);
+            Assert.Empty(canceled.Body);
+        }
+
+        [Fact]
         public async Task InvokeAsync_EncodedBodyAboveLimit_StreamsOriginalAndDoesNotCache()
         {
             var filter = BuildFilter();
@@ -399,7 +607,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
 
             Assert.Equal(source, Encoding.UTF8.GetString(first.Body));
             Assert.Equal(source, Encoding.UTF8.GetString(second.Body));
-            Assert.Equal(4, downstreamCalls);
+            Assert.Equal(2, downstreamCalls);
             Assert.Equal(0, sourceRevalidations);
         }
 
@@ -436,12 +644,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
 
             Assert.Equal(compressed, first.Body);
             Assert.Equal(compressed, second.Body);
-            Assert.Equal(4, downstreamCalls);
+            Assert.Equal(2, downstreamCalls);
             Assert.Equal(0, sourceRevalidations);
         }
 
         [Fact]
-        public async Task InvokeAsync_OversizedFallback_ReplaysOriginalConditionalSemantics()
+        public async Task InvokeAsync_OversizedFallback_PreservesConditionalSemanticsInOnePass()
         {
             var filter = BuildFilter();
             var source = "<html><body>"
@@ -480,7 +688,52 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             Assert.Empty(notModified.Body);
             Assert.Equal(StatusCodes.Status412PreconditionFailed, failed.Context.Response.StatusCode);
             Assert.Empty(failed.Body);
-            Assert.Equal(6, downstreamCalls);
+            Assert.Equal(3, downstreamCalls);
+        }
+
+        [Fact]
+        public async Task InvokeAsync_OversizedFallback_PreservesDatePreconditionsAndPrecedence()
+        {
+            var filter = BuildFilter();
+            var source = "<html><body>"
+                + new string('x', ScriptInjectionStartupFilter.MaxTransformBodyBytes)
+                + "</body></html>";
+            var downstreamCalls = 0;
+
+            async Task StaticHandler(HttpContext context)
+            {
+                downstreamCalls++;
+                await WriteSourceAsync(context, source, SourceETag);
+            }
+
+            var notModified = await RunAsync(
+                filter,
+                StaticHandler,
+                ifModifiedSince: LastModified);
+            var failed = await RunAsync(
+                filter,
+                StaticHandler,
+                ifUnmodifiedSince: "Tue, 20 Oct 2015 07:28:00 GMT");
+            var ifNoneMatchTakesPrecedence = await RunAsync(
+                filter,
+                StaticHandler,
+                ifNoneMatch: "\"different\"",
+                ifModifiedSince: LastModified);
+            var ifMatchTakesPrecedence = await RunAsync(
+                filter,
+                StaticHandler,
+                ifMatch: SourceETag,
+                ifUnmodifiedSince: "Tue, 20 Oct 2015 07:28:00 GMT");
+
+            Assert.Equal(StatusCodes.Status304NotModified, notModified.Context.Response.StatusCode);
+            Assert.Empty(notModified.Body);
+            Assert.Equal(StatusCodes.Status412PreconditionFailed, failed.Context.Response.StatusCode);
+            Assert.Empty(failed.Body);
+            Assert.Equal(StatusCodes.Status200OK, ifNoneMatchTakesPrecedence.Context.Response.StatusCode);
+            Assert.Equal(source, Encoding.UTF8.GetString(ifNoneMatchTakesPrecedence.Body));
+            Assert.Equal(StatusCodes.Status200OK, ifMatchTakesPrecedence.Context.Response.StatusCode);
+            Assert.Equal(source, Encoding.UTF8.GetString(ifMatchTakesPrecedence.Body));
+            Assert.Equal(4, downstreamCalls);
         }
 
         [Fact]
@@ -511,11 +764,38 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             var second = await RunAsync(
                 filter,
                 StaticHandler,
-                acceptEncoding: "br; q=.1, gzip;q=.9");
+                acceptEncoding: "br; q=0.1, gzip;q=0.9");
 
             Assert.Equal(1, fullBodyWrites);
             Assert.Equal(1, sourceRevalidations);
             Assert.Equal(first.Body, second.Body);
+        }
+
+        [Fact]
+        public async Task InvokeAsync_RangeRequest_BypassesInjectionWithoutChangingHeaders()
+        {
+            var filter = BuildFilter();
+            var downstreamCalls = 0;
+
+            var response = await RunAsync(
+                filter,
+                async context =>
+                {
+                    downstreamCalls++;
+                    Assert.Equal("bytes=0-3", context.Request.Headers["Range"].ToString());
+                    Assert.Equal(SourceETag, context.Request.Headers["If-Range"].ToString());
+                    context.Response.StatusCode = StatusCodes.Status206PartialContent;
+                    context.Response.Headers["Content-Range"] = "bytes 0-3/8";
+                    await context.Response.WriteAsync("part");
+                },
+                range: "bytes=0-3",
+                ifRange: SourceETag);
+
+            Assert.Equal(1, downstreamCalls);
+            Assert.Equal(StatusCodes.Status206PartialContent, response.Context.Response.StatusCode);
+            Assert.Equal("bytes 0-3/8", response.Context.Response.Headers["Content-Range"].ToString());
+            Assert.Equal("part", Encoding.UTF8.GetString(response.Body));
+            Assert.DoesNotContain(InjectedTags, Encoding.UTF8.GetString(response.Body), StringComparison.Ordinal);
         }
 
         [Fact]
@@ -848,6 +1128,38 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             using var output = new MemoryStream();
             decompressor.CopyTo(output);
             return output.ToArray();
+        }
+
+        private sealed class CancelOnWarningLogger : ILogger<ScriptInjectionStartupFilter>
+        {
+            private readonly CancellationTokenSource _cancellation;
+
+            public CancelOnWarningLogger(CancellationTokenSource cancellation)
+            {
+                _cancellation = cancellation;
+            }
+
+            public int WarningCount { get; private set; }
+
+            public IDisposable? BeginScope<TState>(TState state)
+                where TState : notnull
+                => null;
+
+            public bool IsEnabled(LogLevel logLevel) => true;
+
+            public void Log<TState>(
+                LogLevel logLevel,
+                EventId eventId,
+                TState state,
+                Exception? exception,
+                Func<TState, Exception?, string> formatter)
+            {
+                if (logLevel == LogLevel.Warning)
+                {
+                    WarningCount++;
+                    _cancellation.Cancel();
+                }
+            }
         }
     }
 }
