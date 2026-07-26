@@ -142,6 +142,50 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
                 StringComparison.Ordinal);
         }
 
+        [Fact]
+        public async Task Configure_OversizedDecodedBody_ReplaysThroughRealResponseCompression()
+        {
+            var filter = BuildFilter();
+            var source = "<html><body>"
+                + new string('x', ScriptInjectionStartupFilter.MaxTransformBodyBytes)
+                + "</body></html>";
+            var downstreamCalls = 0;
+            var services = new ServiceCollection();
+            services.AddLogging();
+            services.AddResponseCompression(options =>
+            {
+                options.Providers.Clear();
+                options.Providers.Add<GzipCompressionProvider>();
+            });
+            using var serviceProvider = services.BuildServiceProvider();
+            var appBuilder = new ApplicationBuilder(serviceProvider);
+            filter.Configure(app =>
+            {
+                app.UseResponseCompression();
+                app.Run(async context =>
+                {
+                    downstreamCalls++;
+                    await WriteSourceAsync(context, source, SourceETag);
+                });
+            })(appBuilder);
+            var pipeline = appBuilder.Build();
+
+            var context = new DefaultHttpContext();
+            context.Request.Method = "GET";
+            context.Request.Path = "/web/index.html";
+            context.Request.Headers["Accept-Encoding"] = "gzip";
+            using var responseBody = new MemoryStream();
+            context.Response.Body = responseBody;
+
+            await pipeline(context);
+
+            Assert.Equal(2, downstreamCalls);
+            Assert.Equal("gzip", context.Response.Headers["Content-Encoding"].ToString());
+            Assert.Equal(
+                source,
+                Encoding.UTF8.GetString(Decompress(responseBody.ToArray(), "gzip")));
+        }
+
         [Theory]
         [InlineData("gzip")]
         [InlineData("br")]
@@ -355,7 +399,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
 
             Assert.Equal(source, Encoding.UTF8.GetString(first.Body));
             Assert.Equal(source, Encoding.UTF8.GetString(second.Body));
-            Assert.Equal(2, downstreamCalls);
+            Assert.Equal(4, downstreamCalls);
             Assert.Equal(0, sourceRevalidations);
         }
 
@@ -392,12 +436,55 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
 
             Assert.Equal(compressed, first.Body);
             Assert.Equal(compressed, second.Body);
-            Assert.Equal(2, downstreamCalls);
+            Assert.Equal(4, downstreamCalls);
             Assert.Equal(0, sourceRevalidations);
         }
 
         [Fact]
-        public async Task InvokeAsync_EquivalentAcceptEncodingSpellings_ShareOneRepresentation()
+        public async Task InvokeAsync_OversizedFallback_ReplaysOriginalConditionalSemantics()
+        {
+            var filter = BuildFilter();
+            var source = "<html><body>"
+                + new string('x', ScriptInjectionStartupFilter.MaxTransformBodyBytes)
+                + "</body></html>";
+            var downstreamCalls = 0;
+
+            async Task StaticHandler(HttpContext context)
+            {
+                downstreamCalls++;
+                var ifMatch = context.Request.Headers["If-Match"].ToString();
+                if (ifMatch.Length > 0 && ifMatch != "*" && ifMatch != SourceETag)
+                {
+                    context.Response.StatusCode = StatusCodes.Status412PreconditionFailed;
+                    context.Response.Headers["ETag"] = SourceETag;
+                    return;
+                }
+
+                var ifNoneMatch = context.Request.Headers["If-None-Match"].ToString();
+                if (ifNoneMatch == "*" || ifNoneMatch == SourceETag)
+                {
+                    context.Response.StatusCode = StatusCodes.Status304NotModified;
+                    context.Response.Headers["ETag"] = SourceETag;
+                    return;
+                }
+
+                await WriteSourceAsync(context, source, SourceETag);
+            }
+
+            var first = await RunAsync(filter, StaticHandler);
+            var notModified = await RunAsync(filter, StaticHandler, ifNoneMatch: SourceETag);
+            var failed = await RunAsync(filter, StaticHandler, ifMatch: "\"jc-stale\"");
+
+            Assert.Equal(source, Encoding.UTF8.GetString(first.Body));
+            Assert.Equal(StatusCodes.Status304NotModified, notModified.Context.Response.StatusCode);
+            Assert.Empty(notModified.Body);
+            Assert.Equal(StatusCodes.Status412PreconditionFailed, failed.Context.Response.StatusCode);
+            Assert.Empty(failed.Body);
+            Assert.Equal(6, downstreamCalls);
+        }
+
+        [Fact]
+        public async Task InvokeAsync_SemanticallyEquivalentAcceptEncodingValues_ShareOneRepresentation()
         {
             var filter = BuildFilter();
             var fullBodyWrites = 0;
@@ -424,7 +511,39 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             var second = await RunAsync(
                 filter,
                 StaticHandler,
-                acceptEncoding: "br; q=.5, gzip;q=1");
+                acceptEncoding: "br; q=.1, gzip;q=.9");
+
+            Assert.Equal(1, fullBodyWrites);
+            Assert.Equal(1, sourceRevalidations);
+            Assert.Equal(first.Body, second.Body);
+        }
+
+        [Fact]
+        public async Task InvokeAsync_UnsupportedAcceptEncodingTokens_CannotCreateCacheVariants()
+        {
+            var filter = BuildFilter();
+            var fullBodyWrites = 0;
+            var sourceRevalidations = 0;
+
+            async Task StaticHandler(HttpContext context)
+            {
+                if (context.Request.Headers["If-None-Match"].ToString() == SourceETag)
+                {
+                    sourceRevalidations++;
+                    context.Response.StatusCode = StatusCodes.Status304NotModified;
+                    context.Response.Headers["ETag"] = SourceETag;
+                    return;
+                }
+
+                fullBodyWrites++;
+                await WriteSourceAsync(context, IndexHtml, SourceETag);
+            }
+
+            var first = await RunAsync(filter, StaticHandler, acceptEncoding: "gzip");
+            var second = await RunAsync(
+                filter,
+                StaticHandler,
+                acceptEncoding: "gzip, arbitrary-one;q=0, arbitrary-two;q=0");
 
             Assert.Equal(1, fullBodyWrites);
             Assert.Equal(1, sourceRevalidations);
@@ -468,6 +587,56 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
         }
 
         [Fact]
+        public async Task InvokeAsync_ConcurrentSourceInvalidation_SingleFlightsTheNewGeneration()
+        {
+            var currentETag = "\"source-v1\"";
+            var currentHtml = "<html><body>one</body></html>";
+            var filter = BuildFilter();
+            var changedSourceEntered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var releaseChangedSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var fullBodyWrites = 0;
+            var sourceRevalidations = 0;
+
+            async Task StaticHandler(HttpContext context)
+            {
+                if (context.Request.Headers["If-None-Match"].ToString() == currentETag)
+                {
+                    sourceRevalidations++;
+                    context.Response.StatusCode = StatusCodes.Status304NotModified;
+                    context.Response.Headers["ETag"] = currentETag;
+                    return;
+                }
+
+                fullBodyWrites++;
+                if (currentETag == "\"source-v2\"")
+                {
+                    changedSourceEntered.TrySetResult(true);
+                    await releaseChangedSource.Task;
+                }
+
+                await WriteSourceAsync(context, currentHtml, currentETag);
+            }
+
+            await RunAsync(filter, StaticHandler);
+            currentETag = "\"source-v2\"";
+            currentHtml = "<html><body>two</body></html>";
+            var firstChanged = RunAsync(filter, StaticHandler);
+            await changedSourceEntered.Task;
+            var secondChanged = RunAsync(filter, StaticHandler);
+            releaseChangedSource.SetResult(true);
+            var responses = await Task.WhenAll(firstChanged, secondChanged);
+
+            Assert.Equal(2, fullBodyWrites);
+            Assert.Equal(1, sourceRevalidations);
+            Assert.All(
+                responses,
+                response => Assert.Contains(
+                    "<body>two",
+                    Encoding.UTF8.GetString(response.Body),
+                    StringComparison.Ordinal));
+        }
+
+        [Fact]
         public async Task InvokeAsync_HeadUsesTransformedGetMetadataWithoutWritingBody()
         {
             var filter = BuildFilter();
@@ -505,6 +674,85 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             Assert.Equal(StatusCodes.Status304NotModified, conditionalHead.Context.Response.StatusCode);
             Assert.Equal(transformedETag, conditionalHead.Context.Response.Headers["ETag"].ToString());
             Assert.Empty(conditionalHead.Body);
+        }
+
+        [Fact]
+        public async Task InvokeAsync_ColdHead_DoesNotDownloadOrPublishSourceEntityMetadata()
+        {
+            var filter = BuildFilter();
+            var downstreamMethods = new System.Collections.Generic.List<string>();
+
+            Task StaticHandler(HttpContext context)
+            {
+                downstreamMethods.Add(context.Request.Method);
+                context.Response.StatusCode = StatusCodes.Status200OK;
+                context.Response.ContentType = "text/html; charset=utf-8";
+                context.Response.Headers["ETag"] = SourceETag;
+                context.Response.Headers["Last-Modified"] = LastModified;
+                context.Response.Headers["Accept-Ranges"] = "bytes";
+                context.Response.ContentLength = ScriptInjectionStartupFilter.MaxTransformBodyBytes * 8L;
+                return Task.CompletedTask;
+            }
+
+            var head = await RunAsync(filter, StaticHandler, method: "HEAD");
+
+            Assert.Equal(new[] { "HEAD" }, downstreamMethods);
+            Assert.Equal(StatusCodes.Status200OK, head.Context.Response.StatusCode);
+            Assert.Empty(head.Body);
+            Assert.False(head.Context.Response.Headers.ContainsKey("ETag"));
+            Assert.False(head.Context.Response.Headers.ContainsKey("Last-Modified"));
+            Assert.False(head.Context.Response.Headers.ContainsKey("Accept-Ranges"));
+            Assert.Null(head.Context.Response.ContentLength);
+        }
+
+        [Fact]
+        public async Task InvokeAsync_ChangedSourceHead_EvictsStaleMetadataWithoutDownloadingBody()
+        {
+            var currentETag = "\"source-v1\"";
+            var currentHtml = "<html><body>one</body></html>";
+            var filter = BuildFilter();
+            var fullBodyWrites = 0;
+            var headCalls = 0;
+
+            async Task StaticHandler(HttpContext context)
+            {
+                if (context.Request.Headers["If-None-Match"].ToString() == currentETag)
+                {
+                    context.Response.StatusCode = StatusCodes.Status304NotModified;
+                    context.Response.Headers["ETag"] = currentETag;
+                    return;
+                }
+
+                context.Response.StatusCode = StatusCodes.Status200OK;
+                context.Response.ContentType = "text/html; charset=utf-8";
+                context.Response.Headers["ETag"] = currentETag;
+                context.Response.Headers["Last-Modified"] = LastModified;
+                if (HttpMethods.IsHead(context.Request.Method))
+                {
+                    headCalls++;
+                    context.Response.ContentLength = Encoding.UTF8.GetByteCount(currentHtml);
+                    return;
+                }
+
+                fullBodyWrites++;
+                await context.Response.WriteAsync(currentHtml);
+            }
+
+            await RunAsync(filter, StaticHandler);
+            currentETag = "\"source-v2\"";
+            currentHtml = "<html><body>two</body></html>";
+            var changedHead = await RunAsync(filter, StaticHandler, method: "HEAD");
+            var refreshed = await RunAsync(filter, StaticHandler);
+
+            Assert.Equal(1, headCalls);
+            Assert.Equal(2, fullBodyWrites);
+            Assert.Empty(changedHead.Body);
+            Assert.False(changedHead.Context.Response.Headers.ContainsKey("ETag"));
+            Assert.Null(changedHead.Context.Response.ContentLength);
+            Assert.Contains(
+                "<body>two",
+                Encoding.UTF8.GetString(refreshed.Body),
+                StringComparison.Ordinal);
         }
 
         [Fact]

@@ -41,16 +41,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
     {
         // PERF(S9): index.html is a hot host path. A warm request performs one
         // validator-only static-file revalidation plus O(1) bounded cache work; it
-        // does not buffer or rewrite the shell again. Cold fills are serialized
-        // process-wide, and both encoded buffering and decoded/re-encoded transforms
-        // stop at 2 MiB before falling back to the untouched host representation. The
-        // singleton retains at most 12 representations / 8 MiB, covering the three
-        // route spellings and normal identity/gzip/br negotiation without scaling
-        // with users or requests.
+        // does not buffer or rewrite the shell again. Four fixed admission stripes
+        // single-flight each representation key and bound aggregate cold/source-change
+        // work. Encoded buffering and decoded/re-encoded transforms stop at 2 MiB
+        // before replaying the untouched host response. The singleton retains at most
+        // 12 representations / 8 MiB, covering the three route spellings and normal
+        // identity/gzip/br negotiation without scaling with users or requests.
         internal const int MaxCachedRepresentations = 12;
         internal const int MaxCachedBodyBytes = 8 * 1024 * 1024;
         internal const int MaxCacheableRepresentationBytes = 2 * 1024 * 1024;
         internal const int MaxTransformBodyBytes = MaxCacheableRepresentationBytes;
+        internal const int RepresentationGateCount = 4;
 
         private readonly ILogger<ScriptInjectionStartupFilter> _logger;
         private readonly IPluginConfigProvider _configProvider;
@@ -58,7 +59,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         private readonly object _cacheLock = new object();
         private readonly Dictionary<string, CachedRepresentation> _cache = new Dictionary<string, CachedRepresentation>(StringComparer.Ordinal);
         private readonly LinkedList<string> _leastRecentlyUsed = new LinkedList<string>();
-        private readonly SemaphoreSlim _coldTransformGate = new SemaphoreSlim(1, 1);
+        private readonly SemaphoreSlim[] _representationGates = Enumerable
+            .Range(0, RepresentationGateCount)
+            .Select(_ => new SemaphoreSlim(1, 1))
+            .ToArray();
         private int _cachedBodyBytes;
         private int _loggedOnce;
 
@@ -129,18 +133,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 context.Request.Path.Value ?? string.Empty,
                 context.Request.Headers["Accept-Encoding"],
                 scriptTags);
+            var representationGate = _representationGates[cacheKey[0] % RepresentationGateCount];
+            await representationGate.WaitAsync(context.RequestAborted).ConfigureAwait(false);
+            var ownsRepresentationGate = true;
             var cached = GetCached(cacheKey);
-            var ownsColdGate = false;
-
-            if (cached == null)
-            {
-                // One bounded process-wide cold fill prevents an Accept-Encoding miss
-                // storm from multiplying decompression and regex work. Recheck after
-                // admission so equivalent concurrent requests share the first result.
-                await _coldTransformGate.WaitAsync(context.RequestAborted).ConfigureAwait(false);
-                ownsColdGate = true;
-                cached = GetCached(cacheKey);
-            }
 
             try
             {
@@ -184,22 +180,19 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     requestHeaders.Remove("If-Modified-Since");
                 }
 
-                // HEAD must describe the transformed GET representation. Run the host
-                // path as GET inside the buffer, then publish identical metadata without
-                // writing the body to the client.
-                if (isHead)
-                {
-                    context.Request.Method = HttpMethods.Get;
-                }
-
                 var originalBody = context.Response.Body;
-                using var buffer = new ThresholdBufferingStream(
-                    isHead ? null : originalBody,
-                    MaxTransformBodyBytes);
+                using var buffer = new BoundedMemoryStream(MaxTransformBodyBytes);
+                var transformLimitExceeded = false;
                 context.Response.Body = buffer;
                 try
                 {
                     await nextMw().ConfigureAwait(false);
+                }
+                catch (BodyLimitExceededException)
+                {
+                    // Nothing reached the transport. Restore the untouched request and
+                    // replay it below so the host owns fallback validators and streaming.
+                    transformLimitExceeded = true;
                 }
                 finally
                 {
@@ -221,11 +214,19 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     RestoreHeader(requestHeaders, "If-Range", originalIfRange, hadIfRange);
                 }
 
-                // Large responses have already streamed through unchanged for GET (or
-                // were discarded for HEAD). A canceled static-file send can be swallowed
-                // by ASP.NET Core, so cancellation must also terminate cache admission.
-                if (buffer.ExceededLimit || context.RequestAborted.IsCancellationRequested)
+                // A canceled static-file send can be swallowed by ASP.NET Core.
+                // Cancellation must terminate cache admission and must never trigger a
+                // second response producer.
+                if (context.RequestAborted.IsCancellationRequested)
                 {
+                    return;
+                }
+
+                if (transformLimitExceeded)
+                {
+                    context.Response.Clear();
+                    ReleaseRepresentationGate(ref ownsRepresentationGate, representationGate);
+                    await nextMw().ConfigureAwait(false);
                     return;
                 }
 
@@ -233,7 +234,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
                 if (context.Response.StatusCode == StatusCodes.Status304NotModified && cached != null)
                 {
-                    ReleaseColdGate(ref ownsColdGate);
+                    ReleaseRepresentationGate(ref ownsRepresentationGate, representationGate);
                     await WriteRepresentationAsync(
                         context,
                         cached,
@@ -243,18 +244,41 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     return;
                 }
 
+                if (isHead)
+                {
+                    if (context.Response.StatusCode != StatusCodes.Status200OK)
+                    {
+                        context.Response.Clear();
+                        ReleaseRepresentationGate(ref ownsRepresentationGate, representationGate);
+                        await nextMw().ConfigureAwait(false);
+                        return;
+                    }
+
+                    // HEAD never downloads the shell just to derive a transformed ETag.
+                    // A warm unchanged source used the cached 304 path above. A cold or
+                    // changed source has no safe transformed metadata yet: evict the old
+                    // entry and omit source validators/length rather than letting caches
+                    // merge source metadata into a later injected GET.
+                    RemoveCached(cacheKey);
+                    context.Response.Headers.Remove("ETag");
+                    context.Response.Headers.Remove("Last-Modified");
+                    context.Response.Headers.Remove("Accept-Ranges");
+                    context.Response.Headers.Remove("Content-Range");
+                    context.Response.ContentLength = null;
+                    context.Response.StatusCode = EvaluateMetadataOnlyHeadPrecondition(
+                        clientIfMatch,
+                        clientIfNoneMatch);
+                    return;
+                }
+
                 var isHtml = context.Response.StatusCode == StatusCodes.Status200OK
                     && (context.Response.ContentType?.Contains("text/html", StringComparison.OrdinalIgnoreCase) ?? false);
 
                 if (!isHtml)
                 {
-                    if (!isHead)
-                    {
-                        await originalBody.WriteAsync(
-                            encodedSource.AsMemory(),
-                            context.RequestAborted).ConfigureAwait(false);
-                    }
-
+                    context.Response.Clear();
+                    ReleaseRepresentationGate(ref ownsRepresentationGate, representationGate);
+                    await nextMw().ConfigureAwait(false);
                     return;
                 }
 
@@ -318,19 +342,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
                 if (representation == null)
                 {
-                    if (isHead)
-                    {
-                        context.Response.ContentLength = encodedSource.Length;
-                    }
-                    else
-                    {
-                        // Response writes sit outside the transform catch: a disconnect
-                        // must propagate instead of attempting a second body.
-                        await originalBody.WriteAsync(
-                            encodedSource.AsMemory(),
-                            context.RequestAborted).ConfigureAwait(false);
-                    }
-
+                    // The buffered response is still uncommitted. Replay with the
+                    // original request so unknown encodings, malformed HTML, and decoded
+                    // size limits retain the host's complete conditional semantics.
+                    context.Response.Clear();
+                    ReleaseRepresentationGate(ref ownsRepresentationGate, representationGate);
+                    await nextMw().ConfigureAwait(false);
                     return;
                 }
 
@@ -340,7 +357,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 }
 
                 PutCached(representation);
-                ReleaseColdGate(ref ownsColdGate);
+                ReleaseRepresentationGate(ref ownsRepresentationGate, representationGate);
                 await WriteRepresentationAsync(
                     context,
                     representation,
@@ -350,7 +367,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             }
             finally
             {
-                ReleaseColdGate(ref ownsColdGate);
+                ReleaseRepresentationGate(ref ownsRepresentationGate, representationGate);
             }
         }
 
@@ -376,6 +393,18 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 _leastRecentlyUsed.Remove(key);
                 _leastRecentlyUsed.AddLast(key);
                 return cached;
+            }
+        }
+
+        private void RemoveCached(string key)
+        {
+            lock (_cacheLock)
+            {
+                if (_cache.Remove(key, out var cached))
+                {
+                    _cachedBodyBytes -= cached.Body.Length;
+                    _leastRecentlyUsed.Remove(key);
+                }
             }
         }
 
@@ -478,6 +507,25 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
             return ClientPrecondition.ShouldProcess;
         }
+
+        private static int EvaluateMetadataOnlyHeadPrecondition(
+            StringValues ifMatch,
+            StringValues ifNoneMatch)
+        {
+            if (!StringValues.IsNullOrEmpty(ifMatch) && !HeaderContainsWildcard(ifMatch))
+            {
+                return StatusCodes.Status412PreconditionFailed;
+            }
+
+            return !StringValues.IsNullOrEmpty(ifNoneMatch) && HeaderContainsWildcard(ifNoneMatch)
+                ? StatusCodes.Status304NotModified
+                : StatusCodes.Status200OK;
+        }
+
+        private static bool HeaderContainsWildcard(StringValues header) =>
+            header
+                .SelectMany(value => (value ?? string.Empty).Split(','))
+                .Any(value => value.Trim() == "*");
 
         private static bool IfMatchSatisfied(StringValues header, string etag)
         {
@@ -605,60 +653,75 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
         private static string CanonicalizeAcceptEncoding(StringValues acceptEncoding)
         {
-            var tokens = acceptEncoding
-                .SelectMany(value => (value ?? string.Empty).Split(','))
-                .Select(CanonicalizeEncodingToken)
-                .Where(value => value.Length > 0)
-                .Distinct(StringComparer.Ordinal)
-                .OrderBy(value => value, StringComparer.Ordinal);
-            return string.Join(",", tokens);
-        }
-
-        private static string CanonicalizeEncodingToken(string token)
-        {
-            var segments = token.Split(';');
-            var coding = segments[0].Trim().ToLowerInvariant();
-            if (coding.Length == 0 || segments.Length == 1)
+            var qualities = new Dictionary<string, decimal>(StringComparer.Ordinal);
+            foreach (var token in acceptEncoding.SelectMany(value => (value ?? string.Empty).Split(',')))
             {
-                return coding;
-            }
-
-            var parameters = segments
-                .Skip(1)
-                .Select(parameter =>
+                var segments = token.Split(';');
+                var coding = segments[0].Trim().ToLowerInvariant();
+                if (coding != "br" && coding != "gzip" && coding != "identity" && coding != "*")
                 {
-                    var pair = parameter.Split(new[] { '=' }, 2);
-                    var name = pair[0].Trim().ToLowerInvariant();
-                    if (pair.Length == 1)
-                    {
-                        return name;
-                    }
+                    continue;
+                }
 
-                    var value = pair[1].Trim().ToLowerInvariant();
-                    if (name == "q"
-                        && decimal.TryParse(
-                            value,
+                var quality = 1m;
+                var valid = true;
+                for (var index = 1; index < segments.Length; index++)
+                {
+                    var pair = segments[index].Split(new[] { '=' }, 2);
+                    if (pair.Length != 2
+                        || !pair[0].Trim().Equals("q", StringComparison.OrdinalIgnoreCase)
+                        || !decimal.TryParse(
+                            pair[1].Trim(),
                             NumberStyles.AllowDecimalPoint,
                             CultureInfo.InvariantCulture,
-                            out var quality)
-                        && quality >= 0
-                        && quality <= 1)
+                            out quality)
+                        || quality < 0
+                        || quality > 1)
                     {
-                        value = quality.ToString("0.###", CultureInfo.InvariantCulture);
+                        valid = false;
+                        break;
+                    }
+                }
+
+                if (valid && (!qualities.TryGetValue(coding, out var previous) || quality > previous))
+                {
+                    qualities[coding] = quality;
+                }
+            }
+
+            // Only relative quality order, zero exclusion, and presence can affect
+            // identity/gzip/Brotli negotiation. Collapsing absolute q values to ranks
+            // yields a finite semantic key space instead of one cache variant per
+            // attacker-chosen decimal spelling.
+            var ranks = qualities.Values
+                .Where(value => value > 0)
+                .Distinct()
+                .OrderByDescending(value => value)
+                .Select((value, index) => (Value: value, Rank: index))
+                .ToDictionary(pair => pair.Value, pair => pair.Rank);
+            return string.Join(
+                ";",
+                new[] { "br", "gzip", "identity", "*" }.Select(coding =>
+                {
+                    if (!qualities.TryGetValue(coding, out var quality))
+                    {
+                        return coding + "=missing";
                     }
 
-                    return name + "=" + value;
-                })
-                .OrderBy(value => value, StringComparer.Ordinal);
-            return coding + ";" + string.Join(";", parameters);
+                    return quality == 0
+                        ? coding + "=zero"
+                        : coding + "=rank" + ranks[quality].ToString(CultureInfo.InvariantCulture);
+                }));
         }
 
-        private void ReleaseColdGate(ref bool ownsColdGate)
+        private static void ReleaseRepresentationGate(
+            ref bool ownsRepresentationGate,
+            SemaphoreSlim representationGate)
         {
-            if (ownsColdGate)
+            if (ownsRepresentationGate)
             {
-                ownsColdGate = false;
-                _coldTransformGate.Release();
+                ownsRepresentationGate = false;
+                representationGate.Release();
             }
         }
 
@@ -695,148 +758,6 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             ShouldProcess,
             NotModified,
             Failed,
-        }
-
-        /// <summary>
-        /// Buffers only small responses. Once the encoded body crosses the
-        /// transformation ceiling, GET switches atomically to the original response
-        /// stream and HEAD discards the internally requested GET body.
-        /// </summary>
-        private sealed class ThresholdBufferingStream : Stream
-        {
-            private readonly Stream? _overflowTarget;
-            private readonly int _limit;
-            private readonly MemoryStream _buffer = new MemoryStream();
-
-            public ThresholdBufferingStream(Stream? overflowTarget, int limit)
-            {
-                _overflowTarget = overflowTarget;
-                _limit = limit;
-            }
-
-            public bool ExceededLimit { get; private set; }
-
-            public override bool CanRead => false;
-
-            public override bool CanSeek => false;
-
-            public override bool CanWrite => true;
-
-            public override long Length => _buffer.Length;
-
-            public override long Position
-            {
-                get => _buffer.Position;
-                set => throw new NotSupportedException();
-            }
-
-            public byte[] ToArray()
-            {
-                if (ExceededLimit)
-                {
-                    throw new InvalidOperationException("The response exceeded the transformation limit.");
-                }
-
-                return _buffer.ToArray();
-            }
-
-            public override void Flush()
-            {
-                if (ExceededLimit)
-                {
-                    _overflowTarget?.Flush();
-                }
-            }
-
-            public override Task FlushAsync(CancellationToken cancellationToken) =>
-                ExceededLimit && _overflowTarget != null
-                    ? _overflowTarget.FlushAsync(cancellationToken)
-                    : Task.CompletedTask;
-
-            public override void Write(byte[] buffer, int offset, int count) =>
-                Write(buffer.AsSpan(offset, count));
-
-            public override void Write(ReadOnlySpan<byte> buffer)
-            {
-                if (ExceededLimit)
-                {
-                    _overflowTarget?.Write(buffer);
-                    return;
-                }
-
-                if (buffer.Length <= _limit - _buffer.Length)
-                {
-                    _buffer.Write(buffer);
-                    return;
-                }
-
-                ExceededLimit = true;
-                if (_overflowTarget != null)
-                {
-                    _buffer.Position = 0;
-                    _buffer.CopyTo(_overflowTarget);
-                    _overflowTarget.Write(buffer);
-                }
-
-                _buffer.SetLength(0);
-            }
-
-            public override Task WriteAsync(
-                byte[] buffer,
-                int offset,
-                int count,
-                CancellationToken cancellationToken) =>
-                WriteAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
-
-            public override async ValueTask WriteAsync(
-                ReadOnlyMemory<byte> buffer,
-                CancellationToken cancellationToken = default)
-            {
-                if (ExceededLimit)
-                {
-                    if (_overflowTarget != null)
-                    {
-                        await _overflowTarget.WriteAsync(buffer, cancellationToken).ConfigureAwait(false);
-                    }
-
-                    return;
-                }
-
-                if (buffer.Length <= _limit - _buffer.Length)
-                {
-                    await _buffer.WriteAsync(buffer, cancellationToken).ConfigureAwait(false);
-                    return;
-                }
-
-                ExceededLimit = true;
-                if (_overflowTarget != null)
-                {
-                    _buffer.Position = 0;
-                    await _buffer.CopyToAsync(_overflowTarget, cancellationToken).ConfigureAwait(false);
-                    await _overflowTarget.WriteAsync(buffer, cancellationToken).ConfigureAwait(false);
-                }
-
-                _buffer.SetLength(0);
-            }
-
-            public override int Read(byte[] buffer, int offset, int count) =>
-                throw new NotSupportedException();
-
-            public override long Seek(long offset, SeekOrigin origin) =>
-                throw new NotSupportedException();
-
-            public override void SetLength(long value) =>
-                throw new NotSupportedException();
-
-            protected override void Dispose(bool disposing)
-            {
-                if (disposing)
-                {
-                    _buffer.Dispose();
-                }
-
-                base.Dispose(disposing);
-            }
         }
 
         private sealed class BoundedMemoryStream : MemoryStream

@@ -21,12 +21,12 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 27316,
-        "totalLines": 36060
+        "coveredLines": 27321,
+        "totalLines": 36038
       },
       "tolerance": {
         "missingCoveredLines": 5,
-        "rationale": "The #453 injected-shell HTTP fix preserves Jellyfin compression, adds strong transformed ETags with correct GET/HEAD and If-Match/If-None-Match behavior, internally revalidates source validators without exposing an unsafe source Last-Modified, and bounds/canonicalizes/coalesces cold fills. Behavioral coverage includes real response-compression ordering, identity/gzip/Brotli bodies, transformed 304/412 responses, source revalidation, two-client script-generation invalidation, cancellation-safe cache admission, encoded/decoded 2 MiB fallbacks, equivalent encoding keys, and concurrent cold requests. Seven clean .NET 10.0.9/Coverlet runs on 2026-07-27 each passed all 2,294 tests: two reproduced the observed high-water exactly at 27,316/36,060 instrumented lines (75.752%) and the other five measured 27,315/36,060. Recording the repeated high-water prevents either clean result from tripping the stale-baseline gate. Retaining the existing evidence-bounded five-line Coverlet tolerance makes the minimum 27,311/36,060 (75.738%), stricter than the prior 27,183/35,896 floor (75.727%). coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, and broad-tolerance negative boundaries."
+        "rationale": "The final #453 injected-shell HTTP boundary pass replaces the larger overflow stream with bounded buffering plus untouched host replay, uses four fixed admission stripes to single-flight cold fills and source invalidations, makes cold/changed HEAD bodyless, and collapses Accept-Encoding keys to the finite identity/gzip/Brotli negotiation state. That refactor removes 22 obsolete instrumented lines while adding covered fallback, concurrency, HEAD, finite-key, and real response-compression regressions. Six clean .NET 10.0.9/Coverlet runs on 2026-07-27 each passed all 2,300 tests; runs 3 through 6 reproduced the reviewed high-water exactly at 27,321/36,038 instrumented lines (75.812%). Retaining the existing evidence-bounded five-line Coverlet tolerance makes the minimum 27,316/36,038 (75.798%), stricter than the prior 27,311/36,060 tolerated floor (75.738%). coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, and broad-tolerance negative boundaries."
       }
     }
   }
