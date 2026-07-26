@@ -20,6 +20,10 @@ const seed = fs.readFileSync(SEED_FILE, 'utf8');
 const playwright = fs.readFileSync(PLAYWRIGHT_FILE, 'utf8');
 const e2eGitignore = fs.readFileSync(E2E_GITIGNORE_FILE, 'utf8');
 const mockServer = fs.readFileSync(MOCK_SERVER_FILE, 'utf8');
+const integrationsCompose = compose.slice(
+    compose.indexOf('  integrations:'),
+    compose.indexOf('\n  jellyfin:')
+);
 
 function seedPrerequisitesAvailable() {
     return ['bash', 'curl', 'jq', 'realpath'].every(
@@ -47,6 +51,7 @@ function runSeed(overrides = {}) {
         'JF_MOCK_IMAGE',
         'JF_MOCK_STATE_DIR',
         'JF_PORT',
+        'MAINTAINERR_URL',
     ]) {
         delete env[name];
     }
@@ -72,6 +77,12 @@ test('Compose isolates names, state, loopback publication, and the two-CPU defau
     assert.match(compose, /node:22-alpine@sha256:[0-9a-f]{64}/);
     assert.match(compose, /api\.themoviedb\.org/);
     assert.match(compose, /SSL_CERT_FILE: \/e2e-certs\/ca\.pem/);
+    assert.match(compose, /net\.createConnection\(\{host:'127\.0\.0\.1',port:6246\}/);
+    assert.doesNotMatch(
+        compose,
+        /127\.0\.0\.1:6246\/api\//,
+        'fixture readiness must not pollute the audited Maintainerr API ledger'
+    );
 });
 
 test('hermetic integrations use only disposable per-seed TLS keys and state', () => {
@@ -84,7 +95,72 @@ test('hermetic integrations use only disposable per-seed TLS keys and state', ()
     assert.match(e2eGitignore, /^docker\/mock-state\/$/m);
     assert.match(mockServer, /return id \? userById\(id\) : null/);
     assert.match(mockServer, /missing or unknown x-api-user fixture identity/);
+    assert.match(mockServer, /url\.pathname === '\/api\/v3\/system\/status'/);
     assert.doesNotMatch(mockServer, /requestedBy[\s\S]{0,250}users\[0\]/);
+});
+
+test('Maintainerr is a private strict read-only fixture with bounded sanitized evidence', () => {
+    assert.match(
+        integrationsCompose,
+        /user: "\$\{JF_UID:-1000\}:\$\{JF_GID:-1000\}"/,
+        'the mock and host fixture must share an identity when replacing private state'
+    );
+    assert.match(mockServer, /maintainerrServer\.listen\(6246, '0\.0\.0\.0'\)/);
+    assert.match(mockServer, /request\.method !== 'GET'/);
+    assert.match(mockServer, /hermetic Maintainerr fixture is read-only/);
+    assert.match(mockServer, /MAX_MAINTAINERR_AUDIT_ROWS = 256/);
+    assert.match(mockServer, /maintainerr-requests\.json/);
+    assert.match(mockServer, /writeFileSync\(temporary, next, \{ mode: 0o600 \}\)/);
+    assert.match(mockServer, /renameSync\(temporary, MAINTAINERR_AUDIT_FILE\)/);
+    assert.match(mockServer, /credentialHeadersPresent/);
+    assert.match(mockServer, /\/api\/health\/ready/);
+    assert.match(mockServer, /\/api\/app\/status/);
+    assert.match(mockServer, /\/api\/media-server\/type/);
+    assert.match(mockServer, /\/api\/storage-metrics/);
+    assert.match(mockServer, /\/api\/overlays\/status/);
+    assert.match(mockServer, /\/api\/rules\/count/);
+    assert.match(mockServer, /\/api\/rules\/execute\/status/);
+    assert.match(mockServer, /\/api\/collections\/media\//);
+    assert.match(mockServer, /\/maintainerr-status/);
+    assert.match(mockServer, /UPSTREAM_SECRET_MUST_NOT_ESCAPE/);
+    assert.doesNotMatch(mockServer, /['"]\/api\/settings(?:\/|['"])/);
+    assert.doesNotMatch(mockServer, /['"]\/api\/rules['"]/);
+    assert.doesNotMatch(mockServer, /['"]\/api\/collections\/overlay-data['"]/);
+});
+
+test('the supplied private Maintainerr target never enters repository files', () => {
+    const forbidden = ['http://192', '.168.0.84:', '6246'].join('');
+    const listed = spawnSync(
+        'git',
+        ['ls-files', '--cached', '--others', '--exclude-standard', '-z'],
+        { cwd: ROOT, encoding: 'buffer' }
+    );
+    assert.equal(listed.status, 0, listed.stderr.toString('utf8'));
+
+    const offenders = listed.stdout
+        .toString('utf8')
+        .split('\0')
+        .filter(Boolean)
+        .filter((relative) => {
+            const absolute = path.join(ROOT, relative);
+            try {
+                return fs.statSync(absolute).isFile()
+                    && fs.readFileSync(absolute).includes(Buffer.from(forbidden));
+            } catch {
+                return false;
+            }
+        });
+
+    assert.deepEqual(offenders, [], 'private Maintainerr target leaked into repository files');
+});
+
+test('seed binds Maintainerr to current Jellyfin identities and a forced hermetic URL', () => {
+    assert.match(seed, /api GET \/System\/Info \| jq -er '\.Id \/\/ empty'/);
+    assert.match(seed, /MAINTAINERR_URL="http:\/\/integrations:6246"/);
+    assert.match(seed, /\.MaintainerrItemStatusForUsers = false/);
+    assert.match(seed, /\.maintainerr\.itemStatuses =/);
+    assert.match(seed, /--arg itemId "\$\{AUTOSKIP_ID\}"/);
+    assert.doesNotMatch(seed, /MAINTAINERR_URL="\$\{MAINTAINERR_URL:-/);
 });
 
 test('seed owns one validated Compose project through an argument array', () => {
@@ -314,6 +390,8 @@ test('rendered Compose config keeps an ephemeral custom shard isolated', (t) => 
             JF_E2E_PROJECT: 'jc-contract-shard-7',
             JF_PORT: '0',
             JF_CPUS: '2',
+            JF_UID: '12345',
+            JF_GID: '23456',
             JF_BIND_ADDRESS: '127.0.0.1',
             JF_CONFIG_DIR: path.join(state, 'config'),
             JF_CACHE_DIR: path.join(state, 'cache'),
@@ -328,8 +406,13 @@ test('rendered Compose config keeps an ephemeral custom shard isolated', (t) => 
         assert.equal(rendered.status, 0, rendered.stderr || rendered.stdout);
         const config = JSON.parse(rendered.stdout);
         const service = config.services.jellyfin;
+        const integrations = config.services.integrations;
         assert.equal(config.name, 'jc-contract-shard-7');
         assert.equal(service.container_name, undefined);
+        assert.equal(integrations.container_name, undefined);
+        assert.equal(integrations.ports, undefined);
+        assert.equal(integrations.user, '12345:23456');
+        assert.equal(service.user, '12345:23456');
         assert.equal(service.cpus, 2);
         assert.deepEqual(service.ports, [{
             mode: 'ingress',
@@ -345,6 +428,25 @@ test('rendered Compose config keeps an ephemeral custom shard isolated', (t) => 
                 { source: path.join(state, 'cache'), target: '/cache', read_only: false },
                 { source: path.join(state, 'media'), target: '/media', read_only: true },
                 { source: path.join(state, 'mock-state/certs/ca.pem'), target: '/e2e-certs/ca.pem', read_only: true },
+            ]
+        );
+        assert.deepEqual(
+            integrations.volumes.map(({ source, target, read_only }) => ({
+                source,
+                target,
+                read_only: !!read_only,
+            })),
+            [
+                {
+                    source: path.join(ROOT, 'e2e/mock-integrations'),
+                    target: '/mock',
+                    read_only: true,
+                },
+                {
+                    source: path.join(state, 'mock-state'),
+                    target: '/state',
+                    read_only: false,
+                },
             ]
         );
     } finally {

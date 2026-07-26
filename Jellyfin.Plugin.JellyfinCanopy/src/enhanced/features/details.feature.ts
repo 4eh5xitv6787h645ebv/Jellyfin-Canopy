@@ -8,7 +8,15 @@ export function isDetailsEnhancementsEnabled(): boolean {
         || JC.currentSettings?.showAudioLanguages === true
         || (JC.pluginConfig?.ShowReleaseDates === true && JC.pluginConfig?.TmdbEnabled === true)
         || JC.pluginConfig?.HiddenContentEnabled === true
-        || JC.pluginConfig?.SpoilerBlurEnabled === true;
+        || JC.pluginConfig?.SpoilerBlurEnabled === true
+        || (
+            JC.pluginConfig?.MaintainerrEnabled === true
+            && JC.pluginConfig?.MaintainerrItemStatusEnabled === true
+            && (
+                JC.currentUser?.Policy?.IsAdministrator === true
+                || JC.pluginConfig?.MaintainerrItemStatusForUsers === true
+            )
+        );
 }
 
 export function isDetailsRoute(routeKey: string): boolean {
@@ -34,7 +42,7 @@ export function activate(scope: FeatureScope): void {
     scope.track(dispose);
     // `scope.isCurrent` fences delayed Spoiler-state readiness against the
     // loader's identity, config and navigation generations.
-    cleanups.push(installDetailsPage(() => scope.isCurrent()));
+    cleanups.push(installDetailsPage(() => scope.isCurrent(), scope.signal));
     cleanups.push(JC.identity.registerReset('details-enhancements-feature', dispose));
     if (!scope.isCurrent()) { dispose(); return; }
     initializeDetailsPage();

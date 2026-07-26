@@ -23,6 +23,50 @@ beforeEach(() => {
 });
 
 describe('built-in detail integration catalog', () => {
+    it('gates the administrator Maintainerr page by both switches and exact route', () => {
+        const item = descriptor('maintainerr-page');
+        JC.currentUser = { Policy: { IsAdministrator: true } };
+        JC.pluginConfig = { MaintainerrEnabled: true, MaintainerrPageEnabled: true };
+
+        expect(item.scope).toBe('navigation');
+        expect(item.restartOnConfigChange).toBe(true);
+        expect(item.isEnabled(state)).toBe(true);
+        expect(item.isApplicable({ ...state, routeKey: '/web/#/maintainerr' })).toBe(true);
+        expect(item.isApplicable({ ...state, routeKey: '/web/#/maintainerr?tab=rules' })).toBe(true);
+        expect(item.isApplicable({ ...state, routeKey: '/web/#/maintainerr-extra' })).toBe(false);
+        JC.currentUser = { Policy: { IsAdministrator: false } };
+        expect(item.isEnabled(state)).toBe(false);
+        JC.currentUser = { Policy: { IsAdministrator: true } };
+        JC.pluginConfig.MaintainerrPageEnabled = false;
+        expect(item.isEnabled(state)).toBe(false);
+        JC.pluginConfig.MaintainerrPageEnabled = true;
+        JC.pluginConfig.MaintainerrEnabled = false;
+        expect(item.isEnabled(state)).toBe(false);
+    });
+
+    it('gates Maintainerr item status by role and shares the details owner', () => {
+        const item = descriptor('maintainerr-item-status');
+        JC.pluginConfig = {
+            MaintainerrEnabled: true,
+            MaintainerrItemStatusEnabled: true,
+            MaintainerrItemStatusForUsers: false,
+        };
+        JC.currentUser = { Policy: { IsAdministrator: true } };
+        expect(item.dependsOn).toEqual(['details-enhancements']);
+        expect(item.restartOnConfigChange).toBe(true);
+        expect(item.isEnabled(state)).toBe(true);
+        expect(item.isApplicable(state)).toBe(true);
+        expect(item.isApplicable({ ...state, routeKey: '/web/#/home' })).toBe(false);
+
+        JC.currentUser = { Policy: { IsAdministrator: false } };
+        expect(item.isEnabled(state)).toBe(false);
+        JC.pluginConfig.MaintainerrItemStatusForUsers = true;
+        expect(item.isEnabled(state)).toBe(true);
+        expect(descriptor('details-enhancements').isEnabled(state)).toBe(true);
+        JC.pluginConfig.MaintainerrItemStatusEnabled = false;
+        expect(item.isEnabled(state)).toBe(false);
+    });
+
     it('activates the event shell after its settings-launcher dependency', () => {
         const settingsIndex = builtInFeatureDescriptors.findIndex((item) => item.id === 'settings-launcher');
         const eventsIndex = builtInFeatureDescriptors.findIndex((item) => item.id === 'enhanced-events');

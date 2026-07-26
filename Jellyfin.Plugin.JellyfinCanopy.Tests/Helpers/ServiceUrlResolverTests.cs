@@ -121,5 +121,147 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Helpers
         [InlineData("[]junk-not-json")]
         public void SanitizeInstanceExternalUrlsJson_LeavesEmptyOrCorruptJsonUntouched(string json)
             => Assert.Equal(json, ServiceUrlResolver.SanitizeInstanceExternalUrlsJson(json));
+
+        [Theory]
+        [InlineData("HTTP://Example.COM:80/base/", "http://example.com/base")]
+        [InlineData("https://example.com:443/maintainerr", "https://example.com/maintainerr")]
+        [InlineData("http://[2001:db8::1]:6246/base/", "http://[2001:db8::1]:6246/base")]
+        public void TryNormalizeHttpBaseUrl_CanonicalizesAuthorityAndPreservesBasePath(
+            string input,
+            string expected)
+        {
+            Assert.True(ServiceUrlResolver.TryNormalizeHttpBaseUrl(input, out var normalized));
+            Assert.Equal(expected, normalized);
+        }
+
+        [Theory]
+        [InlineData("http://example.com/base/../admin")]
+        [InlineData("http://example.com/base/%2e%2e/admin")]
+        [InlineData("http://example.com/base/%252e%252e/admin")]
+        [InlineData("http://example.com/base/%2fadmin")]
+        [InlineData("http://example.com/base/%252fadmin")]
+        [InlineData("http://example.com/base/%5cadmin")]
+        [InlineData("http://example.com/base/%255cadmin")]
+        [InlineData("http://example.com/base/%")]
+        [InlineData("http://user@example.com/base")]
+        [InlineData("http://example.com/base?next=/admin")]
+        [InlineData("http://example.com/base#admin")]
+        public void TryNormalizeHttpBaseUrl_RejectsTraversalAndAmbiguousEscapes(string input)
+            => Assert.False(ServiceUrlResolver.TryNormalizeHttpBaseUrl(input, out _));
+
+        [Theory]
+        [InlineData("/overview", "https://example.com/maintainerr/overview")]
+        [InlineData("/collections/42/exclusions", "https://example.com/maintainerr/collections/42/exclusions")]
+        public void JoinRelativePath_PreservesConfiguredBasePath(string path, string expected)
+            => Assert.Equal(
+                expected,
+                ServiceUrlResolver.JoinRelativePath("https://example.com/maintainerr", path));
+
+        [Theory]
+        [InlineData("/collections/../admin")]
+        [InlineData("/collections/%2e%2e/admin")]
+        [InlineData("/collections/%252e%252e/admin")]
+        [InlineData("/collections/%2fadmin")]
+        [InlineData("/collections/%252fadmin")]
+        [InlineData("/collections/%5cadmin")]
+        [InlineData("/collections/%255cadmin")]
+        [InlineData("//evil.example/overview")]
+        public void JoinRelativePath_RejectsTraversalAtEveryEncodingLayer(string path)
+            => Assert.Null(ServiceUrlResolver.JoinRelativePath("https://example.com/maintainerr", path));
+
+        [Fact]
+        public void JoinRelativePath_AcceptsNormalizedMaxAndRejectsJoinedMaxPlusOne()
+        {
+            const string prefix = "https://example.com/";
+            const string relative = "/overview";
+            var exactBase = prefix + new string(
+                'a',
+                ServiceUrlResolver.MaximumHttpUrlLength - prefix.Length - relative.Length);
+
+            var exact = ServiceUrlResolver.JoinRelativePath(exactBase, relative);
+
+            Assert.NotNull(exact);
+            Assert.Equal(ServiceUrlResolver.MaximumHttpUrlLength, exact.Length);
+            Assert.Null(ServiceUrlResolver.JoinRelativePath(exactBase + "a", relative));
+        }
+
+        [Fact]
+        public void ResolveMappedPublicUrl_UsesExactCurrentJellyfinMappingBeforeFallbacks()
+        {
+            const string mappings = """
+                https://jellyfin.example/base|https://maintainerr.example/public
+                https://other.example|https://other-maintainerr.example
+                """;
+
+            Assert.Equal(
+                "https://maintainerr.example/public",
+                ServiceUrlResolver.ResolveMappedPublicUrl(
+                    "http://127.0.0.1:6246/internal",
+                    "https://maintainerr.example/fallback",
+                    mappings,
+                    "https://jellyfin.example/base/"));
+        }
+
+        [Fact]
+        public void MaintainerrUrlAndMappingBounds_AcceptMaxAndRejectMaxPlusOne()
+        {
+            const string prefix = "https://example.com/";
+            var maximumUrl = prefix + new string(
+                'a',
+                ServiceUrlResolver.MaximumHttpUrlLength - prefix.Length);
+            Assert.True(ServiceUrlResolver.TryNormalizeHttpBaseUrl(maximumUrl, out _));
+            Assert.False(ServiceUrlResolver.TryNormalizeHttpBaseUrl(maximumUrl + "a", out _));
+
+            const string mapping = "https://jellyfin.example|https://maintainerr.example";
+            var maximumMappings = mapping + new string(
+                '\n',
+                ServiceUrlResolver.MaximumUrlMappingsLength - mapping.Length);
+            Assert.Equal(mapping, ServiceUrlResolver.SanitizeUrlMappings(maximumMappings));
+            Assert.Equal(
+                string.Empty,
+                ServiceUrlResolver.SanitizeUrlMappings(maximumMappings + "x"));
+        }
+
+        [Fact]
+        public void MaintainerrNormalizedUrlBound_AcceptsMaxAndRejectsUnicodeExpansionMaxPlusOne()
+        {
+            const string prefix = "https://example.com/";
+            var maximumUrl = prefix + new string('\u00E9', 338);
+            var maximumPlusOne = maximumUrl + "a";
+
+            Assert.True(ServiceUrlResolver.TryNormalizeHttpBaseUrl(maximumUrl, out var normalized));
+            Assert.Equal(ServiceUrlResolver.MaximumHttpUrlLength, normalized.Length);
+            Assert.True(maximumUrl.Length < ServiceUrlResolver.MaximumHttpUrlLength);
+
+            Assert.False(ServiceUrlResolver.TryNormalizeHttpBaseUrl(maximumPlusOne, out var rejected));
+            Assert.Equal(string.Empty, rejected);
+            Assert.True(maximumPlusOne.Length < ServiceUrlResolver.MaximumHttpUrlLength);
+        }
+
+        [Fact]
+        public void MaintainerrNormalizedMappingBound_AcceptsMaxAndRejectsUnicodeExpansionMaxPlusOne()
+        {
+            const string targetPrefix = "https://m.example/";
+            var fullTarget = targetPrefix + new string('\u00E9', 338) + "aa";
+            var rows = Enumerable.Range(0, 31)
+                .Select(index => $"https://j{index:D2}.example|{fullTarget}")
+                .ToList();
+            rows.Add(
+                "https://j31.example|"
+                + targetPrefix
+                + new string('\u00E9', 226)
+                + "aaa");
+            var maximumMappings = string.Join('\n', rows);
+
+            var normalized = ServiceUrlResolver.SanitizeUrlMappings(maximumMappings);
+
+            Assert.True(maximumMappings.Length < ServiceUrlResolver.MaximumUrlMappingsLength);
+            Assert.Equal(ServiceUrlResolver.MaximumUrlMappingsLength, normalized.Length);
+
+            rows[^1] += "a";
+            var maximumPlusOne = string.Join('\n', rows);
+            Assert.True(maximumPlusOne.Length < ServiceUrlResolver.MaximumUrlMappingsLength);
+            Assert.Equal(string.Empty, ServiceUrlResolver.SanitizeUrlMappings(maximumPlusOne));
+        }
     }
 }

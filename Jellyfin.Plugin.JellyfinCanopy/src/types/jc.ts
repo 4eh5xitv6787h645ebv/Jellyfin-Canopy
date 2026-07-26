@@ -30,6 +30,14 @@ export interface PluginConfig {
     AssetCacheEnabled?: boolean;
     /** Gate the in-app Approve/Decline affordance on pending Seerr requests (default true). */
     RequestApprovalsEnabled?: boolean;
+    /** Master switch for the server-local Maintainerr integration. */
+    MaintainerrEnabled?: boolean;
+    /** Administrator-only native Maintainerr dashboard route. */
+    MaintainerrPageEnabled?: boolean;
+    /** Compact cleanup status on supported item-details routes. */
+    MaintainerrItemStatusEnabled?: boolean;
+    /** Allow the generic two-boolean item status for non-administrators. */
+    MaintainerrItemStatusForUsers?: boolean;
     [key: string]: unknown;
 }
 

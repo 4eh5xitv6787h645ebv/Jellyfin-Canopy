@@ -266,6 +266,11 @@ export function initEntryPoints(): void {
     onViewPage(() => {
         reconcilePrefsMenu();
     });
+    window.addEventListener('jc:config-changed', () => {
+        reconcileDrawer();
+        reconcileTray();
+        reconcilePrefsMenu();
+    });
     reconcileDrawer();
     reconcileTray();
 }

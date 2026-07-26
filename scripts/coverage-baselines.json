@@ -21,12 +21,12 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 22637,
-        "totalLines": 31176
+        "coveredLines": 24139,
+        "totalLines": 32875
       },
       "tolerance": {
         "missingCoveredLines": 5,
-        "rationale": "The rebased branch combines the completed server-owned ARR download lifecycle with the elevated, actor-isolated admin-target Canopy User Settings API. The admin-target API adds 140 instrumented lines over the reviewed lifecycle head (31036→31176) for elevation and target resolution, bounded payloads, strong If-Match revisions, conflict evidence, quarantine handling, and shared-store semantics. The combined controller, isolation, lifecycle, pagination, authorization, privacy, concurrency, and boundary regressions add 122 covered lines at the high-water (22515→22637), raising coverage from 72.545% to 72.610%. Two clean .NET 10.0.9/Coverlet runs on 2026-07-26 each passed all 2034 tests and measured 22636 or 22637 covered lines out of 31176, establishing 22637 as the reviewed high-water. Retaining the evidence-bounded five-line Coverlet tolerance makes the minimum 22632/31176 (72.594%), stricter than both the prior 22515/31036 high-water (72.545%) and its 22510/31036 tolerated floor (72.529%). coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, and broad-tolerance negative boundaries."
+        "rationale": "The Maintainerr v3.18 integration adds 1,699 instrumented lines over the reviewed pre-integration server baseline (31,176→32,875) for its closed read-only transport allowlist, private-target and connect-time rebinding guards, caller-scoped projections, strict DTO parsing, byte/array/pagination bounds, generation-owned cache and single-flight behavior, explicit error taxonomy, and bounded 4-active/12-waiting admission policy. Its controller, transport, authorization, privacy, cancellation, cache, schema, concurrency, endpoint, and collection-consistency regressions add 1,502 covered lines at the reviewed high-water (22,637→24,139), raising coverage from 72.610% to 73.427%. Three clean .NET 10.0.9/Coverlet runs on 2026-07-26 each passed all 2,179 tests and reproduced exactly the 32,875-line scope; Coverlet reported a narrow 24,136–24,139 covered-line instrumentation range (24,136 twice and 24,139 once). Recording the reviewed high-water and retaining the evidence-bounded five-line tolerance makes the minimum 24,134/32,875 (73.412%), includes every observed clean measurement, and remains stricter than both the prior 24,115/32,858 high-water (73.392%) and its 24,110/32,858 tolerated floor (73.376%). coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, and broad-tolerance negative boundaries."
       }
     }
   }

@@ -52,6 +52,7 @@ describe('details and external-integration lazy entries', () => {
             import('./arr/links.feature'),
             import('./arr/search/feature'),
             import('./others/letterboxd-links.feature'),
+            import('./entries/maintainerr-item-status'),
         ]);
 
         expect(entries.every((entry) => typeof entry.activate === 'function')).toBe(true);

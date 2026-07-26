@@ -7,7 +7,7 @@ import { JC } from '../../globals';
 import '../../core/lifecycle';
 import '../../core/navigation';
 import '../../core/dom-observer';
-import { registerPage, resolvePage, orderedPages } from './registry';
+import { registerPage, resolvePage, orderedPages, pageAvailable } from './registry';
 import { initFallbackHost, adoptedPageId, drain, lateAdoptIfOnPage } from './fallback-host';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -149,6 +149,32 @@ describe('pages framework', () => {
         setHash('#/nonsense');
         fireViewBeforeShow(fallback);
         expect(adoptedPageId()).toBeNull();
+    });
+
+    it('denies an admin-only deep link until the current identity is an administrator', () => {
+        const descriptor = { ...makeDescriptor('admin-deep-link'), adminOnly: true };
+        const unregister = registerPage(descriptor);
+        const previousUser = JC.currentUser;
+        try {
+            JC.currentUser = undefined;
+            expect(pageAvailable(descriptor)).toBe(false);
+            JC.currentUser = { Policy: { IsAdministrator: false } };
+            expect(pageAvailable(descriptor)).toBe(false);
+            setHash('#/admin-deep-link');
+            const fallback = mountFallback();
+            fireViewBeforeShow(fallback);
+            expect(adoptedPageId()).toBeNull();
+            expect(renders).not.toContain('admin-deep-link');
+
+            JC.currentUser = { Policy: { IsAdministrator: true } };
+            expect(pageAvailable(descriptor)).toBe(true);
+            fireViewBeforeShow(fallback);
+            expect(adoptedPageId()).toBe('admin-deep-link');
+            expect(renders).toContain('admin-deep-link');
+        } finally {
+            JC.currentUser = previousUser;
+            unregister();
+        }
     });
 
     it('route matching is exact — a prefixed URL is not the page', () => {

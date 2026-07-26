@@ -12,6 +12,7 @@ const PAGES = [
     { id: 'downloads', route: '#/downloads', facade: 'downloadsPage', marker: '#jc-downloads-container' },
     { id: 'bookmarks', route: '#/bookmarks', facade: 'bookmarksPage', marker: '#jc-bookmarks-container' },
     { id: 'hidden-content', route: '#/hidden-content', facade: 'hiddenContentPage', marker: '#jc-hidden-content-container' },
+    { id: 'maintainerr', route: '#/maintainerr', facade: 'maintainerrPage', marker: '#jc-maintainerr-container' },
 ] as const;
 
 async function openViaFacade(page: any, facade: string): Promise<void> {
@@ -45,6 +46,7 @@ test.describe('pages lifecycle (shared framework)', () => {
                     'downloads': 'DownloadsPageEnabled',
                     'bookmarks': 'BookmarksEnabled',
                     'hidden-content': 'HiddenContentEnabled',
+                    'maintainerr': 'MaintainerrEnabled',
                 };
                 return !!cfg[flags[id]];
             }, info.id);

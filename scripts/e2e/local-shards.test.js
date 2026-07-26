@@ -74,20 +74,29 @@ test('parser rejects missing, malformed and out-of-range resource values', () =>
     }
 });
 
-test('external integration secrets are removed unless the explicit flag is present', () => {
+test('external integration secrets are removed unless explicitly allowed, while Maintainerr stays hermetic', () => {
     const scrubbed = runSourced(
-        "sanitize_external_environment; printf '%s %s %s' \"${TMDB_API_KEY-unset}\" \"${SEERR_URL-unset}\" \"$SAFE_VALUE\"",
-        { TMDB_API_KEY: 'tmdb-secret', SEERR_URL: 'https://seerr.invalid', SAFE_VALUE: 'kept' }
+        "sanitize_external_environment; printf '%s %s %s %s' \"${TMDB_API_KEY-unset}\" \"${SEERR_URL-unset}\" \"${MAINTAINERR_URL-unset}\" \"$SAFE_VALUE\"",
+        {
+            TMDB_API_KEY: 'tmdb-secret',
+            SEERR_URL: 'https://seerr.invalid',
+            MAINTAINERR_URL: 'http://private-maintainerr.invalid',
+            SAFE_VALUE: 'kept',
+        }
     );
     assert.equal(scrubbed.status, 0, scrubbed.stderr);
-    assert.equal(scrubbed.stdout, 'unset unset kept');
+    assert.equal(scrubbed.stdout, 'unset unset unset kept');
 
     const allowed = runSourced(
-        "parse_args --allow-external-integrations; sanitize_external_environment; printf '%s %s' \"$TMDB_API_KEY\" \"$SEERR_URL\"",
-        { TMDB_API_KEY: 'tmdb-secret', SEERR_URL: 'https://seerr.invalid' }
+        "parse_args --allow-external-integrations; sanitize_external_environment; printf '%s %s %s' \"$TMDB_API_KEY\" \"$SEERR_URL\" \"${MAINTAINERR_URL-unset}\"",
+        {
+            TMDB_API_KEY: 'tmdb-secret',
+            SEERR_URL: 'https://seerr.invalid',
+            MAINTAINERR_URL: 'http://private-maintainerr.invalid',
+        }
     );
     assert.equal(allowed.status, 0, allowed.stderr);
-    assert.equal(allowed.stdout, 'tmdb-secret https://seerr.invalid');
+    assert.equal(allowed.stdout, 'tmdb-secret https://seerr.invalid unset');
 });
 
 test('every shard gets isolated Docker, state, port, CPU and browser coordinates', () => {

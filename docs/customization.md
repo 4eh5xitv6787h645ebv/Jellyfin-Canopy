@@ -312,7 +312,7 @@ The **Overview** tab is otherwise a read-only dashboard, but its **Quick Actions
 
 | Action | Effect |
 |---|---|
-| **Re-test all service connections** | Re-runs the TMDB / Seerr / Sonarr / Radarr connection tests and refreshes the Service Status cards. Read-only — changes no settings. |
+| **Re-test all service connections** | Re-runs the TMDB / Seerr / Sonarr / Radarr / Maintainerr connection tests and refreshes the Service Status cards. Read-only — changes no settings. |
 | **Apply defaults to all users** | Saves the current configuration, then **overwrites every user's saved per-user settings** with the current admin defaults. |
 | **Clear all client tag caches** | Forces every connected client to rebuild only its localStorage tag cache on the next page load — the rest of localStorage is left untouched. Equivalent to **Clear All Client Caches** above, scoped to tag caches. |
 

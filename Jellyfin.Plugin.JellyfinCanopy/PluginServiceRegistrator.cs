@@ -48,6 +48,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy
             // are attached per-request (HttpRequestMessage), never via DefaultRequestHeaders.
             serviceCollection.AddHttpClient(Helpers.PluginHttpClients.ArrClient)
                 .ConfigurePrimaryHttpMessageHandler(() => Helpers.ArrUrlGuard.CreateGuardedHandler(allowAutoRedirect: true));
+            RegisterMaintainerrHttpClient(serviceCollection);
             serviceCollection.AddHttpClient(Helpers.PluginHttpClients.TmdbClient);
             serviceCollection.AddHttpClient(Helpers.PluginHttpClients.AssetsClient);
             serviceCollection.AddHttpClient(Helpers.PluginHttpClients.JikanClient, client =>
@@ -84,6 +85,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy
             // Live view over the plugin configuration (re-read per access, never
             // snapshotted) so admin saves take effect immediately in consumers.
             serviceCollection.AddSingleton<Services.IPluginConfigProvider, Services.PluginConfigProvider>();
+            serviceCollection.AddSingleton(new Services.Maintainerr.MaintainerrHostIdentity(applicationHost.SystemId));
+            serviceCollection.AddSingleton<Services.Maintainerr.IMaintainerrClient, Services.Maintainerr.MaintainerrClient>();
             serviceCollection.AddSingleton(serviceProvider =>
                 new Services.ClientRefreshStateService(
                     serviceProvider.GetRequiredService<Services.IPluginConfigProvider>(),
@@ -203,6 +206,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy
                 o.Filters.AddService<SpoilerFieldStripFilter>();
                 o.Filters.AddService<SpoilerBlurImageFilter>();
             });
+        }
+
+        internal static void RegisterMaintainerrHttpClient(IServiceCollection serviceCollection)
+        {
+            serviceCollection.AddHttpClient(Helpers.PluginHttpClients.MaintainerrClient)
+                // Default IHttpClientFactory logging includes the full RequestUri.
+                // Maintainerr targets are private-network topology and item routes
+                // contain Jellyfin IDs, so only MaintainerrClient's redacted,
+                // endpoint-enum logs are permitted for this named client.
+                .RemoveAllLoggers()
+                .ConfigurePrimaryHttpMessageHandler(Helpers.PluginHttpClients.CreateMaintainerrHandler);
         }
     }
 }

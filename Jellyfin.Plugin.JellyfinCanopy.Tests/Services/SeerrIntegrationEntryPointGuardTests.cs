@@ -150,6 +150,13 @@ public sealed class SeerrIntegrationEntryPointGuardTests
         ["Services/AutoMovieRequestService.cs:GetTmdbCollectionIdAsync"] = new(1, "CreateTmdbClient", "https://api.themoviedb.org", "httpClient.GetAsync(requestUrl)"),
         ["Services/AnimeFiller/JikanAnimeFillerProvider.cs:ResolveAniListIdAsync"] = new(1, "PluginHttpClients.AniListClient", "type: ANIME", "client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, requestDeadline.Token)"),
         ["Services/AnimeFiller/JikanAnimeFillerProvider.cs:GetJikanJsonAsync"] = new(1, "PluginHttpClients.JikanClient", "client.GetAsync(relativePath, HttpCompletionOption.ResponseHeadersRead, requestDeadline.Token)"),
+        ["Services/Maintainerr/MaintainerrClient.cs:SendAsync"] = new(
+            1,
+            "TryBuildEndpoint(baseUrl, endpoint, routeValues",
+            "new HttpRequestMessage(HttpMethod.Get, target)",
+            "PluginHttpClients.CreateMaintainerrClient",
+            "HttpCompletionOption.ResponseHeadersRead",
+            "deadline.Token"),
         ["Services/Seerr/SeerrParentalFilter.cs:FetchCertFromTmdbAsync"] = new(1, "CreateTmdbClient", "https://api.themoviedb.org", "httpClient.GetAsync(requestUri, ct)"),
     };
 

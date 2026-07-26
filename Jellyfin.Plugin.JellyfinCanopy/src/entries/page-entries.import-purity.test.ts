@@ -7,6 +7,7 @@ const entries = [
     './requests-page',
     './hidden-content-page',
     './bookmarks-page',
+    './maintainerr-page',
 ] as const;
 
 const TEST_PATH = decodeURIComponent(new URL(import.meta.url).pathname);
@@ -156,7 +157,7 @@ describe('route page entries', () => {
         });
     }
 
-    it('the cold boot graph contains none of the four route clusters', () => {
+    it('the cold boot graph contains none of the route clusters', () => {
         const inputs = runtimeGraph(`${SRC_ROOT}entries/boot.ts`).map((file) => file.replace(/\\/g, '/'));
         const forbidden = [
             '/arr/calendar/',
@@ -164,6 +165,7 @@ describe('route page entries', () => {
             '/enhanced/hidden-content-page/',
             '/enhanced/bookmarks/library-',
             '/enhanced/bookmarks/page.ts',
+            '/maintainerr/',
         ];
         for (const fragment of forbidden) {
             expect(inputs.filter((file) => file.includes(fragment)), fragment).toEqual([]);

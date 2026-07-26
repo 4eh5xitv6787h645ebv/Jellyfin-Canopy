@@ -11,8 +11,13 @@ const REDACTED = '<redacted>';
 // and serialized header objects. API keys are also present in service config
 // objects (for example SeerrApiKey and TMDB_API_KEY), so match any field ending
 // in ApiKey rather than maintaining a list that can silently fall behind.
+// Maintainerr has no credential, but its internal server URL and access-URL
+// mappings are private topology and receive the same fail-closed treatment in
+// retained logs. The standalone ExternalUrl is an explicitly browser-facing
+// value and remains useful diagnostic evidence.
 const API_KEY_SOURCE = String.raw`(?:[A-Za-z0-9_-]*api[-_]?key)`;
-const SENSITIVE_KEY_SOURCE = String.raw`(?:X-MediaBrowser-Token|X-Emby-Token|${API_KEY_SOURCE}|access[-_]?token|auth[-_]?token|token)`;
+const PRIVATE_TOPOLOGY_SOURCE = String.raw`(?:MaintainerrUrl(?:Mappings)?)`;
+const SENSITIVE_KEY_SOURCE = String.raw`(?:X-MediaBrowser-Token|X-Emby-Token|${API_KEY_SOURCE}|${PRIVATE_TOPOLOGY_SOURCE}|access[-_]?token|auth[-_]?token|token)`;
 const AUTHORIZATION_KEY_SOURCE = String.raw`(?:Authorization|X-Emby-Authorization|X-MediaBrowser-Authorization)`;
 
 // Accept ordinary object/header keys, escaped JSON keys, accessor notation such

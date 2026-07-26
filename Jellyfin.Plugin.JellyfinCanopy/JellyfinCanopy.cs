@@ -308,6 +308,36 @@ namespace Jellyfin.Plugin.JellyfinCanopy
             Sanitize(config.RadarrExternalUrl, v => config.RadarrExternalUrl = v, nameof(config.RadarrExternalUrl), _logger);
             Sanitize(config.BazarrExternalUrl, v => config.BazarrExternalUrl = v, nameof(config.BazarrExternalUrl), _logger);
 
+            // Maintainerr 3.18 has no authentication. Keep its internal fetch target
+            // private, normalize it without losing BASE_PATH, and never echo the raw
+            // LAN URL into logs when a direct configuration write is malformed.
+            if (!Helpers.ServiceUrlResolver.TryNormalizeHttpBaseUrl(config.MaintainerrUrl, out var maintainerrInternal))
+            {
+                if (!string.IsNullOrWhiteSpace(config.MaintainerrUrl))
+                {
+                    _logger.LogWarning("Dropped malformed Maintainerr internal URL on save.");
+                }
+
+                maintainerrInternal = string.Empty;
+            }
+
+            config.MaintainerrUrl = maintainerrInternal;
+
+            var maintainerrExternal = Helpers.ServiceUrlResolver.TryNormalizeHttpBaseUrl(
+                config.MaintainerrExternalUrl,
+                out var normalizedMaintainerrExternal)
+                    ? normalizedMaintainerrExternal
+                    : string.Empty;
+            if (!string.Equals(maintainerrExternal, config.MaintainerrExternalUrl ?? string.Empty, StringComparison.Ordinal)
+                && !string.IsNullOrWhiteSpace(config.MaintainerrExternalUrl))
+            {
+                _logger.LogWarning("Dropped malformed Maintainerr external URL on save.");
+            }
+
+            config.MaintainerrExternalUrl = maintainerrExternal;
+            config.MaintainerrUrlMappings = Helpers.ServiceUrlResolver.SanitizeUrlMappings(
+                config.MaintainerrUrlMappings);
+
             // Per-instance ExternalUrl inside the SonarrInstances/RadarrInstances JSON: the
             // config-page validator can be bypassed by a direct config POST or hand edit, so the
             // save hook is the authoritative gate. Corrupt JSON is deliberately left untouched

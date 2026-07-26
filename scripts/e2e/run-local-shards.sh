@@ -67,6 +67,7 @@ Options:
   --shards N                    Native Playwright shard count (1..16; default 4)
   --cpus-per-server N           CPU quota for each Jellyfin server (1..64; default 2)
   --allow-external-integrations Forward TMDB_* and SEERR_* environment variables
+                                (MAINTAINERR_* is always removed; its E2E is hermetic)
   -h, --help                    Show this help
 
 The 2-CPU default is the official local parity profile. Higher CPU quotas are
@@ -219,9 +220,14 @@ sanitize_external_environment() {
     # Local parity always uses the same digest-pinned containers as required
     # CI. Mutable-image probing has its own isolated compatibility workflow.
     unset JF_IMAGE JF_MOCK_IMAGE
-    (( ALLOW_EXTERNAL_INTEGRATIONS == 0 )) || return 0
 
     local name
+    while IFS= read -r name; do
+        unset "${name}"
+    done < <(compgen -A variable MAINTAINERR_)
+
+    (( ALLOW_EXTERNAL_INTEGRATIONS == 0 )) || return 0
+
     while IFS= read -r name; do
         unset "${name}"
     done < <(compgen -A variable TMDB_; compgen -A variable SEERR_; compgen -A variable RADARR_)
@@ -277,9 +283,9 @@ print_resource_plan() {
         warn "host already has ${swap_used_mib} MiB of swap in use; parallel E2E may increase swap pressure"
     fi
     if (( ALLOW_EXTERNAL_INTEGRATIONS == 1 )); then
-        warn "external TMDB/Seerr integration variables are explicitly enabled for this run"
+        warn "external TMDB/Seerr integration variables are explicitly enabled; Maintainerr remains hermetic"
     else
-        log "external TMDB_* and SEERR_* variables are removed from the runner environment"
+        log "external TMDB_*, SEERR_*, RADARR_* and MAINTAINERR_* variables are removed from the runner environment"
     fi
 }
 

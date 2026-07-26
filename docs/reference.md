@@ -4,7 +4,7 @@ This is the power-user reference for Jellyfin Canopy: a map of where every admin
 
 ## Where Settings Live
 
-Every admin option lives on one of the tabs in the plugin config page: **Dashboard** → **Plugins** → **Jellyfin Canopy**. The config page is split into twelve tabs, each owning a distinct slice of the plugin. Use this table to find the tab you need and the guide that explains it in depth.
+Every admin option lives on one of the tabs in the plugin config page: **Dashboard** → **Plugins** → **Jellyfin Canopy**. The config page is split into thirteen tabs, each owning a distinct slice of the plugin. Use this table to find the tab you need and the guide that explains it in depth.
 
 | Config-page tab | Configures | Documented in |
 |---|---|---|
@@ -13,6 +13,7 @@ Every admin option lives on one of the tabs in the plugin config page: **Dashboa
 | **Playback** | Enhanced playback settings: playback & tab-switch, auto-skip intros/outros, subtitles, panel & toast timing. | [The Enhanced Experience](enhanced.md) |
 | **Pages** | Bookmarks, Hidden Content, Spoiler Guard, Requests Page, Calendar Page. | [The Enhanced Experience](enhanced.md), [Spoiler Guard](spoiler-guard.md), [Sonarr & Radarr](sonarr-radarr.md) |
 | **Seerr** | Seerr connection and Seerr integration features. | [Discover & Request](discover.md) |
+| **Maintainerr** | Read-only connection, native admin page, item status, external links, and regular-user opt-in. | [Maintainerr](maintainerr.md) |
 | **\*arr** | Sonarr / Radarr instances and *arr features. | [Sonarr & Radarr](sonarr-radarr.md) |
 | **Elsewhere** | Elsewhere panel, TMDB API key, TMDB Reviews, Release Dates. | [Discover & Request](discover.md) |
 | **Discovery** | Discovery / Trending feed (requires a Seerr connection). | [Discover & Request](discover.md) |
@@ -23,7 +24,7 @@ Every admin option lives on one of the tabs in the plugin config page: **Dashboa
 
 !!! tip "Most features start off"
 
-    Many features are off by default and several need a one-time setup — a TMDB API key, a Seerr connection, or a Sonarr/Radarr instance — before they do anything. See [Getting Started](getting-started.md) for the first-run checklist.
+    Many features are off by default and several need a one-time setup — a TMDB API key, a Seerr connection, a Sonarr/Radarr instance, or a private Maintainerr URL — before they do anything. See [Getting Started](getting-started.md) for the first-run checklist.
 
 ## Custom CSS
 

@@ -120,6 +120,17 @@ So connecting Seerr is what brings both requests and Discovery to life. See [Dis
 
 To drive Sonarr and Radarr from inside Jellyfin — searching, adding, and managing — add one or more instances on the **\*arr** tab. The *arr features do nothing until at least one instance is configured. See [Sonarr & Radarr](sonarr-radarr.md).
 
+### Connect Maintainerr
+
+To inspect cleanup collections and item-protection status without leaving
+Jellyfin, enable Maintainerr on the **Maintainerr** tab and enter the internal
+URL reachable from the Jellyfin server. No API key is used: Maintainerr 3.18
+does not authenticate its API, so keep it private or behind a protected reverse
+proxy. Add an external browser URL separately if administrators should open
+links from Canopy, then run **Test** and confirm that Maintainerr is connected to
+this same Jellyfin system. See [Maintainerr](maintainerr.md) for the complete
+security and URL setup.
+
 ### Enable Spoiler Guard
 
 [Spoiler Guard](spoiler-guard.md) hides episode thumbnails, titles, and descriptions that could spoil what you haven't watched yet. It's **off until you enable it** on the **Pages** tab. The full walkthrough is in [Spoiler Guard](spoiler-guard.md).

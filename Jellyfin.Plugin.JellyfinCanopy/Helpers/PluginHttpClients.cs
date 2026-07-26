@@ -42,6 +42,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Helpers
         /// <summary>Fixed-origin, credential-free AniList GraphQL client.</summary>
         public const string AniListClient = "JellyfinCanopyAniList";
 
+        /// <summary>
+        /// Credential-free Maintainerr v3.18 client. Registration disables redirects
+        /// and uses the same connect-time SSRF fence as other private-network services.
+        /// </summary>
+        public const string MaintainerrClient = "JellyfinCanopyMaintainerr";
+
         public static HttpClient CreateArrClient(IHttpClientFactory factory)
         {
             // Same fallback pattern as SeerrHttpHelper.CreateClient: if the named
@@ -54,6 +60,26 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Helpers
         {
             try { return factory.CreateClient(TmdbClient); }
             catch { return factory.CreateClient(); }
+        }
+
+        public static HttpClient CreateMaintainerrClient(IHttpClientFactory factory)
+            // Unlike the general arr client, Maintainerr is an admin-configured
+            // private-network origin. Falling back to the unnamed client would
+            // silently lose the no-redirect and connect-time SSRF guarantees.
+            => factory.CreateClient(MaintainerrClient);
+
+        internal static SocketsHttpHandler CreateMaintainerrHandler()
+        {
+            var handler = ArrUrlGuard.CreateGuardedHandler(allowAutoRedirect: false);
+            // IHttpClientFactory pools primary handlers. Disable the default cookie
+            // jar so an upstream Set-Cookie can never become a credential-bearing
+            // Cookie header on a later Maintainerr request.
+            handler.UseCookies = false;
+            handler.Credentials = null;
+            // A proxy would resolve/connect to the target on our behalf, bypassing
+            // ArrUrlGuard's authoritative connect-time DNS-rebinding check.
+            handler.UseProxy = false;
+            return handler;
         }
 
         /// <summary>

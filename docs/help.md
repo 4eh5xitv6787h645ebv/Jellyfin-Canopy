@@ -40,6 +40,20 @@ No. Seerr is an independent project; Jellyfin Canopy integrates with it to enric
 
     Please report plugin issues to the [Jellyfin Canopy repository](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues), **not** to the Seerr team.
 
+#### Is Jellyfin Canopy affiliated with Maintainerr?
+
+No. Maintainerr is an independent project. Canopy provides a deliberately
+bounded read-only integration, but it is not endorsed or supported by the
+Maintainerr team.
+
+!!! warning "Report Canopy issues to Canopy"
+
+    Report connection, page, authorization, or item-status problems to the
+    [Jellyfin Canopy repository](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues),
+    not to the Maintainerr project. Do not include internal URLs, server names,
+    collection/rule names, mount paths, raw responses, or logs until you have
+    inspected and redacted them.
+
 #### Whatever happened to the userscript?
 
 The userscript has been discontinued — the plugin's functionality has grown well beyond what a userscript could carry. If you only need basic keyboard shortcuts, the last userscript version is still available [here](https://github.com/n00bcodr/Jellyfin-Enhanced/raw/05dd5b54802f149e45c76102dabf6235aaf7a5fb/jf_enhanced.user.js).
@@ -128,6 +142,28 @@ A user without access looks like this:
 ![Users without access](images/users-no-access.png)
 
 If it still won't connect, check the logs from three places: the browser console (++f12++) for client errors, the Jellyfin server logs for proxy errors, and the Seerr logs for API errors. The full Seerr setup lives in [Discover & Request](discover.md).
+
+#### Maintainerr won't connect or shows partial data
+
+Maintainerr 3.18 has no API authentication, so there is no key to correct. Check
+that the **Internal URL** is reachable from the Jellyfin server, has no
+credentials/query/fragment, and includes any configured Maintainerr
+`BASE_PATH`. Run **Test** and review the exact sanitized state:
+
+- **redirect or HTML body** — a reverse proxy/auth portal intercepted the
+  server-to-server request; Canopy deliberately does not follow it;
+- **timeout or blocked URL** — correct routing/DNS and ensure the destination is
+  not metadata, link-local, unspecified, or multicast;
+- **Jellyfin identity mismatch** — configure Maintainerr for this same Jellyfin
+  server; item-specific status stays fail-closed until it matches;
+- **unsupported** — an optional 3.18 endpoint is absent, so only that panel is
+  unavailable;
+- **malformed or oversized** — fix the proxy/upstream response rather than
+  treating it as an empty collection list.
+
+Keep the unauthenticated Maintainerr service private or behind a protected
+proxy. The complete setup, privacy model, and endpoint allowlist are in
+[Maintainerr](maintainerr.md).
 
 #### Poster tags aren't showing up
 
@@ -285,7 +321,7 @@ When something misbehaves, the fastest path is usually to gather the right logs,
 
 !!! tip "Feature-specific troubleshooting lives with each feature"
 
-    For issues tied to one area, go straight to that guide: [The Enhanced Experience](enhanced.md) (shortcuts, tags, pause screen, auto-skip, bookmarks, hidden content), [Discover & Request](discover.md) (Elsewhere, Discovery, Seerr, reviews), [Sonarr & Radarr](sonarr-radarr.md) (the \*arr integration and its calendar/requests pages), [Spoiler Guard](spoiler-guard.md), and [Getting Started](getting-started.md) (install, migration, permissions).
+    For issues tied to one area, go straight to that guide: [The Enhanced Experience](enhanced.md) (shortcuts, tags, pause screen, auto-skip, bookmarks, hidden content), [Discover & Request](discover.md) (Elsewhere, Discovery, Seerr, reviews), [Maintainerr](maintainerr.md) (connection, identity, partial capabilities, and privacy), [Sonarr & Radarr](sonarr-radarr.md) (the \*arr integration and its calendar/requests pages), [Spoiler Guard](spoiler-guard.md), and [Getting Started](getting-started.md) (install, migration, permissions).
 
 ### Gather logs before you report
 
@@ -323,6 +359,8 @@ When you write up the report, include: the plugin version, Jellyfin version, bro
 | Plugin installed but scripts don't load | Scripts are injected at request time by the built-in middleware in the default config — see the scripts-not-loading fix in [Getting Started](getting-started.md). The "Jellyfin Canopy Startup" task only matters in the legacy on-disk `index.html` rewrite mode. |
 | Reviews / Elsewhere / Seerr icons not working | TMDB API may be blocked in your region — see [Seerr's TMDB troubleshooting](https://docs.seerr.dev/troubleshooting#tmdb-failed-to-retrievefetch-xxx). |
 | Seerr search not working | Enable "Jellyfin Sign-In" in Seerr, then either enable plugin auto-import and run "Import Users Now" or import users manually in Seerr. Also verify the user isn't on the blocked-users list. |
+| Maintainerr redirects, returns HTML, or times out | Use an internal URL the Jellyfin server can reach directly, include `BASE_PATH`, and permit the exact read-only paths through any proxy. Canopy does not follow login redirects or accept HTML as JSON. See [Maintainerr](maintainerr.md#troubleshooting). |
+| Maintainerr shows an identity warning or partial panel | Point Maintainerr at the same Jellyfin system for item status. An absent optional 3.18 endpoint degrades only its panel; malformed/oversized data is an explicit error, not an empty result. |
 | Tags not appearing | Enable them in settings, clear the cache, and verify the metadata exists (see [Poster tags aren't showing up](#poster-tags-arent-showing-up)). |
 | Bookmarks not saving | Check the server logs and verify the user data folder permissions. |
 | Admin config page tabs not switching | May be caused by Cloudflare Rocket Loader — try disabling it for your Jellyfin domain. See [Getting Started](getting-started.md). |
