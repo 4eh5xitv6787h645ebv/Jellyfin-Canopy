@@ -222,9 +222,6 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             var deviceId = User.FindFirst("Jellyfin-DeviceId")?.Value;
             if (!string.IsNullOrWhiteSpace(deviceId))
             {
-                // NOTE: UserHelper reads the JF12 claim ("Jellyfin-UserId");
-                // the base controller's GetCurrentUserId() probes legacy claim
-                // types (NameIdentifier/sub/Sid) that JF12 does not set.
                 _liveSessionRegistry.Touch(deviceId, UserHelper.GetCurrentUserId(User) ?? Guid.Empty);
             }
         }

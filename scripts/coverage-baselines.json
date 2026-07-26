@@ -21,12 +21,12 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 26967,
-        "totalLines": 35660
+        "coveredLines": 26975,
+        "totalLines": 35661
       },
       "tolerance": {
         "missingCoveredLines": 5,
-        "rationale": "The combined tree includes both the Maintainerr v3.18 read-only integration and the complete elevated, actor-isolated Canopy User Settings resources for Hidden Content preferences, Spoiler Guard preferences, persistent Spoiler Guard overrides, and bounded Hidden Content inventory/item administration. Relative to their shared 22,637/31,176 baseline, the two changes add 4,484 instrumented lines and 4,330 covered lines across closed transport authorization, caller-scoped projection, bounded cache/admission, target-isolated persistence, concurrency, compatibility, opaque-data preservation, and negative-boundary regressions, raising coverage to 26,967/35,660 (75.623%). Three clean combined .NET 10.0.9/Coverlet runs on 2026-07-26 each passed all 2,274 tests and reproduced exactly 26,967/35,660. Retaining the existing evidence-bounded five-line Coverlet tolerance makes the minimum 26,962/35,660 (75.609%), stricter than both the pre-rebase admin-target floor of 25,462/33,961 (74.974%) and the Maintainerr-only floor of 24,134/32,875 (73.412%). coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, and broad-tolerance negative boundaries."
+        "rationale": "The #370 controller identity fix adds the Jellyfin 12 Jellyfin-UserId claim to the shared session-control resolver while retaining all legacy fallbacks, with direct behavioral coverage for claim precedence and compatibility. Two clean .NET 10.0.9/Coverlet runs on 2026-07-27 each passed all 2,279 tests and reproduced 35,661 instrumented lines; Coverlet reported 26,973 and 26,975 covered lines, so the reviewed high-water advances from 26,967/35,660 (75.623%) to 26,975/35,661 (75.643%). Retaining the existing evidence-bounded five-line Coverlet tolerance covers that two-line instrumentation variance and makes the minimum 26,970/35,661 (75.629%), stricter than the prior 26,962/35,660 floor (75.609%). coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, and broad-tolerance negative boundaries."
       }
     }
   }
