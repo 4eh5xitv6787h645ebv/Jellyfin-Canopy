@@ -90,7 +90,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     if (_tagCacheService.Count == 0)
                     {
                         _logger.LogInformation("[TagCache] No cache on disk, building initial cache...");
-                        _tagCacheService.BuildFullCache(null, CancellationToken.None);
+                        _tagCacheService.BuildFullCache(null, cancellationToken);
                     }
                 }
                 catch (System.Exception ex)
