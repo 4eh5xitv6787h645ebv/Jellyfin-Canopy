@@ -30,7 +30,9 @@ The plugin automatically follows the language set in your Jellyfin user profile.
 
 Open **Dashboard** → **Users**, select the user, open the page for editing their profile and personal preferences, then click **Canopy User Settings**. The panel displays an **Editing settings for _name_** banner so you can confirm which account is being edited.
 
-The editable settings, display-language choice, and shortcut overrides are saved server-side for the selected user only. They normally take effect after that user refreshes or reloads their client; the administrator's own settings and active shortcuts do not change. Hidden Content and Spoiler Guard controls are unavailable in this cross-user panel, and browser-local actions such as clearing the translation cache cannot be applied to another user's browser. See [The Enhanced Experience](enhanced.md) for details.
+The editable settings, display-language choice, shortcut overrides, Hidden Content preferences and item management, and Spoiler Guard policy preferences and persistent-title entries are saved server-side for the selected user only. The persistent Spoiler Guard manager covers Series, Movies, Collections, pending TV, and pending Movies in a bounded 50-row view. They normally take effect after that user refreshes or reloads their client; the administrator's own settings, active shortcuts, Hidden Content state, and Spoiler Guard state do not change. Saves announce progress and acknowledgement, and a conflict refreshes or rebases on authoritative target state instead of overwriting it.
+
+Only actions that exist solely in the current browser are unavailable. For example, clearing the translation cache would affect the administrator's browser, and a temporary confirmation snooze cannot be applied to another user's device. Server-persisted **Don't ask again** preferences are still editable. See [The Enhanced Experience](enhanced.md) for details.
 
 #### Is Jellyfin Canopy affiliated with Seerr?
 
@@ -90,7 +92,7 @@ To get it working:
 1. Install a media segment provider (for example, the Intro Skipper plugin).
 2. Enable intro/outro detection in that provider's settings.
 3. Run detection on your library so segments are created.
-4. Enable auto-skip in Jellyfin Canopy settings (Intro and/or Outro).
+4. Enable auto-skip in **Canopy User Settings** (Intro and/or Outro).
 5. Confirm segments were detected for your media (check `GET /MediaSegments/{itemId}`).
 
 !!! note "How the skip behaves"

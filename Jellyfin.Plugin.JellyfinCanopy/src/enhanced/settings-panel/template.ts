@@ -51,11 +51,12 @@ export function buildPanelHtml(ctx: PanelContext): string {
     const settings = ctx.editor.settings as Record<string, any>;
     const shortcuts = ctx.editor.shortcuts;
     const activeShortcuts = ctx.editor.activeShortcuts;
+    const hiddenSettings = ctx.editor.hiddenContentSettings;
+    const spoilerPrefs = ctx.editor.spoilerGuardPrefs;
     const targetBanner = ctx.editor.mode === 'admin-target'
         ? `<div class="jc-admin-target-banner" role="status" style="font-size:12px; color:rgba(255,255,255,0.88); padding:5px 9px; border-radius:999px; background:rgba(47,128,255,0.22); border:1px solid rgba(0,212,255,0.34);">${escapeHtml(
-            tWithFallback(
+            JC.t!(
                 'panel_admin_target_banner',
-                `Editing settings for ${ctx.editor.targetDisplayName}`,
                 { name: ctx.editor.targetDisplayName },
             )
         )}</div>`
@@ -105,6 +106,9 @@ export function buildPanelHtml(ctx: PanelContext): string {
                 #jellyfin-canopy-panel .jc-pane { display: none; }
                 #jellyfin-canopy-panel .jc-pane.active { display: block; }
                 #jellyfin-canopy-panel .jc-pane-title { display: flex; align-items: center; gap: 8px; margin: 14px 0 12px 0; font-size: 17px; font-weight: 700; color: #fff; font-family: inherit; }
+                #jellyfin-canopy-panel .jc-spoiler-overrides-form { display:grid; grid-template-columns:minmax(110px,0.8fr) minmax(150px,1.2fr) minmax(150px,1.2fr) auto; gap:8px; align-items:end; margin-top:12px; }
+                #jellyfin-canopy-panel .jc-spoiler-override-row { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:8px; margin-bottom:6px; border:1px solid rgba(255,255,255,0.1); border-radius:5px; }
+                #jellyfin-canopy-panel .jc-spoiler-override-row-text { min-width:0; overflow-wrap:anywhere; }
                 #jellyfin-canopy-panel .jc-pane-back { display: none; align-items: center; gap: 6px; margin: 12px 0 0 0; padding: 6px 10px; border: none; border-radius: 8px; background: rgba(255,255,255,0.08); color: #fff; font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer; align-self: flex-start; }
                 @media (max-width: 760px) {
                     #jellyfin-canopy-panel { top: 0 !important; left: 0 !important; transform: none !important; width: 100vw !important; max-width: 100vw !important; height: 100dvh !important; max-height: 100dvh !important; border-radius: 0 !important; border: none !important; box-sizing: border-box !important; }
@@ -113,6 +117,7 @@ export function buildPanelHtml(ctx: PanelContext): string {
                     #jellyfin-canopy-panel .jc-panel-main { position: absolute; inset: 0; z-index: 2; background: rgb(24, 24, 24); transform: translateX(102%); transition: transform 200ms ease; }
                     #jellyfin-canopy-panel .jc-panel-body.jc-pane-open .jc-panel-main { transform: translateX(0); }
                     #jellyfin-canopy-panel .jc-panel-body.jc-pane-open .jc-pane-back { display: inline-flex; }
+                    #jellyfin-canopy-panel .jc-spoiler-overrides-form { grid-template-columns:1fr; }
                 }
                 @keyframes shake { 10%, 90% { transform: translateX(-1px); } 20%, 80% { transform: translateX(2px); } 30%, 50%, 70% { transform: translateX(-4px); } 40%, 60% { transform: translateX(4px); } }
                 .shake-error { animation: shake 0.5s ease-in-out; }
@@ -478,33 +483,25 @@ export function buildPanelHtml(ctx: PanelContext): string {
                         </div>
                     </section>
                     ${/* Hidden Content settings — only rendered when the module is initialized (controlled by HiddenContentEnabled config) */ ''}
-                    ${ctx.editor.mode === 'admin-target' ? `
-                    <section class="jc-pane" data-pane="hidden-content">
+                    ${hiddenSettings ? `<section class="jc-pane" data-pane="hidden-content">
                         <h3 class="jc-pane-title">${JC.icon!(JC.IconName!.EYE)} ${JC.t!('hidden_content_settings_title')}</h3>
-                        <div style="padding:12px; background:${presetBoxBackground}; border-radius:6px; border-left:3px solid ${toggleAccentColor}; color:rgba(255,255,255,0.72);">
-                            ${escapeHtml(tWithFallback(
-                                'panel_admin_target_hidden_content_unavailable',
-                                'Hidden Content controls are unavailable while editing another user. Sign in as that user to manage them.',
-                            ))}
-                        </div>
-                    </section>` : (JC as any).hiddenContent ? `<section class="jc-pane" data-pane="hidden-content">
-                        <h3 class="jc-pane-title">${JC.icon!(JC.IconName!.EYE)} ${JC.t!('hidden_content_settings_title')}</h3>
+                        <div id="hiddenContentSaveStatus" role="status" aria-live="polite" style="min-height:18px; margin:-6px 4px 8px; font-size:11px; color:rgba(255,255,255,0.68);"></div>
                         <div style="padding: 0 16px 16px 16px;">
                             <div style="margin-bottom: 12px; padding: 12px; background: ${presetBoxBackground}; border-radius: 6px; border-left: 3px solid ${toggleAccentColor};">
                                 <label style="display: flex; align-items: center; gap: 12px; cursor: pointer;">
-                                    <input type="checkbox" id="hiddenContentEnabledToggle" ${(JC as any).hiddenContent?.getSettings()?.enabled !== false ? 'checked' : ''} style="width:18px; height:18px; accent-color:${toggleAccentColor}; cursor:pointer;">
+                                    <input type="checkbox" id="hiddenContentEnabledToggle" ${hiddenSettings.enabled !== false ? 'checked' : ''} style="width:18px; height:18px; accent-color:${toggleAccentColor}; cursor:pointer;">
                                     <div><div style="font-weight:500;">${JC.t!('hidden_content_toggle_label')}</div><div style="font-size:12px; color:rgba(255,255,255,0.6); margin-top:2px;">${JC.t!('hidden_content_toggle_desc')}</div></div>
                                 </label>
                             </div>
                             <div style="margin-bottom: 12px; padding: 12px; background: ${presetBoxBackground}; border-radius: 6px; border-left: 3px solid ${toggleAccentColor};">
                                 <label style="display: flex; align-items: center; gap: 12px; cursor: pointer;">
-                                    <input type="checkbox" id="hiddenShowHideButtons" ${(JC as any).hiddenContent?.getSettings()?.showHideButtons !== false ? 'checked' : ''} style="width:18px; height:18px; accent-color:${toggleAccentColor}; cursor:pointer;">
+                                    <input type="checkbox" id="hiddenShowHideButtons" ${hiddenSettings.showHideButtons !== false ? 'checked' : ''} style="width:18px; height:18px; accent-color:${toggleAccentColor}; cursor:pointer;">
                                     <div><div style="font-weight:500;">${JC.t!('hidden_content_show_buttons_label')}</div><div style="font-size:12px; color:rgba(255,255,255,0.6); margin-top:2px;">${JC.t!('hidden_content_show_buttons_desc')}</div></div>
                                 </label>
                             </div>
                             <div style="margin-bottom: 12px; padding: 12px; background: ${presetBoxBackground}; border-radius: 6px; border-left: 3px solid rgba(255,255,255,0.15);">
                                 <label style="display: flex; align-items: center; gap: 12px; cursor: pointer;">
-                                    <input type="checkbox" id="hiddenShowConfirmation" ${(JC as any).hiddenContent?.getSettings()?.showHideConfirmation !== false ? 'checked' : ''} style="width:16px; height:16px; accent-color:${toggleAccentColor}; cursor:pointer;">
+                                    <input type="checkbox" id="hiddenShowConfirmation" ${hiddenSettings.showHideConfirmation !== false ? 'checked' : ''} style="width:16px; height:16px; accent-color:${toggleAccentColor}; cursor:pointer;">
                                     <div><div style="font-weight:500; font-size:13px;">${JC.t!('hidden_content_confirm_toggle_label')}</div><div style="font-size:11px; color:rgba(255,255,255,0.5); margin-top:1px;">${JC.t!('hidden_content_confirm_toggle_desc')}</div></div>
                                 </label>
                             </div>
@@ -512,25 +509,25 @@ export function buildPanelHtml(ctx: PanelContext): string {
                                 <div style="font-weight:500; font-size:13px; color:rgba(255,255,255,0.7); margin-bottom:8px; padding-left:4px;">${JC.t!('hidden_content_button_section_title')}</div>
                                 <div style="margin-bottom: 8px; padding: 12px; background: ${presetBoxBackground}; border-radius: 6px; border-left: 3px solid rgba(255,255,255,0.15);">
                                     <label style="display: flex; align-items: center; gap: 12px; cursor: pointer;">
-                                        <input type="checkbox" id="hiddenShowButtonSeerr" ${(JC as any).hiddenContent?.getSettings()?.showButtonSeerr !== false ? 'checked' : ''} style="width:16px; height:16px; accent-color:${toggleAccentColor}; cursor:pointer;">
+                                        <input type="checkbox" id="hiddenShowButtonSeerr" ${hiddenSettings.showButtonSeerr !== false ? 'checked' : ''} style="width:16px; height:16px; accent-color:${toggleAccentColor}; cursor:pointer;">
                                         <div><div style="font-weight:500; font-size:13px;">${JC.t!('hidden_content_show_button_seerr')}</div><div style="font-size:11px; color:rgba(255,255,255,0.5); margin-top:1px;">${JC.t!('hidden_content_show_button_seerr_desc')}</div></div>
                                     </label>
                                 </div>
                                 <div style="margin-bottom: 8px; padding: 12px; background: ${presetBoxBackground}; border-radius: 6px; border-left: 3px solid rgba(255,255,255,0.15);">
                                     <label style="display: flex; align-items: center; gap: 12px; cursor: pointer;">
-                                        <input type="checkbox" id="hiddenShowButtonLibrary" ${(JC as any).hiddenContent?.getSettings()?.showButtonLibrary ? 'checked' : ''} style="width:16px; height:16px; accent-color:${toggleAccentColor}; cursor:pointer;">
+                                        <input type="checkbox" id="hiddenShowButtonLibrary" ${hiddenSettings.showButtonLibrary ? 'checked' : ''} style="width:16px; height:16px; accent-color:${toggleAccentColor}; cursor:pointer;">
                                         <div><div style="font-weight:500; font-size:13px;">${JC.t!('hidden_content_show_button_library')}</div><div style="font-size:11px; color:rgba(255,255,255,0.5); margin-top:1px;">${JC.t!('hidden_content_show_button_library_desc')}</div></div>
                                     </label>
                                 </div>
                                 <div style="margin-bottom: 8px; padding: 12px; background: ${presetBoxBackground}; border-radius: 6px; border-left: 3px solid rgba(255,255,255,0.15);">
                                     <label style="display: flex; align-items: center; gap: 12px; cursor: pointer;">
-                                        <input type="checkbox" id="hiddenShowButtonDetails" ${(JC as any).hiddenContent?.getSettings()?.showButtonDetails !== false ? 'checked' : ''} style="width:16px; height:16px; accent-color:${toggleAccentColor}; cursor:pointer;">
+                                        <input type="checkbox" id="hiddenShowButtonDetails" ${hiddenSettings.showButtonDetails !== false ? 'checked' : ''} style="width:16px; height:16px; accent-color:${toggleAccentColor}; cursor:pointer;">
                                         <div><div style="font-weight:500; font-size:13px;">${JC.t!('hidden_content_show_button_details')}</div><div style="font-size:11px; color:rgba(255,255,255,0.5); margin-top:1px;">${JC.t!('hidden_content_show_button_details_desc')}</div></div>
                                     </label>
                                 </div>
                                 <div style="margin-bottom: 8px; padding: 12px; background: ${presetBoxBackground}; border-radius: 6px; border-left: 3px solid rgba(255,255,255,0.15);">
                                     <label style="display: flex; align-items: center; gap: 12px; cursor: pointer;">
-                                        <input type="checkbox" id="hiddenShowButtonCast" ${(JC as any).hiddenContent?.getSettings()?.showButtonCast ? 'checked' : ''} style="width:16px; height:16px; accent-color:${toggleAccentColor}; cursor:pointer;">
+                                        <input type="checkbox" id="hiddenShowButtonCast" ${hiddenSettings.showButtonCast ? 'checked' : ''} style="width:16px; height:16px; accent-color:${toggleAccentColor}; cursor:pointer;">
                                         <div><div style="font-weight:500; font-size:13px;">${JC.t!('hidden_content_show_button_cast')}</div><div style="font-size:11px; color:rgba(255,255,255,0.5); margin-top:1px;">${JC.t!('hidden_content_show_button_cast_desc')}</div></div>
                                     </label>
                                 </div>
@@ -538,55 +535,55 @@ export function buildPanelHtml(ctx: PanelContext): string {
                             <div id="hiddenContentSurfaceToggles" style="margin-bottom: 12px;">
                                 <div style="margin-bottom: 8px; padding: 12px; background: ${presetBoxBackground}; border-radius: 6px; border-left: 3px solid rgba(255,255,255,0.15);">
                                     <label style="display: flex; align-items: center; gap: 12px; cursor: pointer;">
-                                        <input type="checkbox" id="hiddenFilterLibrary" ${(JC as any).hiddenContent?.getSettings()?.filterLibrary !== false ? 'checked' : ''} style="width:16px; height:16px; accent-color:${toggleAccentColor}; cursor:pointer;">
+                                        <input type="checkbox" id="hiddenFilterLibrary" ${hiddenSettings.filterLibrary !== false ? 'checked' : ''} style="width:16px; height:16px; accent-color:${toggleAccentColor}; cursor:pointer;">
                                         <div><div style="font-weight:500; font-size:13px;">${JC.t!('hidden_content_filter_library')}</div><div style="font-size:11px; color:rgba(255,255,255,0.5); margin-top:1px;">${JC.t!('hidden_content_filter_library_desc')}</div></div>
                                     </label>
                                 </div>
                                 <div style="margin-bottom: 8px; padding: 12px; background: ${presetBoxBackground}; border-radius: 6px; border-left: 3px solid rgba(255,255,255,0.15);">
                                     <label style="display: flex; align-items: center; gap: 12px; cursor: pointer;">
-                                        <input type="checkbox" id="hiddenFilterDiscovery" ${(JC as any).hiddenContent?.getSettings()?.filterDiscovery !== false ? 'checked' : ''} style="width:16px; height:16px; accent-color:${toggleAccentColor}; cursor:pointer;">
+                                        <input type="checkbox" id="hiddenFilterDiscovery" ${hiddenSettings.filterDiscovery !== false ? 'checked' : ''} style="width:16px; height:16px; accent-color:${toggleAccentColor}; cursor:pointer;">
                                         <div><div style="font-weight:500; font-size:13px;">${JC.t!('hidden_content_filter_discovery')}</div><div style="font-size:11px; color:rgba(255,255,255,0.5); margin-top:1px;">${JC.t!('hidden_content_filter_discovery_desc')}</div></div>
                                     </label>
                                 </div>
                                 <div style="margin-bottom: 8px; padding: 12px; background: ${presetBoxBackground}; border-radius: 6px; border-left: 3px solid rgba(255,255,255,0.15);">
                                     <label style="display: flex; align-items: center; gap: 12px; cursor: pointer;">
-                                        <input type="checkbox" id="hiddenFilterSearch" ${(JC as any).hiddenContent?.getSettings()?.filterSearch !== false ? 'checked' : ''} style="width:16px; height:16px; accent-color:${toggleAccentColor}; cursor:pointer;">
+                                        <input type="checkbox" id="hiddenFilterSearch" ${hiddenSettings.filterSearch !== false ? 'checked' : ''} style="width:16px; height:16px; accent-color:${toggleAccentColor}; cursor:pointer;">
                                         <div><div style="font-weight:500; font-size:13px;">${JC.t!('hidden_content_filter_search')}</div><div style="font-size:11px; color:rgba(255,255,255,0.5); margin-top:1px;">${JC.t!('hidden_content_filter_search_desc')}</div></div>
                                     </label>
                                 </div>
                                 <div style="margin-bottom: 8px; padding: 12px; background: ${presetBoxBackground}; border-radius: 6px; border-left: 3px solid rgba(255,255,255,0.15);">
                                     <label style="display: flex; align-items: center; gap: 12px; cursor: pointer;">
-                                        <input type="checkbox" id="hiddenFilterCalendar" ${(JC as any).hiddenContent?.getSettings()?.filterCalendar !== false ? 'checked' : ''} style="width:16px; height:16px; accent-color:${toggleAccentColor}; cursor:pointer;">
+                                        <input type="checkbox" id="hiddenFilterCalendar" ${hiddenSettings.filterCalendar !== false ? 'checked' : ''} style="width:16px; height:16px; accent-color:${toggleAccentColor}; cursor:pointer;">
                                         <div><div style="font-weight:500; font-size:13px;">${JC.t!('hidden_content_filter_calendar')}</div><div style="font-size:11px; color:rgba(255,255,255,0.5); margin-top:1px;">${JC.t!('hidden_content_filter_calendar_desc')}</div></div>
                                     </label>
                                 </div>
                                 <div style="margin-bottom: 8px; padding: 12px; background: ${presetBoxBackground}; border-radius: 6px; border-left: 3px solid rgba(255,255,255,0.15);">
                                     <label style="display: flex; align-items: center; gap: 12px; cursor: pointer;">
-                                        <input type="checkbox" id="hiddenFilterUpcoming" ${(JC as any).hiddenContent?.getSettings()?.filterUpcoming !== false ? 'checked' : ''} style="width:16px; height:16px; accent-color:${toggleAccentColor}; cursor:pointer;">
+                                        <input type="checkbox" id="hiddenFilterUpcoming" ${hiddenSettings.filterUpcoming !== false ? 'checked' : ''} style="width:16px; height:16px; accent-color:${toggleAccentColor}; cursor:pointer;">
                                         <div><div style="font-weight:500; font-size:13px;">${JC.t!('hidden_content_filter_upcoming')}</div><div style="font-size:11px; color:rgba(255,255,255,0.5); margin-top:1px;">${JC.t!('hidden_content_filter_upcoming_desc')}</div></div>
                                     </label>
                                 </div>
                                 <div style="margin-bottom: 8px; padding: 12px; background: ${presetBoxBackground}; border-radius: 6px; border-left: 3px solid rgba(255,255,255,0.15);">
                                     <label style="display: flex; align-items: center; gap: 12px; cursor: pointer;">
-                                        <input type="checkbox" id="hiddenFilterRecommendations" ${(JC as any).hiddenContent?.getSettings()?.filterRecommendations !== false ? 'checked' : ''} style="width:16px; height:16px; accent-color:${toggleAccentColor}; cursor:pointer;">
+                                        <input type="checkbox" id="hiddenFilterRecommendations" ${hiddenSettings.filterRecommendations !== false ? 'checked' : ''} style="width:16px; height:16px; accent-color:${toggleAccentColor}; cursor:pointer;">
                                         <div><div style="font-weight:500; font-size:13px;">${JC.t!('hidden_content_filter_recommendations')}</div><div style="font-size:11px; color:rgba(255,255,255,0.5); margin-top:1px;">${JC.t!('hidden_content_filter_recommendations_desc')}</div></div>
                                     </label>
                                 </div>
                                 <div style="margin-bottom: 8px; padding: 12px; background: ${presetBoxBackground}; border-radius: 6px; border-left: 3px solid rgba(255,255,255,0.15);">
                                     <label style="display: flex; align-items: center; gap: 12px; cursor: pointer;">
-                                        <input type="checkbox" id="hiddenFilterRequests" ${(JC as any).hiddenContent?.getSettings()?.filterRequests !== false ? 'checked' : ''} style="width:16px; height:16px; accent-color:${toggleAccentColor}; cursor:pointer;">
+                                        <input type="checkbox" id="hiddenFilterRequests" ${hiddenSettings.filterRequests !== false ? 'checked' : ''} style="width:16px; height:16px; accent-color:${toggleAccentColor}; cursor:pointer;">
                                         <div><div style="font-weight:500; font-size:13px;">${JC.t!('hidden_content_filter_requests')}</div><div style="font-size:11px; color:rgba(255,255,255,0.5); margin-top:1px;">${JC.t!('hidden_content_filter_requests_desc')}</div></div>
                                     </label>
                                 </div>
                                 <div style="margin-bottom: 8px; padding: 12px; background: ${presetBoxBackground}; border-radius: 6px; border-left: 3px solid rgba(255,255,255,0.15);">
                                     <label style="display: flex; align-items: center; gap: 12px; cursor: pointer;">
-                                        <input type="checkbox" id="hiddenFilterNextUp" ${(JC as any).hiddenContent?.getSettings()?.filterNextUp !== false ? 'checked' : ''} style="width:16px; height:16px; accent-color:${toggleAccentColor}; cursor:pointer;">
+                                        <input type="checkbox" id="hiddenFilterNextUp" ${hiddenSettings.filterNextUp !== false ? 'checked' : ''} style="width:16px; height:16px; accent-color:${toggleAccentColor}; cursor:pointer;">
                                         <div><div style="font-weight:500; font-size:13px;">${JC.t!('hidden_content_filter_nextup')}</div><div style="font-size:11px; color:rgba(255,255,255,0.5); margin-top:1px;">${JC.t!('hidden_content_filter_nextup_desc')}</div></div>
                                     </label>
                                 </div>
                                 <div style="margin-bottom: 8px; padding: 12px; background: ${presetBoxBackground}; border-radius: 6px; border-left: 3px solid rgba(255,255,255,0.15);">
                                     <label style="display: flex; align-items: center; gap: 12px; cursor: pointer;">
-                                        <input type="checkbox" id="hiddenFilterContinueWatching" ${(JC as any).hiddenContent?.getSettings()?.filterContinueWatching !== false ? 'checked' : ''} style="width:16px; height:16px; accent-color:${toggleAccentColor}; cursor:pointer;">
+                                        <input type="checkbox" id="hiddenFilterContinueWatching" ${hiddenSettings.filterContinueWatching !== false ? 'checked' : ''} style="width:16px; height:16px; accent-color:${toggleAccentColor}; cursor:pointer;">
                                         <div><div style="font-weight:500; font-size:13px;">${JC.t!('hidden_content_filter_continue')}</div><div style="font-size:11px; color:rgba(255,255,255,0.5); margin-top:1px;">${JC.t!('hidden_content_filter_continue_desc')}</div></div>
                                     </label>
                                 </div>
@@ -595,31 +592,22 @@ export function buildPanelHtml(ctx: PanelContext): string {
                                 <div style="font-weight:500; font-size:13px; color:rgba(255, 180, 50, 0.9); margin-bottom:8px; padding-left:4px;">${JC.t!('hidden_content_experimental_label')}</div>
                                 <div style="padding: 12px; background: rgba(255, 180, 50, 0.05); border-radius: 6px; border-left: 3px solid rgba(255, 180, 50, 0.3);">
                                     <label style="display: flex; align-items: center; gap: 12px; cursor: pointer;">
-                                        <input type="checkbox" id="hiddenExperimentalCollections" ${(JC as any).hiddenContent?.getSettings()?.experimentalHideCollections ? 'checked' : ''} style="width:16px; height:16px; accent-color:rgba(255, 180, 50, 0.8); cursor:pointer;">
+                                        <input type="checkbox" id="hiddenExperimentalCollections" ${hiddenSettings.experimentalHideCollections ? 'checked' : ''} style="width:16px; height:16px; accent-color:rgba(255, 180, 50, 0.8); cursor:pointer;">
                                         <div><div style="font-weight:500; font-size:13px;">${JC.t!('hidden_content_experimental_collections')}</div><div style="font-size:11px; color:rgba(255,255,255,0.5); margin-top:1px;">${JC.t!('hidden_content_experimental_collections_desc')}</div></div>
                                     </label>
                                 </div>
                             </div>
                             <div style="padding: 12px; background: ${presetBoxBackground}; border-radius: 6px; border-left: 3px solid ${toggleAccentColor};">
                                 <button id="manageHiddenContentBtn" style="width: 100%; padding: 12px; background: ${toggleAccentColor}; color: white; border: none; border-radius: 6px; font-size: 14px; font-weight: 600; cursor: pointer; font-family: inherit; transition: opacity 0.2s;" onmouseover="this.style.opacity='0.8'" onmouseout="this.style.opacity='1'">
-                                    ${JC.t!('hidden_content_manage_button')} (${(JC as any).hiddenContent?.getHiddenCount() || 0})
+                                    ${JC.t!('hidden_content_manage_button')} (${Number(ctx.editor.hiddenContentCount) || 0})
                                 </button>
                                 <div style="font-size:12px; color:rgba(255,255,255,0.6); margin-top:8px;">${JC.t!('hidden_content_manage_desc')}</div>
                             </div>
                         </div>
                     </section>` : ''}
                     ${/* Spoiler Guard user-side override panel — only rendered when the admin master switch is on. */ ''}
-                    ${ctx.editor.mode === 'admin-target' ? `
-                    <section class="jc-pane" data-pane="spoiler-guard">
-                        <h3 class="jc-pane-title">${JC.icon!(JC.IconName!.MASK)} ${JC.t!('panel_settings_spoiler_guard')}</h3>
-                        <div style="padding:12px; background:${presetBoxBackground}; border-radius:6px; border-left:3px solid ${toggleAccentColor}; color:rgba(255,255,255,0.72);">
-                            ${escapeHtml(tWithFallback(
-                                'panel_admin_target_spoiler_guard_unavailable',
-                                'Spoiler Guard controls are unavailable while editing another user. Sign in as that user to manage them.',
-                            ))}
-                        </div>
-                    </section>` : JC.pluginConfig?.SpoilerBlurEnabled === true && JC.spoilerGuard ? (() => {
-                        const sbPrefs = JC.spoilerGuard.getUserPrefs ? JC.spoilerGuard.getUserPrefs() : {};
+                    ${spoilerPrefs ? (() => {
+                        const sbPrefs = spoilerPrefs;
                         // Each row only renders when the admin has the underlying
                         // strip enabled — a user can't opt out of a category the
                         // admin already disabled.
@@ -651,6 +639,7 @@ export function buildPanelHtml(ctx: PanelContext): string {
                         return `
                         <section class="jc-pane" data-pane="spoiler-guard">
                             <h3 class="jc-pane-title">${JC.icon!(JC.IconName!.MASK)} ${JC.t!('panel_settings_spoiler_guard')}</h3>
+                            <div id="spoilerGuardSaveStatus" role="status" aria-live="polite" style="min-height:18px; margin:-6px 4px 8px; font-size:11px; color:rgba(255,255,255,0.68);"></div>
                             <div style="padding: 0 16px 16px 16px;">
                                 <div style="font-weight:500; font-size:13px; color:rgba(255,255,255,0.7); margin-bottom:8px; padding-left:4px;">${JC.t!('panel_settings_spoiler_guard_overrides_section')}</div>
                                 ${row('sbPrefHideOverview',  'HideEpisodeDescriptions', 'panel_settings_spoiler_guard_override_overview',  'panel_settings_spoiler_guard_override_overview_desc',  adminOn.overview)}
@@ -668,6 +657,35 @@ export function buildPanelHtml(ctx: PanelContext): string {
                                         <div><div style="font-weight:500; font-size:13px;">${JC.t!('panel_settings_spoiler_guard_skip_confirm')}</div><div style="font-size:11px; color:rgba(255,255,255,0.5); margin-top:1px;">${JC.t!('panel_settings_spoiler_guard_skip_confirm_desc')}</div></div>
                                     </label>
                                 </div>
+                                ${ctx.editor.mode === 'admin-target' && ctx.editor.spoilerGuardOverrides ? `
+                                <div id="spoilerGuardTargetOverrides" aria-busy="false" style="margin-top:16px; padding:12px; background:${presetBoxBackground}; border-radius:6px; border-left:3px solid ${toggleAccentColor};">
+                                    <div style="font-weight:600; font-size:13px;">${JC.t!('panel_settings_spoiler_guard_persistent_title')}</div>
+                                    <div style="font-size:11px; color:rgba(255,255,255,0.6); margin:4px 0 12px;">${JC.t!('panel_settings_spoiler_guard_persistent_desc')}</div>
+                                    <div id="spoilerGuardOverrideList"></div>
+                                    <div id="spoilerGuardOverridePager" style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin:8px 0;"></div>
+                                    <form id="spoilerGuardOverrideAddForm" class="jc-spoiler-overrides-form">
+                                        <label style="display:flex; flex-direction:column; gap:4px; font-size:11px;">
+                                            ${JC.t!('panel_settings_spoiler_guard_persistent_type')}
+                                            <select id="spoilerGuardOverrideType" style="min-width:0; padding:8px; background:${presetBoxBackground}; color:#fff; border:1px solid rgba(255,255,255,0.2); border-radius:5px;">
+                                                <option value="series">${JC.t!('panel_settings_spoiler_guard_type_series')}</option>
+                                                <option value="movie">${JC.t!('panel_settings_spoiler_guard_type_movie')}</option>
+                                                <option value="collection">${JC.t!('panel_settings_spoiler_guard_type_collection')}</option>
+                                                <option value="pending-tv">${JC.t!('panel_settings_spoiler_guard_type_pending_tv')}</option>
+                                                <option value="pending-movie">${JC.t!('panel_settings_spoiler_guard_type_pending_movie')}</option>
+                                            </select>
+                                        </label>
+                                        <label style="display:flex; flex-direction:column; gap:4px; font-size:11px;">
+                                            ${JC.t!('panel_settings_spoiler_guard_persistent_id')}
+                                            <input id="spoilerGuardOverrideId" autocomplete="off" maxlength="36" required style="min-width:0; padding:8px; background:${presetBoxBackground}; color:#fff; border:1px solid rgba(255,255,255,0.2); border-radius:5px;">
+                                        </label>
+                                        <label style="display:flex; flex-direction:column; gap:4px; font-size:11px;">
+                                            ${JC.t!('panel_settings_spoiler_guard_persistent_name')}
+                                            <input id="spoilerGuardOverrideName" autocomplete="off" maxlength="512" required style="min-width:0; padding:8px; background:${presetBoxBackground}; color:#fff; border:1px solid rgba(255,255,255,0.2); border-radius:5px;">
+                                        </label>
+                                        <button id="spoilerGuardOverrideAdd" type="submit" style="padding:9px 12px; background:${toggleAccentColor}; color:#fff; border:0; border-radius:5px; cursor:pointer;">${JC.t!('panel_settings_spoiler_guard_persistent_add')}</button>
+                                    </form>
+                                    <div id="spoilerGuardOverrideStatus" role="status" aria-live="polite" aria-atomic="true" style="min-height:18px; margin-top:8px; font-size:11px; color:rgba(255,255,255,0.68);"></div>
+                                </div>` : ''}
                             </div>
                         </section>`;
                     })() : ''}
@@ -684,9 +702,8 @@ export function buildPanelHtml(ctx: PanelContext): string {
                             </div>
                             ${ctx.editor.mode === 'admin-target' ? `
                             <div style="padding:12px; background:${presetBoxBackground}; border-radius:6px; border-left:3px solid ${toggleAccentColor}; color:rgba(255,255,255,0.72);">
-                                ${escapeHtml(tWithFallback(
+                                ${escapeHtml(JC.t!(
                                     'panel_admin_target_translation_cache_unavailable',
-                                    'Translation cache controls apply to this browser and cannot be edited for another user.',
                                 ))}
                             </div>` : `
                             <div style="padding: 12px; background: ${presetBoxBackground}; border-radius: 6px; border-left: 3px solid ${toggleAccentColor};">

@@ -20,7 +20,12 @@ describe('hidden-content page navigation (no polling)', () => {
         // Emby.Page.show branch (never the page→page hash-assignment branch).
         window.location.hash = '';
     });
-    afterEach(() => { vi.restoreAllMocks(); delete (window as any).Emby; });
+    afterEach(() => {
+        vi.restoreAllMocks();
+        delete (window as any).Emby;
+        delete document.documentElement.dataset.jcHiddenAdminActor;
+        delete document.documentElement.dataset.jcHiddenAdminTarget;
+    });
 
     it('registering the page module installs no setInterval poller', async () => {
         const intervalSpy = vi.spyOn(window, 'setInterval');
@@ -40,4 +45,5 @@ describe('hidden-content page navigation (no polling)', () => {
         expect(showSpy).toHaveBeenCalledWith('/hidden-content');
         expect(intervalSpy).not.toHaveBeenCalled();
     });
+
 });

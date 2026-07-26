@@ -1,4 +1,5 @@
 using System;
+using System.Buffers;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
@@ -34,7 +35,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         private readonly ILogger _logger;
         private const int MaxCorruptBackupsPerFile = 5;
         private const long MaxCorruptBackupBytesPerFile = 32L * 1024 * 1024;
+        private const int PolicyReadBufferBytes = 64 * 1024;
         private const string UnhealthySuffix = ".unhealthy";
+
+        private sealed class PolicyFileTooLargeException : Exception
+        {
+            public PolicyFileTooLargeException()
+                : base(
+                    $"Policy file exceeds the {PersistedPayloadPolicy.AbsolutePersistedBytes}-byte read limit.")
+            {
+            }
+        }
 
         private static readonly HashSet<string> RecoverableFileNames = new HashSet<string>(StringComparer.Ordinal)
         {
@@ -90,7 +101,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
             }
         }
 
-        private string GetUserConfigDir(string userId)
+        private string GetUserConfigDirPath(string userId)
         {
             var normalizedUserId = (userId ?? string.Empty).Replace("-", "").ToLowerInvariant();
             var userDir = Path.Combine(_configBaseDir, normalizedUserId);
@@ -104,11 +115,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
                     $"Refusing user-config path outside base directory: '{userId}'");
             }
 
+            return userDir;
+        }
+
+        private string GetUserConfigDir(string userId)
+        {
+            var userDir = GetUserConfigDirPath(userId);
             Directory.CreateDirectory(userDir);
             return userDir;
         }
 
-        private string ResolveUserFile(string userId, string fileName)
+        private static void ValidateUserFileName(string fileName)
         {
             if (string.IsNullOrWhiteSpace(fileName)
                 || fileName == "." || fileName == ".."
@@ -118,7 +135,18 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
             {
                 throw new ArgumentException($"Invalid user-config filename: '{fileName}'", nameof(fileName));
             }
+        }
+
+        private string ResolveUserFile(string userId, string fileName)
+        {
+            ValidateUserFileName(fileName);
             return Path.Combine(GetUserConfigDir(userId), fileName);
+        }
+
+        private string ResolveExistingUserFile(string userId, string fileName)
+        {
+            ValidateUserFileName(fileName);
+            return Path.Combine(GetUserConfigDirPath(userId), fileName);
         }
 
         public bool UserConfigurationExists(string userId, string fileName)
@@ -325,6 +353,51 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
                 return new UserConfigReadResult<T>(UserConfigReadStatus.Unavailable, default, ex.Message);
             }
 
+            return ReadUserConfigurationAtPath<T>(
+                userId,
+                fileName,
+                configPath,
+                missingDirectoryIsMissing: false);
+        }
+
+        /// <summary>
+        /// Typed policy read that never creates a per-user directory. Intended
+        /// for bounded administrative enumeration of existing optional files.
+        /// </summary>
+        public UserConfigReadResult<T> ReadExistingUserConfiguration<T>(
+            string userId,
+            string fileName)
+            where T : new()
+        {
+            string configPath;
+            try
+            {
+                configPath = ResolveExistingUserFile(userId, fileName);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(
+                    $"Refusing to resolve existing policy file '{fileName}' for user '{userId}': {ex.Message}");
+                return new UserConfigReadResult<T>(
+                    UserConfigReadStatus.Unavailable,
+                    default,
+                    ex.Message);
+            }
+
+            return ReadUserConfigurationAtPath<T>(
+                userId,
+                fileName,
+                configPath,
+                missingDirectoryIsMissing: true);
+        }
+
+        private UserConfigReadResult<T> ReadUserConfigurationAtPath<T>(
+            string userId,
+            string fileName,
+            string configPath,
+            bool missingDirectoryIsMissing)
+            where T : new()
+        {
             try
             {
                 if (UnhealthyMarkerExists(configPath))
@@ -348,7 +421,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
             string json;
             try
             {
-                json = File.ReadAllText(configPath);
+                json = ReadPolicyTextBounded(configPath);
             }
             catch (FileNotFoundException)
             {
@@ -359,6 +432,19 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
                 // fault, not a never-configured file. It must fall through to
                 // Unavailable so last-known-good / fail-closed is retained.
                 return new UserConfigReadResult<T>(UserConfigReadStatus.Missing, new T(), null);
+            }
+            catch (DirectoryNotFoundException) when (missingDirectoryIsMissing)
+            {
+                return new UserConfigReadResult<T>(UserConfigReadStatus.Missing, new T(), null);
+            }
+            catch (PolicyFileTooLargeException ex)
+            {
+                _logger.LogError(
+                    $"Policy file '{fileName}' for user '{userId}' exceeds the bounded read limit — treating as CORRUPT (protection retained).");
+                return new UserConfigReadResult<T>(
+                    UserConfigReadStatus.Corrupt,
+                    default,
+                    ex.Message);
             }
             catch (Exception ex)
             {
@@ -389,6 +475,64 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
                 _logger.LogError($"Policy file '{fileName}' for user '{userId}' is malformed — treating as CORRUPT (protection retained): {ex.Message}");
                 return new UserConfigReadResult<T>(UserConfigReadStatus.Corrupt, default, ex.Message);
             }
+        }
+
+        private static string ReadPolicyTextBounded(string configPath)
+        {
+            using var input = new FileStream(
+                configPath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete,
+                PolicyReadBufferBytes,
+                FileOptions.SequentialScan);
+            var maximumBytes = PersistedPayloadPolicy.AbsolutePersistedBytes;
+            if (input.Length > maximumBytes)
+            {
+                throw new PolicyFileTooLargeException();
+            }
+
+            // Do not trust the length preflight alone: a non-atomic external
+            // writer can grow the file after Length is observed. Read at most
+            // limit+1 raw bytes and reject on that extra byte, while never
+            // allocating in proportion to an attacker-controlled file size.
+            using var bytes = new MemoryStream((int)input.Length);
+            var buffer = ArrayPool<byte>.Shared.Rent(PolicyReadBufferBytes);
+            try
+            {
+                var total = 0;
+                while (true)
+                {
+                    var remainingWithSentinel = (maximumBytes + 1) - total;
+                    var requested = Math.Min(buffer.Length, remainingWithSentinel);
+                    var read = input.Read(buffer, 0, requested);
+                    if (read == 0)
+                    {
+                        break;
+                    }
+
+                    total += read;
+                    if (total > maximumBytes)
+                    {
+                        throw new PolicyFileTooLargeException();
+                    }
+
+                    bytes.Write(buffer, 0, read);
+                }
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(buffer);
+            }
+
+            bytes.Position = 0;
+            using var reader = new StreamReader(
+                bytes,
+                Encoding.UTF8,
+                detectEncodingFromByteOrderMarks: true,
+                bufferSize: PolicyReadBufferBytes,
+                leaveOpen: false);
+            return reader.ReadToEnd();
         }
 
         /// <summary>

@@ -411,6 +411,24 @@ const CSS_STYLES = `
     .jc-hidden-admin-add-btn:hover {
       background: color-mix(in srgb, var(--jc-hc-accent, rgb(100,200,120)) 34%, transparent);
     }
+    .jc-hidden-admin-mutation-status {
+      min-height: 1.35em;
+      margin: 0 0 12px;
+      color: var(--jc-hc-text, rgba(255,255,255,0.82));
+      font-size: 13px;
+      line-height: 1.35;
+    }
+    .jc-hidden-admin-mutation-status:empty {
+      min-height: 0;
+      margin: 0;
+    }
+    .jc-hidden-admin-mutation-status.is-error {
+      color: rgb(255, 164, 164);
+    }
+    .jc-hidden-admin-modal-status {
+      padding: 0 20px;
+      flex: 0 0 auto;
+    }
     /* Compact status chip that sits inside the header (right of the title). Inline so it never adds
        a banner row that shifts the page; height stays within the title's line so the header doesn't
        grow when it appears/disappears. */

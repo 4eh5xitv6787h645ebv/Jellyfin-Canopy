@@ -7,7 +7,12 @@ import type {} from '../../types/jc';
 import type { HiddenItem, HideItemParams, HiddenContentSettings, HiddenMediaCandidate } from './data';
 import type { HiddenMediaType } from './media-identity';
 import type { HideDialogOptions } from './dialogs';
-import type { HiddenContentUser } from './save';
+import type {
+    AdminHiddenContentResult,
+    AdminHiddenHideResult,
+    AdminHiddenUnhideResult,
+    HiddenContentUserPage,
+} from './save';
 
 declare module '../../types/jc' {
     /** The frozen public JC.hiddenContent surface. */
@@ -35,14 +40,22 @@ declare module '../../types/jc' {
         addLibraryHideButtons(): void;
         removeLibraryHideButtons(): void;
         refresh(): Promise<boolean>;
-        markScopedHidden(itemId: string, scope?: string): void;
+        markScopedHidden(
+            itemId: string,
+            scope?: string,
+            itemsRevision?: number,
+            settingsRevision?: number,
+            hiddenContentEnabled?: boolean,
+        ): void;
+        getSettingsMutationGeneration(field: string): number;
+        beginScopedWrite(): (() => void) | null;
         resolveLegacyIdentity(storageKey: string, mediaType: HiddenMediaType): boolean;
         flushPendingSave(): Promise<void>;
         // Admin-only cross-user visibility + editing
-        fetchHiddenContentUsers(): Promise<HiddenContentUser[] | null>;
-        fetchUserHiddenItemsForAdmin(targetUserId: string): Promise<HiddenItem[] | null>;
-        adminUnhideForUser(targetUserId: string, keys: string[]): Promise<boolean>;
-        adminHideForUser(targetUserId: string, items: HiddenItem[]): Promise<number | boolean>;
+        fetchHiddenContentUsers(cursor?: string | null): Promise<HiddenContentUserPage | null>;
+        fetchUserHiddenItemsForAdmin(targetUserId: string): Promise<AdminHiddenContentResult | null>;
+        adminUnhideForUser(targetUserId: string, keys: string[], itemsRevision: number): Promise<AdminHiddenUnhideResult | null>;
+        adminHideForUser(targetUserId: string, items: HiddenItem[], itemsRevision: number): Promise<AdminHiddenHideResult | null>;
     }
 
     interface JEGlobal {

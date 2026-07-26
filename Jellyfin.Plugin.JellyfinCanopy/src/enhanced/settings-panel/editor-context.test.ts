@@ -315,6 +315,108 @@ describe('admin target settings editor isolation', () => {
         })).toBe(actorSnapshot);
     });
 
+    it.each([
+        ['empty-string', ''],
+        ['boolean', false],
+    ])('rejects a %s revision in an initial target envelope', async (
+        _case,
+        badRevision,
+    ) => {
+        await expect(openTarget(async path => {
+            const response = path.includes('settings.json')
+                ? envelope('settings.json', 1, { AutoPauseEnabled: true })
+                : envelope('shortcuts.json', 1, { Shortcuts: [] }, HASH_B);
+            if (path.includes('settings.json')) {
+                response.Revision = badRevision;
+                (response.Data as Record<string, unknown>).Revision = badRevision;
+            }
+            return response;
+        })).rejects.toMatchObject({ kind: 'protocol' });
+    });
+
+    it.each([
+        ['empty-string', ''],
+        ['boolean', false],
+    ])('evidence-checks rather than accepting a POST acknowledgement with a %s revision', async (
+        _case,
+        badRevision,
+    ) => {
+        let posts = 0;
+        let evidenceReads = 0;
+        const { editor } = await openTarget(async (path, options) => {
+            if (!options?.method && path.includes('/evidence')) {
+                evidenceReads++;
+                throw Object.assign(new Error('evidence unavailable'), { status: 503 });
+            }
+            if (!options?.method) {
+                return path.includes('settings.json')
+                    ? envelope('settings.json', 1, { AutoPauseEnabled: true })
+                    : envelope('shortcuts.json', 1, { Shortcuts: [] }, HASH_B);
+            }
+            posts++;
+            const response = envelope(
+                'settings.json',
+                2,
+                options.body as Record<string, unknown>,
+                HASH_C,
+            );
+            response.Revision = badRevision;
+            (response.Data as Record<string, unknown>).Revision = badRevision;
+            return response;
+        });
+        (editor.settings as Record<string, unknown>).autoPauseEnabled = false;
+
+        await expect(editor.saveSettings()).rejects.toMatchObject({
+            kind: 'unavailable',
+            ambiguous: true,
+        });
+        expect(posts).toBe(1);
+        expect(evidenceReads).toBe(1);
+        expect((editor.settings as Record<string, unknown>).autoPauseEnabled).toBe(true);
+    });
+
+    it.each([
+        ['empty-string', ''],
+        ['boolean', false],
+    ])('rejects a 409 envelope with a %s revision before any safe rebase', async (
+        _case,
+        badRevision,
+    ) => {
+        let posts = 0;
+        let evidenceReads = 0;
+        const { editor } = await openTarget(async (path, options) => {
+            if (!options?.method && path.includes('/evidence')) {
+                evidenceReads++;
+                throw Object.assign(new Error('evidence unavailable'), { status: 503 });
+            }
+            if (!options?.method) {
+                return path.includes('settings.json')
+                    ? envelope('settings.json', 1, { AutoPauseEnabled: true })
+                    : envelope('shortcuts.json', 1, { Shortcuts: [] }, HASH_B);
+            }
+            posts++;
+            const response = conflictEnvelope('settings.json', 2, {
+                AutoPauseEnabled: true,
+                RemoteField: 'must-not-rebase',
+            });
+            response.Revision = badRevision;
+            (response.Data as Record<string, unknown>).Revision = badRevision;
+            throw Object.assign(new Error('malformed conflict'), {
+                status: 409,
+                responseJSON: response,
+            });
+        });
+        (editor.settings as Record<string, unknown>).autoPauseEnabled = false;
+
+        await expect(editor.saveSettings()).rejects.toMatchObject({
+            kind: 'unavailable',
+            ambiguous: true,
+        });
+        expect(posts).toBe(1);
+        expect(evidenceReads).toBe(1);
+        expect(editor.settings).not.toHaveProperty('remoteField');
+    });
+
     it('posts target settings with If-Match and leaves actor settings unchanged', async () => {
         const actorSnapshot = JSON.stringify(JC.currentSettings);
         const calls: Array<{ path: string; options?: Record<string, unknown> }> = [];
@@ -466,6 +568,50 @@ describe('admin target settings editor isolation', () => {
             autoPauseEnabled: false,
             concurrentExtension: 'remote',
         });
+    });
+
+    it('adopts and preserves a hazardous extension key introduced by conflict evidence', async () => {
+        let postCount = 0;
+        const posts: Record<string, unknown>[] = [];
+        const hazardous = JSON.parse(
+            '{"__proto__":{"Nested":"remote-proto"},"constructor":{"Nested":"remote-constructor"}}',
+        ) as Record<string, unknown>;
+        const { editor } = await openTarget(async (path, options) => {
+            if (!options?.method) {
+                return path.includes('settings.json')
+                    ? envelope('settings.json', 1, { AutoPauseEnabled: true })
+                    : envelope('shortcuts.json', 1, { Shortcuts: [] }, HASH_B);
+            }
+            const body = options.body as Record<string, unknown>;
+            posts.push(body);
+            postCount++;
+            if (postCount === 1) {
+                throw Object.assign(new Error('conflict'), {
+                    status: 409,
+                    responseJSON: conflictEnvelope('settings.json', 2, {
+                        AutoPauseEnabled: true,
+                        ...hazardous,
+                    }),
+                });
+            }
+            return envelope('settings.json', postCount + 1, body, HASH_C);
+        });
+        (editor.settings as Record<string, unknown>).autoPauseEnabled = false;
+
+        await editor.saveSettings();
+        expect(Object.prototype.hasOwnProperty.call(editor.settings, '__proto__')).toBe(true);
+        expect((editor.settings as Record<string, unknown>).__proto__)
+            .toEqual({ nested: 'remote-proto' });
+        expect(Object.prototype.hasOwnProperty.call(editor.settings, 'constructor')).toBe(true);
+
+        (editor.settings as Record<string, unknown>).showFileSizes = true;
+        await editor.saveSettings();
+
+        expect(posts).toHaveLength(3);
+        expect(Object.prototype.hasOwnProperty.call(posts[2], '__proto__')).toBe(true);
+        expect(posts[2].__proto__).toEqual({ Nested: 'remote-proto' });
+        expect(Object.prototype.hasOwnProperty.call(posts[2], 'constructor')).toBe(true);
+        expect(posts[2].constructor).toEqual({ Nested: 'remote-constructor' });
     });
 
     it('rebases a queued intent onto authoritative mixed-case extension data', async () => {
@@ -684,21 +830,53 @@ describe('admin target settings editor isolation', () => {
         });
     });
 
-    it('restores the acknowledged target snapshot on 503 and never mutates actor globals', async () => {
+    it('evidence-checks an uncommitted 503, restores the target snapshot, and never mutates actor globals', async () => {
         const actorSnapshot = JSON.stringify(JC.currentSettings);
+        let posts = 0;
         const { editor } = await openTarget(async (path, options) => {
+            if (!options?.method && path.includes('/evidence')) {
+                return envelope('settings.json', 1, { AutoPauseEnabled: true });
+            }
             if (!options?.method) {
                 return path.includes('settings.json')
                     ? envelope('settings.json', 1, { AutoPauseEnabled: true })
                     : envelope('shortcuts.json', 1, { Shortcuts: [] }, HASH_B);
             }
+            posts++;
             throw Object.assign(new Error('unavailable'), { status: 503 });
         });
         (editor.settings as Record<string, unknown>).autoPauseEnabled = false;
 
-        await expect(editor.saveSettings()).rejects.toMatchObject({ kind: 'unavailable' });
+        await expect(editor.saveSettings()).rejects.toMatchObject({
+            kind: 'conflict',
+            ambiguous: true,
+        });
+        expect(posts).toBe(2);
         expect((editor.settings as Record<string, unknown>).autoPauseEnabled).toBe(true);
         expect(JSON.stringify(JC.currentSettings)).toBe(actorSnapshot);
+    });
+
+    it('uses evidence to accept an exact committed write after a 503 response', async () => {
+        let candidate: Record<string, unknown> | null = null;
+        const { editor } = await openTarget(async (path, options) => {
+            if (!options?.method && path.includes('/evidence')) {
+                return envelope('settings.json', 2, candidate!, HASH_C);
+            }
+            if (!options?.method) {
+                return path.includes('settings.json')
+                    ? envelope('settings.json', 1, { AutoPauseEnabled: true })
+                    : envelope('shortcuts.json', 1, { Shortcuts: [] }, HASH_B);
+            }
+            candidate = {
+                ...(options.body as Record<string, unknown>),
+                Revision: 2,
+            };
+            throw Object.assign(new Error('post-commit reconciliation failed'), { status: 503 });
+        });
+        (editor.settings as Record<string, unknown>).autoPauseEnabled = false;
+
+        await expect(editor.saveSettings()).resolves.toMatchObject({ revision: 2 });
+        expect((editor.settings as Record<string, unknown>).autoPauseEnabled).toBe(false);
     });
 
     it('uses evidence to accept a committed write after a malformed acknowledgement', async () => {

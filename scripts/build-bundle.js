@@ -22,6 +22,7 @@ const PROJECT_DIR = path.join(REPO_ROOT, 'Jellyfin.Plugin.JellyfinCanopy');
 const SRC_ROOT = path.join(PROJECT_DIR, 'src');
 const BOOTSTRAP_ROOT = path.join(SRC_ROOT, 'bootstrap');
 const OUT_DIR = path.join(PROJECT_DIR, 'dist');
+const BUILD_OUT_DIR = path.join(REPO_ROOT, '.jc-bundle-output');
 const BUDGET_PATH = path.join(__dirname, 'bundle-budgets.json');
 const FEATURE_CATALOG_PATH = path.join(SRC_ROOT, 'entries', 'feature-catalog.ts');
 const SEERR_CATALOG_PATH = path.join(SRC_ROOT, 'entries', 'seerr-descriptors.ts');
@@ -235,6 +236,33 @@ function collectOutputBytes(results, outDir = OUT_DIR) {
         }
     }
     return artifacts;
+}
+
+function canonicalizeSourceMapPaths(artifacts, outDir = OUT_DIR) {
+    const canonical = new Map(artifacts);
+    for (const [name, bytes] of artifacts) {
+        if (!name.endsWith('.map')) continue;
+        const map = JSON.parse(bytes.toString('utf8'));
+        if (!Array.isArray(map.sources)) {
+            throw new Error(`${name} must contain source paths`);
+        }
+        const mapDirectory = path.dirname(path.join(outDir, ...name.split('/')));
+        map.sources = map.sources.map((sourceName) => {
+            if (typeof sourceName !== 'string' || sourceName.length === 0
+                || path.posix.isAbsolute(sourceName) || sourceName.includes('\\')) {
+                throw new Error(`${name} contains an invalid source path`);
+            }
+            const absolute = path.resolve(mapDirectory, sourceName);
+            const relative = path.relative(REPO_ROOT, absolute).replace(/\\/g, '/');
+            if (path.isAbsolute(relative) || relative.startsWith('../')) {
+                throw new Error(`${name} contains a source outside the repository`);
+            }
+            return assertSafeRelativePath(relative);
+        });
+        const newline = bytes.at(-1) === 0x0A ? '\n' : '';
+        canonical.set(name, Buffer.from(`${JSON.stringify(map)}${newline}`));
+    }
+    return canonical;
 }
 
 function contentTypeFor(relativePath) {
@@ -550,16 +578,22 @@ function createClientManifest(artifacts, metadata, budget) {
     return { schemaVersion: 2, buildId, entries, files, budgets: metrics };
 }
 
-async function createBuildArtifacts({ devMode = false, outDir = OUT_DIR, budget } = {}) {
+async function createBuildArtifacts({ devMode = false, budget } = {}) {
     const resolvedBudget = budget || JSON.parse(fs.readFileSync(BUDGET_PATH, 'utf8'));
     assertColdHomeCatalogOwnership();
+    // Build against one repository-relative virtual destination. With write:false
+    // this creates no directory, and checkout/output paths cannot influence linked
+    // source-map bytes or content-addressed chunk names.
     const results = await Promise.all([
-        esbuild.build(bootstrapOptions(devMode, outDir)),
-        esbuild.build(esmOptions(devMode, outDir)),
+        esbuild.build(bootstrapOptions(devMode, BUILD_OUT_DIR)),
+        esbuild.build(esmOptions(devMode, BUILD_OUT_DIR)),
     ]);
     assertSourceCensus(results.map((result) => result.metafile));
-    const artifacts = collectOutputBytes(results, outDir);
-    const metadata = normalizeOutputMetadata(results, outDir);
+    const artifacts = canonicalizeSourceMapPaths(
+        collectOutputBytes(results, BUILD_OUT_DIR),
+        BUILD_OUT_DIR,
+    );
+    const metadata = normalizeOutputMetadata(results, BUILD_OUT_DIR);
     const manifest = createClientManifest(artifacts, metadata, resolvedBudget);
     const manifestBytes = Buffer.from(`${stableStringify(manifest)}\n`);
     assertPublishedBudgets(manifestBytes.length, manifest.budgets.totalRawBytes, resolvedBudget);

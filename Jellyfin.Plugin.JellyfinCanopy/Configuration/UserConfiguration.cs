@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -88,6 +89,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         public string SeriesName { get; set; } = string.Empty;
         // ISO 8601 timestamp.
         public string EnabledAt { get; set; } = string.Empty;
+
+        [JsonExtensionData]
+        public Dictionary<string, JsonElement> ExtensionData { get; set; } = new(StringComparer.Ordinal);
     }
 
     // Per-movie Spoiler Guard entry. Distinct from SpoilerBlurSeriesEntry
@@ -98,6 +102,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         public string MovieId { get; set; } = string.Empty;
         public string MovieName { get; set; } = string.Empty;
         public string EnabledAt { get; set; } = string.Empty;
+
+        [JsonExtensionData]
+        public Dictionary<string, JsonElement> ExtensionData { get; set; } = new(StringComparer.Ordinal);
     }
 
     // Per-collection Spoiler Guard entry. Toggling Spoiler Guard on a collection
@@ -112,6 +119,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         public string CollectionId { get; set; } = string.Empty;
         public string CollectionName { get; set; } = string.Empty;
         public string EnabledAt { get; set; } = string.Empty;
+
+        [JsonExtensionData]
+        public Dictionary<string, JsonElement> ExtensionData { get; set; } = new(StringComparer.Ordinal);
     }
 
     // Pre-acquisition spoiler intent: user subscribed to Spoiler Guard for a
@@ -128,14 +138,21 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         public string TmdbId { get; set; } = string.Empty;
         public string DisplayName { get; set; } = string.Empty;
         public string RequestedAt { get; set; } = string.Empty;
+
+        [JsonExtensionData]
+        public Dictionary<string, JsonElement> ExtensionData { get; set; } = new(StringComparer.Ordinal);
     }
 
     // Per-user opt-outs from individual admin strip categories. Each field
     // is nullable bool with semantics: null = inherit admin policy,
     // false = override to "don't hide this for me". true is recorded but
     // never enables a strip the admin disabled — the admin cap still wins.
-    public class SpoilerBlurUserPrefs
+    public class SpoilerBlurUserPrefs : IRevisionedUserConfiguration
     {
+        // Preference-subsection revision. It advances only when Prefs changes,
+        // so unrelated series/movie/collection/pending mutations never create a
+        // false conflict for a settings editor.
+        public long Revision { get; set; }
         public bool? HideEpisodeDescriptions { get; set; }
         public bool? HideTags { get; set; }
         public bool? HideChapterNames { get; set; }
@@ -149,6 +166,64 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         // Persist the in-dialog "Don't ask again" snooze as a permanent user
         // choice instead of a session timer.
         public bool SkipDisableConfirm { get; set; }
+
+        [JsonExtensionData]
+        public Dictionary<string, JsonElement> ExtensionData { get; set; } = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+    }
+
+    /// <summary>
+    /// Revisioned administrative view of the four persistent Spoiler Guard
+    /// opt-in dictionaries. This is intentionally separate from <see
+    /// cref="SpoilerBlurUserPrefs"/> so an editor of one resource never
+    /// overwrites or conflicts with the other.
+    /// </summary>
+    public class SpoilerGuardOverrides : IRevisionedUserConfiguration
+    {
+        private Dictionary<string, SpoilerBlurSeriesEntry> _series
+            = new(StringComparer.OrdinalIgnoreCase);
+        private Dictionary<string, SpoilerBlurMovieEntry> _movies
+            = new(StringComparer.OrdinalIgnoreCase);
+        private Dictionary<string, SpoilerBlurCollectionEntry> _collections
+            = new(StringComparer.OrdinalIgnoreCase);
+        private Dictionary<string, SpoilerBlurPendingEntry> _pendingTmdb
+            = new(StringComparer.OrdinalIgnoreCase);
+
+        public long Revision { get; set; }
+
+        public Dictionary<string, SpoilerBlurSeriesEntry> Series
+        {
+            get => _series;
+            set => _series = value == null
+                ? new Dictionary<string, SpoilerBlurSeriesEntry>(StringComparer.OrdinalIgnoreCase)
+                : new Dictionary<string, SpoilerBlurSeriesEntry>(value, StringComparer.OrdinalIgnoreCase);
+        }
+
+        public Dictionary<string, SpoilerBlurMovieEntry> Movies
+        {
+            get => _movies;
+            set => _movies = value == null
+                ? new Dictionary<string, SpoilerBlurMovieEntry>(StringComparer.OrdinalIgnoreCase)
+                : new Dictionary<string, SpoilerBlurMovieEntry>(value, StringComparer.OrdinalIgnoreCase);
+        }
+
+        public Dictionary<string, SpoilerBlurCollectionEntry> Collections
+        {
+            get => _collections;
+            set => _collections = value == null
+                ? new Dictionary<string, SpoilerBlurCollectionEntry>(StringComparer.OrdinalIgnoreCase)
+                : new Dictionary<string, SpoilerBlurCollectionEntry>(value, StringComparer.OrdinalIgnoreCase);
+        }
+
+        public Dictionary<string, SpoilerBlurPendingEntry> PendingTmdb
+        {
+            get => _pendingTmdb;
+            set => _pendingTmdb = value == null
+                ? new Dictionary<string, SpoilerBlurPendingEntry>(StringComparer.OrdinalIgnoreCase)
+                : new Dictionary<string, SpoilerBlurPendingEntry>(value, StringComparer.OrdinalIgnoreCase);
+        }
+
+        [JsonExtensionData]
+        public Dictionary<string, JsonElement> ExtensionData { get; set; } = new(StringComparer.Ordinal);
     }
 
     public class UserSpoilerBlur
@@ -212,6 +287,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         // spoilerblur.json files continue to honor admin policy unchanged.
         public SpoilerBlurUserPrefs Prefs { get; set; } = new SpoilerBlurUserPrefs();
 
+        // Independent CAS token for Series/Movies/Collections/PendingTmdb.
+        // Legacy files omit this property and therefore start at revision zero.
+        public long OverridesRevision { get; set; }
+
+        // Forward-compatible metadata belonging to the elevated override
+        // resource. It is kept separate from this store object's top-level
+        // extension data so an override-only write cannot replace unrelated
+        // future fields.
+        public Dictionary<string, JsonElement> OverridesExtensionData { get; set; }
+            = new(StringComparer.Ordinal);
+
         // Transient, in-memory-only fail-closed marker. Set by
         // SpoilerUserResolver.LoadUserState when this user's policy read faulted
         // (corrupt/unavailable) with no last-known-good to retain, so the image
@@ -220,6 +306,39 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         // through a save even though the resolver's loaded state is read-only.
         [JsonIgnore]
         public bool FailClosed { get; set; }
+
+        [JsonExtensionData]
+        public Dictionary<string, JsonElement> ExtensionData { get; set; } = new(StringComparer.Ordinal);
+    }
+
+    internal static class SpoilerGuardOverridesRevision
+    {
+        internal static long Advance(UserSpoilerBlur state)
+        {
+            ArgumentNullException.ThrowIfNull(state);
+            if (state.OverridesRevision < 0)
+            {
+                throw new InvalidDataException("Spoiler Guard override revision is invalid.");
+            }
+
+            state.OverridesRevision = checked(state.OverridesRevision + 1);
+            return state.OverridesRevision;
+        }
+    }
+
+    internal static class SpoilerGuardOverrideCapacity
+    {
+        internal static int MaximumEntriesPerDictionary
+            => PersistedPayloadPolicy.MaximumSpoilerEntriesPerDictionary;
+
+        internal static bool CanInsert<T>(
+            IReadOnlyDictionary<string, T> entries,
+            string key)
+        {
+            ArgumentNullException.ThrowIfNull(entries);
+            return entries.ContainsKey(key)
+                || entries.Count < MaximumEntriesPerDictionary;
+        }
     }
 
     public class UserShortcuts : IRevisionedUserConfiguration
@@ -312,6 +431,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         public string Provider { get; set; } = string.Empty;
         public string MediaType { get; set; } = string.Empty;
         public string Id { get; set; } = string.Empty;
+
+        [JsonExtensionData]
+        public Dictionary<string, JsonElement> ExtensionData { get; set; } = new(StringComparer.Ordinal);
     }
 
     public class HiddenContentItem
@@ -329,10 +451,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         public int? SeasonNumber { get; set; }
         public int? EpisodeNumber { get; set; }
         public string HideScope { get; set; } = "global";
+
+        [JsonExtensionData]
+        public Dictionary<string, JsonElement> ExtensionData { get; set; } = new(StringComparer.Ordinal);
     }
 
-    public class HiddenContentSettings
+    public class HiddenContentSettings : IRevisionedUserConfiguration
     {
+        // Preference-subsection revision. Item-only mutations deliberately
+        // leave it unchanged so preference CAS and item RMW do not conflict.
+        public long Revision { get; set; }
         public bool Enabled { get; set; } = true;
         public bool FilterLibrary { get; set; } = true;
         public bool FilterDiscovery { get; set; } = true;
@@ -350,12 +478,38 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         public bool ShowButtonDetails { get; set; } = true;
         public bool ShowButtonCast { get; set; } = false;
         public bool ExperimentalHideCollections { get; set; } = false;
+
+        [JsonExtensionData]
+        public Dictionary<string, JsonElement> ExtensionData { get; set; } = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
     }
 
     public class UserHiddenContent
     {
         public Dictionary<string, HiddenContentItem> Items { get; set; } = new Dictionary<string, HiddenContentItem>();
+        // Revision for the complete Items dictionary. It is intentionally
+        // independent from Settings.Revision so preference-only writes do not
+        // conflict with exact-item mutations. Legacy files omit this member and
+        // therefore begin at revision zero.
+        public long ItemsRevision { get; set; }
         public HiddenContentSettings Settings { get; set; } = new HiddenContentSettings();
+
+        [JsonExtensionData]
+        public Dictionary<string, JsonElement> ExtensionData { get; set; } = new(StringComparer.Ordinal);
+    }
+
+    internal static class HiddenContentRevision
+    {
+        internal static long AdvanceItems(UserHiddenContent state)
+        {
+            ArgumentNullException.ThrowIfNull(state);
+            if (state.ItemsRevision < 0)
+            {
+                throw new InvalidDataException("Hidden-content item revision is invalid.");
+            }
+
+            state.ItemsRevision = checked(state.ItemsRevision + 1);
+            return state.ItemsRevision;
+        }
     }
 
     /// <summary>

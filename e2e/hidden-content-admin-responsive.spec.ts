@@ -77,6 +77,10 @@ async function installHermeticHiddenContentRoutes(page: Page): Promise<void> {
                 userName: TARGET_USER_NAME,
                 count: 7,
             }],
+            limit: 100,
+            scanned: 1,
+            truncated: false,
+            nextCursor: null,
         }),
     }));
     await page.route(TARGET_CONTENT_ROUTE, (route) => route.fulfill({
@@ -85,7 +89,7 @@ async function installHermeticHiddenContentRoutes(page: Page): Promise<void> {
         body: JSON.stringify({
             userId: TARGET_USER_ID,
             userName: TARGET_USER_NAME,
-            hiddenContent: { Items: {}, Settings: {} },
+            hiddenContent: { Items: {}, ItemsRevision: 0, Settings: {} },
         }),
     }));
 }

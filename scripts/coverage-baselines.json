@@ -21,12 +21,12 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 24139,
-        "totalLines": 32875
+        "coveredLines": 26967,
+        "totalLines": 35660
       },
       "tolerance": {
         "missingCoveredLines": 5,
-        "rationale": "The Maintainerr v3.18 integration adds 1,699 instrumented lines over the reviewed pre-integration server baseline (31,176→32,875) for its closed read-only transport allowlist, private-target and connect-time rebinding guards, caller-scoped projections, strict DTO parsing, byte/array/pagination bounds, generation-owned cache and single-flight behavior, explicit error taxonomy, and bounded 4-active/12-waiting admission policy. Its controller, transport, authorization, privacy, cancellation, cache, schema, concurrency, endpoint, and collection-consistency regressions add 1,502 covered lines at the reviewed high-water (22,637→24,139), raising coverage from 72.610% to 73.427%. Three clean .NET 10.0.9/Coverlet runs on 2026-07-26 each passed all 2,179 tests and reproduced exactly the 32,875-line scope; Coverlet reported a narrow 24,136–24,139 covered-line instrumentation range (24,136 twice and 24,139 once). Recording the reviewed high-water and retaining the evidence-bounded five-line tolerance makes the minimum 24,134/32,875 (73.412%), includes every observed clean measurement, and remains stricter than both the prior 24,115/32,858 high-water (73.392%) and its 24,110/32,858 tolerated floor (73.376%). coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, and broad-tolerance negative boundaries."
+        "rationale": "The combined tree includes both the Maintainerr v3.18 read-only integration and the complete elevated, actor-isolated Canopy User Settings resources for Hidden Content preferences, Spoiler Guard preferences, persistent Spoiler Guard overrides, and bounded Hidden Content inventory/item administration. Relative to their shared 22,637/31,176 baseline, the two changes add 4,484 instrumented lines and 4,330 covered lines across closed transport authorization, caller-scoped projection, bounded cache/admission, target-isolated persistence, concurrency, compatibility, opaque-data preservation, and negative-boundary regressions, raising coverage to 26,967/35,660 (75.623%). Three clean combined .NET 10.0.9/Coverlet runs on 2026-07-26 each passed all 2,274 tests and reproduced exactly 26,967/35,660. Retaining the existing evidence-bounded five-line Coverlet tolerance makes the minimum 26,962/35,660 (75.609%), stricter than both the pre-rebase admin-target floor of 25,462/33,961 (74.974%) and the Maintainerr-only floor of 24,134/32,875 (73.412%). coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, and broad-tolerance negative boundaries."
       }
     }
   }

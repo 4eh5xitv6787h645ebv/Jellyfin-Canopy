@@ -41,11 +41,7 @@ export function wireShortcutEditor(ctx: PanelContext): void {
                 : classified?.kind === 'authorization'
                     ? 'panel_admin_target_unauthorized'
                     : 'panel_admin_target_save_error';
-            const fallback = classified?.kind === 'conflict'
-                ? 'These settings changed elsewhere. Reload and try again.'
-                : 'Could not save this user’s Canopy settings.';
-            const translated = JC.t?.(key);
-            toast(!translated || translated === key ? fallback : translated);
+            toast(JC.t!(key));
         }
         keyElement.blur();
         await ctx.reconcileAfterSaveFailure?.();

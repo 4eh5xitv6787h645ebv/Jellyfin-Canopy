@@ -152,6 +152,39 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Configuration
             Assert.Null(r.Value);
         }
 
+        [Fact]
+        public void OversizedExistingPolicy_IsCorruptWithoutQuarantineOrBackupSideEffects()
+        {
+            var path = FilePath();
+            using (var stream = new FileStream(
+                       path,
+                       FileMode.CreateNew,
+                       FileAccess.Write,
+                       FileShare.None))
+            {
+                stream.SetLength(PersistedPayloadPolicy.AbsolutePersistedBytes + 1L);
+            }
+
+            var read = Read();
+            var existingRead = _mgr.ReadExistingUserConfiguration<UserHiddenContent>(
+                _userId,
+                FileName);
+
+            Assert.Equal(UserConfigReadStatus.Corrupt, read.Status);
+            Assert.True(read.IsFault);
+            Assert.Null(read.Value);
+            Assert.Contains("read limit", read.FaultDetail, StringComparison.Ordinal);
+            Assert.Equal(UserConfigReadStatus.Corrupt, existingRead.Status);
+            Assert.Null(existingRead.Value);
+            Assert.Equal(
+                PersistedPayloadPolicy.AbsolutePersistedBytes + 1L,
+                new FileInfo(path).Length);
+            Assert.False(File.Exists(path + ".unhealthy"));
+            Assert.Empty(Directory.GetFiles(
+                Path.GetDirectoryName(path)!,
+                FileName + ".corrupt-*"));
+        }
+
         // ─── Lenient path unchanged (compat, criterion 7) ────────────────────────
 
         [Theory]

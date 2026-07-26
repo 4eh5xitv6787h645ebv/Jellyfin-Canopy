@@ -97,9 +97,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.EventHandlers
                 }
 
                 var seriesIdN = seriesId.ToString("N");
-                var seriesName = series.Name ?? string.Empty;
+                var seriesName = PersistedPayloadPolicy.ClampPersistedDisplayName(
+                    series.Name);
 
                 int changed;
+                var capacityExceeded = false;
                 try
                 {
                     changed = _configManager.RmwUserConfiguration<UserSpoilerBlur>(
@@ -109,12 +111,20 @@ namespace Jellyfin.Plugin.JellyfinCanopy.EventHandlers
                         {
                             if (state == null) return 0;
                             if (state.Series.ContainsKey(seriesIdN)) return 0;
+                            if (!SpoilerGuardOverrideCapacity.CanInsert(
+                                state.Series,
+                                seriesIdN))
+                            {
+                                capacityExceeded = true;
+                                return 0;
+                            }
                             state.Series[seriesIdN] = new SpoilerBlurSeriesEntry
                             {
                                 SeriesId = seriesIdN,
                                 SeriesName = seriesName,
                                 EnabledAt = DateTime.UtcNow.ToString("o"),
                             };
+                            SpoilerGuardOverridesRevision.Advance(state);
                             return 1;
                         });
                 }
@@ -128,6 +138,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.EventHandlers
                     return Task.CompletedTask;
                 }
 
+                if (capacityExceeded)
+                {
+                    _logger.LogWarning(
+                        $"SpoilerAutoEnable: series cap of " +
+                        $"{SpoilerGuardOverrideCapacity.MaximumEntriesPerDictionary} reached for " +
+                        $"{userId}; skipping first-play auto-enable for {seriesIdN}.");
+                    return Task.CompletedTask;
+                }
                 if (changed > 0)
                 {
                     // F7: Series set changed — drop the user's cached spoiler

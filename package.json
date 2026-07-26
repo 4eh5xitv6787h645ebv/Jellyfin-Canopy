@@ -33,10 +33,11 @@
     "perf:trace": "node e2e/perf/capture-traces.js"
   },
   "devDependencies": {
+    "@eslint/js": "9.39.4",
     "@playwright/test": "1.58.2",
     "@vitest/coverage-v8": "4.1.9",
     "esbuild": "0.28.1",
-    "eslint": "^9.39.0",
+    "eslint": "^10.8.0",
     "jsdom": "29.1.1",
     "markdown-it": "14.3.0",
     "typescript": "^5.9.3",

@@ -18,6 +18,7 @@ import {
 import type { HiddenContentPageFence } from './state';
 import { isCssColor } from '../../core/css-safe';
 import { createTmdbIdentity, hiddenIdentityKey, identityFromSource } from '../hidden-content/media-identity';
+import type { AdminHiddenContentResult } from '../hidden-content/save';
 // Cross-module reference (defined in hidden-content-page/render.ts). ES-module
 // cyclic edge — only ever invoked at call time, never during module evaluation.
 import { renderPage } from './render';
@@ -25,7 +26,16 @@ import { renderPage } from './render';
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 const logPrefix = '🪼 Jellyfin Canopy: Hidden Content Page:';
+const ADMIN_ADD_RESULT_LIMIT = 24;
+const ADMIN_ADD_NAME_LIMIT = 512;
+const ADMIN_ADD_POSTER_LIMIT = 512;
 let activeAdminModalClose: (() => void) | null = null;
+
+function boundedSearchText(value: unknown, maximum: number): string {
+    return typeof value === 'string'
+        ? value.trim().slice(0, maximum)
+        : '';
+}
 
 export function resetAdminUi(): void {
     activeAdminModalClose?.();
@@ -86,27 +96,62 @@ export async function maybeInitAdminFilter(): Promise<void> {
     state.adminUsersLoading = true;
     // Capture the load token: if the page is left mid-fetch (hidePage bumps the token), a late
     // completion must NOT repopulate adminUsers — that would defeat the fresh re-init on re-open.
-    const token = state.adminLoadToken;
+    const token = state.adminUsersLoadToken;
+    const cursor = state.adminUsersCursor;
     try {
         const isAdmin = await resolveIsAdmin(fence);
-        if (!isPageFenceCurrent(fence) || token !== state.adminLoadToken) return;
+        if (!isPageFenceCurrent(fence) || token !== state.adminUsersLoadToken) return;
         if (!isAdmin) return; // leave adminUsers null; resolveIsAdmin governs retry semantics
-        const list = await (JC as any).hiddenContent.fetchHiddenContentUsers();
+        const page = await JC.hiddenContent?.fetchHiddenContentUsers(cursor);
         // null = transient failure: leave adminUsers null so a later render retries, and do NOT
         // re-render here (re-rendering would re-enter this function and spin a fetch/render loop).
-        if (list === null) return;
-        if (!isPageFenceCurrent(fence) || token !== state.adminLoadToken) return; // page/account left during the fetch
-        state.adminUsers = list;
+        if (!page) return;
+        if (!isPageFenceCurrent(fence) || token !== state.adminUsersLoadToken) return; // page/account left during the fetch
+        const list = page.users;
+        const selected = state.selectedAdminUserId;
+        const selectedAlreadyListed = selected
+            ? list.some((user: { userId?: string }) => user.userId === selected)
+            : true;
+        state.adminUsers = !selected || selectedAlreadyListed
+            ? list
+            : list.concat([{
+                userId: selected,
+                userName: state.adminUserName || selected,
+                count: state.adminItemsUserId === selected
+                    ? (state.adminItems?.length || 0)
+                    : 0,
+            }]);
+        state.adminUsersNextCursor = page.truncated ? page.nextCursor : null;
         // The dropdown can now be drawn from cache — repaint the current surface.
         renderPage();
     } catch (e) {
         if (isPageFenceCurrent(fence)) console.warn(`${logPrefix} admin filter init failed`, e);
     } finally {
         // A's completion must not clear B's independent loading sentinel.
-        if (isPageFenceCurrent(fence) && token === state.adminLoadToken) {
+        if (isPageFenceCurrent(fence) && token === state.adminUsersLoadToken) {
             state.adminUsersLoading = false;
         }
     }
+}
+
+/**
+ * Replaces the current bounded admin user-inventory page. Pages are never
+ * accumulated, so even a large Jellyfin installation keeps this selector's
+ * request, DOM, and retained state bounded.
+ */
+export function onAdminUserPageChange(cursor: string | null): void {
+    const fence = capturePageFence();
+    if (!isPageFenceCurrent(fence)) return;
+    const normalized = cursor
+        ? cursor.trim().replace(/-/g, '').toLowerCase()
+        : '';
+    if (cursor && !/^[0-9a-f]{32}$/.test(normalized)) return;
+    state.adminUsersLoadToken++;
+    state.adminUsersLoading = false;
+    state.adminUsers = null;
+    state.adminUsersCursor = normalized || null;
+    state.adminUsersNextCursor = null;
+    renderPage();
 }
 
 /**
@@ -119,11 +164,17 @@ export async function maybeInitAdminFilter(): Promise<void> {
 export async function onAdminUserChange(value: string): Promise<void> {
     const fence = capturePageFence();
     if (!isPageFenceCurrent(fence)) return;
+    resetAdminUi();
     const token = ++state.adminLoadToken;
+    state.adminMutationToken += 1;
     state.searchQuery = '';
     state.scopedOnly = false;
     state.adminEditMode = false; // always start a freshly-selected user in read-only view
     state.adminLoadError = false;
+    state.adminMutationError = false;
+    state.adminMutationErrorKind = null;
+    state.adminItemsRevision = null;
+    state.adminItemsRevisionUserId = null;
 
     if (!value) {
         state.selectedAdminUserId = null;
@@ -137,21 +188,57 @@ export async function onAdminUserChange(value: string): Promise<void> {
     state.selectedAdminUserId = value;
     const match = (state.adminUsers || []).find((u) => u.userId === value);
     state.adminUserName = match ? match.userName : value;
+    // The regular list intentionally omits users with zero hidden items. An
+    // exact settings-panel handoff can still name one, so stage a bounded
+    // placeholder before the first repaint; renderPage must not interpret the
+    // omission as a deleted-user fallback while the authoritative GET is live.
+    if (!match && Array.isArray(state.adminUsers)) {
+        state.adminUsers = state.adminUsers.concat([{
+            userId: value,
+            userName: value,
+            count: 0,
+        }]);
+    }
     // Clear any prior user's items and repaint to a loading state until the fetch resolves.
     state.adminItems = null;
     state.adminItemsUserId = null;
     renderPage();
 
-    const items = await (JC as any).hiddenContent.fetchUserHiddenItemsForAdmin(value);
+    const loaded = await (JC as any).hiddenContent.fetchUserHiddenItemsForAdmin(value);
     if (!isPageFenceCurrent(fence) || token !== state.adminLoadToken
         || state.selectedAdminUserId !== value) return;
-    if (items === null) {
+    if (loaded === null) {
         // Load failed — surface an error (with retry) rather than a misleading empty grid. Leaving
         // adminItemsUserId null keeps adminReady false so the error branch renders.
         state.adminLoadError = true;
     } else {
+        if (loaded.userId !== value
+            || !Array.isArray(loaded.items)
+            || !Number.isSafeInteger(loaded.itemsRevision)
+            || loaded.itemsRevision < 0) {
+            state.adminLoadError = true;
+            renderPage();
+            return;
+        }
+        const items = loaded.items;
+        if (loaded.userName) state.adminUserName = loaded.userName;
         state.adminItems = items;
         state.adminItemsUserId = value;
+        state.adminItemsRevision = loaded.itemsRevision;
+        state.adminItemsRevisionUserId = value;
+        const count = items.length;
+        const existingUsers = state.adminUsers || [];
+        if (!existingUsers.some((user) => user.userId === value)) {
+            state.adminUsers = existingUsers.concat([{
+                userId: value,
+                userName: state.adminUserName || value,
+                count,
+            }]);
+        } else {
+            state.adminUsers = existingUsers.map((user) => user.userId === value
+                ? { ...user, userName: state.adminUserName || user.userName, count }
+                : user);
+        }
     }
     renderPage();
 }
@@ -251,6 +338,54 @@ export function handleUnhideMany(keys: string[]): void {
     keys.forEach((k) => (JC as any).hiddenContent.unhideItem(k));
 }
 
+function adoptAuthoritativeAdminSnapshot(
+    targetUserId: string,
+    authoritative: AdminHiddenContentResult,
+): boolean {
+    if (authoritative.userId !== targetUserId
+        || !Array.isArray(authoritative.items)
+        || !Number.isSafeInteger(authoritative.itemsRevision)
+        || authoritative.itemsRevision < 0) {
+        return false;
+    }
+    state.adminItems = authoritative.items;
+    state.adminItemsUserId = targetUserId;
+    state.adminItemsRevision = authoritative.itemsRevision;
+    state.adminItemsRevisionUserId = targetUserId;
+    if (authoritative.userName) state.adminUserName = authoritative.userName;
+    if (Array.isArray(state.adminUsers)) {
+        state.adminUsers = state.adminUsers.map(user =>
+            user.userId === targetUserId
+                ? {
+                    ...user,
+                    userName: state.adminUserName || user.userName,
+                    count: authoritative.items.length,
+                }
+                : user);
+    }
+    return true;
+}
+
+function setAdminMutationError(kind: 'conflict' | 'generic'): void {
+    state.adminMutationError = true;
+    state.adminMutationErrorKind = kind;
+}
+
+function clearAdminMutationError(): void {
+    state.adminMutationError = false;
+    state.adminMutationErrorKind = null;
+}
+
+function currentAdminItemsRevision(targetUserId: string): number | null {
+    const revision = state.adminItemsRevision;
+    return state.adminItemsRevisionUserId === targetUserId
+        && typeof revision === 'number'
+        && Number.isSafeInteger(revision)
+        && revision >= 0
+        ? revision
+        : null;
+}
+
 /**
  * Performs an admin-side unhide for the currently-viewed user, then prunes the local cache and
  * repaints. Keeps the dropdown count roughly in sync without a full refetch.
@@ -260,17 +395,90 @@ async function adminUnhide(keys: string[], fence: HiddenContentPageFence): Promi
     if (!isPageFenceCurrent(fence)) return;
     const uid = state.selectedAdminUserId;
     if (!uid) return;
-    const ok = await (JC as any).hiddenContent.adminUnhideForUser(uid, keys);
-    if (!ok || !isPageFenceCurrent(fence) || state.selectedAdminUserId !== uid) return;
+    const expectedRevision = currentAdminItemsRevision(uid);
+    if (expectedRevision === null) {
+        setAdminMutationError('generic');
+        renderPage();
+        return;
+    }
+    const mutationToken = ++state.adminMutationToken;
+    clearAdminMutationError();
+    const acknowledgement = await JC.hiddenContent?.adminUnhideForUser(
+        uid,
+        keys,
+        expectedRevision,
+    );
+    if (!isPageFenceCurrent(fence)
+        || state.selectedAdminUserId !== uid
+        || mutationToken !== state.adminMutationToken
+        || currentAdminItemsRevision(uid) !== expectedRevision) {
+        return;
+    }
     const removed = new Set(keys);
+    if (!acknowledgement || acknowledgement.userId !== uid) {
+        // Keep every row and count unchanged unless the server acknowledged
+        // this exact target. The same controls remain available for an
+        // explicit retry.
+        setAdminMutationError('generic');
+        renderPage();
+        return;
+    }
+    if (acknowledgement.outcome === 'conflict') {
+        if (acknowledgement.authoritative) {
+            adoptAuthoritativeAdminSnapshot(uid, acknowledgement.authoritative);
+        }
+        setAdminMutationError('conflict');
+        renderPage();
+        return;
+    }
+    if (acknowledgement.outcome === 'failed') {
+        if (acknowledgement.authoritative) {
+            adoptAuthoritativeAdminSnapshot(uid, acknowledgement.authoritative);
+        }
+        setAdminMutationError('generic');
+        renderPage();
+        return;
+    }
+    if (acknowledgement.authoritative) {
+        if (!adoptAuthoritativeAdminSnapshot(uid, acknowledgement.authoritative)) {
+            setAdminMutationError('generic');
+        } else {
+            clearAdminMutationError();
+        }
+        renderPage();
+        return;
+    }
+    if (acknowledgement.outcome !== 'committed') {
+        setAdminMutationError('generic');
+        renderPage();
+        return;
+    }
+    const locallyPresent = Array.isArray(state.adminItems)
+        ? state.adminItems.reduce((count, item) =>
+            count + (removed.has(item._key) ? 1 : 0), 0)
+        : 0;
+    // A committed transport acknowledgement still has to prove the exact
+    // effect represented by this snapshot. Accepting removed:0 (or a partial
+    // batch count) and pruning every requested local row would manufacture a
+    // success the server never reported. Keep the old rows and revision
+    // retryable; the next attempt will either succeed at this revision or
+    // recover authoritative evidence through the normal conflict path.
+    if (acknowledgement.removed !== locallyPresent) {
+        setAdminMutationError('generic');
+        renderPage();
+        return;
+    }
+    clearAdminMutationError();
     if (Array.isArray(state.adminItems)) {
         state.adminItems = state.adminItems.filter((it) => !removed.has(it._key));
     }
     if (Array.isArray(state.adminUsers)) {
         // Immutable update: replace the entry rather than mutating the cached object in place.
         state.adminUsers = state.adminUsers.map((x) =>
-            x.userId === uid ? { ...x, count: Math.max(0, (x.count || 0) - removed.size) } : x);
+            x.userId === uid ? { ...x, count: Math.max(0, (x.count || 0) - locallyPresent) } : x);
     }
+    state.adminItemsRevision = acknowledgement.itemsRevision;
+    state.adminItemsRevisionUserId = uid;
     renderPage();
 }
 
@@ -283,6 +491,14 @@ async function adminUnhide(keys: string[], fence: HiddenContentPageFence): Promi
  */
 async function adminAddItem(targetUserId: string, result: any, fence: HiddenContentPageFence): Promise<boolean> {
     if (!isPageFenceCurrent(fence) || state.selectedAdminUserId !== targetUserId) return false;
+    const expectedRevision = currentAdminItemsRevision(targetUserId);
+    if (expectedRevision === null) {
+        setAdminMutationError('generic');
+        renderPage();
+        return false;
+    }
+    const mutationToken = ++state.adminMutationToken;
+    clearAdminMutationError();
     const identity = createTmdbIdentity(result.tmdbId, result.type);
     const item = {
         itemId: result.itemId || '',
@@ -300,12 +516,95 @@ async function adminAddItem(targetUserId: string, result: any, fence: HiddenCont
         hideScope: 'global',
         hiddenAt: new Date().toISOString(),
     };
-    const added = await (JC as any).hiddenContent.adminHideForUser(targetUserId, [item]);
-    if (added === false || !isPageFenceCurrent(fence)
-        || state.selectedAdminUserId !== targetUserId) return false;
-    // The server returns the number of items it newly added; 0 means the user already had it hidden.
-    // Only update the local cache + dropdown count for a real add, so the count can't drift upward.
-    const didAdd = typeof added === 'number' ? added > 0 : true;
+    const acknowledgement = await JC.hiddenContent?.adminHideForUser(
+        targetUserId,
+        [item],
+        expectedRevision,
+    );
+    if (!isPageFenceCurrent(fence)
+        || state.selectedAdminUserId !== targetUserId
+        || mutationToken !== state.adminMutationToken
+        || currentAdminItemsRevision(targetUserId) !== expectedRevision) {
+        return false;
+    }
+    if (!acknowledgement || acknowledgement.userId !== targetUserId) {
+        setAdminMutationError('generic');
+        renderPage();
+        return false;
+    }
+    if (acknowledgement.outcome === 'conflict') {
+        if (acknowledgement.authoritative) {
+            adoptAuthoritativeAdminSnapshot(
+                targetUserId,
+                acknowledgement.authoritative,
+            );
+        }
+        setAdminMutationError('conflict');
+        renderPage();
+        return false;
+    }
+    if (acknowledgement.outcome === 'failed') {
+        if (acknowledgement.authoritative) {
+            adoptAuthoritativeAdminSnapshot(
+                targetUserId,
+                acknowledgement.authoritative,
+            );
+        }
+        setAdminMutationError('generic');
+        renderPage();
+        return false;
+    }
+    if (acknowledgement.authoritative) {
+        if (!adoptAuthoritativeAdminSnapshot(
+            targetUserId,
+            acknowledgement.authoritative,
+        )) {
+            setAdminMutationError('generic');
+            renderPage();
+            return false;
+        }
+        clearAdminMutationError();
+        renderPage();
+        return true;
+    }
+    if (acknowledgement.outcome !== 'committed') {
+        setAdminMutationError('generic');
+        renderPage();
+        return false;
+    }
+    state.adminItemsRevision = acknowledgement.itemsRevision;
+    state.adminItemsRevisionUserId = targetUserId;
+    if (acknowledgement.added === 0) {
+        // A correct-revision zero acknowledgement proves the exact GET
+        // snapshot is still authoritative. It is successful only when that
+        // snapshot already contains the requested canonical identity.
+        const requestedIdentity = identityFromSource(item);
+        const requestedKey = item.itemId
+            || (requestedIdentity ? hiddenIdentityKey(requestedIdentity) : '');
+        const desiredStatePresent = (state.adminItems || []).some(existing => {
+            if (requestedKey
+                && (existing._key === requestedKey
+                    || existing.itemId === requestedKey)) {
+                return true;
+            }
+            const existingIdentity = identityFromSource(existing);
+            return !!requestedIdentity
+                && !!existingIdentity
+                && hiddenIdentityKey(existingIdentity)
+                    === hiddenIdentityKey(requestedIdentity);
+        });
+        if (!desiredStatePresent) {
+            setAdminMutationError('generic');
+            renderPage();
+            return false;
+        }
+        clearAdminMutationError();
+        renderPage();
+        return true;
+    }
+    // Only update the local cache + dropdown count for the exact newly-added
+    // row; the zero/concurrent branch above reconciles authoritatively.
+    const didAdd = acknowledgement.added === 1;
     const key = item.itemId || (identity ? hiddenIdentityKey(identity) : '');
     if (didAdd && Array.isArray(state.adminItems) && !state.adminItems.some((i) => (i._key || i.itemId) === key)) {
         state.adminItems = state.adminItems.concat([{ ...item, _key: key }]);
@@ -315,6 +614,7 @@ async function adminAddItem(targetUserId: string, result: any, fence: HiddenCont
         state.adminUsers = state.adminUsers.map((x) =>
             x.userId === targetUserId ? { ...x, count: (x.count || 0) + 1 } : x);
     }
+    clearAdminMutationError();
     renderPage();
     return true;
 }
@@ -332,6 +632,9 @@ export function openAdminAddModal(): void {
     const userName = state.adminUserName || uid;
 
     activeAdminModalClose?.();
+    const opener = document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
     // The open overlay normally blocks re-opening, but if a stale one is somehow present, note it so
     // we don't later "restore" the page overflow to its already-locked 'hidden' value (a perma-lock).
     const hadStaleOverlay = !!document.querySelector('.jc-hidden-admin-add-overlay');
@@ -345,14 +648,19 @@ export function openAdminAddModal(): void {
     overlay.dataset.jcIdentityOwned = 'true';
     const panel = document.createElement('div');
     panel.className = 'jc-hidden-management-panel';
+    panel.setAttribute('role', 'dialog');
+    panel.setAttribute('aria-modal', 'true');
+    panel.setAttribute('aria-labelledby', 'jc-hidden-admin-add-title');
 
     const header = document.createElement('div');
     header.className = 'jc-hidden-management-header';
     const h2 = document.createElement('h2');
+    h2.id = 'jc-hidden-admin-add-title';
     h2.textContent = JC.t!('hidden_content_admin_add_title', { userName });
     const closeBtn = document.createElement('button');
     closeBtn.className = 'jc-hidden-management-close';
     closeBtn.textContent = '×';
+    closeBtn.setAttribute('aria-label', JC.t!('arr_search_close'));
     header.appendChild(h2);
     header.appendChild(closeBtn);
     panel.appendChild(header);
@@ -363,8 +671,16 @@ export function openAdminAddModal(): void {
     searchInput.type = 'text';
     searchInput.className = 'jc-hidden-management-search';
     searchInput.placeholder = JC.t!('hidden_content_admin_add_search');
+    searchInput.setAttribute('aria-label', searchInput.placeholder);
     toolbar.appendChild(searchInput);
     panel.appendChild(toolbar);
+
+    const mutationStatus = document.createElement('div');
+    mutationStatus.className = 'jc-hidden-admin-mutation-status jc-hidden-admin-modal-status';
+    mutationStatus.setAttribute('role', 'status');
+    mutationStatus.setAttribute('aria-live', 'polite');
+    mutationStatus.setAttribute('aria-atomic', 'true');
+    panel.appendChild(mutationStatus);
 
     const grid = document.createElement('div');
     grid.className = 'jc-hidden-management-grid';
@@ -394,17 +710,37 @@ export function openAdminAddModal(): void {
         searchTimer = null;
         JC.core.refreshSafety!.releaseElement(overlay);
         overlay.remove();
-        document.removeEventListener('keydown', esc);
+        document.removeEventListener('keydown', onKeydown);
         document.body.style.overflow = prevBodyOverflow;
         document.documentElement.style.overflow = prevHtmlOverflow;
         pageHandle?.untrack(close);
         if (activeAdminModalClose === close) activeAdminModalClose = null;
+        if (opener?.isConnected) opener.focus();
     };
     activeAdminModalClose = close;
-    const esc = (e: KeyboardEvent): void => { if (e.key === 'Escape') close(); };
+    const onKeydown = (e: KeyboardEvent): void => {
+        if (e.key === 'Escape') {
+            close();
+            return;
+        }
+        if (e.key !== 'Tab') return;
+        const focusable = [...panel.querySelectorAll<HTMLElement>(
+            'button:not([disabled]),input:not([disabled]),[tabindex]:not([tabindex="-1"])',
+        )];
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (!first || !last) return;
+        if (e.shiftKey && document.activeElement === first) {
+            e.preventDefault();
+            last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+            e.preventDefault();
+            first.focus();
+        }
+    };
     closeBtn.addEventListener('click', close);
     overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
-    document.addEventListener('keydown', esc);
+    document.addEventListener('keydown', onKeydown);
 
     const buildResultCard = (n: any): HTMLElement => {
         const identity = createTmdbIdentity(n.tmdbId, n.type);
@@ -474,10 +810,28 @@ export function openAdminAddModal(): void {
                     if (!isModalCurrent()) return;
                     btn.disabled = true;
                     btn.textContent = JC.t!('hidden_content_admin_add_hiding');
+                    mutationStatus.textContent = '';
+                    mutationStatus.classList.remove('is-error');
+                    mutationStatus.setAttribute('role', 'status');
+                    mutationStatus.setAttribute('aria-live', 'polite');
                     const ok = await adminAddItem(uid, n, fence);
                     if (!isModalCurrent()) return;
                     btn.textContent = ok ? JC.t!('hidden_content_admin_add_added') : JC.t!('hidden_content_admin_add_hide');
-                    if (!ok) btn.disabled = false;
+                    if (!ok) {
+                        btn.disabled = false;
+                        mutationStatus.classList.add('is-error');
+                        mutationStatus.setAttribute('role', 'alert');
+                        mutationStatus.setAttribute('aria-live', 'assertive');
+                        mutationStatus.textContent = JC.t!(
+                            state.adminMutationErrorKind === 'conflict'
+                                ? 'panel_admin_target_conflict_error'
+                                : 'panel_admin_target_save_error',
+                        );
+                    } else {
+                        mutationStatus.setAttribute('role', 'status');
+                        mutationStatus.setAttribute('aria-live', 'polite');
+                        mutationStatus.textContent = JC.t!('hidden_content_admin_add_added');
+                    }
                 })();
             });
         }
@@ -507,12 +861,17 @@ export function openAdminAddModal(): void {
         // Routed through the core fetch layer (auth + JSON parse identical to the
         // former ApiClient.ajax call; any failure still resolves to []).
         const libP = JC.core.api!.fetch((ApiClient as { getUrl(path: string, params?: unknown): string }).getUrl('/Items', {
-            userId: fence.context?.userId || ApiClient.getCurrentUserId(), searchTerm: term, IncludeItemTypes: 'Movie,Series',
-            Recursive: true, Limit: 24, Fields: 'ProviderIds', ImageTypeLimit: 1, EnableImageTypes: 'Primary',
-        })).then((res: any) => (res && res.Items) || []).catch(() => []);
+            userId: uid, searchTerm: term, IncludeItemTypes: 'Movie,Series',
+            Recursive: true, Limit: ADMIN_ADD_RESULT_LIMIT, Fields: 'ProviderIds',
+            ImageTypeLimit: 1, EnableImageTypes: 'Primary',
+        })).then((res: any) => Array.isArray(res?.Items)
+            ? res.Items.slice(0, ADMIN_ADD_RESULT_LIMIT)
+            : []).catch(() => []);
         const seerrAPI = (JC as any).seerrAPI;
         const seerrP = (seerrAPI && seerrAPI.search)
-            ? seerrAPI.search(term).then((res: any) => (res && res.results) || []).catch(() => [])
+            ? seerrAPI.search(term).then((res: any) => Array.isArray(res?.results)
+                ? res.results.slice(0, ADMIN_ADD_RESULT_LIMIT)
+                : []).catch(() => [])
             : Promise.resolve([]);
 
         const [libItems, seerrItems] = await Promise.all([libP, seerrP]);
@@ -521,23 +880,68 @@ export function openAdminAddModal(): void {
         const normalized: any[] = [];
         const seenProviderIdentities = new Set<string>();
         for (const r of libItems) {
-            const tmdb = (r.ProviderIds && (r.ProviderIds.Tmdb || r.ProviderIds.tmdb)) || '';
-            const identity = createTmdbIdentity(tmdb, r.Type);
+            if (normalized.length >= ADMIN_ADD_RESULT_LIMIT) break;
+            if (!r || typeof r !== 'object') continue;
+            const type = r.Type === 'Movie' || r.Type === 'Series'
+                ? r.Type
+                : '';
+            const itemId = boundedSearchText(r.Id, 64);
+            if (!type || !/^[0-9a-fA-F-]{32,36}$/.test(itemId)) continue;
+            const providers = r.ProviderIds && typeof r.ProviderIds === 'object'
+                ? r.ProviderIds
+                : {};
+            const tmdb = boundedSearchText(
+                providers.Tmdb || providers.tmdb,
+                32,
+            );
+            const identity = createTmdbIdentity(tmdb, type);
             if (identity) seenProviderIdentities.add(hiddenIdentityKey(identity));
-            normalized.push({ source: 'library', itemId: r.Id, name: r.Name, type: r.Type,
-                tmdbId: tmdb ? String(tmdb) : '', posterPath: '', year: r.ProductionYear || '' });
+            normalized.push({
+                source: 'library',
+                itemId,
+                name: boundedSearchText(r.Name, ADMIN_ADD_NAME_LIMIT),
+                type,
+                tmdbId: tmdb,
+                posterPath: '',
+                year: typeof r.ProductionYear === 'number'
+                    || typeof r.ProductionYear === 'string'
+                    ? String(r.ProductionYear).slice(0, 4)
+                    : '',
+            });
         }
         for (const r of seerrItems) {
-            if (r.mediaType !== 'movie' && r.mediaType !== 'tv') continue; // skip people
-            const tmdb = String(r.id);
+            if (normalized.length >= ADMIN_ADD_RESULT_LIMIT) break;
+            if (!r || typeof r !== 'object'
+                || (r.mediaType !== 'movie' && r.mediaType !== 'tv')) {
+                continue; // skip people and malformed rows
+            }
+            const tmdb = boundedSearchText(
+                typeof r.id === 'number' ? String(r.id) : r.id,
+                32,
+            );
             const identity = createTmdbIdentity(tmdb, r.mediaType);
-            const identityKey = identity && hiddenIdentityKey(identity);
+            if (!identity) continue;
+            const identityKey = hiddenIdentityKey(identity);
             if (identityKey && seenProviderIdentities.has(identityKey)) continue; // already shown from the library
             if (identityKey) seenProviderIdentities.add(identityKey);
-            normalized.push({ source: 'seerr', itemId: '', name: r.title || r.name || '',
-                type: r.mediaType === 'tv' ? 'Series' : 'Movie', tmdbId: tmdb,
-                posterPath: r.posterPath || r.poster_path || '',
-                year: ((r.releaseDate || r.firstAirDate || '') + '').slice(0, 4) });
+            normalized.push({
+                source: 'seerr',
+                itemId: '',
+                name: boundedSearchText(
+                    r.title || r.name,
+                    ADMIN_ADD_NAME_LIMIT,
+                ),
+                type: r.mediaType === 'tv' ? 'Series' : 'Movie',
+                tmdbId: tmdb,
+                posterPath: boundedSearchText(
+                    r.posterPath || r.poster_path,
+                    ADMIN_ADD_POSTER_LIMIT,
+                ),
+                year: boundedSearchText(
+                    r.releaseDate || r.firstAirDate,
+                    4,
+                ),
+            });
         }
 
         if (!normalized.length) { showMessage(JC.t!('hidden_content_admin_add_none')); return; }

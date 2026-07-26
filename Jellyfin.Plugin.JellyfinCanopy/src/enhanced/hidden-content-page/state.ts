@@ -19,6 +19,8 @@ export interface AdminUser {
     count: number;
 }
 
+export type AdminMutationErrorKind = 'conflict' | 'generic';
+
 export interface HiddenContentPageState {
     searchQuery: string;
     scopedOnly: boolean;
@@ -27,12 +29,21 @@ export interface HiddenContentPageState {
     adminIsAdmin: boolean | null;
     adminUsers: AdminUser[] | null;
     adminUsersLoading: boolean;
+    adminUsersLoadToken: number;
+    adminUsersCursor: string | null;
+    adminUsersNextCursor: string | null;
+    adminUsersFocusAfterPage: boolean;
     selectedAdminUserId: string | null;
     adminEditMode: boolean;
     adminUserName: string;
     adminItems: any[] | null;
     adminItemsUserId: string | null;
+    adminItemsRevision: number | null;
+    adminItemsRevisionUserId: string | null;
     adminLoadError: boolean;
+    adminMutationError: boolean;
+    adminMutationErrorKind: AdminMutationErrorKind | null;
+    adminMutationToken: number;
     adminLoadToken: number;
 }
 
@@ -48,12 +59,21 @@ export const state: HiddenContentPageState = {
     adminIsAdmin: null,          // tri-state: null = not yet resolved, then true/false (false only when authoritative)
     adminUsers: null,            // cached dropdown list: [{ userId, userName, count }]; null = needs (re)fetch
     adminUsersLoading: false,    // guards against concurrent user-list fetches
+    adminUsersLoadToken: 0,      // list requests are independent from exact-target item requests
+    adminUsersCursor: null,      // current bounded inventory page (null = first)
+    adminUsersNextCursor: null,  // exact cursor for the next bounded page
+    adminUsersFocusAfterPage: false, // restore the user selector after async paging
     selectedAdminUserId: null,   // null = viewing own list; otherwise the target user's N-id
     adminEditMode: false,        // when viewing another user, allow editing (unhiding) their items
     adminUserName: '',           // display name of the selected user (for the header badge)
     adminItems: null,            // cached hidden items for the selected user
     adminItemsUserId: null,      // which user adminItems belongs to (guards against showing stale items)
+    adminItemsRevision: null,    // exact ItemsRevision from this target's latest authoritative GET/ACK
+    adminItemsRevisionUserId: null, // target that owns adminItemsRevision
     adminLoadError: false,       // true when the selected user's items failed to load (vs genuinely empty)
+    adminMutationError: false,   // exact-target mutation failed or returned an ambiguous acknowledgement
+    adminMutationErrorKind: null, // conflicts have distinct recovery guidance from generic transport failures
+    adminMutationToken: 0,       // fences overlapping same-target mutations and target switches
     adminLoadToken: 0,           // increments per fetch so stale responses are ignored
 };
 
@@ -115,17 +135,26 @@ export function resetHiddenContentPageState(): void {
     });
 
     state.searchQuery = '';
+    state.adminUsersLoadToken += 1;
     state.adminLoadToken += 1;
     state.adminIsAdmin = null;
     state.selectedAdminUserId = null;
     state.adminEditMode = false;
     state.adminItems = null;
     state.adminItemsUserId = null;
+    state.adminItemsRevision = null;
+    state.adminItemsRevisionUserId = null;
     state.adminLoadError = false;
+    state.adminMutationError = false;
+    state.adminMutationErrorKind = null;
+    state.adminMutationToken += 1;
     state.adminUserName = '';
     state.scopedOnly = false;
     state.adminUsers = null;
     state.adminUsersLoading = false;
+    state.adminUsersCursor = null;
+    state.adminUsersNextCursor = null;
+    state.adminUsersFocusAfterPage = false;
 }
 
 export function scopeBadgeText(scope: string | undefined): string {

@@ -15,7 +15,12 @@ import {
 } from '../shortcut-codec';
 
 export type PanelEditorMode = 'self' | 'admin-target';
-export type PanelUserFile = 'settings.json' | 'shortcuts.json';
+export type PanelUserFile =
+    | 'settings.json'
+    | 'shortcuts.json'
+    | 'hidden-content-settings.json'
+    | 'spoiler-guard-prefs.json'
+    | 'spoiler-guard-overrides.json';
 
 export interface PanelEditorContext {
     readonly mode: PanelEditorMode;
@@ -26,9 +31,16 @@ export interface PanelEditorContext {
     readonly settings: UserSettings;
     readonly shortcuts: Record<string, unknown>;
     readonly activeShortcuts: Record<string, string>;
+    readonly hiddenContentSettings?: Record<string, unknown> | null;
+    readonly hiddenContentCount?: number;
+    readonly spoilerGuardPrefs?: Record<string, unknown> | null;
+    readonly spoilerGuardOverrides?: Record<string, unknown> | null;
     isCurrent(): boolean;
     saveSettings(): Promise<UserSettingsSaveResult>;
     saveShortcuts(): Promise<UserSettingsSaveResult>;
+    saveHiddenContentSettings?(): Promise<UserSettingsSaveResult>;
+    saveSpoilerGuardPrefs?(): Promise<UserSettingsSaveResult>;
+    saveSpoilerGuardOverrides?(): Promise<UserSettingsSaveResult>;
 }
 
 export class AdminTargetPersistenceError extends Error {
@@ -70,6 +82,7 @@ interface AdminFileEnvelope {
     data: Record<string, unknown>;
     targetUserId: string;
     targetDisplayName: string;
+    itemCount?: number;
 }
 
 interface SaveWaiter {
@@ -231,8 +244,8 @@ function resolveTargetShortcuts(
                 result[shortcut.Name] = canonicalizeShortcut(shortcut.Key);
             }
             return result;
-        }, {})
-        : {};
+        }, { __proto__: null } as unknown as Record<string, string>)
+        : { __proto__: null } as unknown as Record<string, string>;
     return {
         ...collect(pluginDefaults.Shortcuts),
         ...collect(targetShortcuts.Shortcuts),
@@ -248,6 +261,19 @@ function cloneValue(value: unknown): unknown {
     return JSON.parse(JSON.stringify(value)) as unknown;
 }
 
+function setOwnDataProperty(
+    target: Record<string, unknown>,
+    key: string,
+    value: unknown,
+): void {
+    Object.defineProperty(target, key, {
+        value,
+        enumerable: true,
+        configurable: true,
+        writable: true,
+    });
+}
+
 function canonical(value: unknown): string {
     if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
     if (value && typeof value === 'object') {
@@ -258,8 +284,12 @@ function canonical(value: unknown): string {
 }
 
 function revisionOf(value: Record<string, unknown>): number | null {
-    const revision = Number(value.Revision ?? value.revision);
-    return Number.isSafeInteger(revision) && revision >= 0 ? revision : null;
+    const revision = value.Revision ?? value.revision;
+    return typeof revision === 'number'
+        && Number.isSafeInteger(revision)
+        && revision >= 0
+        ? revision
+        : null;
 }
 
 function withoutRevision(value: Record<string, unknown>): Record<string, unknown> {
@@ -269,10 +299,19 @@ function withoutRevision(value: Record<string, unknown>): Record<string, unknown
     return result;
 }
 
-function withoutServerManaged(value: Record<string, unknown>): Record<string, unknown> {
+function withoutServerManaged(
+    file: PanelUserFile,
+    value: Record<string, unknown>,
+): Record<string, unknown> {
     const result = withoutRevision(value);
-    delete result.IsAdmin;
-    delete result.isAdmin;
+    // IsAdmin is server-owned metadata only in settings.json. Every other
+    // resource treats unknown fields as opaque extension data, so an IsAdmin
+    // key there must participate in exact acknowledgement evidence and CAS
+    // rebases like any other future field.
+    if (file === 'settings.json') {
+        delete result.IsAdmin;
+        delete result.isAdmin;
+    }
     return result;
 }
 
@@ -280,27 +319,41 @@ function sameValue(left: unknown, right: unknown): boolean {
     return canonical(left) === canonical(right);
 }
 
-function sameContent(left: Record<string, unknown>, right: Record<string, unknown>): boolean {
-    return sameValue(withoutServerManaged(left), withoutServerManaged(right));
+function sameContent(
+    file: PanelUserFile,
+    left: Record<string, unknown>,
+    right: Record<string, unknown>,
+): boolean {
+    return sameValue(
+        withoutServerManaged(file, left),
+        withoutServerManaged(file, right),
+    );
 }
 
-function changedKeys(base: Record<string, unknown>, desired: Record<string, unknown>): string[] {
+function changedKeys(
+    file: PanelUserFile,
+    base: Record<string, unknown>,
+    desired: Record<string, unknown>,
+): string[] {
     const keys = new Set([...Object.keys(base), ...Object.keys(desired)]);
     keys.delete('Revision');
     keys.delete('revision');
-    keys.delete('IsAdmin');
-    keys.delete('isAdmin');
+    if (file === 'settings.json') {
+        keys.delete('IsAdmin');
+        keys.delete('isAdmin');
+    }
     return [...keys].filter(key => !sameValue(base[key], desired[key]));
 }
 
 function safeRebase(
+    file: PanelUserFile,
     base: Record<string, unknown> | null,
     desired: Record<string, unknown>,
     authoritative: Record<string, unknown>,
 ): Record<string, unknown> | null {
     if (!base) return null;
     const rebased = cloneRecord(authoritative);
-    for (const key of changedKeys(base, desired)) {
+    for (const key of changedKeys(file, base, desired)) {
         const remote = authoritative[key];
         const oldValue = base[key];
         const newValue = desired[key];
@@ -308,7 +361,7 @@ function safeRebase(
         // else.  A non-overlapping conflict is safe to rebase and retry.
         if (!sameValue(remote, oldValue) && !sameValue(remote, newValue)) return null;
         if (newValue === undefined) delete rebased[key];
-        else rebased[key] = cloneValue(newValue);
+        else setOwnDataProperty(rebased, key, cloneValue(newValue));
     }
     return rebased;
 }
@@ -323,6 +376,16 @@ function field(record: Record<string, unknown>, camel: string, pascal: string): 
     return record[camel] ?? record[pascal];
 }
 
+function hasValidSpoilerOverrideShape(data: Record<string, unknown>): boolean {
+    for (const key of ['Series', 'Movies', 'Collections', 'PendingTmdb']) {
+        if (!Object.prototype.hasOwnProperty.call(data, key)) return false;
+        const dictionary = recordOf(data[key]);
+        if (!dictionary || Object.keys(dictionary).length > 1000) return false;
+        if (Object.values(dictionary).some(entry => !recordOf(entry))) return false;
+    }
+    return true;
+}
+
 function parseEnvelope(
     value: unknown,
     expectedFile: PanelUserFile,
@@ -332,22 +395,40 @@ function parseEnvelope(
     const record = recordOf(value);
     const data = recordOf(record ? field(record, 'data', 'Data') : null);
     const file = record ? field(record, 'file', 'File') : null;
-    const revision = Number(record ? field(record, 'revision', 'Revision') : Number.NaN);
+    const revisionValue = record ? field(record, 'revision', 'Revision') : undefined;
+    const revision = typeof revisionValue === 'number'
+        && Number.isSafeInteger(revisionValue)
+        && revisionValue >= 0
+        ? revisionValue
+        : null;
     const hashValue = record ? field(record, 'contentHash', 'ContentHash') : null;
     const targetValue = record ? field(record, 'targetUserId', 'TargetUserId') : null;
     const nameValue = record ? field(record, 'targetDisplayName', 'TargetDisplayName') : null;
+    const itemCountValue = record ? field(record, 'itemCount', 'ItemCount') : undefined;
     const success = record ? field(record, 'success', 'Success') : null;
     const targetUserId = normalizeId(targetValue);
     const contentHash = typeof hashValue === 'string' ? hashValue.toLowerCase() : '';
     const targetDisplayName = typeof nameValue === 'string' ? nameValue.trim() : '';
+    const itemCount = itemCountValue === undefined
+        ? undefined
+        : (typeof itemCountValue === 'number'
+            && Number.isSafeInteger(itemCountValue)
+            && itemCountValue >= 0
+            ? itemCountValue
+            : null);
 
     if (!record || !data || file !== expectedFile
         || success !== true
-        || !Number.isSafeInteger(revision) || revision < 0
+        || revision === null
         || revisionOf(data) !== revision
         || !/^[0-9a-f]{64}$/.test(contentHash)
         || targetUserId !== expectedTargetId
-        || targetDisplayName.length === 0) {
+        || targetDisplayName.length === 0
+        || itemCount === null
+        || (expectedFile === 'hidden-content-settings.json'
+            && itemCount === undefined)
+        || (expectedFile === 'spoiler-guard-overrides.json'
+            && !hasValidSpoilerOverrideShape(data))) {
         throw new AdminTargetPersistenceError(
             mutation
                 ? 'The server did not acknowledge the exact target user settings revision.'
@@ -363,6 +444,7 @@ function parseEnvelope(
         data: cloneRecord(data),
         targetUserId,
         targetDisplayName,
+        ...(itemCount === undefined ? {} : { itemCount }),
     };
 }
 
@@ -374,20 +456,38 @@ function parseConflictEnvelope(
     const record = recordOf(value);
     const data = recordOf(record ? field(record, 'data', 'Data') : null);
     const file = record ? field(record, 'file', 'File') : null;
-    const revision = Number(record ? field(record, 'revision', 'Revision') : Number.NaN);
+    const revisionValue = record ? field(record, 'revision', 'Revision') : undefined;
+    const revision = typeof revisionValue === 'number'
+        && Number.isSafeInteger(revisionValue)
+        && revisionValue >= 0
+        ? revisionValue
+        : null;
     const hashValue = record ? field(record, 'contentHash', 'ContentHash') : null;
     const targetValue = record ? field(record, 'targetUserId', 'TargetUserId') : null;
     const nameValue = record ? field(record, 'targetDisplayName', 'TargetDisplayName') : null;
+    const itemCountValue = record ? field(record, 'itemCount', 'ItemCount') : undefined;
     const conflict = record ? field(record, 'conflict', 'Conflict') : null;
     const contentHash = typeof hashValue === 'string' ? hashValue.toLowerCase() : '';
     const targetUserId = normalizeId(targetValue);
     const targetDisplayName = typeof nameValue === 'string' ? nameValue.trim() : '';
+    const itemCount = itemCountValue === undefined
+        ? undefined
+        : (typeof itemCountValue === 'number'
+            && Number.isSafeInteger(itemCountValue)
+            && itemCountValue >= 0
+            ? itemCountValue
+            : null);
     if (!record || !data || conflict !== true || file !== expectedFile
-        || !Number.isSafeInteger(revision) || revision < 0
+        || revision === null
         || revisionOf(data) !== revision
         || !/^[0-9a-f]{64}$/.test(contentHash)
         || targetUserId !== expectedTargetId
-        || targetDisplayName.length === 0) {
+        || targetDisplayName.length === 0
+        || itemCount === null
+        || (expectedFile === 'hidden-content-settings.json'
+            && itemCount === undefined)
+        || (expectedFile === 'spoiler-guard-overrides.json'
+            && !hasValidSpoilerOverrideShape(data))) {
         throw new AdminTargetPersistenceError(
             'The server returned unverified target conflict evidence.',
             { kind: 'conflict', status: 409, ambiguous: true },
@@ -400,6 +500,7 @@ function parseConflictEnvelope(
         data: cloneRecord(data),
         targetUserId,
         targetDisplayName,
+        ...(itemCount === undefined ? {} : { itemCount }),
     };
 }
 
@@ -479,6 +580,11 @@ function classifyError(
             kind: 'unavailable',
             status,
             retryable: true,
+            // A mutation can commit before a post-commit cache/gate operation
+            // produces a 5xx. Only the POST classifier has the expected
+            // file/target evidence context; force an exact evidence read before
+            // claiming rollback or failure.
+            ambiguous: status !== 429 && !!expectedFile && !!expectedTargetId,
             cause: error,
         });
     }
@@ -493,7 +599,57 @@ function classifyError(
     return new AdminTargetPersistenceError(message, { kind: 'protocol', status, cause: error });
 }
 
+const HIDDEN_SETTINGS_WIRE_TO_LOCAL: Readonly<Record<string, string>> = {
+    Revision: 'revision',
+    Enabled: 'enabled',
+    FilterLibrary: 'filterLibrary',
+    FilterDiscovery: 'filterDiscovery',
+    FilterUpcoming: 'filterUpcoming',
+    FilterCalendar: 'filterCalendar',
+    FilterSearch: 'filterSearch',
+    FilterRecommendations: 'filterRecommendations',
+    FilterRequests: 'filterRequests',
+    FilterNextUp: 'filterNextUp',
+    FilterContinueWatching: 'filterContinueWatching',
+    ShowHideButtons: 'showHideButtons',
+    ShowHideConfirmation: 'showHideConfirmation',
+    ShowButtonSeerr: 'showButtonSeerr',
+    ShowButtonLibrary: 'showButtonLibrary',
+    ShowButtonDetails: 'showButtonDetails',
+    ShowButtonCast: 'showButtonCast',
+    ExperimentalHideCollections: 'experimentalHideCollections',
+};
+const HIDDEN_SETTINGS_LOCAL_TO_WIRE = Object.fromEntries(
+    Object.entries(HIDDEN_SETTINGS_WIRE_TO_LOCAL).map(([wire, local]) => [local, wire]),
+) as Readonly<Record<string, string>>;
+
+function renameKnownKeys(
+    value: Record<string, unknown>,
+    names: Readonly<Record<string, string>>,
+): Record<string, unknown> {
+    // Extension-data names are opaque user data. A normal-object assignment
+    // would invoke Object.prototype.__proto__ and silently drop that member.
+    const result = { __proto__: null } as unknown as Record<string, unknown>;
+    for (const [key, fieldValue] of Object.entries(value)) {
+        const outputKey = Object.prototype.hasOwnProperty.call(names, key)
+            ? names[key]
+            : key;
+        setOwnDataProperty(result, outputKey, cloneValue(fieldValue));
+    }
+    return result;
+}
+
 function localValue(file: PanelUserFile, wire: Record<string, unknown>): Record<string, unknown> {
+    if (file === 'hidden-content-settings.json') {
+        // Only schema-owned names are converted. Unknown extension fields keep
+        // their exact spelling and nested shape across a preference-only edit.
+        return renameKnownKeys(wire, HIDDEN_SETTINGS_WIRE_TO_LOCAL);
+    }
+    if (file === 'spoiler-guard-prefs.json') {
+        // Existing Spoiler Guard controls use the server's PascalCase field
+        // names. Keeping them also avoids rewriting extension-field names.
+        return cloneRecord(wire);
+    }
     if (file === 'settings.json') {
         const transformed = JC.transformUserFileCase?.(file, cloneRecord(wire), 'load')
             ?? JC.toCamelCase?.(cloneRecord(wire))
@@ -504,10 +660,13 @@ function localValue(file: PanelUserFile, wire: Record<string, unknown>): Record<
         }
         return record;
     }
-    const result = cloneRecord(wire);
-    normalizeShortcutEntries(result.Shortcuts);
-    if (!Array.isArray(result.Shortcuts)) result.Shortcuts = [];
-    return result;
+    if (file === 'shortcuts.json') {
+        const result = cloneRecord(wire);
+        normalizeShortcutEntries(result.Shortcuts);
+        if (!Array.isArray(result.Shortcuts)) result.Shortcuts = [];
+        return result;
+    }
+    return cloneRecord(wire);
 }
 
 function wireValue(file: PanelUserFile, local: Record<string, unknown>): Record<string, unknown> {
@@ -516,6 +675,10 @@ function wireValue(file: PanelUserFile, local: Record<string, unknown>): Record<
         transformed = JC.transformUserFileCase?.(file, local, 'save')
             ?? JC.toPascalCase?.(local)
             ?? local;
+    } else if (file === 'hidden-content-settings.json') {
+        transformed = renameKnownKeys(local, HIDDEN_SETTINGS_LOCAL_TO_WIRE);
+    } else if (file === 'spoiler-guard-prefs.json') {
+        transformed = cloneRecord(local);
     }
     const result = recordOf(transformed);
     if (!result) {
@@ -579,7 +742,7 @@ function restoreIntentTarget(intent: SaveIntent, wire: Record<string, unknown>):
         // Retain a later edit which happened while this request was in flight.
         if (!sameValue(intent.target[key], desired[key])) continue;
         if (Object.prototype.hasOwnProperty.call(restored, key)) {
-            intent.target[key] = cloneValue(restored[key]);
+            setOwnDataProperty(intent.target, key, cloneValue(restored[key]));
         } else {
             delete intent.target[key];
         }
@@ -627,6 +790,15 @@ function adminPath(targetUserId: string, suffix: string): string {
 export function createSelfPanelEditorContext(actor: IdentityContext): PanelEditorContext {
     const settings: UserSettings = JC.currentSettings || {};
     const shortcuts = (JC.userConfig?.shortcuts || { Shortcuts: [] }) as Record<string, unknown>;
+    const hiddenContent = (JC as unknown as {
+        hiddenContent?: {
+            getSettings?(): Record<string, unknown>;
+            getHiddenCount?(): number;
+        };
+    }).hiddenContent;
+    const spoilerGuard = JC.spoilerGuard as unknown as {
+        getUserPrefs?(): Record<string, unknown>;
+    } | undefined;
     if (!Array.isArray(shortcuts.Shortcuts)) shortcuts.Shortcuts = [];
     return {
         mode: 'self',
@@ -637,6 +809,9 @@ export function createSelfPanelEditorContext(actor: IdentityContext): PanelEdito
         settings,
         shortcuts,
         activeShortcuts: JC.state?.activeShortcuts || {},
+        hiddenContentSettings: hiddenContent?.getSettings?.() || null,
+        hiddenContentCount: hiddenContent?.getHiddenCount?.() || 0,
+        spoilerGuardPrefs: spoilerGuard?.getUserPrefs?.() || null,
         isCurrent: () => JC.identity.isCurrent(actor),
         saveSettings: () => JC.saveUserSettings!('settings.json', settings),
         saveShortcuts: () => JC.saveUserSettings!('shortcuts.json', shortcuts),
@@ -716,13 +891,24 @@ export async function createPanelEditorContext(options: {
         );
     }
 
-    let settingsRaw: unknown;
-    let shortcutsRaw: unknown;
+    const targetFiles: PanelUserFile[] = ['settings.json', 'shortcuts.json'];
+    const hiddenContentEnabled = JC.pluginConfig?.HiddenContentEnabled === true
+        && JC.pluginConfig?.HiddenContentAdmin !== false;
+    const spoilerGuardEnabled = JC.pluginConfig?.SpoilerBlurEnabled === true;
+    if (hiddenContentEnabled) targetFiles.push('hidden-content-settings.json');
+    if (spoilerGuardEnabled) {
+        targetFiles.push('spoiler-guard-prefs.json');
+        targetFiles.push('spoiler-guard-overrides.json');
+    }
+    let rawEntries: Array<[PanelUserFile, unknown]>;
     try {
-        [settingsRaw, shortcutsRaw] = await Promise.all([
-            pluginRequest(adminPath(requestedTarget, `settings.json?_=${Date.now()}`), signal),
-            pluginRequest(adminPath(requestedTarget, `shortcuts.json?_=${Date.now()}`), signal),
-        ]);
+        rawEntries = await Promise.all(targetFiles.map(async file => [
+            file,
+            await pluginRequest(
+                adminPath(requestedTarget, `${encodeURIComponent(file)}?_=${Date.now()}`),
+                signal,
+            ),
+        ] as [PanelUserFile, unknown]));
     } catch (error) {
         if (!isCurrent()) {
             throw stalePanelError(error);
@@ -733,9 +919,16 @@ export async function createPanelEditorContext(options: {
         throw stalePanelError();
     }
 
-    const settingsEnvelope = parseEnvelope(settingsRaw, 'settings.json', requestedTarget, false);
-    const shortcutsEnvelope = parseEnvelope(shortcutsRaw, 'shortcuts.json', requestedTarget, false);
-    if (settingsEnvelope.targetDisplayName !== shortcutsEnvelope.targetDisplayName) {
+    const envelopes = new Map<PanelUserFile, AdminFileEnvelope>();
+    for (const [file, raw] of rawEntries) {
+        envelopes.set(file, parseEnvelope(raw, file, requestedTarget, false));
+    }
+    const settingsEnvelope = envelopes.get('settings.json')!;
+    const shortcutsEnvelope = envelopes.get('shortcuts.json')!;
+    if ([...envelopes.values()].some(
+        envelope => envelope.targetDisplayName !== settingsEnvelope.targetDisplayName
+            || envelope.targetUserId !== settingsEnvelope.targetUserId,
+    )) {
         throw new AdminTargetPersistenceError('Target identity metadata did not match across user files.', {
             kind: 'protocol',
         });
@@ -749,33 +942,69 @@ export async function createPanelEditorContext(options: {
     ) as Record<string, unknown>;
     const shortcuts = localValue('shortcuts.json', shortcutsEnvelope.data);
     const activeShortcuts = resolveTargetShortcuts(pluginDefaults, shortcuts);
-    const targets: Record<PanelUserFile, Record<string, unknown>> = {
+    const hiddenEnvelope = envelopes.get('hidden-content-settings.json');
+    const spoilerEnvelope = envelopes.get('spoiler-guard-prefs.json');
+    const spoilerOverridesEnvelope = envelopes.get('spoiler-guard-overrides.json');
+    const hiddenContentSettings = hiddenEnvelope
+        ? localValue('hidden-content-settings.json', hiddenEnvelope.data)
+        : null;
+    const spoilerGuardPrefs = spoilerEnvelope
+        ? localValue('spoiler-guard-prefs.json', spoilerEnvelope.data)
+        : null;
+    const spoilerGuardOverrides = spoilerOverridesEnvelope
+        ? localValue('spoiler-guard-overrides.json', spoilerOverridesEnvelope.data)
+        : null;
+    const targets: Partial<Record<PanelUserFile, Record<string, unknown>>> = {
         'settings.json': settings,
         'shortcuts.json': shortcuts,
+        ...(hiddenContentSettings
+            ? { 'hidden-content-settings.json': hiddenContentSettings }
+            : {}),
+        ...(spoilerGuardPrefs
+            ? { 'spoiler-guard-prefs.json': spoilerGuardPrefs }
+            : {}),
+        ...(spoilerGuardOverrides
+            ? { 'spoiler-guard-overrides.json': spoilerGuardOverrides }
+            : {}),
     };
-    const queues: Record<PanelUserFile, FileQueue> = {
-        'settings.json': {
+    const createQueue = (envelope: AdminFileEnvelope): FileQueue => ({
             running: false,
             active: null,
             pending: null,
             latestSeq: 0,
-            acknowledged: cloneRecord(settingsEnvelope.data),
-            acknowledgedHash: settingsEnvelope.contentHash,
+            acknowledged: cloneRecord(envelope.data),
+            acknowledgedHash: envelope.contentHash,
             conflictFence: false,
             releaseSafetyHold: null,
-        },
-        'shortcuts.json': {
-            running: false,
-            active: null,
-            pending: null,
-            latestSeq: 0,
-            acknowledged: cloneRecord(shortcutsEnvelope.data),
-            acknowledgedHash: shortcutsEnvelope.contentHash,
-            conflictFence: false,
-            releaseSafetyHold: null,
-        },
+    });
+    const queues: Partial<Record<PanelUserFile, FileQueue>> = {
+        'settings.json': createQueue(settingsEnvelope),
+        'shortcuts.json': createQueue(shortcutsEnvelope),
+        ...(hiddenEnvelope
+            ? { 'hidden-content-settings.json': createQueue(hiddenEnvelope) }
+            : {}),
+        ...(spoilerEnvelope
+            ? { 'spoiler-guard-prefs.json': createQueue(spoilerEnvelope) }
+            : {}),
+        ...(spoilerOverridesEnvelope
+            ? { 'spoiler-guard-overrides.json': createQueue(spoilerOverridesEnvelope) }
+            : {}),
     };
     let sequence = 0;
+    const queueFor = (file: PanelUserFile): FileQueue => {
+        const queue = queues[file];
+        if (!queue) {
+            throw new AdminTargetPersistenceError('Target resource unavailable.', { kind: 'protocol' });
+        }
+        return queue;
+    };
+    const targetFor = (file: PanelUserFile): Record<string, unknown> => {
+        const target = targets[file];
+        if (!target) {
+            throw new AdminTargetPersistenceError('Target resource unavailable.', { kind: 'protocol' });
+        }
+        return target;
+    };
 
     const readEvidence = async (file: PanelUserFile): Promise<AdminFileEnvelope> => {
         const raw = await pluginRequest(
@@ -809,7 +1038,7 @@ export async function createPanelEditorContext(options: {
             throw classifyError(error, file, requestedTarget);
         }
         const envelope = parseEnvelope(raw, file, requestedTarget, true);
-        if (!sameContent(envelope.data, candidate)) {
+        if (!sameContent(file, envelope.data, candidate)) {
             throw new AdminTargetPersistenceError(
                 'The server acknowledged different target user settings content.',
                 { kind: 'protocol', ambiguous: true },
@@ -822,7 +1051,7 @@ export async function createPanelEditorContext(options: {
         if (!isCurrent()) {
             throw stalePanelError();
         }
-        const queue = queues[intent.file];
+        const queue = queueFor(intent.file);
         if (queue.conflictFence) {
             throw new AdminTargetPersistenceError('Reload before saving this target file again.', {
                 kind: 'conflict',
@@ -855,7 +1084,7 @@ export async function createPanelEditorContext(options: {
                 if (error.ambiguous) {
                     try {
                         const evidence = await readEvidence(intent.file);
-                        if (sameContent(evidence.data, candidate)) return evidence;
+                        if (sameContent(intent.file, evidence.data, candidate)) return evidence;
                         if (evidence.revision === revisionOf(candidate) && attempt === 0) continue;
                         throw new AdminTargetPersistenceError(
                             'The target save outcome is uncertain; reload before retrying.',
@@ -887,11 +1116,16 @@ export async function createPanelEditorContext(options: {
                 }
                 if (error.kind !== 'conflict' || !error.authoritative) throw error;
                 lastAuthoritative = error.authoritative;
-                if (sameContent(error.authoritative, candidate)) {
+                if (sameContent(intent.file, error.authoritative, candidate)) {
                     const evidence = await readEvidence(intent.file);
-                    if (sameContent(evidence.data, candidate)) return evidence;
+                    if (sameContent(intent.file, evidence.data, candidate)) return evidence;
                 }
-                const rebased = safeRebase(intent.baseWire, intent.desiredWire, error.authoritative);
+                const rebased = safeRebase(
+                    intent.file,
+                    intent.baseWire,
+                    intent.desiredWire,
+                    error.authoritative,
+                );
                 if (!rebased) throw error;
                 candidate = rebased;
             }
@@ -905,7 +1139,7 @@ export async function createPanelEditorContext(options: {
     };
 
     const drain = async (file: PanelUserFile): Promise<void> => {
-        const queue = queues[file];
+        const queue = queueFor(file);
         if (queue.running) return;
         queue.running = true;
         try {
@@ -923,6 +1157,7 @@ export async function createPanelEditorContext(options: {
                     const pending = currentPending(queue);
                     if (pending) {
                         const rebased = safeRebase(
+                            pending.file,
                             pending.baseWire,
                             pending.desiredWire,
                             acknowledgement.data,
@@ -990,16 +1225,22 @@ export async function createPanelEditorContext(options: {
             if (!isCurrent()) {
                 throw stalePanelError();
             }
-            const queue = queues[file];
+            const queue = queueFor(file);
             if (queue.conflictFence) {
                 throw new AdminTargetPersistenceError(
                     'Reload before saving this target file again.',
                     { kind: 'conflict', status: 409 },
                 );
             }
-            const target = targets[file];
+            const target = targetFor(file);
+            // While A is in flight, the editor already presents A's desired
+            // values as its optimistic base. Diff a later B intent against A,
+            // not against the older acknowledged snapshot. Otherwise an
+            // explicit A -> B revert to the old server value is indistinguishable
+            // from "unchanged" and can be lost when A is acknowledged.
+            const intentBase = queue.active?.desiredWire || queue.acknowledged;
             const desiredWire = file === 'settings.json'
-                ? mergeChangedSettingsWire(target, queue.acknowledged, pluginDefaults)
+                ? mergeChangedSettingsWire(target, intentBase, pluginDefaults)
                 : wireValue(file, target);
             const revision = revisionOf(queue.acknowledged);
             if (revision === null) {
@@ -1011,7 +1252,7 @@ export async function createPanelEditorContext(options: {
             delete desiredWire.revision;
             const serialized = canonical(withoutRevision(desiredWire));
             if (!queue.active && !queue.pending
-                && sameContent(queue.acknowledged, desiredWire)
+                && sameContent(file, queue.acknowledged, desiredWire)
                 && queue.acknowledgedHash) {
                 return Promise.resolve({
                     acknowledged: true,
@@ -1040,7 +1281,7 @@ export async function createPanelEditorContext(options: {
                     seq: ++sequence,
                     file,
                     target,
-                    baseWire: cloneRecord(queue.acknowledged),
+                    baseWire: cloneRecord(intentBase),
                     desiredWire,
                     serialized,
                     waiters: queue.pending ? [...queue.pending.waiters, waiter] : [waiter],
@@ -1064,8 +1305,15 @@ export async function createPanelEditorContext(options: {
         settings,
         shortcuts,
         activeShortcuts,
+        hiddenContentSettings,
+        hiddenContentCount: hiddenEnvelope?.itemCount || 0,
+        spoilerGuardPrefs,
+        spoilerGuardOverrides,
         isCurrent,
         saveSettings: () => save('settings.json'),
         saveShortcuts: () => save('shortcuts.json'),
+        saveHiddenContentSettings: () => save('hidden-content-settings.json'),
+        saveSpoilerGuardPrefs: () => save('spoiler-guard-prefs.json'),
+        saveSpoilerGuardOverrides: () => save('spoiler-guard-overrides.json'),
     };
 }

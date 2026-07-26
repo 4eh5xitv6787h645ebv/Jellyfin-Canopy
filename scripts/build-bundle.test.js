@@ -23,9 +23,8 @@ function snapshot(artifacts) {
 }
 
 test('production build is byte-deterministic with sorted, resolving dynamic inventory', async () => {
-    const outDir = path.join(os.tmpdir(), 'jc-deterministic-output', 'dist');
-    const first = await createBuildArtifacts({ outDir });
-    const second = await createBuildArtifacts({ outDir });
+    const first = await createBuildArtifacts();
+    const second = await createBuildArtifacts();
 
     assert.deepEqual(snapshot(first.artifacts), snapshot(second.artifacts));
     assert.deepEqual(first.manifest, second.manifest);
@@ -77,14 +76,13 @@ test('ESM foundation has stable split-entry and content-addressed chunk naming',
 });
 
 test('generated JavaScript links portable adjacent external sourcemaps', async () => {
-    const outDir = path.join(os.tmpdir(), 'jc-sourcemap-output', 'dist');
-    const { artifacts } = await createBuildArtifacts({ outDir });
+    const { artifacts } = await createBuildArtifacts();
     for (const [name, bytes] of artifacts) {
         if (!name.endsWith('.js')) continue;
         assert.match(bytes.toString('utf8'), /\/\/# sourceMappingURL=[^\r\n]+\.map\s*$/);
         const map = JSON.parse(artifacts.get(`${name}.map`).toString('utf8'));
         assert.equal(map.sources.length, map.sourcesContent.length);
-        assert.ok(map.sources.every((source) => !path.posix.isAbsolute(source) && !source.includes('\\')));
+        assert.ok(map.sources.every((source) => assertSafeRelativePath(source) === source));
     }
 });
 

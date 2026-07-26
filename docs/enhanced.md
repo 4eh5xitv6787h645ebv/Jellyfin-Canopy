@@ -26,7 +26,7 @@ Toggling a feature applies **immediately** — no restart, no page reload. The t
 
 ### Settings persistence
 
-Your preferences follow you. Settings and shortcut overrides from Canopy User Settings are saved **server-side, per Jellyfin user** in the plugin's per-user `settings.json` and `shortcuts.json` files. Because these files are keyed to your Jellyfin account, they sync automatically across devices and browsers where you log in as the same user. Browser-only actions, such as clearing the translation cache or temporarily suppressing a confirmation, remain local to that browser.
+Your preferences follow you. Settings and shortcut overrides from Canopy User Settings are saved **server-side, per Jellyfin user** in `settings.json` and `shortcuts.json`; Hidden Content preferences and hidden items live in `hidden-content.json`, while Spoiler Guard preferences and opt-in state live in `spoilerblur.json`. Because these files are keyed to your Jellyfin account, they sync automatically across devices and browsers where you log in as the same user. Browser-only actions, such as clearing the translation cache or temporarily suppressing a confirmation, remain local to that browser.
 
 ### Admin defaults vs. per-user settings
 
@@ -40,11 +40,15 @@ An administrator can edit another user's server-side Canopy preferences from tha
 2. Select the user, then open the page for editing their profile, image, and personal preferences.
 3. Click **Canopy User Settings**.
 
-The panel shows an **Editing settings for _name_** banner using the user name resolved by the server. Check that banner before changing anything. Settings, display-language choice, and shortcut overrides shown as editable are saved only to the selected user's `settings.json` or `shortcuts.json`; opening or saving this panel does not change the administrator's own settings, active shortcuts, or current browser behavior.
+The panel shows an **Editing settings for _name_** banner using the user name resolved by the server. Check that banner before changing anything. Settings, display-language choice, shortcut overrides, Hidden Content preferences and item management, and Spoiler Guard overrides shown as editable are saved only to the selected user's server profile. Opening or saving this panel does not change the administrator's own settings, active shortcuts, Hidden Content state, Spoiler Guard state, or current browser behavior.
 
-The selected user normally sees the new values after refreshing or reloading their client. The cross-user editor does not reload that user's active devices.
+The controls announce when a target save is in progress, when it is acknowledged, and when the panel is refreshing authoritative state after a conflict or uncertain result. The selected user sees the acknowledged values after refreshing or reloading their client; the cross-user editor does not reload that user's active devices.
 
-Hidden Content and Spoiler Guard controls are deliberately unavailable in this panel because those panes are not safely target-scoped by the cross-user editor. Sign in as the selected user to manage them. Browser-local actions, including clearing the translation cache and temporary confirmation suppressions, are also unavailable because they apply to the administrator's current browser rather than to the selected user's server profile.
+Hidden Content preference saves update only the target's preference subsection, preserving every unrelated hidden item. **Manage Hidden Content** opens directly on the selected user's list, starts read-only, and requires the administrator to enter edit mode before hiding or unhiding items. Spoiler Guard policy-preference saves similarly preserve the target's persistent opt-in state.
+
+When Spoiler Guard is enabled, the same target pane also has a deliberate **Persistent title overrides** manager. It can add or remove guarded Series, Movies, Collections, pending TV requests, and pending Movie requests without impersonating the user. For a local Series, Movie, or Collection, enter its Jellyfin item ID and display name; on save, the server verifies that the item is the correct type and visible to the selected user, then preserves the bounded submitted name in the exact acknowledgement. Unchanged historical rows and removals remain repairable even when the old library item no longer resolves. New pending identities share the ordinary writer's 500-entry admission cap, while the 1,000-entry storage-shape ceiling remains for legacy and removal compatibility. The combined list is sorted and shown **50 rows at a time**, with Previous/Next navigation. Its save token covers all four dictionaries together, so a detail-page toggle or Seerr pending change made at the same time is reconciled instead of overwritten; these writes preserve the target's separate policy preferences.
+
+Only genuinely browser-local actions remain unavailable. Clearing the translation cache would clear the administrator's current browser, and a temporary snooze or acknowledgement cannot be pushed into another user's browser session. Server-persisted preferences—including Spoiler Guard's permanent **Don't ask again** choice—remain editable for the selected user.
 
 ### Default Language
 
@@ -461,11 +465,12 @@ When enabled, the Hidden Content management page is a routed destination reachab
 
 Administrators can review — and optionally manage — what other users have hidden, from the same Hidden Content page. It's admin-only and enforced server-side; regular users never see it.
 
-- A user-filter dropdown switches between *My hidden content* and any user who has hidden something.
+- A user-filter dropdown switches between *My hidden content* and users who have hidden something. Large user directories are navigated in bounded pages of at most **100 candidates**; **First page** and **Next page** replace the selector's current options rather than accumulating every user in the browser.
 - Another user's list is read-only by default, with a "Viewing: OtherUser" badge.
 - An **Edit** toggle (when enabled) lets you unhide items for that user or add new ones.
 - You can add items by searching the library *and* Seerr, so you can hide titles that aren't in the library yet.
 - An admin never overwrites an item the user hid themselves.
+- If that user's hidden list changes elsewhere while you are editing—even if the same title is removed and then re-added—Canopy keeps the current row, refreshes the authoritative list, and shows a conflict instead of reporting a false success. Review the refreshed state and explicitly retry if you still want the change.
 
 | Setting | Scope | Default | What it does |
 | --- | --- | --- | --- |
