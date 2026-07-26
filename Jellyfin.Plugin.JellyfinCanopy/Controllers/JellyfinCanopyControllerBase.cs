@@ -165,7 +165,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
 
         protected Guid GetCurrentUserId()
         {
-            var claim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)
+            var claim = User.FindFirst("Jellyfin-UserId")
+                     ?? User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)
                      ?? User.FindFirst("sub")
                      ?? User.FindFirst("Sid");
             if (claim != null && Guid.TryParse(claim.Value, out var id))
