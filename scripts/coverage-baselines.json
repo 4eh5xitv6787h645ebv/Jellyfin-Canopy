@@ -21,12 +21,12 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 26991,
-        "totalLines": 35680
+        "coveredLines": 27188,
+        "totalLines": 35896
       },
       "tolerance": {
         "missingCoveredLines": 5,
-        "rationale": "The #452 playback-event safety fix replaces three async-void host callbacks with synchronous O(1) dispatchers and an exception-contained observed Task boundary, with behavioral coverage for post-await failures and a failing logger. Two clean .NET 10.0.9/Coverlet runs on 2026-07-27 each passed all 2,282 tests and reproduced exactly 26,991/35,680 instrumented lines (75.647%), so the reviewed high-water advances from 26,975/35,661 (75.643%). Retaining the existing evidence-bounded five-line Coverlet tolerance makes the minimum 26,986/35,680 (75.633%), stricter than the prior 26,970/35,661 floor (75.629%). coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, and broad-tolerance negative boundaries."
+        "rationale": "The #453 injected-shell HTTP fix preserves Jellyfin compression, adds transformed-representation validators and a bounded warm cache, with behavioral coverage for real response-compression ordering, identity/gzip/Brotli bodies, ETag and Last-Modified 304s, source revalidation, and script-generation invalidation. The third and fourth of four clean .NET 10.0.9/Coverlet runs on 2026-07-27 each passed all 2,287 tests and reproduced exactly 27,188/35,896 instrumented lines (75.741%), so the reviewed high-water advances from 26,991/35,680 (75.647%). Retaining the existing evidence-bounded five-line Coverlet tolerance makes the minimum 27,183/35,896 (75.727%), stricter than the prior 26,986/35,680 floor (75.633%); the other two clean runs measured 27,184 and 27,189 covered lines within that window. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, and broad-tolerance negative boundaries."
       }
     }
   }
