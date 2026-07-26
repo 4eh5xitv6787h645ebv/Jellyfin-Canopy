@@ -70,5 +70,55 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Configuration
             // Authenticated callers still see the full value (unchanged behavior).
             Assert.Equal("guid1,guid2", authenticated["MaintenanceModeAffectedUsers"]);
         }
+
+        [Fact]
+        public void MaintainerrFeatureGates_AreConservativeBeforeLogin()
+        {
+            var config = new PluginConfiguration
+            {
+                MaintainerrEnabled = true,
+                MaintainerrPageEnabled = true,
+                MaintainerrItemStatusEnabled = true,
+                MaintainerrItemStatusForUsers = true,
+            };
+
+            var anonymous = SettingDescriptors.BuildPayload(
+                SettingExposure.Public, new SettingContext(config, IsAuthenticated: false));
+            var authenticated = SettingDescriptors.BuildPayload(
+                SettingExposure.Public, new SettingContext(config, IsAuthenticated: true));
+
+            Assert.False(Assert.IsType<bool>(anonymous["MaintainerrEnabled"]));
+            Assert.False(Assert.IsType<bool>(anonymous["MaintainerrPageEnabled"]));
+            Assert.False(Assert.IsType<bool>(anonymous["MaintainerrItemStatusEnabled"]));
+            Assert.False(Assert.IsType<bool>(anonymous["MaintainerrItemStatusForUsers"]));
+
+            Assert.True(Assert.IsType<bool>(authenticated["MaintainerrEnabled"]));
+            Assert.True(Assert.IsType<bool>(authenticated["MaintainerrPageEnabled"]));
+            Assert.True(Assert.IsType<bool>(authenticated["MaintainerrItemStatusEnabled"]));
+            Assert.True(Assert.IsType<bool>(authenticated["MaintainerrItemStatusForUsers"]));
+        }
+
+        [Fact]
+        public void MaintainerrTopology_IsPrivateConfigOnly()
+        {
+            var config = new PluginConfiguration
+            {
+                MaintainerrUrl = "http://maintainerr.internal:6246/base",
+                MaintainerrExternalUrl = "https://maintainerr.example/base",
+                MaintainerrUrlMappings = "https://jellyfin.example|https://maintainerr.example",
+            };
+
+            var context = new SettingContext(config, IsAuthenticated: true);
+            var publicPayload = SettingDescriptors.BuildPayload(SettingExposure.Public, context);
+            var privatePayload = SettingDescriptors.BuildPayload(SettingExposure.Private, context);
+
+            Assert.DoesNotContain("MaintainerrUrl", publicPayload);
+            Assert.DoesNotContain("MaintainerrExternalUrl", publicPayload);
+            Assert.DoesNotContain("MaintainerrUrlMappings", publicPayload);
+
+            Assert.Equal(config.MaintainerrUrl, privatePayload["MaintainerrUrl"]);
+            Assert.Equal(config.MaintainerrExternalUrl, privatePayload["MaintainerrExternalUrl"]);
+            Assert.Equal(config.MaintainerrUrlMappings, privatePayload["MaintainerrUrlMappings"]);
+        }
     }
 }

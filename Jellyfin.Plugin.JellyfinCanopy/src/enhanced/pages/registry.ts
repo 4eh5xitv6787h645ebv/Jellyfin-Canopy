@@ -42,6 +42,14 @@ const catalog: readonly PageDescriptor[] = [
         titleFallback: 'Bookmarks', icon: 'bookmarks',
         isEnabled: () => !!JC.pluginConfig?.BookmarksEnabled, render: renderLoadingPage,
     },
+    {
+        id: 'maintainerr', route: '/maintainerr', titleKey: 'maintainerr_title',
+        titleFallback: 'Maintainerr', icon: 'rule',
+        isEnabled: () => JC.pluginConfig?.MaintainerrEnabled === true
+            && JC.pluginConfig?.MaintainerrPageEnabled === true,
+        adminOnly: true,
+        render: renderLoadingPage,
+    },
 ];
 
 /** Register an active descriptor and return an idempotent restoration closure. */

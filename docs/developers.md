@@ -509,6 +509,42 @@ curl -X POST \
   "<JELLYFIN_URL>/JellyfinCanopy/seerr/request"
 ```
 
+### Maintainerr read-only integration
+
+The Maintainerr surface is a server-mediated, typed projection; it is not a
+generic proxy. Maintainerr 3.18 has no API authentication, browsers never call
+it directly, and no Canopy route can reach a settings, log, database,
+notification-configuration, raw-rule, or mutation endpoint. See the operator
+guide in [Maintainerr](maintainerr.md) for the complete upstream GET allowlist
+and network model.
+
+| Canopy route | Policy and response |
+|---|---|
+| `POST /JellyfinCanopy/maintainerr/test` | `RequiresElevation`; accepts only `{ "url": "<candidate HTTP(S) base>" }` in an 8 KiB body and returns sanitized readiness/version/capability/identity state |
+| `GET /JellyfinCanopy/maintainerr/dashboard` | `RequiresElevation`; returns bounded status, collection summaries, allowlisted storage totals, aggregate rule/queue state, and administrator links |
+| `GET /JellyfinCanopy/maintainerr/dashboard?refresh=true` | Same policy/DTO; explicitly bypasses the short success cache while still joining an identical in-flight refresh |
+| `GET /JellyfinCanopy/maintainerr/collections/{id}/content?page=1&size=25&sort=title&sortOrder=asc` | `RequiresElevation`; positive IDs/pages, size `1..50`, and closed sort/order allowlists |
+| `GET /JellyfinCanopy/maintainerr/item-status/{jellyfinItemId}` | `[Authorize]`; resolves and authorizes the Jellyfin item before an upstream request and requires matching Jellyfin identities |
+
+The item-status wire contract is deliberately role-specific. Administrators
+receive the two generic booleans plus bounded `excludedFrom` and
+`manuallyAddedTo` label/link arrays. Regular users are denied by default; when
+the administrator explicitly opts in they receive **exactly**
+`protectedFromCleanup` and `manuallyManaged`. An upstream, identity, or
+configuration failure collapses to `{ "error": "unavailable" }` for that
+regular-user path, never a false pair of `false` values. Anonymous callers get
+an empty `401`; policy-denied non-admin calls get an empty `403`.
+
+`Services/Maintainerr/MaintainerrClient.cs` is the only upstream dispatch
+owner. It constructs a closed GET endpoint enum, revalidates the saved
+configuration generation and target before dispatch, applies the shared
+private-service SSRF/rebinding guard, disables redirects, uses a ten-second
+linked deadline, caps response bodies before JSON parsing, and maps only
+Canopy-owned DTOs. The internal URL is the fetch target; the sanitized
+external/mapped URL is used only to construct administrator-clicked links.
+Configuration changes fence cache publication and in-flight work, while route
+or item navigation aborts obsolete requests and prevents stale DOM publication.
+
 ### Admin hidden-content API
 
 These admin-only endpoints let an administrator view and manage what **other** users have hidden. Every endpoint requires a Jellyfin **administrator** token (enforced server-side via the `RequiresElevation` policy) **and** the **Let admins view and manage other users' hidden content** toggle (**Pages → Hidden Content → Admin Controls**) to be enabled; otherwise it returns a bare `403` (empty body). `<USER_ID>` is the 32-character hex (`"N"` format) Jellyfin user id.
@@ -1069,6 +1105,7 @@ Known per-server costs the rules above bound — an inventory, not new rules; ea
 - **LiveNotifier config-save fan-out** (`Services/LiveNotifierService.cs:174`): every admin config save enumerates all live sessions to select deliverable devices — `O(sessions)` per save, bounded by the registry cap below (S7's axis, S9's budget discipline).
 - **Smart-refresh heartbeat**: every *visible* open Canopy tab calls `/JellyfinCanopy/client-refresh-state` at the configured 5–3600 second cadence (30 seconds by default); hidden/background tabs make no requests and check once on resume — `O(visible Canopy tabs)` request load per server (S9).
 - **LiveSessionRegistry cap**: the live-session registry is bounded at **500 devices** (`Services/LiveSessionRegistry.cs:55`, `MaxEntries`) — the documented ceiling for push fan-out; the operator-facing limit documentation is owned by SR-11.
+- **Maintainerr local-service reads** (`Services/Maintainerr/MaintainerrClient.cs`): a connection test is exactly four GETs with a combined 256 KiB body ceiling; a cold/forced dashboard is at most nine GETs with a combined 4,653,056-byte ceiling; one content page is one GET capped at 2 MiB/50 items; item status is two GETs capped at 128 KiB combined. At most four upstream requests run concurrently. The 30-second success cache contains one normalized dashboard (at most 500 summaries), never raw bodies or collection pages, and identical in-flight dashboard reads coalesce. Dashboard failures and forced refresh attempts have bounded two-second backoff/minimum intervals; failures remain errors rather than empty results. This is operator-local traffic, so S5 fleet jitter is inapplicable; there is no schedule, polling, library scan, or public shared upstream.
 
 ### Measured impact
 
@@ -1324,6 +1361,8 @@ Jellyfin.Plugin.JellyfinCanopy/
     │   ├── calendar/        # Calendar page (styles, data, render-*, actions, init, event-date)
     │   └── requests/        # Requests page: normalized download lifecycle, source health,
     │                        # bounded history paging, styles, data, render-*, actions, init
+    ├── maintainerr/         # Admin page, bounded DTO parsers/styles, and navigation-scoped
+    │                        # item status; all browser traffic remains same-origin
     ├── tags/                # Tag renderer specs over core/tag-renderer-base + enhanced/tag-pipeline
     ├── elsewhere/           # Streaming-availability + reviews
     ├── extras/              # Active streams, colored ratings/icons, theme selector, plugin icons
@@ -1389,6 +1428,7 @@ Jellyfin.Plugin.JellyfinCanopy/
 │   ├── ArrLinksController.cs / ArrCalendarController.cs / ArrRequestsController.cs
 │   │                          # ArrRequests owns authenticated, current-user download projection
 │   ├── ArrSearchController.cs # Admin-only interactive Sonarr/Radarr search / manage surface (arr/search/*)
+│   ├── MaintainerrController.cs # Elevated test/dashboard/content plus caller-scoped item status
 │   ├── UserSettingsController.cs / HiddenContentController.cs / ReviewsController.cs
 │   ├── TagCacheController.cs / ItemInfoController.cs / BrandingController.cs
 │   ├── SpoilerGuardController.cs # Spoiler Guard opt-in list (series/movies/collections), Seerr
@@ -1414,6 +1454,8 @@ Jellyfin.Plugin.JellyfinCanopy/
 │   ├── Arr/ArrDownloadActivityService.cs
 │   │                          # Bounded queue/history owner: auth projection, normalization,
 │   │                          # strong reconciliation, stale handoff, paging, sanitized DTOs
+│   ├── Maintainerr/           # Typed GET allowlist, generation snapshot, bounded parser,
+│   │                          # coalesced dashboard cache/flight and error taxonomy
 │   ├── LiveNotifierService.cs # Pushes live updates (config-changed etc.) to the sessions
 │   │                          # registered as running the JC client (via ILiveSessionRegistry;
 │   │                          # see the Live updates section)
@@ -1433,9 +1475,11 @@ Jellyfin.Plugin.JellyfinCanopy/
 ├── EventHandlers/             # Server-side Jellyfin event subscribers (playback events;
 │                              # SpoilerAutoEnableEvents = auto-enable Spoiler Guard on a fresh S1E1 play)
 ├── Data/ItemLookupService.cs  # Provider-id lookups via the supported ILibraryManager query surface
+├── Model/Maintainerr/         # Canopy-owned role-specific DTOs; no raw upstream models
 ├── Helpers/                  # Pure helpers: ArrIdHelper (zero-id normalize + persisted opaque
 │   │                          # instance identity/namespacing),
-│                              # ArrUrlGuard (SSRF guard: metadata/rebind blocked, LAN allowed),
+│                              # ArrUrlGuard (SSRF/rebinding guard: metadata blocked, LAN allowed),
+│                              # PluginHttpClients Maintainerr no-redirect named client,
 │                              # Arr/ArrReleaseDate (date-only vs instant calendar release contract),
 │                              # Seerr/TmdbProxyPathClassifier (deny-by-default raw-TMDB gate)
 ├── ScheduledTasks/ · Model/ · Logging/ · PluginPages/
@@ -1725,7 +1769,7 @@ release. MSBuild rejects a missing or different runtime before `npm ci`.
 - `npm run syntax` / `npm run typecheck` — the blocking syntax inventory parses every raw `js/**` resource, the separately served admin script, and every executable inline bootstrap in `Configuration/configPage.html`, with class counts that fail closed on inventory shrink; opt-in `@ts-check` covers the classic loader. Generated `dist/**` remains owned by the blocking esbuild build instead of being redundantly parsed as source.
 - `Jellyfin.Plugin.JellyfinCanopy.Tests/` — xUnit tests, including golden snapshots for the config payloads and on-disk user-file formats, plus a line-coverage ratchet (`scripts/check-dotnet-coverage.js`). Its `Configuration/` tests bridge the `SettingDescriptors` registry to both ends of the admin config page over one shared source parser (`ConfigPageSource.cs`, read by both directions so they can never drift): `ConfigControlCoverageTests` fails if any admin-settable descriptor backed by a real `PluginConfiguration` property has no config-page control (an admin default stuck at its hardcoded value), and `ClientConfigKeyLivenessTests` scans the shipped client source and fails if any `JC.pluginConfig.X` read is not a projected (`Public`/`Private`) descriptor key (a client knob that is always `undefined`).
 - Cross-cutting **guard tests** parse the shipped source and fail on a whole *class* of regression, not just one instance. `src/test/` owns `escape-guard` (HTML-injection, incl. an escape-first check of pre-escaping producers), `css-injection-guard` (CSS-context values), `leak-guard` (object URLs, observers, TTL maps, unbounded retry loops), `error-as-empty-guard` (fetch errors surfaced, not swallowed), `locale-guard`, `ratings-css`, `injected-css-balance`, `legacy-auth-header`, `plugin-loader`, and `build-scripts`. The blocking `scripts/check-performance-rules.js` gate owns the R3/R5/R6 one-pass scan and isolated CPU budget. The retired PluginPages HTML no longer ships on Jellyfin 12; admin-page inline JavaScript is owned by the blocking `scripts/check-syntax.js` inventory. Server-side, `LibraryScanEventGuardTests` scans every reviewed scan-thread subscriber's synchronous body (see [S1](#s1-never-block-jellyfins-synchronous-threads)).
-- `e2e/` — the committed Playwright suite (`npm run e2e`) + `e2e/docker/` (dockerized, seeded Jellyfin unstable/nightly for CI and local runs). The required lane pins one nightly by immutable multi-platform digest; the separate advisory lane follows the mutable `unstable` tag. Required CI uses six isolated native file shards, each with one serial browser worker and an explicitly verified two-CPU Jellyfin quota. Jellyfin, the Node integration fixture, Playwright, and Chromium are pinned by image digest or package lock. A test-only Node service supplies deterministic Seerr, Radarr, and TLS TMDB responses on the private Compose network; each seed generates a short-lived CA in disposable state, so required integration coverage needs no personal secret or third-party network. The committed `e2e/required-test-inventory.json` is exact: the reporter and aggregate fail every runtime skip, flaky/failed test, missing or unexpected test, duplicate shard, stale SHA/run artifact, and inventory drift. The stable aggregate blocks pull requests and main pushes; `release.yml` calls the same workflow and cannot publish the tag SHA until it passes. The separate scheduled/manual latest-nightly compatibility workflow is advisory and cannot weaken the digest-pinned gate.
+- `e2e/` — the committed Playwright suite (`npm run e2e`) + `e2e/docker/` (dockerized, seeded Jellyfin unstable/nightly for CI and local runs). The required lane pins one nightly by immutable multi-platform digest; the separate advisory lane follows the mutable `unstable` tag. Required CI uses six isolated native file shards, each with one serial browser worker and an explicitly verified two-CPU Jellyfin quota. Jellyfin, the Node integration fixture, Playwright, and Chromium are pinned by image digest or package lock. A test-only Node service supplies deterministic Seerr, Radarr, TLS TMDB, and strict GET-only Maintainerr 3.18 responses on the private Compose network. The Maintainerr fixture listens only inside Compose on natural port 6246, implements happy/empty/unsupported/mismatch/slow/malformed/redirect/oversized modes, and writes a bounded sanitized request ledger so tests prove allowlist, pagination, role short-circuits, and cancellation without retaining item IDs or topology. Each seed generates a short-lived CA in disposable state, so required integration coverage needs no personal secret or third-party network. The committed `e2e/required-test-inventory.json` is exact: the reporter and aggregate fail every runtime skip, flaky/failed test, missing or unexpected test, duplicate shard, stale SHA/run artifact, and inventory drift. The stable aggregate blocks pull requests and main pushes; `release.yml` calls the same workflow and cannot publish the tag SHA until it passes. The separate scheduled/manual latest-nightly compatibility workflow is advisory and cannot weaken the digest-pinned gate.
 
   Browser-driven specs send collected primary-page failures through the shared `assertNoRuntimeErrors` net in `e2e/fixtures/auth.ts`, or through a narrowly documented adapter around it: the net fails on any un-whitelisted console error / pageerror, every HTTP 5xx response, and, because Chromium's generic 40x console line carries no url, any 4xx response whose url is not on the known-legacy `ALLOWED_4XX_URL` allowlist (a real broken plugin endpoint). Five-hundred responses are sticky across collector resets, and fixture teardown blocks any unacknowledged 5xx even after a runtime skip or early failure, so login, reload, and multi-user phase boundaries cannot erase them. Specs with a custom console gate apply the same 5xx rule; intentional routed 5xx probes must first prove their exact evidence and then acknowledge those same collected objects. The one routed Seerr 502 exception is scoped to that exact probe. Auxiliary and Node/API-only request paths either use a collector or explicitly check/throw on non-success status. `e2e/console-net.spec.ts` pins the URL/method-aware HTTP detector, sticky reset/teardown behavior, and structured console-source evidence. Alongside the boot / navigation / panel / live-update / tag specs, the security- and persistence-sensitive flows have their own: `arr-requests-parental.spec.ts` (the Requests page applies the caller's own parental limit server-side; an admin bypasses it), `search-tags.spec.ts` (`DisableTagsOnSearchPage` hides *every* tag family on the search page, not just genre), `settings-persist.spec.ts` (a per-user setting round-trips through the server across a reload), and `non-admin.spec.ts` (core surfaces from a non-admin session, where per-user gating bugs live). Readiness probes remain useful for exploratory runs against arbitrary servers, but a missing required integration fails the inventory gate instead of becoming accepted coverage.
 
@@ -1789,7 +1833,9 @@ host.
 TMDB and Seerr variables are scrubbed for the default hermetic run. The
 `--allow-external-integrations` flag forwards them deliberately, but parallel
 shards can then rate-limit or mutate the same external service and the result is
-not parity evidence. Per-run output is retained beneath
+not parity evidence. Maintainerr variables are scrubbed in **both** modes:
+committed E2E always uses the private fixture and can never contact an operator's
+instance. Per-run output is retained beneath
 `e2e/test-results/local-<run-id>/`. The runner disables Playwright tracing (a
 trace can contain login arguments and tokens) and removes any retained file
 that contains one of its random passwords. Random usernames are redacted in

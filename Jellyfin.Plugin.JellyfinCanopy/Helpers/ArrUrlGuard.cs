@@ -54,10 +54,29 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Helpers
 
         internal static bool IsBlockedIp(IPAddress addr)
         {
+            if (addr.IsIPv4MappedToIPv6)
+            {
+                addr = addr.MapToIPv4();
+            }
+
             if (_blockedIPs.Contains(addr)) return true;
-            // 169.254.0.0/16 — AWS metadata + Windows APIPA + ECS metadata + custom probes
             var bytes = addr.GetAddressBytes();
+            // 0.0.0.0/8 is "this network", not a routable unicast service range.
+            if (bytes.Length == 4 && bytes[0] == 0) return true;
+            // 169.254.0.0/16 — AWS metadata + Windows APIPA + ECS metadata + custom probes.
             if (bytes.Length == 4 && bytes[0] == 169 && bytes[1] == 254) return true;
+            // IPv4 multicast must never be a service target.
+            if (bytes.Length == 4 && bytes[0] >= 224 && bytes[0] <= 239) return true;
+            // 240.0.0.0/4 is reserved and includes the limited broadcast address.
+            if (bytes.Length == 4 && bytes[0] >= 240) return true;
+            // IPv6 link-local includes the standard metadata-adjacent scope; multicast
+            // and unspecified addresses are not meaningful unicast service targets.
+            if (addr.AddressFamily == AddressFamily.InterNetworkV6
+                && (addr.IsIPv6LinkLocal || addr.IsIPv6Multicast || addr.Equals(IPAddress.IPv6Any)))
+            {
+                return true;
+            }
+
             return false;
         }
 
@@ -74,6 +93,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Helpers
                     if (IsBlockedIp(addr))
                         return false;
                 }
+
+                if (addresses.Length == 0)
+                    return false;
             }
             catch (SocketException)
             {
@@ -104,6 +126,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Helpers
                     if (IsBlockedIp(addr))
                         return false;
                 }
+
+                if (addresses.Length == 0)
+                    return false;
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {

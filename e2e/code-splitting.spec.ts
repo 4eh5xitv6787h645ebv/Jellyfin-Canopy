@@ -131,6 +131,8 @@ test.describe('manifest-owned code splitting', () => {
             'requests-page',
             'seerr-details',
             'playback-controls',
+            'maintainerr-page',
+            'maintainerr-item-status',
         ].map((id) => entryTarget(manifest, id));
         for (const target of offRoute) {
             expect(

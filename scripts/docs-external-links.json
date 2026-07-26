@@ -39,6 +39,10 @@
       "reason": "Canonical Jellyfin Canopy project link."
     },
     {
+      "url": "https://4eh5xitv6787h645ebv.github.io/Jellyfin-Canopy/maintainerr/",
+      "reason": "Canonical Jellyfin Canopy project link."
+    },
+    {
       "url": "https://4eh5xitv6787h645ebv.github.io/Jellyfin-Canopy/reference/",
       "reason": "Canonical Jellyfin Canopy project link."
     },
@@ -81,6 +85,22 @@
     {
       "url": "https://docs.api.jikan.moe/",
       "reason": "Official Jikan v4 API documentation for anime episode classifications."
+    },
+    {
+      "url": "https://docs.maintainerr.info/api/",
+      "reason": "Official Maintainerr API and security guidance for the read-only integration."
+    },
+    {
+      "url": "https://docs.maintainerr.info/collections/",
+      "reason": "Official Maintainerr collection behavior documentation."
+    },
+    {
+      "url": "https://docs.maintainerr.info/notifications/",
+      "reason": "Official Maintainerr notification configuration documentation."
+    },
+    {
+      "url": "https://docs.maintainerr.info/rules/",
+      "reason": "Official Maintainerr rule behavior documentation."
     },
     {
       "url": "https://docs.seerr.dev/",

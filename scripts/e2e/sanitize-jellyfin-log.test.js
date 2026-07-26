@@ -148,6 +148,19 @@ test('redacts API-key and token query variants without hiding route context', ()
     );
 });
 
+test('redacts private Maintainerr fetch and mapping topology but keeps the public browser URL', () => {
+    const input = '{"MaintainerrUrl":"http://integrations:6246/base",'
+        + '"MaintainerrExternalUrl":"https://maintainerr.example.test",'
+        + '"MaintainerrUrlMappings":"https://jellyfin.example|https://maintainerr.example"}';
+
+    assert.equal(
+        sanitizeJellyfinLog(input),
+        `{"MaintainerrUrl":"${REDACTED}",`
+            + '"MaintainerrExternalUrl":"https://maintainerr.example.test",'
+            + `"MaintainerrUrlMappings":"${REDACTED}"}`
+    );
+});
+
 test('leaves unrelated log text and line endings byte-for-byte unchanged', () => {
     const input = '[INF] Token bucket replenished\r\n'
         + '[DBG] API key authentication is disabled\r\n'

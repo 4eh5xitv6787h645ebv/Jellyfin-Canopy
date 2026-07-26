@@ -663,12 +663,16 @@ test.describe('header button tray stays a single scrollable row (#459)', () => {
         // group, pushing the whole cluster toward the avatar. So the group's left edge
         // is far from the tray's left/scroll origin. A margin on the DOM :first-child
         // would instead leave the group pinned at the tray's left edge (groupLeft ≈
-        // trayLeft). Require the free space to have moved the cluster well right.
+        // trayLeft). Require a real auto-margin gap beyond the same 8px geometry
+        // tolerance used for contiguity/right-edge packing. Do not bake in a
+        // fixed button-count budget: enabling another first-class page (for
+        // example Maintainerr) legitimately consumes one 48px tray slot while
+        // the row still fits and remains correctly packed.
         expect(
             geo!.groupLeft - geo!.trayLeft,
             `native-tabs group must be right-packed (auto margin left of it), not stranded at `
             + `the tray's left edge (groupLeft-trayLeft ${geo!.groupLeft - geo!.trayLeft}px, trayWidth ${geo!.trayWidth}px)`,
-        ).toBeGreaterThan(100);
+        ).toBeGreaterThan(8);
 
         // The cluster packs against the avatar side: the rightmost content edge sits at
         // the tray's right edge (the scroll region ends left of the profile Box).

@@ -269,7 +269,7 @@ The Calendar page collects upcoming releases from all your enabled Sonarr and Ra
 
 **Where it appears.** Calendar is a real page with its own route, so there's no delivery method to choose — Jellyfin Canopy adds its entry points automatically on every layout. The legacy layout gets a **Calendar** link in the **Jellyfin Canopy** section of the sidebar drawer (and in the mobile drawer); the modern layout gets an icon button in the header tray and a link in the user-preferences menu. Because it's a genuine router destination, you can open it directly at `/web/index.html#/calendar`, and browser back/forward, page refresh, and deep links all work.
 
-The order of the page entries in every menu follows the admin **Pages order** setting on the **Pages** tab. Reorder the four pages there — the default order is **Calendar, Requests, Bookmarks, Hidden Content** — using the up/down controls in its **Page order** area.
+The order of the page entries in every menu follows the admin **Pages order** setting on the **Pages** tab. Reorder the five pages there — the default order is **Calendar, Requests, Bookmarks, Hidden Content, Maintainerr** — using the up/down controls in its **Page order** area. Maintainerr remains admin-only regardless of its position.
 
 !!! note "Upgrading from an earlier version"
 

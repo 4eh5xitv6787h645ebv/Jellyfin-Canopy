@@ -224,6 +224,17 @@ export const builtInFeatureDescriptors: readonly ClientFeatureDescriptor[] = Obj
         isApplicable: (state) => /#\/bookmarks([?#]|$)/i.test(state.routeKey),
     },
     {
+        id: 'maintainerr-page',
+        entry: 'maintainerr-page',
+        scope: 'navigation',
+        restartOnConfigChange: true,
+        isEnabled: (state) => Boolean(state.identity)
+            && JC.pluginConfig?.MaintainerrEnabled === true
+            && JC.pluginConfig?.MaintainerrPageEnabled === true
+            && JC.currentUser?.Policy?.IsAdministrator === true,
+        isApplicable: (state) => /#\/maintainerr([?#]|$)/i.test(state.routeKey),
+    },
+    {
         id: 'playback-controls',
         entry: 'playback-controls',
         scope: 'navigation',
@@ -287,7 +298,30 @@ export const builtInFeatureDescriptors: readonly ClientFeatureDescriptor[] = Obj
             || (JC.pluginConfig?.ShowReleaseDates === true && JC.pluginConfig?.TmdbEnabled === true)
             || JC.pluginConfig?.HiddenContentEnabled === true
             || JC.pluginConfig?.SpoilerBlurEnabled === true
+            || (
+                JC.pluginConfig?.MaintainerrEnabled === true
+                && JC.pluginConfig?.MaintainerrItemStatusEnabled === true
+                && (
+                    JC.currentUser?.Policy?.IsAdministrator === true
+                    || JC.pluginConfig?.MaintainerrItemStatusForUsers === true
+                )
+            )
         ),
+        isApplicable: (state) => detailsRoute(state.routeKey),
+    },
+    {
+        id: 'maintainerr-item-status',
+        entry: 'maintainerr-item-status',
+        scope: 'navigation',
+        dependsOn: ['details-enhancements'],
+        restartOnConfigChange: true,
+        isEnabled: (state) => Boolean(state.identity)
+            && JC.pluginConfig?.MaintainerrEnabled === true
+            && JC.pluginConfig?.MaintainerrItemStatusEnabled === true
+            && (
+                JC.currentUser?.Policy?.IsAdministrator === true
+                || JC.pluginConfig?.MaintainerrItemStatusForUsers === true
+            ),
         isApplicable: (state) => detailsRoute(state.routeKey),
     },
     {

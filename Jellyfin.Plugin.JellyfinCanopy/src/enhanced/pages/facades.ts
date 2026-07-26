@@ -2,7 +2,7 @@ import { createStableMethodFacade } from '../../core/feature-loader';
 import { JC } from '../../globals';
 import { openPage } from './router-bridge';
 
-type PageId = 'calendar' | 'downloads' | 'hidden-content' | 'bookmarks';
+type PageId = 'calendar' | 'downloads' | 'hidden-content' | 'bookmarks' | 'maintainerr';
 type Method = (...args: never[]) => unknown;
 type Facade = Record<string, Method>;
 
@@ -29,6 +29,12 @@ const fallbacks: Record<PageId, Facade> = {
     bookmarks: {
         showPage: () => { openPage('bookmarks'); }, refresh: noop,
     },
+    maintainerr: {
+        showPage: () => {
+            if (JC.currentUser?.Policy?.IsAdministrator === true) openPage('maintainerr');
+        },
+        refresh: resolved,
+    },
 };
 
 const stable = {
@@ -36,6 +42,7 @@ const stable = {
     downloads: createStableMethodFacade(fallbacks.downloads),
     'hidden-content': createStableMethodFacade(fallbacks['hidden-content']),
     bookmarks: createStableMethodFacade(fallbacks.bookmarks),
+    maintainerr: createStableMethodFacade(fallbacks.maintainerr),
 };
 
 /** Attach an implementation behind a frozen stable facade; stale detach is harmless. */
@@ -52,3 +59,5 @@ export function attachPageFacade(id: PageId, implementation: object): () => void
 JC.hiddenContentPage = stable['hidden-content'].facade as unknown as
     import('../hidden-content-page/page').HiddenContentPageApi;
 JC.bookmarksPage = stable.bookmarks.facade as unknown as import('../bookmarks/page').BookmarksPageApi;
+JC.maintainerrPage = stable.maintainerr.facade as unknown as
+    import('../../maintainerr/page').MaintainerrPageApi;

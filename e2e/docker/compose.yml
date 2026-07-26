@@ -20,6 +20,9 @@ name: "${JF_E2E_PROJECT:-docker}"
 services:
   integrations:
     image: "${JF_MOCK_IMAGE:-node:22-alpine@sha256:16e22a550f3863206a3f701448c45f7912c6896a62de43add43bb9c86130c3e2}"
+    # The browser fixture and this server atomically replace shared state files.
+    # Use the invoking identity so a 0600 replacement stays host-readable.
+    user: "${JF_UID:-1000}:${JF_GID:-1000}"
     command: ["node", "/mock/server.js"]
     environment:
       JC_E2E_MOCK_STATE: /state/config.json
@@ -39,7 +42,7 @@ services:
           # test-only network resolves it to the TLS fixture instead.
           - api.themoviedb.org
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5055/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "const net=require('node:net');const maintainerr=new Promise((resolve,reject)=>{const socket=net.createConnection({host:'127.0.0.1',port:6246},()=>{socket.end();resolve()});socket.once('error',reject)});Promise.all([fetch('http://127.0.0.1:5055/health').then(r=>{if(!r.ok)throw new Error('not ready')}),maintainerr]).catch(()=>process.exit(1))"]
       interval: 2s
       timeout: 2s
       retries: 30

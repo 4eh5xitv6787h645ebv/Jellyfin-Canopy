@@ -295,7 +295,19 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
                 PublicContextual("SeerrUrlMappings", ctx =>
                     ctx.IsAuthenticated ? (ctx.Config.SeerrUrlMappings ?? string.Empty) : string.Empty),
 
-                // Pages framework: admin order of the four framework pages. Public so
+                // Maintainerr's client surface needs only feature gates. Pre-login callers
+                // receive conservative false values; internal/external URLs and mappings
+                // stay on the elevated private-config endpoint below.
+                PublicContextual("MaintainerrEnabled", ctx =>
+                    ctx.IsAuthenticated && ctx.Config.MaintainerrEnabled),
+                PublicContextual("MaintainerrPageEnabled", ctx =>
+                    ctx.IsAuthenticated && ctx.Config.MaintainerrPageEnabled),
+                PublicContextual("MaintainerrItemStatusEnabled", ctx =>
+                    ctx.IsAuthenticated && ctx.Config.MaintainerrItemStatusEnabled),
+                PublicContextual("MaintainerrItemStatusForUsers", ctx =>
+                    ctx.IsAuthenticated && ctx.Config.MaintainerrItemStatusForUsers),
+
+                // Pages framework: admin order of the framework pages. Public so
                 // the client entry points / registry can order them before render
                 // (src/enhanced/pages/registry.ts reads JC.pluginConfig.PagesOrder).
                 Public("PagesOrder", c => c.PagesOrder),
@@ -428,6 +440,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
                 Private("SonarrExternalUrl", c => c.SonarrExternalUrl),
                 Private("RadarrExternalUrl", c => c.RadarrExternalUrl),
                 Private("BazarrExternalUrl", c => c.BazarrExternalUrl),
+
+                // Maintainerr topology is administrator-only. The external URL and
+                // mappings are browser-link material, but the Maintainerr page/item
+                // controller resolves and emits only sanitized links to administrators.
+                Private("MaintainerrUrl", c => c.MaintainerrUrl),
+                Private("MaintainerrExternalUrl", c => c.MaintainerrExternalUrl),
+                Private("MaintainerrUrlMappings", c => c.MaintainerrUrlMappings),
 
                 // Multi-instance Sonarr/Radarr (no API keys exposed). Enabled flag is exposed so
                 // the config page can render a per-instance toggle and arr-links can filter

@@ -18,7 +18,7 @@
   <a href='https://www.buymeacoffee.com/n00bcodr' target='_blank'><img height='36' style='border:0px;height:36px;' src='https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png' border='0' alt='Buy Me a Coffee' /></a>
 </p>
 
-**Jellyfin Canopy is one plugin that turns a Jellyfin 12 server into a complete home-theater experience** — smarter playback, a built-in discovery and request flow, family-safe viewing, beautiful posters, and real admin superpowers. Install it once on the server and it works everywhere the Jellyfin web interface runs: browsers, the official mobile apps, and desktop apps — nothing to install on your users' devices. The core experience lights up immediately; the bigger feature areas are opt-in, and a few connect to services you may already run (Seerr, Sonarr/Radarr, TMDB) — you enable what you want from one settings page, and almost everything can then be personalized per user.
+**Jellyfin Canopy is one plugin that turns a Jellyfin 12 server into a complete home-theater experience** — smarter playback, a built-in discovery and request flow, family-safe viewing, beautiful posters, and real admin superpowers. Install it once on the server and it works everywhere the Jellyfin web interface runs: browsers, the official mobile apps, and desktop apps — nothing to install on your users' devices. The core experience lights up immediately; the bigger feature areas are opt-in, and a few connect to services you may already run (Seerr, Sonarr/Radarr, Maintainerr, TMDB) — you enable what you want from one settings page, and almost everything can then be personalized per user.
 
 <br>
 
@@ -83,12 +83,13 @@ At-a-glance badges on your library cards — each family individually toggleable
 
 ### 📄 Pages that feel built-in
 
-Four new pages living right in Jellyfin's navigation, reorderable, native on desktop and mobile:
+Five new pages living right in Jellyfin's navigation, reorderable, native on desktop and mobile:
 
 - **Calendar** — upcoming episodes and releases from Sonarr/Radarr.
 - **Requests** — Seerr request status plus server-authorized Sonarr/Radarr **Downloading**, **Processing & attention**, and bounded **History** activity; 100% transfer is kept separate from import and Jellyfin availability.
 - **Bookmarks** — every saved moment across your library.
 - **Hidden Content** — manage everything you've hidden.
+- **Maintainerr** — an admin-only, read-only view of cleanup collections, bounded storage totals, and rule/queue state.
 
 → Details: [Sonarr & Radarr](https://4eh5xitv6787h645ebv.github.io/Jellyfin-Canopy/sonarr-radarr/)
 
@@ -97,6 +98,7 @@ Four new pages living right in Jellyfin's navigation, reorderable, native on des
 - **A real settings app** — plugin settings organized into seven task-oriented areas with live search across every option, on desktop and phone.
 - **Session control** — see active streams from the header, and stop or message any remote-control-capable session without opening the dashboard.
 - **Sonarr/Radarr in the item menu** — trigger an automatic search on movies, series, seasons, or episodes; hand-pick a release (quality, size, seeders, rejection reasons — with one-tap Grab) for movies, seasons, and episodes; monitor/unmonitor and add missing movies or series with bounded, normalized download/import progress.
+- **Maintainerr without a second dashboard tab** — inspect safe collection, cleanup, queue, and item-protection status from Jellyfin, with no destructive proxy controls.
 - **Layout enforcement** — default or force the modern Jellyfin layout on your users' desktop and mobile web devices (TV-mode devices are deliberately exempt).
 - **Maintenance mode** — temporarily lock users out with a friendly banner while you work on the server.
 - **Custom branding** — your own logos, banners, login image, and favicon; plus a theme selector and deep CSS customization.
@@ -160,7 +162,7 @@ Four new pages living right in Jellyfin's navigation, reorderable, native on des
 > [!TIP]
 > Canopy's default request-time script and branding middleware do not need write access to Jellyfin's web or installation tree. [File Transformation](https://github.com/IAmParadox27/jellyfin-plugin-file-transformation), [Plugin Pages](https://github.com/IAmParadox27/jellyfin-plugin-pages), and [Custom Tabs](https://github.com/IAmParadox27/jellyfin-plugin-custom-tabs) are separate optional plugins; Canopy does not use them on Jellyfin 12. See the [least-privilege guidance](https://4eh5xitv6787h645ebv.github.io/Jellyfin-Canopy/getting-started/#permission-issues) before enabling any legacy web-file modification.
 
-Optional integrations — connect what you use, skip what you don't: **Seerr** (requests & discovery), **Sonarr / Radarr / Bazarr** (calendar, normalized download lifecycle/history, item-menu search), a **media-segment provider** like Intro Skipper (auto-skip), and a free **TMDB API key** (Elsewhere, TMDB reviews, release dates, richer cast info).
+Optional integrations — connect what you use, skip what you don't: **Seerr** (requests & discovery), **Sonarr / Radarr / Bazarr** (calendar, normalized download lifecycle/history, item-menu search), **Maintainerr** (read-only cleanup status), a **media-segment provider** like Intro Skipper (auto-skip), and a free **TMDB API key** (Elsewhere, TMDB reviews, release dates, richer cast info).
 
 → Step-by-step: [Getting Started](https://4eh5xitv6787h645ebv.github.io/Jellyfin-Canopy/getting-started/)
 
@@ -176,6 +178,7 @@ Everything above, in depth — every setting explained, with screenshots:
 | [The Enhanced Experience](https://4eh5xitv6787h645ebv.github.io/Jellyfin-Canopy/enhanced/) | Playback, shortcuts, tags, pages, hidden content |
 | [Discover & Request](https://4eh5xitv6787h645ebv.github.io/Jellyfin-Canopy/discover/) | Seerr setup, discovery feed, requests, reviews |
 | [Sonarr & Radarr](https://4eh5xitv6787h645ebv.github.io/Jellyfin-Canopy/sonarr-radarr/) | Calendar, requests page, item-menu search |
+| [Maintainerr](https://4eh5xitv6787h645ebv.github.io/Jellyfin-Canopy/maintainerr/) | Read-only setup, native page, privacy, and troubleshooting |
 | [Spoiler Guard](https://4eh5xitv6787h645ebv.github.io/Jellyfin-Canopy/spoiler-guard/) | Per-user unwatched-content protection |
 | [Anime Filler Warnings](https://4eh5xitv6787h645ebv.github.io/Jellyfin-Canopy/anime-filler-warnings/) | Conservative anime episode filler badges |
 | [Customization](https://4eh5xitv6787h645ebv.github.io/Jellyfin-Canopy/customization/) | Branding, themes, CSS, login image |

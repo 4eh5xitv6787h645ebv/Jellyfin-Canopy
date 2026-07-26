@@ -102,6 +102,12 @@ test.describe('non-admin session', () => {
 
     test('the header button injects and admin surfaces stay gated', async ({ page, consoleErrors }) => {
         await loginAs(page, 'user', consoleErrors);
+        const maintainerrDashboardRequests: string[] = [];
+        page.on('request', (request) => {
+            if (request.url().includes('/JellyfinCanopy/maintainerr/dashboard')) {
+                maintainerrDashboardRequests.push(request.url());
+            }
+        });
 
         // Header-tray injection must work for a non-admin too (when the feature
         // is on for this user). Presence rule from navigation.spec: connected,
@@ -130,10 +136,50 @@ test.describe('non-admin session', () => {
         }, ADMIN_ENDPOINT);
         expect(adminStatus, 'the admin endpoint stays gated from a non-admin browser session').toBe(403);
 
-        const adminLeak = await page.evaluate(
-            () => !!document.querySelector('.jc-hidden-admin-user-filter')
-        );
-        expect(adminLeak, 'no admin-only cross-user filter leaks onto a non-admin surface').toBe(false);
+        const adminLeak = await page.evaluate(async () => {
+            const JC = (window as any).JellyfinCanopy;
+            const config = JC?.pluginConfig || {};
+            const routeBeforeFacadeCall = window.location.hash;
+            JC?.maintainerrPage?.showPage();
+            await new Promise<void>((resolve) => {
+                requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+            });
+            const pageText = document.body.textContent || '';
+            return {
+                hiddenContentFilter: !!document.querySelector('.jc-hidden-admin-user-filter'),
+                maintainerrFacade: typeof JC?.maintainerrPage?.showPage === 'function',
+                routeChangedByFacade: window.location.hash !== routeBeforeFacadeCall,
+                maintainerrNavigation: !!document.querySelector(
+                    '#jcPageLink-maintainerr, #jcPageTray-maintainerr, #jcPagePrefs-maintainerr'
+                ),
+                maintainerrPage: !!document.querySelector('#jc-maintainerr-container'),
+                maintainerrLink: !!document.querySelector('a[href*="maintainerr" i]'),
+                operationalData: pageText.includes('Weekend cleanup')
+                    || pageText.includes('Connected and ready'),
+                topologyText: pageText.includes('integrations:6246')
+                    || pageText.includes('maintainerr.example.test'),
+                internalUrl: config.MaintainerrUrl,
+                externalUrl: config.MaintainerrExternalUrl,
+                mappings: config.MaintainerrUrlMappings,
+            };
+        });
+        expect(adminLeak, 'no admin-only Canopy or Maintainerr surface leaks to a non-admin').toEqual({
+            hiddenContentFilter: false,
+            maintainerrFacade: true,
+            routeChangedByFacade: false,
+            maintainerrNavigation: false,
+            maintainerrPage: false,
+            maintainerrLink: false,
+            operationalData: false,
+            topologyText: false,
+            internalUrl: undefined,
+            externalUrl: undefined,
+            mappings: undefined,
+        });
+        expect(
+            maintainerrDashboardRequests,
+            'the inert non-admin facade makes no dashboard request',
+        ).toEqual([]);
 
         // The /admin/ 403 is an expected authz-degrade url (allow-listed), so the
         // shared net must still be clean.

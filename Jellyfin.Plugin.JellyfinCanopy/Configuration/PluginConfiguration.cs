@@ -180,6 +180,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
             TriggerSeerrScanOnItemAdded = false;
             SeerrScanDebounceSeconds = 60;
 
+            // Maintainerr Settings (read-only; Maintainerr 3.18 has no API authentication)
+            MaintainerrEnabled = false;
+            MaintainerrUrl = "";
+            MaintainerrExternalUrl = "";
+            MaintainerrUrlMappings = "";
+            MaintainerrPageEnabled = true;
+            MaintainerrItemStatusEnabled = true;
+            MaintainerrItemStatusForUsers = false;
+
             // Arr Links Settings
             ArrLinksEnabled = false;
             SonarrUrl = "";
@@ -246,7 +255,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
             // Pages framework: admin order of the framework pages (CSV of page ids).
             // Unknown ids are ignored and missing ids appended by the client registry,
             // so a stale value always degrades to a complete, valid ordering.
-            PagesOrder = "calendar,downloads,bookmarks,hidden-content";
+            PagesOrder = "calendar,downloads,bookmarks,hidden-content,maintainerr";
 
             // Bookmarks Settings
             BookmarksEnabled = true;
@@ -580,6 +589,44 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         // cheap. Independent of SeerrResponseCacheTtlMinutes.
         public int SeerrParentalRatingCacheTtlMinutes { get; set; }
 
+        // Maintainerr Settings
+
+        /// <summary>
+        /// Master switch for the read-only Maintainerr integration. Maintainerr 3.18
+        /// has no API authentication, so there is deliberately no API-key property.
+        /// </summary>
+        public bool MaintainerrEnabled { get; set; }
+
+        /// <summary>
+        /// Internal server-to-server base URL. This is the sole outbound fetch target
+        /// and may include a Maintainerr BASE_PATH.
+        /// </summary>
+        public string MaintainerrUrl { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Optional browser-only base URL used for administrator deep links. It is
+        /// never used as an upstream fetch target.
+        /// </summary>
+        public string MaintainerrExternalUrl { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Optional newline-delimited Jellyfin-access-URL|Maintainerr-browser-URL
+        /// mappings. Mapping targets are browser links only.
+        /// </summary>
+        public string MaintainerrUrlMappings { get; set; } = string.Empty;
+
+        /// <summary>Enables the native administrator Maintainerr page.</summary>
+        public bool MaintainerrPageEnabled { get; set; } = true;
+
+        /// <summary>Enables navigation-scoped Maintainerr item status.</summary>
+        public bool MaintainerrItemStatusEnabled { get; set; } = true;
+
+        /// <summary>
+        /// Explicit opt-in for the minimal two-boolean item-status response to
+        /// authenticated non-administrators. Defaults off.
+        /// </summary>
+        public bool MaintainerrItemStatusForUsers { get; set; }
+
         // Arr Links Settings
         public bool ArrLinksEnabled { get; set; }
         public string SonarrUrl { get; set; }
@@ -689,7 +736,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         /// and appending any missing ones, so a stale value always degrades to a
         /// complete, valid ordering. Public so entry points can read it pre-render.
         /// </summary>
-        public string PagesOrder { get; set; } = "calendar,downloads,bookmarks,hidden-content";
+        public string PagesOrder { get; set; } = "calendar,downloads,bookmarks,hidden-content,maintainerr";
 
         // ── Hidden migration state (no descriptor, no admin UI) ──────────────
         // Whether CANOPY created the (retired) Custom-Tabs delivery entry for

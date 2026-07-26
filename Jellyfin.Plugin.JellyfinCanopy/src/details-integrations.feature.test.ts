@@ -12,6 +12,7 @@ import { activate as activateReviews } from './elsewhere/reviews.feature';
 import { activate as activateArrLinks } from './arr/links.feature';
 import { activate as activateArrSearch } from './arr/search/feature';
 import { activate as activateLetterboxd } from './others/letterboxd-links.feature';
+import { activateMaintainerrItemStatus } from './maintainerr/item-status';
 
 interface TestScope {
     readonly scope: FeatureScope;
@@ -114,6 +115,12 @@ describe('details and integration feature activation', () => {
         expect(isDetailsEnhancementsEnabled()).toBe(false);
         JC.pluginConfig = { ShowReleaseDates: true, TmdbEnabled: true };
         expect(isDetailsEnhancementsEnabled()).toBe(true);
+        JC.pluginConfig = {
+            MaintainerrEnabled: true,
+            MaintainerrItemStatusEnabled: true,
+            MaintainerrItemStatusForUsers: true,
+        };
+        expect(isDetailsEnhancementsEnabled()).toBe(true);
     });
 
     it('does nothing when stale scopes reach every entry', async () => {
@@ -133,6 +140,7 @@ describe('details and integration feature activation', () => {
             activateArrLinks,
             activateArrSearch,
             activateLetterboxd,
+            activateMaintainerrItemStatus,
         ];
         for (const activate of activators) {
             const scope = testScope();
@@ -169,6 +177,31 @@ describe('details and integration feature activation', () => {
         });
         await scope.dispose();
         expect(lifecycleCounts()).toEqual(before);
+    });
+
+    it('adds Maintainerr through the shared details dispatcher without another observer', () => {
+        JC.currentUser = { Policy: { IsAdministrator: true } };
+        JC.pluginConfig = {
+            MaintainerrEnabled: true,
+            MaintainerrItemStatusEnabled: true,
+        };
+        const before = lifecycleCounts();
+        const detailsScope = testScope();
+        const maintainerrScope = testScope();
+        activeScopes.push(detailsScope, maintainerrScope);
+
+        activateDetails(detailsScope.scope);
+        const afterDetails = lifecycleCounts();
+        activateMaintainerrItemStatus(maintainerrScope.scope);
+
+        expect(afterDetails).toEqual({
+            resets: before.resets + 1,
+            live: before.live,
+            body: before.body + 1,
+            navigation: before.navigation + 1,
+            views: before.views + 1,
+        });
+        expect(lifecycleCounts()).toEqual(afterDetails);
     });
 
     it('hot-disables and re-enables arr search through one stable facade', async () => {

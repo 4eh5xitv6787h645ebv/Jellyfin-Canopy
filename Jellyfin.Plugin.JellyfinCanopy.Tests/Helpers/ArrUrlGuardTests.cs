@@ -52,7 +52,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Helpers
         [InlineData("169.254.255.255")]     // 169.254.0.0/16 upper bound
         [InlineData("fd00:ec2::254")]       // AWS IPv6 metadata
         [InlineData("0.0.0.0")]             // IPAddress.Any (unspecified)
+        [InlineData("0.1.2.3")]             // IPv4 "this network" range
+        [InlineData("224.0.0.1")]           // IPv4 multicast
+        [InlineData("240.0.0.1")]           // IPv4 reserved
+        [InlineData("255.255.255.255")]     // limited broadcast
         [InlineData("::")]                  // IPv6Any (unspecified)
+        [InlineData("fe80::1")]             // IPv6 link-local
+        [InlineData("ff02::1")]             // IPv6 multicast
         public void IsBlockedIp_MetadataLinkLocalAndUnspecified_Blocked(string ip)
         {
             Assert.True(ArrUrlGuard.IsBlockedIp(IPAddress.Parse(ip)));

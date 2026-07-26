@@ -85,6 +85,9 @@
 
             const testSeerrBtn = document.getElementById('testSeerrBtn');
             const seerrStatusIndicator = document.getElementById('seerrStatusIndicator');
+            const testMaintainerrBtn = document.getElementById('testMaintainerrBtn');
+            const maintainerrStatusIndicator = document.getElementById('maintainerrStatusIndicator');
+            const maintainerrStatusText = document.getElementById('maintainerrStatusText');
 
             const tmdbStatusIndicator = document.getElementById('tmdbStatusIndicator');
 
@@ -206,9 +209,9 @@
                 const GROUPS = {
                     'command-center': { title: 'Command Center', purpose: 'Service health, feature status and quick actions at a glance.' },
                     'experience':     { title: 'Experience', purpose: 'How Jellyfin looks, plays and handles for every user.' },
-                    'pages':          { title: 'Pages', purpose: 'The Calendar, Requests, Bookmarks and Hidden Content pages.' },
+                    'pages':          { title: 'Pages', purpose: 'Calendar, Requests, Bookmarks, Hidden Content and the administrator Maintainerr page.' },
                     'discovery':      { title: 'Discovery & Community', purpose: 'Trending, reviews, release dates and streaming availability.' },
-                    'connections':    { title: 'Connections & Automation', purpose: 'Seerr, Sonarr, Radarr, Bazarr and their sync rules.' },
+                    'connections':    { title: 'Connections & Automation', purpose: 'Seerr, Maintainerr, Sonarr, Radarr, Bazarr and their sync rules.' },
                     'governance':     { title: 'Governance', purpose: 'Spoiler policy, user defaults, permissions and maintenance.' },
                     'system':         { title: 'System', purpose: 'Assets, diagnostics, developer settings and documentation.' },
                 };
@@ -1052,6 +1055,246 @@
             }
         }
 
+        let maintainerrTestGeneration = 0;
+        let activeMaintainerrTestController = null;
+
+        function jcSetMaintainerrTestStatus(icon, text, color, busy) {
+            maintainerrStatusIndicator.textContent = icon;
+            maintainerrStatusIndicator.style.color = color || '';
+            maintainerrStatusIndicator.classList.toggle('status-check', busy === true);
+            maintainerrStatusText.textContent = text;
+            testMaintainerrBtn.setAttribute('aria-busy', busy === true ? 'true' : 'false');
+        }
+
+        function cancelActiveMaintainerrTest(resetUi) {
+            maintainerrTestGeneration++;
+            if (activeMaintainerrTestController) {
+                activeMaintainerrTestController.abort();
+                activeMaintainerrTestController = null;
+            }
+            if (resetUi === true) {
+                testMaintainerrBtn.disabled = false;
+                jcSetMaintainerrTestStatus('', '', '', false);
+            }
+        }
+
+        function jcIsCurrentMaintainerrTest(generation, url, controller) {
+            const input = document.querySelector('#maintainerrUrl');
+            return generation === maintainerrTestGeneration
+                && controller === activeMaintainerrTestController
+                && !controller.signal.aborted
+                && input
+                && jcNormalizeMaintainerrBaseUrl(input.value || '') === url;
+        }
+
+        function jcParseMaintainerrTestStatus(value) {
+            if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+            const status = value;
+            if (typeof status.ok !== 'boolean'
+                || typeof status.ready !== 'boolean'
+                || typeof status.version !== 'string'
+                || !status.version.trim()
+                || status.version.length > 80
+                || /[\u0000-\u001f\u007f-\u009f]/.test(status.version)
+                || typeof status.jellyfinMode !== 'boolean'
+                || typeof status.capable !== 'boolean'
+                || typeof status.identityMatch !== 'boolean'
+                || status.ok !== (status.capable && status.identityMatch)
+                || (status.capable && (!status.ready || !status.jellyfinMode))) {
+                return null;
+            }
+
+            const identityWarning = status.identityWarning;
+            if ((status.identityMatch && identityWarning !== undefined)
+                || (!status.identityMatch
+                    && identityWarning !== 'identity_unknown'
+                    && identityWarning !== 'identity_mismatch')) {
+                return null;
+            }
+
+            const capabilityNames = [
+                'collections',
+                'collectionContent',
+                'itemStatus',
+                'rules',
+                'storageMetrics',
+                'overlays'
+            ];
+            const capabilities = status.capabilities;
+            if (!capabilities
+                || typeof capabilities !== 'object'
+                || Array.isArray(capabilities)
+                || Object.keys(capabilities).length !== capabilityNames.length) {
+                return null;
+            }
+            for (const name of capabilityNames) {
+                const expected = name === 'itemStatus'
+                    ? status.capable && status.identityMatch
+                    : status.capable;
+                if (capabilities[name] !== expected) return null;
+            }
+
+            const validError = status.capable
+                ? status.error === undefined
+                : !status.ready
+                    ? status.error === 'not_ready'
+                    : !status.jellyfinMode
+                        ? status.error === 'not_ready' || status.error === 'wrong_service'
+                        : status.error === 'not_ready' || status.error === 'unsupported';
+            if (!validError) {
+                return null;
+            }
+
+            return {
+                ready: status.ready,
+                version: status.version,
+                jellyfinMode: status.jellyfinMode,
+                capable: status.capable,
+                identityMatch: status.identityMatch,
+                identityWarning: identityWarning,
+                error: status.error
+            };
+        }
+
+        async function testMaintainerrConnection() {
+            cancelActiveMaintainerrTest(true);
+            const input = document.querySelector('#maintainerrUrl');
+            const url = jcNormalizeMaintainerrBaseUrl(input ? input.value || '' : '');
+            if (!url) {
+                jcSetMaintainerrTestStatus('error', 'Failed', '#dc3545', false);
+                Dashboard.alert({
+                    title: 'Missing or invalid URL',
+                    message: 'Provide an HTTP(S) Maintainerr base URL of at most 2048 characters without credentials, query, fragment, or path traversal.'
+                });
+                return;
+            }
+
+            const generation = maintainerrTestGeneration;
+            const controller = new AbortController();
+            activeMaintainerrTestController = controller;
+            const testToken = beginConnectionTest();
+            const cacheBinding = jcFingerprintConnectionValue(url);
+            testMaintainerrBtn.disabled = true;
+            jcSetMaintainerrTestStatus(
+                'sync',
+                'Testing\u2026',
+                'var(--primary-accent-color, #00a4dc)',
+                true
+            );
+
+            try {
+                const result = await ApiClient.ajax({
+                    type: 'POST',
+                    url: ApiClient.getUrl('/JellyfinCanopy/maintainerr/test'),
+                    dataType: 'json',
+                    contentType: 'application/json',
+                    data: JSON.stringify({ url: url }),
+                    signal: controller.signal
+                });
+                if (!jcIsCurrentMaintainerrTest(generation, url, controller)) return;
+
+                const status = jcParseMaintainerrTestStatus(result);
+                if (!status) {
+                    const malformedError = new Error('Maintainerr returned a malformed test response');
+                    malformedError.responseJSON = { error: 'malformed_response' };
+                    throw malformedError;
+                }
+                const identityState = status.identityWarning === 'identity_mismatch'
+                    ? 'mismatch'
+                    : status.identityWarning === 'identity_unknown'
+                        ? 'unknown'
+                        : 'matched';
+                const version = status.version.slice(0, 32);
+
+                if (!status.ready || !status.jellyfinMode || !status.capable) {
+                    const validationError = new Error('Maintainerr validation failed');
+                    validationError.responseJSON = { error: status.error };
+                    throw validationError;
+                }
+
+                const warning = identityState !== 'matched';
+                const detail = (version ? 'Maintainerr ' + version : 'Connected')
+                    + (identityState === 'mismatch'
+                        ? ' · different Jellyfin server'
+                        : identityState === 'unknown'
+                            ? ' · Jellyfin identity not confirmed'
+                            : '');
+                if (!jcIsCurrentMaintainerrTest(generation, url, controller)) return;
+                setConnectionTestResult(
+                    'maintainerr',
+                    warning ? 'amber' : 'ok',
+                    detail,
+                    testToken,
+                    cacheBinding
+                );
+                jcSetMaintainerrTestStatus(
+                    warning ? 'warning' : 'check_circle',
+                    warning ? 'Connected with warning' : 'Connected',
+                    warning ? '#ffb300' : '#52b54b',
+                    false
+                );
+                jcTestAlert({
+                    title: warning ? 'Connected with warning' : 'Success',
+                    message: identityState === 'mismatch'
+                        ? 'Maintainerr is reachable but is connected to a different Jellyfin server. Per-item status will remain disabled until the identities match.'
+                        : identityState === 'unknown'
+                            ? 'Maintainerr is reachable, but its Jellyfin server identity could not be confirmed. Per-item status will remain disabled until identity can be verified.'
+                            : 'Successfully connected to Maintainerr' + (version ? ' ' + version : '') + '.'
+                });
+            } catch (error) {
+                if (!jcIsCurrentMaintainerrTest(generation, url, controller)) return;
+                let code = '';
+                try {
+                    const body = error && error.responseJSON
+                        ? error.responseJSON
+                        : (error && typeof error.clone === 'function' ? await error.clone().json() : null);
+                    code = body && typeof body.error === 'string' ? body.error.slice(0, 48) : '';
+                } catch (_) { /* sanitized fallback below */ }
+                if (!jcIsCurrentMaintainerrTest(generation, url, controller)) return;
+                const messages = {
+                    invalid_configuration: 'The Maintainerr URL is invalid',
+                    not_ready: 'Maintainerr is reachable but not ready',
+                    not_jellyfin: 'Maintainerr is not configured for Jellyfin',
+                    unsupported: 'Maintainerr does not expose the required read-only capabilities',
+                    blocked_target: 'The destination is blocked by Canopy network policy',
+                    timeout: 'The connection timed out',
+                    canceled: 'The connection test was canceled',
+                    redirect: 'Maintainerr returned a redirect',
+                    wrong_service: 'The destination is not Maintainerr 3.18',
+                    malformed_body: 'Maintainerr returned an invalid response',
+                    malformed_response: 'Maintainerr returned an invalid response',
+                    response_too_large: 'Maintainerr returned an oversized response',
+                    too_large: 'Maintainerr returned too many records',
+                    throttled: 'Maintainerr requests are temporarily limited',
+                    identity_mismatch: 'Maintainerr is connected to a different Jellyfin server',
+                    configuration_changed: 'The Maintainerr configuration changed during the test',
+                    upstream_error: 'Maintainerr could not complete the read-only test',
+                    disabled: 'The Maintainerr integration is disabled',
+                    unavailable: 'Maintainerr is temporarily unavailable'
+                };
+                const detail = messages[code] || 'Connection could not be verified';
+                setConnectionTestResult(
+                    'maintainerr',
+                    'error',
+                    detail,
+                    testToken,
+                    cacheBinding
+                );
+                jcSetMaintainerrTestStatus('error', 'Failed', '#dc3545', false);
+                jcTestAlert({
+                    title: 'Connection failed',
+                    message: detail + '. Confirm the server-only URL, network access, and Maintainerr 3.18 configuration.'
+                });
+            } finally {
+                if (jcIsCurrentMaintainerrTest(generation, url, controller)) {
+                    activeMaintainerrTestController = null;
+                    testMaintainerrBtn.disabled = false;
+                    maintainerrStatusIndicator.classList.remove('status-check');
+                    testMaintainerrBtn.setAttribute('aria-busy', 'false');
+                }
+            }
+        }
+
         async function testTmdbConnection(event) {
             const apiKey = (document.querySelector('#TMDB_API_KEY').value || '').trim();
 
@@ -1728,6 +1971,150 @@
             }
         }
 
+        var JC_MAINTAINERR_MAX_URL_LENGTH = 2048;
+        var JC_MAINTAINERR_MAX_MAPPINGS_LENGTH = 64 * 1024;
+        var JC_MAINTAINERR_MAX_MAPPING_ROWS = 32;
+
+        // Mirror ServiceUrlResolver.TryNormalizeHttpBaseUrl for the Maintainerr
+        // controls. This client-side gate is for immediate, coherent admin
+        // feedback; the server repeats the same trust-boundary validation.
+        function jcIsSafeMaintainerrPathSegment(segment) {
+            var current = segment;
+            for (var depth = 0; depth < 4; depth++) {
+                var decoded;
+                try {
+                    decoded = decodeURIComponent(current);
+                } catch (_) {
+                    return false;
+                }
+                if (decoded === '.' || decoded === '..'
+                    || decoded.indexOf('/') !== -1
+                    || decoded.indexOf('\\') !== -1
+                    || /[\u0000-\u001f\u007f-\u009f]/.test(decoded)) {
+                    return false;
+                }
+                if (decoded.indexOf('%') === -1) return true;
+                if (decoded === current) return false;
+                current = decoded;
+            }
+            return false;
+        }
+
+        function jcNormalizeMaintainerrBaseUrl(value) {
+            if (typeof value !== 'string') return '';
+            var trimmed = value.trim();
+            if (!trimmed
+                || trimmed.length > JC_MAINTAINERR_MAX_URL_LENGTH
+                || /[\u0000-\u001f\u007f-\u009f]/.test(trimmed)
+                || trimmed.indexOf('\\') !== -1
+                || trimmed.indexOf('//') === 0) {
+                return '';
+            }
+
+            var parsed;
+            try {
+                parsed = new URL(trimmed);
+            } catch (_) {
+                return '';
+            }
+            if ((parsed.protocol !== 'http:' && parsed.protocol !== 'https:')
+                || !parsed.hostname
+                || parsed.username
+                || parsed.password
+                || parsed.search
+                || parsed.hash) {
+                return '';
+            }
+
+            // URL canonicalizes literal dot segments, so inspect the original
+            // escaped path before using the parsed/normalized representation.
+            var schemeSeparator = trimmed.indexOf('://');
+            var authorityEnd = schemeSeparator < 0 ? -1 : trimmed.indexOf('/', schemeSeparator + 3);
+            var rawPath = authorityEnd < 0 ? '' : trimmed.slice(authorityEnd);
+            if (rawPath.split('/').some(function(segment) {
+                return !jcIsSafeMaintainerrPathSegment(segment);
+            })) {
+                return '';
+            }
+
+            var authority = parsed.protocol + '//' + parsed.host;
+            var path = parsed.pathname.replace(/^\/+|\/+$/g, '');
+            var normalized = path ? authority + '/' + path : authority;
+            return normalized.length <= JC_MAINTAINERR_MAX_URL_LENGTH ? normalized : '';
+        }
+
+        /**
+         * Parse and normalize Maintainerr mappings once for both Validate and
+         * Save. Issues contain row numbers/reasons only—never URL values.
+         */
+        function jcValidateMaintainerrMappings(value) {
+            var raw = typeof value === 'string' ? value : '';
+            if (raw.length > JC_MAINTAINERR_MAX_MAPPINGS_LENGTH) {
+                return {
+                    value: '',
+                    validCount: 0,
+                    invalidCount: 1,
+                    issues: ['Maintainerr mappings exceed the 64 KiB limit.']
+                };
+            }
+
+            var rows = [];
+            var issues = [];
+            var seenSources = Object.create(null);
+            var nonemptyCount = 0;
+            raw.split(/\r\n?|\n/).forEach(function(line, index) {
+                var trimmed = line.trim();
+                if (!trimmed) return;
+                nonemptyCount++;
+                if (nonemptyCount > JC_MAINTAINERR_MAX_MAPPING_ROWS) return;
+
+                var lineLabel = 'Maintainerr line ' + (index + 1);
+                var parts = trimmed.split('|');
+                if (parts.length !== 2) {
+                    issues.push(lineLabel + ': use exactly one pipe between two URLs.');
+                    return;
+                }
+                var source = jcNormalizeMaintainerrBaseUrl(parts[0]);
+                var target = jcNormalizeMaintainerrBaseUrl(parts[1]);
+                if (!source || !target) {
+                    issues.push(lineLabel + ': both sides must be bounded HTTP(S) base URLs without credentials, query, fragment, or traversal.');
+                    return;
+                }
+                if (source.toLowerCase() === target.toLowerCase()) {
+                    issues.push(lineLabel + ': the Jellyfin and Maintainerr URLs must be different.');
+                    return;
+                }
+                var sourceKey = source.toLowerCase();
+                if (seenSources[sourceKey]) {
+                    issues.push(lineLabel + ': the Jellyfin source URL is duplicated.');
+                    return;
+                }
+                seenSources[sourceKey] = true;
+                rows.push(source + '|' + target);
+            });
+
+            if (nonemptyCount > JC_MAINTAINERR_MAX_MAPPING_ROWS) {
+                issues.push('Maintainerr mappings are limited to 32 nonempty rows; extra rows were dropped.');
+            }
+            var normalizedMappings = rows.join('\n');
+            if (normalizedMappings.length > JC_MAINTAINERR_MAX_MAPPINGS_LENGTH) {
+                return {
+                    value: '',
+                    validCount: 0,
+                    invalidCount: issues.length + 1,
+                    issues: issues.concat(
+                        'Normalized Maintainerr mappings exceed the 64 KiB limit.'
+                    )
+                };
+            }
+            return {
+                value: normalizedMappings,
+                validCount: rows.length,
+                invalidCount: issues.length,
+                issues: issues
+            };
+        }
+
         function collectInstancesFromDom(selector, defaultName) {
             var out = [];
             var incomplete = [];
@@ -2378,6 +2765,41 @@
             })();
             config.SeerrApiKey = (document.querySelector('#SeerrApiKey').value || '').replace(/\s/g, '');
             config.SeerrUrlMappings = (document.querySelector('#seerrUrlMappings').value || '').split('\n').map(u => u.trim()).filter(Boolean).join('\n');
+            // Maintainerr has no API key. Normalize only the two URL roles and the
+            // browser-link mappings; the server repeats this validation before
+            // persistence and applies its stricter outbound-network policy at use.
+            (function () {
+                var internalUrl = String(config.MaintainerrUrl || '').trim();
+                var externalUrl = String(config.MaintainerrExternalUrl || '').trim();
+                var normalizedInternal = jcNormalizeMaintainerrBaseUrl(internalUrl);
+                var normalizedExternal = externalUrl
+                    ? jcNormalizeMaintainerrBaseUrl(externalUrl)
+                    : '';
+                var invalidInternal = !!internalUrl && !normalizedInternal;
+                var invalidExternal = !!externalUrl && !normalizedExternal;
+                config.MaintainerrUrl = normalizedInternal;
+                config.MaintainerrExternalUrl = normalizedExternal;
+
+                // Validate and Save deliberately share this exact bounded parser.
+                // It drops malformed/duplicate/excess rows without echoing their
+                // URL contents into alerts or logs.
+                var mappingResult = jcValidateMaintainerrMappings(
+                    String(config.MaintainerrUrlMappings || '')
+                );
+                var invalidMappings = mappingResult.invalidCount;
+                config.MaintainerrUrlMappings = mappingResult.value;
+
+                if (invalidInternal || invalidExternal || invalidMappings) {
+                    var dropped = [];
+                    if (invalidInternal) dropped.push('the internal URL');
+                    if (invalidExternal) dropped.push('the browser URL');
+                    if (invalidMappings) dropped.push(invalidMappings + ' mapping validation issue' + (invalidMappings === 1 ? '' : 's'));
+                    Dashboard.alert({
+                        title: 'Invalid Maintainerr URL configuration',
+                        message: 'Canopy dropped ' + dropped.join(', ') + '. Maintainerr URLs are limited to 2048 characters and must be HTTP(S) bases without credentials, query, fragment, or traversal. Mappings are limited to 64 KiB and 32 nonempty rows.'
+                    });
+                }
+            })();
             // Bazarr External URL rides the generic data-config-key binder, so validate it here after
             // the bound fields are read: blank a malformed value with a clear warning.
             (function () {
@@ -3145,6 +3567,14 @@
                 && document.querySelector('#SeerrApiKey').value.trim().length > 0;
         }
 
+        function hasMaintainerrConfigured() {
+            var enabled = document.querySelector('#maintainerrEnabled');
+            var url = document.querySelector('#maintainerrUrl');
+            return Boolean(
+                enabled && enabled.checked && url && jcNormalizeMaintainerrBaseUrl(url.value)
+            );
+        }
+
         /**
          * Checks whether at least one ENABLED arr service (Sonarr or Radarr) has a URL and API key.
          * Disabled instances are skipped — they're stored config but the fan-out callers
@@ -3168,7 +3598,7 @@
         // Setup fieldsets that hold the connection inputs are tagged with
         // `data-dep-setup` directly in the HTML — `updateSectionDep` walks
         // every fieldset and gates only the ones WITHOUT that marker, so
-        // admins can always edit Sonarr/Radarr/Bazarr/Seerr setup boxes
+        // admins can always edit Sonarr/Radarr/Bazarr/Seerr/Maintainerr setup boxes
         // regardless of what else is configured.
         var SECTION_DEPS = [
             {
@@ -3178,6 +3608,14 @@
                 bannerTitle: 'Enable "Seerr integration" to configure',
                 bannerHint: 'Provide a Seerr URL and API key in the Setup section above, then enable the integration.',
                 bannerId: 'dep-banner-seerr'
+            },
+            {
+                tabSelector: '#maintainerr',
+                checkFn: hasMaintainerrConfigured,
+                bannerIcon: 'link_off',
+                bannerTitle: 'Enable Maintainerr to configure',
+                bannerHint: 'Provide the server-only Maintainerr URL above, then enable the integration.',
+                bannerId: 'dep-banner-maintainerr'
             },
             {
                 tabSelector: '#arr',
@@ -3516,6 +3954,26 @@
             return _jeCacheGeneration;
         }
 
+        /**
+         * Produce a stable comparison-only binding without persisting an internal
+         * service URL. Two independent 32-bit mixes plus the input length make an
+         * accidental cross-configuration cache match negligible; this is an
+         * identity fence, not a security or authentication primitive.
+         */
+        function jcFingerprintConnectionValue(value) {
+            var text = String(value || '');
+            var hashA = 0x811c9dc5;
+            var hashB = 0x9e3779b9;
+            for (var i = 0; i < text.length; i++) {
+                var code = text.charCodeAt(i);
+                hashA = Math.imul(hashA ^ code, 0x01000193);
+                hashB = Math.imul(hashB ^ code, 0x5f356495);
+            }
+            return 'v1:' + text.length.toString(36) + ':'
+                + ('00000000' + (hashA >>> 0).toString(16)).slice(-8)
+                + ('00000000' + (hashB >>> 0).toString(16)).slice(-8);
+        }
+
         // When true, per-service tests skip their own Dashboard.alert
         // success/failure dialog. The Re-test-all Quick Action sets this
         // for the duration of a batch and shows a single aggregate dialog
@@ -3548,7 +4006,7 @@
          * @param {number} [token] optional generation token from
          *   beginConnectionTest; stale tokens are silently dropped.
          */
-        function setConnectionTestResult(key, status, detail, token) {
+        function setConnectionTestResult(key, status, detail, token, binding) {
             if (token !== undefined && token !== _jeCacheGeneration) {
                 // Stale write from a test that was issued before the last
                 // cache clear. Drop it so a fresher (in-flight) test's
@@ -3559,6 +4017,7 @@
             _jeConnectionTestCache.set(key, {
                 status: status,
                 detail: detail || '',
+                binding: binding || '',
                 at: now
             });
             // Also persist to localStorage so the checklist can show "Last
@@ -3570,6 +4029,7 @@
                 localStorage.setItem('jc_conn_test_' + key, JSON.stringify({
                     status: status,
                     detail: detail || '',
+                    binding: binding || undefined,
                     at: now
                 }));
             } catch (e) { /* persistence is best-effort */ }
@@ -3585,7 +4045,7 @@
          * is meant to outlive page reloads so the admin always sees the
          * date of the most recent verification, however long ago it was.
          */
-        function getPersistedTestResult(key) {
+        function getPersistedTestResult(key, binding) {
             var storageKey = 'jc_conn_test_' + key;
             try {
                 var raw = localStorage.getItem(storageKey);
@@ -3594,6 +4054,10 @@
                 if (!rec || typeof rec.at !== 'number' || typeof rec.status !== 'string') {
                     // Self-heal: drop the bad entry so subsequent renders don't keep
                     // re-parsing it and so the row falls cleanly back to "not tested".
+                    try { localStorage.removeItem(storageKey); } catch (e) {}
+                    return null;
+                }
+                if (binding !== undefined && rec.binding !== binding) {
                     try { localStorage.removeItem(storageKey); } catch (e) {}
                     return null;
                 }
@@ -3627,10 +4091,10 @@
          *  - No data              → row stays 'pending' with the supplied
          *    fallback text
          */
-        function checklistRowState(cacheKey, fallbackDetail) {
-            var live = getConnectionTestResult(cacheKey);
+        function checklistRowState(cacheKey, fallbackDetail, binding) {
+            var live = getConnectionTestResult(cacheKey, binding);
             if (live) return { state: live.status, detail: live.detail };
-            var persisted = getPersistedTestResult(cacheKey);
+            var persisted = getPersistedTestResult(cacheKey, binding);
             if (persisted) return { state: persisted.status, detail: formatLastTested(persisted.at) };
             return { state: 'pending', detail: fallbackDetail };
         }
@@ -3639,9 +4103,13 @@
          * Read a test result from the cache. Returns null on miss OR on
          * expiry — callers render the row as "pending" in that case.
          */
-        function getConnectionTestResult(key) {
+        function getConnectionTestResult(key, binding) {
             var entry = _jeConnectionTestCache.get(key);
             if (!entry) return null;
+            if (binding !== undefined && entry.binding !== binding) {
+                _jeConnectionTestCache.delete(key);
+                return null;
+            }
             if (Date.now() - entry.at > CONNECTION_TEST_CACHE_TTL_MS) {
                 _jeConnectionTestCache.delete(key);
                 return null;
@@ -4221,6 +4689,53 @@
                 });
             }
 
+            // Maintainerr — deliberately URL-only because Maintainerr 3.18 has no
+            // API authentication. The cached test result contains sanitized state,
+            // never the internal URL or upstream response.
+            var maintainerrEnabled = document.getElementById('maintainerrEnabled');
+            var maintainerrUrl = readFieldValue('#maintainerrUrl');
+            var normalizedMaintainerrUrl = jcNormalizeMaintainerrBaseUrl(maintainerrUrl);
+            if (maintainerrEnabled && maintainerrEnabled.checked) {
+                if (normalizedMaintainerrUrl) {
+                    var maintainerrResult = checklistRowState(
+                        'maintainerr',
+                        'Configured — not yet verified',
+                        jcFingerprintConnectionValue(normalizedMaintainerrUrl)
+                    );
+                    pushCard({
+                        id: 'maintainerr',
+                        name: 'Maintainerr',
+                        tab: 'maintainerr',
+                        scrollTo: '#maintainerrUrl',
+                        icon: 'cleaning_services',
+                        state: maintainerrResult.state === 'amber'
+                            ? 'warn'
+                            : maintainerrResult.state === 'pending'
+                                ? 'pending'
+                                : maintainerrResult.state,
+                        detail: maintainerrResult.detail
+                    });
+                } else {
+                    pushCard({
+                        id: 'maintainerr',
+                        name: 'Maintainerr',
+                        tab: 'maintainerr',
+                        icon: 'cleaning_services',
+                        state: 'warn',
+                        detail: maintainerrUrl ? 'Enabled but URL is invalid' : 'Enabled but URL missing'
+                    });
+                }
+            } else if (maintainerrUrl) {
+                pushCard({
+                    id: 'maintainerr',
+                    name: 'Maintainerr',
+                    tab: 'maintainerr',
+                    icon: 'cleaning_services',
+                    state: 'off',
+                    detail: 'Configured but integration disabled'
+                });
+            }
+
             // Sonarr / Radarr — one card per instance, reusing test-cache keys
             ['sonarr', 'radarr'].forEach(function(type) {
                 var list = document.getElementById(type + 'InstancesList');
@@ -4284,7 +4799,7 @@
             if (cards.length === 0) {
                 var empty = document.createElement('div');
                 empty.className = 'jc-checklist-empty';
-                empty.textContent = 'Configure TMDB, Seerr, or an *arr instance to see its status here.';
+                empty.textContent = 'Configure TMDB, Seerr, Maintainerr, or an *arr instance to see its status here.';
                 root.appendChild(empty);
                 return;
             }
@@ -4386,8 +4901,9 @@
             document.querySelector(sel).addEventListener('input', debouncedUpdateDeps);
         });
         document.querySelector('#seerrEnabled').addEventListener('change', updateAllDependencies);
+        document.querySelector('#maintainerrEnabled').addEventListener('change', updateAllDependencies);
         document.querySelector('#tagCacheServerMode').addEventListener('change', updateAllDependencies);
-        ['#seerrUrls', '#SeerrApiKey'].forEach(function(sel) {
+        ['#seerrUrls', '#SeerrApiKey', '#maintainerrUrl'].forEach(function(sel) {
             document.querySelector(sel).addEventListener('input', debouncedUpdateDeps);
         });
 
@@ -4415,6 +4931,13 @@
         _wireInvalidate('#seerr_TMDB_API_KEY', 'tmdb');
         _wireInvalidate('#seerrUrls',       'seerr');
         _wireInvalidate('#SeerrApiKey',     'seerr');
+        _wireInvalidate('#maintainerrUrl',  'maintainerr');
+        var maintainerrUrlInput = document.querySelector('#maintainerrUrl');
+        if (maintainerrUrlInput) {
+            maintainerrUrlInput.addEventListener('input', function() {
+                cancelActiveMaintainerrTest(true);
+            });
+        }
 
         // Parent checkbox change listeners
         var parentIds = {};
@@ -4684,6 +5207,54 @@
             setBtnLabel('Validate Mappings');
         }
 
+        // Maintainerr uses the same strict parser here and during Save. Keep it
+        // separate from the legacy cross-service validator so unsafe URL values
+        // are never interpolated into validation output.
+        function validateMaintainerrMappingSet(inputId, btnId, resultDivId) {
+            var input = document.getElementById(inputId);
+            var btn = document.getElementById(btnId);
+            var resultDiv = document.getElementById(resultDivId);
+            if (!input || !btn || !resultDiv) return;
+            var span = btn.querySelector('span');
+            function setBtnLabel(value) {
+                if (span) span.textContent = value;
+                else btn.textContent = value;
+            }
+
+            btn.disabled = true;
+            setBtnLabel('Validating...');
+            var result = jcValidateMaintainerrMappings(input.value);
+            resultDiv.textContent = '';
+            resultDiv.style.display = 'block';
+            if (result.issues.length === 0) {
+                resultDiv.style.backgroundColor = 'rgba(82, 181, 75, 0.15)';
+                resultDiv.style.borderLeft = '4px solid #52b54b';
+                var icon = document.createElement('i');
+                icon.className = 'material-icons';
+                icon.style.cssText = 'vertical-align: middle; color: #52b54b; margin-right: 0.5em;';
+                icon.textContent = 'check_circle';
+                resultDiv.appendChild(icon);
+                resultDiv.appendChild(document.createTextNode(
+                    result.validCount + ' mapping' + (result.validCount === 1 ? '' : 's') + ' verified.'
+                ));
+            } else {
+                resultDiv.style.backgroundColor = 'rgba(220, 53, 69, 0.15)';
+                resultDiv.style.borderLeft = '4px solid #dc3545';
+                result.issues.forEach(function(issue) {
+                    addIssue(resultDiv, issue);
+                });
+                if (result.validCount > 0) {
+                    addIssue(
+                        resultDiv,
+                        result.validCount + ' other mapping'
+                            + (result.validCount === 1 ? '' : 's') + ' verified.'
+                    );
+                }
+            }
+            btn.disabled = false;
+            setBtnLabel('Validate Mappings');
+        }
+
         // Per-service mapping validation helpers. Each service's Validate button
         // collects only its own instances' mappings (plus Bazarr's single field),
         // feeds them through validateMappingSet, and cleans up any temp textareas
@@ -4809,6 +5380,20 @@
                 );
             });
         }
+        var validateMaintainerrMappingsBtn = document.getElementById('validateMaintainerrMappingsBtn');
+        if (validateMaintainerrMappingsBtn) {
+            validateMaintainerrMappingsBtn.addEventListener('click', function() {
+                var mappings = document.getElementById('maintainerrUrlMappings');
+                if (!mappings || !mappings.value.trim()) {
+                    Dashboard.alert({ title: 'No Mappings', message: 'No Maintainerr URL mappings are configured.' });
+                    return;
+                }
+                validateMaintainerrMappingSet(
+                    'maintainerrUrlMappings',
+                    'validateMaintainerrMappingsBtn', 'maintainerrMappingsValidationResult'
+                );
+            });
+        }
 
         clearTagsCacheBtn.addEventListener('click', async () => {
             if (confirm("Clear all client caches?\n\nThis will force all clients to clear their quality and genre tag caches on next page load.")) {
@@ -4833,6 +5418,7 @@
             }
         });
         testSeerrBtn.addEventListener('click', testSeerrConnection);
+        testMaintainerrBtn.addEventListener('click', testMaintainerrConnection);
 
         /* jc-seerr-scan-helpers:start */
         function jcNormalizeSeerrIdentityDomain(value) {
@@ -4967,6 +5553,12 @@
         // page cannot start another POST after the current request settles.
         page.addEventListener('pagehide', cancelActiveSeerrScan);
         page.addEventListener('viewhide', cancelActiveSeerrScan);
+        page.addEventListener('pagehide', function() {
+            cancelActiveMaintainerrTest(true);
+        });
+        page.addEventListener('viewhide', function() {
+            cancelActiveMaintainerrTest(true);
+        });
 
         async function triggerSeerrScanNow() {
             const rawUrls = document.querySelector('#seerrUrls').value || '';
@@ -5060,6 +5652,7 @@
          *   - TMDB: one `.testTmdbBtn` click (multiple copies exist across tabs
          *     but any one test updates the shared status card)
          *   - Seerr: `#testSeerrBtn` when Seerr is enabled + URL + key set
+         *   - Maintainerr: `#testMaintainerrBtn` when enabled + URL set
          *   - Sonarr / Radarr: every `.arr-instance-test` inside the instance
          *     lists that has a URL + API key populated
          *
@@ -5113,6 +5706,7 @@
                 // Invalidate the cache up front so every checklist row flips
                 // to "pending" immediately; the individual test handlers will
                 // repopulate it as they finish.
+                cancelActiveMaintainerrTest(true);
                 try { clearConnectionTestCache(); } catch (e) { /* renderChecklist logs */ }
 
                 // Suppress per-test Dashboard.alert dialogs for the duration
@@ -5140,6 +5734,16 @@
                     && seerrKey && seerrKey.value.trim()
                     && testSeerrBtn && !testSeerrBtn.disabled) {
                     testSeerrBtn.click();
+                    tested++;
+                }
+
+                // Maintainerr — URL-only by design; Maintainerr 3.18 has no API key.
+                var maintainerrEnabled = document.querySelector('#maintainerrEnabled');
+                var maintainerrUrl = document.querySelector('#maintainerrUrl');
+                if (maintainerrEnabled && maintainerrEnabled.checked
+                    && maintainerrUrl && jcNormalizeMaintainerrBaseUrl(maintainerrUrl.value)
+                    && testMaintainerrBtn && !testMaintainerrBtn.disabled) {
+                    testMaintainerrBtn.click();
                     tested++;
                 }
 
@@ -5172,7 +5776,7 @@
                     try {
                         Dashboard.alert({
                             title: 'Nothing to re-test',
-                            message: 'Enable and configure at least one service (TMDB, Seerr, Sonarr, or Radarr) before running a re-test.'
+                            message: 'Enable and configure at least one service (TMDB, Seerr, Maintainerr, Sonarr, or Radarr) before running a re-test.'
                         });
                     } catch (e) { /* ignore */ }
                     return;

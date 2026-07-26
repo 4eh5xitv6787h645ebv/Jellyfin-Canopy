@@ -15,8 +15,10 @@
 # Requirements: docker (compose v2), curl, jq, and openssl. ffmpeg is used from
 # the host when available, otherwise from jellyfin-ffmpeg inside the image.
 #
-# Seerr/TMDB/Radarr are hermetic by default through the Compose fixture. Local
-# exploratory runs may override these values with real services explicitly:
+# Seerr/TMDB/Radarr are hermetic by default through the Compose fixture. The
+# Maintainerr fixture is always hermetic: committed E2E must never contact a
+# live Maintainerr instance. Local exploratory runs may override only these
+# existing Seerr/TMDB values with real services explicitly:
 #   TMDB_API_KEY               a TMDB v3 API key            -> TmdbEnabled
 #   SEERR_URL             a reachable Seerr URL    \
 #   SEERR_API_KEY         its API key                   > SeerrEnabled
@@ -470,29 +472,46 @@ log "creating the seeded non-admin user"
 api POST /Users/New "$(jq -nc --arg name "${USER_NAME}" --arg password "${USER_PASS}" \
     '{Name: $name, Password: $password}')" >/dev/null
 
-# Bind the hermetic Seerr identities to the exact freshly-created Jellyfin
-# users before enabling the integration. The fixture reads this file on every
-# request, so no credential or mutable third-party account is involved.
+# Bind the hermetic integration identities to the exact freshly-created
+# Jellyfin users/server before enabling the integrations. The fixture reads
+# this file on every request, so no credential or mutable third-party account
+# is involved.
 ADMIN_ID="$(api GET /Users | jq -r --arg name "${ADMIN_USER}" '.[] | select(.Name == $name) | .Id')"
 USER_ID="$(api GET /Users | jq -r --arg name "${USER_NAME}" '.[] | select(.Name == $name) | .Id')"
 [ -n "${ADMIN_ID}" ] && [ "${ADMIN_ID}" != null ] || fail "could not resolve seeded admin id"
 [ -n "${USER_ID}" ] && [ "${USER_ID}" != null ] || fail "could not resolve seeded non-admin id"
+JELLYFIN_MACHINE_ID="$(api GET /System/Info | jq -er '.Id // empty')"
+[ -n "${JELLYFIN_MACHINE_ID}" ] \
+    || fail "could not resolve the authenticated Jellyfin system identity"
 jq -n \
     --arg adminId "${ADMIN_ID}" --arg adminName "${ADMIN_USER}" \
     --arg userId "${USER_ID}" --arg userName "${USER_NAME}" \
-    '{users: [
-        {id: 1, jellyfinUserId: $adminId, username: $adminName, displayName: $adminName, permissions: 1051642},
-        {id: 2, jellyfinUserId: $userId, username: $userName, displayName: $userName, permissions: 790560}
-    ]}' > "${MOCK_STATE_DIR}/config.json"
+    --arg machineId "${JELLYFIN_MACHINE_ID}" \
+    '{
+        users: [
+            {id: 1, jellyfinUserId: $adminId, username: $adminName, displayName: $adminName, permissions: 1051642},
+            {id: 2, jellyfinUserId: $userId, username: $userName, displayName: $userName, permissions: 790560}
+        ],
+        maintainerr: {
+            mode: "happy",
+            jellyfinMachineId: $machineId,
+            itemStatuses: {}
+        }
+    }' > "${MOCK_STATE_DIR}/config.json"
+printf '%s\n' '{"schemaVersion":1,"requests":[]}' \
+    > "${MOCK_STATE_DIR}/maintainerr-requests.json"
 
-# ── 5. plugin feature flags (+ optional TMDB/Seerr) + scan wait ──────────────
+# ── 5. plugin feature flags + hermetic integrations + scan wait ─────────────
 log "enabling plugin features and hermetic integrations"
 
-# The deterministic fixture is the required default. Explicit environment
-# overrides remain available for exploratory local integration runs.
+# The deterministic fixtures are the required default. Explicit environment
+# overrides remain available for exploratory runs of the other integrations;
+# Maintainerr stays forced to the private fixture below.
 TMDB_API_KEY="${TMDB_API_KEY:-jc-e2e-tmdb}"
 SEERR_URL="${SEERR_URL:-http://integrations:5055}"
 SEERR_API_KEY="${SEERR_API_KEY:-jc-e2e-seerr}"
+MAINTAINERR_URL="http://integrations:6246"
+MAINTAINERR_EXTERNAL_URL="https://maintainerr.example.test"
 RADARR_INSTANCES="${RADARR_INSTANCES:-}"
 if [ -z "${RADARR_INSTANCES}" ]; then
     RADARR_INSTANCES="$(jq -nc '[{Name:"E2E Radarr",Url:"http://integrations:7878",ApiKey:"jc-e2e-arr",Enabled:true}]')"
@@ -506,6 +525,8 @@ PLUGIN_CONFIG="$(api GET "/Plugins/${PLUGIN_ID}/Configuration" \
     | jq --arg tmdb "${TMDB_API_KEY}" \
          --arg seerrUrl "${SEERR_URL}" \
          --arg seerrKey "${SEERR_API_KEY}" \
+         --arg maintainerrUrl "${MAINTAINERR_URL}" \
+         --arg maintainerrExternalUrl "${MAINTAINERR_EXTERNAL_URL}" \
          --arg radarrInstances "${RADARR_INSTANCES}" \
          --arg layout "${LAYOUT_ENFORCEMENT}" \
          --argjson seerrParental "${SEERR_RESPECT_PARENTAL}" \
@@ -524,6 +545,13 @@ PLUGIN_CONFIG="$(api GET "/Plugins/${PLUGIN_ID}/Configuration" \
         | .ShowWatchProgress = true
         | .RequestApprovalsEnabled = true
         | .SeerrShowReportButton = true
+        | .MaintainerrEnabled = true
+        | .MaintainerrUrl = $maintainerrUrl
+        | .MaintainerrExternalUrl = $maintainerrExternalUrl
+        | .MaintainerrUrlMappings = ""
+        | .MaintainerrPageEnabled = true
+        | .MaintainerrItemStatusEnabled = true
+        | .MaintainerrItemStatusForUsers = false
         | .ArrSearchEnabled = true
         | .ArrSearchManageEnabled = true
         | .RadarrInstances = $radarrInstances
@@ -540,14 +568,22 @@ SAVED_PLUGIN_CONFIG="$(api GET "/Plugins/${PLUGIN_ID}/Configuration")"
 if ! jq -e '
     .CalendarPageEnabled == true
     and .DownloadsPageEnabled == true
+    and .MaintainerrEnabled == true
+    and .MaintainerrUrl == "http://integrations:6246"
+    and .MaintainerrExternalUrl == "https://maintainerr.example.test"
+    and .MaintainerrUrlMappings == ""
+    and .MaintainerrPageEnabled == true
+    and .MaintainerrItemStatusEnabled == true
+    and .MaintainerrItemStatusForUsers == false
 ' <<<"${SAVED_PLUGIN_CONFIG}" >/dev/null; then
-    fail "saved plugin configuration did not enable the Calendar and Downloads E2E fixtures"
+    fail "saved plugin configuration did not preserve the required page and Maintainerr fixtures"
 fi
 log "layout enforcement: ${LAYOUT_ENFORCEMENT}"
 
 log "TMDB configured (${TMDB_API_KEY:+key present})"
 log "Seerr configured (${SEERR_URL}, respectParental=${SEERR_RESPECT_PARENTAL})"
 log "Radarr configured for the hermetic arr context contract"
+log "Maintainerr configured against the private Compose fixture"
 
 log "waiting for the library scan to index all movies and the exact Auto-Skip path"
 ADMIN_ID="$(api GET /Users | jq -r --arg name "${ADMIN_USER}" '.[] | select(.Name == $name) | .Id')"
@@ -668,6 +704,33 @@ AUTOSKIP_NAMED_PATH="$(printf '%s' "${AUTOSKIP_NAMED_JSON}" | jq -er \
 [ "${AUTOSKIP_NAMED_PATH}" = "${AUTOSKIP_CONTAINER_PATH}" ] \
     || fail "Auto-Skip fixture '${AUTOSKIP_NAME}' resolved to unexpected path ${AUTOSKIP_NAMED_PATH}"
 log "resolved Auto-Skip fixture: name='${AUTOSKIP_NAME}', ID=${AUTOSKIP_ID}, duration=${AUTOSKIP_ACTUAL_SECONDS}s, path=${AUTOSKIP_CONTAINER_PATH}"
+
+# The Maintainerr fixture must bind item status to a current Jellyfin ID, never
+# a database-stable guess. Replace the state atomically so the running mock
+# cannot observe a partially written document.
+MAINTAINERR_STATE_TMP="${MOCK_STATE_DIR}/config.json.maintainerr.tmp"
+jq --arg itemId "${AUTOSKIP_ID}" \
+    '.maintainerr.itemStatuses = {
+        ($itemId): {
+            excludedFrom: [
+                {label: "Protected by retention policy", targetPath: "/collections/11"},
+                {label: "<img src=x onerror=fixture>", targetPath: "//untrusted.example.invalid"}
+            ],
+            manuallyAddedTo: [
+                {label: "Manually managed", targetPath: "/collections/12"}
+            ]
+        }
+    }' "${MOCK_STATE_DIR}/config.json" > "${MAINTAINERR_STATE_TMP}"
+mv -- "${MAINTAINERR_STATE_TMP}" "${MOCK_STATE_DIR}/config.json"
+jq -e --arg itemId "${AUTOSKIP_ID}" --arg machineId "${JELLYFIN_MACHINE_ID}" '
+    .maintainerr.mode == "happy"
+    and .maintainerr.jellyfinMachineId == $machineId
+    and (.maintainerr.itemStatuses | keys) == [$itemId]
+    and (.maintainerr.itemStatuses[$itemId].excludedFrom | length) == 2
+    and (.maintainerr.itemStatuses[$itemId].manuallyAddedTo | length) == 1
+' "${MOCK_STATE_DIR}/config.json" >/dev/null \
+    || fail "Maintainerr fixture did not bind the current Jellyfin item/server identity"
+log "bound the hermetic Maintainerr item-status fixture to the current Auto-Skip item"
 
 log "waiting for the library scan to index the test series + episodes"
 SERIES_ID=""
@@ -858,5 +921,5 @@ jq -n \
     }' > "${SEED_RESULT_TMP}"
 mv -- "${SEED_RESULT_TMP}" "${SEED_RESULT}"
 
-log "ready: ${BASE} (project=${E2E_PROJECT}, cpus=${JF_CPUS}, ${MOVIES} movies, one incomplete collection, series '${SHOW_NAME}' with ${EPISODES} episodes, Spoiler Guard enabled)"
+log "ready: ${BASE} (project=${E2E_PROJECT}, cpus=${JF_CPUS}, ${MOVIES} movies, one incomplete collection, hermetic Maintainerr, series '${SHOW_NAME}' with ${EPISODES} episodes, Spoiler Guard enabled)"
 log "run the suite with: JF_BASE_URL=${BASE} npm run e2e"

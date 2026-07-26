@@ -93,6 +93,7 @@
                 <button class="jellyfin-tab-button" data-tab="discovery" data-group="discovery"><h3><i class="material-icons jc-tab-icon" aria-hidden="true">explore</i>Discovery Feed</h3></button>
                 <button class="jellyfin-tab-button" data-tab="elsewhere" data-group="discovery"><h3><i class="material-icons jc-tab-icon" aria-hidden="true">travel_explore</i>Streaming Availability</h3></button>
                 <button class="jellyfin-tab-button" data-tab="seerr" data-group="connections"><h3><img src="../JellyfinCanopy/assets/icons/seerr.svg" onerror="this.onerror=null;this.src='../JellyfinCanopy/assets/branding/canopy-mark.svg';" alt="" class="jc-tab-icon-img">Seerr</h3></button>
+                <button class="jellyfin-tab-button" data-tab="maintainerr" data-group="connections"><h3><i class="material-icons jc-tab-icon" aria-hidden="true">cleaning_services</i>Maintainerr</h3></button>
                 <button class="jellyfin-tab-button" data-tab="arr" data-group="connections"><h3><i class="material-icons jc-tab-icon" aria-hidden="true">dns</i>Media Managers</h3></button>
                 <button class="jellyfin-tab-button" data-tab="admin" data-group="governance"><h3><i class="material-icons jc-tab-icon" aria-hidden="true">admin_panel_settings</i>Server Controls</h3></button>
                 <button class="jellyfin-tab-button" data-tab="docs" data-group="system"><h3><i class="material-icons jc-tab-icon" aria-hidden="true">menu_book</i>Help &amp; Docs</h3></button>
@@ -139,7 +140,7 @@
                         <i class="material-icons jc-info-icon">dashboard</i>
                         <div>
                             The essential enhancement suite for Jellyfin, bundling advanced features and customizations into one convenient plugin.<br/><br/>
-                            This <strong>Overview</strong> is a read-only snapshot: service connection health, which optional companion plugins are installed, and which features are currently enabled or misconfigured. <em>To turn features on or off, use the other tabs above</em> (Display, Playback, Pages, Seerr, *arr, Extras, …). Clicking any card here jumps straight to the tab that owns it.
+                            This <strong>Overview</strong> is a read-only snapshot: service connection health, which optional companion plugins are installed, and which features are currently enabled or misconfigured. <em>To turn features on or off, use the other tabs above</em> (Display, Playback, Pages, Seerr, Maintainerr, *arr, Extras, …). Clicking any card here jumps straight to the tab that owns it.
                         </div>
                     </div>
 
@@ -176,7 +177,7 @@
                                     <i class="material-icons jc-quick-action-icon" aria-hidden="true">sync</i>
                                     <div class="jc-quick-action-text">
                                         <span class="jc-quick-action-title">Re-test all service connections</span>
-                                        <span class="jc-quick-action-detail">Re-runs the TMDB / Seerr / Sonarr / Radarr tests</span>
+                                        <span class="jc-quick-action-detail">Re-runs the TMDB / Seerr / Maintainerr / Sonarr / Radarr tests</span>
                                     </div>
                                 </button>
                                 <button type="button" id="resetAllUserSettingsBtn" class="jc-quick-action" data-action="apply-all-users">
@@ -632,6 +633,11 @@
                                     </div>
                                     <div class="jc-quality-cat-admin-row jc-pages-order-row" data-page-id="hidden-content">
                                         <div class="checkboxContainer"><span>Hidden Content</span></div>
+                                        <button type="button" class="raised raised-mini jc-page-up" aria-label="Move up"><i class="material-icons" aria-hidden="true">arrow_upward</i></button>
+                                        <button type="button" class="raised raised-mini jc-page-down" aria-label="Move down"><i class="material-icons" aria-hidden="true">arrow_downward</i></button>
+                                    </div>
+                                    <div class="jc-quality-cat-admin-row jc-pages-order-row" data-page-id="maintainerr">
+                                        <div class="checkboxContainer"><span>Maintainerr</span></div>
                                         <button type="button" class="raised raised-mini jc-page-up" aria-label="Move up"><i class="material-icons" aria-hidden="true">arrow_upward</i></button>
                                         <button type="button" class="raised raised-mini jc-page-down" aria-label="Move down"><i class="material-icons" aria-hidden="true">arrow_downward</i></button>
                                     </div>
@@ -1647,6 +1653,97 @@
                                 <div class="jc-setting-description" data-desc-for="seerrUserIdCacheTtlMinutes">
                                     <div class="fieldDescription">How long the Jellyfin → Seerr user ID mapping is cached. Default: 30 minutes.</div>
                                 </div>
+                        </div>
+                    </fieldset>
+                </div>
+
+                <div id="maintainerr" class="jellyfin-tab-content">
+                    <div class="jc-info-banner jc-fieldset-wide jc-tab-intro">
+                        <i class="material-icons jc-info-icon" aria-hidden="true">cleaning_services</i>
+                        <div>
+                            Maintainerr is integrated as a strictly read-only companion. Canopy can show health,
+                            bounded collection summaries, storage totals, rule execution state, and per-item cleanup
+                            protection. It cannot create, change, execute, or delete anything in Maintainerr.
+                            <a class="jc-bold-link" href="https://docs.maintainerr.info/" target="_blank" rel="noopener noreferrer">Official Maintainerr documentation</a>
+                        </div>
+                    </div>
+
+                    <div class="jc-note-banner jc-fieldset-wide" role="note">
+                        <i class="material-icons jc-note-icon" aria-hidden="true">warning_amber</i>
+                        <div>
+                            <strong>Maintainerr 3.18 has no API authentication.</strong>
+                            Keep it on a trusted private network and restrict access with your firewall or reverse
+                            proxy. Plain HTTP is not encrypted; anyone who can reach that address can access
+                            Maintainerr directly. Canopy sends no credentials and never exposes the internal URL to
+                            regular users.
+                        </div>
+                    </div>
+
+                    <fieldset data-dep-setup>
+                        <legend class="sectionTitle">Maintainerr Connection Setup</legend>
+                        <div class="configSection">
+                            <div class="checkboxContainer jc-main-feature">
+                                <label><input id="maintainerrEnabled" data-config-key="MaintainerrEnabled" is="emby-checkbox" type="checkbox"/><span>Enable Maintainerr integration</span></label>
+                            </div>
+                            <div class="jc-setting-description" data-desc-for="maintainerrEnabled">
+                                <div class="fieldDescription jc-field-desc-xl">Allows Canopy's server to perform the reviewed, read-only Maintainerr requests. Disabling this is the integration-wide kill switch.</div>
+                            </div>
+
+                            <div class="inputContainer">
+                                <label class="inputLabel" for="maintainerrUrl">Maintainerr internal URL</label>
+                                <div class="jc-api-row">
+                                    <input id="maintainerrUrl" data-config-key="MaintainerrUrl" is="emby-input" name="maintainerrUrl" type="text" inputmode="url" autocomplete="off" maxlength="2048" class="jc-api-input" placeholder="http://maintainerr:6246"/>
+                                    <span id="maintainerrStatusIndicator" class="material-icons" aria-hidden="true"></span>
+                                    <span id="maintainerrStatusText" role="status" aria-live="polite" aria-atomic="true"></span>
+                                    <button is="emby-button" type="button" id="testMaintainerrBtn" class="emby-button raised button-submit">Test</button>
+                                </div>
+                            </div>
+                            <div class="jc-setting-description" data-desc-for="maintainerrUrl">
+                                <div class="fieldDescription jc-field-desc-xl">Server-only base URL used by Jellyfin to reach Maintainerr. Include any reverse-proxy base path. It must be an absolute HTTP(S) URL without credentials, query, or fragment. The connection test sends this value in a small authenticated JSON request to Canopy, never in a URL, header, or browser request to Maintainerr.</div>
+                            </div>
+
+                            <div class="inputContainer">
+                                <label class="inputLabel" for="maintainerrExternalUrl">Maintainerr browser URL <span style="font-size:0.8em; opacity:0.6;">(optional)</span></label>
+                                <input id="maintainerrExternalUrl" data-config-key="MaintainerrExternalUrl" is="emby-input" name="maintainerrExternalUrl" type="text" inputmode="url" autocomplete="off" maxlength="2048" placeholder="https://maintainerr.example.com"/>
+                            </div>
+                            <div class="jc-setting-description" data-desc-for="maintainerrExternalUrl">
+                                <div class="fieldDescription jc-field-desc-xl">Admin-only destination for explicit “Open in Maintainerr” links. Leave blank to fall back to the internal URL for administrators. Regular users never receive either URL.</div>
+                            </div>
+
+                            <details class="jc-details-section">
+                                <summary>Advanced browser URL mappings</summary>
+                                <div class="jc-details-body">
+                                    <div class="inputContainer">
+                                        <label class="inputLabel" for="maintainerrUrlMappings">Maintainerr URL mappings</label>
+                                        <textarea class="emby-textarea emby-input jc-textarea-medium" id="maintainerrUrlMappings" data-config-key="MaintainerrUrlMappings" name="maintainerrUrlMappings" maxlength="65536" data-max-rows="32" placeholder="https://jellyfin.example.com|https://maintainerr.example.com"></textarea>
+                                    </div>
+                                    <div class="jc-setting-description" data-desc-for="maintainerrUrlMappings">
+                                        <div class="fieldDescription">Map a Jellyfin access URL to the browser-facing Maintainerr URL, one <code>JellyfinURL|MaintainerrURL</code> pair per line. Mappings only select admin-clicked links; the server always uses the internal URL for API traffic.</div>
+                                    </div>
+                                    <button id="validateMaintainerrMappingsBtn" is="emby-button" type="button" class="raised raised-mini"><span>Validate Mappings</span></button>
+                                    <div id="maintainerrMappingsValidationResult" class="jc-validation-result" style="display:none;"></div>
+                                </div>
+                            </details>
+                        </div>
+                    </fieldset>
+
+                    <fieldset>
+                        <legend class="sectionTitle">Canopy Features</legend>
+                        <div class="configSection">
+                            <div class="checkboxContainer"><label><input id="maintainerrPageEnabled" data-config-key="MaintainerrPageEnabled" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Enable the Maintainerr page</span></label></div>
+                            <div class="jc-setting-description" data-desc-for="maintainerrPageEnabled">
+                                <div class="fieldDescription jc-field-desc-xl">Adds an administrator-only Maintainerr page to Canopy navigation with bounded, read-only operational summaries.</div>
+                            </div>
+
+                            <div class="checkboxContainer"><label><input id="maintainerrItemStatusEnabled" data-config-key="MaintainerrItemStatusEnabled" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show Maintainerr status on item details</span></label></div>
+                            <div class="jc-setting-description" data-desc-for="maintainerrItemStatusEnabled">
+                                <div class="fieldDescription jc-field-desc-xl">Shows cleanup-protection and manual-management state for visible Movie, Series, Season, and Episode items. Admins may also see safe collection labels and links.</div>
+                            </div>
+
+                            <div class="checkboxContainer"><label><input id="maintainerrItemStatusForUsers" data-config-key="MaintainerrItemStatusForUsers" is="emby-checkbox" type="checkbox"/><span>Allow generic item status for regular users</span></label></div>
+                            <div class="jc-setting-description" data-desc-for="maintainerrItemStatusForUsers">
+                                <div class="fieldDescription jc-field-desc-xl">Opt in to exposing only two generic booleans—protected from cleanup and manually managed—to authenticated regular users for items they can already access. Collection names, links, server identity, topology, and diagnostics remain administrator-only.</div>
+                            </div>
                         </div>
                     </fieldset>
                 </div>

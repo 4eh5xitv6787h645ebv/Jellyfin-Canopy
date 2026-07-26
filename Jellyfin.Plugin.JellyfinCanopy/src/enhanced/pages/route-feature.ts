@@ -5,7 +5,7 @@ import { adoptedPageId, adoptOrRefreshCurrent, drain } from './fallback-host';
 import { attachPageFacade } from './facades';
 import { registerPage } from './registry';
 
-type PageId = 'calendar' | 'downloads' | 'hidden-content' | 'bookmarks';
+type PageId = 'calendar' | 'downloads' | 'hidden-content' | 'bookmarks' | 'maintainerr';
 
 /**
  * Activate one import-pure page cluster. All global attachment happens only

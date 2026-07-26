@@ -42,6 +42,27 @@ let detailsDispatchGeneration = 0;
 
 interface DetailsPageInstallation {
     readonly isCurrent: () => boolean;
+    readonly signal?: AbortSignal;
+}
+
+/** Context offered to lazily registered integrations by the one shared dispatcher. */
+export interface DetailsIntegrationContext {
+    readonly identity: IdentityContext;
+    readonly itemId: string;
+    readonly itemType: string;
+    readonly page: Element;
+    readonly metadataContainer: HTMLElement;
+    readonly signal?: AbortSignal;
+    isCurrent(): boolean;
+}
+
+/**
+ * Route-only integrations register here instead of adding another body observer,
+ * navigation listener, or visible-page resolver.
+ */
+export interface DetailsIntegration {
+    render(context: DetailsIntegrationContext): void;
+    reset(): void;
 }
 
 interface SpoilerReadinessRetry {
@@ -54,6 +75,7 @@ interface SpoilerReadinessRetry {
 }
 
 let activeInstallation: DetailsPageInstallation | null = null;
+const detailsIntegrations = new Map<string, DetailsIntegration>();
 let spoilerReadinessGeneration = 0;
 let pendingSpoilerReadiness: SpoilerReadinessRetry | null = null;
 let completedSpoilerReadiness: SpoilerReadinessRetry | null = null;
@@ -66,6 +88,25 @@ const AUDIO_LANGUAGES_SUPPORTED_TYPES = ['Episode', 'Season', 'Series', 'Movie']
 
 // Types that support hiding
 const HIDE_SUPPORTED_TYPES = ['Movie', 'Series', 'Episode', 'Season'];
+
+/** Attach one lazy detail integration and immediately revisit the visible item. */
+export function registerDetailsIntegration(
+    id: string,
+    integration: DetailsIntegration,
+): () => void {
+    const previous = detailsIntegrations.get(id);
+    previous?.reset();
+    detailsIntegrations.set(id, integration);
+    scheduleHandleItemDetails();
+    let active = true;
+    return () => {
+        if (!active) return;
+        active = false;
+        if (detailsIntegrations.get(id) !== integration) return;
+        detailsIntegrations.delete(id);
+        integration.reset();
+    };
+}
 
 function sameSpoilerReadinessTarget(
     retry: SpoilerReadinessRetry,
@@ -479,6 +520,35 @@ function runHandleItemDetails(context: IdentityContext): void {
             }
         }
 
+        // Optional route chunks ride this dispatcher. A registered integration
+        // owns its requests/render cache, while this owner supplies the current
+        // visible view, identity and feature-generation fence.
+        const installation = activeInstallation;
+        if (installation && installation.isCurrent() && !installation.signal?.aborted) {
+            for (const integration of detailsIntegrations.values()) {
+                try {
+                    integration.render({
+                        identity: context,
+                        itemId,
+                        itemType: lastDetailsItemType,
+                        page: visiblePage,
+                        metadataContainer: container,
+                        signal: installation.signal,
+                        isCurrent: () => {
+                            if (activeInstallation !== installation
+                                || !installation.isCurrent()
+                                || installation.signal?.aborted
+                                || !JC.identity.isCurrent(context)) return false;
+                            const current = getVisibleDetailsPage();
+                            return current?.page === visiblePage && current.itemId === itemId;
+                        },
+                    });
+                } catch (error) {
+                    console.warn('🪼 Jellyfin Canopy: detail integration failed', error);
+                }
+            }
+        }
+
         // Skip unsupported item types for media features
         if (!FEATURES_SUPPORTED_TYPES.includes(lastDetailsItemType)) {
             return;
@@ -539,13 +609,17 @@ export function resetDetailsPage(): void {
     for (const timer of itemTypeRetryTimers) clearTimeout(timer);
     itemTypeRetryTimers.clear();
     document.querySelectorAll('.jc-detail-hide-btn').forEach((node) => node.remove());
+    for (const integration of detailsIntegrations.values()) integration.reset();
     resetDetailsMediaInfo();
     resetReleaseDates();
 }
 
 /** Install detail-page observation for one lazy-feature activation. */
-export function installDetailsPage(isCurrent: () => boolean = () => true): () => void {
-    const installation: DetailsPageInstallation = { isCurrent };
+export function installDetailsPage(
+    isCurrent: () => boolean = () => true,
+    signal?: AbortSignal,
+): () => void {
+    const installation: DetailsPageInstallation = { isCurrent, signal };
     activeInstallation = installation;
     const body = onBodyMutation('item-details-info', () => {
         if (!isDetailsPageVisible()) return;

@@ -31,6 +31,8 @@ describe('page entry-point identity lifecycle', () => {
 
         enabled = false;
         language = 'B';
+        window.dispatchEvent(new CustomEvent('jc:config-changed'));
+        expect(document.getElementById('jcPageLink-identity-entry')).toBeNull();
         const contextB = JC.identity.transition('server-a', 'user-b', 'account-switch');
         expect(document.getElementById('jcPageLink-identity-entry')).toBeNull();
 
