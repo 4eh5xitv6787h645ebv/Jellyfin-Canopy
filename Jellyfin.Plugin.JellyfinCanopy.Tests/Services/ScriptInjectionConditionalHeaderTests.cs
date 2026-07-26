@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.IO.Compression;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
 using Jellyfin.Plugin.JellyfinCanopy.Services;
@@ -46,8 +47,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             ScriptInjectionStartupFilter filter,
             RequestDelegate staticHandler,
             string? acceptEncoding = null,
+            string? method = null,
+            string? ifMatch = null,
             string? ifNoneMatch = null,
-            string? ifModifiedSince = null)
+            string? ifModifiedSince = null,
+            CancellationToken requestAborted = default)
         {
             using var services = new ServiceCollection().BuildServiceProvider();
             var appBuilder = new ApplicationBuilder(services);
@@ -55,11 +59,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             var pipeline = appBuilder.Build();
 
             var context = new DefaultHttpContext();
-            context.Request.Method = "GET";
+            context.Request.Method = method ?? "GET";
             context.Request.Path = "/web/index.html";
+            context.RequestAborted = requestAborted;
             if (acceptEncoding != null)
             {
                 context.Request.Headers["Accept-Encoding"] = acceptEncoding;
+            }
+
+            if (ifMatch != null)
+            {
+                context.Request.Headers["If-Match"] = ifMatch;
             }
 
             if (ifNoneMatch != null)
@@ -159,7 +169,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             Assert.Equal(encoding, context.Response.Headers["Content-Encoding"].ToString());
             Assert.Equal("Accept-Encoding", context.Response.Headers["Vary"].ToString());
             Assert.Equal("no-cache", context.Response.Headers["Cache-Control"].ToString());
-            Assert.Equal(LastModified, context.Response.Headers["Last-Modified"].ToString());
+            Assert.False(context.Response.Headers.ContainsKey("Last-Modified"));
             Assert.StartsWith("\"jc-", context.Response.Headers["ETag"].ToString(), StringComparison.Ordinal);
             Assert.NotEqual(SourceETag, context.Response.Headers["ETag"].ToString());
             Assert.Contains(InjectedTags, Encoding.UTF8.GetString(Decompress(body, encoding)), StringComparison.Ordinal);
@@ -211,8 +221,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             Assert.Equal(StatusCodes.Status304NotModified, third.Context.Response.StatusCode);
             Assert.Empty(third.Body);
             Assert.Equal(transformedETag, third.Context.Response.Headers["ETag"].ToString());
-            Assert.Equal(StatusCodes.Status304NotModified, fourth.Context.Response.StatusCode);
-            Assert.Empty(fourth.Body);
+            Assert.Equal(StatusCodes.Status200OK, fourth.Context.Response.StatusCode);
+            Assert.Equal(first.Body, fourth.Body);
+            Assert.False(fourth.Context.Response.Headers.ContainsKey("Last-Modified"));
         }
 
         [Fact]
@@ -265,12 +276,263 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
                 filter,
                 StaticHandler,
                 ifModifiedSince: LastModified);
+            var third = await RunAsync(
+                filter,
+                StaticHandler,
+                ifModifiedSince: LastModified);
 
             Assert.Equal(2, fullBodyWrites);
             Assert.NotEqual(
                 first.Context.Response.Headers["ETag"].ToString(),
                 second.Context.Response.Headers["ETag"].ToString());
             Assert.Contains("data-generation=\"two\"", Encoding.UTF8.GetString(second.Body), StringComparison.Ordinal);
+            Assert.Equal(StatusCodes.Status200OK, third.Context.Response.StatusCode);
+            Assert.Contains("data-generation=\"two\"", Encoding.UTF8.GetString(third.Body), StringComparison.Ordinal);
+            Assert.False(third.Context.Response.Headers.ContainsKey("Last-Modified"));
+        }
+
+        [Fact]
+        public async Task InvokeAsync_CanceledPartialSource_IsNeverCached()
+        {
+            var filter = BuildFilter();
+            using var canceledRequest = new CancellationTokenSource();
+            var downstreamCalls = 0;
+            var secondCallSawSourceValidator = false;
+
+            async Task StaticHandler(HttpContext context)
+            {
+                downstreamCalls++;
+                if (downstreamCalls == 1)
+                {
+                    context.Response.StatusCode = StatusCodes.Status200OK;
+                    context.Response.ContentType = "text/html; charset=utf-8";
+                    context.Response.Headers["ETag"] = SourceETag;
+                    await context.Response.WriteAsync("<html><body>");
+                    canceledRequest.Cancel();
+                    return;
+                }
+
+                secondCallSawSourceValidator =
+                    context.Request.Headers["If-None-Match"].ToString() == SourceETag;
+                await WriteSourceAsync(context, IndexHtml, SourceETag);
+            }
+
+            var canceled = await RunAsync(
+                filter,
+                StaticHandler,
+                requestAborted: canceledRequest.Token);
+            var retry = await RunAsync(filter, StaticHandler);
+
+            Assert.Empty(canceled.Body);
+            Assert.False(secondCallSawSourceValidator);
+            Assert.Equal(2, downstreamCalls);
+            Assert.Contains(InjectedTags, Encoding.UTF8.GetString(retry.Body), StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public async Task InvokeAsync_EncodedBodyAboveLimit_StreamsOriginalAndDoesNotCache()
+        {
+            var filter = BuildFilter();
+            var source = "<html><body>"
+                + new string('x', ScriptInjectionStartupFilter.MaxTransformBodyBytes)
+                + "</body></html>";
+            var downstreamCalls = 0;
+            var sourceRevalidations = 0;
+
+            async Task StaticHandler(HttpContext context)
+            {
+                downstreamCalls++;
+                if (context.Request.Headers["If-None-Match"].ToString() == SourceETag)
+                {
+                    sourceRevalidations++;
+                }
+
+                await WriteSourceAsync(context, source, SourceETag);
+            }
+
+            var first = await RunAsync(filter, StaticHandler);
+            var second = await RunAsync(filter, StaticHandler);
+
+            Assert.Equal(source, Encoding.UTF8.GetString(first.Body));
+            Assert.Equal(source, Encoding.UTF8.GetString(second.Body));
+            Assert.Equal(2, downstreamCalls);
+            Assert.Equal(0, sourceRevalidations);
+        }
+
+        [Fact]
+        public async Task InvokeAsync_DecodedBodyAboveLimit_PreservesCompressedSourceAndDoesNotCache()
+        {
+            var filter = BuildFilter();
+            var source = Encoding.UTF8.GetBytes(
+                "<html><body>"
+                + new string('x', ScriptInjectionStartupFilter.MaxTransformBodyBytes)
+                + "</body></html>");
+            var compressed = Compress(source, "gzip");
+            var downstreamCalls = 0;
+            var sourceRevalidations = 0;
+
+            async Task StaticHandler(HttpContext context)
+            {
+                downstreamCalls++;
+                if (context.Request.Headers["If-None-Match"].ToString() == SourceETag)
+                {
+                    sourceRevalidations++;
+                }
+
+                context.Response.StatusCode = StatusCodes.Status200OK;
+                context.Response.ContentType = "text/html; charset=utf-8";
+                context.Response.Headers["Content-Encoding"] = "gzip";
+                context.Response.Headers["ETag"] = SourceETag;
+                context.Response.Headers["Last-Modified"] = LastModified;
+                await context.Response.Body.WriteAsync(compressed);
+            }
+
+            var first = await RunAsync(filter, StaticHandler, acceptEncoding: "gzip");
+            var second = await RunAsync(filter, StaticHandler, acceptEncoding: "gzip");
+
+            Assert.Equal(compressed, first.Body);
+            Assert.Equal(compressed, second.Body);
+            Assert.Equal(2, downstreamCalls);
+            Assert.Equal(0, sourceRevalidations);
+        }
+
+        [Fact]
+        public async Task InvokeAsync_EquivalentAcceptEncodingSpellings_ShareOneRepresentation()
+        {
+            var filter = BuildFilter();
+            var fullBodyWrites = 0;
+            var sourceRevalidations = 0;
+
+            async Task StaticHandler(HttpContext context)
+            {
+                if (context.Request.Headers["If-None-Match"].ToString() == SourceETag)
+                {
+                    sourceRevalidations++;
+                    context.Response.StatusCode = StatusCodes.Status304NotModified;
+                    context.Response.Headers["ETag"] = SourceETag;
+                    return;
+                }
+
+                fullBodyWrites++;
+                await WriteSourceAsync(context, IndexHtml, SourceETag);
+            }
+
+            var first = await RunAsync(
+                filter,
+                StaticHandler,
+                acceptEncoding: "GZIP ; q=1.0, BR;q=0.500");
+            var second = await RunAsync(
+                filter,
+                StaticHandler,
+                acceptEncoding: "br; q=.5, gzip;q=1");
+
+            Assert.Equal(1, fullBodyWrites);
+            Assert.Equal(1, sourceRevalidations);
+            Assert.Equal(first.Body, second.Body);
+        }
+
+        [Fact]
+        public async Task InvokeAsync_ConcurrentColdRequests_CoalesceBeforeTransform()
+        {
+            var filter = BuildFilter();
+            var firstEntered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var releaseFirst = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var fullBodyWrites = 0;
+            var sourceRevalidations = 0;
+
+            async Task StaticHandler(HttpContext context)
+            {
+                if (context.Request.Headers["If-None-Match"].ToString() == SourceETag)
+                {
+                    sourceRevalidations++;
+                    context.Response.StatusCode = StatusCodes.Status304NotModified;
+                    context.Response.Headers["ETag"] = SourceETag;
+                    return;
+                }
+
+                fullBodyWrites++;
+                firstEntered.TrySetResult(true);
+                await releaseFirst.Task;
+                await WriteSourceAsync(context, IndexHtml, SourceETag);
+            }
+
+            var first = RunAsync(filter, StaticHandler, acceptEncoding: "gzip, br");
+            await firstEntered.Task;
+            var second = RunAsync(filter, StaticHandler, acceptEncoding: "br,gzip");
+            releaseFirst.SetResult(true);
+            var responses = await Task.WhenAll(first, second);
+
+            Assert.Equal(1, fullBodyWrites);
+            Assert.Equal(1, sourceRevalidations);
+            Assert.Equal(responses[0].Body, responses[1].Body);
+        }
+
+        [Fact]
+        public async Task InvokeAsync_HeadUsesTransformedGetMetadataWithoutWritingBody()
+        {
+            var filter = BuildFilter();
+            var fullBodyWrites = 0;
+
+            async Task StaticHandler(HttpContext context)
+            {
+                if (context.Request.Headers["If-None-Match"].ToString() == SourceETag)
+                {
+                    context.Response.StatusCode = StatusCodes.Status304NotModified;
+                    context.Response.Headers["ETag"] = SourceETag;
+                    context.Response.Headers["Last-Modified"] = LastModified;
+                    return;
+                }
+
+                fullBodyWrites++;
+                await WriteSourceAsync(context, IndexHtml, SourceETag);
+            }
+
+            var get = await RunAsync(filter, StaticHandler);
+            var transformedETag = get.Context.Response.Headers["ETag"].ToString();
+            var head = await RunAsync(filter, StaticHandler, method: "HEAD");
+            var conditionalHead = await RunAsync(
+                filter,
+                StaticHandler,
+                method: "HEAD",
+                ifNoneMatch: transformedETag);
+
+            Assert.Equal(1, fullBodyWrites);
+            Assert.Equal(StatusCodes.Status200OK, head.Context.Response.StatusCode);
+            Assert.Equal(transformedETag, head.Context.Response.Headers["ETag"].ToString());
+            Assert.Equal(get.Body.Length, head.Context.Response.ContentLength);
+            Assert.Equal("HEAD", head.Context.Request.Method);
+            Assert.Empty(head.Body);
+            Assert.Equal(StatusCodes.Status304NotModified, conditionalHead.Context.Response.StatusCode);
+            Assert.Equal(transformedETag, conditionalHead.Context.Response.Headers["ETag"].ToString());
+            Assert.Empty(conditionalHead.Body);
+        }
+
+        [Fact]
+        public async Task InvokeAsync_IfMatchEvaluatesTheTransformedRepresentation()
+        {
+            var filter = BuildFilter();
+
+            async Task StaticHandler(HttpContext context)
+            {
+                if (context.Request.Headers["If-None-Match"].ToString() == SourceETag)
+                {
+                    context.Response.StatusCode = StatusCodes.Status304NotModified;
+                    context.Response.Headers["ETag"] = SourceETag;
+                    return;
+                }
+
+                await WriteSourceAsync(context, IndexHtml, SourceETag);
+            }
+
+            var first = await RunAsync(filter, StaticHandler);
+            var transformedETag = first.Context.Response.Headers["ETag"].ToString();
+            var matching = await RunAsync(filter, StaticHandler, ifMatch: transformedETag);
+            var stale = await RunAsync(filter, StaticHandler, ifMatch: "\"jc-stale\"");
+
+            Assert.Equal(StatusCodes.Status200OK, matching.Context.Response.StatusCode);
+            Assert.Equal(first.Body, matching.Body);
+            Assert.Equal(StatusCodes.Status412PreconditionFailed, stale.Context.Response.StatusCode);
+            Assert.Empty(stale.Body);
         }
 
         [Fact]
