@@ -40,6 +40,11 @@ Canopy, not to Maintainerr.
   whether an accessible item is protected from cleanup and whether it is
   manually managed.
 
+The native page keeps the read-only service summary and bounded collection
+view inside Jellyfin.
+
+![Administrator-only Maintainerr page in Jellyfin showing connection status, summary cards, and collections](images/maintainerr-dashboard.webp)
+
 Canopy never exposes Maintainerr settings, logs, databases, notification
 configuration, raw rules, raw payloads, mount paths, library names, configured
 server names, or internal topology. It has no Run, Handle, Delete, Postpone,
@@ -114,6 +119,12 @@ Item status is the only possible regular-user surface:
 - every upstream/configuration/mismatch failure is the same generic
   `unavailable` result for a regular user, while a genuine empty status remains
   a successful pair of `false` values.
+
+On an administrator's item-details page, the status appears as a compact inline
+row. An opted-in regular user can see at most the two generic markers; the
+**Maintainerr details** expander and collection links remain administrator-only.
+
+![Maintainerr item-status row on a Jellyfin details page showing Protected from cleanup, Manually managed, and Maintainerr details](images/maintainerr-item-status.webp)
 
 The browser never calls Maintainerr directly. Runtime strings are treated as
 untrusted data and links are built only from a sanitized browser base plus
