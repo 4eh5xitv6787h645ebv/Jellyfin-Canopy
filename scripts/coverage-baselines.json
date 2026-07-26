@@ -9,12 +9,12 @@
       "scope": "Jellyfin.Plugin.JellyfinCanopy/src/core/**",
       "report": "coverage/coverage-summary.json",
       "measured": {
-        "coveredLines": 2326,
-        "totalLines": 2666
+        "coveredLines": 2327,
+        "totalLines": 2667
       },
       "tolerance": {
         "missingCoveredLines": 1,
-        "rationale": "The rebased branch combines the server-owned ARR download lifecycle regressions with the actor-isolated admin-target Canopy User Settings editor. The admin-target tests exercise one additional existing core line without changing the 2666-line client/core scope, advancing the reviewed high-water from 2325/2666 (87.209%) to 2326/2666 (87.247%). Two clean combined Node 22.20/V8 runs on 2026-07-26 each passed all 1603 tests across 227 files and reproduced exactly 2326/2666. Retaining the one-line tolerance makes the minimum 2325/2666 (87.209%), equal to the prior reviewed high-water and stricter than its 2324/2666 tolerated floor (87.172%). coverage-baseline.test.js retains the exact below-floor, above-baseline, scope-change, and broad-tolerance negative boundaries."
+        "rationale": "The #369 body-observer ownership fix adds one instrumented and covered client/core line so stale handles compare their exact subscriber identity before cleanup, advancing the reviewed high-water from 2326/2666 (87.247%) to 2327/2667 (87.252%). Two clean Node 22.20/V8 runs on 2026-07-27 each passed all 1788 tests across 233 files and reproduced exactly 2327/2667. Retaining the existing one-line tolerance makes the minimum 2326/2667 (87.214%), stricter than the prior 2325/2666 tolerated floor (87.209%). coverage-baseline.test.js retains the exact below-floor, above-baseline, scope-change, and broad-tolerance negative boundaries."
       }
     },
     "server": {

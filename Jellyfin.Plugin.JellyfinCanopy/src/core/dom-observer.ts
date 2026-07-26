@@ -108,14 +108,15 @@ export function onBodyMutation(
     if (bodySubscribers.has(id)) {
         console.warn(`🪼 Jellyfin Canopy: Replacing body observer subscriber: ${id}`);
     }
-    bodySubscribers.set(id, { callback, priority });
+    const subscriber = { callback, priority };
+    bodySubscribers.set(id, subscriber);
     if (priority !== 0) {
         resortBodySubscribers();
     }
     ensureBodyObserver();
     console.log(`🪼 Jellyfin Canopy: Body subscriber registered: ${id} (priority: ${priority}, total: ${bodySubscribers.size})`);
     const cleanup = (): void => {
-        if (!bodySubscribers.has(id)) return;
+        if (bodySubscribers.get(id) !== subscriber) return;
         bodySubscribers.delete(id);
         console.log(`🪼 Jellyfin Canopy: Body subscriber removed: ${id} (remaining: ${bodySubscribers.size})`);
         stopBodyObserverIfEmpty();
