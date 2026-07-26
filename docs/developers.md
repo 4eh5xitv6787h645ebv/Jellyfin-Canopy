@@ -1113,7 +1113,9 @@ grep -rn "PERF(S9" Jellyfin.Plugin.JellyfinCanopy/
 
 **Enforced.** Review-enforced today. SR-09 adds guards where mechanical (response-rewrite middleware touching validator/encoding headers without a documented justification); SR-15 budgets the hot paths.
 
-**In the tree (documented DEBT):** `Services/ScriptInjectionStartupFilter.cs` — buffers the **entire `index.html`** into memory per `/web` GET, strips `Accept-Encoding` (the app shell is served uncompressed), and removes `ETag`/`Last-Modified` (no 304 revalidation — every visit re-downloads the shell); `Controllers/ActiveStreamsController.cs:85` — enumerates all sessions on every dashboard poll; `Configuration/ReviewsStore.cs` — opens a fresh SQLite connection per call against one server-wide database.
+**In the tree (bounded):** `Services/ScriptInjectionStartupFilter.cs` preserves Jellyfin's `Accept-Encoding` negotiation and source validators. It assigns each injected identity/gzip/Brotli representation a strong ETag, translates warm revalidation to the source validator, and can answer the browser with a correct 304. A warm request performs one bodyless host revalidation plus bounded metadata work; full decode/rewrite/re-encode occurs only for a cold or changed source generation. The singleton cache is capped at 12 representations, 2 MiB per representation, and 8 MiB total.
+
+**In the tree (documented DEBT):** `Controllers/ActiveStreamsController.cs:85` — enumerates all sessions on every dashboard poll; `Configuration/ReviewsStore.cs` — opens a fresh SQLite connection per call against one server-wide database.
 
 #### The response-envelope rule — bound cache delivery
 
