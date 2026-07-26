@@ -1081,7 +1081,7 @@ grep -rn "PERF(S7" Jellyfin.Plugin.JellyfinCanopy/
 
 **Enforced.** Review-enforced today. SR-09 extends the S1 guard (`LibraryScanEventGuardTests`) to cover `ISessionManager` and user-lifecycle subscriptions with the same allowlist + synchronous-body denylist.
 
-**In the tree (documented DEBT):** `Services/AutoMovieRequestMonitor.cs` and `Services/AutoSeasonRequestMonitor.cs` — `OnPlaybackProgress` runs config resolution plus (deduplicated) Seerr calls on **every** progress tick of every stream; the dedup bounds the remote calls but the per-tick resolution work still scales with concurrent streams.
+**In the tree (documented DEBT):** `Services/AutoMovieRequestMonitor.cs` and `Services/AutoSeasonRequestMonitor.cs` keep the synchronous Jellyfin callbacks O(1) by dispatching to an exception-contained worker. The worker still resolves configuration once per progress tick before the existing user+item Seerr deduplication, so that deferred per-tick work remains to be coalesced.
 
 #### S8 — Startup cost bound
 

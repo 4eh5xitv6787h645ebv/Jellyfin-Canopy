@@ -15,14 +15,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.AutoRequest
     /// duplicates share one reservation; successful and definitive checks retain
     /// a one-hour cooldown, while retryable and cancelled checks release it.
     ///
-    /// Subclasses keep only their trigger predicate and handling logic. The playback
-    /// event handlers themselves stay in the subclasses as async void with their own
-    /// try/catch.
-    ///
-    /// Because those handlers are async void, an exception escaping their catch (e.g. from
-    /// the catch block itself) would become an unobserved exception that crashes the host.
-    /// Each subclass handler therefore double-guards its catch — the logging call inside the
-    /// outer catch is itself wrapped in a swallowing try/catch.
+    /// Subclasses keep only their trigger predicate and handling logic. Jellyfin's
+    /// synchronous playback-event delegates hand work to <see cref="DispatchPlaybackEvent"/>
+    /// so no async continuation or expensive configuration/integration work runs on the
+    /// host event pump.
     /// </summary>
     public abstract class PlaybackWatcherBase : IDisposable
     {
@@ -161,6 +157,59 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.AutoRequest
                     sessionItemKey,
                     operation)
                 : Task.FromResult(false);
+        }
+
+        /// <summary>
+        /// Defers a Jellyfin playback-event callback to the thread pool and contains every
+        /// non-fatal failure inside an observed <see cref="Task"/> boundary.
+        /// </summary>
+        /// <remarks>
+        /// PERF(S7): subscribed event handlers call only this O(1) dispatcher. Configuration
+        /// resolution and Seerr work start on the worker, while
+        /// <see cref="ExecuteDeduplicatedAsync"/> coalesces concurrent user/item operations.
+        /// </remarks>
+        protected Task DispatchPlaybackEvent(string handlerName, Func<Task> work)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(handlerName);
+            ArgumentNullException.ThrowIfNull(work);
+
+            try
+            {
+                return Task.Run(() => RunPlaybackEventSafelyAsync(handlerName, work));
+            }
+            catch (Exception ex)
+            {
+                TryLogPlaybackEventFailure(handlerName, ex);
+                return Task.CompletedTask;
+            }
+        }
+
+        private async Task RunPlaybackEventSafelyAsync(string handlerName, Func<Task> work)
+        {
+            try
+            {
+                await work().ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                TryLogPlaybackEventFailure(handlerName, ex);
+            }
+        }
+
+        private void TryLogPlaybackEventFailure(string handlerName, Exception exception)
+        {
+            try
+            {
+                _logger.LogError(
+                    exception,
+                    "{LogPrefix} Error in {HandlerName}",
+                    LogPrefix,
+                    handlerName);
+            }
+            catch
+            {
+                // A logger failure must not fault detached playback-event work.
+            }
         }
 
         // Cleanup when the plugin is disposed. Terminal: marks the watcher disposed

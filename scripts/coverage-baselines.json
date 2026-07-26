@@ -21,12 +21,12 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 26975,
-        "totalLines": 35661
+        "coveredLines": 26991,
+        "totalLines": 35680
       },
       "tolerance": {
         "missingCoveredLines": 5,
-        "rationale": "The #370 controller identity fix adds the Jellyfin 12 Jellyfin-UserId claim to the shared session-control resolver while retaining all legacy fallbacks, with direct behavioral coverage for claim precedence and compatibility. Two clean .NET 10.0.9/Coverlet runs on 2026-07-27 each passed all 2,279 tests and reproduced 35,661 instrumented lines; Coverlet reported 26,973 and 26,975 covered lines, so the reviewed high-water advances from 26,967/35,660 (75.623%) to 26,975/35,661 (75.643%). Retaining the existing evidence-bounded five-line Coverlet tolerance covers that two-line instrumentation variance and makes the minimum 26,970/35,661 (75.629%), stricter than the prior 26,962/35,660 floor (75.609%). coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, and broad-tolerance negative boundaries."
+        "rationale": "The #452 playback-event safety fix replaces three async-void host callbacks with synchronous O(1) dispatchers and an exception-contained observed Task boundary, with behavioral coverage for post-await failures and a failing logger. Two clean .NET 10.0.9/Coverlet runs on 2026-07-27 each passed all 2,282 tests and reproduced exactly 26,991/35,680 instrumented lines (75.647%), so the reviewed high-water advances from 26,975/35,661 (75.643%). Retaining the existing evidence-bounded five-line Coverlet tolerance makes the minimum 26,986/35,680 (75.633%), stricter than the prior 26,970/35,661 floor (75.629%). coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, and broad-tolerance negative boundaries."
       }
     }
   }
