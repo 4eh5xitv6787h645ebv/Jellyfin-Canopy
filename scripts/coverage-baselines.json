@@ -21,12 +21,12 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 26991,
-        "totalLines": 35680
+        "coveredLines": 27505,
+        "totalLines": 36211
       },
       "tolerance": {
         "missingCoveredLines": 5,
-        "rationale": "The #452 playback-event safety fix replaces three async-void host callbacks with synchronous O(1) dispatchers and an exception-contained observed Task boundary, with behavioral coverage for post-await failures and a failing logger. Two clean .NET 10.0.9/Coverlet runs on 2026-07-27 each passed all 2,282 tests and reproduced exactly 26,991/35,680 instrumented lines (75.647%), so the reviewed high-water advances from 26,975/35,661 (75.643%). Retaining the existing evidence-bounded five-line Coverlet tolerance makes the minimum 26,986/35,680 (75.633%), stricter than the prior 26,970/35,661 floor (75.629%). coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, and broad-tolerance negative boundaries."
+        "rationale": "The final #453 host-semantics review pass ignores source Range/If-Range for the rewritten shell so every byte-range shape receives the complete injected representation and conditional requests are evaluated against its transformed ETag. Real Static Files regressions cover short, unsatisfiable, open-ended, oversized, and multi-range requests; related cache-capacity, non-cacheable-source, unknown-encoding, non-success, cold-HEAD, and bypass cases preserve the existing coverage ratchet while exercising the bounded fallback paths. Six clean .NET 10.0.9/Coverlet runs on 2026-07-27 each passed all 2,319 tests at the same 36,211-line scope: two measured 27,500 covered lines, three measured 27,503, and one measured the reviewed high-water at 27,505 (75.958%). Retaining the existing evidence-bounded five-line Coverlet tolerance makes the minimum 27,500/36,211 (75.944%), stricter than the prior 27,481/36,205 tolerated floor (75.904%). coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, and broad-tolerance negative boundaries."
       }
     }
   }
