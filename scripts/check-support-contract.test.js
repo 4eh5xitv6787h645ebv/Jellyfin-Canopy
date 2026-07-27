@@ -1692,6 +1692,33 @@ test('distinguishes actionable Discussions guidance from explicit disabled-route
             'docs/getting-started.md: routes users to disabled GitHub Discussions'
         ));
     });
+
+    for (const prose of [
+        'GitHub Discussions is for support.',
+        'Support is available in GitHub Discussions.',
+        'GitHub Discussions remains our support forum.',
+    ]) {
+        const activeDescription = validFixture();
+        activeDescription['docs/getting-started.md'] = `${prose}\n`;
+        fixture(activeDescription, root => {
+            assert.ok(auditSupportContract({ root }).problems.includes(
+                'docs/getting-started.md: routes users to disabled GitHub Discussions'
+            ), prose);
+        });
+    }
+
+    for (const prose of [
+        'Previously, users could ask for help in GitHub Discussions.',
+        'The old guide said to use GitHub Discussions for feature requests.',
+    ]) {
+        const historicalDescription = validFixture();
+        historicalDescription['docs/getting-started.md'] = `${prose}\n`;
+        fixture(historicalDescription, root => {
+            assert.ok(!auditSupportContract({ root }).problems.includes(
+                'docs/getting-started.md: routes users to disabled GitHub Discussions'
+            ), prose);
+        });
+    }
 });
 
 test('allows relevance-gated and negated File Transformation guidance', () => {
@@ -1901,7 +1928,17 @@ test('calls to action inherit adjacent prompt-block context', () => {
             message: 'bug intake links',
         },
         {
+            prompt: 'Found a bug in v1.2?',
+            badRoute: DISCORD_ROUTE,
+            message: 'bug intake links',
+        },
+        {
             prompt: 'Need help?',
+            badRoute: ISSUES_ROUTE,
+            message: 'community-support links',
+        },
+        {
+            prompt: 'Need help with version 1.2?',
             badRoute: ISSUES_ROUTE,
             message: 'community-support links',
         },
@@ -2187,6 +2224,8 @@ test('audits route intent in expanded and previous-sentence call-to-action wordi
         [`[Tell us about a defect](${DISCORD_ROUTE}).`, 'bug intake links'],
         [`[File a bug](${DISCORD_ROUTE}).`, 'bug intake links'],
         [`Found a bug? [Open it here](${DISCORD_ROUTE}).`, 'bug intake links'],
+        [`Found a bug in v1.2? [Open it here](${DISCORD_ROUTE}).`, 'bug intake links'],
+        [`Need help with version 1.2? [Click here](${ISSUES_ROUTE}).`, 'community-support links'],
         [`Something broken? [Ask on Discord](${DISCORD_ROUTE}).`, 'bug intake links'],
     ];
     for (const [prose, message] of cases) {
@@ -2197,6 +2236,29 @@ test('audits route intent in expanded and previous-sentence call-to-action wordi
                 problem.startsWith('docs/getting-started.md:')
                 && problem.includes(message)
             )), prose);
+        });
+    }
+});
+
+test('security intake takes precedence over generic problem wording', () => {
+    for (const label of [
+        'Report a problem with security',
+        'Submit a security issue',
+        'Report an issue affecting security',
+    ]) {
+        const files = validFixture();
+        files['docs/getting-started.md'] =
+            `[${label}](${SECURITY_ADVISORY_ROUTE}).\n`;
+        fixture(files, root => {
+            const problems = auditSupportContract({ root }).problems;
+            assert.ok(!problems.some(problem => (
+                problem.startsWith('docs/getting-started.md:')
+                && problem.includes('bug intake links')
+            )), label);
+            assert.ok(!problems.some(problem => (
+                problem.startsWith('docs/getting-started.md:')
+                && problem.includes('security intake links')
+            )), label);
         });
     }
 });

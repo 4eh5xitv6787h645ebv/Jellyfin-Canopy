@@ -142,6 +142,16 @@ const ROUTE_INTENT_TERM = /\b(?:assistance|bugs?|broken|defects?|enhancements?|e
 const HTML_ROUTE_CONTEXT_BEFORE_CUE = /(?:\b(?:at|choose|follow|here|in|on|open|see|select|through|to|use|using|via|visit)\b|[:→])(?:\s+(?:a|an|our|the|this))?\s*$/i;
 const HTML_ROUTE_CONTEXT_AFTER_CUE = /^\s*(?:(?:[-–—:,(]\s*)|(?:for|to|where)\b)/i;
 const DISCUSSIONS_ACTION = /\b(?:ask|create|direct|get|go|join|open|post|route|send|start|submit|use)\b/i;
+const DISCUSSIONS_PURPOSE = '(?:bugs?|defects?|features?|help|ideas?|issues?|questions?|reports?|requests?|support)';
+const DISCUSSIONS_ACTIVE_STATE = new RegExp(
+    `(?:\\b(?:github\\s+)?discussions?\\b.{0,60}`
+    + `\\b(?:are|is|remain|remains|serve|serves)\\b.{0,60}\\b${DISCUSSIONS_PURPOSE}\\b`
+    + `|\\b${DISCUSSIONS_PURPOSE}\\b.{0,60}\\b(?:are|is)\\b`
+    + `.{0,30}\\b(?:at|in|on|through|via)\\b.{0,30}\\b(?:github\\s+)?discussions?\\b)`,
+    'i'
+);
+const DISCUSSIONS_HISTORICAL = /\b(?:formerly|historically|previously|once)\b|\bused\s+to\b|\b(?:deprecated|former|old|retired)\s+(?:channel|forum|guidance|guide|route|workflow)\b/i;
+const DISCUSSIONS_CURRENT = /\b(?:currently|now|still|today)\b/i;
 const DISCUSSIONS_EXCEPTION = /\b(?:anywhere|nowhere)\s+(?:else\s+)?(?:but|except)\b|\b(?:anything\s+)?except\b|\bother\s+than\b/i;
 const TEMPLATE_METADATA = new Map([
     ['.github/ISSUE_TEMPLATE/bug.md', {
@@ -433,6 +443,28 @@ function isExactHttpsRoute(link, route) {
         && actual.hash === expected.hash;
 }
 
+function hardSentenceBoundaries(text) {
+    const boundaries = [];
+    for (let index = 0; index < text.length; index += 1) {
+        const character = text[index];
+        if (character === '!' || character === '?' || character === ';') {
+            boundaries.push(index);
+            continue;
+        }
+        if (character !== '.') continue;
+        const previous = text[index - 1] || '';
+        const next = text[index + 1] || '';
+        const prefix = text.slice(0, index + 1);
+        const abbreviation = /[\p{L}\p{N}]/u.test(previous)
+            && /[\p{L}\p{N}]/u.test(next)
+            || /(?:\b(?:dr|e\.g|etc|i\.e|jr|mr|mrs|ms|no|prof|sr|vs)\.|(?:\b\p{L}\.){2,})$/iu
+                .test(prefix)
+            || /\d\.\d$/u.test(`${previous}.${next}`);
+        if (!abbreviation) boundaries.push(index);
+    }
+    return boundaries;
+}
+
 function semanticLinkText(link) {
     const label = String(link?.label || '').trim();
     let before = String(link?.contextBefore || '');
@@ -445,27 +477,6 @@ function semanticLinkText(link) {
         before = context.slice(0, offset);
         after = context.slice(offset + label.length);
     }
-    const hardSentenceBoundaries = (text) => {
-        const boundaries = [];
-        for (let index = 0; index < text.length; index += 1) {
-            const character = text[index];
-            if (character === '!' || character === '?' || character === ';') {
-                boundaries.push(index);
-                continue;
-            }
-            if (character !== '.') continue;
-            const previous = text[index - 1] || '';
-            const next = text[index + 1] || '';
-            const prefix = text.slice(0, index + 1);
-            const abbreviation = /[\p{L}\p{N}]/u.test(previous)
-                && /[\p{L}\p{N}]/u.test(next)
-                || /(?:\b(?:dr|e\.g|etc|i\.e|jr|mr|mrs|ms|no|prof|sr|vs)\.|(?:\b\p{L}\.){2,})$/iu
-                    .test(prefix)
-                || /\d\.\d$/u.test(`${previous}.${next}`);
-            if (!abbreviation) boundaries.push(index);
-        }
-        return boundaries;
-    };
     const sentenceBoundaries = (text, prefix = '', suffix = '', adjacentLink = false) => {
         const boundaries = hardSentenceBoundaries(text);
         const combined = `${prefix}${text}${suffix}`;
@@ -556,14 +567,9 @@ function linkWithPriorBlockContext(link, normalizedLabel, html) {
     const prior = String(link?.contextBeforeBlock || '').replace(/\s+/g, ' ').trim();
     if (!prior) return link;
     const promptEnd = prior.match(/[?:]\s*$/)?.index;
-    const promptStart = promptEnd === undefined
-        ? 0
-        : Math.max(
-            prior.lastIndexOf('.', promptEnd - 1),
-            prior.lastIndexOf('!', promptEnd - 1),
-            prior.lastIndexOf('?', promptEnd - 1),
-            prior.lastIndexOf(';', promptEnd - 1)
-        ) + 1;
+    const promptStart = promptEnd === undefined ? 0 : (
+        hardSentenceBoundaries(prior.slice(0, promptEnd)).at(-1) ?? -1
+    ) + 1;
     const prompt = promptEnd === undefined ? '' : prior.slice(promptStart).trim();
     const dependent = html
         ? HTML_CONTEXT_DEPENDENT_ROUTE_LABEL
@@ -1121,8 +1127,11 @@ function routesToDiscussions(surface) {
         if (!/\b(?:github\s+discussions?|discussions?.{0,80}\bgithub)\b/i.test(clause)) {
             return false;
         }
+        if (DISCUSSIONS_HISTORICAL.test(clause) && !DISCUSSIONS_CURRENT.test(clause)) {
+            return false;
+        }
         return !explicitlyRejectsDiscussionsRoute(clause)
-            && DISCUSSIONS_ACTION.test(clause);
+            && (DISCUSSIONS_ACTION.test(clause) || DISCUSSIONS_ACTIVE_STATE.test(clause));
     });
 }
 
@@ -1243,13 +1252,15 @@ function auditGlobalRouteLinks(file, surface, root, problems, options = {}) {
             ? { ...link, context: link.label, contextBefore: '', contextAfter: '' }
             : contextualLink;
         const text = semanticLinkText(scopedLink);
+        const securityOwned = isOwnedSecurityIntakeLink(scopedLink);
         const location = `${file}:${link.line || 1}`;
         const isRenderedFragment = options.rendered && /^#[^#]/.test(link.target);
         const bugFormFragment = isRenderedFragment
             && BUG_FORM_ROUTE_LABEL.test(normalizedLabel);
         const featureFormFragment = isRenderedFragment
             && FEATURE_FORM_ROUTE_LABEL.test(normalizedLabel);
-        if ((BUG_ROUTE_INTENT.test(text) || bugFormFragment)
+        if (!securityOwned
+            && (BUG_ROUTE_INTENT.test(text) || bugFormFragment)
             && (!isRenderedFragment || bugFormFragment)
             && !semanticLinkMatches(
                 scopedLink,
@@ -1278,7 +1289,7 @@ function auditGlobalRouteLinks(file, surface, root, problems, options = {}) {
             )) {
             problems.push(`${location}: community-support links must use the Jellyfin Community Discord`);
         }
-        if (isOwnedSecurityIntakeLink(scopedLink)
+        if (securityOwned
             && !securityLinkMatches(scopedLink, SECURITY_ADVISORY_ROUTE, { root, file })) {
             problems.push(`${location}: security intake links must use private GitHub advisories`);
         }

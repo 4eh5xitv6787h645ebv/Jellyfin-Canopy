@@ -369,6 +369,25 @@ test('visually hidden links are not actionable but aria-hidden links remain clic
     assert.ok(links.filter(link => visuallyHidden.has(link.label)).every(link => link.hidden));
 });
 
+test('retains visually rendered route text inside aria-hidden descendants', () => {
+    const source = [
+        '<a href="https://example.com/route">',
+        '  <span aria-hidden="true">Report a problem</span>',
+        '</a>',
+        '<a href="https://example.com/icon">',
+        '  <svg aria-hidden="true" aria-label="Invisible route label"></svg>',
+        '</a>',
+        '',
+    ].join('\n');
+    for (const links of [extractLinks(source), extractRenderedHtmlLinks(source)]) {
+        const routes = links.filter(link => link.type === 'link');
+        assert.equal(routes[0].label, 'Report a problem');
+        assert.equal(isActionableLink(routes[0]), true);
+        assert.equal(routes[1].label, '');
+        assert.equal(isActionableLink(routes[1]), false);
+    }
+});
+
 test('inline style visibility follows declaration order and importance', () => {
     for (const [style, hidden] of [
         ['display:none;display:inline', false],

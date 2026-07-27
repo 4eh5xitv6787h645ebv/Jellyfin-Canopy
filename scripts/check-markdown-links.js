@@ -149,6 +149,18 @@ function visibleHtmlText(content, labels = new Map()) {
     return accessibleHtmlText(content, labels, false);
 }
 
+function visuallyRenderedHtmlText(content) {
+    const visible = stripHiddenHtml(content)
+        .replace(/<(script|style)\b[\s\S]*?<\/\1\s*>/gi, ' ')
+        // SVG metadata is not visible text. Accessible SVG names are already
+        // handled by accessibleHtmlText when the graphic participates in the
+        // accessibility tree.
+        .replace(/<svg\b[\s\S]*?<\/svg\s*>/gi, ' ')
+        .replace(/<svg\b(?:[^>"']|"[^"]*"|'[^']*')*\/?>/gi, ' ')
+        .replace(/<[^>]*>/g, ' ');
+    return markdown.utils.unescapeAll(visible);
+}
+
 function htmlAttributeRecords(content) {
     const attributes = [];
     const pattern = /(?:^|[\s<])(id|href|src|srcset)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/gi;
@@ -461,6 +473,10 @@ function htmlAnchorRecords(content, labels = htmlIdLabels(content)) {
             ? accessibleHtmlText(content.slice(openingEnd, contentEnd), labels)
                 .replace(/\s+/g, ' ').trim()
             : '';
+        const visualName = contentEnd > openingEnd
+            ? visuallyRenderedHtmlText(content.slice(openingEnd, contentEnd))
+                .replace(/\s+/g, ' ').trim()
+            : '';
         const following = content.slice(anchorEnd, Math.min(content.length, anchorEnd + 2_000));
         const nextAnchorOffset = following.search(/<a\b/i);
         const adjacentContextAfterEnd = nextAnchorOffset === -1
@@ -493,7 +509,8 @@ function htmlAnchorRecords(content, labels = htmlIdLabels(content)) {
             label: ariaLabelledText(openingTag, labels)
                 || htmlAttributeValue(openingTag, 'aria-label')
                 || nestedName
-                || htmlAttributeValue(openingTag, 'title'),
+                || htmlAttributeValue(openingTag, 'title')
+                || visualName,
             hidden: hiddenStates.get(match.index) || false,
             contextBefore,
             contextBeforePrior: previousAnchor && beforeBoundary === 0
