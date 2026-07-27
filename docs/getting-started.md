@@ -90,7 +90,40 @@ Versions before 2.0 were published as **Jellyfin Elevate**. It is the same plugi
 
 ## First-run setup
 
-You now have Jellyfin Canopy running, but most features are **off by default**, and several of the biggest ones need a one-time connection before they do anything. Everything below lives under **Dashboard** → **Plugins** → **Jellyfin Canopy**, on the tab named in each item. Turn on what you want and skip the rest.
+### The setup wizard
+
+The first time you open **Dashboard** → **Plugins** → **Jellyfin Canopy**, a
+short setup wizard greets you:
+
+- **Use recommended settings** keeps the defaults most servers run and takes
+  you straight to the connections step — Seerr, Maintainerr, and
+  Sonarr/Radarr, each with its own **Connect** and **Test** right there.
+  Every connection is optional; skip any or all of them.
+- **Let me choose** adds one screen with the six settings people care about
+  most (watch progress, quality badges, discovery feed, streaming
+  availability, auto-skip, spoiler guard) in plain language, then the same
+  connections step.
+- **Skip setup** closes the wizard immediately — it never blocks the settings
+  page, and you can re-run it anytime from the Essentials view.
+
+### Essentials and Advanced
+
+The settings page has two views, switched at the top of the sidebar:
+
+- **Essentials** is one friendly page: the same six key settings as the
+  wizard, your connected-services health, and a **Run setup wizard again**
+  button. Everything else stays on recommended defaults.
+- **Advanced** is the complete catalogue — every tab and all 230+ settings.
+  Both views write the same configuration; Advanced is never more than one
+  click away, and your view choice is remembered per browser.
+
+### The manual checklist
+
+Prefer to set things up by hand in Advanced? Most features are **off by
+default**, and several of the biggest ones need a one-time connection before
+they do anything. Everything below lives under **Dashboard** → **Plugins** →
+**Jellyfin Canopy**, on the tab named in each item. Turn on what you want and
+skip the rest.
 
 !!! tip "The two states to watch for"
 
