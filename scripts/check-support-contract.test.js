@@ -43,7 +43,7 @@ Browser and OS.
 ## Relevant configuration
 Configuration.
 ## Logs
-Attach redacted logs.
+Redact tokens and credentials from attached logs.
 ## Additional context
 Do not include credentials or sensitive data.
 `;
@@ -186,7 +186,10 @@ test('non-rendered comments and fences cannot satisfy intake requirements', () =
         )
         .replace('## Summary\nSummary.', '<!--\n## Summary\nSummary.\n-->')
         .replace('## Steps to reproduce\nSteps.', '```md\n## Steps to reproduce\nSteps.\n```')
-        .replace('## Logs\nAttach redacted logs.', '## Logs\nAttach logs.\n<!-- redact these logs -->');
+        .replace(
+            '## Logs\nRedact tokens and credentials from attached logs.',
+            '## Logs\nAttach logs.\n<!-- redact tokens and credentials -->'
+        );
     fixture(files, root => {
         const problems = auditSupportContract({ root }).problems;
         assert.ok(problems.includes(
@@ -209,10 +212,11 @@ test('non-rendered comments and fences cannot satisfy intake requirements', () =
 
 test('security policy and every security chooser contact stay private-only', () => {
     const files = validFixture();
-    files['SECURITY.md'] = files['SECURITY.md'].replace(
-        '\n',
-        `\n<a href="${ISSUES_ROUTE}">Public security report</a>.\n`
-    );
+    files['SECURITY.md'] += [
+        '## Alternate vulnerability intake',
+        `<a href="${ISSUES_ROUTE}">Public security report</a>.`,
+        '',
+    ].join('\n');
     files['.github/ISSUE_TEMPLATE/config.yml'] += [
         '  - name: Public security vulnerability report',
         `    url: ${ISSUES_ROUTE}`,
@@ -233,6 +237,12 @@ test('security policy and every security chooser contact stay private-only', () 
 
 test('feature and support destinations are owned by their rendered sections', () => {
     const files = validFixture();
+    files['README.md'] = [
+        '## 🌍 Contributing',
+        `[Report bugs](${ISSUES_ROUTE}).`,
+        `[Suggest features](${DISCORD_ROUTE}).`,
+        '',
+    ].join('\n');
     files['docs/help.md'] = files['docs/help.md']
         .replace(`[Request features](${ISSUES_ROUTE})`, `[Request features](${DISCORD_ROUTE})`)
         .replace(`[Ask for support](${DISCORD_ROUTE})`, `[Ask for support](${ISSUES_ROUTE})`);
@@ -243,6 +253,9 @@ test('feature and support destinations are owned by their rendered sections', ()
     fixture(files, root => {
         const problems = auditSupportContract({ root }).problems;
         assert.ok(problems.includes(
+            'README.md: must route feature intake to GitHub Issues in "## 🌍 Contributing"'
+        ));
+        assert.ok(problems.includes(
             'docs/help.md: must route feature intake to GitHub Issues in "## Request a feature"'
         ));
         assert.ok(problems.includes(
@@ -252,6 +265,25 @@ test('feature and support destinations are owned by their rendered sections', ()
         assert.ok(problems.includes(
             '.github/ISSUE_TEMPLATE/feature_request.md: '
             + 'Additional context must require sensitive-data redaction'
+        ));
+    });
+});
+
+test('feature route ownership stops at a higher-level heading boundary', () => {
+    const files = validFixture();
+    files['docs/help.md'] = [
+        `Report bugs with [Issues](${ISSUES_ROUTE}).`,
+        '## Request a feature',
+        `[Suggest features](${DISCORD_ROUTE}).`,
+        '# Unrelated page',
+        `[Feature backlog](${ISSUES_ROUTE}).`,
+        '## Community and support',
+        `[Ask for support](${DISCORD_ROUTE}).`,
+        '',
+    ].join('\n');
+    fixture(files, root => {
+        assert.ok(auditSupportContract({ root }).problems.includes(
+            'docs/help.md: must route feature intake to GitHub Issues in "## Request a feature"'
         ));
     });
 });
@@ -306,16 +338,37 @@ test('canonicalizes GFM and browser route representations before enforcing them'
             'docs/help.md: must route feature intake to GitHub Issues in "## Request a feature"'
         ));
     });
+
+    const encodedFiles = validFixture();
+    encodedFiles['README.md'] += '\n'
+        + '[Disabled route](https://github.com/4EH5XITV6787H645EBV/'
+        + 'JELLYFIN-CANOPY/%64iscussions)\n';
+    fixture(encodedFiles, root => {
+        assert.ok(auditSupportContract({ root }).problems.includes(
+            'README.md: routes users to disabled GitHub Discussions'
+        ));
+    });
 });
 
-test('redaction guidance must render inside the Logs section', () => {
+test('redaction guidance must be positive and render inside its owning section', () => {
     const files = validFixture();
     files['.github/ISSUE_TEMPLATE/bug.md'] = BUG_TEMPLATE
-        .replace('Attach redacted logs.', 'Attach logs.')
-        .replace('## Additional context\nContext.', '## Additional context\nRedact unrelated context.');
+        .replace(
+            'Redact tokens and credentials from attached logs.',
+            'Attach unredacted logs, credentials, and private URLs.'
+        );
+    files['.github/ISSUE_TEMPLATE/feature_request.md'] = FEATURE_TEMPLATE.replace(
+        'Do not include credentials or sensitive data.',
+        'Do not redact credentials or sensitive data.'
+    );
     fixture(files, root => {
-        assert.ok(auditSupportContract({ root }).problems.includes(
+        const problems = auditSupportContract({ root }).problems;
+        assert.ok(problems.includes(
             '.github/ISSUE_TEMPLATE/bug.md: logs section must require sensitive-data redaction'
+        ));
+        assert.ok(problems.includes(
+            '.github/ISSUE_TEMPLATE/feature_request.md: '
+            + 'Additional context must require sensitive-data redaction'
         ));
     });
 });
@@ -410,6 +463,31 @@ test('rejects spaced and multiline File Transformation baseline checklists', () 
             ));
         });
     }
+
+    const plainFields = validFixture();
+    plainFields['.github/ISSUE_TEMPLATE/bug.md'] = BUG_TEMPLATE.replace(
+        '## Additional context',
+        '## File Transformation environment\n\n'
+        + '- File Transformation version:\n'
+        + '- File Transformation enabled:\n\n'
+        + '## Additional context'
+    );
+    fixture(plainFields, root => {
+        assert.ok(auditSupportContract({ root }).problems.includes(
+            '.github/ISSUE_TEMPLATE/bug.md: '
+            + 'File Transformation cannot be a baseline bug-report requirement'
+        ));
+    });
+
+    const featureTask = validFixture();
+    featureTask['.github/ISSUE_TEMPLATE/feature_request.md'] = FEATURE_TEMPLATE
+        + '\n- [ ] `File Transformation` installed\n';
+    fixture(featureTask, root => {
+        assert.ok(auditSupportContract({ root }).problems.includes(
+            '.github/ISSUE_TEMPLATE/feature_request.md: '
+            + 'File Transformation cannot be a baseline feature-request requirement'
+        ));
+    });
 });
 
 test('rejects structurally invalid chooser contact URLs', () => {

@@ -420,7 +420,7 @@ Bug reports go to **GitHub Issues**. A clear, reproducible report is the single 
 
 ## Request a feature
 
-Have an idea? Feature proposals are gathered, discussed, and prioritized in **[GitHub Issues](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues)** using the feature-request template.
+Have an idea? Feature proposals are gathered, discussed, and prioritized in **[GitHub feature requests](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues)** using the feature-request template.
 
 1. Check the [existing issues](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues) to see whether your idea is already tracked.
 2. Open a new issue with the **Feature request** template.

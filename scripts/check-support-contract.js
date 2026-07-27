@@ -199,24 +199,32 @@ function headingText(tokens, index) {
     return inline?.type === 'inline' ? inlineVisibleText(inline.children).trim() : '';
 }
 
-function sectionTokens(tokens, section) {
-    let start = -1;
-    for (let index = 0; index < tokens.length; index += 1) {
-        if (tokens[index].type !== 'heading_open' || tokens[index].tag !== 'h2') continue;
-        if (headingText(tokens, index) === section) {
-            start = index + 3;
-            break;
-        }
-    }
-    if (start === -1) return [];
+function headingLevel(token) {
+    if (token?.type !== 'heading_open' || !/^h[1-6]$/.test(token.tag)) return 0;
+    return Number(token.tag.slice(1));
+}
+
+function headingSectionTokens(tokens, headingIndex) {
+    const level = headingLevel(tokens[headingIndex]);
+    if (level === 0) return [];
+    const start = headingIndex + 3;
     let end = tokens.length;
     for (let index = start; index < tokens.length; index += 1) {
-        if (tokens[index].type === 'heading_open' && tokens[index].tag === 'h2') {
+        const candidate = headingLevel(tokens[index]);
+        if (candidate > 0 && candidate <= level) {
             end = index;
             break;
         }
     }
     return tokens.slice(start, end);
+}
+
+function sectionTokens(tokens, section) {
+    for (let index = 0; index < tokens.length; index += 1) {
+        if (tokens[index].type !== 'heading_open' || tokens[index].tag !== 'h2') continue;
+        if (headingText(tokens, index) === section) return headingSectionTokens(tokens, index);
+    }
+    return [];
 }
 
 function actionableLinks(tokens) {
@@ -234,19 +242,22 @@ function absoluteUrl(target) {
 function repositoryPath(target) {
     const url = absoluteUrl(target);
     if (!url || !['http:', 'https:'].includes(url.protocol)) return '';
-    const hostname = url.hostname.toLowerCase().replace(/^www\./, '');
-    return hostname === 'github.com' ? url.pathname.replace(/\/+$/, '') : '';
+    const hostname = url.hostname.toLowerCase().replace(/\.$/, '').replace(/^www\./, '');
+    if (hostname !== 'github.com') return '';
+    try {
+        return decodeURIComponent(url.pathname).replace(/\/+$/, '');
+    } catch {
+        return '';
+    }
 }
 
-function hasRepositoryRoute(tokens, suffix, descendants = false) {
+function isRepositoryRoute(link, suffix, descendants = false) {
     const expected = `/4eh5xitv6787h645ebv/Jellyfin-Canopy${suffix}`;
-    return actionableLinks(tokens).some((link) => {
-        const url = absoluteUrl(link.target);
-        if (url?.protocol !== 'https:' || url.hostname.toLowerCase() !== 'github.com'
-            || url.username || url.password || url.port || url.search || url.hash) return false;
-        const pathname = url.pathname.replace(/\/+$/, '');
-        return pathname === expected || (descendants && pathname.startsWith(`${expected}/`));
-    });
+    const url = absoluteUrl(link.target);
+    if (url?.protocol !== 'https:' || url.hostname.toLowerCase() !== 'github.com'
+        || url.username || url.password || url.port || url.search || url.hash) return false;
+    const pathname = url.pathname.replace(/\/+$/, '');
+    return pathname === expected || (descendants && pathname.startsWith(`${expected}/`));
 }
 
 function isExactHttpsRoute(link, route) {
@@ -270,6 +281,13 @@ function hasOnlyExactHttpsRoute(tokens, route) {
     const links = extractLinksFromTokens(tokens).filter(link => link?.type === 'link');
     return links.some(link => isActionableLink(link) && isExactHttpsRoute(link, route))
         && links.every(link => isExactHttpsRoute(link, route));
+}
+
+function hasFeatureRepositoryRoute(tokens) {
+    return actionableLinks(tokens).some(link => (
+        /\b(?:feature|proposal|suggest)/i.test(link.label)
+        && isRepositoryRoute(link, '/issues', true)
+    ));
 }
 
 function requireSectionRoute(tokens, file, section, predicate, message, problems) {
@@ -298,8 +316,10 @@ function requireRenderedIssueLinks(body, file, problems) {
     }
 }
 
-function hasFileTransformationChecklist(body) {
+function hasFileTransformationRequirement(body) {
     const tokens = markdown.parse(body, {});
+    const visible = renderedText(tokens).toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (visible.includes('filetransformation')) return true;
     const isFileTransformationTask = (text) => {
         if (!/^\s*\[[ xX]\](?:\s+|$)/.test(text)) return false;
         return text.toLowerCase().replace(/[^a-z0-9]/g, '').includes('filetransformation');
@@ -327,6 +347,12 @@ function hasFileTransformationChecklist(body) {
             && isFileTransformationTask(inlineTaskText(tokens[index].children))) return true;
     }
     return false;
+}
+
+function requiresSensitiveRedaction(text) {
+    if (/\b(?:unredacted|do not redact|don't redact|never redact)\b/i.test(text)) return false;
+    return /\b(?:redact(?:ed|ion)?|(?:do not|never) include)\b.{0,240}\b(?:api keys?|credentials?|personal|private|sensitive|tokens?|usernames?)\b/i
+        .test(text);
 }
 
 function stringValues(value) {
@@ -431,9 +457,9 @@ function auditSupportContract(options = {}) {
         const source = readRegularFile(root, file, problems);
         sources.set(file, source);
         const surface = renderedSupportSurface(source, file);
-        const discussionPath = '/4eh5xitv6787h645ebv/Jellyfin-Canopy/discussions';
+        const discussionPath = '/4eh5xitv6787h645ebv/jellyfin-canopy/discussions';
         const discussions = surface.links.some((link) => {
-            const pathname = link?.type === 'link' ? repositoryPath(link.target) : '';
+            const pathname = link?.type === 'link' ? repositoryPath(link.target).toLowerCase() : '';
             return pathname === discussionPath || pathname.startsWith(`${discussionPath}/`);
         });
         if (discussions || /\bGitHub Discussions\b/i.test(surface.text)) {
@@ -452,7 +478,7 @@ function auditSupportContract(options = {}) {
                 tokens,
                 file,
                 section,
-                owned => hasRepositoryRoute(owned, '/issues', true),
+                hasFeatureRepositoryRoute,
                 'must route feature intake to GitHub Issues',
                 problems
             );
@@ -476,7 +502,20 @@ function auditSupportContract(options = {}) {
     const securityTokens = markdown.parse(sources.get(securityFile) || '', {});
     const vulnerabilitySection = sectionTokens(securityTokens, 'Reporting a Vulnerability');
     const vulnerabilityText = renderedText(vulnerabilitySection);
+    const vulnerabilityIntakeSections = [];
+    for (let index = 0; index < securityTokens.length; index += 1) {
+        if (headingLevel(securityTokens[index]) === 0) continue;
+        const heading = headingText(securityTokens, index);
+        if (/(?:report(?:ing)?|submit).{0,80}vulnerab|vulnerab.{0,80}(?:report|submit|intake)/i
+            .test(heading)) {
+            vulnerabilityIntakeSections.push(headingSectionTokens(securityTokens, index));
+        }
+    }
     if (!hasOnlyExactHttpsRoute(vulnerabilitySection, SECURITY_ADVISORY_ROUTE)
+        || vulnerabilityIntakeSections.length === 0
+        || vulnerabilityIntakeSections.some(tokens => (
+            !hasOnlyExactHttpsRoute(tokens, SECURITY_ADVISORY_ROUTE)
+        ))
         || !/private security advisory/i.test(vulnerabilityText)
         || !/(?:do not|never).*(?:public|issue|discussion|discord)/i.test(vulnerabilityText)) {
         problems.push(
@@ -496,10 +535,10 @@ function auditSupportContract(options = {}) {
         || !/do not report security vulnerabilities here/i.test(bugSecurityText)) {
         problems.push(`${bugFile}: must route vulnerability reports to private GitHub advisories`);
     }
-    if (!/redact/i.test(renderedText(sectionTokens(bugTokens, 'Logs')))) {
+    if (!requiresSensitiveRedaction(renderedText(sectionTokens(bugTokens, 'Logs')))) {
         problems.push(`${bugFile}: logs section must require sensitive-data redaction`);
     }
-    if (hasFileTransformationChecklist(bug.body)) {
+    if (hasFileTransformationRequirement(bug.body)) {
         problems.push(`${bugFile}: File Transformation cannot be a baseline bug-report requirement`);
     }
 
@@ -510,9 +549,13 @@ function auditSupportContract(options = {}) {
     requireSections(featureTokens, featureFile, FEATURE_SECTIONS, problems);
     requireRenderedIssueLinks(feature.body, featureFile, problems);
     const featureContext = renderedText(sectionTokens(featureTokens, 'Additional context'));
-    if (!/(?:do not include|redact)/i.test(featureContext)
-        || !/credential|sensitive|private|personal/i.test(featureContext)) {
+    if (!requiresSensitiveRedaction(featureContext)) {
         problems.push(`${featureFile}: Additional context must require sensitive-data redaction`);
+    }
+    if (hasFileTransformationRequirement(feature.body)) {
+        problems.push(
+            `${featureFile}: File Transformation cannot be a baseline feature-request requirement`
+        );
     }
 
     const configFile = '.github/ISSUE_TEMPLATE/config.yml';
