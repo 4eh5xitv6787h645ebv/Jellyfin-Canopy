@@ -43,6 +43,12 @@ Describe what happens instead, including the exact visible error when one exists
 - Last known working plugin version, if any:
 - New installation or upgrade:
 
+## Server environment
+
+- Server operating system or platform and version:
+- Jellyfin installation method (for example Docker, package, or native install):
+- Server architecture, if relevant:
+
 ## Client environment
 
 - Client or browser and version:

@@ -16,7 +16,7 @@ const {
 
 const BUG_TEMPLATE = `---
 name: Bug report
-about: Report a reproducible problem
+about: Report a reproducible Jellyfin Canopy problem
 title: "🐛[BUG] "
 labels: bug
 assignees: ''
@@ -29,27 +29,36 @@ assignees: ''
 
 Use the private route.
 ## Summary
-Summary.
+Describe the problem and its user-visible impact.
 ## Steps to reproduce
-Steps.
+List the reproduction steps and exact actions.
 ## Expected behavior
-Expected.
+Describe the expected behavior.
 ## Actual behavior
-Actual.
+Describe the actual behavior or what happens instead.
 ## Regression and versions
-Versions.
+- Jellyfin server version:
+- Jellyfin Canopy plugin version:
+- Last known working plugin version:
+- New installation or upgrade:
+## Server environment
+- Server operating system or platform and version:
+- Jellyfin installation method:
 ## Client environment
-Browser and OS.
+- Client or browser and version:
+- Operating system and version:
+- Jellyfin modern MUI or legacy layout:
+- Local or externally proxied access:
 ## Relevant configuration
-Configuration.
+List the relevant Canopy features and configuration. Do not include API keys or credentials.
 ## Logs
-Redact tokens and credentials from attached logs.
+Attach server logs and browser console logs. Redact tokens and credentials.
 ## Additional context
 Do not include credentials or sensitive data.
 `;
 const FEATURE_TEMPLATE = `---
 name: Feature request
-about: Propose an idea
+about: Propose a Jellyfin Canopy capability or behavior change
 title: "➕[Feature Request] "
 labels: enhancement
 assignees: ''
@@ -164,9 +173,12 @@ test('rejects a support surface that routes users to disabled Discussions', () =
     const files = validFixture();
     files['docs/help.md'] += `Request features at ${DISCUSSIONS_ROUTE}.\n`;
     fixture(files, root => {
-        assert.deepEqual(auditSupportContract({ root }).problems, [
-            'docs/help.md: routes users to disabled GitHub Discussions',
-        ]);
+        const problems = auditSupportContract({ root }).problems;
+        assert.ok(problems.includes('docs/help.md: routes users to disabled GitHub Discussions'));
+        assert.ok(problems.some(problem => (
+            problem.startsWith('docs/help.md:')
+            && problem.includes('feature intake links must use a canonical GitHub Issues intake path')
+        )));
     });
 });
 
@@ -212,10 +224,16 @@ test('non-rendered comments and fences cannot satisfy intake requirements', () =
 [Private advisory](${SECURITY_ADVISORY_ROUTE}). -->
 `
         )
-        .replace('## Summary\nSummary.', '<!--\n## Summary\nSummary.\n-->')
-        .replace('## Steps to reproduce\nSteps.', '```md\n## Steps to reproduce\nSteps.\n```')
         .replace(
-            '## Logs\nRedact tokens and credentials from attached logs.',
+            '## Summary\nDescribe the problem and its user-visible impact.',
+            '<!--\n## Summary\nDescribe the problem and its user-visible impact.\n-->'
+        )
+        .replace(
+            '## Steps to reproduce\nList the reproduction steps and exact actions.',
+            '```md\n## Steps to reproduce\nList the reproduction steps and exact actions.\n```'
+        )
+        .replace(
+            '## Logs\nAttach server logs and browser console logs. Redact tokens and credentials.',
             '## Logs\nAttach logs.\n<!-- redact tokens and credentials -->'
         );
     fixture(files, root => {
@@ -671,7 +689,7 @@ test('redaction guidance requires positive, non-negated instructions in its owni
     const files = validFixture();
     files['.github/ISSUE_TEMPLATE/bug.md'] = BUG_TEMPLATE
         .replace(
-            'Redact tokens and credentials from attached logs.',
+            'Attach server logs and browser console logs. Redact tokens and credentials.',
             'Redaction of credentials is not required.'
         );
     files['.github/ISSUE_TEMPLATE/feature_request.md'] = FEATURE_TEMPLATE.replace(
@@ -691,7 +709,7 @@ test('redaction guidance requires positive, non-negated instructions in its owni
 
     const positive = validFixture();
     positive['.github/ISSUE_TEMPLATE/bug.md'] = BUG_TEMPLATE.replace(
-        'Redact tokens and credentials from attached logs.',
+        'Attach server logs and browser console logs. Redact tokens and credentials.',
         'Credentials and private tokens must be redacted from attached logs.'
     );
     fixture(positive, root => {
@@ -702,7 +720,7 @@ test('redaction guidance requires positive, non-negated instructions in its owni
 
     const contractedNegative = validFixture();
     contractedNegative['.github/ISSUE_TEMPLATE/bug.md'] = BUG_TEMPLATE.replace(
-        'Redact tokens and credentials from attached logs.',
+        'Attach server logs and browser console logs. Redact tokens and credentials.',
         "You aren't required to redact credentials or sensitive data."
     );
     fixture(contractedNegative, root => {
@@ -713,7 +731,7 @@ test('redaction guidance requires positive, non-negated instructions in its owni
 
     const scopedPositive = validFixture();
     scopedPositive['.github/ISSUE_TEMPLATE/bug.md'] = BUG_TEMPLATE.replace(
-        'Redact tokens and credentials from attached logs.',
+        'Attach server logs and browser console logs. Redact tokens and credentials.',
         'Redact credentials. Non-sensitive values do not need to be redacted.'
     );
     fixture(scopedPositive, root => {
@@ -724,7 +742,7 @@ test('redaction guidance requires positive, non-negated instructions in its owni
 
     const negativeImperative = validFixture();
     negativeImperative['.github/ISSUE_TEMPLATE/bug.md'] = BUG_TEMPLATE.replace(
-        'Redact tokens and credentials from attached logs.',
+        'Attach server logs and browser console logs. Redact tokens and credentials.',
         'Avoid redacting credentials from attached logs.'
     );
     fixture(negativeImperative, root => {
@@ -735,7 +753,7 @@ test('redaction guidance requires positive, non-negated instructions in its owni
 
     const doubleNegative = validFixture();
     doubleNegative['.github/ISSUE_TEMPLATE/bug.md'] = BUG_TEMPLATE.replace(
-        'Redact tokens and credentials from attached logs.',
+        'Attach server logs and browser console logs. Redact tokens and credentials.',
         'Do not leave credentials unredacted.'
     );
     fixture(doubleNegative, root => {
@@ -746,7 +764,7 @@ test('redaction guidance requires positive, non-negated instructions in its owni
 
     const reversedRequirement = validFixture();
     reversedRequirement['.github/ISSUE_TEMPLATE/bug.md'] = BUG_TEMPLATE.replace(
-        'Redact tokens and credentials from attached logs.',
+        'Attach server logs and browser console logs. Redact tokens and credentials.',
         'Redact credentials? No.'
     );
     fixture(reversedRequirement, root => {
@@ -779,9 +797,18 @@ test('enforces GitHub template metadata and rendered issue-body link semantics',
 test('required intake sections cannot be empty headings', () => {
     const files = validFixture();
     files['.github/ISSUE_TEMPLATE/bug.md'] = BUG_TEMPLATE
-        .replace('## Regression and versions\nVersions.', '## Regression and versions\n')
-        .replace('## Client environment\nBrowser and OS.', '## Client environment\n')
-        .replace('## Relevant configuration\nConfiguration.', '## Relevant configuration\n');
+        .replace(
+            /## Regression and versions\n[\s\S]*?(?=## Server environment)/,
+            '## Regression and versions\n'
+        )
+        .replace(
+            /## Client environment\n[\s\S]*?(?=## Relevant configuration)/,
+            '## Client environment\n'
+        )
+        .replace(
+            /## Relevant configuration\n[\s\S]*?(?=## Logs)/,
+            '## Relevant configuration\n'
+        );
     fixture(files, root => {
         const problems = auditSupportContract({ root }).problems;
         for (const section of [
@@ -965,6 +992,231 @@ test('validates repository-relative links in hidden support and intake Markdown'
             '.github/SECURITY_GUIDELINES.md:1: link escapes repository: ../../SECURITY.md'
         ));
     });
+});
+
+test('audits MkDocs markdown-in-HTML and rendered accessible link names', () => {
+    const files = validFixture();
+    files['docs/getting-started.md'] = [
+        '# Getting started',
+        '',
+        '<div markdown="1">',
+        `[Ask for support](${DISCUSSIONS_ROUTE})`,
+        '</div>',
+        '',
+    ].join('\n');
+    files['site/index.html'] = [
+        '<main>',
+        `<a href="${DISCORD_ROUTE}"><img alt="Report bugs" src="pixel.png"></a>`,
+        '</main>',
+        '',
+    ].join('\n');
+    fixture(files, (root) => {
+        const sourceProblems = auditSupportContract({ root }).problems;
+        assert.ok(sourceProblems.includes(
+            'docs/getting-started.md: routes users to disabled GitHub Discussions'
+        ));
+        const renderedProblems = auditSupportContract({ root, checkBuiltSite: true }).problems;
+        assert.ok(renderedProblems.some(problem => (
+            problem.startsWith('site/index.html:')
+            && problem.includes('bug intake links must use a canonical GitHub Issues intake path')
+        )));
+    });
+});
+
+test('security ownership follows contextual headings, local fragments, and neutral references', () => {
+    const publicHeading = validFixture();
+    publicHeading['docs/getting-started.md'] = [
+        '## Security concerns',
+        `[Open a security issue](${ISSUES_ROUTE}).`,
+        '',
+    ].join('\n');
+    fixture(publicHeading, root => {
+        const problems = auditSupportContract({ root }).problems;
+        assert.ok(problems.some(problem => (
+            problem.startsWith('docs/getting-started.md:')
+            && problem.includes('security intake links must use private GitHub advisories')
+        )));
+        assert.ok(problems.includes(
+            'docs/getting-started.md: "Security concerns" must route only to private GitHub advisories'
+        ));
+    });
+
+    const inherited = validFixture();
+    inherited['SECURITY.md'] = inherited['SECURITY.md'].replace(
+        `[Submit a private report](${SECURITY_ADVISORY_ROUTE}).`,
+        '[Alternative instructions](docs/about.md#get-involved).'
+    );
+    fixture(inherited, root => {
+        assert.ok(auditSupportContract({ root }).problems.includes(
+            'SECURITY.md: "## Reporting a Vulnerability" must use only private GitHub advisories'
+        ));
+    });
+
+    const rawId = validFixture();
+    rawId['SECURITY.md'] = rawId['SECURITY.md'].replace(
+        `[Submit a private report](${SECURITY_ADVISORY_ROUTE}).`,
+        '[Submit a private report](docs/about.md#private-report-route).'
+    );
+    rawId['docs/about.md'] += [
+        '<a id="private-report-route"></a>',
+        `[Submit a vulnerability report](${SECURITY_ADVISORY_ROUTE}).`,
+        '',
+    ].join('\n');
+    fixture(rawId, root => {
+        const problems = auditSupportContract({ root }).problems;
+        assert.ok(
+            !problems.includes(
+                'SECURITY.md: "## Reporting a Vulnerability" must use only private GitHub advisories'
+            ),
+            problems.join('\n')
+        );
+    });
+
+    const neutral = validFixture();
+    neutral['SECURITY.md'] = neutral['SECURITY.md'].replace(
+        `[Submit a private report](${SECURITY_ADVISORY_ROUTE}).`,
+        `[Submit a private report](${SECURITY_ADVISORY_ROUTE}).\n`
+        + `[Security policy background](${ISSUES_ROUTE.replace('/issues', '')}).`
+    );
+    fixture(neutral, root => {
+        assert.ok(!auditSupportContract({ root }).problems.includes(
+            'SECURITY.md: "## Reporting a Vulnerability" must use only private GitHub advisories'
+        ));
+    });
+});
+
+test('pins public template metadata and substantive bug-report fields', () => {
+    const metadata = validFixture();
+    metadata['.github/ISSUE_TEMPLATE/bug.md'] = BUG_TEMPLATE
+        .replace('name: Bug report', 'name: Security vulnerability report')
+        .replace(
+            'about: Report a reproducible Jellyfin Canopy problem',
+            'about: Open a public security vulnerability issue'
+        )
+        .replace('labels: bug', 'labels: bug, security');
+    fixture(metadata, root => {
+        const problems = auditSupportContract({ root }).problems;
+        assert.ok(problems.includes(
+            '.github/ISSUE_TEMPLATE/bug.md: front matter name must equal "Bug report"'
+        ));
+        assert.ok(problems.includes(
+            '.github/ISSUE_TEMPLATE/bug.md: front matter must apply only the bug label'
+        ));
+    });
+
+    const fields = validFixture();
+    fields['.github/ISSUE_TEMPLATE/bug.md'] = BUG_TEMPLATE
+        .replace(
+            /## Regression and versions\n[\s\S]*?(?=## Server environment)/,
+            '## Regression and versions\nDetails.\n'
+        )
+        .replace(
+            /## Server environment\n[\s\S]*?(?=## Client environment)/,
+            '## Server environment\n\u200B\n'
+        );
+    fixture(fields, root => {
+        const problems = auditSupportContract({ root }).problems;
+        assert.ok(problems.some(problem => (
+            problem.includes('"## Regression and versions" must capture')
+            && problem.includes('Jellyfin server version')
+        )));
+        assert.ok(problems.includes(
+            '.github/ISSUE_TEMPLATE/bug.md: required section "## Server environment" '
+            + 'must include guidance or fields'
+        ));
+    });
+
+    const hidden = validFixture();
+    hidden['.github/ISSUE_TEMPLATE/bug.md'] = BUG_TEMPLATE.replace(
+        /## Server environment\n[\s\S]*?(?=## Client environment)/,
+        '## Server environment\n'
+        + '<span hidden>Server operating system or platform. Installation method.</span>\n'
+    );
+    fixture(hidden, root => {
+        assert.ok(auditSupportContract({ root }).problems.includes(
+            '.github/ISSUE_TEMPLATE/bug.md: required section "## Server environment" '
+            + 'must include guidance or fields'
+        ));
+    });
+});
+
+test('globally governs support routes, duplicate sections, and canonical issue intake paths', () => {
+    const files = validFixture();
+    files['docs/getting-started.md'] = [
+        '# Getting started',
+        `[Report bugs](${DISCORD_ROUTE}).`,
+        `[Share your idea](${DISCORD_ROUTE}).`,
+        '',
+    ].join('\n');
+    files['theme/partials/support.html'] = [
+        `<a href="${DISCORD_ROUTE}">Report an issue</a>`,
+        '',
+    ].join('\n');
+    files['docs/help.md'] += [
+        '## Request a feature',
+        `[Feature proposals](${DISCORD_ROUTE}).`,
+        '',
+    ].join('\n');
+    files['README.md'] = files['README.md']
+        .replace(ISSUES_ROUTE, `${ISSUES_ROUTE}/145`);
+    fixture(files, root => {
+        const problems = auditSupportContract({ root }).problems;
+        for (const file of ['docs/getting-started.md', 'theme/partials/support.html']) {
+            assert.ok(problems.some(problem => (
+                problem.startsWith(`${file}:`)
+                && problem.includes('bug intake links must use a canonical GitHub Issues intake path')
+            )));
+        }
+        assert.ok(problems.some(problem => (
+            problem.startsWith('docs/getting-started.md:')
+            && problem.includes('feature intake links must use a canonical GitHub Issues intake path')
+        )));
+        assert.ok(problems.includes(
+            'docs/help.md: must route every feature intake link to GitHub Issues '
+            + 'in "## Request a feature"'
+        ));
+        assert.ok(problems.some(problem => (
+            problem.startsWith('README.md:')
+            && problem.includes('canonical GitHub Issues intake path')
+        )));
+    });
+});
+
+test('distinguishes actionable Discussions guidance from explicit disabled-route prose', () => {
+    const actionable = validFixture();
+    actionable['docs/getting-started.md'] = '**Discussions**: Start a discussion on GitHub.\n';
+    fixture(actionable, root => {
+        assert.ok(auditSupportContract({ root }).problems.includes(
+            'docs/getting-started.md: routes users to disabled GitHub Discussions'
+        ));
+    });
+
+    const negated = validFixture();
+    negated['docs/getting-started.md'] = 'GitHub Discussions is not an intake route.\n';
+    fixture(negated, root => {
+        assert.ok(!auditSupportContract({ root }).problems.includes(
+            'docs/getting-started.md: routes users to disabled GitHub Discussions'
+        ));
+    });
+});
+
+test('allows relevance-gated and negated File Transformation guidance', () => {
+    for (const guidance of [
+        'File Transformation is not required for this report.',
+        'If File Transformation is involved, include its version and enabled state.',
+    ]) {
+        const files = validFixture();
+        files['.github/ISSUE_TEMPLATE/bug.md'] = BUG_TEMPLATE.replace(
+            '## Additional context',
+            `${guidance}\n\n## Additional context`
+        );
+        fixture(files, root => {
+            assert.ok(!auditSupportContract({ root }).problems.includes(
+                '.github/ISSUE_TEMPLATE/bug.md: '
+                + 'File Transformation cannot be a baseline bug-report requirement'
+            ));
+        });
+    }
 });
 
 test('build, release, and docs workflows keep the support contract in the blocking docs gate', () => {

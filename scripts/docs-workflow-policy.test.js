@@ -60,8 +60,8 @@ const DOCS_COMMANDS = [
     ['node', 'scripts/check-docs.js'],
     ['node', 'scripts/check-installation-permissions.js'],
     ['node', 'scripts/check-doc-assets.js'],
-    ['node', 'scripts/check-support-contract.js'],
     ['python', '-m', 'mkdocs', 'build', '--strict', '-d', 'site'],
+    ['node', 'scripts/check-support-contract.js'],
 ];
 
 function tokenizeBlockingChain(command) {

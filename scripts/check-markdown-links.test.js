@@ -214,6 +214,27 @@ test('records each link position and scans quoted HTML delimiters before href', 
     assert.equal(isActionableLink(links[2]), true);
 });
 
+test('extracts MkDocs markdown-in-HTML links and image-only accessible names', () => {
+    const links = extractLinks([
+        '<div markdown="1">',
+        '[Ask for support](https://github.com/owner/repository/discussions)',
+        '</div>',
+        '',
+        '<a href="https://discord.gg/example"><img alt="Report bugs" src="pixel.png"></a>',
+        '',
+    ].join('\n'));
+    assert.ok(links.some(link => (
+        link.target === 'https://github.com/owner/repository/discussions'
+        && link.label === 'Ask for support'
+        && link.line === 2
+    )));
+    assert.ok(links.some(link => (
+        link.target === 'https://discord.gg/example'
+        && link.label === 'Report bugs'
+        && link.line === 5
+    )));
+});
+
 test('validates quoted and unquoted raw HTML links without reserving heading slugs', () => {
     fixture({
         'CONTRIBUTING.md': '<span id=local-id></span>\n[Local](#local-id)\n<img src=docs/missing.png>\n',

@@ -56,11 +56,35 @@ function stripHtmlComments(content) {
     return rendered;
 }
 
-function visibleHtmlText(content) {
+function htmlAttributeValue(tag, name) {
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const pattern = new RegExp(
+        `(?:^|\\s)${escaped}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s"'=<>` + '`' + `]+))`,
+        'i'
+    );
+    const match = tag.match(pattern);
+    return match ? markdown.utils.unescapeAll(match[1] ?? match[2] ?? match[3]) : '';
+}
+
+function accessibleHtmlText(content) {
     const visible = stripHtmlComments(content)
         .replace(/<(script|style)\b[\s\S]*?<\/\1\s*>/gi, ' ')
+        .replace(
+            /<([a-z][a-z0-9:-]*)\b(?=[^>]*(?:\shidden(?:\s|=|>)|\saria-hidden\s*=\s*["']?true\b|\sstyle\s*=\s*["'][^"']*(?:display\s*:\s*none|visibility\s*:\s*hidden)))(?:[^>"']|"[^"]*"|'[^']*')*>[\s\S]*?<\/\1\s*>/gi,
+            ' '
+        )
+        .replace(/<img\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi, (tag) => {
+            const name = htmlAttributeValue(tag, 'alt')
+                || htmlAttributeValue(tag, 'aria-label')
+                || htmlAttributeValue(tag, 'title');
+            return name ? ` ${name} ` : ' ';
+        })
         .replace(/<[^>]*>/g, ' ');
     return markdown.utils.unescapeAll(visible);
+}
+
+function visibleHtmlText(content) {
+    return accessibleHtmlText(content);
 }
 
 function htmlAttributeRecords(content) {
@@ -207,16 +231,23 @@ function htmlAnchorRecords(content) {
     while ((match = opening.exec(content)) !== null) {
         const openingEnd = htmlOpeningTagEnd(content, match.index);
         if (openingEnd === -1) break;
+        const openingTag = content.slice(match.index, openingEnd);
         closing.lastIndex = openingEnd;
         const close = closing.exec(content);
         const anchorEnd = close ? close.index + close[0].length : openingEnd;
+        const nestedName = close
+            ? accessibleHtmlText(content.slice(openingEnd, close.index)).replace(/\s+/g, ' ').trim()
+            : '';
         anchors.push({
             start: match.index,
             openingEnd,
             end: anchorEnd,
-            label: close ? compactVisibleText(content.slice(openingEnd, close.index)) : '',
-            contextBefore: compactVisibleText(content.slice(0, match.index)),
-            contextAfter: compactVisibleText(content.slice(anchorEnd)),
+            closed: Boolean(close),
+            label: htmlAttributeValue(openingTag, 'aria-label')
+                || nestedName
+                || htmlAttributeValue(openingTag, 'title'),
+            contextBefore: compactVisibleText(content.slice(Math.max(0, match.index - 2_000), match.index)),
+            contextAfter: compactVisibleText(content.slice(anchorEnd, anchorEnd + 2_000)),
         });
         opening.lastIndex = anchorEnd;
     }
@@ -270,7 +301,7 @@ function inlineHtmlAnchorRecord(children, start) {
     const opening = children[start]?.content || '';
     const anchor = htmlAnchorRecords(opening)[0];
     if (!anchor) return null;
-    if (anchor.label) return { label: anchor.label, endIndex: start };
+    if (anchor.closed && anchor.label) return { label: anchor.label, endIndex: start };
     let label = compactVisibleText(opening.slice(anchor.openingEnd));
     for (let index = start + 1; index < children.length; index += 1) {
         const child = children[index];
@@ -280,7 +311,10 @@ function inlineHtmlAnchorRecord(children, start) {
                 ? child.content
                 : child.content.slice(0, closing));
             if (closing !== -1) {
-                return { label: label.replace(/\s+/g, ' ').trim(), endIndex: index };
+                return {
+                    label: label.replace(/\s+/g, ' ').trim() || anchor.label,
+                    endIndex: index,
+                };
             }
         } else if (child.type === 'text' || child.type === 'code_inline') {
             label += child.content;
@@ -400,7 +434,7 @@ function extractLinksFromTokens(tokens) {
             } else if (child.type === 'html_inline') {
                 const html = htmlLinks(child.content, childLine);
                 const record = inlineHtmlAnchorRecord(children, index);
-                const anchor = html.find(link => link.type === 'link' && !link.label);
+                const anchor = html.find(link => link.type === 'link');
                 if (anchor && record?.label) anchor.label = record.label;
                 for (const link of html) {
                     link.context = context;
@@ -419,8 +453,58 @@ function extractLinksFromTokens(tokens) {
     return links;
 }
 
+function markdownInHtmlLinks(source) {
+    const links = [];
+    const opening = /<([a-z][a-z0-9:-]*)\b/gi;
+    let match;
+    while ((match = opening.exec(source)) !== null) {
+        const openingEnd = htmlOpeningTagEnd(source, match.index);
+        if (openingEnd === -1) break;
+        const openingTag = source.slice(match.index, openingEnd);
+        if (htmlAttributeValue(openingTag, 'markdown') !== '1') {
+            opening.lastIndex = openingEnd;
+            continue;
+        }
+        const closing = new RegExp(`</${match[1]}\\s*>`, 'ig');
+        closing.lastIndex = openingEnd;
+        const close = closing.exec(source);
+        if (!close) {
+            opening.lastIndex = openingEnd;
+            continue;
+        }
+        const body = source.slice(openingEnd, close.index);
+        const lineOffset = source.slice(0, openingEnd).split('\n').length - 1;
+        for (const link of extractLinks(body)) {
+            links.push({ ...link, line: link.line + lineOffset });
+        }
+        opening.lastIndex = close.index + close[0].length;
+    }
+    return links;
+}
+
 function extractLinks(source) {
-    return extractLinksFromTokens(markdown.parse(source, {}));
+    const links = [
+        ...extractLinksFromTokens(markdown.parse(source, {})),
+        ...markdownInHtmlLinks(source),
+    ];
+    const seen = new Set();
+    return links.filter((link) => {
+        const key = [
+            link.target,
+            link.line,
+            link.type,
+            link.label,
+            link.contextBefore,
+            link.contextAfter,
+        ].join('\u0000');
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+    });
+}
+
+function extractRenderedHtmlLinks(source) {
+    return htmlLinks(source, 1);
 }
 
 function isActionableLink(link) {
@@ -532,6 +616,7 @@ module.exports = {
     collectMarkdownFiles,
     extractLinks,
     extractLinksFromTokens,
+    extractRenderedHtmlLinks,
     headingSlug,
     htmlAttributes,
     isActionableLink,
