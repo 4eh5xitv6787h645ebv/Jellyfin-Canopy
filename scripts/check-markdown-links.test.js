@@ -120,31 +120,36 @@ test('extracts browser-equivalent links without treating images or empty anchors
         target: link.target,
         line: link.line,
         type: link.type,
+        label: link.label,
         actionable: isActionableLink(link),
     })), [
         {
             target: 'https://github.com/owner/repository/issues',
             line: 1,
             type: 'image',
+            label: 'Image',
             actionable: false,
         },
         {
             target: 'https://github.com/owner/repository/issues',
             line: 2,
             type: 'link',
+            label: '',
             actionable: false,
         },
         {
             target: 'http://www.github.com/owner/repository/discussions',
             line: 1,
             type: 'link',
+            label: 'www.github.com/owner/repository/discussions',
             actionable: true,
         },
         {
             target: 'https://github.com/owner/repository/issues/../discussions',
             line: 2,
             type: 'link',
-            actionable: false,
+            label: 'Entity',
+            actionable: true,
         },
     ]);
     assert.deepEqual(extractLinks(

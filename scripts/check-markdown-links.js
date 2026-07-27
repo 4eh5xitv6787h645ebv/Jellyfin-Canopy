@@ -62,16 +62,21 @@ function visibleHtmlText(content) {
         .replace(/<[^>]*>/g, ' ');
 }
 
-function htmlAttributes(content) {
+function htmlAttributeRecords(content) {
     const attributes = [];
     const pattern = /(?:^|[\s<])(id|href|src|srcset)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/gi;
     for (const match of stripHtmlComments(content).matchAll(pattern)) {
         attributes.push({
             name: match[1].toLowerCase(),
             value: markdown.utils.unescapeAll(match[2] ?? match[3] ?? match[4]),
+            index: match.index,
         });
     }
     return attributes;
+}
+
+function htmlAttributes(content) {
+    return htmlAttributeRecords(content).map(({ name, value }) => ({ name, value }));
 }
 
 function htmlIds(tokens) {
@@ -175,13 +180,25 @@ function markdownAnchors(source, dialect = 'github') {
 
 function htmlLinks(content, line) {
     const links = [];
-    for (const attribute of htmlAttributes(content)) {
+    const visible = stripHtmlComments(content);
+    const anchors = [...visible.matchAll(/<a\b[^>]*>([\s\S]*?)<\/a\s*>/gi)].map((match) => {
+        const openingLength = match[0].indexOf('>') + 1;
+        return {
+            start: match.index,
+            end: match.index + openingLength,
+            label: visibleHtmlText(match[1]).replace(/\s+/g, ' ').trim(),
+        };
+    });
+    for (const attribute of htmlAttributeRecords(content)) {
         if (attribute.name === 'href') {
+            const anchor = anchors.find(candidate => (
+                attribute.index >= candidate.start && attribute.index < candidate.end
+            ));
             links.push({
                 target: normalizeLinkTarget(attribute.value),
                 line,
                 type: 'link',
-                label: '',
+                label: anchor?.label || '',
             });
         } else if (attribute.name === 'src') {
             links.push({
@@ -205,6 +222,34 @@ function htmlLinks(content, line) {
         }
     }
     return links;
+}
+
+function inlineHtmlAnchorLabel(children, start) {
+    const opening = children[start]?.content || '';
+    if (!/<a\b/i.test(opening)) return '';
+    let label = visibleHtmlText(opening);
+    if (/<\/a\s*>/i.test(opening)) return label.replace(/\s+/g, ' ').trim();
+    let closed = false;
+    for (let index = start + 1; index < children.length; index += 1) {
+        const child = children[index];
+        if (child.type === 'html_inline') {
+            const closing = child.content.search(/<\/a\s*>/i);
+            label += visibleHtmlText(closing === -1
+                ? child.content
+                : child.content.slice(0, closing));
+            if (closing !== -1) {
+                closed = true;
+                break;
+            }
+        } else if (child.type === 'text' || child.type === 'code_inline') {
+            label += child.content;
+        } else if (child.type === 'image') {
+            label += child.content;
+        } else if (child.type === 'softbreak' || child.type === 'hardbreak') {
+            label += ' ';
+        }
+    }
+    return closed ? label.replace(/\s+/g, ' ').trim() : '';
 }
 
 function normalizeLinkTarget(target) {
@@ -274,7 +319,11 @@ function extractLinksFromTokens(tokens) {
             } else if (child.type === 'text' && linkDepth === 0) {
                 links.push(...wwwAutolinks(child.content, childLine));
             } else if (child.type === 'html_inline') {
-                links.push(...htmlLinks(child.content, childLine));
+                const html = htmlLinks(child.content, childLine);
+                const label = inlineHtmlAnchorLabel(children, index);
+                const anchor = html.find(link => link.type === 'link' && !link.label);
+                if (anchor && label) anchor.label = label;
+                links.push(...html);
             }
             if (child.type === 'softbreak' || child.type === 'hardbreak') childLine += 1;
         }

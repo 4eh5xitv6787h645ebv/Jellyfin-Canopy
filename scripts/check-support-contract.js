@@ -72,7 +72,7 @@ const SUPPORT_ROUTE_SECTIONS = new Map([
 ]);
 const BUG_ROUTE_LABEL = /\b(?:bug(?:s|[- ]reports?)?|report(?: an)? issues?|github issues)\b/i;
 const FEATURE_ROUTE_LABEL = /\b(?:feature|proposal|suggest)/i;
-const SUPPORT_ROUTE_LABEL = /\bdiscord\b/i;
+const SUPPORT_ROUTE_LABEL = /\b(?:discord|support|help|questions?|community)\b/i;
 const SECURITY_INTAKE_HEADING = /(?:\b(?:report(?:ing)?|submit(?:ting)?|disclos(?:e|ing|ures?)|intake)\b.{0,80}\b(?:security|vulnerab\w*)\b|\b(?:security|vulnerab\w*)\b.{0,80}\b(?:report(?:ing)?|submit(?:ting)?|disclos(?:e|ing|ures?)|intake)\b)/i;
 const markdown = new MarkdownIt({ html: true, linkify: true });
 markdown.linkify.set({ fuzzyEmail: false, fuzzyLink: false });
@@ -261,6 +261,12 @@ function absoluteUrl(target) {
     }
 }
 
+function isLocalDocumentationReference(target) {
+    const normalized = normalizeLinkTarget(target);
+    if (absoluteUrl(normalized)) return false;
+    return normalized.startsWith('#') || /\.md(?:[?#]|$)/i.test(normalized);
+}
+
 function repositoryPath(target) {
     const url = absoluteUrl(target);
     if (!url || !['http:', 'https:'].includes(url.protocol)) return '';
@@ -297,7 +303,7 @@ function isExactHttpsRoute(link, route) {
 
 function hasOnlyExactHttpsRoute(tokens, route) {
     const links = extractLinksFromTokens(tokens).filter(link => (
-        link?.type === 'link' && absoluteUrl(link.target)
+        link?.type === 'link' && !isLocalDocumentationReference(link.target)
     ));
     return links.some(link => isActionableLink(link) && isExactHttpsRoute(link, route))
         && links.every(link => isExactHttpsRoute(link, route));
@@ -305,7 +311,7 @@ function hasOnlyExactHttpsRoute(tokens, route) {
 
 function hasOnlySemanticRoute(tokens, labelPattern, predicate) {
     const links = actionableLinks(tokens).filter(link => (
-        absoluteUrl(link.target) && labelPattern.test(link.label)
+        !isLocalDocumentationReference(link.target) && labelPattern.test(link.label)
     ));
     return links.length > 0 && links.every(predicate);
 }
@@ -372,6 +378,11 @@ function hasFileTransformationRequirement(body) {
 function requiresSensitiveRedaction(text) {
     const rejectsRedaction = /\b(?:unredacted|do not redact|don't redact|never redact|no need to redact|not (?:required|needed|necessary|mandatory) to redact|without redacting)\b/i
         .test(text)
+        || /\b(?:do not|don't|never)\s+(?:need|have)\s+to\s+(?:be\s+)?redact(?:ed|ing)?\b/i
+            .test(text)
+        || /\bneed\s+not\s+be\s+redacted\b/i.test(text)
+        || /\b(?:is|are)\s+not\s+(?:required|needed|necessary|mandatory)\s+to\s+be\s+redacted\b/i
+            .test(text)
         || /\bredact(?:ion|ing)?\b.{0,160}\b(?:is|are)(?:\s+not|n't)\s+(?:required|needed|necessary|mandatory)\b/i
             .test(text)
         || /\bredact(?:ion|ing)?\b.{0,160}\b(?:is|are)\s+(?:optional|unnecessary)\b/i

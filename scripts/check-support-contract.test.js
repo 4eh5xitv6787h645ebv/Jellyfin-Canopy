@@ -330,6 +330,7 @@ test('one correct semantic route cannot hide a second route to the wrong destina
         '## 🌍 Contributing',
         `[Report bugs](${ISSUES_ROUTE}).`,
         `[Open a bug report](${DISCORD_ROUTE}).`,
+        `<a href="${DISCORD_ROUTE}">Open another bug report</a>.`,
         `[Suggest features](${ISSUES_ROUTE}).`,
         `[Feature proposals](${DISCORD_ROUTE}).`,
         '',
@@ -337,7 +338,7 @@ test('one correct semantic route cannot hide a second route to the wrong destina
     files['CONTRIBUTING.md'] = files['CONTRIBUTING.md'].replace(
         `[Jellyfin Community Discord](${DISCORD_ROUTE}).`,
         `[Jellyfin Community Discord](${DISCORD_ROUTE}).\n`
-        + `[Discord fallback](${ISSUES_ROUTE}).`
+        + `[Ask for support](${ISSUES_ROUTE}).`
     );
     fixture(files, root => {
         const problems = auditSupportContract({ root }).problems;
@@ -449,7 +450,7 @@ test('redaction guidance requires positive, non-negated instructions in its owni
         );
     files['.github/ISSUE_TEMPLATE/feature_request.md'] = FEATURE_TEMPLATE.replace(
         'Do not include credentials or sensitive data.',
-        'Do not redact credentials or sensitive data.'
+        'Credentials and sensitive data do not need to be redacted.'
     );
     fixture(files, root => {
         const problems = auditSupportContract({ root }).problems;
