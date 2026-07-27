@@ -112,13 +112,29 @@ wait_up() {
 }
 wait_up
 
+# /System/Info/Public answers 200 well before the server will accept a startup-wizard
+# POST, which returns 503 until initialisation finishes. Liveness is not readiness:
+# retry until the first wizard call is actually accepted.
+retry() {
+  local attempts="$1"; shift
+  local n=1
+  until "$@"; do
+    if [ "$n" -ge "$attempts" ]; then
+      echo "gave up after $attempts attempts: $*" >&2
+      return 1
+    fi
+    n=$((n + 1))
+    sleep 3
+  done
+}
+
 log "Complete startup wizard"
-curl -sf -o /dev/null -X POST "$B/Startup/Configuration" -H 'Content-Type: application/json' \
+retry 40 curl -sf -o /dev/null -X POST "$B/Startup/Configuration" -H 'Content-Type: application/json' \
   -d '{"UICulture":"en-US","MetadataCountryCode":"US","PreferredMetadataLanguage":"en"}'
-curl -sf -o /dev/null "$B/Startup/User"
-curl -sf -o /dev/null -X POST "$B/Startup/User" -H 'Content-Type: application/json' \
+retry 10 curl -sf -o /dev/null "$B/Startup/User"
+retry 10 curl -sf -o /dev/null -X POST "$B/Startup/User" -H 'Content-Type: application/json' \
   -d "{\"Name\":\"$ADMIN_USER\",\"Password\":\"$ADMIN_PW\"}"
-curl -sf -o /dev/null -X POST "$B/Startup/Complete"
+retry 10 curl -sf -o /dev/null -X POST "$B/Startup/Complete"
 
 read_token() { python3 -c 'import json,sys; print(json.load(sys.stdin)["AccessToken"])'; }
 TOKEN="$(curl -sf -X POST "$B/Users/AuthenticateByName" -H 'Content-Type: application/json' \
@@ -176,6 +192,8 @@ docker exec "$NAME" sh -c '
   ln -sfn meta.json     /config/plugins/Ep00SpikeHost_1.0.0.0/inside-file'
 docker restart "$NAME" >/dev/null
 wait_up
+# Plugin controllers are routed a little after the server answers /System/Info.
+retry 40 test "$(curl -s -o /dev/null -w '%{http_code}' "$B/Ep00Spike/Discovery")" = 200
 
 log "Probe B — load contexts and type identity"
 curl -s "$B/Ep00Spike/Self" -H "$AUTH" | python3 -m json.tool
@@ -281,6 +299,9 @@ docker exec "$NAME" sh -c 'rm -rf /config/plugins/Ep00SpikeHost_1.0.0.0'
 docker restart "$NAME" >/dev/null; wait_up /jf
 printf '  jellyfin health : %s\n' "$(curl -s -o /dev/null -w '%{http_code}' "$B/jf/System/Info/Public")"
 printf '  host route      : %s\n' "$(curl -s -o /dev/null -w '%{http_code}' "$B/jf/Ep00Spike/Discovery")"
-printf '  boot errors     : %s\n' "$(docker logs "$NAME" 2>&1 | tail -200 | grep -c '\[ERR\]')"
+# Count errors for THIS boot only. `tail -200` would inspect a window, not a boot,
+# and would quietly under-report on a chatty startup.
+BOOT_START="$(docker inspect "$NAME" --format '{{.State.StartedAt}}')"
+printf '  boot errors     : %s\n' "$(docker logs --since "$BOOT_START" "$NAME" 2>&1 | grep -c '\[ERR\]' || true)"
 
 log "Done — the container and its temporary state are removed on exit."
