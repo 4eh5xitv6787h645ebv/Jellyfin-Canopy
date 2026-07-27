@@ -1,17 +1,12 @@
 /* =============================================================================
-   Jellyfin Canopy — Config Page Stylesheet (Modernized)
+   Jellyfin Canopy — Config Page Stylesheet (Verdant, ground-up rewrite)
+   Layers: 1 tokens · 2 base · 3 shell · 4 nav · 5 editorial forms ·
+           6 dashboards · 7 components · 8 wizard+essentials · 9 responsive
    ============================================================================= */
 
 /* ---------------------------------------------------------------------------
-   Theme-aware surface palette
-   ---------------------------------------------------------------------------
-   Jellyfin ships multiple themes (Dark, Pumpkin, Light, WMC, Blue Radiance,
-   Apple TV, Purple Haze). Each swaps a whole theme.css at runtime with
-   hardcoded colors — no CSS-variable contract we can rely on. So we define
-   our own small palette below, with dark defaults and a `.jc-light-theme`
-   override block that kicks in when a tiny JS detector at page load decides
-   the current theme has a light body. `@media (prefers-color-scheme: light)`
-   acts as a secondary fallback for browser-level preferences.
+   1. TOKENS — theme-adaptive Verdant palette (guarded blocks; light block and
+   the media-query fallback are exact clones by test contract)
    --------------------------------------------------------------------------- */
 #JellyfinCanopyPage {
     /* Card surface: deep forest panel on dark (Verdant undertone), paper-sage
@@ -168,21 +163,20 @@
        light theme sheet and the plugin page initialize at different times. */
     color: var(--jc-text-strong);
     font-family: inherit;
+
+/* ===========================================================================
+   2. BASE — page root, focus ownership, display type, motion
+   =========================================================================== */
+
+#JellyfinCanopyPage {
+    /* Pair the page foreground with its own surface palette; host themes and
+       this page initialize at different times, so never inherit host color. */
+    color: var(--jc-text-strong);
+    font-family: inherit;
 }
 
-/* Verdant display type: serif titles carry the page's editorial identity.
-   Body copy and controls stay on the host sans for native feel. */
-#JellyfinCanopyPage .jc-page-title,
-#JellyfinCanopyPage legend.sectionTitle,
-#JellyfinCanopyPage .jc-preview-panel-title {
-    font-family: var(--jc-display-font);
-    font-weight: 450;
-    letter-spacing: 0.005em;
-}
-
-/* A single keyboard-focus owner covers native controls plus Canopy's custom
-   nav, tabs, cards and action buttons. Host themes are free to restyle their
-   own dashboard controls, but cannot erase focus inside this page. */
+/* Single keyboard-focus owner for every interactive element on the page.
+   Host themes may restyle their own controls but cannot erase focus here. */
 #JellyfinCanopyPage :is(
     button,
     a[href],
@@ -195,24 +189,31 @@
     outline-offset: 3px;
 }
 
-/* Override Jellyfin admin's `.content-primary form { max-width: ~803px }`
-   default. The page-id prefix gives us higher specificity than the
-   admin theme, so we don't need !important.
-   Cap at 2400px so the tab grid (auto-fit, minmax(480px, 1fr)) can fit
-   4-5 cards on ultrawide while preventing single-row content (Overview's
-   status dashboard, Integration Health, Quick Actions — all of which span
-   `grid-column: 1 / -1`) from stretching across a 4K/5K viewport at a
-   single huge column. 2400px = 4 full cards at 480px wide + gaps. */
+/* Verdant display type: serif titles carry the editorial identity; body copy
+   and controls stay on the host sans for native feel. */
+#JellyfinCanopyPage .jc-page-title,
+#JellyfinCanopyPage legend.sectionTitle,
+#JellyfinCanopyPage .jc-preview-panel-title,
+#JellyfinCanopyPage .jc-wiz-title,
+#JellyfinCanopyPage .jc-ess-title {
+    font-family: var(--jc-display-font);
+    font-weight: 450;
+    letter-spacing: 0.005em;
+}
+
+/* Jellyfin admin caps forms at ~803px; the page-id prefix outranks it. */
 #JellyfinCanopyPage #JellyfinCanopyForm {
     max-width: 2400px;
     width: 100%;
     margin: 0 auto;
-    padding-bottom: 120px; /* Space for sticky footer */
+    padding-bottom: 120px; /* room for the floating save dock */
 }
 
-/* ---------------------------------------------------------------------------
-   Animations
-   --------------------------------------------------------------------------- */
+/* Sticky positioning needs the ancestor's overflow released (scoped). */
+#JellyfinCanopyPage[data-role="page"] > [data-role="content"] {
+    overflow: visible;
+}
+
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes shake {
     10%, 90% { transform: translate3d(-1px, 0, 0); }
@@ -224,26 +225,13 @@
     from { opacity: 0; transform: translateY(20px); }
     to { opacity: 1; transform: translateY(0); }
 }
-
 .status-check { animation: spin 1s linear infinite; }
 .shake { animation: shake 0.82s cubic-bezier(.36,.07,.19,.97) both; }
 
-/* ---------------------------------------------------------------------------
-   Sticky header region — title + search + tab bar stay pinned at the
-   viewport top; only the form content scrolls.
-   Jellyfin's `[data-role="content"]` ancestor sets `overflow: hidden`
-   which kills `position: sticky`. Override that ancestor (scoped to
-   our page) so sticky works on window scroll.
-   --------------------------------------------------------------------------- */
-#JellyfinCanopyPage[data-role="page"] > [data-role="content"] {
-    overflow: visible;
-}
+/* ===========================================================================
+   3. SHELL — sidebar grid, drawer, z-band 2000-2003 (+ wizard at 2500)
+   =========================================================================== */
 
-/* ---------------------------------------------------------------------------
-   Settings-app shell: a sticky section sidebar on the left (brand, search,
-   section nav, page actions) and the active section's pane on the right.
-   Collapses to an off-canvas drawer + floating toggle below 900px.
-   --------------------------------------------------------------------------- */
 .jc-shell {
     display: grid;
     grid-template-columns: 252px minmax(0, 1fr);
@@ -262,10 +250,9 @@
     border-radius: 14px;
     background: var(--jc-card-bg, rgba(22, 22, 22, 0.94));
     box-shadow: 0 6px 22px rgba(0, 0, 0, 0.22);
+    overflow-y: auto;
 }
-.jc-main {
-    min-width: 0;
-}
+.jc-main { min-width: 0; }
 .jc-side-foot {
     display: flex;
     gap: 8px;
@@ -273,11 +260,11 @@
     justify-content: space-between;
     padding-top: 12px;
     border-top: 1px solid var(--jc-border);
+    margin-top: auto;
 }
 
-/* Mobile drawer toggle: floating pill, hidden on desktop. Pinned to the
-   dark surface palette in BOTH themes: the small white label needs a solid
-   dark backing — the brand gradient's cyan end fails contrast under it. */
+/* Mobile drawer toggle: pinned to the dark Verdant surface in BOTH themes —
+   the literal dark backing is what licenses the white label. */
 .jc-nav-toggle {
     display: none;
     position: fixed;
@@ -304,14 +291,9 @@
     opacity: 0;
     transition: opacity 200ms ease;
 }
-
 @media (max-width: 900px) {
-    .jc-shell {
-        display: block;
-    }
-    .jc-nav-toggle {
-        display: inline-flex;
-    }
+    .jc-shell { display: block; }
+    .jc-nav-toggle { display: inline-flex; }
     .jc-sidebar {
         position: fixed;
         top: 0;
@@ -324,21 +306,14 @@
         transform: translateX(-102%);
         transition: transform 220ms ease;
     }
-    .jc-shell.jc-nav-open .jc-sidebar {
-        transform: translateX(0);
-    }
-    .jc-shell.jc-nav-open .jc-nav-scrim {
-        display: block;
-        opacity: 1;
-    }
+    .jc-shell.jc-nav-open .jc-sidebar { transform: translateX(0); }
+    .jc-shell.jc-nav-open .jc-nav-scrim { display: block; opacity: 1; }
 }
 
-/* ---------------------------------------------------------------------------
-   Header & Search Bar
-   --------------------------------------------------------------------------- */
-/* Brand lockup: embedded Canopy mark + gradient wordmark at the top of the
-   sidebar, with the signature gradient hairline underneath. Explicit img
-   dimensions in the markup reserve the box before the SVG loads (no shift). */
+/* ===========================================================================
+   4. NAV — brand, mode switch, search, branch rail, section strip
+   =========================================================================== */
+
 #JellyfinCanopyPage .jc-brand-lockup {
     position: relative;
     display: flex;
@@ -360,40 +335,43 @@
     opacity: 0.55;
     pointer-events: none;
 }
-#JellyfinCanopyPage .jc-brand-mark {
-    /* Verdant tree mark, shipped as a data URI so the admin page needs no
-       extra served asset. Fixed box reserves layout before paint. */
-    flex: none;
-    display: inline-block;
-    width: 30px;
-    height: 26px;
-    background: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjI2NSAyMTIgNzI0IDYxMCIgcm9sZT0iaW1nIiBhcmlhLWxhYmVsbGVkYnk9InRpdGxlIiBzaGFwZS1yZW5kZXJpbmc9Imdlb21ldHJpY1ByZWNpc2lvbiI+CiAgPHRpdGxlIGlkPSJ0aXRsZSI+SmVsbHlmaW4gQ2Fub3B5IG1hcmsgKFZlcmRhbnQpPC90aXRsZT4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0ibWFya0dyYWRpZW50IiBncmFkaWVudFVuaXRzPSJ1c2VyU3BhY2VPblVzZSIgeDE9IjI4MyIgeTE9IjAiIHgyPSI5NzEiIHkyPSIwIj4KICAgICAgPHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjM0I2QjMzIi8+CiAgICAgIDxzdG9wIG9mZnNldD0iMC4zNSIgc3RvcC1jb2xvcj0iIzVFOEE1MiIvPgogICAgICA8c3RvcCBvZmZzZXQ9IjAuNyIgc3RvcC1jb2xvcj0iIzdGQTk2OCIvPgogICAgICA8c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiNBNEM5ODciLz4KICAgIDwvbGluZWFyR3JhZGllbnQ+CiAgPC9kZWZzPgoKICA8cGF0aCBkPSJNIDMzMCAzODEgTCAzMjYgMzg5IEwgMzI1IDM5OCBMIDMyOCA0MDcgTCAzMzQgNDE0IEwgMzIwIDQ0MCBMIDMwOCA0NzIgTCAzMDYgNDc0IEwgMzAwIDQ3NCBMIDI5MyA0NzcgTCAyODUgNDg1IEwgMjgzIDQ5MCBMIDI4MyA1MDIgTCAyODcgNTEwIEwgMjk3IDUxNyBMIDMxMSA1MTggTCAzMjEgNTExIEwgMzI1IDUxMSBMIDM4MyA1NDEgTCAzOTEgNTQ3IEwgMzkxIDU2NCBMIDM3OCA1NzMgTCAzMjIgNjAwIEwgMzE4IDU5NiBMIDMwOSA1OTIgTCAzMDIgNTkyIEwgMjkzIDU5NiBMIDI4OSA2MDAgTCAyODUgNjEyIEwgMjg2IDYxOCBMIDI5MyA2MjggTCAzMDIgNjMyIEwgMzEwIDYzMiBMIDMxNyA2MjkgTCAzMjUgNjE5IEwgMzI2IDYwOCBMIDMyOCA2MDYgTCAzOTUgNTc0IEwgNDExIDU4NCBMIDQyNiA1ODQgTCA0MzggNTc4IEwgNDQ0IDU3MSBMIDQ0NiA1NjUgTCA0NTMgNTU5IEwgNDY0IDU1NCBMIDQ5MSA1NDkgTCA1MTYgNTUyIEwgNTI2IDU1NiBMIDUzOSA1NjUgTCA1NDkgNTc2IEwgNTU2IDU4OCBMIDU2NCA2MTIgTCA1NjggNjQ0IEwgNTY2IDY4MyBMIDU1NyA3MjAgTCA1NDMgNzQ3IEwgNTI0IDc2OCBMIDUxNSA3NzUgTCA0OTMgNzg3IEwgNDU3IDc5OCBMIDQyNiA4MDMgTCA1MzAgODAzIEwgNTUwIDgwMCBMIDU2NSA3OTUgTCA1ODUgNzgzIEwgNjAzIDc2NCBMIDYxOCA3MzcgTCA2MjYgNzEzIEwgNjI4IDcxNCBMIDYzNSA3MzcgTCA2NTMgNzY4IEwgNjY5IDc4NCBMIDY5MCA3OTYgTCA3MDMgODAwIEwgNzIzIDgwMyBMIDgyNiA4MDMgTCA3NzkgNzk0IEwgNzQ0IDc3OSBMIDczMSA3NzAgTCA3MTIgNzUwIEwgNzA2IDc0MSBMIDY5NCA3MTUgTCA2ODcgNjg0IEwgNjg1IDY1OCBMIDY4NiA2MzEgTCA2OTAgNjA4IEwgNjk3IDU4OCBMIDcwNSA1NzUgTCA3MTkgNTYxIEwgNzM0IDU1MyBMIDc0NSA1NTAgTCA3NjMgNTQ5IEwgNzg5IDU1NCBMIDgwMiA1NjAgTCA4MDcgNTY1IEwgODEyIDU3NSBMIDgxOSA1ODEgTCA4MzIgNTg1IEwgODQ1IDU4MyBMIDg1NyA1NzQgTCA5MjYgNjA3IEwgOTI3IDYxNiBMIDkzMCA2MjMgTCA5MzYgNjI5IEwgOTQzIDYzMiBMIDk1NyA2MzAgTCA5NjYgNjIwIEwgOTY3IDYwNyBMIDk2MyA1OTkgTCA5NTggNTk1IEwgOTQ2IDU5MiBMIDk0MSA1OTMgTCA5MzAgNjAwIEwgODY3IDU2OSBMIDg2MiA1NjUgTCA4NjIgNTQ3IEwgODczIDUzOSBMIDkyOCA1MTEgTCA5MzIgNTExIEwgOTM2IDUxNSBMIDk0MyA1MTggTCA5NTQgNTE4IEwgOTYzIDUxMyBMIDk2OSA1MDQgTCA5NzAgNDkxIEwgOTY3IDQ4NCBMIDk2MCA0NzcgTCA5NTMgNDc0IEwgOTQ3IDQ3NCBMIDk0NSA0NzIgTCA5MzYgNDQ3IEwgOTE5IDQxNSBMIDkyNSA0MDcgTCA5MjggMzk3IEwgOTI1IDM4NCBMIDkxOSAzNzcgTCA5MTEgMzczIEwgOTAyIDM3MiBMIDg5MyAzNzUgTCA4NTEgMzM0IEwgODUzIDMyNiBMIDg1MiAzMTcgTCA4NDMgMzA2IEwgODM3IDMwMyBMIDgyNyAzMDMgTCA4MTQgMzA5IEwgNzg0IDI5MiBMIDc1OSAyODEgTCA3NTkgMjcwIEwgNzU2IDI2MyBMIDc1MiAyNTggTCA3NDUgMjU0IEwgNzMwIDI1NCBMIDcyMyAyNTggTCA3MTcgMjY2IEwgNjU5IDI1OCBMIDY1MiAyNDIgTCA2NDMgMjM0IEwgNjMzIDIzMCBMIDYyMCAyMzAgTCA2MTAgMjM0IEwgNjAxIDI0MiBMIDU5NSAyNTYgTCA1ODggMjU5IEwgNTM2IDI2NiBMIDUyNyAyNTYgTCA1MTkgMjUzIEwgNTExIDI1MyBMIDUwMiAyNTcgTCA0OTYgMjY0IEwgNDk0IDI3MCBMIDQ5NCAyODAgTCA0OTIgMjgyIEwgNDY5IDI5MiBMIDQ0MCAzMDkgTCA0MzcgMzA5IEwgNDI3IDMwMyBMIDQxNyAzMDMgTCA0MTAgMzA2IEwgNDAzIDMxMyBMIDQwMCAzMjUgTCA0MDIgMzM0IEwgMzYwIDM3NSBMIDM1MiAzNzIgTCAzNDYgMzcyIEwgMzM3IDM3NSBaIE0gNTk2IDYwNyBMIDYwNSA2MTAgTCA2NzAgNjUyIEwgNjc0IDY1OSBMIDY3MCA2NjYgTCA2MDAgNzEwIEwgNTk0IDcwOSBMIDU5MSA3MDQgTCA1OTEgNjE0IFogTSA4MjEgNDY5IEwgODI2IDQ5NCBMIDgyOCA1MjUgTCA4MjYgNTI4IEwgODE4IDUzMSBMIDgwNyA1NDQgTCA3OTggNTQ1IEwgNzU4IDUzNCBMIDczNCA1MzQgTCA3MDggNTQyIEwgNjk0IDU1MSBMIDY3OSA1NjUgTCA2NjggNTgxIEwgNjY1IDU4MSBMIDY2NiA1NjQgTCA2NzQgNTM2IEwgNjg4IDUxMiBMIDcwOSA0OTEgTCA3MzkgNDc0IEwgNzkyIDQ1NyBMIDgwMCA0NTcgTCA4MDUgNDYyIFogTSA0MzIgNDY5IEwgNDM2IDQ2NiBMIDQ0NSA0NjQgTCA0NTMgNDU3IEwgNDU5IDQ1NyBMIDUxMSA0NzMgTCA1MzcgNDg2IEwgNTYyIDUwOCBMIDU3MyA1MjQgTCA1ODMgNTQ4IEwgNTg3IDU2NiBMIDU4OCA1ODEgTCA1ODYgNTgyIEwgNTc1IDU2NiBMIDU1NSA1NDggTCA1NDAgNTQwIEwgNTI1IDUzNSBMIDQ5NCA1MzQgTCA0NTQgNTQ1IEwgNDQ2IDU0NCBMIDQzNiA1MzIgTCA0MjUgNTI2IEwgNDI3IDQ5NCBaIE0gNjE1IDQzNCBMIDYyNSA0MzcgTCA2MzYgNDM0IEwgNjQxIDQzNiBMIDY2MCA0NTggTCA2NjUgNDY4IEwgNjY4IDQ4MCBMIDY2NiA1MDEgTCA2NDIgNTQ5IEwgNjM0IDU3MiBMIDYyNyA2MDQgTCA2MjUgNjAzIEwgNjIyIDU4NCBMIDYxMyA1NTQgTCA1ODggNTA0IEwgNTg1IDQ5MiBMIDU4NSA0NzkgTCA1OTMgNDU4IEwgNjAwIDQ0OCBaIE0gOTEwIDQxOCBMIDkxNiA0MjUgTCA5MjkgNDUxIEwgOTM3IDQ3MyBMIDkzNyA0NzcgTCA5MzAgNDgzIEwgOTI3IDQ4OSBMIDkyNiA1MDIgTCA4NTkgNTM3IEwgODQ3IDUyOSBMIDgzOCA1MjcgTCA4MzUgNTE4IEwgODMwIDQ2NSBMIDgzNiA0NjIgTCA4NDUgNDUwIEwgODQ3IDQ0MiBMIDg0NiA0MzIgTCA4ODQgNDExIEwgODk2IDQxOCBaIE0gMzQzIDQxOCBMIDM1NyA0MTggTCAzNjkgNDExIEwgNDAyIDQyOCBMIDQwNyA0MzIgTCA0MDYgNDQzIEwgNDExIDQ1NiBMIDQyMyA0NjYgTCA0MTcgNTI0IEwgNDE0IDUyNyBMIDQwNiA1MjkgTCAzOTYgNTM3IEwgMzU3IDUxOSBMIDMyNiA1MDEgTCAzMjYgNDg5IEwgMzIzIDQ4MyBMIDMxNiA0NzcgTCAzMTYgNDc0IEwgMzI1IDQ0OSBMIDMzNyA0MjUgWiBNIDc5NyA0MjkgTCA3OTQgNDM4IEwgNzk0IDQ0NSBMIDc5MCA0NDkgTCA3NzEgNDU3IEwgNzUwIDQ2MSBMIDcyMyA0NjkgTCA3MDIgNDc5IEwgNjg4IDQ4OSBMIDY4NiA0ODggTCA2OTUgNDU0IEwgNzA0IDM5OCBMIDcxOCAzOTIgTCA3MjQgMzg2IEwgNzMxIDM4NyBMIDc1OCA0MDEgTCA3ODQgNDE4IFogTSA0NTcgNDI4IEwgNDg4IDQwNSBMIDUyMiAzODcgTCA1MjggMzg2IEwgNTM1IDM5MiBMIDU0NyAzOTYgTCA1NTAgNDAyIEwgNTU2IDQ0NSBMIDU2NiA0ODcgTCA1NjQgNDg4IEwgNTUxIDQ3OSBMIDUzMCA0NjkgTCA1MTUgNDY0IEwgNDgyIDQ1NyBMIDQ2MyA0NDkgTCA0NTkgNDQ1IFogTSA1MjQgMzYyIEwgNTI0IDM3NiBMIDUyMSAzNzkgTCA0ODkgMzk2IEwgNDUxIDQyMSBMIDQ0MCA0MTUgTCA0MjggNDE0IEwgNDE4IDQxOCBMIDQxMyA0MjMgTCA0MDkgNDIzIEwgMzc2IDQwNiBMIDM3MiA0MDIgTCAzNzIgMzkwIEwgMzY4IDM4MiBMIDM3NSAzNzEgTCA0MDUgMzQzIEwgNDA5IDM0MiBMIDQxNyAzNDYgTCA0MjYgMzQ2IEwgNDM3IDM0MCBMIDQ0MiAzMzMgTCA0NTQgMzM0IEwgNDc5IDM0MSBMIDUwNyAzNTIgWiBNIDcyOSAzNjIgTCA3MzIgMzU5IEwgNzYwIDM0NiBMIDc4NyAzMzcgTCA4MDkgMzMyIEwgODIwIDM0MyBMIDgyNyAzNDYgTCA4MzUgMzQ2IEwgODQ0IDM0MiBMIDg0OCAzNDMgTCA4NjEgMzU0IEwgODg2IDM4MSBMIDg4MSAzOTAgTCA4ODEgNDAzIEwgODQxIDQyNCBMIDgzMyA0MTcgTCA4MjQgNDE0IEwgODE2IDQxNCBMIDgwMiA0MjEgTCA3NzIgNDAxIEwgNzMyIDM3OSBMIDcyOSAzNzYgWiBNIDYwOSAyOTAgTCA2MjAgMjkzIEwgNjM0IDI5MyBMIDY0MSAyOTAgTCA2NDYgMjkxIEwgNjY3IDMxMyBMIDY4OCAzNDMgTCA2ODkgMzQ3IEwgNjc5IDM1OSBMIDY3NyAzNzQgTCA2ODQgMzg4IEwgNjk1IDM5NiBMIDY5NSA0MDkgTCA2ODggNDQ2IEwgNjc4IDQ3MyBMIDY2MyA0NTAgTCA2NDMgNDI4IEwgNjQ1IDQyMyBMIDY0NSA0MTIgTCA2NDMgNDA3IEwgNjM3IDQwMSBMIDYzMCAzOTggTCA2MjAgMzk5IEwgNjEwIDQwNyBMIDYwOCA0MTEgTCA2MDggNDIzIEwgNjEwIDQyOCBMIDU5MCA0NTAgTCA1NzYgNDczIEwgNTcyIDQ2OCBMIDU2MCA0MjUgTCA1NTggMzk2IEwgNTczIDM4MiBMIDU3NiAzNzMgTCA1NzYgMzY2IEwgNTczIDM1NyBMIDU2NCAzNDYgTCA1NjkgMzM2IEwgNTg1IDMxNCBaIE0gNjUwIDI4MyBMIDY1OSAyNjcgTCA2ODAgMjY4IEwgNzE1IDI3NSBMIDcyMSAyODkgTCA3MzAgMjk1IEwgNzQzIDI5NiBMIDc1NCAyODkgTCA3NTcgMjg5IEwgNzg5IDMwNCBMIDgwOCAzMTUgTCA4MTEgMzE5IEwgODA2IDMyNSBMIDc2MCAzMzggTCA3MjQgMzUzIEwgNzExIDM0NCBMIDY5OCAzNDIgTCA2NzIgMzA4IFogTSA2MDIgMjgyIEwgNjAwIDI4NyBMIDU4MSAzMDggTCA1NTQgMzQzIEwgNTQyIDM0NCBMIDUzNCAzNDggTCA1MjkgMzUzIEwgNDg3IDMzNiBMIDQ0MyAzMjMgTCA0NDIgMzE4IEwgNDQ1IDMxNSBMIDQ5NCAyOTAgTCA0OTkgMjg5IEwgNTEwIDI5NiBMIDUyMyAyOTUgTCA1MzIgMjg5IEwgNTM3IDI3NyBMIDU0MSAyNzQgTCA1NzQgMjY4IEwgNTk0IDI2NyBaIiBmaWxsPSJ1cmwoI21hcmtHcmFkaWVudCkiIGZpbGwtcnVsZT0iZXZlbm9kZCIvPgo8L3N2Zz4K") center / contain no-repeat;
-}
 #JellyfinCanopyPage .jc-brand-name {
-    /* Verdant lockup: italic serif wordmark in ink, letting the green mark
-       carry the color. (Replaces the gradient-clipped wordmark.) */
     font-family: var(--jc-display-font);
     font-style: italic;
     font-weight: 500;
     color: var(--jc-text-strong);
 }
-#settingsSearchContainer {
-    width: 100%;
+
+/* Essentials/Advanced mode switch: two-segment pill at the rail top. */
+#JellyfinCanopyPage .jc-mode-switch {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    background: var(--jc-surface-1);
+    border: 1px solid var(--jc-border);
+    border-radius: 999px;
+    padding: 3px;
 }
-#settingsSearchContainer > div {
-    position: relative;
-    /* display: block is enough — the icon / count / clear are all
-       absolute-positioned. A flex container tried to treat them as
-       items and relied on `top: auto` resolving to the static position
-       under align-items: center, which some browsers render with
-       sub-pixel offsets. Using block + explicit top: 50% /
-       translateY(-50%) on each overlay is deterministic across
-       browsers. */
-    display: block;
+#JellyfinCanopyPage .jc-mode-switch button {
+    border: 0;
+    background: none;
+    color: var(--jc-text-muted);
+    font-family: inherit;
+    font-size: 0.88em;
+    font-weight: 600;
+    padding: 7px 0;
+    border-radius: 999px;
+    cursor: pointer;
 }
+#JellyfinCanopyPage .jc-mode-switch button:hover { color: var(--jc-text-strong); }
+#JellyfinCanopyPage .jc-mode-switch button[aria-selected="true"] {
+    background: var(--jc-accent);
+    color: var(--jc-on-accent);
+}
+
+#settingsSearchContainer { width: 100%; }
+#settingsSearchContainer > div { position: relative; display: block; }
 #settingsSearchInput {
     width: 100%;
-    /* Pad left for the search icon, right for count + clear button. */
     padding: 10px 90px 10px 40px !important;
     background: var(--jc-overlay);
     border: 1px solid var(--jc-border);
@@ -402,10 +380,8 @@
     font-size: 0.9em;
     outline: none;
     transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
-    box-shadow: inset 0 2px 4px rgba(0,0,0,0.1);
+    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.1);
     box-sizing: border-box;
-    /* Ensure the input paints BELOW the overlay icons so its selection
-       highlight (native browser paint) doesn't cover them. */
     position: relative;
     z-index: 0;
 }
@@ -423,9 +399,6 @@
     pointer-events: none;
     font-size: 18px !important;
     line-height: 1;
-    /* Sit above the input so the native selection-highlight paint
-       (which can cover the input's full content box) never masks the
-       icon. */
     z-index: 1;
 }
 #settingsSearchCount {
@@ -456,338 +429,12 @@
     font-size: 0.8em;
     align-items: center;
     justify-content: center;
-    transition: background 0.2s;
     z-index: 2;
 }
-#settingsSearchClear:hover {
-    background: var(--jc-danger);
-}
+#settingsSearchClear:hover { background: var(--jc-danger); }
 
-/* ---------------------------------------------------------------------------
-   Overview Tab — Service Status, Quick Actions
-   --------------------------------------------------------------------------- */
-.jc-overview-section {
-    margin-bottom: 20px;
-}
-.jc-overview-section > .configSection {
-    padding: 14px 18px;
-}
-.jc-legend-icon {
-    font-size: 20px !important;
-    line-height: 1;
-    vertical-align: middle;
-    margin-right: 8px;
-    opacity: 0.75;
-    color: var(--jc-accent);
-}
-#JellyfinCanopyPage .sectionTitle .jc-legend-icon { vertical-align: -4px; }
-.jc-legend-icon-img {
-    width: 20px;
-    height: 20px;
-    margin-right: 8px;
-    vertical-align: -5px;
-    /* No plate: the Sonarr/Radarr/Bazarr brand SVGs already carry
-       their own solid backgrounds in-file (rounded squircle for
-       Sonarr, circle for Radarr, circle for Bazarr) so an extra
-       plate reads as a double-backing. */
-}
-
-/* Quick Actions grid */
-.jc-quick-actions-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-    gap: 12px;
-}
-.jc-quick-action {
-    background: var(--jc-card-gradient);
-    border: 1px solid var(--jc-border);
-    border-radius: 12px;
-    padding: 14px 16px;
-    display: flex;
-    align-items: center;
-    gap: 14px;
-    cursor: pointer;
-    color: inherit;
-    text-align: left;
-    transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s;
-    font: inherit;
-    width: 100%;
-    min-width: 0;
-    box-sizing: border-box;
-}
-.jc-quick-action:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 8px 25px rgba(0,0,0,0.15);
-    border-color: var(--jc-text-dim);
-    background: var(--jc-card-gradient-lift);
-}
-.jc-quick-action:focus-visible {
-    outline: 2px solid var(--jc-accent);
-    outline-offset: 2px;
-}
-.jc-quick-action-icon {
-    font-size: 26px !important;
-    color: var(--jc-accent);
-    flex-shrink: 0;
-}
-.jc-quick-action-text {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    min-width: 0;
-}
-.jc-quick-action-title {
-    font-size: 0.95em;
-    font-weight: 600;
-}
-.jc-quick-action-detail {
-    font-size: 0.8em;
-    color: var(--jc-text-muted);
-    line-height: 1.3;
-}
-
-/* Empty-state hint shared by Service Status, Features, and Optional
-   Dependencies renderers when they have nothing to show. */
-.jc-checklist-empty {
-    padding: 14px 16px;
-    border: 1px dashed var(--jc-border);
-    border-radius: 10px;
-    color: var(--jc-text-subtle);
-    font-size: 0.9em;
-    text-align: center;
-}
-
-/* ---------------------------------------------------------------------------
-   Overview Tab — Service Status (merged from legacy status cards + checklist)
-   Mirrors the Optional Dependencies / Features look: card grid with a
-   left-border accent per state, icon + name + detail. Clickable rows jump
-   to the owning tab.
-   --------------------------------------------------------------------------- */
-.jc-service-dashboard {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-    gap: 10px;
-}
-.jc-service-card {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 12px;
-    background: var(--jc-surface-1);
-    border: 1px solid var(--jc-border);
-    border-left-width: 3px;
-    border-radius: 10px;
-    cursor: pointer;
-    color: inherit;
-    text-align: left;
-    font: inherit;
-    transition: background 0.15s ease, transform 0.15s ease;
-}
-.jc-service-card:hover { background: var(--jc-surface-2); transform: translateY(-1px); }
-.jc-service-card.jc-state-ok       { border-left-color: var(--jc-success); }
-.jc-service-card.jc-state-warn     { border-left-color: var(--jc-warning); }
-.jc-service-card.jc-state-error    { border-left-color: var(--jc-danger); }
-.jc-service-card.jc-state-pending  { border-left-color: var(--jc-text-dim); }
-.jc-service-card.jc-state-off      { border-left-color: var(--jc-border-strong); opacity: 1; }
-.jc-service-icon {
-    font-size: 20px !important;
-    color: var(--jc-text-muted);
-    flex-shrink: 0;
-}
-.jc-service-card.jc-state-ok    .jc-service-icon { color: var(--jc-success); }
-.jc-service-card.jc-state-warn  .jc-service-icon { color: var(--jc-warning); }
-.jc-service-card.jc-state-error .jc-service-icon { color: var(--jc-danger); }
-.jc-service-body {
-    min-width: 0;
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 1px;
-}
-.jc-service-name {
-    font-size: 0.92em;
-    font-weight: 600;
-}
-.jc-service-detail {
-    font-size: 0.78em;
-    color: var(--jc-text-muted);
-    line-height: 1.35;
-    word-break: break-word;
-}
-
-@media (max-width: 540px) {
-    .jc-service-dashboard { grid-template-columns: 1fr; }
-    .jc-service-card { padding: 10px; }
-}
-
-/* ---------------------------------------------------------------------------
-   Overview Tab — Optional Dependencies grid
-   --------------------------------------------------------------------------- */
-.jc-optional-plugins-dashboard {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-    gap: 10px;
-}
-.jc-optional-plugin-card {
-    display: flex;
-    align-items: flex-start;
-    gap: 10px;
-    padding: 12px;
-    background: var(--jc-surface-1);
-    border: 1px solid var(--jc-border);
-    border-left-width: 3px;
-    border-left-color: var(--jc-border-strong);
-    border-radius: 10px;
-    position: relative;
-}
-.jc-optional-plugin-link {
-    position: absolute;
-    top: 10px;
-    right: 10px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 24px;
-    height: 24px;
-    border-radius: 4px;
-    color: var(--jc-text-subtle);
-    text-decoration: none;
-    transition: opacity 0.15s ease, color 0.15s ease, background 0.15s ease;
-}
-.jc-optional-plugin-link:hover,
-.jc-optional-plugin-link:focus-visible {
-    opacity: 1;
-    color: var(--jc-accent);
-    background: var(--jc-accent-tint-10);
-    outline: none;
-}
-.jc-optional-plugin-link .material-icons {
-    font-size: 16px !important;
-    line-height: 1;
-}
-.jc-optional-plugin-body {
-    padding-right: 28px;
-}
-.jc-optional-plugin-card.jc-state-installed  { border-left-color: var(--jc-success); }
-.jc-optional-plugin-card.jc-state-missing    { border-left-color: var(--jc-border-strong); opacity: 1; }
-.jc-optional-plugin-card.jc-state-unknown    { border-left-color: var(--jc-text-dim); }
-.jc-optional-plugin-card.jc-state-warn       { border-left-color: var(--jc-warning); }
-.jc-optional-plugin-icon {
-    font-size: 20px !important;
-    flex-shrink: 0;
-    margin-top: 2px;
-    color: var(--jc-text-muted);
-}
-.jc-optional-plugin-card.jc-state-installed .jc-optional-plugin-icon { color: var(--jc-success); }
-.jc-optional-plugin-card.jc-state-warn      .jc-optional-plugin-icon { color: var(--jc-warning); }
-.jc-optional-plugin-body {
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-}
-.jc-optional-plugin-name {
-    font-weight: 600;
-    font-size: 0.92em;
-}
-.jc-optional-plugin-status {
-    font-size: 0.8em;
-    color: var(--jc-text-muted);
-    line-height: 1.35;
-}
-.jc-optional-plugin-purpose {
-    font-size: 0.78em;
-    color: var(--jc-text-subtle);
-    line-height: 1.4;
-    margin-top: 2px;
-}
-
-/* ---------------------------------------------------------------------------
-   Overview Tab — Features dashboard
-   --------------------------------------------------------------------------- */
-.jc-features-dashboard {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-    gap: 8px;
-}
-.jc-feature-row {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 10px 12px;
-    background: var(--jc-surface-1);
-    border: 1px solid var(--jc-border);
-    border-left-width: 3px;
-    border-radius: 8px;
-    cursor: pointer;
-    color: inherit;
-    text-align: left;
-    font: inherit;
-    transition: background 0.15s ease, transform 0.15s ease;
-}
-.jc-feature-row:hover {
-    background: var(--jc-surface-2);
-    transform: translateY(-1px);
-}
-.jc-feature-row.jc-state-on         { border-left-color: var(--jc-success); }
-.jc-feature-row.jc-state-warn       { border-left-color: var(--jc-warning); }
-.jc-feature-row.jc-state-off        { border-left-color: var(--jc-border-strong); opacity: 1; }
-.jc-feature-icon {
-    font-size: 18px !important;
-    color: var(--jc-text-muted);
-    flex-shrink: 0;
-}
-.jc-feature-row.jc-state-on   .jc-feature-icon { color: var(--jc-success); }
-.jc-feature-row.jc-state-warn .jc-feature-icon { color: var(--jc-warning); }
-.jc-feature-body {
-    min-width: 0;
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 1px;
-}
-.jc-feature-name {
-    font-size: 0.9em;
-    font-weight: 500;
-}
-.jc-feature-detail {
-    font-size: 0.78em;
-    color: var(--jc-text-muted);
-    line-height: 1.3;
-    word-break: break-word;
-}
-
-@media (max-width: 540px) {
-    .jc-optional-plugins-dashboard,
-    .jc-features-dashboard { grid-template-columns: 1fr; }
-    .jc-optional-plugin-card, .jc-feature-row { padding: 10px; }
-}
-
-/* ---------------------------------------------------------------------------
-   Tab Navigation (sits inside .jc-sticky-header which handles pinning)
-   --------------------------------------------------------------------------- */
-/* Grouped rail (handoff IA): seven product areas in the sidebar. */
-.jc-tab-bar {
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-    padding: 0;
-    margin: 0;
-    border-bottom: 0;
-    flex: 1;
-    min-height: 0;
-    overflow-y: auto;
-    scrollbar-width: thin;
-    user-select: none;
-}
-.jc-tab-bar.jc-dragging {
-    scroll-behavior: auto;
-}
-/* Verdant branch rail: the group list reads as a branch — a hairline stem
-   with a node dot per group; the active node fills leaf-green with a halo. */
-#JellyfinCanopyPage .jc-tab-bar {
-    position: relative;
-}
+/* Branch rail: hairline stem, node dot per group, active node leaf-lit. */
+#JellyfinCanopyPage .jc-tab-bar { position: relative; }
 #JellyfinCanopyPage .jc-tab-bar::before {
     content: "";
     position: absolute;
@@ -821,15 +468,6 @@
     line-height: 1.25;
     overflow-wrap: anywhere;
 }
-#JellyfinCanopyPage .jc-group-btn:hover {
-    background: var(--jc-surface-3);
-    color: var(--jc-text-strong);
-}
-#JellyfinCanopyPage .jc-group-btn.active {
-    background: var(--jc-accent-tint-10);
-    border-color: var(--jc-accent-border);
-    color: var(--jc-text-strong);
-}
 #JellyfinCanopyPage .jc-group-btn::before {
     content: "";
     position: absolute;
@@ -842,26 +480,26 @@
     background: var(--jc-border-strong);
     transition: background-color 0.15s ease, box-shadow 0.15s ease;
 }
-#JellyfinCanopyPage .jc-group-btn:hover::before {
-    background: var(--jc-text-dim);
+#JellyfinCanopyPage .jc-group-btn:hover {
+    background: var(--jc-surface-3);
+    color: var(--jc-text-strong);
+}
+#JellyfinCanopyPage .jc-group-btn:hover::before { background: var(--jc-text-dim); }
+#JellyfinCanopyPage .jc-group-btn.active {
+    background: var(--jc-accent-tint-10);
+    border-color: var(--jc-accent-border);
+    color: var(--jc-text-strong);
 }
 #JellyfinCanopyPage .jc-group-btn.active::before {
     background: var(--jc-accent);
     box-shadow: 0 0 0 3px var(--jc-accent-tint-20);
 }
-#JellyfinCanopyPage .jc-group-btn.active .jc-tab-icon {
-    color: var(--jc-accent);
-}
-#JellyfinCanopyPage .jc-group-btn .jc-nav-count {
-    margin-left: auto;
-}
+#JellyfinCanopyPage .jc-group-btn.active .jc-tab-icon { color: var(--jc-accent); }
+#JellyfinCanopyPage .jc-group-btn .jc-nav-count { margin-left: auto; }
 #JellyfinCanopyPage .jc-group-btn .jc-tab-icon,
-#JellyfinCanopyPage .jc-group-btn .jc-nav-count {
-    flex: 0 0 auto;
-}
+#JellyfinCanopyPage .jc-group-btn .jc-nav-count { flex: 0 0 auto; }
 
-/* Page header: active group title + purpose, and its sections as a
-   compact segmented control (never a second full-width bar). */
+/* Page header + section strip (segmented control for the active group). */
 .jc-page-header {
     display: flex;
     flex-wrap: wrap;
@@ -872,9 +510,8 @@
 }
 .jc-page-title {
     margin: 0;
-    font-size: 1.65em;
-    font-weight: 700;
-    letter-spacing: -0.01em;
+    font-size: 1.8em;
+    font-weight: 450;
     color: var(--jc-text-strong);
 }
 .jc-page-purpose {
@@ -893,12 +530,8 @@
     overflow-x: auto;
     scrollbar-width: none;
 }
-.jc-section-strip.jc-strip-single {
-    display: none;
-}
+.jc-section-strip.jc-strip-single { display: none; }
 
-/* Section buttons: same .jellyfin-tab-button[data-tab] contract, rendered
-   as segments of the active group's control. */
 #JellyfinCanopyPage .jellyfin-tab-button {
     display: none;
     background: transparent;
@@ -916,9 +549,7 @@
     transition: background-color 0.15s ease, color 0.15s ease;
 }
 #JellyfinCanopyPage .jellyfin-tab-button.jc-in-group,
-#JellyfinCanopyPage .jellyfin-tab-button.jc-search-reveal {
-    display: inline-flex;
-}
+#JellyfinCanopyPage .jellyfin-tab-button.jc-search-reveal { display: inline-flex; }
 #JellyfinCanopyPage .jellyfin-tab-button h3 {
     margin: 0;
     width: 100%;
@@ -934,9 +565,7 @@
     width: 18px;
     height: 18px;
     pointer-events: none;
-    /* Black plate hides transparent SVG regions from the active-tab
-       accent bg. */
-    background: #000;
+    background: #000; /* plate under transparent brand SVGs */
     border-radius: 50%;
     padding: 0;
     box-sizing: content-box;
@@ -952,13 +581,11 @@
     background: var(--jc-surface-3);
     color: var(--jc-text-strong);
 }
-/* Active section segment: gradient fill, the signature moment. */
 #JellyfinCanopyPage .jellyfin-tab-button.active {
     background: var(--jc-grad-control);
     color: var(--jc-control-text) !important;
     text-shadow: 0 1px 2px rgba(8, 15, 9, 0.35);
 }
-/* Per-section match count shown on nav items while searching. */
 #JellyfinCanopyPage .jc-nav-count {
     margin-left: auto;
     padding: 1px 8px;
@@ -970,10 +597,7 @@
     font-weight: 700;
 }
 
-#JellyfinCanopyPage .jellyfin-tab-content {
-    display: none;
-    animation: slideUpFade 0.3s ease forwards;
-}
+#JellyfinCanopyPage .jellyfin-tab-content { display: none; animation: slideUpFade 0.3s ease forwards; }
 #JellyfinCanopyPage .jellyfin-tab-content.active {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(480px, 1fr));
@@ -981,36 +605,26 @@
     align-items: start;
 }
 
-/* ---------------------------------------------------------------------------
-   Fieldsets (Cards)
-   --------------------------------------------------------------------------- */
+/* ===========================================================================
+   5. EDITORIAL FORMS — cards, serif legends, hairline rows, native controls
+   =========================================================================== */
+
 #JellyfinCanopyForm fieldset {
     background: var(--jc-card-bg, rgba(22, 22, 22, 0.94));
     border: 1px solid var(--jc-border);
-    border-radius: 12px;
+    border-radius: 14px;
     padding: 0;
     margin: 0;
-    box-shadow: 0 6px 22px rgba(0, 0, 0, 0.22);
+    box-shadow: 0 6px 22px rgba(0, 0, 0, 0.18);
     overflow: hidden;
-    transition: border-color 0.2s ease, box-shadow 0.25s ease;
+    transition: border-color 0.2s ease;
 }
-#JellyfinCanopyForm fieldset:hover {
-    border-color: var(--jc-accent-border);
-    box-shadow: 0 6px 22px rgba(0, 0, 0, 0.22), 0 0 0 1px var(--jc-accent-tint-10);
-}
-/* Native <legend> has peculiar layout — it's positioned relative to the
-   fieldset's top border and doesn't always respect width/display. The
-   `float: left; width: 100%;` trick normalizes it into a proper block
-   header that spans the full fieldset width. configSection then
-   `clear: both;` so its flow starts below the floated legend. */
+#JellyfinCanopyForm fieldset:hover { border-color: var(--jc-border-strong); }
 #JellyfinCanopyForm legend.sectionTitle {
     float: left;
     width: 100%;
     margin: 0;
     padding: 14px 22px;
-    /* Verdant rail: a 3px leaf-gradient edge on the left of every card
-       header. The old sheen layer is gone — serif titles on the flat card
-       surface carry the editorial look. */
     background: var(--jc-grad-rail) left / 3px 100% no-repeat;
     font-size: 1.18em;
     font-weight: 500;
@@ -1019,13 +633,21 @@
     box-sizing: border-box;
     color: var(--jc-text-strong);
 }
-/* Keep the icon inline with the title on a row, now that the legend
-   is a floated block (display:flex would override the float). */
 #JellyfinCanopyForm legend.sectionTitle .jc-legend-icon {
     display: inline-block;
     margin-right: 8px;
     vertical-align: -4px;
 }
+.jc-legend-icon {
+    font-size: 20px !important;
+    line-height: 1;
+    vertical-align: middle;
+    margin-right: 8px;
+    opacity: 0.75;
+    color: var(--jc-accent);
+}
+#JellyfinCanopyPage .sectionTitle .jc-legend-icon { vertical-align: -4px; }
+.jc-legend-icon-img { width: 20px; height: 20px; margin-right: 8px; vertical-align: -5px; }
 #JellyfinCanopyPage .configSection {
     clear: both;
     padding: 20px 24px;
@@ -1033,64 +655,38 @@
     flex-direction: column;
     gap: 14px;
 }
-
-/* Let specific fieldsets span full width */
 .jellyfin-tab-content.active > fieldset.jc-fieldset-wide,
 .jellyfin-tab-content.active > fieldset.jc-overview-section,
 .jellyfin-tab-content.active > fieldset:has(.jc-branding-grid),
 .jellyfin-tab-content.active > fieldset:has(.arr-instances-list),
 .jellyfin-tab-content.active > fieldset:has(.jc-textarea-large),
-.jellyfin-tab-content.active > fieldset:has(.jc-seerr-label) {
-    grid-column: 1 / -1;
-}
+.jellyfin-tab-content.active > fieldset:has(.jc-seerr-label) { grid-column: 1 / -1; }
 .jellyfin-tab-content.active > .jc-info-banner,
-.jellyfin-tab-content.active > .jc-dep-banner {
-    grid-column: 1 / -1;
-}
+.jellyfin-tab-content.active > .jc-dep-banner { grid-column: 1 / -1; }
 
-/* ---------------------------------------------------------------------------
-   Inputs, Checkboxes & Form Elements
-   --------------------------------------------------------------------------- */
-#JellyfinCanopyPage .configSection > .inputContainer,
-#JellyfinCanopyPage .configSection > .selectContainer {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-}
-/* Settings-row layout on wide viewports: label (and its description) on the
-   left, the control right-aligned in its own column — the standard settings
-   pattern, denser and more scannable than stacked forms. Rows with textareas
-   or wide custom widgets keep the stacked layout. */
+/* Wide-viewport two-column rows: label left, control right. */
 @media (min-width: 1100px) {
     #JellyfinCanopyPage .configSection > .inputContainer:not(:has(textarea, .jc-textarea-large)),
-    #JellyfinCanopyPage .configSection > .selectContainer:not(:has(textarea)) {
+    #JellyfinCanopyPage .configSection > .selectContainer:not(:has(textarea, .jc-textarea-large)) {
         display: grid;
         grid-template-columns: minmax(0, 1fr) minmax(200px, 300px);
-        grid-auto-flow: dense;
-        column-gap: 20px;
+        gap: 6px 18px;
         align-items: center;
+        grid-auto-flow: dense;
     }
-    #JellyfinCanopyPage .configSection > .inputContainer:not(:has(textarea, .jc-textarea-large)) > label,
-    #JellyfinCanopyPage .configSection > .selectContainer:not(:has(textarea)) > label {
+    #JellyfinCanopyPage .configSection > .inputContainer:not(:has(textarea, .jc-textarea-large)) > .fieldDescription,
+    #JellyfinCanopyPage .configSection > .selectContainer:not(:has(textarea, .jc-textarea-large)) > .fieldDescription {
         grid-column: 1;
     }
     #JellyfinCanopyPage .configSection > .inputContainer:not(:has(textarea, .jc-textarea-large)) > .emby-input,
     #JellyfinCanopyPage .configSection > .inputContainer:not(:has(textarea, .jc-textarea-large)) > .emby-select,
-    #JellyfinCanopyPage .configSection > .selectContainer:not(:has(textarea)) > .emby-select {
+    #JellyfinCanopyPage .configSection > .selectContainer:not(:has(textarea, .jc-textarea-large)) > .emby-select {
         grid-column: 2;
-        grid-row: 1;
-        align-self: center;
-    }
-    #JellyfinCanopyPage .configSection > .inputContainer:not(:has(textarea, .jc-textarea-large)) > .fieldDescription,
-    #JellyfinCanopyPage .configSection > .inputContainer:not(:has(textarea, .jc-textarea-large)) > .jc-setting-description,
-    #JellyfinCanopyPage .configSection > .selectContainer:not(:has(textarea)) > .fieldDescription,
-    #JellyfinCanopyPage .configSection > .selectContainer:not(:has(textarea)) > .jc-setting-description {
-        grid-column: 1;
+        grid-row: 1 / span 2;
     }
 }
-/* Verdant editorial rows: settings read as calm hairline-separated rows on
-   the card surface instead of boxed sub-cards. Hover lifts gently onto
-   surface-1; keyboard focus keeps the accent inset ring. */
+
+/* Editorial hairline rows. */
 #JellyfinCanopyPage .configSection > .inputContainer,
 #JellyfinCanopyPage .configSection > .checkboxContainer,
 #JellyfinCanopyPage .configSection > .selectContainer {
@@ -1104,14 +700,10 @@
 }
 #JellyfinCanopyPage .configSection > .inputContainer:last-child,
 #JellyfinCanopyPage .configSection > .checkboxContainer:last-child,
-#JellyfinCanopyPage .configSection > .selectContainer:last-child {
-    border-bottom-color: transparent;
-}
+#JellyfinCanopyPage .configSection > .selectContainer:last-child { border-bottom-color: transparent; }
 #JellyfinCanopyPage .configSection > .inputContainer:hover,
 #JellyfinCanopyPage .configSection > .checkboxContainer:hover,
-#JellyfinCanopyPage .configSection > .selectContainer:hover {
-    background: var(--jc-surface-1);
-}
+#JellyfinCanopyPage .configSection > .selectContainer:hover { background: var(--jc-surface-1); }
 #JellyfinCanopyPage .configSection > .inputContainer:focus-within,
 #JellyfinCanopyPage .configSection > .checkboxContainer:focus-within,
 #JellyfinCanopyPage .configSection > .selectContainer:focus-within {
@@ -1121,7 +713,6 @@
     box-shadow: 0 0 0 1px var(--jc-accent) inset;
 }
 
-/* Ensure inputs span fully where intended */
 #JellyfinCanopyPage .configSection > .inputContainer .emby-input,
 #JellyfinCanopyPage .configSection > .inputContainer .emby-select,
 #JellyfinCanopyPage .configSection > .inputContainer .emby-textarea,
@@ -1131,12 +722,7 @@
     box-sizing: border-box;
 }
 
-/* Consistent dropdown chevron across every <select> inside this config page.
-   Jellyfin admin's native emby-select styling sometimes shows no arrow
-   (depending on theme), which makes the control look like a text input. We
-   zero the native appearance and paint our own chevron SVG to guarantee a
-   visible "this is a dropdown" affordance that matches the accent color on
-   focus. */
+/* Guaranteed dropdown affordance with the paired-theme chevron. */
 #JellyfinCanopyPage select.emby-select {
     -webkit-appearance: none;
     -moz-appearance: none;
@@ -1152,13 +738,9 @@
 #JellyfinCanopyPage select.emby-select:focus-visible {
     background-image: var(--jc-select-chevron-focus);
 }
-/* IE/Edge legacy — hide the built-in dropdown arrow to avoid double chevrons */
 #JellyfinCanopyPage select.emby-select::-ms-expand { display: none; }
 
-#JellyfinCanopyPage .checkboxContainer {
-    display: flex;
-    align-items: center;
-}
+#JellyfinCanopyPage .checkboxContainer { display: flex; align-items: center; flex-wrap: wrap; }
 #JellyfinCanopyPage .checkboxContainer label {
     display: flex;
     align-items: center;
@@ -1167,12 +749,7 @@
     cursor: pointer;
     word-break: break-word;
 }
-#JellyfinCanopyPage .checkboxContainer input[type="checkbox"] {
-    flex-shrink: 0;
-    margin: 0;
-}
-/* Slightly brighter, medium-weight labels — when descriptions are off
-   the label is the only cue, so make it readable first. */
+#JellyfinCanopyPage .checkboxContainer input[type="checkbox"] { flex-shrink: 0; margin: 0; }
 #JellyfinCanopyPage .checkboxContainer label > span {
     font-size: 0.95em;
     font-weight: 500;
@@ -1187,203 +764,216 @@
     color: var(--jc-text-muted);
     font-size: 0.9em;
 }
+#JellyfinCanopyPage .fieldDescription {
+    color: var(--jc-text-subtle);
+    font-size: 0.85em;
+    line-height: 1.45;
+}
 
-/* Feature-enabler (main-feature) checkboxes — accent left-border +
-   gradient bg + bold label to signal "this toggle masters the feature
-   that this fieldset exists for." Add jc-main-feature to the
-   checkboxContainer in HTML to opt in. */
+/* Feature-master rows: the section's headline toggle. */
 #JellyfinCanopyPage .configSection > .jc-main-feature {
-    background: linear-gradient(90deg,
-        color-mix(in srgb, var(--jc-accent) 14%, transparent) 0%,
-        color-mix(in srgb, var(--jc-accent) 2%, transparent) 100%);
-    border-color: color-mix(in srgb, var(--jc-accent) 22%, transparent);
+    background:
+        linear-gradient(90deg,
+            color-mix(in srgb, var(--jc-accent) 10%, transparent) 0%,
+            color-mix(in srgb, var(--jc-accent) 3%, transparent) 60%,
+            transparent 100%);
     border-left: 3px solid var(--jc-accent);
-    margin-bottom: 12px !important;
+    border-radius: 4px 10px 10px 4px;
 }
-#JellyfinCanopyPage .configSection > .jc-main-feature label > span {
-    font-weight: 600;
-    font-size: 1.02em;
-    color: var(--jc-text-strong);
-    letter-spacing: 0.1px;
-}
-
-/* Integration-choice toggles (Plugin Pages vs Custom Tabs) — pair of
-   alternatives that answer "how do you want this feature delivered?".
-   Subtle seed-gold accent to distinguish from the leaf feature-master. */
+#JellyfinCanopyPage .configSection > .jc-main-feature label > span { font-weight: 600; }
+/* Integration-choice pair: seed-gold to read as "pick a delivery mode". */
 #JellyfinCanopyPage .configSection > .checkboxContainer:has(> label > input[id$="UsePluginPages"]),
 #JellyfinCanopyPage .configSection > .checkboxContainer:has(> label > input[id$="UseCustomTabs"]) {
     background: color-mix(in srgb, var(--verdant-seed) 7%, transparent);
     border-left: 2px solid color-mix(in srgb, var(--verdant-seed) 45%, transparent);
 }
 
-#JellyfinCanopyPage .fieldDescription {
-    color: var(--jc-text-muted);
-    font-size: 0.85em;
-    margin-top: 8px;
-    line-height: 1.4;
+#JellyfinCanopyPage .jc-brand-mark {
+    /* Verdant tree mark, shipped as a data URI so the admin page needs no
+       extra served asset. Fixed box reserves layout before paint. */
+    flex: none;
+    display: inline-block;
+    width: 30px;
+    height: 26px;
+    background: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjI2NSAyMTIgNzI0IDYxMCIgcm9sZT0iaW1nIiBhcmlhLWxhYmVsbGVkYnk9InRpdGxlIiBzaGFwZS1yZW5kZXJpbmc9Imdlb21ldHJpY1ByZWNpc2lvbiI+CiAgPHRpdGxlIGlkPSJ0aXRsZSI+SmVsbHlmaW4gQ2Fub3B5IG1hcmsgKFZlcmRhbnQpPC90aXRsZT4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0ibWFya0dyYWRpZW50IiBncmFkaWVudFVuaXRzPSJ1c2VyU3BhY2VPblVzZSIgeDE9IjI4MyIgeTE9IjAiIHgyPSI5NzEiIHkyPSIwIj4KICAgICAgPHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjM0I2QjMzIi8+CiAgICAgIDxzdG9wIG9mZnNldD0iMC4zNSIgc3RvcC1jb2xvcj0iIzVFOEE1MiIvPgogICAgICA8c3RvcCBvZmZzZXQ9IjAuNyIgc3RvcC1jb2xvcj0iIzdGQTk2OCIvPgogICAgICA8c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiNBNEM5ODciLz4KICAgIDwvbGluZWFyR3JhZGllbnQ+CiAgPC9kZWZzPgoKICA8cGF0aCBkPSJNIDMzMCAzODEgTCAzMjYgMzg5IEwgMzI1IDM5OCBMIDMyOCA0MDcgTCAzMzQgNDE0IEwgMzIwIDQ0MCBMIDMwOCA0NzIgTCAzMDYgNDc0IEwgMzAwIDQ3NCBMIDI5MyA0NzcgTCAyODUgNDg1IEwgMjgzIDQ5MCBMIDI4MyA1MDIgTCAyODcgNTEwIEwgMjk3IDUxNyBMIDMxMSA1MTggTCAzMjEgNTExIEwgMzI1IDUxMSBMIDM4MyA1NDEgTCAzOTEgNTQ3IEwgMzkxIDU2NCBMIDM3OCA1NzMgTCAzMjIgNjAwIEwgMzE4IDU5NiBMIDMwOSA1OTIgTCAzMDIgNTkyIEwgMjkzIDU5NiBMIDI4OSA2MDAgTCAyODUgNjEyIEwgMjg2IDYxOCBMIDI5MyA2MjggTCAzMDIgNjMyIEwgMzEwIDYzMiBMIDMxNyA2MjkgTCAzMjUgNjE5IEwgMzI2IDYwOCBMIDMyOCA2MDYgTCAzOTUgNTc0IEwgNDExIDU4NCBMIDQyNiA1ODQgTCA0MzggNTc4IEwgNDQ0IDU3MSBMIDQ0NiA1NjUgTCA0NTMgNTU5IEwgNDY0IDU1NCBMIDQ5MSA1NDkgTCA1MTYgNTUyIEwgNTI2IDU1NiBMIDUzOSA1NjUgTCA1NDkgNTc2IEwgNTU2IDU4OCBMIDU2NCA2MTIgTCA1NjggNjQ0IEwgNTY2IDY4MyBMIDU1NyA3MjAgTCA1NDMgNzQ3IEwgNTI0IDc2OCBMIDUxNSA3NzUgTCA0OTMgNzg3IEwgNDU3IDc5OCBMIDQyNiA4MDMgTCA1MzAgODAzIEwgNTUwIDgwMCBMIDU2NSA3OTUgTCA1ODUgNzgzIEwgNjAzIDc2NCBMIDYxOCA3MzcgTCA2MjYgNzEzIEwgNjI4IDcxNCBMIDYzNSA3MzcgTCA2NTMgNzY4IEwgNjY5IDc4NCBMIDY5MCA3OTYgTCA3MDMgODAwIEwgNzIzIDgwMyBMIDgyNiA4MDMgTCA3NzkgNzk0IEwgNzQ0IDc3OSBMIDczMSA3NzAgTCA3MTIgNzUwIEwgNzA2IDc0MSBMIDY5NCA3MTUgTCA2ODcgNjg0IEwgNjg1IDY1OCBMIDY4NiA2MzEgTCA2OTAgNjA4IEwgNjk3IDU4OCBMIDcwNSA1NzUgTCA3MTkgNTYxIEwgNzM0IDU1MyBMIDc0NSA1NTAgTCA3NjMgNTQ5IEwgNzg5IDU1NCBMIDgwMiA1NjAgTCA4MDcgNTY1IEwgODEyIDU3NSBMIDgxOSA1ODEgTCA4MzIgNTg1IEwgODQ1IDU4MyBMIDg1NyA1NzQgTCA5MjYgNjA3IEwgOTI3IDYxNiBMIDkzMCA2MjMgTCA5MzYgNjI5IEwgOTQzIDYzMiBMIDk1NyA2MzAgTCA5NjYgNjIwIEwgOTY3IDYwNyBMIDk2MyA1OTkgTCA5NTggNTk1IEwgOTQ2IDU5MiBMIDk0MSA1OTMgTCA5MzAgNjAwIEwgODY3IDU2OSBMIDg2MiA1NjUgTCA4NjIgNTQ3IEwgODczIDUzOSBMIDkyOCA1MTEgTCA5MzIgNTExIEwgOTM2IDUxNSBMIDk0MyA1MTggTCA5NTQgNTE4IEwgOTYzIDUxMyBMIDk2OSA1MDQgTCA5NzAgNDkxIEwgOTY3IDQ4NCBMIDk2MCA0NzcgTCA5NTMgNDc0IEwgOTQ3IDQ3NCBMIDk0NSA0NzIgTCA5MzYgNDQ3IEwgOTE5IDQxNSBMIDkyNSA0MDcgTCA5MjggMzk3IEwgOTI1IDM4NCBMIDkxOSAzNzcgTCA5MTEgMzczIEwgOTAyIDM3MiBMIDg5MyAzNzUgTCA4NTEgMzM0IEwgODUzIDMyNiBMIDg1MiAzMTcgTCA4NDMgMzA2IEwgODM3IDMwMyBMIDgyNyAzMDMgTCA4MTQgMzA5IEwgNzg0IDI5MiBMIDc1OSAyODEgTCA3NTkgMjcwIEwgNzU2IDI2MyBMIDc1MiAyNTggTCA3NDUgMjU0IEwgNzMwIDI1NCBMIDcyMyAyNTggTCA3MTcgMjY2IEwgNjU5IDI1OCBMIDY1MiAyNDIgTCA2NDMgMjM0IEwgNjMzIDIzMCBMIDYyMCAyMzAgTCA2MTAgMjM0IEwgNjAxIDI0MiBMIDU5NSAyNTYgTCA1ODggMjU5IEwgNTM2IDI2NiBMIDUyNyAyNTYgTCA1MTkgMjUzIEwgNTExIDI1MyBMIDUwMiAyNTcgTCA0OTYgMjY0IEwgNDk0IDI3MCBMIDQ5NCAyODAgTCA0OTIgMjgyIEwgNDY5IDI5MiBMIDQ0MCAzMDkgTCA0MzcgMzA5IEwgNDI3IDMwMyBMIDQxNyAzMDMgTCA0MTAgMzA2IEwgNDAzIDMxMyBMIDQwMCAzMjUgTCA0MDIgMzM0IEwgMzYwIDM3NSBMIDM1MiAzNzIgTCAzNDYgMzcyIEwgMzM3IDM3NSBaIE0gNTk2IDYwNyBMIDYwNSA2MTAgTCA2NzAgNjUyIEwgNjc0IDY1OSBMIDY3MCA2NjYgTCA2MDAgNzEwIEwgNTk0IDcwOSBMIDU5MSA3MDQgTCA1OTEgNjE0IFogTSA4MjEgNDY5IEwgODI2IDQ5NCBMIDgyOCA1MjUgTCA4MjYgNTI4IEwgODE4IDUzMSBMIDgwNyA1NDQgTCA3OTggNTQ1IEwgNzU4IDUzNCBMIDczNCA1MzQgTCA3MDggNTQyIEwgNjk0IDU1MSBMIDY3OSA1NjUgTCA2NjggNTgxIEwgNjY1IDU4MSBMIDY2NiA1NjQgTCA2NzQgNTM2IEwgNjg4IDUxMiBMIDcwOSA0OTEgTCA3MzkgNDc0IEwgNzkyIDQ1NyBMIDgwMCA0NTcgTCA4MDUgNDYyIFogTSA0MzIgNDY5IEwgNDM2IDQ2NiBMIDQ0NSA0NjQgTCA0NTMgNDU3IEwgNDU5IDQ1NyBMIDUxMSA0NzMgTCA1MzcgNDg2IEwgNTYyIDUwOCBMIDU3MyA1MjQgTCA1ODMgNTQ4IEwgNTg3IDU2NiBMIDU4OCA1ODEgTCA1ODYgNTgyIEwgNTc1IDU2NiBMIDU1NSA1NDggTCA1NDAgNTQwIEwgNTI1IDUzNSBMIDQ5NCA1MzQgTCA0NTQgNTQ1IEwgNDQ2IDU0NCBMIDQzNiA1MzIgTCA0MjUgNTI2IEwgNDI3IDQ5NCBaIE0gNjE1IDQzNCBMIDYyNSA0MzcgTCA2MzYgNDM0IEwgNjQxIDQzNiBMIDY2MCA0NTggTCA2NjUgNDY4IEwgNjY4IDQ4MCBMIDY2NiA1MDEgTCA2NDIgNTQ5IEwgNjM0IDU3MiBMIDYyNyA2MDQgTCA2MjUgNjAzIEwgNjIyIDU4NCBMIDYxMyA1NTQgTCA1ODggNTA0IEwgNTg1IDQ5MiBMIDU4NSA0NzkgTCA1OTMgNDU4IEwgNjAwIDQ0OCBaIE0gOTEwIDQxOCBMIDkxNiA0MjUgTCA5MjkgNDUxIEwgOTM3IDQ3MyBMIDkzNyA0NzcgTCA5MzAgNDgzIEwgOTI3IDQ4OSBMIDkyNiA1MDIgTCA4NTkgNTM3IEwgODQ3IDUyOSBMIDgzOCA1MjcgTCA4MzUgNTE4IEwgODMwIDQ2NSBMIDgzNiA0NjIgTCA4NDUgNDUwIEwgODQ3IDQ0MiBMIDg0NiA0MzIgTCA4ODQgNDExIEwgODk2IDQxOCBaIE0gMzQzIDQxOCBMIDM1NyA0MTggTCAzNjkgNDExIEwgNDAyIDQyOCBMIDQwNyA0MzIgTCA0MDYgNDQzIEwgNDExIDQ1NiBMIDQyMyA0NjYgTCA0MTcgNTI0IEwgNDE0IDUyNyBMIDQwNiA1MjkgTCAzOTYgNTM3IEwgMzU3IDUxOSBMIDMyNiA1MDEgTCAzMjYgNDg5IEwgMzIzIDQ4MyBMIDMxNiA0NzcgTCAzMTYgNDc0IEwgMzI1IDQ0OSBMIDMzNyA0MjUgWiBNIDc5NyA0MjkgTCA3OTQgNDM4IEwgNzk0IDQ0NSBMIDc5MCA0NDkgTCA3NzEgNDU3IEwgNzUwIDQ2MSBMIDcyMyA0NjkgTCA3MDIgNDc5IEwgNjg4IDQ4OSBMIDY4NiA0ODggTCA2OTUgNDU0IEwgNzA0IDM5OCBMIDcxOCAzOTIgTCA3MjQgMzg2IEwgNzMxIDM4NyBMIDc1OCA0MDEgTCA3ODQgNDE4IFogTSA0NTcgNDI4IEwgNDg4IDQwNSBMIDUyMiAzODcgTCA1MjggMzg2IEwgNTM1IDM5MiBMIDU0NyAzOTYgTCA1NTAgNDAyIEwgNTU2IDQ0NSBMIDU2NiA0ODcgTCA1NjQgNDg4IEwgNTUxIDQ3OSBMIDUzMCA0NjkgTCA1MTUgNDY0IEwgNDgyIDQ1NyBMIDQ2MyA0NDkgTCA0NTkgNDQ1IFogTSA1MjQgMzYyIEwgNTI0IDM3NiBMIDUyMSAzNzkgTCA0ODkgMzk2IEwgNDUxIDQyMSBMIDQ0MCA0MTUgTCA0MjggNDE0IEwgNDE4IDQxOCBMIDQxMyA0MjMgTCA0MDkgNDIzIEwgMzc2IDQwNiBMIDM3MiA0MDIgTCAzNzIgMzkwIEwgMzY4IDM4MiBMIDM3NSAzNzEgTCA0MDUgMzQzIEwgNDA5IDM0MiBMIDQxNyAzNDYgTCA0MjYgMzQ2IEwgNDM3IDM0MCBMIDQ0MiAzMzMgTCA0NTQgMzM0IEwgNDc5IDM0MSBMIDUwNyAzNTIgWiBNIDcyOSAzNjIgTCA3MzIgMzU5IEwgNzYwIDM0NiBMIDc4NyAzMzcgTCA4MDkgMzMyIEwgODIwIDM0MyBMIDgyNyAzNDYgTCA4MzUgMzQ2IEwgODQ0IDM0MiBMIDg0OCAzNDMgTCA4NjEgMzU0IEwgODg2IDM4MSBMIDg4MSAzOTAgTCA4ODEgNDAzIEwgODQxIDQyNCBMIDgzMyA0MTcgTCA4MjQgNDE0IEwgODE2IDQxNCBMIDgwMiA0MjEgTCA3NzIgNDAxIEwgNzMyIDM3OSBMIDcyOSAzNzYgWiBNIDYwOSAyOTAgTCA2MjAgMjkzIEwgNjM0IDI5MyBMIDY0MSAyOTAgTCA2NDYgMjkxIEwgNjY3IDMxMyBMIDY4OCAzNDMgTCA2ODkgMzQ3IEwgNjc5IDM1OSBMIDY3NyAzNzQgTCA2ODQgMzg4IEwgNjk1IDM5NiBMIDY5NSA0MDkgTCA2ODggNDQ2IEwgNjc4IDQ3MyBMIDY2MyA0NTAgTCA2NDMgNDI4IEwgNjQ1IDQyMyBMIDY0NSA0MTIgTCA2NDMgNDA3IEwgNjM3IDQwMSBMIDYzMCAzOTggTCA2MjAgMzk5IEwgNjEwIDQwNyBMIDYwOCA0MTEgTCA2MDggNDIzIEwgNjEwIDQyOCBMIDU5MCA0NTAgTCA1NzYgNDczIEwgNTcyIDQ2OCBMIDU2MCA0MjUgTCA1NTggMzk2IEwgNTczIDM4MiBMIDU3NiAzNzMgTCA1NzYgMzY2IEwgNTczIDM1NyBMIDU2NCAzNDYgTCA1NjkgMzM2IEwgNTg1IDMxNCBaIE0gNjUwIDI4MyBMIDY1OSAyNjcgTCA2ODAgMjY4IEwgNzE1IDI3NSBMIDcyMSAyODkgTCA3MzAgMjk1IEwgNzQzIDI5NiBMIDc1NCAyODkgTCA3NTcgMjg5IEwgNzg5IDMwNCBMIDgwOCAzMTUgTCA4MTEgMzE5IEwgODA2IDMyNSBMIDc2MCAzMzggTCA3MjQgMzUzIEwgNzExIDM0NCBMIDY5OCAzNDIgTCA2NzIgMzA4IFogTSA2MDIgMjgyIEwgNjAwIDI4NyBMIDU4MSAzMDggTCA1NTQgMzQzIEwgNTQyIDM0NCBMIDUzNCAzNDggTCA1MjkgMzUzIEwgNDg3IDMzNiBMIDQ0MyAzMjMgTCA0NDIgMzE4IEwgNDQ1IDMxNSBMIDQ5NCAyOTAgTCA0OTkgMjg5IEwgNTEwIDI5NiBMIDUyMyAyOTUgTCA1MzIgMjg5IEwgNTM3IDI3NyBMIDU0MSAyNzQgTCA1NzQgMjY4IEwgNTk0IDI2NyBaIiBmaWxsPSJ1cmwoI21hcmtHcmFkaWVudCkiIGZpbGwtcnVsZT0iZXZlbm9kZCIvPgo8L3N2Zz4K") center / contain no-repeat;
 }
 
-/* Beautiful grouping of descriptions without negative margins */
-#JellyfinCanopyPage .jc-setting-description {
-    margin-top: 4px;
-    margin-bottom: 12px;
-    padding-left: 14px;
-    border-left: 2px solid var(--jc-border);
-}
-#JellyfinCanopyPage .checkboxContainer + .fieldDescription,
-#JellyfinCanopyPage .inputContainer + .fieldDescription,
-#JellyfinCanopyPage .selectContainer + .fieldDescription {
-    margin-top: 4px;
-    margin-bottom: 12px;
-    padding-left: 14px;
-    border-left: 2px solid var(--jc-border);
-}
-#JellyfinCanopyPage .configSection > .jc-setting-description,
-#JellyfinCanopyPage .jc-details-body > .jc-setting-description {
-    margin-top: 0;
-    margin-bottom: 0;
-}
-#JellyfinCanopyPage .jc-setting-description > .fieldDescription {
-    margin-top: 0;
-}
-/* Tighten the gap inside accordion bodies — 15px reads as too loose for
-   a stack of toggle+description pairs since the description block already
-   has its border + padding making it visually distinct. */
-.jc-details-body { gap: 10px; }
+/* ===========================================================================
+   6. DASHBOARDS — service status, features, optional deps, quick actions
+   =========================================================================== */
 
-/* ---------------------------------------------------------------------------
-   Accordions (Details / Summary)
-   --------------------------------------------------------------------------- */
-.jc-details-section, .jc-seerr-details {
-    background: var(--jc-overlay);
-    border: 1px solid var(--jc-border-subtle);
+.jc-overview-section { margin-bottom: 20px; }
+.jc-overview-section > .configSection { padding: 14px 18px; }
+.jc-checklist-empty {
+    padding: 14px 16px;
+    border: 1px dashed var(--jc-border);
     border-radius: 10px;
-    margin: 5px 0 10px 0;
-    overflow: hidden;
-    transition: background-color 0.25s ease, border-color 0.25s ease;
+    color: var(--jc-text-subtle);
+    font-size: 0.9em;
+    text-align: center;
 }
-.jc-details-section:hover, .jc-seerr-details:hover {
-    border-color: var(--jc-border);
+
+.jc-service-dashboard,
+.jc-optional-plugins-dashboard {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 10px;
 }
-.jc-details-section[open], .jc-seerr-details[open] {
-    background: var(--jc-surface-1);
-    border-color: var(--jc-border);
-}
-.jc-details-section > summary, .jc-seerr-details > summary {
-    background: transparent;
-    padding: 14px 18px;
-    font-weight: 600;
-    cursor: pointer;
+.jc-service-card,
+.jc-optional-plugin-card {
     display: flex;
-    justify-content: space-between;
     align-items: center;
     gap: 10px;
-    list-style: none;
-    user-select: none;
-    color: var(--jc-text-muted);
-    transition: color 0.2s ease;
-}
-.jc-details-section[open] > summary,
-.jc-seerr-details[open] > summary {
-    color: var(--jc-text-strong);
-}
-.jc-details-section > summary:hover,
-.jc-seerr-details > summary:hover {
-    color: var(--jc-accent);
-}
-.jc-details-section > summary::-webkit-details-marker,
-.jc-seerr-details > summary::-webkit-details-marker {
-    display: none;
-}
-.jc-details-section > summary::after,
-.jc-seerr-details > summary::after {
-    content: "chevron_right";
-    font-family: "Material Icons";
-    font-size: 24px;
-    display: inline-block;
-    transition: transform 0.25s ease, color 0.2s ease;
-    color: var(--jc-text-subtle);
-    line-height: 1;
-    flex-shrink: 0;
-}
-.jc-details-section[open] > summary::after,
-.jc-seerr-details[open] > summary::after {
-    transform: rotate(90deg);
-    color: var(--jc-accent);
-}
-.jc-details-body {
-    padding: 0 20px 20px 20px;
-    border-top: 1px solid var(--jc-border);
-    margin-top: 5px;
-    padding-top: 15px;
-    display: flex;
-    flex-direction: column;
-    gap: 15px;
-}
-.jc-details-body > .jc-setting-description {
-    margin-top: -2em;
-}
-
-/* ---------------------------------------------------------------------------
-   Arr instance cards
-   --------------------------------------------------------------------------- */
-/* Instance cards mirror the .jc-details-section (Tag Filters) look: subtle
-   on rest, slightly lighter on open, no strong accent border. Keep a
-   chevron summary prefix but mute the color so it feels consistent with
-   other collapsibles on the page. */
-.arr-instance-card {
-    background: var(--jc-overlay);
-    border: 1px solid var(--jc-border-subtle);
-    border-radius: 10px;
-    margin: 5px 0 10px 0;
-    overflow: hidden;
-    transition: background-color 0.25s ease, border-color 0.25s ease;
-}
-.arr-instance-card:hover  { border-color: var(--jc-border); }
-.arr-instance-card[open] {
+    padding: 12px;
     background: var(--jc-surface-1);
-    border-color: var(--jc-border);
+    border: 1px solid var(--jc-border);
+    border-left-width: 3px;
+    border-radius: 10px;
+    cursor: pointer;
+    color: inherit;
+    text-align: left;
+    font: inherit;
+    transition: background 0.15s ease, transform 0.15s ease;
 }
-.arr-instance-card > summary {
+.jc-service-card:hover,
+.jc-optional-plugin-card:hover { background: var(--jc-surface-2); transform: translateY(-1px); }
+.jc-service-card.jc-state-ok,
+.jc-optional-plugin-card.jc-state-ok { border-left-color: var(--jc-success); }
+.jc-service-card.jc-state-warn,
+.jc-optional-plugin-card.jc-state-warn { border-left-color: var(--jc-warning); }
+.jc-service-card.jc-state-error,
+.jc-optional-plugin-card.jc-state-error { border-left-color: var(--jc-danger); }
+.jc-service-card.jc-state-pending,
+.jc-optional-plugin-card.jc-state-pending { border-left-color: var(--jc-text-dim); }
+.jc-service-card.jc-state-off { border-left-color: var(--jc-border-strong); opacity: 1; }
+.jc-optional-plugin-card.jc-state-off { border-left-color: var(--jc-border-strong); opacity: 1; }
+.jc-service-icon,
+.jc-optional-plugin-icon { font-size: 20px !important; color: var(--jc-text-muted); flex-shrink: 0; }
+.jc-service-card.jc-state-ok .jc-service-icon,
+.jc-optional-plugin-card.jc-state-ok .jc-optional-plugin-icon { color: var(--jc-success); }
+.jc-service-card.jc-state-warn .jc-service-icon { color: var(--jc-warning); }
+.jc-service-card.jc-state-error .jc-service-icon { color: var(--jc-danger); }
+.jc-service-body,
+.jc-optional-plugin-body { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.jc-service-name,
+.jc-optional-plugin-name { font-weight: 600; font-size: 0.92em; color: var(--jc-text-strong); }
+.jc-service-detail,
+.jc-optional-plugin-status,
+.jc-optional-plugin-purpose { font-size: 0.8em; color: var(--jc-text-muted); line-height: 1.35; }
+.jc-optional-plugin-link { color: var(--jc-text-muted); }
+.jc-optional-plugin-link:hover,
+.jc-optional-plugin-link:focus-visible { color: var(--jc-accent); background: var(--jc-accent-tint-10); }
+
+.jc-features-dashboard {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 10px;
+}
+.jc-feature-row {
     display: flex;
     align-items: center;
-    gap: 12px;
-    padding: 14px 18px;
+    gap: 10px;
+    padding: 10px 12px;
+    background: var(--jc-surface-1);
+    border: 1px solid var(--jc-border);
+    border-left-width: 3px;
+    border-radius: 10px;
     cursor: pointer;
-    list-style: none;
-    user-select: none;
-    background: transparent;
-    color: var(--jc-text-muted);
+    color: inherit;
+    text-align: left;
+    font: inherit;
+    transition: background 0.15s ease;
 }
-.arr-instance-card > summary::-webkit-details-marker { display: none; }
-.arr-instance-card > summary::before {
-    content: "\e5cc";
-    font-family: "Material Icons";
-    font-size: 20px;
-    transition: transform 0.2s;
-    color: var(--jc-text-subtle);
-}
-.arr-instance-card[open] > summary::before {
-    transform: rotate(90deg);
-    color: var(--jc-text-strong);
-}
+.jc-feature-row:hover { background: var(--jc-surface-2); }
+.jc-feature-row.jc-state-ok { border-left-color: var(--jc-success); }
+.jc-feature-row.jc-state-warn { border-left-color: var(--jc-warning); }
+.jc-feature-row.jc-state-off { border-left-color: var(--jc-border-strong); opacity: 1; }
+.jc-feature-icon { font-size: 18px !important; color: var(--jc-text-muted); flex-shrink: 0; }
+.jc-feature-row.jc-state-ok .jc-feature-icon { color: var(--jc-success); }
+.jc-feature-body { min-width: 0; }
+.jc-feature-name { font-weight: 600; font-size: 0.9em; color: var(--jc-text-strong); }
+.jc-feature-detail { font-size: 0.78em; color: var(--jc-text-muted); }
 
-/* Custom toggle for the per-instance Enabled checkbox (can't use is="emby-checkbox"
-   because the summary row has no <label><span> wrapper). Renders as a
-   pill-style switch that inherits the accent color when checked. */
+.jc-quick-actions-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 12px;
+}
+.jc-quick-action {
+    background: var(--jc-card-gradient);
+    border: 1px solid var(--jc-border);
+    border-radius: 12px;
+    padding: 14px 16px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    cursor: pointer;
+    color: inherit;
+    text-align: left;
+    transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s;
+    font: inherit;
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+}
+.jc-quick-action:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 25px rgba(0, 0, 0, 0.15);
+    border-color: var(--jc-text-dim);
+    background: var(--jc-card-gradient-lift);
+}
+.jc-quick-action-icon { font-size: 26px !important; color: var(--jc-accent); flex-shrink: 0; }
+.jc-quick-action-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.jc-quick-action-title { font-size: 0.95em; font-weight: 600; }
+.jc-quick-action-detail { font-size: 0.8em; color: var(--jc-text-muted); line-height: 1.3; }
+
+/* ===========================================================================
+   7. COMPONENTS
+   =========================================================================== */
+
+/* Accordions */
+.jc-details-section { border: 1px solid var(--jc-border-subtle); border-radius: 10px; }
+.jc-details-section > summary {
+    cursor: pointer;
+    padding: 12px 16px;
+    font-weight: 600;
+    color: var(--jc-text-muted);
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.jc-details-section > summary::-webkit-details-marker { display: none; }
+.jc-details-section > summary::after { content: "expand_more"; font-family: 'Material Symbols Rounded', 'Material Icons'; margin-left: auto; transition: transform 0.15s ease; }
+.jc-details-section[open] > summary::after { transform: rotate(180deg); color: var(--jc-accent); }
+.jc-details-section > summary:hover { color: var(--jc-accent); }
+.jc-details-body { padding: 4px 16px 14px; display: flex; flex-direction: column; gap: 12px; }
+
+/* Arr instance cards */
+.arr-instances-list { display: flex; flex-direction: column; gap: 12px; }
+.arr-instance-card {
+    background: var(--jc-surface-1);
+    border: 1px solid var(--jc-border);
+    border-radius: 12px;
+    padding: 4px 14px 12px;
+}
+.arr-instance-card > summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 12px; padding: 10px 2px; }
+.arr-instance-card > summary::-webkit-details-marker { display: none; }
+.arr-instance-name-label { font-weight: 600; color: var(--jc-text-strong); }
+.arr-instance-summary-url { color: var(--jc-text-subtle); font-size: 0.85em; overflow: hidden; text-overflow: ellipsis; }
 .arr-instance-enabled {
     appearance: none;
     -webkit-appearance: none;
+    position: relative;
     width: 34px;
     height: 18px;
+    margin: 0;
     border-radius: 999px;
     background: var(--jc-surface-3);
     border: 1px solid var(--jc-border-strong);
     cursor: pointer;
-    position: relative;
-    flex-shrink: 0;
+    flex: none;
     transition: background 0.18s ease, border-color 0.18s ease;
-    margin: 0;
 }
 .arr-instance-enabled::before {
     content: "";
@@ -1397,67 +987,24 @@
     transform: translateY(-50%);
     transition: left 0.18s ease, background 0.18s ease;
 }
-.arr-instance-enabled:hover {
-    border-color: var(--jc-text-dim);
-}
-.arr-instance-enabled:checked {
-    background: color-mix(in srgb, var(--jc-accent) 70%, transparent);
-    border-color: var(--jc-accent);
-}
-.arr-instance-enabled:checked::before {
-    left: 18px;
-    background: #fff;
-}
-.arr-instance-enabled:focus-visible {
-    outline: 2px solid var(--jc-accent);
-    outline-offset: 2px;
-}
-.arr-instance-summary-name { flex: 1; font-weight: 600; }
-.arr-instance-summary-url {
-    color: var(--jc-text-subtle);
-    font-size: 0.85em;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    max-width: 250px;
-}
-.arr-instance-card-body {
-    padding: 15px 18px;
-    border-top: 1px solid var(--jc-border);
-}
-.arr-instance-header {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    margin-bottom: 10px;
-}
-.arr-instance-disabled { opacity: 1; }
-.arr-instance-disabled > summary .arr-instance-enabled { opacity: 1; }
-.arr-instance-disabled > summary .arr-instance-summary-name {
-    text-decoration: line-through;
-    color: var(--jc-text-muted);
-}
-.arr-instance-disabled > .arr-instance-card-body {
-    pointer-events: none;
-}
+.arr-instance-enabled:hover { border-color: var(--jc-text-dim); }
+.arr-instance-enabled:checked { background: color-mix(in srgb, var(--jc-accent) 70%, transparent); border-color: var(--jc-accent); }
+.arr-instance-enabled:checked::before { left: 18px; background: #fff; }
+.arr-instance-body { display: flex; flex-direction: column; gap: 10px; padding-top: 8px; }
+.arr-instance-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.arr-instance-status { font-size: 0.85em; color: var(--jc-text-muted); }
 .arr-instance-remove {
-    background: transparent;
-    border: 1px solid rgba(220,53,69,0.5);
+    background: none;
+    border: 1px solid color-mix(in srgb, var(--jc-danger) 50%, transparent);
     color: var(--jc-danger);
-    border-radius: 6px;
+    border-radius: 8px;
     padding: 6px 12px;
     cursor: pointer;
     font-size: 0.85em;
-    transition: all 0.2s;
 }
-.arr-instance-remove:hover {
-    background: rgba(220,53,69,0.15);
-    color: var(--jc-danger);
-}
+.arr-instance-remove:hover { background: color-mix(in srgb, var(--jc-danger) 15%, transparent); }
 
-/* ---------------------------------------------------------------------------
-   Sticky Save Dock
-   --------------------------------------------------------------------------- */
+/* Save dock: floating pill, single save owner. */
 .jc-save-dock {
     position: fixed;
     bottom: 30px;
@@ -1466,7 +1013,7 @@
     display: flex;
     justify-content: center;
     align-items: center;
-    background: rgba(25, 25, 25, 0.9);
+    background: rgba(16, 25, 17, 0.9);
     backdrop-filter: blur(16px);
     -webkit-backdrop-filter: blur(16px);
     border: 1px solid var(--jc-border);
@@ -1490,12 +1037,7 @@
     gap: 8px;
     transition: transform 0.2s, box-shadow 0.2s;
 }
-.jc-save-dock .jc-save-dock-btn:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 6px 15px rgba(0,0,0,0.3);
-}
-/* Unsaved-changes state: the dock announces itself with a brand glow and an
-   "Unsaved changes" chip (visual only; the save flow is untouched). */
+.jc-save-dock .jc-save-dock-btn:hover { transform: translateY(-2px); box-shadow: 0 6px 15px rgba(0, 0, 0, 0.3); }
 .jc-save-dock.jc-dirty {
     border-color: var(--jc-accent-border);
     box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6), 0 0 0 2px var(--jc-accent-tint-20);
@@ -1514,57 +1056,374 @@
     font-weight: 600;
     white-space: nowrap;
 }
-.jc-save-dock.jc-dirty::before {
-    display: inline-flex;
-}
-.jc-save-dock-icon {
-    font-size: 20px !important;
-    line-height: 1;
-}
+.jc-save-dock.jc-dirty::before { display: inline-flex; }
+.jc-save-dock-icon { font-size: 20px !important; line-height: 1; }
+.jc-apply-hint { text-align: center; color: var(--jc-text-subtle); font-size: 0.85em; margin-top: 18px; }
 
-/* ---------------------------------------------------------------------------
-   Banners & Alerts
-   --------------------------------------------------------------------------- */
+/* Banners */
 .jc-info-banner, .jc-info-banner-inline, .jc-info-banner-inline-center, .jc-info-banner-compact,
 .jc-note-banner, .jc-danger-banner, .jc-purple-banner, .jc-mobile-banner, .jc-splash-info-banner, .jc-dep-banner {
     border-radius: 8px;
+    border-left: 4px solid var(--jc-border-strong);
+    padding: 12px 16px;
     display: flex;
-    gap: 15px;
-    padding: 14px 20px;
-    margin: 10px 0;
-    align-items: center;
-    border-left-width: 4px;
-    border-left-style: solid;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    gap: 12px;
+    align-items: flex-start;
+    font-size: 0.9em;
+    line-height: 1.45;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
 }
-.jc-info-banner-row { display: flex; align-items: flex-start; gap: 15px; }
-
 .jc-info-banner, .jc-info-banner-inline, .jc-info-banner-inline-center, .jc-info-banner-compact, .jc-splash-info-banner {
-    background-color: color-mix(in srgb, var(--jc-accent) 10%, transparent);
+    background-color: color-mix(in srgb, var(--jc-accent) 8%, transparent);
     border-left-color: var(--jc-accent);
 }
 .jc-note-banner, .jc-mobile-banner, .jc-dep-banner {
-    background-color: rgba(255,193,7,0.1); border-left-color: var(--jc-warning);
+    background-color: color-mix(in srgb, var(--jc-warning) 10%, transparent);
+    border-left-color: var(--jc-warning);
 }
-.jc-danger-banner {
-    background-color: rgba(220,53,69,0.15); border-left-color: var(--jc-danger);
-}
-.jc-purple-banner {
-    /* Legacy name; Verdant retints this family to the info hue. */
-    background-color: color-mix(in srgb, var(--jc-info) 14%, transparent); border-left-color: var(--jc-info);
-}
-
+.jc-danger-banner { background-color: color-mix(in srgb, var(--jc-danger) 15%, transparent); border-left-color: var(--jc-danger); }
+.jc-purple-banner { background-color: color-mix(in srgb, var(--jc-info) 14%, transparent); border-left-color: var(--jc-info); }
 .jc-info-icon, .jc-bottom-info-icon, .jc-info-icon-sm { color: var(--jc-accent); font-size: 24px; flex-shrink: 0; margin-top: 2px; }
 .jc-note-icon, .jc-mobile-icon, .jc-dep-banner-icon { color: var(--jc-warning); font-size: 24px; flex-shrink: 0; margin-top: 2px; }
 .jc-danger-icon { color: var(--jc-danger); font-size: 24px; flex-shrink: 0; margin-top: 2px; }
 .jc-purple-icon { color: var(--jc-info); font-size: 24px; flex-shrink: 0; margin-top: 2px; }
 .jc-hidden { display: none !important; }
 
-/* ---------------------------------------------------------------------------
-   Search Highlight Utilities
-   --------------------------------------------------------------------------- */
+/* Search highlight + mode */
 .jc-search-hidden { display: none !important; }
+.jc-search-match { background: color-mix(in srgb, var(--jc-warning) 30%, transparent); border-radius: 3px; }
+.jc-search-match-active { background: var(--jc-warning); color: #16260F; border-radius: 3px; }
+.jc-search-tab-label { color: var(--jc-accent); font-size: 0.8em; font-weight: 700; display: block; margin: 6px 0; }
 
+/* Branding upload */
+.jc-branding-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; }
+.jc-branding-card { background: var(--jc-surface-1); border: 1px solid var(--jc-border); border-radius: 12px; padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; }
+.jc-branding-label-bold { font-weight: 600; color: var(--jc-text-strong); }
+.jc-branding-label, .jc-branding-meta, .jc-branding-hint, .jc-branding-size-hint,
+.jc-branding-maxsize, .jc-branding-dimensions { color: var(--jc-text-subtle); font-size: 0.82em; }
+.jc-branding-dropzone {
+    border: 2px dashed color-mix(in srgb, var(--jc-accent) 50%, transparent);
+    border-radius: 10px;
+    padding: 18px;
+    text-align: center;
+    color: var(--jc-text-muted);
+    cursor: pointer;
+    transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+.jc-branding-dropzone:hover { border-color: var(--jc-accent); background: var(--jc-accent-tint-10); }
+.jc-branding-preview { position: relative; display: inline-flex; }
+.jc-branding-preview img { max-width: 100%; border-radius: 8px; }
+.jc-branding-delete {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    border: 0;
+    background: rgba(0, 0, 0, 0.6);
+    color: #fff !important;
+    cursor: pointer;
+    display: grid;
+    place-items: center;
+}
+.jc-branding-delete:hover { background: #e53935; }
+
+/* Misc widgets */
+.jc-help-link, .jc-desc-toggle { display: inline-flex; align-items: center; gap: 6px; }
+.jc-help-link:hover, .jc-desc-toggle:hover { border-color: var(--jc-accent-border) !important; box-shadow: 0 0 0 1px var(--jc-accent-tint-10); }
+.jc-desc-toggle-state {
+    font-size: 0.72em;
+    font-weight: 700;
+    padding: 1px 7px;
+    border-radius: 999px;
+    border: 1px solid currentColor;
+}
+.jc-desc-toggle[aria-pressed="true"] .jc-desc-toggle-state { background: var(--jc-accent); color: var(--jc-on-accent); border-color: transparent; }
+body.jc-hide-descriptions .jc-setting-description { display: none !important; }
+body.jc-hide-descriptions .jc-overview-intro,
+body.jc-hide-descriptions .jc-tab-intro { display: none !important; }
+.jc-bold-link { font-weight: 600; color: var(--jc-accent); }
+.jc-kbd {
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+    background: var(--jc-surface-2);
+    border: 1px solid var(--jc-border);
+    border-radius: 5px;
+    padding: 1px 6px;
+    font-size: 0.85em;
+}
+.jc-screenshot-img { max-width: 100%; border-radius: 8px; box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3); }
+.jc-textarea-large { min-height: 120px; }
+textarea.emby-textarea { width: 100%; box-sizing: border-box; }
+
+/* Tag rows + reorder */
+.jc-tag-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.jc-order-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; background: var(--jc-surface-1); border: 1px solid var(--jc-border); border-radius: 8px; }
+
+/* Permission audit */
+.jc-audit-summary {
+    padding: 10px 14px;
+    background: color-mix(in srgb, var(--jc-accent) 8%, transparent);
+    border-left: 3px solid var(--jc-accent);
+    border-radius: 6px;
+}
+.jc-audit-chip { display: inline-flex; align-items: center; gap: 5px; border-radius: 999px; padding: 2px 10px; font-size: 0.8em; font-weight: 600; }
+.jc-audit-chip-ok { background: color-mix(in srgb, var(--jc-success) 18%, transparent); color: var(--jc-success); }
+.jc-audit-chip-warn { background: color-mix(in srgb, var(--jc-warning) 18%, transparent); color: var(--jc-warning); }
+.jc-audit-chip-unlinked { background: var(--jc-surface-3); color: var(--jc-text-muted); }
+.jc-audit-error {
+    color: var(--jc-danger);
+    padding: 10px 14px;
+    background: color-mix(in srgb, var(--jc-danger) 9%, transparent);
+    border-left: 3px solid var(--jc-danger);
+    border-radius: 6px;
+}
+
+/* Docs tab */
+.jc-docs-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; background: var(--jc-card-bg, rgba(22, 22, 22, 0.94)); border: 1px solid var(--jc-border); border-radius: 12px 12px 0 0; }
+.jc-docs-title { color: var(--jc-accent); font-weight: 600; margin: 0; }
+.jc-docs-open-link { color: var(--jc-accent); }
+.jc-docs-iframe { width: 100%; min-height: 70vh; border: 1px solid var(--jc-border); border-radius: 0 0 12px 12px; background: #0f0f0f; }
+
+/* Preview panel + toast (intentionally always-dark surfaces). */
+.jc-preview-panel-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 99999;
+    background: var(--jc-overlay-hard);
+    display: grid;
+    place-items: center;
+}
+.jc-preview-panel-card {
+    background: rgb(24, 24, 24);
+    color: #fff;
+    border: 1px solid var(--jc-border);
+    border-radius: 14px;
+    padding: 22px 26px;
+    max-width: 480px;
+    box-shadow: 0 18px 60px rgba(0, 0, 0, 0.7);
+}
+.jc-preview-panel-title { color: var(--jc-accent); margin: 0 0 8px; }
+.jc-preview-panel-countdown { color: var(--jc-accent); font-weight: 700; }
+.jc-preview-panel-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 16px; }
+.jc-preview-toast {
+    position: fixed;
+    bottom: 30px;
+    right: 30px;
+    z-index: 99999;
+    background: linear-gradient(rgba(0, 0, 0, 0.9), rgba(40, 40, 40, 0.9));
+    color: #fff;
+    border: 1px solid var(--jc-accent, rgba(255, 255, 255, 0.1));
+    border-radius: 10px;
+    padding: 12px 18px;
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.3);
+}
+
+/* ===========================================================================
+   8. WIZARD + ESSENTIALS (Verdant-native)
+   =========================================================================== */
+
+.jc-wizard {
+    position: fixed;
+    inset: 0;
+    z-index: 2500;
+    background: var(--jc-overlay-hard);
+    display: grid;
+    place-items: center;
+    padding: 24px;
+}
+.jc-wizard[hidden] { display: none; }
+.jc-wiz-card {
+    width: 100%;
+    max-width: 640px;
+    max-height: calc(100vh - 48px);
+    overflow-y: auto;
+    background: var(--jc-card-bg);
+    border: 1px solid var(--jc-border);
+    border-radius: 20px;
+    padding: 32px 36px 26px;
+    box-shadow: 0 30px 70px -40px rgba(0, 0, 0, 0.8);
+}
+.jc-wiz-steps { display: flex; justify-content: center; margin-bottom: 26px; }
+.jc-wiz-stepnode { display: flex; flex-direction: column; align-items: center; width: 108px; position: relative; }
+.jc-wiz-stepnode::before { content: ""; position: absolute; top: 6px; left: -50%; width: 100%; height: 1px; background: var(--jc-border); }
+.jc-wiz-stepnode:first-child::before { display: none; }
+.jc-wiz-stepnode .jc-wiz-node { width: 13px; height: 13px; border-radius: 50%; background: var(--jc-card-bg); border: 1.5px solid var(--jc-border); z-index: 1; transition: background-color 0.2s ease, border-color 0.2s ease; }
+.jc-wiz-stepnode .jc-wiz-steplabel { margin-top: 8px; font-size: 0.72em; letter-spacing: 0.14em; text-transform: uppercase; color: var(--jc-text-subtle); }
+.jc-wiz-stepnode.jc-done .jc-wiz-node { background: var(--jc-accent-strong); border-color: var(--jc-accent-strong); }
+.jc-wiz-stepnode.jc-done::before { background: var(--jc-accent-strong); }
+.jc-wiz-stepnode.jc-now .jc-wiz-node { background: var(--jc-accent); border-color: var(--jc-accent); box-shadow: 0 0 0 4px var(--jc-accent-tint-20); }
+.jc-wiz-stepnode.jc-now .jc-wiz-steplabel { color: var(--jc-accent); }
+.jc-wiz-pane[hidden] { display: none; }
+.jc-wiz-title { font-size: 1.7em; font-weight: 450; margin: 10px 0 8px; color: var(--jc-text-strong); }
+.jc-wiz-lede { color: var(--jc-text-muted); margin: 0 0 20px; max-width: 56ch; }
+.jc-wiz-eyebrow { font-size: 0.72em; letter-spacing: 0.2em; text-transform: uppercase; color: var(--verdant-seed); }
+.jc-wiz-choices { display: grid; gap: 12px; margin-bottom: 14px; }
+.jc-wiz-choice {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    text-align: left;
+    width: 100%;
+    background: var(--jc-surface-1);
+    border: 1px solid var(--jc-border);
+    border-radius: 14px;
+    padding: 16px 18px;
+    cursor: pointer;
+    color: var(--jc-text-strong);
+    font: inherit;
+}
+.jc-wiz-choice:hover { border-color: var(--jc-accent-strong); }
+.jc-wiz-choice.jc-hero { border-color: var(--jc-accent-strong); background: color-mix(in srgb, var(--jc-accent) 7%, var(--jc-card-bg)); }
+.jc-wiz-choice .jc-wiz-choice-title { font-weight: 600; }
+.jc-wiz-choice .jc-wiz-choice-desc { color: var(--jc-text-muted); font-size: 0.88em; margin-top: 2px; line-height: 1.4; }
+.jc-wiz-badge { font-size: 0.68em; letter-spacing: 0.12em; text-transform: uppercase; color: var(--jc-on-accent); background: var(--jc-accent); border-radius: 999px; padding: 3px 9px; margin-left: 10px; font-weight: 700; }
+.jc-wiz-optgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 8px; }
+.jc-wiz-opt {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    background: var(--jc-surface-1);
+    border: 1px solid var(--jc-border);
+    border-radius: 12px;
+    padding: 13px 15px;
+}
+.jc-wiz-opt .jc-wiz-opt-title { font-weight: 600; font-size: 0.92em; }
+.jc-wiz-opt .jc-wiz-opt-desc { color: var(--jc-text-muted); font-size: 0.82em; margin-top: 2px; line-height: 1.4; }
+.jc-wiz-connrows { display: grid; gap: 12px; }
+.jc-wiz-connrow { background: var(--jc-surface-1); border: 1px solid var(--jc-border); border-radius: 12px; padding: 13px 15px; }
+.jc-wiz-connhead { display: flex; align-items: center; gap: 12px; }
+.jc-wiz-connname { font-weight: 600; }
+.jc-wiz-conndesc { color: var(--jc-text-muted); font-size: 0.82em; }
+.jc-wiz-connstate { margin-left: auto; font-size: 0.85em; color: var(--jc-text-muted); display: inline-flex; align-items: center; gap: 7px; flex: none; }
+.jc-wiz-connstate.jc-ok { color: var(--jc-success); }
+.jc-wiz-connform { display: none; grid-template-columns: 1fr 1fr auto; gap: 10px; margin-top: 12px; align-items: end; }
+.jc-wiz-connform.jc-open { display: grid; }
+.jc-wiz-connform label { display: block; font-size: 0.72em; letter-spacing: 0.1em; text-transform: uppercase; color: var(--jc-text-subtle); margin-bottom: 4px; }
+.jc-wiz-footrow { display: flex; align-items: center; justify-content: space-between; margin-top: 22px; gap: 10px; }
+.jc-wiz-footrow .jc-wiz-right { display: flex; gap: 10px; align-items: center; }
+.jc-wiz-btn-primary {
+    background: var(--jc-grad-control);
+    color: var(--jc-control-text);
+    text-shadow: 0 1px 2px rgba(8, 15, 9, 0.35);
+    border: 0;
+    border-radius: 999px;
+    padding: 10px 24px;
+    font-weight: 650;
+    cursor: pointer;
+    font: inherit;
+}
+.jc-wiz-btn-primary:hover { filter: brightness(1.07); }
+.jc-wiz-btn-quiet {
+    background: none;
+    border: 1px solid var(--jc-border);
+    color: var(--jc-text-strong);
+    border-radius: 999px;
+    padding: 10px 22px;
+    cursor: pointer;
+    font: inherit;
+}
+.jc-wiz-btn-quiet:hover { border-color: var(--jc-accent-strong); color: var(--jc-accent); }
+.jc-wiz-btn-link { background: none; border: 0; color: var(--jc-text-subtle); cursor: pointer; text-decoration: underline; text-underline-offset: 3px; font: inherit; font-size: 0.9em; }
+.jc-wiz-btn-link:hover { color: var(--jc-text-muted); }
+.jc-wiz-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--jc-text-dim); }
+.jc-wiz-dot.jc-ok { background: var(--jc-success); box-shadow: 0 0 6px color-mix(in srgb, var(--jc-success) 40%, transparent); }
+.jc-wiz-summary { display: grid; gap: 8px; margin: 4px 0 20px; }
+.jc-wiz-sumline { display: flex; gap: 10px; align-items: center; color: var(--jc-text-muted); font-size: 0.95em; }
+.jc-wiz-sumline b { color: var(--jc-text-strong); }
+
+/* Essentials */
+#jcEssentials[hidden] { display: none; }
+.jc-ess-lede { color: var(--jc-text-muted); max-width: 68ch; margin: 0 0 20px; }
+.jc-ess-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; margin-bottom: 22px; }
+.jc-ess-card {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 14px;
+    background: var(--jc-card-bg);
+    border: 1px solid var(--jc-border);
+    border-radius: 14px;
+    padding: 16px 18px;
+}
+.jc-ess-card .jc-ess-name { font-weight: 600; color: var(--jc-text-strong); }
+.jc-ess-card .jc-ess-desc { color: var(--jc-text-muted); font-size: 0.85em; margin-top: 3px; line-height: 1.45; max-width: 42ch; }
+.jc-ess-svc {
+    background: var(--jc-card-bg);
+    border: 1px solid var(--jc-border);
+    border-radius: 14px;
+    padding: 16px 20px;
+    margin-bottom: 22px;
+}
+.jc-ess-svc-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 10px; }
+.jc-ess-svc-list { display: flex; gap: 24px; flex-wrap: wrap; }
+.jc-ess-svc-item { display: inline-flex; align-items: center; gap: 8px; font-size: 0.92em; color: var(--jc-text-muted); }
+.jc-ess-svc-item b { color: var(--jc-text-strong); }
+.jc-ess-note {
+    background: color-mix(in srgb, var(--jc-accent) 7%, var(--jc-card-bg));
+    border: 1px solid color-mix(in srgb, var(--jc-accent) 25%, var(--jc-border));
+    border-radius: 12px;
+    padding: 12px 16px;
+    color: var(--jc-text-muted);
+    font-size: 0.9em;
+    margin-bottom: 22px;
+    max-width: 80ch;
+}
+.jc-ess-foot { display: flex; align-items: center; gap: 16px; border-top: 1px solid var(--jc-border); padding-top: 18px; }
+/* Essentials mode hides the advanced chrome; the form stays for the dock. */
+body.jc-essentials-mode #JellyfinCanopyPage .jc-tab-bar,
+body.jc-essentials-mode #JellyfinCanopyPage #settingsSearchContainer,
+body.jc-essentials-mode #JellyfinCanopyPage #jcSectionStrip,
+body.jc-essentials-mode #JellyfinCanopyForm > .jellyfin-tab-content,
+body.jc-essentials-mode #JellyfinCanopyPage .jc-apply-hint { display: none !important; }
+
+/* ===========================================================================
+   9. RESPONSIVE + MOTION
+   =========================================================================== */
+
+@media (max-width: 768px) {
+    .jc-save-dock { left: 140px; transform: none; right: 16px; justify-content: flex-end; }
+    .jc-page-header { align-items: flex-start; flex-direction: column; }
+    .jc-section-strip { max-width: 100%; }
+    #JellyfinCanopyPage .jellyfin-tab-content.active { grid-template-columns: 1fr; }
+    .jc-wiz-optgrid, .jc-wiz-connform { grid-template-columns: 1fr; }
+}
+@media (max-width: 540px) {
+    .jc-service-dashboard, .jc-features-dashboard, .jc-optional-plugins-dashboard { grid-template-columns: 1fr; }
+}
+@media (max-width: 420px) {
+    #JellyfinCanopyPage .jc-group-btn { min-height: 44px; }
+    #settingsSearchClear { width: 28px; height: 28px; }
+    .jc-wiz-card { padding: 22px 20px 18px; }
+}
+@media (max-width: 600px) {
+    .jc-tag-position { width: 100%; }
+}
+@media (prefers-reduced-motion: reduce) {
+    #JellyfinCanopyPage .jellyfin-tab-content { animation: none; }
+    .jc-nav-scrim, .jc-sidebar, .jc-preview-toast,
+    .jc-group-btn, .jc-group-btn::before, .arr-instance-enabled, .arr-instance-enabled::before { transition: none !important; }
+}
+
+/* ===========================================================================
+   7b. CARRYOVER — behavior-coupled and utility rules preserved from the
+   previous sheet (token-clean; display/behavior contracts of the engine)
+   =========================================================================== */
+
+.jc-tab-bar.jc-dragging {
+    scroll-behavior: auto;
+}
+.arr-instance-disabled { opacity: 1; }
+.arr-instance-disabled > summary .arr-instance-enabled { opacity: 1; }
+.arr-instance-disabled > summary .arr-instance-summary-name {
+    text-decoration: line-through;
+    color: var(--jc-text-muted);
+}
+.arr-instance-disabled > .arr-instance-card-body {
+    pointer-events: none;
+}
+.jc-info-banner-row { display: flex; align-items: flex-start; gap: 15px; }
 /* In search mode the form becomes a flex column so tab-contents
    whose tab name itself matches the query can hoist to the top via
    order: -1 — searching "elsewhere" should surface the Elsewhere
@@ -1586,117 +1445,15 @@
 #JellyfinCanopyForm.jc-search-mode > .jellyfin-tab-content.jc-tab-name-match {
     order: -1;
 }
-.jc-search-match {
-    background-color: rgba(255,200,0,0.35);
-    color: var(--jc-text-strong);
-    border-radius: 4px;
-    padding: 0 3px;
-    box-shadow: 0 0 0 1px rgba(255,200,0,0.25);
-    /* box-decoration-break: clone keeps the highlight inline with surrounding
-       text across line wraps, so the rest of the description doesn't get
-       pushed to a new line when a short match lands at line start. */
-    display: inline;
-    box-decoration-break: clone;
-    -webkit-box-decoration-break: clone;
-}
-.jc-search-match-active {
-    background-color: rgba(255,165,0,0.85);
-    box-shadow: 0 0 0 2px rgba(255,165,0,0.5);
-    color: #000;
-    font-weight: bold;
-}
-.jc-search-tab-label {
-    font-size: 1.4em;
-    font-weight: 700;
-    color: var(--jc-accent);
-    margin-bottom: 1em;
-    padding-bottom: 0.5em;
-    border-bottom: 2px solid var(--jc-border);
-    grid-column: 1 / -1;
-}
-
-/* ---------------------------------------------------------------------------
-   Custom Branding Dropzones
-   --------------------------------------------------------------------------- */
-.jc-branding-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-    gap: 20px;
-    margin: 15px 0;
-}
-.jc-branding-card {
-    background: var(--jc-overlay-soft);
-    border: 1px solid var(--jc-border);
-    border-radius: 12px;
-    padding: 16px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-}
-.jc-branding-label-bold { font-weight: bold; color: var(--jc-text-strong); font-size: 1.05em; }
-.jc-branding-size-hint { font-size: 0.75em; color: var(--jc-text-subtle); margin-bottom: 6px; }
-.jc-branding-label { color: var(--jc-text-muted); font-size: 0.85em; }
-.jc-branding-meta { font-size: 0.8em; color: var(--jc-text-muted); margin-bottom: 10px; }
-.jc-branding-dropzone {
-    background: var(--jc-surface-1);
-    border: 2px dashed color-mix(in srgb, var(--jc-accent) 50%, transparent);
-    border-radius: 8px;
-    padding: 20px;
-    text-align: center;
-    cursor: pointer;
-    min-height: 180px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    transition: all 0.2s;
-    position: relative;
-}
-.jc-branding-dropzone:hover {
-    background: color-mix(in srgb, var(--jc-accent) 5%, transparent);
-    border-color: var(--jc-accent);
-}
 .jc-branding-file-input {
     position: absolute;
     inset: 0;
     opacity: 0;
     cursor: pointer;
 }
-.jc-branding-preview { max-height: 100px; border-radius: 4px; margin-bottom: 10px; }
 .jc-branding-placeholder { color: var(--jc-text-dim); font-size: 2em; }
 .jc-branding-placeholder-icon { font-size: 2.5em; }
 .jc-branding-status { font-size: 0.85em; margin-top: 5px; min-height: 1em; }
-.jc-branding-dimensions { color: var(--jc-text-muted); font-size: 0.75em; margin-top: 3px; }
-.jc-branding-hint { color: var(--jc-text-muted); font-size: 0.85em; margin-top: 5px; }
-.jc-branding-maxsize { color: var(--jc-text-subtle); font-size: 0.7em; margin-top: 2px; }
-.jc-branding-delete {
-    position: absolute;
-    top: 10px; right: 10px;
-    background: var(--jc-overlay-hard) !important;
-    border: none;
-    color: #fff !important;
-    padding: 6px !important;
-    border-radius: 50% !important;
-    width: 36px; height: 36px;
-    display: flex; align-items: center; justify-content: center;
-}
-.jc-branding-delete:hover { background: #e53935 !important; }
-
-/* ---------------------------------------------------------------------------
-   Misc / Utility
-   --------------------------------------------------------------------------- */
-.jc-help-link { border-radius: 20px; }
-/* Header actions: quiet ghost pills that answer with the brand accent. */
-#JellyfinCanopyPage .jc-help-link,
-#JellyfinCanopyPage .jc-desc-toggle {
-    border: 1px solid var(--jc-border);
-    transition: border-color 0.2s ease, box-shadow 0.2s ease;
-}
-#JellyfinCanopyPage .jc-help-link:hover,
-#JellyfinCanopyPage .jc-desc-toggle:hover {
-    border-color: var(--jc-accent-border);
-    box-shadow: 0 0 0 2px var(--jc-accent-tint-10);
-}
 #JellyfinCanopyPage .jc-api-row {
     display: flex;
     align-items: center;
@@ -1714,46 +1471,9 @@
 #JellyfinCanopyPage .jc-api-row > :not(.jc-api-input) {
     flex: 0 0 auto;
 }
-.jc-textarea-tall { height: 120px !important; }
 .jc-textarea-medium { height: 90px !important; }
-.jc-textarea-large { height: 160px !important; }
-.jc-bold-link { font-weight: bold; color: var(--jc-text-strong); text-decoration: underline; }
-.jc-kbd { background: var(--jc-surface-3); padding: 3px 6px; border-radius: 4px; font-family: monospace; }
-.jc-screenshot-img { max-width: 100%; border-radius: 8px; margin-top: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); }
 .jc-screenshot-img-sm { max-width: 60%; }
 .jc-loading-text { color: var(--jc-text-muted); }
-
-.jc-copy-code-wrapper {
-    position: relative;
-    margin: 10px 0;
-}
-.jc-copy-html-btn {
-    position: absolute;
-    top: 5px;
-    right: 5px;
-    font-size: 0.75em !important;
-    padding: 4px 10px !important;
-    z-index: 2;
-}
-.jc-code-pre {
-    background: var(--jc-overlay-hard);
-    padding: 12px 75px 12px 16px !important; /* Pad right so copy btn doesn't overlap text */
-    border-radius: 6px;
-    overflow-x: auto;
-    font-size: 0.85em;
-    margin: 0;
-    border: 1px solid var(--jc-border);
-}
-
-.jc-apply-hint {
-    text-align: center;
-    color: var(--jc-text-subtle);
-    font-size: 0.85em;
-    margin-top: 10px;
-    grid-column: 1 / -1;
-}
-
-
 .dep-hint-text {
     color: var(--jc-warning);
     font-size: 0.8em;
@@ -1761,76 +1481,8 @@
     display: block;
     font-style: italic;
 }
-/* Parent-dep hints get appended as direct <div class="dep-hint-text"> children
-   of .checkboxContainer (which is display: flex; align-items: center). Without
-   these rules the hint becomes a flex sibling of the label, sharing the row
-   and crushing both pieces on narrow viewports (visible on phones: the label
-   "Use Plugin Pages for Hidden Content" and the hint "Enable X to configure"
-   end up squashed into half-width columns). Wrap the hint onto its own line. */
-#JellyfinCanopyPage .checkboxContainer { flex-wrap: wrap; }
 #JellyfinCanopyPage .checkboxContainer > .dep-hint-text { flex-basis: 100%; }
 .dep-required-icon { vertical-align: middle; margin-left: 6px; }
-
-/* ---------------------------------------------------------------------------
-   Docs tab — embedded live docs iframe
-   Breaks out of the form's 1400px max-width so the iframe goes edge-to-edge.
-   Keeps only a thin single-line header with the title + "open in new tab".
-   --------------------------------------------------------------------------- */
-/* Docs tab takes the full width of the form (matching the tab bar above it)
-   and uses a single-row header + tall iframe with no fieldset chrome. */
-#docs.jellyfin-tab-content.active {
-    display: block;
-    width: 100%;
-    padding: 0;
-    gap: 0;
-}
-.jc-docs-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 8px 16px;
-    background: var(--jc-card-bg, rgba(22, 22, 22, 0.94));
-    border-bottom: 1px solid var(--jc-border);
-}
-.jc-docs-title {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    font-weight: 600;
-    font-size: 1.05em;
-    color: var(--jc-accent);
-}
-.jc-docs-title .jc-legend-icon { font-size: 20px !important; }
-.jc-docs-open-link {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    color: var(--jc-accent);
-    text-decoration: none;
-    font-size: 0.9em;
-    padding: 4px 8px;
-    border-radius: 4px;
-    transition: background 0.15s ease;
-}
-.jc-docs-open-link:hover { background: var(--jc-surface-2); text-decoration: underline; }
-.jc-docs-open-link .material-icons { font-size: 16px !important; }
-.jc-docs-iframe {
-    width: 100%;
-    height: calc(100vh - 170px);
-    min-height: 520px;
-    border: 0;
-    background: #0f0f0f;
-    display: block;
-}
-
-/* ---------------------------------------------------------------------------
-   Setting description visibility toggle
-   --------------------------------------------------------------------------- */
-body.jc-hide-descriptions .jc-setting-description { display: none !important; }
-body.jc-hide-descriptions .jc-overview-intro,
-body.jc-hide-descriptions .jc-tab-intro { display: none !important; }
-
 /* Per-service action row on the *arr tab — [+ Add instance] [Validate Mappings] */
 .jc-arr-action-row {
     display: flex;
@@ -1840,32 +1492,8 @@ body.jc-hide-descriptions .jc-tab-intro { display: none !important; }
     margin-top: 8px;
 }
 .jc-arr-action-row > button { width: fit-content; margin: 0; }
-.jc-desc-toggle { display: inline-flex; align-items: center; gap: 8px; }
-/* On/Off pill — replaces the earlier Material-icons indicator that
-   vanished on themes whose raised-button fill matches the accent.
-   Pill is a small chip that flips its background between a muted
-   neutral (OFF) and the user's accent color (ON). Always reads
-   against the button because the chip has its own fill. */
-.jc-desc-toggle-state {
-    font-size: 0.72em;
-    font-weight: 700;
-    letter-spacing: 0.6px;
-    text-transform: uppercase;
-    padding: 2px 8px;
-    border-radius: 999px;
-    background: color-mix(in srgb, currentColor 18%, transparent);
-    color: currentColor;
-    line-height: 1.4;
-    min-width: 28px;
-    text-align: center;
-}
-.jc-desc-toggle[aria-pressed="true"] .jc-desc-toggle-state {
-    background: var(--jc-accent);
-    color: var(--jc-on-accent);
-}
 .jc-desc-toggle-off { opacity: 0.85; }
 .jc-desc-toggle-off:hover { opacity: 1; }
-
 /* ---------------------------------------------------------------------------
    Collapsible info banners
    When "Descriptions" is off, every .jc-info-banner-inline(-center) folds
@@ -1899,11 +1527,9 @@ body.jc-hide-descriptions .jc-tab-intro { display: none !important; }
     line-height: 1;
     vertical-align: middle;
 }
-
 body.jc-hide-descriptions .jc-banner-trigger { display: inline-flex; }
 body.jc-hide-descriptions .jc-banner-managed { display: none; }
 body.jc-hide-descriptions .jc-banner-managed.jc-banner-open { display: block; }
-
 /* Per-banner gating: hide the banner + surface the trigger icon when the
    gating parent checkbox (.jc-setting-description[data-desc-for="X"] where
    #X is a checkbox) is unchecked. Same UX as descriptions-off, but scoped
@@ -1911,7 +1537,6 @@ body.jc-hide-descriptions .jc-banner-managed.jc-banner-open { display: block; }
 .jc-banner-managed.jc-banner-parent-off:not(.jc-banner-open) { display: none; }
 .jc-banner-managed.jc-banner-parent-off.jc-banner-open { display: block; }
 .jc-banner-trigger.jc-banner-parent-off { display: inline-flex; }
-
 /* Surface the parent description container only for sections whose banner
    is explicitly opened, and suppress the plain description text within. */
 body.jc-hide-descriptions .jc-setting-description:has(.jc-banner-managed.jc-banner-open) {
@@ -1920,57 +1545,7 @@ body.jc-hide-descriptions .jc-setting-description:has(.jc-banner-managed.jc-bann
 body.jc-hide-descriptions .jc-setting-description:has(.jc-banner-managed.jc-banner-open) > .fieldDescription {
     display: none;
 }
-
-/* ---------------------------------------------------------------------------
-   Gated help blocks
-   --------------------------------------------------------------------------- */
-[data-gated-by][hidden] { display: none !important; }
-
-/* ---------------------------------------------------------------------------
-   Dynamic descriptions — hide install-only content when the relevant
-   integration plugin is detected on the server. Body classes are toggled
-   by checkInstalledPlugins() in configPage.html.
-   --------------------------------------------------------------------------- */
-body.jc-has-customtabs   .jc-needs-customtabs   { display: none !important; }
-body.jc-has-pluginpages  .jc-needs-pluginpages  { display: none !important; }
 body.jc-has-introskipper .jc-needs-introskipper { display: none !important; }
-
-/* Media Tags rows — pair an Enable toggle with its Position dropdown on
-   one row so the relationship is obvious without an "Advanced" accordion.
-   Falls to a stacked layout on narrow viewports so the dropdown doesn't
-   shrink unreadably. */
-.jc-tag-row {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    flex-wrap: wrap;
-}
-.jc-tag-row > .checkboxContainer {
-    flex: 1 1 200px;
-    margin: 0;
-    min-width: 0;
-}
-.jc-tag-row > .jc-tag-position {
-    flex: 0 0 auto;
-    margin: 0;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-}
-.jc-tag-row > .jc-tag-position .inputLabel {
-    font-size: 0.85em;
-    margin: 0;
-    white-space: nowrap;
-}
-.jc-tag-row > .jc-tag-position .emby-select {
-    min-width: 140px;
-}
-@media (max-width: 600px) {
-    .jc-tag-row > .jc-tag-position {
-        flex: 1 1 100%;
-    }
-}
-
 /* Quality-tag category rows inside the admin <details>. Visual treatment
    matches the rest of the form: a single horizontal row holding a checkbox
    container, plus reorder buttons that stay quiet by default and hint at
@@ -2009,23 +1584,15 @@ body.jc-has-introskipper .jc-needs-introskipper { display: none !important; }
     vertical-align: -2px;
     opacity: 0.85;
 }
-
-/* Custom Tabs auto-manage toggles — hidden by default. Revealed only when
-   the Custom Tabs plugin is detected AND its config schema matches what
-   Jellyfin Canopy knows how to write. JS sets `jc-has-customtabs-compat`
-   on body after a successful schema validation. */
-.jc-customtabs-automanage { display: none; }
-body.jc-has-customtabs-compat .jc-customtabs-automanage { display: block; }
-
 /* "✓ Plugin detected" badges — hidden by default, revealed when the
    matching body class is present. Authors place
    <span class="jc-installed-badge" data-plugin="customtabs">…</span>
    wherever a positive confirmation makes sense. */
 .jc-installed-badge { display: none; }
-body.jc-has-customtabs   .jc-installed-badge[data-plugin="customtabs"]   { display: inline-flex; }
-body.jc-has-pluginpages  .jc-installed-badge[data-plugin="pluginpages"]  { display: inline-flex; }
+body.jc-has-customtabs   .jc-installed-badge[data-plugin="customtabs"] { display: inline-flex; }
+body.jc-has-pluginpages  .jc-installed-badge[data-plugin="pluginpages"] { display: inline-flex; }
 body.jc-has-introskipper .jc-installed-badge[data-plugin="introskipper"] { display: inline-flex; }
-body.jc-has-kefintweaks  .jc-installed-badge[data-plugin="kefintweaks"]  { display: inline-flex; }
+body.jc-has-kefintweaks  .jc-installed-badge[data-plugin="kefintweaks"] { display: inline-flex; }
 .jc-installed-badge {
     align-items: center;
     gap: 4px;
@@ -2036,23 +1603,6 @@ body.jc-has-kefintweaks  .jc-installed-badge[data-plugin="kefintweaks"]  { displ
     vertical-align: middle;
 }
 .jc-installed-badge .material-icons { font-size: 16px !important; }
-
-/* ---------------------------------------------------------------------------
-   Permission Audit (Seerr → Permission Audit)
-   Card-list layout that reflows cleanly on narrow viewports instead of a
-   three-column table. Status shown via color-coded chips + a left border
-   accent per card. OK users collapsed behind a <details> as name pills.
-   --------------------------------------------------------------------------- */
-.jc-audit-summary {
-    font-size: 0.92em;
-    color: var(--jc-text-strong);
-    margin-bottom: 12px;
-    padding: 10px 14px;
-    background: color-mix(in srgb, var(--jc-accent) 10%, transparent);
-    border-left: 3px solid var(--jc-accent);
-    border-radius: 6px;
-    line-height: 1.4;
-}
 .jc-audit-summary-title { font-weight: 600; }
 .jc-audit-summary-chips {
     display: flex;
@@ -2060,21 +1610,6 @@ body.jc-has-kefintweaks  .jc-installed-badge[data-plugin="kefintweaks"]  { displ
     gap: 6px;
     margin-top: 8px;
 }
-.jc-audit-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 3px 10px;
-    border-radius: 999px;
-    font-size: 0.82em;
-    font-weight: 600;
-    white-space: nowrap;
-}
-.jc-audit-chip .material-icons { font-size: 14px !important; }
-.jc-audit-chip-warn     { background: rgba(229,160,13,0.18); color: var(--jc-warning); }
-.jc-audit-chip-unlinked { background: rgba(158,158,158,0.18); color: var(--jc-text-muted); }
-.jc-audit-chip-ok       { background: rgba(82,181,75,0.18); color: var(--jc-success); }
-
 .jc-audit-cards {
     display: flex;
     flex-direction: column;
@@ -2091,8 +1626,6 @@ body.jc-has-kefintweaks  .jc-installed-badge[data-plugin="kefintweaks"]  { displ
     flex-direction: column;
     gap: 8px;
 }
-.jc-audit-card-warn     { border-left-color: var(--jc-warning); }
-.jc-audit-card-unlinked { border-left-color: var(--jc-border-strong); }
 .jc-audit-card-header {
     display: flex;
     align-items: center;
@@ -2138,7 +1671,6 @@ body.jc-has-kefintweaks  .jc-installed-badge[data-plugin="kefintweaks"]  { displ
     font-weight: 700;
 }
 .jc-audit-card-unlinked .jc-audit-card-issues li::before { color: var(--jc-text-subtle); }
-
 .jc-audit-ok-section { margin-top: 6px; }
 .jc-audit-ok-section > summary {
     cursor: pointer;
@@ -2177,85 +1709,7 @@ body.jc-has-kefintweaks  .jc-installed-badge[data-plugin="kefintweaks"]  { displ
     font-size: 0.82em;
     word-break: break-word;
 }
-.jc-audit-error {
-    color: var(--jc-danger);
-    padding: 10px 14px;
-    background: color-mix(in srgb, var(--jc-danger) 9%, transparent);
-    border-left: 3px solid var(--jc-danger);
-    border-radius: 6px;
-}
-
-@media (max-width: 540px) {
-    .jc-audit-summary { padding: 8px 10px; font-size: 0.88em; }
-    .jc-audit-card { padding: 10px 12px; }
-    .jc-audit-card-header { flex-direction: column; align-items: flex-start; gap: 6px; }
-    .jc-audit-chip { font-size: 0.78em; padding: 2px 8px; }
-}
-
-/* Responsive utility */
-#keyboard .configSection > div[style*="display:flex"] {
-    flex-wrap: wrap;
-}
-
-/* Mobile */
-@media (max-width: 768px) {
-    .jc-save-dock {
-        flex-direction: row;
-        bottom: calc(10px + env(safe-area-inset-bottom, 0px));
-        left: 140px;
-        right: 8px;
-        width: auto;
-        transform: none;
-        border-radius: 20px;
-        padding: 8px;
-        box-sizing: border-box;
-    }
-    .jc-save-dock .jc-save-dock-btn {
-        width: 100%;
-        min-width: 0;
-        justify-content: center;
-        padding: 10px 12px !important;
-    }
-    .jc-save-dock.jc-dirty::before {
-        position: absolute;
-        right: 0;
-        bottom: calc(100% + 6px);
-        margin: 0;
-    }
-    .jc-nav-toggle {
-        left: 8px;
-        bottom: calc(10px + env(safe-area-inset-bottom, 0px));
-        padding: 10px 12px;
-    }
-    .jc-quick-actions-grid {
-        grid-template-columns: minmax(0, 1fr);
-    }
-    .jc-tab-bar { padding: 10px 0; }
-    /* Prefix with #JellyfinCanopyPage to match the base rule's specificity
-       (1,1,0). Class-only selectors (0,1,0) here lose the cascade to the
-       prefixed base, leaving desktop padding/grid values stuck on phones. */
-    #JellyfinCanopyPage .jellyfin-tab-button { padding: 8px 14px; }
-    .jc-tab-icon { font-size: 18px !important; }
-
-    /* The tab content grid uses minmax(480px, 1fr) for desktop multi-column.
-       On viewports narrower than the 480px min, the grid forces horizontal
-       overflow (descriptions get cut off, page scrolls sideways). Collapse
-       to single column under 768px so cards stack cleanly. The prefix is
-       required for specificity parity with the base rule at line ~654. */
-    #JellyfinCanopyPage .jellyfin-tab-content.active {
-        grid-template-columns: 1fr;
-        gap: 12px;
-    }
-    /* Grid items default to `min-width: auto` (their intrinsic content width).
-       Banners and fieldsets containing flex layouts have a wide intrinsic min
-       (the longest line of unwrapped text), which forces grid items wider than
-       the column even with `1fr`. Set `min-width: 0` so items honor the column
-       width and let their text/contents wrap inside. */
-    .jellyfin-tab-content.active > * {
-        min-width: 0;
-    }
-
-    /* Flex children default to min-width: auto, which equals their intrinsic
+/* Flex children default to min-width: auto, which equals their intrinsic
        content width. Inside info banners, that means the inner text div refuses
        to shrink below the longest line — pushing the whole page wider than the
        viewport. Force `min-width: 0` so flex children honor their parent's
@@ -2273,55 +1727,6 @@ body.jc-has-kefintweaks  .jc-installed-badge[data-plugin="kefintweaks"]  { displ
     .jc-info-banner-row > * {
         min-width: 0;
     }
-    .fieldDescription, .jc-setting-description {
-        overflow-wrap: anywhere;
-        word-break: break-word;
-    }
-    /* Same anti-overflow for the form itself in case any ancestor's min-width
-       forces it wide; let it shrink to viewport. */
-    #JellyfinCanopyForm {
-        min-width: 0;
-    }
-
-    /* Header row: title + the two action buttons + search. The action
-       buttons ("Docs & Help" / "Descriptions") were wrapping to 3 lines
-       and overflowing the viewport. Shrink padding + let the title row
-       wrap so buttons drop below if needed. */
-    #JellyfinCanopyPage .sectionTitleContainer { gap: 8px; }
-    #JellyfinCanopyPage .sectionTitleContainer h2 { font-size: 1.4em; flex: 1 1 100%; }
-    .jc-header-title-row {
-        flex-wrap: wrap;
-        gap: 8px;
-    }
-    .jc-help-link, .jc-desc-toggle {
-        padding: 6px 10px;
-        font-size: 0.85em;
-    }
-    #settingsSearchContainer {
-        /* In the sidebar column, growing would swallow the nav's space —
-           the search stays content-height on every viewport. */
-        flex: 0 0 auto;
-        max-width: 100%;
-    }
-}
-
-/* Sub-mobile: tighten typography + ensure the buttons stay tappable.
-   Labels stay visible (no icon fallback anymore after the header icons
-   were removed — an icon-less button with a hidden label would render
-   as an empty square). 44×44 min size meets WCAG 2.1 AAA. */
-@media (max-width: 420px) {
-    .jc-help-link,
-    .jc-desc-toggle {
-        min-height: 44px;
-        padding: 8px 12px;
-        font-size: 0.82em;
-    }
-    #JellyfinCanopyPage .sectionTitleContainer h2 { font-size: 1.25em; }
-}
-
-#settingsSearchClear { display: none; }
-#settingsSearchClear.show { display: flex; }
-
 /* =========================================================================
    Timing preview buttons (Playback tab → Shortcuts Panel & Toast Timing)
    Lets admins preview how long the shortcuts panel or a toast stays visible
@@ -2349,101 +1754,36 @@ body.jc-hide-descriptions .jc-timing-test-row {
 .jc-timing-test-btn .material-icons {
     font-size: 1.1em;
 }
-
-/* Full-screen preview of the shortcuts panel autoclose timing — card styled
-   to match the real panel in js/enhanced/ui.js: solid rgb(24,24,24) bg,
-   subtle white border, 16px radius, centered on screen, backdrop blur. */
-.jc-preview-panel-overlay {
-    position: fixed;
-    inset: 0;
-    background: var(--jc-overlay-hard);
-    z-index: 99999;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    animation: jc-preview-fade-in 0.2s ease;
-}
-.jc-preview-panel-card {
-    background: rgb(24, 24, 24);
-    color: #fff;
-    border: 1px solid var(--jc-border);
-    border-radius: 16px;
-    padding: 24px 28px;
-    min-width: 350px;
-    max-width: min(520px, 90vw);
-    max-height: 90vh;
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.7);
-    backdrop-filter: blur(30px);
-    -webkit-backdrop-filter: blur(30px);
-    font-size: 14px;
-    font-family: inherit;
-}
-.jc-preview-panel-title {
-    font-size: 1.15em;
-    font-weight: 600;
-    margin: 0 0 10px 0;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    color: var(--jc-accent);
-}
 .jc-preview-panel-body {
     line-height: 1.5;
     margin: 0 0 18px 0;
     opacity: 0.92;
 }
-.jc-preview-panel-countdown {
-    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-    font-weight: 700;
-    color: var(--jc-accent);
-    white-space: nowrap;
-}
-.jc-preview-panel-actions {
-    display: flex;
-    justify-content: flex-end;
-}
-
-/* Bottom-right toast preview — mirrors the real JC.toast() in js/enhanced/ui.js:
-   same position, dark gradient bg, accent border, backdrop blur, and
-   slide-in-from-right transition (not a keyframe animation). */
-.jc-preview-toast {
-    position: fixed;
-    bottom: 20px;
-    right: 20px;
-    transform: translateX(calc(100% + 20px));
-    background: linear-gradient(135deg, rgba(0, 0, 0, 0.9), rgba(40, 40, 40, 0.9));
-    color: #fff;
-    padding: 10px 14px;
-    border-radius: 8px;
-    z-index: 99999;
-    font-size: clamp(13px, 2vw, 16px);
-    font-weight: 500;
-    text-shadow: -1px -1px 10px black;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
-    backdrop-filter: blur(30px);
-    -webkit-backdrop-filter: blur(30px);
-    border: 1px solid var(--jc-accent, rgba(255, 255, 255, 0.1));
-    max-width: clamp(280px, 80vw, 350px);
-    transition: transform 0.3s ease-out;
-    pointer-events: none;
-}
 .jc-preview-toast.jc-shown {
     transform: translateX(0);
 }
 
-@keyframes jc-preview-fade-in {
-    from { opacity: 0; }
-    to   { opacity: 1; }
+@media (max-width: 540px) {
+.jc-audit-card { padding: 10px 12px; }
+.jc-audit-card-header { flex-direction: column; align-items: flex-start; gap: 6px; }
 }
-
-@media (prefers-reduced-motion: reduce) {
-    .jc-preview-panel-overlay { animation: none; }
-    .jc-preview-toast { transition: none; }
-}
-
-div#seerrMappingsValidationResult,
-div#sonarrMappingsValidationResult,
-div#radarrMappingsValidationResult,
-div#bazarrMappingsValidationResult {
-    padding: 10px;
+@media (max-width: 768px) {
+/* Flex children default to min-width: auto, which equals their intrinsic
+       content width. Inside info banners, that means the inner text div refuses
+       to shrink below the longest line — pushing the whole page wider than the
+       viewport. Force `min-width: 0` so flex children honor their parent's
+       width, and force long words/URLs to break instead of overflowing. */
+    .jc-info-banner > *,
+    .jc-info-banner-inline > *,
+    .jc-info-banner-inline-center > *,
+    .jc-info-banner-compact > *,
+    .jc-note-banner > *,
+    .jc-mobile-banner > *,
+    .jc-danger-banner > *,
+    .jc-purple-banner > *,
+    .jc-dep-banner > *,
+    .jc-splash-info-banner > *,
+    .jc-info-banner-row > * {
+        min-width: 0;
+    }
 }
