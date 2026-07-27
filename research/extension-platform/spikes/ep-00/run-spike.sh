@@ -14,8 +14,10 @@ set -euo pipefail
 PORT="${1:-8199}"
 IMAGE="${EP00_IMAGE:-jellyfin/jellyfin:12.0-rc3.20260722-020441}"
 NAME="ep00-jf12"
-ADMIN_USER="ep00admin"
-ADMIN_PW="Spike669Pw!x"
+ADMIN_USER="${EP00_ADMIN_USER:-ep00admin}"
+# Throwaway credential for a disposable container that is destroyed at the end of
+# the run. Override with EP00_ADMIN_PW if your environment forbids a literal.
+ADMIN_PW="${EP00_ADMIN_PW:-$(head -c 18 /dev/urandom | base64 | tr -d '/+=')Aa1!}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT

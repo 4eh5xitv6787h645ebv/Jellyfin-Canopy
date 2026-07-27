@@ -328,7 +328,7 @@ route value can change it. This is the foundation of
 controller contains
 
 ```
-Jellyfin-Token   = fa886739976743cfb1eaf4475302b68c
+Jellyfin-Token   = <the caller's access token, verbatim>
 Jellyfin-IsApiKey = False
 ```
 
