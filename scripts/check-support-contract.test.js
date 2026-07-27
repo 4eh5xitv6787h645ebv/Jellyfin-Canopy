@@ -1888,6 +1888,17 @@ test('audits generic security calls to action and plain source or built HTML pro
             + 'must route only to private GitHub advisories'
         ));
     });
+
+    const hiddenBuiltHtml = validFixture();
+    hiddenBuiltHtml['site/index.html'] = '<!doctype html><html><head>'
+        + '<title>Support</title></head><body hidden>'
+        + 'For vulnerabilities, contact us on Discord.</body></html>';
+    fixture(hiddenBuiltHtml, root => {
+        assert.ok(!auditSupportContract({ root, checkBuiltSite: true }).problems.some(
+            problem => problem.startsWith('site/index.html:')
+                && problem.includes('private GitHub advisories')
+        ));
+    });
 });
 
 test('calls to action inherit adjacent prompt-block context', () => {
@@ -2608,6 +2619,9 @@ test('normalizes inline markup and invisible format characters in route intent',
         `<a href="${ISSUES_ROUTE}">Submit a vulnera<span>bil</span>ity report</a>`,
         `<a href="${ISSUES_ROUTE}">Submit a vulnera<wbr>bility report</a>`,
         `<a href="${ISSUES_ROUTE}">Submit a vulnera\u200Bbility report</a>`,
+        `<a href="${ISSUES_ROUTE}">Submit a vulnera\u034Fbility report</a>`,
+        `<a href="${ISSUES_ROUTE}">Submit a vulnera\uFE0Fbility report</a>`,
+        `<a href="${ISSUES_ROUTE}">Submit a vulnera\uFFF9bility report</a>`,
     ]) {
         const files = validFixture();
         files['theme/partials/support.html'] = source;
@@ -2628,6 +2642,135 @@ test('normalizes inline markup and invisible format characters in route intent',
             && problem.includes('security intake links must use private GitHub advisories')
         )));
     });
+
+    for (const source of [
+        '## Security\n\nUse Dis\u200Bcord.\n',
+        '## Secu\u034Frity\n\nUse Discord.\n',
+        '## Secu\uFFF9rity\n\nUse Discord.\n',
+    ]) {
+        const section = validFixture();
+        section['docs/getting-started.md'] = source;
+        fixture(section, root => {
+            assert.ok(auditSupportContract({ root }).problems.includes(
+                'docs/getting-started.md: security or vulnerability intake prose '
+                + 'must route only to private GitHub advisories'
+            ), source);
+        });
+    }
+
+    for (const [source, message] of [
+        [
+            `<dialog open>Need</dialog>help <a href="${ISSUES_ROUTE}">here</a>`,
+            'community-support links',
+        ],
+        [
+            'Submit a vulnera<search style="display:contents">bil</search>ity '
+                + `report through <a href="${ISSUES_ROUTE}">here</a>`,
+            'security intake links',
+        ],
+        [
+            'Submit a vulnera<dialog style="display:inline">bil</dialog>ity '
+                + `report through <a href="${ISSUES_ROUTE}">here</a>`,
+            'security intake links',
+        ],
+        [
+            `<a href="${ISSUES_ROUTE}">Submit a vulnera<body></body>bility report</a>`,
+            'security intake links',
+        ],
+        [
+            `<a href="${ISSUES_ROUTE}">Submit a vulnera<html></html>bility report</a>`,
+            'security intake links',
+        ],
+        [
+            `<a href="${ISSUES_ROUTE}">Submit a vulnera<caption></caption>bility report</a>`,
+            'security intake links',
+        ],
+        [
+            `<a href="${ISSUES_ROUTE}">Submit a vulnera<audio></audio>bility report</a>`,
+            'security intake links',
+        ],
+        [
+            `<a href="${ISSUES_ROUTE}">Submit a vulnera<dialog></dialog>bility report</a>`,
+            'security intake links',
+        ],
+        [
+            '<select id="public-route"><option selected>Submit a vulnera'
+                + '<search>bil</search>ity report</option></select>'
+                + `<a aria-labelledby="public-route" href="${ISSUES_ROUTE}"></a>`,
+            'security intake links',
+        ],
+        [
+            `<a href="${ISSUES_ROUTE}"><output>Submit a vulnera`
+                + '<span style="display:inherit">bil</span>ity report</output></a>',
+            'security intake links',
+        ],
+        [
+            `<a href="${ISSUES_ROUTE}">Need</br>help</a>`,
+            'community-support links',
+        ],
+        [
+            `<a href="${ISSUES_ROUTE}">Need</p>help</a>`,
+            'community-support links',
+        ],
+    ]) {
+        const displayBoundary = validFixture();
+        displayBoundary['theme/partials/support.html'] = source;
+        fixture(displayBoundary, root => {
+            assert.ok(auditSupportContract({ root }).problems.some(problem => (
+                problem.startsWith('theme/partials/support.html:')
+                && problem.includes(message)
+            )), source);
+        });
+    }
+
+    const hiddenDocument = validFixture();
+    hiddenDocument['theme/base.html'] = '<!doctype html><html><head>'
+        + '<title>Support</title></head><body hidden>'
+        + 'Vulnerabilities go to Discord.</body></html>';
+    fixture(hiddenDocument, root => {
+        assert.ok(!auditSupportContract({ root }).problems.some(problem => (
+            problem.startsWith('theme/base.html:')
+            && problem.includes('private GitHub advisories')
+        )));
+    });
+
+    const omittedHeadClose = validFixture();
+    omittedHeadClose['theme/base.html'] = '<!doctype html><html><head>'
+        + '<title>Support</title><body>'
+        + 'Submit vulnerability reports via Discord.</body></html>';
+    fixture(omittedHeadClose, root => {
+        assert.ok(auditSupportContract({ root }).problems.some(problem => (
+            problem.startsWith('theme/base.html:')
+            && problem.includes('private GitHub advisories')
+        )));
+    });
+
+    const doctypeFragment = validFixture();
+    doctypeFragment['theme/partials/support.html'] =
+        '<!doctype html><head>Submit vulnerability reports via Discord.</head>';
+    fixture(doctypeFragment, root => {
+        assert.ok(auditSupportContract({ root }).problems.some(problem => (
+            problem.startsWith('theme/partials/support.html:')
+            && problem.includes('private GitHub advisories')
+        )));
+    });
+
+    for (const terminator of [
+        '<input>',
+        '<textarea></textarea>',
+        '<select>',
+    ]) {
+        const selectRepair = validFixture();
+        selectRepair['theme/partials/support.html'] =
+            `<select>${terminator}<div id="route-name">Need help</div>`
+            + `<a aria-labelledby="route-name" href="${ISSUES_ROUTE}"></a>`;
+        fixture(selectRepair, root => {
+            assert.ok(auditSupportContract({ root }).problems.some(problem => (
+                problem.startsWith('theme/partials/support.html:')
+                && problem.includes('community-support links')
+            )), terminator);
+        });
+    }
 });
 
 test('rejects every independently reproduced support-contract bypass', () => {

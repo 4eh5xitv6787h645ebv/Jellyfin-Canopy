@@ -11,6 +11,7 @@ const {
     collectMarkdownFiles,
     extractLinks,
     extractRenderedHtmlLinks,
+    governedHtmlText,
     headingSlug,
     htmlAttributes,
     isActionableLink,
@@ -761,7 +762,30 @@ test('preserves inline text adjacency while retaining block boundaries', () => {
     for (const [body, expected] of [
         ['Report a vulnera<span>bil</span>ity', 'Report a vulnerability'],
         ['Report a vulnera<wbr>bility', 'Report a vulnerability'],
+        [
+            'Report a vulnera<search style="display:contents">bil</search>ity',
+            'Report a vulnerability',
+        ],
+        [
+            'Report a vulnera<dialog style="display:inline">bil</dialog>ity',
+            'Report a vulnerability',
+        ],
+        [
+            '<output>Report a vulnera<span style="display:inherit">bil</span>ity</output>',
+            'Report a vulnerability',
+        ],
+        ['Report a vulnera<body></body>bility', 'Report a vulnerability'],
+        ['Report a vulnera<html></html>bility', 'Report a vulnerability'],
+        ['Report a vulnera<caption></caption>bility', 'Report a vulnerability'],
+        ['Report a vulnera<audio></audio>bility', 'Report a vulnerability'],
+        ['Report a vulnera<dialog></dialog>bility', 'Report a vulnerability'],
         ['<div>Report a</div><div>vulnerability</div>', 'Report a vulnerability'],
+        ['<span style="display:block">Need</span>help', 'Need help'],
+        ['<dialog open>Need</dialog>help', 'Need help'],
+        ['<legend>Need</legend>help', 'Need help'],
+        ['<search>Need</search>help', 'Need help'],
+        ['Need</br>help', 'Need help'],
+        ['Need</p>help', 'Need help'],
     ]) {
         const source = `<a href="${target}">${body}</a>`;
         for (const links of [extractLinks(source), extractRenderedHtmlLinks(source)]) {
@@ -770,6 +794,94 @@ test('preserves inline text adjacency while retaining block boundaries', () => {
             assert.equal(link.label, expected, body);
         }
     }
+});
+
+test('uses browser select repair and caller-provided document context', () => {
+    const target = 'https://example.com/route';
+    const selected = '<select id="route-name"><option selected>'
+        + 'Report a vulnera<search>bil</search>ity</option></select>'
+        + `<a aria-labelledby="route-name" href="${target}"></a>`;
+    for (const links of [extractLinks(selected), extractRenderedHtmlLinks(selected)]) {
+        const link = links.find(candidate => candidate.type === 'link');
+        assert.ok(link);
+        assert.equal(link.label, 'Report a vulnerability');
+    }
+
+    for (const terminator of [
+        '<input>',
+        '<textarea></textarea>',
+        '<select>',
+    ]) {
+        const repaired = `<select>${terminator}<div id="route-name">Need help</div>`
+            + `<a aria-labelledby="route-name" href="${target}"></a>`;
+        for (const links of [extractLinks(repaired), extractRenderedHtmlLinks(repaired)]) {
+            const link = links.find(candidate => candidate.type === 'link');
+            assert.ok(link, terminator);
+            assert.equal(link.label, 'Need help', terminator);
+            assert.equal(isActionableLink(link), true, terminator);
+        }
+    }
+
+    for (const [source, hidden] of [
+        [
+            '<select hidden></select>'
+                + `<a href="${target}">Submit a vulnerability report</a>`,
+            false,
+        ],
+        [
+            '<select></select><div hidden>'
+                + `<a href="${target}">Submit a vulnerability report</a></div>`,
+            true,
+        ],
+    ]) {
+        for (const links of [extractLinks(source), extractRenderedHtmlLinks(source)]) {
+            const link = links.find(candidate => candidate.type === 'link');
+            assert.ok(link);
+            assert.equal(link.hidden, hidden, source);
+            assert.equal(isActionableLink(link), !hidden, source);
+        }
+    }
+
+    const hiddenDocument = '<!doctype html><html><head><title>Hidden</title></head>'
+        + '<body hidden>Submit a vulnerability report</body></html>';
+    assert.doesNotMatch(
+        governedHtmlText(hiddenDocument, new Map(), {}, { documentMode: true }),
+        /vulnerability/i
+    );
+
+    const omittedHeadClose = '<!doctype html><html><head><title>Support</title>'
+        + '<body>Submit a vulnerability report</body></html>';
+    assert.match(
+        governedHtmlText(omittedHeadClose, new Map(), {}, { documentMode: true }),
+        /vulnerability/i
+    );
+
+    const textClosesHead = '<!doctype html><html><head>'
+        + `Need help <a href="${target}">here</a></html>`;
+    const documentLinks = extractRenderedHtmlLinks(
+        textClosesHead,
+        { documentMode: true }
+    );
+    assert.equal(documentLinks[0].label, 'here');
+    assert.equal(documentLinks[0].hidden, false);
+    assert.match(
+        governedHtmlText(textClosesHead, new Map(), {}, { documentMode: true }),
+        /Need help/i
+    );
+
+    const fragmentWithDoctype =
+        '<!doctype html><head>Submit a vulnerability report via Discord.</head>';
+    assert.match(governedHtmlText(fragmentWithDoctype), /vulnerability/i);
+});
+
+test('bounds malformed table-context boundary parsing', () => {
+    const source = '<caption>'.repeat(6_000) + 'Report a vulnerability';
+    const started = performance.now();
+    assert.match(governedHtmlText(source), /\[label truncated:/);
+    assert.ok(
+        performance.now() - started < 4_000,
+        'malformed table-context fragments must be depth-bounded'
+    );
 });
 
 test('resolves nested same-tag ID labels with bounded traversal work', () => {

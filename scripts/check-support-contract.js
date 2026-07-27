@@ -42,6 +42,11 @@ const RENDERED_HTML_ROOTS = [
     'theme',
     'Jellyfin.Plugin.JellyfinCanopy/Configuration/configPage.html',
 ];
+const COMPLETE_HTML_DOCUMENTS = new Set([
+    'theme/404.html',
+    'theme/base.html',
+    'Jellyfin.Plugin.JellyfinCanopy/Configuration/configPage.html',
+]);
 const BUG_SECTIONS = [
     'Security reports',
     'Summary',
@@ -453,7 +458,8 @@ function hardSentenceBoundaries(text) {
 }
 
 function routeText(value) {
-    return String(value || '').replace(/\p{Cf}/gu, '');
+    return String(value || '')
+        .replace(/[\p{Cf}\p{Default_Ignorable_Code_Point}]/gu, '');
 }
 
 function semanticLinkText(link) {
@@ -1016,9 +1022,14 @@ function renderedSupportSurface(source, file) {
             /\{\{\s*config\.repo_url\s*\}\}/g,
             REPOSITORY
         );
+        const htmlOptions = {
+            documentMode: COMPLETE_HTML_DOCUMENTS.has(file)
+                || file.startsWith('site/'),
+        };
         return {
-            links: extractRenderedHtmlLinks(expanded),
-            text: governedHtmlText(expanded).replace(/\s+/g, ' ').trim(),
+            links: extractRenderedHtmlLinks(expanded, htmlOptions),
+            text: governedHtmlText(expanded, new Map(), {}, htmlOptions)
+                .replace(/\s+/g, ' ').trim(),
         };
     }
     const tokens = markdown.parse(source, {});
@@ -1177,7 +1188,7 @@ function routesSecurityIntakePublicly(tokens) {
             if (prohibitionListLevel > 0 && level <= prohibitionListLevel) {
                 prohibitionListLevel = 0;
             }
-            const heading = headingText(tokens, index);
+            const heading = routeText(headingText(tokens, index));
             if (SECURITY_CONTEXT_HEADING.test(heading)) {
                 securitySectionLevel = level;
             }
@@ -1188,8 +1199,8 @@ function routesSecurityIntakePublicly(tokens) {
             continue;
         }
         let text = '';
-        if (token.type === 'inline') text = inlineVisibleText(token.children);
-        if (token.type === 'html_block') text = governedHtmlText(token.content);
+        if (token.type === 'inline') text = routeText(inlineVisibleText(token.children));
+        if (token.type === 'html_block') text = routeText(governedHtmlText(token.content));
         if (!text || prohibitionListLevel > 0) continue;
         if (routesSecurityTextPublicly(text)) return true;
         if (securitySectionLevel > 0
@@ -1496,7 +1507,7 @@ function auditSupportContract(options = {}) {
         }
         for (let index = 0; index < tokens.length; index += 1) {
             if (headingLevel(tokens[index]) === 0) continue;
-            const heading = headingText(tokens, index);
+            const heading = routeText(headingText(tokens, index));
             if (!SECURITY_CONTEXT_HEADING.test(heading)) continue;
             const owned = headingSectionTokens(tokens, index);
             const contextualLinks = actionableLinks(owned)

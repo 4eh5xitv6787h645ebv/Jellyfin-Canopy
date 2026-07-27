@@ -69,12 +69,19 @@ function htmlAttributeValue(tag, name) {
     return match ? markdown.utils.unescapeAll(match[1] ?? match[2] ?? match[3]) : '';
 }
 
-function stripHiddenHtml(content, excludeAriaHidden = false, initialState = null) {
+function stripHiddenHtml(
+    content,
+    excludeAriaHidden = false,
+    initialState = null,
+    options = {}
+) {
     const source = stripHtmlComments(content);
+    const documentMode = Boolean(options.documentMode);
     const visible = [];
     const stack = initialState
         ? [{
             tag: null,
+            insideSelect: false,
             persistentHidden: Boolean(initialState.persistentHidden),
             visibilityHidden: Boolean(initialState.visibilityHidden),
             hidden: Boolean(initialState.persistentHidden || initialState.visibilityHidden),
@@ -83,13 +90,27 @@ function stripHiddenHtml(content, excludeAriaHidden = false, initialState = null
     const pattern = /<(\/?)([a-z][a-z0-9:-]*)\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi;
     let offset = 0;
     for (const match of source.matchAll(pattern)) {
-        const hiddenBefore = Boolean(stack.at(-1)?.hidden);
-        if (!hiddenBefore) visible.push(source.slice(offset, match.index));
+        repairHtmlStackForText(
+            stack,
+            source.slice(offset, match.index),
+            documentMode
+        );
+        if (!stack.at(-1)?.hidden) visible.push(source.slice(offset, match.index));
         const closing = match[1] === '/';
+        const tag = match[2].toLowerCase();
+        if (!closing && repairHtmlStackForOpening(stack, tag, documentMode)) {
+            offset = match.index + match[0].length;
+            continue;
+        }
+        const hiddenBefore = Boolean(stack.at(-1)?.hidden);
+        if (htmlElementIsIgnored(tag, stack.at(-1)?.insideSelect, documentMode)) {
+            offset = match.index + match[0].length;
+            continue;
+        }
         const openingState = closing
             ? null
             : htmlOpeningVisibilityState(stack, match[0], excludeAriaHidden);
-        updateHtmlVisibilityStack(stack, match[0], excludeAriaHidden);
+        updateHtmlVisibilityStack(stack, match[0], excludeAriaHidden, documentMode);
         const hiddenAfter = Boolean(stack.at(-1)?.hidden);
         if (closing
             ? !hiddenBefore && !hiddenAfter
@@ -106,25 +127,29 @@ function accessibleHtmlText(
     content,
     labels = new Map(),
     excludeAriaHidden = true,
-    initialState = null
+    initialState = null,
+    options = {}
 ) {
-    return htmlAccessibleTreeText(content, labels, excludeAriaHidden, initialState);
+    return htmlAccessibleTreeText(
+        content,
+        labels,
+        excludeAriaHidden,
+        initialState,
+        options
+    );
 }
 
-function visibleHtmlText(content, labels = new Map()) {
-    return accessibleHtmlText(content, labels, false);
+function visibleHtmlText(content, labels = new Map(), options = {}) {
+    return accessibleHtmlText(content, labels, false, null, options);
 }
 
-function visuallyRenderedHtmlText(content, initialState = null) {
-    const visible = stripHiddenHtml(content, false, initialState)
+function visuallyRenderedHtmlText(content, initialState = null, options = {}) {
+    const visible = stripHiddenHtml(content, false, initialState, options)
         .replace(/<(script|style)\b[\s\S]*?<\/\1\s*>/gi, ' ')
         // SVG title/description elements are metadata, but SVG <text> is
         // genuinely painted content and must remain available to route checks.
-        .replace(/<(?:desc|title)\b[\s\S]*?<\/(?:desc|title)\s*>/gi, ' ')
-        .replace(/<\/?([a-z][a-z0-9:-]*)\b[^>]*>/gi, (tag, name) => (
-            HTML_TEXT_BOUNDARY_ELEMENTS.has(name.toLowerCase()) ? ' ' : ''
-        ));
-    return markdown.utils.unescapeAll(visible);
+        .replace(/<(?:desc|title)\b[\s\S]*?<\/(?:desc|title)\s*>/gi, ' ');
+    return markdown.utils.unescapeAll(htmlTextWithBoundaries(visible, options));
 }
 
 function combinedHtmlLabel(accessible, visual) {
@@ -137,10 +162,16 @@ function combinedHtmlLabel(accessible, visual) {
     return boundedDomText([accessibleLabel, visualLabel]);
 }
 
-function governedHtmlText(content, labels = new Map(), initialStates = {}) {
+function governedHtmlText(content, labels = new Map(), initialStates = {}, options = {}) {
     return combinedHtmlLabel(
-        accessibleHtmlText(content, labels, true, initialStates.accessibility),
-        visuallyRenderedHtmlText(content, initialStates.visual)
+        accessibleHtmlText(
+            content,
+            labels,
+            true,
+            initialStates.accessibility,
+            options
+        ),
+        visuallyRenderedHtmlText(content, initialStates.visual, options)
     );
 }
 
@@ -272,8 +303,14 @@ function markdownAnchors(source, dialect = 'github') {
     return anchors;
 }
 
-function compactGovernedText(content, labels = new Map(), initialStates = {}) {
-    return governedHtmlText(content, labels, initialStates).replace(/\s+/g, ' ').trim();
+function compactGovernedText(
+    content,
+    labels = new Map(),
+    initialStates = {},
+    options = {}
+) {
+    return governedHtmlText(content, labels, initialStates, options)
+        .replace(/\s+/g, ' ').trim();
 }
 
 function boundedDomText(parts) {
@@ -309,13 +346,156 @@ function boundedDomText(parts) {
 }
 
 const HTML_TEXT_BOUNDARY_ELEMENTS = new Set([
-    'address', 'article', 'aside', 'blockquote', 'br', 'button', 'dd', 'details',
-    'div', 'dl', 'dt', 'fieldset', 'figcaption', 'figure', 'footer', 'form',
-    'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'header', 'hr', 'iframe', 'img', 'input',
-    'li', 'main', 'meter', 'nav', 'ol', 'output', 'p', 'pre', 'progress', 'section',
-    'select', 'summary', 'svg', 'table', 'tbody', 'td', 'textarea', 'tfoot', 'th',
-    'thead', 'tr', 'ul',
+    'address', 'article', 'aside', 'audio', 'blockquote', 'br', 'button',
+    'canvas', 'caption', 'center', 'col', 'colgroup', 'dd', 'details', 'dialog',
+    'dir', 'div', 'dl', 'dt', 'embed', 'fieldset', 'figcaption', 'figure', 'footer',
+    'form', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'header', 'hgroup', 'hr',
+    'iframe', 'img', 'input', 'legend', 'li', 'listing',
+    'main', 'marquee', 'menu', 'meter', 'nav', 'object', 'ol', 'optgroup', 'option',
+    'output', 'p', 'plaintext', 'pre', 'progress', 'search', 'section', 'select',
+    'summary', 'svg', 'table', 'tbody', 'td', 'textarea', 'tfoot', 'th', 'thead',
+    'tr', 'ul', 'video', 'xmp',
 ]);
+const HTML_FRAGMENT_IGNORED_ELEMENTS = new Set([
+    'body', 'frame', 'frameset', 'head', 'html',
+]);
+const HTML_TABLE_CONTEXT_ELEMENTS = new Set([
+    'caption', 'col', 'colgroup', 'tbody', 'td', 'tfoot', 'th', 'thead', 'tr',
+]);
+const HTML_RECOVERED_BOUNDARY_END_TAGS = new Set(['br', 'p']);
+const HTML_ATOMIC_TEXT_BOUNDARY_ELEMENTS = new Set([
+    'audio', 'br', 'button', 'canvas', 'embed', 'hr', 'iframe', 'img', 'input',
+    'marquee', 'meter', 'object', 'output', 'progress', 'select', 'svg', 'textarea',
+    'video',
+]);
+const HTML_DEFAULT_BLOCK_BOUNDARY_ELEMENTS = new Set(
+    [...HTML_TEXT_BOUNDARY_ELEMENTS].filter(tag => (
+        !HTML_ATOMIC_TEXT_BOUNDARY_ELEMENTS.has(tag) || tag === 'hr'
+    ))
+);
+const HTML_SELECT_CONTEXT_ELEMENTS = new Set([
+    'hr', 'optgroup', 'option', 'script', 'select', 'template',
+]);
+const HTML_HEAD_CONTEXT_ELEMENTS = new Set([
+    'base', 'basefont', 'bgsound', 'link', 'meta', 'noframes', 'noscript',
+    'script', 'style', 'template', 'title',
+]);
+
+function htmlElementIsIgnored(tag, insideSelect = false, documentMode = false) {
+    return insideSelect && !HTML_SELECT_CONTEXT_ELEMENTS.has(tag)
+        || !documentMode && HTML_FRAGMENT_IGNORED_ELEMENTS.has(tag);
+}
+
+function repairHtmlStackForOpening(stack, tag, documentMode = false) {
+    if (documentMode) {
+        const head = lastHtmlStackTagIndex(stack, 'head');
+        if (head !== -1) {
+            if (tag === 'head') return true;
+            if (!HTML_HEAD_CONTEXT_ELEMENTS.has(tag)) stack.splice(head);
+        } else if (tag === 'head' && lastHtmlStackTagIndex(stack, 'body') !== -1) {
+            return true;
+        }
+    }
+    if (!stack.at(-1)?.insideSelect
+        || !['input', 'select', 'textarea'].includes(tag)) {
+        return false;
+    }
+    const select = lastHtmlStackTagIndex(stack, 'select');
+    if (select !== -1) stack.splice(select);
+    // A nested select closes the active select but is itself discarded.
+    // Input and textarea are reprocessed in the restored outer context.
+    return tag === 'select';
+}
+
+function repairHtmlStackForText(stack, text, documentMode = false) {
+    if (documentMode && stack.at(-1)?.tag === 'head' && /\S/.test(text)) {
+        stack.pop();
+    }
+}
+
+function htmlOpeningTextLayout(
+    tag,
+    openingTag,
+    inheritedDisplayBoundary = false,
+    insideTable = false
+) {
+    if (HTML_TABLE_CONTEXT_ELEMENTS.has(tag)
+        && !insideTable) {
+        return { displayBoundary: false, textBoundary: false };
+    }
+    const display = inlineStyleDisplay(htmlAttributeValue(openingTag, 'style'));
+    let displayBoundary;
+    if (!display || /^revert(?:-layer)?$/.test(display)) {
+        displayBoundary = HTML_DEFAULT_BLOCK_BOUNDARY_ELEMENTS.has(tag);
+    } else if (display === 'inherit') {
+        displayBoundary = inheritedDisplayBoundary;
+    } else if (['contents', 'initial', 'none', 'unset'].includes(display)
+        || /^(?:inline(?:$|[-\s])|ruby(?:$|-))/.test(display)) {
+        displayBoundary = false;
+    } else {
+        displayBoundary = true;
+    }
+    return {
+        displayBoundary,
+        textBoundary: displayBoundary || HTML_ATOMIC_TEXT_BOUNDARY_ELEMENTS.has(tag),
+    };
+}
+
+function htmlTextWithBoundaries(content, options = {}) {
+    const parts = [];
+    const stack = [];
+    const documentMode = Boolean(options.documentMode);
+    const pattern = /<(\/?)([a-z][a-z0-9:-]*)\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi;
+    let offset = 0;
+    for (const match of content.matchAll(pattern)) {
+        parts.push(content.slice(offset, match.index));
+        const closing = match[1] === '/';
+        const tag = match[2].toLowerCase();
+        if (!closing && repairHtmlStackForOpening(stack, tag, documentMode)) {
+            offset = match.index + match[0].length;
+            continue;
+        }
+        if (htmlElementIsIgnored(tag, stack.at(-1)?.insideSelect, documentMode)) {
+            offset = match.index + match[0].length;
+            continue;
+        }
+        if (closing) {
+            const opening = lastHtmlStackTagIndex(stack, tag);
+            if (opening !== -1) {
+                const [record] = stack.splice(opening);
+                if (record.textBoundary) parts.push(' ');
+            } else if (HTML_RECOVERED_BOUNDARY_END_TAGS.has(tag)) {
+                parts.push(' ');
+            }
+        } else {
+            const parent = stack.at(-1) || null;
+            const layout = htmlOpeningTextLayout(
+                tag,
+                match[0],
+                parent?.displayBoundary || false,
+                parent?.insideTable || false
+            );
+            if (layout.textBoundary) parts.push(' ');
+            const selfClosing = /\/>\s*$/.test(match[0]) || HTML_VOID_ELEMENTS.has(tag);
+            if (selfClosing) {
+                if (layout.textBoundary) parts.push(' ');
+            } else {
+                if (stack.length >= MAX_HTML_TREE_DEPTH) {
+                    return HTML_LABEL_OVERFLOW_MARKER;
+                }
+                stack.push({
+                    tag,
+                    ...layout,
+                    insideTable: tag === 'table' || Boolean(parent?.insideTable),
+                    insideSelect: tag === 'select' || Boolean(parent?.insideSelect),
+                });
+            }
+        }
+        offset = match.index + match[0].length;
+    }
+    parts.push(content.slice(offset));
+    return parts.join('');
+}
 
 function boundedHtmlParts(parts, valueForPart) {
     let text = '';
@@ -336,7 +516,7 @@ function boundedHtmlParts(parts, valueForPart) {
     };
     for (const part of parts) {
         const boundary = typeof part !== 'string'
-            && HTML_TEXT_BOUNDARY_ELEMENTS.has(part.tag);
+            && part.textBoundary;
         if (boundary) append(' ');
         append(valueForPart(part));
         if (boundary) append(' ');
@@ -494,8 +674,15 @@ function htmlEmbeddedControlValue(record, body, values = null) {
     return '';
 }
 
-function htmlAccessibleTreeText(content, labels, excludeAriaHidden, initialState) {
+function htmlAccessibleTreeText(
+    content,
+    labels,
+    excludeAriaHidden,
+    initialState,
+    options = {}
+) {
     const source = stripHtmlComments(content);
+    const documentMode = Boolean(options.documentMode);
     const records = [];
     const rootParts = [];
     const stack = [];
@@ -513,6 +700,11 @@ function htmlAccessibleTreeText(content, labels, excludeAriaHidden, initialState
         const closing = match[1] === '/';
         const tag = match[2].toLowerCase();
         if (currentRawTextTag && !(closing && tag === currentRawTextTag)) continue;
+        repairHtmlStackForText(
+            stack,
+            source.slice(offset, match.index),
+            documentMode
+        );
         if (match.index > offset) {
             (stack.at(-1)?.parts || rootParts).push(markdown.utils.unescapeAll(
                 source.slice(offset, match.index)
@@ -520,7 +712,19 @@ function htmlAccessibleTreeText(content, labels, excludeAriaHidden, initialState
         }
         if (closing) {
             const opening = lastHtmlStackTagIndex(stack, tag);
-            if (opening !== -1) stack.splice(opening);
+            if (opening !== -1) {
+                stack.splice(opening);
+            } else if (HTML_RECOVERED_BOUNDARY_END_TAGS.has(tag)) {
+                (stack.at(-1)?.parts || rootParts).push(' ');
+            }
+            offset = match.index + match[0].length;
+            continue;
+        }
+        if (repairHtmlStackForOpening(stack, tag, documentMode)) {
+            offset = match.index + match[0].length;
+            continue;
+        }
+        if (htmlElementIsIgnored(tag, stack.at(-1)?.insideSelect, documentMode)) {
             offset = match.index + match[0].length;
             continue;
         }
@@ -530,15 +734,28 @@ function htmlAccessibleTreeText(content, labels, excludeAriaHidden, initialState
         }
         if (stack.length >= MAX_HTML_TREE_DEPTH) return HTML_LABEL_OVERFLOW_MARKER;
         const parent = stack.at(-1) || null;
+        const insideTable = tag === 'table' || Boolean(parent?.insideTable);
+        const insideSelect = tag === 'select' || Boolean(parent?.insideSelect);
+        const accessibilityState = htmlOpeningVisibilityState(
+            [parent?.accessibilityState || initial],
+            match[0],
+            excludeAriaHidden
+        );
+        const layout = htmlOpeningTextLayout(
+            tag,
+            match[0],
+            parent?.displayBoundary || false,
+            parent?.insideTable || false
+        );
         const record = {
             index: records.length,
             tag,
             openingTag: match[0],
-            accessibilityState: htmlOpeningVisibilityState(
-                [parent?.accessibilityState || initial],
-                match[0],
-                excludeAriaHidden
-            ),
+            displayBoundary: layout.displayBoundary,
+            textBoundary: !accessibilityState.hidden && layout.textBoundary,
+            insideTable,
+            insideSelect,
+            accessibilityState,
             parts: [],
             value: '',
         };
@@ -795,8 +1012,9 @@ function resolvedHtmlIdLabels(records, ids) {
     }));
 }
 
-function htmlIdLabels(content) {
+function htmlIdLabels(content, options = {}) {
     const source = stripHtmlComments(content);
+    const documentMode = Boolean(options.documentMode);
     const idAttributes = htmlAttributeRecords(source)
         .filter(attribute => attribute.name === 'id');
     if (idAttributes.length === 0) return new Map();
@@ -817,6 +1035,11 @@ function htmlIdLabels(content) {
         if (currentRawTextTag && !(closing && tag === currentRawTextTag)) {
             continue;
         }
+        repairHtmlStackForText(
+            stack,
+            source.slice(offset, match.index),
+            documentMode
+        );
         if (stack.length > 0 && match.index > offset) {
             stack.at(-1).parts.push(markdown.utils.unescapeAll(
                 source.slice(offset, match.index)
@@ -824,7 +1047,20 @@ function htmlIdLabels(content) {
         }
         if (closing) {
             const opening = lastHtmlStackTagIndex(stack, tag);
-            if (opening !== -1) stack.splice(opening);
+            if (opening !== -1) {
+                stack.splice(opening);
+            } else if (HTML_RECOVERED_BOUNDARY_END_TAGS.has(tag)
+                && stack.length > 0) {
+                stack.at(-1).parts.push(' ');
+            }
+            offset = match.index + match[0].length;
+            continue;
+        }
+        if (repairHtmlStackForOpening(stack, tag, documentMode)) {
+            offset = match.index + match[0].length;
+            continue;
+        }
+        if (htmlElementIsIgnored(tag, stack.at(-1)?.insideSelect, documentMode)) {
             offset = match.index + match[0].length;
             continue;
         }
@@ -844,10 +1080,23 @@ function htmlIdLabels(content) {
             openingTag,
             true
         );
+        const insideTable = tag === 'table' || Boolean(parent?.insideTable);
+        const insideSelect = tag === 'select' || Boolean(parent?.insideSelect);
+        const layout = htmlOpeningTextLayout(
+            tag,
+            openingTag,
+            parent?.displayBoundary || false,
+            parent?.insideTable || false
+        );
         const record = {
             index: records.length,
             tag,
             openingTag,
+            displayBoundary: layout.displayBoundary,
+            textBoundary: !(visualState.hidden && accessibilityState.hidden)
+                && layout.textBoundary,
+            insideTable,
+            insideSelect,
             parentIndex: parent?.index ?? -1,
             labelAncestorIndex: parent?.tag === 'label'
                 ? parent.index
@@ -975,7 +1224,17 @@ function inlineStyleVisibility(style) {
 function htmlTagIsPersistentlyHidden(tag, excludeAriaHidden = false) {
     return htmlTagHasHiddenAttribute(tag)
         || inlineStyleDisplay(htmlAttributeValue(tag, 'style')) === 'none'
+        || htmlTagIsNativelyHidden(tag)
         || excludeAriaHidden && htmlTagIsAriaHidden(tag);
+}
+
+function htmlTagIsNativelyHidden(tag) {
+    const name = tag.match(/^<\s*([a-z][a-z0-9:-]*)\b/i)?.[1].toLowerCase();
+    if (name === 'head') return true;
+    if (name === 'audio') return !htmlTagHasAttribute(tag, 'controls');
+    if (name !== 'dialog' || htmlTagHasAttribute(tag, 'open')) return false;
+    const display = inlineStyleDisplay(htmlAttributeValue(tag, 'style'));
+    return !display || /^revert(?:-layer)?$/.test(display);
 }
 
 function htmlTagVisibilityOverride(tag) {
@@ -1007,11 +1266,18 @@ function lastHtmlStackTagIndex(stack, tag) {
     return -1;
 }
 
-function updateHtmlVisibilityStack(stack, content, excludeAriaHidden = false) {
+function updateHtmlVisibilityStack(
+    stack,
+    content,
+    excludeAriaHidden = false,
+    documentMode = false
+) {
     const pattern = /<(\/?)([a-z][a-z0-9:-]*)\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi;
     for (const match of content.matchAll(pattern)) {
         const closing = match[1] === '/';
         const tag = match[2].toLowerCase();
+        if (!closing && repairHtmlStackForOpening(stack, tag, documentMode)) continue;
+        if (htmlElementIsIgnored(tag, stack.at(-1)?.insideSelect, documentMode)) continue;
         if (closing) {
             const opening = lastHtmlStackTagIndex(stack, tag);
             if (opening !== -1) stack.splice(opening);
@@ -1025,42 +1291,64 @@ function updateHtmlVisibilityStack(stack, content, excludeAriaHidden = false) {
         if (selfClosing) continue;
         stack.push({
             tag,
+            insideSelect: tag === 'select' || Boolean(stack.at(-1)?.insideSelect),
             ...htmlOpeningVisibilityState(stack, match[0], excludeAriaHidden),
         });
     }
 }
 
-function htmlElementIsHidden(content, index, openingTag, excludeAriaHidden = false) {
+function htmlElementIsHidden(
+    content,
+    index,
+    openingTag,
+    excludeAriaHidden = false,
+    options = {}
+) {
     const stack = [];
-    updateHtmlVisibilityStack(stack, content.slice(0, index), excludeAriaHidden);
+    const documentMode = Boolean(options.documentMode);
+    updateHtmlVisibilityStack(
+        stack,
+        content.slice(0, index),
+        excludeAriaHidden,
+        documentMode
+    );
     return htmlOpeningVisibilityState(stack, openingTag, excludeAriaHidden).hidden;
 }
 
-function htmlPriorBlockText(content, boundary, labels) {
+function htmlPriorBlockText(content, boundary, labels, options = {}) {
     if (boundary <= 0) return '';
     const blocks = content.slice(0, boundary).split(
         /<\/?(?:address|article|aside|blockquote|div|footer|form|h[1-6]|header|li|main|nav|ol|p|section|table|td|th|tr|ul)\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi
     );
-    return blocks.map(block => compactGovernedText(block, labels)).filter(Boolean).at(-1) || '';
+    return blocks.map(block => compactGovernedText(block, labels, {}, options))
+        .filter(Boolean).at(-1) || '';
 }
 
-function htmlAnchorHiddenStates(content) {
+function htmlAnchorHiddenStates(content, options = {}) {
     const states = new Map();
     const stack = [];
+    const documentMode = Boolean(options.documentMode);
     const pattern = /<(\/?)([a-z][a-z0-9:-]*)\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi;
+    let offset = 0;
     for (const match of content.matchAll(pattern)) {
-        updateHtmlVisibilityStack(stack, match[0]);
+        repairHtmlStackForText(
+            stack,
+            content.slice(offset, match.index),
+            documentMode
+        );
+        updateHtmlVisibilityStack(stack, match[0], false, documentMode);
         if (match[1] !== '/' && match[2].toLowerCase() === 'a') {
             states.set(match.index, Boolean(stack.at(-1)?.hidden));
         }
+        offset = match.index + match[0].length;
     }
     return states;
 }
 
-function htmlAnchorRecords(content, labels = htmlIdLabels(content)) {
+function htmlAnchorRecords(content, labels = htmlIdLabels(content), options = {}) {
     const anchors = [];
     const closing = /<\/a\s*>/gi;
-    const hiddenStates = htmlAnchorHiddenStates(content);
+    const hiddenStates = htmlAnchorHiddenStates(content, options);
     const openings = [];
     for (const match of content.matchAll(/<a\b/gi)) {
         const openingEnd = htmlOpeningTagEnd(content, match.index);
@@ -1079,11 +1367,17 @@ function htmlAnchorRecords(content, labels = htmlIdLabels(content)) {
             ? nextOpening
             : (close ? close.index + close[0].length : content.length);
         const nestedName = contentEnd > openingEnd
-            ? accessibleHtmlText(content.slice(openingEnd, contentEnd), labels)
+            ? accessibleHtmlText(
+                content.slice(openingEnd, contentEnd),
+                labels,
+                true,
+                null,
+                options
+            )
                 .replace(/\s+/g, ' ').trim()
             : '';
         const visualName = contentEnd > openingEnd
-            ? visuallyRenderedHtmlText(content.slice(openingEnd, contentEnd))
+            ? visuallyRenderedHtmlText(content.slice(openingEnd, contentEnd), null, options)
                 .replace(/\s+/g, ' ').trim()
             : '';
         const following = content.slice(anchorEnd, Math.min(content.length, anchorEnd + 2_000));
@@ -1107,7 +1401,7 @@ function htmlAnchorRecords(content, labels = htmlIdLabels(content)) {
             ? previousAnchor.label
             : '';
         const contextBefore = `${repairedPriorLabel} ${
-            compactGovernedText(rawBefore.slice(beforeBoundary), labels)
+            compactGovernedText(rawBefore.slice(beforeBoundary), labels, {}, options)
         }`.replace(/\s+/g, ' ').trim();
         const accessibleName = ariaLabelledText(openingTag, labels)
             || htmlAttributeText(openingTag, 'aria-label')
@@ -1126,10 +1420,17 @@ function htmlAnchorRecords(content, labels = htmlIdLabels(content)) {
                 ? `${previousAnchor.contextBeforePrior || ''} ${previousAnchor.contextBefore || ''}`
                     .replace(/\s+/g, ' ').trim()
                 : '',
-            contextBeforeBlock: htmlPriorBlockText(rawBefore, beforeBoundary, labels),
+            contextBeforeBlock: htmlPriorBlockText(
+                rawBefore,
+                beforeBoundary,
+                labels,
+                options
+            ),
             contextAfter: compactGovernedText(
                 rawAfter.slice(0, afterBoundary),
-                labels
+                labels,
+                {},
+                options
             ),
             contextBeforeStartsAtLink: Boolean(previousAnchor)
                 && previousAnchorEnd > 0
@@ -1140,11 +1441,17 @@ function htmlAnchorRecords(content, labels = htmlIdLabels(content)) {
     return anchors;
 }
 
-function htmlLinks(content, line, labels = htmlIdLabels(content)) {
+function htmlLinks(
+    content,
+    line,
+    labels = null,
+    options = {}
+) {
+    const resolvedLabels = labels || htmlIdLabels(content, options);
     const links = [];
     const visible = stripHtmlComments(content);
-    const context = compactGovernedText(visible);
-    const anchors = htmlAnchorRecords(visible, labels);
+    const context = compactGovernedText(visible, resolvedLabels, {}, options);
+    const anchors = htmlAnchorRecords(visible, resolvedLabels, options);
     let anchorIndex = 0;
     for (const attribute of htmlAttributeRecords(content)) {
         if (attribute.name === 'href') {
@@ -1532,8 +1839,8 @@ function extractLinks(source) {
     });
 }
 
-function extractRenderedHtmlLinks(source) {
-    return htmlLinks(source, 1);
+function extractRenderedHtmlLinks(source, options = {}) {
+    return htmlLinks(source, 1, null, options);
 }
 
 function isActionableLink(link) {
