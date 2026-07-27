@@ -215,25 +215,39 @@ test('records each link position and scans quoted HTML delimiters before href', 
     assert.equal(isActionableLink(links[2]), true);
 });
 
-test('extracts MkDocs markdown-in-HTML links and image-only accessible names', () => {
+test('extracts every MkDocs markdown-in-HTML mode and image-only accessible names', () => {
     const links = extractLinks([
         '<div markdown="1">',
         '[Ask for support](https://github.com/owner/repository/discussions)',
         '</div>',
         '',
+        '<div markdown="block">',
+        '[Report a bug](https://github.com/owner/repository/issues/new?template=bug.md)',
+        '</div>',
+        '',
+        '<span markdown="span">',
+        '[Request a feature](https://github.com/owner/repository/issues/new?template=feature.md)',
+        '</span>',
+        '',
+        '<section markdown>',
+        '[Submit privately](https://github.com/owner/repository/security/advisories/new)',
+        '</section>',
+        '',
         '<a href="https://discord.gg/example"><img alt="Report bugs" src="pixel.png"></a>',
         '',
     ].join('\n'));
-    assert.ok(links.some(link => (
-        link.target === 'https://github.com/owner/repository/discussions'
-        && link.label === 'Ask for support'
-        && link.line === 2
-    )));
-    assert.ok(links.some(link => (
-        link.target === 'https://discord.gg/example'
-        && link.label === 'Report bugs'
-        && link.line === 5
-    )));
+    assert.deepEqual(
+        links.filter(link => link.type === 'link')
+            .map(link => ({ label: link.label, line: link.line }))
+            .sort((left, right) => left.line - right.line),
+        [
+            { label: 'Ask for support', line: 2 },
+            { label: 'Report a bug', line: 6 },
+            { label: 'Request a feature', line: 10 },
+            { label: 'Submit privately', line: 14 },
+            { label: 'Report bugs', line: 17 },
+        ]
+    );
 });
 
 test('resolves aria-labelledby accessible names in source and rendered HTML', () => {
@@ -260,6 +274,26 @@ test('extracts accessible names from nested SVG and labelled images', () => {
         '</a>',
         '<a href="https://github.com/owner/repository/issues/new">',
         '  <img src="shield.png" aria-labelledby="image-security-label">',
+        '</a>',
+        '',
+    ].join('\n');
+    for (const links of [extractLinks(source), extractRenderedHtmlLinks(source)]) {
+        const actionable = links.filter(link => link.type === 'link');
+        assert.deepEqual(
+            actionable.map(link => link.label),
+            ['Submit a vulnerability report', 'Submit a vulnerability report']
+        );
+        assert.ok(actionable.every(isActionableLink));
+    }
+});
+
+test('extracts accessible names from generic labelled HTML descendants', () => {
+    const source = [
+        '<a href="https://github.com/owner/repository/issues">',
+        '  <span role="img" aria-label="Submit a vulnerability report"></span>',
+        '</a>',
+        '<a href="https://github.com/owner/repository/issues/new">',
+        '  <i aria-label="Submit a vulnerability report"></i>',
         '</a>',
         '',
     ].join('\n');

@@ -1245,6 +1245,8 @@ test('allows relevance-gated and negated File Transformation guidance', () => {
         'File Transformation is not required for this report.',
         'If File Transformation is involved, include its version and enabled state.',
         'File Transformation details, if applicable:',
+        'File Transformation details, as applicable:',
+        'File Transformation details (optional):',
     ]) {
         const files = validFixture();
         files['.github/ISSUE_TEMPLATE/bug.md'] = BUG_TEMPLATE.replace(
@@ -1256,6 +1258,173 @@ test('allows relevance-gated and negated File Transformation guidance', () => {
                 '.github/ISSUE_TEMPLATE/bug.md: '
                 + 'File Transformation cannot be a baseline bug-report requirement'
             ));
+        });
+    }
+});
+
+test('requires File Transformation prompts to be relevance-gated', () => {
+    for (const guidance of [
+        'Tell us whether File Transformation is present.',
+        'Indicate your File Transformation version.',
+    ]) {
+        const files = validFixture();
+        files['.github/ISSUE_TEMPLATE/bug.md'] = BUG_TEMPLATE.replace(
+            '## Additional context',
+            `${guidance}\n\n## Additional context`
+        );
+        fixture(files, root => {
+            assert.ok(auditSupportContract({ root }).problems.includes(
+                '.github/ISSUE_TEMPLATE/bug.md: '
+                + 'File Transformation cannot be a baseline bug-report requirement'
+            ));
+        });
+    }
+});
+
+test('distinguishes explicit security-route rejection from unrelated negation and exceptions', () => {
+    for (const prose of [
+        'Do not ignore vulnerabilities, contact us on Discord.',
+        'Do not report vulnerabilities anywhere except Discord.',
+        'Vulnerabilities should be reported on Discord.',
+    ]) {
+        const files = validFixture();
+        files['docs/getting-started.md'] = `${prose}\n`;
+        fixture(files, root => {
+            assert.ok(auditSupportContract({ root }).problems.includes(
+                'docs/getting-started.md: security or vulnerability intake prose '
+                + 'must route only to private GitHub advisories'
+            ));
+        });
+    }
+
+    const safe = validFixture();
+    safe['docs/getting-started.md'] = 'Vulnerabilities must not be reported on Discord.\n';
+    fixture(safe, root => {
+        assert.ok(!auditSupportContract({ root }).problems.includes(
+            'docs/getting-started.md: security or vulnerability intake prose '
+            + 'must route only to private GitHub advisories'
+        ));
+    });
+});
+
+test('audits generic security calls to action and plain source or built HTML prose', () => {
+    for (const markdownSource of [
+        `Found a vulnerability? [Click here](${DISCORD_ROUTE}).\n`,
+        `Need to report a vulnerability? [Use this link](${ISSUES_ROUTE}).\n`,
+        `Security issue? [Open](${DISCORD_ROUTE}).\n`,
+    ]) {
+        const files = validFixture();
+        files['docs/getting-started.md'] = markdownSource;
+        fixture(files, root => {
+            assert.ok(auditSupportContract({ root }).problems.some(problem => (
+                problem.startsWith('docs/getting-started.md:')
+                && problem.includes('private GitHub advisories')
+            )));
+        });
+    }
+
+    const sourceHtml = validFixture();
+    sourceHtml['theme/partials/support.html'] =
+        '<p>For vulnerabilities, contact us on Discord.</p>\n';
+    fixture(sourceHtml, root => {
+        assert.ok(auditSupportContract({ root }).problems.includes(
+            'theme/partials/support.html: security or vulnerability intake prose '
+            + 'must route only to private GitHub advisories'
+        ));
+    });
+
+    const builtHtml = validFixture();
+    builtHtml['site/index.html'] =
+        '<p>For vulnerabilities, contact us on Discord.</p>\n';
+    fixture(builtHtml, root => {
+        assert.ok(auditSupportContract({ root, checkBuiltSite: true }).problems.includes(
+            'site/index.html: security or vulnerability intake prose '
+            + 'must route only to private GitHub advisories'
+        ));
+    });
+});
+
+test('rejects exception-shaped Discussions routes but allows explicit non-route prose', () => {
+    for (const prose of [
+        'Do not use anything except GitHub Discussions for support.',
+        'Never send feature ideas anywhere but GitHub Discussions.',
+    ]) {
+        const files = validFixture();
+        files['docs/getting-started.md'] = `${prose}\n`;
+        fixture(files, root => {
+            assert.ok(auditSupportContract({ root }).problems.includes(
+                'docs/getting-started.md: routes users to disabled GitHub Discussions'
+            ));
+        });
+    }
+
+    const safe = validFixture();
+    safe['docs/getting-started.md'] = 'GitHub Discussions is not for support.\n';
+    fixture(safe, root => {
+        assert.ok(!auditSupportContract({ root }).problems.includes(
+            'docs/getting-started.md: routes users to disabled GitHub Discussions'
+        ));
+    });
+});
+
+test('rejects optional wording that leaves required bug environment fields blank', () => {
+    const files = validFixture();
+    files['.github/ISSUE_TEMPLATE/bug.md'] = BUG_TEMPLATE.replace(
+        '- Server operating system or platform and version:\n- Jellyfin installation method:',
+        [
+            '- Server operating system or platform may be omitted:',
+            '- Installation method can be left blank:',
+        ].join('\n')
+    );
+    fixture(files, root => {
+        assert.ok(auditSupportContract({ root }).problems.some(problem => (
+            problem.startsWith('.github/ISSUE_TEMPLATE/bug.md:')
+            && problem.includes('"## Server environment" must capture')
+        )));
+    });
+});
+
+test('audits route intent in expanded and previous-sentence call-to-action wording', () => {
+    const cases = [
+        [`[Pitch an idea](${DISCORD_ROUTE}).`, 'feature intake links'],
+        [`[Send us your feature idea](${DISCORD_ROUTE}).`, 'feature intake links'],
+        [`Want to propose a feature? [Click here](${DISCORD_ROUTE}).`, 'feature intake links'],
+        [`[Get assistance](${ISSUES_ROUTE}).`, 'community-support links'],
+        [`[Need help?](${ISSUES_ROUTE}).`, 'community-support links'],
+        [`Need help? [Click here](${ISSUES_ROUTE}).`, 'community-support links'],
+        [`[Tell us about a defect](${DISCORD_ROUTE}).`, 'bug intake links'],
+        [`[File a bug](${DISCORD_ROUTE}).`, 'bug intake links'],
+        [`Found a bug? [Open it here](${DISCORD_ROUTE}).`, 'bug intake links'],
+    ];
+    for (const [prose, message] of cases) {
+        const files = validFixture();
+        files['docs/getting-started.md'] = `${prose}\n`;
+        fixture(files, root => {
+            assert.ok(auditSupportContract({ root }).problems.some(problem => (
+                problem.startsWith('docs/getting-started.md:')
+                && problem.includes(message)
+            )));
+        });
+    }
+});
+
+test('audits generic aria-labelled HTML descendants as security intake links', () => {
+    for (const child of [
+        '<span role="img" aria-label="Submit a vulnerability report"></span>',
+        '<i aria-label="Submit a vulnerability report"></i>',
+    ]) {
+        const files = validFixture();
+        files['theme/partials/support.html'] = [
+            `<a href="${ISSUES_ROUTE}">`,
+            `  ${child}`,
+            '</a>',
+            '',
+        ].join('\n');
+        fixture(files, root => {
+            assert.ok(auditSupportContract({ root }).problems.some(problem => (
+                problem.startsWith('theme/partials/support.html:')
+                && problem.includes('security intake links must use private GitHub advisories')
+            )));
         });
     }
 });

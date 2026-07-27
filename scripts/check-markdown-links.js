@@ -97,6 +97,27 @@ function accessibleHtmlText(content, labels = new Map()) {
                 || htmlAttributeValue(tag, 'title');
             return name ? ` ${name} ` : ' ';
         })
+        .replace(
+            /<([a-z][a-z0-9:-]*)\b((?:[^>"']|"[^"]*"|'[^']*')*\saria-(?:label|labelledby)\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+)(?:[^>"']|"[^"]*"|'[^']*')*)>([\s\S]*?)<\/\1\s*>/gi,
+            (element, tag, attributes, body) => {
+                const openingTag = `<${tag}${attributes}>`;
+                const name = ariaLabelledText(openingTag, labels)
+                    || htmlAttributeValue(openingTag, 'aria-label')
+                    || htmlAttributeValue(openingTag, 'title')
+                    || accessibleHtmlText(body, labels);
+                return name ? ` ${name} ` : ' ';
+            }
+        )
+        .replace(
+            /<([a-z][a-z0-9:-]*)\b((?:[^>"']|"[^"]*"|'[^']*')*\saria-(?:label|labelledby)\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+)(?:[^>"']|"[^"]*"|'[^']*')*)\/?>/gi,
+            (element, tag, attributes) => {
+                const openingTag = `<${tag}${attributes}>`;
+                const name = ariaLabelledText(openingTag, labels)
+                    || htmlAttributeValue(openingTag, 'aria-label')
+                    || htmlAttributeValue(openingTag, 'title');
+                return name ? ` ${name} ` : ' ';
+            }
+        )
         .replace(/<[^>]*>/g, ' ');
     return markdown.utils.unescapeAll(visible);
 }
@@ -528,7 +549,9 @@ function markdownInHtmlLinks(source) {
         const openingEnd = htmlOpeningTagEnd(source, match.index);
         if (openingEnd === -1) break;
         const openingTag = source.slice(match.index, openingEnd);
-        if (htmlAttributeValue(openingTag, 'markdown') !== '1') {
+        const markdownMode = htmlAttributeValue(openingTag, 'markdown').toLowerCase();
+        const bareMarkdown = /\smarkdown(?=\s|\/?>)/i.test(openingTag);
+        if (!['1', 'block', 'span', 'markdown'].includes(markdownMode) && !bareMarkdown) {
             opening.lastIndex = openingEnd;
             continue;
         }
