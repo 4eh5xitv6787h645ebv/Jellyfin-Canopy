@@ -2711,6 +2711,19 @@ test('governs form submissions and hidden ID names while inert routes remain ina
         ));
     });
 
+    const visibleAfterParagraphClose = validFixture();
+    visibleAfterParagraphClose['docs/getting-started.md'] =
+        '<p hidden>\n\n'
+        + `<form action="${ISSUES_ROUTE}">\n`
+        + '<button>Submit a vulnerability report</button>\n'
+        + '</form>\n';
+    fixture(visibleAfterParagraphClose, root => {
+        assert.ok(auditSupportContract({ root }).problems.some(problem => (
+            problem.startsWith('docs/getting-started.md:')
+            && problem.includes('security intake links must use private GitHub advisories')
+        )));
+    });
+
     const formLocalSecurityIntent = validFixture();
     formLocalSecurityIntent['docs/getting-started.md'] =
         `<form action="${ISSUES_ROUTE}">`
@@ -2718,6 +2731,32 @@ test('governs form submissions and hidden ID names while inert routes remain ina
         + '<button>Continue</button></form>';
     fixture(formLocalSecurityIntent, root => {
         assert.ok(auditSupportContract({ root }).problems.some(problem => (
+            problem.startsWith('docs/getting-started.md:')
+            && problem.includes('security intake links must use private GitHub advisories')
+        )));
+    });
+
+    const formIntentAfterHiddenPrefix = validFixture();
+    formIntentAfterHiddenPrefix['docs/getting-started.md'] =
+        `<form action="${ISSUES_ROUTE}">`
+        + `<div hidden>${'x'.repeat(800)}</div>`
+        + '<p>Submit a vulnerability report below.</p>'
+        + '<button>Continue</button></form>';
+    fixture(formIntentAfterHiddenPrefix, root => {
+        assert.ok(auditSupportContract({ root }).problems.some(problem => (
+            problem.startsWith('docs/getting-started.md:')
+            && problem.includes('security intake links must use private GitHub advisories')
+        )));
+    });
+
+    const independentFormActions = validFixture();
+    independentFormActions['docs/getting-started.md'] =
+        `<form action="${ISSUES_ROUTE}">`
+        + '<p>Submit a vulnerability report '
+        + `<button formaction="${SECURITY_ADVISORY_ROUTE}">Privately</button></p>`
+        + '<p>Report a bug <button>Continue</button></p></form>';
+    fixture(independentFormActions, root => {
+        assert.ok(!auditSupportContract({ root }).problems.some(problem => (
             problem.startsWith('docs/getting-started.md:')
             && problem.includes('security intake links must use private GitHub advisories')
         )));
@@ -2731,6 +2770,19 @@ test('governs form submissions and hidden ID names while inert routes remain ina
         + ' for submitting a vulnerability report</form></div>';
     fixture(hiddenFormContext, root => {
         assert.ok(!auditSupportContract({ root }).problems.some(problem => (
+            problem.startsWith('docs/getting-started.md:')
+            && problem.includes('security intake links must use private GitHub advisories')
+        )));
+    });
+
+    const visibleContextAfterHiddenAncestor = validFixture();
+    visibleContextAfterHiddenAncestor['docs/getting-started.md'] =
+        `<form action="${ISSUES_ROUTE}">`
+        + '<div style="visibility:hidden">'
+        + '<button style="visibility:visible">Continue</button></div>'
+        + '<p>Submit a vulnerability report below.</p></form>';
+    fixture(visibleContextAfterHiddenAncestor, root => {
+        assert.ok(auditSupportContract({ root }).problems.some(problem => (
             problem.startsWith('docs/getting-started.md:')
             && problem.includes('security intake links must use private GitHub advisories')
         )));

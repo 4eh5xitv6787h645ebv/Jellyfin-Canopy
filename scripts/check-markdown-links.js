@@ -134,8 +134,15 @@ function stripHiddenHtml(
     const source = stripHtmlComments(content);
     const documentMode = Boolean(options.documentMode);
     const visible = [];
-    const stack = initialState
-        ? [{
+    const stack = Array.isArray(initialState)
+        ? initialState.map(state => ({
+            tag: state.tag,
+            insideSelect: Boolean(state.insideSelect),
+            persistentHidden: Boolean(state.persistentHidden),
+            visibilityHidden: Boolean(state.visibilityHidden),
+            hidden: Boolean(state.persistentHidden || state.visibilityHidden),
+        }))
+        : initialState ? [{
             tag: null,
             insideSelect: false,
             persistentHidden: Boolean(initialState.persistentHidden),
@@ -444,6 +451,11 @@ const HTML_HEAD_CONTEXT_ELEMENTS = new Set([
     'base', 'basefont', 'bgsound', 'link', 'meta', 'noframes', 'noscript',
     'script', 'style', 'template', 'title',
 ]);
+const HTML_P_AUTOCLOSE_OPENING_ELEMENTS = new Set([
+    'address', 'article', 'aside', 'blockquote', 'div', 'dl', 'fieldset', 'footer',
+    'form', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'header', 'hgroup', 'hr', 'main',
+    'menu', 'nav', 'ol', 'p', 'pre', 'search', 'section', 'table', 'ul',
+]);
 
 function htmlElementIsIgnored(tag, insideSelect = false, documentMode = false) {
     return insideSelect && !HTML_SELECT_CONTEXT_ELEMENTS.has(tag)
@@ -460,15 +472,44 @@ function repairHtmlStackForOpening(stack, tag, documentMode = false) {
             return true;
         }
     }
-    if (!stack.at(-1)?.insideSelect
-        || !['input', 'select', 'textarea'].includes(tag)) {
-        return false;
+    if (stack.at(-1)?.insideSelect) {
+        if (!['input', 'select', 'textarea'].includes(tag)) return false;
+        const select = lastHtmlStackTagIndex(stack, 'select');
+        if (select !== -1) stack.splice(select);
+        // A nested select closes the active select but is itself discarded.
+        // Input and textarea are reprocessed in the restored outer context.
+        if (tag === 'select') return true;
     }
-    const select = lastHtmlStackTagIndex(stack, 'select');
-    if (select !== -1) stack.splice(select);
-    // A nested select closes the active select but is itself discarded.
-    // Input and textarea are reprocessed in the restored outer context.
-    return tag === 'select';
+    if (tag === 'form' && lastHtmlStackTagIndex(stack, 'form') !== -1) {
+        return true;
+    }
+    if (tag === 'button') {
+        const button = lastHtmlStackTagIndex(stack, 'button');
+        if (button !== -1) stack.splice(button);
+    }
+    if (tag === 'li') {
+        const listItem = lastHtmlStackTagIndex(stack, 'li');
+        if (listItem !== -1) stack.splice(listItem);
+    }
+    if (tag === 'dd' || tag === 'dt') {
+        const descriptionItem = Math.max(
+            lastHtmlStackTagIndex(stack, 'dd'),
+            lastHtmlStackTagIndex(stack, 'dt')
+        );
+        if (descriptionItem !== -1) stack.splice(descriptionItem);
+    }
+    if (/^h[1-6]$/.test(tag)) {
+        const heading = Math.max(
+            ...[1, 2, 3, 4, 5, 6]
+                .map(level => lastHtmlStackTagIndex(stack, `h${level}`))
+        );
+        if (heading !== -1) stack.splice(heading);
+    }
+    if (HTML_P_AUTOCLOSE_OPENING_ELEMENTS.has(tag)) {
+        const paragraph = lastHtmlStackTagIndex(stack, 'p');
+        if (paragraph !== -1) stack.splice(paragraph);
+    }
+    return false;
 }
 
 function repairHtmlStackForText(stack, text, documentMode = false) {
@@ -1279,6 +1320,19 @@ function htmlContextBeforeBoundary(content) {
     return start;
 }
 
+function htmlContextBeforeSegments(content) {
+    const segments = [];
+    let start = 0;
+    for (const boundary of content.matchAll(
+        /<\/?(?:address|article|aside|blockquote|div|footer|form|h[1-6]|header|li|main|nav|ol|p|section|table|td|th|tr|ul)\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi
+    )) {
+        segments.push({ start, end: boundary.index });
+        start = boundary.index + boundary[0].length;
+    }
+    segments.push({ start, end: content.length });
+    return segments.reverse();
+}
+
 const HTML_VOID_ELEMENTS = new Set([
     'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link',
     'meta', 'param', 'source', 'track', 'wbr',
@@ -1501,12 +1555,13 @@ function htmlVisibilityStateSnapshots(
             documentMode
         );
         position = textEnd;
-        const state = stack.at(-1);
-        states.set(target, state ? {
+        states.set(target, stack.map(state => ({
+            tag: state.tag,
+            insideSelect: state.insideSelect,
             persistentHidden: state.persistentHidden,
             visibilityHidden: state.visibilityHidden,
             hidden: state.hidden,
-        } : null);
+        })));
     }
     return states;
 }
@@ -1777,6 +1832,15 @@ function htmlSubmitControlLabel(
     return combinedHtmlLabel(labelled || ariaLabel || associated || native || title, native);
 }
 
+function htmlSubmitControlType(control) {
+    const declaredType = htmlAttributeText(control.openingTag, 'type').toLowerCase();
+    return control.tag === 'button'
+        ? ['button', 'reset', 'submit'].includes(declaredType)
+            ? declaredType
+            : 'submit'
+        : htmlInputType(control);
+}
+
 function htmlFormSubmissionLinks(
     content,
     line,
@@ -1809,8 +1873,22 @@ function htmlFormSubmissionLinks(
             ).replace(/\s+/g, ' ').trim(),
         }));
     const fieldsetDisabledStates = htmlOpeningFieldsetDisabledStates(content, options);
+    const controls = [...buttons, ...inputs]
+        .sort((left, right) => left.start - right.start);
+    const nextSubmission = new Map();
+    const lastSubmissionByForm = new Map();
+    for (let index = controls.length - 1; index >= 0; index -= 1) {
+        const control = controls[index];
+        if (!['submit', 'image'].includes(htmlSubmitControlType(control))) continue;
+        const form = htmlAssociatedForm(control, forms, formsById);
+        if (!form) continue;
+        const next = lastSubmissionByForm.get(form);
+        if (next) nextSubmission.set(control, next);
+        lastSubmissionByForm.set(form, control);
+    }
     const contextOffsets = [];
-    for (const control of [...buttons, ...inputs]) {
+    const contextPlans = new Map();
+    for (const control of controls) {
         const form = htmlAssociatedForm(control, forms, formsById);
         const containedByForm = form
             && form.start < control.start
@@ -1822,10 +1900,29 @@ function htmlFormSubmissionLinks(
         const beforeBoundary = containedByForm
             ? 0
             : htmlContextBeforeBoundary(rawBefore);
+        const beforeSegments = containedByForm
+            ? htmlContextBeforeSegments(rawBefore)
+            : [{ start: beforeBoundary, end: rawBefore.length }];
+        const contextEnd = containedByForm
+            ? Math.min(form.contentEnd, control.end + MAX_HTML_CONTEXT_LENGTH)
+            : Math.min(content.length, control.end + MAX_HTML_CONTEXT_LENGTH);
+        const rawAfter = content.slice(control.end, contextEnd);
+        const afterBoundary = htmlContextAfterBoundary(rawAfter);
         contextOffsets.push(
-            contextStart + beforeBoundary,
+            ...beforeSegments.map(segment => contextStart + segment.start),
             control.end
         );
+        contextPlans.set(control, {
+            containedByForm,
+            contextStart,
+            contextEnd,
+            rawBefore,
+            rawAfter,
+            beforeBoundary,
+            beforeSegments,
+            afterBoundary,
+            allowFormAfterFallback: containedByForm && !nextSubmission.has(control),
+        });
     }
     const visualStates = htmlVisibilityStateSnapshots(
         content,
@@ -1840,18 +1937,12 @@ function htmlFormSubmissionLinks(
         options
     );
     const initialStatesAt = offset => ({
-        accessibility: accessibilityStates.get(offset),
+        accessibility: accessibilityStates.get(offset)?.at(-1),
         visual: visualStates.get(offset),
     });
     const links = [];
-    for (const control of [...buttons, ...inputs]
-        .sort((left, right) => left.start - right.start)) {
-        const declaredType = htmlAttributeText(control.openingTag, 'type').toLowerCase();
-        const type = control.tag === 'button'
-            ? ['button', 'reset', 'submit'].includes(declaredType)
-                ? declaredType
-                : 'submit'
-            : htmlInputType(control);
+    for (const control of controls) {
+        const type = htmlSubmitControlType(control);
         if (!['submit', 'image'].includes(type)
             || htmlTagHasAttribute(control.openingTag, 'disabled')
             || fieldsetDisabledStates.get(control.start)) {
@@ -1867,25 +1958,40 @@ function htmlFormSubmissionLinks(
             ? htmlAttributeValue(control.openingTag, 'formaction')
             : form.action;
         if (!action) continue;
-        const containedByForm = form.start < control.start && control.start < form.end;
-        const contextStart = containedByForm
-            ? Math.max(form.openingEnd, control.start - MAX_HTML_CONTEXT_LENGTH)
-            : Math.max(0, control.start - MAX_HTML_CONTEXT_LENGTH);
-        const contextEnd = containedByForm
-            ? Math.min(form.contentEnd, control.end + MAX_HTML_CONTEXT_LENGTH)
-            : Math.min(content.length, control.end + MAX_HTML_CONTEXT_LENGTH);
-        const rawBefore = content.slice(
+        const {
+            containedByForm,
             contextStart,
-            control.start
+            rawBefore,
+            rawAfter,
+            beforeBoundary,
+            beforeSegments,
+            afterBoundary,
+            allowFormAfterFallback,
+        } = contextPlans.get(control);
+        let contextBefore = '';
+        for (const segment of beforeSegments) {
+            contextBefore = compactGovernedText(
+                rawBefore.slice(segment.start, segment.end),
+                labels,
+                initialStatesAt(contextStart + segment.start),
+                options
+            );
+            if (contextBefore) break;
+        }
+        let contextAfter = compactGovernedText(
+            rawAfter.slice(0, afterBoundary),
+            labels,
+            initialStatesAt(control.end),
+            options
         );
-        const rawAfter = content.slice(
-            control.end,
-            contextEnd
-        );
-        const beforeBoundary = containedByForm ? 0 : htmlContextBeforeBoundary(rawBefore);
-        const afterBoundary = containedByForm
-            ? rawAfter.length
-            : htmlContextAfterBoundary(rawAfter);
+        if (!contextAfter && allowFormAfterFallback) {
+            contextAfter = compactGovernedText(
+                rawAfter,
+                labels,
+                initialStatesAt(control.end),
+                options
+            );
+        }
         links.push({
             target: normalizeLinkTarget(action),
             line,
@@ -1897,12 +2003,7 @@ function htmlFormSubmissionLinks(
                 labelRecords,
                 options
             ),
-            contextBefore: compactGovernedText(
-                rawBefore.slice(beforeBoundary),
-                labels,
-                initialStatesAt(contextStart + beforeBoundary),
-                options
-            ),
+            contextBefore,
             contextBeforeBlock: containedByForm
                 ? ''
                 : htmlPriorBlockText(
@@ -1911,12 +2012,7 @@ function htmlFormSubmissionLinks(
                     labels,
                     options
                 ),
-            contextAfter: compactGovernedText(
-                rawAfter.slice(0, afterBoundary),
-                labels,
-                initialStatesAt(control.end),
-                options
-            ),
+            contextAfter,
             hidden: hiddenStates.get(control.start) || false,
         });
     }

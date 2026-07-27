@@ -728,6 +728,16 @@ test('extracts HTML form submissions and image-map routes with control names', (
     assert.equal(crossBlockLink.hidden, true);
     assert.equal(isActionableLink(crossBlockLink), false);
 
+    const paragraphAutoClose = '<p hidden>\n\n'
+        + `<form action="${formTarget}">\n`
+        + '<button>Submit a vulnerability report</button>\n'
+        + '</form>\n';
+    const paragraphAutoCloseLink = extractLinks(paragraphAutoClose)
+        .find(candidate => candidate.target === formTarget);
+    assert.ok(paragraphAutoCloseLink);
+    assert.equal(paragraphAutoCloseLink.hidden, false);
+    assert.equal(isActionableLink(paragraphAutoCloseLink), true);
+
     const formLocalIntent = `<form action="${formTarget}">`
         + '<p>Submit a vulnerability report below.</p>'
         + '<button>Continue</button></form>';
@@ -735,6 +745,18 @@ test('extracts HTML form submissions and image-map routes with control names', (
         .find(candidate => candidate.target === formTarget);
     assert.ok(formLocalLink);
     assert.match(formLocalLink.contextBefore, /submit a vulnerability report below/i);
+
+    const truncatedHiddenPrefix = `<form action="${formTarget}">`
+        + `<div hidden>${'x'.repeat(800)}</div>`
+        + '<p>Submit a vulnerability report below.</p>'
+        + '<button>Continue</button></form>';
+    const truncatedHiddenPrefixLink = extractLinks(truncatedHiddenPrefix)
+        .find(candidate => candidate.target === formTarget);
+    assert.ok(truncatedHiddenPrefixLink);
+    assert.match(
+        truncatedHiddenPrefixLink.contextBefore,
+        /submit a vulnerability report below/i
+    );
 
     const inheritedVisibility = '<div style="visibility:hidden">'
         + `<form action="${formTarget}">`
@@ -745,6 +767,36 @@ test('extracts HTML form submissions and image-map routes with control names', (
     assert.ok(inheritedVisibilityLink);
     assert.equal(inheritedVisibilityLink.hidden, false);
     assert.equal(inheritedVisibilityLink.contextAfter, '');
+
+    const restoredAfterAncestor = `<form action="${formTarget}">`
+        + '<div style="visibility:hidden">'
+        + '<button style="visibility:visible">Continue</button></div>'
+        + '<p>Submit a vulnerability report below.</p></form>';
+    const restoredAfterAncestorLink = extractLinks(restoredAfterAncestor)
+        .find(candidate => candidate.target === formTarget);
+    assert.ok(restoredAfterAncestorLink);
+    assert.match(
+        restoredAfterAncestorLink.contextAfter,
+        /submit a vulnerability report below/i
+    );
+
+    const splitFormRoutes = `<form action="${formTarget}">`
+        + '<p>Submit a vulnerability report '
+        + `<button formaction="${overrideTarget}">Privately</button></p>`
+        + '<p>Report a bug <button>Continue</button></p></form>';
+    const splitFormLinks = extractLinks(splitFormRoutes);
+    const privateFormLink = splitFormLinks.find(
+        candidate => candidate.target === overrideTarget
+    );
+    const publicFormLink = splitFormLinks.find(
+        candidate => candidate.target === formTarget
+    );
+    assert.ok(privateFormLink);
+    assert.ok(publicFormLink);
+    assert.match(privateFormLink.contextBefore, /submit a vulnerability report/i);
+    assert.doesNotMatch(privateFormLink.contextAfter, /report a bug/i);
+    assert.match(publicFormLink.contextBefore, /report a bug/i);
+    assert.doesNotMatch(publicFormLink.contextBefore, /vulnerability/i);
 
     const inlineCode = '`<form action="' + formTarget
         + '"><button>Report a bug</button></form>`';
