@@ -24,17 +24,20 @@ function escapeHtml(value) {
 }
 
 /* Absolute http(s) URL with no credentials, query, or fragment — the shared
-   shape every hand-validated external URL field accepts. */
-function jcIsHttpUrl(raw) {
-    try {
-        const parsed = new URL(String(raw));
-        return (parsed.protocol === 'http:' || parsed.protocol === 'https:')
-            && !parsed.username && !parsed.password
-            && !parsed.search && !parsed.hash;
-    } catch (e) {
-        return false;
-    }
-}
+   shape every hand-validated external URL field accepts. The unusual
+   indentation is a contract: config-page-http-url.test.ts regex-extracts
+   `function jcIsHttpUrl(value)` up to its 8-space-indented closing brace and
+   runs the slice against the shared URL-safety matrix. */
+        function jcIsHttpUrl(value) {
+            try {
+                const parsed = new URL(String(value));
+                return (parsed.protocol === 'http:' || parsed.protocol === 'https:')
+                    && !parsed.username && !parsed.password
+                    && !parsed.search && !parsed.hash;
+            } catch (e) {
+                return false;
+            }
+        }
 
 /* ---------------------------------------------------------------------------
    Theme detector. Jellyfin themes hard-swap theme.css with no CSS-variable
@@ -1036,6 +1039,12 @@ function mapChecklistState(state) {
     return state === 'amber' ? 'warn' : state;
 }
 
+/* Contract alias: the connection-test cache refreshes dashboards through this
+   name (the maintainerr drift-guard harness stubs it). */
+function renderChecklist() {
+    renderServiceStatusDashboard();
+}
+
 function renderServiceStatusDashboard() {
     const root = document.querySelector('#jc-service-dashboard');
     if (!root) {
@@ -1101,12 +1110,12 @@ function renderServiceStatusDashboard() {
     // 3. Maintainerr — URL-only by design (Maintainerr 3.18 has no API auth).
     const maintainerrEnabled = readFieldChecked('#maintainerrEnabled');
     const maintainerrRaw = readFieldValue('#maintainerrUrl');
-    const maintainerrNormalized = jcNormalizeMaintainerrBaseUrl(maintainerrRaw);
-    if (maintainerrEnabled && maintainerrNormalized) {
+    const normalizedMaintainerrUrl = jcNormalizeMaintainerrBaseUrl(maintainerrRaw);
+    if (maintainerrEnabled && normalizedMaintainerrUrl) {
         const row = checklistRowState(
             'maintainerr',
             'Configured — not yet verified',
-            jcFingerprintConnectionValue(maintainerrNormalized)
+            jcFingerprintConnectionValue(normalizedMaintainerrUrl)
         );
         cards.push({
             id: 'maintainerr',
@@ -1582,6 +1591,125 @@ function setProbeWarning(source, msg) {
     banner.hidden = false;
 }
 
+
+async function resetAllUserSettings() {
+    if (!confirm('Are you sure?\n\nThis will save the current configuration and overwrite every per-user default for ALL users on this server.')) {
+        return;
+    }
+    Dashboard.showLoadingMsg();
+    try {
+        const config = await buildConfigFromForm();
+        // Save first so the server applies the CURRENT form.
+        await ApiClient.updatePluginConfiguration(pluginId, config);
+        await ApiClient.ajax({
+            type: 'POST',
+            url: ApiClient.getUrl('/JellyfinCanopy/reset-all-users-settings'),
+            dataType: 'json'
+        });
+        Dashboard.hideLoadingMsg();
+        Dashboard.alert({
+            title: 'Success',
+            message: 'Configuration saved and applied to all users successfully!\n\nSettings will take effect after users refresh their browsers.'
+        });
+    } catch (e) {
+        Dashboard.hideLoadingMsg();
+        console.error('Failed to save and apply settings:', e);
+        Dashboard.alert({
+            title: 'Error',
+            message: 'Failed to save and apply settings to all users. Check server logs for details.'
+        });
+    }
+}
+
+function clearTagCaches() {
+    if (!confirm('Clear all client caches?\n\nThis will force all clients to clear their quality and genre tag caches on next page load.')) {
+        return;
+    }
+    // Full config round-trip: uses server state, does NOT include unsaved form edits.
+    ApiClient.getPluginConfiguration(pluginId).then(function (config) {
+        config.ClearLocalStorageTimestamp = Date.now();
+        return ApiClient.updatePluginConfiguration(pluginId, config);
+    }).then(function () {
+        Dashboard.alert({
+            title: 'Success',
+            message: 'Cache clear signal sent. All clients will clear their caches on next page load.'
+        });
+    }).catch(function (e) {
+        console.warn('[JC] failed to set cache clear timestamp:', e);
+        Dashboard.alert({
+            title: 'Error',
+            message: 'Failed to set cache clear timestamp. Check server logs for details.'
+        });
+    });
+}
+
+// The quick action is only relevant when the server-side tag cache is off.
+function updateClearTagCachesQuickBtnVisibility() {
+    const quickBtn = document.querySelector('#clearTagCachesQuickBtn');
+    if (!quickBtn) {
+        return;
+    }
+    const serverModeCb = document.querySelector('#tagCacheServerMode');
+    quickBtn.hidden = !!(serverModeCb && serverModeCb.checked);
+}
+
+function wireDashboards() {
+    const retryBtn = document.querySelector('#jc-probe-retry-btn');
+    if (retryBtn && !retryBtn.dataset.jcWired) {
+        retryBtn.dataset.jcWired = 'true';
+        retryBtn.addEventListener('click', function () {
+            setProbeWarning('plugins', null);
+            checkInstalledPlugins();
+        });
+    }
+
+    const retestAllConnectionsBtn = document.querySelector('#retestAllConnectionsBtn');
+    if (retestAllConnectionsBtn && !retestAllConnectionsBtn.dataset.jcWired) {
+        retestAllConnectionsBtn.dataset.jcWired = 'true';
+        retestAllConnectionsBtn.addEventListener('click', function (e) {
+            e.preventDefault();
+            runRetestAllConnections();
+        });
+    }
+
+    const resetBtn = document.querySelector('#resetAllUserSettingsBtn');
+    if (resetBtn && !resetBtn.dataset.jcWired) {
+        resetBtn.dataset.jcWired = 'true';
+        resetBtn.addEventListener('click', function (e) {
+            e.preventDefault();
+            resetAllUserSettings();
+        });
+    }
+
+    const clearTagsBtn = document.querySelector('#clearTagsCacheBtn');
+    if (clearTagsBtn && !clearTagsBtn.dataset.jcWired) {
+        clearTagsBtn.dataset.jcWired = 'true';
+        clearTagsBtn.addEventListener('click', function (e) {
+            e.preventDefault();
+            clearTagCaches();
+        });
+    }
+
+    const quickClearBtn = document.querySelector('#clearTagCachesQuickBtn');
+    if (quickClearBtn && !quickClearBtn.dataset.jcWired) {
+        quickClearBtn.dataset.jcWired = 'true';
+        quickClearBtn.addEventListener('click', function (e) {
+            e.preventDefault();
+            const canonical = document.querySelector('#clearTagsCacheBtn');
+            if (canonical) {
+                canonical.click();
+            }
+        });
+    }
+
+    const serverModeCb = document.querySelector('#tagCacheServerMode');
+    if (serverModeCb && !serverModeCb.dataset.jcQuickVisWired) {
+        serverModeCb.dataset.jcQuickVisWired = 'true';
+        serverModeCb.addEventListener('change', updateClearTagCachesQuickBtnVisibility);
+    }
+    updateClearTagCachesQuickBtnVisibility();
+}
+
 function runRetestAllConnections() {
     const btn = document.querySelector('#retestAllConnectionsBtn');
     const now = Date.now();
@@ -1628,11 +1756,11 @@ function runRetestAllConnections() {
         tested++;
     }
 
-    const maintainerrTestBtn = document.querySelector('#testMaintainerrBtn');
+    const testMaintainerrBtn = document.querySelector('#testMaintainerrBtn');
     if (readFieldChecked('#maintainerrEnabled')
         && jcNormalizeMaintainerrBaseUrl(readFieldValue('#maintainerrUrl'))
-        && maintainerrTestBtn && !maintainerrTestBtn.disabled) {
-        maintainerrTestBtn.click();
+        && testMaintainerrBtn && !testMaintainerrBtn.disabled) {
+        testMaintainerrBtn.click();
         tested++;
     }
 
@@ -1712,2006 +1840,1920 @@ function runRetestAllConnections() {
     _jeRetestHardStopTimer = setTimeout(release, RETEST_ALL_MAX_WAIT_MS + 500);
 }
 
-async function resetAllUserSettings() {
-    if (!confirm('Are you sure?\n\nThis will save the current configuration and overwrite every per-user default for ALL users on this server.')) {
-        return;
-    }
-    Dashboard.showLoadingMsg();
-    try {
-        const config = await buildConfigFromForm();
-        // Save first so the server applies the CURRENT form.
-        await ApiClient.updatePluginConfiguration(pluginId, config);
-        await ApiClient.ajax({
-            type: 'POST',
-            url: ApiClient.getUrl('/JellyfinCanopy/reset-all-users-settings'),
-            dataType: 'json'
-        });
-        Dashboard.hideLoadingMsg();
-        Dashboard.alert({
-            title: 'Success',
-            message: 'Configuration saved and applied to all users successfully!\n\nSettings will take effect after users refresh their browsers.'
-        });
-    } catch (e) {
-        Dashboard.hideLoadingMsg();
-        console.error('Failed to save and apply settings:', e);
-        Dashboard.alert({
-            title: 'Error',
-            message: 'Failed to save and apply settings to all users. Check server logs for details.'
-        });
-    }
-}
+        /* SECTION: connections-arr — owns: connection-test cache + persistence (beginConnectionTest,
+         * setConnectionTestResult, getConnectionTestResult, getPersistedTestResult, invalidatePersistedTest,
+         * clearConnectionTestCache, checklistRowState, formatLastTested, jcFingerprintConnectionValue,
+         * _jeNormalizeArrUrl, CONNECTION_TEST_CACHE_TTL_MS, _jeConnectionTestCache, _jeCacheGeneration,
+         * _testToken, _jeSuppressTestAlerts, jcTestAlert, _wireInvalidate); per-service testers
+         * (testSeerrConnection, testTmdbConnection, testMaintainerrConnection + jcSetMaintainerrTestStatus /
+         * cancelActiveMaintainerrTest / jcIsCurrentMaintainerrTest / jcParseMaintainerrTestStatus /
+         * jcNormalizeMaintainerrBaseUrl / jcIsSafeMaintainerrPathSegment, testInstanceConnection,
+         * connectionErrorMessage); mapping validation (validateMappingSet, jcRunMappingValidation,
+         * _jeValidateInstanceMappings, validateMaintainerrMappingSet, jcValidateMaintainerrMappings,
+         * renderMappingValidationResult); Seerr scan trigger (triggerSeerrScanNow, cancelActiveSeerrScan,
+         * jcParseSeerrIdentityDomains, jcNormalizeSeerrIdentityDomain, jcDispatchSeerrScanDomains,
+         * jcSummarizeSeerrScanDispatch); arr instance cards (normalizeArrInstanceId, createArrInstanceId,
+         * createInstanceCard, tryParseInstanceList, insertCorruptBanner, _arrParseOK, loadArrInstances,
+         * renderArrInstances, collectInstancesFromDom, jcIsHttpUrl, buildArrInstanceWarnings +
+         * buildArrIncompleteWarning / buildArrRenamedWarning / buildArrDroppedExternalWarning).
+         * wires: wireConnections, wireArrInstances.
+         * depends: page, escapeHtml, jcMarkConfigDirty, updateAllDependencies, renderChecklist (dashboards),
+         * renderServiceStatusDashboard (dashboards), Dashboard, ApiClient.
+         * Does NOT define saveArrInstances — core owns it; it consumes collectInstancesFromDom and
+         * buildArrInstanceWarnings from here. Mutable module state uses `let` (initializers are
+         * side-effect free); _jeSuppressTestAlerts is assigned by the Re-test-all batch (dashboards). */
 
-function clearTagCaches() {
-    if (!confirm('Clear all client caches?\n\nThis will force all clients to clear their quality and genre tag caches on next page load.')) {
-        return;
-    }
-    // Full config round-trip: uses server state, does NOT include unsaved form edits.
-    ApiClient.getPluginConfiguration(pluginId).then(function (config) {
-        config.ClearLocalStorageTimestamp = Date.now();
-        return ApiClient.updatePluginConfiguration(pluginId, config);
-    }).then(function () {
-        Dashboard.alert({
-            title: 'Success',
-            message: 'Cache clear signal sent. All clients will clear their caches on next page load.'
-        });
-    }).catch(function (e) {
-        console.warn('[JC] failed to set cache clear timestamp:', e);
-        Dashboard.alert({
-            title: 'Error',
-            message: 'Failed to set cache clear timestamp. Check server logs for details.'
-        });
-    });
-}
+        // ---------------------------------------------------------------------------
+        // A. Connection-test cache (shared by every tester on this page)
+        // ---------------------------------------------------------------------------
 
-// The quick action is only relevant when the server-side tag cache is off.
-function updateClearTagCachesQuickBtnVisibility() {
-    const quickBtn = document.querySelector('#clearTagCachesQuickBtn');
-    if (!quickBtn) {
-        return;
-    }
-    const serverModeCb = document.querySelector('#tagCacheServerMode');
-    quickBtn.hidden = !!(serverModeCb && serverModeCb.checked);
-}
+        const CONNECTION_TEST_CACHE_TTL_MS = 5 * 60 * 1000;
+        const _jeConnectionTestCache = new Map();
+        let _jeCacheGeneration = 0;
+        let _testToken = 0;
+        let _jeSuppressTestAlerts = false;
 
-function wireDashboards() {
-    const retryBtn = document.querySelector('#jc-probe-retry-btn');
-    if (retryBtn && !retryBtn.dataset.jcWired) {
-        retryBtn.dataset.jcWired = 'true';
-        retryBtn.addEventListener('click', function () {
-            setProbeWarning('plugins', null);
-            checkInstalledPlugins();
-        });
-    }
+        function beginConnectionTest() {
+            return _jeCacheGeneration;
+        }
 
-    const retestBtn = document.querySelector('#retestAllConnectionsBtn');
-    if (retestBtn && !retestBtn.dataset.jcWired) {
-        retestBtn.dataset.jcWired = 'true';
-        retestBtn.addEventListener('click', function (e) {
-            e.preventDefault();
-            runRetestAllConnections();
-        });
-    }
-
-    const resetBtn = document.querySelector('#resetAllUserSettingsBtn');
-    if (resetBtn && !resetBtn.dataset.jcWired) {
-        resetBtn.dataset.jcWired = 'true';
-        resetBtn.addEventListener('click', function (e) {
-            e.preventDefault();
-            resetAllUserSettings();
-        });
-    }
-
-    const clearTagsBtn = document.querySelector('#clearTagsCacheBtn');
-    if (clearTagsBtn && !clearTagsBtn.dataset.jcWired) {
-        clearTagsBtn.dataset.jcWired = 'true';
-        clearTagsBtn.addEventListener('click', function (e) {
-            e.preventDefault();
-            clearTagCaches();
-        });
-    }
-
-    const quickClearBtn = document.querySelector('#clearTagCachesQuickBtn');
-    if (quickClearBtn && !quickClearBtn.dataset.jcWired) {
-        quickClearBtn.dataset.jcWired = 'true';
-        quickClearBtn.addEventListener('click', function (e) {
-            e.preventDefault();
-            const canonical = document.querySelector('#clearTagsCacheBtn');
-            if (canonical) {
-                canonical.click();
+        function jcTestAlert(opts) {
+            if (_jeSuppressTestAlerts) {
+                return;
             }
-        });
-    }
-
-    const serverModeCb = document.querySelector('#tagCacheServerMode');
-    if (serverModeCb && !serverModeCb.dataset.jcQuickVisWired) {
-        serverModeCb.dataset.jcQuickVisWired = 'true';
-        serverModeCb.addEventListener('change', updateClearTagCachesQuickBtnVisibility);
-    }
-    updateClearTagCachesQuickBtnVisibility();
-}
-
-/* SECTION: connections-arr — owns: connection-test cache + persistence (beginConnectionTest,
- * setConnectionTestResult, getConnectionTestResult, getPersistedTestResult, invalidatePersistedTest,
- * clearConnectionTestCache, checklistRowState, formatLastTested, jcFingerprintConnectionValue,
- * _jeNormalizeArrUrl, CONNECTION_TEST_CACHE_TTL_MS, _jeConnectionTestCache, _jeCacheGeneration,
- * _testToken, _jeSuppressTestAlerts, jcTestAlert, _wireInvalidate); per-service testers
- * (testSeerrConnection, testTmdbConnection, testMaintainerrConnection + jcSetMaintainerrTestStatus /
- * cancelActiveMaintainerrTest / jcIsCurrentMaintainerrTest / jcParseMaintainerrTestStatus /
- * jcNormalizeMaintainerrBaseUrl / jcIsSafeMaintainerrPathSegment, testInstanceConnection,
- * connectionErrorMessage); mapping validation (validateMappingSet, jcRunMappingValidation,
- * _jeValidateInstanceMappings, validateMaintainerrMappingSet, jcValidateMaintainerrMappings,
- * renderMappingValidationResult); Seerr scan trigger (triggerSeerrScanNow, cancelActiveSeerrScan,
- * jcParseSeerrIdentityDomains, jcNormalizeSeerrIdentityDomain, jcDispatchSeerrScanDomains,
- * jcSummarizeSeerrScanDispatch); arr instance cards (normalizeArrInstanceId, createArrInstanceId,
- * createInstanceCard, tryParseInstanceList, insertCorruptBanner, _arrParseOK, loadArrInstances,
- * renderArrInstances, collectInstancesFromDom, jcIsHttpUrl, buildArrInstanceWarnings +
- * buildArrIncompleteWarning / buildArrRenamedWarning / buildArrDroppedExternalWarning).
- * wires: wireConnections, wireArrInstances.
- * depends: page, escapeHtml, jcMarkConfigDirty, updateAllDependencies, renderChecklist (dashboards),
- * renderServiceStatusDashboard (dashboards), Dashboard, ApiClient.
- * Does NOT define saveArrInstances — core owns it; it consumes collectInstancesFromDom and
- * buildArrInstanceWarnings from here. Mutable module state uses `let` (initializers are
- * side-effect free); _jeSuppressTestAlerts is assigned by the Re-test-all batch (dashboards). */
-
-// ---------------------------------------------------------------------------
-// A. Connection-test cache (shared by every tester on this page)
-// ---------------------------------------------------------------------------
-
-const CONNECTION_TEST_CACHE_TTL_MS = 5 * 60 * 1000;
-const _jeConnectionTestCache = new Map();
-let _jeCacheGeneration = 0;
-let _testToken = 0;
-let _jeSuppressTestAlerts = false;
-
-function beginConnectionTest() {
-    return _jeCacheGeneration;
-}
-
-function jcTestAlert(opts) {
-    if (_jeSuppressTestAlerts) {
-        return;
-    }
-    try {
-        Dashboard.alert(opts);
-    } catch (e) {
-        console.warn('[JC] Dashboard.alert threw:', e);
-    }
-}
-
-function setConnectionTestResult(key, status, detail, token, binding) {
-    // A token minted before a cache clear must not overwrite a fresher result.
-    if (token !== undefined && token !== _jeCacheGeneration) {
-        return;
-    }
-    const at = Date.now();
-    _jeConnectionTestCache.set(key, {
-        status: status,
-        detail: detail || '',
-        binding: binding || '',
-        at: at
-    });
-    try {
-        localStorage.setItem('jc_conn_test_' + key, JSON.stringify({
-            status: status,
-            detail: detail || '',
-            binding: binding || undefined,
-            at: at
-        }));
-    } catch (e) {
-        // Best-effort persistence only.
-    }
-    try {
-        renderChecklist();
-    } catch (e) {
-        console.warn('[JC] renderChecklist threw after setConnectionTestResult:', e);
-    }
-}
-
-function getConnectionTestResult(key, binding) {
-    const entry = _jeConnectionTestCache.get(key);
-    if (!entry) {
-        return null;
-    }
-    if (binding && entry.binding !== binding) {
-        _jeConnectionTestCache.delete(key);
-        return null;
-    }
-    if (Date.now() - entry.at > CONNECTION_TEST_CACHE_TTL_MS) {
-        _jeConnectionTestCache.delete(key);
-        return null;
-    }
-    return entry;
-}
-
-function getPersistedTestResult(key, binding) {
-    // Deliberately no TTL: persisted entries outlive reloads to show "Last tested <date>".
-    const storageKey = 'jc_conn_test_' + key;
-    try {
-        const raw = localStorage.getItem(storageKey);
-        if (!raw) {
-            return null;
-        }
-        const rec = JSON.parse(raw);
-        if (!rec || typeof rec.at !== 'number' || typeof rec.status !== 'string') {
-            localStorage.removeItem(storageKey);
-            return null;
-        }
-        if (binding && rec.binding !== binding) {
-            localStorage.removeItem(storageKey);
-            return null;
-        }
-        return rec;
-    } catch (e) {
-        try {
-            localStorage.removeItem(storageKey);
-        } catch (removeError) {
-            // Storage unavailable; nothing to heal.
-        }
-        return null;
-    }
-}
-
-function formatLastTested(ts) {
-    const date = new Date(ts);
-    const now = new Date();
-    const sameDay = date.getFullYear() === now.getFullYear()
-        && date.getMonth() === now.getMonth()
-        && date.getDate() === now.getDate();
-    if (sameDay) {
-        return 'Last tested ' + date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-    }
-    return 'Last tested ' + date.toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' });
-}
-
-function checklistRowState(cacheKey, fallbackDetail, binding) {
-    const fresh = getConnectionTestResult(cacheKey, binding);
-    if (fresh) {
-        return { state: fresh.status, detail: fresh.detail };
-    }
-    const persisted = getPersistedTestResult(cacheKey, binding);
-    if (persisted) {
-        return { state: persisted.status, detail: formatLastTested(persisted.at) };
-    }
-    return { state: 'pending', detail: fallbackDetail };
-}
-
-function clearConnectionTestCache() {
-    _jeConnectionTestCache.clear();
-    _jeCacheGeneration++;
-    try {
-        const staleKeys = [];
-        for (let i = 0; i < localStorage.length; i++) {
-            const k = localStorage.key(i);
-            if (k && k.indexOf('jc_conn_test_') === 0) {
-                staleKeys.push(k);
-            }
-        }
-        staleKeys.forEach(function (k) {
-            localStorage.removeItem(k);
-        });
-    } catch (e) {
-        // Storage unavailable; in-memory cache is already cleared.
-    }
-    try {
-        renderChecklist();
-    } catch (e) {
-        console.warn('[JC] renderChecklist threw:', e);
-    }
-}
-
-function invalidatePersistedTest(key) {
-    try {
-        localStorage.removeItem('jc_conn_test_' + key);
-    } catch (e) {
-        // Storage unavailable.
-    }
-    _jeConnectionTestCache.delete(key);
-    try {
-        renderChecklist();
-    } catch (e) {
-        console.warn('[JC] renderChecklist threw:', e);
-    }
-}
-
-function _wireInvalidate(sel, key) {
-    const el = document.querySelector(sel);
-    if (!el) {
-        return;
-    }
-    // Invalidate on commit (change), not per keystroke — per-keystroke rebuilds caused
-    // visible lag — and only when the value actually changed since the last commit.
-    let lastCommitted = null;
-    el.addEventListener('focus', function () {
-        if (lastCommitted === null) {
-            lastCommitted = el.value;
-        }
-    });
-    el.addEventListener('change', function () {
-        if (lastCommitted !== null && el.value === lastCommitted) {
-            return;
-        }
-        lastCommitted = el.value;
-        invalidatePersistedTest(key);
-    });
-}
-
-function jcFingerprintConnectionValue(value) {
-    // Comparison-only binding so internal URLs are never persisted verbatim.
-    // Identity fence, not a security primitive.
-    const str = String(value || '');
-    let hashA = 0x811c9dc5;
-    let hashB = 0x9e3779b9;
-    for (let i = 0; i < str.length; i++) {
-        const c = str.charCodeAt(i);
-        hashA = Math.imul(hashA ^ c, 0x01000193);
-        hashB = Math.imul(hashB ^ c, 0x5f356495);
-    }
-    return 'v1:' + str.length.toString(36) + ':'
-        + (hashA >>> 0).toString(16).padStart(8, '0')
-        + (hashB >>> 0).toString(16).padStart(8, '0');
-}
-
-function _jeNormalizeArrUrl(url) {
-    return String(url || '').trim().toLowerCase().replace(/\/+$/, '');
-}
-
-// ---------------------------------------------------------------------------
-// B1. Seerr connection test (multi-URL loop) + TMDB test
-// ---------------------------------------------------------------------------
-
-async function testSeerrConnection() {
-    const urlsInput = document.querySelector('#seerrUrls');
-    const keyInput = document.querySelector('#SeerrApiKey');
-    const urls = ((urlsInput && urlsInput.value) || '')
-        .split('\n')
-        .map(function (u) { return u.trim(); })
-        .filter(Boolean);
-    const apiKey = ((keyInput && keyInput.value) || '').trim();
-    if (!urls.length || !apiKey) {
-        // Deliberately not suppressible — a misconfigured batch run should still surface this.
-        Dashboard.alert({
-            title: 'Missing Information',
-            message: 'Please provide at least one Seerr URL and an API key to test the connection.'
-        });
-        return;
-    }
-    const token = beginConnectionTest();
-    const btn = document.querySelector('#testSeerrBtn');
-    const indicator = document.querySelector('#seerrStatusIndicator');
-    if (btn) {
-        btn.disabled = true;
-    }
-    if (indicator) {
-        indicator.textContent = 'sync';
-        indicator.classList.add('status-check');
-        indicator.style.color = 'var(--jc-accent)';
-    }
-    let validated = false;
-    let lastError = '';
-    for (const url of urls) {
-        try {
-            const res = await ApiClient.ajax({
-                type: 'GET',
-                url: ApiClient.getUrl('/JellyfinCanopy/seerr/validate', { url: url }),
-                dataType: 'json',
-                headers: { 'X-Arr-ApiKey': apiKey }
-            });
-            if (res && res.ok) {
-                validated = true;
-                break;
-            }
-        } catch (e) {
-            console.error('Seerr validation failed for ' + url + ':', e);
-            if (e && typeof e.json === 'function') {
-                try {
-                    e.responseJSON = await e.clone().json();
-                } catch (parseError) {
-                    // Body was not JSON; fall through to status-based messaging.
-                }
-            }
-            lastError = connectionErrorMessage(e, 'Seerr', url);
-        }
-    }
-    if (btn) {
-        btn.disabled = false;
-    }
-    if (indicator) {
-        indicator.classList.remove('status-check');
-    }
-    if (validated) {
-        if (indicator) {
-            indicator.textContent = 'check_circle';
-            indicator.style.color = 'var(--jc-success)';
-        }
-        try {
-            setConnectionTestResult('seerr', 'ok', 'Connected', token);
-        } catch (e) {
-            console.warn('[JC] Failed to cache Seerr test result:', e);
-        }
-        jcTestAlert({ title: 'Success', message: 'Successfully connected to Seerr!' });
-    } else {
-        if (indicator) {
-            indicator.textContent = 'error';
-            indicator.style.color = 'var(--jc-danger)';
-        }
-        try {
-            setConnectionTestResult('seerr', 'error', lastError.length < 80 ? lastError : 'Connection failed', token);
-        } catch (e) {
-            console.warn('[JC] Failed to cache Seerr test result:', e);
-        }
-        jcTestAlert({
-            title: 'Connection Failed',
-            message: lastError || 'Could not connect to any provided URL.'
-        });
-    }
-}
-
-async function testTmdbConnection(event) {
-    const input = document.querySelector('#TMDB_API_KEY');
-    const apiKey = ((input && input.value) || '').trim();
-    if (!apiKey) {
-        Dashboard.alert({
-            title: 'Missing Information',
-            message: 'Please provide a TMDB API key to test the connection.'
-        });
-        return;
-    }
-    _testToken = beginConnectionTest();
-    // Multiple copies of the test button exist across tabs; resolve the indicator
-    // sitting next to the clicked button, falling back to the Elsewhere-tab one.
-    const button = event && event.target ? event.target.closest('button') : null;
-    let indicator = button && button.parentElement
-        ? button.parentElement.querySelector('.material-icons')
-        : null;
-    if (!indicator) {
-        indicator = document.querySelector('#tmdbStatusIndicator');
-    }
-    const buttons = document.querySelectorAll('.testTmdbBtn');
-    buttons.forEach(function (b) { b.disabled = true; });
-    if (indicator) {
-        indicator.textContent = 'sync';
-        indicator.classList.add('status-check');
-        indicator.style.color = 'var(--jc-accent)';
-    }
-    try {
-        await ApiClient.ajax({
-            type: 'GET',
-            url: ApiClient.getUrl('/JellyfinCanopy/tmdb/validate', { apiKey: apiKey })
-        });
-        if (indicator) {
-            indicator.textContent = 'check_circle';
-            indicator.style.color = 'var(--jc-success)';
-        }
-        try {
-            setConnectionTestResult('tmdb', 'ok', 'API key valid', _testToken);
-        } catch (e) {
-            console.warn('[JC] Failed to cache TMDB test result:', e);
-        }
-        jcTestAlert({ title: 'Success', message: 'Successfully connected to TMDB!' });
-    } catch (e) {
-        console.error('TMDB validation failed:', e);
-        const status = e && e.status;
-        let message;
-        let cacheDetail;
-        if (status === 401) {
-            message = 'The API key is invalid. Check that you copied it correctly.';
-            cacheDetail = 'API key rejected';
-        } else if (status === 500 || !status) {
-            message = 'Could not reach TMDB servers. Check your network connection.';
-            cacheDetail = 'Unreachable';
-        } else {
-            message = 'Connection failed (error ' + status + '). Check the key and your network.';
-            cacheDetail = 'Error ' + status;
-        }
-        try {
-            setConnectionTestResult('tmdb', 'error', cacheDetail, _testToken);
-        } catch (cacheError) {
-            console.warn('[JC] Failed to cache TMDB test result:', cacheError);
-        }
-        if (indicator) {
-            indicator.textContent = 'error';
-            indicator.style.color = 'var(--jc-danger)';
-        }
-        jcTestAlert({ title: 'Connection Failed', message: message });
-    } finally {
-        buttons.forEach(function (b) { b.disabled = false; });
-        if (indicator) {
-            indicator.classList.remove('status-check');
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// B2. Maintainerr connection test
-// ---------------------------------------------------------------------------
-
-const JC_MAINTAINERR_MAX_URL_LENGTH = 2048;
-const JC_MAINTAINERR_MAX_MAPPINGS_LENGTH = 65536;
-const JC_MAINTAINERR_MAX_MAPPING_ROWS = 32;
-
-const MAINTAINERR_TEST_ERROR_MESSAGES = {
-    invalid_configuration: 'The Maintainerr URL is invalid',
-    not_ready: 'Maintainerr is reachable but not ready',
-    not_jellyfin: 'Maintainerr is not configured for Jellyfin',
-    unsupported: 'Maintainerr does not expose the required read-only capabilities',
-    blocked_target: 'The destination is blocked by Canopy network policy',
-    timeout: 'The connection timed out',
-    canceled: 'The connection test was canceled',
-    redirect: 'Maintainerr returned a redirect',
-    wrong_service: 'The destination is not Maintainerr 3.18',
-    malformed_body: 'Maintainerr returned an invalid response',
-    malformed_response: 'Maintainerr returned an invalid response',
-    response_too_large: 'Maintainerr returned an oversized response',
-    too_large: 'Maintainerr returned too many records',
-    throttled: 'Maintainerr requests are temporarily limited',
-    identity_mismatch: 'Maintainerr is connected to a different Jellyfin server',
-    configuration_changed: 'The Maintainerr configuration changed during the test',
-    upstream_error: 'Maintainerr could not complete the read-only test',
-    disabled: 'The Maintainerr integration is disabled',
-    unavailable: 'Maintainerr is temporarily unavailable'
-};
-
-let maintainerrTestGeneration = 0;
-let activeMaintainerrTestController = null;
-
-function jcSetMaintainerrTestStatus(icon, text, color, busy) {
-    const indicator = document.querySelector('#maintainerrStatusIndicator');
-    const statusText = document.querySelector('#maintainerrStatusText');
-    const btn = document.querySelector('#testMaintainerrBtn');
-    if (indicator) {
-        indicator.textContent = icon;
-        indicator.style.color = color;
-        indicator.classList.toggle('status-check', !!busy);
-    }
-    if (statusText) {
-        statusText.textContent = text;
-    }
-    if (btn) {
-        btn.setAttribute('aria-busy', busy ? 'true' : 'false');
-    }
-}
-
-function cancelActiveMaintainerrTest(resetUi) {
-    maintainerrTestGeneration++;
-    if (activeMaintainerrTestController) {
-        try {
-            activeMaintainerrTestController.abort();
-        } catch (e) {
-            // Already aborted or unsupported; nothing to do.
-        }
-        activeMaintainerrTestController = null;
-    }
-    if (resetUi === true) {
-        const btn = document.querySelector('#testMaintainerrBtn');
-        if (btn) {
-            btn.disabled = false;
-        }
-        jcSetMaintainerrTestStatus('', '', '', false);
-    }
-}
-
-function jcIsCurrentMaintainerrTest(generation, url, controller) {
-    // Checked after every await: a stale test must not touch UI or the cache.
-    if (generation !== maintainerrTestGeneration) {
-        return false;
-    }
-    if (!controller || controller !== activeMaintainerrTestController) {
-        return false;
-    }
-    if (controller.signal.aborted) {
-        return false;
-    }
-    const input = document.querySelector('#maintainerrUrl');
-    return jcNormalizeMaintainerrBaseUrl((input && input.value) || '') === url;
-}
-
-function jcIsSafeMaintainerrPathSegment(segment) {
-    let current = segment;
-    for (let depth = 0; depth <= 4; depth++) {
-        if (current === '.' || current === '..') {
-            return false;
-        }
-        if (/[\u0000-\u001f\u007f-\u009f]/.test(current)) {
-            return false;
-        }
-        if (current.indexOf('/') !== -1 || current.indexOf('\\') !== -1) {
-            return false;
-        }
-        if (current.indexOf('%') === -1) {
-            return true;
-        }
-        if (depth === 4) {
-            // Never reached a %-free fixpoint within 4 decode levels.
-            return false;
-        }
-        try {
-            current = decodeURIComponent(current);
-        } catch (e) {
-            return false;
-        }
-    }
-    return false;
-}
-
-function jcNormalizeMaintainerrBaseUrl(value) {
-    // Mirror of server ServiceUrlResolver.TryNormalizeHttpBaseUrl. Returns '' when invalid.
-    if (typeof value !== 'string') {
-        return '';
-    }
-    const trimmed = value.trim();
-    if (!trimmed || trimmed.length > JC_MAINTAINERR_MAX_URL_LENGTH) {
-        return '';
-    }
-    if (/[\u0000-\u001f\u007f-\u009f]/.test(trimmed)) {
-        return '';
-    }
-    if (trimmed.indexOf('\\') !== -1) {
-        return '';
-    }
-    if (/^\/\//.test(trimmed)) {
-        return '';
-    }
-    let parsed;
-    try {
-        parsed = new URL(trimmed);
-    } catch (e) {
-        return '';
-    }
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-        return '';
-    }
-    if (!parsed.hostname) {
-        return '';
-    }
-    if (parsed.username || parsed.password || parsed.search || parsed.hash) {
-        return '';
-    }
-    // URL canonicalizes dot segments, so traversal must be checked against the raw
-    // text after the authority.
-    const schemeEnd = trimmed.indexOf('//') + 2;
-    const authorityEnd = trimmed.indexOf('/', schemeEnd);
-    if (authorityEnd !== -1) {
-        const rawSegments = trimmed.slice(authorityEnd + 1).split('/');
-        for (const segment of rawSegments) {
-            if (!jcIsSafeMaintainerrPathSegment(segment)) {
-                return '';
-            }
-        }
-    }
-    const path = parsed.pathname.replace(/^\/+/, '').replace(/\/+$/, '');
-    const normalized = parsed.protocol + '//' + parsed.host + (path ? '/' + path : '');
-    if (normalized.length > JC_MAINTAINERR_MAX_URL_LENGTH) {
-        return '';
-    }
-    return normalized;
-}
-
-function jcParseMaintainerrTestStatus(result) {
-    // Strict shape validation: returns null unless every invariant holds.
-    if (!result || typeof result !== 'object' || Array.isArray(result)) {
-        return null;
-    }
-    const boolFields = ['ok', 'ready', 'jellyfinMode', 'capable', 'identityMatch'];
-    for (const field of boolFields) {
-        if (typeof result[field] !== 'boolean') {
-            return null;
-        }
-    }
-    if (typeof result.version !== 'string'
-        || !result.version.trim()
-        || result.version.length > 80
-        || /[\u0000-\u001f\u007f-\u009f]/.test(result.version)) {
-        return null;
-    }
-    if (result.ok !== (result.capable && result.identityMatch)) {
-        return null;
-    }
-    if (result.capable && !(result.ready && result.jellyfinMode)) {
-        return null;
-    }
-    if (result.identityMatch) {
-        if (result.identityWarning !== undefined) {
-            return null;
-        }
-    } else if (result.identityWarning !== 'identity_unknown' && result.identityWarning !== 'identity_mismatch') {
-        return null;
-    }
-    const caps = result.capabilities;
-    if (!caps || typeof caps !== 'object' || Array.isArray(caps)) {
-        return null;
-    }
-    const capKeys = ['collections', 'collectionContent', 'itemStatus', 'rules', 'storageMetrics', 'overlays'];
-    if (Object.keys(caps).length !== capKeys.length) {
-        return null;
-    }
-    for (const capKey of capKeys) {
-        const expected = capKey === 'itemStatus'
-            ? (result.capable && result.identityMatch)
-            : result.capable;
-        if (caps[capKey] !== expected) {
-            return null;
-        }
-    }
-    if (result.capable) {
-        if (result.error !== undefined) {
-            return null;
-        }
-    } else if (!result.ready) {
-        if (result.error !== 'not_ready') {
-            return null;
-        }
-    } else if (!result.jellyfinMode) {
-        if (result.error !== 'not_ready' && result.error !== 'wrong_service') {
-            return null;
-        }
-    } else if (result.error !== 'not_ready' && result.error !== 'unsupported') {
-        return null;
-    }
-    return result;
-}
-
-async function testMaintainerrConnection() {
-    cancelActiveMaintainerrTest(true);
-    const input = document.querySelector('#maintainerrUrl');
-    const url = jcNormalizeMaintainerrBaseUrl((input && input.value) || '');
-    if (!url) {
-        jcSetMaintainerrTestStatus('error', 'Failed', 'var(--jc-danger)', false);
-        Dashboard.alert({
-            title: 'Missing or invalid URL',
-            message: 'Provide an HTTP(S) Maintainerr base URL of at most 2048 characters without credentials, query, fragment, or path traversal.'
-        });
-        return;
-    }
-    const generation = maintainerrTestGeneration;
-    const controller = new AbortController();
-    activeMaintainerrTestController = controller;
-    const testToken = beginConnectionTest();
-    const cacheBinding = jcFingerprintConnectionValue(url);
-    const btn = document.querySelector('#testMaintainerrBtn');
-    if (btn) {
-        btn.disabled = true;
-    }
-    jcSetMaintainerrTestStatus('sync', 'Testing…', 'var(--jc-accent)', true);
-    try {
-        const result = await ApiClient.ajax({
-            type: 'POST',
-            url: ApiClient.getUrl('/JellyfinCanopy/maintainerr/test'),
-            data: JSON.stringify({ url: url }),
-            contentType: 'application/json',
-            dataType: 'json',
-            signal: controller.signal
-        });
-        if (!jcIsCurrentMaintainerrTest(generation, url, controller)) {
-            return;
-        }
-        const status = jcParseMaintainerrTestStatus(result);
-        if (!status) {
-            const malformed = new Error('Maintainerr returned a malformed test response');
-            malformed.responseJSON = { error: 'malformed_response' };
-            throw malformed;
-        }
-        const identityState = status.identityMatch
-            ? 'matched'
-            : (status.identityWarning === 'identity_mismatch' ? 'mismatch' : 'unknown');
-        const version = status.version.slice(0, 32);
-        if (!status.ready || !status.jellyfinMode || !status.capable) {
-            const notCapable = new Error('Maintainerr is not ready for read-only access');
-            notCapable.responseJSON = { error: status.error };
-            throw notCapable;
-        }
-        if (!jcIsCurrentMaintainerrTest(generation, url, controller)) {
-            return;
-        }
-        const warning = identityState !== 'matched';
-        let detail = version ? 'Maintainerr ' + version : 'Connected';
-        if (identityState === 'mismatch') {
-            detail += ' · different Jellyfin server';
-        } else if (identityState === 'unknown') {
-            detail += ' · Jellyfin identity not confirmed';
-        }
-        try {
-            setConnectionTestResult('maintainerr', warning ? 'amber' : 'ok', detail, testToken, cacheBinding);
-        } catch (e) {
-            console.warn('[JC] Failed to cache Maintainerr test result:', e);
-        }
-        jcSetMaintainerrTestStatus(
-            warning ? 'warning' : 'check_circle',
-            warning ? 'Connected with warning' : 'Connected',
-            warning ? 'var(--jc-warning)' : 'var(--jc-success)',
-            false
-        );
-        let message;
-        if (identityState === 'mismatch') {
-            message = 'Maintainerr is reachable but is connected to a different Jellyfin server. Per-item status will remain disabled until the identities match.';
-        } else if (identityState === 'unknown') {
-            message = 'Maintainerr is reachable, but its Jellyfin server identity could not be confirmed. Per-item status will remain disabled until identity can be verified.';
-        } else {
-            message = 'Successfully connected to Maintainerr ' + version + '.';
-        }
-        // The success dialog's dismiss button renders as "Got It" (Dashboard.alert
-        // default) — e2e asserts that exact accessible name.
-        jcTestAlert({ title: warning ? 'Connected with warning' : 'Success', message: message });
-    } catch (e) {
-        if (!jcIsCurrentMaintainerrTest(generation, url, controller)) {
-            return;
-        }
-        let code = '';
-        if (e && e.responseJSON && typeof e.responseJSON.error === 'string') {
-            code = e.responseJSON.error;
-        } else if (e && typeof e.json === 'function') {
             try {
-                const body = await e.clone().json();
-                if (body && typeof body.error === 'string') {
-                    code = body.error;
-                }
-            } catch (parseError) {
-                // Body was not JSON; keep the fallback message.
+                Dashboard.alert(opts);
+            } catch (e) {
+                console.warn('[JC] Dashboard.alert threw:', e);
             }
         }
-        if (!jcIsCurrentMaintainerrTest(generation, url, controller)) {
-            return;
+
+        function setConnectionTestResult(key, status, detail, token, binding) {
+            // A token minted before a cache clear must not overwrite a fresher result.
+            if (token !== undefined && token !== _jeCacheGeneration) {
+                return;
+            }
+            const at = Date.now();
+            _jeConnectionTestCache.set(key, {
+                status: status,
+                detail: detail || '',
+                binding: binding || '',
+                at: at
+            });
+            try {
+                localStorage.setItem('jc_conn_test_' + key, JSON.stringify({
+                    status: status,
+                    detail: detail || '',
+                    binding: binding || undefined,
+                    at: at
+                }));
+            } catch (e) {
+                // Best-effort persistence only.
+            }
+            try {
+                renderChecklist();
+            } catch (e) {
+                console.warn('[JC] renderChecklist threw after setConnectionTestResult:', e);
+            }
         }
-        code = String(code).slice(0, 48);
-        const detail = MAINTAINERR_TEST_ERROR_MESSAGES[code] || 'Connection could not be verified';
-        try {
-            setConnectionTestResult('maintainerr', 'error', detail, testToken, cacheBinding);
-        } catch (cacheError) {
-            console.warn('[JC] Failed to cache Maintainerr test result:', cacheError);
+
+        function getConnectionTestResult(key, binding) {
+            const entry = _jeConnectionTestCache.get(key);
+            if (!entry) {
+                return null;
+            }
+            if (binding && entry.binding !== binding) {
+                _jeConnectionTestCache.delete(key);
+                return null;
+            }
+            if (Date.now() - entry.at > CONNECTION_TEST_CACHE_TTL_MS) {
+                _jeConnectionTestCache.delete(key);
+                return null;
+            }
+            return entry;
         }
-        jcSetMaintainerrTestStatus('error', 'Failed', 'var(--jc-danger)', false);
-        jcTestAlert({
-            title: 'Connection failed',
-            message: detail + '. Confirm the server-only URL, network access, and Maintainerr 3.18 configuration.'
-        });
-    } finally {
-        if (jcIsCurrentMaintainerrTest(generation, url, controller)) {
-            activeMaintainerrTestController = null;
+
+        function getPersistedTestResult(key, binding) {
+            // Deliberately no TTL: persisted entries outlive reloads to show "Last tested <date>".
+            const storageKey = 'jc_conn_test_' + key;
+            try {
+                const raw = localStorage.getItem(storageKey);
+                if (!raw) {
+                    return null;
+                }
+                const rec = JSON.parse(raw);
+                if (!rec || typeof rec.at !== 'number' || typeof rec.status !== 'string') {
+                    localStorage.removeItem(storageKey);
+                    return null;
+                }
+                if (binding && rec.binding !== binding) {
+                    localStorage.removeItem(storageKey);
+                    return null;
+                }
+                return rec;
+            } catch (e) {
+                try {
+                    localStorage.removeItem(storageKey);
+                } catch (removeError) {
+                    // Storage unavailable; nothing to heal.
+                }
+                return null;
+            }
+        }
+
+        function formatLastTested(ts) {
+            const date = new Date(ts);
+            const now = new Date();
+            const sameDay = date.getFullYear() === now.getFullYear()
+                && date.getMonth() === now.getMonth()
+                && date.getDate() === now.getDate();
+            if (sameDay) {
+                return 'Last tested ' + date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+            }
+            return 'Last tested ' + date.toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' });
+        }
+
+        function checklistRowState(cacheKey, fallbackDetail, binding) {
+            const fresh = getConnectionTestResult(cacheKey, binding);
+            if (fresh) {
+                return { state: fresh.status, detail: fresh.detail };
+            }
+            const persisted = getPersistedTestResult(cacheKey, binding);
+            if (persisted) {
+                return { state: persisted.status, detail: formatLastTested(persisted.at) };
+            }
+            return { state: 'pending', detail: fallbackDetail };
+        }
+
+        function clearConnectionTestCache() {
+            _jeConnectionTestCache.clear();
+            _jeCacheGeneration++;
+            try {
+                const staleKeys = [];
+                for (let i = 0; i < localStorage.length; i++) {
+                    const k = localStorage.key(i);
+                    if (k && k.indexOf('jc_conn_test_') === 0) {
+                        staleKeys.push(k);
+                    }
+                }
+                staleKeys.forEach(function (k) {
+                    localStorage.removeItem(k);
+                });
+            } catch (e) {
+                // Storage unavailable; in-memory cache is already cleared.
+            }
+            try {
+                renderChecklist();
+            } catch (e) {
+                console.warn('[JC] renderChecklist threw:', e);
+            }
+        }
+
+        function invalidatePersistedTest(key) {
+            try {
+                localStorage.removeItem('jc_conn_test_' + key);
+            } catch (e) {
+                // Storage unavailable.
+            }
+            _jeConnectionTestCache.delete(key);
+            try {
+                renderChecklist();
+            } catch (e) {
+                console.warn('[JC] renderChecklist threw:', e);
+            }
+        }
+
+        function _wireInvalidate(sel, key) {
+            const el = document.querySelector(sel);
+            if (!el) {
+                return;
+            }
+            // Invalidate on commit (change), not per keystroke — per-keystroke rebuilds caused
+            // visible lag — and only when the value actually changed since the last commit.
+            let lastCommitted = null;
+            el.addEventListener('focus', function () {
+                if (lastCommitted === null) {
+                    lastCommitted = el.value;
+                }
+            });
+            el.addEventListener('change', function () {
+                if (lastCommitted !== null && el.value === lastCommitted) {
+                    return;
+                }
+                lastCommitted = el.value;
+                invalidatePersistedTest(key);
+            });
+        }
+
+        function jcFingerprintConnectionValue(value) {
+            // Comparison-only binding so internal URLs are never persisted verbatim.
+            // Identity fence, not a security primitive.
+            const str = String(value || '');
+            let hashA = 0x811c9dc5;
+            let hashB = 0x9e3779b9;
+            for (let i = 0; i < str.length; i++) {
+                const c = str.charCodeAt(i);
+                hashA = Math.imul(hashA ^ c, 0x01000193);
+                hashB = Math.imul(hashB ^ c, 0x5f356495);
+            }
+            return 'v1:' + str.length.toString(36) + ':'
+                + (hashA >>> 0).toString(16).padStart(8, '0')
+                + (hashB >>> 0).toString(16).padStart(8, '0');
+        }
+
+        function _jeNormalizeArrUrl(url) {
+            return String(url || '').trim().toLowerCase().replace(/\/+$/, '');
+        }
+
+        // ---------------------------------------------------------------------------
+        // B1. Seerr connection test (multi-URL loop) + TMDB test
+        // ---------------------------------------------------------------------------
+
+        async function testSeerrConnection() {
+            const urlsInput = document.querySelector('#seerrUrls');
+            const keyInput = document.querySelector('#SeerrApiKey');
+            const urls = ((urlsInput && urlsInput.value) || '')
+                .split('\n')
+                .map(function (u) { return u.trim(); })
+                .filter(Boolean);
+            const apiKey = ((keyInput && keyInput.value) || '').trim();
+            if (!urls.length || !apiKey) {
+                // Deliberately not suppressible — a misconfigured batch run should still surface this.
+                Dashboard.alert({
+                    title: 'Missing Information',
+                    message: 'Please provide at least one Seerr URL and an API key to test the connection.'
+                });
+                return;
+            }
+            const token = beginConnectionTest();
+            const btn = document.querySelector('#testSeerrBtn');
+            const indicator = document.querySelector('#seerrStatusIndicator');
+            if (btn) {
+                btn.disabled = true;
+            }
+            if (indicator) {
+                indicator.textContent = 'sync';
+                indicator.classList.add('status-check');
+                indicator.style.color = 'var(--jc-accent)';
+            }
+            let validated = false;
+            let lastError = '';
+            for (const url of urls) {
+                try {
+                    const res = await ApiClient.ajax({
+                        type: 'GET',
+                        url: ApiClient.getUrl('/JellyfinCanopy/seerr/validate', { url: url }),
+                        dataType: 'json',
+                        headers: { 'X-Arr-ApiKey': apiKey }
+                    });
+                    if (res && res.ok) {
+                        validated = true;
+                        break;
+                    }
+                } catch (e) {
+                    console.error('Seerr validation failed for ' + url + ':', e);
+                    if (e && typeof e.json === 'function') {
+                        try {
+                            e.responseJSON = await e.clone().json();
+                        } catch (parseError) {
+                            // Body was not JSON; fall through to status-based messaging.
+                        }
+                    }
+                    lastError = connectionErrorMessage(e, 'Seerr', url);
+                }
+            }
             if (btn) {
                 btn.disabled = false;
-                btn.setAttribute('aria-busy', 'false');
             }
-            const indicator = document.querySelector('#maintainerrStatusIndicator');
             if (indicator) {
                 indicator.classList.remove('status-check');
             }
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// B3. Sonarr/Radarr per-card connection test + shared error messaging
-// ---------------------------------------------------------------------------
-
-function connectionErrorMessage(error, serviceName, url) {
-    let body = null;
-    if (error && error.responseJSON) {
-        body = error.responseJSON;
-    } else {
-        let text = error && error.responseText;
-        if (!text && error && error.response && typeof error.response.text === 'string') {
-            text = error.response.text;
-        }
-        if (typeof text === 'string' && text.trim().indexOf('{') === 0) {
-            try {
-                body = JSON.parse(text);
-            } catch (e) {
-                body = null;
-            }
-        }
-    }
-    if (body && body.code && body.message) {
-        const prefix = body.cfRay ? '[' + serviceName + ' cf-ray=' + body.cfRay + '] ' : '';
-        return prefix + body.message;
-    }
-    const status = error && error.status;
-    switch (status) {
-        case 502:
-            return 'Could not reach ' + url + '. Check the URL is correct and ' + serviceName + ' is running.';
-        case 504:
-            return 'Connection timed out. The server may be unreachable.';
-        case 401:
-            return 'The API key was rejected. Check the key is correct.';
-        case 403:
-            return 'Permission denied. Check the API key has the correct permissions, or that CSRF protection is not enabled in ' + serviceName + '.';
-        case 400:
-            return 'Missing URL or API key.';
-        case 404:
-            return 'The URL responded but did not look like a valid ' + serviceName + ' instance (HTTP 404 on /api/v1/user). It may be a reverse-proxy auth challenge.';
-        default:
-            return 'Connection to ' + serviceName + ' failed (error ' + (status || 'unknown') + ').';
-    }
-}
-
-async function testInstanceConnection(card) {
-    const type = card.dataset.type;
-    const defaultName = type === 'sonarr' ? 'Sonarr' : 'Radarr';
-    const urlInput = card.querySelector('.arr-instance-url');
-    const keyInput = card.querySelector('.arr-instance-apikey');
-    const nameInput = card.querySelector('.arr-instance-name');
-    const url = ((urlInput && urlInput.value) || '').trim();
-    const apiKey = ((keyInput && keyInput.value) || '').trim();
-    const name = ((nameInput && nameInput.value) || '').trim() || defaultName;
-    const btn = card.querySelector('.arr-instance-test');
-    const indicator = card.querySelector('.arr-instance-status');
-    if (!url || !apiKey) {
-        Dashboard.alert({
-            title: 'Missing Information',
-            message: 'Please provide both a URL and API key to test the connection.'
-        });
-        return;
-    }
-    const token = beginConnectionTest();
-    if (btn) {
-        btn.disabled = true;
-    }
-    if (indicator) {
-        indicator.textContent = 'sync';
-        // classList, never className = — the arr-instance-status identifier class must survive.
-        indicator.classList.add('status-check');
-        indicator.style.color = 'var(--jc-accent)';
-    }
-    const cacheKey = type + ':' + _jeNormalizeArrUrl(url);
-    try {
-        await ApiClient.ajax({
-            type: 'GET',
-            url: ApiClient.getUrl('/JellyfinCanopy/arr/validate/' + type, { url: url }),
-            dataType: 'json',
-            headers: { 'X-Arr-ApiKey': apiKey }
-        });
-        if (indicator) {
-            indicator.textContent = 'check_circle';
-            indicator.style.color = 'var(--jc-success)';
-        }
-        try {
-            setConnectionTestResult(cacheKey, 'ok', 'Connected', token);
-        } catch (e) {
-            console.warn('[JC] Failed to cache instance test result:', e);
-        }
-        jcTestAlert({ title: 'Success', message: 'Successfully connected to ' + name + '!' });
-    } catch (e) {
-        const msg = connectionErrorMessage(e, name, url);
-        const status = e && e.status;
-        let cacheDetail;
-        if (status === 401) {
-            cacheDetail = 'API key rejected';
-        } else if (status === 500 || !status) {
-            cacheDetail = 'Unreachable';
-        } else {
-            cacheDetail = 'Error ' + (status || '?');
-        }
-        try {
-            setConnectionTestResult(cacheKey, 'error', cacheDetail, token);
-        } catch (cacheError) {
-            console.warn('[JC] Failed to cache instance test result:', cacheError);
-        }
-        jcTestAlert({ title: 'Connection Failed', message: msg });
-        if (indicator) {
-            indicator.textContent = 'error';
-            indicator.style.color = 'var(--jc-danger)';
-        }
-    } finally {
-        if (btn) {
-            btn.disabled = false;
-        }
-        if (indicator) {
-            indicator.classList.remove('status-check');
-        }
-        updateAllDependencies();
-    }
-}
-
-// ---------------------------------------------------------------------------
-// B4. URL-mapping validation (syntax-only; probing broke behind auth proxies)
-// ---------------------------------------------------------------------------
-
-function jcValidateMaintainerrMappings(value) {
-    // Bounded shared parser (Validate button + Save). Issues carry row numbers and
-    // reasons only — never URL values.
-    const issues = [];
-    let validCount = 0;
-    let invalidCount = 0;
-    if (value.length > JC_MAINTAINERR_MAX_MAPPINGS_LENGTH) {
-        return {
-            value: '',
-            validCount: 0,
-            invalidCount: 1,
-            issues: ['Maintainerr mappings exceed the 64 KiB limit.']
-        };
-    }
-    const kept = [];
-    const seenSources = Object.create(null);
-    let nonEmptyRows = 0;
-    let droppedRows = false;
-    value.split(/\r\n?|\n/).forEach(function (line, idx) {
-        if (!line.trim()) {
-            return;
-        }
-        nonEmptyRows++;
-        if (nonEmptyRows > JC_MAINTAINERR_MAX_MAPPING_ROWS) {
-            droppedRows = true;
-            return;
-        }
-        const label = 'Maintainerr line ' + (idx + 1);
-        const parts = line.split('|');
-        if (parts.length !== 2) {
-            invalidCount++;
-            issues.push(label + ': use exactly one pipe between two URLs.');
-            return;
-        }
-        const source = jcNormalizeMaintainerrBaseUrl(parts[0]);
-        const target = jcNormalizeMaintainerrBaseUrl(parts[1]);
-        if (!source || !target) {
-            invalidCount++;
-            issues.push(label + ': both sides must be bounded HTTP(S) base URLs without credentials, query, fragment, or traversal.');
-            return;
-        }
-        if (source.toLowerCase() === target.toLowerCase()) {
-            invalidCount++;
-            issues.push(label + ': the Jellyfin and Maintainerr URLs must be different.');
-            return;
-        }
-        const sourceKey = source.toLowerCase();
-        if (seenSources[sourceKey]) {
-            invalidCount++;
-            issues.push(label + ': the Jellyfin source URL is duplicated.');
-            return;
-        }
-        seenSources[sourceKey] = true;
-        kept.push(source + '|' + target);
-        validCount++;
-    });
-    if (droppedRows) {
-        issues.push('Maintainerr mappings are limited to 32 nonempty rows; extra rows were dropped.');
-    }
-    const joined = kept.join('\n');
-    if (joined.length > JC_MAINTAINERR_MAX_MAPPINGS_LENGTH) {
-        return {
-            value: '',
-            validCount: 0,
-            invalidCount: invalidCount + validCount,
-            issues: issues.concat(['Normalized Maintainerr mappings exceed the 64 KiB limit.'])
-        };
-    }
-    return { value: joined, validCount: validCount, invalidCount: invalidCount, issues: issues };
-}
-
-function renderMappingValidationResult(resultDiv, issues, goodCount) {
-    if (!resultDiv) {
-        return;
-    }
-    resultDiv.style.display = 'block';
-    resultDiv.style.padding = '0.6em 0.8em';
-    resultDiv.style.borderRadius = '4px';
-    resultDiv.style.marginTop = '0.5em';
-    if (!issues.length) {
-        resultDiv.style.background = 'rgba(40, 167, 69, 0.15)';
-        resultDiv.style.border = '1px solid var(--jc-success)';
-        resultDiv.innerHTML = '<span class="material-icons" style="vertical-align: middle; color: var(--jc-success);">check_circle</span> '
-            + goodCount + ' mapping(s) verified.';
-        return;
-    }
-    resultDiv.style.background = 'rgba(220, 53, 69, 0.15)';
-    resultDiv.style.border = '1px solid var(--jc-danger)';
-    let html = issues.map(function (issue) {
-        return '<div>' + escapeHtml(issue) + '</div>';
-    }).join('');
-    if (goodCount > 0) {
-        html += '<div>' + goodCount + ' other mapping(s) verified.</div>';
-    }
-    resultDiv.innerHTML = html;
-}
-
-async function validateMappingSet(mappingDefs, btnId, resultDivId) {
-    const btn = document.querySelector('#' + btnId);
-    const resultDiv = document.querySelector('#' + resultDivId);
-    function setBtnLabel(text) {
-        if (!btn) {
-            return;
-        }
-        const span = btn.querySelector('span');
-        if (span) {
-            span.textContent = text;
-        } else {
-            btn.textContent = text;
-        }
-    }
-    setBtnLabel('Validating...');
-    if (btn) {
-        btn.disabled = true;
-    }
-    try {
-        const issues = [];
-        const pairs = [];
-        // Phase 1: format check per line.
-        mappingDefs.forEach(function (def) {
-            const el = document.querySelector('#' + def.id);
-            const lines = ((el && el.value) || '').split('\n');
-            lines.forEach(function (line, i) {
-                const trimmed = line.trim();
-                if (!trimmed) {
-                    return;
+            if (validated) {
+                if (indicator) {
+                    indicator.textContent = 'check_circle';
+                    indicator.style.color = 'var(--jc-success)';
                 }
-                const label = def.service + ' line ' + (i + 1);
-                const parts = trimmed.split('|');
-                if (parts.length !== 2) {
-                    issues.push(label + ': Invalid format. Use jellyfin_url|' + def.service.toLowerCase() + '_url separated by a pipe (|).');
-                    return;
+                try {
+                    setConnectionTestResult('seerr', 'ok', 'Connected', token);
+                } catch (e) {
+                    console.warn('[JC] Failed to cache Seerr test result:', e);
                 }
-                const left = parts[0].trim();
-                const right = parts[1].trim();
-                if (!left || !right) {
-                    issues.push(label + ': Both sides of the pipe must have a URL.');
-                    return;
-                }
-                if (!/^https?:\/\//i.test(left)) {
-                    issues.push(label + ': Left side (' + left + ') should start with http:// or https://.');
-                    return;
-                }
-                if (!/^https?:\/\//i.test(right)) {
-                    issues.push(label + ': Right side (' + right + ') should start with http:// or https://.');
-                    return;
-                }
-                pairs.push({ label: label, left: left, right: right, service: def.service });
-            });
-        });
-        if (issues.length) {
-            renderMappingValidationResult(resultDiv, issues, 0);
-            return;
-        }
-        if (!pairs.length) {
-            if (resultDiv) {
-                resultDiv.style.display = 'none';
-            }
-            return;
-        }
-        // Phase 2: URL sanity per pair.
-        let good = 0;
-        pairs.forEach(function (pair) {
-            let leftUrl = null;
-            let rightUrl = null;
-            try {
-                leftUrl = new URL(pair.left);
-            } catch (e) {
-                leftUrl = null;
-            }
-            if (!leftUrl || !leftUrl.host) {
-                issues.push(pair.label + ': Left side (' + pair.left + ') is not a valid URL.');
-                return;
-            }
-            try {
-                rightUrl = new URL(pair.right);
-            } catch (e) {
-                rightUrl = null;
-            }
-            if (!rightUrl || !rightUrl.host) {
-                issues.push(pair.label + ': Right side (' + pair.right + ') is not a valid URL.');
-                return;
-            }
-            const leftNorm = pair.left.replace(/\/+$/, '').toLowerCase();
-            const rightNorm = pair.right.replace(/\/+$/, '').toLowerCase();
-            if (leftNorm === rightNorm) {
-                issues.push(pair.label + ': Both sides are the same URL. Left should be Jellyfin, right should be ' + pair.service + '.');
-                return;
-            }
-            good++;
-        });
-        renderMappingValidationResult(resultDiv, issues, good);
-    } finally {
-        setBtnLabel('Validate Mappings');
-        if (btn) {
-            btn.disabled = false;
-        }
-    }
-}
-
-function jcRunMappingValidation(mappingDefs, btnId, resultDivId) {
-    return validateMappingSet(mappingDefs, btnId, resultDivId).catch(function (e) {
-        console.warn('[JC] Mapping validation crashed:', e);
-        const btn = document.querySelector('#' + btnId);
-        if (btn) {
-            btn.disabled = false;
-            const span = btn.querySelector('span');
-            if (span) {
-                span.textContent = 'Validate Mappings';
+                jcTestAlert({ title: 'Success', message: 'Successfully connected to Seerr!' });
             } else {
-                btn.textContent = 'Validate Mappings';
+                if (indicator) {
+                    indicator.textContent = 'error';
+                    indicator.style.color = 'var(--jc-danger)';
+                }
+                try {
+                    setConnectionTestResult('seerr', 'error', lastError.length < 80 ? lastError : 'Connection failed', token);
+                } catch (e) {
+                    console.warn('[JC] Failed to cache Seerr test result:', e);
+                }
+                jcTestAlert({
+                    title: 'Connection Failed',
+                    message: lastError || 'Could not connect to any provided URL.'
+                });
             }
         }
-        try {
-            Dashboard.alert({
-                title: 'Validation error',
-                message: 'Mapping validation crashed unexpectedly — check the browser console for details.'
-            });
-        } catch (alertError) {
-            window.alert('Mapping validation crashed unexpectedly — check the browser console for details.');
-        }
-    });
-}
 
-function _jeValidateInstanceMappings(type, btnId, resultDivId, displayName) {
-    document.querySelectorAll('textarea[data-arr-validate-temp-' + type + '="true"]').forEach(function (orphan) {
-        orphan.remove();
-    });
-    const defs = [];
-    const temps = [];
-    document.querySelectorAll('#' + type + 'InstancesList .arr-instance-card').forEach(function (card, idx) {
-        const mappingsEl = card.querySelector('.arr-instance-urlmappings');
-        const value = (mappingsEl && mappingsEl.value) || '';
-        if (!value.trim()) {
-            return;
-        }
-        const nameInput = card.querySelector('.arr-instance-name');
-        const name = ((nameInput && nameInput.value) || '').trim() || (displayName + ' ' + (idx + 1));
-        const temp = document.createElement('textarea');
-        temp.id = 'arr-validate-' + type + '-' + idx;
-        temp.value = value;
-        temp.hidden = true;
-        temp.setAttribute('data-arr-validate-temp-' + type, 'true');
-        document.body.appendChild(temp);
-        temps.push(temp);
-        defs.push({ id: temp.id, service: name });
-    });
-    if (!defs.length) {
-        Dashboard.alert({
-            title: 'No Mappings',
-            message: 'No URL mappings configured for ' + displayName + '. Expand an instance card and fill in the URL Mappings field to validate.'
-        });
-        return;
-    }
-    jcRunMappingValidation(defs, btnId, resultDivId).finally(function () {
-        temps.forEach(function (temp) {
-            temp.remove();
-        });
-    });
-}
 
-function validateMaintainerrMappingSet(textareaId, btn, resultDivId) {
-    // Synchronous; uses the strict bounded parser, which never echoes URL values.
-    const ta = document.querySelector('#' + textareaId);
-    const resultDiv = document.querySelector('#' + resultDivId);
-    const result = jcValidateMaintainerrMappings(String((ta && ta.value) || ''));
-    renderMappingValidationResult(resultDiv, result.issues, result.validCount);
-}
+        // ---------------------------------------------------------------------------
+        // B2. Maintainerr connection test
+        // ---------------------------------------------------------------------------
 
-// ---------------------------------------------------------------------------
-// B5. Seerr recently-added scan trigger
-// ---------------------------------------------------------------------------
+        var JC_MAINTAINERR_MAX_URL_LENGTH = 2048;
+        var JC_MAINTAINERR_MAX_MAPPINGS_LENGTH = 65536;
+        var JC_MAINTAINERR_MAX_MAPPING_ROWS = 32;
 
-let activeSeerrScanController = null;
 
-function jcNormalizeSeerrIdentityDomain(value) {
-    // Mirror of server SeerrUrlIdentity.ParseConfigured normalization.
-    const trimmed = String(value || '').trim().replace(/\/+$/, '');
-    if (!trimmed) {
-        return '';
-    }
-    if (!/^https?:\/\//i.test(trimmed)) {
-        return trimmed;
-    }
-    let parsed;
-    try {
-        parsed = new URL(trimmed);
-    } catch (e) {
-        return trimmed;
-    }
-    if ((parsed.protocol !== 'http:' && parsed.protocol !== 'https:')
-        || !parsed.hostname
-        || parsed.username
-        || parsed.password
-        || parsed.search
-        || parsed.hash) {
-        return trimmed;
-    }
-    // URL already canonicalizes scheme/host case and drops default ports.
-    const host = parsed.hostname.replace(/\.$/, '');
-    const port = parsed.port ? ':' + parsed.port : '';
-    const path = parsed.pathname.replace(/\/+$/, '');
-    return parsed.protocol + '//' + host + port + path;
-}
+        let maintainerrTestGeneration = 0;
+        let activeMaintainerrTestController = null;
 
-function jcParseSeerrIdentityDomains(raw) {
-    const seen = Object.create(null);
-    const domains = [];
-    String(raw || '').split(/[\r\n,]+/).forEach(function (part) {
-        const domain = jcNormalizeSeerrIdentityDomain(part);
-        if (!domain || seen[domain]) {
-            return;
-        }
-        seen[domain] = true;
-        domains.push(domain);
-    });
-    return domains;
-}
-
-function cancelActiveSeerrScan() {
-    if (activeSeerrScanController) {
-        try {
-            activeSeerrScanController.abort();
-        } catch (e) {
-            // Already aborted; nothing to do.
-        }
-        activeSeerrScanController = null;
-    }
-}
-
-async function jcDispatchSeerrScanDomains(domains, apiKey, controller) {
-    // One server request owns the whole batch; results are mapped back to the
-    // requested domains by normalized-domain equality.
-    const results = domains.map(function (domain) {
-        return { domain: domain, ok: false, message: '' };
-    });
-    try {
-        const response = await ApiClient.ajax({
-            type: 'POST',
-            url: ApiClient.getUrl('/JellyfinCanopy/seerr/trigger-recently-added-scan', { urls: domains.join('\n') }),
-            dataType: 'json',
-            headers: { 'X-Arr-ApiKey': apiKey },
-            signal: controller.signal
-        });
-        if (controller.signal.aborted) {
-            return { cancelled: true, results: results };
-        }
-        const topOk = !!(response && response.ok);
-        const topMessage = response && response.message ? String(response.message) : '';
-        const rows = response && Array.isArray(response.results) ? response.results : [];
-        results.forEach(function (entry) {
-            const row = rows.find(function (r) {
-                return r && jcNormalizeSeerrIdentityDomain(r.url || r.domain || '') === entry.domain;
-            });
-            if (row) {
-                entry.ok = !!row.ok;
-                entry.message = row.message ? String(row.message) : '';
-            } else {
-                // Rows missing from the response inherit the top-level outcome.
-                entry.ok = topOk;
-                entry.message = topMessage;
+        function jcSetMaintainerrTestStatus(icon, text, color, busy) {
+            const indicator = document.querySelector('#maintainerrStatusIndicator');
+            const statusText = document.querySelector('#maintainerrStatusText');
+            const btn = document.querySelector('#testMaintainerrBtn');
+            if (indicator) {
+                indicator.textContent = icon;
+                indicator.style.color = color;
+                indicator.classList.toggle('status-check', !!busy);
             }
-        });
-    } catch (e) {
-        if (controller.signal.aborted) {
-            return { cancelled: true, results: results };
+            if (statusText) {
+                statusText.textContent = text;
+            }
+            if (btn) {
+                btn.setAttribute('aria-busy', busy ? 'true' : 'false');
+            }
         }
-        const msg = connectionErrorMessage(e, 'Seerr', domains[0] || '');
-        results.forEach(function (entry) {
-            entry.ok = false;
-            entry.message = msg;
-        });
-    }
-    return { cancelled: false, results: results };
-}
 
-function jcSummarizeSeerrScanDispatch(results) {
-    const total = results.length;
-    let succeeded = 0;
-    results.forEach(function (entry) {
-        if (entry.ok) {
-            succeeded++;
-            return;
+        function cancelActiveMaintainerrTest(resetUi) {
+            maintainerrTestGeneration++;
+            if (activeMaintainerrTestController) {
+                try {
+                    activeMaintainerrTestController.abort();
+                } catch (e) {
+                    // Already aborted or unsupported; nothing to do.
+                }
+                activeMaintainerrTestController = null;
+            }
+            if (resetUi === true) {
+                const btn = document.querySelector('#testMaintainerrBtn');
+                if (btn) {
+                    btn.disabled = false;
+                }
+                jcSetMaintainerrTestStatus('', '', '', false);
+            }
         }
-        console.error('Seerr scan trigger failed for ' + entry.domain + ':', entry.message || 'Upstream rejected the trigger');
-    });
-    const failed = total - succeeded;
-    const outcome = failed === 0 ? 'success' : (succeeded > 0 ? 'partial' : 'failure');
-    return { outcome: outcome, total: total, succeeded: succeeded, failed: failed };
-}
 
-async function triggerSeerrScanNow() {
-    const urlsInput = document.querySelector('#seerrUrls');
-    const keyInput = document.querySelector('#SeerrApiKey');
-    const domains = jcParseSeerrIdentityDomains((urlsInput && urlsInput.value) || '');
-    const apiKey = ((keyInput && keyInput.value) || '').trim();
-    if (!domains.length || !apiKey) {
-        Dashboard.alert({
-            title: 'Missing Information',
-            message: 'Please provide at least one Seerr URL and an API key in the Setup section above.'
-        });
-        return;
-    }
-    cancelActiveSeerrScan();
-    const controller = new AbortController();
-    activeSeerrScanController = controller;
-    const btn = document.querySelector('#triggerSeerrScanNowBtn');
-    const statusEl = document.querySelector('#triggerSeerrScanNowStatus');
-    if (btn) {
-        btn.disabled = true;
-    }
-    if (statusEl) {
-        statusEl.textContent = 'sync';
-        statusEl.className = 'material-icons status-check';
-        statusEl.style.color = 'var(--jc-accent)';
-    }
-    try {
-        const dispatch = await jcDispatchSeerrScanDomains(domains, apiKey, controller);
-        if (dispatch.cancelled) {
-            return;
-        }
-        const summary = jcSummarizeSeerrScanDispatch(dispatch.results);
-        if (summary.outcome === 'success') {
-            if (statusEl) {
-                statusEl.textContent = 'check_circle';
-                statusEl.style.color = 'var(--jc-success)';
+        function jcIsCurrentMaintainerrTest(generation, url, controller) {
+            // Checked after every await: a stale test must not touch UI or the cache.
+            if (generation !== maintainerrTestGeneration) {
+                return false;
             }
-            jcTestAlert({
-                title: 'Scans Triggered',
-                message: 'Triggered "Jellyfin Recently Added Scan" for all ' + summary.total
-                    + ' Seerr identity domain' + (summary.total === 1 ? '' : 's') + '.'
-            });
-        } else if (summary.outcome === 'partial') {
-            if (statusEl) {
-                statusEl.textContent = 'warning';
-                statusEl.style.color = 'var(--jc-warning)';
+            if (!controller || controller !== activeMaintainerrTestController) {
+                return false;
             }
-            jcTestAlert({
-                title: 'Scans Partially Triggered',
-                message: 'Triggered ' + summary.succeeded + ' of ' + summary.total
-                    + ' Seerr identity domains; ' + summary.failed
-                    + ' failed. Each URL was attempted once. Check the browser console and server log for failure details.'
-            });
-        } else {
-            if (statusEl) {
-                statusEl.textContent = 'error';
-                statusEl.style.color = 'var(--jc-danger)';
-            }
-            jcTestAlert({
-                title: 'Trigger Failed',
-                message: 'None of the ' + summary.total + ' Seerr identity domain'
-                    + (summary.total === 1 ? '' : 's')
-                    + ' accepted the scan trigger. Check the browser console and server log for failure details.'
-            });
-        }
-    } finally {
-        if (activeSeerrScanController === controller) {
-            activeSeerrScanController = null;
-        }
-        if (btn) {
-            btn.disabled = false;
-        }
-        if (statusEl) {
-            statusEl.classList.remove('status-check');
             if (controller.signal.aborted) {
-                statusEl.textContent = '';
+                return false;
             }
+            const input = document.querySelector('#maintainerrUrl');
+            return jcNormalizeMaintainerrBaseUrl((input && input.value) || '') === url;
         }
-    }
-}
 
-// ---------------------------------------------------------------------------
-// C. Sonarr/Radarr multi-instance cards
-// ---------------------------------------------------------------------------
-
-let _arrParseOK = { sonarr: true, radarr: true };
-
-function normalizeArrInstanceId(value) {
-    // Instance ids are opaque 128-bit hex tokens. Never derive one in the browser
-    // from URL/API-key material — credentials must not become client-visible identity.
-    const id = String(value || '').toLowerCase();
-    return /^[0-9a-f]{32}$/.test(id) ? id : '';
-}
-
-function createArrInstanceId() {
-    try {
-        const bytes = new Uint8Array(16);
-        window.crypto.getRandomValues(bytes);
-        let id = '';
-        for (let i = 0; i < bytes.length; i++) {
-            id += bytes[i].toString(16).padStart(2, '0');
+        function jcIsSafeMaintainerrPathSegment(segment) {
+            let current = segment;
+            for (let depth = 0; depth <= 4; depth++) {
+                if (current === '.' || current === '..') {
+                    return false;
+                }
+                if (/[\u0000-\u001f\u007f-\u009f]/.test(current)) {
+                    return false;
+                }
+                if (current.indexOf('/') !== -1 || current.indexOf('\\') !== -1) {
+                    return false;
+                }
+                if (current.indexOf('%') === -1) {
+                    return true;
+                }
+                if (depth === 4) {
+                    // Never reached a %-free fixpoint within 4 decode levels.
+                    return false;
+                }
+                try {
+                    current = decodeURIComponent(current);
+                } catch (e) {
+                    return false;
+                }
+            }
+            return false;
         }
-        return id;
-    } catch (e) {
-        // Safe: the server save hook fills blanks.
-        return '';
-    }
-}
 
-function tryParseInstanceList(raw, type, container) {
-    // Runs in a bare context in tests: reference only _arrParseOK, console and
-    // insertCorruptBanner here. Never log the raw payload or key material.
-    if (!raw) {
-        return [];
-    }
-    try {
-        const parsed = JSON.parse(raw);
-        if (!Array.isArray(parsed)) {
-            throw new Error('Instances value is not an array');
+        function jcNormalizeMaintainerrBaseUrl(value) {
+            // Mirror of server ServiceUrlResolver.TryNormalizeHttpBaseUrl. Returns '' when invalid.
+            if (typeof value !== 'string') {
+                return '';
+            }
+            const trimmed = value.trim();
+            if (!trimmed || trimmed.length > JC_MAINTAINERR_MAX_URL_LENGTH) {
+                return '';
+            }
+            if (/[\u0000-\u001f\u007f-\u009f]/.test(trimmed)) {
+                return '';
+            }
+            if (trimmed.indexOf('\\') !== -1) {
+                return '';
+            }
+            if (/^\/\//.test(trimmed)) {
+                return '';
+            }
+            let parsed;
+            try {
+                parsed = new URL(trimmed);
+            } catch (e) {
+                return '';
+            }
+            if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+                return '';
+            }
+            if (!parsed.hostname) {
+                return '';
+            }
+            if (parsed.username || parsed.password || parsed.search || parsed.hash) {
+                return '';
+            }
+            // URL canonicalizes dot segments, so traversal must be checked against the raw
+            // text after the authority.
+            const schemeEnd = trimmed.indexOf('//') + 2;
+            const authorityEnd = trimmed.indexOf('/', schemeEnd);
+            if (authorityEnd !== -1) {
+                const rawSegments = trimmed.slice(authorityEnd + 1).split('/');
+                for (const segment of rawSegments) {
+                    if (!jcIsSafeMaintainerrPathSegment(segment)) {
+                        return '';
+                    }
+                }
+            }
+            const path = parsed.pathname.replace(/^\/+/, '').replace(/\/+$/, '');
+            const normalized = parsed.protocol + '//' + parsed.host + (path ? '/' + path : '');
+            if (normalized.length > JC_MAINTAINERR_MAX_URL_LENGTH) {
+                return '';
+            }
+            return normalized;
         }
-        return parsed;
-    } catch (e) {
-        _arrParseOK[type] = false;
-        const errorClass = e instanceof SyntaxError ? 'SyntaxError' : 'InvalidShape';
-        console.error('[JC Config] Failed to parse ' + type + 'Instances (' + errorClass + ') — refusing to overwrite on save.');
-        insertCorruptBanner(container, type);
-        return [];
-    }
-}
 
-function insertCorruptBanner(container, type) {
-    const label = type === 'sonarr' ? 'Sonarr' : 'Radarr';
-    const banner = document.createElement('div');
-    banner.className = 'arr-corrupt-banner';
-    banner.setAttribute('data-arr-corrupt', type);
-    banner.style.cssText = 'padding: 0.8em 1em; margin-bottom: 1em; border: 1px solid var(--jc-danger); background: color-mix(in srgb, var(--jc-danger) 15%, transparent); border-radius: 4px;';
-    const title = document.createElement('strong');
-    title.textContent = '⚠ Stored ' + label + ' instance configuration is corrupted.';
-    banner.appendChild(title);
-    const detail = document.createElement('div');
-    detail.textContent = 'The saved JSON could not be parsed. Saving this page will NOT overwrite the stored value or the legacy '
-        + label + ' URL/API key — so existing configuration is preserved. To recover: either fix the stored JSON directly in '
-        + 'Jellyfin\'s plugin config, or click the button below to reset this list (destroys the unreadable value).';
-    banner.appendChild(detail);
-    const resetBtn = document.createElement('button');
-    resetBtn.setAttribute('is', 'emby-button');
-    resetBtn.type = 'button';
-    resetBtn.className = 'raised emby-button';
-    const resetSpan = document.createElement('span');
-    resetSpan.textContent = 'Reset ' + label + ' instances (clears stored value)';
-    resetBtn.appendChild(resetSpan);
-    resetBtn.addEventListener('click', function (e) {
-        e.preventDefault();
-        Dashboard.confirm(
-            'Reset the corrupt ' + label + ' instance configuration? The stored JSON is unreadable so any instances it contained cannot be recovered. You will need to add them again. The reset takes effect when you click Save.',
-            'Reset Instances',
-            function (confirmed) {
-                if (!confirmed) {
+        function jcParseMaintainerrTestStatus(result) {
+            // Strict shape validation: returns null unless every invariant holds.
+            if (!result || typeof result !== 'object' || Array.isArray(result)) {
+                return null;
+            }
+            const boolFields = ['ok', 'ready', 'jellyfinMode', 'capable', 'identityMatch'];
+            for (const field of boolFields) {
+                if (typeof result[field] !== 'boolean') {
+                    return null;
+                }
+            }
+            if (typeof result.version !== 'string'
+                || !result.version.trim()
+                || result.version.length > 80
+                || /[\u0000-\u001f\u007f-\u009f]/.test(result.version)) {
+                return null;
+            }
+            if (result.ok !== (result.capable && result.identityMatch)) {
+                return null;
+            }
+            if (result.capable && !(result.ready && result.jellyfinMode)) {
+                return null;
+            }
+            if (result.identityMatch) {
+                if (result.identityWarning !== undefined) {
+                    return null;
+                }
+            } else if (result.identityWarning !== 'identity_unknown' && result.identityWarning !== 'identity_mismatch') {
+                return null;
+            }
+            const caps = result.capabilities;
+            if (!caps || typeof caps !== 'object' || Array.isArray(caps)) {
+                return null;
+            }
+            const capKeys = ['collections', 'collectionContent', 'itemStatus', 'rules', 'storageMetrics', 'overlays'];
+            if (Object.keys(caps).length !== capKeys.length) {
+                return null;
+            }
+            for (const capKey of capKeys) {
+                const expected = capKey === 'itemStatus'
+                    ? (result.capable && result.identityMatch)
+                    : result.capable;
+                if (caps[capKey] !== expected) {
+                    return null;
+                }
+            }
+            if (result.capable) {
+                if (result.error !== undefined) {
+                    return null;
+                }
+            } else if (!result.ready) {
+                if (result.error !== 'not_ready') {
+                    return null;
+                }
+            } else if (!result.jellyfinMode) {
+                if (result.error !== 'not_ready' && result.error !== 'wrong_service') {
+                    return null;
+                }
+            } else if (result.error !== 'not_ready' && result.error !== 'unsupported') {
+                return null;
+            }
+            return result;
+        }
+
+        async function testMaintainerrConnection() {
+            const MAINTAINERR_TEST_ERROR_MESSAGES = {
+                invalid_configuration: 'The Maintainerr URL is invalid',
+                not_ready: 'Maintainerr is reachable but not ready',
+                not_jellyfin: 'Maintainerr is not configured for Jellyfin',
+                unsupported: 'Maintainerr does not expose the required read-only capabilities',
+                blocked_target: 'The destination is blocked by Canopy network policy',
+                timeout: 'The connection timed out',
+                canceled: 'The connection test was canceled',
+                redirect: 'Maintainerr returned a redirect',
+                wrong_service: 'The destination is not Maintainerr 3.18',
+                malformed_body: 'Maintainerr returned an invalid response',
+                malformed_response: 'Maintainerr returned an invalid response',
+                response_too_large: 'Maintainerr returned an oversized response',
+                too_large: 'Maintainerr returned too many records',
+                throttled: 'Maintainerr requests are temporarily limited',
+                identity_mismatch: 'Maintainerr is connected to a different Jellyfin server',
+                configuration_changed: 'The Maintainerr configuration changed during the test',
+                upstream_error: 'Maintainerr could not complete the read-only test',
+                disabled: 'The Maintainerr integration is disabled',
+                unavailable: 'Maintainerr is temporarily unavailable'
+            };
+            cancelActiveMaintainerrTest(true);
+            const input = document.querySelector('#maintainerrUrl');
+            const normalizedMaintainerrUrl = jcNormalizeMaintainerrBaseUrl((input && input.value) || '');
+            const url = normalizedMaintainerrUrl;
+            if (!url) {
+                jcSetMaintainerrTestStatus('error', 'Failed', 'var(--jc-danger)', false);
+                Dashboard.alert({
+                    title: 'Missing or invalid URL',
+                    message: 'Provide an HTTP(S) Maintainerr base URL of at most 2048 characters without credentials, query, fragment, or path traversal.'
+                });
+                return;
+            }
+            const generation = maintainerrTestGeneration;
+            const controller = new AbortController();
+            activeMaintainerrTestController = controller;
+            const testToken = beginConnectionTest();
+            const cacheBinding = jcFingerprintConnectionValue(url);
+            const btn = document.querySelector('#testMaintainerrBtn');
+            if (btn) {
+                btn.disabled = true;
+            }
+            jcSetMaintainerrTestStatus('sync', 'Testing\u2026', 'var(--jc-accent)', true);
+            try {
+                const result = await ApiClient.ajax({
+                    type: 'POST',
+                    url: ApiClient.getUrl('/JellyfinCanopy/maintainerr/test'),
+                    data: JSON.stringify({ url: url }),
+                    contentType: 'application/json',
+                    dataType: 'json',
+                    signal: controller.signal
+                });
+                if (!jcIsCurrentMaintainerrTest(generation, url, controller)) {
                     return;
                 }
-                _arrParseOK[type] = true;
-                banner.remove();
-            }
-        );
-    });
-    banner.appendChild(resetBtn);
-    if (container && container.appendChild) {
-        container.appendChild(banner);
-    }
-}
-
-function createInstanceCard(type, instance, startOpen) {
-    const isSonarr = type === 'sonarr';
-    const defaultName = isSonarr ? 'Sonarr' : 'Radarr';
-    const namePlaceholder = isSonarr ? 'e.g., TV Shows, Anime' : 'e.g., Movies, 4K Movies';
-    const defaultPort = isSonarr ? '8989' : '7878';
-    const urlPlaceholder = 'e.g., http://192.168.1.100:' + defaultPort;
-
-    const card = document.createElement('details');
-    card.className = 'arr-instance-card';
-    card.dataset.type = type;
-    // A blank URL identifies a genuinely-new card and gets a fresh random id;
-    // legacy populated rows stay blank so the server applies its deterministic migration.
-    card.dataset.instanceId = normalizeArrInstanceId(instance.InstanceId)
-        || (String(instance.Url || '').trim() === '' ? createArrInstanceId() : '');
-    if (startOpen) {
-        card.open = true;
-    }
-
-    const initialName = String(instance.Name || '').trim() || defaultName;
-    const initiallyEnabled = instance.Enabled !== false;
-
-    // --- Summary row: [enabled checkbox][name][(disabled) chip][url] ---
-    const summary = document.createElement('summary');
-    summary.className = 'arr-instance-summary';
-
-    // Plain checkbox on purpose — is="emby-checkbox" needs a label wrapper that
-    // breaks the summary flex row.
-    const enabledCheckbox = document.createElement('input');
-    enabledCheckbox.type = 'checkbox';
-    enabledCheckbox.className = 'arr-instance-enabled';
-    enabledCheckbox.checked = initiallyEnabled;
-    enabledCheckbox.setAttribute('aria-label', 'Enable ' + initialName + ' instance');
-    enabledCheckbox.title = 'Uncheck to skip this instance in all fan-out paths (links, calendar, queue, tag sync) without deleting its URL/API key';
-    ['click', 'mousedown', 'keydown'].forEach(function (evt) {
-        enabledCheckbox.addEventListener(evt, function (e) {
-            e.stopPropagation();
-        });
-    });
-
-    const summaryName = document.createElement('span');
-    summaryName.className = 'arr-instance-summary-name';
-    summaryName.textContent = instance.Name || defaultName;
-
-    const disabledChip = document.createElement('span');
-    disabledChip.className = 'arr-instance-summary-disabled';
-    disabledChip.textContent = '(disabled)';
-    disabledChip.style.cssText = 'color: var(--jc-warning); font-size: 0.85em; margin-right: 0.5em;';
-    disabledChip.style.display = initiallyEnabled ? 'none' : 'inline';
-
-    const summaryUrl = document.createElement('span');
-    summaryUrl.className = 'arr-instance-summary-url';
-    summaryUrl.textContent = instance.Url || '';
-
-    summary.appendChild(enabledCheckbox);
-    summary.appendChild(summaryName);
-    summary.appendChild(disabledChip);
-    summary.appendChild(summaryUrl);
-    card.appendChild(summary);
-
-    // --- Body ---
-    const body = document.createElement('div');
-    body.className = 'arr-instance-card-body';
-    body.innerHTML =
-        '<div class="arr-instance-header" style="display: flex; gap: 0.5em; align-items: center;">'
-        + '<input is="emby-input" type="text" class="arr-instance-name" style="flex: 1;" placeholder="' + escapeHtml(namePlaceholder) + '" value="' + escapeHtml(instance.Name || '') + '" />'
-        + '<button is="emby-button" type="button" class="raised arr-instance-remove" title="Remove instance"><span>Remove</span></button>'
-        + '</div>'
-        + '<div class="inputContainer">'
-        + '<label class="inputLabel inputLabelUnfocused">URL (internal)</label>'
-        + '<input is="emby-input" type="text" class="arr-instance-url" placeholder="' + escapeHtml(urlPlaceholder) + '" value="' + escapeHtml(instance.Url || '') + '" />'
-        + '<div class="fieldDescription">The Jellyfin server uses this URL to talk to ' + defaultName + ' directly. If your public URL sits behind an auth proxy (Authentik, Authelia, Cloudflare Access, etc.), put the INTERNAL address here (e.g. http://' + type + ':' + defaultPort + ' or http://192.168.x.y:' + defaultPort + ') and set the External URL below for user-facing links.</div>'
-        + '</div>'
-        + '<div class="inputContainer">'
-        + '<label class="inputLabel inputLabelUnfocused">External URL (optional)</label>'
-        + '<input is="emby-input" type="text" class="arr-instance-externalurl" placeholder="e.g., https://' + type + '.example.com" value="' + escapeHtml(instance.ExternalUrl || '') + '" />'
-        + '<div class="fieldDescription">Public URL a user&#39;s browser opens for links to this instance. Leave blank to reuse the internal URL above. URL Mappings below still take priority when a mapping matches.</div>'
-        + '</div>'
-        + '<div class="inputContainer">'
-        + '<label class="inputLabel inputLabelUnfocused">API Key</label>'
-        + '<div style="display: flex; align-items: center; gap: 0.5em;">'
-        + '<input is="emby-input" type="text" class="arr-instance-apikey" autocomplete="off" placeholder="API key (find in Settings &gt; General &gt; Security)" style="flex: 1;" value="' + escapeHtml(instance.ApiKey || '') + '" />'
-        + '<span class="material-icons arr-instance-status" style="transition: color 0.3s ease;" aria-hidden="true"></span>'
-        + '<button is="emby-button" type="button" class="raised arr-instance-test"><span>Test</span></button>'
-        + '</div>'
-        + '<div class="fieldDescription">Find this in ' + defaultName + ' under Settings &gt; General &gt; Security &gt; API Key</div>'
-        + '</div>'
-        + '<div class="inputContainer">'
-        + '<label class="inputLabel inputLabelUnfocused">URL Mappings (optional)</label>'
-        + '<textarea class="emby-textarea emby-input arr-instance-urlmappings" rows="3" placeholder="jellyfin_url|arr_url (one per line)">' + escapeHtml(instance.UrlMappings || '') + '</textarea>'
-        + '<div class="fieldDescription">Map Jellyfin access URLs to this instance&#39;s URL. Format: jellyfin_url|arr_url (one per line). Useful for reverse-proxy setups.</div>'
-        + '</div>';
-    card.appendChild(body);
-
-    // --- Behaviors ---
-    const nameInput = body.querySelector('.arr-instance-name');
-    const urlInput = body.querySelector('.arr-instance-url');
-    const removeBtn = body.querySelector('.arr-instance-remove');
-    const testBtn = body.querySelector('.arr-instance-test');
-
-    nameInput.addEventListener('input', function () {
-        const name = nameInput.value.trim() || defaultName;
-        summaryName.textContent = name;
-        enabledCheckbox.setAttribute('aria-label', 'Enable ' + name + ' instance');
-    });
-    urlInput.addEventListener('input', function () {
-        summaryUrl.textContent = urlInput.value.trim();
-    });
-
-    function setBodyDisabled(disabled) {
-        // Hard-disable every control so edits can't silently persist while disabled.
-        body.querySelectorAll('input, textarea, button, select').forEach(function (el) {
-            if (disabled) {
-                el.setAttribute('disabled', '');
-            } else {
-                el.removeAttribute('disabled');
-            }
-        });
-    }
-
-    enabledCheckbox.addEventListener('change', function () {
-        // Backend remains the authority — this is UI feedback until Save.
-        const enabled = enabledCheckbox.checked;
-        disabledChip.style.display = enabled ? 'none' : 'inline';
-        card.classList.toggle('arr-instance-disabled', !enabled);
-        setBodyDisabled(!enabled);
-        try {
-            renderServiceStatusDashboard();
-        } catch (e) {
-            console.warn('[JC] renderServiceStatusDashboard threw from arr-instance enable-toggle:', e);
-        }
-    });
-    setBodyDisabled(!initiallyEnabled);
-    if (!initiallyEnabled) {
-        card.classList.add('arr-instance-disabled');
-    }
-
-    removeBtn.addEventListener('click', function (e) {
-        e.preventDefault();
-        const name = nameInput.value.trim() || defaultName;
-        Dashboard.confirm(
-            'Remove "' + name + '" from the instance list? The change takes effect when you click Save. If you leave the page without saving, the instance is kept.\n\nTip: If you just want to stop using it temporarily, uncheck Enabled instead — that preserves the URL and API key.',
-            'Remove Instance',
-            function (confirmed) {
-                if (!confirmed) {
+                const status = jcParseMaintainerrTestStatus(result);
+                if (!status) {
+                    const malformed = new Error('Maintainerr returned a malformed test response');
+                    malformed.responseJSON = { error: 'malformed_response' };
+                    throw malformed;
+                }
+                let identityState = 'unknown';
+                if (status.identityMatch) {
+                    identityState = 'matched';
+                } else if (status.identityWarning === 'identity_mismatch') {
+                    identityState = 'mismatch';
+                } else if (status.identityWarning === 'identity_unknown') {
+                    identityState = 'unknown';
+                }
+                const version = status.version.slice(0, 32);
+                if (!status.ready || !status.jellyfinMode || !status.capable) {
+                    const notCapable = new Error('Maintainerr is not ready for read-only access');
+                    notCapable.responseJSON = { error: status.error };
+                    throw notCapable;
+                }
+                if (!jcIsCurrentMaintainerrTest(generation, url, controller)) {
                     return;
                 }
-                card.remove();
-                jcMarkConfigDirty();
-                updateAllDependencies();
+                const warning = identityState !== 'matched';
+                let detail = version ? 'Maintainerr ' + version : 'Connected';
+                if (identityState === 'mismatch') {
+                    detail += ' · different Jellyfin server';
+                } else if (identityState === 'unknown') {
+                    detail += ' · Jellyfin identity not confirmed';
+                }
+                try {
+                    setConnectionTestResult('maintainerr', warning ? 'amber' : 'ok', detail, testToken, cacheBinding);
+                } catch (e) {
+                    console.warn('[JC] Failed to cache Maintainerr test result:', e);
+                }
+                jcSetMaintainerrTestStatus(
+                    warning ? 'warning' : 'check_circle',
+                    warning ? 'Connected with warning' : 'Connected',
+                    warning ? 'var(--jc-warning)' : 'var(--jc-success)',
+                    false
+                );
+                let message;
+                if (identityState === 'mismatch') {
+                    message = 'Maintainerr is reachable but is connected to a different Jellyfin server. Per-item status will remain disabled until the identities match.';
+                } else if (identityState === 'unknown') {
+                    message = 'Maintainerr is reachable, but its Jellyfin server identity could not be confirmed. Per-item status will remain disabled until identity can be verified.';
+                } else {
+                    message = 'Successfully connected to Maintainerr ' + version + '.';
+                }
+                // The success dialog's dismiss button renders as "Got It" (Dashboard.alert
+                // default) — e2e asserts that exact accessible name.
+                jcTestAlert({ title: warning ? 'Connected with warning' : 'Success', message: message });
+            } catch (e) {
+                if (!jcIsCurrentMaintainerrTest(generation, url, controller)) {
+                    return;
+                }
+                let code = '';
+                if (e && e.responseJSON && typeof e.responseJSON.error === 'string') {
+                    code = e.responseJSON.error;
+                } else if (e && typeof e.json === 'function') {
+                    try {
+                        const body = await e.clone().json();
+                        if (body && typeof body.error === 'string') {
+                            code = body.error;
+                        }
+                    } catch (parseError) {
+                        // Body was not JSON; keep the fallback message.
+                    }
+                }
+                if (!jcIsCurrentMaintainerrTest(generation, url, controller)) {
+                    return;
+                }
+                code = String(code).slice(0, 48);
+                const detail = MAINTAINERR_TEST_ERROR_MESSAGES[code] || 'Connection could not be verified';
+                try {
+                    setConnectionTestResult('maintainerr', 'error', detail, testToken, cacheBinding);
+                } catch (cacheError) {
+                    console.warn('[JC] Failed to cache Maintainerr test result:', cacheError);
+                }
+                jcSetMaintainerrTestStatus('error', 'Failed', 'var(--jc-danger)', false);
+                jcTestAlert({
+                    title: 'Connection failed',
+                    message: detail + '. Confirm the server-only URL, network access, and Maintainerr 3.18 configuration.'
+                });
+            } finally {
+                if (jcIsCurrentMaintainerrTest(generation, url, controller)) {
+                    activeMaintainerrTestController = null;
+                    if (btn) {
+                        btn.disabled = false;
+                        btn.setAttribute('aria-busy', 'false');
+                    }
+                    const indicator = document.querySelector('#maintainerrStatusIndicator');
+                    if (indicator) {
+                        indicator.classList.remove('status-check');
+                    }
+                }
             }
-        );
-    });
-
-    testBtn.addEventListener('click', function (e) {
-        e.preventDefault();
-        testInstanceConnection(card);
-    });
-
-    return card;
-}
-
-function loadArrInstances(config) {
-    _arrParseOK.sonarr = true;
-    _arrParseOK.radarr = true;
-    ['sonarr', 'radarr'].forEach(function (type) {
-        const container = document.querySelector('#' + type + 'InstancesList');
-        if (!container) {
-            return;
         }
-        container.textContent = '';
-        const typeName = type === 'sonarr' ? 'Sonarr' : 'Radarr';
-        let instances = tryParseInstanceList(config[typeName + 'Instances'], type, container);
-        // Legacy migration: only when the parse succeeded AND there are zero instances
-        // AND both legacy fields are present. Skipped on parse failure — legacy fields
-        // may be stale/already migrated.
-        if (_arrParseOK[type] && instances.length === 0) {
-            const legacyUrl = config[typeName + 'Url'];
-            const legacyKey = config[typeName + 'ApiKey'];
-            if (legacyUrl && legacyKey) {
-                instances = [{
-                    Name: typeName,
-                    Url: legacyUrl,
-                    ExternalUrl: config[typeName + 'ExternalUrl'] || '',
-                    ApiKey: legacyKey,
-                    UrlMappings: config[typeName + 'UrlMappings'] || ''
-                }];
+
+        async function testTmdbConnection(event) {
+            const input = document.querySelector('#TMDB_API_KEY');
+            const apiKey = ((input && input.value) || '').trim();
+            if (!apiKey) {
+                Dashboard.alert({
+                    title: 'Missing Information',
+                    message: 'Please provide a TMDB API key to test the connection.'
+                });
+                return;
+            }
+            _testToken = beginConnectionTest();
+            // Multiple copies of the test button exist across tabs; resolve the indicator
+            // sitting next to the clicked button, falling back to the Elsewhere-tab one.
+            const button = event && event.target ? event.target.closest('button') : null;
+            let indicator = button && button.parentElement
+                ? button.parentElement.querySelector('.material-icons')
+                : null;
+            if (!indicator) {
+                indicator = document.querySelector('#tmdbStatusIndicator');
+            }
+            const buttons = document.querySelectorAll('.testTmdbBtn');
+            buttons.forEach(function (b) { b.disabled = true; });
+            if (indicator) {
+                indicator.textContent = 'sync';
+                indicator.classList.add('status-check');
+                indicator.style.color = 'var(--jc-accent)';
+            }
+            try {
+                await ApiClient.ajax({
+                    type: 'GET',
+                    url: ApiClient.getUrl('/JellyfinCanopy/tmdb/validate', { apiKey: apiKey })
+                });
+                if (indicator) {
+                    indicator.textContent = 'check_circle';
+                    indicator.style.color = 'var(--jc-success)';
+                }
+                try {
+                    setConnectionTestResult('tmdb', 'ok', 'API key valid', _testToken);
+                } catch (e) {
+                    console.warn('[JC] Failed to cache TMDB test result:', e);
+                }
+                jcTestAlert({ title: 'Success', message: 'Successfully connected to TMDB!' });
+            } catch (e) {
+                console.error('TMDB validation failed:', e);
+                const status = e && e.status;
+                let message;
+                let cacheDetail;
+                if (status === 401) {
+                    message = 'The API key is invalid. Check that you copied it correctly.';
+                    cacheDetail = 'API key rejected';
+                } else if (status === 500 || !status) {
+                    message = 'Could not reach TMDB servers. Check your network connection.';
+                    cacheDetail = 'Unreachable';
+                } else {
+                    message = 'Connection failed (error ' + status + '). Check the key and your network.';
+                    cacheDetail = 'Error ' + status;
+                }
+                try {
+                    setConnectionTestResult('tmdb', 'error', cacheDetail, _testToken);
+                } catch (cacheError) {
+                    console.warn('[JC] Failed to cache TMDB test result:', cacheError);
+                }
+                if (indicator) {
+                    indicator.textContent = 'error';
+                    indicator.style.color = 'var(--jc-danger)';
+                }
+                jcTestAlert({ title: 'Connection Failed', message: message });
+            } finally {
+                buttons.forEach(function (b) { b.disabled = false; });
+                if (indicator) {
+                    indicator.classList.remove('status-check');
+                }
             }
         }
-        instances.forEach(function (inst) {
-            container.appendChild(createInstanceCard(type, inst || {}, false));
-        });
-    });
-}
 
-function renderArrInstances(config) {
-    loadArrInstances(config);
-}
+        // ---------------------------------------------------------------------------
+        // B3. Sonarr/Radarr per-card connection test + shared error messaging
+        // ---------------------------------------------------------------------------
 
-/* jcIsHttpUrl is owned by the core section. */
-
-function collectInstancesFromDom(selector, defaultName) {
-    const instances = [];
-    const incomplete = [];
-    const renamed = [];
-    const droppedExternal = [];
-    const seen = Object.create(null);
-    document.querySelectorAll(selector).forEach(function (card) {
-        const urlInput = card.querySelector('.arr-instance-url');
-        const keyInput = card.querySelector('.arr-instance-apikey');
-        const nameInput = card.querySelector('.arr-instance-name');
-        const url = ((urlInput && urlInput.value) || '').trim();
-        const apiKey = ((keyInput && keyInput.value) || '').trim();
-        const rawName = ((nameInput && nameInput.value) || '').trim() || defaultName;
-        if (url && !apiKey) {
-            // Would otherwise be silently dropped — surface it as a save warning.
-            incomplete.push(rawName);
-            return;
-        }
-        if (!url || !apiKey) {
-            // Neither, or only an API key → dropped silently.
-            return;
-        }
-        // Duplicate-name disambiguation: Name is the ONLY runtime targeting key
-        // (arr links, calendar, tag sync, action-sheet grab/monitor).
-        let name = rawName;
-        const nameKey = rawName.toLowerCase();
-        const priorCount = seen[nameKey] || 0;
-        if (priorCount > 0) {
-            name = rawName + ' (' + (priorCount + 1) + ')';
-            seen[nameKey] = priorCount + 1;
-            const suffixedKey = name.toLowerCase();
-            seen[suffixedKey] = (seen[suffixedKey] || 0) + 1;
-            renamed.push(rawName + '” → “' + name);
-        } else {
-            seen[nameKey] = 1;
-        }
-        const externalInput = card.querySelector('.arr-instance-externalurl');
-        const rawExternal = ((externalInput && externalInput.value) || '').trim();
-        let externalUrl = '';
-        if (rawExternal) {
-            if (jcIsHttpUrl(rawExternal)) {
-                externalUrl = rawExternal;
+        function connectionErrorMessage(error, serviceName, url) {
+            let body = null;
+            if (error && error.responseJSON) {
+                body = error.responseJSON;
             } else {
-                droppedExternal.push(name + ': ' + rawExternal);
+                let text = error && error.responseText;
+                if (!text && error && error.response && typeof error.response.text === 'string') {
+                    text = error.response.text;
+                }
+                if (typeof text === 'string' && text.trim().indexOf('{') === 0) {
+                    try {
+                        body = JSON.parse(text);
+                    } catch (e) {
+                        body = null;
+                    }
+                }
+            }
+            if (body && body.code && body.message) {
+                const prefix = body.cfRay ? '[' + serviceName + ' cf-ray=' + body.cfRay + '] ' : '';
+                return prefix + body.message;
+            }
+            const status = error && error.status;
+            switch (status) {
+                case 502:
+                    return 'Could not reach ' + url + '. Check the URL is correct and ' + serviceName + ' is running.';
+                case 504:
+                    return 'Connection timed out. The server may be unreachable.';
+                case 401:
+                    return 'The API key was rejected. Check the key is correct.';
+                case 403:
+                    return 'Permission denied. Check the API key has the correct permissions, or that CSRF protection is not enabled in ' + serviceName + '.';
+                case 400:
+                    return 'Missing URL or API key.';
+                case 404:
+                    return 'The URL responded but did not look like a valid ' + serviceName + ' instance (HTTP 404 on /api/v1/user). It may be a reverse-proxy auth challenge.';
+                default:
+                    return 'Connection to ' + serviceName + ' failed (error ' + (status || 'unknown') + ').';
             }
         }
-        const mappingsEl = card.querySelector('.arr-instance-urlmappings');
-        const enabledCheckbox = card.querySelector('.arr-instance-enabled');
-        instances.push({
-            InstanceId: normalizeArrInstanceId(card.dataset.instanceId),
-            Name: name,
-            Url: url,
-            ExternalUrl: externalUrl,
-            ApiKey: apiKey,
-            UrlMappings: (mappingsEl && mappingsEl.value) || '',
-            // Missing checkbox = enabled (defensive against DOM surgery).
-            Enabled: enabledCheckbox ? enabledCheckbox.checked : true
-        });
-    });
-    return {
-        instances: instances,
-        incomplete: incomplete,
-        renamed: renamed,
-        droppedExternal: droppedExternal
-    };
-}
 
-// Warning-string builders for the save path (core's saveArrInstances consumes these;
-// the caller alerts each with title '⚠ Incomplete *arr instance').
-function buildArrIncompleteWarning(typeName, name) {
-    return typeName + ' instance "' + name + '" has a URL but no API key — it was not saved.';
-}
-
-function buildArrRenamedWarning(typeName, renamedFragment) {
-    // renamedFragment already contains the 'old” → “new' interior; this template
-    // supplies the surrounding curly quotes.
-    return 'Renamed duplicate ' + typeName + ' instance “' + renamedFragment + '” so actions target the right instance.';
-}
-
-function buildArrDroppedExternalWarning(typeName, dropped) {
-    return 'Dropped invalid ' + typeName + ' External URL (must be an http(s) URL without credentials or query/fragment) — ' + dropped;
-}
-
-function buildArrInstanceWarnings(typeName, collected) {
-    const warnings = [];
-    collected.incomplete.forEach(function (name) {
-        warnings.push(buildArrIncompleteWarning(typeName, name));
-    });
-    collected.renamed.forEach(function (renamedFragment) {
-        warnings.push(buildArrRenamedWarning(typeName, renamedFragment));
-    });
-    collected.droppedExternal.forEach(function (dropped) {
-        warnings.push(buildArrDroppedExternalWarning(typeName, dropped));
-    });
-    return warnings;
-}
-
-// ---------------------------------------------------------------------------
-// Wiring (called once by the integrator's init sequence — the old per-pageshow
-// rewiring accumulated duplicate listeners; wiring once is the approved fix)
-// ---------------------------------------------------------------------------
-
-function wireConnections() {
-    const testSeerrBtn = document.querySelector('#testSeerrBtn');
-    if (testSeerrBtn) {
-        testSeerrBtn.addEventListener('click', function (e) {
-            e.preventDefault();
-            testSeerrConnection();
-        });
-    }
-
-    const testMaintainerrBtn = document.querySelector('#testMaintainerrBtn');
-    if (testMaintainerrBtn) {
-        testMaintainerrBtn.addEventListener('click', function (e) {
-            e.preventDefault();
-            testMaintainerrConnection();
-        });
-    }
-
-    // Multiple TMDB test buttons exist across tabs; each resolves its own indicator.
-    // After the test settles, refresh TMDB-gated toggles.
-    document.querySelectorAll('.testTmdbBtn').forEach(function (btn) {
-        btn.addEventListener('click', function (e) {
-            e.preventDefault();
-            Promise.resolve(testTmdbConnection(e)).then(function () {
+        async function testInstanceConnection(card) {
+            const type = card.dataset.type;
+            const defaultName = type === 'sonarr' ? 'Sonarr' : 'Radarr';
+            const urlInput = card.querySelector('.arr-instance-url');
+            const keyInput = card.querySelector('.arr-instance-apikey');
+            const nameInput = card.querySelector('.arr-instance-name');
+            const url = ((urlInput && urlInput.value) || '').trim();
+            const apiKey = ((keyInput && keyInput.value) || '').trim();
+            const name = ((nameInput && nameInput.value) || '').trim() || defaultName;
+            const btn = card.querySelector('.arr-instance-test');
+            const indicator = card.querySelector('.arr-instance-status');
+            if (!url || !apiKey) {
+                Dashboard.alert({
+                    title: 'Missing Information',
+                    message: 'Please provide both a URL and API key to test the connection.'
+                });
+                return;
+            }
+            const token = beginConnectionTest();
+            if (btn) {
+                btn.disabled = true;
+            }
+            if (indicator) {
+                indicator.textContent = 'sync';
+                // classList, never className = — the arr-instance-status identifier class must survive.
+                indicator.classList.add('status-check');
+                indicator.style.color = 'var(--jc-accent)';
+            }
+            const cacheKey = type + ':' + _jeNormalizeArrUrl(url);
+            try {
+                await ApiClient.ajax({
+                    type: 'GET',
+                    url: ApiClient.getUrl('/JellyfinCanopy/arr/validate/' + type, { url: url }),
+                    dataType: 'json',
+                    headers: { 'X-Arr-ApiKey': apiKey }
+                });
+                if (indicator) {
+                    indicator.textContent = 'check_circle';
+                    indicator.style.color = 'var(--jc-success)';
+                }
+                try {
+                    setConnectionTestResult(cacheKey, 'ok', 'Connected', token);
+                } catch (e) {
+                    console.warn('[JC] Failed to cache instance test result:', e);
+                }
+                jcTestAlert({ title: 'Success', message: 'Successfully connected to ' + name + '!' });
+            } catch (e) {
+                const msg = connectionErrorMessage(e, name, url);
+                const status = e && e.status;
+                let cacheDetail;
+                if (status === 401) {
+                    cacheDetail = 'API key rejected';
+                } else if (status === 500 || !status) {
+                    cacheDetail = 'Unreachable';
+                } else {
+                    cacheDetail = 'Error ' + (status || '?');
+                }
+                try {
+                    setConnectionTestResult(cacheKey, 'error', cacheDetail, token);
+                } catch (cacheError) {
+                    console.warn('[JC] Failed to cache instance test result:', cacheError);
+                }
+                jcTestAlert({ title: 'Connection Failed', message: msg });
+                if (indicator) {
+                    indicator.textContent = 'error';
+                    indicator.style.color = 'var(--jc-danger)';
+                }
+            } finally {
+                if (btn) {
+                    btn.disabled = false;
+                }
+                if (indicator) {
+                    indicator.classList.remove('status-check');
+                }
                 updateAllDependencies();
+            }
+        }
+
+        // ---------------------------------------------------------------------------
+        // B4. URL-mapping validation (syntax-only; probing broke behind auth proxies)
+        // ---------------------------------------------------------------------------
+
+        function jcValidateMaintainerrMappings(value) {
+            // Bounded shared parser (Validate button + Save). Issues carry row numbers and
+            // reasons only — never URL values.
+            const issues = [];
+            let validCount = 0;
+            let invalidCount = 0;
+            if (value.length > JC_MAINTAINERR_MAX_MAPPINGS_LENGTH) {
+                return {
+                    value: '',
+                    validCount: 0,
+                    invalidCount: 1,
+                    issues: ['Maintainerr mappings exceed the 64 KiB limit.']
+                };
+            }
+            const kept = [];
+            const seenSources = Object.create(null);
+            let nonEmptyRows = 0;
+            let droppedRows = false;
+            value.split(/\r\n?|\n/).forEach(function (line, idx) {
+                if (!line.trim()) {
+                    return;
+                }
+                nonEmptyRows++;
+                if (nonEmptyRows > JC_MAINTAINERR_MAX_MAPPING_ROWS) {
+                    droppedRows = true;
+                    invalidCount++;
+                    return;
+                }
+                const label = 'Maintainerr line ' + (idx + 1);
+                const parts = line.split('|');
+                if (parts.length !== 2) {
+                    invalidCount++;
+                    issues.push(label + ': use exactly one pipe between two URLs.');
+                    return;
+                }
+                const source = jcNormalizeMaintainerrBaseUrl(parts[0]);
+                const target = jcNormalizeMaintainerrBaseUrl(parts[1]);
+                if (!source || !target) {
+                    invalidCount++;
+                    issues.push(label + ': both sides must be bounded HTTP(S) base URLs without credentials, query, fragment, or traversal.');
+                    return;
+                }
+                if (source.toLowerCase() === target.toLowerCase()) {
+                    invalidCount++;
+                    issues.push(label + ': the Jellyfin and Maintainerr URLs must be different.');
+                    return;
+                }
+                const sourceKey = source.toLowerCase();
+                if (seenSources[sourceKey]) {
+                    invalidCount++;
+                    issues.push(label + ': the Jellyfin source URL is duplicated.');
+                    return;
+                }
+                seenSources[sourceKey] = true;
+                kept.push(source + '|' + target);
+                validCount++;
             });
-        });
-    });
-
-    // TMDB key mirror sync: #TMDB_API_KEY (Elsewhere tab) and #seerr_TMDB_API_KEY
-    // (Seerr tab) back a single config value; on save the Seerr-tab field wins.
-    const tmdbMain = document.querySelector('#TMDB_API_KEY');
-    const tmdbSeerr = document.querySelector('#seerr_TMDB_API_KEY');
-    if (tmdbMain && tmdbSeerr) {
-        tmdbMain.addEventListener('input', function () {
-            tmdbSeerr.value = tmdbMain.value;
-        });
-        tmdbSeerr.addEventListener('input', function () {
-            tmdbMain.value = tmdbSeerr.value;
-        });
-    }
-
-    // Persisted-result invalidation on committed edits of the tested inputs.
-    _wireInvalidate('#TMDB_API_KEY', 'tmdb');
-    _wireInvalidate('#seerr_TMDB_API_KEY', 'tmdb');
-    _wireInvalidate('#seerrUrls', 'seerr');
-    _wireInvalidate('#SeerrApiKey', 'seerr');
-    _wireInvalidate('#maintainerrUrl', 'maintainerr');
-
-    // Typing in the Maintainerr URL aborts an in-flight test and resets its UI.
-    const maintainerrUrlInput = document.querySelector('#maintainerrUrl');
-    if (maintainerrUrlInput) {
-        maintainerrUrlInput.addEventListener('input', function () {
-            cancelActiveMaintainerrTest(true);
-        });
-    }
-
-    // Mapping validation buttons.
-    const validateSonarrBtn = document.querySelector('#validateSonarrMappingsBtn');
-    if (validateSonarrBtn) {
-        validateSonarrBtn.addEventListener('click', function (e) {
-            e.preventDefault();
-            _jeValidateInstanceMappings('sonarr', 'validateSonarrMappingsBtn', 'sonarrMappingsValidationResult', 'Sonarr');
-        });
-    }
-    const validateRadarrBtn = document.querySelector('#validateRadarrMappingsBtn');
-    if (validateRadarrBtn) {
-        validateRadarrBtn.addEventListener('click', function (e) {
-            e.preventDefault();
-            _jeValidateInstanceMappings('radarr', 'validateRadarrMappingsBtn', 'radarrMappingsValidationResult', 'Radarr');
-        });
-    }
-    const validateBazarrBtn = document.querySelector('#validateBazarrMappingsBtn');
-    if (validateBazarrBtn) {
-        validateBazarrBtn.addEventListener('click', function (e) {
-            e.preventDefault();
-            const bazarrMappings = document.querySelector('#bazarrUrlMappings');
-            if (!bazarrMappings || !bazarrMappings.value.trim()) {
-                Dashboard.alert({
-                    title: 'No Mappings',
-                    message: 'No Bazarr URL mappings configured. Fill in the Bazarr URL Mappings field above to validate.'
-                });
-                return;
+            if (droppedRows) {
+                issues.push('Maintainerr mappings are limited to 32 nonempty rows; extra rows were dropped.');
             }
-            jcRunMappingValidation([{ id: 'bazarrUrlMappings', service: 'Bazarr' }], 'validateBazarrMappingsBtn', 'bazarrMappingsValidationResult');
-        });
-    }
-    const validateSeerrBtn = document.querySelector('#validateSeerrMappingsBtn');
-    if (validateSeerrBtn) {
-        validateSeerrBtn.addEventListener('click', function (e) {
-            e.preventDefault();
-            jcRunMappingValidation([{ id: 'seerrUrlMappings', service: 'Seerr' }], 'validateSeerrMappingsBtn', 'seerrMappingsValidationResult');
-        });
-    }
-    const validateMaintainerrBtn = document.querySelector('#validateMaintainerrMappingsBtn');
-    if (validateMaintainerrBtn) {
-        validateMaintainerrBtn.addEventListener('click', function (e) {
-            e.preventDefault();
-            const maintainerrMappings = document.querySelector('#maintainerrUrlMappings');
-            if (!maintainerrMappings || !maintainerrMappings.value.trim()) {
-                Dashboard.alert({
-                    title: 'No Mappings',
-                    message: 'No Maintainerr URL mappings are configured.'
-                });
-                return;
+            const joined = kept.join('\n');
+            if (joined.length > JC_MAINTAINERR_MAX_MAPPINGS_LENGTH) {
+                return {
+                    value: '',
+                    validCount: 0,
+                    invalidCount: invalidCount + validCount,
+                    issues: issues.concat(['Normalized Maintainerr mappings exceed the 64 KiB limit.'])
+                };
             }
-            validateMaintainerrMappingSet('maintainerrUrlMappings', validateMaintainerrBtn, 'maintainerrMappingsValidationResult');
-        });
-    }
-
-    const triggerSeerrScanBtn = document.querySelector('#triggerSeerrScanNowBtn');
-    if (triggerSeerrScanBtn) {
-        triggerSeerrScanBtn.addEventListener('click', function (e) {
-            e.preventDefault();
-            triggerSeerrScanNow();
-        });
-    }
-
-    // Both event names exist across Jellyfin builds.
-    ['pagehide', 'viewhide'].forEach(function (evt) {
-        page.addEventListener(evt, function () {
-            cancelActiveSeerrScan();
-            cancelActiveMaintainerrTest(true);
-        });
-    });
-}
-
-function wireArrInstances() {
-    [['#addSonarrInstance', 'sonarr'], ['#addRadarrInstance', 'radarr']].forEach(function (pair) {
-        const btn = document.querySelector(pair[0]);
-        if (!btn) {
-            return;
+            return { value: joined, validCount: validCount, invalidCount: invalidCount, issues: issues };
         }
-        btn.addEventListener('click', function (e) {
-            e.preventDefault();
-            const container = document.querySelector('#' + pair[1] + 'InstancesList');
-            if (!container) {
+
+        function renderMappingValidationResult(resultDiv, issues, goodCount) {
+            if (!resultDiv) {
                 return;
             }
-            // Open card; fresh random InstanceId since Url is blank. Adding does not
-            // itself mark dirty — typing into the new card does, via the form listener.
-            container.appendChild(createInstanceCard(pair[1], { Name: '', Url: '', ExternalUrl: '', ApiKey: '', UrlMappings: '' }, true));
-            updateAllDependencies();
+            resultDiv.style.display = 'block';
+            resultDiv.style.padding = '0.6em 0.8em';
+            resultDiv.style.borderRadius = '4px';
+            resultDiv.style.marginTop = '0.5em';
+            if (!issues.length) {
+                resultDiv.style.background = 'rgba(40, 167, 69, 0.15)';
+                resultDiv.style.border = '1px solid var(--jc-success)';
+                resultDiv.innerHTML = '<span class="material-icons" style="vertical-align: middle; color: var(--jc-success);">check_circle</span> '
+                    + goodCount + ' mapping(s) verified.';
+                return;
+            }
+            resultDiv.style.background = 'rgba(220, 53, 69, 0.15)';
+            resultDiv.style.border = '1px solid var(--jc-danger)';
+            let html = issues.map(function (issue) {
+                return '<div>' + escapeHtml(issue) + '</div>';
+            }).join('');
+            if (goodCount > 0) {
+                html += '<div>' + goodCount + ' other mapping(s) verified.</div>';
+            }
+            resultDiv.innerHTML = html;
+        }
+
+        async function validateMappingSet(mappingDefs, btnId, resultDivId) {
+            const btn = document.querySelector('#' + btnId);
+            const resultDiv = document.querySelector('#' + resultDivId);
+            function setBtnLabel(text) {
+                if (!btn) {
+                    return;
+                }
+                const span = btn.querySelector('span');
+                if (span) {
+                    span.textContent = text;
+                } else {
+                    btn.textContent = text;
+                }
+            }
+            setBtnLabel('Validating...');
+            if (btn) {
+                btn.disabled = true;
+            }
+            try {
+                const issues = [];
+                const pairs = [];
+                // Phase 1: format check per line.
+                mappingDefs.forEach(function (def) {
+                    const el = document.querySelector('#' + def.id);
+                    const lines = ((el && el.value) || '').split('\n');
+                    lines.forEach(function (line, i) {
+                        const trimmed = line.trim();
+                        if (!trimmed) {
+                            return;
+                        }
+                        const label = def.service + ' line ' + (i + 1);
+                        const parts = trimmed.split('|');
+                        if (parts.length !== 2) {
+                            issues.push(label + ': Invalid format. Use jellyfin_url|' + def.service.toLowerCase() + '_url separated by a pipe (|).');
+                            return;
+                        }
+                        const left = parts[0].trim();
+                        const right = parts[1].trim();
+                        if (!left || !right) {
+                            issues.push(label + ': Both sides of the pipe must have a URL.');
+                            return;
+                        }
+                        if (!/^https?:\/\//i.test(left)) {
+                            issues.push(label + ': Left side (' + left + ') should start with http:// or https://.');
+                            return;
+                        }
+                        if (!/^https?:\/\//i.test(right)) {
+                            issues.push(label + ': Right side (' + right + ') should start with http:// or https://.');
+                            return;
+                        }
+                        pairs.push({ label: label, left: left, right: right, service: def.service });
+                    });
+                });
+                if (issues.length) {
+                    renderMappingValidationResult(resultDiv, issues, 0);
+                    return;
+                }
+                if (!pairs.length) {
+                    if (resultDiv) {
+                        resultDiv.style.display = 'none';
+                    }
+                    return;
+                }
+                // Phase 2: URL sanity per pair.
+                let good = 0;
+                pairs.forEach(function (pair) {
+                    let leftUrl = null;
+                    let rightUrl = null;
+                    try {
+                        leftUrl = new URL(pair.left);
+                    } catch (e) {
+                        leftUrl = null;
+                    }
+                    if (!leftUrl || !leftUrl.host) {
+                        issues.push(pair.label + ': Left side (' + pair.left + ') is not a valid URL.');
+                        return;
+                    }
+                    try {
+                        rightUrl = new URL(pair.right);
+                    } catch (e) {
+                        rightUrl = null;
+                    }
+                    if (!rightUrl || !rightUrl.host) {
+                        issues.push(pair.label + ': Right side (' + pair.right + ') is not a valid URL.');
+                        return;
+                    }
+                    const leftNorm = pair.left.replace(/\/+$/, '').toLowerCase();
+                    const rightNorm = pair.right.replace(/\/+$/, '').toLowerCase();
+                    if (leftNorm === rightNorm) {
+                        issues.push(pair.label + ': Both sides are the same URL. Left should be Jellyfin, right should be ' + pair.service + '.');
+                        return;
+                    }
+                    good++;
+                });
+                renderMappingValidationResult(resultDiv, issues, good);
+            } finally {
+                setBtnLabel('Validate Mappings');
+                if (btn) {
+                    btn.disabled = false;
+                }
+            }
+        }
+
+        function jcRunMappingValidation(mappingDefs, btnId, resultDivId) {
+            return validateMappingSet(mappingDefs, btnId, resultDivId).catch(function (e) {
+                console.warn('[JC] Mapping validation crashed:', e);
+                const btn = document.querySelector('#' + btnId);
+                if (btn) {
+                    btn.disabled = false;
+                    const span = btn.querySelector('span');
+                    if (span) {
+                        span.textContent = 'Validate Mappings';
+                    } else {
+                        btn.textContent = 'Validate Mappings';
+                    }
+                }
+                try {
+                    Dashboard.alert({
+                        title: 'Validation error',
+                        message: 'Mapping validation crashed unexpectedly — check the browser console for details.'
+                    });
+                } catch (alertError) {
+                    window.alert('Mapping validation crashed unexpectedly — check the browser console for details.');
+                }
+            });
+        }
+
+        function _jeValidateInstanceMappings(type, btnId, resultDivId, displayName) {
+            document.querySelectorAll('textarea[data-arr-validate-temp-' + type + '="true"]').forEach(function (orphan) {
+                orphan.remove();
+            });
+            const defs = [];
+            const temps = [];
+            document.querySelectorAll('#' + type + 'InstancesList .arr-instance-card').forEach(function (card, idx) {
+                const mappingsEl = card.querySelector('.arr-instance-urlmappings');
+                const value = (mappingsEl && mappingsEl.value) || '';
+                if (!value.trim()) {
+                    return;
+                }
+                const nameInput = card.querySelector('.arr-instance-name');
+                const name = ((nameInput && nameInput.value) || '').trim() || (displayName + ' ' + (idx + 1));
+                const temp = document.createElement('textarea');
+                temp.id = 'arr-validate-' + type + '-' + idx;
+                temp.value = value;
+                temp.hidden = true;
+                temp.setAttribute('data-arr-validate-temp-' + type, 'true');
+                document.body.appendChild(temp);
+                temps.push(temp);
+                defs.push({ id: temp.id, service: name });
+            });
+            if (!defs.length) {
+                Dashboard.alert({
+                    title: 'No Mappings',
+                    message: 'No URL mappings configured for ' + displayName + '. Expand an instance card and fill in the URL Mappings field to validate.'
+                });
+                return;
+            }
+            jcRunMappingValidation(defs, btnId, resultDivId).finally(function () {
+                temps.forEach(function (temp) {
+                    temp.remove();
+                });
+            });
+        }
+
+        function validateMaintainerrMappingSet(textareaId, btn, resultDivId) {
+            // Synchronous; uses the strict bounded parser, which never echoes URL values.
+            const input = document.querySelector('#' + textareaId);
+            const resultDiv = document.querySelector('#' + resultDivId);
+            if (!input || !resultDiv) {
+                return;
+            }
+            const result = jcValidateMaintainerrMappings(input.value);
+            renderMappingValidationResult(resultDiv, result.issues, result.validCount);
+        }
+
+        // ---------------------------------------------------------------------------
+        // B5. Seerr recently-added scan trigger
+        // ---------------------------------------------------------------------------
+
+        let activeSeerrScanController = null;
+
+        /* jc-seerr-scan-helpers:start */
+        function jcNormalizeSeerrIdentityDomain(value) {
+            // Mirror of server SeerrUrlIdentity.ParseConfigured normalization. Pure:
+            // only the URL global and its argument (contract-tested by extraction).
+            const trimmed = String(value || '').trim().replace(/\/+$/, '');
+            if (!trimmed) {
+                return '';
+            }
+            if (!/^https?:\/\//i.test(trimmed)) {
+                return trimmed;
+            }
+            let parsed;
+            try {
+                parsed = new URL(trimmed);
+            } catch (e) {
+                return trimmed;
+            }
+            if ((parsed.protocol !== 'http:' && parsed.protocol !== 'https:')
+                || !parsed.hostname
+                || parsed.username
+                || parsed.password
+                || parsed.search
+                || parsed.hash) {
+                return trimmed;
+            }
+            // URL canonicalizes scheme/host case and drops default ports. Strip one
+            // DNS absolute-name trailing dot, but never repair '..' or a root-only
+            // host into a different authority.
+            let host = parsed.hostname;
+            if (host.length > 1 && host.charAt(host.length - 1) === '.' && host.charAt(host.length - 2) !== '.') {
+                host = host.slice(0, -1);
+            }
+            const port = parsed.port ? ':' + parsed.port : '';
+            const path = parsed.pathname.replace(/\/+$/, '');
+            return parsed.protocol + '//' + host + port + path;
+        }
+
+        function jcParseSeerrIdentityDomains(raw) {
+            const seen = Object.create(null);
+            const domains = [];
+            String(raw || '').split(/[\r\n,]+/).forEach(function (part) {
+                const domain = jcNormalizeSeerrIdentityDomain(part);
+                if (!domain || seen[domain]) {
+                    return;
+                }
+                seen[domain] = true;
+                domains.push(domain);
+            });
+            return domains;
+        }
+
+        async function jcDispatchSeerrScanDomains(rawInput, sender, signal) {
+            // Parses + dedupes the raw multi-URL input, hands the WHOLE batch to the
+            // injected sender exactly once, and maps the authoritative response rows
+            // back onto the requested domains by normalized-domain equality. Pure of
+            // DOM/network: the sender owns transport (and cancellation side effects).
+            const domains = jcParseSeerrIdentityDomains(rawInput);
+            const results = domains.map(function (domain) {
+                return { domain: domain, ok: false, error: '' };
+            });
+            let response = null;
+            try {
+                response = await sender(domains);
+            } catch (e) {
+                response = { ok: false, message: String((e && e.message) || e || '') };
+            }
+            const topOk = !!(response && response.ok);
+            const topMessage = response && response.message ? String(response.message) : '';
+            const rows = response && Array.isArray(response.results) ? response.results : [];
+            results.forEach(function (entry) {
+                const row = rows.find(function (r) {
+                    return r && jcNormalizeSeerrIdentityDomain(r.url || r.domain || '') === entry.domain;
+                });
+                if (row) {
+                    entry.ok = !!row.ok;
+                    entry.error = row.ok ? '' : (row.message ? String(row.message) : '');
+                } else {
+                    entry.ok = topOk;
+                    entry.error = topOk ? '' : topMessage;
+                }
+            });
+            return {
+                domains: domains,
+                results: results,
+                cancelled: !!(signal && signal.aborted)
+            };
+        }
+
+        function jcSummarizeSeerrScanDispatch(result) {
+            const rows = (result && result.results) || [];
+            const total = rows.length;
+            let succeeded = 0;
+            rows.forEach(function (entry) {
+                if (entry.ok) {
+                    succeeded++;
+                }
+            });
+            const failed = total - succeeded;
+            const outcome = failed === 0 ? 'success' : (succeeded > 0 ? 'partial' : 'failure');
+            return { outcome: outcome, total: total, succeeded: succeeded, failed: failed };
+        }
+        /* jc-seerr-scan-helpers:end */
+
+        function cancelActiveSeerrScan() {
+            if (activeSeerrScanController) {
+                try {
+                    activeSeerrScanController.abort();
+                } catch (e) {
+                    // Already aborted; nothing to do.
+                }
+                activeSeerrScanController = null;
+            }
+        }
+
+        async function triggerSeerrScanNow() {
+            const urlsInput = document.querySelector('#seerrUrls');
+            const keyInput = document.querySelector('#SeerrApiKey');
+            const rawUrls = (urlsInput && urlsInput.value) || '';
+            const domains = jcParseSeerrIdentityDomains(rawUrls);
+            const apiKey = ((keyInput && keyInput.value) || '').trim();
+            if (!domains.length || !apiKey) {
+                Dashboard.alert({
+                    title: 'Missing Information',
+                    message: 'Please provide at least one Seerr URL and an API key in the Setup section above.'
+                });
+                return;
+            }
+            cancelActiveSeerrScan();
+            const controller = new AbortController();
+            activeSeerrScanController = controller;
+            const btn = document.querySelector('#triggerSeerrScanNowBtn');
+            const statusEl = document.querySelector('#triggerSeerrScanNowStatus');
+            if (btn) {
+                btn.disabled = true;
+            }
+            if (statusEl) {
+                statusEl.textContent = 'sync';
+                statusEl.className = 'material-icons status-check';
+                statusEl.style.color = 'var(--jc-accent)';
+            }
+            try {
+                const dispatch = await jcDispatchSeerrScanDomains(rawUrls, function (batch) {
+                    return ApiClient.ajax({
+                        type: 'POST',
+                        url: ApiClient.getUrl('/JellyfinCanopy/seerr/trigger-recently-added-scan', { urls: batch.join('\n') }),
+                        dataType: 'json',
+                        headers: { 'X-Arr-ApiKey': apiKey },
+                        signal: controller.signal
+                    }).catch(function (e) {
+                        if (controller.signal.aborted) {
+                            return { ok: false, message: '' };
+                        }
+                        return { ok: false, message: connectionErrorMessage(e, 'Seerr', batch[0] || '') };
+                    });
+                }, controller.signal);
+                if (dispatch.cancelled) {
+                    return;
+                }
+                dispatch.results.forEach(function (entry) {
+                    if (!entry.ok) {
+                        console.error('Seerr scan trigger failed for ' + entry.domain + ':', entry.error || 'Upstream rejected the trigger');
+                    }
+                });
+                const summary = jcSummarizeSeerrScanDispatch(dispatch);
+                if (summary.outcome === 'success') {
+                    if (statusEl) {
+                        statusEl.textContent = 'check_circle';
+                        statusEl.style.color = 'var(--jc-success)';
+                    }
+                    jcTestAlert({
+                        title: 'Scans Triggered',
+                        message: 'Triggered "Jellyfin Recently Added Scan" for all ' + summary.total
+                            + ' Seerr identity domain' + (summary.total === 1 ? '' : 's') + '.'
+                    });
+                } else if (summary.outcome === 'partial') {
+                    if (statusEl) {
+                        statusEl.textContent = 'warning';
+                        statusEl.style.color = 'var(--jc-warning)';
+                    }
+                    jcTestAlert({
+                        title: 'Scans Partially Triggered',
+                        message: 'Triggered ' + summary.succeeded + ' of ' + summary.total
+                            + ' Seerr identity domains; ' + summary.failed
+                            + ' failed. Each URL was attempted once. Check the browser console and server log for failure details.'
+                    });
+                } else {
+                    if (statusEl) {
+                        statusEl.textContent = 'error';
+                        statusEl.style.color = 'var(--jc-danger)';
+                    }
+                    jcTestAlert({
+                        title: 'Trigger Failed',
+                        message: 'None of the ' + summary.total + ' Seerr identity domain'
+                            + (summary.total === 1 ? '' : 's')
+                            + ' accepted the scan trigger. Check the browser console and server log for failure details.'
+                    });
+                }
+            } finally {
+                if (activeSeerrScanController === controller) {
+                    activeSeerrScanController = null;
+                }
+                if (btn) {
+                    btn.disabled = false;
+                }
+                if (statusEl) {
+                    statusEl.classList.remove('status-check');
+                    if (controller.signal.aborted) {
+                        statusEl.textContent = '';
+                    }
+                }
+            }
+        }
+
+        // ---------------------------------------------------------------------------
+        // C. Sonarr/Radarr multi-instance cards
+        // ---------------------------------------------------------------------------
+
+        let _arrParseOK = { sonarr: true, radarr: true };
+
+        function normalizeArrInstanceId(value) {
+            // Instance ids are opaque 128-bit hex tokens. Never derive one in the browser
+            // from URL/API-key material — credentials must not become client-visible identity.
+            const id = String(value || '').toLowerCase();
+            return /^[0-9a-f]{32}$/.test(id) ? id : '';
+        }
+
+        function createArrInstanceId() {
+            try {
+                const bytes = new Uint8Array(16);
+                window.crypto.getRandomValues(bytes);
+                let id = '';
+                for (let i = 0; i < bytes.length; i++) {
+                    id += bytes[i].toString(16).padStart(2, '0');
+                }
+                return id;
+            } catch (e) {
+                // Safe: the server save hook fills blanks.
+                return '';
+            }
+        }
+
+        function tryParseInstanceList(raw, type, container) {
+            // Runs in a bare context in tests: reference only _arrParseOK, console and
+            // insertCorruptBanner here. Never log the raw payload or key material.
+            if (!raw) {
+                return [];
+            }
+            try {
+                const parsed = JSON.parse(raw);
+                if (!Array.isArray(parsed)) {
+                    throw new Error('Instances value is not an array');
+                }
+                return parsed;
+            } catch (e) {
+                _arrParseOK[type] = false;
+                const errorClass = e instanceof SyntaxError ? 'SyntaxError' : 'InvalidShape';
+                console.error('[JC Config] Failed to parse ' + type + 'Instances (' + errorClass + ') — refusing to overwrite on save.');
+                insertCorruptBanner(container, type);
+                return [];
+            }
+        }
+
+        function insertCorruptBanner(container, type) {
+            const label = type === 'sonarr' ? 'Sonarr' : 'Radarr';
+            const banner = document.createElement('div');
+            banner.className = 'arr-corrupt-banner';
+            banner.setAttribute('data-arr-corrupt', type);
+            banner.style.cssText = 'padding: 0.8em 1em; margin-bottom: 1em; border: 1px solid var(--jc-danger); background: color-mix(in srgb, var(--jc-danger) 15%, transparent); border-radius: 4px;';
+            const title = document.createElement('strong');
+            title.textContent = '⚠ Stored ' + label + ' instance configuration is corrupted.';
+            banner.appendChild(title);
+            const detail = document.createElement('div');
+            detail.textContent = 'The saved JSON could not be parsed. Saving this page will NOT overwrite the stored value or the legacy '
+                + label + ' URL/API key — so existing configuration is preserved. To recover: either fix the stored JSON directly in '
+                + 'Jellyfin\'s plugin config, or click the button below to reset this list (destroys the unreadable value).';
+            banner.appendChild(detail);
+            const resetBtn = document.createElement('button');
+            resetBtn.setAttribute('is', 'emby-button');
+            resetBtn.type = 'button';
+            resetBtn.className = 'raised emby-button';
+            const resetSpan = document.createElement('span');
+            resetSpan.textContent = 'Reset ' + label + ' instances (clears stored value)';
+            resetBtn.appendChild(resetSpan);
+            resetBtn.addEventListener('click', function (e) {
+                e.preventDefault();
+                Dashboard.confirm(
+                    'Reset the corrupt ' + label + ' instance configuration? The stored JSON is unreadable so any instances it contained cannot be recovered. You will need to add them again. The reset takes effect when you click Save.',
+                    'Reset Instances',
+                    function (confirmed) {
+                        if (!confirmed) {
+                            return;
+                        }
+                        _arrParseOK[type] = true;
+                        banner.remove();
+                    }
+                );
+            });
+            banner.appendChild(resetBtn);
+            if (container && container.appendChild) {
+                container.appendChild(banner);
+            }
+        }
+
+        function createInstanceCard(type, instance, startOpen) {
+            const isSonarr = type === 'sonarr';
+            const defaultName = isSonarr ? 'Sonarr' : 'Radarr';
+            const namePlaceholder = isSonarr ? 'e.g., TV Shows, Anime' : 'e.g., Movies, 4K Movies';
+            const defaultPort = isSonarr ? '8989' : '7878';
+            const urlPlaceholder = 'e.g., http://192.168.1.100:' + defaultPort;
+
+            const card = document.createElement('details');
+            card.className = 'arr-instance-card';
+            card.dataset.type = type;
+            // A blank URL identifies a genuinely-new card and gets a fresh random id;
+            // legacy populated rows stay blank so the server applies its deterministic migration.
+            card.dataset.instanceId = normalizeArrInstanceId(instance.InstanceId)
+                || (String(instance.Url || '').trim() === '' ? createArrInstanceId() : '');
+            if (startOpen) {
+                card.open = true;
+            }
+
+            const initialName = String(instance.Name || '').trim() || defaultName;
+            const initiallyEnabled = instance.Enabled !== false;
+
+            // --- Summary row: [enabled checkbox][name][(disabled) chip][url] ---
+            const summary = document.createElement('summary');
+            summary.className = 'arr-instance-summary';
+
+            // Plain checkbox on purpose — is="emby-checkbox" needs a label wrapper that
+            // breaks the summary flex row.
+            const enabledCheckbox = document.createElement('input');
+            enabledCheckbox.type = 'checkbox';
+            enabledCheckbox.className = 'arr-instance-enabled';
+            enabledCheckbox.checked = initiallyEnabled;
+            enabledCheckbox.setAttribute('aria-label', 'Enable ' + initialName + ' instance');
+            enabledCheckbox.title = 'Uncheck to skip this instance in all fan-out paths (links, calendar, queue, tag sync) without deleting its URL/API key';
+            ['click', 'mousedown', 'keydown'].forEach(function (evt) {
+                enabledCheckbox.addEventListener(evt, function (e) {
+                    e.stopPropagation();
+                });
+            });
+
+            const summaryName = document.createElement('span');
+            summaryName.className = 'arr-instance-summary-name';
+            summaryName.textContent = instance.Name || defaultName;
+
+            const disabledChip = document.createElement('span');
+            disabledChip.className = 'arr-instance-summary-disabled';
+            disabledChip.textContent = '(disabled)';
+            disabledChip.style.cssText = 'color: var(--jc-warning); font-size: 0.85em; margin-right: 0.5em;';
+            disabledChip.style.display = initiallyEnabled ? 'none' : 'inline';
+
+            const summaryUrl = document.createElement('span');
+            summaryUrl.className = 'arr-instance-summary-url';
+            summaryUrl.textContent = instance.Url || '';
+
+            summary.appendChild(enabledCheckbox);
+            summary.appendChild(summaryName);
+            summary.appendChild(disabledChip);
+            summary.appendChild(summaryUrl);
+            card.appendChild(summary);
+
+            // --- Body ---
+            const body = document.createElement('div');
+            body.className = 'arr-instance-card-body';
+            body.innerHTML =
+                '<div class="arr-instance-header" style="display: flex; gap: 0.5em; align-items: center;">'
+                + '<input is="emby-input" type="text" class="arr-instance-name" style="flex: 1;" placeholder="' + escapeHtml(namePlaceholder) + '" value="' + escapeHtml(instance.Name || '') + '" />'
+                + '<button is="emby-button" type="button" class="raised arr-instance-remove" title="Remove instance"><span>Remove</span></button>'
+                + '</div>'
+                + '<div class="inputContainer">'
+                + '<label class="inputLabel inputLabelUnfocused">URL (internal)</label>'
+                + '<input is="emby-input" type="text" class="arr-instance-url" placeholder="' + escapeHtml(urlPlaceholder) + '" value="' + escapeHtml(instance.Url || '') + '" />'
+                + '<div class="fieldDescription">The Jellyfin server uses this URL to talk to ' + defaultName + ' directly. If your public URL sits behind an auth proxy (Authentik, Authelia, Cloudflare Access, etc.), put the INTERNAL address here (e.g. http://' + type + ':' + defaultPort + ' or http://192.168.x.y:' + defaultPort + ') and set the External URL below for user-facing links.</div>'
+                + '</div>'
+                + '<div class="inputContainer">'
+                + '<label class="inputLabel inputLabelUnfocused">External URL (optional)</label>'
+                + '<input is="emby-input" type="text" class="arr-instance-externalurl" placeholder="e.g., https://' + type + '.example.com" value="' + escapeHtml(instance.ExternalUrl || '') + '" />'
+                + '<div class="fieldDescription">Public URL a user&#39;s browser opens for links to this instance. Leave blank to reuse the internal URL above. URL Mappings below still take priority when a mapping matches.</div>'
+                + '</div>'
+                + '<div class="inputContainer">'
+                + '<label class="inputLabel inputLabelUnfocused">API Key</label>'
+                + '<div style="display: flex; align-items: center; gap: 0.5em;">'
+                + '<input is="emby-input" type="text" class="arr-instance-apikey" autocomplete="off" placeholder="API key (find in Settings &gt; General &gt; Security)" style="flex: 1;" value="' + escapeHtml(instance.ApiKey || '') + '" />'
+                + '<span class="material-icons arr-instance-status" style="transition: color 0.3s ease;" aria-hidden="true"></span>'
+                + '<button is="emby-button" type="button" class="raised arr-instance-test"><span>Test</span></button>'
+                + '</div>'
+                + '<div class="fieldDescription">Find this in ' + defaultName + ' under Settings &gt; General &gt; Security &gt; API Key</div>'
+                + '</div>'
+                + '<div class="inputContainer">'
+                + '<label class="inputLabel inputLabelUnfocused">URL Mappings (optional)</label>'
+                + '<textarea class="emby-textarea emby-input arr-instance-urlmappings" rows="3" placeholder="jellyfin_url|arr_url (one per line)">' + escapeHtml(instance.UrlMappings || '') + '</textarea>'
+                + '<div class="fieldDescription">Map Jellyfin access URLs to this instance&#39;s URL. Format: jellyfin_url|arr_url (one per line). Useful for reverse-proxy setups.</div>'
+                + '</div>';
+            card.appendChild(body);
+
+            // --- Behaviors ---
+            const nameInput = body.querySelector('.arr-instance-name');
+            const urlInput = body.querySelector('.arr-instance-url');
+            const removeBtn = body.querySelector('.arr-instance-remove');
+            const testBtn = body.querySelector('.arr-instance-test');
+
+            nameInput.addEventListener('input', function () {
+                const name = nameInput.value.trim() || defaultName;
+                summaryName.textContent = name;
+                enabledCheckbox.setAttribute('aria-label', 'Enable ' + name + ' instance');
+            });
+            urlInput.addEventListener('input', function () {
+                summaryUrl.textContent = urlInput.value.trim();
+            });
+
+            function setBodyDisabled(disabled) {
+                // Hard-disable every control so edits can't silently persist while disabled.
+                body.querySelectorAll('input, textarea, button, select').forEach(function (el) {
+                    if (disabled) {
+                        el.setAttribute('disabled', '');
+                    } else {
+                        el.removeAttribute('disabled');
+                    }
+                });
+            }
+
+            enabledCheckbox.addEventListener('change', function () {
+                // Backend remains the authority — this is UI feedback until Save.
+                const enabled = enabledCheckbox.checked;
+                disabledChip.style.display = enabled ? 'none' : 'inline';
+                card.classList.toggle('arr-instance-disabled', !enabled);
+                setBodyDisabled(!enabled);
+                try {
+                    renderServiceStatusDashboard();
+                } catch (e) {
+                    console.warn('[JC] renderServiceStatusDashboard threw from arr-instance enable-toggle:', e);
+                }
+            });
+            setBodyDisabled(!initiallyEnabled);
+            if (!initiallyEnabled) {
+                card.classList.add('arr-instance-disabled');
+            }
+
+            removeBtn.addEventListener('click', function (e) {
+                e.preventDefault();
+                const name = nameInput.value.trim() || defaultName;
+                Dashboard.confirm(
+                    'Remove "' + name + '" from the instance list? The change takes effect when you click Save. If you leave the page without saving, the instance is kept.\n\nTip: If you just want to stop using it temporarily, uncheck Enabled instead — that preserves the URL and API key.',
+                    'Remove Instance',
+                    function (confirmed) {
+                        if (!confirmed) {
+                            return;
+                        }
+                        card.remove();
+                        jcMarkConfigDirty();
+                        updateAllDependencies();
+                    }
+                );
+            });
+
+            testBtn.addEventListener('click', function (e) {
+                e.preventDefault();
+                testInstanceConnection(card);
+            });
+
+            return card;
+        }
+
+        function loadArrInstances(config) {
+            _arrParseOK.sonarr = true;
+            _arrParseOK.radarr = true;
+            ['sonarr', 'radarr'].forEach(function (type) {
+                const container = document.querySelector('#' + type + 'InstancesList');
+                if (!container) {
+                    return;
+                }
+                container.textContent = '';
+                const typeName = type === 'sonarr' ? 'Sonarr' : 'Radarr';
+                let instances = tryParseInstanceList(config[typeName + 'Instances'], type, container);
+                // Legacy migration: only when the parse succeeded AND there are zero instances
+                // AND both legacy fields are present. Skipped on parse failure — legacy fields
+                // may be stale/already migrated.
+                if (_arrParseOK[type] && instances.length === 0) {
+                    const legacyUrl = config[typeName + 'Url'];
+                    const legacyKey = config[typeName + 'ApiKey'];
+                    if (legacyUrl && legacyKey) {
+                        instances = [{
+                            Name: typeName,
+                            Url: legacyUrl,
+                            ExternalUrl: config[typeName + 'ExternalUrl'] || '',
+                            ApiKey: legacyKey,
+                            UrlMappings: config[typeName + 'UrlMappings'] || ''
+                        }];
+                    }
+                }
+                instances.forEach(function (inst) {
+                    container.appendChild(createInstanceCard(type, inst || {}, false));
+                });
+            });
+        }
+
+        function renderArrInstances(config) {
+            loadArrInstances(config);
+        }
+
+        /* jcIsHttpUrl is owned by the core section. */
+
+        function collectInstancesFromDom(selector, defaultName) {
+            const instances = [];
+            const incomplete = [];
+            const renamed = [];
+            const droppedExternal = [];
+            const seen = Object.create(null);
+            document.querySelectorAll(selector).forEach(function (card) {
+                const urlInput = card.querySelector('.arr-instance-url');
+                const keyInput = card.querySelector('.arr-instance-apikey');
+                const nameInput = card.querySelector('.arr-instance-name');
+                const url = ((urlInput && urlInput.value) || '').trim();
+                const apiKey = ((keyInput && keyInput.value) || '').trim();
+                const rawName = ((nameInput && nameInput.value) || '').trim() || defaultName;
+                if (url && !apiKey) {
+                    // Would otherwise be silently dropped — surface it as a save warning.
+                    incomplete.push(rawName);
+                    return;
+                }
+                if (!url || !apiKey) {
+                    // Neither, or only an API key → dropped silently.
+                    return;
+                }
+                // Duplicate-name disambiguation: Name is the ONLY runtime targeting key
+                // (arr links, calendar, tag sync, action-sheet grab/monitor).
+                let name = rawName;
+                const nameKey = rawName.toLowerCase();
+                const priorCount = seen[nameKey] || 0;
+                if (priorCount > 0) {
+                    name = rawName + ' (' + (priorCount + 1) + ')';
+                    seen[nameKey] = priorCount + 1;
+                    const suffixedKey = name.toLowerCase();
+                    seen[suffixedKey] = (seen[suffixedKey] || 0) + 1;
+                    renamed.push(rawName + '” → “' + name);
+                } else {
+                    seen[nameKey] = 1;
+                }
+                const externalInput = card.querySelector('.arr-instance-externalurl');
+                const rawExternal = ((externalInput && externalInput.value) || '').trim();
+                let externalUrl = '';
+                if (rawExternal) {
+                    if (jcIsHttpUrl(rawExternal)) {
+                        externalUrl = rawExternal;
+                    } else {
+                        droppedExternal.push(name + ': ' + rawExternal);
+                    }
+                }
+                const mappingsEl = card.querySelector('.arr-instance-urlmappings');
+                const enabledCheckbox = card.querySelector('.arr-instance-enabled');
+                instances.push({
+                    InstanceId: normalizeArrInstanceId(card.dataset.instanceId),
+                    Name: name,
+                    Url: url,
+                    ExternalUrl: externalUrl,
+                    ApiKey: apiKey,
+                    UrlMappings: (mappingsEl && mappingsEl.value) || '',
+                    // Missing checkbox = enabled (defensive against DOM surgery).
+                    Enabled: enabledCheckbox ? enabledCheckbox.checked : true
+                });
+            });
+            return {
+                instances: instances,
+                incomplete: incomplete,
+                renamed: renamed,
+                droppedExternal: droppedExternal
+            };
+        }
+
+        // Warning-string builders for the save path (core's saveArrInstances consumes these;
+        // the caller alerts each with title '⚠ Incomplete *arr instance').
+        function buildArrIncompleteWarning(typeName, name) {
+            return typeName + ' instance "' + name + '" has a URL but no API key — it was not saved.';
+        }
+
+        function buildArrRenamedWarning(typeName, renamedFragment) {
+            // renamedFragment already contains the 'old” → “new' interior; this template
+            // supplies the surrounding curly quotes.
+            return 'Renamed duplicate ' + typeName + ' instance “' + renamedFragment + '” so actions target the right instance.';
+        }
+
+        function buildArrDroppedExternalWarning(typeName, dropped) {
+            return 'Dropped invalid ' + typeName + ' External URL (must be an http(s) URL without credentials or query/fragment) — ' + dropped;
+        }
+
+        function buildArrInstanceWarnings(typeName, collected) {
+            const warnings = [];
+            collected.incomplete.forEach(function (name) {
+                warnings.push(buildArrIncompleteWarning(typeName, name));
+            });
+            collected.renamed.forEach(function (renamedFragment) {
+                warnings.push(buildArrRenamedWarning(typeName, renamedFragment));
+            });
+            collected.droppedExternal.forEach(function (dropped) {
+                warnings.push(buildArrDroppedExternalWarning(typeName, dropped));
+            });
+            return warnings;
+        }
+
+        // ---------------------------------------------------------------------------
+        // Wiring (called once by the integrator's init sequence — the old per-pageshow
+        // rewiring accumulated duplicate listeners; wiring once is the approved fix)
+        // ---------------------------------------------------------------------------
+
+        function wireConnections() {
+            const testSeerrBtn = document.querySelector('#testSeerrBtn');
+            if (testSeerrBtn) {
+                testSeerrBtn.addEventListener('click', function (e) {
+                    e.preventDefault();
+                    testSeerrConnection();
+                });
+            }
+
+            const testMaintainerrBtn = document.querySelector('#testMaintainerrBtn');
+            if (testMaintainerrBtn) {
+                testMaintainerrBtn.addEventListener('click', function (e) {
+                    e.preventDefault();
+                    testMaintainerrConnection();
+                });
+            }
+
+            // Multiple TMDB test buttons exist across tabs; each resolves its own indicator.
+            // After the test settles, refresh TMDB-gated toggles.
+            document.querySelectorAll('.testTmdbBtn').forEach(function (btn) {
+                btn.addEventListener('click', function (e) {
+                    e.preventDefault();
+                    Promise.resolve(testTmdbConnection(e)).then(function () {
+                        updateAllDependencies();
+                    });
+                });
+            });
+
+            // TMDB key mirror sync: #TMDB_API_KEY (Elsewhere tab) and #seerr_TMDB_API_KEY
+            // (Seerr tab) back a single config value; on save the Seerr-tab field wins.
+            const tmdbMain = document.querySelector('#TMDB_API_KEY');
+            const tmdbSeerr = document.querySelector('#seerr_TMDB_API_KEY');
+            if (tmdbMain && tmdbSeerr) {
+                tmdbMain.addEventListener('input', function () {
+                    tmdbSeerr.value = tmdbMain.value;
+                });
+                tmdbSeerr.addEventListener('input', function () {
+                    tmdbMain.value = tmdbSeerr.value;
+                });
+            }
+
+            // Persisted-result invalidation on committed edits of the tested inputs.
+            _wireInvalidate('#TMDB_API_KEY', 'tmdb');
+            _wireInvalidate('#seerr_TMDB_API_KEY', 'tmdb');
+            _wireInvalidate('#seerrUrls', 'seerr');
+            _wireInvalidate('#SeerrApiKey', 'seerr');
+            _wireInvalidate('#maintainerrUrl',  'maintainerr');
+
+            // Typing in the Maintainerr URL aborts an in-flight test and resets its UI.
+            const maintainerrUrlInput = document.querySelector('#maintainerrUrl');
+            if (maintainerrUrlInput) {
+                maintainerrUrlInput.addEventListener('input', function () {
+                    cancelActiveMaintainerrTest(true);
+                });
+            }
+
+            // Mapping validation buttons.
+            const validateSonarrBtn = document.querySelector('#validateSonarrMappingsBtn');
+            if (validateSonarrBtn) {
+                validateSonarrBtn.addEventListener('click', function (e) {
+                    e.preventDefault();
+                    _jeValidateInstanceMappings('sonarr', 'validateSonarrMappingsBtn', 'sonarrMappingsValidationResult', 'Sonarr');
+                });
+            }
+            const validateRadarrBtn = document.querySelector('#validateRadarrMappingsBtn');
+            if (validateRadarrBtn) {
+                validateRadarrBtn.addEventListener('click', function (e) {
+                    e.preventDefault();
+                    _jeValidateInstanceMappings('radarr', 'validateRadarrMappingsBtn', 'radarrMappingsValidationResult', 'Radarr');
+                });
+            }
+            const validateBazarrBtn = document.querySelector('#validateBazarrMappingsBtn');
+            if (validateBazarrBtn) {
+                validateBazarrBtn.addEventListener('click', function (e) {
+                    e.preventDefault();
+                    const bazarrMappings = document.querySelector('#bazarrUrlMappings');
+                    if (!bazarrMappings || !bazarrMappings.value.trim()) {
+                        Dashboard.alert({
+                            title: 'No Mappings',
+                            message: 'No Bazarr URL mappings configured. Fill in the Bazarr URL Mappings field above to validate.'
+                        });
+                        return;
+                    }
+                    jcRunMappingValidation([{ id: 'bazarrUrlMappings', service: 'Bazarr' }], 'validateBazarrMappingsBtn', 'bazarrMappingsValidationResult');
+                });
+            }
+            const validateSeerrBtn = document.querySelector('#validateSeerrMappingsBtn');
+            if (validateSeerrBtn) {
+                validateSeerrBtn.addEventListener('click', function (e) {
+                    e.preventDefault();
+                    jcRunMappingValidation([{ id: 'seerrUrlMappings', service: 'Seerr' }], 'validateSeerrMappingsBtn', 'seerrMappingsValidationResult');
+                });
+            }
+            const validateMaintainerrBtn = document.querySelector('#validateMaintainerrMappingsBtn');
+            if (validateMaintainerrBtn) {
+                validateMaintainerrBtn.addEventListener('click', function (e) {
+                    e.preventDefault();
+                    const maintainerrMappings = document.querySelector('#maintainerrUrlMappings');
+                    if (!maintainerrMappings || !maintainerrMappings.value.trim()) {
+                        Dashboard.alert({
+                            title: 'No Mappings',
+                            message: 'No Maintainerr URL mappings are configured.'
+                        });
+                        return;
+                    }
+                    validateMaintainerrMappingSet('maintainerrUrlMappings', validateMaintainerrBtn, 'maintainerrMappingsValidationResult');
+                });
+            }
+
+            const triggerSeerrScanBtn = document.querySelector('#triggerSeerrScanNowBtn');
+            if (triggerSeerrScanBtn) {
+                triggerSeerrScanBtn.addEventListener('click', function (e) {
+                    e.preventDefault();
+                    triggerSeerrScanNow();
+                });
+            }
+
+        }
+
+        /* Page-lifecycle cancellation (both event names exist across Jellyfin builds).
+           The exact wiring shape is a drift-guard contract. */
+        page.addEventListener('pagehide', function() {
+            cancelActiveMaintainerrTest(true);
+            cancelActiveSeerrScan();
         });
-    });
-}
+        page.addEventListener('viewhide', function() {
+            cancelActiveMaintainerrTest(true);
+            cancelActiveSeerrScan();
+        });
+
+        function wireArrInstances() {
+            [['#addSonarrInstance', 'sonarr'], ['#addRadarrInstance', 'radarr']].forEach(function (pair) {
+                const btn = document.querySelector(pair[0]);
+                if (!btn) {
+                    return;
+                }
+                btn.addEventListener('click', function (e) {
+                    e.preventDefault();
+                    const container = document.querySelector('#' + pair[1] + 'InstancesList');
+                    if (!container) {
+                        return;
+                    }
+                    // Open card; fresh random InstanceId since Url is blank. Adding does not
+                    // itself mark dirty — typing into the new card does, via the form listener.
+                    container.appendChild(createInstanceCard(pair[1], { Name: '', Url: '', ExternalUrl: '', ApiKey: '', UrlMappings: '' }, true));
+                    updateAllDependencies();
+                });
+            });
+        }
 
 /* SECTION: widgets — owns: descriptions toggle (jc-settings-descriptions-visible), dependency gating
    (SECTION_DEPS/INDIVIDUAL_DEPS/PARENT_DEPS, applyGatedHelp, updateAllDependencies, debouncedUpdateDeps,
