@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>SpikeContracts</AssemblyName>
+    <RootNamespace>Ep00.Contracts</RootNamespace>
+    <!-- Deliberately overridden per build: -p:SpikeContractsVersion=1.0.0 / 2.0.0 -->
+    <SpikeContractsVersion Condition="'$(SpikeContractsVersion)'==''">1.0.0</SpikeContractsVersion>
+    <AssemblyVersion>$(SpikeContractsVersion).0</AssemblyVersion>
+    <FileVersion>$(SpikeContractsVersion).0</FileVersion>
+    <Version>$(SpikeContractsVersion)</Version>
+  </PropertyGroup>
+</Project>
