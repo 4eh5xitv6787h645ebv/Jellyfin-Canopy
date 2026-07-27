@@ -69,6 +69,60 @@ function htmlAttributeValue(tag, name) {
     return match ? markdown.utils.unescapeAll(match[1] ?? match[2] ?? match[3]) : '';
 }
 
+const HTML_ROUTE_INERT_CONTENT_ELEMENTS = new Set([
+    'iframe', 'noembed', 'noframes', 'plaintext', 'script', 'style',
+    'template', 'textarea', 'title', 'xmp',
+]);
+const HTML_LABEL_INERT_CONTENT_ELEMENTS = new Set(['template']);
+
+function maskHtmlElementContents(content, elements) {
+    const stack = [];
+    const ranges = [];
+    const pattern = /<(\/?)([a-z][a-z0-9:-]*)\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi;
+    for (const match of content.matchAll(pattern)) {
+        const closing = match[1] === '/';
+        const tag = match[2].toLowerCase();
+        const active = stack.at(-1);
+        if (active && active.tag !== 'template'
+            && !(closing && tag === active.tag)) {
+            continue;
+        }
+        if (closing) {
+            const opening = lastHtmlStackTagIndex(stack, tag);
+            if (opening === -1) continue;
+            for (const record of stack.slice(opening)) {
+                ranges.push([record.contentStart, match.index]);
+            }
+            stack.splice(opening);
+        } else if (elements.has(tag)) {
+            stack.push({
+                tag,
+                contentStart: match.index + match[0].length,
+            });
+        }
+    }
+    for (const record of stack) ranges.push([record.contentStart, content.length]);
+    if (ranges.length === 0) return content;
+    ranges.sort((left, right) => left[0] - right[0] || left[1] - right[1]);
+    const merged = [];
+    for (const range of ranges) {
+        const prior = merged.at(-1);
+        if (prior && range[0] <= prior[1]) {
+            prior[1] = Math.max(prior[1], range[1]);
+        } else {
+            merged.push([...range]);
+        }
+    }
+    let masked = '';
+    let offset = 0;
+    for (const [start, end] of merged) {
+        masked += content.slice(offset, start);
+        masked += content.slice(start, end).replace(/[^\r\n]/g, ' ');
+        offset = end;
+    }
+    return masked + content.slice(offset);
+}
+
 function stripHiddenHtml(
     content,
     excludeAriaHidden = false,
@@ -167,15 +221,19 @@ function combinedHtmlLabel(accessible, visual) {
 }
 
 function governedHtmlText(content, labels = new Map(), initialStates = {}, options = {}) {
+    const renderedContent = maskHtmlElementContents(
+        content,
+        HTML_LABEL_INERT_CONTENT_ELEMENTS
+    );
     return combinedHtmlLabel(
         accessibleHtmlText(
-            content,
+            renderedContent,
             labels,
             true,
             initialStates.accessibility,
             options
         ),
-        visuallyRenderedHtmlText(content, initialStates.visual, options)
+        visuallyRenderedHtmlText(renderedContent, initialStates.visual, options)
     );
 }
 
@@ -862,6 +920,23 @@ function htmlAssociatedLabelNodes(records, ids) {
     return associations;
 }
 
+function directReferencedHtmlValues(records) {
+    const values = Array(records.length).fill('');
+    for (let index = records.length - 1; index >= 0; index -= 1) {
+        const record = records[index];
+        if (['script', 'style', 'template'].includes(record.tag)) continue;
+        const body = boundedHtmlParts(record.parts, part => (
+            typeof part === 'string' ? part : values[part.index]
+        ));
+        const text = htmlAttributeText(record.openingTag, 'aria-label')
+            || htmlEmbeddedControlValue(record, body, values)
+            || htmlNativeAccessibleName(record, body)
+            || body;
+        values[index] = boundedDomText([text]);
+    }
+    return values;
+}
+
 function resolvedHtmlIdLabels(records, ids) {
     const idEntries = [...ids];
     const associationNodes = htmlAssociatedLabelNodes(records, ids);
@@ -907,10 +982,18 @@ function resolvedHtmlIdLabels(records, ids) {
         }
     }
 
+    const directlyReferencedValues = directReferencedHtmlValues(records);
     for (const [entryIndex, [, record]] of idEntries.entries()) {
+        const idNode = idOffset + entryIndex;
+        for (const id of record.referenceIds) {
+            dependencies[idNode].push({
+                node: labelNodeById.get(id),
+                reference: true,
+            });
+        }
         if (!record.visualState.persistentHidden
             && !record.accessibilityState.persistentHidden) {
-            dependencies[idOffset + entryIndex].push({
+            dependencies[idNode].push({
                 node: record.index,
                 reference: false,
             });
@@ -993,10 +1076,15 @@ function resolvedHtmlIdLabels(records, ids) {
                     ? record.accessibilityState.hidden ? '' : part
                     : values[part.index]
             ));
-            let label = record.accessibilityState.hidden ? '' : (
-                htmlEmbeddedControlValue(record, body, values)
-                || values[record.index]
-            );
+            const referenced = boundedDomText(record.referenceIds
+                .filter(id => (
+                    components[node] !== components[labelNodeById.get(id)]
+                ))
+                .map(id => values[labelNodeById.get(id)]));
+            let label = record.accessibilityState.hidden
+                ? referenced || directlyReferencedValues[record.index]
+                : htmlEmbeddedControlValue(record, body, values)
+                    || values[record.index];
             if (!record.visualState.persistentHidden && !label) {
                 label = record.accessibilityState.persistentHidden
                     ? record.visualText
@@ -1017,7 +1105,10 @@ function resolvedHtmlIdLabels(records, ids) {
 }
 
 function htmlIdLabels(content, options = {}) {
-    const source = stripHtmlComments(content);
+    const source = maskHtmlElementContents(
+        stripHtmlComments(content),
+        HTML_LABEL_INERT_CONTENT_ELEMENTS
+    );
     const documentMode = Boolean(options.documentMode);
     const idAttributes = htmlAttributeRecords(source)
         .filter(attribute => attribute.name === 'id');
@@ -1328,7 +1419,7 @@ function htmlPriorBlockText(content, boundary, labels, options = {}) {
         .filter(Boolean).at(-1) || '';
 }
 
-function htmlAnchorHiddenStates(content, options = {}) {
+function htmlOpeningHiddenStates(content, options = {}) {
     const states = new Map();
     const stack = [];
     const documentMode = Boolean(options.documentMode);
@@ -1341,8 +1432,11 @@ function htmlAnchorHiddenStates(content, options = {}) {
             documentMode
         );
         updateHtmlVisibilityStack(stack, match[0], false, documentMode);
-        if (match[1] !== '/' && match[2].toLowerCase() === 'a') {
-            states.set(match.index, Boolean(stack.at(-1)?.hidden));
+        if (match[1] !== '/') {
+            states.set(
+                match.index,
+                Boolean(stack.at(-1)?.hidden) || htmlTagIsHidden(match[0])
+            );
         }
         offset = match.index + match[0].length;
     }
@@ -1352,7 +1446,7 @@ function htmlAnchorHiddenStates(content, options = {}) {
 function htmlAnchorRecords(content, labels = htmlIdLabels(content), options = {}) {
     const anchors = [];
     const closing = /<\/a\s*>/gi;
-    const hiddenStates = htmlAnchorHiddenStates(content, options);
+    const hiddenStates = htmlOpeningHiddenStates(content, options);
     const openings = [];
     for (const match of content.matchAll(/<a\b/gi)) {
         const openingEnd = htmlOpeningTagEnd(content, match.index);
@@ -1445,19 +1539,180 @@ function htmlAnchorRecords(content, labels = htmlIdLabels(content), options = {}
     return anchors;
 }
 
+function htmlOpeningElementRecords(
+    content,
+    tag,
+    voidElement = false,
+    ignoreNestedOpening = false
+) {
+    const records = [];
+    const pattern = new RegExp(
+        `<(\\/?)${tag}\\b(?:[^>"']|"[^"]*"|'[^']*')*>`,
+        'gi'
+    );
+    let active = null;
+    for (const match of content.matchAll(pattern)) {
+        const closing = match[1] === '/';
+        if (closing) {
+            if (!active || voidElement) continue;
+            active.contentEnd = match.index;
+            active.end = match.index + match[0].length;
+            active = null;
+            continue;
+        }
+        if (active && ignoreNestedOpening) continue;
+        if (active) {
+            active.contentEnd = match.index;
+            active.end = match.index;
+        }
+        const openingEnd = match.index + match[0].length;
+        const record = {
+            start: match.index,
+            openingEnd,
+            openingTag: match[0],
+            contentEnd: openingEnd,
+            end: openingEnd,
+        };
+        records.push(record);
+        if (!voidElement) active = record;
+    }
+    if (active) {
+        active.contentEnd = content.length;
+        active.end = content.length;
+    }
+    return records;
+}
+
+function htmlAssociatedForm(control, forms, formsById) {
+    const explicitId = htmlAttributeValue(control.openingTag, 'form');
+    if (explicitId) return formsById.get(explicitId) || null;
+    let lower = 0;
+    let upper = forms.length;
+    while (lower < upper) {
+        const middle = Math.floor((lower + upper) / 2);
+        if (forms[middle].start < control.start) {
+            lower = middle + 1;
+        } else {
+            upper = middle;
+        }
+    }
+    const candidate = forms[lower - 1];
+    return candidate && control.start < candidate.end ? candidate : null;
+}
+
+function htmlSubmitControlLabel(control, content, labels, options) {
+    const labelled = ariaLabelledText(control.openingTag, labels);
+    const ariaLabel = htmlAttributeText(control.openingTag, 'aria-label');
+    const title = htmlAttributeText(control.openingTag, 'title');
+    if (control.tag === 'button') {
+        const body = governedHtmlText(
+            content.slice(control.openingEnd, control.contentEnd),
+            labels,
+            {},
+            options
+        ).replace(/\s+/g, ' ').trim();
+        return boundedDomText([labelled || ariaLabel || body || title]);
+    }
+    const type = htmlAttributeText(control.openingTag, 'type').toLowerCase();
+    const native = type === 'image'
+        ? htmlAttributeText(control.openingTag, 'alt') || title
+        : htmlAttributeText(control.openingTag, 'value') || 'Submit';
+    return boundedDomText([labelled || ariaLabel || native || title]);
+}
+
+function htmlFormSubmissionLinks(
+    content,
+    line,
+    labels,
+    context,
+    hiddenStates,
+    options = {}
+) {
+    const forms = htmlOpeningElementRecords(content, 'form', false, true)
+        .map(record => ({
+            ...record,
+            action: htmlAttributeValue(record.openingTag, 'action'),
+        }));
+    const formsById = new Map();
+    for (const form of forms) {
+        const id = htmlAttributeValue(form.openingTag, 'id');
+        if (id && !formsById.has(id)) formsById.set(id, form);
+    }
+    const buttons = htmlOpeningElementRecords(content, 'button')
+        .map(record => ({ ...record, tag: 'button' }));
+    const inputs = htmlOpeningElementRecords(content, 'input', true)
+        .map(record => ({ ...record, tag: 'input' }));
+    const links = [];
+    for (const control of [...buttons, ...inputs]
+        .sort((left, right) => left.start - right.start)) {
+        const type = htmlAttributeText(control.openingTag, 'type').toLowerCase()
+            || (control.tag === 'button' ? 'submit' : 'text');
+        if (!['submit', 'image'].includes(type)
+            || htmlTagHasAttribute(control.openingTag, 'disabled')) {
+            continue;
+        }
+        const form = htmlAssociatedForm(control, forms, formsById);
+        if (!form) continue;
+        const method = htmlTagHasAttribute(control.openingTag, 'formmethod')
+            ? htmlAttributeText(control.openingTag, 'formmethod')
+            : htmlAttributeText(form.openingTag, 'method');
+        if (method.toLowerCase() === 'dialog') continue;
+        const action = htmlTagHasAttribute(control.openingTag, 'formaction')
+            ? htmlAttributeValue(control.openingTag, 'formaction')
+            : form.action;
+        if (!action) continue;
+        links.push({
+            target: normalizeLinkTarget(action),
+            line,
+            type: 'link',
+            label: htmlSubmitControlLabel(control, content, labels, options),
+            context,
+            hidden: hiddenStates.get(control.start) || false,
+        });
+    }
+    return links;
+}
+
+function htmlAreaRecords(content, labels, hiddenStates) {
+    return htmlOpeningElementRecords(content, 'area', true).map(record => ({
+        ...record,
+        label: boundedDomText([
+            ariaLabelledText(record.openingTag, labels)
+                || htmlAttributeText(record.openingTag, 'aria-label')
+                || htmlAttributeText(record.openingTag, 'alt')
+                || htmlAttributeText(record.openingTag, 'title'),
+        ]),
+        hidden: hiddenStates.get(record.start) || false,
+    }));
+}
+
 function htmlLinks(
     content,
     line,
     labels = null,
     options = {}
 ) {
-    const resolvedLabels = labels || htmlIdLabels(content, options);
-    const links = [];
-    const visible = stripHtmlComments(content);
+    const uncommented = stripHtmlComments(content);
+    const resolvedLabels = labels || htmlIdLabels(uncommented, options);
+    const visible = maskHtmlElementContents(
+        uncommented,
+        HTML_ROUTE_INERT_CONTENT_ELEMENTS
+    );
     const context = compactGovernedText(visible, resolvedLabels, {}, options);
+    const hiddenStates = htmlOpeningHiddenStates(visible, options);
+    const links = htmlFormSubmissionLinks(
+        visible,
+        line,
+        resolvedLabels,
+        context,
+        hiddenStates,
+        options
+    );
     const anchors = htmlAnchorRecords(visible, resolvedLabels, options);
+    const areas = htmlAreaRecords(visible, resolvedLabels, hiddenStates);
     let anchorIndex = 0;
-    for (const attribute of htmlAttributeRecords(content)) {
+    let areaIndex = 0;
+    for (const attribute of htmlAttributeRecords(visible)) {
         if (attribute.name === 'href') {
             while (anchorIndex < anchors.length
                 && attribute.index >= anchors[anchorIndex].openingEnd) {
@@ -1469,11 +1724,22 @@ function htmlLinks(
                 && attribute.index < candidate.openingEnd
                 ? candidate
                 : null;
+            while (areaIndex < areas.length
+                && attribute.index >= areas[areaIndex].openingEnd) {
+                areaIndex += 1;
+            }
+            const areaCandidate = areas[areaIndex];
+            const area = areaCandidate
+                && attribute.index >= areaCandidate.start
+                && attribute.index < areaCandidate.openingEnd
+                ? areaCandidate
+                : null;
+            const route = anchor || area;
             links.push({
                 target: normalizeLinkTarget(attribute.value),
                 line,
                 type: 'link',
-                label: anchor?.label || '',
+                label: route?.label || '',
                 context,
                 contextBefore: anchor?.contextBefore || '',
                 contextBeforePrior: anchor?.contextBeforePrior || '',
@@ -1481,7 +1747,7 @@ function htmlLinks(
                 contextAfter: anchor?.contextAfter || '',
                 contextBeforeStartsAtLink: anchor?.contextBeforeStartsAtLink || false,
                 contextAfterEndsAtLink: anchor?.contextAfterEndsAtLink || false,
-                hidden: anchor?.hidden || false,
+                hidden: route?.hidden || false,
             });
         } else if (attribute.name === 'src') {
             links.push({
@@ -1678,7 +1944,13 @@ function extractLinksFromTokens(tokens) {
         let childLine = line;
         let linkDepth = 0;
         const htmlVisibilityStack = [];
-        const children = token.children || [];
+        const inlineSource = maskHtmlElementContents(
+            token.content,
+            HTML_ROUTE_INERT_CONTENT_ELEMENTS
+        );
+        const children = inlineSource === token.content
+            ? token.children || []
+            : markdown.parseInline(inlineSource, {})[0]?.children || [];
         const context = inlineSemanticText(children);
         const regions = inlineLinkRegions(children, htmlLabels);
         const regionsByStart = new Map(regions.map(region => [region.startIndex, region]));

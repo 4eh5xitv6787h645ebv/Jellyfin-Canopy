@@ -2475,11 +2475,17 @@ test('hidden SVG metadata cannot govern document prose or adjacent routes', () =
             files[file] = source;
             fixture(files, root => {
                 const problems = auditSupportContract({ root }).problems;
-                assert.ok(!problems.some(problem => (
+                const governed = problems.some(problem => (
                     problem.startsWith(`${file}:`)
                     && (problem.includes('disabled GitHub Discussions')
                         || problem.includes('private GitHub advisories'))
-                )), `${file}: ${hiddenMetadata}`);
+                ));
+                assert.equal(
+                    governed,
+                    source.startsWith('<svg id="hidden-route-name"')
+                        && hiddenMetadata.includes('Vulnerabilities go to Discord'),
+                    `${file}: ${hiddenMetadata}`
+                );
             });
         }
     }
@@ -2515,11 +2521,16 @@ test('hidden SVG metadata cannot govern document prose or adjacent routes', () =
             + `<a aria-labelledby="hidden-route-name" href="${DISCORD_ROUTE}"></a>\n`;
         fixture(files, root => {
             const problems = auditSupportContract({ root }).problems;
-            assert.ok(!problems.some(problem => (
+            const governed = problems.some(problem => (
                 problem.startsWith('theme/partials/support.html:')
                 && (problem.includes('disabled GitHub Discussions')
                     || problem.includes('private GitHub advisories'))
-            )), referencedMetadata);
+            ));
+            assert.equal(
+                governed,
+                referencedMetadata.includes('Vulnerabilities go to Discord'),
+                referencedMetadata
+            );
         });
     }
 
@@ -2558,7 +2569,8 @@ test('hidden SVG metadata cannot govern document prose or adjacent routes', () =
                 assert.equal(problems.some(problem => (
                     problem.startsWith(`${file}:`)
                     && problem.includes('community-support links')
-                )), governed, `${file}: ${metadata}`);
+                )), governed || source.startsWith('<svg id="route-name" '),
+                `${file}: ${metadata}`);
             });
         }
     }
@@ -2589,6 +2601,61 @@ test('hidden SVG metadata cannot govern document prose or adjacent routes', () =
             )), paintedReference);
         });
     }
+});
+
+test('governs form submissions and hidden ID names while inert routes remain inactive', () => {
+    for (const source of [
+        `<form action="${ISSUES_ROUTE}">`
+            + '<button>Submit a vulnerability report</button></form>',
+        '<span id="route-name" hidden>Submit a vulnerability report</span>'
+            + `<a aria-labelledby="route-name" href="${ISSUES_ROUTE}"></a>`,
+        '<span id="route-name" style="display:none">'
+            + 'Submit a vulnerability report</span>'
+            + `<a aria-labelledby="route-name" href="${ISSUES_ROUTE}"></a>`,
+        '<span id="route-name" aria-hidden="true">'
+            + 'Submit a vulnerability report</span>'
+            + `<a aria-labelledby="route-name" href="${ISSUES_ROUTE}"></a>`,
+    ]) {
+        const files = validFixture();
+        files['theme/partials/support.html'] = source;
+        fixture(files, root => {
+            assert.ok(auditSupportContract({ root }).problems.some(problem => (
+                problem.startsWith('theme/partials/support.html:')
+                && problem.includes('security intake links must use private GitHub advisories')
+            )), source);
+        });
+    }
+
+    for (const [opening, closing] of [
+        ['<script>', '</script>'],
+        ['<style>', '</style>'],
+        ['<template>', '</template>'],
+        ['<textarea>', '</textarea>'],
+    ]) {
+        const files = validFixture();
+        files['theme/partials/support.html'] = `${opening}`
+            + `<a href="${ISSUES_ROUTE}">Submit a vulnerability report</a>`
+            + `${closing}`;
+        fixture(files, root => {
+            assert.ok(!auditSupportContract({ root }).problems.some(problem => (
+                problem.startsWith('theme/partials/support.html:')
+                && problem.includes('security intake links must use private GitHub advisories')
+            )), opening);
+        });
+    }
+
+    const inertRequiredRoute = validFixture();
+    inertRequiredRoute['.github/ISSUE_TEMPLATE/bug.md'] = BUG_TEMPLATE.replace(
+        `[the private advisory form](${SECURITY_ADVISORY_ROUTE})`,
+        `<template><a href="${SECURITY_ADVISORY_ROUTE}">`
+            + 'the private advisory form</a></template>'
+    );
+    fixture(inertRequiredRoute, root => {
+        assert.ok(auditSupportContract({ root }).problems.includes(
+            '.github/ISSUE_TEMPLATE/bug.md: '
+            + 'must route vulnerability reports to private GitHub advisories'
+        ));
+    });
 });
 
 test('audits question intent in source and rendered call-to-action wording', () => {

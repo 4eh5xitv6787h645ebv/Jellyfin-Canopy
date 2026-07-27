@@ -508,7 +508,7 @@ test('resolves aria-labelledby accessible names in source and rendered HTML', ()
     }
 });
 
-test('aria-labelledby ignores ancestor-hidden metadata but retains painted SVG text', () => {
+test('aria-labelledby includes directly referenced hidden nodes but ignores inert IDs', () => {
     const target = 'https://example.com/route';
     for (const referenced of [
         '<svg aria-hidden="true"><title id="route-name">Report a problem</title></svg>',
@@ -537,11 +537,12 @@ test('aria-labelledby ignores ancestor-hidden metadata but retains painted SVG t
     ]) {
         const source = referenced
             + `<a aria-labelledby="route-name" href="${target}"></a>`;
+        const inert = referenced.startsWith('<script>');
         for (const links of [extractLinks(source), extractRenderedHtmlLinks(source)]) {
             const link = links.find(candidate => candidate.type === 'link');
             assert.ok(link, referenced);
-            assert.equal(link.label, '', referenced);
-            assert.equal(isActionableLink(link), false, referenced);
+            assert.equal(link.label, inert ? '' : 'Report a problem', referenced);
+            assert.equal(isActionableLink(link), !inert, referenced);
         }
     }
 
@@ -590,6 +591,115 @@ test('aria-labelledby ignores ancestor-hidden metadata but retains painted SVG t
             assert.equal(link.label, 'Report a problem', referenced);
             assert.equal(isActionableLink(link), true, referenced);
         }
+    }
+});
+
+test('extracts HTML form submissions and image-map routes with control names', () => {
+    const formTarget = 'https://example.com/form-route';
+    const overrideTarget = 'https://example.com/override-route';
+    const areaTarget = 'https://example.com/area-route';
+    const sources = [
+        [
+            `<form action="${formTarget}">`
+                + '<button>Submit a vulnerability report</button></form>',
+            formTarget,
+            'Submit a vulnerability report',
+        ],
+        [
+            `<form action="${formTarget}">`
+                + `<button type="submit" formaction="${overrideTarget}" `
+                + 'aria-label="Report a bug"></button></form>',
+            overrideTarget,
+            'Report a bug',
+        ],
+        [
+            `<form id="route-form" action="${formTarget}"></form>`
+                + '<input form="route-form" type="submit" value="Request a feature">',
+            formTarget,
+            'Request a feature',
+        ],
+        [
+            `<form method="dialog" action="${formTarget}">`
+                + '<button formmethod="post">Report a bug</button></form>',
+            formTarget,
+            'Report a bug',
+        ],
+        [
+            `<form action="${formTarget}"><form action="${overrideTarget}">`
+                + '<button>Report a bug</button></form>',
+            formTarget,
+            'Report a bug',
+        ],
+        [
+            `<map><area href="${areaTarget}" alt="Report a bug"></map>`,
+            areaTarget,
+            'Report a bug',
+        ],
+    ];
+    for (const [source, target, label] of sources) {
+        for (const links of [extractLinks(source), extractRenderedHtmlLinks(source)]) {
+            const link = links.find(candidate => candidate.target === target);
+            assert.ok(link, source);
+            assert.equal(link.label, label, source);
+            assert.equal(isActionableLink(link), true, source);
+        }
+    }
+
+    for (const source of [
+        `<form action="${formTarget}"><button type="button" `
+            + `formaction="${overrideTarget}">Report a bug</button></form>`,
+        `<form action="${formTarget}"><button disabled>`
+            + 'Report a bug</button></form>',
+        `<form method="dialog" action="${formTarget}">`
+            + '<button>Report a bug</button></form>',
+        `<form action="${formTarget}"><button formmethod="dialog">`
+            + 'Report a bug</button></form>',
+    ]) {
+        for (const links of [extractLinks(source), extractRenderedHtmlLinks(source)]) {
+            assert.ok(!links.some(link => (
+                [formTarget, overrideTarget].includes(link.target)
+                && isActionableLink(link)
+            )), source);
+        }
+    }
+
+    const hidden = `<form hidden action="${formTarget}">`
+        + '<button>Report a bug</button></form>';
+    for (const links of [extractLinks(hidden), extractRenderedHtmlLinks(hidden)]) {
+        const link = links.find(candidate => candidate.target === formTarget);
+        assert.ok(link);
+        assert.equal(link.hidden, true);
+        assert.equal(isActionableLink(link), false);
+    }
+});
+
+test('ignores anchors and ID labels inside inert or raw-text HTML content', () => {
+    const inertTarget = 'https://example.com/inert-route';
+    const visibleTarget = 'https://example.com/visible-route';
+    for (const [opening, closing] of [
+        ['<script>', '</script>'],
+        ['<style>', '</style>'],
+        ['<template>', '</template>'],
+        ['<textarea>', '</textarea>'],
+    ]) {
+        const source = `${opening}<a href="${inertTarget}">Report a bug</a>${closing}`
+            + `<a href="${visibleTarget}">Documentation</a>`;
+        for (const links of [extractLinks(source), extractRenderedHtmlLinks(source)]) {
+            assert.ok(!links.some(link => link.target === inertTarget), opening);
+            const visible = links.find(link => link.target === visibleTarget);
+            assert.ok(visible, opening);
+            assert.equal(isActionableLink(visible), true, opening);
+        }
+    }
+
+    const templateLabel = '<template><span id="route-name">'
+        + 'Submit a vulnerability report</span></template>'
+        + `<a aria-labelledby="route-name" href="${visibleTarget}"></a>`;
+    for (const links of [extractLinks(templateLabel), extractRenderedHtmlLinks(templateLabel)]) {
+        const link = links.find(candidate => candidate.target === visibleTarget);
+        assert.ok(link);
+        assert.equal(link.label, '');
+        assert.equal(isActionableLink(link), false);
     }
 });
 
