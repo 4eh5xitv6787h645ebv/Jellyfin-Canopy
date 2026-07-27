@@ -2373,6 +2373,16 @@ test('hidden SVG metadata cannot govern document prose or adjacent routes', () =
             + 'aria-label="Vulnerabilities go to Discord"></svg></div>',
         '<div style="display:none"><span id="hidden-route-name">'
             + '<svg aria-label="GitHub Discussions: support"></svg></span></div>',
+        '<div style="visibility:hidden"><span id="hidden-route-name">'
+            + 'Need help?</span></div>',
+        '<svg style="visibility:hidden"><text id="hidden-route-name">'
+            + 'Need help?</text></svg>',
+        '<div style="visibility:hidden"><svg><text id="hidden-route-name">'
+            + 'Need help?</text></svg></div>',
+        '<svg style="visibility:hidden"><title id="hidden-route-name">'
+            + 'Need help?</title></svg>',
+        '<svg style="visibility:hidden"><desc id="hidden-route-name">'
+            + 'Need help?</desc></svg>',
     ]) {
         const files = validFixture();
         files['theme/partials/support.html'] = referencedMetadata

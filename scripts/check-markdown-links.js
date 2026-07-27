@@ -66,10 +66,17 @@ function htmlAttributeValue(tag, name) {
     return match ? markdown.utils.unescapeAll(match[1] ?? match[2] ?? match[3]) : '';
 }
 
-function stripHiddenHtml(content, excludeAriaHidden = false) {
+function stripHiddenHtml(content, excludeAriaHidden = false, initialState = null) {
     const source = stripHtmlComments(content);
     const visible = [];
-    const stack = [];
+    const stack = initialState
+        ? [{
+            tag: null,
+            persistentHidden: Boolean(initialState.persistentHidden),
+            visibilityHidden: Boolean(initialState.visibilityHidden),
+            hidden: Boolean(initialState.persistentHidden || initialState.visibilityHidden),
+        }]
+        : [];
     const pattern = /<(\/?)([a-z][a-z0-9:-]*)\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi;
     let offset = 0;
     for (const match of source.matchAll(pattern)) {
@@ -92,8 +99,13 @@ function stripHiddenHtml(content, excludeAriaHidden = false) {
     return visible.join('');
 }
 
-function accessibleHtmlText(content, labels = new Map(), excludeAriaHidden = true) {
-    const visible = stripHiddenHtml(content, excludeAriaHidden)
+function accessibleHtmlText(
+    content,
+    labels = new Map(),
+    excludeAriaHidden = true,
+    initialState = null
+) {
+    const visible = stripHiddenHtml(content, excludeAriaHidden, initialState)
         .replace(/<(script|style)\b[\s\S]*?<\/\1\s*>/gi, ' ')
         .replace(
             /<svg\b((?:[^>"']|"[^"]*"|'[^']*')*)>([\s\S]*?)<\/svg\s*>/gi,
@@ -148,8 +160,8 @@ function visibleHtmlText(content, labels = new Map()) {
     return accessibleHtmlText(content, labels, false);
 }
 
-function visuallyRenderedHtmlText(content) {
-    const visible = stripHiddenHtml(content)
+function visuallyRenderedHtmlText(content, initialState = null) {
+    const visible = stripHiddenHtml(content, false, initialState)
         .replace(/<(script|style)\b[\s\S]*?<\/\1\s*>/gi, ' ')
         // SVG title/description elements are metadata, but SVG <text> is
         // genuinely painted content and must remain available to route checks.
@@ -168,10 +180,10 @@ function combinedHtmlLabel(accessible, visual) {
     return `${accessibleLabel} ${visualLabel}`;
 }
 
-function governedHtmlText(content, labels = new Map()) {
+function governedHtmlText(content, labels = new Map(), initialStates = {}) {
     return combinedHtmlLabel(
-        accessibleHtmlText(content, labels),
-        visuallyRenderedHtmlText(content)
+        accessibleHtmlText(content, labels, true, initialStates.accessibility),
+        visuallyRenderedHtmlText(content, initialStates.visual)
     );
 }
 
@@ -303,8 +315,8 @@ function markdownAnchors(source, dialect = 'github') {
     return anchors;
 }
 
-function compactGovernedText(content, labels = new Map()) {
-    return governedHtmlText(content, labels).replace(/\s+/g, ' ').trim();
+function compactGovernedText(content, labels = new Map(), initialStates = {}) {
+    return governedHtmlText(content, labels, initialStates).replace(/\s+/g, ' ').trim();
 }
 
 function htmlIdLabels(content) {
@@ -326,6 +338,8 @@ function htmlIdLabels(content) {
             accessibilityHidden = false,
             visuallyPersistentHidden = false,
             accessibilityPersistentHidden = false,
+            visualParentState = null,
+            accessibilityParentState = null,
         } = hiddenStates.get(match.index) || {};
         let label = accessibilityHidden
             ? ''
@@ -338,8 +352,12 @@ function htmlIdLabels(content) {
             if (close) {
                 const element = visible.slice(match.index, close.index + close[0].length);
                 label = accessibilityPersistentHidden
-                    ? visuallyRenderedHtmlText(element).replace(/\s+/g, ' ').trim()
-                    : compactGovernedText(element, labels);
+                    ? visuallyRenderedHtmlText(element, visualParentState)
+                        .replace(/\s+/g, ' ').trim()
+                    : compactGovernedText(element, labels, {
+                        visual: visualParentState,
+                        accessibility: accessibilityParentState,
+                    });
             }
         }
         if (label) labels.set(id, label.replace(/\s+/g, ' ').trim());
@@ -512,6 +530,8 @@ function htmlElementHiddenStates(content) {
     const pattern = /<(\/?)([a-z][a-z0-9:-]*)\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi;
     for (const match of content.matchAll(pattern)) {
         if (match[1] !== '/') {
+            const visualParentState = visualStack.at(-1) || null;
+            const accessibilityParentState = accessibilityStack.at(-1) || null;
             const visualState = htmlOpeningVisibilityState(visualStack, match[0]);
             const accessibilityState = htmlOpeningVisibilityState(
                 accessibilityStack,
@@ -522,6 +542,8 @@ function htmlElementHiddenStates(content) {
                 accessibilityHidden: accessibilityState.hidden,
                 visuallyPersistentHidden: visualState.persistentHidden,
                 accessibilityPersistentHidden: accessibilityState.persistentHidden,
+                visualParentState,
+                accessibilityParentState,
             });
         }
         updateHtmlVisibilityStack(visualStack, match[0]);

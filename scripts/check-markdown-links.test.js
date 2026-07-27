@@ -520,6 +520,16 @@ test('aria-labelledby ignores ancestor-hidden metadata but retains painted SVG t
             + 'Report a problem</span></div>',
         '<div style="display:none"><svg style="visibility:visible">'
             + '<text id="route-name">Report a problem</text></svg></div>',
+        '<div style="visibility:hidden"><span id="route-name">'
+            + 'Report a problem</span></div>',
+        '<svg style="visibility:hidden"><text id="route-name">'
+            + 'Report a problem</text></svg>',
+        '<div style="visibility:hidden"><svg><text id="route-name">'
+            + 'Report a problem</text></svg></div>',
+        '<svg style="visibility:hidden"><title id="route-name">'
+            + 'Report a problem</title></svg>',
+        '<svg style="visibility:hidden"><desc id="route-name">'
+            + 'Report a problem</desc></svg>',
     ]) {
         const source = referenced
             + `<a aria-labelledby="route-name" href="${target}"></a>`;
