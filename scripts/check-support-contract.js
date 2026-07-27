@@ -84,7 +84,7 @@ const BUG_ROUTE_LABEL = new RegExp(
     `(?:${BUG_ROUTE_INTENT.source}|\\bgithub issues\\b)`,
     'i'
 );
-const FEATURE_ROUTE_LABEL = /\b(?:feature[- ]requests?|feature\s+proposals?|(?:have|propose|request|share|suggest|submit|tell)\b.{0,50}\bimprovements?|improvements?\s+(?:ideas?|proposals?|requests?)|request(?:ing)?\b.{0,40}\b(?:features?|enhancements?)|(?:pitch|send|submit)(?:s|ed|ing)?\b.{0,40}\b(?:features?|ideas?|enhancements?)|suggest\b.{0,40}\b(?:features?|ideas?|enhancements?)|share\b.{0,40}\b(?:ideas?|enhancements?)|propos(?:e|als?)\b.{0,40}\b(?:features?|ideas?|enhancements?)|enhancement\s+(?:ideas?|issues?|proposals?|requests?|submission|template)|feature(?:-request)?\s+(?:issues?|template)|ideas?\s+(?:channel|submission|template))\b/i;
+const FEATURE_ROUTE_LABEL = /\b(?:feature[- ]requests?|feature\s+proposals?|(?:open|use|visit)\b.{0,20}\bfeature(?:[- ]request)?\s+(?:form|intake)|(?:have|propose|request|share|suggest|submit|tell)\b.{0,50}\bimprovements?|improvements?\s+(?:ideas?|proposals?|requests?)|request(?:ing)?\b.{0,40}\b(?:features?|enhancements?)|(?:pitch|send|submit)(?:s|ed|ing)?\b.{0,40}\b(?:features?|ideas?|enhancements?)|suggest\b.{0,40}\b(?:features?|ideas?|enhancements?)|share\b.{0,40}\b(?:ideas?|enhancements?)|propos(?:e|als?)\b.{0,40}\b(?:features?|ideas?|enhancements?)|enhancement\s+(?:ideas?|issues?|proposals?|requests?|submission|template)|feature(?:-request)?\s+(?:issues?|template)|ideas?\s+(?:channel|submission|template))\b/i;
 const SUPPORT_ROUTE_INTENT = /(?:\b(?:assistance|community\s+(?:chat|forum|support)|for\s+(?:help|support)|(?:ask|get|request|seek)\s+(?:for\s+|to\s+)?(?:assistance|help|support)|(?:open|use|visit)\b.{0,20}\b(?:help|support)\s+(?:form|intake)|(?:help|support)\s+(?:channel|chat|community|forum|requests?|server))\b|(?:^|[.!?;]\s*)(?:(?:(?:any|have)\s+)?questions?\s*\?|need\s+(?:for\s+|to\s+)?(?:assistance|help|support)\b))/i;
 const SUPPORT_ROUTE_LABEL = new RegExp(
     `(?:${SUPPORT_ROUTE_INTENT.source}|\\bdiscord\\b)`,
@@ -107,7 +107,7 @@ const PUBLIC_SECURITY_EXCEPTION = /\b(?:anywhere|nowhere)\s+(?:else\s+)?(?:but|e
 const PUBLIC_SECURITY_NEGATION_ACTION = '(?:contact(?:ed|ing)?|disclos\\w*|email(?:ed|ing)?|file(?:d|ing)?|include(?:d|ing)?|message(?:d|ing)?|notif(?:y|ied|ying)|open(?:ed|ing)?|post(?:ed|ing)?|report(?:ed|ing)?|send|sent|submit(?:ted|ting)?|use(?:d|ing)?)';
 const CONTEXTUAL_ACTION_LABEL = '(?:click(?:\\s+here)?|continue|details?|follow|go|here'
     + '|learn\\s+more|link|more|open(?:\\s+it\\s+here)?|read\\s+more|this|this\\s+link'
-    + '|open\\s+(?:the\\s+)?(?:bug|intake|report|support)\\s+form'
+    + '|open\\s+(?:the\\s+)?(?:bug|feature(?:-request)?|intake|report|support)\\s+form'
     + '|use\\s+this\\s+link|view|(?:ask|report\\s+it|send\\s+it|tell\\s+us)'
     + '(?:\\s+(?:at|in|on|through|to|via)\\s+(?:discord|github|issues?|the\\s+forum))?'
     + '|visit\\s+our(?:\\s+community\\s+(?:chat|forum)|\\s+(?:at|in|on|through|to|via)'
@@ -123,6 +123,7 @@ const CONTEXT_DEPENDENT_ROUTE_LABEL = new RegExp(
     `^(?:${CONTEXTUAL_ACTION_LABEL}|(?:github\\s+)?issues?|discord|community\\s+(?:chat|forum))$`,
     'i'
 );
+const DIRECT_FORM_ROUTE_LABEL = /^(?:open|use|visit)\b.{0,20}\b(?:bug|defect|feature(?:[- ]request)?|help|support)(?:[- ]report)?\s+(?:form|intake)$/i;
 const ROUTE_INTENT_TERM = /\b(?:assistance|bugs?|broken|defects?|enhancements?|exploits?|features?|help|ideas?|improvements?|questions?|security|support|vulnerab\w*)\b|community\s+(?:chat|forum|support)/i;
 const DISCUSSIONS_ACTION = /\b(?:ask|create|direct|go|join|open|post|route|send|start|submit|use)\b/i;
 const DISCUSSIONS_PURPOSE = /\b(?:bugs?|community|features?|help|ideas?|issues?|questions?|reports?|requests?|support)\b/i;
@@ -450,7 +451,7 @@ function semanticLinkText(link) {
         }
         return boundaries;
     };
-    const sentenceBoundaries = (text, prefix = '', suffix = '') => {
+    const sentenceBoundaries = (text, prefix = '', suffix = '', adjacentLink = false) => {
         const boundaries = hardSentenceBoundaries(text);
         const combined = `${prefix}${text}${suffix}`;
         const offset = prefix.length;
@@ -473,15 +474,28 @@ function semanticLinkText(link) {
                 || SUPPORT_ROUTE_INTENT.test(clause)
                 || SECURITY_ROUTE_LABEL.test(clause)
             );
-            if (ownsRoute(leftClause) && ownsRoute(rightClause)) {
+            const leftOwnsRoute = ownsRoute(leftClause);
+            const rightOwnsRoute = ownsRoute(rightClause);
+            if ((leftOwnsRoute && rightOwnsRoute)
+                || (adjacentLink && rightOwnsRoute && next === combined.length)) {
                 boundaries.push(index);
             }
         }
         return boundaries.sort((left, right) => left - right);
     };
-    const boundaries = sentenceBoundaries(after, `${before} ${label} `);
+    const boundaries = sentenceBoundaries(
+        after,
+        `${before} ${label} `,
+        '',
+        Boolean(link?.contextAfterEndsAtLink)
+    );
     const end = boundaries.length > 0 ? Math.min(...boundaries) : after.length;
-    const beforeBoundaries = sentenceBoundaries(before, '', ` ${label} ${after}`);
+    const beforeBoundaries = sentenceBoundaries(
+        before,
+        '',
+        ` ${label} ${after}`,
+        Boolean(link?.contextBeforeStartsAtLink)
+    );
     const ownStart = (beforeBoundaries.at(-1) ?? -1) + 1;
     const ownClause = `${before.slice(ownStart)} ${label} ${after.slice(0, end)}`
         .replace(/\s+/g, ' ').trim();
@@ -1102,15 +1116,21 @@ function auditGlobalRouteLinks(file, surface, root, problems, options = {}) {
         // Raw HTML context is link-local, but only route-like labels inherit it:
         // broad documentation labels such as "Help & Community" can legitimately
         // describe intake without being an intake destination themselves.
+        const normalizedLabel = String(link.label || '')
+            .replace(/[^\p{L}\p{N}\s-]/gu, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
         const scopedLink = options.html
-            && !HTML_CONTEXT_DEPENDENT_ROUTE_LABEL.test(String(link.label || '').trim())
+            && !HTML_CONTEXT_DEPENDENT_ROUTE_LABEL.test(normalizedLabel)
             ? { ...link, context: link.label, contextBefore: '', contextAfter: '' }
             : link;
         const text = semanticLinkText(scopedLink);
         const location = `${file}:${link.line || 1}`;
         const isRenderedFragment = options.rendered && /^#[^#]/.test(link.target);
+        const directFormFragment = isRenderedFragment
+            && DIRECT_FORM_ROUTE_LABEL.test(normalizedLabel);
         if (BUG_ROUTE_INTENT.test(text)
-            && !isRenderedFragment
+            && (!isRenderedFragment || directFormFragment)
             && !semanticLinkMatches(
                 scopedLink,
                 BUG_ROUTE_INTENT,
@@ -1120,7 +1140,7 @@ function auditGlobalRouteLinks(file, surface, root, problems, options = {}) {
             problems.push(`${location}: bug intake links must use a canonical GitHub Issues intake path`);
         }
         if (FEATURE_ROUTE_LABEL.test(text)
-            && !isRenderedFragment
+            && (!isRenderedFragment || directFormFragment)
             && !semanticLinkMatches(
                 scopedLink,
                 FEATURE_ROUTE_LABEL,

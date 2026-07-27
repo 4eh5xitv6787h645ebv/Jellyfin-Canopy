@@ -581,6 +581,9 @@ test('global route ownership distinguishes intake intent from destination names'
         'record dependency history.</p>',
         '<p><a href="https://discord.com/developers/docs">Discord</a> ',
         'documents the integration API.</p>',
+        '<p><a href="https://discord.com/developers/docs">Discord</a> ',
+        'documents the integration API, and for support, use ',
+        `<a href="${DISCORD_ROUTE}">the Discord server</a>.</p>`,
         '',
     ].join('');
     fixture(files, root => {
@@ -636,6 +639,23 @@ test('global route ownership combines destination names with explicit intake con
         },
         {
             file: 'theme/partials/support.html',
+            source: `<p>Report bugs in <a href="${DISCORD_ROUTE}">`
+                + 'GitHub Issues →</a>.</p>\n',
+            message: 'bug intake links',
+        },
+        {
+            file: 'theme/partials/support.html',
+            source: `<p>For support, use <a href="${ISSUES_ROUTE}">`
+                + 'Discord ↗</a>.</p>\n',
+            message: 'community-support links',
+        },
+        {
+            file: 'theme/partials/support.html',
+            source: `<p>Report bugs here: <a href="${DISCORD_ROUTE}">Open →</a>.</p>\n`,
+            message: 'bug intake links',
+        },
+        {
+            file: 'theme/partials/support.html',
             source: `<p>Questions? <a href="${ISSUES_ROUTE}">GitHub Issues</a>.</p>\n`,
             message: 'community-support links',
         },
@@ -664,6 +684,26 @@ test('semantic route ownership decodes rendered raw HTML labels', () => {
             'CONTRIBUTING.md: must route every community-support link to the '
             + 'Jellyfin Community Discord in "## 💬 Getting Help"'
         ));
+    });
+});
+
+test('rendered category form links cannot hide behind local fragments', () => {
+    const files = validFixture();
+    files['site/index.html'] = [
+        '<p><a href="#faq">Open the bug form</a>.</p>',
+        '<p><a href="#ideas">Open the feature-request form</a>.</p>',
+        '',
+    ].join('\n');
+    fixture(files, root => {
+        const problems = auditSupportContract({ root, checkBuiltSite: true }).problems;
+        assert.ok(problems.some(problem => (
+            problem.startsWith('site/index.html:')
+            && problem.includes('bug intake links')
+        )));
+        assert.ok(problems.some(problem => (
+            problem.startsWith('site/index.html:')
+            && problem.includes('feature intake links')
+        )));
     });
 });
 

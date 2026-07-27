@@ -343,6 +343,8 @@ function htmlAnchorRecords(content, labels = htmlIdLabels(content)) {
             match.index
         );
         const rawAfter = content.slice(anchorEnd, adjacentContextAfterEnd);
+        const beforeBoundary = htmlContextBeforeBoundary(rawBefore);
+        const afterBoundary = htmlContextAfterBoundary(rawAfter);
         anchors.push({
             start: match.index,
             openingEnd,
@@ -353,13 +355,15 @@ function htmlAnchorRecords(content, labels = htmlIdLabels(content)) {
                 || nestedName
                 || htmlAttributeValue(openingTag, 'title'),
             contextBefore: compactVisibleText(
-                rawBefore.slice(htmlContextBeforeBoundary(rawBefore)),
+                rawBefore.slice(beforeBoundary),
                 labels
             ),
             contextAfter: compactVisibleText(
-                rawAfter.slice(0, htmlContextAfterBoundary(rawAfter)),
+                rawAfter.slice(0, afterBoundary),
                 labels
             ),
+            contextBeforeStartsAtLink: previousAnchorEnd > 0 && beforeBoundary === 0,
+            contextAfterEndsAtLink: nextAnchorOffset !== -1 && afterBoundary === rawAfter.length,
         });
         previousAnchorEnd = anchorEnd;
         opening.lastIndex = anchorEnd;
@@ -385,6 +389,8 @@ function htmlLinks(content, line, labels = htmlIdLabels(content)) {
                 context,
                 contextBefore: anchor?.contextBefore || '',
                 contextAfter: anchor?.contextAfter || '',
+                contextBeforeStartsAtLink: anchor?.contextBeforeStartsAtLink || false,
+                contextAfterEndsAtLink: anchor?.contextAfterEndsAtLink || false,
             });
         } else if (attribute.name === 'src') {
             links.push({
