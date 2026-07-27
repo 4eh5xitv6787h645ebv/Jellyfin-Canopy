@@ -2742,6 +2742,10 @@ test('governs form submissions and hidden ID names while inert routes remain ina
         '<div style="visibility:hidden"><math><svg><mi>'
             + '<caption style="visibility:visible">'
             + `<a href="${ISSUES_ROUTE}">Submit a vulnerability report</a>`,
+        '<div style="visibility:hidden"><math>'
+            + '<annotation-xml encoding="application/xml"><svg><foreignObject>'
+            + '<caption style="visibility:visible">'
+            + `<a href="${ISSUES_ROUTE}">Submit a vulnerability report</a>`,
     ]) {
         const hiddenRoute = validFixture();
         hiddenRoute['docs/getting-started.md'] = hiddenMalformedRoute;
@@ -2770,6 +2774,10 @@ test('governs form submissions and hidden ID names while inert routes remain ina
             + 'aria-label="Submit a vulnerability report"></a>',
         '<div style="visibility:hidden"><svg><math>'
             + '<annotation-xml encoding="text/html">'
+            + '<caption style="visibility:visible">'
+            + `<a href="${ISSUES_ROUTE}">Submit a vulnerability report</a>`,
+        '<div style="visibility:hidden"><math>'
+            + '<annotation-xml encoding="application/xml"><svg><mi>'
             + '<caption style="visibility:visible">'
             + `<a href="${ISSUES_ROUTE}">Submit a vulnerability report</a>`,
     ]) {
@@ -2823,6 +2831,14 @@ test('governs form submissions and hidden ID names while inert routes remain ina
             + '<p>For security vulnerabilities.</p>'
             + '<p>A typo does not constitute a vulnerability.</p>'
             + '<button>Submit the report</button></form>',
+        `<form action="${ISSUES_ROUTE}">`
+            + '<p>Read the documentation. For security vulnerabilities.</p>'
+            + '<p>A typo does not constitute a vulnerability.</p>'
+            + '<button>Submit the report</button></form>',
+        `<form action="${ISSUES_ROUTE}">`
+            + '<p>For security vulnerabilities, review the submission guidelines.</p>'
+            + '<p>A typo does not constitute a vulnerability.</p>'
+            + '<button>Submit the report</button></form>',
         ...[
             '<button disabled>Ignored</button>',
             '<button hidden>Ignored</button>',
@@ -2846,6 +2862,8 @@ test('governs form submissions and hidden ID names while inert routes remain ina
     for (const privateRouteLabel of [
         'private GitHub advisories',
         'Use the private security process',
+        'Open the security policy',
+        'Use the private security guidance',
     ]) {
         const distinctPrivateAnchor = validFixture();
         distinctPrivateAnchor['docs/getting-started.md'] =
@@ -2861,6 +2879,20 @@ test('governs form submissions and hidden ID names while inert routes remain ina
             )), privateRouteLabel);
         });
     }
+
+    const distinctSupportAnchor = validFixture();
+    distinctSupportAnchor['docs/getting-started.md'] =
+        `<form action="${ISSUES_ROUTE}">`
+        + '<p>Need help? Use '
+        + `<a href="${DISCORD_ROUTE}">the community support process</a>.</p>`
+        + '<p>Report a regular bug with this form.</p>'
+        + '<button>Continue</button></form>';
+    fixture(distinctSupportAnchor, root => {
+        assert.ok(!auditSupportContract({ root }).problems.some(problem => (
+            problem.startsWith('docs/getting-started.md:')
+            && problem.includes('community-support links')
+        )));
+    });
 
     for (const formSource of [
         `<form action="${ISSUES_ROUTE}">`

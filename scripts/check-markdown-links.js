@@ -12,10 +12,8 @@ const HTML_LABEL_OVERFLOW_MARKER =
     '[label truncated: support feature bug vulnerability security question help issue report request]';
 const HTML_FORM_NEUTRAL_REFERENCE_LABEL =
     /\b(?:background|documentation|guidance|guide|policy|process|reference|timeline)\b/i;
-const HTML_FORM_ACTIONABLE_REFERENCE_LABEL =
-    /\b(?:contact|email|file|message|notify|send|submit)\b|(?:\b(?:create|open)\b.{0,80}\b(?:advisory|form|intake|issue|report|request)\b)|(?=.*\b(?:private|security)\b)(?=.*\bprocess\b).*\b(?:follow|go|through|use|via|visit)\b/i;
 const HTML_FORM_ACTIONABLE_REFERENCE_TARGET =
-    /^https:\/\/github\.com\/[^/]+\/[^/]+\/security\/advisories\/new(?:[?#].*)?$/i;
+    /^https:\/\/(?:github\.com\/[^/?#]+\/[^/?#]+\/(?:issues(?:\/new(?:\/choose)?)?|security\/advisories\/new)|discord\.gg\/[^/?#]+)\/?(?:[?#].*)?$/i;
 const markdown = new MarkdownIt({ html: true, linkify: true });
 markdown.linkify.set({ fuzzyEmail: false, fuzzyLink: false });
 const gfmWwwLinkifier = new MarkdownIt().linkify;
@@ -525,6 +523,11 @@ const HTML_FOREIGN_CONTENT_BREAKOUT_ELEMENTS = new Set([
 
 function htmlParentUsesForeignRules(parent, tag) {
     if (!parent?.foreignContent) return false;
+    if (parent.foreignKind === 'math'
+        && parent.tag === 'annotation-xml'
+        && tag === 'svg') {
+        return false;
+    }
     if (parent.mathTextIntegrationPoint
         && ['malignmark', 'mglyph'].includes(tag)) {
         return true;
@@ -2147,8 +2150,7 @@ function htmlFormSubmissionLinks(
             || anchor.hidden
             || !anchor.label.trim()
             || (HTML_FORM_NEUTRAL_REFERENCE_LABEL.test(anchor.label)
-                && !(HTML_FORM_ACTIONABLE_REFERENCE_LABEL.test(anchor.label)
-                    && HTML_FORM_ACTIONABLE_REFERENCE_TARGET.test(anchor.target)))) {
+                && !HTML_FORM_ACTIONABLE_REFERENCE_TARGET.test(anchor.target))) {
             continue;
         }
         if (actionableSubmissions.some(control => (

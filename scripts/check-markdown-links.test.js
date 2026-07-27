@@ -599,6 +599,10 @@ test('aria-labelledby includes directly referenced hidden nodes but ignores iner
 test('extracts HTML form submissions and image-map routes with control names', () => {
     const formTarget = 'https://example.com/form-route';
     const overrideTarget = 'https://example.com/override-route';
+    const securityTarget =
+        'https://github.com/example/project/security/advisories/new';
+    const issuesTarget = 'https://github.com/example/project/issues';
+    const discordTarget = 'https://discord.gg/example';
     const areaTarget = 'https://example.com/area-route';
     const sources = [
         [
@@ -771,6 +775,10 @@ test('extracts HTML form submissions and image-map routes with control names', (
         '<div style="visibility:hidden"><math><svg><mi>'
             + '<caption style="visibility:visible">'
             + `<a href="${browserScopeTarget}">Report a bug</a>`,
+        '<div style="visibility:hidden"><math>'
+            + '<annotation-xml encoding="application/xml"><svg><foreignObject>'
+            + '<caption style="visibility:visible">'
+            + `<a href="${browserScopeTarget}">Report a bug</a>`,
     ]) {
         const scopedLink = extractLinks(scopedHiddenRoute)
             .find(candidate => candidate.target === browserScopeTarget);
@@ -796,6 +804,10 @@ test('extracts HTML form submissions and image-map routes with control names', (
             + 'aria-label="Submit a vulnerability report"></a>',
         '<div style="visibility:hidden"><svg><math>'
             + '<annotation-xml encoding="text/html">'
+            + '<caption style="visibility:visible">'
+            + `<a href="${browserScopeTarget}">Submit a vulnerability report</a>`,
+        '<div style="visibility:hidden"><math>'
+            + '<annotation-xml encoding="application/xml"><svg><mi>'
             + '<caption style="visibility:visible">'
             + `<a href="${browserScopeTarget}">Submit a vulnerability report</a>`,
     ]) {
@@ -859,6 +871,43 @@ test('extracts HTML form submissions and image-map routes with control names', (
     assert.ok(distinctAnchorIntentLink);
     assert.match(distinctAnchorIntentLink.contextBefore, /report a regular bug/i);
     assert.doesNotMatch(distinctAnchorIntentLink.contextBefore, /vulnerab/i);
+
+    for (const [routeTarget, routeLabel, precedingIntent] of [
+        [securityTarget, 'Open the security policy', 'Submit a vulnerability report'],
+        [securityTarget, 'Use the private security guidance', 'Submit a vulnerability report'],
+        [discordTarget, 'Use the community support process', 'Need help'],
+        [issuesTarget, 'Open the issue intake guide', 'Report a bug'],
+    ]) {
+        const neutralActionBoundary = `<form action="${formTarget}">`
+            + `<p>${precedingIntent} through `
+            + `<a href="${routeTarget}">${routeLabel}</a>.</p>`
+            + '<p>Request a feature with this form.</p>'
+            + '<button>Continue</button></form>';
+        const boundaryFormLink = extractLinks(neutralActionBoundary)
+            .find(candidate => candidate.target === formTarget);
+        assert.ok(boundaryFormLink, routeLabel);
+        assert.match(boundaryFormLink.contextBefore, /request a feature/i, routeLabel);
+        assert.doesNotMatch(
+            boundaryFormLink.contextBefore,
+            new RegExp(precedingIntent, 'i'),
+            routeLabel
+        );
+    }
+
+    const longNeutralLabel =
+        'private security process '.repeat(350).slice(0, 8_192);
+    const manyNeutralActions = `<form action="${formTarget}">`
+        + Array.from(
+            { length: 100 },
+            () => `<a href="${securityTarget}">${longNeutralLabel}</a>`
+        ).join('')
+        + '<button>Report a bug</button></form>';
+    const neutralActionsStarted = performance.now();
+    assert.ok(extractLinks(manyNeutralActions).length > 0);
+    assert.ok(
+        performance.now() - neutralActionsStarted < 4_000,
+        'neutral form-action boundaries must remain linear across long labels'
+    );
 
     const parserInertAnchor = `<form action="${formTarget}">`
         + '<p>Submit a vulnerability report below.</p>'

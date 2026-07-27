@@ -673,31 +673,42 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
     }
     clauses.push(text.slice(start));
     const applicableGroups = [];
-    let group = '';
+    let group = [];
     for (const clause of clauses) {
         if (NON_VULNERABILITY_CONTEXT.test(clause)) {
-            if (group.trim()) applicableGroups.push(group.trim());
-            group = '';
+            if (group.length) applicableGroups.push(group);
+            group = [];
         } else {
-            group += clause;
+            group.push(clause);
         }
     }
-    if (group.trim()) applicableGroups.push(group.trim());
+    if (group.length) applicableGroups.push(group);
+    const groupText = applicable => applicable.join('').trim();
     const ownsSecurityRoute = applicable => (
         SECURITY_ROUTE_LABEL.test(applicable)
         && (!NEUTRAL_SECURITY_REFERENCE.test(applicable)
             || SECURITY_ROUTE_CUE.test(applicable))
     );
-    if (applicableGroups.some(ownsSecurityRoute)) return true;
+    if (applicableGroups.some(applicable => ownsSecurityRoute(groupText(applicable)))) {
+        return true;
+    }
     const securitySubject = new RegExp(`\\b${SECURITY_SUBJECT}\\b`, 'i');
     const securityAction = new RegExp(`\\b${SECURITY_ACTION}\\b`, 'i');
+    const explicitVulnerabilitySubject =
+        /\b(?:about|for|regarding)\s+(?:security\s+)?vulnerab\w*\b/i;
     return applicableGroups.some((applicable, index) => {
         const following = applicableGroups[index + 1];
+        const applicableText = groupText(applicable);
+        const followingText = following ? groupText(following) : '';
+        const ownsSubject = applicable.some(clause => (
+            securitySubject.test(clause)
+            && (!NEUTRAL_SECURITY_REFERENCE.test(clause)
+                || explicitVulnerabilitySubject.test(clause))
+        ));
         return Boolean(following)
-            && securitySubject.test(applicable)
-            && !NEUTRAL_SECURITY_REFERENCE.test(applicable)
-            && securityAction.test(following)
-            && ownsSecurityRoute(`${applicable} ${following}`);
+            && ownsSubject
+            && securityAction.test(followingText)
+            && ownsSecurityRoute(`${applicableText} ${followingText}`);
     });
 }
 
