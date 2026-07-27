@@ -12,8 +12,22 @@ const HTML_LABEL_OVERFLOW_MARKER =
     '[label truncated: support feature bug vulnerability security question help issue report request]';
 const HTML_FORM_NEUTRAL_REFERENCE_LABEL =
     /\b(?:background|documentation|guidance|guide|policy|process|reference|timeline)\b/i;
+const HTML_FORM_ACTION_CUE_SOURCE =
+    '(?:ask(?:s|ed|ing)?|contact(?:s|ed|ing)?|creat(?:e|es|ed|ing)'
+    + '|email(?:s|ed|ing)?|file(?:s|d|ing)?|follow(?:s|ed|ing)?|get(?:s|ting)?'
+    + '|go(?:es|ing)?|join(?:s|ed|ing)?|message(?:s|d|ing)?'
+    + '|notif(?:y|ies|ied|ying)|open(?:s|ed|ing)?|post(?:s|ed|ing)?'
+    + '|report(?:s|ed|ing)?|request(?:s|ed|ing)?|send|sending|sent'
+    + '|share(?:s|d|ing)?|submit(?:s|ted|ting)?|suggest(?:s|ed|ing)?'
+    + '|tell(?:s|ing)?|told|use(?:s|d|ing)?|visit(?:s|ed|ing)?)';
 const HTML_FORM_ACTION_CUE =
-    /\b(?:contact|create|email|file|follow|go|message|notify|open|send|submit|use|visit)\b/i;
+    new RegExp(`\\b${HTML_FORM_ACTION_CUE_SOURCE}\\b`, 'i');
+const HTML_FORM_ADJACENT_ACTION_CUE = new RegExp(
+    `\\b${HTML_FORM_ACTION_CUE_SOURCE}\\b`
+    + '(?:\\s+(?:at|in|on|through|to|via))?'
+    + '(?:\\s+(?:a|an|our|the|this))?\\s*$',
+    'i'
+);
 const HTML_FORM_ACTIONABLE_REFERENCE_TARGET =
     /^https:\/\/(?:github\.com\/[^/?#]+\/[^/?#]+\/(?:issues(?:\/new(?:\/choose)?)?|security\/advisories\/new)|discord\.gg\/[^/?#]+)\/?(?:[?#].*)?$/i;
 const markdown = new MarkdownIt({ html: true, linkify: true });
@@ -2152,7 +2166,8 @@ function htmlFormSubmissionLinks(
             || anchor.hidden
             || !anchor.label.trim()
             || (HTML_FORM_NEUTRAL_REFERENCE_LABEL.test(anchor.label)
-                && !(HTML_FORM_ACTION_CUE.test(anchor.label)
+                && !((HTML_FORM_ACTION_CUE.test(anchor.label)
+                    || HTML_FORM_ADJACENT_ACTION_CUE.test(anchor.contextBefore))
                     && HTML_FORM_ACTIONABLE_REFERENCE_TARGET.test(anchor.target)))) {
             continue;
         }

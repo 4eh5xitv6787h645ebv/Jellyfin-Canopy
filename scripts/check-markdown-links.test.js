@@ -881,10 +881,23 @@ test('extracts HTML form submissions and image-map routes with control names', (
     assert.ok(neutralCanonicalFormLink);
     assert.match(neutralCanonicalFormLink.contextBefore, /vulnerab/i);
 
+    const splitActionBoundary = `<form action="${formTarget}">`
+        + '<p>Need help? Use '
+        + `<a href="${discordTarget}">the community support process</a>.</p>`
+        + '<p>Request a feature with this form.</p>'
+        + '<button>Continue</button></form>';
+    const splitActionFormLink = extractLinks(splitActionBoundary)
+        .find(candidate => candidate.target === formTarget);
+    assert.ok(splitActionFormLink);
+    assert.match(splitActionFormLink.contextBefore, /request a feature/i);
+    assert.doesNotMatch(splitActionFormLink.contextBefore, /need help/i);
+
     for (const [routeTarget, routeLabel, precedingIntent] of [
         [securityTarget, 'Open the security policy', 'Submit a vulnerability report'],
         [securityTarget, 'Use the private security guidance', 'Submit a vulnerability report'],
+        [securityTarget, 'Report through the private security process', 'Submit a vulnerability report'],
         [discordTarget, 'Use the community support process', 'Need help'],
+        [discordTarget, 'Ask in the community support process', 'Need help'],
         [issuesTarget, 'Open the issue intake guide', 'Report a bug'],
     ]) {
         const neutralActionBoundary = `<form action="${formTarget}">`

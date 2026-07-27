@@ -2839,6 +2839,14 @@ test('governs form submissions and hidden ID names while inert routes remain ina
             + '<p>For security vulnerabilities, review the submission guidelines.</p>'
             + '<p>A typo does not constitute a vulnerability.</p>'
             + '<button>Submit the report</button></form>',
+        `<form action="${ISSUES_ROUTE}">`
+            + '<p>This form is not only for security vulnerabilities. Read the policy.</p>'
+            + '<p>A typo does not constitute a vulnerability.</p>'
+            + '<button>Submit the report</button></form>',
+        `<form action="${ISSUES_ROUTE}">`
+            + '<p>This form is not for ordinary defects, only security vulnerabilities.</p>'
+            + '<p>A typo does not constitute a vulnerability.</p>'
+            + '<button>Submit the report</button></form>',
         ...[
             '<button disabled>Ignored</button>',
             '<button hidden>Ignored</button>',
@@ -2864,6 +2872,7 @@ test('governs form submissions and hidden ID names while inert routes remain ina
         'Use the private security process',
         'Open the security policy',
         'Use the private security guidance',
+        'Report through the private security process',
     ]) {
         const distinctPrivateAnchor = validFixture();
         distinctPrivateAnchor['docs/getting-started.md'] =
@@ -2880,19 +2889,25 @@ test('governs form submissions and hidden ID names while inert routes remain ina
         });
     }
 
-    const distinctSupportAnchor = validFixture();
-    distinctSupportAnchor['docs/getting-started.md'] =
-        `<form action="${ISSUES_ROUTE}">`
-        + '<p>Need help? '
-        + `<a href="${DISCORD_ROUTE}">Use the community support process</a>.</p>`
-        + '<p>Report a regular bug with this form.</p>'
-        + '<button>Continue</button></form>';
-    fixture(distinctSupportAnchor, root => {
-        assert.ok(!auditSupportContract({ root }).problems.some(problem => (
-            problem.startsWith('docs/getting-started.md:')
-            && problem.includes('community-support links')
-        )));
-    });
+    for (const [supportPrefix, supportLabel] of [
+        ['Need help? ', 'Use the community support process'],
+        ['Need help? ', 'Ask in the community support process'],
+        ['Need help? Use ', 'the community support process'],
+    ]) {
+        const distinctSupportAnchor = validFixture();
+        distinctSupportAnchor['docs/getting-started.md'] =
+            `<form action="${ISSUES_ROUTE}">`
+            + `<p>${supportPrefix}`
+            + `<a href="${DISCORD_ROUTE}">${supportLabel}</a>.</p>`
+            + '<p>Report a regular bug with this form.</p>'
+            + '<button>Continue</button></form>';
+        fixture(distinctSupportAnchor, root => {
+            assert.ok(!auditSupportContract({ root }).problems.some(problem => (
+                problem.startsWith('docs/getting-started.md:')
+                && problem.includes('community-support links')
+            )), supportLabel);
+        });
+    }
 
     for (const formSource of [
         `<form action="${ISSUES_ROUTE}">`
@@ -2954,18 +2969,23 @@ test('governs form submissions and hidden ID names while inert routes remain ina
         )));
     });
 
-    const explicitlyNonSecurityForm = validFixture();
-    explicitlyNonSecurityForm['docs/getting-started.md'] =
-        `<form action="${ISSUES_ROUTE}">`
-        + '<p>This form is not for security vulnerabilities. Read the policy.</p>'
-        + '<p>A typo does not constitute a vulnerability.</p>'
-        + '<button>Submit the report</button></form>';
-    fixture(explicitlyNonSecurityForm, root => {
-        assert.ok(!auditSupportContract({ root }).problems.some(problem => (
-            problem.startsWith('docs/getting-started.md:')
-            && problem.includes('security intake links must use private GitHub advisories')
-        )));
-    });
+    for (const nonSecurityContext of [
+        'This form is not for security vulnerabilities. Read the policy.',
+        'Security vulnerabilities are not accepted here. Read the policy.',
+    ]) {
+        const explicitlyNonSecurityForm = validFixture();
+        explicitlyNonSecurityForm['docs/getting-started.md'] =
+            `<form action="${ISSUES_ROUTE}">`
+            + `<p>${nonSecurityContext}</p>`
+            + '<p>A typo does not constitute a vulnerability.</p>'
+            + '<button>Submit the report</button></form>';
+        fixture(explicitlyNonSecurityForm, root => {
+            assert.ok(!auditSupportContract({ root }).problems.some(problem => (
+                problem.startsWith('docs/getting-started.md:')
+                && problem.includes('security intake links must use private GitHub advisories')
+            )), nonSecurityContext);
+        });
+    }
 
     const formIntentAfterHiddenPrefix = validFixture();
     formIntentAfterHiddenPrefix['docs/getting-started.md'] =
