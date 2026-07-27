@@ -7,6 +7,7 @@ const MarkdownIt = require('markdown-it');
 const ROOT = path.join(__dirname, '..');
 const REQUIRED_FILES = ['README.md', 'CONTRIBUTING.md'];
 const MAX_HTML_LABEL_LENGTH = 8_192;
+const MAX_HTML_CONTEXT_LENGTH = 768;
 const HTML_LABEL_OVERFLOW_MARKER =
     '[label truncated: support feature bug vulnerability security question help issue report request]';
 const markdown = new MarkdownIt({ html: true, linkify: true });
@@ -1454,6 +1455,62 @@ function htmlOpeningHiddenStates(content, options = {}) {
     return states;
 }
 
+function htmlVisibilityStateSnapshots(
+    content,
+    offsets,
+    excludeAriaHidden = false,
+    options = {}
+) {
+    const states = new Map();
+    const stack = [];
+    const documentMode = Boolean(options.documentMode);
+    const targets = [...new Set(offsets)]
+        .map(offset => Math.max(0, Math.min(content.length, offset)))
+        .sort((left, right) => left - right);
+    const matches = [...content.matchAll(
+        /<(\/?)([a-z][a-z0-9:-]*)\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi
+    )];
+    let matchIndex = 0;
+    let position = 0;
+    for (const target of targets) {
+        while (matchIndex < matches.length) {
+            const match = matches[matchIndex];
+            const end = match.index + match[0].length;
+            if (end > target) break;
+            repairHtmlStackForText(
+                stack,
+                content.slice(position, match.index),
+                documentMode
+            );
+            updateHtmlVisibilityStack(
+                stack,
+                match[0],
+                excludeAriaHidden,
+                documentMode
+            );
+            position = end;
+            matchIndex += 1;
+        }
+        const nextTag = matches[matchIndex];
+        const textEnd = nextTag && nextTag.index < target
+            ? nextTag.index
+            : target;
+        repairHtmlStackForText(
+            stack,
+            content.slice(position, textEnd),
+            documentMode
+        );
+        position = textEnd;
+        const state = stack.at(-1);
+        states.set(target, state ? {
+            persistentHidden: state.persistentHidden,
+            visibilityHidden: state.visibilityHidden,
+            hidden: state.hidden,
+        } : null);
+    }
+    return states;
+}
+
 function htmlAnchorRecords(content, labels = htmlIdLabels(content), options = {}) {
     const anchors = [];
     const closing = /<\/a\s*>/gi;
@@ -1752,6 +1809,40 @@ function htmlFormSubmissionLinks(
             ).replace(/\s+/g, ' ').trim(),
         }));
     const fieldsetDisabledStates = htmlOpeningFieldsetDisabledStates(content, options);
+    const contextOffsets = [];
+    for (const control of [...buttons, ...inputs]) {
+        const form = htmlAssociatedForm(control, forms, formsById);
+        const containedByForm = form
+            && form.start < control.start
+            && control.start < form.end;
+        const contextStart = containedByForm
+            ? Math.max(form.openingEnd, control.start - MAX_HTML_CONTEXT_LENGTH)
+            : Math.max(0, control.start - MAX_HTML_CONTEXT_LENGTH);
+        const rawBefore = content.slice(contextStart, control.start);
+        const beforeBoundary = containedByForm
+            ? 0
+            : htmlContextBeforeBoundary(rawBefore);
+        contextOffsets.push(
+            contextStart + beforeBoundary,
+            control.end
+        );
+    }
+    const visualStates = htmlVisibilityStateSnapshots(
+        content,
+        contextOffsets,
+        false,
+        options
+    );
+    const accessibilityStates = htmlVisibilityStateSnapshots(
+        content,
+        contextOffsets,
+        true,
+        options
+    );
+    const initialStatesAt = offset => ({
+        accessibility: accessibilityStates.get(offset),
+        visual: visualStates.get(offset),
+    });
     const links = [];
     for (const control of [...buttons, ...inputs]
         .sort((left, right) => left.start - right.start)) {
@@ -1776,16 +1867,25 @@ function htmlFormSubmissionLinks(
             ? htmlAttributeValue(control.openingTag, 'formaction')
             : form.action;
         if (!action) continue;
+        const containedByForm = form.start < control.start && control.start < form.end;
+        const contextStart = containedByForm
+            ? Math.max(form.openingEnd, control.start - MAX_HTML_CONTEXT_LENGTH)
+            : Math.max(0, control.start - MAX_HTML_CONTEXT_LENGTH);
+        const contextEnd = containedByForm
+            ? Math.min(form.contentEnd, control.end + MAX_HTML_CONTEXT_LENGTH)
+            : Math.min(content.length, control.end + MAX_HTML_CONTEXT_LENGTH);
         const rawBefore = content.slice(
-            Math.max(0, control.start - 512),
+            contextStart,
             control.start
         );
         const rawAfter = content.slice(
             control.end,
-            Math.min(content.length, control.end + 512)
+            contextEnd
         );
-        const beforeBoundary = htmlContextBeforeBoundary(rawBefore);
-        const afterBoundary = htmlContextAfterBoundary(rawAfter);
+        const beforeBoundary = containedByForm ? 0 : htmlContextBeforeBoundary(rawBefore);
+        const afterBoundary = containedByForm
+            ? rawAfter.length
+            : htmlContextAfterBoundary(rawAfter);
         links.push({
             target: normalizeLinkTarget(action),
             line,
@@ -1800,19 +1900,21 @@ function htmlFormSubmissionLinks(
             contextBefore: compactGovernedText(
                 rawBefore.slice(beforeBoundary),
                 labels,
-                {},
+                initialStatesAt(contextStart + beforeBoundary),
                 options
             ),
-            contextBeforeBlock: htmlPriorBlockText(
-                rawBefore,
-                beforeBoundary,
-                labels,
-                options
-            ),
+            contextBeforeBlock: containedByForm
+                ? ''
+                : htmlPriorBlockText(
+                    rawBefore,
+                    beforeBoundary,
+                    labels,
+                    options
+                ),
             contextAfter: compactGovernedText(
                 rawAfter.slice(0, afterBoundary),
                 labels,
-                {},
+                initialStatesAt(control.end),
                 options
             ),
             hidden: hiddenStates.get(control.start) || false,
@@ -2092,7 +2194,7 @@ function renderedMarkdownHtmlSource(tokens) {
     for (let index = 0; index < tokens.length; index += 1) {
         const token = tokens[index];
         if (token.type === 'html_block') {
-            blocks.push(`<div>${token.content}</div>`);
+            blocks.push(token.content);
         } else if (token.type === 'inline') {
             const parent = tokens[index - 1];
             const tag = parent?.nesting === 1 && /^(?:h[1-6]|p)$/.test(parent.tag)

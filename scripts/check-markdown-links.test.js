@@ -718,6 +718,34 @@ test('extracts HTML form submissions and image-map routes with control names', (
         assert.equal(isActionableLink(link), false);
     }
 
+    const crossBlockHidden = '<div hidden>\n\n'
+        + `<form action="${formTarget}">\n`
+        + '<button>Submit a vulnerability report</button>\n'
+        + '</form>\n\n</div>\n';
+    const crossBlockLink = extractLinks(crossBlockHidden)
+        .find(candidate => candidate.target === formTarget);
+    assert.ok(crossBlockLink);
+    assert.equal(crossBlockLink.hidden, true);
+    assert.equal(isActionableLink(crossBlockLink), false);
+
+    const formLocalIntent = `<form action="${formTarget}">`
+        + '<p>Submit a vulnerability report below.</p>'
+        + '<button>Continue</button></form>';
+    const formLocalLink = extractLinks(formLocalIntent)
+        .find(candidate => candidate.target === formTarget);
+    assert.ok(formLocalLink);
+    assert.match(formLocalLink.contextBefore, /submit a vulnerability report below/i);
+
+    const inheritedVisibility = '<div style="visibility:hidden">'
+        + `<form action="${formTarget}">`
+        + '<button style="visibility:visible">Continue</button>'
+        + ' for submitting a vulnerability report</form></div>';
+    const inheritedVisibilityLink = extractLinks(inheritedVisibility)
+        .find(candidate => candidate.target === formTarget);
+    assert.ok(inheritedVisibilityLink);
+    assert.equal(inheritedVisibilityLink.hidden, false);
+    assert.equal(inheritedVisibilityLink.contextAfter, '');
+
     const inlineCode = '`<form action="' + formTarget
         + '"><button>Report a bug</button></form>`';
     assert.ok(!extractLinks(inlineCode).some(link => link.target === formTarget));

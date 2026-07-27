@@ -2696,6 +2696,46 @@ test('governs form submissions and hidden ID names while inert routes remain ina
         ));
     });
 
+    const hiddenCrossBlockRoute = validFixture();
+    hiddenCrossBlockRoute['.github/ISSUE_TEMPLATE/bug.md'] = BUG_TEMPLATE.replace(
+        `[the private advisory form](${SECURITY_ADVISORY_ROUTE})`,
+        '<div hidden>\n\n'
+            + `<form action="${SECURITY_ADVISORY_ROUTE}">\n`
+            + '<button>the private advisory form</button>\n'
+            + '</form>\n\n</div>'
+    );
+    fixture(hiddenCrossBlockRoute, root => {
+        assert.ok(auditSupportContract({ root }).problems.includes(
+            '.github/ISSUE_TEMPLATE/bug.md: '
+            + 'must route vulnerability reports to private GitHub advisories'
+        ));
+    });
+
+    const formLocalSecurityIntent = validFixture();
+    formLocalSecurityIntent['docs/getting-started.md'] =
+        `<form action="${ISSUES_ROUTE}">`
+        + '<p>Submit a vulnerability report below.</p>'
+        + '<button>Continue</button></form>';
+    fixture(formLocalSecurityIntent, root => {
+        assert.ok(auditSupportContract({ root }).problems.some(problem => (
+            problem.startsWith('docs/getting-started.md:')
+            && problem.includes('security intake links must use private GitHub advisories')
+        )));
+    });
+
+    const hiddenFormContext = validFixture();
+    hiddenFormContext['docs/getting-started.md'] =
+        '<div style="visibility:hidden">'
+        + `<form action="${ISSUES_ROUTE}">`
+        + '<button style="visibility:visible">Continue</button>'
+        + ' for submitting a vulnerability report</form></div>';
+    fixture(hiddenFormContext, root => {
+        assert.ok(!auditSupportContract({ root }).problems.some(problem => (
+            problem.startsWith('docs/getting-started.md:')
+            && problem.includes('security intake links must use private GitHub advisories')
+        )));
+    });
+
     const localFormContext = validFixture();
     localFormContext['docs/getting-started.md'] =
         `Need help? [Ask on Discord](${DISCORD_ROUTE})\n\n`
