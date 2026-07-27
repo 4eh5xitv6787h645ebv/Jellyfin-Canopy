@@ -6,6 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
 const {
+    DISCORD_ROUTE,
     DISCUSSIONS_ROUTE,
     ISSUES_ROUTE,
     SECURITY_ADVISORY_ROUTE,
@@ -21,10 +22,11 @@ labels: bug
 assignees: ''
 ---
 
+## Security reports
+
 > Do not report security vulnerabilities here. Follow
 > [the private advisory form](${SECURITY_ADVISORY_ROUTE}).
 
-## Security reports
 Use the private route.
 ## Summary
 Summary.
@@ -43,7 +45,7 @@ Configuration.
 ## Logs
 Attach redacted logs.
 ## Additional context
-Context.
+Do not include credentials or sensitive data.
 `;
 const FEATURE_TEMPLATE = `---
 name: Feature request
@@ -60,7 +62,7 @@ Proposal.
 ## Alternatives and scope
 Alternatives.
 ## Additional context
-Context.
+Do not include credentials or sensitive data.
 `;
 const CONFIG = `blank_issues_enabled: false
 contact_links:
@@ -74,6 +76,40 @@ function validFixture() {
         if (file === '.github/ISSUE_TEMPLATE/bug.md') return [file, BUG_TEMPLATE];
         if (file === '.github/ISSUE_TEMPLATE/feature_request.md') return [file, FEATURE_TEMPLATE];
         if (file === '.github/ISSUE_TEMPLATE/config.yml') return [file, CONFIG];
+        if (file === 'README.md') {
+            return [file, `## 🌍 Contributing\n[Suggest features](${ISSUES_ROUTE}).\n`];
+        }
+        if (file === 'CONTRIBUTING.md') {
+            return [file, [
+                '## 🤝 Ways to Contribute',
+                `[Feature requests](${ISSUES_ROUTE}).`,
+                '## 📋 Feature Request Guidelines',
+                `[Use the feature template](${ISSUES_ROUTE}).`,
+                '',
+            ].join('\n')];
+        }
+        if (file === 'docs/about.md') {
+            return [file, `## Get involved\n[Request features](${ISSUES_ROUTE}).\n`];
+        }
+        if (file === 'docs/help.md') {
+            return [file, [
+                `Report bugs with [Issues](${ISSUES_ROUTE}).`,
+                '## Request a feature',
+                `[Request features](${ISSUES_ROUTE}).`,
+                '## Community and support',
+                `[Ask for support](${DISCORD_ROUTE}).`,
+                '',
+            ].join('\n')];
+        }
+        if (file === 'SECURITY.md') {
+            return [file, [
+                '## Reporting a Vulnerability',
+                `[Submit a private report](${SECURITY_ADVISORY_ROUTE}).`,
+                'GitHub opens a private security advisory.',
+                'Do not disclose details in a public Issue, Discussion, or Discord message.',
+                '',
+            ].join('\n')];
+        }
         return [file, `Support requests use [GitHub Issues](${ISSUES_ROUTE}).\n`];
     }));
 }
@@ -98,7 +134,7 @@ test('live support routes and intake templates satisfy one enforced contract', (
 
 test('rejects a support surface that routes users to disabled Discussions', () => {
     const files = validFixture();
-    files['docs/help.md'] = `Request features at ${DISCUSSIONS_ROUTE} or ${ISSUES_ROUTE}.\n`;
+    files['docs/help.md'] += `Request features at ${DISCUSSIONS_ROUTE}.\n`;
     fixture(files, root => {
         assert.deepEqual(auditSupportContract({ root }).problems, [
             'docs/help.md: routes users to disabled GitHub Discussions',
@@ -153,7 +189,9 @@ test('non-rendered comments and fences cannot satisfy intake requirements', () =
         .replace('## Logs\nAttach redacted logs.', '## Logs\nAttach logs.\n<!-- redact these logs -->');
     fixture(files, root => {
         const problems = auditSupportContract({ root }).problems;
-        assert.ok(problems.includes('README.md: must route feature intake to GitHub Issues'));
+        assert.ok(problems.includes(
+            'README.md: must route feature intake to GitHub Issues in "## 🌍 Contributing"'
+        ));
         assert.ok(problems.includes(
             '.github/ISSUE_TEMPLATE/bug.md: missing required section "## Summary"'
         ));
@@ -165,6 +203,107 @@ test('non-rendered comments and fences cannot satisfy intake requirements', () =
         ));
         assert.ok(problems.includes(
             '.github/ISSUE_TEMPLATE/bug.md: logs section must require sensitive-data redaction'
+        ));
+    });
+});
+
+test('security policy and every security chooser contact stay private-only', () => {
+    const files = validFixture();
+    files['SECURITY.md'] = files['SECURITY.md'].replace(
+        '\n',
+        `\n<a href="${ISSUES_ROUTE}">Public security report</a>.\n`
+    );
+    files['.github/ISSUE_TEMPLATE/config.yml'] += [
+        '  - name: Public security vulnerability report',
+        `    url: ${ISSUES_ROUTE}`,
+        '    about: Report vulnerability details in a public issue.',
+        '',
+    ].join('\n');
+    fixture(files, root => {
+        const problems = auditSupportContract({ root }).problems;
+        assert.ok(problems.includes(
+            'SECURITY.md: "## Reporting a Vulnerability" must use only private GitHub advisories'
+        ));
+        assert.ok(problems.includes(
+            '.github/ISSUE_TEMPLATE/config.yml: contact_links[1] '
+            + 'routes security or vulnerability reports outside private GitHub advisories'
+        ));
+    });
+});
+
+test('feature and support destinations are owned by their rendered sections', () => {
+    const files = validFixture();
+    files['docs/help.md'] = files['docs/help.md']
+        .replace(`[Request features](${ISSUES_ROUTE})`, `[Request features](${DISCORD_ROUTE})`)
+        .replace(`[Ask for support](${DISCORD_ROUTE})`, `[Ask for support](${ISSUES_ROUTE})`);
+    files['.github/ISSUE_TEMPLATE/feature_request.md'] = FEATURE_TEMPLATE.replace(
+        'Do not include credentials or sensitive data.',
+        'Include any other useful context.'
+    );
+    fixture(files, root => {
+        const problems = auditSupportContract({ root }).problems;
+        assert.ok(problems.includes(
+            'docs/help.md: must route feature intake to GitHub Issues in "## Request a feature"'
+        ));
+        assert.ok(problems.includes(
+            'docs/help.md: must route general support to the Jellyfin Community Discord '
+            + 'in "## Community and support"'
+        ));
+        assert.ok(problems.includes(
+            '.github/ISSUE_TEMPLATE/feature_request.md: '
+            + 'Additional context must require sensitive-data redaction'
+        ));
+    });
+});
+
+test('images, empty anchors, and comments cannot satisfy actionable routes', () => {
+    for (const replacement of [
+        `![Feature proposals](${ISSUES_ROUTE})`,
+        `[](${ISSUES_ROUTE})`,
+        `<!-- <a href="${ISSUES_ROUTE}">Feature proposals</a>`,
+    ]) {
+        const files = validFixture();
+        files['README.md'] = `## 🌍 Contributing\n${replacement}\n`;
+        fixture(files, root => {
+            assert.ok(auditSupportContract({ root }).problems.includes(
+                'README.md: must route feature intake to GitHub Issues in "## 🌍 Contributing"'
+            ));
+        });
+    }
+
+    const advisoryImage = validFixture();
+    advisoryImage['.github/ISSUE_TEMPLATE/bug.md'] = BUG_TEMPLATE.replace(
+        `[the private advisory form](${SECURITY_ADVISORY_ROUTE})`,
+        `![the private advisory form](${SECURITY_ADVISORY_ROUTE})`
+    );
+    fixture(advisoryImage, root => {
+        assert.ok(auditSupportContract({ root }).problems.includes(
+            '.github/ISSUE_TEMPLATE/bug.md: '
+            + 'must route vulnerability reports to private GitHub advisories'
+        ));
+    });
+});
+
+test('canonicalizes GFM and browser route representations before enforcing them', () => {
+    const wwwFiles = validFixture();
+    wwwFiles['README.md'] += '\n'
+        + 'www.github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/discussions\n';
+    fixture(wwwFiles, root => {
+        assert.ok(auditSupportContract({ root }).problems.includes(
+            'README.md: routes users to disabled GitHub Discussions'
+        ));
+    });
+
+    const dotSegmentFiles = validFixture();
+    dotSegmentFiles['docs/help.md'] = dotSegmentFiles['docs/help.md'].replace(
+        `[Request features](${ISSUES_ROUTE})`,
+        `[Request features](${ISSUES_ROUTE}/../discussions)`
+    );
+    fixture(dotSegmentFiles, root => {
+        const problems = auditSupportContract({ root }).problems;
+        assert.ok(problems.includes('docs/help.md: routes users to disabled GitHub Discussions'));
+        assert.ok(problems.includes(
+            'docs/help.md: must route feature intake to GitHub Issues in "## Request a feature"'
         ));
     });
 });
@@ -191,9 +330,10 @@ test('enforces GitHub template metadata and rendered issue-body link semantics',
         assert.ok(problems.includes(
             '.github/ISSUE_TEMPLATE/bug.md: front matter name must contain 4 to 64 characters'
         ));
-        assert.ok(problems.includes(
-            '.github/ISSUE_TEMPLATE/bug.md:3: rendered issue-body links must use an absolute HTTPS URL: ../../SECURITY.md'
-        ));
+        assert.ok(problems.some(problem => (
+            /^\.github\/ISSUE_TEMPLATE\/bug\.md:\d+: rendered issue-body links must use an absolute HTTPS URL: \.\.\/\.\.\/SECURITY\.md$/
+                .test(problem)
+        )));
         assert.ok(problems.includes(
             '.github/ISSUE_TEMPLATE/bug.md: must route vulnerability reports to private GitHub advisories'
         ));
@@ -257,6 +397,7 @@ test('rejects spaced and multiline File Transformation baseline checklists', () 
         '1. [ ] File Transformation installed',
         '> - [ ] File Transformation installed',
         '- [ ] File\n\n  Transformation installed',
+        '- [ ] File `Transformation` installed',
     ]) {
         const files = validFixture();
         files['.github/ISSUE_TEMPLATE/bug.md'] = BUG_TEMPLATE.replace(

@@ -5,13 +5,21 @@ const path = require('node:path');
 const { URL } = require('node:url');
 const MarkdownIt = require('markdown-it');
 const { parseDocument } = require('yaml');
-const { extractLinks, validateMarkdownFile } = require('./check-markdown-links');
+const {
+    extractLinks,
+    extractLinksFromTokens,
+    isActionableLink,
+    normalizeLinkTarget,
+    stripHtmlComments,
+    validateMarkdownFile,
+} = require('./check-markdown-links');
 
 const ROOT = path.join(__dirname, '..');
 const REPOSITORY = 'https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy';
 const DISCUSSIONS_ROUTE = `${REPOSITORY}/discussions`;
 const ISSUES_ROUTE = `${REPOSITORY}/issues`;
 const SECURITY_ADVISORY_ROUTE = `${REPOSITORY}/security/advisories/new`;
+const DISCORD_ROUTE = 'https://discord.gg/EYNFf7y4CG';
 const TEMPLATE_DIRECTORY = '.github/ISSUE_TEMPLATE';
 const TEMPLATE_ENTRIES = ['bug.md', 'config.yml', 'feature_request.md'];
 const SUPPORT_FILES = [
@@ -43,12 +51,15 @@ const FEATURE_SECTIONS = [
     'Alternatives and scope',
     'Additional context',
 ];
-const FEATURE_INTAKE_FILES = [
-    'README.md',
-    'CONTRIBUTING.md',
-    'docs/about.md',
-    'docs/help.md',
-];
+const FEATURE_ROUTE_SECTIONS = new Map([
+    ['README.md', ['🌍 Contributing']],
+    ['CONTRIBUTING.md', ['🤝 Ways to Contribute', '📋 Feature Request Guidelines']],
+    ['docs/about.md', ['Get involved']],
+    ['docs/help.md', ['Request a feature']],
+]);
+const SUPPORT_ROUTE_SECTIONS = new Map([
+    ['docs/help.md', ['Community and support']],
+]);
 const markdown = new MarkdownIt({ html: true, linkify: true });
 markdown.linkify.set({ fuzzyEmail: false, fuzzyLink: false });
 
@@ -150,8 +161,7 @@ function auditTemplateDirectory(root, problems) {
 }
 
 function visibleHtmlText(content) {
-    return content
-        .replace(/<!--[\s\S]*?-->/g, ' ')
+    return stripHtmlComments(content)
         .replace(/<(script|style)\b[\s\S]*?<\/\1\s*>/gi, ' ')
         .replace(/<[^>]*>/g, ' ');
 }
@@ -159,6 +169,16 @@ function visibleHtmlText(content) {
 function inlineVisibleText(children = []) {
     return children.map((token) => {
         if (token.type === 'text') return token.content;
+        if (token.type === 'image') return token.content;
+        if (token.type === 'softbreak' || token.type === 'hardbreak') return ' ';
+        if (token.type === 'html_inline') return visibleHtmlText(token.content);
+        return '';
+    }).join('');
+}
+
+function inlineTaskText(children = []) {
+    return children.map((token) => {
+        if (token.type === 'text' || token.type === 'code_inline') return token.content;
         if (token.type === 'image') return token.content;
         if (token.type === 'softbreak' || token.type === 'hardbreak') return ' ';
         if (token.type === 'html_inline') return visibleHtmlText(token.content);
@@ -199,6 +219,64 @@ function sectionTokens(tokens, section) {
     return tokens.slice(start, end);
 }
 
+function actionableLinks(tokens) {
+    return extractLinksFromTokens(tokens).filter(isActionableLink);
+}
+
+function absoluteUrl(target) {
+    try {
+        return new URL(normalizeLinkTarget(target));
+    } catch {
+        return null;
+    }
+}
+
+function repositoryPath(target) {
+    const url = absoluteUrl(target);
+    if (!url || !['http:', 'https:'].includes(url.protocol)) return '';
+    const hostname = url.hostname.toLowerCase().replace(/^www\./, '');
+    return hostname === 'github.com' ? url.pathname.replace(/\/+$/, '') : '';
+}
+
+function hasRepositoryRoute(tokens, suffix, descendants = false) {
+    const expected = `/4eh5xitv6787h645ebv/Jellyfin-Canopy${suffix}`;
+    return actionableLinks(tokens).some((link) => {
+        const url = absoluteUrl(link.target);
+        if (url?.protocol !== 'https:' || url.hostname.toLowerCase() !== 'github.com'
+            || url.username || url.password || url.port || url.search || url.hash) return false;
+        const pathname = url.pathname.replace(/\/+$/, '');
+        return pathname === expected || (descendants && pathname.startsWith(`${expected}/`));
+    });
+}
+
+function isExactHttpsRoute(link, route) {
+    const expected = new URL(route);
+    const actual = absoluteUrl(link.target);
+    return actual?.protocol === 'https:'
+        && actual.hostname.toLowerCase() === expected.hostname
+        && actual.username === ''
+        && actual.password === ''
+        && actual.port === expected.port
+        && actual.pathname.replace(/\/+$/, '') === expected.pathname.replace(/\/+$/, '')
+        && actual.search === expected.search
+        && actual.hash === expected.hash;
+}
+
+function hasExactHttpsRoute(tokens, route) {
+    return actionableLinks(tokens).some(link => isExactHttpsRoute(link, route));
+}
+
+function hasOnlyExactHttpsRoute(tokens, route) {
+    const links = extractLinksFromTokens(tokens).filter(link => link?.type === 'link');
+    return links.some(link => isActionableLink(link) && isExactHttpsRoute(link, route))
+        && links.every(link => isExactHttpsRoute(link, route));
+}
+
+function requireSectionRoute(tokens, file, section, predicate, message, problems) {
+    const owned = sectionTokens(tokens, section);
+    if (owned.length === 0 || !predicate(owned)) problems.push(`${file}: ${message} in "## ${section}"`);
+}
+
 function requireSections(tokens, file, sections, problems) {
     const headings = new Set();
     for (let index = 0; index < tokens.length; index += 1) {
@@ -237,24 +315,44 @@ function hasFileTransformationChecklist(body) {
                     if (depth === 0) break;
                 }
             }
-            if (isFileTransformationTask(renderedText(tokens.slice(index + 1, end)))) return true;
+            const item = tokens.slice(index + 1, end).map((token) => {
+                if (token.type === 'inline') return inlineTaskText(token.children);
+                if (token.type === 'html_block') return visibleHtmlText(token.content);
+                return '';
+            }).join(' ').replace(/\s+/g, ' ').trim();
+            if (isFileTransformationTask(item)) return true;
             continue;
         }
         if (tokens[index].type === 'inline'
-            && isFileTransformationTask(inlineVisibleText(tokens[index].children))) return true;
+            && isFileTransformationTask(inlineTaskText(tokens[index].children))) return true;
     }
     return false;
+}
+
+function stringValues(value) {
+    if (typeof value === 'string') return [value];
+    if (Array.isArray(value)) return value.flatMap(stringValues);
+    if (isMapping(value)) return Object.values(value).flatMap(stringValues);
+    return [];
 }
 
 function renderedSupportSurface(source, file) {
     if (file.endsWith('.yml') || file.endsWith('.yaml')) {
         const document = parseDocument(source, { prettyErrors: false, uniqueKeys: true });
-        if (document.errors.length > 0) return '';
-        return JSON.stringify(document.toJS());
+        if (document.errors.length > 0) return { links: [], text: '' };
+        const values = stringValues(document.toJS());
+        return {
+            links: values.map(value => ({
+                target: normalizeLinkTarget(value),
+                line: 1,
+                type: 'link',
+                label: value,
+            })),
+            text: values.join(' '),
+        };
     }
     const tokens = markdown.parse(source, {});
-    const links = extractLinks(source).map(link => link.target || '');
-    return `${renderedText(tokens)} ${links.join(' ')}`;
+    return { links: extractLinksFromTokens(tokens), text: renderedText(tokens) };
 }
 
 function isAbsoluteHttpsUrl(value) {
@@ -307,6 +405,11 @@ function requireChooserConfig(config, file, problems) {
         if (typeof contact.url === 'string' && !isAbsoluteHttpsUrl(contact.url)) {
             problems.push(`${prefix}.url must be a valid absolute HTTPS URL`);
         }
+        const securityMeaning = `${String(contact.name || '')} ${String(contact.about || '')}`;
+        if (/security|vulnerab/i.test(securityMeaning)
+            && normalizeLinkTarget(contact.url) !== SECURITY_ADVISORY_ROUTE) {
+            problems.push(`${prefix} routes security or vulnerability reports outside private GitHub advisories`);
+        }
     }
     const security = config.contact_links.find(contact => (
         isMapping(contact) && contact.url === SECURITY_ADVISORY_ROUTE
@@ -328,7 +431,12 @@ function auditSupportContract(options = {}) {
         const source = readRegularFile(root, file, problems);
         sources.set(file, source);
         const surface = renderedSupportSurface(source, file);
-        if (surface.includes(DISCUSSIONS_ROUTE) || /\bGitHub Discussions\b/i.test(surface)) {
+        const discussionPath = '/4eh5xitv6787h645ebv/Jellyfin-Canopy/discussions';
+        const discussions = surface.links.some((link) => {
+            const pathname = link?.type === 'link' ? repositoryPath(link.target) : '';
+            return pathname === discussionPath || pathname.startsWith(`${discussionPath}/`);
+        });
+        if (discussions || /\bGitHub Discussions\b/i.test(surface.text)) {
             problems.push(`${file}: routes users to disabled GitHub Discussions`);
         }
     }
@@ -336,24 +444,56 @@ function auditSupportContract(options = {}) {
         && candidate.endsWith('.md'))) {
         problems.push(...validateMarkdownFile(file, root));
     }
-    for (const file of FEATURE_INTAKE_FILES) {
+    for (const [file, sections] of FEATURE_ROUTE_SECTIONS) {
         const source = sources.get(file) || '';
-        if (!extractLinks(source).some(link => (
-            link.target === ISSUES_ROUTE || link.target?.startsWith(`${ISSUES_ROUTE}/`)
-        ))) {
-            problems.push(`${file}: must route feature intake to GitHub Issues`);
+        const tokens = markdown.parse(source, {});
+        for (const section of sections) {
+            requireSectionRoute(
+                tokens,
+                file,
+                section,
+                owned => hasRepositoryRoute(owned, '/issues', true),
+                'must route feature intake to GitHub Issues',
+                problems
+            );
         }
+    }
+    for (const [file, sections] of SUPPORT_ROUTE_SECTIONS) {
+        const tokens = markdown.parse(sources.get(file) || '', {});
+        for (const section of sections) {
+            requireSectionRoute(
+                tokens,
+                file,
+                section,
+                owned => hasExactHttpsRoute(owned, DISCORD_ROUTE),
+                'must route general support to the Jellyfin Community Discord',
+                problems
+            );
+        }
+    }
+
+    const securityFile = 'SECURITY.md';
+    const securityTokens = markdown.parse(sources.get(securityFile) || '', {});
+    const vulnerabilitySection = sectionTokens(securityTokens, 'Reporting a Vulnerability');
+    const vulnerabilityText = renderedText(vulnerabilitySection);
+    if (!hasOnlyExactHttpsRoute(vulnerabilitySection, SECURITY_ADVISORY_ROUTE)
+        || !/private security advisory/i.test(vulnerabilityText)
+        || !/(?:do not|never).*(?:public|issue|discussion|discord)/i.test(vulnerabilityText)) {
+        problems.push(
+            `${securityFile}: "## Reporting a Vulnerability" must use only private GitHub advisories`
+        );
     }
 
     const bugFile = '.github/ISSUE_TEMPLATE/bug.md';
     const bug = issueTemplate(sources.get(bugFile) || '', bugFile, problems);
     const bugTokens = markdown.parse(bug.body, {});
-    const bugText = renderedText(bugTokens);
+    const bugSecurity = sectionTokens(bugTokens, 'Security reports');
+    const bugSecurityText = renderedText(bugSecurity);
     requireTemplateMetadata(bug.metadata, bugFile, 'bug', problems);
     requireSections(bugTokens, bugFile, BUG_SECTIONS, problems);
     requireRenderedIssueLinks(bug.body, bugFile, problems);
-    if (!extractLinks(bug.body).some(link => link.target === SECURITY_ADVISORY_ROUTE)
-        || !/do not report security vulnerabilities here/i.test(bugText)) {
+    if (!hasOnlyExactHttpsRoute(bugSecurity, SECURITY_ADVISORY_ROUTE)
+        || !/do not report security vulnerabilities here/i.test(bugSecurityText)) {
         problems.push(`${bugFile}: must route vulnerability reports to private GitHub advisories`);
     }
     if (!/redact/i.test(renderedText(sectionTokens(bugTokens, 'Logs')))) {
@@ -369,6 +509,11 @@ function auditSupportContract(options = {}) {
     requireTemplateMetadata(feature.metadata, featureFile, 'enhancement', problems);
     requireSections(featureTokens, featureFile, FEATURE_SECTIONS, problems);
     requireRenderedIssueLinks(feature.body, featureFile, problems);
+    const featureContext = renderedText(sectionTokens(featureTokens, 'Additional context'));
+    if (!/(?:do not include|redact)/i.test(featureContext)
+        || !/credential|sensitive|private|personal/i.test(featureContext)) {
+        problems.push(`${featureFile}: Additional context must require sensitive-data redaction`);
+    }
 
     const configFile = '.github/ISSUE_TEMPLATE/config.yml';
     const config = parseYaml(sources.get(configFile) || '', configFile, problems);
@@ -391,6 +536,7 @@ if (require.main === module) process.exitCode = main();
 
 module.exports = {
     BUG_SECTIONS,
+    DISCORD_ROUTE,
     DISCUSSIONS_ROUTE,
     FEATURE_SECTIONS,
     ISSUES_ROUTE,

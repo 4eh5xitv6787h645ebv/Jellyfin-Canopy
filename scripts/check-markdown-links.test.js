@@ -8,8 +8,10 @@ const test = require('node:test');
 const {
     checkMarkdownLinks,
     collectMarkdownFiles,
+    extractLinks,
     headingSlug,
     htmlAttributes,
+    isActionableLink,
     markdownAnchors,
     mkdocsHeadingSlug,
     validateMarkdownFile,
@@ -100,6 +102,54 @@ test('ignores external links and links shown as code examples', () => {
     fixture({
         'CONTRIBUTING.md': '[Web](https://example.com/missing)\n`[inline](missing.md)`\n```md\n[fenced](missing.md)\n```\n',
     }, root => assert.deepEqual(validateMarkdownFile('CONTRIBUTING.md', root), []));
+});
+
+test('extracts browser-equivalent links without treating images or empty anchors as actions', () => {
+    const nonActions = extractLinks([
+        '![Image](https://github.com/owner/repository/issues)',
+        '[](https://github.com/owner/repository/issues)',
+        '',
+    ].join('\n'));
+    const browserForms = extractLinks([
+        'www.github.com/owner/repository/discussions',
+        '<a href="https&colon;//github.com/owner/repository/issues/../discussions">Entity</a>',
+        '',
+    ].join('\n'));
+
+    assert.deepEqual([...nonActions, ...browserForms].map(link => ({
+        target: link.target,
+        line: link.line,
+        type: link.type,
+        actionable: isActionableLink(link),
+    })), [
+        {
+            target: 'https://github.com/owner/repository/issues',
+            line: 1,
+            type: 'image',
+            actionable: false,
+        },
+        {
+            target: 'https://github.com/owner/repository/issues',
+            line: 2,
+            type: 'link',
+            actionable: false,
+        },
+        {
+            target: 'http://www.github.com/owner/repository/discussions',
+            line: 1,
+            type: 'link',
+            actionable: true,
+        },
+        {
+            target: 'https://github.com/owner/repository/issues/../discussions',
+            line: 2,
+            type: 'link',
+            actionable: false,
+        },
+    ]);
+    assert.deepEqual(extractLinks(
+        '<!-- [Hidden](https://github.com/owner/repository/issues)'
+    ), []);
 });
 
 test('validates quoted and unquoted raw HTML links without reserving heading slugs', () => {

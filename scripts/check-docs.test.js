@@ -65,6 +65,8 @@ test('hidden support templates and chooser URLs are part of the reviewed invento
         '.github/ISSUE_TEMPLATE/bug.md': [
             '[Help](https://unreviewed.example/bug-help)',
             'Bare https://unreviewed.example/bare-help',
+            'www.unreviewed.com/www-help',
+            '<a href="https&colon;//unreviewed.example/entity-help">Entity</a>',
             '',
         ].join('\n'),
         '.github/ISSUE_TEMPLATE/config.yml': [
@@ -86,6 +88,14 @@ test('hidden support templates and chooser URLs are part of the reviewed invento
         assert.ok(problems.includes(
             '.github/ISSUE_TEMPLATE/bug.md:2: external URL is absent from the reviewed offline inventory: '
             + 'https://unreviewed.example/bare-help'
+        ));
+        assert.ok(problems.includes(
+            '.github/ISSUE_TEMPLATE/bug.md:3: external documentation URL must use HTTPS: '
+            + 'http://www.unreviewed.com/www-help'
+        ));
+        assert.ok(problems.includes(
+            '.github/ISSUE_TEMPLATE/bug.md:4: external URL is absent from the reviewed offline inventory: '
+            + 'https://unreviewed.example/entity-help'
         ));
         assert.ok(problems.includes(
             '.github/ISSUE_TEMPLATE/config.yml:2: external URL is absent from the reviewed offline inventory: '

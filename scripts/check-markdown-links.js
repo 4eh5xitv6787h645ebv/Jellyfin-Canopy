@@ -8,6 +8,8 @@ const ROOT = path.join(__dirname, '..');
 const REQUIRED_FILES = ['README.md', 'CONTRIBUTING.md'];
 const markdown = new MarkdownIt({ html: true, linkify: true });
 markdown.linkify.set({ fuzzyEmail: false, fuzzyLink: false });
+const gfmWwwLinkifier = new MarkdownIt().linkify;
+gfmWwwLinkifier.set({ fuzzyEmail: false });
 
 function headingSlug(heading) {
     return heading
@@ -40,11 +42,34 @@ function inlineText(children = []) {
     }).join('');
 }
 
+function stripHtmlComments(content) {
+    let rendered = '';
+    let offset = 0;
+    while (offset < content.length) {
+        const opening = content.indexOf('<!--', offset);
+        if (opening === -1) return rendered + content.slice(offset);
+        rendered += content.slice(offset, opening);
+        const closing = content.indexOf('-->', opening + 4);
+        if (closing === -1) return rendered;
+        offset = closing + 3;
+    }
+    return rendered;
+}
+
+function visibleHtmlText(content) {
+    return stripHtmlComments(content)
+        .replace(/<(script|style)\b[\s\S]*?<\/\1\s*>/gi, ' ')
+        .replace(/<[^>]*>/g, ' ');
+}
+
 function htmlAttributes(content) {
     const attributes = [];
     const pattern = /(?:^|[\s<])(id|href|src|srcset)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/gi;
-    for (const match of content.matchAll(pattern)) {
-        attributes.push({ name: match[1].toLowerCase(), value: match[2] ?? match[3] ?? match[4] });
+    for (const match of stripHtmlComments(content).matchAll(pattern)) {
+        attributes.push({
+            name: match[1].toLowerCase(),
+            value: markdown.utils.unescapeAll(match[2] ?? match[3] ?? match[4]),
+        });
     }
     return attributes;
 }
@@ -150,36 +175,119 @@ function markdownAnchors(source, dialect = 'github') {
 
 function htmlLinks(content, line) {
     const links = [];
-    const rendered = content.replace(/<!--[\s\S]*?-->/g, '');
-    for (const attribute of htmlAttributes(rendered)) {
-        if (attribute.name === 'href' || attribute.name === 'src') {
-            links.push({ target: attribute.value, line });
+    for (const attribute of htmlAttributes(content)) {
+        if (attribute.name === 'href') {
+            links.push({
+                target: normalizeLinkTarget(attribute.value),
+                line,
+                type: 'link',
+                label: '',
+            });
+        } else if (attribute.name === 'src') {
+            links.push({
+                target: normalizeLinkTarget(attribute.value),
+                line,
+                type: 'image',
+                label: '',
+            });
         } else if (attribute.name === 'srcset') {
             for (const candidate of attribute.value.split(',')) {
-            const target = candidate.trim().split(/\s+/)[0];
-            if (target) links.push({ target, line });
+                const target = candidate.trim().split(/\s+/)[0];
+                if (target) {
+                    links.push({
+                        target: normalizeLinkTarget(target),
+                        line,
+                        type: 'image',
+                        label: '',
+                    });
+                }
             }
         }
     }
     return links;
 }
 
-function extractLinks(source) {
-    const tokens = markdown.parse(source, {});
+function normalizeLinkTarget(target) {
+    const decoded = markdown.utils.unescapeAll(String(target || '').trim());
+    if (/^www\./i.test(decoded)) return `http://${decoded}`;
+    if (decoded.startsWith('//')) return `https:${decoded}`;
+    return decoded;
+}
+
+function inlineLabel(children, start) {
+    const label = [];
+    let depth = 1;
+    for (let index = start + 1; index < children.length; index += 1) {
+        const child = children[index];
+        if (child.type === 'link_open') depth += 1;
+        if (child.type === 'link_close') {
+            depth -= 1;
+            if (depth === 0) break;
+        }
+        if (child.type === 'text' || child.type === 'code_inline') label.push(child.content);
+        else if (child.type === 'image') label.push(child.content);
+        else if (child.type === 'softbreak' || child.type === 'hardbreak') label.push(' ');
+        else if (child.type === 'html_inline') label.push(visibleHtmlText(child.content));
+    }
+    return label.join('').replace(/\s+/g, ' ').trim();
+}
+
+function wwwAutolinks(content, line) {
+    return (gfmWwwLinkifier.match(content) || [])
+        .filter(match => /^www\./i.test(match.raw))
+        .map(match => ({
+            target: normalizeLinkTarget(match.raw),
+            line,
+            type: 'link',
+            label: match.raw,
+        }));
+}
+
+function extractLinksFromTokens(tokens) {
     const links = [];
     for (const token of tokens) {
         const line = (token.map?.[0] || 0) + 1;
         if (token.type === 'html_block') links.push(...htmlLinks(token.content, line));
         if (token.type !== 'inline') continue;
         let childLine = line;
-        for (const child of token.children || []) {
-            if (child.type === 'link_open') links.push({ target: child.attrGet('href'), line: childLine });
-            else if (child.type === 'image') links.push({ target: child.attrGet('src'), line: childLine });
-            else if (child.type === 'html_inline') links.push(...htmlLinks(child.content, childLine));
+        let linkDepth = 0;
+        const children = token.children || [];
+        for (let index = 0; index < children.length; index += 1) {
+            const child = children[index];
+            if (child.type === 'link_open') {
+                links.push({
+                    target: normalizeLinkTarget(child.attrGet('href')),
+                    line: childLine,
+                    type: 'link',
+                    label: inlineLabel(children, index),
+                });
+                linkDepth += 1;
+            } else if (child.type === 'link_close') {
+                linkDepth = Math.max(0, linkDepth - 1);
+            } else if (child.type === 'image') {
+                links.push({
+                    target: normalizeLinkTarget(child.attrGet('src')),
+                    line: childLine,
+                    type: 'image',
+                    label: child.content.trim(),
+                });
+            } else if (child.type === 'text' && linkDepth === 0) {
+                links.push(...wwwAutolinks(child.content, childLine));
+            } else if (child.type === 'html_inline') {
+                links.push(...htmlLinks(child.content, childLine));
+            }
             if (child.type === 'softbreak' || child.type === 'hardbreak') childLine += 1;
         }
     }
     return links;
+}
+
+function extractLinks(source) {
+    return extractLinksFromTokens(markdown.parse(source, {}));
+}
+
+function isActionableLink(link) {
+    return link?.type === 'link' && Boolean(link.label?.trim());
 }
 
 function splitTarget(rawTarget) {
@@ -286,9 +394,13 @@ module.exports = {
     checkMarkdownLinks,
     collectMarkdownFiles,
     extractLinks,
+    extractLinksFromTokens,
     headingSlug,
     htmlAttributes,
+    isActionableLink,
     markdownAnchors,
     mkdocsHeadingSlug,
+    normalizeLinkTarget,
+    stripHtmlComments,
     validateMarkdownFile,
 };

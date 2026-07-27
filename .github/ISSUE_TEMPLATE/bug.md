@@ -7,12 +7,12 @@ assignees: ''
 
 ---
 
+## Security reports
+
 > [!IMPORTANT]
 > Do not report security vulnerabilities here. Follow
 > [the private vulnerability-reporting form](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/security/advisories/new)
 > to contact the maintainers without disclosing the report publicly.
-
-## Security reports
 
 Confirm this report does not disclose a vulnerability, credential, private URL,
 personal data, or other sensitive material. Use the private security route above
