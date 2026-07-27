@@ -497,6 +497,40 @@ test('semantic ownership does not cross delimited route clauses', () => {
     }
 });
 
+test('security ownership does not cross adjacent ordinary links in Markdown', () => {
+    const forms = [
+        (advisory, issues) => `[Submit a private vulnerability report](${advisory})`
+            + `[Project roadmap](${issues})`,
+        (advisory, issues) => `[Submit a private vulnerability report](${advisory}) and `
+            + `[Project roadmap](${issues})`,
+        (advisory, issues) => `[Submit a private vulnerability report](${advisory}) | `
+            + `[Project roadmap](${issues})`,
+        (advisory, issues) => `<a href="${advisory}">`
+            + 'Submit a private vulnerability report</a>'
+            + `<a href="${issues}">Project roadmap</a>`,
+        (advisory, issues) => `<a href="${advisory}">`
+            + 'Submit a private vulnerability report</a> and '
+            + `<a href="${issues}">Project roadmap</a>`,
+        (advisory, issues) => `<a href="${advisory}">`
+            + 'Submit a private vulnerability report</a> | '
+            + `<a href="${issues}">Project roadmap</a>`,
+    ];
+    for (const form of forms) {
+        const files = validFixture();
+        files['docs/getting-started.md'] = `${form(
+            SECURITY_ADVISORY_ROUTE,
+            ISSUES_ROUTE
+        )}\n`;
+        fixture(files, root => {
+            const problems = auditSupportContract({ root }).problems.filter(problem => (
+                problem.startsWith('docs/getting-started.md:')
+                && problem.includes('security intake links')
+            ));
+            assert.deepEqual(problems, []);
+        });
+    }
+});
+
 test('category-specific form labels own direct and semicolon-delimited intake routes', () => {
     const cases = [
         {

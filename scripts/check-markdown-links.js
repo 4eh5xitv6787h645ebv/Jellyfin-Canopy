@@ -580,6 +580,7 @@ function inlineHtmlAnchorRecord(children, start, labels) {
                 return {
                     label: label.replace(/\s+/g, ' ').trim() || anchor.label,
                     endIndex: index - 1,
+                    autoClosed: true,
                 };
             }
             label += visibleHtmlText(
@@ -653,6 +654,59 @@ function inlineSemanticText(children = []) {
     }).join('').replace(/\s+/g, ' ').trim();
 }
 
+function inlineLinkRegions(children, labels) {
+    const regions = [];
+    for (let index = 0; index < children.length; index += 1) {
+        const child = children[index];
+        if (child.type === 'link_open') {
+            regions.push({
+                startIndex: index,
+                endIndex: inlineLinkEnd(children, index),
+            });
+            continue;
+        }
+        if (child.type !== 'html_inline') continue;
+        const html = htmlLinks(child.content, 1, labels);
+        if (!html.some(link => link.type === 'link')) continue;
+        const record = inlineHtmlAnchorRecord(children, index, labels);
+        regions.push({
+            startIndex: index,
+            endIndex: record?.endIndex ?? index,
+            html,
+            record,
+        });
+    }
+    const contextual = [];
+    for (const [index, region] of regions.entries()) {
+        const previous = contextual.at(-1);
+        const next = regions[index + 1];
+        const contextBefore = inlineSemanticText(children.slice(
+            previous ? previous.endIndex + 1 : 0,
+            region.startIndex
+        ));
+        const repairedPriorLabel = previous?.record?.autoClosed
+            && previous.endIndex + 1 === region.startIndex
+            ? previous.record.label
+            : '';
+        contextual.push({
+            ...region,
+            contextBefore: `${repairedPriorLabel} ${contextBefore}`
+                .replace(/\s+/g, ' ').trim(),
+            contextBeforePrior: previous
+                ? `${previous.contextBeforePrior || ''} ${previous.contextBefore || ''}`
+                    .replace(/\s+/g, ' ').trim()
+                : '',
+            contextAfter: inlineSemanticText(children.slice(
+                region.endIndex + 1,
+                next ? next.startIndex : children.length
+            )),
+            contextBeforeStartsAtLink: Boolean(previous),
+            contextAfterEndsAtLink: Boolean(next),
+        });
+    }
+    return contextual;
+}
+
 function wwwAutolinks(content, line, context = '', contextBefore = '', contextAfter = '') {
     return (gfmWwwLinkifier.match(content) || [])
         .filter(match => /^www\./i.test(match.raw))
@@ -694,19 +748,24 @@ function extractLinksFromTokens(tokens) {
         const htmlVisibilityStack = [];
         const children = token.children || [];
         const context = inlineSemanticText(children);
+        const regions = inlineLinkRegions(children, htmlLabels);
+        const regionsByStart = new Map(regions.map(region => [region.startIndex, region]));
         for (let index = 0; index < children.length; index += 1) {
             const child = children[index];
             if (child.type === 'link_open') {
-                const endIndex = inlineLinkEnd(children, index);
+                const region = regionsByStart.get(index);
                 links.push({
                     target: normalizeLinkTarget(child.attrGet('href')),
                     line: childLine,
                     type: 'link',
                     label: inlineLabel(children, index),
                     context,
-                    contextBefore: inlineSemanticText(children.slice(0, index)),
+                    contextBefore: region.contextBefore,
+                    contextBeforePrior: region.contextBeforePrior,
                     contextBeforeBlock: previousBlockText,
-                    contextAfter: inlineSemanticText(children.slice(endIndex + 1)),
+                    contextAfter: region.contextAfter,
+                    contextBeforeStartsAtLink: region.contextBeforeStartsAtLink,
+                    contextAfterEndsAtLink: region.contextAfterEndsAtLink,
                     hidden: Boolean(htmlVisibilityStack.at(-1)?.hidden),
                 });
                 linkDepth += 1;
@@ -720,7 +779,9 @@ function extractLinksFromTokens(tokens) {
                     label: child.content.trim(),
                     hidden: Boolean(htmlVisibilityStack.at(-1)?.hidden),
                 });
-            } else if (child.type === 'text' && linkDepth === 0) {
+            } else if (child.type === 'text'
+                && linkDepth === 0
+                && /\bwww\./i.test(child.content)) {
                 links.push(...wwwAutolinks(
                     child.content,
                     childLine,
@@ -729,20 +790,41 @@ function extractLinksFromTokens(tokens) {
                     inlineSemanticText(children.slice(index + 1))
                 ));
             } else if (child.type === 'html_inline') {
-                const html = htmlLinks(child.content, childLine, htmlLabels);
-                const record = inlineHtmlAnchorRecord(children, index, htmlLabels);
+                const region = regionsByStart.get(index);
+                const html = region?.html || htmlLinks(child.content, childLine, htmlLabels);
+                const record = region?.record || inlineHtmlAnchorRecord(
+                    children,
+                    index,
+                    htmlLabels
+                );
                 const anchor = html.find(link => link.type === 'link');
                 if (anchor && record?.label) anchor.label = record.label;
-                for (const link of html) {
+                const htmlRouteLinks = html.filter(link => link.type === 'link');
+                const firstRouteIndex = html.indexOf(htmlRouteLinks[0]);
+                const lastRouteIndex = html.indexOf(htmlRouteLinks.at(-1));
+                for (const [linkIndex, link] of html.entries()) {
+                    link.line = childLine;
                     link.hidden ||= Boolean(htmlVisibilityStack.at(-1)?.hidden);
                     link.context = context;
-                    link.contextBefore = `${inlineSemanticText(children.slice(0, index))} `
-                        + `${link.contextBefore || ''}`;
+                    if (region && linkIndex === firstRouteIndex) {
+                        link.contextBefore = `${region.contextBefore} `
+                            + `${link.contextBefore || ''}`;
+                        link.contextBeforePrior = `${region.contextBeforePrior} `
+                            + `${link.contextBeforePrior || ''}`;
+                        link.contextBeforeStartsAtLink ||= region.contextBeforeStartsAtLink;
+                    }
                     link.contextBeforeBlock ||= previousBlockText;
-                    link.contextAfter = `${link.contextAfter || ''} `
-                        + `${inlineSemanticText(children.slice((record?.endIndex ?? index) + 1))}`;
-                    link.contextBefore = link.contextBefore.replace(/\s+/g, ' ').trim();
-                    link.contextAfter = link.contextAfter.replace(/\s+/g, ' ').trim();
+                    if (region && linkIndex === lastRouteIndex) {
+                        link.contextAfter = `${link.contextAfter || ''} `
+                            + `${region.contextAfter}`;
+                        link.contextAfterEndsAtLink ||= region.contextAfterEndsAtLink;
+                    }
+                    link.contextBefore = String(link.contextBefore || '')
+                        .replace(/\s+/g, ' ').trim();
+                    link.contextBeforePrior = String(link.contextBeforePrior || '')
+                        .replace(/\s+/g, ' ').trim();
+                    link.contextAfter = String(link.contextAfter || '')
+                        .replace(/\s+/g, ' ').trim();
                 }
                 links.push(...html);
                 updateHtmlVisibilityStack(htmlVisibilityStack, child.content);

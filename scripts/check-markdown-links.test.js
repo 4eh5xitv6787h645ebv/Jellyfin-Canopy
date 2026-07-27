@@ -216,12 +216,12 @@ test('records each link position and scans quoted HTML delimiters before href', 
             target: 'https://example.com/one',
             label: 'same',
             before: '',
-            after: '. For support, same.',
+            after: '. For support,',
         },
         {
             target: 'https://example.com/two',
             label: 'same',
-            before: 'same. For support,',
+            before: '. For support,',
             after: '.',
         },
         {
@@ -232,6 +232,43 @@ test('records each link position and scans quoted HTML delimiters before href', 
         },
     ]);
     assert.equal(isActionableLink(links[2]), true);
+});
+
+test('Markdown link context excludes neighboring labels but retains prose', () => {
+    const sources = [
+        'Before [One](https://example.com/one) between '
+            + '[Two](https://example.com/two) after.',
+        'Before <a href="https://example.com/one">One</a> between '
+            + '<a href="https://example.com/two">Two</a> after.',
+    ];
+    for (const source of sources) {
+        const links = extractLinks(source);
+        assert.deepEqual(links.map(link => ({
+            label: link.label,
+            before: link.contextBefore,
+            priorBefore: link.contextBeforePrior,
+            after: link.contextAfter,
+            beforeStartsAtLink: link.contextBeforeStartsAtLink,
+            afterEndsAtLink: link.contextAfterEndsAtLink,
+        })), [
+            {
+                label: 'One',
+                before: 'Before',
+                priorBefore: '',
+                after: 'between',
+                beforeStartsAtLink: false,
+                afterEndsAtLink: true,
+            },
+            {
+                label: 'Two',
+                before: 'between',
+                priorBefore: 'Before',
+                after: 'after.',
+                beforeStartsAtLink: true,
+                afterEndsAtLink: false,
+            },
+        ]);
+    }
 });
 
 test('raw HTML link context excludes neighboring link labels but retains prose', () => {
