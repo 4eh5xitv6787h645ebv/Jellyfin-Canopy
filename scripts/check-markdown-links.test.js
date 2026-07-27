@@ -872,14 +872,20 @@ test('extracts HTML form submissions and image-map routes with control names', (
     assert.match(distinctAnchorIntentLink.contextBefore, /report a regular bug/i);
     assert.doesNotMatch(distinctAnchorIntentLink.contextBefore, /vulnerab/i);
 
-    const neutralCanonicalReference = `<form action="${formTarget}">`
-        + '<p>Submit a vulnerability report below. Read '
-        + `<a href="${securityTarget}">the security policy</a>.</p>`
-        + '<button>Continue</button></form>';
-    const neutralCanonicalFormLink = extractLinks(neutralCanonicalReference)
-        .find(candidate => candidate.target === formTarget);
-    assert.ok(neutralCanonicalFormLink);
-    assert.match(neutralCanonicalFormLink.contextBefore, /vulnerab/i);
+    for (const [referencePrefix, referenceLabel] of [
+        ['Read ', 'the security policy'],
+        ['Read ', 'the security reporting process'],
+        ['Do not use ', 'the security policy'],
+    ]) {
+        const neutralCanonicalReference = `<form action="${formTarget}">`
+            + `<p>Submit a vulnerability report below. ${referencePrefix}`
+            + `<a href="${securityTarget}">${referenceLabel}</a>.</p>`
+            + '<button>Continue</button></form>';
+        const neutralCanonicalFormLink = extractLinks(neutralCanonicalReference)
+            .find(candidate => candidate.target === formTarget);
+        assert.ok(neutralCanonicalFormLink, referenceLabel);
+        assert.match(neutralCanonicalFormLink.contextBefore, /vulnerab/i, referenceLabel);
+    }
 
     const splitActionBoundary = `<form action="${formTarget}">`
         + '<p>Need help? Use '

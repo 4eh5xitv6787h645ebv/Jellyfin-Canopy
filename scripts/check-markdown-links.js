@@ -21,11 +21,17 @@ const HTML_FORM_ACTION_CUE_SOURCE =
     + '|share(?:s|d|ing)?|submit(?:s|ted|ting)?|suggest(?:s|ed|ing)?'
     + '|tell(?:s|ing)?|told|use(?:s|d|ing)?|visit(?:s|ed|ing)?)';
 const HTML_FORM_ACTION_CUE =
-    new RegExp(`\\b${HTML_FORM_ACTION_CUE_SOURCE}\\b`, 'i');
+    new RegExp(`^(?:please\\s+)?${HTML_FORM_ACTION_CUE_SOURCE}\\b`, 'i');
 const HTML_FORM_ADJACENT_ACTION_CUE = new RegExp(
     `\\b${HTML_FORM_ACTION_CUE_SOURCE}\\b`
     + '(?:\\s+(?:at|in|on|through|to|via))?'
     + '(?:\\s+(?:a|an|our|the|this))?\\s*$',
+    'i'
+);
+const HTML_FORM_NEGATED_ACTION_CUE = new RegExp(
+    `(?:\\b(?:do(?:es)? not|doesn't|don't|never)\\b.{0,40}`
+    + `\\b${HTML_FORM_ACTION_CUE_SOURCE}\\b`
+    + `|\\bno\\s+need\\s+to\\s+${HTML_FORM_ACTION_CUE_SOURCE}\\b)`,
     'i'
 );
 const HTML_FORM_ACTIONABLE_REFERENCE_TARGET =
@@ -2021,6 +2027,14 @@ function htmlAssociatedForm(control, forms, formsById) {
     return htmlContainingForm(control, forms);
 }
 
+function htmlFormAnchorHasActionCue(anchor) {
+    if (HTML_FORM_ACTION_CUE.test(anchor.label)) return true;
+    const adjacentClause = String(anchor.contextBefore || '')
+        .split(/[.!?;]/).at(-1).trim();
+    return HTML_FORM_ADJACENT_ACTION_CUE.test(adjacentClause)
+        && !HTML_FORM_NEGATED_ACTION_CUE.test(adjacentClause);
+}
+
 function htmlWrappingLabel(control, labelRecords) {
     let lower = 0;
     let upper = labelRecords.length;
@@ -2166,8 +2180,7 @@ function htmlFormSubmissionLinks(
             || anchor.hidden
             || !anchor.label.trim()
             || (HTML_FORM_NEUTRAL_REFERENCE_LABEL.test(anchor.label)
-                && !((HTML_FORM_ACTION_CUE.test(anchor.label)
-                    || HTML_FORM_ADJACENT_ACTION_CUE.test(anchor.contextBefore))
+                && !(htmlFormAnchorHasActionCue(anchor)
                     && HTML_FORM_ACTIONABLE_REFERENCE_TARGET.test(anchor.target)))) {
             continue;
         }

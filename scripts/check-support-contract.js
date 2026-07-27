@@ -111,15 +111,19 @@ const NEGATED_SECURITY_SUBJECT_PHRASE =
     '(?:security\\s+(?:concerns?|issues?|reports?|vulnerab\\w*)'
     + '|exploits?|vulnerab\\w*|security)';
 const NEGATED_SECURITY_SUBJECT = new RegExp(
-    `(?:\\b(?:are not|aren't|is not|isn't)\\s+(?:intended\\s+)?for\\s+`
-    + `(?:a\\s+|the\\s+)?${NEGATED_SECURITY_SUBJECT_PHRASE}\\b`
-    + `|\\b(?:do(?:es)? not|doesn't|don't|never)\\s+`
-    + '(?:(?:accept|allow|handle|report|submit)\\s+'
-    + '|use\\b.{0,20}\\bfor\\s+)'
+    `(?:\\b(?:this|the)\\s+form\\s+`
+    + `(?:is\\s+(?:definitely\\s+)?not|isn't)\\s+`
+    + `(?:(?:appropriate|intended|meant)\\s+)?for\\s+`
+    + `${NEGATED_SECURITY_SUBJECT_PHRASE}\\b`
+    + `|\\b(?:this|the)\\s+form\\s+`
+    + `(?:do(?:es)? not|doesn't)\\s+(?:apply|pertain)\\s+to\\s+`
+    + `${NEGATED_SECURITY_SUBJECT_PHRASE}\\b`
+    + `|\\b(?:do not|don't|never)\\s+use\\s+(?:this|the)\\s+form\\s+for\\s+`
     + `${NEGATED_SECURITY_SUBJECT_PHRASE}\\b`
     + `|\\b${NEGATED_SECURITY_SUBJECT_PHRASE}\\b\\s+`
     + '(?:are not|aren\'t|is not|isn\'t)\\s+'
-    + '(?:accepted|allowed|handled|permitted|supported)\\b)',
+    + '(?:accepted|allowed|handled|permitted|supported)\\s+'
+    + '(?:here|(?:by|in|on|through|via)\\s+(?:this|the)\\s+form)\\b)',
     'gi'
 );
 const SECURITY_CONTEXT_HEADING = /\b(?:security|vulnerab\w*)\b/i;

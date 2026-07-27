@@ -2847,6 +2847,10 @@ test('governs form submissions and hidden ID names while inert routes remain ina
             + '<p>This form is not for ordinary defects, only security vulnerabilities.</p>'
             + '<p>A typo does not constitute a vulnerability.</p>'
             + '<button>Submit the report</button></form>',
+        `<form action="${ISSUES_ROUTE}">`
+            + '<p>Security vulnerabilities are not accepted via Discord.</p>'
+            + '<p>A typo does not constitute a vulnerability.</p>'
+            + '<button>Submit the report</button></form>',
         ...[
             '<button disabled>Ignored</button>',
             '<button hidden>Ignored</button>',
@@ -2931,6 +2935,15 @@ test('governs form submissions and hidden ID names while inert routes remain ina
             + '<a href="https://github.com/other/project/security/advisories/new">'
             + 'the security policy</a>.</p>'
             + '<button>Continue</button></form>',
+        `<form action="${ISSUES_ROUTE}">`
+            + '<p>Submit a vulnerability report below. Read '
+            + `<a href="${SECURITY_ADVISORY_ROUTE}">`
+            + 'the security reporting process</a>.</p>'
+            + '<button>Continue</button></form>',
+        `<form action="${ISSUES_ROUTE}">`
+            + '<p>Submit a vulnerability report below. Do not use '
+            + `<a href="${SECURITY_ADVISORY_ROUTE}">the security policy</a>.</p>`
+            + '<button>Continue</button></form>',
     ]) {
         const retainedIntent = validFixture();
         retainedIntent['docs/getting-started.md'] = formSource;
@@ -2971,6 +2984,8 @@ test('governs form submissions and hidden ID names while inert routes remain ina
 
     for (const nonSecurityContext of [
         'This form is not for security vulnerabilities. Read the policy.',
+        'This form does not apply to security vulnerabilities. Read the policy.',
+        'This form isn\'t appropriate for security vulnerabilities. Read the policy.',
         'Security vulnerabilities are not accepted here. Read the policy.',
     ]) {
         const explicitlyNonSecurityForm = validFixture();
