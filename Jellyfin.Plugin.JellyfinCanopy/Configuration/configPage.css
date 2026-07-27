@@ -440,52 +440,28 @@
     position: relative;
     width: 100%;
     background: transparent;
-    border: 1px solid transparent;
-    border-radius: 10px;
-    padding: 11px 12px 11px 24px;
-    color: var(--jc-text-muted);
+    border: 0;
+    padding: 12px 12px 4px 24px;
+    color: var(--jc-text-subtle);
     cursor: pointer;
     font-family: inherit;
     font-weight: 600;
-    font-size: 0.92em;
+    font-size: 0.72em;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
     display: flex;
     align-items: center;
-    gap: 9px;
+    gap: 8px;
     text-align: left;
-    transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
     min-width: 0;
     box-sizing: border-box;
     white-space: normal;
     line-height: 1.25;
     overflow-wrap: anywhere;
 }
-#JellyfinCanopyPage .jc-group-btn::before {
-    content: "";
-    position: absolute;
-    left: 6px;
-    top: 50%;
-    transform: translateY(-50%);
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: var(--jc-border-strong);
-    transition: background-color 0.15s ease, box-shadow 0.15s ease;
-}
-#JellyfinCanopyPage .jc-group-btn:hover {
-    background: var(--jc-surface-3);
-    color: var(--jc-text-strong);
-}
-#JellyfinCanopyPage .jc-group-btn:hover::before { background: var(--jc-text-dim); }
-#JellyfinCanopyPage .jc-group-btn.active {
-    background: var(--jc-accent-tint-10);
-    border-color: var(--jc-accent-border);
-    color: var(--jc-text-strong);
-}
-#JellyfinCanopyPage .jc-group-btn.active::before {
-    background: var(--jc-accent);
-    box-shadow: 0 0 0 3px var(--jc-accent-tint-20);
-}
-#JellyfinCanopyPage .jc-group-btn.active .jc-tab-icon { color: var(--jc-accent); }
+#JellyfinCanopyPage .jc-group-btn:hover { color: var(--jc-text-strong); }
+#JellyfinCanopyPage .jc-group-btn.active { color: var(--jc-text-muted); }
+#JellyfinCanopyPage .jc-group-btn .jc-tab-icon { font-size: 15px !important; opacity: 0.7; }
 #JellyfinCanopyPage .jc-group-btn .jc-nav-count { margin-left: auto; }
 #JellyfinCanopyPage .jc-group-btn .jc-tab-icon,
 #JellyfinCanopyPage .jc-group-btn .jc-nav-count { flex: 0 0 auto; }
@@ -511,7 +487,7 @@
     color: var(--jc-text-muted);
 }
 .jc-section-strip {
-    display: inline-flex;
+    display: none;
     gap: 4px;
     padding: 4px;
     border: 1px solid var(--jc-border);
@@ -541,6 +517,36 @@
 }
 #JellyfinCanopyPage .jellyfin-tab-button.jc-in-group,
 #JellyfinCanopyPage .jellyfin-tab-button.jc-search-reveal { display: inline-flex; }
+/* Mockup rail: every section is a branch item under its group label. */
+#JellyfinCanopyPage .jc-rail-sections { display: flex; flex-direction: column; }
+#JellyfinCanopyPage .jellyfin-tab-button.jc-in-rail {
+    display: flex;
+    position: relative;
+    width: 100%;
+    border-radius: 10px;
+    padding: 7px 10px 7px 26px;
+    text-align: left;
+    white-space: normal;
+    font-size: 0.92em;
+}
+#JellyfinCanopyPage .jellyfin-tab-button.jc-in-rail::before {
+    content: "";
+    position: absolute;
+    left: 6px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--jc-border-strong);
+    transition: background-color 0.15s ease, box-shadow 0.15s ease;
+}
+#JellyfinCanopyPage .jellyfin-tab-button.jc-in-rail:hover::before { background: var(--jc-text-dim); }
+#JellyfinCanopyPage .jellyfin-tab-button.jc-in-rail.active::before {
+    background: var(--jc-accent);
+    box-shadow: 0 0 0 3px var(--jc-accent-tint-20);
+}
+#JellyfinCanopyPage .jellyfin-tab-button.jc-in-rail h3 { justify-content: flex-start; }
 #JellyfinCanopyPage .jellyfin-tab-button h3 {
     margin: 0;
     width: 100%;
@@ -591,7 +597,7 @@
 #JellyfinCanopyPage .jellyfin-tab-content { display: none; animation: slideUpFade 0.3s ease forwards; }
 #JellyfinCanopyPage .jellyfin-tab-content.active {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(480px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(480px, 100%), 1fr));
     gap: 20px;
     align-items: start;
 }
@@ -807,7 +813,7 @@
 .jc-service-dashboard,
 .jc-optional-plugins-dashboard {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
     gap: 10px;
 }
 .jc-service-card,
@@ -858,7 +864,7 @@
 
 .jc-features-dashboard {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
     gap: 10px;
 }
 .jc-feature-row {
@@ -889,7 +895,7 @@
 
 .jc-quick-actions-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr));
     gap: 12px;
 }
 .jc-quick-action {
@@ -1089,7 +1095,7 @@
 .jc-search-tab-label { color: var(--jc-accent); font-size: 0.8em; font-weight: 700; display: block; margin: 6px 0; }
 
 /* Branding upload */
-.jc-branding-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; }
+.jc-branding-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr)); gap: 14px; }
 .jc-branding-card { background: var(--jc-surface-1); border: 1px solid var(--jc-border); border-radius: 12px; padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; }
 .jc-branding-label-bold { font-weight: 600; color: var(--jc-text-strong); }
 .jc-branding-label, .jc-branding-meta, .jc-branding-hint, .jc-branding-size-hint,
@@ -1342,7 +1348,7 @@ textarea.emby-textarea { width: 100%; box-sizing: border-box; }
 /* Essentials */
 #jcEssentials[hidden] { display: none; }
 .jc-ess-lede { color: var(--jc-text-muted); max-width: 68ch; margin: 0 0 20px; }
-.jc-ess-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; margin-bottom: 22px; }
+.jc-ess-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); gap: 14px; margin-bottom: 22px; }
 .jc-ess-card {
     display: flex;
     align-items: flex-start;

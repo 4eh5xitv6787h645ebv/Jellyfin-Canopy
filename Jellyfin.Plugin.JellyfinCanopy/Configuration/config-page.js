@@ -172,10 +172,22 @@ function wireGroupShell() {
         return; // whole group shell no-ops; jcSyncGroupForTab stays null
     }
 
-    // Relocate the section buttons out of the hidden store into the strip
-    // (same nodes, order preserved), then drop the store.
+    // Mockup-faithful rail: relocate each section button out of the hidden
+    // store into the rail, directly under its group label (same nodes, order
+    // preserved), then drop the store. The header strip element stays in the
+    // DOM (pinned hook) but receives nothing and renders empty.
+    const railGroupSections = {};
+    railBtns.forEach(function (groupBtn) {
+        const holder = document.createElement('div');
+        holder.className = 'jc-rail-sections';
+        holder.dataset.groupSections = groupBtn.dataset.group;
+        groupBtn.insertAdjacentElement('afterend', holder);
+        railGroupSections[groupBtn.dataset.group] = holder;
+    });
     store.querySelectorAll('.jellyfin-tab-button').forEach(function (b) {
-        strip.appendChild(b);
+        const holder = railGroupSections[b.dataset.group];
+        (holder || strip).appendChild(b);
+        b.classList.add('jc-in-rail');
     });
     store.remove();
 
@@ -206,16 +218,18 @@ function wireGroupShell() {
             }
         });
         strip.classList.toggle('jc-strip-single', members < 2);
-        if (titleEl) {
-            titleEl.textContent = meta.title;
-        }
+        /* The serif header title belongs to the ACTIVE SECTION (activateTab
+           owns it); the group contributes the purpose lede. */
         if (purposeEl) {
             purposeEl.textContent = meta.purpose;
         }
         if (activateFirst) {
             const target = firstVisible || first;
             if (target) {
-                target.click(); // drives the normal tab click pipeline incl. sessionStorage
+                /* Direct activation, NOT target.click(): on mobile the rail
+                   lives in the drawer, and the click pipeline's drawer-closer
+                   would slam it shut before the admin picks a section. */
+                jcActivateSection(target.dataset.tab);
             }
         }
     }
@@ -268,6 +282,11 @@ function activateTab(tabId) {
     tabs.forEach(function (t) {
         t.classList.toggle('active', t.dataset.tab === tabId);
     });
+    const activeSectionBtn = document.querySelector('.jellyfin-tab-button[data-tab="' + tabId + '"]');
+    const headerTitle = document.querySelector('#jcPageTitle');
+    if (activeSectionBtn && headerTitle && activeSectionBtn.dataset.jcLabel) {
+        headerTitle.textContent = activeSectionBtn.dataset.jcLabel;
+    }
     if (jcSyncGroupForTab) {
         jcSyncGroupForTab(tabId);
     }
@@ -329,32 +348,35 @@ function activateTab(tabId) {
 // ---------------------------------------------------------------------------
 const LEGACY_TAB_MAP = { 'enhanced': 'display', 'seerr': 'seerr', 'arr-links': 'arr' };
 
+function jcActivateSection(tabId) {
+    if (isSearchMode) {
+        const target = document.querySelector('#' + tabId + ' > fieldset:not(.jc-search-hidden)');
+        clearTimeout(searchDebounce);
+        if (searchInput) {
+            searchInput.value = '';
+        }
+        exitSearchMode();
+        activateTab(tabId);
+        if (target) {
+            setTimeout(function () {
+                target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }, 60);
+        }
+    } else {
+        activateTab(tabId);
+    }
+    try {
+        sessionStorage.setItem('jellyfinCanopyActiveTab', tabId);
+    } catch (e) {
+        // sessionStorage unavailable — skip persistence
+    }
+}
+
 function wireTabButtons() {
     captureStaticNodeLists();
     tabs.forEach(function (btn) {
         btn.addEventListener('click', function () {
-            const tabId = btn.dataset.tab;
-            if (isSearchMode) {
-                const target = document.querySelector('#' + tabId + ' > fieldset:not(.jc-search-hidden)');
-                clearTimeout(searchDebounce);
-                if (searchInput) {
-                    searchInput.value = '';
-                }
-                exitSearchMode();
-                activateTab(tabId);
-                if (target) {
-                    setTimeout(function () {
-                        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                    }, 60);
-                }
-            } else {
-                activateTab(tabId);
-            }
-            try {
-                sessionStorage.setItem('jellyfinCanopyActiveTab', tabId);
-            } catch (e) {
-                // sessionStorage unavailable — skip persistence
-            }
+            jcActivateSection(btn.dataset.tab);
         });
     });
 }

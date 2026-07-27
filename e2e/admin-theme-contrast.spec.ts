@@ -291,7 +291,7 @@ test.describe('admin theme contrast', () => {
                             };
                         });
                         expect(fallback.after, `${viewport.name} browser light-preference fallback`).toEqual(fallback.before);
-                        expect(fallback.chevron, `${viewport.name} fallback select chevron`).toContain('%23344054');
+                        expect(fallback.chevron, `${viewport.name} fallback select chevron`).toContain('%23334029');
                     }
 
                     assertNoConfigPageRuntimeErrors(consoleErrors);
