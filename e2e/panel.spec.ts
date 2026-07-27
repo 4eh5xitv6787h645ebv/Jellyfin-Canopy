@@ -52,7 +52,7 @@ test.describe('panel', () => {
 
         // Printable keys belong to the focused editor: the panel-level `?`
         // dismissal must not steal the character or destroy the search context.
-        await search.press('Shift+/');
+        await search.press('?');
         await expect(search).toHaveValue('?');
         await expect(panel).toBeVisible();
 
