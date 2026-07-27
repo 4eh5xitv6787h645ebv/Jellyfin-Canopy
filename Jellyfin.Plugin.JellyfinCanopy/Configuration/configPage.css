@@ -14,61 +14,64 @@
    acts as a secondary fallback for browser-level preferences.
    --------------------------------------------------------------------------- */
 #JellyfinCanopyPage {
-    /* Card surface: deep navy-tinted panel on dark (Canopy Night undertone),
-       paper on light — tokenized so every fieldset/panel shares it. */
-    --jc-card-bg: #0F1421;
-    /* ----- Canopy brand palette (12-brand-guides/palette.txt) -----
-       The brand accent is deliberately constant across Jellyfin themes —
-       the page carries the plugin's identity, not the host theme's. Only
-       its light/dark LEGIBILITY variant switches with the theme detector. */
-    --canopy-navy:   #0C1943;
-    --canopy-night:  #000611;
-    --canopy-cyan:   #00D4FF;
-    --canopy-aqua:   #08AEEE;
-    --canopy-blue:   #2F80FF;
-    --canopy-indigo: #555CF2;
-    --canopy-violet: #7B4CFF;
-    /* Brand accent: cyan-leaning on dark surfaces. */
-    --jc-accent:        var(--canopy-cyan);
-    --jc-accent-strong: var(--canopy-blue);
+    /* Card surface: deep forest panel on dark (Verdant undertone), paper-sage
+       on light — tokenized so every fieldset/panel shares it. */
+    --jc-card-bg: #101911;
+    /* ----- Verdant palette (approved admin-page redesign) -----
+       The admin page carries the Verdant botanical identity: forest surfaces
+       with a leaf accent and a seed-gold highlight. The accent is deliberately
+       constant across Jellyfin themes — the page carries the plugin page's
+       identity, not the host theme's. Only its light/dark LEGIBILITY variant
+       switches with the theme detector. */
+    --verdant-leaf:  #A4C987;
+    --verdant-moss:  #5E8A52;
+    --verdant-pine:  #2E5B46;
+    --verdant-fern:  #3B6B33;
+    --verdant-olive: #56663A;
+    --verdant-seed:  #D9B36C;
+    /* Display serif for titles/legends; falls back through platform serifs. */
+    --jc-display-font: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+    /* Brand accent: leaf green on dark surfaces. */
+    --jc-accent:        var(--verdant-leaf);
+    --jc-accent-strong: var(--verdant-moss);
     /* Foreground for text sitting ON the accent fill (chips, badges). */
-    --jc-on-accent:     #04222f;
-    /* Semantic status colors (handoff design-tokens.json). */
-    --jc-success: #22C55E;
-    --jc-warning: #F59E0B;
-    --jc-danger:  #F87171;
-    --jc-info:    #38BDF8;
+    --jc-on-accent:     #16260F;
+    /* Semantic status colors (Verdant-tuned, contrast-checked both themes). */
+    --jc-success: #8FCE9B;
+    --jc-warning: #D9B36C;
+    --jc-danger:  #F0A08D;
+    --jc-info:    #8CC9DB;
     /* Signature gradient (mark, active tab, primary actions, hairlines). */
-    --jc-grad: linear-gradient(135deg, var(--canopy-cyan) 0%, var(--canopy-blue) 52%, var(--canopy-violet) 100%);
+    --jc-grad: linear-gradient(135deg, var(--verdant-pine) 0%, var(--verdant-moss) 55%, var(--verdant-leaf) 100%);
     /* Text-bearing controls need a darker gradient than the decorative brand
-       gradient: white text over the cyan brand stop is below WCAG contrast. */
-    --jc-control-start: #0E7490;
-    --jc-control-mid:   #1D4ED8;
-    --jc-control-end:   #6D28D9;
+       gradient: white text over the leaf stop is below WCAG contrast. */
+    --jc-control-start: #2E5B46;
+    --jc-control-mid:   #3B6B33;
+    --jc-control-end:   #56663A;
     --jc-control-text:  #FFFFFF;
     --jc-grad-control: linear-gradient(135deg, var(--jc-control-start) 0%, var(--jc-control-mid) 52%, var(--jc-control-end) 100%);
-    --jc-select-chevron: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'><path fill='none' stroke='%23e0e0e0' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' d='M1.5 1.5 L6 6 L10.5 1.5'/></svg>");
-    --jc-select-chevron-focus: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'><path fill='none' stroke='%2300a4dc' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' d='M1.5 1.5 L6 6 L10.5 1.5'/></svg>");
-    --jc-grad-soft: linear-gradient(135deg, rgba(0, 212, 255, 0.16) 0%, rgba(47, 128, 255, 0.10) 52%, rgba(123, 76, 255, 0.16) 100%);
+    --jc-select-chevron: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'><path fill='none' stroke='%23d9e2d4' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' d='M1.5 1.5 L6 6 L10.5 1.5'/></svg>");
+    --jc-select-chevron-focus: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'><path fill='none' stroke='%23a4c987' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' d='M1.5 1.5 L6 6 L10.5 1.5'/></svg>");
+    --jc-grad-soft: linear-gradient(135deg, rgba(164, 201, 135, 0.14) 0%, rgba(94, 138, 82, 0.10) 52%, rgba(217, 179, 108, 0.10) 100%);
     /* Vertical rail variant for card/legend accents. */
-    --jc-grad-rail: linear-gradient(180deg, var(--canopy-cyan) 0%, var(--canopy-violet) 100%);
+    --jc-grad-rail: linear-gradient(180deg, var(--verdant-leaf) 0%, var(--verdant-moss) 100%);
 
     /* Surface lift layers — slightly lighter than body bg */
-    --jc-surface-1:      #161B2B;
-    --jc-surface-2:      #1D2336;
-    --jc-surface-3:      #232A40;
-    --jc-surface-hover:  #232A40;
+    --jc-surface-1:      #16221B;
+    --jc-surface-2:      #1B2A21;
+    --jc-surface-3:      #213328;
+    --jc-surface-hover:  #243A2C;
     /* Borders */
-    --jc-border-subtle:  rgba(38, 48, 71, 0.55);
-    --jc-border:         #263047;
-    --jc-border-strong:  #33405E;
-    --jc-border-focus:   #7DD3FC;
+    --jc-border-subtle:  rgba(41, 58, 44, 0.55);
+    --jc-border:         #293A2C;
+    --jc-border-strong:  #3A5240;
+    --jc-border-focus:   #A9D18C;
     /* Text — `inherit` stays legible under any theme's <html> color */
     --jc-text:           inherit;
-    --jc-text-strong:    #F7F9FC;
-    --jc-text-muted:     #B7C0D2;
-    --jc-text-subtle:    #8B93A7;
-    --jc-text-dim:       #8B93A7;
+    --jc-text-strong:    #ECF2EA;
+    --jc-text-muted:     #B9C6B6;
+    --jc-text-subtle:    #93A594;
+    --jc-text-dim:       #93A594;
     /* Subtle decorative gradients for card surfaces (light shine → transparent).
        Swap to dark shine on light themes so cards keep a faint lift. */
     --jc-card-gradient:       linear-gradient(145deg, rgba(255, 255, 255, 0.06) 0%, rgba(255, 255, 255, 0.02) 100%);
@@ -86,32 +89,32 @@
 
 #JellyfinCanopyPage.jc-light-theme {
     --jc-card-bg: #FFFFFF;
-    /* Brand accent legibility variant: cyan washes out on white, so light
-       themes lean on the deeper Canopy blue for text/controls; the gradient
-       (decorative) is shared. */
-    --jc-accent:        #0F5CAB;
-    --jc-accent-strong: var(--canopy-indigo);
-    --jc-on-accent:     #ffffff;
+    /* Brand accent legibility variant: leaf green washes out on white, so
+       light themes lean on the deeper Verdant moss for text/controls; the
+       gradient (decorative) is shared. */
+    --jc-accent:        #3A6B2E;
+    --jc-accent-strong: #2C5222;
+    --jc-on-accent:     #FFFFFF;
 
-    --jc-success: #166534;
-    --jc-warning: #92400E;
-    --jc-danger:  #B91C1C;
-    --jc-info:    #0369A1;
-    --jc-select-chevron: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'><path fill='none' stroke='%23344054' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' d='M1.5 1.5 L6 6 L10.5 1.5'/></svg>");
-    --jc-select-chevron-focus: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'><path fill='none' stroke='%230369A1' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' d='M1.5 1.5 L6 6 L10.5 1.5'/></svg>");
+    --jc-success: #1B6E31;
+    --jc-warning: #7A5210;
+    --jc-danger:  #A82A22;
+    --jc-info:    #145E86;
+    --jc-select-chevron: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'><path fill='none' stroke='%23334029' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' d='M1.5 1.5 L6 6 L10.5 1.5'/></svg>");
+    --jc-select-chevron-focus: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'><path fill='none' stroke='%232C5222' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' d='M1.5 1.5 L6 6 L10.5 1.5'/></svg>");
 
-    --jc-surface-1:      #F0F4FA;
-    --jc-surface-2:      #E7EDF6;
-    --jc-surface-3:      #DDE6F2;
-    --jc-surface-hover:  #DDE6F2;
-    --jc-border-subtle:  rgba(203, 213, 225, 0.6);
-    --jc-border:         #CBD5E1;
-    --jc-border-strong:  #A8B6C9;
-    --jc-border-focus:   #0369A1;
-    --jc-text-strong:    #0B1220;
-    --jc-text-muted:     #344054;
-    --jc-text-subtle:    #566174;
-    --jc-text-dim:       #596579;
+    --jc-surface-1:      #F2F5EE;
+    --jc-surface-2:      #E9EFE2;
+    --jc-surface-3:      #DFE8D6;
+    --jc-surface-hover:  #DFE8D6;
+    --jc-border-subtle:  rgba(206, 216, 198, 0.6);
+    --jc-border:         #CBD8C2;
+    --jc-border-strong:  #A7B89D;
+    --jc-border-focus:   #3A6B2E;
+    --jc-text-strong:    #131A10;
+    --jc-text-muted:     #33402F;
+    --jc-text-subtle:    #4E5C49;
+    --jc-text-dim:       #52604D;
     --jc-card-gradient:       linear-gradient(145deg, rgba(0, 0, 0, 0.03) 0%, rgba(0, 0, 0, 0.01) 100%);
     --jc-card-gradient-lift:  linear-gradient(145deg, rgba(0, 0, 0, 0.05) 0%, rgba(0, 0, 0, 0.015) 100%);
     --jc-legend-gradient:     linear-gradient(180deg, rgba(0, 0, 0, 0.02) 0%, rgba(0, 0, 0, 0.01) 100%);
@@ -126,27 +129,27 @@
 @media (prefers-color-scheme: light) {
     #JellyfinCanopyPage:not(.jc-dark-theme):not(.jc-light-theme) {
         --jc-card-bg:       #FFFFFF;
-        --jc-accent:        #0F5CAB;
-        --jc-accent-strong: var(--canopy-indigo);
-        --jc-on-accent:     #ffffff;
-        --jc-success:       #166534;
-        --jc-warning:       #92400E;
-        --jc-danger:        #B91C1C;
-        --jc-info:          #0369A1;
-        --jc-select-chevron: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'><path fill='none' stroke='%23344054' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' d='M1.5 1.5 L6 6 L10.5 1.5'/></svg>");
-        --jc-select-chevron-focus: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'><path fill='none' stroke='%230369A1' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' d='M1.5 1.5 L6 6 L10.5 1.5'/></svg>");
-        --jc-surface-1:      #F0F4FA;
-        --jc-surface-2:      #E7EDF6;
-        --jc-surface-3:      #DDE6F2;
-        --jc-surface-hover:  #DDE6F2;
-        --jc-border-subtle:  rgba(203, 213, 225, 0.6);
-        --jc-border:         #CBD5E1;
-        --jc-border-strong:  #A8B6C9;
-        --jc-border-focus:   #0369A1;
-        --jc-text-strong:    #0B1220;
-        --jc-text-muted:     #344054;
-        --jc-text-subtle:    #566174;
-        --jc-text-dim:       #596579;
+        --jc-accent:        #3A6B2E;
+        --jc-accent-strong: #2C5222;
+        --jc-on-accent:     #FFFFFF;
+        --jc-success:       #1B6E31;
+        --jc-warning:       #7A5210;
+        --jc-danger:        #A82A22;
+        --jc-info:          #145E86;
+        --jc-select-chevron: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'><path fill='none' stroke='%23334029' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' d='M1.5 1.5 L6 6 L10.5 1.5'/></svg>");
+        --jc-select-chevron-focus: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'><path fill='none' stroke='%232C5222' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' d='M1.5 1.5 L6 6 L10.5 1.5'/></svg>");
+        --jc-surface-1:      #F2F5EE;
+        --jc-surface-2:      #E9EFE2;
+        --jc-surface-3:      #DFE8D6;
+        --jc-surface-hover:  #DFE8D6;
+        --jc-border-subtle:  rgba(206, 216, 198, 0.6);
+        --jc-border:         #CBD8C2;
+        --jc-border-strong:  #A7B89D;
+        --jc-border-focus:   #3A6B2E;
+        --jc-text-strong:    #131A10;
+        --jc-text-muted:     #33402F;
+        --jc-text-subtle:    #4E5C49;
+        --jc-text-dim:       #52604D;
         --jc-card-gradient:       linear-gradient(145deg, rgba(0, 0, 0, 0.03) 0%, rgba(0, 0, 0, 0.01) 100%);
         --jc-card-gradient-lift:  linear-gradient(145deg, rgba(0, 0, 0, 0.05) 0%, rgba(0, 0, 0, 0.015) 100%);
         --jc-legend-gradient:     linear-gradient(180deg, rgba(0, 0, 0, 0.02) 0%, rgba(0, 0, 0, 0.01) 100%);
@@ -165,6 +168,16 @@
        light theme sheet and the plugin page initialize at different times. */
     color: var(--jc-text-strong);
     font-family: inherit;
+}
+
+/* Verdant display type: serif titles carry the page's editorial identity.
+   Body copy and controls stay on the host sans for native feel. */
+#JellyfinCanopyPage .jc-page-title,
+#JellyfinCanopyPage legend.sectionTitle,
+#JellyfinCanopyPage .jc-preview-panel-title {
+    font-family: var(--jc-display-font);
+    font-weight: 450;
+    letter-spacing: 0.005em;
 }
 
 /* A single keyboard-focus owner covers native controls plus Canopy's custom
@@ -274,9 +287,9 @@
     align-items: center;
     gap: 8px;
     padding: 10px 16px;
-    border: 1px solid #263047;
+    border: 1px solid #293A2C;
     border-radius: 50px;
-    background: #0F1421;
+    background: #101911;
     color: #fff;
     font-weight: 600;
     cursor: pointer;
@@ -287,7 +300,7 @@
     position: fixed;
     inset: 0;
     z-index: 2002;
-    background: rgba(0, 6, 17, 0.55);
+    background: rgba(8, 15, 9, 0.55);
     opacity: 0;
     transition: opacity 200ms ease;
 }
@@ -348,16 +361,21 @@
     pointer-events: none;
 }
 #JellyfinCanopyPage .jc-brand-mark {
+    /* Verdant tree mark, shipped as a data URI so the admin page needs no
+       extra served asset. Fixed box reserves layout before paint. */
     flex: none;
+    display: inline-block;
     width: 30px;
     height: 26px;
+    background: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjI2NSAyMTIgNzI0IDYxMCIgcm9sZT0iaW1nIiBhcmlhLWxhYmVsbGVkYnk9InRpdGxlIiBzaGFwZS1yZW5kZXJpbmc9Imdlb21ldHJpY1ByZWNpc2lvbiI+CiAgPHRpdGxlIGlkPSJ0aXRsZSI+SmVsbHlmaW4gQ2Fub3B5IG1hcmsgKFZlcmRhbnQpPC90aXRsZT4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0ibWFya0dyYWRpZW50IiBncmFkaWVudFVuaXRzPSJ1c2VyU3BhY2VPblVzZSIgeDE9IjI4MyIgeTE9IjAiIHgyPSI5NzEiIHkyPSIwIj4KICAgICAgPHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjM0I2QjMzIi8+CiAgICAgIDxzdG9wIG9mZnNldD0iMC4zNSIgc3RvcC1jb2xvcj0iIzVFOEE1MiIvPgogICAgICA8c3RvcCBvZmZzZXQ9IjAuNyIgc3RvcC1jb2xvcj0iIzdGQTk2OCIvPgogICAgICA8c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiNBNEM5ODciLz4KICAgIDwvbGluZWFyR3JhZGllbnQ+CiAgPC9kZWZzPgoKICA8cGF0aCBkPSJNIDMzMCAzODEgTCAzMjYgMzg5IEwgMzI1IDM5OCBMIDMyOCA0MDcgTCAzMzQgNDE0IEwgMzIwIDQ0MCBMIDMwOCA0NzIgTCAzMDYgNDc0IEwgMzAwIDQ3NCBMIDI5MyA0NzcgTCAyODUgNDg1IEwgMjgzIDQ5MCBMIDI4MyA1MDIgTCAyODcgNTEwIEwgMjk3IDUxNyBMIDMxMSA1MTggTCAzMjEgNTExIEwgMzI1IDUxMSBMIDM4MyA1NDEgTCAzOTEgNTQ3IEwgMzkxIDU2NCBMIDM3OCA1NzMgTCAzMjIgNjAwIEwgMzE4IDU5NiBMIDMwOSA1OTIgTCAzMDIgNTkyIEwgMjkzIDU5NiBMIDI4OSA2MDAgTCAyODUgNjEyIEwgMjg2IDYxOCBMIDI5MyA2MjggTCAzMDIgNjMyIEwgMzEwIDYzMiBMIDMxNyA2MjkgTCAzMjUgNjE5IEwgMzI2IDYwOCBMIDMyOCA2MDYgTCAzOTUgNTc0IEwgNDExIDU4NCBMIDQyNiA1ODQgTCA0MzggNTc4IEwgNDQ0IDU3MSBMIDQ0NiA1NjUgTCA0NTMgNTU5IEwgNDY0IDU1NCBMIDQ5MSA1NDkgTCA1MTYgNTUyIEwgNTI2IDU1NiBMIDUzOSA1NjUgTCA1NDkgNTc2IEwgNTU2IDU4OCBMIDU2NCA2MTIgTCA1NjggNjQ0IEwgNTY2IDY4MyBMIDU1NyA3MjAgTCA1NDMgNzQ3IEwgNTI0IDc2OCBMIDUxNSA3NzUgTCA0OTMgNzg3IEwgNDU3IDc5OCBMIDQyNiA4MDMgTCA1MzAgODAzIEwgNTUwIDgwMCBMIDU2NSA3OTUgTCA1ODUgNzgzIEwgNjAzIDc2NCBMIDYxOCA3MzcgTCA2MjYgNzEzIEwgNjI4IDcxNCBMIDYzNSA3MzcgTCA2NTMgNzY4IEwgNjY5IDc4NCBMIDY5MCA3OTYgTCA3MDMgODAwIEwgNzIzIDgwMyBMIDgyNiA4MDMgTCA3NzkgNzk0IEwgNzQ0IDc3OSBMIDczMSA3NzAgTCA3MTIgNzUwIEwgNzA2IDc0MSBMIDY5NCA3MTUgTCA2ODcgNjg0IEwgNjg1IDY1OCBMIDY4NiA2MzEgTCA2OTAgNjA4IEwgNjk3IDU4OCBMIDcwNSA1NzUgTCA3MTkgNTYxIEwgNzM0IDU1MyBMIDc0NSA1NTAgTCA3NjMgNTQ5IEwgNzg5IDU1NCBMIDgwMiA1NjAgTCA4MDcgNTY1IEwgODEyIDU3NSBMIDgxOSA1ODEgTCA4MzIgNTg1IEwgODQ1IDU4MyBMIDg1NyA1NzQgTCA5MjYgNjA3IEwgOTI3IDYxNiBMIDkzMCA2MjMgTCA5MzYgNjI5IEwgOTQzIDYzMiBMIDk1NyA2MzAgTCA5NjYgNjIwIEwgOTY3IDYwNyBMIDk2MyA1OTkgTCA5NTggNTk1IEwgOTQ2IDU5MiBMIDk0MSA1OTMgTCA5MzAgNjAwIEwgODY3IDU2OSBMIDg2MiA1NjUgTCA4NjIgNTQ3IEwgODczIDUzOSBMIDkyOCA1MTEgTCA5MzIgNTExIEwgOTM2IDUxNSBMIDk0MyA1MTggTCA5NTQgNTE4IEwgOTYzIDUxMyBMIDk2OSA1MDQgTCA5NzAgNDkxIEwgOTY3IDQ4NCBMIDk2MCA0NzcgTCA5NTMgNDc0IEwgOTQ3IDQ3NCBMIDk0NSA0NzIgTCA5MzYgNDQ3IEwgOTE5IDQxNSBMIDkyNSA0MDcgTCA5MjggMzk3IEwgOTI1IDM4NCBMIDkxOSAzNzcgTCA5MTEgMzczIEwgOTAyIDM3MiBMIDg5MyAzNzUgTCA4NTEgMzM0IEwgODUzIDMyNiBMIDg1MiAzMTcgTCA4NDMgMzA2IEwgODM3IDMwMyBMIDgyNyAzMDMgTCA4MTQgMzA5IEwgNzg0IDI5MiBMIDc1OSAyODEgTCA3NTkgMjcwIEwgNzU2IDI2MyBMIDc1MiAyNTggTCA3NDUgMjU0IEwgNzMwIDI1NCBMIDcyMyAyNTggTCA3MTcgMjY2IEwgNjU5IDI1OCBMIDY1MiAyNDIgTCA2NDMgMjM0IEwgNjMzIDIzMCBMIDYyMCAyMzAgTCA2MTAgMjM0IEwgNjAxIDI0MiBMIDU5NSAyNTYgTCA1ODggMjU5IEwgNTM2IDI2NiBMIDUyNyAyNTYgTCA1MTkgMjUzIEwgNTExIDI1MyBMIDUwMiAyNTcgTCA0OTYgMjY0IEwgNDk0IDI3MCBMIDQ5NCAyODAgTCA0OTIgMjgyIEwgNDY5IDI5MiBMIDQ0MCAzMDkgTCA0MzcgMzA5IEwgNDI3IDMwMyBMIDQxNyAzMDMgTCA0MTAgMzA2IEwgNDAzIDMxMyBMIDQwMCAzMjUgTCA0MDIgMzM0IEwgMzYwIDM3NSBMIDM1MiAzNzIgTCAzNDYgMzcyIEwgMzM3IDM3NSBaIE0gNTk2IDYwNyBMIDYwNSA2MTAgTCA2NzAgNjUyIEwgNjc0IDY1OSBMIDY3MCA2NjYgTCA2MDAgNzEwIEwgNTk0IDcwOSBMIDU5MSA3MDQgTCA1OTEgNjE0IFogTSA4MjEgNDY5IEwgODI2IDQ5NCBMIDgyOCA1MjUgTCA4MjYgNTI4IEwgODE4IDUzMSBMIDgwNyA1NDQgTCA3OTggNTQ1IEwgNzU4IDUzNCBMIDczNCA1MzQgTCA3MDggNTQyIEwgNjk0IDU1MSBMIDY3OSA1NjUgTCA2NjggNTgxIEwgNjY1IDU4MSBMIDY2NiA1NjQgTCA2NzQgNTM2IEwgNjg4IDUxMiBMIDcwOSA0OTEgTCA3MzkgNDc0IEwgNzkyIDQ1NyBMIDgwMCA0NTcgTCA4MDUgNDYyIFogTSA0MzIgNDY5IEwgNDM2IDQ2NiBMIDQ0NSA0NjQgTCA0NTMgNDU3IEwgNDU5IDQ1NyBMIDUxMSA0NzMgTCA1MzcgNDg2IEwgNTYyIDUwOCBMIDU3MyA1MjQgTCA1ODMgNTQ4IEwgNTg3IDU2NiBMIDU4OCA1ODEgTCA1ODYgNTgyIEwgNTc1IDU2NiBMIDU1NSA1NDggTCA1NDAgNTQwIEwgNTI1IDUzNSBMIDQ5NCA1MzQgTCA0NTQgNTQ1IEwgNDQ2IDU0NCBMIDQzNiA1MzIgTCA0MjUgNTI2IEwgNDI3IDQ5NCBaIE0gNjE1IDQzNCBMIDYyNSA0MzcgTCA2MzYgNDM0IEwgNjQxIDQzNiBMIDY2MCA0NTggTCA2NjUgNDY4IEwgNjY4IDQ4MCBMIDY2NiA1MDEgTCA2NDIgNTQ5IEwgNjM0IDU3MiBMIDYyNyA2MDQgTCA2MjUgNjAzIEwgNjIyIDU4NCBMIDYxMyA1NTQgTCA1ODggNTA0IEwgNTg1IDQ5MiBMIDU4NSA0NzkgTCA1OTMgNDU4IEwgNjAwIDQ0OCBaIE0gOTEwIDQxOCBMIDkxNiA0MjUgTCA5MjkgNDUxIEwgOTM3IDQ3MyBMIDkzNyA0NzcgTCA5MzAgNDgzIEwgOTI3IDQ4OSBMIDkyNiA1MDIgTCA4NTkgNTM3IEwgODQ3IDUyOSBMIDgzOCA1MjcgTCA4MzUgNTE4IEwgODMwIDQ2NSBMIDgzNiA0NjIgTCA4NDUgNDUwIEwgODQ3IDQ0MiBMIDg0NiA0MzIgTCA4ODQgNDExIEwgODk2IDQxOCBaIE0gMzQzIDQxOCBMIDM1NyA0MTggTCAzNjkgNDExIEwgNDAyIDQyOCBMIDQwNyA0MzIgTCA0MDYgNDQzIEwgNDExIDQ1NiBMIDQyMyA0NjYgTCA0MTcgNTI0IEwgNDE0IDUyNyBMIDQwNiA1MjkgTCAzOTYgNTM3IEwgMzU3IDUxOSBMIDMyNiA1MDEgTCAzMjYgNDg5IEwgMzIzIDQ4MyBMIDMxNiA0NzcgTCAzMTYgNDc0IEwgMzI1IDQ0OSBMIDMzNyA0MjUgWiBNIDc5NyA0MjkgTCA3OTQgNDM4IEwgNzk0IDQ0NSBMIDc5MCA0NDkgTCA3NzEgNDU3IEwgNzUwIDQ2MSBMIDcyMyA0NjkgTCA3MDIgNDc5IEwgNjg4IDQ4OSBMIDY4NiA0ODggTCA2OTUgNDU0IEwgNzA0IDM5OCBMIDcxOCAzOTIgTCA3MjQgMzg2IEwgNzMxIDM4NyBMIDc1OCA0MDEgTCA3ODQgNDE4IFogTSA0NTcgNDI4IEwgNDg4IDQwNSBMIDUyMiAzODcgTCA1MjggMzg2IEwgNTM1IDM5MiBMIDU0NyAzOTYgTCA1NTAgNDAyIEwgNTU2IDQ0NSBMIDU2NiA0ODcgTCA1NjQgNDg4IEwgNTUxIDQ3OSBMIDUzMCA0NjkgTCA1MTUgNDY0IEwgNDgyIDQ1NyBMIDQ2MyA0NDkgTCA0NTkgNDQ1IFogTSA1MjQgMzYyIEwgNTI0IDM3NiBMIDUyMSAzNzkgTCA0ODkgMzk2IEwgNDUxIDQyMSBMIDQ0MCA0MTUgTCA0MjggNDE0IEwgNDE4IDQxOCBMIDQxMyA0MjMgTCA0MDkgNDIzIEwgMzc2IDQwNiBMIDM3MiA0MDIgTCAzNzIgMzkwIEwgMzY4IDM4MiBMIDM3NSAzNzEgTCA0MDUgMzQzIEwgNDA5IDM0MiBMIDQxNyAzNDYgTCA0MjYgMzQ2IEwgNDM3IDM0MCBMIDQ0MiAzMzMgTCA0NTQgMzM0IEwgNDc5IDM0MSBMIDUwNyAzNTIgWiBNIDcyOSAzNjIgTCA3MzIgMzU5IEwgNzYwIDM0NiBMIDc4NyAzMzcgTCA4MDkgMzMyIEwgODIwIDM0MyBMIDgyNyAzNDYgTCA4MzUgMzQ2IEwgODQ0IDM0MiBMIDg0OCAzNDMgTCA4NjEgMzU0IEwgODg2IDM4MSBMIDg4MSAzOTAgTCA4ODEgNDAzIEwgODQxIDQyNCBMIDgzMyA0MTcgTCA4MjQgNDE0IEwgODE2IDQxNCBMIDgwMiA0MjEgTCA3NzIgNDAxIEwgNzMyIDM3OSBMIDcyOSAzNzYgWiBNIDYwOSAyOTAgTCA2MjAgMjkzIEwgNjM0IDI5MyBMIDY0MSAyOTAgTCA2NDYgMjkxIEwgNjY3IDMxMyBMIDY4OCAzNDMgTCA2ODkgMzQ3IEwgNjc5IDM1OSBMIDY3NyAzNzQgTCA2ODQgMzg4IEwgNjk1IDM5NiBMIDY5NSA0MDkgTCA2ODggNDQ2IEwgNjc4IDQ3MyBMIDY2MyA0NTAgTCA2NDMgNDI4IEwgNjQ1IDQyMyBMIDY0NSA0MTIgTCA2NDMgNDA3IEwgNjM3IDQwMSBMIDYzMCAzOTggTCA2MjAgMzk5IEwgNjEwIDQwNyBMIDYwOCA0MTEgTCA2MDggNDIzIEwgNjEwIDQyOCBMIDU5MCA0NTAgTCA1NzYgNDczIEwgNTcyIDQ2OCBMIDU2MCA0MjUgTCA1NTggMzk2IEwgNTczIDM4MiBMIDU3NiAzNzMgTCA1NzYgMzY2IEwgNTczIDM1NyBMIDU2NCAzNDYgTCA1NjkgMzM2IEwgNTg1IDMxNCBaIE0gNjUwIDI4MyBMIDY1OSAyNjcgTCA2ODAgMjY4IEwgNzE1IDI3NSBMIDcyMSAyODkgTCA3MzAgMjk1IEwgNzQzIDI5NiBMIDc1NCAyODkgTCA3NTcgMjg5IEwgNzg5IDMwNCBMIDgwOCAzMTUgTCA4MTEgMzE5IEwgODA2IDMyNSBMIDc2MCAzMzggTCA3MjQgMzUzIEwgNzExIDM0NCBMIDY5OCAzNDIgTCA2NzIgMzA4IFogTSA2MDIgMjgyIEwgNjAwIDI4NyBMIDU4MSAzMDggTCA1NTQgMzQzIEwgNTQyIDM0NCBMIDUzNCAzNDggTCA1MjkgMzUzIEwgNDg3IDMzNiBMIDQ0MyAzMjMgTCA0NDIgMzE4IEwgNDQ1IDMxNSBMIDQ5NCAyOTAgTCA0OTkgMjg5IEwgNTEwIDI5NiBMIDUyMyAyOTUgTCA1MzIgMjg5IEwgNTM3IDI3NyBMIDU0MSAyNzQgTCA1NzQgMjY4IEwgNTk0IDI2NyBaIiBmaWxsPSJ1cmwoI21hcmtHcmFkaWVudCkiIGZpbGwtcnVsZT0iZXZlbm9kZCIvPgo8L3N2Zz4K") center / contain no-repeat;
 }
 #JellyfinCanopyPage .jc-brand-name {
-    background: var(--jc-grad);
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
-    -webkit-text-fill-color: transparent;
+    /* Verdant lockup: italic serif wordmark in ink, letting the green mark
+       carry the color. (Replaces the gradient-clipped wordmark.) */
+    font-family: var(--jc-display-font);
+    font-style: italic;
+    font-weight: 500;
+    color: var(--jc-text-strong);
 }
 #settingsSearchContainer {
     width: 100%;
@@ -914,7 +932,7 @@
 #JellyfinCanopyPage .jellyfin-tab-button.active {
     background: var(--jc-grad-control);
     color: var(--jc-control-text) !important;
-    text-shadow: 0 1px 2px rgba(0, 6, 17, 0.35);
+    text-shadow: 0 1px 2px rgba(8, 15, 9, 0.35);
 }
 /* Per-section match count shown on nav items while searching. */
 #JellyfinCanopyPage .jc-nav-count {
@@ -1159,11 +1177,11 @@
 
 /* Integration-choice toggles (Plugin Pages vs Custom Tabs) — pair of
    alternatives that answer "how do you want this feature delivered?".
-   Subtle purple/blue accent to distinguish from the feature-master. */
+   Subtle seed-gold accent to distinguish from the leaf feature-master. */
 #JellyfinCanopyPage .configSection > .checkboxContainer:has(> label > input[id$="UsePluginPages"]),
 #JellyfinCanopyPage .configSection > .checkboxContainer:has(> label > input[id$="UseCustomTabs"]) {
-    background: rgba(155, 89, 182, 0.05);
-    border-left: 2px solid rgba(155, 89, 182, 0.4);
+    background: color-mix(in srgb, var(--verdant-seed) 7%, transparent);
+    border-left: 2px solid color-mix(in srgb, var(--verdant-seed) 45%, transparent);
 }
 
 #JellyfinCanopyPage .fieldDescription {
@@ -1434,7 +1452,7 @@
     letter-spacing: 0.5px;
     background: var(--jc-grad-control);
     color: var(--jc-control-text);
-    text-shadow: 0 1px 2px rgba(0, 6, 17, 0.35);
+    text-shadow: 0 1px 2px rgba(8, 15, 9, 0.35);
     display: inline-flex;
     align-items: center;
     gap: 8px;
@@ -1500,13 +1518,14 @@
     background-color: rgba(220,53,69,0.15); border-left-color: var(--jc-danger);
 }
 .jc-purple-banner {
-    background-color: rgba(155,89,182,0.15); border-left-color: #9b59b6;
+    /* Legacy name; Verdant retints this family to the info hue. */
+    background-color: color-mix(in srgb, var(--jc-info) 14%, transparent); border-left-color: var(--jc-info);
 }
 
 .jc-info-icon, .jc-bottom-info-icon, .jc-info-icon-sm { color: var(--jc-accent); font-size: 24px; flex-shrink: 0; margin-top: 2px; }
 .jc-note-icon, .jc-mobile-icon, .jc-dep-banner-icon { color: var(--jc-warning); font-size: 24px; flex-shrink: 0; margin-top: 2px; }
 .jc-danger-icon { color: var(--jc-danger); font-size: 24px; flex-shrink: 0; margin-top: 2px; }
-.jc-purple-icon { color: #9b59b6; font-size: 24px; flex-shrink: 0; margin-top: 2px; }
+.jc-purple-icon { color: var(--jc-info); font-size: 24px; flex-shrink: 0; margin-top: 2px; }
 .jc-hidden { display: none !important; }
 
 /* ---------------------------------------------------------------------------
@@ -2129,8 +2148,8 @@ body.jc-has-kefintweaks  .jc-installed-badge[data-plugin="kefintweaks"]  { displ
 .jc-audit-error {
     color: var(--jc-danger);
     padding: 10px 14px;
-    background: rgba(244,67,54,0.08);
-    border-left: 3px solid #f44336;
+    background: color-mix(in srgb, var(--jc-danger) 9%, transparent);
+    border-left: 3px solid var(--jc-danger);
     border-radius: 6px;
 }
 
