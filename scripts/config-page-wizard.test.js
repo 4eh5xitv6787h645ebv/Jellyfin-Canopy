@@ -34,9 +34,9 @@ test('wizard opens from hydration before the loading overlay clears and stays sk
     const hide = js.indexOf('Dashboard.hideLoadingMsg();', hook);
     assert.ok(hook >= 0, 'loadConfig must gate the wizard on WizardCompleted');
     assert.ok(hide > hook, 'wizard hook must run before the loading overlay clears');
-    assert.match(js, /if \(event\.key === 'Escape'\) jcCloseWizard\(true\);/,
+    assert.match(js, /if \(event\.key === 'Escape'\) jcSkipWizard\(\);/,
         'Escape must close (and complete) the wizard');
-    assert.match(js, /jcCloseWizard\(true\)/, 'scrim/skip paths must complete the wizard');
+    assert.match(js, /jcSkipWizard\(\)/, 'scrim/skip paths must complete the wizard');
 });
 
 test('completion flag persists outside the form save path and stays undescribed', () => {
@@ -59,9 +59,14 @@ test('the parked server flag ships with the wizard', () => {
     // parked; this test flips from documenting to enforcing once it lands.
     const hasProperty = /public bool WizardCompleted \{ get; set; \}/.test(config);
     if (!hasProperty) {
-        // Parked: the wizard must then fail open (reappear next load, never block).
+        // Parked: the wizard must then fail open (never block) AND a browser
+        // fallback must stop the modal reopening on every visit.
         assert.match(js, /could not persist wizard completion/,
             'without the server flag the persist path must fail open with a warning');
+        assert.match(js, /jc-wizard-completed/,
+            'browser fallback key must gate auto-open while the flag is parked');
+        assert.match(js, /jcWizardLocallyDone\(\)/,
+            'loadConfig must consult the browser fallback before opening');
     }
 });
 

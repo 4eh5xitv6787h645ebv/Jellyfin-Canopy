@@ -1583,12 +1583,12 @@ function setProbeWarning(source, msg) {
     }
     const messages = Object.keys(_jeProbeWarnings).map(function (k) { return _jeProbeWarnings[k]; });
     if (!messages.length) {
-        banner.hidden = true;
+        banner.style.display = 'none';
         msgEl.textContent = '';
         return;
     }
     msgEl.textContent = ' — ' + messages.join(' / ');
-    banner.hidden = false;
+    banner.style.display = '';
 }
 
 
@@ -3724,8 +3724,12 @@ function runRetestAllConnections() {
 
         }
 
-        /* Page-lifecycle cancellation (both event names exist across Jellyfin builds).
-           The exact wiring shape is a drift-guard contract. */
+        /* Page-lifecycle cancellation (both event names exist across Jellyfin
+           builds). Wired via init isolation like every other subsystem; the
+           dedented addEventListener lines keep the drift-guard's pinned
+           12-space handler-body shape. */
+        function wireConnectionLifecycle() {
+            if (!page) return;
         page.addEventListener('pagehide', function() {
             cancelActiveMaintainerrTest(true);
             cancelActiveSeerrScan();
@@ -3734,6 +3738,7 @@ function runRetestAllConnections() {
             cancelActiveMaintainerrTest(true);
             cancelActiveSeerrScan();
         });
+        }
 
         function wireArrInstances() {
             [['#addSonarrInstance', 'sonarr'], ['#addRadarrInstance', 'radarr']].forEach(function (pair) {
@@ -5352,11 +5357,10 @@ function wireImportSeerrUsers() {
         btn.disabled = true;
         setLabel('Saving config...');
         try {
-            try {
-                // Server must see the current blocklist before importing.
-                await saveConfig(new Event('submit'));
-            } catch (saveErr) {
-                console.warn('[JC] pre-import save failed', saveErr);
+            // Server must see the current blocklist before importing.
+            // saveConfig never rejects; it reports failure via its return value.
+            const preImportSaved = await saveConfig(new Event('submit'));
+            if (preImportSaved === false) {
                 if (result) {
                     result.textContent = 'Could not save config. Import was not attempted.';
                     result.style.color = 'var(--jc-danger)';
@@ -6168,14 +6172,15 @@ function loadConfig() {
         jcSyncWatchlistRetentionVisibility();
 
         jcSyncEssentialsMirrors();
-        renderServiceStatusDashboard(config);
-        renderFeaturesDashboard(config);
+        jcRenderEssentialsServices();
+        renderServiceStatusDashboard();
+        renderFeaturesDashboard();
         updateAllDependencies();
         updateRequestsRequirementsBanner();
 
-        if (config.WizardCompleted !== true && !_jcWizardShown) {
+        if (config.WizardCompleted !== true && !jcWizardLocallyDone() && !_jcWizardShown) {
             _jcWizardShown = true;
-            jcOpenWizard(config);
+            jcOpenWizard();
         }
 
         Dashboard.hideLoadingMsg();
@@ -6276,6 +6281,7 @@ async function saveConfig(e) {
         }
         Dashboard.processPluginConfigurationUpdateResult(result);
         jcClearDirtyIfUnchanged(dirtyRevisionAtSnapshot);
+        return true;
     } catch (saveErr) {
         Dashboard.hideLoadingMsg();
         console.error('[JC] saveConfig failed:', saveErr);
@@ -6301,6 +6307,14 @@ async function saveConfig(e) {
    status indicators, renderArrInstances/arr add buttons, jcDirty owner. */
 
 const VIEW_MODE_KEY = 'jc-settings-view-mode';
+/* Browser fallback for wizard completion while the server-side flag is
+   parked: without it the modal would reopen on every visit. The server
+   flag, once present, dominates (checked in loadConfig). */
+const WIZARD_DONE_KEY = 'jc-wizard-completed';
+
+function jcWizardLocallyDone() {
+    try { return localStorage.getItem(WIZARD_DONE_KEY) === 'true'; } catch (e) { return false; }
+}
 
 /* The six Essentials/wizard mirrors and their canonical bound controls.
    AutoSkip drives intro+outro together (reads intro). */
@@ -6321,7 +6335,9 @@ function jcCanonicalChecked(ids) {
 function jcSetCanonical(ids, checked) {
     ids.forEach(function (id) {
         const el = document.getElementById(id);
-        if (!el || el.checked === checked) return;
+        /* Disabled canonicals are dependency-gated (missing TMDB key, absent
+           Intro Skipper, ...): mirrors must not write through the gate. */
+        if (!el || el.disabled || el.checked === checked) return;
         el.checked = checked;
         el.dispatchEvent(new Event('change', { bubbles: true }));
     });
@@ -6330,10 +6346,13 @@ function jcSetCanonical(ids, checked) {
 /* Pull canonical values into every mirror (called after each hydration). */
 function jcSyncEssentialsMirrors() {
     JC_MIRROR_MAP.forEach(function (m) {
+        const first = document.getElementById(m.canonical[0]);
         const value = jcCanonicalChecked(m.canonical);
         [m.ess, m.wiz].forEach(function (id) {
             const mirror = document.getElementById(id);
-            if (mirror) mirror.checked = value;
+            if (!mirror) return;
+            mirror.checked = value;
+            mirror.disabled = !!(first && first.disabled);
         });
     });
 }
@@ -6378,7 +6397,13 @@ function jcRenderEssentialsServices() {
     ];
     services.forEach(function (svc) {
         const enabled = jcCanonicalChecked([svc.enabledId]);
-        const cached = enabled ? getPersistedTestResult(svc.key) : null;
+        let binding;
+        if (svc.key === 'maintainerr') {
+            const urlInput = document.querySelector('#maintainerrUrl');
+            binding = jcFingerprintConnectionValue(
+                jcNormalizeMaintainerrBaseUrl((urlInput && urlInput.value) || ''));
+        }
+        const cached = enabled ? getPersistedTestResult(svc.key, binding) : null;
         const item = document.createElement('span');
         item.className = 'jc-ess-svc-item';
         const dot = document.createElement('span');
@@ -6544,16 +6569,91 @@ function jcWizObserveIndicator(indicator, stateEl, doneText) {
     setTimeout(function () { observer.disconnect(); }, 30000);
 }
 
-function jcWizTestSeerr() {
-    const url = (document.getElementById('jcWizSeerrUrl').value || '').trim();
-    const key = (document.getElementById('jcWizSeerrKey').value || '').trim();
-    if (!url) return;
+function jcWizVal(id) {
+    const el = document.getElementById(id);
+    return ((el && el.value) || '').trim();
+}
+
+function jcWizSetInput(el, value) {
+    if (!el || el.value === value) return;
+    el.value = value;
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+function jcWizEnable(id) {
+    const el = document.getElementById(id);
+    if (el && !el.checked && !el.disabled) {
+        el.checked = true;
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+}
+
+/* Commit wizard connection fields into the canonical controls,
+   NON-destructively: Seerr URLs merge into the multi-URL list, and an arr
+   card is only reused when it is still blank. Called by each Test button and
+   by Finish/Skip-to-done, so typed credentials are never silently dropped. */
+function jcWizCommitSeerr() {
+    const url = jcWizVal('jcWizSeerrUrl');
+    const key = jcWizVal('jcWizSeerrKey');
+    if (!url && !key) return false;
     const urls = document.querySelector('#seerrUrls');
-    const apiKey = document.querySelector('#SeerrApiKey');
-    const enabled = document.getElementById('seerrEnabled');
-    if (urls) { urls.value = url; urls.dispatchEvent(new Event('input', { bubbles: true })); }
-    if (apiKey) { apiKey.value = key; apiKey.dispatchEvent(new Event('input', { bubbles: true })); }
-    if (enabled && !enabled.checked) { enabled.checked = true; enabled.dispatchEvent(new Event('change', { bubbles: true })); }
+    if (url && urls) {
+        const lines = (urls.value || '').split('\n').map(function (l) { return l.trim(); }).filter(Boolean);
+        if (lines.indexOf(url) === -1) {
+            lines.push(url);
+            jcWizSetInput(urls, lines.join('\n'));
+        }
+    }
+    if (key) jcWizSetInput(document.querySelector('#SeerrApiKey'), key);
+    if (url) jcWizEnable('seerrEnabled');
+    return true;
+}
+
+function jcWizCommitMaintainerr() {
+    const url = jcWizVal('jcWizMaintUrl');
+    if (!url) return false;
+    jcWizSetInput(document.querySelector('#maintainerrUrl'), url);
+    jcWizEnable('maintainerrEnabled');
+    return true;
+}
+
+function jcWizCommitArr(type) {
+    const url = jcWizVal(type === 'sonarr' ? 'jcWizSonarrUrl' : 'jcWizRadarrUrl');
+    const key = jcWizVal(type === 'sonarr' ? 'jcWizSonarrKey' : 'jcWizRadarrKey');
+    if (!url || !key) return null;
+    const list = document.querySelector(type === 'sonarr' ? '#sonarrInstancesList' : '#radarrInstancesList');
+    if (!list) return null;
+    /* Reuse a card only while it is still blank; existing instances are
+       never overwritten by a wizard relaunch. */
+    let card = null;
+    list.querySelectorAll('.arr-instance-card').forEach(function (candidate) {
+        if (card) return;
+        const u = candidate.querySelector('.arr-instance-url');
+        const k = candidate.querySelector('.arr-instance-apikey');
+        if (u && k && !u.value.trim() && !k.value.trim()) card = candidate;
+    });
+    if (!card) {
+        const addBtn = document.querySelector(type === 'sonarr' ? '#addSonarrInstance' : '#addRadarrInstance');
+        if (addBtn) addBtn.click();
+        const cards = list.querySelectorAll('.arr-instance-card');
+        card = cards[cards.length - 1] || null;
+    }
+    if (!card) return null;
+    jcWizSetInput(card.querySelector('.arr-instance-url'), url);
+    jcWizSetInput(card.querySelector('.arr-instance-apikey'), key);
+    return card;
+}
+
+function jcWizCommitConnections() {
+    jcWizCommitSeerr();
+    jcWizCommitMaintainerr();
+    jcWizCommitArr('sonarr');
+    jcWizCommitArr('radarr');
+}
+
+function jcWizTestSeerr() {
+    if (!jcWizVal('jcWizSeerrUrl')) return;
+    jcWizCommitSeerr();
     const btn = document.querySelector('#testSeerrBtn');
     if (btn) btn.click();
     jcWizObserveIndicator(document.querySelector('#seerrStatusIndicator'),
@@ -6561,12 +6661,8 @@ function jcWizTestSeerr() {
 }
 
 function jcWizTestMaintainerr() {
-    const url = (document.getElementById('jcWizMaintUrl').value || '').trim();
-    if (!url) return;
-    const canonical = document.querySelector('#maintainerrUrl');
-    const enabled = document.getElementById('maintainerrEnabled');
-    if (canonical) { canonical.value = url; canonical.dispatchEvent(new Event('input', { bubbles: true })); }
-    if (enabled && !enabled.checked) { enabled.checked = true; enabled.dispatchEvent(new Event('change', { bubbles: true })); }
+    if (!jcWizVal('jcWizMaintUrl')) return;
+    jcWizCommitMaintainerr();
     const btn = document.querySelector('#testMaintainerrBtn');
     if (btn) btn.click();
     jcWizObserveIndicator(document.querySelector('#maintainerrStatusIndicator'),
@@ -6574,49 +6670,55 @@ function jcWizTestMaintainerr() {
 }
 
 function jcWizTestArr(type) {
-    const url = (document.getElementById(type === 'sonarr' ? 'jcWizSonarrUrl' : 'jcWizRadarrUrl').value || '').trim();
-    const key = (document.getElementById(type === 'sonarr' ? 'jcWizSonarrKey' : 'jcWizRadarrKey').value || '').trim();
-    if (!url || !key) return;
-    const listSelector = type === 'sonarr' ? '#sonarrInstancesList' : '#radarrInstancesList';
-    const addSelector = type === 'sonarr' ? '#addSonarrInstance' : '#addRadarrInstance';
-    const list = document.querySelector(listSelector);
-    if (!list) return;
-    let card = list.querySelector('.arr-instance-card');
+    const stateEl = document.getElementById(type === 'sonarr' ? 'jcWizSonarrState' : 'jcWizRadarrState');
+    const card = jcWizCommitArr(type);
     if (!card) {
-        const addBtn = document.querySelector(addSelector);
-        if (addBtn) addBtn.click();
-        card = list.querySelector('.arr-instance-card');
+        if (stateEl && (jcWizVal(type === 'sonarr' ? 'jcWizSonarrUrl' : 'jcWizRadarrUrl')
+            || jcWizVal(type === 'sonarr' ? 'jcWizSonarrKey' : 'jcWizRadarrKey'))) {
+            stateEl.textContent = 'Enter both a URL and an API key first';
+        }
+        return;
     }
-    if (!card) return;
-    const urlInput = card.querySelector('.arr-instance-url');
-    const keyInput = card.querySelector('.arr-instance-apikey');
-    if (urlInput) { urlInput.value = url; urlInput.dispatchEvent(new Event('input', { bubbles: true })); }
-    if (keyInput) { keyInput.value = key; keyInput.dispatchEvent(new Event('input', { bubbles: true })); }
     const testBtn = card.querySelector('.arr-instance-test');
     if (testBtn) testBtn.click();
-    jcWizObserveIndicator(card.querySelector('.arr-instance-status'),
-        document.getElementById(type === 'sonarr' ? 'jcWizSonarrState' : 'jcWizRadarrState'), 'Connected');
+    jcWizObserveIndicator(card.querySelector('.arr-instance-status'), stateEl, 'Connected');
 }
 
 async function jcWizPersistCompleted() {
+    /* Browser fallback first (works even while the server flag is parked). */
+    try { localStorage.setItem(WIZARD_DONE_KEY, 'true'); } catch (e) { /* private mode */ }
     try {
         const config = await ApiClient.getPluginConfiguration(pluginId);
         config.WizardCompleted = true;
         await ApiClient.updatePluginConfiguration(pluginId, config);
     } catch (e) {
-        /* Fail open: the wizard closes regardless; it reappears next visit. */
+        /* Fail open: the wizard closes regardless; the local key still
+           prevents it reopening in this browser. */
         console.warn('[JC] could not persist wizard completion:', e);
     }
 }
 
-function jcCloseWizard(persist) {
+function jcWizSetShellInert(inert) {
+    [document.querySelector('.jc-main'), document.querySelector('#jcSidebar')].forEach(function (el) {
+        if (el) el.inert = inert;
+    });
+}
+
+function jcCloseWizard() {
     const wizard = document.querySelector('#jcWizard');
     if (wizard) wizard.hidden = true;
-    if (persist) jcWizPersistCompleted();
+    jcWizSetShellInert(false);
     if (_jcWizardPrevFocus && typeof _jcWizardPrevFocus.focus === 'function') {
         try { _jcWizardPrevFocus.focus(); } catch (e) { /* gone */ }
     }
     _jcWizardPrevFocus = null;
+}
+
+/* Skip paths: close and mark complete. No form save happens here, so the
+   completion round-trip races nothing. */
+function jcSkipWizard() {
+    jcCloseWizard();
+    jcWizPersistCompleted();
 }
 
 function jcOpenWizard() {
@@ -6630,6 +6732,7 @@ function jcOpenWizard() {
     const lede = document.querySelector('#jcWizConnLede');
     if (lede) lede.textContent = 'Canopy works fine without these. Connect what you run — or skip, and add them anytime under Connections.';
     wizard.hidden = false;
+    jcWizSetShellInert(true);
     jcWizGo(1);
 }
 
@@ -6639,7 +6742,15 @@ function wireWizard() {
 
     wizard.addEventListener('click', function (event) {
         const go = event.target.closest('[data-wgo]');
-        if (go) { jcWizGo(parseInt(go.dataset.wgo, 10)); return; }
+        if (go) {
+            const step = parseInt(go.dataset.wgo, 10);
+            if (step === 1) _jcWizardChoseRecommended = false;
+            /* Entering Done commits any typed connection fields (idempotent
+               merge), so a later Escape cannot silently drop them. */
+            if (step === 4) jcWizCommitConnections();
+            jcWizGo(step);
+            return;
+        }
         const conn = event.target.closest('[data-wconn]');
         if (conn) {
             const formEl = document.getElementById('jcWizForm-' + conn.dataset.wconn);
@@ -6656,11 +6767,11 @@ function wireWizard() {
         }
         if (event.target === wizard) {
             /* Scrim click = skip: never trap the admin. */
-            jcCloseWizard(true);
+            jcSkipWizard();
         }
     });
     wizard.addEventListener('keydown', function (event) {
-        if (event.key === 'Escape') jcCloseWizard(true);
+        if (event.key === 'Escape') jcSkipWizard();
     });
 
     const recommended = document.querySelector('#jcWizRecommended');
@@ -6682,7 +6793,7 @@ function wireWizard() {
         });
     }
     const skip = document.querySelector('#jcWizSkip');
-    if (skip) skip.addEventListener('click', function () { jcCloseWizard(true); });
+    if (skip) skip.addEventListener('click', function () { jcSkipWizard(); });
 
     /* Experience mirrors write through to the canonical controls. */
     JC_MIRROR_MAP.forEach(function (m) {
@@ -6692,11 +6803,18 @@ function wireWizard() {
         }
     });
 
-    function finishTo(mode) {
+    async function finishTo(mode) {
+        jcWizCommitConnections();
+        jcCloseWizard();
         const dock = document.querySelector('.jc-save-dock');
-        const dirty = !!(dock && dock.classList.contains('jc-dirty'));
-        jcCloseWizard(true);
-        if (dirty && form) form.requestSubmit ? form.requestSubmit() : saveConfig(new Event('submit'));
+        if (dock && dock.classList.contains('jc-dirty')) {
+            /* One canonical write: await the form save, THEN write the
+               completion flag from the post-save server state. Two
+               concurrent read-modify-writes would race and one could
+               silently roll the other back. */
+            await saveConfig(new Event('submit'));
+        }
+        await jcWizPersistCompleted();
         const modeBtn = document.querySelector(mode === 'essentials' ? '#jcModeEssentials' : '#jcModeAdvanced');
         if (modeBtn) modeBtn.click();
     }
@@ -6732,6 +6850,7 @@ jcWire('dirty-state', wireDirtyState);
 jcWire('search', wireSearch);
 jcWire('widgets', wireWidgets);
 jcWire('connections', wireConnections);
+jcWire('connection-lifecycle', wireConnectionLifecycle);
 jcWire('arr-instances', wireArrInstances);
 jcWire('dashboards', wireDashboards);
 jcWire('core-bindings', wireCoreBindings);
