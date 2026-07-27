@@ -268,11 +268,10 @@ function htmlLinks(content, line) {
 
 function inlineHtmlAnchorRecord(children, start) {
     const opening = children[start]?.content || '';
-    if (!/<a\b/i.test(opening)) return null;
-    let label = visibleHtmlText(opening);
-    if (/<\/a\s*>/i.test(opening)) {
-        return { label: label.replace(/\s+/g, ' ').trim(), endIndex: start };
-    }
+    const anchor = htmlAnchorRecords(opening)[0];
+    if (!anchor) return null;
+    if (anchor.label) return { label: anchor.label, endIndex: start };
+    let label = compactVisibleText(opening.slice(anchor.openingEnd));
     for (let index = start + 1; index < children.length; index += 1) {
         const child = children[index];
         if (child.type === 'html_inline') {

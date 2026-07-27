@@ -276,19 +276,37 @@ test('security policy and every security chooser contact stay private-only', () 
 });
 
 test('repository-wide security intake recognizes plural report and submission headings', () => {
-    for (const heading of ['Security reports', 'Vulnerability submissions']) {
+    for (const [file, heading] of [
+        ['docs/about.md', 'Security reports'],
+        ['docs/getting-started.md', 'Vulnerability submissions'],
+    ]) {
         const files = validFixture();
-        files['docs/about.md'] += [
+        files[file] = (files[file] || '') + [
             `## ${heading}`,
             `[Open a public report](${ISSUES_ROUTE}).`,
             '',
         ].join('\n');
         fixture(files, root => {
             assert.ok(auditSupportContract({ root }).problems.includes(
-                `docs/about.md: "${heading}" must route only to private GitHub advisories`
+                `${file}: "${heading}" must route only to private GitHub advisories`
             ));
         });
     }
+});
+
+test('security intake links stay private outside named intake headings', () => {
+    const files = validFixture();
+    files['SECURITY.md'] = files['SECURITY.md'].replace(
+        '## Contact',
+        '## Contact\n'
+        + `For vulnerability submissions, [open a public report](${ISSUES_ROUTE}).`
+    );
+    fixture(files, root => {
+        assert.ok(auditSupportContract({ root }).problems.includes(
+            'SECURITY.md: security or vulnerability intake links '
+            + 'must route only to private GitHub advisories'
+        ));
+    });
 });
 
 test('feature and support destinations are owned by their rendered sections', () => {
@@ -336,6 +354,20 @@ test('feature and support destinations are owned by their rendered sections', ()
         assert.ok(problems.includes(
             '.github/ISSUE_TEMPLATE/feature_request.md: '
             + 'Additional context must require sensitive-data redaction'
+        ));
+    });
+});
+
+test('feature-route ownership recognizes idea wording', () => {
+    const files = validFixture();
+    files['README.md'] = files['README.md'].replace(
+        `[Suggest features](${ISSUES_ROUTE}).`,
+        `[Suggest features](${ISSUES_ROUTE}).\n[Share your idea](${DISCORD_ROUTE}).`
+    );
+    fixture(files, root => {
+        assert.ok(auditSupportContract({ root }).problems.includes(
+            'README.md: must route every feature intake link to GitHub Issues '
+            + 'in "## 🌍 Contributing"'
         ));
     });
 });
@@ -406,6 +438,23 @@ test('semantic ownership uses each link sentence even for cross-category and rep
     });
 });
 
+test('semantic ownership keeps abbreviations and semicolons inside the owning sentence', () => {
+    for (const prose of ['For support, e.g. use', 'For support; use']) {
+        const files = validFixture();
+        files['CONTRIBUTING.md'] = files['CONTRIBUTING.md'].replace(
+            `[Jellyfin Community Discord](${DISCORD_ROUTE}).`,
+            `[Jellyfin Community Discord](${DISCORD_ROUTE}).\n`
+            + `${prose} [GitHub Issues](${ISSUES_ROUTE}).`
+        );
+        fixture(files, root => {
+            assert.ok(auditSupportContract({ root }).problems.includes(
+                'CONTRIBUTING.md: must route every community-support link to the '
+                + 'Jellyfin Community Discord in "## 💬 Getting Help"'
+            ));
+        });
+    }
+});
+
 test('semantic route ownership decodes rendered raw HTML labels', () => {
     const files = validFixture();
     files['CONTRIBUTING.md'] = files['CONTRIBUTING.md'].replace(
@@ -426,7 +475,7 @@ test('semantic ownership scans raw HTML attributes with quoted greater-than char
     files['CONTRIBUTING.md'] = files['CONTRIBUTING.md'].replace(
         `[Jellyfin Community Discord](${DISCORD_ROUTE}).`,
         `[Jellyfin Community Discord](${DISCORD_ROUTE}).\n`
-        + `<div><a title="1 > 0" href="${ISSUES_ROUTE}">Ask for support</a></div>`
+        + `<a title="1 > 0" href="${ISSUES_ROUTE}">Ask for support</a>`
     );
     fixture(files, root => {
         assert.ok(auditSupportContract({ root }).problems.includes(
@@ -480,6 +529,18 @@ test('private security intake follows owned local routes but permits neutral pol
     neutral['docs/policy.md'] = 'This policy contains no intake link.\n';
     fixture(neutral, root => {
         assert.ok(!auditSupportContract({ root }).problems.includes(
+            'SECURITY.md: "## Reporting a Vulnerability" must use only private GitHub advisories'
+        ));
+    });
+
+    const disguisedIntake = validFixture();
+    disguisedIntake['SECURITY.md'] = disguisedIntake['SECURITY.md'].replace(
+        `[Submit a private report](${SECURITY_ADVISORY_ROUTE}).`,
+        '[Submit a vulnerability report via the alternate policy]'
+        + '(docs/about.md#get-involved).'
+    );
+    fixture(disguisedIntake, root => {
+        assert.ok(auditSupportContract({ root }).problems.includes(
             'SECURITY.md: "## Reporting a Vulnerability" must use only private GitHub advisories'
         ));
     });
@@ -682,6 +743,17 @@ test('redaction guidance requires positive, non-negated instructions in its owni
             '.github/ISSUE_TEMPLATE/bug.md: logs section must require sensitive-data redaction'
         ));
     });
+
+    const reversedRequirement = validFixture();
+    reversedRequirement['.github/ISSUE_TEMPLATE/bug.md'] = BUG_TEMPLATE.replace(
+        'Redact tokens and credentials from attached logs.',
+        'Redact credentials? No.'
+    );
+    fixture(reversedRequirement, root => {
+        assert.ok(auditSupportContract({ root }).problems.includes(
+            '.github/ISSUE_TEMPLATE/bug.md: logs section must require sensitive-data redaction'
+        ));
+    });
 });
 
 test('enforces GitHub template metadata and rendered issue-body link semantics', () => {
@@ -701,6 +773,27 @@ test('enforces GitHub template metadata and rendered issue-body link semantics',
         assert.ok(problems.includes(
             '.github/ISSUE_TEMPLATE/bug.md: must route vulnerability reports to private GitHub advisories'
         ));
+    });
+});
+
+test('required intake sections cannot be empty headings', () => {
+    const files = validFixture();
+    files['.github/ISSUE_TEMPLATE/bug.md'] = BUG_TEMPLATE
+        .replace('## Regression and versions\nVersions.', '## Regression and versions\n')
+        .replace('## Client environment\nBrowser and OS.', '## Client environment\n')
+        .replace('## Relevant configuration\nConfiguration.', '## Relevant configuration\n');
+    fixture(files, root => {
+        const problems = auditSupportContract({ root }).problems;
+        for (const section of [
+            'Regression and versions',
+            'Client environment',
+            'Relevant configuration',
+        ]) {
+            assert.ok(problems.includes(
+                `.github/ISSUE_TEMPLATE/bug.md: required section "## ${section}" `
+                + 'must include guidance or fields'
+            ));
+        }
     });
 });
 

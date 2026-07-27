@@ -183,7 +183,7 @@ test('records each link position and scans quoted HTML delimiters before href', 
     const links = extractLinks([
         '[same](https://example.com/one). For support, [same](https://example.com/two).',
         '',
-        '<div><a title="1 > 0" href="https://example.com/three">Ask for support</a></div>',
+        '<a title="1 > 0" href="https://example.com/three">Ask for support</a>',
         '',
     ].join('\n'));
     assert.deepEqual(links.map(link => ({
