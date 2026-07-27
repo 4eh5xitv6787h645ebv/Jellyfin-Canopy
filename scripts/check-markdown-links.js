@@ -319,49 +319,151 @@ function compactGovernedText(content, labels = new Map(), initialStates = {}) {
     return governedHtmlText(content, labels, initialStates).replace(/\s+/g, ' ').trim();
 }
 
+function compactDomText(parts) {
+    return parts.filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+}
+
 function htmlIdLabels(content) {
-    const labels = new Map();
-    const visible = stripHtmlComments(content);
-    const hiddenStates = htmlElementHiddenStates(visible);
-    const opening = /<([a-z][a-z0-9:-]*)\b/gi;
-    let match;
-    while ((match = opening.exec(visible)) !== null) {
-        const openingEnd = htmlOpeningTagEnd(visible, match.index);
-        if (openingEnd === -1) break;
-        const openingTag = visible.slice(match.index, openingEnd);
-        const id = htmlAttributeValue(openingTag, 'id');
-        if (!id || labels.has(id)) {
-            opening.lastIndex = openingEnd;
+    const source = stripHtmlComments(content);
+    if (!htmlAttributeRecords(source).some(attribute => attribute.name === 'id')) {
+        return new Map();
+    }
+    const records = [];
+    const ids = new Map();
+    const stack = [];
+    const pattern = /<(\/?)([a-z][a-z0-9:-]*)\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi;
+    let offset = 0;
+    for (const match of source.matchAll(pattern)) {
+        const currentRawTextTag = ['script', 'style'].includes(stack.at(-1)?.tag)
+            ? stack.at(-1).tag
+            : '';
+        const closing = match[1] === '/';
+        const tag = match[2].toLowerCase();
+        if (currentRawTextTag && !(closing && tag === currentRawTextTag)) {
             continue;
         }
-        const {
-            accessibilityHidden = false,
-            visuallyPersistentHidden = false,
-            accessibilityPersistentHidden = false,
-            visualParentState = null,
-            accessibilityParentState = null,
-        } = hiddenStates.get(match.index) || {};
-        let label = accessibilityHidden
-            ? ''
-            : htmlAttributeValue(openingTag, 'aria-label')
-                || htmlAttributeValue(openingTag, 'title');
-        if (!visuallyPersistentHidden && !label && !/\/>\s*$/.test(openingTag)) {
-            const closing = new RegExp(`</${match[1]}\\s*>`, 'ig');
-            closing.lastIndex = openingEnd;
-            const close = closing.exec(visible);
-            if (close) {
-                const element = visible.slice(match.index, close.index + close[0].length);
-                label = accessibilityPersistentHidden
-                    ? visuallyRenderedHtmlText(element, visualParentState)
-                        .replace(/\s+/g, ' ').trim()
-                    : compactGovernedText(element, labels, {
-                        visual: visualParentState,
-                        accessibility: accessibilityParentState,
-                    });
-            }
+        if (stack.length > 0 && match.index > offset) {
+            stack.at(-1).parts.push(markdown.utils.unescapeAll(
+                source.slice(offset, match.index)
+            ));
         }
-        if (label) labels.set(id, label.replace(/\s+/g, ' ').trim());
-        opening.lastIndex = openingEnd;
+        if (closing) {
+            const opening = lastHtmlStackTagIndex(stack, tag);
+            if (opening !== -1) stack.splice(opening);
+            offset = match.index + match[0].length;
+            continue;
+        }
+        if (tag === 'a') {
+            const activeAnchor = lastHtmlStackTagIndex(stack, tag);
+            if (activeAnchor !== -1) stack.splice(activeAnchor);
+        }
+        const parent = stack.at(-1) || null;
+        const openingTag = match[0];
+        const visualState = htmlOpeningVisibilityState(
+            parent ? [parent.visualState] : [],
+            openingTag
+        );
+        const accessibilityState = htmlOpeningVisibilityState(
+            parent ? [parent.accessibilityState] : [],
+            openingTag,
+            true
+        );
+        const record = {
+            tag,
+            openingTag,
+            visualState,
+            accessibilityState,
+            parts: [],
+        };
+        if (parent) parent.parts.push(record);
+        records.push(record);
+        const id = htmlAttributeValue(openingTag, 'id');
+        if (id && !ids.has(id)) ids.set(id, record);
+        const selfClosing = /\/>\s*$/.test(openingTag) || HTML_VOID_ELEMENTS.has(tag);
+        if (!selfClosing) stack.push(record);
+        offset = match.index + match[0].length;
+    }
+    if (stack.length > 0 && offset < source.length) {
+        stack.at(-1).parts.push(markdown.utils.unescapeAll(source.slice(offset)));
+    }
+
+    for (let index = records.length - 1; index >= 0; index -= 1) {
+        const record = records[index];
+        if (['script', 'style', 'desc', 'title'].includes(record.tag)) {
+            record.visualText = '';
+            continue;
+        }
+        record.visualText = compactDomText(record.parts.map(part => (
+            typeof part === 'string'
+                ? record.visualState.hidden ? '' : part
+                : part.visualText
+        )));
+    }
+
+    const labelledText = (record, labels) => {
+        const references = htmlAttributeValue(record.openingTag, 'aria-labelledby')
+            .split(/\s+/)
+            .filter(Boolean)
+            .map(id => labels.get(id) || '')
+            .filter(Boolean);
+        return compactDomText(references);
+    };
+
+    let labels = new Map();
+    const maximumPasses = Math.min(ids.size + 1, 32);
+    for (let pass = 0; pass < maximumPasses; pass += 1) {
+        for (let index = records.length - 1; index >= 0; index -= 1) {
+            const record = records[index];
+            if (['script', 'style'].includes(record.tag)) {
+                record.accessibleText = '';
+                continue;
+            }
+            const body = compactDomText(record.parts.map(part => (
+                typeof part === 'string'
+                    ? record.accessibilityState.hidden ? '' : part
+                    : part.accessibleText
+            )));
+            let text = body;
+            if (!record.accessibilityState.hidden) {
+                const referenced = labelledText(record, labels);
+                const ariaLabel = htmlAttributeValue(record.openingTag, 'aria-label');
+                const title = htmlAttributeValue(record.openingTag, 'title');
+                if (record.tag === 'img') {
+                    text = referenced
+                        || ariaLabel
+                        || htmlAttributeValue(record.openingTag, 'alt')
+                        || title;
+                } else if (record.tag === 'svg'
+                    || ariaLabel
+                    || htmlAttributeValue(record.openingTag, 'aria-labelledby')) {
+                    text = referenced || ariaLabel || title || body;
+                }
+            }
+            record.accessibleText = compactDomText([text]);
+        }
+
+        const nextLabels = new Map();
+        for (const [id, record] of ids) {
+            let label = record.accessibilityState.hidden
+                ? ''
+                : htmlAttributeValue(record.openingTag, 'aria-label')
+                    || htmlAttributeValue(record.openingTag, 'title')
+                    || '';
+            if (!record.visualState.persistentHidden && !label) {
+                label = record.accessibilityState.persistentHidden
+                    ? record.visualText
+                    : combinedHtmlLabel(record.accessibleText, record.visualText);
+            }
+            label = compactDomText([label]);
+            if (label) nextLabels.set(id, label);
+        }
+
+        if (nextLabels.size === labels.size
+            && [...nextLabels].every(([id, label]) => labels.get(id) === label)) {
+            labels = nextLabels;
+            break;
+        }
+        labels = nextLabels;
     }
     return labels;
 }
@@ -521,35 +623,6 @@ function htmlElementIsHidden(content, index, openingTag, excludeAriaHidden = fal
     const stack = [];
     updateHtmlVisibilityStack(stack, content.slice(0, index), excludeAriaHidden);
     return htmlOpeningVisibilityState(stack, openingTag, excludeAriaHidden).hidden;
-}
-
-function htmlElementHiddenStates(content) {
-    const states = new Map();
-    const visualStack = [];
-    const accessibilityStack = [];
-    const pattern = /<(\/?)([a-z][a-z0-9:-]*)\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi;
-    for (const match of content.matchAll(pattern)) {
-        if (match[1] !== '/') {
-            const visualParentState = visualStack.at(-1) || null;
-            const accessibilityParentState = accessibilityStack.at(-1) || null;
-            const visualState = htmlOpeningVisibilityState(visualStack, match[0]);
-            const accessibilityState = htmlOpeningVisibilityState(
-                accessibilityStack,
-                match[0],
-                true
-            );
-            states.set(match.index, {
-                accessibilityHidden: accessibilityState.hidden,
-                visuallyPersistentHidden: visualState.persistentHidden,
-                accessibilityPersistentHidden: accessibilityState.persistentHidden,
-                visualParentState,
-                accessibilityParentState,
-            });
-        }
-        updateHtmlVisibilityStack(visualStack, match[0]);
-        updateHtmlVisibilityStack(accessibilityStack, match[0], true);
-    }
-    return states;
 }
 
 function htmlPriorBlockText(content, boundary, labels) {

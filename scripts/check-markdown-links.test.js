@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { performance } = require('node:perf_hooks');
 const test = require('node:test');
 const {
     checkMarkdownLinks,
@@ -530,6 +531,8 @@ test('aria-labelledby ignores ancestor-hidden metadata but retains painted SVG t
             + 'Report a problem</title></svg>',
         '<svg style="visibility:hidden"><desc id="route-name">'
             + 'Report a problem</desc></svg>',
+        '<script>const template = \'<span id="route-name">Report a problem</span>\';'
+            + '</script>',
     ]) {
         const source = referenced
             + `<a aria-labelledby="route-name" href="${target}"></a>`;
@@ -553,6 +556,11 @@ test('aria-labelledby ignores ancestor-hidden metadata but retains painted SVG t
             + 'style="visibility:visible">Report a problem</span></div>',
         '<div id="route-name" style="visibility:hidden"><svg '
             + 'style="visibility:visible"><text>Report a problem</text></svg></div>',
+        '<span id="route-name"><span hidden>Decorative text</span>'
+            + 'Report a problem</span>',
+        '<svg><g id="route-name"><g style="display:none"><text>Decorative text</text>'
+            + '</g><text>Report a problem</text></g></svg>',
+        '<span id="route-name">Report&#32;a&#32;problem</span>',
     ]) {
         const source = referenced
             + `<a aria-labelledby="route-name" href="${target}"></a>`;
@@ -563,6 +571,30 @@ test('aria-labelledby ignores ancestor-hidden metadata but retains painted SVG t
             assert.equal(isActionableLink(link), true, referenced);
         }
     }
+});
+
+test('resolves nested same-tag ID labels with bounded traversal work', () => {
+    const target = 'https://example.com/route';
+    const depth = 500;
+    const referenced = Array.from(
+        { length: depth },
+        (_, index) => `<span id="route-name-${index}">`
+    ).join('')
+        + 'Report a problem'
+        + '</span>'.repeat(depth);
+    const source = referenced
+        + `<a aria-labelledby="route-name-0" href="${target}"></a>`;
+    const started = performance.now();
+    for (const links of [extractLinks(source), extractRenderedHtmlLinks(source)]) {
+        const link = links.find(candidate => candidate.type === 'link');
+        assert.ok(link);
+        assert.equal(link.label, 'Report a problem');
+        assert.equal(isActionableLink(link), true);
+    }
+    assert.ok(
+        performance.now() - started < 4_000,
+        '500 nested ID labels must not trigger quadratic subtree rescanning'
+    );
 });
 
 test('extracts accessible names from nested SVG and labelled images', () => {

@@ -2383,6 +2383,8 @@ test('hidden SVG metadata cannot govern document prose or adjacent routes', () =
             + 'Need help?</title></svg>',
         '<svg style="visibility:hidden"><desc id="hidden-route-name">'
             + 'Need help?</desc></svg>',
+        '<script>const template = \'<span id="hidden-route-name">Need help?</span>\';'
+            + '</script>',
     ]) {
         const files = validFixture();
         files['theme/partials/support.html'] = referencedMetadata
@@ -2449,6 +2451,9 @@ test('hidden SVG metadata cannot govern document prose or adjacent routes', () =
             + 'style="visibility:visible">Need help?</span></div>',
         '<div id="route-name" style="visibility:hidden"><svg '
             + 'style="visibility:visible"><text>Need help?</text></svg></div>',
+        '<span id="route-name"><span hidden>Decorative text</span>Need help?</span>',
+        '<svg><g id="route-name"><g style="display:none"><text>Decorative text</text>'
+            + '</g><text>Need help?</text></g></svg>',
     ]) {
         const files = validFixture();
         files['theme/partials/support.html'] = paintedReference
