@@ -386,6 +386,31 @@ test('retains visually rendered route text inside aria-hidden descendants', () =
         assert.equal(routes[1].label, '');
         assert.equal(isActionableLink(routes[1]), false);
     }
+
+    const paintedSvg = [
+        '<a href="https://example.com/painted">',
+        '  <svg aria-hidden="true"><text>Report a problem</text></svg>',
+        '</a>',
+        '',
+    ].join('\n');
+    for (const links of [extractLinks(paintedSvg), extractRenderedHtmlLinks(paintedSvg)]) {
+        const link = links.find(candidate => candidate.type === 'link');
+        assert.equal(link.label, 'Report a problem');
+        assert.equal(isActionableLink(link), true);
+    }
+
+    for (const hiddenMetadata of [
+        '<svg aria-hidden="true" aria-label="Report a problem"></svg>',
+        '<svg aria-hidden="true"><title>Report a problem</title></svg>',
+    ]) {
+        const raw = `<a href="https://example.com/metadata">${hiddenMetadata}</a>`;
+        const markdownLink = `[${hiddenMetadata}](https://example.com/metadata)`;
+        for (const links of [extractLinks(raw), extractRenderedHtmlLinks(raw), extractLinks(markdownLink)]) {
+            const link = links.find(candidate => candidate.type === 'link');
+            assert.equal(link.label, '');
+            assert.equal(isActionableLink(link), false);
+        }
+    }
 });
 
 test('inline style visibility follows declaration order and importance', () => {

@@ -92,7 +92,7 @@ const SUPPORT_ROUTE_LABEL = new RegExp(
     `(?:${SUPPORT_ROUTE_INTENT.source}|\\bdiscord\\b)`,
     'i'
 );
-const SECURITY_ACTION = '(?:alerts?|click(?:s|ed|ing)?|concerns?|contact(?:s|ed|ing)?|emails?|file(?:s|d|ing)?|follow(?:s|ed|ing)?|instructions?|issues?|messages?|notifications?|notif(?:y|ies|ied|ying)|report(?:s|ed|ing)?|send|sent|submissions?|submit(?:s|ted|ting)?|disclos(?:e|es|ed|ing|ures?)|intake|use(?:s|d|ing)?)';
+const SECURITY_ACTION = '(?:alerts?|click(?:s|ed|ing)?|concerns?|contact(?:s|ed|ing)?|emails?|file(?:s|d|ing)?|follow(?:s|ed|ing)?|go(?:es|ing)?|instructions?|issues?|messages?|notifications?|notif(?:y|ies|ied|ying)|report(?:s|ed|ing)?|send|sent|submissions?|submit(?:s|ted|ting)?|disclos(?:e|es|ed|ing|ures?)|intake|use(?:s|d|ing)?)';
 const SECURITY_SUBJECT = '(?:exploits?|security|vulnerab\\w*)';
 const SECURITY_INTAKE_HEADING = new RegExp(
     `(?:\\b${SECURITY_ACTION}\\b.{0,80}\\b${SECURITY_SUBJECT}\\b`
@@ -101,7 +101,7 @@ const SECURITY_INTAKE_HEADING = new RegExp(
 );
 const SECURITY_ROUTE_LABEL = SECURITY_INTAKE_HEADING;
 const NEUTRAL_SECURITY_REFERENCE = /\b(?:background|documentation|guidelines?|policy|process|reference|timeline)\b/i;
-const SECURITY_ROUTE_CUE = /\b(?:alternative|contact|create|email|file|form|instructions?|message|notify|open|send|submit|through|use|via)\b/i;
+const SECURITY_ROUTE_CUE = /\b(?:alternative|contact|create|email|file|form|go(?:es|ing)?|instructions?|message|notify|open|send|submit|through|use|via)\b/i;
 const NON_VULNERABILITY_CONTEXT = /\b(?:do(?:es)? not|doesn't|don't|not)\s+(?:constitute|involve)\b.{0,80}\bvulnerab/i;
 const SECURITY_CONTEXT_HEADING = /\b(?:security|vulnerab\w*)\b/i;
 const PUBLIC_SECURITY_CHANNEL = /\b(?:discord|e-?mail|github\s+(?:issues?|discussions?)|issue\s+tracker|public\s+(?:channel|forum|issues?|reports?|threads?)|[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,})\b/i;
@@ -147,7 +147,11 @@ const DISCUSSIONS_ACTIVE_STATE = new RegExp(
     `(?:\\b(?:github\\s+)?discussions?\\b.{0,60}`
     + `\\b(?:are|is|remain|remains|serve|serves)\\b.{0,60}\\b${DISCUSSIONS_PURPOSE}\\b`
     + `|\\b${DISCUSSIONS_PURPOSE}\\b.{0,60}\\b(?:are|is)\\b`
-    + `.{0,30}\\b(?:at|in|on|through|via)\\b.{0,30}\\b(?:github\\s+)?discussions?\\b)`,
+    + `.{0,30}\\b(?:at|in|on|through|via)\\b.{0,30}\\b(?:github\\s+)?discussions?\\b`
+    + `|\\b(?:github\\s+)?discussions?\\b\\s*(?:[-–—,:]\\s*)`
+    + `(?:\\w+\\s+){0,3}\\b${DISCUSSIONS_PURPOSE}\\b`
+    + `|\\b${DISCUSSIONS_PURPOSE}\\b\\s*(?:[-–—,:]\\s*)`
+    + `(?:\\w+\\s+){0,3}\\b(?:github\\s+)?discussions?\\b)`,
     'i'
 );
 const DISCUSSIONS_HISTORICAL = /\b(?:formerly|historically|previously|once)\b|\bused\s+to\b|\b(?:deprecated|former|old|retired)\s+(?:channel|forum|guidance|guide|route|workflow)\b/i;

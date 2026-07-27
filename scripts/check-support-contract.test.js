@@ -1697,6 +1697,7 @@ test('distinguishes actionable Discussions guidance from explicit disabled-route
         'GitHub Discussions is for support.',
         'Support is available in GitHub Discussions.',
         'GitHub Discussions remains our support forum.',
+        'GitHub Discussions: support and feature requests.',
     ]) {
         const activeDescription = validFixture();
         activeDescription['docs/getting-started.md'] = `${prose}\n`;
@@ -1710,6 +1711,7 @@ test('distinguishes actionable Discussions guidance from explicit disabled-route
     for (const prose of [
         'Previously, users could ask for help in GitHub Discussions.',
         'The old guide said to use GitHub Discussions for feature requests.',
+        'Previously, GitHub Discussions: support and feature requests.',
     ]) {
         const historicalDescription = validFixture();
         historicalDescription['docs/getting-started.md'] = `${prose}\n`;
@@ -2259,6 +2261,59 @@ test('security intake takes precedence over generic problem wording', () => {
                 problem.startsWith('docs/getting-started.md:')
                 && problem.includes('security intake links')
             )), label);
+        });
+    }
+});
+
+test('direct security destinations cannot use public community routes', () => {
+    for (const [file, source] of [
+        [
+            'docs/getting-started.md',
+            `Vulnerabilities go to [Discord](${DISCORD_ROUTE}).\n`,
+        ],
+        [
+            'theme/partials/support.html',
+            `<p>Vulnerabilities go to <a href="${DISCORD_ROUTE}">Discord</a>.</p>\n`,
+        ],
+    ]) {
+        const files = validFixture();
+        files[file] = source;
+        fixture(files, root => {
+            assert.ok(auditSupportContract({ root }).problems.some(problem => (
+                problem.startsWith(`${file}:`)
+                && problem.includes('private GitHub advisories')
+            )), file);
+        });
+    }
+});
+
+test('painted SVG route text is governed while hidden SVG metadata is ignored', () => {
+    const painted = validFixture();
+    painted['theme/partials/support.html'] = [
+        `<a href="${DISCORD_ROUTE}">`,
+        '  <svg aria-hidden="true"><text>Report a problem</text></svg>',
+        '</a>',
+        '',
+    ].join('\n');
+    fixture(painted, root => {
+        assert.ok(auditSupportContract({ root }).problems.some(problem => (
+            problem.startsWith('theme/partials/support.html:')
+            && problem.includes('bug intake links')
+        )));
+    });
+
+    for (const metadata of [
+        '<svg aria-hidden="true" aria-label="Report a problem"></svg>',
+        '<svg aria-hidden="true"><title>Report a problem</title></svg>',
+    ]) {
+        const files = validFixture();
+        files['theme/partials/support.html'] =
+            `<a href="${DISCORD_ROUTE}">${metadata}</a>\n`;
+        fixture(files, root => {
+            assert.ok(!auditSupportContract({ root }).problems.some(problem => (
+                problem.startsWith('theme/partials/support.html:')
+                && problem.includes('bug intake links')
+            )), metadata);
         });
     }
 });

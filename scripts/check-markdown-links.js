@@ -152,13 +152,28 @@ function visibleHtmlText(content, labels = new Map()) {
 function visuallyRenderedHtmlText(content) {
     const visible = stripHiddenHtml(content)
         .replace(/<(script|style)\b[\s\S]*?<\/\1\s*>/gi, ' ')
-        // SVG metadata is not visible text. Accessible SVG names are already
-        // handled by accessibleHtmlText when the graphic participates in the
-        // accessibility tree.
-        .replace(/<svg\b[\s\S]*?<\/svg\s*>/gi, ' ')
-        .replace(/<svg\b(?:[^>"']|"[^"]*"|'[^']*')*\/?>/gi, ' ')
+        // SVG title/description elements are metadata, but SVG <text> is
+        // genuinely painted content and must remain available to route checks.
+        .replace(/<(?:desc|title)\b[\s\S]*?<\/(?:desc|title)\s*>/gi, ' ')
         .replace(/<[^>]*>/g, ' ');
     return markdown.utils.unescapeAll(visible);
+}
+
+function combinedHtmlLabel(accessible, visual) {
+    const accessibleLabel = accessible.replace(/\s+/g, ' ').trim();
+    const visualLabel = visual.replace(/\s+/g, ' ').trim();
+    if (!accessibleLabel) return visualLabel;
+    if (!visualLabel || accessibleLabel.toLowerCase() === visualLabel.toLowerCase()) {
+        return accessibleLabel;
+    }
+    return `${accessibleLabel} ${visualLabel}`;
+}
+
+function governedHtmlText(content, labels = new Map()) {
+    return combinedHtmlLabel(
+        accessibleHtmlText(content, labels),
+        visuallyRenderedHtmlText(content)
+    );
 }
 
 function htmlAttributeRecords(content) {
@@ -500,17 +515,17 @@ function htmlAnchorRecords(content, labels = htmlIdLabels(content)) {
         const contextBefore = `${repairedPriorLabel} ${
             compactVisibleText(rawBefore.slice(beforeBoundary), labels)
         }`.replace(/\s+/g, ' ').trim();
+        const accessibleName = ariaLabelledText(openingTag, labels)
+            || htmlAttributeValue(openingTag, 'aria-label')
+            || nestedName
+            || htmlAttributeValue(openingTag, 'title');
         anchors.push({
             start: match.index,
             openingEnd,
             end: anchorEnd,
             closed: Boolean(close) || autoClosed,
             autoClosed,
-            label: ariaLabelledText(openingTag, labels)
-                || htmlAttributeValue(openingTag, 'aria-label')
-                || nestedName
-                || htmlAttributeValue(openingTag, 'title')
-                || visualName,
+            label: combinedHtmlLabel(accessibleName, visualName),
             hidden: hiddenStates.get(match.index) || false,
             contextBefore,
             contextBeforePrior: previousAnchor && beforeBoundary === 0
@@ -591,42 +606,40 @@ function inlineHtmlAnchorRecord(children, start, labels) {
     const opening = children[start]?.content || '';
     const anchor = htmlAnchorRecords(opening, labels)[0];
     if (!anchor) return null;
-    if (anchor.closed && anchor.label) return { label: anchor.label, endIndex: start };
-    let label = compactVisibleText(opening.slice(anchor.openingEnd), labels);
+    if (anchor.closed) {
+        return anchor.label ? { label: anchor.label, endIndex: start } : null;
+    }
+    const openingTag = opening.slice(anchor.start, anchor.openingEnd);
+    const explicitName = ariaLabelledText(openingTag, labels)
+        || htmlAttributeValue(openingTag, 'aria-label');
+    const title = htmlAttributeValue(openingTag, 'title');
+    let body = opening.slice(anchor.openingEnd);
+    const record = (endIndex, autoClosed = false) => {
+        const label = combinedHtmlLabel(explicitName, governedHtmlText(body, labels)) || title;
+        return label ? { label, endIndex, autoClosed } : null;
+    };
     for (let index = start + 1; index < children.length; index += 1) {
         const child = children[index];
         if (child.type === 'html_inline') {
             const nestedOpening = child.content.search(/<a\b/i);
             const closing = child.content.search(/<\/a\s*>/i);
             if (nestedOpening !== -1 && (closing === -1 || nestedOpening < closing)) {
-                return {
-                    label: label.replace(/\s+/g, ' ').trim() || anchor.label,
-                    endIndex: index - 1,
-                    autoClosed: true,
-                };
+                body += child.content.slice(0, nestedOpening);
+                return record(index - 1, true);
             }
-            label += visibleHtmlText(
-                closing === -1 ? child.content : child.content.slice(0, closing),
-                labels
-            );
+            body += closing === -1 ? child.content : child.content.slice(0, closing);
             if (closing !== -1) {
-                return {
-                    label: label.replace(/\s+/g, ' ').trim() || anchor.label,
-                    endIndex: index,
-                };
+                return record(index);
             }
         } else if (child.type === 'text' || child.type === 'code_inline') {
-            label += child.content;
+            body += markdown.utils.escapeHtml(child.content);
         } else if (child.type === 'image') {
-            label += child.content;
+            body += markdown.utils.escapeHtml(child.content);
         } else if (child.type === 'softbreak' || child.type === 'hardbreak') {
-            label += ' ';
+            body += ' ';
         }
     }
-    const unclosedLabel = label.replace(/\s+/g, ' ').trim();
-    return unclosedLabel
-        ? { label: unclosedLabel, endIndex: children.length - 1 }
-        : null;
+    return record(children.length - 1);
 }
 
 function normalizeLinkTarget(target) {
@@ -637,7 +650,7 @@ function normalizeLinkTarget(target) {
 }
 
 function inlineLabel(children, start) {
-    const label = [];
+    const source = [];
     let depth = 1;
     for (let index = start + 1; index < children.length; index += 1) {
         const child = children[index];
@@ -646,12 +659,17 @@ function inlineLabel(children, start) {
             depth -= 1;
             if (depth === 0) break;
         }
-        if (child.type === 'text' || child.type === 'code_inline') label.push(child.content);
-        else if (child.type === 'image') label.push(child.content);
-        else if (child.type === 'softbreak' || child.type === 'hardbreak') label.push(' ');
-        else if (child.type === 'html_inline') label.push(visibleHtmlText(child.content));
+        if (child.type === 'text' || child.type === 'code_inline') {
+            source.push(markdown.utils.escapeHtml(child.content));
+        } else if (child.type === 'image') {
+            source.push(markdown.utils.escapeHtml(child.content));
+        } else if (child.type === 'softbreak' || child.type === 'hardbreak') {
+            source.push(' ');
+        } else if (child.type === 'html_inline') {
+            source.push(child.content);
+        }
     }
-    return label.join('').replace(/\s+/g, ' ').trim();
+    return governedHtmlText(source.join(''));
 }
 
 function inlineLinkEnd(children, start) {
