@@ -1667,7 +1667,7 @@ function htmlAssociatedForm(control, forms, formsById) {
     return candidate && control.start < candidate.end ? candidate : null;
 }
 
-function htmlWrappingLabel(control, labelRecords, content, labels, options) {
+function htmlWrappingLabel(control, labelRecords) {
     let lower = 0;
     let upper = labelRecords.length;
     while (lower < upper) {
@@ -1684,12 +1684,7 @@ function htmlWrappingLabel(control, labelRecords, content, labels, options) {
         || htmlTagHasAttribute(candidate.openingTag, 'for')) {
         return '';
     }
-    return governedHtmlText(
-        content.slice(candidate.openingEnd, candidate.contentEnd),
-        labels,
-        {},
-        options
-    ).replace(/\s+/g, ' ').trim();
+    return candidate.label;
 }
 
 function htmlSubmitControlLabel(
@@ -1703,29 +1698,32 @@ function htmlSubmitControlLabel(
     const ariaLabel = htmlAttributeText(control.openingTag, 'aria-label');
     const id = htmlAttributeValue(control.openingTag, 'id');
     const associated = (id && labels.get(id))
-        || htmlWrappingLabel(control, labelRecords, content, labels, options);
+        || htmlWrappingLabel(control, labelRecords);
     const title = htmlAttributeText(control.openingTag, 'title');
     if (control.tag === 'button') {
+        const source = content.slice(control.openingEnd, control.contentEnd);
         const body = governedHtmlText(
-            content.slice(control.openingEnd, control.contentEnd),
+            source,
             labels,
             {},
             options
         ).replace(/\s+/g, ' ').trim();
-        return boundedDomText([labelled || ariaLabel || associated || body || title]);
+        const accessible = labelled || ariaLabel || associated || body || title;
+        const visual = visuallyRenderedHtmlText(source, null, options)
+            .replace(/\s+/g, ' ').trim();
+        return combinedHtmlLabel(accessible, visual);
     }
     const type = htmlAttributeText(control.openingTag, 'type').toLowerCase();
     const native = type === 'image'
         ? htmlAttributeText(control.openingTag, 'alt') || title
         : htmlAttributeText(control.openingTag, 'value') || 'Submit';
-    return boundedDomText([labelled || ariaLabel || associated || native || title]);
+    return combinedHtmlLabel(labelled || ariaLabel || associated || native || title, native);
 }
 
 function htmlFormSubmissionLinks(
     content,
     line,
     labels,
-    context,
     hiddenStates,
     options = {}
 ) {
@@ -1743,7 +1741,16 @@ function htmlFormSubmissionLinks(
         .map(record => ({ ...record, tag: 'button' }));
     const inputs = htmlOpeningElementRecords(content, 'input', true)
         .map(record => ({ ...record, tag: 'input' }));
-    const labelRecords = htmlOpeningElementRecords(content, 'label');
+    const labelRecords = htmlOpeningElementRecords(content, 'label')
+        .map(record => ({
+            ...record,
+            label: governedHtmlText(
+                content.slice(record.openingEnd, record.contentEnd),
+                labels,
+                {},
+                options
+            ).replace(/\s+/g, ' ').trim(),
+        }));
     const fieldsetDisabledStates = htmlOpeningFieldsetDisabledStates(content, options);
     const links = [];
     for (const control of [...buttons, ...inputs]
@@ -1769,6 +1776,16 @@ function htmlFormSubmissionLinks(
             ? htmlAttributeValue(control.openingTag, 'formaction')
             : form.action;
         if (!action) continue;
+        const rawBefore = content.slice(
+            Math.max(0, control.start - 512),
+            control.start
+        );
+        const rawAfter = content.slice(
+            control.end,
+            Math.min(content.length, control.end + 512)
+        );
+        const beforeBoundary = htmlContextBeforeBoundary(rawBefore);
+        const afterBoundary = htmlContextAfterBoundary(rawAfter);
         links.push({
             target: normalizeLinkTarget(action),
             line,
@@ -1780,7 +1797,24 @@ function htmlFormSubmissionLinks(
                 labelRecords,
                 options
             ),
-            context,
+            contextBefore: compactGovernedText(
+                rawBefore.slice(beforeBoundary),
+                labels,
+                {},
+                options
+            ),
+            contextBeforeBlock: htmlPriorBlockText(
+                rawBefore,
+                beforeBoundary,
+                labels,
+                options
+            ),
+            contextAfter: compactGovernedText(
+                rawAfter.slice(0, afterBoundary),
+                labels,
+                {},
+                options
+            ),
             hidden: hiddenStates.get(control.start) || false,
         });
     }
@@ -1820,7 +1854,6 @@ function htmlLinks(
             visible,
             line,
             resolvedLabels,
-            context,
             hiddenStates,
             options
         );
@@ -2042,24 +2075,49 @@ function wwwAutolinks(content, line, context = '', contextBefore = '', contextAf
         }));
 }
 
+function renderedInlineHtmlSource(children = []) {
+    return children.map((child) => {
+        if (child.type === 'html_inline') return child.content;
+        if (child.type === 'text' || child.type === 'code_inline') {
+            return markdown.utils.escapeHtml(child.content);
+        }
+        if (child.type === 'image') return markdown.utils.escapeHtml(child.content);
+        if (child.type === 'softbreak' || child.type === 'hardbreak') return '\n';
+        return '';
+    }).join('');
+}
+
+function renderedMarkdownHtmlSource(tokens) {
+    const blocks = [];
+    for (let index = 0; index < tokens.length; index += 1) {
+        const token = tokens[index];
+        if (token.type === 'html_block') {
+            blocks.push(`<div>${token.content}</div>`);
+        } else if (token.type === 'inline') {
+            const parent = tokens[index - 1];
+            const tag = parent?.nesting === 1 && /^(?:h[1-6]|p)$/.test(parent.tag)
+                ? parent.tag
+                : 'div';
+            blocks.push(
+                `<${tag}>${renderedInlineHtmlSource(token.children)}</${tag}>`
+            );
+        }
+    }
+    return blocks.join('\n');
+}
+
 function extractLinksFromTokens(tokens, markdownEnvironment = {}) {
     let previousBlockText = '';
-    const htmlSource = tokens.flatMap((token) => {
-        if (token.type === 'html_block') return [token.content];
-        if (token.type === 'inline') return [token.content];
-        return [];
-    }).join('\n');
+    const htmlSource = renderedMarkdownHtmlSource(tokens);
     const htmlLabels = htmlIdLabels(htmlSource);
     const visibleHtmlSource = maskHtmlElementContents(
         stripHtmlComments(htmlSource),
         HTML_ROUTE_INERT_CONTENT_ELEMENTS
     );
-    const htmlContext = compactGovernedText(visibleHtmlSource, htmlLabels);
     const links = htmlFormSubmissionLinks(
         visibleHtmlSource,
         1,
         htmlLabels,
-        htmlContext,
         htmlOpeningHiddenStates(visibleHtmlSource)
     );
     for (const token of tokens) {

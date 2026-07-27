@@ -189,7 +189,7 @@ function parseMarkdown(source) {
     const environment = {};
     const tokens = markdown.parse(source, environment);
     for (const token of tokens) {
-        Object.defineProperty(token, 'linkEnvironment', { value: environment });
+        token.linkEnvironment = environment;
     }
     return tokens;
 }

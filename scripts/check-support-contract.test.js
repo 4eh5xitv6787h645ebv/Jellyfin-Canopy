@@ -2618,6 +2618,9 @@ test('governs form submissions and hidden ID names while inert routes remain ina
         `<form action="${ISSUES_ROUTE}"><label for="submit-route">`
             + 'Submit a vulnerability report</label>'
             + '<button id="submit-route"></button></form>',
+        `<form action="${ISSUES_ROUTE}"><label for="submit-route">`
+            + 'Documentation.</label><button id="submit-route">'
+            + 'Submit a vulnerability report</button></form>',
         `<form action="${ISSUES_ROUTE}"><button type="invalid">`
             + 'Submit a vulnerability report</button></form>',
     ]) {
@@ -2678,6 +2681,31 @@ test('governs form submissions and hidden ID names while inert routes remain ina
             '.github/ISSUE_TEMPLATE/bug.md: '
             + 'must route vulnerability reports to private GitHub advisories'
         ));
+    });
+
+    const codeRequiredRoute = validFixture();
+    codeRequiredRoute['.github/ISSUE_TEMPLATE/bug.md'] = BUG_TEMPLATE.replace(
+        `[the private advisory form](${SECURITY_ADVISORY_ROUTE})`,
+        '`<form action="' + SECURITY_ADVISORY_ROUTE
+            + '"><button>Submit a vulnerability report</button></form>`'
+    );
+    fixture(codeRequiredRoute, root => {
+        assert.ok(auditSupportContract({ root }).problems.includes(
+            '.github/ISSUE_TEMPLATE/bug.md: '
+            + 'must route vulnerability reports to private GitHub advisories'
+        ));
+    });
+
+    const localFormContext = validFixture();
+    localFormContext['docs/getting-started.md'] =
+        `Need help? [Ask on Discord](${DISCORD_ROUTE})\n\n`
+        + '# Unrelated signup\n\n'
+        + `<form action="${ISSUES_ROUTE}"><button>Continue</button></form>\n`;
+    fixture(localFormContext, root => {
+        assert.ok(!auditSupportContract({ root }).problems.some(problem => (
+            problem.startsWith('docs/getting-started.md:')
+            && problem.includes('community-support links')
+        )));
     });
 });
 

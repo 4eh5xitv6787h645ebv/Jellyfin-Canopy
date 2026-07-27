@@ -634,6 +634,13 @@ test('extracts HTML form submissions and image-map routes with control names', (
             'Submit a vulnerability report',
         ],
         [
+            `<form action="${formTarget}"><label for="submit-route">`
+                + 'Documentation.</label><button id="submit-route">'
+                + 'Submit a vulnerability report</button></form>',
+            formTarget,
+            'Documentation. Submit a vulnerability report',
+        ],
+        [
             `<form action="${formTarget}"><label>Submit a vulnerability report`
                 + '<button></button></label></form>',
             formTarget,
@@ -710,6 +717,24 @@ test('extracts HTML form submissions and image-map routes with control names', (
         assert.equal(link.hidden, true);
         assert.equal(isActionableLink(link), false);
     }
+
+    const inlineCode = '`<form action="' + formTarget
+        + '"><button>Report a bug</button></form>`';
+    assert.ok(!extractLinks(inlineCode).some(link => link.target === formTarget));
+
+    const count = 800;
+    const malformedWrappingLabel = `<form action="${formTarget}">`
+        + '<label>Report a bug'
+        + '<button></button>'.repeat(count)
+        + '</label></form>';
+    const started = performance.now();
+    const controls = extractLinks(malformedWrappingLabel)
+        .filter(link => link.target === formTarget);
+    assert.ok(controls.length > 0);
+    assert.ok(
+        performance.now() - started < 4_000,
+        'wrapping-label resolution must remain bounded across many controls'
+    );
 });
 
 test('ignores anchors and ID labels inside inert or raw-text HTML content', () => {
