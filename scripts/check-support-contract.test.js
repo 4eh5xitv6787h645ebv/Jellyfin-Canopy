@@ -2354,16 +2354,30 @@ test('hidden SVG metadata cannot govern document prose or adjacent routes', () =
         ['<svg aria-hidden="true"><title>Need help?</title></svg>', false],
         ['<svg aria-hidden="true"><text>Need help?</text></svg>', true],
     ]) {
-        const files = validFixture();
-        files['docs/getting-started.md'] =
-            `${metadata} [Click here](${ISSUES_ROUTE}).\n`;
-        fixture(files, root => {
-            const problems = auditSupportContract({ root }).problems;
-            assert.equal(problems.some(problem => (
-                problem.startsWith('docs/getting-started.md:')
-                && problem.includes('community-support links')
-            )), governed, metadata);
-        });
+        for (const [file, source] of [
+            [
+                'docs/getting-started.md',
+                `${metadata} [Click here](${ISSUES_ROUTE}).\n`,
+            ],
+            [
+                'docs/getting-started.md',
+                `${metadata}\n\n[Click here](${ISSUES_ROUTE}).\n`,
+            ],
+            [
+                'theme/partials/support.html',
+                `<p>${metadata} <a href="${ISSUES_ROUTE}">Click here</a>.</p>\n`,
+            ],
+        ]) {
+            const files = validFixture();
+            files[file] = source;
+            fixture(files, root => {
+                const problems = auditSupportContract({ root }).problems;
+                assert.equal(problems.some(problem => (
+                    problem.startsWith(`${file}:`)
+                    && problem.includes('community-support links')
+                )), governed, `${file}: ${metadata}`);
+            });
+        }
     }
 });
 

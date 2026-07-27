@@ -308,6 +308,10 @@ function compactVisibleText(content, labels = new Map()) {
     return visibleHtmlText(content, labels).replace(/\s+/g, ' ').trim();
 }
 
+function compactGovernedText(content, labels = new Map()) {
+    return governedHtmlText(content, labels).replace(/\s+/g, ' ').trim();
+}
+
 function htmlIdLabels(content) {
     const labels = new Map();
     const visible = stripHtmlComments(content);
@@ -460,7 +464,7 @@ function htmlPriorBlockText(content, boundary, labels) {
     const blocks = content.slice(0, boundary).split(
         /<\/?(?:address|article|aside|blockquote|div|footer|form|h[1-6]|header|li|main|nav|ol|p|section|table|td|th|tr|ul)\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi
     );
-    return blocks.map(block => compactVisibleText(block, labels)).filter(Boolean).at(-1) || '';
+    return blocks.map(block => compactGovernedText(block, labels)).filter(Boolean).at(-1) || '';
 }
 
 function htmlAnchorHiddenStates(content) {
@@ -526,7 +530,7 @@ function htmlAnchorRecords(content, labels = htmlIdLabels(content)) {
             ? previousAnchor.label
             : '';
         const contextBefore = `${repairedPriorLabel} ${
-            compactVisibleText(rawBefore.slice(beforeBoundary), labels)
+            compactGovernedText(rawBefore.slice(beforeBoundary), labels)
         }`.replace(/\s+/g, ' ').trim();
         const accessibleName = ariaLabelledText(openingTag, labels)
             || htmlAttributeValue(openingTag, 'aria-label')
@@ -546,7 +550,7 @@ function htmlAnchorRecords(content, labels = htmlIdLabels(content)) {
                     .replace(/\s+/g, ' ').trim()
                 : '',
             contextBeforeBlock: htmlPriorBlockText(rawBefore, beforeBoundary, labels),
-            contextAfter: compactVisibleText(
+            contextAfter: compactGovernedText(
                 rawAfter.slice(0, afterBoundary),
                 labels
             ),
@@ -562,7 +566,7 @@ function htmlAnchorRecords(content, labels = htmlIdLabels(content)) {
 function htmlLinks(content, line, labels = htmlIdLabels(content)) {
     const links = [];
     const visible = stripHtmlComments(content);
-    const context = compactVisibleText(visible);
+    const context = compactGovernedText(visible);
     const anchors = htmlAnchorRecords(visible, labels);
     let anchorIndex = 0;
     for (const attribute of htmlAttributeRecords(content)) {
@@ -778,7 +782,7 @@ function extractLinksFromTokens(tokens) {
                 if (!link.contextBeforeBlock) link.contextBeforeBlock = previousBlockText;
             }
             links.push(...html);
-            const blockText = compactVisibleText(token.content, htmlLabels);
+            const blockText = compactGovernedText(token.content, htmlLabels);
             if (blockText) previousBlockText = blockText;
         }
         if (token.type !== 'inline') continue;
