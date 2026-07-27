@@ -77,27 +77,44 @@ function validFixture() {
         if (file === '.github/ISSUE_TEMPLATE/feature_request.md') return [file, FEATURE_TEMPLATE];
         if (file === '.github/ISSUE_TEMPLATE/config.yml') return [file, CONFIG];
         if (file === 'README.md') {
-            return [file, `## 🌍 Contributing\n[Suggest features](${ISSUES_ROUTE}).\n`];
+            return [file, [
+                '## 🌍 Contributing',
+                `[Report bugs](${ISSUES_ROUTE}).`,
+                `[Suggest features](${ISSUES_ROUTE}).`,
+                '',
+            ].join('\n')];
         }
         if (file === 'CONTRIBUTING.md') {
             return [file, [
                 '## 🤝 Ways to Contribute',
                 `[Feature requests](${ISSUES_ROUTE}).`,
+                `[Report bugs](${ISSUES_ROUTE}).`,
                 '## 📋 Feature Request Guidelines',
                 `[Use the feature template](${ISSUES_ROUTE}).`,
+                '## 🐛 Bug Reports',
+                `[Use the bug-report template](${ISSUES_ROUTE}).`,
+                '## 💬 Getting Help',
+                `[Jellyfin Community Discord](${DISCORD_ROUTE}).`,
                 '',
             ].join('\n')];
         }
         if (file === 'docs/about.md') {
-            return [file, `## Get involved\n[Request features](${ISSUES_ROUTE}).\n`];
+            return [file, [
+                '## Get involved',
+                `[Report bugs and request features](${ISSUES_ROUTE}).`,
+                `[Discord community](${DISCORD_ROUTE}).`,
+                '',
+            ].join('\n')];
         }
         if (file === 'docs/help.md') {
             return [file, [
-                `Report bugs with [Issues](${ISSUES_ROUTE}).`,
+                '## Report an issue',
+                `[Report bugs with GitHub Issues](${ISSUES_ROUTE}).`,
                 '## Request a feature',
                 `[Request features](${ISSUES_ROUTE}).`,
                 '## Community and support',
-                `[Ask for support](${DISCORD_ROUTE}).`,
+                `[GitHub Issues for bug reports](${ISSUES_ROUTE}).`,
+                `[Discord support](${DISCORD_ROUTE}).`,
                 '',
             ].join('\n')];
         }
@@ -107,6 +124,17 @@ function validFixture() {
                 `[Submit a private report](${SECURITY_ADVISORY_ROUTE}).`,
                 'GitHub opens a private security advisory.',
                 'Do not disclose details in a public Issue, Discussion, or Discord message.',
+                '## Contact',
+                `[Jellyfin Community Discord](${DISCORD_ROUTE}).`,
+                '',
+            ].join('\n')];
+        }
+        if (file === '.github/SECURITY_GUIDELINES.md') {
+            return [file, [
+                '## Reporting Security Issues',
+                `[Private vulnerability report](${SECURITY_ADVISORY_ROUTE}).`,
+                '## Questions?',
+                `[Jellyfin Community Discord](${DISCORD_ROUTE}).`,
                 '',
             ].join('\n')];
         }
@@ -193,7 +221,8 @@ test('non-rendered comments and fences cannot satisfy intake requirements', () =
     fixture(files, root => {
         const problems = auditSupportContract({ root }).problems;
         assert.ok(problems.includes(
-            'README.md: must route feature intake to GitHub Issues in "## 🌍 Contributing"'
+            'README.md: must route every feature intake link to GitHub Issues '
+            + 'in "## 🌍 Contributing"'
         ));
         assert.ok(problems.includes(
             '.github/ISSUE_TEMPLATE/bug.md: missing required section "## Summary"'
@@ -213,8 +242,15 @@ test('non-rendered comments and fences cannot satisfy intake requirements', () =
 test('security policy and every security chooser contact stay private-only', () => {
     const files = validFixture();
     files['SECURITY.md'] += [
-        '## Alternate vulnerability intake',
+        '## Security disclosures',
         `<a href="${ISSUES_ROUTE}">Public security report</a>.`,
+        '',
+    ].join('\n');
+    files['.github/SECURITY_GUIDELINES.md'] = [
+        '## Reporting Security Issues',
+        `[Public security report](${ISSUES_ROUTE}).`,
+        '## Questions?',
+        `[Jellyfin Community Discord](${DISCORD_ROUTE}).`,
         '',
     ].join('\n');
     files['.github/ISSUE_TEMPLATE/config.yml'] += [
@@ -226,7 +262,11 @@ test('security policy and every security chooser contact stay private-only', () 
     fixture(files, root => {
         const problems = auditSupportContract({ root }).problems;
         assert.ok(problems.includes(
-            'SECURITY.md: "## Reporting a Vulnerability" must use only private GitHub advisories'
+            'SECURITY.md: "Security disclosures" must route only to private GitHub advisories'
+        ));
+        assert.ok(problems.includes(
+            '.github/SECURITY_GUIDELINES.md: "Reporting Security Issues" '
+            + 'must route only to private GitHub advisories'
         ));
         assert.ok(problems.includes(
             '.github/ISSUE_TEMPLATE/config.yml: contact_links[1] '
@@ -239,13 +279,17 @@ test('feature and support destinations are owned by their rendered sections', ()
     const files = validFixture();
     files['README.md'] = [
         '## 🌍 Contributing',
-        `[Report bugs](${ISSUES_ROUTE}).`,
+        `[Report bugs](${DISCORD_ROUTE}).`,
         `[Suggest features](${DISCORD_ROUTE}).`,
         '',
     ].join('\n');
+    files['CONTRIBUTING.md'] = files['CONTRIBUTING.md'].replace(
+        `[Jellyfin Community Discord](${DISCORD_ROUTE})`,
+        `[Jellyfin Community Discord](${ISSUES_ROUTE})`
+    );
     files['docs/help.md'] = files['docs/help.md']
         .replace(`[Request features](${ISSUES_ROUTE})`, `[Request features](${DISCORD_ROUTE})`)
-        .replace(`[Ask for support](${DISCORD_ROUTE})`, `[Ask for support](${ISSUES_ROUTE})`);
+        .replace(`[Discord support](${DISCORD_ROUTE})`, `[Discord support](${ISSUES_ROUTE})`);
     files['.github/ISSUE_TEMPLATE/feature_request.md'] = FEATURE_TEMPLATE.replace(
         'Do not include credentials or sensitive data.',
         'Include any other useful context.'
@@ -253,18 +297,61 @@ test('feature and support destinations are owned by their rendered sections', ()
     fixture(files, root => {
         const problems = auditSupportContract({ root }).problems;
         assert.ok(problems.includes(
-            'README.md: must route feature intake to GitHub Issues in "## 🌍 Contributing"'
+            'README.md: must route every bug intake link to GitHub Issues '
+            + 'in "## 🌍 Contributing"'
         ));
         assert.ok(problems.includes(
-            'docs/help.md: must route feature intake to GitHub Issues in "## Request a feature"'
+            'README.md: must route every feature intake link to GitHub Issues '
+            + 'in "## 🌍 Contributing"'
         ));
         assert.ok(problems.includes(
-            'docs/help.md: must route general support to the Jellyfin Community Discord '
+            'CONTRIBUTING.md: must route every community-support link to the '
+            + 'Jellyfin Community Discord in "## 💬 Getting Help"'
+        ));
+        assert.ok(problems.includes(
+            'docs/help.md: must route every feature intake link to GitHub Issues '
+            + 'in "## Request a feature"'
+        ));
+        assert.ok(problems.includes(
+            'docs/help.md: must route every community-support link to the '
+            + 'Jellyfin Community Discord '
             + 'in "## Community and support"'
         ));
         assert.ok(problems.includes(
             '.github/ISSUE_TEMPLATE/feature_request.md: '
             + 'Additional context must require sensitive-data redaction'
+        ));
+    });
+});
+
+test('one correct semantic route cannot hide a second route to the wrong destination', () => {
+    const files = validFixture();
+    files['README.md'] = [
+        '## 🌍 Contributing',
+        `[Report bugs](${ISSUES_ROUTE}).`,
+        `[Open a bug report](${DISCORD_ROUTE}).`,
+        `[Suggest features](${ISSUES_ROUTE}).`,
+        `[Feature proposals](${DISCORD_ROUTE}).`,
+        '',
+    ].join('\n');
+    files['CONTRIBUTING.md'] = files['CONTRIBUTING.md'].replace(
+        `[Jellyfin Community Discord](${DISCORD_ROUTE}).`,
+        `[Jellyfin Community Discord](${DISCORD_ROUTE}).\n`
+        + `[Discord fallback](${ISSUES_ROUTE}).`
+    );
+    fixture(files, root => {
+        const problems = auditSupportContract({ root }).problems;
+        assert.ok(problems.includes(
+            'README.md: must route every bug intake link to GitHub Issues '
+            + 'in "## 🌍 Contributing"'
+        ));
+        assert.ok(problems.includes(
+            'README.md: must route every feature intake link to GitHub Issues '
+            + 'in "## 🌍 Contributing"'
+        ));
+        assert.ok(problems.includes(
+            'CONTRIBUTING.md: must route every community-support link to the '
+            + 'Jellyfin Community Discord in "## 💬 Getting Help"'
         ));
     });
 });
@@ -278,12 +365,13 @@ test('feature route ownership stops at a higher-level heading boundary', () => {
         '# Unrelated page',
         `[Feature backlog](${ISSUES_ROUTE}).`,
         '## Community and support',
-        `[Ask for support](${DISCORD_ROUTE}).`,
+        `[Discord support](${DISCORD_ROUTE}).`,
         '',
     ].join('\n');
     fixture(files, root => {
         assert.ok(auditSupportContract({ root }).problems.includes(
-            'docs/help.md: must route feature intake to GitHub Issues in "## Request a feature"'
+            'docs/help.md: must route every feature intake link to GitHub Issues '
+            + 'in "## Request a feature"'
         ));
     });
 });
@@ -298,7 +386,8 @@ test('images, empty anchors, and comments cannot satisfy actionable routes', () 
         files['README.md'] = `## 🌍 Contributing\n${replacement}\n`;
         fixture(files, root => {
             assert.ok(auditSupportContract({ root }).problems.includes(
-                'README.md: must route feature intake to GitHub Issues in "## 🌍 Contributing"'
+                'README.md: must route every feature intake link to GitHub Issues '
+                + 'in "## 🌍 Contributing"'
             ));
         });
     }
@@ -335,7 +424,8 @@ test('canonicalizes GFM and browser route representations before enforcing them'
         const problems = auditSupportContract({ root }).problems;
         assert.ok(problems.includes('docs/help.md: routes users to disabled GitHub Discussions'));
         assert.ok(problems.includes(
-            'docs/help.md: must route feature intake to GitHub Issues in "## Request a feature"'
+            'docs/help.md: must route every feature intake link to GitHub Issues '
+            + 'in "## Request a feature"'
         ));
     });
 
@@ -350,12 +440,12 @@ test('canonicalizes GFM and browser route representations before enforcing them'
     });
 });
 
-test('redaction guidance must be positive and render inside its owning section', () => {
+test('redaction guidance requires positive, non-negated instructions in its owning section', () => {
     const files = validFixture();
     files['.github/ISSUE_TEMPLATE/bug.md'] = BUG_TEMPLATE
         .replace(
             'Redact tokens and credentials from attached logs.',
-            'Attach unredacted logs, credentials, and private URLs.'
+            'Redaction of credentials is not required.'
         );
     files['.github/ISSUE_TEMPLATE/feature_request.md'] = FEATURE_TEMPLATE.replace(
         'Do not include credentials or sensitive data.',
@@ -369,6 +459,17 @@ test('redaction guidance must be positive and render inside its owning section',
         assert.ok(problems.includes(
             '.github/ISSUE_TEMPLATE/feature_request.md: '
             + 'Additional context must require sensitive-data redaction'
+        ));
+    });
+
+    const positive = validFixture();
+    positive['.github/ISSUE_TEMPLATE/bug.md'] = BUG_TEMPLATE.replace(
+        'Redact tokens and credentials from attached logs.',
+        'Credentials and private tokens must be redacted from attached logs.'
+    );
+    fixture(positive, root => {
+        assert.ok(!auditSupportContract({ root }).problems.includes(
+            '.github/ISSUE_TEMPLATE/bug.md: logs section must require sensitive-data redaction'
         ));
     });
 });
@@ -483,6 +584,16 @@ test('rejects spaced and multiline File Transformation baseline checklists', () 
     featureTask['.github/ISSUE_TEMPLATE/feature_request.md'] = FEATURE_TEMPLATE
         + '\n- [ ] `File Transformation` installed\n';
     fixture(featureTask, root => {
+        assert.ok(auditSupportContract({ root }).problems.includes(
+            '.github/ISSUE_TEMPLATE/feature_request.md: '
+            + 'File Transformation cannot be a baseline feature-request requirement'
+        ));
+    });
+
+    const inlineCodeParagraph = validFixture();
+    inlineCodeParagraph['.github/ISSUE_TEMPLATE/feature_request.md'] = FEATURE_TEMPLATE
+        + '\nRequired integration: `File Transformation`.\n';
+    fixture(inlineCodeParagraph, root => {
         assert.ok(auditSupportContract({ root }).problems.includes(
             '.github/ISSUE_TEMPLATE/feature_request.md: '
             + 'File Transformation cannot be a baseline feature-request requirement'

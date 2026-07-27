@@ -244,7 +244,9 @@ Before submitting a PR, verify:
 
 ## Reporting Security Issues
 
-See [SECURITY.md](../SECURITY.md) for reporting vulnerabilities.
+Report vulnerabilities only through the
+[private vulnerability-reporting form](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/security/advisories/new).
+The full disclosure policy and response timeline remain in [SECURITY.md](../SECURITY.md).
 
 ## Security Tools
 

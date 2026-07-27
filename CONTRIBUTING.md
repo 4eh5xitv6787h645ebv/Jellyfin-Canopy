@@ -9,7 +9,7 @@ Thank you for your interest in contributing to Jellyfin Canopy! This document pr
 You can contribute code through:
 - **Open Pull Requests**: Check the [open PRs](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/pulls) for issues that need help
 - **Feature Requests**: Browse [feature-request issues](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues) for proposals that need design or implementation help
-- **Bug Fixes**: Fix any bugs you encounter and submit a PR
+- **Bug Fixes**: Start from the [GitHub bug-report issues](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues), fix a reproducible bug, and submit a PR
 
 > [!NOTE]
 > Feature requests stay in Issues so their scope, triage state, and implementation
@@ -1121,7 +1121,7 @@ When reporting bugs:
 
 1. **Check Existing Issues**: Avoid duplicates
 2. **Check FAQs**
-3. **Provide Details** as per the Bug report template
+3. **Provide Details** through the [GitHub bug-report issues](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues) and use the Bug report template
 
 ## 💬 Getting Help
 

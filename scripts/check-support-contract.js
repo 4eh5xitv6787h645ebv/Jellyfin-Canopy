@@ -51,6 +51,12 @@ const FEATURE_SECTIONS = [
     'Alternatives and scope',
     'Additional context',
 ];
+const BUG_ROUTE_SECTIONS = new Map([
+    ['README.md', ['🌍 Contributing']],
+    ['CONTRIBUTING.md', ['🤝 Ways to Contribute', '🐛 Bug Reports']],
+    ['docs/about.md', ['Get involved']],
+    ['docs/help.md', ['Report an issue', 'Community and support']],
+]);
 const FEATURE_ROUTE_SECTIONS = new Map([
     ['README.md', ['🌍 Contributing']],
     ['CONTRIBUTING.md', ['🤝 Ways to Contribute', '📋 Feature Request Guidelines']],
@@ -58,8 +64,16 @@ const FEATURE_ROUTE_SECTIONS = new Map([
     ['docs/help.md', ['Request a feature']],
 ]);
 const SUPPORT_ROUTE_SECTIONS = new Map([
+    ['CONTRIBUTING.md', ['💬 Getting Help']],
+    ['SECURITY.md', ['Contact']],
+    ['docs/about.md', ['Get involved']],
     ['docs/help.md', ['Community and support']],
+    ['.github/SECURITY_GUIDELINES.md', ['Questions?']],
 ]);
+const BUG_ROUTE_LABEL = /\b(?:bug(?:s|[- ]reports?)?|report(?: an)? issues?|github issues)\b/i;
+const FEATURE_ROUTE_LABEL = /\b(?:feature|proposal|suggest)/i;
+const SUPPORT_ROUTE_LABEL = /\bdiscord\b/i;
+const SECURITY_INTAKE_HEADING = /(?:\b(?:report(?:ing)?|submit(?:ting)?|disclos(?:e|ing|ures?)|intake)\b.{0,80}\b(?:security|vulnerab\w*)\b|\b(?:security|vulnerab\w*)\b.{0,80}\b(?:report(?:ing)?|submit(?:ting)?|disclos(?:e|ing|ures?)|intake)\b)/i;
 const markdown = new MarkdownIt({ html: true, linkify: true });
 markdown.linkify.set({ fuzzyEmail: false, fuzzyLink: false });
 
@@ -194,6 +208,14 @@ function renderedText(tokens) {
     }).join(' ').replace(/\s+/g, ' ').trim();
 }
 
+function renderedTextWithCode(tokens) {
+    return tokens.map((token) => {
+        if (token.type === 'inline') return inlineTaskText(token.children);
+        if (token.type === 'html_block') return visibleHtmlText(token.content);
+        return '';
+    }).join(' ').replace(/\s+/g, ' ').trim();
+}
+
 function headingText(tokens, index) {
     const inline = tokens[index + 1];
     return inline?.type === 'inline' ? inlineVisibleText(inline.children).trim() : '';
@@ -273,21 +295,19 @@ function isExactHttpsRoute(link, route) {
         && actual.hash === expected.hash;
 }
 
-function hasExactHttpsRoute(tokens, route) {
-    return actionableLinks(tokens).some(link => isExactHttpsRoute(link, route));
-}
-
 function hasOnlyExactHttpsRoute(tokens, route) {
-    const links = extractLinksFromTokens(tokens).filter(link => link?.type === 'link');
+    const links = extractLinksFromTokens(tokens).filter(link => (
+        link?.type === 'link' && absoluteUrl(link.target)
+    ));
     return links.some(link => isActionableLink(link) && isExactHttpsRoute(link, route))
         && links.every(link => isExactHttpsRoute(link, route));
 }
 
-function hasFeatureRepositoryRoute(tokens) {
-    return actionableLinks(tokens).some(link => (
-        /\b(?:feature|proposal|suggest)/i.test(link.label)
-        && isRepositoryRoute(link, '/issues', true)
+function hasOnlySemanticRoute(tokens, labelPattern, predicate) {
+    const links = actionableLinks(tokens).filter(link => (
+        absoluteUrl(link.target) && labelPattern.test(link.label)
     ));
+    return links.length > 0 && links.every(predicate);
 }
 
 function requireSectionRoute(tokens, file, section, predicate, message, problems) {
@@ -318,7 +338,7 @@ function requireRenderedIssueLinks(body, file, problems) {
 
 function hasFileTransformationRequirement(body) {
     const tokens = markdown.parse(body, {});
-    const visible = renderedText(tokens).toLowerCase().replace(/[^a-z0-9]/g, '');
+    const visible = renderedTextWithCode(tokens).toLowerCase().replace(/[^a-z0-9]/g, '');
     if (visible.includes('filetransformation')) return true;
     const isFileTransformationTask = (text) => {
         if (!/^\s*\[[ xX]\](?:\s+|$)/.test(text)) return false;
@@ -350,9 +370,19 @@ function hasFileTransformationRequirement(body) {
 }
 
 function requiresSensitiveRedaction(text) {
-    if (/\b(?:unredacted|do not redact|don't redact|never redact)\b/i.test(text)) return false;
-    return /\b(?:redact(?:ed|ion)?|(?:do not|never) include)\b.{0,240}\b(?:api keys?|credentials?|personal|private|sensitive|tokens?|usernames?)\b/i
-        .test(text);
+    const rejectsRedaction = /\b(?:unredacted|do not redact|don't redact|never redact|no need to redact|not (?:required|needed|necessary|mandatory) to redact|without redacting)\b/i
+        .test(text)
+        || /\bredact(?:ion|ing)?\b.{0,160}\b(?:is|are)(?:\s+not|n't)\s+(?:required|needed|necessary|mandatory)\b/i
+            .test(text)
+        || /\bredact(?:ion|ing)?\b.{0,160}\b(?:is|are)\s+(?:optional|unnecessary)\b/i
+            .test(text)
+        || /\b(?:may|can)\s+(?:skip|omit|avoid)\s+(?:the\s+)?redact(?:ion|ing)?\b/i.test(text);
+    if (rejectsRedaction) return false;
+    const sensitive = '(?:api keys?|credentials?|personal|private|sensitive|tokens?|usernames?)';
+    return new RegExp(`\\bredact\\b.{0,240}\\b${sensitive}\\b`, 'i').test(text)
+        || new RegExp(`\\b(?:do not|never) include\\b.{0,240}\\b${sensitive}\\b`, 'i').test(text)
+        || new RegExp(`\\b${sensitive}\\b.{0,160}\\b(?:must|should|need(?:s)? to) be redacted\\b`, 'i')
+            .test(text);
 }
 
 function stringValues(value) {
@@ -470,6 +500,24 @@ function auditSupportContract(options = {}) {
         && candidate.endsWith('.md'))) {
         problems.push(...validateMarkdownFile(file, root));
     }
+    for (const [file, sections] of BUG_ROUTE_SECTIONS) {
+        const source = sources.get(file) || '';
+        const tokens = markdown.parse(source, {});
+        for (const section of sections) {
+            requireSectionRoute(
+                tokens,
+                file,
+                section,
+                owned => hasOnlySemanticRoute(
+                    owned,
+                    BUG_ROUTE_LABEL,
+                    link => isRepositoryRoute(link, '/issues', true)
+                ),
+                'must route every bug intake link to GitHub Issues',
+                problems
+            );
+        }
+    }
     for (const [file, sections] of FEATURE_ROUTE_SECTIONS) {
         const source = sources.get(file) || '';
         const tokens = markdown.parse(source, {});
@@ -478,8 +526,12 @@ function auditSupportContract(options = {}) {
                 tokens,
                 file,
                 section,
-                hasFeatureRepositoryRoute,
-                'must route feature intake to GitHub Issues',
+                owned => hasOnlySemanticRoute(
+                    owned,
+                    FEATURE_ROUTE_LABEL,
+                    link => isRepositoryRoute(link, '/issues', true)
+                ),
+                'must route every feature intake link to GitHub Issues',
                 problems
             );
         }
@@ -491,8 +543,12 @@ function auditSupportContract(options = {}) {
                 tokens,
                 file,
                 section,
-                owned => hasExactHttpsRoute(owned, DISCORD_ROUTE),
-                'must route general support to the Jellyfin Community Discord',
+                owned => hasOnlySemanticRoute(
+                    owned,
+                    SUPPORT_ROUTE_LABEL,
+                    link => isExactHttpsRoute(link, DISCORD_ROUTE)
+                ),
+                'must route every community-support link to the Jellyfin Community Discord',
                 problems
             );
         }
@@ -502,25 +558,28 @@ function auditSupportContract(options = {}) {
     const securityTokens = markdown.parse(sources.get(securityFile) || '', {});
     const vulnerabilitySection = sectionTokens(securityTokens, 'Reporting a Vulnerability');
     const vulnerabilityText = renderedText(vulnerabilitySection);
-    const vulnerabilityIntakeSections = [];
-    for (let index = 0; index < securityTokens.length; index += 1) {
-        if (headingLevel(securityTokens[index]) === 0) continue;
-        const heading = headingText(securityTokens, index);
-        if (/(?:report(?:ing)?|submit).{0,80}vulnerab|vulnerab.{0,80}(?:report|submit|intake)/i
-            .test(heading)) {
-            vulnerabilityIntakeSections.push(headingSectionTokens(securityTokens, index));
-        }
-    }
     if (!hasOnlyExactHttpsRoute(vulnerabilitySection, SECURITY_ADVISORY_ROUTE)
-        || vulnerabilityIntakeSections.length === 0
-        || vulnerabilityIntakeSections.some(tokens => (
-            !hasOnlyExactHttpsRoute(tokens, SECURITY_ADVISORY_ROUTE)
-        ))
         || !/private security advisory/i.test(vulnerabilityText)
         || !/(?:do not|never).*(?:public|issue|discussion|discord)/i.test(vulnerabilityText)) {
         problems.push(
             `${securityFile}: "## Reporting a Vulnerability" must use only private GitHub advisories`
         );
+    }
+    for (const file of files.filter(candidate => candidate.endsWith('.md'))) {
+        const tokens = markdown.parse(sources.get(file) || '', {});
+        for (let index = 0; index < tokens.length; index += 1) {
+            if (headingLevel(tokens[index]) === 0) continue;
+            const heading = headingText(tokens, index);
+            if (!SECURITY_INTAKE_HEADING.test(heading)) continue;
+            if (!hasOnlyExactHttpsRoute(
+                headingSectionTokens(tokens, index),
+                SECURITY_ADVISORY_ROUTE
+            )) {
+                problems.push(
+                    `${file}: "${heading}" must route only to private GitHub advisories`
+                );
+            }
+        }
     }
 
     const bugFile = '.github/ISSUE_TEMPLATE/bug.md';
