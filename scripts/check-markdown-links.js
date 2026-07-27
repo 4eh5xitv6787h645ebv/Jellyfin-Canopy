@@ -10,6 +10,8 @@ const MAX_HTML_LABEL_LENGTH = 8_192;
 const MAX_HTML_CONTEXT_LENGTH = 768;
 const HTML_LABEL_OVERFLOW_MARKER =
     '[label truncated: support feature bug vulnerability security question help issue report request]';
+const HTML_FORM_NEUTRAL_REFERENCE_LABEL =
+    /\b(?:background|documentation|guidance|guide|policy|process|reference|timeline)\b/i;
 const markdown = new MarkdownIt({ html: true, linkify: true });
 markdown.linkify.set({ fuzzyEmail: false, fuzzyLink: false });
 const gfmWwwLinkifier = new MarkdownIt().linkify;
@@ -139,6 +141,7 @@ function stripHiddenHtml(
             tag: state.tag,
             insideSelect: Boolean(state.insideSelect),
             insideTable: Boolean(state.insideTable),
+            foreignContent: Boolean(state.foreignContent),
             persistentHidden: Boolean(state.persistentHidden),
             visibilityHidden: Boolean(state.visibilityHidden),
             hidden: Boolean(state.persistentHidden || state.visibilityHidden),
@@ -147,6 +150,7 @@ function stripHiddenHtml(
             tag: null,
             insideSelect: false,
             insideTable: false,
+            foreignContent: false,
             persistentHidden: Boolean(initialState.persistentHidden),
             visibilityHidden: Boolean(initialState.visibilityHidden),
             hidden: Boolean(initialState.persistentHidden || initialState.visibilityHidden),
@@ -172,7 +176,8 @@ function stripHiddenHtml(
             tag,
             stack.at(-1)?.insideSelect,
             documentMode,
-            stack.at(-1)?.insideTable
+            stack.at(-1)?.insideTable,
+            htmlOpeningIsForeignContent(stack.at(-1), tag)
         )) {
             offset = match.index + match[0].length;
             continue;
@@ -454,6 +459,10 @@ const HTML_DEFAULT_BLOCK_BOUNDARY_ELEMENTS = new Set(
 const HTML_SELECT_CONTEXT_ELEMENTS = new Set([
     'hr', 'optgroup', 'option', 'script', 'select', 'template',
 ]);
+const HTML_SELECT_IN_TABLE_REPAIR_ELEMENTS = new Set([
+    ...HTML_TABLE_CONTEXT_ELEMENTS,
+    'table',
+]);
 const HTML_HEAD_CONTEXT_ELEMENTS = new Set([
     'base', 'basefont', 'bgsound', 'link', 'meta', 'noframes', 'noscript',
     'script', 'style', 'template', 'title',
@@ -470,7 +479,8 @@ const HTML_SCOPE_BOUNDARY_ELEMENTS = new Set([
 const HTML_LIST_REPAIR_BOUNDARY_ELEMENTS = new Set([
     'applet', 'area', 'article', 'aside', 'base', 'basefont', 'bgsound',
     'blockquote', 'body', 'br', 'button', 'caption', 'center', 'col', 'colgroup',
-    'details', 'dir', 'dl', 'embed', 'fieldset', 'figcaption', 'figure', 'footer',
+    'dd', 'details', 'dir', 'dl', 'dt', 'embed', 'fieldset', 'figcaption',
+    'figure', 'footer',
     'form', 'frame', 'frameset', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'head',
     'header', 'hgroup', 'hr', 'html', 'iframe', 'img', 'input', 'keygen', 'li',
     'link', 'listing', 'main', 'marquee', 'menu', 'meta', 'nav', 'noembed',
@@ -487,16 +497,26 @@ const HTML_BUTTON_ELEMENTS = new Set(['button']);
 const HTML_LIST_ITEM_ELEMENTS = new Set(['li']);
 const HTML_DEFINITION_ITEM_ELEMENTS = new Set(['dd', 'dt']);
 const HTML_PARAGRAPH_ELEMENTS = new Set(['p']);
+const HTML_FOREIGN_CONTENT_INTEGRATION_POINTS = new Set([
+    'desc', 'foreignobject', 'mi', 'mn', 'mo', 'ms', 'mtext', 'title',
+]);
+
+function htmlOpeningIsForeignContent(parent, tag) {
+    if (tag === 'svg' || tag === 'math') return true;
+    return Boolean(parent?.foreignContent)
+        && !HTML_FOREIGN_CONTENT_INTEGRATION_POINTS.has(parent.tag);
+}
 
 function htmlElementIsIgnored(
     tag,
     insideSelect = false,
     documentMode = false,
-    insideTable = false
+    insideTable = false,
+    foreignContent = false
 ) {
     return insideSelect && !HTML_SELECT_CONTEXT_ELEMENTS.has(tag)
         || !documentMode && HTML_FRAGMENT_IGNORED_ELEMENTS.has(tag)
-        || HTML_TABLE_CONTEXT_ELEMENTS.has(tag) && !insideTable;
+        || HTML_TABLE_CONTEXT_ELEMENTS.has(tag) && !insideTable && !foreignContent;
 }
 
 function lastHtmlStackTagIndexInScope(stack, tags, boundaries) {
@@ -518,12 +538,18 @@ function repairHtmlStackForOpening(stack, tag, documentMode = false) {
         }
     }
     if (stack.at(-1)?.insideSelect) {
-        if (!['input', 'select', 'textarea'].includes(tag)) return false;
-        const select = lastHtmlStackTagIndex(stack, 'select');
-        if (select !== -1) stack.splice(select);
-        // A nested select closes the active select but is itself discarded.
-        // Input and textarea are reprocessed in the restored outer context.
-        if (tag === 'select') return true;
+        const repairsSelect = ['input', 'select', 'textarea'].includes(tag)
+            || stack.at(-1).insideTable
+                && HTML_SELECT_IN_TABLE_REPAIR_ELEMENTS.has(tag);
+        if (repairsSelect) {
+            const select = lastHtmlStackTagIndex(stack, 'select');
+            if (select !== -1) stack.splice(select);
+            // A nested select closes the active select but is itself discarded.
+            // Other repair tokens are reprocessed in the restored outer context.
+            if (tag === 'select') return true;
+        } else {
+            return false;
+        }
     }
     if (tag === 'form' && lastHtmlStackTagIndex(stack, 'form') !== -1) {
         return true;
@@ -618,7 +644,8 @@ function htmlTextWithBoundaries(content, options = {}) {
             tag,
             stack.at(-1)?.insideSelect,
             documentMode,
-            stack.at(-1)?.insideTable
+            stack.at(-1)?.insideTable,
+            htmlOpeningIsForeignContent(stack.at(-1), tag)
         )) {
             offset = match.index + match[0].length;
             continue;
@@ -652,6 +679,7 @@ function htmlTextWithBoundaries(content, options = {}) {
                     ...layout,
                     insideTable: tag === 'table' || Boolean(parent?.insideTable),
                     insideSelect: tag === 'select' || Boolean(parent?.insideSelect),
+                    foreignContent: htmlOpeningIsForeignContent(parent, tag),
                 });
             }
         }
@@ -892,7 +920,8 @@ function htmlAccessibleTreeText(
             tag,
             stack.at(-1)?.insideSelect,
             documentMode,
-            stack.at(-1)?.insideTable
+            stack.at(-1)?.insideTable,
+            htmlOpeningIsForeignContent(stack.at(-1), tag)
         )) {
             offset = match.index + match[0].length;
             continue;
@@ -905,6 +934,7 @@ function htmlAccessibleTreeText(
         const parent = stack.at(-1) || null;
         const insideTable = tag === 'table' || Boolean(parent?.insideTable);
         const insideSelect = tag === 'select' || Boolean(parent?.insideSelect);
+        const foreignContent = htmlOpeningIsForeignContent(parent, tag);
         const accessibilityState = htmlOpeningVisibilityState(
             [parent?.accessibilityState || initial],
             match[0],
@@ -924,6 +954,7 @@ function htmlAccessibleTreeText(
             textBoundary: !accessibilityState.hidden && layout.textBoundary,
             insideTable,
             insideSelect,
+            foreignContent,
             accessibilityState,
             parts: [],
             value: '',
@@ -1276,7 +1307,8 @@ function htmlIdLabels(content, options = {}) {
             tag,
             stack.at(-1)?.insideSelect,
             documentMode,
-            stack.at(-1)?.insideTable
+            stack.at(-1)?.insideTable,
+            htmlOpeningIsForeignContent(stack.at(-1), tag)
         )) {
             offset = match.index + match[0].length;
             continue;
@@ -1299,6 +1331,7 @@ function htmlIdLabels(content, options = {}) {
         );
         const insideTable = tag === 'table' || Boolean(parent?.insideTable);
         const insideSelect = tag === 'select' || Boolean(parent?.insideSelect);
+        const foreignContent = htmlOpeningIsForeignContent(parent, tag);
         const layout = htmlOpeningTextLayout(
             tag,
             openingTag,
@@ -1314,6 +1347,7 @@ function htmlIdLabels(content, options = {}) {
                 && layout.textBoundary,
             insideTable,
             insideSelect,
+            foreignContent,
             parentIndex: parent?.index ?? -1,
             labelAncestorIndex: parent?.tag === 'label'
                 ? parent.index
@@ -1502,6 +1536,7 @@ function updateHtmlVisibilityStack(
     excludeAriaHidden = false,
     documentMode = false
 ) {
+    let acceptedOpening = false;
     const pattern = /<(\/?)([a-z][a-z0-9:-]*)\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi;
     for (const match of content.matchAll(pattern)) {
         const closing = match[1] === '/';
@@ -1511,7 +1546,8 @@ function updateHtmlVisibilityStack(
             tag,
             stack.at(-1)?.insideSelect,
             documentMode,
-            stack.at(-1)?.insideTable
+            stack.at(-1)?.insideTable,
+            htmlOpeningIsForeignContent(stack.at(-1), tag)
         )) continue;
         if (closing) {
             const opening = lastHtmlStackTagIndex(stack, tag);
@@ -1522,15 +1558,19 @@ function updateHtmlVisibilityStack(
             const activeAnchor = lastHtmlStackTagIndex(stack, tag);
             if (activeAnchor !== -1) stack.splice(activeAnchor);
         }
+        acceptedOpening = true;
         const selfClosing = /\/>\s*$/.test(match[0]) || HTML_VOID_ELEMENTS.has(tag);
         if (selfClosing) continue;
+        const parent = stack.at(-1) || null;
         stack.push({
             tag,
-            insideSelect: tag === 'select' || Boolean(stack.at(-1)?.insideSelect),
-            insideTable: tag === 'table' || Boolean(stack.at(-1)?.insideTable),
+            insideSelect: tag === 'select' || Boolean(parent?.insideSelect),
+            insideTable: tag === 'table' || Boolean(parent?.insideTable),
+            foreignContent: htmlOpeningIsForeignContent(parent, tag),
             ...htmlOpeningVisibilityState(stack, match[0], excludeAriaHidden),
         });
     }
+    return acceptedOpening;
 }
 
 function htmlElementIsHidden(
@@ -1572,8 +1612,8 @@ function htmlOpeningHiddenStates(content, options = {}) {
             content.slice(offset, match.index),
             documentMode
         );
-        updateHtmlVisibilityStack(stack, match[0], false, documentMode);
-        if (match[1] !== '/') {
+        const accepted = updateHtmlVisibilityStack(stack, match[0], false, documentMode);
+        if (match[1] !== '/' && accepted) {
             states.set(
                 match.index,
                 Boolean(stack.at(-1)?.hidden) || htmlTagIsHidden(match[0])
@@ -1634,6 +1674,7 @@ function htmlVisibilityStateSnapshots(
             tag: state.tag,
             insideSelect: state.insideSelect,
             insideTable: state.insideTable,
+            foreignContent: state.foreignContent,
             persistentHidden: state.persistentHidden,
             visibilityHidden: state.visibilityHidden,
             hidden: state.hidden,
@@ -1713,7 +1754,9 @@ function htmlAnchorRecords(content, labels = htmlIdLabels(content), options = {}
             autoClosed,
             label: combinedHtmlLabel(accessibleName, visualName),
             target: htmlAttributeValue(openingTag, 'href'),
-            hidden: hiddenStates.get(match.index) || false,
+            hidden: !hiddenStates.has(match.index)
+                || Boolean(hiddenStates.get(match.index)),
+            rendered: hiddenStates.has(match.index),
             contextBefore,
             contextBeforePrior: previousAnchor && beforeBoundary === 0
                 ? `${previousAnchor.contextBeforePrior || ''} ${previousAnchor.contextBefore || ''}`
@@ -1812,7 +1855,8 @@ function htmlOpeningFieldsetDisabledStates(content, options = {}) {
             tag,
             stack.at(-1)?.insideSelect,
             documentMode,
-            stack.at(-1)?.insideTable
+            stack.at(-1)?.insideTable,
+            htmlOpeningIsForeignContent(stack.at(-1), tag)
         )) {
             offset = match.index + match[0].length;
             continue;
@@ -1834,6 +1878,7 @@ function htmlOpeningFieldsetDisabledStates(content, options = {}) {
                 tag,
                 insideSelect: tag === 'select' || Boolean(parent?.insideSelect),
                 insideTable: tag === 'table' || Boolean(parent?.insideTable),
+                foreignContent: htmlOpeningIsForeignContent(parent, tag),
                 ancestorFieldsetDisabled: inherited,
                 disabledByFieldset: inherited || ownDisabled,
                 firstLegendSeen: false,
@@ -1991,7 +2036,8 @@ function htmlFormSubmissionLinks(
                 labelRecords,
                 options
             ),
-            hidden: hiddenStates.get(control.start) || false,
+            hidden: !hiddenStates.has(control.start)
+                || Boolean(hiddenStates.get(control.start)),
         });
     }
     const actionableSubmissions = controls.filter((control) => {
@@ -2006,7 +2052,13 @@ function htmlFormSubmissionLinks(
         submission: true,
     }));
     for (const anchor of htmlAnchorRecords(content, labels, options)) {
-        if (!anchor.target || anchor.hidden || !anchor.label.trim()) continue;
+        if (!anchor.target
+            || !anchor.rendered
+            || anchor.hidden
+            || !anchor.label.trim()
+            || HTML_FORM_NEUTRAL_REFERENCE_LABEL.test(anchor.label)) {
+            continue;
+        }
         if (actionableSubmissions.some(control => (
             anchor.start < control.end && control.start < anchor.end
         ))) {
@@ -2176,7 +2228,8 @@ function htmlAreaRecords(content, labels, hiddenStates) {
                 || htmlAttributeText(record.openingTag, 'alt')
                 || htmlAttributeText(record.openingTag, 'title'),
         ]),
-        hidden: hiddenStates.get(record.start) || false,
+        hidden: !hiddenStates.has(record.start)
+            || Boolean(hiddenStates.get(record.start)),
     }));
 }
 
@@ -2536,6 +2589,10 @@ function extractLinksFromTokens(tokens, markdownEnvironment = {}) {
                     inlineSemanticText(children.slice(index + 1))
                 ));
             } else if (child.type === 'html_inline') {
+                const acceptedOpening = updateHtmlVisibilityStack(
+                    htmlVisibilityStack,
+                    child.content
+                );
                 const region = regionsByStart.get(index);
                 const html = region?.html || htmlLinks(
                     child.content,
@@ -2555,7 +2612,8 @@ function extractLinksFromTokens(tokens, markdownEnvironment = {}) {
                 const lastRouteIndex = html.indexOf(htmlRouteLinks.at(-1));
                 for (const [linkIndex, link] of html.entries()) {
                     link.line = childLine;
-                    link.hidden ||= Boolean(htmlVisibilityStack.at(-1)?.hidden);
+                    link.hidden ||= !acceptedOpening
+                        || Boolean(htmlVisibilityStack.at(-1)?.hidden);
                     link.context = context;
                     if (region && linkIndex === firstRouteIndex) {
                         link.contextBefore = `${region.contextBefore} `
@@ -2578,7 +2636,6 @@ function extractLinksFromTokens(tokens, markdownEnvironment = {}) {
                         .replace(/\s+/g, ' ').trim();
                 }
                 links.push(...html);
-                updateHtmlVisibilityStack(htmlVisibilityStack, child.content);
             }
             if (child.type === 'softbreak' || child.type === 'hardbreak') childLine += 1;
         }

@@ -2723,6 +2723,26 @@ test('governs form submissions and hidden ID names while inert routes remain ina
         )));
     });
 
+    for (const hiddenMalformedRoute of [
+        '<li><dd hidden><li>'
+            + `<a href="${ISSUES_ROUTE}">Submit a vulnerability report</a>`,
+        '<table><select><caption hidden>'
+            + `<a href="${ISSUES_ROUTE}">Submit a vulnerability report</a>`,
+        '<svg style="visibility:hidden"><foreignObject><caption '
+            + 'style="visibility:visible">'
+            + `<a href="${ISSUES_ROUTE}">Submit a vulnerability report</a>`
+            + '</caption></foreignObject></svg>',
+    ]) {
+        const hiddenRoute = validFixture();
+        hiddenRoute['docs/getting-started.md'] = hiddenMalformedRoute;
+        fixture(hiddenRoute, root => {
+            assert.ok(!auditSupportContract({ root }).problems.some(problem => (
+                problem.startsWith('docs/getting-started.md:')
+                && problem.includes('security intake links must use private GitHub advisories')
+            )), hiddenMalformedRoute);
+        });
+    }
+
     for (const repairedVisibleRoute of [
         '<h1 hidden><p><h2>'
             + `<a href="${ISSUES_ROUTE}">Submit a vulnerability report</a>`
@@ -2730,6 +2750,11 @@ test('governs form submissions and hidden ID names while inert routes remain ina
         '<button hidden><caption><button>'
             + `<a href="${ISSUES_ROUTE}">Submit a vulnerability report</a>`
             + '</button>',
+        '<table><select><caption>'
+            + `<a href="${ISSUES_ROUTE}">Submit a vulnerability report</a>`,
+        '<svg style="visibility:hidden"><caption style="visibility:visible">'
+            + `<a href="${ISSUES_ROUTE}" aria-label="Submit a vulnerability report">`
+            + '<rect width="100" height="100"></rect></a></caption></svg>',
     ]) {
         const visibleMalformedRoute = validFixture();
         visibleMalformedRoute['docs/getting-started.md'] = repairedVisibleRoute;
@@ -2805,6 +2830,40 @@ test('governs form submissions and hidden ID names while inert routes remain ina
         + '<p>Report a regular bug with this form.</p>'
         + '<button>Continue</button></form>';
     fixture(distinctPrivateAnchor, root => {
+        assert.ok(!auditSupportContract({ root }).problems.some(problem => (
+            problem.startsWith('docs/getting-started.md:')
+            && problem.includes('security intake links must use private GitHub advisories')
+        )));
+    });
+
+    for (const formSource of [
+        `<form action="${ISSUES_ROUTE}">`
+            + '<p>Submit a vulnerability report below.</p>'
+            + `<select><a href="${SECURITY_ADVISORY_ROUTE}">`
+            + 'private advisory</a></select><button>Continue</button></form>',
+        `<form action="${ISSUES_ROUTE}">`
+            + '<p>Submit a vulnerability report below. Read '
+            + '<a href="../SECURITY.md">our security policy</a>.</p>'
+            + '<button>Continue</button></form>',
+    ]) {
+        const retainedIntent = validFixture();
+        retainedIntent['docs/getting-started.md'] = formSource;
+        fixture(retainedIntent, root => {
+            assert.ok(auditSupportContract({ root }).problems.some(problem => (
+                problem.startsWith('docs/getting-started.md:')
+                && problem.includes('security intake links must use private GitHub advisories')
+            )), formSource);
+        });
+    }
+
+    const separatedNegation = validFixture();
+    separatedNegation['docs/getting-started.md'] =
+        `<form action="${ISSUES_ROUTE}">`
+        + '<p>Submit the bug form.</p>'
+        + '<p>A typo does not constitute a vulnerability.</p>'
+        + '<p>Read the security background.</p>'
+        + '<button>Continue</button></form>';
+    fixture(separatedNegation, root => {
         assert.ok(!auditSupportContract({ root }).problems.some(problem => (
             problem.startsWith('docs/getting-started.md:')
             && problem.includes('security intake links must use private GitHub advisories')

@@ -751,6 +751,16 @@ test('extracts HTML form submissions and image-map routes with control names', (
         '<p hidden><button><div>'
             + `<a href="${browserScopeTarget}">Report a bug</a>`
             + '</div></button></p>',
+        '<li><dd hidden><li>'
+            + `<a href="${browserScopeTarget}">Report a bug</a>`,
+        '<li style="visibility:hidden"><dt><li>'
+            + `<a href="${browserScopeTarget}">Report a bug</a>`,
+        '<table><select><caption hidden>'
+            + `<a href="${browserScopeTarget}">Report a bug</a>`,
+        '<svg style="visibility:hidden"><foreignObject><caption '
+            + 'style="visibility:visible">'
+            + `<a href="${browserScopeTarget}">Report a bug</a>`
+            + '</caption></foreignObject></svg>',
     ]) {
         const scopedLink = extractLinks(scopedHiddenRoute)
             .find(candidate => candidate.target === browserScopeTarget);
@@ -766,6 +776,11 @@ test('extracts HTML form submissions and image-map routes with control names', (
         '<button hidden><caption><button>'
             + `<a href="${browserScopeTarget}">Submit a vulnerability report</a>`
             + '</button>',
+        '<table><select><caption>'
+            + `<a href="${browserScopeTarget}">Submit a vulnerability report</a>`,
+        '<svg style="visibility:hidden"><caption style="visibility:visible">'
+            + `<a href="${browserScopeTarget}" aria-label="Submit a vulnerability report">`
+            + '<rect width="100" height="100"></rect></a></caption></svg>',
     ]) {
         const repairedLink = extractLinks(repairedVisibleRoute)
             .find(candidate => candidate.target === browserScopeTarget);
@@ -810,6 +825,33 @@ test('extracts HTML form submissions and image-map routes with control names', (
     assert.ok(distinctAnchorIntentLink);
     assert.match(distinctAnchorIntentLink.contextBefore, /report a regular bug/i);
     assert.doesNotMatch(distinctAnchorIntentLink.contextBefore, /vulnerab/i);
+
+    const parserInertAnchor = `<form action="${formTarget}">`
+        + '<p>Submit a vulnerability report below.</p>'
+        + `<select><a href="${overrideTarget}">private advisory</a></select>`
+        + '<button>Continue</button></form>';
+    const parserInertLinks = extractLinks(parserInertAnchor);
+    const parserInertFormLink = parserInertLinks
+        .find(candidate => candidate.target === formTarget);
+    const parserInertPrivateLink = parserInertLinks
+        .find(candidate => candidate.target === overrideTarget);
+    assert.ok(parserInertFormLink);
+    assert.ok(parserInertPrivateLink);
+    assert.match(parserInertFormLink.contextBefore, /submit a vulnerability report below/i);
+    assert.equal(parserInertPrivateLink.hidden, true);
+    assert.equal(isActionableLink(parserInertPrivateLink), false);
+
+    const neutralReferenceAnchor = `<form action="${formTarget}">`
+        + '<p>Submit a vulnerability report below. Read '
+        + '<a href="https://example.com/security-policy">our security policy</a>.</p>'
+        + '<button>Continue</button></form>';
+    const neutralReferenceFormLink = extractLinks(neutralReferenceAnchor)
+        .find(candidate => candidate.target === formTarget);
+    assert.ok(neutralReferenceFormLink);
+    assert.match(
+        neutralReferenceFormLink.contextBefore,
+        /submit a vulnerability report below/i
+    );
 
     const laterFormIntent = `<form action="${formTarget}">`
         + '<button>Continue</button><span>Click here.</span>'
@@ -1208,6 +1250,18 @@ test('uses browser select repair and caller-provided document context', () => {
             assert.equal(link.hidden, hidden, source);
             assert.equal(isActionableLink(link), !hidden, source);
         }
+    }
+
+    const discardedSelectAnchor = '<select>'
+        + `<a href="${target}">Submit a vulnerability report</a></select>`;
+    for (const links of [
+        extractLinks(discardedSelectAnchor),
+        extractRenderedHtmlLinks(discardedSelectAnchor),
+    ]) {
+        const link = links.find(candidate => candidate.target === target);
+        assert.ok(link);
+        assert.equal(link.hidden, true);
+        assert.equal(isActionableLink(link), false);
     }
 
     const hiddenDocument = '<!doctype html><html><head><title>Hidden</title></head>'

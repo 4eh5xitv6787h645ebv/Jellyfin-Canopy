@@ -672,12 +672,22 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
         start = boundary + 1;
     }
     clauses.push(text.slice(start));
-    const applicable = clauses
-        .filter(clause => !NON_VULNERABILITY_CONTEXT.test(clause))
-        .join(' ');
-    if (!SECURITY_ROUTE_LABEL.test(applicable)) return false;
-    return !NEUTRAL_SECURITY_REFERENCE.test(applicable)
-        || SECURITY_ROUTE_CUE.test(applicable);
+    const applicableGroups = [];
+    let group = '';
+    for (const clause of clauses) {
+        if (NON_VULNERABILITY_CONTEXT.test(clause)) {
+            if (group.trim()) applicableGroups.push(group.trim());
+            group = '';
+        } else {
+            group += clause;
+        }
+    }
+    if (group.trim()) applicableGroups.push(group.trim());
+    return applicableGroups.some(applicable => (
+        SECURITY_ROUTE_LABEL.test(applicable)
+        && (!NEUTRAL_SECURITY_REFERENCE.test(applicable)
+            || SECURITY_ROUTE_CUE.test(applicable))
+    ));
 }
 
 function exactRouteResult(tokens, route, options) {
