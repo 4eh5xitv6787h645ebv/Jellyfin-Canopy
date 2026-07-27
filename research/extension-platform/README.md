@@ -52,8 +52,8 @@ code is written. Every document is *proposed* until its milestone's exit gate.
    context is an allow-list, never a pass-through.
    ([S14](spike-evidence.md#s14--forged-identity-is-fully-resisted-but-the-token-is-in-the-claims))
 4. **A deadline protects the caller, not the server.** A provider that ignores
-   cancellation kept running after the deadline fired, and was indistinguishable
-   from one that cooperates. Containment of a malicious plugin is not achievable.
+   cancellation kept running after the deadline fired and could not be killed.
+   Containment of a malicious plugin is not achievable.
    ([S6](spike-evidence.md#s6--provider-failure-modes-all-map-to-bounded-host-errors))
 5. **Lazy binding survives everything.** Reversed load order, disable, uninstall,
    upgrade and a fully absent platform all behaved correctly, with Jellyfin

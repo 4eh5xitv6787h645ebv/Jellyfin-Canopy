@@ -19,6 +19,17 @@ public sealed class ProviderBinder
 
     private static readonly Guid ProviderPluginId = new("b1a7c3d2-4e5f-4a6b-8c9d-0e1f2a3b4c5d");
 
+    /// <summary>How long a provider gets to observe cancellation before it is declared runaway.</summary>
+    private const int GraceAfterDeadlineMs = 250;
+
+    /// <summary>A Task that never completes successfully; it only ever cancels.</summary>
+    private static Task WaitForCancellation(CancellationToken token)
+    {
+        var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        token.Register(() => tcs.TrySetResult());
+        return tcs.Task;
+    }
+
     private readonly IPluginManager _pluginManager;
     private readonly IServiceProvider _serviceProvider;
     private readonly ILogger<ProviderBinder> _logger;
@@ -216,17 +227,38 @@ public sealed class ProviderBinder
                 return result;
             }
 
-            var completed = await Task.WhenAny(task, Task.Delay(deadlineMs, cancellationToken)).ConfigureAwait(false);
+            // Do NOT race a second timer against the provider task: the linked source
+            // already cancels at the deadline, so a cooperative provider faults with
+            // OperationCanceledException and an uncooperative one simply never
+            // completes. Racing a Delay of the same duration makes the two look
+            // identical, which is a bug in the host, not a property of the provider.
+            using var grace = new CancellationTokenSource();
+            deadline.Token.Register(() => grace.CancelAfter(GraceAfterDeadlineMs));
+            var completed = await Task.WhenAny(task, WaitForCancellation(grace.Token)).ConfigureAwait(false);
             if (!ReferenceEquals(completed, task))
             {
                 result["ok"] = false;
                 result["error"] = "provider_deadline_exceeded";
                 result["elapsedMs"] = started.ElapsedMilliseconds;
-                result["note"] = "Host returned; the provider Task is still running in-process and cannot be killed.";
+                result["note"] = "Provider ignored cancellation; its Task is still running in-process and cannot be killed.";
                 return result;
             }
 
-            await task.ConfigureAwait(false);
+            try
+            {
+                await task.ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (deadline.IsCancellationRequested)
+            {
+                // The provider honoured the deadline. This is a materially different
+                // outcome from a runaway provider and must not be collapsed into it.
+                result["ok"] = false;
+                result["error"] = "provider_cancelled";
+                result["elapsedMs"] = started.ElapsedMilliseconds;
+                result["note"] = "Provider observed cancellation and stopped.";
+                return result;
+            }
+
             var payload = task.GetType().GetProperty("Result")?.GetValue(task) as string;
             result["elapsedMs"] = started.ElapsedMilliseconds;
             result["responseBytes"] = payload?.Length ?? 0;

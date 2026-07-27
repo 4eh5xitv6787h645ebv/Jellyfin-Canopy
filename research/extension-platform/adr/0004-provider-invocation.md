@@ -50,7 +50,8 @@ Every outcome maps to a stable code. Verified:
 | throws | `provider_faulted` |
 | returns malformed JSON | `provider_response_invalid_json` (validated **before** leaving the boundary) |
 | returns an oversized response | `provider_response_too_large` — **must be added**; the spike had no cap |
-| exceeds the deadline | `provider_deadline_exceeded` |
+| honours cancellation at the deadline | `provider_cancelled` |
+| exceeds the deadline without cooperating | `provider_deadline_exceeded` |
 | plugin disabled | `provider_disabled` |
 | plugin uninstalled / absent | `provider_absent` |
 | circuit open | `provider_unavailable` |
@@ -61,10 +62,17 @@ another, and circuit breakers that open on repeated faults.
 ### The honest limit
 
 A deadline **protects the caller, not the server**. In the spike the kernel
-returned on time, but the provider `Task` kept running in-process and could not
-be killed — and a provider that honours cancellation was
-*indistinguishable from the caller's side* from one that ignores it. Both
-returned `provider_deadline_exceeded`.
+returned on time, but a provider that ignores the cancellation token kept
+running in-process afterwards and could not be killed.
+
+A cooperative provider *is* distinguishable, but only if the kernel cancels at
+the deadline, allows a short grace window, and then **awaits** the task rather
+than racing a timer against it. The spike's first binder raced a
+`Task.Delay` of the same duration and collapsed both cases into one code; the
+corrected binder separates them — `provider_cancelled` at ~2003 ms versus
+`provider_deadline_exceeded` at ~2254 ms. The kernel must therefore emit two
+codes, and must not copy the racing shape. See
+[S6](../spike-evidence.md#s6--provider-failure-modes-all-map-to-bounded-host-errors).
 
 Therefore: providers are **trusted in-process code**. Scopes reduce accidental
 exposure. They do not contain a malicious or pathological provider, and no
@@ -104,4 +112,8 @@ document in this program may claim otherwise.
 - **Killing a runaway provider thread.** Not available on .NET, and
   `Thread.Abort` does not exist. Recorded as a permanent limitation.
 - **Trusting a provider's declared timeout.** Rejected: the deadline is the
-  kernel's, and the spike shows the provider's cooperation cannot be verified.
+  kernel's.
+- **Racing a timer against the provider task to enforce the deadline.** Rejected
+  on evidence: it collapses a cooperative provider and a runaway one into the
+  same error code, leaks a timer per call, and leaves the losing task
+  unobserved.

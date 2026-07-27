@@ -147,16 +147,36 @@ test rather than rely on this.
 | `invalid-json` | `ok=false error=provider_response_invalid_json` — response validated *before* leaving the boundary |
 | `unknown-op` | `ok=true` — the provider answered `{"ok":false,"error":"unknown_operation"}`; unknown operations are a provider-level answer, not a transport fault |
 | `big` (2 MB) | `ok=true bytes=2000021` — no host-imposed response cap exists yet |
-| `hang` (8 s, ignores cancellation) | `ok=false error=provider_deadline_exceeded elapsed=2004ms` |
-| `cancellable-hang` (8 s, honours cancellation) | `ok=false error=provider_deadline_exceeded elapsed=2000ms` |
+| `hang` (8 s, ignores cancellation) | `ok=false error=provider_deadline_exceeded elapsed=2254ms` |
+| `cancellable-hang` (8 s, honours cancellation) | `ok=false error=provider_cancelled elapsed=2003ms` |
 
 **The load-bearing negative result:** the host returned on time in both hang
-cases, but the provider `Task` kept running in-process and could not be killed.
-The two cases are also indistinguishable from the caller's side. A deadline
-protects the *caller*, never the *server*. This is why
-[ADR-0003](adr/0004-provider-invocation.md) treats providers as
-trusted in-process code and the [threat model](threat-model.md) records
-"malicious installed plugin" as out of scope for containment.
+cases, but the `hang` provider — the one that ignores the cancellation token —
+kept running in-process afterwards and could not be killed. A deadline protects
+the *caller*, never the *server*. This is why
+[ADR-0004](adr/0004-provider-invocation.md) treats providers as trusted
+in-process code and the [threat model](threat-model.md) records "malicious
+installed plugin" as out of scope for containment.
+
+**A correction, recorded because the first version of this probe was wrong.** An
+earlier binder raced `Task.WhenAny(providerTask, Task.Delay(deadlineMs))` while
+its linked `CancellationTokenSource` cancelled at the same instant. Both hang
+cases then reported `provider_deadline_exceeded`, and this file initially
+concluded that a cooperative provider is indistinguishable from a runaway one.
+That conclusion was an artifact of the harness, not a property of Jellyfin.
+
+The binder now cancels at the deadline, gives the provider a 250 ms grace window
+to observe it, and awaits the task instead of racing a timer against it. The two
+cases separate cleanly:
+
+- a provider that **honours** cancellation → `provider_cancelled` at ~2003 ms;
+- a provider that **ignores** it → `provider_deadline_exceeded` at ~2254 ms,
+  still running.
+
+So the platform *can* tell a well-behaved slow provider from a runaway one, and
+[ADR-0004](adr/0004-provider-invocation.md) requires two distinct error codes
+rather than one. The earlier shape is recorded here so EP-04 does not reinvent
+it.
 
 ## S7 — Event streaming survives the host pipeline
 

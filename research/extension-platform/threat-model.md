@@ -119,8 +119,7 @@ credentials, or hangs the server.
 records make behaviour visible.
 [S6](spike-evidence.md#s6--provider-failure-modes-all-map-to-bounded-host-errors)
 demonstrates the limit precisely: a provider that ignores cancellation kept
-running after the kernel's deadline fired and could not be killed, and was
-indistinguishable from a well-behaved one.
+running after the kernel's deadline fired and could not be killed.
 *Residual.* **Accepted and documented.** Installing a plugin is a trust decision
 made by the administrator, before the platform is involved. No document in this
 program may claim containment here.
