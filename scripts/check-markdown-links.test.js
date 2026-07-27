@@ -506,6 +506,43 @@ test('resolves aria-labelledby accessible names in source and rendered HTML', ()
     }
 });
 
+test('aria-labelledby ignores ancestor-hidden metadata but retains painted SVG text', () => {
+    const target = 'https://example.com/route';
+    for (const referenced of [
+        '<svg aria-hidden="true"><title id="route-name">Report a problem</title></svg>',
+        '<svg aria-hidden="true"><desc id="route-name">Report a problem</desc></svg>',
+        '<svg aria-hidden="true"><g id="route-name" aria-label="Report a problem"></g></svg>',
+        '<svg aria-hidden="true"><g id="route-name" title="Report a problem"></g></svg>',
+        '<div hidden><svg id="route-name" aria-label="Report a problem"></svg></div>',
+        '<div style="display:none"><span id="route-name">'
+            + '<svg aria-label="Report a problem"></svg></span></div>',
+    ]) {
+        const source = referenced
+            + `<a aria-labelledby="route-name" href="${target}"></a>`;
+        for (const links of [extractLinks(source), extractRenderedHtmlLinks(source)]) {
+            const link = links.find(candidate => candidate.type === 'link');
+            assert.ok(link, referenced);
+            assert.equal(link.label, '', referenced);
+            assert.equal(isActionableLink(link), false, referenced);
+        }
+    }
+
+    for (const referenced of [
+        '<svg aria-hidden="true"><text id="route-name">Report a problem</text></svg>',
+        '<div aria-hidden="true"><span id="route-name">'
+            + '<svg><text>Report a problem</text></svg></span></div>',
+    ]) {
+        const source = referenced
+            + `<a aria-labelledby="route-name" href="${target}"></a>`;
+        for (const links of [extractLinks(source), extractRenderedHtmlLinks(source)]) {
+            const link = links.find(candidate => candidate.type === 'link');
+            assert.ok(link, referenced);
+            assert.equal(link.label, 'Report a problem', referenced);
+            assert.equal(isActionableLink(link), true, referenced);
+        }
+    }
+});
+
 test('extracts accessible names from nested SVG and labelled images', () => {
     const source = [
         '<span id="image-security-label">Submit a vulnerability report</span>',

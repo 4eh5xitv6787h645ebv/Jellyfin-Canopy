@@ -2360,6 +2360,33 @@ test('hidden SVG metadata cannot govern document prose or adjacent routes', () =
         }
     }
 
+    for (const referencedMetadata of [
+        '<svg aria-hidden="true">'
+            + '<title id="hidden-route-name">Vulnerabilities go to Discord</title></svg>',
+        '<svg aria-hidden="true">'
+            + '<desc id="hidden-route-name">GitHub Discussions: support</desc></svg>',
+        '<svg aria-hidden="true"><g id="hidden-route-name" '
+            + 'aria-label="Vulnerabilities go to Discord"></g></svg>',
+        '<svg aria-hidden="true"><g id="hidden-route-name" '
+            + 'title="GitHub Discussions: support"></g></svg>',
+        '<div hidden><svg id="hidden-route-name" '
+            + 'aria-label="Vulnerabilities go to Discord"></svg></div>',
+        '<div style="display:none"><span id="hidden-route-name">'
+            + '<svg aria-label="GitHub Discussions: support"></svg></span></div>',
+    ]) {
+        const files = validFixture();
+        files['theme/partials/support.html'] = referencedMetadata
+            + `<a aria-labelledby="hidden-route-name" href="${DISCORD_ROUTE}"></a>\n`;
+        fixture(files, root => {
+            const problems = auditSupportContract({ root }).problems;
+            assert.ok(!problems.some(problem => (
+                problem.startsWith('theme/partials/support.html:')
+                && (problem.includes('disabled GitHub Discussions')
+                    || problem.includes('private GitHub advisories'))
+            )), referencedMetadata);
+        });
+    }
+
     for (const [metadata, governed] of [
         ['<svg aria-hidden="true"><title>Need help?</title></svg>', false],
         ['<svg aria-hidden="true"><text>Need help?</text></svg>', true],
@@ -2398,6 +2425,22 @@ test('hidden SVG metadata cannot govern document prose or adjacent routes', () =
                 )), governed, `${file}: ${metadata}`);
             });
         }
+    }
+
+    for (const paintedReference of [
+        '<svg aria-hidden="true"><text id="route-name">Need help?</text></svg>',
+        '<div aria-hidden="true"><span id="route-name">'
+            + '<svg><text>Need help?</text></svg></span></div>',
+    ]) {
+        const files = validFixture();
+        files['theme/partials/support.html'] = paintedReference
+            + `<a aria-labelledby="route-name" href="${ISSUES_ROUTE}"></a>\n`;
+        fixture(files, root => {
+            assert.ok(auditSupportContract({ root }).problems.some(problem => (
+                problem.startsWith('theme/partials/support.html:')
+                && problem.includes('community-support links')
+            )), paintedReference);
+        });
     }
 });
 
