@@ -532,6 +532,8 @@ test('aria-labelledby includes directly referenced hidden nodes but ignores iner
             + 'Report a problem</title></svg>',
         '<svg style="visibility:hidden"><desc id="route-name">'
             + 'Report a problem</desc></svg>',
+        '<label for="route-name">Report a problem</label>'
+            + '<input id="route-name" hidden type="image" alt="Documentation">',
         '<script>const template = \'<span id="route-name">Report a problem</span>\';'
             + '</script>',
     ]) {
@@ -625,6 +627,37 @@ test('extracts HTML form submissions and image-map routes with control names', (
             'Report a bug',
         ],
         [
+            `<form action="${formTarget}"><label for="submit-route">`
+                + 'Submit a vulnerability report</label>'
+                + '<button id="submit-route"></button></form>',
+            formTarget,
+            'Submit a vulnerability report',
+        ],
+        [
+            `<form action="${formTarget}"><label>Submit a vulnerability report`
+                + '<button></button></label></form>',
+            formTarget,
+            'Submit a vulnerability report',
+        ],
+        [
+            `<form action="${formTarget}"><button type="invalid">`
+                + 'Report a bug</button></form>',
+            formTarget,
+            'Report a bug',
+        ],
+        [
+            `<form action="${formTarget}"><fieldset disabled><legend>`
+                + '<button>Report a bug</button></legend></fieldset></form>',
+            formTarget,
+            'Report a bug',
+        ],
+        [
+            `<form id="route-form" action="${formTarget}"></form>\n\n`
+                + 'Press <button form="route-form">Report a bug</button>.',
+            formTarget,
+            'Report a bug',
+        ],
+        [
             `<form action="${formTarget}"><form action="${overrideTarget}">`
                 + '<button>Report a bug</button></form>',
             formTarget,
@@ -654,6 +687,12 @@ test('extracts HTML form submissions and image-map routes with control names', (
             + '<button>Report a bug</button></form>',
         `<form action="${formTarget}"><button formmethod="dialog">`
             + 'Report a bug</button></form>',
+        `<form action="${formTarget}"><button form="">`
+            + 'Report a bug</button></form>',
+        `<form action="${formTarget}"><button form>`
+            + 'Report a bug</button></form>',
+        `<form action="${formTarget}"><fieldset disabled>`
+            + '<button>Report a bug</button></fieldset></form>',
     ]) {
         for (const links of [extractLinks(source), extractRenderedHtmlLinks(source)]) {
             assert.ok(!links.some(link => (
@@ -701,6 +740,21 @@ test('ignores anchors and ID labels inside inert or raw-text HTML content', () =
         assert.equal(link.label, '');
         assert.equal(isActionableLink(link), false);
     }
+
+    const plaintext = '<plaintext>Rendered as text</plaintext>'
+        + `<a href="${inertTarget}">Report a bug</a>`;
+    for (const links of [extractLinks(plaintext), extractRenderedHtmlLinks(plaintext)]) {
+        assert.ok(!links.some(link => link.target === inertTarget));
+    }
+
+    const reference = '<template>Rendered later</template> '
+        + '[Report a problem][route]\n\n'
+        + `[route]: ${visibleTarget}\n`;
+    const referenceLink = extractLinks(reference)
+        .find(candidate => candidate.target === visibleTarget);
+    assert.ok(referenceLink);
+    assert.equal(referenceLink.label, 'Report a problem');
+    assert.equal(isActionableLink(referenceLink), true);
 });
 
 test('preserves accessible-name precedence for referenced ID elements', () => {

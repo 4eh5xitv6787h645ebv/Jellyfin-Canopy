@@ -185,6 +185,15 @@ const PINNED_COMMUNITY_ROUTES = new Map([
 const markdown = new MarkdownIt({ html: true, linkify: true });
 markdown.linkify.set({ fuzzyEmail: false, fuzzyLink: false });
 
+function parseMarkdown(source) {
+    const environment = {};
+    const tokens = markdown.parse(source, environment);
+    for (const token of tokens) {
+        Object.defineProperty(token, 'linkEnvironment', { value: environment });
+    }
+    return tokens;
+}
+
 function readRegularFile(root, file, problems) {
     const absolute = path.join(root, file);
     if (!fs.existsSync(absolute)) {
@@ -371,7 +380,8 @@ function sectionOccurrences(tokens, section) {
 }
 
 function actionableLinks(tokens) {
-    return extractLinksFromTokens(tokens).filter(isActionableLink);
+    const environment = tokens.find(token => token.linkEnvironment)?.linkEnvironment || {};
+    return extractLinksFromTokens(tokens, environment).filter(isActionableLink);
 }
 
 function absoluteUrl(target) {
@@ -686,7 +696,7 @@ function exactRouteResult(tokens, route, options) {
             continue;
         }
         const source = fs.readFileSync(path.join(context.root, target.file), 'utf8');
-        const documentTokens = markdown.parse(source, {});
+        const documentTokens = parseMarkdown(source);
         const inherited = `${context.securityContext} ${semanticLinkText(link)}`
             .replace(/\s+/g, ' ').trim();
         const nested = exactRouteResult(
@@ -718,7 +728,7 @@ function securityLinkMatches(link, route, options) {
     const visited = options.visited || new Set([`${options.file}#`]);
     if (visited.has(key) || visited.size >= 8) return false;
     const source = fs.readFileSync(path.join(options.root, target.file), 'utf8');
-    const documentTokens = markdown.parse(source, {});
+    const documentTokens = parseMarkdown(source);
     const result = exactRouteResult(
         fragmentSectionTokens(documentTokens, target.fragment, target.file),
         route,
@@ -741,7 +751,7 @@ function semanticLinkMatches(link, labelPattern, predicate, options) {
     const visited = new Set(options.visited);
     visited.add(key);
     const source = fs.readFileSync(path.join(options.root, target.file), 'utf8');
-    const documentTokens = markdown.parse(source, {});
+    const documentTokens = parseMarkdown(source);
     const nestedOptions = {
         root: options.root,
         file: target.file,
@@ -842,7 +852,7 @@ function requireRenderedIssueLinks(body, file, problems) {
 }
 
 function hasFileTransformationRequirement(body) {
-    const tokens = markdown.parse(body, {});
+    const tokens = parseMarkdown(body);
     const isRequirement = (text) => {
         const compact = text.replace(/\s+/g, ' ').trim();
         if (!/\bfile\s*transformation\b/i.test(compact)) return false;
@@ -1033,7 +1043,7 @@ function renderedSupportSurface(source, file) {
                 .replace(/\s+/g, ' ').trim(),
         };
     }
-    const tokens = markdown.parse(source, {});
+    const tokens = parseMarkdown(source);
     return { links: extractLinks(source), text: renderedText(tokens) };
 }
 
@@ -1417,7 +1427,7 @@ function auditSupportContract(options = {}) {
     }
     for (const [file, sections] of BUG_ROUTE_SECTIONS) {
         const source = sources.get(file) || '';
-        const tokens = markdown.parse(source, {});
+        const tokens = parseMarkdown(source);
         for (const section of sections) {
             requireSectionRoute(
                 tokens,
@@ -1436,7 +1446,7 @@ function auditSupportContract(options = {}) {
     }
     for (const [file, sections] of FEATURE_ROUTE_SECTIONS) {
         const source = sources.get(file) || '';
-        const tokens = markdown.parse(source, {});
+        const tokens = parseMarkdown(source);
         for (const section of sections) {
             requireSectionRoute(
                 tokens,
@@ -1454,7 +1464,7 @@ function auditSupportContract(options = {}) {
         }
     }
     for (const [file, sections] of SUPPORT_ROUTE_SECTIONS) {
-        const tokens = markdown.parse(sources.get(file) || '', {});
+        const tokens = parseMarkdown(sources.get(file) || '');
         for (const section of sections) {
             requireSectionRoute(
                 tokens,
@@ -1473,7 +1483,7 @@ function auditSupportContract(options = {}) {
     }
 
     const securityFile = 'SECURITY.md';
-    const securityTokens = markdown.parse(sources.get(securityFile) || '', {});
+    const securityTokens = parseMarkdown(sources.get(securityFile) || '');
     const vulnerabilitySection = sectionTokens(securityTokens, 'Reporting a Vulnerability');
     const vulnerabilityText = renderedText(vulnerabilitySection);
     if (!hasOnlyExactHttpsRoute(
@@ -1488,7 +1498,7 @@ function auditSupportContract(options = {}) {
         );
     }
     for (const file of auditedFiles.filter(candidate => candidate.endsWith('.md'))) {
-        const tokens = markdown.parse(sources.get(file) || '', {});
+        const tokens = parseMarkdown(sources.get(file) || '');
         if (routesSecurityIntakePublicly(tokens)) {
             problems.push(
                 `${file}: security or vulnerability intake prose must route only to private GitHub advisories`
@@ -1529,7 +1539,7 @@ function auditSupportContract(options = {}) {
 
     const bugFile = '.github/ISSUE_TEMPLATE/bug.md';
     const bug = issueTemplate(sources.get(bugFile) || '', bugFile, problems);
-    const bugTokens = markdown.parse(bug.body, {});
+    const bugTokens = parseMarkdown(bug.body);
     const bugSecurity = sectionTokens(bugTokens, 'Security reports');
     const bugSecurityText = renderedText(bugSecurity);
     requireTemplateMetadata(bug.metadata, bugFile, TEMPLATE_METADATA.get(bugFile), problems);
@@ -1598,7 +1608,7 @@ function auditSupportContract(options = {}) {
 
     const featureFile = '.github/ISSUE_TEMPLATE/feature_request.md';
     const feature = issueTemplate(sources.get(featureFile) || '', featureFile, problems);
-    const featureTokens = markdown.parse(feature.body, {});
+    const featureTokens = parseMarkdown(feature.body);
     requireTemplateMetadata(
         feature.metadata,
         featureFile,

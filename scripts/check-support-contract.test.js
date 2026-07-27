@@ -2615,12 +2615,35 @@ test('governs form submissions and hidden ID names while inert routes remain ina
         '<span id="route-name" aria-hidden="true">'
             + 'Submit a vulnerability report</span>'
             + `<a aria-labelledby="route-name" href="${ISSUES_ROUTE}"></a>`,
+        `<form action="${ISSUES_ROUTE}"><label for="submit-route">`
+            + 'Submit a vulnerability report</label>'
+            + '<button id="submit-route"></button></form>',
+        `<form action="${ISSUES_ROUTE}"><button type="invalid">`
+            + 'Submit a vulnerability report</button></form>',
     ]) {
         const files = validFixture();
         files['theme/partials/support.html'] = source;
         fixture(files, root => {
             assert.ok(auditSupportContract({ root }).problems.some(problem => (
                 problem.startsWith('theme/partials/support.html:')
+                && problem.includes('security intake links must use private GitHub advisories')
+            )), source);
+        });
+    }
+
+    for (const source of [
+        `<form id="security-route" action="${ISSUES_ROUTE}"></form>\n\n`
+            + 'Press <button form="security-route">'
+            + 'Submit a vulnerability report</button>.',
+        '<template>Later route</template> '
+            + '[Submit a vulnerability report][security-route]\n\n'
+            + `[security-route]: ${ISSUES_ROUTE}\n`,
+    ]) {
+        const files = validFixture();
+        files['docs/getting-started.md'] = source;
+        fixture(files, root => {
+            assert.ok(auditSupportContract({ root }).problems.some(problem => (
+                problem.startsWith('docs/getting-started.md:')
                 && problem.includes('security intake links must use private GitHub advisories')
             )), source);
         });

@@ -83,6 +83,7 @@ function maskHtmlElementContents(content, elements) {
         const closing = match[1] === '/';
         const tag = match[2].toLowerCase();
         const active = stack.at(-1);
+        if (active?.tag === 'plaintext') continue;
         if (active && active.tag !== 'template'
             && !(closing && tag === active.tag)) {
             continue;
@@ -991,6 +992,9 @@ function resolvedHtmlIdLabels(records, ids) {
                 reference: true,
             });
         }
+        for (const node of record.associatedLabelNodes) {
+            dependencies[idNode].push({ node, reference: false });
+        }
         if (!record.visualState.persistentHidden
             && !record.accessibilityState.persistentHidden) {
             dependencies[idNode].push({
@@ -1081,8 +1085,15 @@ function resolvedHtmlIdLabels(records, ids) {
                     components[node] !== components[labelNodeById.get(id)]
                 ))
                 .map(id => values[labelNodeById.get(id)]));
+            const associated = boundedDomText(
+                record.associatedLabelNodes.map(index => values[index])
+            );
+            const ariaLabel = htmlAttributeText(record.openingTag, 'aria-label');
             let label = record.accessibilityState.hidden
-                ? referenced || directlyReferencedValues[record.index]
+                ? referenced
+                    || ariaLabel
+                    || associated
+                    || directlyReferencedValues[record.index]
                 : htmlEmbeddedControlValue(record, body, values)
                     || values[record.index];
             if (!record.visualState.persistentHidden && !label) {
@@ -1583,9 +1594,65 @@ function htmlOpeningElementRecords(
     return records;
 }
 
+function htmlOpeningFieldsetDisabledStates(content, options = {}) {
+    const states = new Map();
+    const stack = [];
+    const documentMode = Boolean(options.documentMode);
+    const pattern = /<(\/?)([a-z][a-z0-9:-]*)\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi;
+    let offset = 0;
+    for (const match of content.matchAll(pattern)) {
+        repairHtmlStackForText(
+            stack,
+            content.slice(offset, match.index),
+            documentMode
+        );
+        const closing = match[1] === '/';
+        const tag = match[2].toLowerCase();
+        if (closing) {
+            const opening = lastHtmlStackTagIndex(stack, tag);
+            if (opening !== -1) stack.splice(opening);
+            offset = match.index + match[0].length;
+            continue;
+        }
+        if (repairHtmlStackForOpening(stack, tag, documentMode)) {
+            offset = match.index + match[0].length;
+            continue;
+        }
+        if (htmlElementIsIgnored(tag, stack.at(-1)?.insideSelect, documentMode)) {
+            offset = match.index + match[0].length;
+            continue;
+        }
+        const parent = stack.at(-1) || null;
+        let inherited = Boolean(parent?.disabledByFieldset);
+        if (tag === 'legend'
+            && parent?.tag === 'fieldset'
+            && !parent.firstLegendSeen) {
+            parent.firstLegendSeen = true;
+            inherited = parent.ancestorFieldsetDisabled;
+        }
+        states.set(match.index, inherited);
+        const selfClosing = /\/>\s*$/.test(match[0]) || HTML_VOID_ELEMENTS.has(tag);
+        if (!selfClosing) {
+            const ownDisabled = tag === 'fieldset'
+                && htmlTagHasAttribute(match[0], 'disabled');
+            stack.push({
+                tag,
+                insideSelect: tag === 'select' || Boolean(parent?.insideSelect),
+                ancestorFieldsetDisabled: inherited,
+                disabledByFieldset: inherited || ownDisabled,
+                firstLegendSeen: false,
+            });
+        }
+        offset = match.index + match[0].length;
+    }
+    return states;
+}
+
 function htmlAssociatedForm(control, forms, formsById) {
     const explicitId = htmlAttributeValue(control.openingTag, 'form');
-    if (explicitId) return formsById.get(explicitId) || null;
+    if (htmlTagHasAttribute(control.openingTag, 'form')) {
+        return formsById.get(explicitId) || null;
+    }
     let lower = 0;
     let upper = forms.length;
     while (lower < upper) {
@@ -1600,9 +1667,43 @@ function htmlAssociatedForm(control, forms, formsById) {
     return candidate && control.start < candidate.end ? candidate : null;
 }
 
-function htmlSubmitControlLabel(control, content, labels, options) {
+function htmlWrappingLabel(control, labelRecords, content, labels, options) {
+    let lower = 0;
+    let upper = labelRecords.length;
+    while (lower < upper) {
+        const middle = Math.floor((lower + upper) / 2);
+        if (labelRecords[middle].start < control.start) {
+            lower = middle + 1;
+        } else {
+            upper = middle;
+        }
+    }
+    const candidate = labelRecords[lower - 1];
+    if (!candidate
+        || control.start >= candidate.end
+        || htmlTagHasAttribute(candidate.openingTag, 'for')) {
+        return '';
+    }
+    return governedHtmlText(
+        content.slice(candidate.openingEnd, candidate.contentEnd),
+        labels,
+        {},
+        options
+    ).replace(/\s+/g, ' ').trim();
+}
+
+function htmlSubmitControlLabel(
+    control,
+    content,
+    labels,
+    labelRecords,
+    options
+) {
     const labelled = ariaLabelledText(control.openingTag, labels);
     const ariaLabel = htmlAttributeText(control.openingTag, 'aria-label');
+    const id = htmlAttributeValue(control.openingTag, 'id');
+    const associated = (id && labels.get(id))
+        || htmlWrappingLabel(control, labelRecords, content, labels, options);
     const title = htmlAttributeText(control.openingTag, 'title');
     if (control.tag === 'button') {
         const body = governedHtmlText(
@@ -1611,13 +1712,13 @@ function htmlSubmitControlLabel(control, content, labels, options) {
             {},
             options
         ).replace(/\s+/g, ' ').trim();
-        return boundedDomText([labelled || ariaLabel || body || title]);
+        return boundedDomText([labelled || ariaLabel || associated || body || title]);
     }
     const type = htmlAttributeText(control.openingTag, 'type').toLowerCase();
     const native = type === 'image'
         ? htmlAttributeText(control.openingTag, 'alt') || title
         : htmlAttributeText(control.openingTag, 'value') || 'Submit';
-    return boundedDomText([labelled || ariaLabel || native || title]);
+    return boundedDomText([labelled || ariaLabel || associated || native || title]);
 }
 
 function htmlFormSubmissionLinks(
@@ -1642,13 +1743,20 @@ function htmlFormSubmissionLinks(
         .map(record => ({ ...record, tag: 'button' }));
     const inputs = htmlOpeningElementRecords(content, 'input', true)
         .map(record => ({ ...record, tag: 'input' }));
+    const labelRecords = htmlOpeningElementRecords(content, 'label');
+    const fieldsetDisabledStates = htmlOpeningFieldsetDisabledStates(content, options);
     const links = [];
     for (const control of [...buttons, ...inputs]
         .sort((left, right) => left.start - right.start)) {
-        const type = htmlAttributeText(control.openingTag, 'type').toLowerCase()
-            || (control.tag === 'button' ? 'submit' : 'text');
+        const declaredType = htmlAttributeText(control.openingTag, 'type').toLowerCase();
+        const type = control.tag === 'button'
+            ? ['button', 'reset', 'submit'].includes(declaredType)
+                ? declaredType
+                : 'submit'
+            : htmlInputType(control);
         if (!['submit', 'image'].includes(type)
-            || htmlTagHasAttribute(control.openingTag, 'disabled')) {
+            || htmlTagHasAttribute(control.openingTag, 'disabled')
+            || fieldsetDisabledStates.get(control.start)) {
             continue;
         }
         const form = htmlAssociatedForm(control, forms, formsById);
@@ -1665,7 +1773,13 @@ function htmlFormSubmissionLinks(
             target: normalizeLinkTarget(action),
             line,
             type: 'link',
-            label: htmlSubmitControlLabel(control, content, labels, options),
+            label: htmlSubmitControlLabel(
+                control,
+                content,
+                labels,
+                labelRecords,
+                options
+            ),
             context,
             hidden: hiddenStates.get(control.start) || false,
         });
@@ -1700,14 +1814,16 @@ function htmlLinks(
     );
     const context = compactGovernedText(visible, resolvedLabels, {}, options);
     const hiddenStates = htmlOpeningHiddenStates(visible, options);
-    const links = htmlFormSubmissionLinks(
-        visible,
-        line,
-        resolvedLabels,
-        context,
-        hiddenStates,
-        options
-    );
+    const links = options.includeFormSubmissions === false
+        ? []
+        : htmlFormSubmissionLinks(
+            visible,
+            line,
+            resolvedLabels,
+            context,
+            hiddenStates,
+            options
+        );
     const anchors = htmlAnchorRecords(visible, resolvedLabels, options);
     const areas = htmlAreaRecords(visible, resolvedLabels, hiddenStates);
     let anchorIndex = 0;
@@ -1864,7 +1980,12 @@ function inlineLinkRegions(children, labels) {
             continue;
         }
         if (child.type !== 'html_inline') continue;
-        const html = htmlLinks(child.content, 1, labels);
+        const html = htmlLinks(
+            child.content,
+            1,
+            labels,
+            { includeFormSubmissions: false }
+        );
         if (!html.some(link => link.type === 'link')) continue;
         const record = inlineHtmlAnchorRecord(children, index, labels);
         regions.push({
@@ -1921,18 +2042,35 @@ function wwwAutolinks(content, line, context = '', contextBefore = '', contextAf
         }));
 }
 
-function extractLinksFromTokens(tokens) {
-    const links = [];
+function extractLinksFromTokens(tokens, markdownEnvironment = {}) {
     let previousBlockText = '';
-    const htmlLabels = htmlIdLabels(tokens.flatMap((token) => {
+    const htmlSource = tokens.flatMap((token) => {
         if (token.type === 'html_block') return [token.content];
         if (token.type === 'inline') return [token.content];
         return [];
-    }).join('\n'));
+    }).join('\n');
+    const htmlLabels = htmlIdLabels(htmlSource);
+    const visibleHtmlSource = maskHtmlElementContents(
+        stripHtmlComments(htmlSource),
+        HTML_ROUTE_INERT_CONTENT_ELEMENTS
+    );
+    const htmlContext = compactGovernedText(visibleHtmlSource, htmlLabels);
+    const links = htmlFormSubmissionLinks(
+        visibleHtmlSource,
+        1,
+        htmlLabels,
+        htmlContext,
+        htmlOpeningHiddenStates(visibleHtmlSource)
+    );
     for (const token of tokens) {
         const line = (token.map?.[0] || 0) + 1;
         if (token.type === 'html_block') {
-            const html = htmlLinks(token.content, line, htmlLabels);
+            const html = htmlLinks(
+                token.content,
+                line,
+                htmlLabels,
+                { includeFormSubmissions: false }
+            );
             for (const link of html) {
                 if (!link.contextBeforeBlock) link.contextBeforeBlock = previousBlockText;
             }
@@ -1950,7 +2088,7 @@ function extractLinksFromTokens(tokens) {
         );
         const children = inlineSource === token.content
             ? token.children || []
-            : markdown.parseInline(inlineSource, {})[0]?.children || [];
+            : markdown.parseInline(inlineSource, markdownEnvironment)[0]?.children || [];
         const context = inlineSemanticText(children);
         const regions = inlineLinkRegions(children, htmlLabels);
         const regionsByStart = new Map(regions.map(region => [region.startIndex, region]));
@@ -1995,7 +2133,12 @@ function extractLinksFromTokens(tokens) {
                 ));
             } else if (child.type === 'html_inline') {
                 const region = regionsByStart.get(index);
-                const html = region?.html || htmlLinks(child.content, childLine, htmlLabels);
+                const html = region?.html || htmlLinks(
+                    child.content,
+                    childLine,
+                    htmlLabels,
+                    { includeFormSubmissions: false }
+                );
                 const record = region?.record || inlineHtmlAnchorRecord(
                     children,
                     index,
@@ -2092,9 +2235,10 @@ function markdownInHtmlLinks(tokens) {
 }
 
 function extractLinks(source) {
-    const tokens = markdown.parse(source, {});
+    const environment = {};
+    const tokens = markdown.parse(source, environment);
     const links = [
-        ...extractLinksFromTokens(tokens),
+        ...extractLinksFromTokens(tokens, environment),
         ...markdownInHtmlLinks(tokens),
     ];
     const seen = new Set();
