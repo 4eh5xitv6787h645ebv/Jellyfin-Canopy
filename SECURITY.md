@@ -105,7 +105,7 @@ Advanced Security or a public repository).
 
 For security concerns that don't constitute a vulnerability, you can:
 - Open a regular GitHub issue
-- Start a discussion in GitHub Discussions
-- Contact the maintainers directly
+- Ask in the [Jellyfin Community Discord](https://discord.gg/EYNFf7y4CG)
+- Contact the maintainers privately when the question contains sensitive details
 
 Thank you for helping keep Jellyfin Canopy secure!

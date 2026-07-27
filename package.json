@@ -13,7 +13,7 @@
     "check:performance-rules": "node scripts/check-performance-rules.js",
     "check:markdown-links": "node scripts/check-markdown-links.js && node scripts/check-installation-permissions.js",
     "check:docs-assets": "node scripts/check-doc-assets.js",
-    "check:docs": "node scripts/check-docs.js && node scripts/check-installation-permissions.js && node scripts/check-doc-assets.js && python -m mkdocs build --strict -d site",
+    "check:docs": "node scripts/check-docs.js && node scripts/check-installation-permissions.js && node scripts/check-doc-assets.js && node scripts/check-support-contract.js && python -m mkdocs build --strict -d site",
     "check:docs:external": "node scripts/check-docs.js --probe-external",
     "lint": "eslint --exit-on-fatal-error --max-warnings 6586 \"Jellyfin.Plugin.JellyfinCanopy/js/**/*.js\" \"Jellyfin.Plugin.JellyfinCanopy/src/**/*.ts\" \"Jellyfin.Plugin.JellyfinCanopy/Configuration/*.js\" \"scripts/**/*.js\"",
     "lint:fix": "eslint --fix \"Jellyfin.Plugin.JellyfinCanopy/js/**/*.js\" \"Jellyfin.Plugin.JellyfinCanopy/src/**/*.ts\" \"Jellyfin.Plugin.JellyfinCanopy/Configuration/*.js\" \"scripts/**/*.js\"",

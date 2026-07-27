@@ -244,7 +244,7 @@ Before submitting a PR, verify:
 
 ## Reporting Security Issues
 
-See [SECURITY.md](../../SECURITY.md) for reporting vulnerabilities.
+See [SECURITY.md](../SECURITY.md) for reporting vulnerabilities.
 
 ## Security Tools
 
@@ -267,5 +267,5 @@ We use the following tools:
 
 If you have security questions, please:
 1. Check existing documentation
-2. Ask in GitHub Discussions
+2. Ask in the [Jellyfin Community Discord](https://discord.gg/EYNFf7y4CG)
 3. Contact maintainers privately for sensitive topics

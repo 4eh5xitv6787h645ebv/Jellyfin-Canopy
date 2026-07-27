@@ -1,36 +1,66 @@
 ---
 name: Bug
-about: Create a report to help us improve
-title: "\U0001F41B[BUG]"
+about: Report a reproducible Jellyfin Canopy problem
+title: "🐛[BUG] "
 labels: bug
 assignees:
 
 ---
 
-**Describe the bug**
-A clear and concise description of what the bug is.
+> [!IMPORTANT]
+> Do not report security vulnerabilities here. Follow
+> [SECURITY.md](../../SECURITY.md) to contact a maintainer privately.
 
-**Expected behavior**
-A clear and concise description of what you expected to happen.
+## Security reports
 
-**Screenshots**
-If applicable, add screenshots to help explain your problem.
+Confirm this report does not disclose a vulnerability, credential, private URL,
+personal data, or other sensitive material. Use the private security route above
+when it does.
 
-**Jellyfin Environment (please complete the following information):**
- - Server Version: [e.g. 12.0.0]
- - Plugin Version: [e.g. 1.0.0.0]
- - Jellyfin Installation Method: [e.g. Docker, Linux, etc.]
- - Device: [e.g. Jellyfin Android App, Jellyfin Web on Firefox, etc.,]
- - External Access Method: [eg. Tailscale, Cloudflare, Caddy, etc.] (only needed when the issue is seen on external networks)
- - Theme being used: [e.g. Jellyfish, Zesty, etc.,]
- - [ ] [FileTransformation](https://github.com/IAmParadox27/jellyfin-plugin-file-transformation) Installed
+## Summary
 
+Describe the problem and its user-visible impact.
 
-**Logs**
+## Steps to reproduce
 
-Please provide server logs and browser console logs as applicable (make sure sensitive information is redacted)
+1. Start from the smallest configuration that still reproduces the problem.
+2. List the exact navigation and actions.
+3. State whether the problem reproduces consistently.
 
-[How to gather logs?](https://4eh5xitv6787h645ebv.github.io/Jellyfin-Canopy/faq-support/faq/#troubleshooting)
+## Expected behavior
 
-**Additional context**
-Add any other context about the problem here.
+Describe what should happen.
+
+## Actual behavior
+
+Describe what happens instead, including the exact visible error when one exists.
+
+## Regression and versions
+
+- Jellyfin server version:
+- Jellyfin Canopy plugin version:
+- Last known working plugin version, if any:
+- New installation or upgrade:
+
+## Client environment
+
+- Client or browser and version:
+- Operating system and version:
+- Jellyfin modern (MUI) or legacy web layout:
+- Local or externally proxied access:
+
+## Relevant configuration
+
+List only the Canopy features, optional plugins, integrations, proxy, theme, or
+custom CSS involved in this reproduction. Do not include API keys or credentials.
+
+## Logs
+
+Attach the relevant server log and browser console excerpt. Redact tokens, API
+keys, credentials, private URLs, media names, usernames, and other personal data.
+See [How to gather logs](https://4eh5xitv6787h645ebv.github.io/Jellyfin-Canopy/help/#gather-logs-before-you-report).
+
+## Additional context
+
+Add screenshots, a minimal configuration export, or other evidence only when it
+helps reproduce or distinguish the problem. Redact sensitive information.

@@ -8,11 +8,13 @@ Thank you for your interest in contributing to Jellyfin Canopy! This document pr
 
 You can contribute code through:
 - **Open Pull Requests**: Check the [open PRs](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/pulls) for issues that need help
-- **Discussions**: Browse [Discussions](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/discussions) for feature requests and ideas that interest you
+- **Feature Requests**: Browse [Issues](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues) for proposals that need design or implementation help
 - **Bug Fixes**: Fix any bugs you encounter and submit a PR
 
 > [!NOTE]
-> Feature requests that are considered niche use cases are often moved to Discussions. Feel free to implement any of these if they interest you!
+> Feature requests stay in Issues so their scope, triage state, and implementation
+> remain visible in one place. Feel free to implement an accepted request that
+> interests you.
 
 ### 2. Translation Contributions
 
@@ -1105,10 +1107,13 @@ Before submitting a PR, ensure you've tested:
 
 When proposing new features:
 
-1. **Check Discussions First**: Your idea might already be there!
+1. **Check Existing Issues First**: Your idea might already be tracked
 2. **Provide Context**: Explain the use case and benefit
 3. **Be Specific**: Clear descriptions help implementation
 4. **Consider Scope**: Is this a core feature or niche use case?
+5. **Use the Feature Request Template**: Keep proposals in
+   [GitHub Issues](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues)
+   so they follow the same triage path
 
 ## 🐛 Bug Reports
 
@@ -1123,8 +1128,7 @@ When reporting bugs:
 If you have questions or need help:
 
 - **Discord**: Reach out on the [Jellyfin Community Discord](https://discord.gg/EYNFf7y4CG)
-- **Discussions**: Start a discussion on GitHub
-- **Issues**: For bug-related questions
+- **Issues**: Report reproducible bugs and propose features through the matching template
 
 ## 🎨 UI/UX Contributions
 
