@@ -15,14 +15,23 @@ set -euo pipefail
 
 PORT="${1:-8199}"
 IMAGE="${EP00_IMAGE:-jellyfin/jellyfin:12.0-rc3.20260722-020441}"
-NAME="ep00-jf12"
+NAME="${EP00_CONTAINER:-ep00-jf12}"
 ADMIN_USER="${EP00_ADMIN_USER:-ep00admin}"
 # Throwaway credential for a disposable container that is destroyed at the end of
 # the run. Override with EP00_ADMIN_PW if your environment forbids a literal.
 ADMIN_PW="${EP00_ADMIN_PW:-$(head -c 18 /dev/urandom | base64 | tr -d '/+=')Aa1!}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORK="$(mktemp -d)"
-trap 'rm -rf "$WORK"' EXIT
+
+# The container writes into $WORK as root, so the temp directory cannot be removed
+# from here. Stop the container first, then delete its files from inside a
+# throwaway container that does run as root.
+cleanup() {
+  docker rm -f "$NAME" >/dev/null 2>&1 || true
+  docker run --rm -v "$WORK:/work" alpine:3 sh -c 'rm -rf /work/..?* /work/.[!.]* /work/*' >/dev/null 2>&1 || true
+  rm -rf "$WORK" 2>/dev/null || true
+}
+trap cleanup EXIT
 
 export DOTNET_ROOT="${DOTNET_ROOT:-$HOME/.dotnet}"
 export PATH="$DOTNET_ROOT:$PATH"
@@ -274,4 +283,4 @@ printf '  jellyfin health : %s\n' "$(curl -s -o /dev/null -w '%{http_code}' "$B/
 printf '  host route      : %s\n' "$(curl -s -o /dev/null -w '%{http_code}' "$B/jf/Ep00Spike/Discovery")"
 printf '  boot errors     : %s\n' "$(docker logs "$NAME" 2>&1 | tail -200 | grep -c '\[ERR\]')"
 
-log "Done. Remove the disposable server with: docker rm -f $NAME"
+log "Done — the container and its temporary state are removed on exit."
