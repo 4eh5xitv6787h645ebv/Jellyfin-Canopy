@@ -31,7 +31,7 @@ code is written. Every document is *proposed* until its milestone's exit gate.
 | [0004](adr/0004-provider-invocation.md) | provider binding and failure isolation | proposed |
 | [0005](adr/0005-manifest-discovery.md) | manifest discovery and registry binding | proposed |
 | [0006](adr/0006-client-event-transport.md) | client event transport | proposed |
-| [0007](adr/0007-declarative-web-contributions.md) | declarative web contributions | proposed (1–6); decision 7 **deferred, not in v1** |
+| [0007](adr/0007-declarative-web-contributions.md) | declarative web contributions | proposed (1–6); the sandboxed-frame decision **deferred, not in v1** |
 | [0008](adr/0008-storage-ownership.md) | storage ownership | proposed |
 | [0009](adr/0009-packaging-and-kernel-placement.md) | packaging and kernel placement | proposed |
 | [0010](adr/0010-deprecation-and-support-policy.md) | deprecation and support policy | proposed |

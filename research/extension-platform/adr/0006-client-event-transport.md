@@ -32,10 +32,15 @@ hard-crashes, has not been tested on real hardware.
    than a silently incomplete stream.
 5. Delivery is **at-least-once within bounded retention**. Events are
    invalidations and notifications, never the sole source of truth.
-6. Authorization is applied **before enqueueing**, not at delivery. High-volume
-   changes are coalesced; queues and per-consumer memory are bounded; a slow
-   consumer is disconnected and told to resync rather than allowed to grow a
-   queue.
+6. Authorization is applied **before enqueueing and again at delivery**.
+   Enqueue-time filtering alone is not enough: an event authorized before a
+   permission change would still be delivered out of a reconnect buffer
+   afterwards, which contradicts the immediate-revocation rule in
+   [ADR-0011](0011-identity-and-authority.md). A grant change or a Jellyfin
+   permission change drops the subscriber's buffer and forces `resync-required`.
+   High-volume changes are coalesced; queues and per-consumer memory are bounded;
+   a slow consumer is disconnected and told to resync rather than allowed to grow
+   a queue.
 7. `X-Accel-Buffering: no` and `Cache-Control: no-cache, no-store` are set on the
    stream.
 8. **Jellyfin's native WebSocket enum is not extended or smuggled through.**

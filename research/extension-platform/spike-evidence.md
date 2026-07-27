@@ -154,44 +154,63 @@ which is the difference between a security control and a report field.
 | 300 KB of filler | `rejected: manifest exceeds 256 KiB` — rejected on size *before* parsing |
 | valid JSON that is not an object | `rejected: manifest_not_an_object` |
 
-## S5 — Path containment holds against traversal *and* symlinks
+## S5 — Path containment holds against traversal, symlinks and link cycles
 
-`GET /Ep00Spike/Traversal`. The runner first creates, inside the host plugin root,
-`escape-dir -> /etc` (a symlinked **directory component**), `escape-file ->
-/etc/hostname` (a symlinked leaf) and `inside-file -> meta.json` (a symlink that
-stays inside).
+`GET /Ep00Spike/Traversal`. The fixtures live in `/config/ep00-linktests`,
+**deliberately outside every plugin directory** — see the startup hazard below.
+The containment function takes its root as a parameter, so a controlled directory
+exercises exactly the code path a plugin root would.
 
 | Candidate | Accepted | Rejected by |
 |---|---|---|
-| `jellyfin-canopy-extension.json` | **yes** | — (the real manifest) |
+| `jellyfin-canopy-extension.json` | no | absent (no manifest in the fixture root) |
 | `../jellyfin-canopy-extension.json` | no | containment |
 | `../../../../../../etc/passwd` | no | containment |
 | `..\..\..\etc\passwd` | no | containment |
 | `subdir/../../escape.json` | no | containment |
 | `/etc/passwd` | no | absolute path |
 | `manifest.json\0/etc/passwd` | no | embedded NUL |
-| `escape-dir/passwd` | no | **symlink escapes plugin root** |
-| `escape-file` | no | **symlink escapes plugin root** |
-| `inside-file` | **yes** | — (correctly *not* a false positive) |
+| `escape-dir/passwd` (`escape-dir -> /etc`) | no | **symlink escapes root** |
+| `escape-file` (`-> /etc/hostname`) | no | **symlink escapes root** |
+| `hop-etc/openssl.cnf` (two hops, both links inside the root) | no | **symlink escapes root** |
+| `cycle` (`cycle -> cycle2 -> cycle`) | no | **unresolvable link target (IOException)** |
+| `inside-file` (`-> inside.json`) | **yes** | — correctly *not* a false positive |
 
-**Two defects were found here and fixed rather than documented away.**
+**Four defects were found here and fixed rather than documented away.** Each was
+found by a review of the probe, not by the probe, which is itself the point.
 
-1. The Windows-separator case originally reported `absent: no manifest at
-   ..\..\..\etc\passwd`. A backslash is a legal filename character on Linux, so
-   the candidate resolved to a missing file *inside* the root and the containment
-   check was never exercised — a pass for the wrong reason, which reads exactly
-   like a real pass. Separators are now normalised before any test, and the case
-   is rejected by containment.
-2. `Path.GetFullPath` is **lexical**: it does not resolve symlinks, and
-   `FileInfo.LinkTarget` sees only the final component. So `escape-dir/passwd`
-   originally passed containment, `File.Exists` returned true, and the reader
-   returned the contents of `/etc/passwd` with `reason=accepted`. The probe now
-   resolves every path component with `ResolveLinkTarget(returnFinalTarget: true)`
-   and re-tests containment against the fully resolved path.
+1. **Windows separators were never evaluated.** `..\..\..\etc\passwd` originally
+   reported `absent`, because a backslash is a legal filename character on Linux,
+   so the candidate resolved to a missing file *inside* the root. A pass for the
+   wrong reason reads exactly like a real pass. Separators are now normalised
+   first.
+2. **A symlinked directory component escaped entirely.** `Path.GetFullPath` is
+   lexical and `FileInfo.LinkTarget` sees only the leaf, so `escape-dir/passwd`
+   passed containment and the reader returned `/etc/passwd` with
+   `reason=accepted`.
+3. **One resolution pass was not enough.** After fixing (2), a *two-hop* chain
+   still escaped: resolving one component introduces new components that are
+   themselves links. `hop-etc -> <root>/hop-root/ssl` with `hop-root -> /etc` —
+   both links inside the root, neither target lexically outside it — resolved to
+   `/etc/ssl` only on the second pass. Resolution now runs to a fixed point,
+   bounded at 40 passes.
+4. **A link cycle threw out of the reader.** A loop passes `File.Exists` (which
+   lstats) and the size cap (the link string is short), so `File.ReadAllText` was
+   the first thing to fail — and `Discover()` has no `try`/`catch` around its
+   per-plugin loop, so one plugin root containing a loop would have taken manifest
+   discovery down for *every* plugin. It is now a rejection.
 
-The second defect is the reason [#494](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/494)
-exists: EP-03 must not re-derive this check, and must additionally close the
-TOCTOU window by re-validating on an open handle.
+**A startup hazard found by accident, worth recording.** An earlier version of
+this probe created its fixtures inside the host plugin's own directory. With a
+link to `/` among them, **Jellyfin did not start** — the plugin loader walks
+plugin roots looking for assemblies and followed it. A plugin package that ships
+a symlink can therefore prevent the server from booting. Related to
+[T-16](threat-model.md#t-16--plugin-directory-deletion-by-manifest-name-collision--high-accepted),
+and the reason the fixtures moved out of `/config/plugins`.
+
+The remaining gap is TOCTOU: the path is validated and then opened, with no
+revalidation on the handle —
+[#494](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/494).
 
 ## S6 — Provider failure modes all map to bounded host errors
 
@@ -204,9 +223,10 @@ TOCTOU window by re-validating on an open handle.
 | `invalid-json` | `ok=false error=provider_response_invalid_json` — validated *before* leaving the boundary |
 | `unknown-op` | `ok=true` — the provider answered `{"ok":false,"error":"unknown_operation"}`; an unknown operation is a provider-level answer, not a transport fault |
 | `big` (2 MB) | `ok=true chars=2000021` — no host-imposed response cap exists yet |
-| `hang` (8 s, ignores cancellation) | `ok=false error=provider_deadline_exceeded elapsed=2254ms` |
+| `hang` (8 s, ignores cancellation) | `ok=false error=provider_deadline_exceeded elapsed=2257ms` |
 | `cancellable-hang` (8 s, honours cancellation) | `ok=false error=provider_cancelled elapsed=2003ms` |
-| caller aborts mid-call | `caller_cancelled` — never attributed to the provider |
+| caller aborts mid-call | `caller_cancelled` — never charged to the provider, even when the provider is *also* running away |
+| entrypoint returns `Task` rather than `Task<string>` | `provider_abi_mismatch` — an ABI violation, not a null result |
 
 **The load-bearing negative result:** the host returned on time in both hang
 cases, but the `hang` provider — the one that ignores the cancellation token —
@@ -233,13 +253,23 @@ together and `WhenAny` returned whichever won, so:
   network problem;
 - and every successful call leaked a live timer for the remainder of the deadline.
 
-The binder now awaits the provider's own task with
-`WaitAsync(deadline + grace)` and branches on the outcome, giving four distinct
-results: `ok`, `provider_cancelled`, `provider_deadline_exceeded`, and
-`caller_cancelled`. Cooperation *is* observable, and
-[ADR-0004](adr/0004-provider-invocation.md) now requires all four codes and lists
-the racing shape as a rejected alternative. The mistake is recorded because an
-EP-04 implementer would otherwise write it again.
+The binder now awaits the provider's own task with `WaitAsync(deadline + grace)`
+and branches on the outcome. Cooperation *is* observable.
+
+Two follow-on defects surfaced when the fixed binder was re-reviewed, and both
+are the kind that only bite in production:
+
+- a **caller abort against an uncooperative provider** still reached the timeout
+  branch first, so a client closing its connection was charged to the provider
+  and would have tripped its circuit breaker for someone else's network problem;
+- `provider_cancelled` was assigned to *any* `OperationCanceledException`,
+  including one the provider raised on its own unrelated token, and depended on
+  whether the entrypoint happened to be `async`.
+
+Both are now guarded on which token actually fired.
+[ADR-0004](adr/0004-provider-invocation.md) lists every resulting code and records
+the racing shape as a rejected alternative, because an EP-04 implementer would
+otherwise write it again.
 
 ## S7 — Event streaming survives the host pipeline
 
@@ -444,8 +474,8 @@ Carried into later milestones rather than assumed.
 5. **No declarative web contribution, sandboxed frame or `postMessage` broker.**
    Playwright is not provisioned here, so the browser half of EP-00's required
    verification did not run and
-   [ADR-0007](adr/0007-declarative-web-contributions.md) decision 7 is marked
-   deferred. → [#491](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/491)
+   [ADR-0007](adr/0007-declarative-web-contributions.md)'s sandboxed-frame
+   decision is deferred. → [#491](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/491)
 6. **Version negotiation.** `/Ep00Spike/Discovery` returns a static
    `{min:1,max:1}` and nothing negotiates against it, so
    [ADR-0002](adr/0002-protocol-and-version-negotiation.md)'s highest-common-version
@@ -462,13 +492,13 @@ Carried into later milestones rather than assumed.
 
 ## Probe coverage of this file
 
-`run-spike.sh` replays probes **A–I**, which cover S1–S7 and S9–S13. Three
-results were produced by hand and are **not** scripted:
+`run-spike.sh` replays probes **A–J**, covering S1–S6, S8–S14 and the S7 direct
+case. Two results were produced by hand and are **not** scripted:
 
 | Not scripted | Why |
 |---|---|
-| S7's nginx matrix | needs a second container and three proxy configurations |
+| S7's nginx proxy matrix | needs a second container and three proxy configurations |
 | S13's `1.0.0.0 → 2.5.0.0` upgrade row | needs a second staged plugin version |
-| S8's rejected header forms | the script covers the query-parameter forms only |
 
-S14 (forged identity) **is** scripted, as probe J.
+S8's rejected header forms and S10's CORS response are covered by probe A; S14
+(forged identity) is probe J.

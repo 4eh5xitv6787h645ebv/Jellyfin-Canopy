@@ -1,6 +1,6 @@
 # ADR-0005 — Manifest discovery and registry binding
 
-Status: **proposed** (EP-00) · Owner: platform kernel · Evidence: [S4](../spike-evidence.md#s4--manifest-discovery-binds-to-the-real-plugin-identity-and-rejects-a-claim-to-another), [S5](../spike-evidence.md#s5--path-containment-holds-against-traversal-and-symlinks), [S13](../spike-evidence.md#s13--lifecycle-matrix)
+Status: **proposed** (EP-00) · Owner: platform kernel · Evidence: [S4](../spike-evidence.md#s4--manifest-discovery-binds-to-the-real-plugin-identity-and-rejects-a-claim-to-another), [S5](../spike-evidence.md#s5--path-containment-holds-against-traversal-symlinks-and-link-cycles), [S13](../spike-evidence.md#s13--lifecycle-matrix)
 
 ## Context
 
@@ -21,9 +21,13 @@ declared scopes — are each a distinct vulnerability.
 3. **Containment before I/O.** The resolved path must canonicalize to a location
    strictly inside the plugin root; absolute paths, embedded NUL, `..` traversal
    and root-escaping symlinks are rejected before any file is opened.
-   Verified ([S5](../spike-evidence.md#s5--path-containment-holds-against-traversal-and-symlinks)).
-   **Path separators must be normalised first** — the spike's Windows-separator
-   case passed for the wrong reason and did not exercise the containment check.
+   Verified ([S5](../spike-evidence.md#s5--path-containment-holds-against-traversal-symlinks-and-link-cycles)).
+   **Three things the naive implementation gets wrong**, each found in the spike:
+   separators must be normalised before any test; link resolution must cover every
+   path *component*, not just the leaf; and it must run to a **fixed point**,
+   because resolving one component introduces new ones that may themselves be
+   links. A link cycle must be a rejection, not an exception escaping the reader —
+   discovery iterates every plugin and one bad root must not take out the rest.
 4. **Bounded.** Manifest size, id/version lengths, operation and contribution
    counts, nesting depth and local-asset counts are all capped.
 5. **A manifest is never a grant.** It states what an extension *requests*. An
@@ -34,10 +38,14 @@ declared scopes — are each a distinct vulnerability.
 7. **Explicit lifecycle states**, rendered distinctly and never collapsed:
    `discovered/pending`, `enabled`, `disabled`, `incompatible`, `unhealthy`,
    `quarantined`, `revoked`, `absent`.
-8. **Nothing on the startup path.** Discovery, validation and registry recovery
+8. **A plugin package may ship symlinks, and Jellyfin follows them.** A link to
+   `/` inside a plugin directory prevented the server from starting at all during
+   the spike. The registry cannot fix the host's own scan, but it must not add to
+   the problem, and admin diagnostics should make such a root identifiable.
+9. **Nothing on the startup path.** Discovery, validation and registry recovery
    run after startup, off the critical path. One malformed extension must not
    delay or fail Jellyfin or Canopy startup.
-9. **Crash-safe persistence** via the existing `AtomicFile` durable-write
+10. **Crash-safe persistence** via the existing `AtomicFile` durable-write
    primitive (temp sibling → fsync contents → rename → fsync parent directory),
    with quarantine-on-corruption and a versioned unhealthy marker — the same
    model `UserConfigurationStore` already uses.

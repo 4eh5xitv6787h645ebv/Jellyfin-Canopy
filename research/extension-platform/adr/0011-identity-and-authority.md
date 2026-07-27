@@ -32,8 +32,10 @@ non-admin's own id. But the `ClaimsPrincipal` handed to a controller contains
 3. **`RequestIdentityService` confidence tiers may narrow a candidate set; they
    may never authorize.** Anything below `Authenticated` selects *which user's own
    preferences* to apply, never *what may be accessed*. Promotion of this service
-   to a platform capability is blocked until it has direct unit tests — it
-   currently has none, and is covered only indirectly.
+   to a platform capability is blocked until the **full ladder** is covered on its
+   own terms. There is no dedicated test file; `Tests/Services/SpoilerIdentityTests.cs`
+   does construct the service directly and assert on its ladder, but only along
+   the Spoiler Guard path, leaving the session-by-IP and cookie tiers untested.
 4. **The kernel never hands over the raw bearer token.** Not to a provider, not
    to an iframe, not into a descriptor, not into a log or an audit record. The
    provider context is an explicit allow-list
@@ -80,7 +82,12 @@ non-admin's own id. But the `ClaimsPrincipal` handed to a controller contains
     contribution *off*, they do not express consent. Stated plainly because the
     absence is a policy choice, not an oversight.
 13. **Revocation is immediate** across the registry, in-flight calls, event
-    subscriptions, cached catalogs and outstanding action tokens.
+    subscriptions, cached catalogs and outstanding action tokens. For events this
+    means re-checking at delivery and dropping the subscriber's reconnect buffer,
+    not merely filtering at enqueue time
+    ([ADR-0006](0006-client-event-transport.md) decision 6) — and note that
+    "in-flight calls" is aspirational for a provider that ignores cancellation,
+    which cannot be stopped ([ADR-0004](0004-provider-invocation.md)).
 14. **Audit records are redacted by construction:** extension, operation, actor
     attribution, decision, result, duration, correlation id. Never payloads,
     never tokens, never upstream keys.

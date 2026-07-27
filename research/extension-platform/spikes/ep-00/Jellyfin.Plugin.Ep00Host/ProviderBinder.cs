@@ -246,6 +246,18 @@ public sealed class ProviderBinder
             await task.WaitAsync(TimeSpan.FromMilliseconds(deadlineMs + GraceAfterDeadlineMs), CancellationToken.None)
                 .ConfigureAwait(false);
         }
+        catch (TimeoutException) when (cancellationToken.IsCancellationRequested)
+        {
+            // The caller went away and the provider then ran past the deadline. The
+            // runaway behaviour is worth noting, but the *outcome* belongs to the
+            // caller: charging it to the provider would trip its circuit breaker for
+            // someone else's dropped connection.
+            result["ok"] = false;
+            result["error"] = "caller_cancelled";
+            result["elapsedMs"] = started.ElapsedMilliseconds;
+            result["note"] = "Caller aborted; the provider also ignored cancellation and is still running.";
+            return result;
+        }
         catch (TimeoutException)
         {
             result["ok"] = false;
@@ -263,7 +275,7 @@ public sealed class ProviderBinder
             result["elapsedMs"] = started.ElapsedMilliseconds;
             return result;
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (deadline.IsCancellationRequested)
         {
             result["ok"] = false;
             result["error"] = "provider_cancelled";
@@ -290,8 +302,20 @@ public sealed class ProviderBinder
 
         try
         {
-            var payload = task.GetType().GetProperty("Result")?.GetValue(task) as string;
             result["elapsedMs"] = started.ElapsedMilliseconds;
+
+            var resultProperty = task.GetType().GetProperty("Result");
+            if (resultProperty is null)
+            {
+                // Task rather than Task<string>: the entrypoint does not implement the
+                // ABI at all, which is a different failure from returning nothing.
+                result["ok"] = false;
+                result["error"] = "provider_abi_mismatch";
+                result["detail"] = "entrypoint returned " + task.GetType().Name + ", expected Task<string>";
+                return result;
+            }
+
+            var payload = resultProperty.GetValue(task) as string;
             result["responseChars"] = payload?.Length ?? 0;
 
             if (payload is null)

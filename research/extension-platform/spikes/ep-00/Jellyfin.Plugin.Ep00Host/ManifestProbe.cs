@@ -15,6 +15,20 @@ public sealed class ManifestProbe
     /// <summary>Manifests are third-party input; cap them before reading.</summary>
     public const int MaximumManifestBytes = 256 * 1024;
 
+    /// <summary>Bounds the link-resolution loop so a pathological chain cannot spin.</summary>
+    private const int MaximumLinkResolutionPasses = 40;
+
+    /// <summary>
+    /// Where the traversal fixtures live — deliberately OUTSIDE every plugin
+    /// directory. Jellyfin walks plugin roots looking for assemblies, and a link to
+    /// "/" inside one prevents the server from starting at all. The containment
+    /// function takes its root as a parameter, so exercising it against a controlled
+    /// directory tests exactly the same code path.
+    /// </summary>
+    private const string LinkFixtureRoot = "/config/ep00-linktests";
+
+    private static readonly Guid HostPluginId = new("a0b1c2d3-e4f5-4061-8273-8495a6b7c8d9");
+
     private readonly IPluginManager _pluginManager;
 
     public ManifestProbe(IPluginManager pluginManager)
@@ -109,12 +123,22 @@ public sealed class ManifestProbe
             "escape-dir/passwd",
             "escape-file",
             "inside-file",
+            // Two-hop chain: hop-root -> /etc and hop-etc -> <root>/hop-root/ssl.
+            // A single resolution pass leaves the components introduced by the first
+            // target unresolved, so this escapes unless resolution runs to a fixed point.
+            "hop-etc/openssl.cnf",
+            // A symlink loop: passes File.Exists and the size cap, and only fails on read.
+            "cycle",
         };
 
-        var host = _pluginManager.Plugins.FirstOrDefault(p => p.Id == new Guid("a0b1c2d3-e4f5-4061-8273-8495a6b7c8d9"));
-        var root = host?.Path ?? AppContext.BaseDirectory;
+        var root = Directory.Exists(LinkFixtureRoot)
+            ? LinkFixtureRoot
+            : _pluginManager.Plugins.FirstOrDefault(p => p.Id == HostPluginId)?.Path ?? AppContext.BaseDirectory;
 
-        var results = new List<Dictionary<string, object?>>();
+        var results = new List<Dictionary<string, object?>>
+        {
+            new() { ["candidate"] = "(fixture root in use)", ["accepted"] = Directory.Exists(LinkFixtureRoot), ["reason"] = root },
+        };
         foreach (var candidate in candidates)
         {
             var accepted = TryRead(root, candidate, out _, out var reason);
@@ -187,7 +211,7 @@ public sealed class ManifestProbe
         string resolved;
         try
         {
-            resolved = ResolveFinal(candidate);
+            resolved = ResolveToFixedPoint(candidate);
         }
         catch (Exception ex)
         {
@@ -214,12 +238,57 @@ public sealed class ManifestProbe
             return false;
         }
 
-        json = File.ReadAllText(resolved);
+        // NEW-2: a symlink loop passes File.Exists (lstat) and the size cap (the link
+        // string is short), so the read is the first thing that fails. Left
+        // unguarded it escapes TryRead and takes discovery down for every plugin.
+        try
+        {
+            json = File.ReadAllText(resolved);
+        }
+        catch (IOException ex)
+        {
+            reason = "rejected: unreadable (" + ex.GetType().Name + ")";
+            return false;
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            reason = "rejected: unreadable (" + ex.GetType().Name + ")";
+            return false;
+        }
+
         reason = "accepted";
         return true;
     }
 
-    /// <summary>Resolves every symlink in <paramref name="path"/>, one component at a time.</summary>
+    /// <summary>
+    /// Resolves links repeatedly until the path stops changing. A single pass is not
+    /// enough: resolving one component can introduce new components that are
+    /// themselves links, so a two-hop chain would survive an unrepeated walk.
+    /// </summary>
+    private static string ResolveToFixedPoint(string path)
+    {
+        var resolved = path;
+        for (var i = 0; i < MaximumLinkResolutionPasses; i++)
+        {
+            var next = ResolveFinal(resolved);
+            if (string.Equals(next, resolved, StringComparison.Ordinal))
+            {
+                return resolved;
+            }
+
+            resolved = next;
+        }
+
+        throw new IOException("Link resolution did not converge after "
+            + MaximumLinkResolutionPasses + " passes.");
+    }
+
+    /// <summary>
+    /// Resolves every symlink in <paramref name="path"/>, one component at a time.
+    /// Unix-shaped: it splits on the platform separator and rebuilds from a bare
+    /// separator, so it does not handle Windows drive or UNC roots. That is adequate
+    /// for a Linux-only throwaway spike and must not be lifted into the kernel as-is.
+    /// </summary>
     private static string ResolveFinal(string path)
     {
         // ResolveLinkTarget(returnFinalTarget: true) only follows a link at the leaf,
@@ -229,17 +298,28 @@ public sealed class ManifestProbe
         foreach (var part in parts)
         {
             current = Path.Combine(current, part);
-            FileSystemInfo? target = null;
+            // A component that does not exist cannot be a link, and asking anyway
+            // throws FileNotFoundException — which would turn a legitimately absent
+            // manifest into an "unresolvable link" error.
+            var isDirectory = Directory.Exists(current);
+            if (!isDirectory && !File.Exists(current))
+            {
+                continue;
+            }
+
+            FileSystemInfo? target;
             try
             {
-                target = Directory.Exists(current)
+                target = isDirectory
                     ? new DirectoryInfo(current).ResolveLinkTarget(true)
                     : new FileInfo(current).ResolveLinkTarget(true);
             }
             catch (IOException)
             {
-                // Broken or cyclic link: leave the component unresolved. The
-                // containment test below still runs against what we have.
+                // A cyclic or otherwise unresolvable link. Leaving the component
+                // unresolved would let containment pass on a path we cannot reason
+                // about, so fail closed instead.
+                throw;
             }
 
             if (target is not null)
@@ -251,7 +331,20 @@ public sealed class ManifestProbe
         return current;
     }
 
-    private static bool IsInside(string candidate, string canonicalRoot) =>
-        string.Equals(candidate, canonicalRoot, StringComparison.Ordinal)
-        || candidate.StartsWith(canonicalRoot + Path.DirectorySeparatorChar, StringComparison.Ordinal);
+    private static bool IsInside(string candidate, string canonicalRoot)
+    {
+        if (string.Equals(candidate, canonicalRoot, StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        // A root that is already a single separator would otherwise demand a doubled
+        // separator and reject everything. Unreachable for a real plugin root, but
+        // this function is the one EP-03 will inherit.
+        var prefix = canonicalRoot.EndsWith(Path.DirectorySeparatorChar)
+            ? canonicalRoot
+            : canonicalRoot + Path.DirectorySeparatorChar;
+
+        return candidate.StartsWith(prefix, StringComparison.Ordinal);
+    }
 }

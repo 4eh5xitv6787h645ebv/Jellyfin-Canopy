@@ -73,13 +73,15 @@ these is out of scope for v1.
 |---|---|---|---|
 | **Server plugins** | another installed Jellyfin 12 .NET plugin | declares a manifest; the kernel invokes it in-process over a JSON ABI | **yes** — [S3](spike-evidence.md#s3--cross-plugin-di-works-but-only-by-foreign-concrete-type) |
 | **Web extensions** | contributions rendered by Canopy's own web adapter | declarative surface schemas over HTTP | **not yet** — no browser spike ran |
-| **Native / TV clients** | Android TV, Roku, Kodi, Swift, third-party clients | HTTP + a deliberately small descriptor schema the client chooses to implement | **no** — and cannot be, without that client's authors |
+| **Native / TV clients** | Android TV, Roku, Kodi, Swift, third-party clients | HTTP + a deliberately small descriptor schema the client chooses to implement | **no** — and cannot be, without that client's authors. A first-party [Android TV fork](https://github.com/4eh5xitv6787h645ebv/jellyfin-androidtv) is a committed adopter; see the [client matrix](supported-client-matrix.md#the-first-native-adopter). |
 | **Automation / companion services** | scripts, bots, sidecar containers | HTTP + a service credential | **partly** — HTTP surface exists, credentials do not |
 
 The asymmetry in that last column is the single most important thing in this
 charter. A server plugin can be made to work by us. A native client cannot: a
 server-side installation **cannot** add UI to a client that has not implemented
-the protocol, and no amount of platform design changes that. See the
+the protocol, and no amount of platform design changes that. Having one adopter
+lined up makes the protocol testable against something real; it does not change
+the asymmetry for every other client. See the
 [supported-client matrix](supported-client-matrix.md).
 
 ## 3. Ownership and support boundary

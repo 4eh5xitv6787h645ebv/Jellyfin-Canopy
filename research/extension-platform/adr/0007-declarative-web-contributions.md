@@ -1,6 +1,6 @@
 # ADR-0007 — Declarative web contributions
 
-Status: **proposed** for decisions 1–6 · **deferred, not in v1** for decision 7 · Owner: web adapter
+Status: **proposed** for decisions 1–6 · **deferred, not in v1** for the sandboxed-frame decision · Owner: web adapter
 
 ## Context
 
@@ -81,7 +81,7 @@ machine-enforced today. They are therefore *proposed*, not provisional — and t
 real risk they carry is rendering breadth, which is what
 [#491](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/491) gates.
 
-The deferred decision above rests on nothing yet, which is why it is deferred
+The deferred sandboxed-frame decision rests on nothing yet, which is why it is deferred
 rather than merely unproven.
 
 ## Consequences

@@ -142,15 +142,15 @@ fingerprint-bound to the GUID Jellyfin reports
 ([S4](spike-evidence.md#s4--manifest-discovery-binds-to-the-real-plugin-identity-and-rejects-a-claim-to-another)).
 Traversal, absolute paths, embedded NUL and escaping symlinks are rejected before
 any file is opened
-([S5](spike-evidence.md#s5--path-containment-holds-against-traversal-and-symlinks)).
+([S5](spike-evidence.md#s5--path-containment-holds-against-traversal-symlinks-and-link-cycles)).
 Size, malformed-JSON and non-object manifests are rejected before registration, and a fingerprint mismatch is a rejection rather than a flag — all verified. A manifest requests; an admin grants.
-*Residual.* **Low.** Two defects found during the spike were fixed rather than
-documented away: separators are now normalised before any test, and every path
-component is resolved with `ResolveLinkTarget(returnFinalTarget: true)` so a
-symlinked *directory* component can no longer escape — the original lexical check
-happily returned `/etc/passwd`. Both symlink cases are now rejected and a
-symlink that stays inside the root is still accepted
-([S5](spike-evidence.md#s5--path-containment-holds-against-traversal-and-symlinks)).
+*Residual.* **Low.** Four defects found during the spike were fixed rather than
+documented away: separators are normalised before any test; every path component
+is resolved, not just the leaf; resolution runs to a **fixed point**, because one
+pass still let a two-hop chain escape; and a link cycle is rejected rather than
+throwing out of the reader, which would otherwise have taken manifest discovery
+down for every plugin. A symlink that stays inside the root is still accepted
+([S5](spike-evidence.md#s5--path-containment-holds-against-traversal-symlinks-and-link-cycles)).
 Remaining gap: nothing re-validates on the open handle, so a TOCTOU window
 remains — [#494](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/494).
 

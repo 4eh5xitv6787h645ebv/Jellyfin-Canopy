@@ -129,6 +129,10 @@ retry() {
 }
 
 log "Complete startup wizard"
+route_is() {
+  [ "$(curl -s -o /dev/null -w '%{http_code}' "$1")" = "$2" ]
+}
+
 retry 40 curl -sf -o /dev/null -X POST "$B/Startup/Configuration" -H 'Content-Type: application/json' \
   -d '{"UICulture":"en-US","MetadataCountryCode":"US","PreferredMetadataLanguage":"en"}'
 retry 10 curl -sf -o /dev/null "$B/Startup/User"
@@ -186,14 +190,30 @@ docker cp "$WORK/Ep00SpikeHost_1.0.0.0" "$NAME:/config/plugins/"
 docker cp "$WORK/Ep00SpikeProvider_1.0.0.0" "$NAME:/config/plugins/"
 # Symlinks for the containment probe: one escaping directory component, one
 # escaping leaf, and one that legitimately stays inside the root.
+# Link fixtures for the containment probe. They live OUTSIDE /config/plugins on
+# purpose: Jellyfin walks plugin roots for assemblies, and a link to "/" inside one
+# prevents the server from starting at all.
 docker exec "$NAME" sh -c '
-  ln -sfn /etc          /config/plugins/Ep00SpikeHost_1.0.0.0/escape-dir
-  ln -sfn /etc/hostname /config/plugins/Ep00SpikeHost_1.0.0.0/escape-file
-  ln -sfn meta.json     /config/plugins/Ep00SpikeHost_1.0.0.0/inside-file'
+  R=/config/ep00-linktests
+  mkdir -p "$R"
+  echo "{}" > "$R/inside.json"
+  ln -sfn /etc              "$R/escape-dir"
+  ln -sfn /etc/hostname     "$R/escape-file"
+  ln -sfn inside.json       "$R/inside-file"
+  # Two-hop chain: both links are inside the fixture root and neither target is
+  # lexically outside it. Only fixed-point resolution catches this.
+  ln -sfn /etc              "$R/hop-root"
+  ln -sfn "$R/hop-root/ssl" "$R/hop-etc"
+  # A loop, to prove the reader rejects rather than throwing out of discovery.
+  ln -sfn cycle2 "$R/cycle"
+  ln -sfn cycle  "$R/cycle2"'
 docker restart "$NAME" >/dev/null
 wait_up
 # Plugin controllers are routed a little after the server answers /System/Info.
-retry 40 test "$(curl -s -o /dev/null -w '%{http_code}' "$B/Ep00Spike/Discovery")" = 200
+# NB: the command must be re-evaluated on every attempt, so this has to be a
+# function call - `retry N test "$(curl ...)" = 200` expands the curl exactly once
+# and then loops on a stale value until it gives up.
+retry 40 route_is "$B/Ep00Spike/Discovery" 200
 
 log "Probe B — load contexts and type identity"
 curl -s "$B/Ep00Spike/Self" -H "$AUTH" | python3 -m json.tool

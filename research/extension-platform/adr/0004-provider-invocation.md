@@ -74,9 +74,10 @@ Every outcome maps to a stable code. Verified:
 | throws (sync or async) | `provider_faulted` — one code; do not split by whether the exception arrived wrapped in `TargetInvocationException`, which depends only on whether the entrypoint is `async` |
 | returns malformed JSON | `provider_response_invalid_json` (validated **before** leaving the boundary) |
 | returns an oversized response | `provider_response_too_large` — **must be added**; the spike had no cap |
-| honours cancellation at the deadline | `provider_cancelled` |
+| honours cancellation at the deadline | `provider_cancelled` — assigned only when the kernel's own deadline token fired, never for a cancellation the provider raised on some other token |
 | exceeds the deadline without cooperating | `provider_deadline_exceeded` |
-| the **caller** aborts | `caller_cancelled` — never attributed to the provider, never counted against its circuit breaker |
+| the **caller** aborts | `caller_cancelled` — never attributed to the provider, never counted against its circuit breaker. This must be checked *before* the deadline branch: a caller abort against a provider that ignores cancellation otherwise reaches the timeout first and is misfiled. |
+| entrypoint returns `Task` rather than `Task<string>` | `provider_abi_mismatch` — distinct from returning nothing |
 | plugin disabled | `provider_disabled` |
 | plugin uninstalled / absent | `provider_absent` |
 | circuit open | `provider_unavailable` |

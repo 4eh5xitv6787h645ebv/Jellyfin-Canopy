@@ -31,7 +31,8 @@ shape of the problem.
 | Jellyfin Web on mobile browser | 1 | yes | planned | `fetch()` stream | yes | **supported** |
 | Jellyfin Web TV mode (browser) | 1 | yes | planned | `fetch()` stream | yes | **supported** — *not* evidence of native TV support |
 | Jellyfin Android (mobile, WebView portions) | 2 | partial | no | no | yes | **best effort**, untested |
-| Jellyfin Android TV | 4 | **no** | no | no | yes | **unsupported** unless adopted |
+| **`4eh5xitv6787h645ebv/jellyfin-androidtv`** (first-party fork, Kotlin) | 4 | **no** | **planned — committed adopter** | planned | yes | **design partner** — see below |
+| Jellyfin Android TV (upstream) | 4 | **no** | no | no | yes | **unsupported** unless adopted |
 | Findroid, Plethorafin and other native Android clients | 4 | **no** | no | no | yes | **unsupported** unless adopted |
 | Swiftfin (iOS / tvOS) | 4 | **no** | no | no | yes | **unsupported** unless adopted |
 | Roku | 4 | **no** | no | no | yes | **unsupported** unless adopted |
@@ -52,6 +53,26 @@ It does not mean broken. A native client that has not adopted the protocol:
 Graceful omission is a hard requirement: a client that negotiates a schema it
 does not support gets the contribution **omitted**, never approximated, never
 half-rendered ([ADR-0007](adr/0007-declarative-web-contributions.md)).
+
+## The first native adopter
+
+A first-party fork of the Android TV client —
+[`4eh5xitv6787h645ebv/jellyfin-androidtv`](https://github.com/4eh5xitv6787h645ebv/jellyfin-androidtv) (Kotlin) — is in
+development by the same owner and intends to consume this protocol. That changes
+the programme's shape in three ways:
+
+1. **The native protocol has a real design partner.** EP-08 can be validated
+   against a client that actually renders descriptors, instead of only against a
+   headless fixture ([#492](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/492)).
+2. **Kotlin model generation stops being speculative.** ADR-0009 lists Kotlin
+   models as "where practical"; there is now a concrete consumer for them.
+3. **It does not change the rule.** This client is listed as an adopter only when
+   a conformance run passes on it. Being the same owner earns no exemption, and
+   nothing here implies upstream Android TV, Roku, Kodi or Swift support.
+
+The honest caveat: a single first-party adopter proves the protocol is
+*implementable*, not that it is *adoptable by strangers*. Risk R-02 is reduced,
+not closed.
 
 ## Adoption path for a native client
 
@@ -78,8 +99,9 @@ Stated plainly so the matrix is not read as stronger than the evidence:
 - **No browser spike ran.** Playwright is not provisioned here, so declarative
   slot rendering, the opaque-origin frame and the `postMessage` broker are all
   unverified. Every "planned" cell depends on the EP-00 web-sandbox child issue.
-- **No native or TV client was involved in any way.** Nothing in the spike
-  supports any claim about Android TV, Roku, Kodi or Swift behaviour.
+- **No native or TV client was involved in any way**, including the first-party
+  fork above. Nothing in the spike supports any claim about Android TV, Roku,
+  Kodi or Swift behaviour.
 - Whether a native client gracefully ignores or **hard-crashes** on an unexpected
   payload under a known `SessionMessageType` is untested, and is one reason the
   platform does not use that channel.
