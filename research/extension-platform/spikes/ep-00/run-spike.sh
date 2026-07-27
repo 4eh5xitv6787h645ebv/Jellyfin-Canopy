@@ -128,10 +128,17 @@ printf 'bare 401 body bytes   : %s\n' "$(curl -s -o /dev/null -w '%{size_downloa
 for p in api_key apikey ApiKey token accessToken; do
   printf 'query auth %-12s : %s\n' "$p" "$(curl -s -o /dev/null -w '%{http_code}' "$B/System/Info?$p=$TOKEN")"
 done
-for h in "X-Emby-Token: $TOKEN" "X-MediaBrowser-Token: $TOKEN" "Authorization: Bearer $TOKEN" "Authorization: Emby Token=$TOKEN" "Authorization: MediaBrowser Token=$TOKEN"; do
-  printf 'header %-34s : %s\n' "${h%%:*}${h#*Token}" \
-    "$(curl -s -o /dev/null -w '%{http_code}' "$B/System/Info" -H "$h")"
-done
+# Header forms Jellyfin 12 does and does not accept. Labels are written out so the
+# token never appears in the transcript.
+header_probe() {
+  printf 'header %-30s : %s\n' "$1" \
+    "$(curl -s -o /dev/null -w '%{http_code}' "$B/System/Info" -H "$2")"
+}
+header_probe 'X-Emby-Token'                "X-Emby-Token: $TOKEN"
+header_probe 'X-MediaBrowser-Token'        "X-MediaBrowser-Token: $TOKEN"
+header_probe 'Authorization: Bearer'       "Authorization: Bearer $TOKEN"
+header_probe 'Authorization: Emby'         "Authorization: Emby Token=$TOKEN"
+header_probe 'Authorization: MediaBrowser' "Authorization: MediaBrowser Token=$TOKEN"
 printf 'CORS preflight        : '
 curl -s -i -X OPTIONS "$B/System/Info" -H 'Origin: https://evil.example' \
   -H 'Access-Control-Request-Method: GET' -H 'Access-Control-Request-Headers: authorization' \
