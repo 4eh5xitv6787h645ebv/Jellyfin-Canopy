@@ -179,6 +179,41 @@ test('decodes raw HTML labels and records each link rendered container text', ()
     ]);
 });
 
+test('records each link position and scans quoted HTML delimiters before href', () => {
+    const links = extractLinks([
+        '[same](https://example.com/one). For support, [same](https://example.com/two).',
+        '',
+        '<div><a title="1 > 0" href="https://example.com/three">Ask for support</a></div>',
+        '',
+    ].join('\n'));
+    assert.deepEqual(links.map(link => ({
+        target: link.target,
+        label: link.label,
+        before: link.contextBefore,
+        after: link.contextAfter,
+    })), [
+        {
+            target: 'https://example.com/one',
+            label: 'same',
+            before: '',
+            after: '. For support, same.',
+        },
+        {
+            target: 'https://example.com/two',
+            label: 'same',
+            before: 'same. For support,',
+            after: '.',
+        },
+        {
+            target: 'https://example.com/three',
+            label: 'Ask for support',
+            before: '',
+            after: '',
+        },
+    ]);
+    assert.equal(isActionableLink(links[2]), true);
+});
+
 test('validates quoted and unquoted raw HTML links without reserving heading slugs', () => {
     fixture({
         'CONTRIBUTING.md': '<span id=local-id></span>\n[Local](#local-id)\n<img src=docs/missing.png>\n',

@@ -275,6 +275,22 @@ test('security policy and every security chooser contact stay private-only', () 
     });
 });
 
+test('repository-wide security intake recognizes plural report and submission headings', () => {
+    for (const heading of ['Security reports', 'Vulnerability submissions']) {
+        const files = validFixture();
+        files['docs/about.md'] += [
+            `## ${heading}`,
+            `[Open a public report](${ISSUES_ROUTE}).`,
+            '',
+        ].join('\n');
+        fixture(files, root => {
+            assert.ok(auditSupportContract({ root }).problems.includes(
+                `docs/about.md: "${heading}" must route only to private GitHub advisories`
+            ));
+        });
+    }
+});
+
 test('feature and support destinations are owned by their rendered sections', () => {
     const files = validFixture();
     files['README.md'] = [
@@ -372,12 +388,45 @@ test('semantic route ownership includes prose surrounding click-here links', () 
     });
 });
 
+test('semantic ownership uses each link sentence even for cross-category and repeated labels', () => {
+    const files = validFixture();
+    files['CONTRIBUTING.md'] = files['CONTRIBUTING.md'].replace(
+        `[Jellyfin Community Discord](${DISCORD_ROUTE}).`,
+        `[Jellyfin Community Discord](${DISCORD_ROUTE}).\n`
+        + `[GitHub Issues](${ISSUES_ROUTE}) are for bugs. `
+        + `For support, use [GitHub Issues](${ISSUES_ROUTE}).\n`
+        + `[click here](${DISCORD_ROUTE}) for release notes. `
+        + `For support, [click here](${ISSUES_ROUTE}).`
+    );
+    fixture(files, root => {
+        assert.ok(auditSupportContract({ root }).problems.includes(
+            'CONTRIBUTING.md: must route every community-support link to the '
+            + 'Jellyfin Community Discord in "## 💬 Getting Help"'
+        ));
+    });
+});
+
 test('semantic route ownership decodes rendered raw HTML labels', () => {
     const files = validFixture();
     files['CONTRIBUTING.md'] = files['CONTRIBUTING.md'].replace(
         `[Jellyfin Community Discord](${DISCORD_ROUTE}).`,
         `[Jellyfin Community Discord](${DISCORD_ROUTE}).\n`
         + `<div><a href="${ISSUES_ROUTE}">Ask for supp&#111;rt</a></div>`
+    );
+    fixture(files, root => {
+        assert.ok(auditSupportContract({ root }).problems.includes(
+            'CONTRIBUTING.md: must route every community-support link to the '
+            + 'Jellyfin Community Discord in "## 💬 Getting Help"'
+        ));
+    });
+});
+
+test('semantic ownership scans raw HTML attributes with quoted greater-than characters', () => {
+    const files = validFixture();
+    files['CONTRIBUTING.md'] = files['CONTRIBUTING.md'].replace(
+        `[Jellyfin Community Discord](${DISCORD_ROUTE}).`,
+        `[Jellyfin Community Discord](${DISCORD_ROUTE}).\n`
+        + `<div><a title="1 > 0" href="${ISSUES_ROUTE}">Ask for support</a></div>`
     );
     fixture(files, root => {
         assert.ok(auditSupportContract({ root }).problems.includes(
@@ -400,6 +449,68 @@ test('semantic intake links follow relative Markdown targets in file context', (
             + 'Jellyfin Community Discord in "## 💬 Getting Help"'
         ));
     });
+});
+
+test('private security intake follows owned local routes but permits neutral policy links', () => {
+    const files = validFixture();
+    files['SECURITY.md'] = files['SECURITY.md'].replace(
+        `[Submit a private report](${SECURITY_ADVISORY_ROUTE}).`,
+        `[Submit a private report](${SECURITY_ADVISORY_ROUTE}).\n`
+        + '[Alternative vulnerability report](docs/public-report.md).\n'
+        + '[Security policy background](docs/policy.md).'
+    );
+    files['docs/public-report.md'] = [
+        '## Public route',
+        `[Open a public vulnerability report](${ISSUES_ROUTE}).`,
+        '',
+    ].join('\n');
+    files['docs/policy.md'] = 'This policy contains no intake link.\n';
+    fixture(files, root => {
+        assert.ok(auditSupportContract({ root }).problems.includes(
+            'SECURITY.md: "## Reporting a Vulnerability" must use only private GitHub advisories'
+        ));
+    });
+
+    const neutral = validFixture();
+    neutral['SECURITY.md'] = neutral['SECURITY.md'].replace(
+        `[Submit a private report](${SECURITY_ADVISORY_ROUTE}).`,
+        `[Submit a private report](${SECURITY_ADVISORY_ROUTE}).\n`
+        + '[Security policy background](docs/policy.md).'
+    );
+    neutral['docs/policy.md'] = 'This policy contains no intake link.\n';
+    fixture(neutral, root => {
+        assert.ok(!auditSupportContract({ root }).problems.includes(
+            'SECURITY.md: "## Reporting a Vulnerability" must use only private GitHub advisories'
+        ));
+    });
+});
+
+test('private security intake resolves explicit and duplicate canonical heading anchors', () => {
+    for (const [fragment, target] of [
+        [
+            'support-intake',
+            `## Community route {#support-intake}\n`
+            + `[Submit a vulnerability report](${SECURITY_ADVISORY_ROUTE}).\n`,
+        ],
+        [
+            'community-route_1',
+            `## Community route\nPolicy only.\n`
+            + `## Community route\n`
+            + `[Submit a vulnerability report](${SECURITY_ADVISORY_ROUTE}).\n`,
+        ],
+    ]) {
+        const files = validFixture();
+        files['SECURITY.md'] = files['SECURITY.md'].replace(
+            `[Submit a private report](${SECURITY_ADVISORY_ROUTE}).`,
+            `[Submit a vulnerability report](docs/security-routes.md#${fragment}).`
+        );
+        files['docs/security-routes.md'] = target;
+        fixture(files, root => {
+            assert.ok(!auditSupportContract({ root }).problems.includes(
+                'SECURITY.md: "## Reporting a Vulnerability" must use only private GitHub advisories'
+            ));
+        });
+    }
 });
 
 test('feature route ownership stops at a higher-level heading boundary', () => {
@@ -549,6 +660,28 @@ test('redaction guidance requires positive, non-negated instructions in its owni
             '.github/ISSUE_TEMPLATE/bug.md: logs section must require sensitive-data redaction'
         ));
     });
+
+    const negativeImperative = validFixture();
+    negativeImperative['.github/ISSUE_TEMPLATE/bug.md'] = BUG_TEMPLATE.replace(
+        'Redact tokens and credentials from attached logs.',
+        'Avoid redacting credentials from attached logs.'
+    );
+    fixture(negativeImperative, root => {
+        assert.ok(auditSupportContract({ root }).problems.includes(
+            '.github/ISSUE_TEMPLATE/bug.md: logs section must require sensitive-data redaction'
+        ));
+    });
+
+    const doubleNegative = validFixture();
+    doubleNegative['.github/ISSUE_TEMPLATE/bug.md'] = BUG_TEMPLATE.replace(
+        'Redact tokens and credentials from attached logs.',
+        'Do not leave credentials unredacted.'
+    );
+    fixture(doubleNegative, root => {
+        assert.ok(!auditSupportContract({ root }).problems.includes(
+            '.github/ISSUE_TEMPLATE/bug.md: logs section must require sensitive-data redaction'
+        ));
+    });
 });
 
 test('enforces GitHub template metadata and rendered issue-body link semantics', () => {
@@ -690,6 +823,22 @@ test('rejects structurally invalid chooser contact URLs', () => {
         assert.ok(auditSupportContract({ root }).problems.includes(
             '.github/ISSUE_TEMPLATE/config.yml: contact_links[1].url '
             + 'must be a valid absolute HTTPS URL'
+        ));
+    });
+});
+
+test('restricts the issue chooser to the governed private-security contact', () => {
+    const files = validFixture();
+    files['.github/ISSUE_TEMPLATE/config.yml'] = CONFIG + [
+        '  - name: Community support',
+        `    url: ${ISSUES_ROUTE}`,
+        '    about: Ask questions and get help.',
+        '',
+    ].join('\n');
+    fixture(files, root => {
+        assert.ok(auditSupportContract({ root }).problems.includes(
+            '.github/ISSUE_TEMPLATE/config.yml: '
+            + 'contact_links must contain only the private security-report entry'
         ));
     });
 });

@@ -8,9 +8,8 @@ const { parseDocument } = require('yaml');
 const {
     extractLinks,
     extractLinksFromTokens,
-    headingSlug,
     isActionableLink,
-    mkdocsHeadingSlug,
+    markdownHeadingAnchors,
     normalizeLinkTarget,
     validateMarkdownFile,
     visibleHtmlText,
@@ -75,7 +74,15 @@ const SUPPORT_ROUTE_SECTIONS = new Map([
 const BUG_ROUTE_LABEL = /\b(?:bug(?:s|[- ]reports?)?|report(?: an)? issues?|github issues)\b/i;
 const FEATURE_ROUTE_LABEL = /\b(?:feature|proposal|suggest)/i;
 const SUPPORT_ROUTE_LABEL = /\b(?:discord|support|help|questions?|community)\b/i;
-const SECURITY_INTAKE_HEADING = /(?:\b(?:report(?:ing)?|submit(?:ting)?|disclos(?:e|ing|ures?)|intake)\b.{0,80}\b(?:security|vulnerab\w*)\b|\b(?:security|vulnerab\w*)\b.{0,80}\b(?:report(?:ing)?|submit(?:ting)?|disclos(?:e|ing|ures?)|intake)\b)/i;
+const SECURITY_ACTION = '(?:reports?|reporting|submissions?|submit(?:s|ting)?|disclos(?:e|es|ing|ures?)|intake)';
+const SECURITY_SUBJECT = '(?:security|vulnerab\\w*)';
+const SECURITY_INTAKE_HEADING = new RegExp(
+    `(?:\\b${SECURITY_ACTION}\\b.{0,80}\\b${SECURITY_SUBJECT}\\b`
+    + `|\\b${SECURITY_SUBJECT}\\b.{0,80}\\b${SECURITY_ACTION}\\b)`,
+    'i'
+);
+const SECURITY_ROUTE_LABEL = SECURITY_INTAKE_HEADING;
+const NEUTRAL_SECURITY_REFERENCE = /\b(?:background|documentation|guidelines?|policy|reference|timeline)\b/i;
 const markdown = new MarkdownIt({ html: true, linkify: true });
 markdown.linkify.set({ fuzzyEmail: false, fuzzyLink: false });
 
@@ -305,24 +312,18 @@ function isExactHttpsRoute(link, route) {
         && actual.hash === expected.hash;
 }
 
-function hasOnlyExactHttpsRoute(tokens, route) {
-    const links = extractLinksFromTokens(tokens).filter(link => (
-        link?.type === 'link' && !isLocalDocumentationReference(link.target)
-    ));
-    return links.some(link => isActionableLink(link) && isExactHttpsRoute(link, route))
-        && links.every(link => isExactHttpsRoute(link, route));
-}
-
 function semanticLinkText(link) {
     const label = String(link?.label || '').trim();
-    if (BUG_ROUTE_LABEL.test(label)
-        || FEATURE_ROUTE_LABEL.test(label)
-        || SUPPORT_ROUTE_LABEL.test(label)) return label;
-    const context = String(link?.context || '').trim();
-    const offset = context.toLowerCase().indexOf(label.toLowerCase());
-    if (!label || offset === -1) return `${label} ${context}`.trim();
-    const before = context.slice(0, offset);
-    const after = context.slice(offset + label.length);
+    let before = String(link?.contextBefore || '');
+    let after = String(link?.contextAfter || '');
+    if (!Object.hasOwn(link || {}, 'contextBefore')
+        || !Object.hasOwn(link || {}, 'contextAfter')) {
+        const context = String(link?.context || '').trim();
+        const offset = context.toLowerCase().indexOf(label.toLowerCase());
+        if (!label || offset === -1) return `${label} ${context}`.trim();
+        before = context.slice(0, offset);
+        after = context.slice(offset + label.length);
+    }
     const start = Math.max(
         before.lastIndexOf('.'),
         before.lastIndexOf('!'),
@@ -333,7 +334,7 @@ function semanticLinkText(link) {
         .map(boundary => after.indexOf(boundary))
         .filter(index => index !== -1);
     const end = boundaries.length > 0 ? Math.min(...boundaries) : after.length;
-    return `${label} ${before.slice(start)} ${after.slice(0, end)}`.replace(/\s+/g, ' ').trim();
+    return `${before.slice(start)} ${label} ${after.slice(0, end)}`.replace(/\s+/g, ' ').trim();
 }
 
 function localMarkdownTarget(root, file, target) {
@@ -364,14 +365,58 @@ function localMarkdownTarget(root, file, target) {
 
 function fragmentSectionTokens(tokens, fragment, file) {
     if (!fragment) return tokens;
-    const slug = file.startsWith('docs/') ? mkdocsHeadingSlug : headingSlug;
-    for (let index = 0; index < tokens.length; index += 1) {
-        if (headingLevel(tokens[index]) === 0) continue;
-        let heading = headingText(tokens, index);
-        if (file.startsWith('docs/')) heading = heading.replace(/\s*\{[^}]+\}\s*$/, '');
-        if (slug(heading) === fragment) return headingSectionTokens(tokens, index);
-    }
+    const dialect = file.startsWith('docs/') ? 'mkdocs' : 'github';
+    const heading = markdownHeadingAnchors(tokens, dialect)
+        .find(record => record.anchor === fragment);
+    if (heading) return headingSectionTokens(tokens, heading.index);
     return [];
+}
+
+function exactRouteResult(tokens, route, options) {
+    const context = {
+        root: options.root,
+        file: options.file,
+        visited: options.visited || new Set([`${options.file}#`]),
+    };
+    const links = extractLinksFromTokens(tokens).filter(link => link?.type === 'link');
+    const direct = links.filter(link => !isLocalDocumentationReference(link.target));
+    let hasRoute = direct.some(link => isActionableLink(link) && isExactHttpsRoute(link, route));
+    if (!direct.every(link => isExactHttpsRoute(link, route))) {
+        return { hasRoute, valid: false };
+    }
+    const localIntake = links.filter(link => (
+        isActionableLink(link)
+        && isLocalDocumentationReference(link.target)
+        && SECURITY_ROUTE_LABEL.test(semanticLinkText(link))
+        && !NEUTRAL_SECURITY_REFERENCE.test(semanticLinkText(link))
+    ));
+    for (const link of localIntake) {
+        const target = localMarkdownTarget(context.root, context.file, link.target);
+        if (!target) return { hasRoute, valid: false };
+        const key = `${target.file}#${target.fragment}`;
+        if (context.visited.has(key) || context.visited.size >= 8) {
+            return { hasRoute, valid: false };
+        }
+        const source = fs.readFileSync(path.join(context.root, target.file), 'utf8');
+        const documentTokens = markdown.parse(source, {});
+        const nested = exactRouteResult(
+            fragmentSectionTokens(documentTokens, target.fragment, target.file),
+            route,
+            {
+                root: context.root,
+                file: target.file,
+                visited: new Set([...context.visited, key]),
+            }
+        );
+        hasRoute ||= nested.hasRoute;
+        if (!nested.valid) return { hasRoute, valid: false };
+    }
+    return { hasRoute, valid: true };
+}
+
+function hasOnlyExactHttpsRoute(tokens, route, options) {
+    const result = exactRouteResult(tokens, route, options);
+    return result.hasRoute && result.valid;
 }
 
 function semanticLinkMatches(link, labelPattern, predicate, options) {
@@ -389,6 +434,7 @@ function semanticLinkMatches(link, labelPattern, predicate, options) {
         file: target.file,
         visited,
         sectionMap: options.sectionMap,
+        inherited: true,
     };
     const ownedSections = target.fragment
         ? []
@@ -412,6 +458,11 @@ function hasOnlySemanticRoute(tokens, labelPattern, predicate, options) {
         sectionMap: options.sectionMap,
     };
     const links = actionableLinks(tokens).filter(link => labelPattern.test(semanticLinkText(link)));
+    if (links.length === 0 && options.inherited) {
+        const direct = actionableLinks(tokens)
+            .filter(link => !isLocalDocumentationReference(link.target));
+        return direct.length > 0 && direct.every(predicate);
+    }
     return links.length > 0
         && links.every(link => semanticLinkMatches(link, labelPattern, predicate, context));
 }
@@ -494,9 +545,17 @@ function requiresSensitiveRedaction(text) {
         const subjects = clause.replace(/\bnon[- ]sensitive\b/gi, 'ordinary');
         return new RegExp(`\\b${sensitive}\\b`, 'i').test(subjects);
     };
+    const requiresNoUnredactedSensitiveData = clause => new RegExp(
+        `\\b(?:do not|never)\\s+leave\\b.{0,160}\\b${sensitive}\\b`
+        + `.{0,160}\\bunredacted\\b`,
+        'i'
+    ).test(clause);
     const rejectsRedaction = (clause) => (
-        /\b(?:unredacted|do not redact|never redact|no need to redact|without redacting)\b/i
+        /\b(?:do not redact|never redact|no need to redact|without redacting|avoid redacting)\b/i
             .test(clause)
+        || (!requiresNoUnredactedSensitiveData(clause)
+            && /\b(?:leave|keep|allow)\b.{0,120}\b(?:unredacted|without redaction)\b/i.test(clause))
+        || /\bremain(?:s|ed|ing)?\s+unredacted\b/i.test(clause)
         || /\b(?:do not|never)\s+(?:need|have)\s+to\s+(?:be\s+)?redact(?:ed|ing)?\b/i
             .test(clause)
         || /\b(?:does|did)\s+not\s+need\s+to\s+(?:be\s+)?redact(?:ed|ing)?\b/i.test(clause)
@@ -517,13 +576,22 @@ function requiresSensitiveRedaction(text) {
     }
     return clauses.some((clause) => {
         if (!hasSensitiveSubject(clause)) return false;
-        return new RegExp(`\\bredact(?:ed|ing)?\\b.{0,240}\\b${sensitive}\\b`, 'i').test(clause)
+        return new RegExp(
+            `(?:^|,\\s*)(?:please\\s+|always\\s+)?redact\\b.{0,240}\\b${sensitive}\\b`,
+            'i'
+        ).test(clause)
             || new RegExp(`\\b(?:do not|never) include\\b.{0,240}\\b${sensitive}\\b`, 'i')
                 .test(clause)
             || new RegExp(
+                `\\b(?:must|should|need(?:s)? to|(?:is|are) required to)\\s+redact\\b`
+                + `.{0,240}\\b${sensitive}\\b`,
+                'i'
+            ).test(clause)
+            || new RegExp(
                 `\\b${sensitive}\\b.{0,160}\\b(?:must|should|need(?:s)? to) be redacted\\b`,
                 'i'
-            ).test(clause);
+            ).test(clause)
+            || requiresNoUnredactedSensitiveData(clause);
     });
 }
 
@@ -580,6 +648,9 @@ function requireChooserConfig(config, file, problems) {
     if (!Array.isArray(config.contact_links)) {
         problems.push(`${file}: contact_links must be an array`);
         return;
+    }
+    if (config.contact_links.length !== 1) {
+        problems.push(`${file}: contact_links must contain only the private security-report entry`);
     }
     if (config.contact_links.length > 10) {
         problems.push(`${file}: contact_links cannot contain more than 10 entries`);
@@ -702,7 +773,11 @@ function auditSupportContract(options = {}) {
     const securityTokens = markdown.parse(sources.get(securityFile) || '', {});
     const vulnerabilitySection = sectionTokens(securityTokens, 'Reporting a Vulnerability');
     const vulnerabilityText = renderedText(vulnerabilitySection);
-    if (!hasOnlyExactHttpsRoute(vulnerabilitySection, SECURITY_ADVISORY_ROUTE)
+    if (!hasOnlyExactHttpsRoute(
+        vulnerabilitySection,
+        SECURITY_ADVISORY_ROUTE,
+        { root, file: securityFile }
+    )
         || !/private security advisory/i.test(vulnerabilityText)
         || !/(?:do not|never).*(?:public|issue|discussion|discord)/i.test(vulnerabilityText)) {
         problems.push(
@@ -717,7 +792,8 @@ function auditSupportContract(options = {}) {
             if (!SECURITY_INTAKE_HEADING.test(heading)) continue;
             if (!hasOnlyExactHttpsRoute(
                 headingSectionTokens(tokens, index),
-                SECURITY_ADVISORY_ROUTE
+                SECURITY_ADVISORY_ROUTE,
+                { root, file }
             )) {
                 problems.push(
                     `${file}: "${heading}" must route only to private GitHub advisories`
@@ -734,7 +810,11 @@ function auditSupportContract(options = {}) {
     requireTemplateMetadata(bug.metadata, bugFile, 'bug', problems);
     requireSections(bugTokens, bugFile, BUG_SECTIONS, problems);
     requireRenderedIssueLinks(bug.body, bugFile, problems);
-    if (!hasOnlyExactHttpsRoute(bugSecurity, SECURITY_ADVISORY_ROUTE)
+    if (!hasOnlyExactHttpsRoute(
+        bugSecurity,
+        SECURITY_ADVISORY_ROUTE,
+        { root, file: bugFile }
+    )
         || !/do not report security vulnerabilities here/i.test(bugSecurityText)) {
         problems.push(`${bugFile}: must route vulnerability reports to private GitHub advisories`);
     }

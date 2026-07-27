@@ -142,39 +142,83 @@ function mkdocsBlockAttributeIds(tokens) {
     return ids;
 }
 
-function markdownAnchors(source, dialect = 'github') {
-    const tokens = markdown.parse(source, {});
-    const anchors = htmlIds(tokens);
-    const usedHeadingIds = new Set();
-    const blockAttributeIds = dialect === 'mkdocs' ? mkdocsBlockAttributeIds(tokens) : new Set();
-    for (const id of blockAttributeIds) {
-        anchors.add(id);
-        usedHeadingIds.add(id);
-    }
+function markdownHeadingAnchors(tokens, dialect = 'github') {
+    const usedHeadingIds = dialect === 'mkdocs' ? mkdocsBlockAttributeIds(tokens) : new Set();
     const slug = dialect === 'mkdocs' ? mkdocsHeadingSlug : headingSlug;
     const headings = [];
     for (let index = 0; index < tokens.length - 1; index += 1) {
         if (tokens[index].type !== 'heading_open' || tokens[index + 1].type !== 'inline') continue;
-        let heading = inlineText(tokens[index + 1].children);
-        if (dialect === 'mkdocs') {
-            const explicitId = mkdocsAttributeId(heading);
-            headings.push({ explicitId, heading });
-            if (explicitId) {
-                anchors.add(explicitId);
-                usedHeadingIds.add(explicitId);
-            }
-        } else {
-            headings.push({ explicitId: '', heading });
-        }
+        const heading = inlineText(tokens[index + 1].children);
+        const explicitId = dialect === 'mkdocs' ? mkdocsAttributeId(heading) : '';
+        headings.push({ explicitId, heading, index });
+        if (explicitId) usedHeadingIds.add(explicitId);
     }
+    const records = [];
     for (const record of headings) {
         let { heading } = record;
-        if (dialect === 'mkdocs') {
-            if (record.explicitId) continue;
-            heading = heading.replace(/\s*\{[^}]+\}\s*$/, '');
+        if (record.explicitId) {
+            records.push({ anchor: record.explicitId, index: record.index });
+            continue;
         }
-        const base = slug(heading);
-        anchors.add(addUniqueHeadingAnchor(usedHeadingIds, base, dialect));
+        if (dialect === 'mkdocs') heading = heading.replace(/\s*\{[^}]+\}\s*$/, '');
+        records.push({
+            anchor: addUniqueHeadingAnchor(usedHeadingIds, slug(heading), dialect),
+            index: record.index,
+        });
+    }
+    return records;
+}
+
+function markdownAnchors(source, dialect = 'github') {
+    const tokens = markdown.parse(source, {});
+    const anchors = htmlIds(tokens);
+    const blockAttributeIds = dialect === 'mkdocs' ? mkdocsBlockAttributeIds(tokens) : new Set();
+    for (const id of blockAttributeIds) anchors.add(id);
+    for (const record of markdownHeadingAnchors(tokens, dialect)) anchors.add(record.anchor);
+    return anchors;
+}
+
+function compactVisibleText(content) {
+    return visibleHtmlText(content).replace(/\s+/g, ' ').trim();
+}
+
+function htmlOpeningTagEnd(content, start) {
+    let quote = '';
+    for (let index = start; index < content.length; index += 1) {
+        const character = content[index];
+        if (quote) {
+            if (character === quote) quote = '';
+            continue;
+        }
+        if (character === '"' || character === "'") {
+            quote = character;
+        } else if (character === '>') {
+            return index + 1;
+        }
+    }
+    return -1;
+}
+
+function htmlAnchorRecords(content) {
+    const anchors = [];
+    const opening = /<a\b/gi;
+    const closing = /<\/a\s*>/gi;
+    let match;
+    while ((match = opening.exec(content)) !== null) {
+        const openingEnd = htmlOpeningTagEnd(content, match.index);
+        if (openingEnd === -1) break;
+        closing.lastIndex = openingEnd;
+        const close = closing.exec(content);
+        const anchorEnd = close ? close.index + close[0].length : openingEnd;
+        anchors.push({
+            start: match.index,
+            openingEnd,
+            end: anchorEnd,
+            label: close ? compactVisibleText(content.slice(openingEnd, close.index)) : '',
+            contextBefore: compactVisibleText(content.slice(0, match.index)),
+            contextAfter: compactVisibleText(content.slice(anchorEnd)),
+        });
+        opening.lastIndex = anchorEnd;
     }
     return anchors;
 }
@@ -182,19 +226,12 @@ function markdownAnchors(source, dialect = 'github') {
 function htmlLinks(content, line) {
     const links = [];
     const visible = stripHtmlComments(content);
-    const context = visibleHtmlText(visible).replace(/\s+/g, ' ').trim();
-    const anchors = [...visible.matchAll(/<a\b[^>]*>([\s\S]*?)<\/a\s*>/gi)].map((match) => {
-        const openingLength = match[0].indexOf('>') + 1;
-        return {
-            start: match.index,
-            end: match.index + openingLength,
-            label: visibleHtmlText(match[1]).replace(/\s+/g, ' ').trim(),
-        };
-    });
+    const context = compactVisibleText(visible);
+    const anchors = htmlAnchorRecords(visible);
     for (const attribute of htmlAttributeRecords(content)) {
         if (attribute.name === 'href') {
             const anchor = anchors.find(candidate => (
-                attribute.index >= candidate.start && attribute.index < candidate.end
+                attribute.index >= candidate.start && attribute.index < candidate.openingEnd
             ));
             links.push({
                 target: normalizeLinkTarget(attribute.value),
@@ -202,6 +239,8 @@ function htmlLinks(content, line) {
                 type: 'link',
                 label: anchor?.label || '',
                 context,
+                contextBefore: anchor?.contextBefore || '',
+                contextAfter: anchor?.contextAfter || '',
             });
         } else if (attribute.name === 'src') {
             links.push({
@@ -227,12 +266,13 @@ function htmlLinks(content, line) {
     return links;
 }
 
-function inlineHtmlAnchorLabel(children, start) {
+function inlineHtmlAnchorRecord(children, start) {
     const opening = children[start]?.content || '';
-    if (!/<a\b/i.test(opening)) return '';
+    if (!/<a\b/i.test(opening)) return null;
     let label = visibleHtmlText(opening);
-    if (/<\/a\s*>/i.test(opening)) return label.replace(/\s+/g, ' ').trim();
-    let closed = false;
+    if (/<\/a\s*>/i.test(opening)) {
+        return { label: label.replace(/\s+/g, ' ').trim(), endIndex: start };
+    }
     for (let index = start + 1; index < children.length; index += 1) {
         const child = children[index];
         if (child.type === 'html_inline') {
@@ -241,8 +281,7 @@ function inlineHtmlAnchorLabel(children, start) {
                 ? child.content
                 : child.content.slice(0, closing));
             if (closing !== -1) {
-                closed = true;
-                break;
+                return { label: label.replace(/\s+/g, ' ').trim(), endIndex: index };
             }
         } else if (child.type === 'text' || child.type === 'code_inline') {
             label += child.content;
@@ -252,7 +291,7 @@ function inlineHtmlAnchorLabel(children, start) {
             label += ' ';
         }
     }
-    return closed ? label.replace(/\s+/g, ' ').trim() : '';
+    return null;
 }
 
 function normalizeLinkTarget(target) {
@@ -280,6 +319,18 @@ function inlineLabel(children, start) {
     return label.join('').replace(/\s+/g, ' ').trim();
 }
 
+function inlineLinkEnd(children, start) {
+    let depth = 1;
+    for (let index = start + 1; index < children.length; index += 1) {
+        if (children[index].type === 'link_open') depth += 1;
+        if (children[index].type === 'link_close') {
+            depth -= 1;
+            if (depth === 0) return index;
+        }
+    }
+    return start;
+}
+
 function inlineSemanticText(children = []) {
     return children.map((child) => {
         if (child.type === 'text' || child.type === 'code_inline') return child.content;
@@ -290,7 +341,7 @@ function inlineSemanticText(children = []) {
     }).join('').replace(/\s+/g, ' ').trim();
 }
 
-function wwwAutolinks(content, line, context = '') {
+function wwwAutolinks(content, line, context = '', contextBefore = '', contextAfter = '') {
     return (gfmWwwLinkifier.match(content) || [])
         .filter(match => /^www\./i.test(match.raw))
         .map(match => ({
@@ -299,6 +350,10 @@ function wwwAutolinks(content, line, context = '') {
             type: 'link',
             label: match.raw,
             context,
+            contextBefore: `${contextBefore} ${content.slice(0, match.index)}`
+                .replace(/\s+/g, ' ').trim(),
+            contextAfter: `${content.slice(match.lastIndex)} ${contextAfter}`
+                .replace(/\s+/g, ' ').trim(),
         }));
 }
 
@@ -315,12 +370,15 @@ function extractLinksFromTokens(tokens) {
         for (let index = 0; index < children.length; index += 1) {
             const child = children[index];
             if (child.type === 'link_open') {
+                const endIndex = inlineLinkEnd(children, index);
                 links.push({
                     target: normalizeLinkTarget(child.attrGet('href')),
                     line: childLine,
                     type: 'link',
                     label: inlineLabel(children, index),
                     context,
+                    contextBefore: inlineSemanticText(children.slice(0, index)),
+                    contextAfter: inlineSemanticText(children.slice(endIndex + 1)),
                 });
                 linkDepth += 1;
             } else if (child.type === 'link_close') {
@@ -333,13 +391,27 @@ function extractLinksFromTokens(tokens) {
                     label: child.content.trim(),
                 });
             } else if (child.type === 'text' && linkDepth === 0) {
-                links.push(...wwwAutolinks(child.content, childLine, context));
+                links.push(...wwwAutolinks(
+                    child.content,
+                    childLine,
+                    context,
+                    inlineSemanticText(children.slice(0, index)),
+                    inlineSemanticText(children.slice(index + 1))
+                ));
             } else if (child.type === 'html_inline') {
                 const html = htmlLinks(child.content, childLine);
-                const label = inlineHtmlAnchorLabel(children, index);
+                const record = inlineHtmlAnchorRecord(children, index);
                 const anchor = html.find(link => link.type === 'link' && !link.label);
-                if (anchor && label) anchor.label = label;
-                for (const link of html) link.context = context;
+                if (anchor && record?.label) anchor.label = record.label;
+                for (const link of html) {
+                    link.context = context;
+                    link.contextBefore = `${inlineSemanticText(children.slice(0, index))} `
+                        + `${link.contextBefore || ''}`;
+                    link.contextAfter = `${link.contextAfter || ''} `
+                        + `${inlineSemanticText(children.slice((record?.endIndex ?? index) + 1))}`;
+                    link.contextBefore = link.contextBefore.replace(/\s+/g, ' ').trim();
+                    link.contextAfter = link.contextAfter.replace(/\s+/g, ' ').trim();
+                }
                 links.push(...html);
             }
             if (child.type === 'softbreak' || child.type === 'hardbreak') childLine += 1;
@@ -465,6 +537,7 @@ module.exports = {
     htmlAttributes,
     isActionableLink,
     markdownAnchors,
+    markdownHeadingAnchors,
     mkdocsHeadingSlug,
     normalizeLinkTarget,
     stripHtmlComments,
