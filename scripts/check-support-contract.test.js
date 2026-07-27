@@ -2851,6 +2851,15 @@ test('governs form submissions and hidden ID names while inert routes remain ina
             + '<p>Security vulnerabilities are not accepted via Discord.</p>'
             + '<p>A typo does not constitute a vulnerability.</p>'
             + '<button>Submit the report</button></form>',
+        `<form action="${ISSUES_ROUTE}">`
+            + '<p>Submit a vulnerability report below. You do not need to use '
+            + `<a href="${SECURITY_ADVISORY_ROUTE}">the security policy</a>.</p>`
+            + '<p>Report a regular bug with this form.</p>'
+            + '<button>Continue</button></form>',
+        'This form does not accept security vulnerabilities. '
+            + `Submit them via [GitHub Issues](${ISSUES_ROUTE}).`,
+        'Do not submit security vulnerabilities with this form; '
+            + `instead submit them via [GitHub Issues](${ISSUES_ROUTE}).`,
         ...[
             '<button disabled>Ignored</button>',
             '<button hidden>Ignored</button>',

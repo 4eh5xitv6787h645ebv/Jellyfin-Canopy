@@ -713,19 +713,38 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
     }
     if (group.length) applicableGroups.push(group);
     const groupText = applicable => applicable.join('').trim();
+    const securitySubject = new RegExp(`\\b${SECURITY_SUBJECT}\\b`, 'i');
+    const securityAction = new RegExp(`\\b${SECURITY_ACTION}\\b`, 'i');
+    const explicitVulnerabilitySubject =
+        /\b(?:about|for|regarding)\s+(?:security\s+)?vulnerab\w*\b/i;
+    const securityAnaphor =
+        /\b(?:it|them|these|those|such\s+(?:concerns?|issues?|reports?|vulnerab\w*))\b/i;
+    const negatedAnaphoricAction = new RegExp(
+        `\\b(?:(?:do(?:es)? not|doesn't|don't|never|cannot|can't)`
+        + `|(?:can|must|should)\\s+not)\\b.{0,40}\\b${SECURITY_ACTION}\\b`,
+        'i'
+    );
     const ownsSecurityRoute = (applicable) => {
         const positive = applicable.replace(NEGATED_SECURITY_SUBJECT, ' ');
         return SECURITY_ROUTE_LABEL.test(positive)
             && (!NEUTRAL_SECURITY_REFERENCE.test(positive)
                 || SECURITY_ROUTE_CUE.test(positive));
     };
-    if (applicableGroups.some(applicable => ownsSecurityRoute(groupText(applicable)))) {
+    const ownsAnaphoricSecurityRoute = applicable => applicable.some((clause, index) => {
+        const positiveClause = clause.replace(NEGATED_SECURITY_SUBJECT, ' ');
+        if (positiveClause === clause) return false;
+        const following = applicable[index + 1]?.replace(NEGATED_SECURITY_SUBJECT, ' ') || '';
+        return securityAnaphor.test(following)
+            && securityAction.test(following)
+            && SECURITY_ROUTE_CUE.test(following)
+            && !negatedAnaphoricAction.test(following);
+    });
+    if (applicableGroups.some(applicable => (
+        ownsSecurityRoute(groupText(applicable))
+        || ownsAnaphoricSecurityRoute(applicable)
+    ))) {
         return true;
     }
-    const securitySubject = new RegExp(`\\b${SECURITY_SUBJECT}\\b`, 'i');
-    const securityAction = new RegExp(`\\b${SECURITY_ACTION}\\b`, 'i');
-    const explicitVulnerabilitySubject =
-        /\b(?:about|for|regarding)\s+(?:security\s+)?vulnerab\w*\b/i;
     return applicableGroups.some((applicable, index) => {
         const following = applicableGroups[index + 1];
         const applicableText = groupText(applicable);

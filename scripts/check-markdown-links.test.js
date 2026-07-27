@@ -876,6 +876,9 @@ test('extracts HTML form submissions and image-map routes with control names', (
         ['Read ', 'the security policy'],
         ['Read ', 'the security reporting process'],
         ['Do not use ', 'the security policy'],
+        ['Do not currently use ', 'the security policy'],
+        ['Do not ever use ', 'the security policy'],
+        ['You do not need to use ', 'the security policy'],
     ]) {
         const neutralCanonicalReference = `<form action="${formTarget}">`
             + `<p>Submit a vulnerability report below. ${referencePrefix}`

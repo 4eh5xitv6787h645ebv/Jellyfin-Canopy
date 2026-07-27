@@ -31,9 +31,15 @@ const HTML_FORM_ADJACENT_ACTION_CUE = new RegExp(
     + '(?:\\s+(?:a|an|our|the|this))?\\s*$',
     'i'
 );
+const HTML_FORM_NEGATED_ACTION_MODIFIER =
+    '(?:(?:(?:actually|currently|ever|necessarily|now|really)\\s+)'
+    + '|(?:(?:have|need|want)\\s+to\\s+))*';
 const HTML_FORM_NEGATED_ACTION_CUE = new RegExp(
-    `(?:\\b(?:do(?:es)? not|doesn't|don't|never)\\s+`
-    + `|\\bno\\s+need\\s+to\\s+)${HTML_FORM_ACTION_CUE_SOURCE}\\b`
+    '^(?:(?:(?:i|we|you|they|users?|(?:this|the)\\s+form)\\s+)?'
+    + `(?:(?:do(?:es)? not|doesn't|don't|never|cannot|can't)`
+    + `|(?:can|must|should)\\s+not)\\s+${HTML_FORM_NEGATED_ACTION_MODIFIER}`
+    + '|(?:(?:there\\s+is|you\\s+have)\\s+)?no\\s+need\\s+to\\s+)'
+    + `${HTML_FORM_ACTION_CUE_SOURCE}\\b`
     + '(?:\\s+(?:at|in|on|through|to|via))?'
     + '(?:\\s+(?:a|an|our|the|this))?\\s*$',
     'i'
