@@ -123,8 +123,10 @@ const CONTEXT_DEPENDENT_ROUTE_LABEL = new RegExp(
     `^(?:${CONTEXTUAL_ACTION_LABEL}|(?:github\\s+)?issues?|discord|community\\s+(?:chat|forum))$`,
     'i'
 );
-const DIRECT_FORM_ROUTE_LABEL = /^(?:open|use|visit)\b.{0,20}\b(?:bug|defect|feature(?:[- ]request)?|help|support)(?:[- ]report)?\s+(?:form|intake)$/i;
+const DIRECT_FORM_ROUTE_LABEL = /^(?:(?:open|use|visit)\b.{0,20}\b)?(?:bug|defect|feature(?:[- ]request)?|help|support)(?:[- ]report)?\s+(?:form|intake)$/i;
 const ROUTE_INTENT_TERM = /\b(?:assistance|bugs?|broken|defects?|enhancements?|exploits?|features?|help|ideas?|improvements?|questions?|security|support|vulnerab\w*)\b|community\s+(?:chat|forum|support)/i;
+const HTML_ROUTE_CONTEXT_BEFORE_CUE = /(?:\b(?:at|choose|follow|here|in|on|open|see|select|through|to|use|using|via|visit)\b|[:→])\s*$/i;
+const HTML_ROUTE_CONTEXT_AFTER_CUE = /^\s*(?:(?:[-–—:,(]\s*)|(?:for|to|where)\b)/i;
 const DISCUSSIONS_ACTION = /\b(?:ask|create|direct|go|join|open|post|route|send|start|submit|use)\b/i;
 const DISCUSSIONS_PURPOSE = /\b(?:bugs?|community|features?|help|ideas?|issues?|questions?|reports?|requests?|support)\b/i;
 const DISCUSSIONS_EXCEPTION = /\b(?:anywhere|nowhere)\s+(?:else\s+)?(?:but|except)\b|\b(?:anything\s+)?except\b|\bother\s+than\b/i;
@@ -507,6 +509,19 @@ function semanticLinkText(link) {
     const start = (startBoundary ?? -1) + 1;
     return `${before.slice(Math.max(start, before.length - 80))} ${label} ${after.slice(0, Math.min(end, 80))}`
         .replace(/\s+/g, ' ').trim();
+}
+
+function htmlContextOwnsRoute(link) {
+    const before = String(link?.contextBefore || '').slice(-160);
+    const after = String(link?.contextAfter || '').slice(0, 160);
+    const ownsRoute = text => (
+        BUG_ROUTE_INTENT.test(text)
+        || FEATURE_ROUTE_LABEL.test(text)
+        || SUPPORT_ROUTE_INTENT.test(text)
+        || SECURITY_ROUTE_LABEL.test(text)
+    );
+    return ownsRoute(before) && HTML_ROUTE_CONTEXT_BEFORE_CUE.test(before)
+        || HTML_ROUTE_CONTEXT_AFTER_CUE.test(after) && ownsRoute(after);
 }
 
 function localMarkdownTarget(root, file, target) {
@@ -1113,15 +1128,18 @@ function auditGlobalRouteLinks(file, surface, root, problems, options = {}) {
         if (['ko-fi.com', 'www.buymeacoffee.com'].includes(target?.hostname.toLowerCase())) {
             continue;
         }
-        // Raw HTML context is link-local, but only route-like labels inherit it:
-        // broad documentation labels such as "Help & Community" can legitimately
-        // describe intake without being an intake destination themselves.
+        // Raw HTML context is link-local. Route-like labels always inherit it;
+        // neutral labels inherit only explicit prose that directs the reader
+        // through this link, so descriptive "Help & Community" references do
+        // not absorb unrelated intake language later in the container.
         const normalizedLabel = String(link.label || '')
             .replace(/[^\p{L}\p{N}\s-]/gu, ' ')
             .replace(/\s+/g, ' ')
             .trim();
         const scopedLink = options.html
             && !HTML_CONTEXT_DEPENDENT_ROUTE_LABEL.test(normalizedLabel)
+            && !(htmlContextOwnsRoute(link)
+                && absoluteUrl(link.target))
             ? { ...link, context: link.label, contextBefore: '', contextAfter: '' }
             : link;
         const text = semanticLinkText(scopedLink);

@@ -581,6 +581,10 @@ test('global route ownership distinguishes intake intent from destination names'
         'record dependency history.</p>',
         '<p><a href="https://discord.com/developers/docs">Discord</a> ',
         'documents the integration API.</p>',
+        '<p><a href="https://example.com/help">Help &amp; Community</a> ',
+        'documents where to report bugs and get support.</p>',
+        '<p>For the full walkthrough on how to report bugs and request features, ',
+        'head to <a href="../help/">Help &amp; Community</a>.</p>',
         '<p><a href="https://discord.com/developers/docs">Discord</a> ',
         'documents the integration API, and for support, use ',
         `<a href="${DISCORD_ROUTE}">the Discord server</a>.</p>`,
@@ -656,6 +660,17 @@ test('global route ownership combines destination names with explicit intake con
         },
         {
             file: 'theme/partials/support.html',
+            source: `<p>For support, use <a href="${ISSUES_ROUTE}">Support guide</a>.</p>\n`,
+            message: 'community-support links',
+        },
+        {
+            file: 'theme/partials/support.html',
+            source: `<p>Submit vulnerabilities through <a href="${ISSUES_ROUTE}">`
+                + 'Security guide</a>.</p>\n',
+            message: 'security intake links',
+        },
+        {
+            file: 'theme/partials/support.html',
             source: `<p>Questions? <a href="${ISSUES_ROUTE}">GitHub Issues</a>.</p>\n`,
             message: 'community-support links',
         },
@@ -688,23 +703,22 @@ test('semantic route ownership decodes rendered raw HTML labels', () => {
 });
 
 test('rendered category form links cannot hide behind local fragments', () => {
-    const files = validFixture();
-    files['site/index.html'] = [
-        '<p><a href="#faq">Open the bug form</a>.</p>',
-        '<p><a href="#ideas">Open the feature-request form</a>.</p>',
-        '',
-    ].join('\n');
-    fixture(files, root => {
-        const problems = auditSupportContract({ root, checkBuiltSite: true }).problems;
-        assert.ok(problems.some(problem => (
-            problem.startsWith('site/index.html:')
-            && problem.includes('bug intake links')
-        )));
-        assert.ok(problems.some(problem => (
-            problem.startsWith('site/index.html:')
-            && problem.includes('feature intake links')
-        )));
-    });
+    const cases = [
+        { label: 'Open the bug form', message: 'bug intake links' },
+        { label: 'Bug report form', message: 'bug intake links' },
+        { label: 'Open the feature-request form', message: 'feature intake links' },
+        { label: 'Feature request form', message: 'feature intake links' },
+    ];
+    for (const { label, message } of cases) {
+        const files = validFixture();
+        files['site/index.html'] = `<p><a href="#intake">${label}</a>.</p>\n`;
+        fixture(files, root => {
+            assert.ok(auditSupportContract({ root, checkBuiltSite: true }).problems.some(problem => (
+                problem.startsWith('site/index.html:')
+                && problem.includes(message)
+            )));
+        });
+    }
 });
 
 test('semantic ownership scans raw HTML attributes with quoted greater-than characters', () => {
