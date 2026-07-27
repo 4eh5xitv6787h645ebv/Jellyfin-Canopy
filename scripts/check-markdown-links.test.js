@@ -295,6 +295,20 @@ test('raw HTML link context excludes neighboring link labels but retains prose',
     }
 });
 
+test('hidden raw HTML and Markdown-in-HTML links are not actionable', () => {
+    const links = extractLinks([
+        '<a hidden href="https://example.com/hidden">Hidden</a>',
+        '<a aria-hidden="true" href="https://example.com/aria-hidden">ARIA hidden</a>',
+        '<a style="display:none" href="https://example.com/css-hidden">CSS hidden</a>',
+        '<div hidden><a href="https://example.com/ancestor-hidden">Ancestor hidden</a></div>',
+        '<span hidden>[Markdown hidden](https://example.com/markdown-hidden)</span>',
+        '<a href="https://example.com/visible">Visible</a>',
+        '',
+    ].join('\n'));
+    assert.deepEqual(links.filter(isActionableLink).map(link => link.label), ['Visible']);
+    assert.ok(links.filter(link => link.label !== 'Visible').every(link => link.hidden));
+});
+
 test('extracts every MkDocs markdown-in-HTML mode and image-only accessible names', () => {
     const links = extractLinks([
         '<div markdown="1">',

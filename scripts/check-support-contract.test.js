@@ -1661,6 +1661,104 @@ test('audits generic security calls to action and plain source or built HTML pro
     });
 });
 
+test('security calls to action inherit adjacent block context', () => {
+    for (const [label, target] of [
+        ['File it here', ISSUES_ROUTE],
+        ['Email us', 'mailto:security@example.com'],
+        ['Contact the maintainers', 'mailto:security@example.com'],
+        ['Send details', DISCORD_ROUTE],
+    ]) {
+        const markdownFiles = validFixture();
+        markdownFiles['docs/getting-started.md'] =
+            `Found a vulnerability?\n\n[${label}](${target}).\n`;
+        fixture(markdownFiles, root => {
+            assert.ok(auditSupportContract({ root }).problems.some(problem => (
+                problem.startsWith('docs/getting-started.md:')
+                && problem.includes('private GitHub advisories')
+            )), label);
+        });
+
+        const htmlFiles = validFixture();
+        htmlFiles['theme/partials/support.html'] =
+            `<p>Found a vulnerability?</p><p><a href="${target}">${label}</a>.</p>\n`;
+        fixture(htmlFiles, root => {
+            assert.ok(auditSupportContract({ root }).problems.some(problem => (
+                problem.startsWith('theme/partials/support.html:')
+                && problem.includes('private GitHub advisories')
+            )), label);
+        });
+    }
+});
+
+test('plain-text vulnerability email routes are rejected but explicit prohibitions are safe', () => {
+    for (const [file, source] of [
+        ['docs/getting-started.md', 'Found a vulnerability? Email security@example.com.\n'],
+        ['theme/partials/support.html', '<p>For vulnerabilities, email security@example.com.</p>\n'],
+    ]) {
+        const files = validFixture();
+        files[file] = source;
+        fixture(files, root => {
+            assert.ok(auditSupportContract({ root }).problems.some(problem => (
+                problem.startsWith(`${file}:`)
+                && problem.includes('private GitHub advisories')
+            )));
+        });
+    }
+
+    const safe = validFixture();
+    safe['docs/getting-started.md'] = 'Do not email vulnerability reports.\n';
+    fixture(safe, root => {
+        assert.ok(!auditSupportContract({ root }).problems.some(problem => (
+            problem.startsWith('docs/getting-started.md:')
+            && problem.includes('private GitHub advisories')
+        )));
+    });
+});
+
+test('pins every published Discord navigation source to the community route', () => {
+    const cases = [
+        ['mkdocs.yml', [
+            'extra:',
+            '  social:',
+            '    - icon: fontawesome/brands/discord',
+            `      link: ${ISSUES_ROUTE}`,
+            '      name: Jellyfin Community Discord - Jellyfin Canopy Channel',
+            '',
+        ].join('\n')],
+        ['theme/partials/footer.html', `<a href="${ISSUES_ROUTE}">Discord</a>\n`],
+        ['theme/404.html', `<a href="${ISSUES_ROUTE}">Discord</a>\n`],
+    ];
+    for (const [file, source] of cases) {
+        const files = validFixture();
+        files[file] = source;
+        fixture(files, root => {
+            assert.ok(auditSupportContract({ root }).problems.includes(
+                `${file}: published Discord navigation must use the Jellyfin Community Discord`
+            ));
+        });
+    }
+});
+
+test('hidden links cannot satisfy mandatory support routes', () => {
+    for (const hidden of [
+        'hidden',
+        'aria-hidden="true"',
+        'style="display:none"',
+    ]) {
+        const files = validFixture();
+        files['docs/help.md'] = files['docs/help.md'].replace(
+            `[Discord support](${DISCORD_ROUTE}).`,
+            `<a ${hidden} href="${DISCORD_ROUTE}">Discord support</a>.`
+        );
+        fixture(files, root => {
+            assert.ok(auditSupportContract({ root }).problems.includes(
+                'docs/help.md: must route every community-support link to the '
+                + 'Jellyfin Community Discord in "## Community and support"'
+            ), hidden);
+        });
+    }
+});
+
 test('rejects exception-shaped Discussions routes but allows explicit non-route prose', () => {
     for (const prose of [
         'Do not use anything except GitHub Discussions for support.',

@@ -317,6 +317,52 @@ function htmlContextBeforeBoundary(content) {
     return start;
 }
 
+const HTML_VOID_ELEMENTS = new Set([
+    'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link',
+    'meta', 'param', 'source', 'track', 'wbr',
+]);
+
+function htmlTagIsHidden(tag) {
+    return /(?:^|\s)hidden(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?(?=\s|\/?>)/i
+        .test(tag)
+        || /\saria-hidden\s*=\s*["']?true\b/i.test(tag)
+        || /\sstyle\s*=\s*["'][^"']*(?:display\s*:\s*none|visibility\s*:\s*hidden)/i
+            .test(tag);
+}
+
+function updateHtmlVisibilityStack(stack, content) {
+    const pattern = /<(\/?)([a-z][a-z0-9:-]*)\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi;
+    for (const match of content.matchAll(pattern)) {
+        const closing = match[1] === '/';
+        const tag = match[2].toLowerCase();
+        if (closing) {
+            const opening = stack.map(entry => entry.tag).lastIndexOf(tag);
+            if (opening !== -1) stack.splice(opening);
+            continue;
+        }
+        const selfClosing = /\/>\s*$/.test(match[0]) || HTML_VOID_ELEMENTS.has(tag);
+        if (selfClosing) continue;
+        stack.push({
+            tag,
+            hidden: Boolean(stack.at(-1)?.hidden) || htmlTagIsHidden(match[0]),
+        });
+    }
+}
+
+function htmlElementIsHidden(content, index, openingTag) {
+    const stack = [];
+    updateHtmlVisibilityStack(stack, content.slice(0, index));
+    return Boolean(stack.at(-1)?.hidden) || htmlTagIsHidden(openingTag);
+}
+
+function htmlPriorBlockText(content, boundary, labels) {
+    if (boundary <= 0) return '';
+    const blocks = content.slice(0, boundary).split(
+        /<\/?(?:address|article|aside|blockquote|div|footer|form|h[1-6]|header|li|main|nav|ol|p|section|table|td|th|tr|ul)\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi
+    );
+    return blocks.map(block => compactVisibleText(block, labels)).filter(Boolean).at(-1) || '';
+}
+
 function htmlAnchorRecords(content, labels = htmlIdLabels(content)) {
     const anchors = [];
     const opening = /<a\b/gi;
@@ -359,11 +405,13 @@ function htmlAnchorRecords(content, labels = htmlIdLabels(content)) {
                 || htmlAttributeValue(openingTag, 'aria-label')
                 || nestedName
                 || htmlAttributeValue(openingTag, 'title'),
+            hidden: htmlElementIsHidden(content, match.index, openingTag),
             contextBefore,
             contextBeforePrior: previousAnchor && beforeBoundary === 0
                 ? `${previousAnchor.contextBeforePrior || ''} ${previousAnchor.contextBefore || ''}`
                     .replace(/\s+/g, ' ').trim()
                 : '',
+            contextBeforeBlock: htmlPriorBlockText(rawBefore, beforeBoundary, labels),
             contextAfter: compactVisibleText(
                 rawAfter.slice(0, afterBoundary),
                 labels
@@ -395,9 +443,11 @@ function htmlLinks(content, line, labels = htmlIdLabels(content)) {
                 context,
                 contextBefore: anchor?.contextBefore || '',
                 contextBeforePrior: anchor?.contextBeforePrior || '',
+                contextBeforeBlock: anchor?.contextBeforeBlock || '',
                 contextAfter: anchor?.contextAfter || '',
                 contextBeforeStartsAtLink: anchor?.contextBeforeStartsAtLink || false,
                 contextAfterEndsAtLink: anchor?.contextAfterEndsAtLink || false,
+                hidden: anchor?.hidden || false,
             });
         } else if (attribute.name === 'src') {
             links.push({
@@ -519,6 +569,7 @@ function wwwAutolinks(content, line, context = '', contextBefore = '', contextAf
 
 function extractLinksFromTokens(tokens) {
     const links = [];
+    let previousBlockText = '';
     const htmlLabels = htmlIdLabels(tokens.flatMap((token) => {
         if (token.type === 'html_block') return [token.content];
         if (token.type === 'inline') return [token.content];
@@ -526,10 +577,19 @@ function extractLinksFromTokens(tokens) {
     }).join('\n'));
     for (const token of tokens) {
         const line = (token.map?.[0] || 0) + 1;
-        if (token.type === 'html_block') links.push(...htmlLinks(token.content, line, htmlLabels));
+        if (token.type === 'html_block') {
+            const html = htmlLinks(token.content, line, htmlLabels);
+            for (const link of html) {
+                if (!link.contextBeforeBlock) link.contextBeforeBlock = previousBlockText;
+            }
+            links.push(...html);
+            const blockText = compactVisibleText(token.content, htmlLabels);
+            if (blockText) previousBlockText = blockText;
+        }
         if (token.type !== 'inline') continue;
         let childLine = line;
         let linkDepth = 0;
+        const htmlVisibilityStack = [];
         const children = token.children || [];
         const context = inlineSemanticText(children);
         for (let index = 0; index < children.length; index += 1) {
@@ -543,7 +603,9 @@ function extractLinksFromTokens(tokens) {
                     label: inlineLabel(children, index),
                     context,
                     contextBefore: inlineSemanticText(children.slice(0, index)),
+                    contextBeforeBlock: previousBlockText,
                     contextAfter: inlineSemanticText(children.slice(endIndex + 1)),
+                    hidden: Boolean(htmlVisibilityStack.at(-1)?.hidden),
                 });
                 linkDepth += 1;
             } else if (child.type === 'link_close') {
@@ -554,6 +616,7 @@ function extractLinksFromTokens(tokens) {
                     line: childLine,
                     type: 'image',
                     label: child.content.trim(),
+                    hidden: Boolean(htmlVisibilityStack.at(-1)?.hidden),
                 });
             } else if (child.type === 'text' && linkDepth === 0) {
                 links.push(...wwwAutolinks(
@@ -569,18 +632,22 @@ function extractLinksFromTokens(tokens) {
                 const anchor = html.find(link => link.type === 'link');
                 if (anchor && record?.label) anchor.label = record.label;
                 for (const link of html) {
+                    link.hidden ||= Boolean(htmlVisibilityStack.at(-1)?.hidden);
                     link.context = context;
                     link.contextBefore = `${inlineSemanticText(children.slice(0, index))} `
                         + `${link.contextBefore || ''}`;
+                    link.contextBeforeBlock ||= previousBlockText;
                     link.contextAfter = `${link.contextAfter || ''} `
                         + `${inlineSemanticText(children.slice((record?.endIndex ?? index) + 1))}`;
                     link.contextBefore = link.contextBefore.replace(/\s+/g, ' ').trim();
                     link.contextAfter = link.contextAfter.replace(/\s+/g, ' ').trim();
                 }
                 links.push(...html);
+                updateHtmlVisibilityStack(htmlVisibilityStack, child.content);
             }
             if (child.type === 'softbreak' || child.type === 'hardbreak') childLine += 1;
         }
+        if (context) previousBlockText = context;
     }
     return links;
 }
@@ -645,7 +712,9 @@ function extractLinks(source) {
             link.type,
             link.label,
             link.contextBefore,
+            link.contextBeforeBlock,
             link.contextAfter,
+            link.hidden,
         ].join('\u0000');
         if (seen.has(key)) return false;
         seen.add(key);
@@ -658,7 +727,7 @@ function extractRenderedHtmlLinks(source) {
 }
 
 function isActionableLink(link) {
-    return link?.type === 'link' && Boolean(link.label?.trim());
+    return link?.type === 'link' && !link.hidden && Boolean(link.label?.trim());
 }
 
 function splitTarget(rawTarget) {
@@ -706,6 +775,7 @@ function validateMarkdownFile(file, root = ROOT) {
 
     const source = fs.readFileSync(absoluteFile, 'utf8');
     for (const link of extractLinks(source)) {
+        if (link.hidden) continue;
         if (!link.target || isExternal(link.target)) continue;
         let decoded;
         try {

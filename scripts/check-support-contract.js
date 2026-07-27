@@ -102,7 +102,7 @@ const NEUTRAL_SECURITY_REFERENCE = /\b(?:background|documentation|guidelines?|po
 const SECURITY_ROUTE_CUE = /\b(?:alternative|contact|create|email|file|form|instructions?|message|notify|open|send|submit|through|use|via)\b/i;
 const NON_VULNERABILITY_CONTEXT = /\b(?:do(?:es)? not|doesn't|don't|not)\s+(?:constitute|involve)\b.{0,80}\bvulnerab/i;
 const SECURITY_CONTEXT_HEADING = /\b(?:security|vulnerab\w*)\b/i;
-const PUBLIC_SECURITY_CHANNEL = /\b(?:discord|github\s+(?:issues?|discussions?)|issue\s+tracker|public\s+(?:channel|forum|issues?|reports?|threads?))\b/i;
+const PUBLIC_SECURITY_CHANNEL = /\b(?:discord|e-?mail|github\s+(?:issues?|discussions?)|issue\s+tracker|public\s+(?:channel|forum|issues?|reports?|threads?)|[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,})\b/i;
 const PUBLIC_SECURITY_EXCEPTION = /\b(?:anywhere|nowhere)\s+(?:else\s+)?(?:but|except)\b|\b(?:except|other\s+than)\b/i;
 const PUBLIC_SECURITY_NEGATION_ACTION = '(?:contact(?:ed|ing)?|disclos\\w*|email(?:ed|ing)?|file(?:d|ing)?|include(?:d|ing)?|message(?:d|ing)?|notif(?:y|ied|ying)|open(?:ed|ing)?|post(?:ed|ing)?|report(?:ed|ing)?|send|sent|submit(?:ted|ting)?|use(?:d|ing)?)';
 const CONTEXTUAL_ACTION_LABEL = '(?:click(?:\\s+here)?|continue|details?|follow|go|here'
@@ -157,6 +157,11 @@ const TEMPLATE_METADATA = new Map([
         labels: 'enhancement',
         assignees: '',
     }],
+]);
+const PINNED_COMMUNITY_ROUTES = new Map([
+    ['mkdocs.yml', /\bjellyfin community discord\s*-\s*jellyfin canopy channel\b/i],
+    ['theme/partials/footer.html', /^discord$/i],
+    ['theme/404.html', /^discord$/i],
 ]);
 const markdown = new MarkdownIt({ html: true, linkify: true });
 markdown.linkify.set({ fuzzyEmail: false, fuzzyLink: false });
@@ -546,6 +551,25 @@ function htmlExtendedContextBefore(link) {
     }
     return `${link.contextBeforePrior} ${link.contextBefore || ''}`
         .replace(/\s+/g, ' ').trim();
+}
+
+function linkWithPriorBlockContext(link, normalizedLabel, html) {
+    const prior = String(link?.contextBeforeBlock || '').replace(/\s+/g, ' ').trim();
+    if (!prior) return link;
+    const dependent = html
+        ? HTML_CONTEXT_DEPENDENT_ROUTE_LABEL
+        : CONTEXT_DEPENDENT_ROUTE_LABEL;
+    const own = `${link?.contextBefore || ''} ${link?.label || ''} ${link?.contextAfter || ''}`
+        .replace(/\s+/g, ' ').trim();
+    if (!dependent.test(normalizedLabel)
+        || !ROUTE_INTENT_TERM.test(prior)
+        || ROUTE_INTENT_TERM.test(own)) {
+        return link;
+    }
+    return {
+        ...link,
+        contextBefore: `${prior} ${link?.contextBefore || ''}`.replace(/\s+/g, ' ').trim(),
+    };
 }
 
 function localMarkdownTarget(root, file, target) {
@@ -992,6 +1016,17 @@ function renderedSupportSurface(source, file) {
     return { links: extractLinks(source), text: renderedText(tokens) };
 }
 
+function requirePinnedCommunityRoute(file, surface, problems) {
+    const label = PINNED_COMMUNITY_ROUTES.get(file);
+    if (!label) return;
+    const routes = surface.links.filter(isActionableLink).filter(link => (
+        label.test(String(link.label || '').replace(/\s+/g, ' ').trim())
+    ));
+    if (routes.length !== 1 || !routes.every(link => isExactHttpsRoute(link, DISCORD_ROUTE))) {
+        problems.push(`${file}: published Discord navigation must use the Jellyfin Community Discord`);
+    }
+}
+
 function collectFiles(root, candidate, extension, files, excludedDirectories = new Set()) {
     const absolute = path.join(root, candidate);
     if (!fs.existsSync(absolute)) return;
@@ -1084,6 +1119,10 @@ function routesToDiscussions(surface) {
 
 function explicitlyRejectsPublicSecurityRoute(clause) {
     if (PUBLIC_SECURITY_EXCEPTION.test(clause)) return false;
+    if (/\b(?:do not|don't|never|must not|must never|should not|cannot|can't)\s+(?:ever\s+)?e-?mail\b.{0,120}\b(?:exploits?|security|vulnerab\w*)\b/i
+        .test(clause)) {
+        return true;
+    }
     const beforeChannel = new RegExp(
         `\\b(?:do not|don't|never|must not|must never|should not|cannot|can't)\\s+`
         + `(?:ever\\s+)?(?:be\\s+)?${PUBLIC_SECURITY_NEGATION_ACTION}\\b`
@@ -1179,12 +1218,13 @@ function auditGlobalRouteLinks(file, surface, root, problems, options = {}) {
             .replace(/[^\p{L}\p{N}\s-]/gu, ' ')
             .replace(/\s+/g, ' ')
             .trim();
+        const blockContextLink = linkWithPriorBlockContext(link, normalizedLabel, options.html);
         const ownsHtmlContext = options.html
-            && htmlContextOwnsRoute(link)
+            && htmlContextOwnsRoute(blockContextLink)
             && absoluteUrl(link.target);
         const contextualLink = ownsHtmlContext
-            ? { ...link, contextBefore: htmlExtendedContextBefore(link) }
-            : link;
+            ? { ...blockContextLink, contextBefore: htmlExtendedContextBefore(blockContextLink) }
+            : blockContextLink;
         const scopedLink = options.html
             && !HTML_CONTEXT_DEPENDENT_ROUTE_LABEL.test(normalizedLabel)
             && !ownsHtmlContext
@@ -1337,6 +1377,7 @@ function auditSupportContract(options = {}) {
         auditGlobalRouteLinks(file, surface, root, problems, {
             html: /\.html?$/i.test(file),
         });
+        requirePinnedCommunityRoute(file, surface, problems);
     }
     for (const file of auditedFiles.filter(candidate => candidate.endsWith('.md'))) {
         problems.push(...validateMarkdownFile(file, root));
