@@ -1743,6 +1743,8 @@ test('hidden links cannot satisfy mandatory support routes', () => {
     for (const hidden of [
         'hidden',
         'aria-hidden="true"',
+        'aria-hidden="tr&#117;e"',
+        'aria-hidden=tr&#117;e',
         'style="display:none"',
         'style=display:none',
         'style=visibility:hidden',
@@ -1797,20 +1799,60 @@ test('hidden Discussions links are ignored by link and prose audits', () => {
     }
 });
 
-test('malformed nested anchors cannot hide public vulnerability routes', () => {
-    const source = `<a href="${SECURITY_ADVISORY_ROUTE}">`
-        + `Submit a private vulnerability report <a href="${ISSUES_ROUTE}">here</a></a>\n`;
-    for (const [file, options] of [
-        ['theme/partials/support.html', {}],
-        ['site/index.html', { checkBuiltSite: true }],
+test('browser-visible style overrides remain governed', () => {
+    for (const style of [
+        'display:none;display:inline',
+        'visibility:hidden;visibility:visible',
+        'display:none!important;display:inline!important',
     ]) {
         const files = validFixture();
-        files[file] = source;
+        files['docs/getting-started.md'] =
+            `<a style="${style}" href="${DISCUSSIONS_ROUTE}">GitHub Discussions support</a>\n`;
         fixture(files, root => {
-            assert.ok(auditSupportContract({ root, ...options }).problems.some(problem => (
-                problem.startsWith(`${file}:`)
-                && problem.includes('security intake links must use private GitHub advisories')
-            )), file);
+            assert.ok(auditSupportContract({ root }).problems.includes(
+                'docs/getting-started.md: routes users to disabled GitHub Discussions'
+            ), style);
+        });
+    }
+});
+
+test('malformed nested anchors cannot hide public vulnerability routes', () => {
+    for (const [route, ending] of [
+        [ISSUES_ROUTE, '</a></a>'],
+        [DISCORD_ROUTE, '</a></a>'],
+        ['mailto:security@example.com', '</a></a>'],
+        [ISSUES_ROUTE, ''],
+        [DISCORD_ROUTE, ''],
+        ['mailto:security@example.com', ''],
+    ]) {
+        const source = `<a href="${SECURITY_ADVISORY_ROUTE}">`
+            + `Submit a private vulnerability report <a href="${route}">here${ending}\n`;
+        for (const [file, options] of [
+            ['theme/partials/support.html', {}],
+            ['site/index.html', { checkBuiltSite: true }],
+        ]) {
+            const files = validFixture();
+            files[file] = source;
+            fixture(files, root => {
+                assert.ok(auditSupportContract({ root, ...options }).problems.some(problem => (
+                    problem.startsWith(`${file}:`)
+                    && problem.includes('security intake links must use private GitHub advisories')
+                )), `${file}: ${route}: ${ending || 'unclosed'}`);
+            });
+        }
+    }
+});
+
+test('void elements inside hidden inline HTML do not hide later visible intake prose', () => {
+    for (const voidElement of ['<br>', '<img src="pixel.png">']) {
+        const files = validFixture();
+        files['docs/getting-started.md'] = '<span hidden>not visible'
+            + `${voidElement}</span> Submit vulnerability reports by email security@example.com.\n`;
+        fixture(files, root => {
+            assert.ok(auditSupportContract({ root }).problems.some(problem => (
+                problem.startsWith('docs/getting-started.md:')
+                && problem.includes('security or vulnerability intake prose')
+            )), voidElement);
         });
     }
 });

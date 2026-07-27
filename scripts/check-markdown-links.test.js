@@ -299,6 +299,8 @@ test('hidden raw HTML and Markdown-in-HTML links are not actionable', () => {
     const links = extractLinks([
         '<a hidden href="https://example.com/hidden">Hidden</a>',
         '<a aria-hidden="true" href="https://example.com/aria-hidden">ARIA hidden</a>',
+        '<a aria-hidden="tr&#117;e" href="https://example.com/entity-aria-hidden">Entity ARIA hidden</a>',
+        '<a aria-hidden=tr&#117;e href="https://example.com/unquoted-entity-aria-hidden">Unquoted entity ARIA hidden</a>',
         '<a style="display:none" href="https://example.com/css-hidden">CSS hidden</a>',
         '<a style=display:none href="https://example.com/unquoted-hidden">Unquoted hidden</a>',
         '<a style=visibility:hidden href="https://example.com/unquoted-invisible">Unquoted invisible</a>',
@@ -315,27 +317,45 @@ test('hidden raw HTML and Markdown-in-HTML links are not actionable', () => {
     assert.ok(links.filter(link => link.label !== 'Visible').every(link => link.hidden));
 });
 
+test('inline style visibility follows declaration order and importance', () => {
+    for (const [style, hidden] of [
+        ['display:none;display:inline', false],
+        ['visibility:hidden;visibility:visible', false],
+        ['display:none!important;display:inline', true],
+        ['display:none;display:inline!important', false],
+        ['display:none!important;display:inline!important', false],
+        ['display:none;display:invalid', true],
+    ]) {
+        const source = `<a style="${style}" href="https://example.com/route">Route</a>`;
+        for (const links of [extractLinks(source), extractRenderedHtmlLinks(source)]) {
+            const link = links.find(candidate => candidate.type === 'link');
+            assert.ok(link, style);
+            assert.equal(link.hidden, hidden, style);
+            assert.equal(isActionableLink(link), !hidden, style);
+        }
+    }
+});
+
 test('repairs malformed nested anchors into independently actionable links', () => {
-    const source = [
-        '<a href="https://example.com/private">',
-        '  Submit a private vulnerability report ',
-        '  <a href="https://example.com/public">here</a>',
-        '</a>',
-        '',
-    ].join('');
-    for (const links of [extractLinks(source), extractRenderedHtmlLinks(source)]) {
-        const actionable = links.filter(isActionableLink);
-        assert.deepEqual(
-            actionable.map(link => ({ target: link.target, label: link.label })),
-            [
-                {
-                    target: 'https://example.com/private',
-                    label: 'Submit a private vulnerability report',
-                },
-                { target: 'https://example.com/public', label: 'here' },
-            ]
-        );
-        assert.match(actionable[1].contextBefore, /private vulnerability report/i);
+    for (const ending of ['</a></a>', '']) {
+        const source = '<a href="https://example.com/private">'
+            + 'Submit a private vulnerability report '
+            + `<a href="https://example.com/public">here${ending}`;
+        for (const links of [extractLinks(source), extractRenderedHtmlLinks(source)]) {
+            const actionable = links.filter(isActionableLink);
+            assert.deepEqual(
+                actionable.map(link => ({ target: link.target, label: link.label })),
+                [
+                    {
+                        target: 'https://example.com/private',
+                        label: 'Submit a private vulnerability report',
+                    },
+                    { target: 'https://example.com/public', label: 'here' },
+                ],
+                ending || 'unclosed'
+            );
+            assert.match(actionable[1].contextBefore, /private vulnerability report/i);
+        }
     }
 });
 

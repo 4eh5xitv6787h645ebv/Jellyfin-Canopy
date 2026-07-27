@@ -15,6 +15,7 @@ const {
     isActionableLink,
     markdownHeadingAnchors,
     normalizeLinkTarget,
+    updateHtmlVisibilityStack,
     validateMarkdownFile,
     visibleHtmlText,
 } = require('./check-markdown-links');
@@ -273,26 +274,22 @@ function auditTemplateDirectory(root, problems) {
 
 function inlineRenderedText(children = [], includeCode = false) {
     const values = [];
-    let hiddenDepth = 0;
+    const visibilityStack = [];
     for (const token of children) {
         if (token.type === 'html_inline') {
-            if (/^<\//.test(token.content)) {
-                if (hiddenDepth > 0) hiddenDepth -= 1;
-                else values.push(visibleHtmlText(token.content));
-                continue;
-            }
-            const hidden = htmlTagIsHidden(token.content);
-            const selfClosing = /\/>\s*$/.test(token.content);
-            if (hiddenDepth > 0) {
-                if (!selfClosing) hiddenDepth += 1;
-            } else if (hidden && !selfClosing) {
-                hiddenDepth = 1;
-            } else if (!hidden) {
+            const hiddenBefore = Boolean(visibilityStack.at(-1)?.hidden);
+            const closing = /^\s*<\//.test(token.content);
+            const ownHidden = !closing && htmlTagIsHidden(token.content);
+            updateHtmlVisibilityStack(visibilityStack, token.content);
+            const hiddenAfter = Boolean(visibilityStack.at(-1)?.hidden);
+            if (closing
+                ? !hiddenBefore && !hiddenAfter
+                : !hiddenAfter && !ownHidden) {
                 values.push(visibleHtmlText(token.content));
             }
             continue;
         }
-        if (hiddenDepth > 0) continue;
+        if (visibilityStack.at(-1)?.hidden) continue;
         if (token.type === 'text' || (includeCode && token.type === 'code_inline')) {
             values.push(token.content);
         } else if (token.type === 'image') {

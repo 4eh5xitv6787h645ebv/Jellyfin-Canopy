@@ -344,10 +344,40 @@ const HTML_VOID_ELEMENTS = new Set([
 
 function htmlTagIsHidden(tag) {
     const style = htmlAttributeValue(tag, 'style');
+    const ariaHidden = htmlAttributeValue(tag, 'aria-hidden').toLowerCase();
     return /(?:^|\s)hidden(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?(?=\s|\/?>)/i
         .test(tag)
-        || /\saria-hidden\s*=\s*["']?true\b/i.test(tag)
-        || /(?:^|;)\s*(?:display\s*:\s*none|visibility\s*:\s*hidden)\b/i.test(style);
+        || ariaHidden === 'true'
+        || inlineStyleHides(style);
+}
+
+function cascadedInlineStyleValue(style, property, validValue) {
+    let winner = null;
+    const declaration = new RegExp(
+        `(?:^|;)\\s*${property}\\s*:\\s*([^;]*)`,
+        'gi'
+    );
+    for (const match of style.replace(/\/\*[\s\S]*?\*\//g, ' ').matchAll(declaration)) {
+        const important = /!\s*important\s*$/i.test(match[1]);
+        const value = match[1].replace(/!\s*important\s*$/i, '').trim().toLowerCase();
+        if (!validValue.test(value)) continue;
+        if (!winner || important || !winner.important) winner = { important, value };
+    }
+    return winner?.value || '';
+}
+
+function inlineStyleHides(style) {
+    const display = cascadedInlineStyleValue(
+        style,
+        'display',
+        /^(?:none|contents|block|inline|run-in|flow-root|list-item|flex|grid|table|table-(?:row|cell|column|caption|row-group|header-group|footer-group|column-group)|inline-(?:block|flex|grid|table)|ruby(?:-base|-text|-base-container|-text-container)?|inherit|initial|revert(?:-layer)?|unset|(?:block|inline)\s+(?:flow|flow-root|flex|grid|ruby)(?:\s+list-item)?)$/i
+    );
+    const visibility = cascadedInlineStyleValue(
+        style,
+        'visibility',
+        /^(?:visible|hidden|collapse|inherit|initial|revert(?:-layer)?|unset)$/i
+    );
+    return display === 'none' || ['hidden', 'collapse'].includes(visibility);
 }
 
 function updateHtmlVisibilityStack(stack, content) {
@@ -388,26 +418,40 @@ function htmlPriorBlockText(content, boundary, labels) {
     return blocks.map(block => compactVisibleText(block, labels)).filter(Boolean).at(-1) || '';
 }
 
+function htmlAnchorHiddenStates(content) {
+    const states = new Map();
+    const stack = [];
+    const pattern = /<(\/?)([a-z][a-z0-9:-]*)\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi;
+    for (const match of content.matchAll(pattern)) {
+        updateHtmlVisibilityStack(stack, match[0]);
+        if (match[1] !== '/' && match[2].toLowerCase() === 'a') {
+            states.set(match.index, Boolean(stack.at(-1)?.hidden));
+        }
+    }
+    return states;
+}
+
 function htmlAnchorRecords(content, labels = htmlIdLabels(content)) {
     const anchors = [];
-    const opening = /<a\b/gi;
     const closing = /<\/a\s*>/gi;
-    let match;
-    while ((match = opening.exec(content)) !== null) {
+    const hiddenStates = htmlAnchorHiddenStates(content);
+    const openings = [];
+    for (const match of content.matchAll(/<a\b/gi)) {
         const openingEnd = htmlOpeningTagEnd(content, match.index);
         if (openingEnd === -1) break;
+        openings.push({ index: match.index, openingEnd });
+    }
+    for (const [index, match] of openings.entries()) {
+        const { openingEnd } = match;
         const openingTag = content.slice(match.index, openingEnd);
         closing.lastIndex = openingEnd;
         const close = closing.exec(content);
-        const nextOpeningOffset = content.slice(openingEnd).search(/<a\b/i);
-        const nextOpening = nextOpeningOffset === -1
-            ? -1
-            : openingEnd + nextOpeningOffset;
+        const nextOpening = openings[index + 1]?.index ?? -1;
         const autoClosed = nextOpening !== -1 && (!close || nextOpening < close.index);
-        const contentEnd = autoClosed ? nextOpening : (close?.index ?? openingEnd);
+        const contentEnd = autoClosed ? nextOpening : (close?.index ?? content.length);
         const anchorEnd = autoClosed
             ? nextOpening
-            : (close ? close.index + close[0].length : openingEnd);
+            : (close ? close.index + close[0].length : content.length);
         const nestedName = contentEnd > openingEnd
             ? accessibleHtmlText(content.slice(openingEnd, contentEnd), labels)
                 .replace(/\s+/g, ' ').trim()
@@ -445,7 +489,7 @@ function htmlAnchorRecords(content, labels = htmlIdLabels(content)) {
                 || htmlAttributeValue(openingTag, 'aria-label')
                 || nestedName
                 || htmlAttributeValue(openingTag, 'title'),
-            hidden: htmlElementIsHidden(content, match.index, openingTag),
+            hidden: hiddenStates.get(match.index) || false,
             contextBefore,
             contextBeforePrior: previousAnchor && beforeBoundary === 0
                 ? `${previousAnchor.contextBeforePrior || ''} ${previousAnchor.contextBefore || ''}`
@@ -470,11 +514,19 @@ function htmlLinks(content, line, labels = htmlIdLabels(content)) {
     const visible = stripHtmlComments(content);
     const context = compactVisibleText(visible);
     const anchors = htmlAnchorRecords(visible, labels);
+    let anchorIndex = 0;
     for (const attribute of htmlAttributeRecords(content)) {
         if (attribute.name === 'href') {
-            const anchor = anchors.find(candidate => (
-                attribute.index >= candidate.start && attribute.index < candidate.openingEnd
-            ));
+            while (anchorIndex < anchors.length
+                && attribute.index >= anchors[anchorIndex].openingEnd) {
+                anchorIndex += 1;
+            }
+            const candidate = anchors[anchorIndex];
+            const anchor = candidate
+                && attribute.index >= candidate.start
+                && attribute.index < candidate.openingEnd
+                ? candidate
+                : null;
             links.push({
                 target: normalizeLinkTarget(attribute.value),
                 line,
@@ -548,7 +600,10 @@ function inlineHtmlAnchorRecord(children, start, labels) {
             label += ' ';
         }
     }
-    return null;
+    const unclosedLabel = label.replace(/\s+/g, ' ').trim();
+    return unclosedLabel
+        ? { label: unclosedLabel, endIndex: children.length - 1 }
+        : null;
 }
 
 function normalizeLinkTarget(target) {
@@ -898,6 +953,7 @@ module.exports = {
     mkdocsHeadingSlug,
     normalizeLinkTarget,
     stripHtmlComments,
+    updateHtmlVisibilityStack,
     validateMarkdownFile,
     visibleHtmlText,
 };
