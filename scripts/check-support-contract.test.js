@@ -473,6 +473,21 @@ test('semantic ownership keeps abbreviations and semicolons inside the owning se
     }
 });
 
+test('semantic ownership does not cross semicolon-delimited route clauses', () => {
+    const files = validFixture();
+    files['docs/getting-started.md'] =
+        `For bug reports, use [GitHub Issues](${ISSUES_ROUTE}); `
+        + `for help, use [Discord](${DISCORD_ROUTE}).\n`;
+    fixture(files, root => {
+        assert.deepEqual(
+            auditSupportContract({ root }).problems.filter(problem => (
+                problem.startsWith('docs/getting-started.md:')
+            )),
+            []
+        );
+    });
+});
+
 test('semantic route ownership decodes rendered raw HTML labels', () => {
     const files = validFixture();
     files['CONTRIBUTING.md'] = files['CONTRIBUTING.md'].replace(
@@ -1246,7 +1261,6 @@ test('allows relevance-gated and negated File Transformation guidance', () => {
         'If File Transformation is involved, include its version and enabled state.',
         'File Transformation details, if applicable:',
         'File Transformation details, as applicable:',
-        'File Transformation details (optional):',
     ]) {
         const files = validFixture();
         files['.github/ISSUE_TEMPLATE/bug.md'] = BUG_TEMPLATE.replace(
@@ -1266,6 +1280,7 @@ test('requires File Transformation prompts to be relevance-gated', () => {
     for (const guidance of [
         'Tell us whether File Transformation is present.',
         'Indicate your File Transformation version.',
+        'File Transformation details (optional):',
     ]) {
         const files = validFixture();
         files['.github/ISSUE_TEMPLATE/bug.md'] = BUG_TEMPLATE.replace(
@@ -1310,6 +1325,8 @@ test('distinguishes explicit security-route rejection from unrelated negation an
 test('audits generic security calls to action and plain source or built HTML prose', () => {
     for (const markdownSource of [
         `Found a vulnerability? [Click here](${DISCORD_ROUTE}).\n`,
+        `Found a vulnerability? [Open a GitHub issue](${ISSUES_ROUTE}).\n`,
+        `Found an exploit? [Report it on Discord](${DISCORD_ROUTE}).\n`,
         `Need to report a vulnerability? [Use this link](${ISSUES_ROUTE}).\n`,
         `Security issue? [Open](${DISCORD_ROUTE}).\n`,
     ]) {
@@ -1331,6 +1348,16 @@ test('audits generic security calls to action and plain source or built HTML pro
             'theme/partials/support.html: security or vulnerability intake prose '
             + 'must route only to private GitHub advisories'
         ));
+    });
+
+    const contextualSourceHtml = validFixture();
+    contextualSourceHtml['theme/partials/support.html'] =
+        `<p>Found a vulnerability? <a href="${ISSUES_ROUTE}">Open a GitHub issue</a>.</p>\n`;
+    fixture(contextualSourceHtml, root => {
+        assert.ok(auditSupportContract({ root }).problems.some(problem => (
+            problem.startsWith('theme/partials/support.html:')
+            && problem.includes('security intake links must use private GitHub advisories')
+        )));
     });
 
     const builtHtml = validFixture();
@@ -1372,8 +1399,8 @@ test('rejects optional wording that leaves required bug environment fields blank
     files['.github/ISSUE_TEMPLATE/bug.md'] = BUG_TEMPLATE.replace(
         '- Server operating system or platform and version:\n- Jellyfin installation method:',
         [
-            '- Server operating system or platform may be omitted:',
-            '- Installation method can be left blank:',
+            '- Optional server operating system or platform and version:',
+            '- Optional Jellyfin installation method:',
         ].join('\n')
     );
     fixture(files, root => {
@@ -1389,12 +1416,15 @@ test('audits route intent in expanded and previous-sentence call-to-action wordi
         [`[Pitch an idea](${DISCORD_ROUTE}).`, 'feature intake links'],
         [`[Send us your feature idea](${DISCORD_ROUTE}).`, 'feature intake links'],
         [`Want to propose a feature? [Click here](${DISCORD_ROUTE}).`, 'feature intake links'],
+        [`Have an improvement in mind? [Tell us on Discord](${DISCORD_ROUTE}).`, 'feature intake links'],
         [`[Get assistance](${ISSUES_ROUTE}).`, 'community-support links'],
         [`[Need help?](${ISSUES_ROUTE}).`, 'community-support links'],
         [`Need help? [Click here](${ISSUES_ROUTE}).`, 'community-support links'],
+        [`Questions? [Visit our community forum](${ISSUES_ROUTE}).`, 'community-support links'],
         [`[Tell us about a defect](${DISCORD_ROUTE}).`, 'bug intake links'],
         [`[File a bug](${DISCORD_ROUTE}).`, 'bug intake links'],
         [`Found a bug? [Open it here](${DISCORD_ROUTE}).`, 'bug intake links'],
+        [`Something broken? [Ask on Discord](${DISCORD_ROUTE}).`, 'bug intake links'],
     ];
     for (const [prose, message] of cases) {
         const files = validFixture();
@@ -1529,6 +1559,16 @@ test('rejects every independently reproduced support-contract bypass', () => {
         assert.ok(result.files.includes('.github/SUPPORT.md'));
         assert.ok(result.problems.includes(
             '.github/SUPPORT.md: routes users to disabled GitHub Discussions'
+        ));
+    });
+
+    const researchSupport = validFixture();
+    researchSupport['research/design.md'] = `[Get support](${DISCUSSIONS_ROUTE}).\n`;
+    fixture(researchSupport, root => {
+        const result = auditSupportContract({ root });
+        assert.ok(result.files.includes('research/design.md'));
+        assert.ok(result.problems.includes(
+            'research/design.md: routes users to disabled GitHub Discussions'
         ));
     });
 

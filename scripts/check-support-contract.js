@@ -79,11 +79,11 @@ const SUPPORT_ROUTE_SECTIONS = new Map([
     ['docs/help.md', ['Community and support']],
     ['.github/SECURITY_GUIDELINES.md', ['Questions?']],
 ]);
-const BUG_ROUTE_LABEL = /\b(?:bug[- ]reports?|github bug-report issues|github issues|issue tracker|(?:file|found|report|submit|tell)\b.{0,40}\b(?:a\s+)?(?:bugs?|defects?|issues?))\b/i;
-const FEATURE_ROUTE_LABEL = /\b(?:feature[- ]requests?|feature\s+proposals?|request(?:ing)?\b.{0,40}\b(?:features?|enhancements?)|(?:pitch|send|submit)(?:s|ed|ing)?\b.{0,40}\b(?:features?|ideas?|enhancements?)|suggest\b.{0,40}\b(?:features?|ideas?|enhancements?)|share\b.{0,40}\b(?:ideas?|enhancements?)|propos(?:e|als?)\b.{0,40}\b(?:features?|ideas?|enhancements?)|enhancement\s+(?:ideas?|issues?|proposals?|requests?|submission|template)|feature(?:-request)?\s+(?:issues?|template)|ideas?\s+(?:channel|submission|template))\b/i;
-const SUPPORT_ROUTE_LABEL = /(?:\b(?:assistance|discord|community\s+(?:chat|support)|for\s+(?:help|support)|(?:ask|get|request|seek)\s+(?:for\s+|to\s+)?(?:assistance|help|support)|(?:help|support)\s+(?:channel|chat|community|forum|requests?|server))\b|(?:^|[.!?]\s*)need\s+(?:for\s+|to\s+)?(?:assistance|help|support)\b)/i;
+const BUG_ROUTE_LABEL = /\b(?:bug[- ]reports?|github bug-report issues|github issues|issue tracker|(?:something|anything|this|it)\s+(?:is\s+)?broken|broken\s+(?:behavior|feature|functionality|plugin)|(?:file|found|report|submit|tell)\b.{0,40}\b(?:a\s+)?(?:bugs?|defects?|issues?))\b/i;
+const FEATURE_ROUTE_LABEL = /\b(?:feature[- ]requests?|feature\s+proposals?|(?:have|propose|request|share|suggest|submit|tell)\b.{0,50}\bimprovements?|improvements?\s+(?:ideas?|proposals?|requests?)|request(?:ing)?\b.{0,40}\b(?:features?|enhancements?)|(?:pitch|send|submit)(?:s|ed|ing)?\b.{0,40}\b(?:features?|ideas?|enhancements?)|suggest\b.{0,40}\b(?:features?|ideas?|enhancements?)|share\b.{0,40}\b(?:ideas?|enhancements?)|propos(?:e|als?)\b.{0,40}\b(?:features?|ideas?|enhancements?)|enhancement\s+(?:ideas?|issues?|proposals?|requests?|submission|template)|feature(?:-request)?\s+(?:issues?|template)|ideas?\s+(?:channel|submission|template))\b/i;
+const SUPPORT_ROUTE_LABEL = /(?:\b(?:assistance|discord|community\s+(?:chat|forum|support)|for\s+(?:help|support)|(?:ask|get|request|seek)\s+(?:for\s+|to\s+)?(?:assistance|help|support)|(?:help|support)\s+(?:channel|chat|community|forum|requests?|server))\b|(?:^|[.!?;]\s*)need\s+(?:for\s+|to\s+)?(?:assistance|help|support)\b)/i;
 const SECURITY_ACTION = '(?:alerts?|click(?:s|ed|ing)?|concerns?|contact(?:s|ed|ing)?|emails?|follow(?:s|ed|ing)?|instructions?|issues?|messages?|notifications?|notif(?:y|ies|ied|ying)|report(?:s|ed|ing)?|submissions?|submit(?:s|ted|ting)?|disclos(?:e|es|ed|ing|ures?)|intake|use(?:s|d|ing)?)';
-const SECURITY_SUBJECT = '(?:security|vulnerab\\w*)';
+const SECURITY_SUBJECT = '(?:exploits?|security|vulnerab\\w*)';
 const SECURITY_INTAKE_HEADING = new RegExp(
     `(?:\\b${SECURITY_ACTION}\\b.{0,80}\\b${SECURITY_SUBJECT}\\b`
     + `|\\b${SECURITY_SUBJECT}\\b.{0,80}\\b${SECURITY_ACTION}\\b)`,
@@ -97,7 +97,18 @@ const SECURITY_CONTEXT_HEADING = /\b(?:security|vulnerab\w*)\b/i;
 const PUBLIC_SECURITY_CHANNEL = /\b(?:discord|github\s+(?:issues?|discussions?)|issue\s+tracker|public\s+(?:channel|forum|issues?|reports?|threads?))\b/i;
 const PUBLIC_SECURITY_EXCEPTION = /\b(?:anywhere|nowhere)\s+(?:else\s+)?(?:but|except)\b|\b(?:except|other\s+than)\b/i;
 const PUBLIC_SECURITY_NEGATION_ACTION = '(?:contact(?:ed|ing)?|disclos\\w*|email(?:ed|ing)?|file(?:d|ing)?|include(?:d|ing)?|message(?:d|ing)?|notif(?:y|ied|ying)|open(?:ed|ing)?|post(?:ed|ing)?|report(?:ed|ing)?|send|sent|submit(?:ted|ting)?|use(?:d|ing)?)';
-const GENERIC_ROUTE_LABEL = /^(?:click(?:\s+here)?|continue|details?|follow|go|here|learn\s+more|link|more|open(?:\s+it\s+here)?|read\s+more|this|this\s+link|use\s+this\s+link|view)$/i;
+const CONTEXTUAL_ACTION_LABEL = '(?:click(?:\\s+here)?|continue|details?|follow|go|here'
+    + '|learn\\s+more|link|more|open(?:\\s+it\\s+here)?|read\\s+more|this|this\\s+link'
+    + '|use\\s+this\\s+link|view|(?:ask|report\\s+it|send\\s+it|tell\\s+us)'
+    + '(?:\\s+(?:at|in|on|through|to|via)\\s+(?:discord|github|issues?|the\\s+forum))?'
+    + '|visit\\s+our(?:\\s+community\\s+(?:chat|forum)|\\s+(?:at|in|on|through|to|via)'
+    + '\\s+(?:discord|github|issues?|the\\s+forum))?|open\\s+(?:a\\s+)?github\\s+issue)';
+const HTML_CONTEXT_DEPENDENT_ROUTE_LABEL = new RegExp(`^(?:${CONTEXTUAL_ACTION_LABEL})$`, 'i');
+const CONTEXT_DEPENDENT_ROUTE_LABEL = new RegExp(
+    `^(?:${CONTEXTUAL_ACTION_LABEL}|(?:github\\s+)?issues?|discord|community\\s+(?:chat|forum))$`,
+    'i'
+);
+const ROUTE_INTENT_TERM = /\b(?:assistance|bugs?|broken|defects?|enhancements?|exploits?|features?|help|ideas?|improvements?|questions?|security|support|vulnerab\w*)\b|community\s+(?:chat|forum|support)/i;
 const DISCUSSIONS_ACTION = /\b(?:ask|create|direct|go|join|open|post|route|send|start|submit|use)\b/i;
 const DISCUSSIONS_PURPOSE = /\b(?:bugs?|community|features?|help|ideas?|issues?|questions?|reports?|requests?|support)\b/i;
 const DISCUSSIONS_EXCEPTION = /\b(?:anywhere|nowhere)\s+(?:else\s+)?(?:but|except)\b|\b(?:anything\s+)?except\b|\bother\s+than\b/i;
@@ -407,7 +418,7 @@ function semanticLinkText(link) {
         const boundaries = [];
         for (let index = 0; index < text.length; index += 1) {
             const character = text[index];
-            if (character === '!' || character === '?') {
+            if (character === '!' || character === '?' || character === ';') {
                 boundaries.push(index);
                 continue;
             }
@@ -424,13 +435,18 @@ function semanticLinkText(link) {
         }
         return boundaries;
     };
+    const boundaries = sentenceBoundaries(after);
+    const end = boundaries.length > 0 ? Math.min(...boundaries) : after.length;
     const beforeBoundaries = sentenceBoundaries(before);
-    const startBoundary = GENERIC_ROUTE_LABEL.test(label)
+    const ownStart = (beforeBoundaries.at(-1) ?? -1) + 1;
+    const ownClause = `${before.slice(ownStart)} ${label} ${after.slice(0, end)}`
+        .replace(/\s+/g, ' ').trim();
+    const inheritPriorClause = CONTEXT_DEPENDENT_ROUTE_LABEL.test(label)
+        && !ROUTE_INTENT_TERM.test(ownClause);
+    const startBoundary = inheritPriorClause
         ? beforeBoundaries.at(-2)
         : beforeBoundaries.at(-1);
     const start = (startBoundary ?? -1) + 1;
-    const boundaries = sentenceBoundaries(after);
-    const end = boundaries.length > 0 ? Math.min(...boundaries) : after.length;
     return `${before.slice(Math.max(start, before.length - 80))} ${label} ${after.slice(0, Math.min(end, 80))}`
         .replace(/\s+/g, ' ').trim();
 }
@@ -667,7 +683,7 @@ function requireSectionFields(tokens, file, section, fields, problems) {
         .map(text => text.replace(/\p{Cf}/gu, '').replace(/\s+/g, ' ').trim())
         .filter(Boolean);
     const captureCue = /(?:[:?]\s*$|\b(?:attach|describe|enter|include|indicate|list|provide|record|report|select|specify|state|supply)\b)/i;
-    const captureOptOut = /\b(?:(?:is|are|was|were)\s+(?:not\s+(?:applicable|needed|relevant|required)|irrelevant|optional|unnecessary)|need\s+not\s+be\s+(?:attached|described|entered|included|listed|provided|recorded|reported|specified|stated|supplied)|(?:can|may)\s+(?:be\s+)?(?:left\s+blank|omitted|skipped)|(?:do not|don't|never)\s+(?:attach|describe|enter|include|list|provide|record|report|specify|state|supply)|no need to\s+(?:attach|describe|enter|include|list|provide|record|report|specify|state|supply))\b/i;
+    const captureOptOut = /(?:^optional\b|\b(?:(?:is|are|was|were)\s+(?:not\s+(?:applicable|needed|relevant|required)|irrelevant|optional|unnecessary)|need\s+not\s+be\s+(?:attached|described|entered|included|listed|provided|recorded|reported|specified|stated|supplied)|(?:can|may)\s+(?:be\s+)?(?:left\s+blank|omitted|skipped)|(?:do not|don't|never)\s+(?:attach|describe|enter|include|list|provide|record|report|specify|state|supply)|no need to\s+(?:attach|describe|enter|include|list|provide|record|report|specify|state|supply))\b)/i;
     const missing = fields.filter(field => !prompts.some((prompt) => {
         if (!field.pattern.test(prompt)) return false;
         if (field.allowNegatedPrompt) return true;
@@ -701,7 +717,7 @@ function hasFileTransformationRequirement(body) {
         }
         const conditional = /\b(?:if|only if|only when|when|where)\b.{0,120}\bfile\s*transformation\b/i
             .test(compact)
-            || /\bfile\s*transformation\b.{0,120}\b(?:(?:as|if|only when|when|where)\b.{0,80}\b(?:applicable|involved|relevant|used)|optional)\b/i
+            || /\bfile\s*transformation\b.{0,120}\b(?:as|if|only when|when|where)\b.{0,80}\b(?:applicable|involved|relevant|used)\b/i
                 .test(compact);
         if (conditional) return false;
         const normalized = compact.replace(/[`_*]/g, '');
@@ -879,7 +895,7 @@ function renderedSupportSurface(source, file) {
     return { links: extractLinks(source), text: renderedText(tokens) };
 }
 
-function collectFiles(root, candidate, extension, files) {
+function collectFiles(root, candidate, extension, files, excludedDirectories = new Set()) {
     const absolute = path.join(root, candidate);
     if (!fs.existsSync(absolute)) return;
     const stat = fs.lstatSync(absolute);
@@ -891,19 +907,37 @@ function collectFiles(root, candidate, extension, files) {
     if (!stat.isDirectory()) return;
     for (const entry of fs.readdirSync(absolute, { withFileTypes: true })
         .sort((left, right) => left.name.localeCompare(right.name))) {
-        collectFiles(root, path.join(candidate, entry.name), extension, files);
+        if (entry.isDirectory() && excludedDirectories.has(entry.name)) continue;
+        collectFiles(
+            root,
+            path.join(candidate, entry.name),
+            extension,
+            files,
+            excludedDirectories
+        );
     }
 }
 
 function collectSupportSurfaceFiles(root, files) {
     const surfaces = [...new Set([...files, ...collectMarkdownFiles(root)])];
+    const excludedDirectories = new Set([
+        '.agents',
+        '.git',
+        'bin',
+        'coverage',
+        'node_modules',
+        'obj',
+        'site',
+        'test-results',
+    ]);
     for (const entry of fs.readdirSync(root, { withFileTypes: true })
         .sort((left, right) => left.name.localeCompare(right.name))) {
         if (entry.isFile() && /\.md$/i.test(entry.name) && entry.name !== 'AGENTS.md') {
             surfaces.push(entry.name);
+        } else if (entry.isDirectory() && !excludedDirectories.has(entry.name)) {
+            collectFiles(root, entry.name, /\.md$/i, surfaces, excludedDirectories);
         }
     }
-    collectFiles(root, '.github', /\.md$/i, surfaces);
     if (fs.existsSync(path.join(root, 'mkdocs.yml'))) surfaces.push('mkdocs.yml');
     for (const candidate of RENDERED_HTML_ROOTS) {
         collectFiles(root, candidate, /\.html?$/i, surfaces);
@@ -1021,7 +1055,8 @@ function auditGlobalRouteLinks(file, surface, root, problems, options = {}) {
         if (['ko-fi.com', 'www.buymeacoffee.com'].includes(target?.hostname.toLowerCase())) {
             continue;
         }
-        const scopedLink = options.html && !GENERIC_ROUTE_LABEL.test(String(link.label || '').trim())
+        const scopedLink = options.html
+            && !HTML_CONTEXT_DEPENDENT_ROUTE_LABEL.test(String(link.label || '').trim())
             ? { ...link, context: link.label, contextBefore: '', contextAfter: '' }
             : link;
         const text = semanticLinkText(scopedLink);
