@@ -333,6 +333,7 @@
 }
 
 /* Essentials/Advanced mode switch: two-segment pill at the rail top. */
+#JellyfinCanopyPage .jc-mode-switch[hidden] { display: none; }
 #JellyfinCanopyPage .jc-mode-switch {
     display: grid;
     grid-template-columns: 1fr 1fr;
