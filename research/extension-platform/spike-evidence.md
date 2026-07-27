@@ -78,7 +78,7 @@ repository) establishes the sharper form of the same result: this happens even
 when the two plugins ship a **byte-identical** contract assembly at the *same*
 version, and the DI consequence of asking for the host's own copy of the
 interface is a silent `null` — no exception, no log entry, no `Malfunctioned`
-status. See [ADR-0003](adr/0003-json-abi-and-provider-invocation.md).
+status. See [ADR-0003](adr/0004-provider-invocation.md).
 
 ## S3 — Cross-plugin DI works, but only by foreign concrete type
 
@@ -95,7 +95,7 @@ The host resolved the provider's singleton out of Jellyfin's shared container by
 passing the `Type` object obtained **from the provider's own assembly**, then
 invoked it reflectively over `string` in / `string` out. This is the only
 binding path that worked, and it is the basis of
-[ADR-0003](adr/0003-json-abi-and-provider-invocation.md).
+[ADR-0003](adr/0004-provider-invocation.md).
 
 ## S4 — Manifest discovery binds to the real plugin identity
 
@@ -154,7 +154,7 @@ test rather than rely on this.
 cases, but the provider `Task` kept running in-process and could not be killed.
 The two cases are also indistinguishable from the caller's side. A deadline
 protects the *caller*, never the *server*. This is why
-[ADR-0003](adr/0003-json-abi-and-provider-invocation.md) treats providers as
+[ADR-0003](adr/0004-provider-invocation.md) treats providers as
 trusted in-process code and the [threat model](threat-model.md) records
 "malicious installed plugin" as out of scope for containment.
 
@@ -267,7 +267,7 @@ plugin gets for free, and exceeding it surfaces as an **opaque `500`, not a
 `413`**. `System.Text.Json`'s default maximum depth of 64 is a useful structural
 bound but produces a parse error, not a protocol error. Platform v1 must impose
 its own far smaller limits and map them to a structured `413`
-([ADR-0002](adr/0002-protocol-version-negotiation.md)).
+([ADR-0002](adr/0002-protocol-and-version-negotiation.md)).
 
 ## S12 — Reverse-proxy base path
 
@@ -306,7 +306,7 @@ Disabled and uninstalled are distinguishable: a disabled plugin is still present
 in `IPluginManager.Plugins` with `Manifest.Status = Disabled`, whereas an
 uninstalled one is gone entirely. The platform must render these as different
 states rather than collapsing both to "unavailable"
-([ADR-0004](adr/0004-manifest-discovery-and-registry-binding.md)).
+([ADR-0004](adr/0005-manifest-discovery.md)).
 
 ## S14 — Forged identity is fully resisted, but the token is in the claims
 
@@ -322,7 +322,7 @@ resolve the *admin's* user id:
 
 The acting identity is derived from the access token alone. No header, cookie or
 route value can change it. This is the foundation of
-[ADR-0007](adr/0007-identity-and-authority.md).
+[ADR-0007](adr/0011-identity-and-authority.md).
 
 **The finding that changes a design decision:** the `ClaimsPrincipal` handed to a
 controller contains
@@ -336,7 +336,7 @@ Jellyfin-IsApiKey = False
 attribution. Any design that passed the `ClaimsPrincipal`, the `HttpContext`, or
 an unfiltered claims collection across the provider boundary would hand every
 installed extension a working credential for the calling user. The provider
-context in [ADR-0003](adr/0003-json-abi-and-provider-invocation.md) is therefore
+context in [ADR-0003](adr/0004-provider-invocation.md) is therefore
 an explicit allow-list of derived values, never a pass-through, and this is
 recorded as threat **T-05**.
 
@@ -356,8 +356,8 @@ Carried into later milestones rather than assumed:
    `postMessage` broker was exercised.** Playwright is not provisioned in this
    environment, so the browser-side half of EP-00's required verification is
    carried forward as its own child issue rather than claimed. The web ADRs
-   ([ADR-0007](adr/0007-identity-and-authority.md) is unaffected;
-   [ADR-0005](adr/0005-declarative-web-contributions.md) is the one at risk) are
+   ([ADR-0007](adr/0011-identity-and-authority.md) is unaffected;
+   [ADR-0005](adr/0007-declarative-web-contributions.md) is the one at risk) are
    marked *provisional* until that child closes.
 5. **Proxy buffering was not shown to break SSE** (S7). Treated as an untested
    hypothesis, not a justification.
