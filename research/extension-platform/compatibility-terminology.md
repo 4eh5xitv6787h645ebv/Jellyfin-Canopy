@@ -38,10 +38,13 @@ it.
 | **Revoked** | grants withdrawn; credentials invalid | present, all access refused immediately |
 | **Unsupported** | works, but this capability does not exist on this client class | contribution omitted, never approximated |
 
-Verified distinguishable in the [lifecycle
-matrix](spike-evidence.md#s13--lifecycle-matrix): a disabled plugin reported
-`provider present but status=Disabled`, an uninstalled one reported `no plugin
-with GUID … in IPluginManager.Plugins`.
+**Only two of these eight are verified.** The [lifecycle
+matrix](spike-evidence.md#s13--lifecycle-matrix) showed `absent` and `disabled`
+distinguishable — a disabled plugin reported `provider present but
+status=Disabled`, an uninstalled one reported `no plugin with GUID … in
+IPluginManager.Plugins`. The other six are design states with no probe behind
+them; `incompatible` in particular depends on version negotiation, which
+[was never exercised](spike-evidence.md#what-this-spike-did-not-establish).
 
 ## Compatibility words
 

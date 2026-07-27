@@ -24,7 +24,7 @@ Everything here already works in production. The column that matters is
 | `ILiveSessionRegistry` | public | yes | no | the deliverable-device selector is the reusable part |
 | `AtomicFile` | **internal** | n/a | no | make public — genuinely generic, already guarded by an architecture test |
 | `LiveNotifierService` | public sealed | **no** | no publish surface | needs `ILiveNotifier`, a topic/payload contract and an authenticated publish route. Its carrier-command trick is a web-client implementation detail that must not enter the contract. |
-| `RequestIdentityService` | public sealed | **no** | no | **blocked**: no direct unit-test file exists. Tiers stay disambiguation-only. |
+| `RequestIdentityService` | public sealed | **no** | no | **blocked**: no dedicated test file. `Tests/Services/SpoilerIdentityTests.cs` does construct it and assert on its ladder, but only along the Spoiler Guard path — the session-by-IP and cookie tiers are untested on their own terms. Tiers stay disambiguation-only. |
 | `SettingDescriptors` | **internal** | no | payloads readable, no registration | highest value, highest effort: public types, DI-collected registration, namespaced keys, golden-snapshot strategy for third-party keys |
 | `UserConfigurationStore` / `PersistedPayloadPolicy` / `PersistedJson` | **internal** | no | only via Canopy's own typed routes | interface + namespaced file registration in place of the hard-coded whitelist — the model for [ADR-0008](adr/0008-storage-ownership.md) |
 | `AssetCacheService` | public sealed | **no** | read-only, manifest keys only | needs an asset-source contribution point and per-source byte budgets |
@@ -55,7 +55,7 @@ Verified in the spike unless marked otherwise.
 | Unforgeable acting identity | claims derived from the token | [S14](spike-evidence.md#s14--forged-identity-is-fully-resisted-but-the-token-is-in-the-claims) |
 | Enumerate other installed plugins | `IPluginManager.Plugins` → GUID, version, path, DLLs, status, live instance | [S1](spike-evidence.md#s1--one-collectible-assemblyloadcontext-per-plugin) |
 | Cross-plugin invocation | foreign concrete `Type` from the provider's assembly + shared DI + reflection | [S3](spike-evidence.md#s3--cross-plugin-di-works-but-only-by-foreign-concrete-type) |
-| Manifest bound to real plugin identity | plugin root from `IPluginManager` + GUID fingerprint | [S4](spike-evidence.md#s4--manifest-discovery-binds-to-the-real-plugin-identity) |
+| Manifest bound to real plugin identity | plugin root from `IPluginManager` + GUID fingerprint | [S4](spike-evidence.md#s4--manifest-discovery-binds-to-the-real-plugin-identity-and-rejects-a-claim-to-another) |
 | Unbuffered event streaming | `text/event-stream`, chunked, at source cadence | [S7](spike-evidence.md#s7--event-streaming-survives-the-host-pipeline) |
 | Bounded long-poll | ordinary request | [S7](spike-evidence.md#s7--event-streaming-survives-the-host-pipeline) |
 | Reverse-proxy base path | inherited automatically by plugin routes | [S12](spike-evidence.md#s12--reverse-proxy-base-path) |
@@ -92,8 +92,9 @@ milestone does not spend budget rediscovering them.
 
 | Wanted | Reality | Evidence |
 |---|---|---|
-| Shared CLR type identity between plugins | one collectible ALC per plugin; identically named types are unrelated; the DI failure is a **silent `null`** | [S1](spike-evidence.md#s1--one-collectible-assemblyloadcontext-per-plugin), [S2](spike-evidence.md#s2--no-shared-type-identity-and-the-failure-is-silent) |
-| Fix the above with a resolution hook | works in isolation; Jellyfin installs none, all types resolve before any plugin code runs, `[ModuleInitializer]` does not fire during load | load-context harness |
+| Shared CLR type identity between plugins | one collectible ALC per plugin; identically named types are unrelated; the DI failure is a **silent `null`** (`resolveByHostOwnedInterface: null`, nothing thrown) | [S1](spike-evidence.md#s1--one-collectible-assemblyloadcontext-per-plugin), [S2](spike-evidence.md#s2--no-shared-type-identity-and-the-failure-is-silent) |
+| Fix the above with a resolution hook | works in isolation; Jellyfin installs none, all types resolve before any plugin code runs, `[ModuleInitializer]` does not fire during load | Jellyfin 12 source; **not probed here** |
+| Two plugins with the same display name to coexist safely | Jellyfin's old-version cleanup deduplicates by manifest `name` alone and `Directory.Delete`s the loser | `PluginManager.DiscoverPlugins`; see **T-16** |
 | Declare a dependency between plugins | no such field in `meta.json`; no ordering attribute | JF12 source |
 | Control load order contractually | alphabetical by manifest `name` — deterministic but undocumented, untested, emergent from a private sort | [S13](spike-evidence.md#s13--lifecycle-matrix) |
 | Declare a maximum supported host version | `targetAbi` is a minimum with no ceiling | JF12 source |
@@ -125,3 +126,8 @@ Carried forward as EP-00 child issues rather than assumed either way.
 4. Behaviour under concurrency and sustained load. Every probe was sequential.
 5. Whether the provider response cap, which does not exist today, can be enforced
    without buffering the whole response.
+6. Whether two plugins shipping a **byte-identical, same-version** contract
+   assembly behave as S2 showed for two *different* versions. Documented .NET
+   behaviour says yes; this spike did not show it.
+7. Version negotiation of any kind — `/Ep00Spike/Discovery` returns a static
+   range and nothing negotiates against it.

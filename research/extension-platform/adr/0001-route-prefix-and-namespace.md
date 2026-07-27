@@ -11,8 +11,8 @@ does not exist — the plugin was rebranded and the live prefix is
 prefix convention of its own, so nothing prevents two plugins from colliding.
 
 The existing surface also fails **open**: nine routes are anonymous purely by
-having no attribute, each with a prose rationale in a comment. A new endpoint
-that forgets `[Authorize]` is anonymous and nothing catches it.
+having no attribute — and only two of the nine carry a rationale comment. A new
+endpoint that forgets `[Authorize]` is anonymous, and nothing catches it.
 
 ## Decision
 

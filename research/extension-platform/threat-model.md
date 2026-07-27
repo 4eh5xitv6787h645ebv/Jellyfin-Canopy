@@ -12,7 +12,7 @@ revisits it in full before GA.
 | **Z1 — kernel boundary** | manifest reader, registry, provider binder, capability gate, audit | Trusted code enforcing policy **on** untrusted data |
 | **Z2 — extension declarations** | `jellyfin-canopy-extension.json`, requested scopes, contribution descriptors, provider responses | **Untrusted input**, authored by a third party |
 | **Z3 — authenticated client** | browser with a Canopy web adapter, native/TV client, companion service | Untrusted; authenticated; authority = its Jellyfin user |
-| **Z4 — sandboxed frame** | opaque-origin iframe, if EP-07 ships one | Untrusted, no host DOM, no token |
+| **Z4 — sandboxed frame** | opaque-origin iframe — **deferred, not in v1** ([ADR-0007](adr/0007-declarative-web-contributions.md)) | Untrusted, no host DOM, no token |
 | **Z5 — anonymous network** | unauthenticated callers, other web origins | Fully untrusted |
 
 **Z0 is one trust zone, not many.** An installed plugin is already inside it. The
@@ -66,6 +66,8 @@ flowchart TB
   BIND -->|"JSON string + derived context"| PROV
   PROV -->|"JSON string, schema-validated on return"| BIND
   MAN -->|"read only from the plugin root Jellyfin reports"| REG
+  PROV -.->|"uncontained: in-process, can inject IHttpContextAccessor (T-03, T-05)"| AUTH
+  PROV -.->|"uncontained: full server-process trust (T-03)"| JF
   GATE --> OWN
   OWN --> JF
   EVENTS -->|"authorized before enqueue"| WEB
@@ -124,35 +126,55 @@ running after the kernel's deadline fired and could not be killed.
 made by the administrator, before the platform is involved. No document in this
 program may claim containment here.
 
-### T-04 · Malicious manifest — **high**
+### T-04 · Malformed or dishonest manifest — **high (defence in depth)**
 
 A manifest declares another extension's id, escapes its plugin root, declares
-scopes it was never granted, or is a decompression/parser bomb.
+scopes it was never granted, or is a parser bomb.
+
+*Adversary, stated honestly.* Anyone who can write this file into a plugin root
+is already inside Z0 — so this is **not** a containment boundary against a
+malicious plugin (that is T-03, accepted). It is robustness against a careless
+extension, a compromised supply chain, a fork that copied a manifest, and a
+partially completed install. It is worth doing for exactly those cases.
 
 *Mitigation.* Manifests are read only from the root `IPluginManager` reports and
 fingerprint-bound to the GUID Jellyfin reports
-([S4](spike-evidence.md#s4--manifest-discovery-binds-to-the-real-plugin-identity)).
+([S4](spike-evidence.md#s4--manifest-discovery-binds-to-the-real-plugin-identity-and-rejects-a-claim-to-another)).
 Traversal, absolute paths, embedded NUL and escaping symlinks are rejected before
 any file is opened
-([S5](spike-evidence.md#s5--traversal-is-rejected-before-any-file-is-opened)).
-Size, depth and count bounds apply. A manifest requests; an admin grants.
-*Residual.* **Low**, with one known gap: the Windows-separator case passed for
-the wrong reason on Linux and did not exercise containment. EP-03 must normalise
-separators first.
+([S5](spike-evidence.md#s5--path-containment-holds-against-traversal-and-symlinks)).
+Size, malformed-JSON and non-object manifests are rejected before registration, and a fingerprint mismatch is a rejection rather than a flag — all verified. A manifest requests; an admin grants.
+*Residual.* **Low.** Two defects found during the spike were fixed rather than
+documented away: separators are now normalised before any test, and every path
+component is resolved with `ResolveLinkTarget(returnFinalTarget: true)` so a
+symlinked *directory* component can no longer escape — the original lexical check
+happily returned `/etc/passwd`. Both symlink cases are now rejected and a
+symlink that stays inside the root is still accepted
+([S5](spike-evidence.md#s5--path-containment-holds-against-traversal-and-symlinks)).
+Remaining gap: nothing re-validates on the open handle, so a TOCTOU window
+remains — [#494](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/494).
 
-### T-05 · Token theft through the provider boundary — **high**
+### T-05 · Token theft through the provider boundary — **high, accepted**
 
 An extension obtains the calling user's bearer token and acts as them, outside
 any scope or audit.
 
 *Mitigation.* The `ClaimsPrincipal` contains `Jellyfin-Token` — the raw bearer
-token — so it is never passed across the boundary. The provider context is an
-explicit allow-list of derived values; `HttpContext`, `IServiceProvider` and host
-services are never exposed
+token — so the kernel never passes it across the boundary. The provider context
+is an explicit allow-list of derived values; `HttpContext`, `IServiceProvider`
+and host services are never exposed
 ([ADR-0004](adr/0004-provider-invocation.md),
 [ADR-0011](adr/0011-identity-and-authority.md)).
-*Residual.* **Low**, and this is the threat most likely to be reintroduced by a
-convenience refactor. It needs a dedicated regression test, not a review note.
+
+*Residual.* **Accepted — subsumed by T-03.** The allow-list stops *accidental*
+exposure, not a provider that wants the token. A provider entrypoint is
+constructed by Jellyfin's own container and can inject `IHttpContextAccessor`;
+because the kernel invokes it synchronously on the request's execution context,
+that accessor returns the live principal for the very request being brokered.
+Withholding the principal from the call signature is hygiene and keeps the
+published contract honest; it is not a boundary. The reduction that *is* real:
+a careless provider no longer acquires a credential it never asked for, and the
+platform never offers one.
 
 ### T-06 · Stored XSS via extension-supplied UI — **high**
 
@@ -162,12 +184,13 @@ with the viewer's token.
 *Mitigation.* Extensions supply neither markup nor selectors nor script; they
 target semantic slots rendered by Canopy's own adapter, which already has
 build-failing HTML-escape and CSS-injection guards
-([ADR-0007](adr/0007-declarative-web-contributions.md)). Interactive untrusted
-content, if it ships, is confined to an opaque-origin frame that never receives
-the token. This is the whole reason
+([ADR-0007](adr/0007-declarative-web-contributions.md)). Extensions have no content channel into
+the page at all in v1, which is the whole reason
 [milestone 82 is superseded](milestone-82-disposition.md).
-*Residual.* **Medium — unverified.** No browser spike ran. The frame and
-`postMessage` broker are unproven, which is why ADR-0007 is provisional.
+*Residual.* **Medium — unverified.** No browser spike ran, so slot rendering,
+mounting/teardown and CSP behaviour are unproven
+([#491](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/491)). The
+sandboxed frame is not part of v1, so it neither helps nor hurts this residual.
 
 ### T-07 · Cross-origin abuse of a held token — **medium**
 
@@ -239,12 +262,14 @@ left the server healthy ([S13](spike-evidence.md#s13--lifecycle-matrix)).
 A subscriber receives events about another user's activity, or another
 extension's state.
 
-*Mitigation.* Authorize and filter **before enqueueing**, never at delivery.
-Per-subscriber cursors; reconnect buffers scoped to the subscriber; a gap outside
-retention returns `resync-required` rather than another subscriber's data
-([ADR-0006](adr/0006-client-event-transport.md)).
+*Mitigation.* Authorize and filter **before enqueueing**, and re-check at
+delivery — enqueue-time filtering alone would let an event authorized before a
+permission change still be delivered out of a reconnect buffer afterwards. A
+grant change or a Jellyfin permission change drops the subscriber's buffer and
+forces `resync-required`. Per-subscriber cursors; reconnect buffers scoped to the
+subscriber ([ADR-0006](adr/0006-client-event-transport.md)).
 *Residual.* **Low by design, untested.** EP-05 must prove it under multi-user
-load.
+load, including a permission change mid-stream.
 
 ### T-13 · Confused deputy via contribution-supplied context — **high**
 
@@ -262,9 +287,10 @@ A client never names a provider method
 A version drift between two independently shipped components makes the platform
 quietly do nothing.
 
-*Mitigation.* This is not hypothetical: resolving a host-owned interface across
-the plugin boundary returns `null` with no exception, no log entry and no
-`Malfunctioned` status
+*Mitigation.* This is not hypothetical, and it is probed in this repository:
+resolving a host-owned interface across the plugin boundary returns
+`resolveByHostOwnedInterface: null` with `threw: False` — no exception, no log
+entry, no `Malfunctioned` status
 ([S2](spike-evidence.md#s2--no-shared-type-identity-and-the-failure-is-silent)).
 The JSON ABI removes the shared-type dependency entirely
 ([ADR-0003](adr/0003-json-abi.md)); protocol negotiation, health probes and an
@@ -282,6 +308,30 @@ second write path. Quarantine-on-corruption with a versioned unhealthy marker an
 bounded backup retention. Transactional migrations that roll back
 ([ADR-0008](adr/0008-storage-ownership.md)).
 *Residual.* **Low.**
+
+### T-16 · Plugin-directory deletion by manifest-name collision — **high, accepted**
+
+A third-party plugin ships `"name": "Jellyfin Canopy"` in its `meta.json`.
+Jellyfin's own old-version cleanup deletes the real Canopy installation.
+
+*Evidence.* `PluginManager.DiscoverPlugins()` sorts with `LocalPlugin.Compare`
+(`Name` ordinal-ignore-case → `Id` → `Version`), walks the sorted list backwards
+keeping the first enabled entry **per `Name`**, and for every subsequent entry
+with the same `Name` runs `Directory.Delete(path, recursive: true)`. The
+deduplication keys on `Name` alone — never on GUID — so two plugins that share a
+display name and differ only in GUID are treated as two versions of one plugin,
+and the loser's directory is removed.
+
+*Mitigation.* None available to a plugin: the behaviour is in the host, before
+any plugin code runs. What the platform can do is (a) document the exact `name`
+string as reserved, (b) add a startup self-check that the expected plugin root
+still exists and log loudly if it does not, and (c) prefer **not** to introduce a
+second reserved name — which is an additional argument for keeping the kernel
+in-process ([charter §6](charter.md#6-kernel-placement-decision)).
+
+*Residual.* **Accepted.** Reachable by the same adversary as T-03, and also by an
+honest fork or a namesake by accident, which makes it worth documenting even
+though the malicious case adds nothing to T-03.
 
 ## 4. Out of scope
 

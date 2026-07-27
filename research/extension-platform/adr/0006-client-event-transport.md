@@ -21,7 +21,12 @@ hard-crashes, has not been tested on real hardware.
 1. **Primary transport: an authenticated `text/event-stream` response consumed by
    `fetch()` streaming**, not by `EventSource`.
 2. **Fallback: a bounded long-poll** with the same cursor semantics.
-3. **Query-string credentials are forbidden on every platform route.**
+3. **Query-string credentials are forbidden on every platform route**, and the
+   rule needs teeth: Jellyfin 12 authenticates `?apikey=` / `?ApiKey=` in host
+   middleware *before* a plugin controller runs, so "we do not use it" is not
+   enforcement. A platform action filter must reject any request whose query
+   string carries a credential parameter (ordinal-ignore-case) with a structured
+   `400`, and an architecture test must assert the filter is registered.
 4. Events carry an id and a per-stream cursor; reconnect resumes within a bounded
    retention window; a gap outside retention returns `resync-required` rather
    than a silently incomplete stream.

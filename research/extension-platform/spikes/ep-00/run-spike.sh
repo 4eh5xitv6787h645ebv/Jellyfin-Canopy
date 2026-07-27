@@ -2,8 +2,10 @@
 # EP-00 throwaway spike runner.
 #
 # Builds the two independently packaged spike plugins, installs them into a
-# disposable Jellyfin 12 container, and replays every probe whose result is
-# recorded in ../../spike-evidence.md.
+# disposable Jellyfin 12 container, and replays probes A-J from
+# ../../spike-evidence.md. Three results there were produced by hand and are NOT
+# scripted: S7's nginx proxy matrix, S13's 1.0.0.0 -> 2.5.0.0 upgrade row, and
+# S8's rejected authentication header forms. See "Probe coverage of this file".
 #
 # This is throwaway research code. It is deliberately outside the solution and
 # is never built by CI. Nothing here becomes Platform v1.
@@ -126,14 +128,36 @@ printf 'bare 401 body bytes   : %s\n' "$(curl -s -o /dev/null -w '%{size_downloa
 for p in api_key apikey ApiKey token accessToken; do
   printf 'query auth %-12s : %s\n' "$p" "$(curl -s -o /dev/null -w '%{http_code}' "$B/System/Info?$p=$TOKEN")"
 done
+for h in "X-Emby-Token: $TOKEN" "X-MediaBrowser-Token: $TOKEN" "Authorization: Bearer $TOKEN" "Authorization: Emby Token=$TOKEN" "Authorization: MediaBrowser Token=$TOKEN"; do
+  printf 'header %-34s : %s\n' "${h%%:*}${h#*Token}" \
+    "$(curl -s -o /dev/null -w '%{http_code}' "$B/System/Info" -H "$h")"
+done
 printf 'CORS preflight        : '
 curl -s -i -X OPTIONS "$B/System/Info" -H 'Origin: https://evil.example' \
   -H 'Access-Control-Request-Method: GET' -H 'Access-Control-Request-Headers: authorization' \
   | grep -i 'access-control-allow' | tr -d '\r' | paste -sd' '
 
+# The HOST is deliberately given a manifest claiming the PROVIDER's GUID, so the
+# fingerprint-mismatch rejection has a negative case to reject.
+cat > "$WORK/Ep00SpikeHost_1.0.0.0/jellyfin-canopy-extension.json" <<'IMPOSTOR'
+{
+  "schemaVersion": 1,
+  "id": "ep00.impostor",
+  "pluginId": "b1a7c3d2-4e5f-4a6b-8c9d-0e1f2a3b4c5d",
+  "version": "9.9.9",
+  "kind": "server-provider"
+}
+IMPOSTOR
+
 log "Install both spike plugins"
 docker cp "$WORK/Ep00SpikeHost_1.0.0.0" "$NAME:/config/plugins/"
 docker cp "$WORK/Ep00SpikeProvider_1.0.0.0" "$NAME:/config/plugins/"
+# Symlinks for the containment probe: one escaping directory component, one
+# escaping leaf, and one that legitimately stays inside the root.
+docker exec "$NAME" sh -c '
+  ln -sfn /etc          /config/plugins/Ep00SpikeHost_1.0.0.0/escape-dir
+  ln -sfn /etc/hostname /config/plugins/Ep00SpikeHost_1.0.0.0/escape-file
+  ln -sfn meta.json     /config/plugins/Ep00SpikeHost_1.0.0.0/inside-file'
 docker restart "$NAME" >/dev/null
 wait_up
 
@@ -188,6 +212,19 @@ printf 'depth 200 -> '
 curl -s -X POST "$B/Ep00Spike/Echo" -H "$AUTH" -H 'Content-Type: application/json' \
   --data-binary "@$WORK/deep.json"
 echo
+
+log "Probe J — forged identity (non-admin token, injected user ids)"
+ADMIN_ID="$(curl -s "$B/Users/Me" -H "$AUTH" | python3 -c 'import json,sys; print(json.load(sys.stdin)["Id"])')"
+resolved() {
+  curl -s "$B/Ep00Spike/Whoami" -H "Authorization: MediaBrowser Token=$TOKEN2" "$@" \
+    | python3 -c 'import json,sys; print([c["Value"] for c in json.load(sys.stdin)["claims"] if c["Type"]=="Jellyfin-UserId"])'
+}
+printf 'non-admin baseline            : %s\n' "$(resolved)"
+printf 'Jellyfin-UserId header        : %s\n' "$(resolved -H "Jellyfin-UserId: $ADMIN_ID")"
+printf 'X-Jellyfin-User-Id header     : %s\n' "$(resolved -H "X-Jellyfin-User-Id: $ADMIN_ID")"
+printf 'X-Emby-Authorization UserId   : %s\n' "$(resolved -H "X-Emby-Authorization: MediaBrowser UserId=$ADMIN_ID")"
+printf 'jellyfin-userid cookie        : %s\n' "$(resolved -b "jellyfin-userid=$ADMIN_ID")"
+printf 'admin id (must NOT appear)    : %s\n' "$ADMIN_ID"
 
 log "Probe H — reverse proxy base path"
 curl -s "$B/System/Configuration/network" -H "$AUTH" \

@@ -31,7 +31,7 @@ code is written. Every document is *proposed* until its milestone's exit gate.
 | [0004](adr/0004-provider-invocation.md) | provider binding and failure isolation | proposed |
 | [0005](adr/0005-manifest-discovery.md) | manifest discovery and registry binding | proposed |
 | [0006](adr/0006-client-event-transport.md) | client event transport | proposed |
-| [0007](adr/0007-declarative-web-contributions.md) | declarative web contributions | **provisional — unverified** |
+| [0007](adr/0007-declarative-web-contributions.md) | declarative web contributions | proposed (1–6); decision 7 **deferred, not in v1** |
 | [0008](adr/0008-storage-ownership.md) | storage ownership | proposed |
 | [0009](adr/0009-packaging-and-kernel-placement.md) | packaging and kernel placement | proposed |
 | [0010](adr/0010-deprecation-and-support-policy.md) | deprecation and support policy | proposed |
@@ -53,7 +53,9 @@ code is written. Every document is *proposed* until its milestone's exit gate.
    ([S14](spike-evidence.md#s14--forged-identity-is-fully-resisted-but-the-token-is-in-the-claims))
 4. **A deadline protects the caller, not the server.** A provider that ignores
    cancellation kept running after the deadline fired and could not be killed.
-   Containment of a malicious plugin is not achievable.
+   Cooperation *is* observable — but only if the kernel awaits the cancelled task
+   instead of racing a timer against it, which the first version of this spike got
+   wrong. Containment of a malicious plugin is not achievable.
    ([S6](spike-evidence.md#s6--provider-failure-modes-all-map-to-bounded-host-errors))
 5. **Lazy binding survives everything.** Reversed load order, disable, uninstall,
    upgrade and a fully absent platform all behaved correctly, with Jellyfin
@@ -67,7 +69,11 @@ research/extension-platform/spikes/ep-00/run-spike.sh 8199
 ```
 
 Builds both throwaway plugins, runs a disposable Jellyfin 12 container, and
-replays every probe. It touches no existing server and is never built by CI.
+replays probes A–J. Three results — the nginx proxy matrix, the plugin-upgrade
+row and the rejected authentication header forms — were produced by hand and are
+listed as unscripted in
+[the coverage table](spike-evidence.md#probe-coverage-of-this-file). It touches no
+existing server and is never built by CI.
 
 ## Conventions
 

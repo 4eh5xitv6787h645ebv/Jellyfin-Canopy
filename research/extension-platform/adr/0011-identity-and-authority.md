@@ -34,11 +34,16 @@ non-admin's own id. But the `ClaimsPrincipal` handed to a controller contains
    preferences* to apply, never *what may be accessed*. Promotion of this service
    to a platform capability is blocked until it has direct unit tests — it
    currently has none, and is covered only indirectly.
-4. **The raw bearer token never crosses any boundary.** Not to a provider, not to
-   an iframe, not into a descriptor, not into a log or an audit record. The
+4. **The kernel never hands over the raw bearer token.** Not to a provider, not
+   to an iframe, not into a descriptor, not into a log or an audit record. The
    provider context is an explicit allow-list
    ([ADR-0004](0004-provider-invocation.md)); the `ClaimsPrincipal` and
-   `HttpContext` are never passed.
+   `HttpContext` are never passed. Note the precise claim: an installed provider
+   is constructed by Jellyfin's container and can inject
+   `IHttpContextAccessor` to reach the live principal itself. The allow-list
+   prevents *accidental* exposure; containing a provider that wants the token is
+   [T-03](../threat-model.md#t-03--malicious-or-compromised-installed-plugin--critical-accepted),
+   which is accepted, not mitigated.
 5. **Re-authorize at invocation.** Item, user, library and parental access are
    checked again when an action runs, never inherited from the context a
    contribution or provider supplied. Canopy's existing `UserAccessQuery` /
@@ -61,9 +66,22 @@ non-admin's own id. But the `ClaimsPrincipal` handed to a controller contains
 10. **Actions are opaque, short-lived capabilities** binding extension,
     operation, user, device, catalog revision, scopes and expiry — with
     replay protection. A client never names a provider method.
-11. **Revocation is immediate** across the registry, in-flight calls, event
+11. **Operations declare the authority they need**, and the kernel intersects it
+    with the caller's own Jellyfin privileges. An operation declares
+    `authenticated` or `elevated`; an `elevated` operation is refused to a
+    non-admin *even when the extension holds the corresponding grant*, because a
+    grant is a ceiling on the extension, never a promotion for the caller. This
+    is what makes the admin-only reference capability in
+    [`v1-capability-freeze.md`](../v1-capability-freeze.md#c9--reference-capability-families)
+    expressible.
+12. **v1 has no per-user consent.** Grants are administrator-approved and
+    server-wide; a user cannot decline an approved extension. The admin and user
+    kill switches in [ADR-0007](0007-declarative-web-contributions.md) turn a
+    contribution *off*, they do not express consent. Stated plainly because the
+    absence is a policy choice, not an oversight.
+13. **Revocation is immediate** across the registry, in-flight calls, event
     subscriptions, cached catalogs and outstanding action tokens.
-12. **Audit records are redacted by construction:** extension, operation, actor
+14. **Audit records are redacted by construction:** extension, operation, actor
     attribution, decision, result, duration, correlation id. Never payloads,
     never tokens, never upstream keys.
 
@@ -71,7 +89,10 @@ non-admin's own id. But the `ClaimsPrincipal` handed to a controller contains
 
 - Point 4 is the one that would have been got wrong by default. Passing the
   claims principal is the obvious, ergonomic choice, and it silently hands every
-  installed extension a working credential for whoever is browsing.
+  installed extension a working credential for whoever is browsing — including a
+  non-admin's, whenever their page triggers a contribution. It is worth doing even
+  though a determined provider can reach the principal anyway, because the
+  published contract should not *offer* the credential.
 - Point 3 protects an existing invariant that is easy to erode: once an
   extension can ask "who is this?" and get an answer with 80% confidence,
   somebody will authorize on it.

@@ -90,8 +90,10 @@ invoke an approved opaque action, confirm-or-form then invoke, refresh the
 contribution, show a localized toast or dialog.
 
 Not in v1: extension-supplied HTML, CSS, selectors or script; remote module URLs;
-a general component tree. ADR [0007](adr/0007-declarative-web-contributions.md) —
-**provisional, unverified**.
+a general component tree; **the sandboxed iframe and `postMessage` broker**, which
+have no content to carry while the preceding line holds. ADR
+[0007](adr/0007-declarative-web-contributions.md) — decisions 1–6 proposed but
+**unverified in a browser** ([#491](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/491)).
 
 ## C8 — Native-safe descriptor schema
 

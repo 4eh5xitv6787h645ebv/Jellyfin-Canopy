@@ -11,8 +11,9 @@ refuted an assumption, the refutation is recorded rather than removed.
 ## How this was produced
 
 - Two throwaway plugins in [`spikes/ep-00/`](spikes/ep-00/): a **host** standing
-  in for the platform kernel, and an independently packaged **provider**. They
-  share no project reference and no repository code.
+  in for the platform kernel, and an independently packaged **provider**. Neither
+  references the other, and neither references any repository code. Each
+  *separately compiles* its own copy of `SpikeContracts`, which is the point.
 - Both ship their own copy of `SpikeContracts.dll` declaring the *same*
   `Ep00.Contracts.IExtensionProvider` type — the host at assembly version
   `1.0.0.0`, the provider at `2.0.0.0`.
@@ -45,9 +46,10 @@ AssemblyLoadContext.All:
 ```
 
 Confirmed: each externally installed plugin gets its own **unnamed, collectible**
-context. Only three contexts existed even though six server-bundled plugins were
-also loaded, so server-bundled plugins do not each get their own context — this
-is a property of separately installed plugin directories.
+context. Only three contexts existed in total, while the server log for the same
+boot shows eight plugins loaded (the two spikes plus six server-bundled ones), so
+the server-bundled plugins are not each getting their own context — one context
+per *separately installed plugin directory* is the rule this spike establishes.
 
 Both copies of the same-named assembly were loaded, side by side:
 
@@ -59,26 +61,49 @@ Loaded assembly SpikeContracts, Version=2.0.0.0 … from /config/plugins/Ep00Spi
 ## S2 — No shared type identity, and the failure is silent
 
 ```
-sameFullName                      : True
-referenceEqualTypes               : False
+sameFullName                         : True
+referenceEqualTypes                  : False
 hostTypeIsAssignableFromProviderType : False
-directCastSucceeded               : False
-directCastError                   : Unable to cast object of type
-                                    'Jellyfin.Plugin.Ep00Provider.Ep00ProviderEntrypoint'
-                                    to type 'Ep00.Contracts.IExtensionProvider'.
+directCastSucceeded                  : False
+directCastError                      : Unable to cast object of type
+                                       'Jellyfin.Plugin.Ep00Provider.Ep00ProviderEntrypoint'
+                                       to type 'Ep00.Contracts.IExtensionProvider'.
 ```
 
-Two types with an identical fully qualified name are **not** the same type. A
-cast throws `InvalidCastException`; an `IsAssignableFrom` check simply answers
-`false`.
+Two types with an identical fully qualified name are **not** the same type. A cast
+throws `InvalidCastException`; an `IsAssignableFrom` check simply answers `false`.
 
-The independent load-context harness in
-`/home/jake/docs/jellyfinv12` (recorded during EP-00 research, not part of this
-repository) establishes the sharper form of the same result: this happens even
-when the two plugins ship a **byte-identical** contract assembly at the *same*
-version, and the DI consequence of asking for the host's own copy of the
-interface is a silent `null` — no exception, no log entry, no `Malfunctioned`
-status. See [ADR-0003](adr/0004-provider-invocation.md).
+**The silent half, probed rather than asserted.** The provider registers itself
+*both* by concrete type and against **its own** copy of the shared interface —
+which is what an author would write if they believed the contract assembly were
+shared:
+
+```csharp
+serviceCollection.AddSingleton<Ep00ProviderEntrypoint>();
+serviceCollection.AddSingleton<Ep00.Contracts.IExtensionProvider>(
+    sp => sp.GetRequiredService<Ep00ProviderEntrypoint>());
+```
+
+The host then asks Jellyfin's container for **its** copy of the same interface:
+
+```
+resolveByHostOwnedInterface      : null
+resolveByHostOwnedInterfaceThrew : False
+```
+
+`null`, and nothing thrown. No exception, no log entry, no `Malfunctioned` plugin
+status — the registration is there, the type name matches, and the answer is
+silently nothing. This is the single most important result in the file, and it is
+why [ADR-0003](adr/0003-json-abi.md) forbids a shared runtime contract assembly
+and why "no silent failures" is a charter success metric.
+
+**Scope of what was shown.** The two plugins ship `SpikeContracts.dll` at
+*different* assembly versions (`1.0.0.0` and `2.0.0.0`). That is sufficient for
+the ABI decision, but it does **not** show the sharper case — two plugins
+shipping a byte-identical contract assembly at the *same* version — which .NET
+load-context semantics say behaves identically. That stronger claim is asserted
+from documented runtime behaviour, not probed here, and is listed under
+[what this spike did not establish](#what-this-spike-did-not-establish).
 
 ## S3 — Cross-plugin DI works, but only by foreign concrete type
 
@@ -93,48 +118,80 @@ reflectiveInvokeResult:
 
 The host resolved the provider's singleton out of Jellyfin's shared container by
 passing the `Type` object obtained **from the provider's own assembly**, then
-invoked it reflectively over `string` in / `string` out. This is the only
-binding path that worked, and it is the basis of
-[ADR-0003](adr/0004-provider-invocation.md).
+invoked it reflectively over `string` in / `string` out.
 
-## S4 — Manifest discovery binds to the real plugin identity
+Set against S2 this is the whole binding rule in two lines: asking for the
+provider's **concrete type** works; asking for the **host's copy of an interface**
+returns `null` silently. [ADR-0003](adr/0003-json-abi.md) and
+[ADR-0004](adr/0004-provider-invocation.md) follow directly.
+
+## S4 — Manifest discovery binds to the real plugin identity, and rejects a claim to another
+
+The host plugin was deliberately given a manifest claiming the **provider's** GUID:
+
+```json
+{ "id": "ep00.impostor", "pluginId": "b1a7c3d2-4e5f-4a6b-8c9d-0e1f2a3b4c5d", … }
+```
 
 `GET /Ep00Spike/Manifests`:
 
-```
-EP-00 Spike Host     root=/config/plugins/Ep00SpikeHost_1.0.0.0
-                     manifestFound=false  reason=absent: no manifest at jellyfin-canopy-extension.json
-EP-00 Spike Provider root=/config/plugins/Ep00SpikeProvider_1.0.0.0
-                     manifestFound=true   reason=accepted
-                     manifestId=ep00.spike.provider  manifestVersion=1.0.0
-                     declaredPluginId=b1a7c3d2-4e5f-4a6b-8c9d-0e1f2a3b4c5d
-                     fingerprintBound=true
-```
+| Plugin | manifest found | fingerprintBound | outcome |
+|---|---|---|---|
+| EP-00 Spike Host (impostor manifest) | yes | **false** | `rejected: fingerprint_mismatch`, `registered: false` |
+| EP-00 Spike Provider (honest manifest) | yes | true | `registered: true` |
 
-The reader never scans a path of its own choosing: the root is whatever
-`IPluginManager` reports for that plugin, and the manifest's self-declared
-`pluginId` is checked against the GUID Jellyfin reports. A manifest that claims
-someone else's identity is detected, not trusted.
+The root is whatever `IPluginManager` reports for that plugin, and the manifest's
+self-declared `pluginId` is checked against the GUID Jellyfin reports. A manifest
+claiming someone else's identity is **rejected**, not merely flagged — an earlier
+version of this probe computed the flag but registered the extension anyway,
+which is the difference between a security control and a report field.
 
-## S5 — Traversal is rejected before any file is opened
+**Robustness, same reader:**
 
-`GET /Ep00Spike/Traversal`:
+| Manifest | Result |
+|---|---|
+| malformed JSON (`{ this is not json`) | `rejected: manifest_malformed` — `'t' is an invalid start of a property name` |
+| 300 KB of filler | `rejected: manifest exceeds 256 KiB` — rejected on size *before* parsing |
+| valid JSON that is not an object | `rejected: manifest_not_an_object` |
 
-| Candidate | Accepted | Reason |
+## S5 — Path containment holds against traversal *and* symlinks
+
+`GET /Ep00Spike/Traversal`. The runner first creates, inside the host plugin root,
+`escape-dir -> /etc` (a symlinked **directory component**), `escape-file ->
+/etc/hostname` (a symlinked leaf) and `inside-file -> meta.json` (a symlink that
+stays inside).
+
+| Candidate | Accepted | Rejected by |
 |---|---|---|
-| `jellyfin-canopy-extension.json` | no | absent (host ships none) |
-| `../jellyfin-canopy-extension.json` | no | resolves outside plugin root |
-| `../../../../../../etc/passwd` | no | resolves outside plugin root |
-| `..\..\..\etc\passwd` | no | absent — see caveat |
-| `subdir/../../escape.json` | no | resolves outside plugin root |
+| `jellyfin-canopy-extension.json` | **yes** | — (the real manifest) |
+| `../jellyfin-canopy-extension.json` | no | containment |
+| `../../../../../../etc/passwd` | no | containment |
+| `..\..\..\etc\passwd` | no | containment |
+| `subdir/../../escape.json` | no | containment |
 | `/etc/passwd` | no | absolute path |
-| `manifest.json\0/etc/passwd` | no | embedded NUL in name |
+| `manifest.json\0/etc/passwd` | no | embedded NUL |
+| `escape-dir/passwd` | no | **symlink escapes plugin root** |
+| `escape-file` | no | **symlink escapes plugin root** |
+| `inside-file` | **yes** | — (correctly *not* a false positive) |
 
-**Caveat, recorded rather than hidden:** the Windows-style separator case was
-rejected only because a backslash is a legal filename character on Linux, so the
-candidate resolved to a non-existent file inside the root. It did not exercise
-the containment check. EP-03 must normalise separators before the containment
-test rather than rely on this.
+**Two defects were found here and fixed rather than documented away.**
+
+1. The Windows-separator case originally reported `absent: no manifest at
+   ..\..\..\etc\passwd`. A backslash is a legal filename character on Linux, so
+   the candidate resolved to a missing file *inside* the root and the containment
+   check was never exercised — a pass for the wrong reason, which reads exactly
+   like a real pass. Separators are now normalised before any test, and the case
+   is rejected by containment.
+2. `Path.GetFullPath` is **lexical**: it does not resolve symlinks, and
+   `FileInfo.LinkTarget` sees only the final component. So `escape-dir/passwd`
+   originally passed containment, `File.Exists` returned true, and the reader
+   returned the contents of `/etc/passwd` with `reason=accepted`. The probe now
+   resolves every path component with `ResolveLinkTarget(returnFinalTarget: true)`
+   and re-tests containment against the fully resolved path.
+
+The second defect is the reason [#494](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/494)
+exists: EP-03 must not re-derive this check, and must additionally close the
+TOCTOU window by re-validating on an open handle.
 
 ## S6 — Provider failure modes all map to bounded host errors
 
@@ -142,13 +199,14 @@ test rather than rely on this.
 
 | Operation | Result |
 |---|---|
-| `ping` | `ok=true elapsed=1ms bytes=280` |
-| `throw` | `ok=false error=provider_faulted` (`InvalidOperationException` surfaced as a stable code) |
-| `invalid-json` | `ok=false error=provider_response_invalid_json` — response validated *before* leaving the boundary |
-| `unknown-op` | `ok=true` — the provider answered `{"ok":false,"error":"unknown_operation"}`; unknown operations are a provider-level answer, not a transport fault |
-| `big` (2 MB) | `ok=true bytes=2000021` — no host-imposed response cap exists yet |
+| `ping` | `ok=true elapsed=1ms chars=280` |
+| `throw` | `ok=false error=provider_faulted` |
+| `invalid-json` | `ok=false error=provider_response_invalid_json` — validated *before* leaving the boundary |
+| `unknown-op` | `ok=true` — the provider answered `{"ok":false,"error":"unknown_operation"}`; an unknown operation is a provider-level answer, not a transport fault |
+| `big` (2 MB) | `ok=true chars=2000021` — no host-imposed response cap exists yet |
 | `hang` (8 s, ignores cancellation) | `ok=false error=provider_deadline_exceeded elapsed=2254ms` |
 | `cancellable-hang` (8 s, honours cancellation) | `ok=false error=provider_cancelled elapsed=2003ms` |
+| caller aborts mid-call | `caller_cancelled` — never attributed to the provider |
 
 **The load-bearing negative result:** the host returned on time in both hang
 cases, but the `hang` provider — the one that ignores the cancellation token —
@@ -158,25 +216,30 @@ the *caller*, never the *server*. This is why
 in-process code and the [threat model](threat-model.md) records "malicious
 installed plugin" as out of scope for containment.
 
-**A correction, recorded because the first version of this probe was wrong.** An
-earlier binder raced `Task.WhenAny(providerTask, Task.Delay(deadlineMs))` while
-its linked `CancellationTokenSource` cancelled at the same instant. Both hang
-cases then reported `provider_deadline_exceeded`, and this file initially
-concluded that a cooperative provider is indistinguishable from a runaway one.
-That conclusion was an artifact of the harness, not a property of Jellyfin.
+**A correction, kept because the first version of this probe was wrong.** The
+original binder enforced its deadline with
+`Task.WhenAny(providerTask, Task.Delay(deadlineMs))` while its linked
+`CancellationTokenSource` cancelled at the same instant. Two timers then fired
+together and `WhenAny` returned whichever won, so:
 
-The binder now cancels at the deadline, gives the provider a 250 ms grace window
-to observe it, and awaits the task instead of racing a timer against it. The two
-cases separate cleanly:
+- both hang cases reported `provider_deadline_exceeded` — and this file initially
+  concluded that a cooperative provider is *indistinguishable* from a runaway one,
+  which is false;
+- the result was a coin flip: on the other branch the awaited task threw
+  `TaskCanceledException` and the same run would have reported `provider_faulted`;
+- a **caller** abort also completed the delay task, so a client closing its
+  connection was reported as the provider breaching its deadline — which in the
+  real design would trip that provider's circuit breaker for someone else's
+  network problem;
+- and every successful call leaked a live timer for the remainder of the deadline.
 
-- a provider that **honours** cancellation → `provider_cancelled` at ~2003 ms;
-- a provider that **ignores** it → `provider_deadline_exceeded` at ~2254 ms,
-  still running.
-
-So the platform *can* tell a well-behaved slow provider from a runaway one, and
-[ADR-0004](adr/0004-provider-invocation.md) requires two distinct error codes
-rather than one. The earlier shape is recorded here so EP-04 does not reinvent
-it.
+The binder now awaits the provider's own task with
+`WaitAsync(deadline + grace)` and branches on the outcome, giving four distinct
+results: `ok`, `provider_cancelled`, `provider_deadline_exceeded`, and
+`caller_cancelled`. Cooperation *is* observable, and
+[ADR-0004](adr/0004-provider-invocation.md) now requires all four codes and lists
+the racing shape as a rejected alternative. The mistake is recorded because an
+EP-04 implementer would otherwise write it again.
 
 ## S7 — Event streaming survives the host pipeline
 
@@ -248,10 +311,13 @@ on core routes alike. EP-01's rule that Jellyfin authorization failures stay
 bare and unstructured is therefore a description of existing behaviour, not a
 new constraint.
 
-`Policies.DefaultAuthorization` **does not exist** in Jellyfin 12; the only
-policy constant a plugin needs is `Policies.RequiresElevation`, with plain
-`[Authorize]` for "any signed-in user". This is corrected wherever the roadmap
-issues assume otherwise.
+`Policies.DefaultAuthorization` **does not exist** in Jellyfin 12 — the spike
+build failed on it, which is how this was found. `MediaBrowser.Common.Api.Policies`
+does expose other constants (`LocalAccessOrRequiresElevation`,
+`IgnoreParentalControl`, `Download` and more); the platform's *choice* to use only
+`Policies.RequiresElevation` plus plain `[Authorize]` is a design decision
+([ADR-0011](adr/0011-identity-and-authority.md)), not a finding. The roadmap's
+reference to `DefaultAuthorization` is corrected wherever it appears.
 
 ## S10 — Host CORS is permissive
 
@@ -326,7 +392,7 @@ Disabled and uninstalled are distinguishable: a disabled plugin is still present
 in `IPluginManager.Plugins` with `Manifest.Status = Disabled`, whereas an
 uninstalled one is gone entirely. The platform must render these as different
 states rather than collapsing both to "unavailable"
-([ADR-0004](adr/0005-manifest-discovery.md)).
+([ADR-0005](adr/0005-manifest-discovery.md)).
 
 ## S14 — Forged identity is fully resisted, but the token is in the claims
 
@@ -342,7 +408,7 @@ resolve the *admin's* user id:
 
 The acting identity is derived from the access token alone. No header, cookie or
 route value can change it. This is the foundation of
-[ADR-0007](adr/0011-identity-and-authority.md).
+[ADR-0011](adr/0011-identity-and-authority.md).
 
 **The finding that changes a design decision:** the `ClaimsPrincipal` handed to a
 controller contains
@@ -356,30 +422,53 @@ Jellyfin-IsApiKey = False
 attribution. Any design that passed the `ClaimsPrincipal`, the `HttpContext`, or
 an unfiltered claims collection across the provider boundary would hand every
 installed extension a working credential for the calling user. The provider
-context in [ADR-0003](adr/0004-provider-invocation.md) is therefore
+context in [ADR-0004](adr/0004-provider-invocation.md) is therefore
 an explicit allow-list of derived values, never a pass-through, and this is
 recorded as threat **T-05**.
 
 ## What this spike did not establish
 
-Carried into later milestones rather than assumed:
+Carried into later milestones rather than assumed.
 
-1. **Collectible does not mean unloadable in practice.** The contexts report
-   `IsCollectible = true`, but nothing here proved Jellyfin actually unloads one
-   on disable/uninstall without a restart. Every lifecycle case above used a
-   restart. EP-03 must test hot disable.
-2. **No concurrency or sustained load** was applied. Every probe was sequential.
-3. **No native or TV client was involved.** Nothing here supports any claim
-   about Android TV, Roku, Kodi or Swift behaviour — see the
-   [supported-client matrix](supported-client-matrix.md).
-4. **No declarative web contribution was rendered and no sandboxed frame or
-   `postMessage` broker was exercised.** Playwright is not provisioned in this
-   environment, so the browser-side half of EP-00's required verification is
-   carried forward as its own child issue rather than claimed. The web ADRs
-   ([ADR-0007](adr/0011-identity-and-authority.md) is unaffected;
-   [ADR-0005](adr/0007-declarative-web-contributions.md) is the one at risk) are
-   marked *provisional* until that child closes.
-5. **Proxy buffering was not shown to break SSE** (S7). Treated as an untested
-   hypothesis, not a justification.
-6. **The provider response size was unbounded** by the host (S6, `big`). A
-   response cap is an EP-04 requirement, not something that exists today.
+1. **Byte-identical, same-version contract assemblies.** S2 used two *different*
+   assembly versions. .NET load-context semantics say the same-version case
+   behaves identically, but this spike did not show it.
+2. **Collectible does not mean unloaded.** The contexts report
+   `IsCollectible = true`, but nothing here proved Jellyfin unloads one on
+   disable or uninstall without a restart. Every lifecycle case used a restart.
+   → [#493](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/493)
+3. **No concurrency or sustained load.** Every probe was sequential.
+4. **No native or TV client was involved.** Nothing here supports any claim about
+   Android TV, Roku, Kodi or Swift.
+   → [#492](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/492)
+5. **No declarative web contribution, sandboxed frame or `postMessage` broker.**
+   Playwright is not provisioned here, so the browser half of EP-00's required
+   verification did not run and
+   [ADR-0007](adr/0007-declarative-web-contributions.md) decision 7 is marked
+   deferred. → [#491](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/491)
+6. **Version negotiation.** `/Ep00Spike/Discovery` returns a static
+   `{min:1,max:1}` and nothing negotiates against it, so
+   [ADR-0002](adr/0002-protocol-and-version-negotiation.md)'s highest-common-version
+   rule and the `incompatible` registry state are unexercised.
+7. **Proxy buffering was not shown to break SSE** (S7). Treated as an untested
+   hypothesis, not as justification.
+8. **Provider response size is unbounded** by the host (S6, `big`). A response cap
+   is EP-04 work, not an existing property.
+9. **Six of the eight lifecycle states** in
+   [compatibility-terminology](compatibility-terminology.md#state-words) are design
+   states with no probe. Only `absent` and `disabled` were shown distinguishable.
+10. **TOCTOU on manifest reads.** S5 validates a path and then opens it; nothing
+    re-validates on the open handle.
+
+## Probe coverage of this file
+
+`run-spike.sh` replays probes **A–I**, which cover S1–S7 and S9–S13. Three
+results were produced by hand and are **not** scripted:
+
+| Not scripted | Why |
+|---|---|
+| S7's nginx matrix | needs a second container and three proxy configurations |
+| S13's `1.0.0.0 → 2.5.0.0` upgrade row | needs a second staged plugin version |
+| S8's rejected header forms | the script covers the query-parameter forms only |
+
+S14 (forged identity) **is** scripted, as probe J.

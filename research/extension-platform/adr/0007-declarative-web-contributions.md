@@ -1,6 +1,6 @@
 # ADR-0007 — Declarative web contributions
 
-Status: **provisional** (EP-00) — see *Open question* below · Owner: web adapter
+Status: **proposed** for decisions 1–6 · **deferred, not in v1** for decision 7 · Owner: web adapter
 
 ## Context
 
@@ -36,12 +36,24 @@ failure of [milestone 82](../milestone-82-disposition.md).
 6. Resolution is **batched and lazy**, with a total surface deadline and bounded
    partial-failure semantics, so N extensions do not produce an N-request
    waterfall or measurable jank.
-7. **Interactive untrusted content, if it ships at all, uses an opaque-origin
-   iframe and a capability-filtered `postMessage` broker.** The frame is never
-   handed the Jellyfin token.
-8. `window.JellyfinCanopy` stays compatible. It gains an explicit **platform API
+7. `window.JellyfinCanopy` stays compatible. It gains an explicit **platform API
    version field** — it currently has none — and platform APIs are versioned
    separately from the plugin version.
+
+### Deferred — not in v1
+
+**Interactive untrusted content in an opaque-origin iframe with a
+capability-filtered `postMessage` broker.** Decision 2 forbids extensions from
+supplying markup, CSS, selectors or script, and
+[`v1-capability-freeze.md`](../v1-capability-freeze.md#c7--declarative-web-slots)
+repeats that as a v1 non-goal — so in v1 there is nothing to put *in* such a
+frame. The mechanism is written down here because a later version may need it and
+because the security requirements should not be re-derived from scratch: the
+frame would be opaque-origin, would never receive the Jellyfin token, and every
+message would pass a capability filter.
+
+Nothing in v1 may depend on it, and no milestone may treat the sandboxed-frame
+path as available.
 
 ## Rationale
 
@@ -55,17 +67,22 @@ failure of [milestone 82](../milestone-82-disposition.md).
   runtime immutability and no version field. Publishing it as a platform surface
   without a version is how a contract becomes unversionable forever.
 
-## Open question — why this ADR is *provisional*
+## What is verified, and what is not
 
 **No browser spike ran.** Playwright is not provisioned in this environment, so
-the opaque-origin iframe, the `postMessage` broker, CSP behaviour, and slot
-rendering across the modern/legacy/mobile/Web-TV layouts are all **unverified**.
-Decisions 1–6 rest on the existing codebase, which is solid evidence; decision 7
-rests on nothing yet.
+slot rendering across the modern/legacy/mobile/Web-TV matrix, idempotent mounting
+and teardown across the view cache, CSP behaviour, and two contributions
+coexisting without collisions are all **unverified**.
 
-This ADR is therefore *provisional* and is promoted to *proposed* only when the
-EP-00 child issue covering the web sandbox and `postMessage` proof closes. Until
-then, no later milestone may treat the sandboxed-frame path as available.
+Decisions 1–6 rest on Canopy's existing client architecture, which is strong
+evidence: the injection primitive, the single multiplexed observer, the
+three-layer teardown model and the layout owner all exist and are
+machine-enforced today. They are therefore *proposed*, not provisional — and the
+real risk they carry is rendering breadth, which is what
+[#491](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/491) gates.
+
+The deferred decision above rests on nothing yet, which is why it is deferred
+rather than merely unproven.
 
 ## Consequences
 

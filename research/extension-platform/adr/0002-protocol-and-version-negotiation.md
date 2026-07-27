@@ -5,9 +5,9 @@ Status: **proposed** (EP-00) · Owner: platform kernel
 ## Context
 
 There is no machine-readable description of Canopy's API — no OpenAPI, no JSON
-Schema, no `[ProducesResponseType]`. There are **four coexisting error
-envelopes**, **three pagination dialects**, **three size-limit mechanisms** and
-**no correlation ID**. Consumers today reverse-engineer prose.
+Schema, no `[ProducesResponseType]`. There are at least **four coexisting
+error-envelope shapes** (plus bare string bodies), **three pagination dialects**,
+**three size-limit mechanisms** and **no correlation ID**. Consumers today reverse-engineer prose.
 
 Two host behaviours constrain any answer:
 
@@ -63,6 +63,11 @@ Two host behaviours constrain any answer:
 - Every platform response carries a correlation ID, which the current codebase
   has nowhere to source from — a small cross-cutting addition.
 - Legacy routes keep their existing envelopes. They are not retrofitted.
+- **One case the kernel cannot reach:** a request at or above Kestrel's
+  30,000,000-byte limit is rejected by host middleware before any plugin code
+  runs, so it still surfaces as the host's opaque `500`. The kernel's structured
+  `413` covers everything between its own limit and that ceiling; the ceiling case
+  must be documented for consumers rather than promised away.
 
 ## Rejected alternatives
 

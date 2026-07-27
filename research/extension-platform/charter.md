@@ -40,9 +40,11 @@ to solve again from scratch:
 
 Today none of that is reusable. The measurements are specific:
 
-- **183 routes** across 22 controllers, none versioned, with **four coexisting
-  error envelopes**, **three pagination dialects**, **three size-limit
-  mechanisms**, **two different caller-id resolvers** and **no correlation ID**.
+- **183 routes** across 22 controllers, none versioned, with **at least four
+  coexisting error-envelope shapes** (an anonymous `{success, code, message}`, two
+  typed generic envelopes, a Seerr upstream shape, and bare string bodies),
+  **three pagination dialects**, **three size-limit mechanisms**, **two different
+  caller-id resolvers** and **no correlation ID**.
 - **No machine-readable contract of any kind** — no OpenAPI, no JSON Schema, no
   `[ProducesResponseType]`. The only description of the surface is prose in
   `docs/developers.md`, which explicitly says it documents a subset.
@@ -201,6 +203,14 @@ provider failure may run on the startup path
 [S13](spike-evidence.md#s13--lifecycle-matrix), where removing the host plugin
 entirely left Jellyfin healthy with **zero errors on that boot**.
 
+There is a second, less obvious blast radius, and it argues the same way. A
+plugin's *display name* is what Jellyfin deduplicates installations by: two
+plugins sharing a `name` are treated as two versions of one plugin and the loser's
+directory is deleted outright (**[T-16](threat-model.md#t-16--plugin-directory-deletion-by-manifest-name-collision--high-accepted)**).
+Every additional plugin this programme ships is another reserved name and another
+way for a namesake — malicious or accidental — to delete an installation. One
+plugin is the smaller target.
+
 ## 7. Relationship to existing Canopy assets
 
 These are inputs to formalize, not code to duplicate. The repository rule that
@@ -215,7 +225,7 @@ exception: a platform adapter calls the owner, it never grows a second copy.
 | `IItemLookupService`, `UserAccessQuery` | already public and interface-backed — wrap in platform DTOs |
 | `ILiveSessionRegistry` | already an interface — the fan-out selector is the reusable part |
 | `LiveNotifierService` | no interface, hard-wired to one event and one carrier command — needs an `ILiveNotifier` before it can be a platform capability |
-| `RequestIdentityService` | disambiguation only, never authority; **has no direct unit-test file** — that gap must close before promotion |
+| `RequestIdentityService` | disambiguation only, never authority; no dedicated test file and only Spoiler-Guard-scoped direct coverage — the full ladder must be covered before promotion |
 | `SettingDescriptors` | `internal`, hard-coded registry, unnamespaced keys — the highest-value and highest-effort extraction |
 | `UserConfigurationStore` | `internal`, hard-coded filename whitelist — the model for [ADR-0008](adr/0008-storage-ownership.md) |
 | `window.JellyfinCanopy` | stays compatible; gains an explicit version field; new APIs are versioned separately |

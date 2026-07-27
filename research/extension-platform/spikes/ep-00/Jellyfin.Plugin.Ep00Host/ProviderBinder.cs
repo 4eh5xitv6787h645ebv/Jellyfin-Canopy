@@ -22,14 +22,6 @@ public sealed class ProviderBinder
     /// <summary>How long a provider gets to observe cancellation before it is declared runaway.</summary>
     private const int GraceAfterDeadlineMs = 250;
 
-    /// <summary>A Task that never completes successfully; it only ever cancels.</summary>
-    private static Task WaitForCancellation(CancellationToken token)
-    {
-        var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        token.Register(() => tcs.TrySetResult());
-        return tcs.Task;
-    }
-
     private readonly IPluginManager _pluginManager;
     private readonly IServiceProvider _serviceProvider;
     private readonly ILogger<ProviderBinder> _logger;
@@ -123,6 +115,21 @@ public sealed class ProviderBinder
             .FirstOrDefault(i => i.FullName == typeof(IExtensionProvider).FullName);
         var hostContractType = typeof(IExtensionProvider);
 
+        // H-1 probe: the provider registers itself against ITS copy of the shared
+        // interface. Ask DI for OUR copy of the same interface and record what
+        // happens — this is the failure mode the whole ABI decision rests on.
+        try
+        {
+            var byHostInterface = _serviceProvider.GetService(typeof(IExtensionProvider));
+            result["resolveByHostOwnedInterface"] = byHostInterface is null ? "null" : byHostInterface.GetType().FullName;
+            result["resolveByHostOwnedInterfaceThrew"] = false;
+        }
+        catch (Exception ex)
+        {
+            result["resolveByHostOwnedInterfaceThrew"] = true;
+            result["resolveByHostOwnedInterfaceError"] = ex.GetType().Name + ": " + ex.Message;
+        }
+
         result["hostContractAssembly"] = hostContractType.Assembly.FullName;
         result["providerContractAssembly"] = providerContractType?.Assembly.FullName;
         result["sameFullName"] = providerContractType?.FullName == hostContractType.FullName;
@@ -215,81 +222,59 @@ public sealed class ProviderBinder
         deadline.CancelAfter(deadlineMs);
 
         var started = System.Diagnostics.Stopwatch.StartNew();
+        Task? task = null;
         try
         {
-            // Task<string> from a foreign load context is still a Task<string>: System.Private.CoreLib
-            // is shared, so the awaitable itself is load-context safe.
+            // Task<string> from a foreign load context is still a Task<string>:
+            // System.Private.CoreLib is shared, so the awaitable itself is
+            // load-context safe.
             var returned = method.Invoke(instance, [operationId, requestJson, deadline.Token]);
-            if (returned is not Task task)
+            task = returned as Task;
+            if (task is null)
             {
                 result["ok"] = false;
                 result["error"] = "provider_returned_non_task";
                 return result;
             }
 
-            // Do NOT race a second timer against the provider task: the linked source
-            // already cancels at the deadline, so a cooperative provider faults with
-            // OperationCanceledException and an uncooperative one simply never
-            // completes. Racing a Delay of the same duration makes the two look
-            // identical, which is a bug in the host, not a property of the provider.
-            using var grace = new CancellationTokenSource();
-            deadline.Token.Register(() => grace.CancelAfter(GraceAfterDeadlineMs));
-            var completed = await Task.WhenAny(task, WaitForCancellation(grace.Token)).ConfigureAwait(false);
-            if (!ReferenceEquals(completed, task))
-            {
-                result["ok"] = false;
-                result["error"] = "provider_deadline_exceeded";
-                result["elapsedMs"] = started.ElapsedMilliseconds;
-                result["note"] = "Provider ignored cancellation; its Task is still running in-process and cannot be killed.";
-                return result;
-            }
-
-            try
-            {
-                await task.ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) when (deadline.IsCancellationRequested)
-            {
-                // The provider honoured the deadline. This is a materially different
-                // outcome from a runaway provider and must not be collapsed into it.
-                result["ok"] = false;
-                result["error"] = "provider_cancelled";
-                result["elapsedMs"] = started.ElapsedMilliseconds;
-                result["note"] = "Provider observed cancellation and stopped.";
-                return result;
-            }
-
-            var payload = task.GetType().GetProperty("Result")?.GetValue(task) as string;
+            // Wait for the provider's own task. Do NOT race a second timer against
+            // it: the linked source already cancels at the deadline, so racing a
+            // Task.Delay of the same duration collapses "provider cooperated" and
+            // "provider ran away" into one indistinguishable outcome, leaks a timer
+            // per call, and misreports a client abort as a deadline breach.
+            // The grace window is how long a cooperating provider gets to notice.
+            await task.WaitAsync(TimeSpan.FromMilliseconds(deadlineMs + GraceAfterDeadlineMs), CancellationToken.None)
+                .ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
+            result["ok"] = false;
+            result["error"] = "provider_deadline_exceeded";
             result["elapsedMs"] = started.ElapsedMilliseconds;
-            result["responseBytes"] = payload?.Length ?? 0;
-
-            // Validate before letting a provider response leave the boundary.
-            if (payload is null)
-            {
-                result["ok"] = false;
-                result["error"] = "provider_returned_null";
-                return result;
-            }
-
-            try
-            {
-                using var _ = JsonDocument.Parse(payload);
-                result["ok"] = true;
-                result["responsePreview"] = payload.Length > 256 ? payload[..256] + "…" : payload;
-            }
-            catch (JsonException ex)
-            {
-                result["ok"] = false;
-                result["error"] = "provider_response_invalid_json";
-                result["detail"] = ex.Message;
-            }
-
+            result["note"] = "Provider ignored cancellation; its Task is still running in-process and cannot be killed.";
+            return result;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // The CALLER went away. This is not the provider's fault and must never
+            // be attributed to it, or client aborts would trip its circuit breaker.
+            result["ok"] = false;
+            result["error"] = "caller_cancelled";
+            result["elapsedMs"] = started.ElapsedMilliseconds;
+            return result;
+        }
+        catch (OperationCanceledException)
+        {
+            result["ok"] = false;
+            result["error"] = "provider_cancelled";
+            result["elapsedMs"] = started.ElapsedMilliseconds;
+            result["note"] = "Provider observed cancellation at the deadline and stopped.";
             return result;
         }
         catch (TargetInvocationException ex)
         {
             result["ok"] = false;
-            result["error"] = "provider_threw";
+            result["error"] = "provider_faulted";
             result["detail"] = ex.InnerException?.GetType().Name + ": " + ex.InnerException?.Message;
             result["elapsedMs"] = started.ElapsedMilliseconds;
             return result;
@@ -300,6 +285,43 @@ public sealed class ProviderBinder
             result["error"] = "provider_faulted";
             result["detail"] = ex.GetType().Name + ": " + ex.Message;
             result["elapsedMs"] = started.ElapsedMilliseconds;
+            return result;
+        }
+
+        try
+        {
+            var payload = task.GetType().GetProperty("Result")?.GetValue(task) as string;
+            result["elapsedMs"] = started.ElapsedMilliseconds;
+            result["responseChars"] = payload?.Length ?? 0;
+
+            if (payload is null)
+            {
+                result["ok"] = false;
+                result["error"] = "provider_returned_null";
+                return result;
+            }
+
+            // Validate before letting a provider response leave the boundary.
+            try
+            {
+                using var _ = JsonDocument.Parse(payload);
+                result["ok"] = true;
+                result["responsePreview"] = payload.Length > 256 ? payload[..256] + "\u2026" : payload;
+            }
+            catch (JsonException ex)
+            {
+                result["ok"] = false;
+                result["error"] = "provider_response_invalid_json";
+                result["detail"] = ex.Message;
+            }
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            result["ok"] = false;
+            result["error"] = "provider_faulted";
+            result["detail"] = ex.GetType().Name + ": " + ex.Message;
             return result;
         }
     }

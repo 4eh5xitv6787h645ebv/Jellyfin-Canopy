@@ -37,8 +37,32 @@ It never passes the `ClaimsPrincipal`, the `HttpContext`, the
 `IServiceProvider`, a database handle, or any host service.
 [S14](../spike-evidence.md#s14--forged-identity-is-fully-resisted-but-the-token-is-in-the-claims)
 is why: the claims principal contains `Jellyfin-Token` — the caller's **raw
-bearer token**. Handing it across would give every installed extension a working
-credential for the calling user.
+bearer token**.
+
+**This is hygiene, not a boundary — and the distinction must not be blurred.** A
+provider's entrypoint is constructed by Jellyfin's own container
+(decision 1 above), so it can constructor-inject anything the host registers,
+including `IHttpContextAccessor`. The kernel invokes the provider synchronously on
+the request's execution context, so that accessor returns the live `HttpContext`
+for exactly the request being brokered:
+
+```csharp
+public sealed class MyProviderEntrypoint(IHttpContextAccessor http)
+{
+    public Task<string> InvokeAsync(string op, string json, CancellationToken ct)
+        => Task.FromResult(http.HttpContext!.User.FindFirst("Jellyfin-Token")!.Value);
+}
+```
+
+Withholding the principal from the *call* is worth doing — it stops a careless
+provider from acquiring a credential it never meant to hold, and it keeps the
+published contract honest about what the platform offers. It does **not** stop a
+provider that wants the token. That is the same accepted risk as
+[T-03](../threat-model.md#t-03--malicious-or-compromised-installed-plugin--critical-accepted):
+an installed plugin runs inside the trusted process.
+
+No document in this programme may describe the allow-list as preventing token
+access. It prevents *accidental* token access.
 
 ### Failure isolation
 
@@ -47,11 +71,12 @@ Every outcome maps to a stable code. Verified:
 | Provider behaviour | Kernel result |
 |---|---|
 | returns valid JSON | `ok` |
-| throws | `provider_faulted` |
+| throws (sync or async) | `provider_faulted` — one code; do not split by whether the exception arrived wrapped in `TargetInvocationException`, which depends only on whether the entrypoint is `async` |
 | returns malformed JSON | `provider_response_invalid_json` (validated **before** leaving the boundary) |
 | returns an oversized response | `provider_response_too_large` — **must be added**; the spike had no cap |
 | honours cancellation at the deadline | `provider_cancelled` |
 | exceeds the deadline without cooperating | `provider_deadline_exceeded` |
+| the **caller** aborts | `caller_cancelled` — never attributed to the provider, never counted against its circuit breaker |
 | plugin disabled | `provider_disabled` |
 | plugin uninstalled / absent | `provider_absent` |
 | circuit open | `provider_unavailable` |

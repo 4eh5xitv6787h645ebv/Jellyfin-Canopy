@@ -1,6 +1,6 @@
 # ADR-0005 — Manifest discovery and registry binding
 
-Status: **proposed** (EP-00) · Owner: platform kernel · Evidence: [S4](../spike-evidence.md#s4--manifest-discovery-binds-to-the-real-plugin-identity), [S5](../spike-evidence.md#s5--traversal-is-rejected-before-any-file-is-opened), [S13](../spike-evidence.md#s13--lifecycle-matrix)
+Status: **proposed** (EP-00) · Owner: platform kernel · Evidence: [S4](../spike-evidence.md#s4--manifest-discovery-binds-to-the-real-plugin-identity-and-rejects-a-claim-to-another), [S5](../spike-evidence.md#s5--path-containment-holds-against-traversal-and-symlinks), [S13](../spike-evidence.md#s13--lifecycle-matrix)
 
 ## Context
 
@@ -17,11 +17,11 @@ declared scopes — are each a distinct vulnerability.
    directories.
 2. **Fingerprint binding.** The manifest's self-declared `pluginId` must match
    the GUID Jellyfin reports for that plugin. A mismatch is a rejection, not a
-   warning. Verified working ([S4](../spike-evidence.md#s4--manifest-discovery-binds-to-the-real-plugin-identity)).
+   warning. Verified working ([S4](../spike-evidence.md#s4--manifest-discovery-binds-to-the-real-plugin-identity-and-rejects-a-claim-to-another)).
 3. **Containment before I/O.** The resolved path must canonicalize to a location
    strictly inside the plugin root; absolute paths, embedded NUL, `..` traversal
    and root-escaping symlinks are rejected before any file is opened.
-   Verified ([S5](../spike-evidence.md#s5--traversal-is-rejected-before-any-file-is-opened)).
+   Verified ([S5](../spike-evidence.md#s5--path-containment-holds-against-traversal-and-symlinks)).
    **Path separators must be normalised first** — the spike's Windows-separator
    case passed for the wrong reason and did not exercise the containment check.
 4. **Bounded.** Manifest size, id/version lengths, operation and contribution
