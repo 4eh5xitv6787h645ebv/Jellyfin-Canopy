@@ -2162,6 +2162,45 @@ test('governs restored accessible labels and rejects truncated route labels', ()
         });
     }
 
+    for (const source of [
+        '<label hidden for="route-control">Submit a vulnerability report</label>'
+            + '<input id="route-control" type="image" alt="Documentation">'
+            + `<a aria-labelledby="route-control" href="${ISSUES_ROUTE}"></a>`,
+        '<label style="visibility:hidden">Submit a vulnerability report'
+            + '<span><input id="route-control" style="visibility:visible" '
+            + 'type="image" alt="Documentation"></span>'
+            + '</label>'
+            + `<a aria-labelledby="route-control" href="${ISSUES_ROUTE}"></a>`,
+        '<input id="route-name" type="image" alt="   " '
+            + 'title="Submit a vulnerability report">'
+            + `<a aria-labelledby="route-name" href="${ISSUES_ROUTE}"></a>`,
+        '<input id="route-name" type="text" title="   " '
+            + 'placeholder="Submit a vulnerability report">'
+            + `<a aria-labelledby="route-name" href="${ISSUES_ROUTE}"></a>`,
+        '<input id="route-name" type="not-a-real-state" '
+            + 'placeholder="Submit a vulnerability report">'
+            + `<a aria-labelledby="route-name" href="${ISSUES_ROUTE}"></a>`,
+        '<input id="route-name" type="text" value="Submit a vulnerability report">'
+            + `<a aria-labelledby="route-name" href="${ISSUES_ROUTE}"></a>`,
+        '<select id="route-name"><option selected>Submit a vulnerability report</option></select>'
+            + `<a aria-labelledby="route-name" href="${ISSUES_ROUTE}"></a>`,
+        `<a href="${ISSUES_ROUTE}">`
+            + '<button title="Submit a vulnerability report"></button></a>',
+        `<a href="${ISSUES_ROUTE}">`
+            + '<input type="image" alt="Submit a vulnerability report"></a>',
+        `<a href="${ISSUES_ROUTE}">`
+            + '<abbr title="Submit a vulnerability report"></abbr></a>',
+    ]) {
+        const files = validFixture();
+        files['theme/partials/support.html'] = `${source}\n`;
+        fixture(files, root => {
+            assert.ok(auditSupportContract({ root }).problems.some(problem => (
+                problem.startsWith('theme/partials/support.html:')
+                && problem.includes('security intake links must use private GitHub advisories')
+            )), source);
+        });
+    }
+
     const precedence = validFixture();
     precedence['theme/partials/support.html'] =
         '<img id="route-name" alt="Submit a vulnerability report" title="Documentation">'

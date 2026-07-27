@@ -115,32 +115,62 @@ function accessibleHtmlText(
             (element, attributes, body) => {
                 const openingTag = `<svg${attributes}>`;
                 const name = ariaLabelledText(openingTag, labels)
-                    || htmlAttributeValue(openingTag, 'aria-label')
-                    || htmlAttributeValue(openingTag, 'title')
+                    || htmlAttributeText(openingTag, 'aria-label')
+                    || htmlAttributeText(openingTag, 'title')
                     || accessibleHtmlText(body, labels, excludeAriaHidden);
                 return name ? ` ${name} ` : ' ';
             }
         )
         .replace(/<svg\b(?:[^>"']|"[^"]*"|'[^']*')*\/?>/gi, (tag) => {
             const name = ariaLabelledText(tag, labels)
-                || htmlAttributeValue(tag, 'aria-label')
-                || htmlAttributeValue(tag, 'title');
+                || htmlAttributeText(tag, 'aria-label')
+                || htmlAttributeText(tag, 'title');
             return name ? ` ${name} ` : ' ';
         })
         .replace(/<img\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi, (tag) => {
             const name = ariaLabelledText(tag, labels)
-                || htmlAttributeValue(tag, 'aria-label')
-                || htmlAttributeValue(tag, 'alt')
-                || htmlAttributeValue(tag, 'title');
+                || htmlAttributeText(tag, 'aria-label')
+                || htmlAttributeText(tag, 'alt')
+                || htmlAttributeText(tag, 'title');
             return name ? ` ${name} ` : ' ';
         })
+        .replace(
+            /<(button|summary|textarea|select|output|iframe)\b((?:[^>"']|"[^"]*"|'[^']*')*)>([\s\S]*?)<\/\1\s*>/gi,
+            (element, tag, attributes, body) => {
+                const openingTag = `<${tag}${attributes}>`;
+                const name = htmlElementAccessibleName(
+                    tag.toLowerCase(),
+                    openingTag,
+                    accessibleHtmlText(body, labels, excludeAriaHidden),
+                    labels
+                );
+                return name ? ` ${name} ` : ' ';
+            }
+        )
+        .replace(/<input\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi, (openingTag) => {
+            const name = htmlElementAccessibleName('input', openingTag, '', labels);
+            return name ? ` ${name} ` : ' ';
+        })
+        .replace(
+            /<([a-z][a-z0-9:-]*)\b((?:[^>"']|"[^"]*"|'[^']*')*\stitle\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+)(?:[^>"']|"[^"]*"|'[^']*')*)>([\s\S]*?)<\/\1\s*>/gi,
+            (element, tag, attributes, body) => {
+                const openingTag = `<${tag}${attributes}>`;
+                const name = htmlElementAccessibleName(
+                    tag.toLowerCase(),
+                    openingTag,
+                    accessibleHtmlText(body, labels, excludeAriaHidden),
+                    labels
+                );
+                return name ? ` ${name} ` : ' ';
+            }
+        )
         .replace(
             /<([a-z][a-z0-9:-]*)\b((?:[^>"']|"[^"]*"|'[^']*')*\saria-(?:label|labelledby)\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+)(?:[^>"']|"[^"]*"|'[^']*')*)>([\s\S]*?)<\/\1\s*>/gi,
             (element, tag, attributes, body) => {
                 const openingTag = `<${tag}${attributes}>`;
                 const name = ariaLabelledText(openingTag, labels)
-                    || htmlAttributeValue(openingTag, 'aria-label')
-                    || htmlAttributeValue(openingTag, 'title')
+                    || htmlAttributeText(openingTag, 'aria-label')
+                    || htmlAttributeText(openingTag, 'title')
                     || accessibleHtmlText(body, labels, excludeAriaHidden);
                 return name ? ` ${name} ` : ' ';
             }
@@ -150,8 +180,8 @@ function accessibleHtmlText(
             (element, tag, attributes) => {
                 const openingTag = `<${tag}${attributes}>`;
                 const name = ariaLabelledText(openingTag, labels)
-                    || htmlAttributeValue(openingTag, 'aria-label')
-                    || htmlAttributeValue(openingTag, 'title');
+                    || htmlAttributeText(openingTag, 'aria-label')
+                    || htmlAttributeText(openingTag, 'title');
                 return name ? ` ${name} ` : ' ';
             }
         )
@@ -358,6 +388,10 @@ function htmlLabelIsTruncated(label) {
     return String(label || '').includes(HTML_LABEL_OVERFLOW_MARKER);
 }
 
+function htmlAttributeText(tag, name) {
+    return boundedDomText([htmlAttributeValue(tag, name)]);
+}
+
 function htmlLabelGraphComponents(dependencies) {
     const reverse = dependencies.map(() => []);
     for (const [node, edges] of dependencies.entries()) {
@@ -408,38 +442,136 @@ function htmlLabelGraphComponents(dependencies) {
     return components;
 }
 
+const HTML_INPUT_TYPES = new Set([
+    'button', 'checkbox', 'color', 'date', 'datetime-local', 'email', 'file',
+    'hidden', 'image', 'month', 'number', 'password', 'radio', 'range', 'reset',
+    'search', 'submit', 'tel', 'text', 'time', 'url', 'week',
+]);
+
 function htmlNativeAccessibleName(record, body) {
-    const attribute = name => htmlAttributeValue(record.openingTag, name);
+    const attribute = name => htmlAttributeText(record.openingTag, name);
     const title = attribute('title');
     if (record.tag === 'button' || record.tag === 'summary' || record.tag === 'a') {
         return body || title;
     }
     if (record.tag === 'input') {
-        const type = attribute('type').toLowerCase() || 'text';
+        const declaredType = attribute('type').toLowerCase() || 'text';
+        const type = HTML_INPUT_TYPES.has(declaredType) ? declaredType : 'text';
         if (type === 'image') return attribute('alt') || title;
         if (['button', 'submit', 'reset'].includes(type)) {
             return attribute('value') || title;
         }
         if (['text', 'password', 'number', 'search', 'tel', 'email', 'url'].includes(type)) {
-            return title || attribute('placeholder') || attribute('aria-placeholder');
+            return attribute('value')
+                || title
+                || attribute('placeholder')
+                || attribute('aria-placeholder');
         }
+        if (type === 'range') return attribute('value') || title;
         return title;
     }
     if (record.tag === 'textarea') {
-        return title || attribute('placeholder') || attribute('aria-placeholder');
+        return body || title || attribute('placeholder') || attribute('aria-placeholder');
+    }
+    if (record.tag === 'select' || record.tag === 'output') return body || title;
+    if (record.tag === 'meter' || record.tag === 'progress') {
+        return attribute('value') || body || title;
     }
     return title;
 }
 
+function htmlElementAccessibleName(tag, openingTag, body, labels) {
+    const id = htmlAttributeText(openingTag, 'id');
+    return (id && labels.get(id))
+        || ariaLabelledText(openingTag, labels)
+        || htmlAttributeText(openingTag, 'aria-label')
+        || htmlNativeAccessibleName({ tag, openingTag }, boundedDomText([body]))
+        || boundedDomText([body]);
+}
+
+const HTML_LABELABLE_ELEMENTS = new Set([
+    'button', 'input', 'meter', 'output', 'progress', 'select', 'textarea',
+]);
+
+function htmlAssociatedLabelParts(records, label, control) {
+    const parts = [];
+    const controlAncestors = new Set();
+    for (let index = control.parentIndex; index !== -1; ) {
+        controlAncestors.add(index);
+        index = records[index]?.parentIndex ?? -1;
+    }
+    const visit = (candidate) => {
+        for (const part of candidate.parts) {
+            if (typeof part === 'string') {
+                parts.push(part);
+            } else if (part.index === control.index) {
+                continue;
+            } else if (controlAncestors.has(part.index)) {
+                visit(part);
+            } else {
+                parts.push(part);
+            }
+        }
+    };
+    visit(label);
+    return parts;
+}
+
+function htmlAssociatedLabelNodes(records, ids) {
+    const associations = [];
+    const wrappedControls = new Map();
+    for (const candidate of records) {
+        if (candidate.labelAncestorIndex === -1
+            || !HTML_LABELABLE_ELEMENTS.has(candidate.tag)
+            || candidate.tag === 'input'
+                && htmlAttributeText(candidate.openingTag, 'type').toLowerCase() === 'hidden'
+            || wrappedControls.has(candidate.labelAncestorIndex)) {
+            continue;
+        }
+        wrappedControls.set(candidate.labelAncestorIndex, candidate);
+    }
+    for (const label of records.filter(record => record.tag === 'label')) {
+        const hasExplicitFor = /\sfor(?:\s*=|\s|\/?>)/i.test(label.openingTag);
+        const explicitId = htmlAttributeText(label.openingTag, 'for');
+        const control = hasExplicitFor ? ids.get(explicitId) : wrappedControls.get(label.index);
+        if (!control || !HTML_LABELABLE_ELEMENTS.has(control.tag)) continue;
+        if (control.tag === 'input'
+            && htmlAttributeText(control.openingTag, 'type').toLowerCase() === 'hidden') {
+            continue;
+        }
+        associations.push({
+            control,
+            label,
+            parts: htmlAssociatedLabelParts(records, label, control),
+        });
+    }
+    return associations;
+}
+
 function resolvedHtmlIdLabels(records, ids) {
     const idEntries = [...ids];
+    const associationNodes = htmlAssociatedLabelNodes(records, ids);
+    const associationOffset = records.length;
+    const idOffset = associationOffset + associationNodes.length;
     const labelNodeById = new Map(idEntries.map(
-        ([id], index) => [id, records.length + index]
+        ([id], index) => [id, idOffset + index]
     ));
     const dependencies = Array.from(
-        { length: records.length + idEntries.length },
+        { length: idOffset + idEntries.length },
         () => []
     );
+
+    for (const record of records) record.associatedLabelNodes = [];
+    for (const [index, association] of associationNodes.entries()) {
+        const node = associationOffset + index;
+        association.control.associatedLabelNodes.push(node);
+        dependencies[association.control.index].push({ node, reference: true });
+        for (const part of association.parts) {
+            if (typeof part !== 'string') {
+                dependencies[node].push({ node: part.index, reference: false });
+            }
+        }
+    }
 
     for (const record of records) {
         const labelledBy = htmlAttributeValue(record.openingTag, 'aria-labelledby');
@@ -449,7 +581,8 @@ function resolvedHtmlIdLabels(records, ids) {
                 .filter(id => labelNodeById.has(id))
         )];
         record.usesResolvedAccessibleName = ['img', 'svg'].includes(record.tag)
-            || Boolean(labelledBy);
+            || Boolean(labelledBy)
+            || record.associatedLabelNodes.length > 0;
         for (const part of record.parts) {
             if (typeof part !== 'string') {
                 dependencies[record.index].push({ node: part.index, reference: false });
@@ -464,15 +597,15 @@ function resolvedHtmlIdLabels(records, ids) {
     }
 
     for (const [entryIndex, [, record]] of idEntries.entries()) {
-        const directLabel = htmlAttributeValue(record.openingTag, 'aria-label')
-            || htmlAttributeValue(record.openingTag, 'title');
+        const directLabel = htmlAttributeText(record.openingTag, 'aria-label')
+            || htmlAttributeText(record.openingTag, 'title');
         const readsRecordValue = !record.visualState.persistentHidden
             && !record.accessibilityState.persistentHidden
             && (record.accessibilityState.hidden
                 || record.usesResolvedAccessibleName
                 || !directLabel);
         if (readsRecordValue) {
-            dependencies[records.length + entryIndex].push({
+            dependencies[idOffset + entryIndex].push({
                 node: record.index,
                 reference: false,
             });
@@ -512,35 +645,50 @@ function resolvedHtmlIdLabels(records, ids) {
                             components[node] !== components[labelNodeById.get(id)]
                         ))
                         .map(id => values[labelNodeById.get(id)]));
-                    const ariaLabel = htmlAttributeValue(record.openingTag, 'aria-label');
-                    const title = htmlAttributeValue(record.openingTag, 'title');
+                    const ariaLabel = htmlAttributeText(record.openingTag, 'aria-label');
+                    const associated = boundedDomText(
+                        record.associatedLabelNodes.map(index => values[index])
+                    );
+                    const title = htmlAttributeText(record.openingTag, 'title');
                     if (record.tag === 'img') {
                         text = referenced
                             || ariaLabel
-                            || htmlAttributeValue(record.openingTag, 'alt')
+                            || associated
+                            || htmlAttributeText(record.openingTag, 'alt')
                             || title;
                     } else if (record.tag === 'svg'
                         || ariaLabel
                         || htmlAttributeValue(record.openingTag, 'aria-labelledby')) {
                         text = referenced
                             || ariaLabel
+                            || associated
                             || htmlNativeAccessibleName(record, body)
                             || title
                             || body;
                     } else {
-                        text = htmlNativeAccessibleName(record, body) || body;
+                        text = associated || htmlNativeAccessibleName(record, body) || body;
                     }
                 }
                 values[node] = boundedDomText([text]);
             }
+        } else if (node < idOffset) {
+            const association = associationNodes[node - associationOffset];
+            const body = boundedDomText(association.parts.map(part => (
+                typeof part === 'string' ? part : values[part.index]
+            )));
+            values[node] = boundedDomText([
+                htmlAttributeText(association.label.openingTag, 'aria-label')
+                    || body
+                    || htmlAttributeText(association.label.openingTag, 'title'),
+            ]);
         } else {
-            const [, record] = idEntries[node - records.length];
+            const [, record] = idEntries[node - idOffset];
             let label = record.accessibilityState.hidden
                 ? ''
                 : record.usesResolvedAccessibleName
                     ? values[record.index]
-                    : htmlAttributeValue(record.openingTag, 'aria-label')
-                        || htmlAttributeValue(record.openingTag, 'title')
+                    : htmlAttributeText(record.openingTag, 'aria-label')
+                        || htmlAttributeText(record.openingTag, 'title')
                         || '';
             if (!record.visualState.persistentHidden && !label) {
                 label = record.accessibilityState.persistentHidden
@@ -556,7 +704,7 @@ function resolvedHtmlIdLabels(records, ids) {
     }
 
     return new Map(idEntries.flatMap(([id], index) => {
-        const label = values[records.length + index];
+        const label = values[idOffset + index];
         return label ? [[id, label]] : [];
     }));
 }
@@ -610,6 +758,10 @@ function htmlIdLabels(content) {
             index: records.length,
             tag,
             openingTag,
+            parentIndex: parent?.index ?? -1,
+            labelAncestorIndex: parent?.tag === 'label'
+                ? parent.index
+                : parent?.labelAncestorIndex ?? -1,
             visualState,
             accessibilityState,
             parts: [],
@@ -868,9 +1020,9 @@ function htmlAnchorRecords(content, labels = htmlIdLabels(content)) {
             compactGovernedText(rawBefore.slice(beforeBoundary), labels)
         }`.replace(/\s+/g, ' ').trim();
         const accessibleName = ariaLabelledText(openingTag, labels)
-            || htmlAttributeValue(openingTag, 'aria-label')
+            || htmlAttributeText(openingTag, 'aria-label')
             || nestedName
-            || htmlAttributeValue(openingTag, 'title');
+            || htmlAttributeText(openingTag, 'title');
         anchors.push({
             start: match.index,
             openingEnd,
@@ -963,8 +1115,8 @@ function inlineHtmlAnchorRecord(children, start, labels) {
     }
     const openingTag = opening.slice(anchor.start, anchor.openingEnd);
     const explicitName = ariaLabelledText(openingTag, labels)
-        || htmlAttributeValue(openingTag, 'aria-label');
-    const title = htmlAttributeValue(openingTag, 'title');
+        || htmlAttributeText(openingTag, 'aria-label');
+    const title = htmlAttributeText(openingTag, 'title');
     let body = opening.slice(anchor.openingEnd);
     const record = (endIndex, autoClosed = false) => {
         const label = combinedHtmlLabel(explicitName, governedHtmlText(body, labels))

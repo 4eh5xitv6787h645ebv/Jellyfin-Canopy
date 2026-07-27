@@ -641,6 +641,87 @@ test('preserves native accessible-name precedence for restored controls', () => 
     }
 });
 
+test('resolves associated labels before native control fallbacks', () => {
+    const target = 'https://example.com/route';
+    for (const referenced of [
+        '<label hidden for="route-name">Report a problem</label>'
+            + '<input id="route-name" type="image" alt="Documentation">',
+        '<label style="visibility:hidden">Report a problem'
+            + '<span><input id="route-name" style="visibility:visible" '
+            + 'type="image" alt="Documentation"></span>'
+            + '</label>',
+    ]) {
+        const source = referenced
+            + `<a aria-labelledby="route-name" href="${target}"></a>`;
+        for (const links of [extractLinks(source), extractRenderedHtmlLinks(source)]) {
+            const link = links.find(candidate => candidate.type === 'link');
+            assert.ok(link);
+            assert.equal(link.label, 'Report a problem');
+            assert.equal(isActionableLink(link), true);
+        }
+    }
+});
+
+test('resolves many associated labels with bounded traversal work', () => {
+    const target = 'https://example.com/route';
+    const count = 500;
+    const controls = Array.from({ length: count }, (_, index) => (
+        `<label for="control-${index}">${index === count - 1 ? 'Report a problem' : 'Filler'}</label>`
+        + `<input id="control-${index}" type="image" alt="Documentation">`
+    )).join('');
+    const source = controls
+        + `<a aria-labelledby="control-${count - 1}" href="${target}"></a>`;
+    const started = performance.now();
+    for (const links of [extractLinks(source), extractRenderedHtmlLinks(source)]) {
+        const link = links.find(candidate => candidate.type === 'link');
+        assert.ok(link);
+        assert.equal(link.label, 'Report a problem');
+    }
+    assert.ok(
+        performance.now() - started < 4_000,
+        'associated labels must not trigger quadratic control searches'
+    );
+});
+
+test('normalizes native fallbacks and resolves embedded control values', () => {
+    const target = 'https://example.com/route';
+    for (const referenced of [
+        '<input id="route-name" type="image" alt="   " title="Report a problem">',
+        '<input id="route-name" type="text" title="   " placeholder="Report a problem">',
+        '<input id="route-name" type="not-a-real-state" placeholder="Report a problem">',
+        '<input id="route-name" type="text" value="Report a problem">',
+        '<input id="route-name" type="range" value="Report a problem">',
+        '<textarea id="route-name">Report a problem</textarea>',
+        '<select id="route-name"><option selected>Report a problem</option></select>',
+    ]) {
+        const source = referenced
+            + `<a aria-labelledby="route-name" href="${target}"></a>`;
+        for (const links of [extractLinks(source), extractRenderedHtmlLinks(source)]) {
+            const link = links.find(candidate => candidate.type === 'link');
+            assert.ok(link, referenced);
+            assert.equal(link.label, 'Report a problem', referenced);
+            assert.equal(isActionableLink(link), true, referenced);
+        }
+    }
+});
+
+test('resolves native names in direct anchor descendants', () => {
+    const target = 'https://example.com/route';
+    for (const descendant of [
+        '<button title="Report a problem"></button>',
+        '<input type="image" alt="Report a problem">',
+        '<abbr title="Report a problem"></abbr>',
+    ]) {
+        const source = `<a href="${target}">${descendant}</a>`;
+        for (const links of [extractLinks(source), extractRenderedHtmlLinks(source)]) {
+            const link = links.find(candidate => candidate.type === 'link');
+            assert.ok(link, descendant);
+            assert.equal(link.label, 'Report a problem', descendant);
+            assert.equal(isActionableLink(link), true, descendant);
+        }
+    }
+});
+
 test('resolves nested same-tag ID labels with bounded traversal work', () => {
     const target = 'https://example.com/route';
     const depth = 500;
