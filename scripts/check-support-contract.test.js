@@ -2739,6 +2739,9 @@ test('governs form submissions and hidden ID names while inert routes remain ina
             + '<caption style="visibility:visible">'
             + `<a href="${ISSUES_ROUTE}">Submit a vulnerability report</a>`
             + '</caption></annotation-xml></math>',
+        '<div style="visibility:hidden"><math><svg><mi>'
+            + '<caption style="visibility:visible">'
+            + `<a href="${ISSUES_ROUTE}">Submit a vulnerability report</a>`,
     ]) {
         const hiddenRoute = validFixture();
         hiddenRoute['docs/getting-started.md'] = hiddenMalformedRoute;
@@ -2765,6 +2768,10 @@ test('governs form submissions and hidden ID names while inert routes remain ina
         '<svg><select><table>'
             + `<a href="${ISSUES_ROUTE}" `
             + 'aria-label="Submit a vulnerability report"></a>',
+        '<div style="visibility:hidden"><svg><math>'
+            + '<annotation-xml encoding="text/html">'
+            + '<caption style="visibility:visible">'
+            + `<a href="${ISSUES_ROUTE}">Submit a vulnerability report</a>`,
     ]) {
         const visibleMalformedRoute = validFixture();
         visibleMalformedRoute['docs/getting-started.md'] = repairedVisibleRoute;
@@ -2864,6 +2871,14 @@ test('governs form submissions and hidden ID names while inert routes remain ina
             + '<p>Submit a vulnerability report below. Read '
             + '<a href="../SECURITY.md">our security policy</a>.</p>'
             + '<button>Continue</button></form>',
+        `<form action="${ISSUES_ROUTE}">`
+            + '<p>Submit a vulnerability report below.</p>'
+            + '<a href="https://example.com/docs">Use the documentation</a>'
+            + '<button>Continue</button></form>',
+        `<form action="${ISSUES_ROUTE}">`
+            + '<p>Submit a vulnerability report below.</p>'
+            + '<a href="https://example.com/docs">Submit the documentation</a>'
+            + '<button>Continue</button></form>',
     ]) {
         const retainedIntent = validFixture();
         retainedIntent['docs/getting-started.md'] = formSource;
@@ -2883,6 +2898,19 @@ test('governs form submissions and hidden ID names while inert routes remain ina
         + '<p>Read the security background.</p>'
         + '<button>Continue</button></form>';
     fixture(separatedNegation, root => {
+        assert.ok(!auditSupportContract({ root }).problems.some(problem => (
+            problem.startsWith('docs/getting-started.md:')
+            && problem.includes('security intake links must use private GitHub advisories')
+        )));
+    });
+
+    const neutralSecurityBeforeNegation = validFixture();
+    neutralSecurityBeforeNegation['docs/getting-started.md'] =
+        `<form action="${ISSUES_ROUTE}">`
+        + '<p>Read the security background.</p>'
+        + '<p>A typo does not constitute a vulnerability.</p>'
+        + '<button>Submit the report</button></form>';
+    fixture(neutralSecurityBeforeNegation, root => {
         assert.ok(!auditSupportContract({ root }).problems.some(problem => (
             problem.startsWith('docs/getting-started.md:')
             && problem.includes('security intake links must use private GitHub advisories')

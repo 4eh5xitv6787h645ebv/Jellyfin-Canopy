@@ -768,6 +768,9 @@ test('extracts HTML form submissions and image-map routes with control names', (
             + '<caption style="visibility:visible">'
             + `<a href="${browserScopeTarget}">Report a bug</a>`
             + '</caption></annotation-xml></math>',
+        '<div style="visibility:hidden"><math><svg><mi>'
+            + '<caption style="visibility:visible">'
+            + `<a href="${browserScopeTarget}">Report a bug</a>`,
     ]) {
         const scopedLink = extractLinks(scopedHiddenRoute)
             .find(candidate => candidate.target === browserScopeTarget);
@@ -791,6 +794,10 @@ test('extracts HTML form submissions and image-map routes with control names', (
         '<svg><select><table>'
             + `<a href="${browserScopeTarget}" `
             + 'aria-label="Submit a vulnerability report"></a>',
+        '<div style="visibility:hidden"><svg><math>'
+            + '<annotation-xml encoding="text/html">'
+            + '<caption style="visibility:visible">'
+            + `<a href="${browserScopeTarget}">Submit a vulnerability report</a>`,
     ]) {
         const repairedLink = extractLinks(repairedVisibleRoute)
             .find(candidate => candidate.target === browserScopeTarget);
@@ -816,6 +823,23 @@ test('extracts HTML form submissions and image-map routes with control names', (
         .find(candidate => candidate.target === formTarget);
     assert.ok(formLocalLink);
     assert.match(formLocalLink.contextBefore, /submit a vulnerability report below/i);
+
+    for (const neutralReferenceLabel of [
+        'Use the documentation',
+        'Submit the documentation',
+    ]) {
+        const neutralReferenceBeforeSubmit = `<form action="${formTarget}">`
+            + '<p>Submit a vulnerability report below.</p>'
+            + `<a href="https://example.com/docs">${neutralReferenceLabel}</a>`
+            + '<button>Continue</button></form>';
+        const documentationReferenceFormLink = extractLinks(neutralReferenceBeforeSubmit)
+            .find(candidate => candidate.target === formTarget);
+        assert.ok(documentationReferenceFormLink);
+        assert.match(
+            documentationReferenceFormLink.contextBefore,
+            /submit a vulnerability report below/i
+        );
+    }
 
     const earlierFormIntent = `<form action="${formTarget}">`
         + '<p>Submit a vulnerability report below.</p>'

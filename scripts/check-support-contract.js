@@ -695,6 +695,7 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
         const following = applicableGroups[index + 1];
         return Boolean(following)
             && securitySubject.test(applicable)
+            && !NEUTRAL_SECURITY_REFERENCE.test(applicable)
             && securityAction.test(following)
             && ownsSecurityRoute(`${applicable} ${following}`);
     });

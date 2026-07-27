@@ -12,8 +12,10 @@ const HTML_LABEL_OVERFLOW_MARKER =
     '[label truncated: support feature bug vulnerability security question help issue report request]';
 const HTML_FORM_NEUTRAL_REFERENCE_LABEL =
     /\b(?:background|documentation|guidance|guide|policy|process|reference|timeline)\b/i;
-const HTML_FORM_ACTION_CUE =
-    /\b(?:contact|create|email|file|follow|go|message|notify|open|send|submit|through|use|via|visit)\b/i;
+const HTML_FORM_ACTIONABLE_REFERENCE_LABEL =
+    /\b(?:contact|email|file|message|notify|send|submit)\b|(?:\b(?:create|open)\b.{0,80}\b(?:advisory|form|intake|issue|report|request)\b)|(?=.*\b(?:private|security)\b)(?=.*\bprocess\b).*\b(?:follow|go|through|use|via|visit)\b/i;
+const HTML_FORM_ACTIONABLE_REFERENCE_TARGET =
+    /^https:\/\/github\.com\/[^/]+\/[^/]+\/security\/advisories\/new(?:[?#].*)?$/i;
 const markdown = new MarkdownIt({ html: true, linkify: true });
 markdown.linkify.set({ fuzzyEmail: false, fuzzyLink: false });
 const gfmWwwLinkifier = new MarkdownIt().linkify;
@@ -531,11 +533,12 @@ function htmlParentUsesForeignRules(parent, tag) {
 }
 
 function htmlOpeningForeignKind(parent, tag) {
+    if (htmlParentUsesForeignRules(parent, tag)) {
+        return parent.foreignKind || 'foreign';
+    }
     if (tag === 'svg') return 'svg';
     if (tag === 'math') return 'math';
-    return htmlParentUsesForeignRules(parent, tag)
-        ? parent.foreignKind || 'foreign'
-        : '';
+    return '';
 }
 
 function htmlOpeningIsForeignContent(parent, tag) {
@@ -2144,7 +2147,8 @@ function htmlFormSubmissionLinks(
             || anchor.hidden
             || !anchor.label.trim()
             || (HTML_FORM_NEUTRAL_REFERENCE_LABEL.test(anchor.label)
-                && !HTML_FORM_ACTION_CUE.test(anchor.label))) {
+                && !(HTML_FORM_ACTIONABLE_REFERENCE_LABEL.test(anchor.label)
+                    && HTML_FORM_ACTIONABLE_REFERENCE_TARGET.test(anchor.target)))) {
             continue;
         }
         if (actionableSubmissions.some(control => (
