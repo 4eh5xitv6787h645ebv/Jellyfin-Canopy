@@ -1744,6 +1744,9 @@ test('hidden links cannot satisfy mandatory support routes', () => {
         'hidden',
         'aria-hidden="true"',
         'style="display:none"',
+        'style=display:none',
+        'style=visibility:hidden',
+        'style="display&#58;none"',
     ]) {
         const files = validFixture();
         files['docs/help.md'] = files['docs/help.md'].replace(
@@ -1755,6 +1758,59 @@ test('hidden links cannot satisfy mandatory support routes', () => {
                 'docs/help.md: must route every community-support link to the '
                 + 'Jellyfin Community Discord in "## Community and support"'
             ), hidden);
+        });
+    }
+
+    const markdownInHtml = validFixture();
+    markdownInHtml['docs/help.md'] = markdownInHtml['docs/help.md'].replace(
+        `[Discord support](${DISCORD_ROUTE}).`,
+        [
+            '<div hidden markdown="1">',
+            `[Discord support](${DISCORD_ROUTE}).`,
+            '</div>',
+        ].join('\n')
+    );
+    fixture(markdownInHtml, root => {
+        assert.ok(auditSupportContract({ root }).problems.includes(
+            'docs/help.md: must route every community-support link to the '
+            + 'Jellyfin Community Discord in "## Community and support"'
+        ));
+    });
+});
+
+test('hidden Discussions links are ignored by link and prose audits', () => {
+    for (const hidden of [
+        'hidden',
+        'aria-hidden=true',
+        'style=display:none',
+        'style=visibility:hidden',
+        'style="display&#58;none"',
+    ]) {
+        const files = validFixture();
+        files['docs/getting-started.md'] =
+            `<a ${hidden} href="${DISCUSSIONS_ROUTE}">GitHub Discussions support</a>\n`;
+        fixture(files, root => {
+            assert.ok(!auditSupportContract({ root }).problems.includes(
+                'docs/getting-started.md: routes users to disabled GitHub Discussions'
+            ), hidden);
+        });
+    }
+});
+
+test('malformed nested anchors cannot hide public vulnerability routes', () => {
+    const source = `<a href="${SECURITY_ADVISORY_ROUTE}">`
+        + `Submit a private vulnerability report <a href="${ISSUES_ROUTE}">here</a></a>\n`;
+    for (const [file, options] of [
+        ['theme/partials/support.html', {}],
+        ['site/index.html', { checkBuiltSite: true }],
+    ]) {
+        const files = validFixture();
+        files[file] = source;
+        fixture(files, root => {
+            assert.ok(auditSupportContract({ root, ...options }).problems.some(problem => (
+                problem.startsWith(`${file}:`)
+                && problem.includes('security intake links must use private GitHub advisories')
+            )), file);
         });
     }
 });

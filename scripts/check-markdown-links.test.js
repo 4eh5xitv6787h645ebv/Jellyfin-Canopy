@@ -300,13 +300,43 @@ test('hidden raw HTML and Markdown-in-HTML links are not actionable', () => {
         '<a hidden href="https://example.com/hidden">Hidden</a>',
         '<a aria-hidden="true" href="https://example.com/aria-hidden">ARIA hidden</a>',
         '<a style="display:none" href="https://example.com/css-hidden">CSS hidden</a>',
+        '<a style=display:none href="https://example.com/unquoted-hidden">Unquoted hidden</a>',
+        '<a style=visibility:hidden href="https://example.com/unquoted-invisible">Unquoted invisible</a>',
+        '<a style="display&#58;none" href="https://example.com/entity-hidden">Entity hidden</a>',
         '<div hidden><a href="https://example.com/ancestor-hidden">Ancestor hidden</a></div>',
         '<span hidden>[Markdown hidden](https://example.com/markdown-hidden)</span>',
+        '<div hidden markdown="1">',
+        '[Markdown-in-HTML hidden](https://example.com/markdown-in-html-hidden)',
+        '</div>',
         '<a href="https://example.com/visible">Visible</a>',
         '',
     ].join('\n'));
     assert.deepEqual(links.filter(isActionableLink).map(link => link.label), ['Visible']);
     assert.ok(links.filter(link => link.label !== 'Visible').every(link => link.hidden));
+});
+
+test('repairs malformed nested anchors into independently actionable links', () => {
+    const source = [
+        '<a href="https://example.com/private">',
+        '  Submit a private vulnerability report ',
+        '  <a href="https://example.com/public">here</a>',
+        '</a>',
+        '',
+    ].join('');
+    for (const links of [extractLinks(source), extractRenderedHtmlLinks(source)]) {
+        const actionable = links.filter(isActionableLink);
+        assert.deepEqual(
+            actionable.map(link => ({ target: link.target, label: link.label })),
+            [
+                {
+                    target: 'https://example.com/private',
+                    label: 'Submit a private vulnerability report',
+                },
+                { target: 'https://example.com/public', label: 'here' },
+            ]
+        );
+        assert.match(actionable[1].contextBefore, /private vulnerability report/i);
+    }
 });
 
 test('extracts every MkDocs markdown-in-HTML mode and image-only accessible names', () => {

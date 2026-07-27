@@ -66,13 +66,33 @@ function htmlAttributeValue(tag, name) {
     return match ? markdown.utils.unescapeAll(match[1] ?? match[2] ?? match[3]) : '';
 }
 
+function stripHiddenHtml(content) {
+    const source = stripHtmlComments(content);
+    const visible = [];
+    const stack = [];
+    const pattern = /<(\/?)([a-z][a-z0-9:-]*)\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi;
+    let offset = 0;
+    for (const match of source.matchAll(pattern)) {
+        const hiddenBefore = Boolean(stack.at(-1)?.hidden);
+        if (!hiddenBefore) visible.push(source.slice(offset, match.index));
+        const closing = match[1] === '/';
+        const ownHidden = !closing && htmlTagIsHidden(match[0]);
+        updateHtmlVisibilityStack(stack, match[0]);
+        const hiddenAfter = Boolean(stack.at(-1)?.hidden);
+        if (closing
+            ? !hiddenBefore && !hiddenAfter
+            : !hiddenAfter && !ownHidden) {
+            visible.push(match[0]);
+        }
+        offset = match.index + match[0].length;
+    }
+    if (!stack.at(-1)?.hidden) visible.push(source.slice(offset));
+    return visible.join('');
+}
+
 function accessibleHtmlText(content, labels = new Map()) {
-    const visible = stripHtmlComments(content)
+    const visible = stripHiddenHtml(content)
         .replace(/<(script|style)\b[\s\S]*?<\/\1\s*>/gi, ' ')
-        .replace(
-            /<([a-z][a-z0-9:-]*)\b(?=[^>]*(?:\shidden(?:\s|=|>)|\saria-hidden\s*=\s*["']?true\b|\sstyle\s*=\s*["'][^"']*(?:display\s*:\s*none|visibility\s*:\s*hidden)))(?:[^>"']|"[^"]*"|'[^']*')*>[\s\S]*?<\/\1\s*>/gi,
-            ' '
-        )
         .replace(
             /<svg\b((?:[^>"']|"[^"]*"|'[^']*')*)>([\s\S]*?)<\/svg\s*>/gi,
             (element, attributes, body) => {
@@ -323,11 +343,11 @@ const HTML_VOID_ELEMENTS = new Set([
 ]);
 
 function htmlTagIsHidden(tag) {
+    const style = htmlAttributeValue(tag, 'style');
     return /(?:^|\s)hidden(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?(?=\s|\/?>)/i
         .test(tag)
         || /\saria-hidden\s*=\s*["']?true\b/i.test(tag)
-        || /\sstyle\s*=\s*["'][^"']*(?:display\s*:\s*none|visibility\s*:\s*hidden)/i
-            .test(tag);
+        || /(?:^|;)\s*(?:display\s*:\s*none|visibility\s*:\s*hidden)\b/i.test(style);
 }
 
 function updateHtmlVisibilityStack(stack, content) {
@@ -339,6 +359,10 @@ function updateHtmlVisibilityStack(stack, content) {
             const opening = stack.map(entry => entry.tag).lastIndexOf(tag);
             if (opening !== -1) stack.splice(opening);
             continue;
+        }
+        if (tag === 'a') {
+            const activeAnchor = stack.map(entry => entry.tag).lastIndexOf(tag);
+            if (activeAnchor !== -1) stack.splice(activeAnchor);
         }
         const selfClosing = /\/>\s*$/.test(match[0]) || HTML_VOID_ELEMENTS.has(tag);
         if (selfClosing) continue;
@@ -352,7 +376,8 @@ function updateHtmlVisibilityStack(stack, content) {
 function htmlElementIsHidden(content, index, openingTag) {
     const stack = [];
     updateHtmlVisibilityStack(stack, content.slice(0, index));
-    return Boolean(stack.at(-1)?.hidden) || htmlTagIsHidden(openingTag);
+    updateHtmlVisibilityStack(stack, openingTag);
+    return Boolean(stack.at(-1)?.hidden);
 }
 
 function htmlPriorBlockText(content, boundary, labels) {
@@ -367,7 +392,6 @@ function htmlAnchorRecords(content, labels = htmlIdLabels(content)) {
     const anchors = [];
     const opening = /<a\b/gi;
     const closing = /<\/a\s*>/gi;
-    let previousAnchorEnd = 0;
     let match;
     while ((match = opening.exec(content)) !== null) {
         const openingEnd = htmlOpeningTagEnd(content, match.index);
@@ -375,15 +399,28 @@ function htmlAnchorRecords(content, labels = htmlIdLabels(content)) {
         const openingTag = content.slice(match.index, openingEnd);
         closing.lastIndex = openingEnd;
         const close = closing.exec(content);
-        const anchorEnd = close ? close.index + close[0].length : openingEnd;
-        const nestedName = close
-            ? accessibleHtmlText(content.slice(openingEnd, close.index), labels).replace(/\s+/g, ' ').trim()
+        const nextOpeningOffset = content.slice(openingEnd).search(/<a\b/i);
+        const nextOpening = nextOpeningOffset === -1
+            ? -1
+            : openingEnd + nextOpeningOffset;
+        const autoClosed = nextOpening !== -1 && (!close || nextOpening < close.index);
+        const contentEnd = autoClosed ? nextOpening : (close?.index ?? openingEnd);
+        const anchorEnd = autoClosed
+            ? nextOpening
+            : (close ? close.index + close[0].length : openingEnd);
+        const nestedName = contentEnd > openingEnd
+            ? accessibleHtmlText(content.slice(openingEnd, contentEnd), labels)
+                .replace(/\s+/g, ' ').trim()
             : '';
         const following = content.slice(anchorEnd, Math.min(content.length, anchorEnd + 2_000));
         const nextAnchorOffset = following.search(/<a\b/i);
         const adjacentContextAfterEnd = nextAnchorOffset === -1
             ? anchorEnd + following.length
             : anchorEnd + nextAnchorOffset;
+        const previousAnchor = anchors.at(-1);
+        const previousAnchorEnd = previousAnchor?.end <= match.index
+            ? previousAnchor.end
+            : 0;
         const rawBefore = content.slice(
             Math.max(previousAnchorEnd, match.index - 2_000),
             match.index
@@ -391,16 +428,19 @@ function htmlAnchorRecords(content, labels = htmlIdLabels(content)) {
         const rawAfter = content.slice(anchorEnd, adjacentContextAfterEnd);
         const beforeBoundary = htmlContextBeforeBoundary(rawBefore);
         const afterBoundary = htmlContextAfterBoundary(rawAfter);
-        const previousAnchor = anchors.at(-1);
-        const contextBefore = compactVisibleText(
-            rawBefore.slice(beforeBoundary),
-            labels
-        );
+        const repairedPriorLabel = previousAnchor?.autoClosed
+            && previousAnchor.end === match.index
+            ? previousAnchor.label
+            : '';
+        const contextBefore = `${repairedPriorLabel} ${
+            compactVisibleText(rawBefore.slice(beforeBoundary), labels)
+        }`.replace(/\s+/g, ' ').trim();
         anchors.push({
             start: match.index,
             openingEnd,
             end: anchorEnd,
-            closed: Boolean(close),
+            closed: Boolean(close) || autoClosed,
+            autoClosed,
             label: ariaLabelledText(openingTag, labels)
                 || htmlAttributeValue(openingTag, 'aria-label')
                 || nestedName
@@ -416,11 +456,11 @@ function htmlAnchorRecords(content, labels = htmlIdLabels(content)) {
                 rawAfter.slice(0, afterBoundary),
                 labels
             ),
-            contextBeforeStartsAtLink: previousAnchorEnd > 0 && beforeBoundary === 0,
+            contextBeforeStartsAtLink: Boolean(previousAnchor)
+                && previousAnchorEnd > 0
+                && beforeBoundary === 0,
             contextAfterEndsAtLink: nextAnchorOffset !== -1 && afterBoundary === rawAfter.length,
         });
-        previousAnchorEnd = anchorEnd;
-        opening.lastIndex = anchorEnd;
     }
     return anchors;
 }
@@ -482,7 +522,14 @@ function inlineHtmlAnchorRecord(children, start, labels) {
     for (let index = start + 1; index < children.length; index += 1) {
         const child = children[index];
         if (child.type === 'html_inline') {
+            const nestedOpening = child.content.search(/<a\b/i);
             const closing = child.content.search(/<\/a\s*>/i);
+            if (nestedOpening !== -1 && (closing === -1 || nestedOpening < closing)) {
+                return {
+                    label: label.replace(/\s+/g, ' ').trim() || anchor.label,
+                    endIndex: index - 1,
+                };
+            }
             label += visibleHtmlText(
                 closing === -1 ? child.content : child.content.slice(0, closing),
                 labels
@@ -689,8 +736,13 @@ function markdownInHtmlLinks(tokens) {
             const body = source.slice(openingEnd, close.index);
             const lineOffset = (token.map?.[0] || 0)
                 + source.slice(0, openingEnd).split('\n').length - 1;
+            const containerHidden = htmlElementIsHidden(source, match.index, openingTag);
             for (const link of extractLinks(body)) {
-                links.push({ ...link, line: link.line + lineOffset });
+                links.push({
+                    ...link,
+                    line: link.line + lineOffset,
+                    hidden: containerHidden || link.hidden,
+                });
             }
             opening.lastIndex = close.index + close[0].length;
         }
@@ -839,6 +891,7 @@ module.exports = {
     extractRenderedHtmlLinks,
     headingSlug,
     htmlAttributes,
+    htmlTagIsHidden,
     isActionableLink,
     markdownAnchors,
     markdownHeadingAnchors,

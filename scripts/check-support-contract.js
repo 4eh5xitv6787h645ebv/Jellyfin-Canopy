@@ -11,6 +11,7 @@ const {
     extractLinksFromTokens,
     extractRenderedHtmlLinks,
     htmlAttributes,
+    htmlTagIsHidden,
     isActionableLink,
     markdownHeadingAnchors,
     normalizeLinkTarget,
@@ -280,8 +281,7 @@ function inlineRenderedText(children = [], includeCode = false) {
                 else values.push(visibleHtmlText(token.content));
                 continue;
             }
-            const hidden = /\shidden(?:\s|=|>|$)|\saria-hidden\s*=\s*["']?true\b|\sstyle\s*=\s*["'][^"']*(?:display\s*:\s*none|visibility\s*:\s*hidden)/i
-                .test(token.content);
+            const hidden = htmlTagIsHidden(token.content);
             const selfClosing = /\/>\s*$/.test(token.content);
             if (hiddenDepth > 0) {
                 if (!selfClosing) hiddenDepth += 1;
@@ -1104,7 +1104,7 @@ function explicitlyRejectsDiscussionsRoute(clause) {
 
 function routesToDiscussions(surface) {
     const discussionPath = '/4eh5xitv6787h645ebv/jellyfin-canopy/discussions';
-    if (surface.links.some((link) => {
+    if (surface.links.filter(isActionableLink).some((link) => {
         const pathname = link?.type === 'link' ? repositoryPath(link.target).toLowerCase() : '';
         return pathname === discussionPath || pathname.startsWith(`${discussionPath}/`);
     })) return true;
