@@ -66,6 +66,7 @@ test('hidden support templates and chooser URLs are part of the reviewed invento
         '.github/ISSUE_TEMPLATE/config.yml': [
             'contact_links:',
             '  - url: https://unreviewed.example/private',
+            '  - url: https://',
             '',
         ].join('\n'),
         'policy.json': JSON.stringify({ schemaVersion: 1, allowedUrls: [] }),
@@ -81,6 +82,9 @@ test('hidden support templates and chooser URLs are part of the reviewed invento
         assert.ok(problems.includes(
             '.github/ISSUE_TEMPLATE/config.yml:2: external URL is absent from the reviewed offline inventory: '
             + 'https://unreviewed.example/private'
+        ));
+        assert.ok(problems.includes(
+            '.github/ISSUE_TEMPLATE/config.yml:3: malformed external URL: <redacted-malformed-url>'
         ));
     });
 });

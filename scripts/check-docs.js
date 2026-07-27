@@ -337,11 +337,19 @@ function externalLinksInSupportChooser(root = ROOT) {
     const absolute = path.join(root, file);
     if (!fs.existsSync(absolute)) return [];
     const source = fs.readFileSync(absolute, 'utf8');
+    const document = parseDocument(source, { prettyErrors: false, uniqueKeys: true });
+    if (document.errors.length > 0) return [];
+    const contacts = document.get('contact_links', true);
+    if (!Array.isArray(contacts?.items)) return [];
     const links = [];
-    for (const [index, line] of source.split('\n').entries()) {
-        for (const match of line.matchAll(/https?:\/\/[^\s'"<>]+/g)) {
-            links.push({ file, line: index + 1, url: match[0] });
-        }
+    for (const contact of contacts.items) {
+        const url = typeof contact?.get === 'function' ? contact.get('url', true) : null;
+        if (typeof url?.value !== 'string') continue;
+        links.push({
+            file,
+            line: sourceLine(source, Number.isInteger(url.range?.[0]) ? url.range[0] : 0),
+            url: url.value,
+        });
     }
     return links;
 }

@@ -2,6 +2,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { URL } = require('node:url');
 const { parseDocument } = require('yaml');
 const { extractLinks, validateMarkdownFile } = require('./check-markdown-links');
 
@@ -164,12 +165,34 @@ function requireRenderedIssueLinks(body, file, problems) {
 }
 
 function hasFileTransformationChecklist(body) {
-    const checklistItems = body.match(
-        /^\s*(?:[-*+]\s*)?\[[ xX]\].*(?:\r?\n(?: {2,}|\t).*)*/gm
-    ) || [];
-    return checklistItems.some(item => (
-        item.toLowerCase().replace(/[^a-z0-9]/g, '').includes('filetransformation')
-    ));
+    const lines = body.replace(/\r\n?/g, '\n').split('\n');
+    const taskStart = /^\s*(?:(?:[-*+]|\d{1,9}[.)])\s+)?\[[ xX]\](?:[ \t]+(.*))?$/;
+    const listStart = /^\s*(?:[-*+]|\d{1,9}[.)])\s+/;
+    for (let index = 0; index < lines.length; index += 1) {
+        const start = lines[index].match(taskStart);
+        if (!start) continue;
+        const item = [start[1] || ''];
+        for (let next = index + 1; next < lines.length; next += 1) {
+            const line = lines[next];
+            if (!line.trim() || /^\s*#{1,6}\s+/.test(line) || listStart.test(line)) break;
+            item.push(line.trim());
+        }
+        if (item.join('').toLowerCase().replace(/[^a-z0-9]/g, '')
+            .includes('filetransformation')) {
+            return true;
+        }
+    }
+    return false;
+}
+
+function isAbsoluteHttpsUrl(value) {
+    if (typeof value !== 'string') return false;
+    try {
+        const parsed = new URL(value);
+        return parsed.protocol === 'https:' && Boolean(parsed.hostname);
+    } catch {
+        return false;
+    }
 }
 
 function requireChooserConfig(config, file, problems) {
@@ -209,8 +232,8 @@ function requireChooserConfig(config, file, problems) {
                 problems.push(`${prefix}.${field} must be a non-empty string`);
             }
         }
-        if (typeof contact.url === 'string' && !/^https:\/\//i.test(contact.url)) {
-            problems.push(`${prefix}.url must use an absolute HTTPS URL`);
+        if (typeof contact.url === 'string' && !isAbsoluteHttpsUrl(contact.url)) {
+            problems.push(`${prefix}.url must be a valid absolute HTTPS URL`);
         }
     }
     const security = config.contact_links.find(contact => (

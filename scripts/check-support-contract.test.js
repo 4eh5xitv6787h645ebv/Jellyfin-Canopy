@@ -208,6 +208,8 @@ test('rejects spaced and multiline File Transformation baseline checklists', () 
     for (const checklist of [
         '- [ ] File Transformation installed',
         '- [x] File\n  Transformation enabled',
+        '- [ ] File\nTransformation installed',
+        '1. [ ] File Transformation installed',
     ]) {
         const files = validFixture();
         files['.github/ISSUE_TEMPLATE/bug.md'] = BUG_TEMPLATE.replace(
@@ -220,6 +222,22 @@ test('rejects spaced and multiline File Transformation baseline checklists', () 
             ));
         });
     }
+});
+
+test('rejects structurally invalid chooser contact URLs', () => {
+    const files = validFixture();
+    files['.github/ISSUE_TEMPLATE/config.yml'] = CONFIG + [
+        '  - name: Broken support link',
+        '    url: https://',
+        '    about: This must not be accepted based on its prefix.',
+        '',
+    ].join('\n');
+    fixture(files, root => {
+        assert.ok(auditSupportContract({ root }).problems.includes(
+            '.github/ISSUE_TEMPLATE/config.yml: contact_links[1].url '
+            + 'must be a valid absolute HTTPS URL'
+        ));
+    });
 });
 
 test('requires a governed feature template and private security chooser route', () => {
