@@ -4129,11 +4129,11 @@ function updateRequestsRequirementsBanner() {
     // The page is useful with EITHER source: downloads <- any enabled *arr; requests/issues <- Seerr.
     const met = hasAnyArrService() || hasSeerrConfigured();
     if (met) {
-        line.hidden = true;
+        line.style.display = 'none';
     } else {
         const target = list || line;
         target.textContent = 'Configure Seerr (for requests) and/or Sonarr or Radarr (for downloads) — URL and API key each.';
-        line.hidden = false;
+        line.style.display = '';
     }
 }
 
