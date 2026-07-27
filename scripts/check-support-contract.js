@@ -79,13 +79,13 @@ const SUPPORT_ROUTE_SECTIONS = new Map([
     ['docs/help.md', ['Community and support']],
     ['.github/SECURITY_GUIDELINES.md', ['Questions?']],
 ]);
-const BUG_ROUTE_INTENT = /\b(?:bug[- ]reports?|github bug-report issues|issue tracker|(?:something|anything|this|it)\s+(?:is\s+)?broken|broken\s+(?:behavior|feature|functionality|plugin)|(?:file|found|report|submit|tell)\b.{0,40}\b(?:a\s+)?(?:bugs?|defects?|issues?)|(?:create|open|use|visit)\b.{0,40}\b(?:github\s+)?issues?\b.{0,20}\bfor\s+(?:a\s+)?(?:bugs?|defects?))\b/i;
+const BUG_ROUTE_INTENT = /\b(?:bug[- ]reports?|(?:^|[.!?;]\s*)for\s+(?:a\s+)?bugs?|github bug-report issues|issue tracker|(?:something|anything|this|it)\s+(?:is\s+)?broken|broken\s+(?:behavior|feature|functionality|plugin)|(?:file|found|report|submit|tell)\b.{0,40}\b(?:a\s+)?(?:bugs?|defects?|issues?)|(?:open|use|visit)\b.{0,20}\b(?:bug|defect)(?:[- ]report)?\s+(?:form|intake)|(?:create|open|use|visit)\b.{0,40}\b(?:github\s+)?issues?\b.{0,20}\bfor\s+(?:a\s+)?(?:bugs?|defects?))\b/i;
 const BUG_ROUTE_LABEL = new RegExp(
     `(?:${BUG_ROUTE_INTENT.source}|\\bgithub issues\\b)`,
     'i'
 );
 const FEATURE_ROUTE_LABEL = /\b(?:feature[- ]requests?|feature\s+proposals?|(?:have|propose|request|share|suggest|submit|tell)\b.{0,50}\bimprovements?|improvements?\s+(?:ideas?|proposals?|requests?)|request(?:ing)?\b.{0,40}\b(?:features?|enhancements?)|(?:pitch|send|submit)(?:s|ed|ing)?\b.{0,40}\b(?:features?|ideas?|enhancements?)|suggest\b.{0,40}\b(?:features?|ideas?|enhancements?)|share\b.{0,40}\b(?:ideas?|enhancements?)|propos(?:e|als?)\b.{0,40}\b(?:features?|ideas?|enhancements?)|enhancement\s+(?:ideas?|issues?|proposals?|requests?|submission|template)|feature(?:-request)?\s+(?:issues?|template)|ideas?\s+(?:channel|submission|template))\b/i;
-const SUPPORT_ROUTE_INTENT = /(?:\b(?:assistance|community\s+(?:chat|forum|support)|for\s+(?:help|support)|(?:ask|get|request|seek)\s+(?:for\s+|to\s+)?(?:assistance|help|support)|(?:help|support)\s+(?:channel|chat|community|forum|requests?|server))\b|(?:^|[.!?;]\s*)(?:(?:(?:any|have)\s+)?questions?\s*\?|need\s+(?:for\s+|to\s+)?(?:assistance|help|support)\b))/i;
+const SUPPORT_ROUTE_INTENT = /(?:\b(?:assistance|community\s+(?:chat|forum|support)|for\s+(?:help|support)|(?:ask|get|request|seek)\s+(?:for\s+|to\s+)?(?:assistance|help|support)|(?:open|use|visit)\b.{0,20}\b(?:help|support)\s+(?:form|intake)|(?:help|support)\s+(?:channel|chat|community|forum|requests?|server))\b|(?:^|[.!?;]\s*)(?:(?:(?:any|have)\s+)?questions?\s*\?|need\s+(?:for\s+|to\s+)?(?:assistance|help|support)\b))/i;
 const SUPPORT_ROUTE_LABEL = new RegExp(
     `(?:${SUPPORT_ROUTE_INTENT.source}|\\bdiscord\\b)`,
     'i'

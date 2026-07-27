@@ -474,19 +474,59 @@ test('semantic ownership keeps abbreviations and semicolons inside the owning se
 });
 
 test('semantic ownership does not cross delimited route clauses', () => {
-    for (const separator of ['; ', ', and ']) {
-        const files = validFixture();
-        files['docs/getting-started.md'] =
-            `For bug reports, use [GitHub Issues](${ISSUES_ROUTE})${separator}`
-            + `for help, use [Discord](${DISCORD_ROUTE}).\n`;
-        fixture(files, root => {
-            assert.deepEqual(
-                auditSupportContract({ root }).problems.filter(problem => (
-                    problem.startsWith('docs/getting-started.md:')
-                )),
-                []
-            );
-        });
+    for (const bugClause of ['For bug reports', 'For bugs']) {
+        for (const separator of ['; ', ', and ']) {
+            for (const file of ['docs/getting-started.md', 'theme/partials/support.html']) {
+                const files = validFixture();
+                files[file] = file.endsWith('.html')
+                    ? `<p>${bugClause}, use <a href="${ISSUES_ROUTE}">GitHub Issues</a>`
+                        + `${separator}for help, use `
+                        + `<a href="${DISCORD_ROUTE}">Discord</a>.</p>\n`
+                    : `${bugClause}, use [GitHub Issues](${ISSUES_ROUTE})${separator}`
+                        + `for help, use [Discord](${DISCORD_ROUTE}).\n`;
+                fixture(files, root => {
+                    assert.deepEqual(
+                        auditSupportContract({ root }).problems.filter(problem => (
+                            problem.startsWith(`${file}:`)
+                        )),
+                        []
+                    );
+                });
+            }
+        }
+    }
+});
+
+test('category-specific form labels own direct and semicolon-delimited intake routes', () => {
+    const cases = [
+        {
+            label: 'Open the bug form',
+            target: DISCORD_ROUTE,
+            trailing: 'submit a bug',
+            message: 'bug intake links',
+        },
+        {
+            label: 'Open the support form',
+            target: ISSUES_ROUTE,
+            trailing: 'ask for help',
+            message: 'community-support links',
+        },
+    ];
+    for (const entry of cases) {
+        for (const separator of ['. ', `; ${entry.trailing}. `]) {
+            for (const file of ['docs/getting-started.md', 'theme/partials/support.html']) {
+                const files = validFixture();
+                files[file] = file.endsWith('.html')
+                    ? `<p><a href="${entry.target}">${entry.label}</a>${separator}</p>\n`
+                    : `[${entry.label}](${entry.target})${separator}\n`;
+                fixture(files, root => {
+                    assert.ok(auditSupportContract({ root }).problems.some(problem => (
+                        problem.startsWith(`${file}:`)
+                        && problem.includes(entry.message)
+                    )));
+                });
+            }
+        }
     }
 });
 
