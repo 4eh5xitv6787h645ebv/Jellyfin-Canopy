@@ -872,6 +872,15 @@ test('extracts HTML form submissions and image-map routes with control names', (
     assert.match(distinctAnchorIntentLink.contextBefore, /report a regular bug/i);
     assert.doesNotMatch(distinctAnchorIntentLink.contextBefore, /vulnerab/i);
 
+    const neutralCanonicalReference = `<form action="${formTarget}">`
+        + '<p>Submit a vulnerability report below. Read '
+        + `<a href="${securityTarget}">the security policy</a>.</p>`
+        + '<button>Continue</button></form>';
+    const neutralCanonicalFormLink = extractLinks(neutralCanonicalReference)
+        .find(candidate => candidate.target === formTarget);
+    assert.ok(neutralCanonicalFormLink);
+    assert.match(neutralCanonicalFormLink.contextBefore, /vulnerab/i);
+
     for (const [routeTarget, routeLabel, precedingIntent] of [
         [securityTarget, 'Open the security policy', 'Submit a vulnerability report'],
         [securityTarget, 'Use the private security guidance', 'Submit a vulnerability report'],

@@ -107,6 +107,8 @@ const SECURITY_ROUTE_LABEL = SECURITY_INTAKE_HEADING;
 const NEUTRAL_SECURITY_REFERENCE = /\b(?:background|documentation|guidelines?|policy|process|reference|timeline)\b/i;
 const SECURITY_ROUTE_CUE = /\b(?:alternative|contact|create|email|file|form|go(?:es|ing)?|instructions?|message|notify|open|send|submit|through|use|via)\b/i;
 const NON_VULNERABILITY_CONTEXT = /\b(?:do(?:es)? not|doesn't|don't|not)\s+(?:constitute|involve)\b.{0,80}\bvulnerab/i;
+const NEGATED_SECURITY_SUBJECT =
+    /\b(?:are not|aren't|do(?:es)? not|doesn't|don't|is not|isn't|never)\b.{0,80}\b(?:exploits?|security|vulnerab\w*)\b/i;
 const SECURITY_CONTEXT_HEADING = /\b(?:security|vulnerab\w*)\b/i;
 const PUBLIC_SECURITY_CHANNEL = /\b(?:discord|e-?mail|github\s+(?:issues?|discussions?)|issue\s+tracker|public\s+(?:channel|forum|issues?|reports?|threads?)|[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,})\b/i;
 const PUBLIC_SECURITY_EXCEPTION = /\b(?:anywhere|nowhere)\s+(?:else\s+)?(?:but|except)\b|\b(?:except|other\s+than)\b/i;
@@ -702,6 +704,7 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
         const followingText = following ? groupText(following) : '';
         const ownsSubject = applicable.some(clause => (
             securitySubject.test(clause)
+            && !NEGATED_SECURITY_SUBJECT.test(clause)
             && (!NEUTRAL_SECURITY_REFERENCE.test(clause)
                 || explicitVulnerabilitySubject.test(clause))
         ));

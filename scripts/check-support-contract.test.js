@@ -2883,8 +2883,8 @@ test('governs form submissions and hidden ID names while inert routes remain ina
     const distinctSupportAnchor = validFixture();
     distinctSupportAnchor['docs/getting-started.md'] =
         `<form action="${ISSUES_ROUTE}">`
-        + '<p>Need help? Use '
-        + `<a href="${DISCORD_ROUTE}">the community support process</a>.</p>`
+        + '<p>Need help? '
+        + `<a href="${DISCORD_ROUTE}">Use the community support process</a>.</p>`
         + '<p>Report a regular bug with this form.</p>'
         + '<button>Continue</button></form>';
     fixture(distinctSupportAnchor, root => {
@@ -2910,6 +2910,11 @@ test('governs form submissions and hidden ID names while inert routes remain ina
         `<form action="${ISSUES_ROUTE}">`
             + '<p>Submit a vulnerability report below.</p>'
             + '<a href="https://example.com/docs">Submit the documentation</a>'
+            + '<button>Continue</button></form>',
+        `<form action="${ISSUES_ROUTE}">`
+            + '<p>Submit a vulnerability report below. Read '
+            + '<a href="https://github.com/other/project/security/advisories/new">'
+            + 'the security policy</a>.</p>'
             + '<button>Continue</button></form>',
     ]) {
         const retainedIntent = validFixture();
@@ -2943,6 +2948,19 @@ test('governs form submissions and hidden ID names while inert routes remain ina
         + '<p>A typo does not constitute a vulnerability.</p>'
         + '<button>Submit the report</button></form>';
     fixture(neutralSecurityBeforeNegation, root => {
+        assert.ok(!auditSupportContract({ root }).problems.some(problem => (
+            problem.startsWith('docs/getting-started.md:')
+            && problem.includes('security intake links must use private GitHub advisories')
+        )));
+    });
+
+    const explicitlyNonSecurityForm = validFixture();
+    explicitlyNonSecurityForm['docs/getting-started.md'] =
+        `<form action="${ISSUES_ROUTE}">`
+        + '<p>This form is not for security vulnerabilities. Read the policy.</p>'
+        + '<p>A typo does not constitute a vulnerability.</p>'
+        + '<button>Submit the report</button></form>';
+    fixture(explicitlyNonSecurityForm, root => {
         assert.ok(!auditSupportContract({ root }).problems.some(problem => (
             problem.startsWith('docs/getting-started.md:')
             && problem.includes('security intake links must use private GitHub advisories')

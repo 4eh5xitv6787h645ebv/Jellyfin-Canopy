@@ -12,6 +12,8 @@ const HTML_LABEL_OVERFLOW_MARKER =
     '[label truncated: support feature bug vulnerability security question help issue report request]';
 const HTML_FORM_NEUTRAL_REFERENCE_LABEL =
     /\b(?:background|documentation|guidance|guide|policy|process|reference|timeline)\b/i;
+const HTML_FORM_ACTION_CUE =
+    /\b(?:contact|create|email|file|follow|go|message|notify|open|send|submit|use|visit)\b/i;
 const HTML_FORM_ACTIONABLE_REFERENCE_TARGET =
     /^https:\/\/(?:github\.com\/[^/?#]+\/[^/?#]+\/(?:issues(?:\/new(?:\/choose)?)?|security\/advisories\/new)|discord\.gg\/[^/?#]+)\/?(?:[?#].*)?$/i;
 const markdown = new MarkdownIt({ html: true, linkify: true });
@@ -2150,7 +2152,8 @@ function htmlFormSubmissionLinks(
             || anchor.hidden
             || !anchor.label.trim()
             || (HTML_FORM_NEUTRAL_REFERENCE_LABEL.test(anchor.label)
-                && !HTML_FORM_ACTIONABLE_REFERENCE_TARGET.test(anchor.target))) {
+                && !(HTML_FORM_ACTION_CUE.test(anchor.label)
+                    && HTML_FORM_ACTIONABLE_REFERENCE_TARGET.test(anchor.target)))) {
             continue;
         }
         if (actionableSubmissions.some(control => (
