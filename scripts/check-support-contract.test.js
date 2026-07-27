@@ -491,20 +491,42 @@ test('semantic ownership does not cross delimited route clauses', () => {
 });
 
 test('comma conjunctions preserve trailing intake intent owned by the link', () => {
-    const files = validFixture();
-    files['docs/getting-started.md'] =
-        `[Open the report form](${DISCORD_ROUTE}), and submit a bug.\n`;
-    files['theme/partials/support.html'] =
-        `<p><a href="${DISCORD_ROUTE}">Open the report form</a>, and submit a bug.</p>\n`;
-    fixture(files, root => {
-        const problems = auditSupportContract({ root }).problems;
+    const cases = [
+        {
+            label: 'Open the report form',
+            target: DISCORD_ROUTE,
+            trailing: 'submit a bug',
+            message: 'bug intake links',
+        },
+        {
+            label: 'Open the bug form',
+            target: DISCORD_ROUTE,
+            trailing: 'submit a bug',
+            message: 'bug intake links',
+        },
+        {
+            label: 'Open the support form',
+            target: ISSUES_ROUTE,
+            trailing: 'ask for help',
+            message: 'community-support links',
+        },
+    ];
+    for (const entry of cases) {
         for (const file of ['docs/getting-started.md', 'theme/partials/support.html']) {
-            assert.ok(problems.some(problem => (
-                problem.startsWith(`${file}:`)
-                && problem.includes('bug intake links')
-            )));
+            const files = validFixture();
+            files[file] = file.endsWith('.html')
+                ? `<p><a href="${entry.target}">${entry.label}</a>, `
+                    + `and ${entry.trailing}.</p>\n`
+                : `[${entry.label}](${entry.target}), and ${entry.trailing}.\n`;
+            fixture(files, root => {
+                const problems = auditSupportContract({ root }).problems;
+                assert.ok(problems.some(problem => (
+                    problem.startsWith(`${file}:`)
+                    && problem.includes(entry.message)
+                )));
+            });
         }
-    });
+    }
 });
 
 test('global route ownership distinguishes intake intent from destination names', () => {
@@ -550,6 +572,27 @@ test('global route ownership combines destination names with explicit intake con
             source: '<p>For help, use '
                 + '<a href="https://discord.com/developers/docs">Discord</a>.</p>\n',
             message: 'community-support links',
+        },
+        {
+            file: 'theme/partials/support.html',
+            source: '<p>For help, use '
+                + '<a href="https://discord.com/developers/docs">'
+                + 'Jellyfin Community Discord</a>.</p>\n',
+            message: 'community-support links',
+        },
+        {
+            file: 'theme/partials/support.html',
+            source: '<p>For help, use '
+                + '<a href="https://discord.com/developers/docs">'
+                + 'the Discord server</a>.</p>\n',
+            message: 'community-support links',
+        },
+        {
+            file: 'theme/partials/support.html',
+            source: '<p>Report bugs in '
+                + '<a href="https://github.com/example/dependency/issues">'
+                + 'the Issues page</a>.</p>\n',
+            message: 'bug intake links',
         },
         {
             file: 'theme/partials/support.html',

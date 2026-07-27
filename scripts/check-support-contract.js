@@ -107,13 +107,16 @@ const PUBLIC_SECURITY_EXCEPTION = /\b(?:anywhere|nowhere)\s+(?:else\s+)?(?:but|e
 const PUBLIC_SECURITY_NEGATION_ACTION = '(?:contact(?:ed|ing)?|disclos\\w*|email(?:ed|ing)?|file(?:d|ing)?|include(?:d|ing)?|message(?:d|ing)?|notif(?:y|ied|ying)|open(?:ed|ing)?|post(?:ed|ing)?|report(?:ed|ing)?|send|sent|submit(?:ted|ting)?|use(?:d|ing)?)';
 const CONTEXTUAL_ACTION_LABEL = '(?:click(?:\\s+here)?|continue|details?|follow|go|here'
     + '|learn\\s+more|link|more|open(?:\\s+it\\s+here)?|read\\s+more|this|this\\s+link'
-    + '|open\\s+(?:the\\s+)?(?:intake|report)\\s+form'
+    + '|open\\s+(?:the\\s+)?(?:bug|intake|report|support)\\s+form'
     + '|use\\s+this\\s+link|view|(?:ask|report\\s+it|send\\s+it|tell\\s+us)'
     + '(?:\\s+(?:at|in|on|through|to|via)\\s+(?:discord|github|issues?|the\\s+forum))?'
     + '|visit\\s+our(?:\\s+community\\s+(?:chat|forum)|\\s+(?:at|in|on|through|to|via)'
     + '\\s+(?:discord|github|issues?|the\\s+forum))?|open\\s+(?:a\\s+)?github\\s+issue)';
 const HTML_CONTEXT_DEPENDENT_ROUTE_LABEL = new RegExp(
-    `^(?:${CONTEXTUAL_ACTION_LABEL}|(?:github\\s+)?issues?|discord|community\\s+(?:chat|forum))$`,
+    `^(?:${CONTEXTUAL_ACTION_LABEL}`
+    + '|(?:the\\s+)?(?:github\\s+)?issues?(?:\\s+(?:page|tracker))?'
+    + '|(?:the\\s+)?(?:jellyfin\\s+community\\s+)?discord(?:\\s+(?:channel|chat|community|server))?'
+    + '|(?:the\\s+)?community\\s+(?:chat|forum|server))$',
     'i'
 );
 const CONTEXT_DEPENDENT_ROUTE_LABEL = new RegExp(
@@ -464,7 +467,13 @@ function semanticLinkText(link) {
                 .find(boundary => boundary > combinedIndex) ?? combined.length;
             const leftClause = combined.slice(previous + 1, combinedIndex);
             const rightClause = combined.slice(combinedIndex + 1, next);
-            if (ROUTE_INTENT_TERM.test(leftClause) && ROUTE_INTENT_TERM.test(rightClause)) {
+            const ownsRoute = clause => (
+                BUG_ROUTE_INTENT.test(clause)
+                || FEATURE_ROUTE_LABEL.test(clause)
+                || SUPPORT_ROUTE_INTENT.test(clause)
+                || SECURITY_ROUTE_LABEL.test(clause)
+            );
+            if (ownsRoute(leftClause) && ownsRoute(rightClause)) {
                 boundaries.push(index);
             }
         }
@@ -1090,6 +1099,9 @@ function auditGlobalRouteLinks(file, surface, root, problems, options = {}) {
         if (['ko-fi.com', 'www.buymeacoffee.com'].includes(target?.hostname.toLowerCase())) {
             continue;
         }
+        // Raw HTML context is link-local, but only route-like labels inherit it:
+        // broad documentation labels such as "Help & Community" can legitimately
+        // describe intake without being an intake destination themselves.
         const scopedLink = options.html
             && !HTML_CONTEXT_DEPENDENT_ROUTE_LABEL.test(String(link.label || '').trim())
             ? { ...link, context: link.label, contextBefore: '', contextAfter: '' }
