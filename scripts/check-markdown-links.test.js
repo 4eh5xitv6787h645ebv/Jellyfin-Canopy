@@ -516,6 +516,10 @@ test('aria-labelledby ignores ancestor-hidden metadata but retains painted SVG t
         '<div hidden><svg id="route-name" aria-label="Report a problem"></svg></div>',
         '<div style="display:none"><span id="route-name">'
             + '<svg aria-label="Report a problem"></svg></span></div>',
+        '<div hidden><span id="route-name" style="visibility:visible">'
+            + 'Report a problem</span></div>',
+        '<div style="display:none"><svg style="visibility:visible">'
+            + '<text id="route-name">Report a problem</text></svg></div>',
     ]) {
         const source = referenced
             + `<a aria-labelledby="route-name" href="${target}"></a>`;
@@ -531,6 +535,14 @@ test('aria-labelledby ignores ancestor-hidden metadata but retains painted SVG t
         '<svg aria-hidden="true"><text id="route-name">Report a problem</text></svg>',
         '<div aria-hidden="true"><span id="route-name">'
             + '<svg><text>Report a problem</text></svg></span></div>',
+        '<div style="visibility:hidden"><span id="route-name" '
+            + 'style="visibility:visible">Report a problem</span></div>',
+        '<div style="visibility:hidden"><svg style="visibility:visible">'
+            + '<text id="route-name">Report a problem</text></svg></div>',
+        '<div id="route-name" style="visibility:hidden"><span '
+            + 'style="visibility:visible">Report a problem</span></div>',
+        '<div id="route-name" style="visibility:hidden"><svg '
+            + 'style="visibility:visible"><text>Report a problem</text></svg></div>',
     ]) {
         const source = referenced
             + `<a aria-labelledby="route-name" href="${target}"></a>`;

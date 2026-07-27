@@ -66,7 +66,7 @@ function htmlAttributeValue(tag, name) {
     return match ? markdown.utils.unescapeAll(match[1] ?? match[2] ?? match[3]) : '';
 }
 
-function stripHiddenHtml(content, hiddenTag = htmlTagIsHidden) {
+function stripHiddenHtml(content, excludeAriaHidden = false) {
     const source = stripHtmlComments(content);
     const visible = [];
     const stack = [];
@@ -76,12 +76,14 @@ function stripHiddenHtml(content, hiddenTag = htmlTagIsHidden) {
         const hiddenBefore = Boolean(stack.at(-1)?.hidden);
         if (!hiddenBefore) visible.push(source.slice(offset, match.index));
         const closing = match[1] === '/';
-        const ownHidden = !closing && hiddenTag(match[0]);
-        updateHtmlVisibilityStack(stack, match[0], hiddenTag);
+        const openingState = closing
+            ? null
+            : htmlOpeningVisibilityState(stack, match[0], excludeAriaHidden);
+        updateHtmlVisibilityStack(stack, match[0], excludeAriaHidden);
         const hiddenAfter = Boolean(stack.at(-1)?.hidden);
         if (closing
             ? !hiddenBefore && !hiddenAfter
-            : !hiddenAfter && !ownHidden) {
+            : !openingState.hidden) {
             visible.push(match[0]);
         }
         offset = match.index + match[0].length;
@@ -91,10 +93,7 @@ function stripHiddenHtml(content, hiddenTag = htmlTagIsHidden) {
 }
 
 function accessibleHtmlText(content, labels = new Map(), excludeAriaHidden = true) {
-    const visible = stripHiddenHtml(
-        content,
-        tag => htmlTagIsHidden(tag) || excludeAriaHidden && htmlTagIsAriaHidden(tag)
-    )
+    const visible = stripHiddenHtml(content, excludeAriaHidden)
         .replace(/<(script|style)\b[\s\S]*?<\/\1\s*>/gi, ' ')
         .replace(
             /<svg\b((?:[^>"']|"[^"]*"|'[^']*')*)>([\s\S]*?)<\/svg\s*>/gi,
@@ -324,20 +323,21 @@ function htmlIdLabels(content) {
             continue;
         }
         const {
-            visuallyHidden = false,
             accessibilityHidden = false,
+            visuallyPersistentHidden = false,
+            accessibilityPersistentHidden = false,
         } = hiddenStates.get(match.index) || {};
         let label = accessibilityHidden
             ? ''
             : htmlAttributeValue(openingTag, 'aria-label')
                 || htmlAttributeValue(openingTag, 'title');
-        if (!visuallyHidden && !label && !/\/>\s*$/.test(openingTag)) {
+        if (!visuallyPersistentHidden && !label && !/\/>\s*$/.test(openingTag)) {
             const closing = new RegExp(`</${match[1]}\\s*>`, 'ig');
             closing.lastIndex = openingEnd;
             const close = closing.exec(visible);
             if (close) {
                 const element = visible.slice(match.index, close.index + close[0].length);
-                label = accessibilityHidden
+                label = accessibilityPersistentHidden
                     ? visuallyRenderedHtmlText(element).replace(/\s+/g, ' ').trim()
                     : compactGovernedText(element, labels);
             }
@@ -397,11 +397,13 @@ const HTML_VOID_ELEMENTS = new Set([
     'meta', 'param', 'source', 'track', 'wbr',
 ]);
 
-function htmlTagIsHidden(tag) {
-    const style = htmlAttributeValue(tag, 'style');
+function htmlTagHasHiddenAttribute(tag) {
     return /(?:^|\s)hidden(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?(?=\s|\/?>)/i
-        .test(tag)
-        || inlineStyleHides(style);
+        .test(tag);
+}
+
+function htmlTagIsHidden(tag) {
+    return htmlTagIsPersistentlyHidden(tag) || htmlTagVisibilityOverride(tag) === true;
 }
 
 function htmlTagIsAriaHidden(tag) {
@@ -423,66 +425,107 @@ function cascadedInlineStyleValue(style, property, validValue) {
     return winner?.value || '';
 }
 
-function inlineStyleHides(style) {
-    const display = cascadedInlineStyleValue(
+function inlineStyleDisplay(style) {
+    return cascadedInlineStyleValue(
         style,
         'display',
         /^(?:none|contents|block|inline|run-in|flow-root|list-item|flex|grid|table|table-(?:row|cell|column|caption|row-group|header-group|footer-group|column-group)|inline-(?:block|flex|grid|table)|ruby(?:-base|-text|-base-container|-text-container)?|inherit|initial|revert(?:-layer)?|unset|(?:block|inline)\s+(?:flow|flow-root|flex|grid|ruby)(?:\s+list-item)?)$/i
     );
-    const visibility = cascadedInlineStyleValue(
+}
+
+function inlineStyleVisibility(style) {
+    return cascadedInlineStyleValue(
         style,
         'visibility',
         /^(?:visible|hidden|collapse|inherit|initial|revert(?:-layer)?|unset)$/i
     );
-    return display === 'none' || ['hidden', 'collapse'].includes(visibility);
 }
 
-function updateHtmlVisibilityStack(stack, content, hiddenTag = htmlTagIsHidden) {
+function htmlTagIsPersistentlyHidden(tag, excludeAriaHidden = false) {
+    return htmlTagHasHiddenAttribute(tag)
+        || inlineStyleDisplay(htmlAttributeValue(tag, 'style')) === 'none'
+        || excludeAriaHidden && htmlTagIsAriaHidden(tag);
+}
+
+function htmlTagVisibilityOverride(tag) {
+    const visibility = inlineStyleVisibility(htmlAttributeValue(tag, 'style'));
+    if (['hidden', 'collapse'].includes(visibility)) return true;
+    if (['visible', 'initial'].includes(visibility)) return false;
+    return null;
+}
+
+function htmlOpeningVisibilityState(stack, openingTag, excludeAriaHidden = false) {
+    const parent = stack.at(-1);
+    const persistentHidden = Boolean(parent?.persistentHidden)
+        || htmlTagIsPersistentlyHidden(openingTag, excludeAriaHidden);
+    const override = htmlTagVisibilityOverride(openingTag);
+    const visibilityHidden = override === null
+        ? Boolean(parent?.visibilityHidden)
+        : override;
+    return {
+        persistentHidden,
+        visibilityHidden,
+        hidden: persistentHidden || visibilityHidden,
+    };
+}
+
+function lastHtmlStackTagIndex(stack, tag) {
+    for (let index = stack.length - 1; index >= 0; index -= 1) {
+        if (stack[index].tag === tag) return index;
+    }
+    return -1;
+}
+
+function updateHtmlVisibilityStack(stack, content, excludeAriaHidden = false) {
     const pattern = /<(\/?)([a-z][a-z0-9:-]*)\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi;
     for (const match of content.matchAll(pattern)) {
         const closing = match[1] === '/';
         const tag = match[2].toLowerCase();
         if (closing) {
-            const opening = stack.map(entry => entry.tag).lastIndexOf(tag);
+            const opening = lastHtmlStackTagIndex(stack, tag);
             if (opening !== -1) stack.splice(opening);
             continue;
         }
         if (tag === 'a') {
-            const activeAnchor = stack.map(entry => entry.tag).lastIndexOf(tag);
+            const activeAnchor = lastHtmlStackTagIndex(stack, tag);
             if (activeAnchor !== -1) stack.splice(activeAnchor);
         }
         const selfClosing = /\/>\s*$/.test(match[0]) || HTML_VOID_ELEMENTS.has(tag);
         if (selfClosing) continue;
         stack.push({
             tag,
-            hidden: Boolean(stack.at(-1)?.hidden) || hiddenTag(match[0]),
+            ...htmlOpeningVisibilityState(stack, match[0], excludeAriaHidden),
         });
     }
 }
 
-function htmlElementIsHidden(content, index, openingTag, hiddenTag = htmlTagIsHidden) {
+function htmlElementIsHidden(content, index, openingTag, excludeAriaHidden = false) {
     const stack = [];
-    updateHtmlVisibilityStack(stack, content.slice(0, index), hiddenTag);
-    return Boolean(stack.at(-1)?.hidden) || hiddenTag(openingTag);
+    updateHtmlVisibilityStack(stack, content.slice(0, index), excludeAriaHidden);
+    return htmlOpeningVisibilityState(stack, openingTag, excludeAriaHidden).hidden;
 }
 
 function htmlElementHiddenStates(content) {
     const states = new Map();
     const visualStack = [];
     const accessibilityStack = [];
-    const accessibilityHiddenTag = tag => htmlTagIsHidden(tag) || htmlTagIsAriaHidden(tag);
     const pattern = /<(\/?)([a-z][a-z0-9:-]*)\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi;
     for (const match of content.matchAll(pattern)) {
         if (match[1] !== '/') {
+            const visualState = htmlOpeningVisibilityState(visualStack, match[0]);
+            const accessibilityState = htmlOpeningVisibilityState(
+                accessibilityStack,
+                match[0],
+                true
+            );
             states.set(match.index, {
-                visuallyHidden: Boolean(visualStack.at(-1)?.hidden)
-                    || htmlTagIsHidden(match[0]),
-                accessibilityHidden: Boolean(accessibilityStack.at(-1)?.hidden)
-                    || accessibilityHiddenTag(match[0]),
+                accessibilityHidden: accessibilityState.hidden,
+                visuallyPersistentHidden: visualState.persistentHidden,
+                accessibilityPersistentHidden: accessibilityState.persistentHidden,
             });
         }
         updateHtmlVisibilityStack(visualStack, match[0]);
-        updateHtmlVisibilityStack(accessibilityStack, match[0], accessibilityHiddenTag);
+        updateHtmlVisibilityStack(accessibilityStack, match[0], true);
     }
     return states;
 }
