@@ -757,10 +757,17 @@ test('extracts HTML form submissions and image-map routes with control names', (
             + `<a href="${browserScopeTarget}">Report a bug</a>`,
         '<table><select><caption hidden>'
             + `<a href="${browserScopeTarget}">Report a bug</a>`,
+        '<table><select><col>'
+            + `<a href="${browserScopeTarget}">Report a bug</a>`,
         '<svg style="visibility:hidden"><foreignObject><caption '
             + 'style="visibility:visible">'
             + `<a href="${browserScopeTarget}">Report a bug</a>`
             + '</caption></foreignObject></svg>',
+        '<math style="visibility:hidden">'
+            + '<annotation-xml encoding="text/html">'
+            + '<caption style="visibility:visible">'
+            + `<a href="${browserScopeTarget}">Report a bug</a>`
+            + '</caption></annotation-xml></math>',
     ]) {
         const scopedLink = extractLinks(scopedHiddenRoute)
             .find(candidate => candidate.target === browserScopeTarget);
@@ -781,6 +788,9 @@ test('extracts HTML form submissions and image-map routes with control names', (
         '<svg style="visibility:hidden"><caption style="visibility:visible">'
             + `<a href="${browserScopeTarget}" aria-label="Submit a vulnerability report">`
             + '<rect width="100" height="100"></rect></a></caption></svg>',
+        '<svg><select><table>'
+            + `<a href="${browserScopeTarget}" `
+            + 'aria-label="Submit a vulnerability report"></a>',
     ]) {
         const repairedLink = extractLinks(repairedVisibleRoute)
             .find(candidate => candidate.target === browserScopeTarget);

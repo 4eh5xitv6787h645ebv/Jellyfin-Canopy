@@ -2728,10 +2728,17 @@ test('governs form submissions and hidden ID names while inert routes remain ina
             + `<a href="${ISSUES_ROUTE}">Submit a vulnerability report</a>`,
         '<table><select><caption hidden>'
             + `<a href="${ISSUES_ROUTE}">Submit a vulnerability report</a>`,
+        '<table><select><col>'
+            + `<a href="${ISSUES_ROUTE}">Submit a vulnerability report</a>`,
         '<svg style="visibility:hidden"><foreignObject><caption '
             + 'style="visibility:visible">'
             + `<a href="${ISSUES_ROUTE}">Submit a vulnerability report</a>`
             + '</caption></foreignObject></svg>',
+        '<math style="visibility:hidden">'
+            + '<annotation-xml encoding="text/html">'
+            + '<caption style="visibility:visible">'
+            + `<a href="${ISSUES_ROUTE}">Submit a vulnerability report</a>`
+            + '</caption></annotation-xml></math>',
     ]) {
         const hiddenRoute = validFixture();
         hiddenRoute['docs/getting-started.md'] = hiddenMalformedRoute;
@@ -2755,6 +2762,9 @@ test('governs form submissions and hidden ID names while inert routes remain ina
         '<svg style="visibility:hidden"><caption style="visibility:visible">'
             + `<a href="${ISSUES_ROUTE}" aria-label="Submit a vulnerability report">`
             + '<rect width="100" height="100"></rect></a></caption></svg>',
+        '<svg><select><table>'
+            + `<a href="${ISSUES_ROUTE}" `
+            + 'aria-label="Submit a vulnerability report"></a>',
     ]) {
         const visibleMalformedRoute = validFixture();
         visibleMalformedRoute['docs/getting-started.md'] = repairedVisibleRoute;
@@ -2802,6 +2812,10 @@ test('governs form submissions and hidden ID names while inert routes remain ina
             + '<p>A typo does not constitute a vulnerability.</p>'
             + '<p>Submit a vulnerability report below.</p>'
             + '<button>Continue</button></form>',
+        `<form action="${ISSUES_ROUTE}">`
+            + '<p>For security vulnerabilities.</p>'
+            + '<p>A typo does not constitute a vulnerability.</p>'
+            + '<button>Submit the report</button></form>',
         ...[
             '<button disabled>Ignored</button>',
             '<button hidden>Ignored</button>',
@@ -2822,19 +2836,24 @@ test('governs form submissions and hidden ID names while inert routes remain ina
         });
     }
 
-    const distinctPrivateAnchor = validFixture();
-    distinctPrivateAnchor['docs/getting-started.md'] =
-        `<form action="${ISSUES_ROUTE}">`
-        + '<p>Submit a vulnerability report through '
-        + `<a href="${SECURITY_ADVISORY_ROUTE}">private GitHub advisories</a>.</p>`
-        + '<p>Report a regular bug with this form.</p>'
-        + '<button>Continue</button></form>';
-    fixture(distinctPrivateAnchor, root => {
-        assert.ok(!auditSupportContract({ root }).problems.some(problem => (
-            problem.startsWith('docs/getting-started.md:')
-            && problem.includes('security intake links must use private GitHub advisories')
-        )));
-    });
+    for (const privateRouteLabel of [
+        'private GitHub advisories',
+        'Use the private security process',
+    ]) {
+        const distinctPrivateAnchor = validFixture();
+        distinctPrivateAnchor['docs/getting-started.md'] =
+            `<form action="${ISSUES_ROUTE}">`
+            + '<p>Submit a vulnerability report through '
+            + `<a href="${SECURITY_ADVISORY_ROUTE}">${privateRouteLabel}</a>.</p>`
+            + '<p>Report a regular bug with this form.</p>'
+            + '<button>Continue</button></form>';
+        fixture(distinctPrivateAnchor, root => {
+            assert.ok(!auditSupportContract({ root }).problems.some(problem => (
+                problem.startsWith('docs/getting-started.md:')
+                && problem.includes('security intake links must use private GitHub advisories')
+            )), privateRouteLabel);
+        });
+    }
 
     for (const formSource of [
         `<form action="${ISSUES_ROUTE}">`

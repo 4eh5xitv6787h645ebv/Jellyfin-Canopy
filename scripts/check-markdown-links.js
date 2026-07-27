@@ -12,6 +12,8 @@ const HTML_LABEL_OVERFLOW_MARKER =
     '[label truncated: support feature bug vulnerability security question help issue report request]';
 const HTML_FORM_NEUTRAL_REFERENCE_LABEL =
     /\b(?:background|documentation|guidance|guide|policy|process|reference|timeline)\b/i;
+const HTML_FORM_ACTION_CUE =
+    /\b(?:contact|create|email|file|follow|go|message|notify|open|send|submit|through|use|via|visit)\b/i;
 const markdown = new MarkdownIt({ html: true, linkify: true });
 markdown.linkify.set({ fuzzyEmail: false, fuzzyLink: false });
 const gfmWwwLinkifier = new MarkdownIt().linkify;
@@ -142,6 +144,9 @@ function stripHiddenHtml(
             insideSelect: Boolean(state.insideSelect),
             insideTable: Boolean(state.insideTable),
             foreignContent: Boolean(state.foreignContent),
+            foreignKind: state.foreignKind || '',
+            htmlIntegrationPoint: Boolean(state.htmlIntegrationPoint),
+            mathTextIntegrationPoint: Boolean(state.mathTextIntegrationPoint),
             persistentHidden: Boolean(state.persistentHidden),
             visibilityHidden: Boolean(state.visibilityHidden),
             hidden: Boolean(state.persistentHidden || state.visibilityHidden),
@@ -151,6 +156,9 @@ function stripHiddenHtml(
             insideSelect: false,
             insideTable: false,
             foreignContent: false,
+            foreignKind: '',
+            htmlIntegrationPoint: false,
+            mathTextIntegrationPoint: false,
             persistentHidden: Boolean(initialState.persistentHidden),
             visibilityHidden: Boolean(initialState.visibilityHidden),
             hidden: Boolean(initialState.persistentHidden || initialState.visibilityHidden),
@@ -167,7 +175,12 @@ function stripHiddenHtml(
         if (!stack.at(-1)?.hidden) visible.push(source.slice(offset, match.index));
         const closing = match[1] === '/';
         const tag = match[2].toLowerCase();
-        if (!closing && repairHtmlStackForOpening(stack, tag, documentMode)) {
+        if (!closing && repairHtmlStackForOpening(
+            stack,
+            tag,
+            documentMode,
+            match[0]
+        )) {
             offset = match.index + match[0].length;
             continue;
         }
@@ -460,8 +473,7 @@ const HTML_SELECT_CONTEXT_ELEMENTS = new Set([
     'hr', 'optgroup', 'option', 'script', 'select', 'template',
 ]);
 const HTML_SELECT_IN_TABLE_REPAIR_ELEMENTS = new Set([
-    ...HTML_TABLE_CONTEXT_ELEMENTS,
-    'table',
+    'caption', 'table', 'tbody', 'td', 'tfoot', 'th', 'thead', 'tr',
 ]);
 const HTML_HEAD_CONTEXT_ELEMENTS = new Set([
     'base', 'basefont', 'bgsound', 'link', 'meta', 'noframes', 'noscript',
@@ -497,14 +509,80 @@ const HTML_BUTTON_ELEMENTS = new Set(['button']);
 const HTML_LIST_ITEM_ELEMENTS = new Set(['li']);
 const HTML_DEFINITION_ITEM_ELEMENTS = new Set(['dd', 'dt']);
 const HTML_PARAGRAPH_ELEMENTS = new Set(['p']);
-const HTML_FOREIGN_CONTENT_INTEGRATION_POINTS = new Set([
-    'desc', 'foreignobject', 'mi', 'mn', 'mo', 'ms', 'mtext', 'title',
+const HTML_SVG_INTEGRATION_POINTS = new Set([
+    'desc', 'foreignobject', 'title',
+]);
+const HTML_MATH_TEXT_INTEGRATION_POINTS = new Set(['mi', 'mn', 'mo', 'ms', 'mtext']);
+const HTML_FOREIGN_CONTENT_BREAKOUT_ELEMENTS = new Set([
+    'b', 'big', 'blockquote', 'body', 'br', 'center', 'code', 'dd', 'div', 'dl',
+    'dt', 'em', 'embed', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'head', 'hr', 'i',
+    'img', 'li', 'listing', 'menu', 'meta', 'nobr', 'ol', 'p', 'pre', 'ruby',
+    's', 'small', 'span', 'strong', 'strike', 'sub', 'sup', 'table', 'tt', 'u',
+    'ul', 'var',
 ]);
 
+function htmlParentUsesForeignRules(parent, tag) {
+    if (!parent?.foreignContent) return false;
+    if (parent.mathTextIntegrationPoint
+        && ['malignmark', 'mglyph'].includes(tag)) {
+        return true;
+    }
+    return !parent.htmlIntegrationPoint;
+}
+
+function htmlOpeningForeignKind(parent, tag) {
+    if (tag === 'svg') return 'svg';
+    if (tag === 'math') return 'math';
+    return htmlParentUsesForeignRules(parent, tag)
+        ? parent.foreignKind || 'foreign'
+        : '';
+}
+
 function htmlOpeningIsForeignContent(parent, tag) {
-    if (tag === 'svg' || tag === 'math') return true;
-    return Boolean(parent?.foreignContent)
-        && !HTML_FOREIGN_CONTENT_INTEGRATION_POINTS.has(parent.tag);
+    return Boolean(htmlOpeningForeignKind(parent, tag));
+}
+
+function htmlForeignIntegrationState(foreignKind, tag, openingTag) {
+    const mathTextIntegrationPoint = foreignKind === 'math'
+        && HTML_MATH_TEXT_INTEGRATION_POINTS.has(tag);
+    const annotationEncoding = foreignKind === 'math' && tag === 'annotation-xml'
+        ? htmlAttributeText(openingTag, 'encoding').toLowerCase()
+        : '';
+    const htmlIntegrationPoint = (foreignKind === 'svg'
+        && HTML_SVG_INTEGRATION_POINTS.has(tag))
+        || mathTextIntegrationPoint
+        || ['text/html', 'application/xhtml+xml'].includes(annotationEncoding);
+    return { htmlIntegrationPoint, mathTextIntegrationPoint };
+}
+
+function htmlOpeningTreeState(parent, tag, openingTag) {
+    const foreignKind = htmlOpeningForeignKind(parent, tag);
+    const foreignContent = Boolean(foreignKind);
+    return {
+        insideSelect: Boolean(parent?.insideSelect)
+            || !foreignContent && tag === 'select',
+        insideTable: Boolean(parent?.insideTable)
+            || !foreignContent && tag === 'table',
+        foreignContent,
+        foreignKind,
+        ...htmlForeignIntegrationState(foreignKind, tag, openingTag),
+    };
+}
+
+function htmlForeignOpeningBreaksOut(stack, tag, openingTag) {
+    if (!htmlParentUsesForeignRules(stack.at(-1), tag)) return false;
+    const fontBreakout = tag === 'font'
+        && ['color', 'face', 'size'].some(attribute => (
+            htmlTagHasAttribute(openingTag, attribute)
+        ));
+    if (!HTML_FOREIGN_CONTENT_BREAKOUT_ELEMENTS.has(tag) && !fontBreakout) {
+        return false;
+    }
+    while (stack.at(-1)?.foreignContent
+        && !stack.at(-1).htmlIntegrationPoint) {
+        stack.pop();
+    }
+    return true;
 }
 
 function htmlElementIsIgnored(
@@ -527,7 +605,16 @@ function lastHtmlStackTagIndexInScope(stack, tags, boundaries) {
     return -1;
 }
 
-function repairHtmlStackForOpening(stack, tag, documentMode = false) {
+function repairHtmlStackForOpening(
+    stack,
+    tag,
+    documentMode = false,
+    openingTag = ''
+) {
+    const foreignRules = htmlParentUsesForeignRules(stack.at(-1), tag);
+    if (foreignRules && !htmlForeignOpeningBreaksOut(stack, tag, openingTag)) {
+        return false;
+    }
     if (documentMode) {
         const head = lastHtmlStackTagIndex(stack, 'head');
         if (head !== -1) {
@@ -636,7 +723,12 @@ function htmlTextWithBoundaries(content, options = {}) {
         parts.push(content.slice(offset, match.index));
         const closing = match[1] === '/';
         const tag = match[2].toLowerCase();
-        if (!closing && repairHtmlStackForOpening(stack, tag, documentMode)) {
+        if (!closing && repairHtmlStackForOpening(
+            stack,
+            tag,
+            documentMode,
+            match[0]
+        )) {
             offset = match.index + match[0].length;
             continue;
         }
@@ -677,9 +769,7 @@ function htmlTextWithBoundaries(content, options = {}) {
                 stack.push({
                     tag,
                     ...layout,
-                    insideTable: tag === 'table' || Boolean(parent?.insideTable),
-                    insideSelect: tag === 'select' || Boolean(parent?.insideSelect),
-                    foreignContent: htmlOpeningIsForeignContent(parent, tag),
+                    ...htmlOpeningTreeState(parent, tag, match[0]),
                 });
             }
         }
@@ -912,7 +1002,7 @@ function htmlAccessibleTreeText(
             offset = match.index + match[0].length;
             continue;
         }
-        if (repairHtmlStackForOpening(stack, tag, documentMode)) {
+        if (repairHtmlStackForOpening(stack, tag, documentMode, match[0])) {
             offset = match.index + match[0].length;
             continue;
         }
@@ -926,15 +1016,14 @@ function htmlAccessibleTreeText(
             offset = match.index + match[0].length;
             continue;
         }
-        if (tag === 'a') {
+        if (tag === 'a'
+            && !htmlOpeningIsForeignContent(stack.at(-1), tag)) {
             const activeAnchor = lastHtmlStackTagIndex(stack, tag);
             if (activeAnchor !== -1) stack.splice(activeAnchor);
         }
         if (stack.length >= MAX_HTML_TREE_DEPTH) return HTML_LABEL_OVERFLOW_MARKER;
         const parent = stack.at(-1) || null;
-        const insideTable = tag === 'table' || Boolean(parent?.insideTable);
-        const insideSelect = tag === 'select' || Boolean(parent?.insideSelect);
-        const foreignContent = htmlOpeningIsForeignContent(parent, tag);
+        const treeState = htmlOpeningTreeState(parent, tag, match[0]);
         const accessibilityState = htmlOpeningVisibilityState(
             [parent?.accessibilityState || initial],
             match[0],
@@ -952,9 +1041,7 @@ function htmlAccessibleTreeText(
             openingTag: match[0],
             displayBoundary: layout.displayBoundary,
             textBoundary: !accessibilityState.hidden && layout.textBoundary,
-            insideTable,
-            insideSelect,
-            foreignContent,
+            ...treeState,
             accessibilityState,
             parts: [],
             value: '',
@@ -1299,7 +1386,7 @@ function htmlIdLabels(content, options = {}) {
             offset = match.index + match[0].length;
             continue;
         }
-        if (repairHtmlStackForOpening(stack, tag, documentMode)) {
+        if (repairHtmlStackForOpening(stack, tag, documentMode, match[0])) {
             offset = match.index + match[0].length;
             continue;
         }
@@ -1313,7 +1400,8 @@ function htmlIdLabels(content, options = {}) {
             offset = match.index + match[0].length;
             continue;
         }
-        if (tag === 'a') {
+        if (tag === 'a'
+            && !htmlOpeningIsForeignContent(stack.at(-1), tag)) {
             const activeAnchor = lastHtmlStackTagIndex(stack, tag);
             if (activeAnchor !== -1) stack.splice(activeAnchor);
         }
@@ -1329,9 +1417,7 @@ function htmlIdLabels(content, options = {}) {
             openingTag,
             true
         );
-        const insideTable = tag === 'table' || Boolean(parent?.insideTable);
-        const insideSelect = tag === 'select' || Boolean(parent?.insideSelect);
-        const foreignContent = htmlOpeningIsForeignContent(parent, tag);
+        const treeState = htmlOpeningTreeState(parent, tag, openingTag);
         const layout = htmlOpeningTextLayout(
             tag,
             openingTag,
@@ -1345,9 +1431,7 @@ function htmlIdLabels(content, options = {}) {
             displayBoundary: layout.displayBoundary,
             textBoundary: !(visualState.hidden && accessibilityState.hidden)
                 && layout.textBoundary,
-            insideTable,
-            insideSelect,
-            foreignContent,
+            ...treeState,
             parentIndex: parent?.index ?? -1,
             labelAncestorIndex: parent?.tag === 'label'
                 ? parent.index
@@ -1541,7 +1625,10 @@ function updateHtmlVisibilityStack(
     for (const match of content.matchAll(pattern)) {
         const closing = match[1] === '/';
         const tag = match[2].toLowerCase();
-        if (!closing && repairHtmlStackForOpening(stack, tag, documentMode)) continue;
+        if (!closing
+            && repairHtmlStackForOpening(stack, tag, documentMode, match[0])) {
+            continue;
+        }
         if (htmlElementIsIgnored(
             tag,
             stack.at(-1)?.insideSelect,
@@ -1554,7 +1641,8 @@ function updateHtmlVisibilityStack(
             if (opening !== -1) stack.splice(opening);
             continue;
         }
-        if (tag === 'a') {
+        if (tag === 'a'
+            && !htmlOpeningIsForeignContent(stack.at(-1), tag)) {
             const activeAnchor = lastHtmlStackTagIndex(stack, tag);
             if (activeAnchor !== -1) stack.splice(activeAnchor);
         }
@@ -1564,9 +1652,7 @@ function updateHtmlVisibilityStack(
         const parent = stack.at(-1) || null;
         stack.push({
             tag,
-            insideSelect: tag === 'select' || Boolean(parent?.insideSelect),
-            insideTable: tag === 'table' || Boolean(parent?.insideTable),
-            foreignContent: htmlOpeningIsForeignContent(parent, tag),
+            ...htmlOpeningTreeState(parent, tag, match[0]),
             ...htmlOpeningVisibilityState(stack, match[0], excludeAriaHidden),
         });
     }
@@ -1675,6 +1761,9 @@ function htmlVisibilityStateSnapshots(
             insideSelect: state.insideSelect,
             insideTable: state.insideTable,
             foreignContent: state.foreignContent,
+            foreignKind: state.foreignKind,
+            htmlIntegrationPoint: state.htmlIntegrationPoint,
+            mathTextIntegrationPoint: state.mathTextIntegrationPoint,
             persistentHidden: state.persistentHidden,
             visibilityHidden: state.visibilityHidden,
             hidden: state.hidden,
@@ -1847,7 +1936,7 @@ function htmlOpeningFieldsetDisabledStates(content, options = {}) {
             offset = match.index + match[0].length;
             continue;
         }
-        if (repairHtmlStackForOpening(stack, tag, documentMode)) {
+        if (repairHtmlStackForOpening(stack, tag, documentMode, match[0])) {
             offset = match.index + match[0].length;
             continue;
         }
@@ -1876,9 +1965,7 @@ function htmlOpeningFieldsetDisabledStates(content, options = {}) {
                 && htmlTagHasAttribute(match[0], 'disabled');
             stack.push({
                 tag,
-                insideSelect: tag === 'select' || Boolean(parent?.insideSelect),
-                insideTable: tag === 'table' || Boolean(parent?.insideTable),
-                foreignContent: htmlOpeningIsForeignContent(parent, tag),
+                ...htmlOpeningTreeState(parent, tag, match[0]),
                 ancestorFieldsetDisabled: inherited,
                 disabledByFieldset: inherited || ownDisabled,
                 firstLegendSeen: false,
@@ -2056,7 +2143,8 @@ function htmlFormSubmissionLinks(
             || !anchor.rendered
             || anchor.hidden
             || !anchor.label.trim()
-            || HTML_FORM_NEUTRAL_REFERENCE_LABEL.test(anchor.label)) {
+            || (HTML_FORM_NEUTRAL_REFERENCE_LABEL.test(anchor.label)
+                && !HTML_FORM_ACTION_CUE.test(anchor.label))) {
             continue;
         }
         if (actionableSubmissions.some(control => (

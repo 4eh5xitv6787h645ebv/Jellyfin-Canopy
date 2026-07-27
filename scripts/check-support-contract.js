@@ -683,11 +683,21 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
         }
     }
     if (group.trim()) applicableGroups.push(group.trim());
-    return applicableGroups.some(applicable => (
+    const ownsSecurityRoute = applicable => (
         SECURITY_ROUTE_LABEL.test(applicable)
         && (!NEUTRAL_SECURITY_REFERENCE.test(applicable)
             || SECURITY_ROUTE_CUE.test(applicable))
-    ));
+    );
+    if (applicableGroups.some(ownsSecurityRoute)) return true;
+    const securitySubject = new RegExp(`\\b${SECURITY_SUBJECT}\\b`, 'i');
+    const securityAction = new RegExp(`\\b${SECURITY_ACTION}\\b`, 'i');
+    return applicableGroups.some((applicable, index) => {
+        const following = applicableGroups[index + 1];
+        return Boolean(following)
+            && securitySubject.test(applicable)
+            && securityAction.test(following)
+            && ownsSecurityRoute(`${applicable} ${following}`);
+    });
 }
 
 function exactRouteResult(tokens, route, options) {
