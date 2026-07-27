@@ -717,11 +717,28 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
     const securityAction = new RegExp(`\\b${SECURITY_ACTION}\\b`, 'i');
     const explicitVulnerabilitySubject =
         /\b(?:about|for|regarding)\s+(?:security\s+)?vulnerab\w*\b/i;
-    const securityAnaphor =
-        /\b(?:it|them|these|those|such\s+(?:concerns?|issues?|reports?|vulnerab\w*))\b/i;
+    const pluralSecurityAnaphor =
+        /\b(?:them|these|those|such\s+(?:concerns?|issues?|reports?|vulnerab\w*))\b/i;
+    const singularSecurityAnaphor = /\bit\b/i;
+    const securityFormSubject = new RegExp(`\\b${NEGATED_SECURITY_FORM_SUBJECT}\\b`, 'i');
+    const anaphoricSecurityAction =
+        '(?:contact(?:s|ed|ing)?|disclos(?:e|es|ed|ing)|email(?:s|ed|ing)?'
+        + '|file(?:s|d|ing)?|message(?:s|d|ing)?|notif(?:y|ies|ied|ying)'
+        + '|open(?:s|ed|ing)?|post(?:s|ed|ing)?|report(?:s|ed|ing)?'
+        + '|send|sending|sent|submit(?:s|ted|ting)?|use(?:s|d|ing)?)';
+    const anaphoricSecurityRoute = new RegExp(
+        `\\b${anaphoricSecurityAction}\\b.{0,40}`
+        + `(?:${pluralSecurityAnaphor.source}|${singularSecurityAnaphor.source})`,
+        'i'
+    );
     const negatedAnaphoricAction = new RegExp(
-        `\\b(?:(?:do(?:es)? not|doesn't|don't|never|cannot|can't)`
-        + `|(?:can|must|should)\\s+not)\\b.{0,40}\\b${SECURITY_ACTION}\\b`,
+        '\\b(?:(?:(?:do(?:es)? not|doesn\'t|don\'t|never|cannot|can\'t)'
+        + '|(?:can|must|should)\\s+'
+        + '(?:(?:absolutely|actually|currently|definitely|ever|necessarily|now|really)\\s+)*'
+        + 'not)\\b.{0,40}'
+        + '|(?:(?:there\\s+is|you\\s+have)\\s+)?no\\s+need\\s+to\\s+'
+        + '|(?:not\\s+required\\s+to|avoid|refrain\\s+from)\\s+)'
+        + `\\b${anaphoricSecurityAction}\\b`,
         'i'
     );
     const ownsSecurityRoute = (applicable) => {
@@ -734,10 +751,14 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
         const positiveClause = clause.replace(NEGATED_SECURITY_SUBJECT, ' ');
         if (positiveClause === clause) return false;
         const following = applicable[index + 1]?.replace(NEGATED_SECURITY_SUBJECT, ' ') || '';
-        return securityAnaphor.test(following)
-            && securityAction.test(following)
-            && SECURITY_ROUTE_CUE.test(following)
-            && !negatedAnaphoricAction.test(following);
+        return [positiveClause, following].some((candidate) => {
+            const ownsAnaphor = pluralSecurityAnaphor.test(candidate)
+                || singularSecurityAnaphor.test(candidate)
+                    && !securityFormSubject.test(clause);
+            return ownsAnaphor
+                && anaphoricSecurityRoute.test(candidate)
+                && !negatedAnaphoricAction.test(candidate);
+        });
     });
     if (applicableGroups.some(applicable => (
         ownsSecurityRoute(groupText(applicable))

@@ -32,13 +32,15 @@ const HTML_FORM_ADJACENT_ACTION_CUE = new RegExp(
     'i'
 );
 const HTML_FORM_NEGATED_ACTION_MODIFIER =
-    '(?:(?:(?:actually|currently|ever|necessarily|now|really)\\s+)'
+    '(?:(?:(?:absolutely|actually|currently|definitely|ever|necessarily|now|really)\\s+)'
     + '|(?:(?:have|need|want)\\s+to\\s+))*';
 const HTML_FORM_NEGATED_ACTION_CUE = new RegExp(
-    '^(?:(?:(?:i|we|you|they|users?|(?:this|the)\\s+form)\\s+)?'
+    '(?:(?:(?:i|we|you|they|users?|(?:this|the)\\s+form)\\s+)?'
     + `(?:(?:do(?:es)? not|doesn't|don't|never|cannot|can't)`
-    + `|(?:can|must|should)\\s+not)\\s+${HTML_FORM_NEGATED_ACTION_MODIFIER}`
-    + '|(?:(?:there\\s+is|you\\s+have)\\s+)?no\\s+need\\s+to\\s+)'
+    + `|(?:can|must|should)\\s+${HTML_FORM_NEGATED_ACTION_MODIFIER}not)`
+    + `\\s+${HTML_FORM_NEGATED_ACTION_MODIFIER}`
+    + '|(?:(?:there\\s+is|you\\s+have)\\s+)?no\\s+need\\s+to\\s+'
+    + '|(?:not\\s+required\\s+to|avoid|refrain\\s+from)\\s+)'
     + `${HTML_FORM_ACTION_CUE_SOURCE}\\b`
     + '(?:\\s+(?:at|in|on|through|to|via))?'
     + '(?:\\s+(?:a|an|our|the|this))?\\s*$',

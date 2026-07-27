@@ -2856,10 +2856,38 @@ test('governs form submissions and hidden ID names while inert routes remain ina
             + `<a href="${SECURITY_ADVISORY_ROUTE}">the security policy</a>.</p>`
             + '<p>Report a regular bug with this form.</p>'
             + '<button>Continue</button></form>',
+        `<form action="${ISSUES_ROUTE}">`
+            + '<p>Submit a vulnerability report below. Please do not use '
+            + `<a href="${SECURITY_ADVISORY_ROUTE}">the security policy</a>.</p>`
+            + '<p>Report a regular bug with this form.</p>'
+            + '<button>Continue</button></form>',
+        `<form action="${ISSUES_ROUTE}">`
+            + '<p>Submit a vulnerability report below. Contributors do not use '
+            + `<a href="${SECURITY_ADVISORY_ROUTE}">the security policy</a>.</p>`
+            + '<p>Report a regular bug with this form.</p>'
+            + '<button>Continue</button></form>',
+        `<form action="${ISSUES_ROUTE}">`
+            + '<p>Submit a vulnerability report below. You should absolutely not use '
+            + `<a href="${SECURITY_ADVISORY_ROUTE}">the security policy</a>.</p>`
+            + '<p>Report a regular bug with this form.</p>'
+            + '<button>Continue</button></form>',
+        `<form action="${ISSUES_ROUTE}">`
+            + '<p>Submit a vulnerability report below. Please refrain from using '
+            + `<a href="${SECURITY_ADVISORY_ROUTE}">the security policy</a>.</p>`
+            + '<p>Report a regular bug with this form.</p>'
+            + '<button>Continue</button></form>',
         'This form does not accept security vulnerabilities. '
             + `Submit them via [GitHub Issues](${ISSUES_ROUTE}).`,
+        'This form does not accept security vulnerabilities. '
+            + `Report them on [GitHub Issues](${ISSUES_ROUTE}).`,
+        'This form does not accept security vulnerabilities. '
+            + `Disclose them on [GitHub Issues](${ISSUES_ROUTE}).`,
         'Do not submit security vulnerabilities with this form; '
             + `instead submit them via [GitHub Issues](${ISSUES_ROUTE}).`,
+        'Do not submit security vulnerabilities with this form—instead '
+            + `submit them [here](${ISSUES_ROUTE}).`,
+        'Do not submit security vulnerabilities with this form: instead '
+            + `submit them [here](${ISSUES_ROUTE}).`,
         ...[
             '<button disabled>Ignored</button>',
             '<button hidden>Ignored</button>',
@@ -2877,6 +2905,22 @@ test('governs form submissions and hidden ID names while inert routes remain ina
                 problem.startsWith('docs/getting-started.md:')
                 && problem.includes('security intake links must use private GitHub advisories')
             )), formSource);
+        });
+    }
+
+    for (const nonRoutingSecurityReference of [
+        'Vulnerabilities are not accepted here. No need to submit them via '
+            + `[GitHub Issues](${ISSUES_ROUTE}).`,
+        'This form does not accept security vulnerabilities. '
+            + `Use it via [GitHub Issues](${ISSUES_ROUTE}).`,
+    ]) {
+        const excludedSecurityIntent = validFixture();
+        excludedSecurityIntent['docs/getting-started.md'] = nonRoutingSecurityReference;
+        fixture(excludedSecurityIntent, root => {
+            assert.ok(!auditSupportContract({ root }).problems.some(problem => (
+                problem.startsWith('docs/getting-started.md:')
+                && problem.includes('security intake links must use private GitHub advisories')
+            )), nonRoutingSecurityReference);
         });
     }
 
