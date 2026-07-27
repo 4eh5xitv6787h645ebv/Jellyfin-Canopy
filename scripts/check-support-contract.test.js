@@ -2696,6 +2696,42 @@ test('rejects every independently reproduced support-contract bypass', () => {
         )));
     });
 
+    for (const referencedControl of [
+        '<input id="public-vulnerability-route" type="image" '
+            + 'alt="Submit a vulnerability report" title="Documentation">',
+        '<input id="public-vulnerability-route" type="text" '
+            + 'value="Submit a vulnerability report" aria-label="Documentation">',
+        '<input id="public-vulnerability-route" type="range" '
+            + 'aria-valuetext="Submit a vulnerability report" '
+            + 'aria-valuenow="7" value="3" aria-label="Documentation">',
+        '<select id="public-vulnerability-route" aria-label="Documentation">'
+            + '<option selected>Submit a vulnerability report</option>'
+            + '<option>Documentation</option></select>',
+    ]) {
+        const embeddedControlSecurity = validFixture();
+        embeddedControlSecurity['theme/partials/support.html'] = referencedControl
+            + `<a aria-labelledby="public-vulnerability-route" href="${ISSUES_ROUTE}"></a>`;
+        fixture(embeddedControlSecurity, root => {
+            assert.ok(auditSupportContract({ root }).problems.some(problem => (
+                problem.startsWith('theme/partials/support.html:')
+                && problem.includes('security intake links must use private GitHub advisories')
+            )), referencedControl);
+        });
+    }
+
+    const longRouteId = `public-vulnerability-route-${'x'.repeat(9_000)}`;
+    const longAssociatedSecurity = validFixture();
+    longAssociatedSecurity['theme/partials/support.html'] =
+        `<label for="${longRouteId}">Submit a vulnerability report</label>`
+        + `<input id="${longRouteId}" type="image" alt="Documentation">`
+        + `<a aria-labelledby="${longRouteId}" href="${ISSUES_ROUTE}"></a>`;
+    fixture(longAssociatedSecurity, root => {
+        assert.ok(auditSupportContract({ root }).problems.some(problem => (
+            problem.startsWith('theme/partials/support.html:')
+            && problem.includes('security intake links must use private GitHub advisories')
+        )));
+    });
+
     const githubSupport = validFixture();
     githubSupport['.github/SUPPORT.md'] = 'Get support in GitHub Discussions.\n';
     fixture(githubSupport, root => {

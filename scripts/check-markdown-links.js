@@ -108,85 +108,7 @@ function accessibleHtmlText(
     excludeAriaHidden = true,
     initialState = null
 ) {
-    const visible = stripHiddenHtml(content, excludeAriaHidden, initialState)
-        .replace(/<(script|style)\b[\s\S]*?<\/\1\s*>/gi, ' ')
-        .replace(
-            /<svg\b((?:[^>"']|"[^"]*"|'[^']*')*)>([\s\S]*?)<\/svg\s*>/gi,
-            (element, attributes, body) => {
-                const openingTag = `<svg${attributes}>`;
-                const name = ariaLabelledText(openingTag, labels)
-                    || htmlAttributeText(openingTag, 'aria-label')
-                    || htmlAttributeText(openingTag, 'title')
-                    || accessibleHtmlText(body, labels, excludeAriaHidden);
-                return name ? ` ${name} ` : ' ';
-            }
-        )
-        .replace(/<svg\b(?:[^>"']|"[^"]*"|'[^']*')*\/?>/gi, (tag) => {
-            const name = ariaLabelledText(tag, labels)
-                || htmlAttributeText(tag, 'aria-label')
-                || htmlAttributeText(tag, 'title');
-            return name ? ` ${name} ` : ' ';
-        })
-        .replace(/<img\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi, (tag) => {
-            const name = ariaLabelledText(tag, labels)
-                || htmlAttributeText(tag, 'aria-label')
-                || htmlAttributeText(tag, 'alt')
-                || htmlAttributeText(tag, 'title');
-            return name ? ` ${name} ` : ' ';
-        })
-        .replace(
-            /<(button|summary|textarea|select|output|iframe)\b((?:[^>"']|"[^"]*"|'[^']*')*)>([\s\S]*?)<\/\1\s*>/gi,
-            (element, tag, attributes, body) => {
-                const openingTag = `<${tag}${attributes}>`;
-                const name = htmlElementAccessibleName(
-                    tag.toLowerCase(),
-                    openingTag,
-                    accessibleHtmlText(body, labels, excludeAriaHidden),
-                    labels
-                );
-                return name ? ` ${name} ` : ' ';
-            }
-        )
-        .replace(/<input\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi, (openingTag) => {
-            const name = htmlElementAccessibleName('input', openingTag, '', labels);
-            return name ? ` ${name} ` : ' ';
-        })
-        .replace(
-            /<([a-z][a-z0-9:-]*)\b((?:[^>"']|"[^"]*"|'[^']*')*\stitle\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+)(?:[^>"']|"[^"]*"|'[^']*')*)>([\s\S]*?)<\/\1\s*>/gi,
-            (element, tag, attributes, body) => {
-                const openingTag = `<${tag}${attributes}>`;
-                const name = htmlElementAccessibleName(
-                    tag.toLowerCase(),
-                    openingTag,
-                    accessibleHtmlText(body, labels, excludeAriaHidden),
-                    labels
-                );
-                return name ? ` ${name} ` : ' ';
-            }
-        )
-        .replace(
-            /<([a-z][a-z0-9:-]*)\b((?:[^>"']|"[^"]*"|'[^']*')*\saria-(?:label|labelledby)\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+)(?:[^>"']|"[^"]*"|'[^']*')*)>([\s\S]*?)<\/\1\s*>/gi,
-            (element, tag, attributes, body) => {
-                const openingTag = `<${tag}${attributes}>`;
-                const name = ariaLabelledText(openingTag, labels)
-                    || htmlAttributeText(openingTag, 'aria-label')
-                    || htmlAttributeText(openingTag, 'title')
-                    || accessibleHtmlText(body, labels, excludeAriaHidden);
-                return name ? ` ${name} ` : ' ';
-            }
-        )
-        .replace(
-            /<([a-z][a-z0-9:-]*)\b((?:[^>"']|"[^"]*"|'[^']*')*\saria-(?:label|labelledby)\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+)(?:[^>"']|"[^"]*"|'[^']*')*)\/?>/gi,
-            (element, tag, attributes) => {
-                const openingTag = `<${tag}${attributes}>`;
-                const name = ariaLabelledText(openingTag, labels)
-                    || htmlAttributeText(openingTag, 'aria-label')
-                    || htmlAttributeText(openingTag, 'title');
-                return name ? ` ${name} ` : ' ';
-            }
-        )
-        .replace(/<[^>]*>/g, ' ');
-    return markdown.utils.unescapeAll(visible);
+    return htmlAccessibleTreeText(content, labels, excludeAriaHidden, initialState);
 }
 
 function visibleHtmlText(content, labels = new Map()) {
@@ -447,6 +369,15 @@ const HTML_INPUT_TYPES = new Set([
     'hidden', 'image', 'month', 'number', 'password', 'radio', 'range', 'reset',
     'search', 'submit', 'tel', 'text', 'time', 'url', 'week',
 ]);
+const HTML_TEXT_INPUT_TYPES = new Set([
+    'email', 'number', 'password', 'search', 'tel', 'text', 'url',
+]);
+const MAX_HTML_TREE_DEPTH = 512;
+
+function htmlInputType(record) {
+    const declared = htmlAttributeText(record.openingTag, 'type').toLowerCase() || 'text';
+    return HTML_INPUT_TYPES.has(declared) ? declared : 'text';
+}
 
 function htmlNativeAccessibleName(record, body) {
     const attribute = name => htmlAttributeText(record.openingTag, name);
@@ -454,39 +385,162 @@ function htmlNativeAccessibleName(record, body) {
     if (record.tag === 'button' || record.tag === 'summary' || record.tag === 'a') {
         return body || title;
     }
+    if (record.tag === 'img') return attribute('alt') || title;
+    if (record.tag === 'svg') return title || body;
     if (record.tag === 'input') {
-        const declaredType = attribute('type').toLowerCase() || 'text';
-        const type = HTML_INPUT_TYPES.has(declaredType) ? declaredType : 'text';
+        const type = htmlInputType(record);
         if (type === 'image') return attribute('alt') || title;
         if (['button', 'submit', 'reset'].includes(type)) {
             return attribute('value') || title;
         }
-        if (['text', 'password', 'number', 'search', 'tel', 'email', 'url'].includes(type)) {
-            return attribute('value')
-                || title
-                || attribute('placeholder')
-                || attribute('aria-placeholder');
+        if (HTML_TEXT_INPUT_TYPES.has(type)) {
+            return title || attribute('placeholder') || attribute('aria-placeholder');
         }
-        if (type === 'range') return attribute('value') || title;
         return title;
     }
     if (record.tag === 'textarea') {
-        return body || title || attribute('placeholder') || attribute('aria-placeholder');
+        return title || attribute('placeholder') || attribute('aria-placeholder');
     }
-    if (record.tag === 'select' || record.tag === 'output') return body || title;
-    if (record.tag === 'meter' || record.tag === 'progress') {
-        return attribute('value') || body || title;
-    }
+    if (record.tag === 'output') return body || title;
     return title;
 }
 
-function htmlElementAccessibleName(tag, openingTag, body, labels) {
-    const id = htmlAttributeText(openingTag, 'id');
-    return (id && labels.get(id))
-        || ariaLabelledText(openingTag, labels)
-        || htmlAttributeText(openingTag, 'aria-label')
-        || htmlNativeAccessibleName({ tag, openingTag }, boundedDomText([body]))
-        || boundedDomText([body]);
+function htmlTagHasAttribute(tag, name) {
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(
+        `(?:^|\\s)${escaped}(?:\\s*=\\s*(?:"[^"]*"|'[^']*'|[^\\s"'=<>` + '`' + `]+))?`
+        + '(?=\\s|/?>)',
+        'i'
+    ).test(tag);
+}
+
+function htmlSelectEmbeddedValue(record, values, body) {
+    if (!values) return body;
+    const options = [];
+    const stack = [...record.parts].reverse();
+    while (stack.length > 0) {
+        const part = stack.pop();
+        if (typeof part === 'string') continue;
+        if (part.tag === 'option') {
+            options.push(part);
+            continue;
+        }
+        for (let index = part.parts.length - 1; index >= 0; index -= 1) {
+            stack.push(part.parts[index]);
+        }
+    }
+    const selected = options.filter(option => htmlTagHasAttribute(option.openingTag, 'selected'));
+    const contributing = selected.length > 0 ? selected : options.slice(0, 1);
+    return boundedDomText(contributing.map(option => values[option.index]));
+}
+
+function htmlEmbeddedControlValue(record, body, values = null) {
+    const attribute = name => htmlAttributeText(record.openingTag, name);
+    if (record.tag === 'input') {
+        const type = htmlInputType(record);
+        if (type === 'range') {
+            return attribute('aria-valuetext')
+                || attribute('aria-valuenow')
+                || attribute('value');
+        }
+        if (HTML_TEXT_INPUT_TYPES.has(type)) return attribute('value');
+        return '';
+    }
+    if (record.tag === 'textarea' || record.tag === 'output') return body;
+    if (record.tag === 'select') return htmlSelectEmbeddedValue(record, values, body);
+    if (record.tag === 'meter' || record.tag === 'progress') {
+        return attribute('aria-valuetext')
+            || attribute('aria-valuenow')
+            || attribute('value');
+    }
+    return '';
+}
+
+function htmlAccessibleTreeText(content, labels, excludeAriaHidden, initialState) {
+    const source = stripHtmlComments(content);
+    const records = [];
+    const rootParts = [];
+    const stack = [];
+    const initial = initialState || {
+        persistentHidden: false,
+        visibilityHidden: false,
+        hidden: false,
+    };
+    const pattern = /<(\/?)([a-z][a-z0-9:-]*)\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi;
+    let offset = 0;
+    for (const match of source.matchAll(pattern)) {
+        const currentRawTextTag = ['script', 'style'].includes(stack.at(-1)?.tag)
+            ? stack.at(-1).tag
+            : '';
+        const closing = match[1] === '/';
+        const tag = match[2].toLowerCase();
+        if (currentRawTextTag && !(closing && tag === currentRawTextTag)) continue;
+        if (match.index > offset) {
+            (stack.at(-1)?.parts || rootParts).push(markdown.utils.unescapeAll(
+                source.slice(offset, match.index)
+            ));
+        }
+        if (closing) {
+            const opening = lastHtmlStackTagIndex(stack, tag);
+            if (opening !== -1) stack.splice(opening);
+            offset = match.index + match[0].length;
+            continue;
+        }
+        if (tag === 'a') {
+            const activeAnchor = lastHtmlStackTagIndex(stack, tag);
+            if (activeAnchor !== -1) stack.splice(activeAnchor);
+        }
+        if (stack.length >= MAX_HTML_TREE_DEPTH) return HTML_LABEL_OVERFLOW_MARKER;
+        const parent = stack.at(-1) || null;
+        const record = {
+            index: records.length,
+            tag,
+            openingTag: match[0],
+            accessibilityState: htmlOpeningVisibilityState(
+                [parent?.accessibilityState || initial],
+                match[0],
+                excludeAriaHidden
+            ),
+            parts: [],
+            value: '',
+        };
+        (parent?.parts || rootParts).push(record);
+        records.push(record);
+        const selfClosing = /\/>\s*$/.test(match[0]) || HTML_VOID_ELEMENTS.has(tag);
+        if (!selfClosing) stack.push(record);
+        offset = match.index + match[0].length;
+    }
+    if (offset < source.length) {
+        (stack.at(-1)?.parts || rootParts).push(markdown.utils.unescapeAll(
+            source.slice(offset)
+        ));
+    }
+    const values = Array(records.length).fill('');
+    for (let index = records.length - 1; index >= 0; index -= 1) {
+        const record = records[index];
+        if (['script', 'style'].includes(record.tag)) continue;
+        const body = boundedDomText(record.parts.map(part => (
+            typeof part === 'string'
+                ? record.accessibilityState.hidden ? '' : part
+                : values[part.index]
+        )));
+        let value = body;
+        if (!record.accessibilityState.hidden) {
+            const id = htmlAttributeValue(record.openingTag, 'id');
+            value = (id && labels.get(id))
+                || htmlEmbeddedControlValue(record, body, values)
+                || ariaLabelledText(record.openingTag, labels)
+                || htmlAttributeText(record.openingTag, 'aria-label')
+                || htmlNativeAccessibleName(record, body)
+                || body;
+        }
+        values[index] = boundedDomText([value]);
+    }
+    return boundedDomText(rootParts.map(part => (
+        typeof part === 'string'
+            ? initial.hidden ? '' : part
+            : values[part.index]
+    )));
 }
 
 const HTML_LABELABLE_ELEMENTS = new Set([
@@ -500,20 +554,21 @@ function htmlAssociatedLabelParts(records, label, control) {
         controlAncestors.add(index);
         index = records[index]?.parentIndex ?? -1;
     }
-    const visit = (candidate) => {
-        for (const part of candidate.parts) {
-            if (typeof part === 'string') {
-                parts.push(part);
-            } else if (part.index === control.index) {
-                continue;
-            } else if (controlAncestors.has(part.index)) {
-                visit(part);
-            } else {
-                parts.push(part);
+    const pending = [...label.parts].reverse();
+    while (pending.length > 0) {
+        const part = pending.pop();
+        if (typeof part === 'string') {
+            parts.push(part);
+        } else if (part.index === control.index) {
+            continue;
+        } else if (controlAncestors.has(part.index)) {
+            for (let index = part.parts.length - 1; index >= 0; index -= 1) {
+                pending.push(part.parts[index]);
             }
+        } else {
+            parts.push(part);
         }
-    };
-    visit(label);
+    }
     return parts;
 }
 
@@ -532,7 +587,7 @@ function htmlAssociatedLabelNodes(records, ids) {
     }
     for (const label of records.filter(record => record.tag === 'label')) {
         const hasExplicitFor = /\sfor(?:\s*=|\s|\/?>)/i.test(label.openingTag);
-        const explicitId = htmlAttributeText(label.openingTag, 'for');
+        const explicitId = htmlAttributeValue(label.openingTag, 'for');
         const control = hasExplicitFor ? ids.get(explicitId) : wrappedControls.get(label.index);
         if (!control || !HTML_LABELABLE_ELEMENTS.has(control.tag)) continue;
         if (control.tag === 'input'
@@ -580,9 +635,6 @@ function resolvedHtmlIdLabels(records, ids) {
                 .split(/\s+/)
                 .filter(id => labelNodeById.has(id))
         )];
-        record.usesResolvedAccessibleName = ['img', 'svg'].includes(record.tag)
-            || Boolean(labelledBy)
-            || record.associatedLabelNodes.length > 0;
         for (const part of record.parts) {
             if (typeof part !== 'string') {
                 dependencies[record.index].push({ node: part.index, reference: false });
@@ -597,14 +649,8 @@ function resolvedHtmlIdLabels(records, ids) {
     }
 
     for (const [entryIndex, [, record]] of idEntries.entries()) {
-        const directLabel = htmlAttributeText(record.openingTag, 'aria-label')
-            || htmlAttributeText(record.openingTag, 'title');
-        const readsRecordValue = !record.visualState.persistentHidden
-            && !record.accessibilityState.persistentHidden
-            && (record.accessibilityState.hidden
-                || record.usesResolvedAccessibleName
-                || !directLabel);
-        if (readsRecordValue) {
+        if (!record.visualState.persistentHidden
+            && !record.accessibilityState.persistentHidden) {
             dependencies[idOffset + entryIndex].push({
                 node: record.index,
                 reference: false,
@@ -683,13 +729,15 @@ function resolvedHtmlIdLabels(records, ids) {
             ]);
         } else {
             const [, record] = idEntries[node - idOffset];
-            let label = record.accessibilityState.hidden
-                ? ''
-                : record.usesResolvedAccessibleName
-                    ? values[record.index]
-                    : htmlAttributeText(record.openingTag, 'aria-label')
-                        || htmlAttributeText(record.openingTag, 'title')
-                        || '';
+            const body = boundedDomText(record.parts.map(part => (
+                typeof part === 'string'
+                    ? record.accessibilityState.hidden ? '' : part
+                    : values[part.index]
+            )));
+            let label = record.accessibilityState.hidden ? '' : (
+                htmlEmbeddedControlValue(record, body, values)
+                || values[record.index]
+            );
             if (!record.visualState.persistentHidden && !label) {
                 label = record.accessibilityState.persistentHidden
                     ? record.visualText
@@ -711,9 +759,12 @@ function resolvedHtmlIdLabels(records, ids) {
 
 function htmlIdLabels(content) {
     const source = stripHtmlComments(content);
-    if (!htmlAttributeRecords(source).some(attribute => attribute.name === 'id')) {
-        return new Map();
-    }
+    const idAttributes = htmlAttributeRecords(source)
+        .filter(attribute => attribute.name === 'id');
+    if (idAttributes.length === 0) return new Map();
+    const overflowLabels = () => new Map(idAttributes.map(
+        attribute => [attribute.value, HTML_LABEL_OVERFLOW_MARKER]
+    ));
     const records = [];
     const ids = new Map();
     const stack = [];
@@ -743,6 +794,7 @@ function htmlIdLabels(content) {
             const activeAnchor = lastHtmlStackTagIndex(stack, tag);
             if (activeAnchor !== -1) stack.splice(activeAnchor);
         }
+        if (stack.length >= MAX_HTML_TREE_DEPTH) return overflowLabels();
         const parent = stack.at(-1) || null;
         const openingTag = match[0];
         const visualState = htmlOpeningVisibilityState(

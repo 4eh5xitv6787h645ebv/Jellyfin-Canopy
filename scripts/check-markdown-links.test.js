@@ -690,9 +690,15 @@ test('normalizes native fallbacks and resolves embedded control values', () => {
         '<input id="route-name" type="text" title="   " placeholder="Report a problem">',
         '<input id="route-name" type="not-a-real-state" placeholder="Report a problem">',
         '<input id="route-name" type="text" value="Report a problem">',
-        '<input id="route-name" type="range" value="Report a problem">',
+        '<input id="route-name" type="image" alt="Report a problem" title="Documentation">',
+        '<input id="route-name" type="text" value="Report a problem" title="Documentation">',
+        '<input id="route-name" type="text" value="Report a problem" aria-label="Documentation">',
+        '<input id="route-name" type="range" aria-valuetext="Report a problem" '
+            + 'aria-valuenow="7" value="3" aria-label="Documentation">',
         '<textarea id="route-name">Report a problem</textarea>',
-        '<select id="route-name"><option selected>Report a problem</option></select>',
+        '<select id="route-name" aria-label="Documentation">'
+            + '<option selected>Report a problem</option>'
+            + '<option>Documentation</option></select>',
     ]) {
         const source = referenced
             + `<a aria-labelledby="route-name" href="${target}"></a>`;
@@ -702,6 +708,34 @@ test('normalizes native fallbacks and resolves embedded control values', () => {
             assert.equal(link.label, 'Report a problem', referenced);
             assert.equal(isActionableLink(link), true, referenced);
         }
+    }
+});
+
+test('uses only the selected option as an embedded select value', () => {
+    const target = 'https://example.com/route';
+    const referenced = '<select id="route-name" aria-label="Need help">'
+        + '<option selected>Documentation</option>'
+        + '<option>Report a problem</option></select>';
+    const source = referenced
+        + `<a aria-labelledby="route-name" href="${target}"></a>`;
+    for (const links of [extractLinks(source), extractRenderedHtmlLinks(source)]) {
+        const link = links.find(candidate => candidate.type === 'link');
+        assert.ok(link);
+        assert.equal(link.label, 'Documentation');
+    }
+});
+
+test('preserves long id and for keys when resolving associated labels', () => {
+    const target = 'https://example.com/route';
+    const id = `route-${'x'.repeat(9_000)}`;
+    const source = `<label for="${id}">Report a problem</label>`
+        + `<input id="${id}" type="image" alt="Documentation">`
+        + `<a aria-labelledby="${id}" href="${target}"></a>`;
+    for (const links of [extractLinks(source), extractRenderedHtmlLinks(source)]) {
+        const link = links.find(candidate => candidate.type === 'link');
+        assert.ok(link);
+        assert.equal(link.label, 'Report a problem');
+        assert.equal(isActionableLink(link), true);
     }
 });
 
@@ -743,6 +777,41 @@ test('resolves nested same-tag ID labels with bounded traversal work', () => {
     assert.ok(
         performance.now() - started < 4_000,
         '500 nested ID labels must not trigger quadratic subtree rescanning'
+    );
+});
+
+test('fails closed quickly for malformed nested label trees', () => {
+    const target = 'https://example.com/route';
+    const source = '<label>'.repeat(6_000)
+        + '<input id="route-name" type="image" alt="Documentation">'
+        + '</label>'.repeat(6_000)
+        + `<a aria-labelledby="route-name" href="${target}"></a>`;
+    const started = performance.now();
+    for (const links of [extractLinks(source), extractRenderedHtmlLinks(source)]) {
+        const link = links.find(candidate => candidate.type === 'link');
+        assert.ok(link);
+        assert.match(link.label, /\[label truncated:/);
+    }
+    assert.ok(
+        performance.now() - started < 4_000,
+        'malformed nested labels must be depth-bounded'
+    );
+});
+
+test('fails closed quickly for unclosed native descendants', () => {
+    const target = 'https://example.com/route';
+    const source = `<a href="${target}">`
+        + '<button title="Documentation">'.repeat(8_000)
+        + 'Report a problem</a>';
+    const started = performance.now();
+    for (const links of [extractLinks(source), extractRenderedHtmlLinks(source)]) {
+        const link = links.find(candidate => candidate.type === 'link');
+        assert.ok(link);
+        assert.match(link.label, /\[label truncated:/);
+    }
+    assert.ok(
+        performance.now() - started < 4_000,
+        'unclosed native descendants must be depth-bounded'
     );
 });
 
