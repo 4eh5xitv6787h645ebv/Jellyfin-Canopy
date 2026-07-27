@@ -560,6 +560,19 @@ test('aria-labelledby ignores ancestor-hidden metadata but retains painted SVG t
             + 'style="visibility:visible" alt="Report a problem"></div>',
         '<div id="route-name" style="visibility:hidden"><button '
             + 'style="visibility:visible" aria-label="Report a problem"></button></div>',
+        '<div id="route-name" style="visibility:hidden"><button '
+            + 'style="visibility:visible" title="Report a problem"></button></div>',
+        '<div id="route-name" style="visibility:hidden"><input '
+            + 'style="visibility:visible" type="image" alt="Report a problem"></div>',
+        '<div id="route-name" style="visibility:hidden"><input '
+            + 'style="visibility:visible" type="button" value="Report a problem"></div>',
+        '<div id="route-name" style="visibility:hidden"><input '
+            + 'style="visibility:visible" type="text" '
+            + 'placeholder="Report a problem"></div>',
+        '<div id="route-name" style="visibility:hidden"><textarea '
+            + 'style="visibility:visible" placeholder="Report a problem"></textarea></div>',
+        '<div id="route-name" style="visibility:hidden"><iframe '
+            + 'style="visibility:visible" title="Report a problem"></iframe></div>',
         '<div id="route-name" style="visibility:hidden"><svg '
             + 'style="visibility:visible" aria-label="Report a problem"></svg></div>',
         '<span id="route-name"><span hidden>Decorative text</span>'
@@ -589,6 +602,33 @@ test('preserves accessible-name precedence for referenced ID elements', () => {
             + '<img id="route-name" aria-labelledby="name" '
             + 'aria-label="Need help" alt="Other" title="Documentation">',
         '<img id="route-name" alt="Report a problem" title="Documentation">',
+    ]) {
+        const source = referenced
+            + `<a aria-labelledby="route-name" href="${target}"></a>`;
+        for (const links of [extractLinks(source), extractRenderedHtmlLinks(source)]) {
+            const link = links.find(candidate => candidate.type === 'link');
+            assert.ok(link);
+            assert.equal(link.label, 'Report a problem');
+            assert.equal(isActionableLink(link), true);
+        }
+    }
+});
+
+test('preserves native accessible-name precedence for restored controls', () => {
+    const target = 'https://example.com/route';
+    for (const referenced of [
+        '<div id="route-name" style="visibility:hidden"><button '
+            + 'style="visibility:visible" title="Documentation">'
+            + 'Report a problem</button></div>',
+        '<div id="route-name" style="visibility:hidden"><input '
+            + 'style="visibility:visible" type="image" '
+            + 'alt="Report a problem" title="Documentation"></div>',
+        '<div id="route-name" style="visibility:hidden"><input '
+            + 'style="visibility:visible" type="button" '
+            + 'value="Report a problem" title="Documentation"></div>',
+        '<div id="route-name" style="visibility:hidden"><input '
+            + 'style="visibility:visible" type="text" title="Report a problem" '
+            + 'placeholder="Documentation"></div>',
     ]) {
         const source = referenced
             + `<a aria-labelledby="route-name" href="${target}"></a>`;

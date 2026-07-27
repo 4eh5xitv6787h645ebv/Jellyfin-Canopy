@@ -408,6 +408,29 @@ function htmlLabelGraphComponents(dependencies) {
     return components;
 }
 
+function htmlNativeAccessibleName(record, body) {
+    const attribute = name => htmlAttributeValue(record.openingTag, name);
+    const title = attribute('title');
+    if (record.tag === 'button' || record.tag === 'summary' || record.tag === 'a') {
+        return body || title;
+    }
+    if (record.tag === 'input') {
+        const type = attribute('type').toLowerCase() || 'text';
+        if (type === 'image') return attribute('alt') || title;
+        if (['button', 'submit', 'reset'].includes(type)) {
+            return attribute('value') || title;
+        }
+        if (['text', 'password', 'number', 'search', 'tel', 'email', 'url'].includes(type)) {
+            return title || attribute('placeholder') || attribute('aria-placeholder');
+        }
+        return title;
+    }
+    if (record.tag === 'textarea') {
+        return title || attribute('placeholder') || attribute('aria-placeholder');
+    }
+    return title;
+}
+
 function resolvedHtmlIdLabels(records, ids) {
     const idEntries = [...ids];
     const labelNodeById = new Map(idEntries.map(
@@ -499,7 +522,13 @@ function resolvedHtmlIdLabels(records, ids) {
                     } else if (record.tag === 'svg'
                         || ariaLabel
                         || htmlAttributeValue(record.openingTag, 'aria-labelledby')) {
-                        text = referenced || ariaLabel || title || body;
+                        text = referenced
+                            || ariaLabel
+                            || htmlNativeAccessibleName(record, body)
+                            || title
+                            || body;
+                    } else {
+                        text = htmlNativeAccessibleName(record, body) || body;
                     }
                 }
                 values[node] = boundedDomText([text]);

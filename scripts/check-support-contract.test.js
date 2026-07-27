@@ -2137,6 +2137,18 @@ test('governs restored accessible labels and rejects truncated route labels', ()
         '<svg style="visibility:visible" aria-label="Submit a vulnerability report"></svg>',
         '<button style="visibility:visible" '
             + 'aria-label="Submit a vulnerability report"></button>',
+        '<button style="visibility:visible" '
+            + 'title="Submit a vulnerability report"></button>',
+        '<input style="visibility:visible" type="image" '
+            + 'alt="Submit a vulnerability report">',
+        '<input style="visibility:visible" type="button" '
+            + 'value="Submit a vulnerability report">',
+        '<input style="visibility:visible" type="text" '
+            + 'placeholder="Submit a vulnerability report">',
+        '<textarea style="visibility:visible" '
+            + 'placeholder="Submit a vulnerability report"></textarea>',
+        '<iframe style="visibility:visible" '
+            + 'title="Submit a vulnerability report"></iframe>',
     ]) {
         const files = validFixture();
         files['theme/partials/support.html'] = '<div id="route-name" '
