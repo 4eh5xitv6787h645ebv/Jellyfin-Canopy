@@ -2877,6 +2877,8 @@ test('governs form submissions and hidden ID names while inert routes remain ina
         'Open the security policy',
         'Use the private security guidance',
         'Report through the private security process',
+        'You can use the security policy',
+        '→ Use the security policy',
     ]) {
         const distinctPrivateAnchor = validFixture();
         distinctPrivateAnchor['docs/getting-started.md'] =
@@ -2890,6 +2892,25 @@ test('governs form submissions and hidden ID names while inert routes remain ina
                 problem.startsWith('docs/getting-started.md:')
                 && problem.includes('security intake links must use private GitHub advisories')
             )), privateRouteLabel);
+        });
+    }
+
+    for (const affirmativePrefix of [
+        'Do not hesitate to use ',
+        'Do not email us, use ',
+    ]) {
+        const locallyAffirmativePrivateAnchor = validFixture();
+        locallyAffirmativePrivateAnchor['docs/getting-started.md'] =
+            `<form action="${ISSUES_ROUTE}">`
+            + `<p>Submit a vulnerability report below. ${affirmativePrefix}`
+            + `<a href="${SECURITY_ADVISORY_ROUTE}">the security policy</a>.</p>`
+            + '<p>Report a regular bug with this form.</p>'
+            + '<button>Continue</button></form>';
+        fixture(locallyAffirmativePrivateAnchor, root => {
+            assert.ok(!auditSupportContract({ root }).problems.some(problem => (
+                problem.startsWith('docs/getting-started.md:')
+                && problem.includes('security intake links must use private GitHub advisories')
+            )), affirmativePrefix);
         });
     }
 
@@ -2986,6 +3007,9 @@ test('governs form submissions and hidden ID names while inert routes remain ina
         'This form is not for security vulnerabilities. Read the policy.',
         'This form does not apply to security vulnerabilities. Read the policy.',
         'This form isn\'t appropriate for security vulnerabilities. Read the policy.',
+        'This form does not accept security vulnerabilities. Read the policy.',
+        'Do not submit security vulnerabilities with this form. Read the policy.',
+        'This bug form is not intended for security vulnerabilities. Read the policy.',
         'Security vulnerabilities are not accepted here. Read the policy.',
     ]) {
         const explicitlyNonSecurityForm = validFixture();

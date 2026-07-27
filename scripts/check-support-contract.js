@@ -110,20 +110,30 @@ const NON_VULNERABILITY_CONTEXT = /\b(?:do(?:es)? not|doesn't|don't|not)\s+(?:co
 const NEGATED_SECURITY_SUBJECT_PHRASE =
     '(?:security\\s+(?:concerns?|issues?|reports?|vulnerab\\w*)'
     + '|exploits?|vulnerab\\w*|security)';
+const NEGATED_SECURITY_FORM_SUBJECT =
+    '(?:(?:this|the)\\s+(?:(?:bug|issue|support)(?:-report)?\\s+)?form'
+    + '|(?:this|the)\\s+intake)';
 const NEGATED_SECURITY_SUBJECT = new RegExp(
-    `(?:\\b(?:this|the)\\s+form\\s+`
+    `(?:\\b${NEGATED_SECURITY_FORM_SUBJECT}\\s+`
     + `(?:is\\s+(?:definitely\\s+)?not|isn't)\\s+`
     + `(?:(?:appropriate|intended|meant)\\s+)?for\\s+`
     + `${NEGATED_SECURITY_SUBJECT_PHRASE}\\b`
-    + `|\\b(?:this|the)\\s+form\\s+`
-    + `(?:do(?:es)? not|doesn't)\\s+(?:apply|pertain)\\s+to\\s+`
+    + `|\\b${NEGATED_SECURITY_FORM_SUBJECT}\\s+`
+    + `(?:do(?:es)? not|doesn't)\\s+`
+    + `(?:(?:apply|pertain)\\s+to\\s+|(?:accept|allow|handle|support)\\s+)`
     + `${NEGATED_SECURITY_SUBJECT_PHRASE}\\b`
-    + `|\\b(?:do not|don't|never)\\s+use\\s+(?:this|the)\\s+form\\s+for\\s+`
+    + `|\\b(?:do not|don't|never)\\s+use\\s+`
+    + `${NEGATED_SECURITY_FORM_SUBJECT}\\s+for\\s+`
     + `${NEGATED_SECURITY_SUBJECT_PHRASE}\\b`
+    + `|\\b(?:do not|don't|never)\\s+`
+    + '(?:accept|allow|handle|report|submit)\\s+'
+    + `${NEGATED_SECURITY_SUBJECT_PHRASE}\\b\\s+`
+    + `(?:by|in|on|through|to|via|with)\\s+${NEGATED_SECURITY_FORM_SUBJECT}\\b`
     + `|\\b${NEGATED_SECURITY_SUBJECT_PHRASE}\\b\\s+`
     + '(?:are not|aren\'t|is not|isn\'t)\\s+'
     + '(?:accepted|allowed|handled|permitted|supported)\\s+'
-    + '(?:here|(?:by|in|on|through|via)\\s+(?:this|the)\\s+form)\\b)',
+    + `(?:here|(?:by|in|on|through|via|with)\\s+`
+    + `${NEGATED_SECURITY_FORM_SUBJECT})\\b)`,
     'gi'
 );
 const SECURITY_CONTEXT_HEADING = /\b(?:security|vulnerab\w*)\b/i;
@@ -703,11 +713,12 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
     }
     if (group.length) applicableGroups.push(group);
     const groupText = applicable => applicable.join('').trim();
-    const ownsSecurityRoute = applicable => (
-        SECURITY_ROUTE_LABEL.test(applicable)
-        && (!NEUTRAL_SECURITY_REFERENCE.test(applicable)
-            || SECURITY_ROUTE_CUE.test(applicable))
-    );
+    const ownsSecurityRoute = (applicable) => {
+        const positive = applicable.replace(NEGATED_SECURITY_SUBJECT, ' ');
+        return SECURITY_ROUTE_LABEL.test(positive)
+            && (!NEUTRAL_SECURITY_REFERENCE.test(positive)
+                || SECURITY_ROUTE_CUE.test(positive));
+    };
     if (applicableGroups.some(applicable => ownsSecurityRoute(groupText(applicable)))) {
         return true;
     }

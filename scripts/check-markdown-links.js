@@ -20,8 +20,11 @@ const HTML_FORM_ACTION_CUE_SOURCE =
     + '|report(?:s|ed|ing)?|request(?:s|ed|ing)?|send|sending|sent'
     + '|share(?:s|d|ing)?|submit(?:s|ted|ting)?|suggest(?:s|ed|ing)?'
     + '|tell(?:s|ing)?|told|use(?:s|d|ing)?|visit(?:s|ed|ing)?)';
+const HTML_FORM_ACTION_CUE_PREFIX =
+    '(?:(?:(?:please|now|(?:you|users?)\\s+(?:can|may|should))\\s+)'
+    + '|(?:[→›»:-]+\\s*))*';
 const HTML_FORM_ACTION_CUE =
-    new RegExp(`^(?:please\\s+)?${HTML_FORM_ACTION_CUE_SOURCE}\\b`, 'i');
+    new RegExp(`^${HTML_FORM_ACTION_CUE_PREFIX}${HTML_FORM_ACTION_CUE_SOURCE}\\b`, 'i');
 const HTML_FORM_ADJACENT_ACTION_CUE = new RegExp(
     `\\b${HTML_FORM_ACTION_CUE_SOURCE}\\b`
     + '(?:\\s+(?:at|in|on|through|to|via))?'
@@ -29,9 +32,10 @@ const HTML_FORM_ADJACENT_ACTION_CUE = new RegExp(
     'i'
 );
 const HTML_FORM_NEGATED_ACTION_CUE = new RegExp(
-    `(?:\\b(?:do(?:es)? not|doesn't|don't|never)\\b.{0,40}`
-    + `\\b${HTML_FORM_ACTION_CUE_SOURCE}\\b`
-    + `|\\bno\\s+need\\s+to\\s+${HTML_FORM_ACTION_CUE_SOURCE}\\b)`,
+    `(?:\\b(?:do(?:es)? not|doesn't|don't|never)\\s+`
+    + `|\\bno\\s+need\\s+to\\s+)${HTML_FORM_ACTION_CUE_SOURCE}\\b`
+    + '(?:\\s+(?:at|in|on|through|to|via))?'
+    + '(?:\\s+(?:a|an|our|the|this))?\\s*$',
     'i'
 );
 const HTML_FORM_ACTIONABLE_REFERENCE_TARGET =

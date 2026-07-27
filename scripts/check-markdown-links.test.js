@@ -898,10 +898,36 @@ test('extracts HTML form submissions and image-map routes with control names', (
     assert.match(splitActionFormLink.contextBefore, /request a feature/i);
     assert.doesNotMatch(splitActionFormLink.contextBefore, /need help/i);
 
+    for (const affirmativePrefix of [
+        'Do not hesitate to use ',
+        'Do not email us, use ',
+    ]) {
+        const locallyAffirmativeBoundary = `<form action="${formTarget}">`
+            + `<p>Submit a vulnerability report below. ${affirmativePrefix}`
+            + `<a href="${securityTarget}">the security policy</a>.</p>`
+            + '<p>Report a regular bug with this form.</p>'
+            + '<button>Continue</button></form>';
+        const locallyAffirmativeFormLink = extractLinks(locallyAffirmativeBoundary)
+            .find(candidate => candidate.target === formTarget);
+        assert.ok(locallyAffirmativeFormLink, affirmativePrefix);
+        assert.match(
+            locallyAffirmativeFormLink.contextBefore,
+            /report a regular bug/i,
+            affirmativePrefix
+        );
+        assert.doesNotMatch(
+            locallyAffirmativeFormLink.contextBefore,
+            /vulnerab/i,
+            affirmativePrefix
+        );
+    }
+
     for (const [routeTarget, routeLabel, precedingIntent] of [
         [securityTarget, 'Open the security policy', 'Submit a vulnerability report'],
         [securityTarget, 'Use the private security guidance', 'Submit a vulnerability report'],
         [securityTarget, 'Report through the private security process', 'Submit a vulnerability report'],
+        [securityTarget, 'You can use the security policy', 'Submit a vulnerability report'],
+        [securityTarget, '→ Use the security policy', 'Submit a vulnerability report'],
         [discordTarget, 'Use the community support process', 'Need help'],
         [discordTarget, 'Ask in the community support process', 'Need help'],
         [issuesTarget, 'Open the issue intake guide', 'Report a bug'],
