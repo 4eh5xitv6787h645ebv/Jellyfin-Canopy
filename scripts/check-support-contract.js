@@ -81,7 +81,7 @@ const SUPPORT_ROUTE_SECTIONS = new Map([
     ['docs/help.md', ['Community and support']],
     ['.github/SECURITY_GUIDELINES.md', ['Questions?']],
 ]);
-const BUG_ROUTE_INTENT = /\b(?:bug[- ]reports?|(?:^|[.!?;]\s*)for\s+(?:a\s+)?bugs?|github bug-report issues|issue tracker|(?:something|anything|this|it)\s+(?:is\s+)?broken|broken\s+(?:behavior|feature|functionality|plugin)|(?:file|found|report|submit|tell)\b.{0,40}\b(?:a\s+)?(?:bugs?|defects?|issues?)|(?:open|use|visit)\b.{0,20}\b(?:bug|defect)(?:[- ]report)?\s+(?:form|intake)|(?:create|open|use|visit)\b.{0,40}\b(?:github\s+)?issues?\b.{0,20}\bfor\s+(?:a\s+)?(?:bugs?|defects?))\b/i;
+const BUG_ROUTE_INTENT = /\b(?:bug[- ]reports?|(?:^|[.!?;]\s*)for\s+(?:a\s+)?bugs?|github bug-report issues|issue tracker|(?:something|anything|this|it)\s+(?:is\s+)?broken|broken\s+(?:behavior|feature|functionality|plugin)|report(?:s|ed|ing)?\s+(?:a\s+)?problems?|(?:file|found|report|submit|tell)\b.{0,40}\b(?:a\s+)?(?:bugs?|defects?|issues?)|(?:open|use|visit)\b.{0,20}\b(?:bug|defect)(?:[- ]report)?\s+(?:form|intake)|(?:create|open|use|visit)\b.{0,40}\b(?:github\s+)?issues?\b.{0,20}\bfor\s+(?:a\s+)?(?:bugs?|defects?))\b/i;
 const BUG_ROUTE_LABEL = new RegExp(
     `(?:${BUG_ROUTE_INTENT.source}|\\bgithub issues\\b)`,
     'i'
@@ -141,9 +141,7 @@ const FEATURE_FORM_ROUTE_LABEL = new RegExp(
 const ROUTE_INTENT_TERM = /\b(?:assistance|bugs?|broken|defects?|enhancements?|exploits?|features?|help|ideas?|improvements?|questions?|security|support|vulnerab\w*)\b|community\s+(?:chat|forum|support)/i;
 const HTML_ROUTE_CONTEXT_BEFORE_CUE = /(?:\b(?:at|choose|follow|here|in|on|open|see|select|through|to|use|using|via|visit)\b|[:→])(?:\s+(?:a|an|our|the|this))?\s*$/i;
 const HTML_ROUTE_CONTEXT_AFTER_CUE = /^\s*(?:(?:[-–—:,(]\s*)|(?:for|to|where)\b)/i;
-const PRIOR_BLOCK_ROUTE_PROMPT = /[?:]\s*$/;
-const DISCUSSIONS_ACTION = /\b(?:ask|create|direct|go|join|open|post|route|send|start|submit|use)\b/i;
-const DISCUSSIONS_PURPOSE = /\b(?:bugs?|community|features?|help|ideas?|issues?|questions?|reports?|requests?|support)\b/i;
+const DISCUSSIONS_ACTION = /\b(?:ask|create|direct|get|go|join|open|post|route|send|start|submit|use)\b/i;
 const DISCUSSIONS_EXCEPTION = /\b(?:anywhere|nowhere)\s+(?:else\s+)?(?:but|except)\b|\b(?:anything\s+)?except\b|\bother\s+than\b/i;
 const TEMPLATE_METADATA = new Map([
     ['.github/ISSUE_TEMPLATE/bug.md', {
@@ -557,14 +555,23 @@ function htmlExtendedContextBefore(link) {
 function linkWithPriorBlockContext(link, normalizedLabel, html) {
     const prior = String(link?.contextBeforeBlock || '').replace(/\s+/g, ' ').trim();
     if (!prior) return link;
+    const promptEnd = prior.match(/[?:]\s*$/)?.index;
+    const promptStart = promptEnd === undefined
+        ? 0
+        : Math.max(
+            prior.lastIndexOf('.', promptEnd - 1),
+            prior.lastIndexOf('!', promptEnd - 1),
+            prior.lastIndexOf('?', promptEnd - 1),
+            prior.lastIndexOf(';', promptEnd - 1)
+        ) + 1;
+    const prompt = promptEnd === undefined ? '' : prior.slice(promptStart).trim();
     const dependent = html
         ? HTML_CONTEXT_DEPENDENT_ROUTE_LABEL
         : CONTEXT_DEPENDENT_ROUTE_LABEL;
     const own = `${link?.contextBefore || ''} ${link?.label || ''} ${link?.contextAfter || ''}`
         .replace(/\s+/g, ' ').trim();
     if (!dependent.test(normalizedLabel)
-        || !ROUTE_INTENT_TERM.test(prior)
-        || !PRIOR_BLOCK_ROUTE_PROMPT.test(prior)
+        || !ROUTE_INTENT_TERM.test(prompt)
         || ROUTE_INTENT_TERM.test(own)) {
         return link;
     }
@@ -1115,7 +1122,7 @@ function routesToDiscussions(surface) {
             return false;
         }
         return !explicitlyRejectsDiscussionsRoute(clause)
-            && (DISCUSSIONS_ACTION.test(clause) || DISCUSSIONS_PURPOSE.test(clause));
+            && DISCUSSIONS_ACTION.test(clause);
     });
 }
 

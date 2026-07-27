@@ -66,7 +66,7 @@ function htmlAttributeValue(tag, name) {
     return match ? markdown.utils.unescapeAll(match[1] ?? match[2] ?? match[3]) : '';
 }
 
-function stripHiddenHtml(content) {
+function stripHiddenHtml(content, hiddenTag = htmlTagIsHidden) {
     const source = stripHtmlComments(content);
     const visible = [];
     const stack = [];
@@ -76,8 +76,8 @@ function stripHiddenHtml(content) {
         const hiddenBefore = Boolean(stack.at(-1)?.hidden);
         if (!hiddenBefore) visible.push(source.slice(offset, match.index));
         const closing = match[1] === '/';
-        const ownHidden = !closing && htmlTagIsHidden(match[0]);
-        updateHtmlVisibilityStack(stack, match[0]);
+        const ownHidden = !closing && hiddenTag(match[0]);
+        updateHtmlVisibilityStack(stack, match[0], hiddenTag);
         const hiddenAfter = Boolean(stack.at(-1)?.hidden);
         if (closing
             ? !hiddenBefore && !hiddenAfter
@@ -90,8 +90,11 @@ function stripHiddenHtml(content) {
     return visible.join('');
 }
 
-function accessibleHtmlText(content, labels = new Map()) {
-    const visible = stripHiddenHtml(content)
+function accessibleHtmlText(content, labels = new Map(), excludeAriaHidden = true) {
+    const visible = stripHiddenHtml(
+        content,
+        tag => htmlTagIsHidden(tag) || excludeAriaHidden && htmlTagIsAriaHidden(tag)
+    )
         .replace(/<(script|style)\b[\s\S]*?<\/\1\s*>/gi, ' ')
         .replace(
             /<svg\b((?:[^>"']|"[^"]*"|'[^']*')*)>([\s\S]*?)<\/svg\s*>/gi,
@@ -100,7 +103,7 @@ function accessibleHtmlText(content, labels = new Map()) {
                 const name = ariaLabelledText(openingTag, labels)
                     || htmlAttributeValue(openingTag, 'aria-label')
                     || htmlAttributeValue(openingTag, 'title')
-                    || accessibleHtmlText(body, labels);
+                    || accessibleHtmlText(body, labels, excludeAriaHidden);
                 return name ? ` ${name} ` : ' ';
             }
         )
@@ -124,7 +127,7 @@ function accessibleHtmlText(content, labels = new Map()) {
                 const name = ariaLabelledText(openingTag, labels)
                     || htmlAttributeValue(openingTag, 'aria-label')
                     || htmlAttributeValue(openingTag, 'title')
-                    || accessibleHtmlText(body, labels);
+                    || accessibleHtmlText(body, labels, excludeAriaHidden);
                 return name ? ` ${name} ` : ' ';
             }
         )
@@ -143,7 +146,7 @@ function accessibleHtmlText(content, labels = new Map()) {
 }
 
 function visibleHtmlText(content, labels = new Map()) {
-    return accessibleHtmlText(content, labels);
+    return accessibleHtmlText(content, labels, false);
 }
 
 function htmlAttributeRecords(content) {
@@ -344,11 +347,13 @@ const HTML_VOID_ELEMENTS = new Set([
 
 function htmlTagIsHidden(tag) {
     const style = htmlAttributeValue(tag, 'style');
-    const ariaHidden = htmlAttributeValue(tag, 'aria-hidden').toLowerCase();
     return /(?:^|\s)hidden(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?(?=\s|\/?>)/i
         .test(tag)
-        || ariaHidden === 'true'
         || inlineStyleHides(style);
+}
+
+function htmlTagIsAriaHidden(tag) {
+    return htmlAttributeValue(tag, 'aria-hidden').toLowerCase() === 'true';
 }
 
 function cascadedInlineStyleValue(style, property, validValue) {
@@ -380,7 +385,7 @@ function inlineStyleHides(style) {
     return display === 'none' || ['hidden', 'collapse'].includes(visibility);
 }
 
-function updateHtmlVisibilityStack(stack, content) {
+function updateHtmlVisibilityStack(stack, content, hiddenTag = htmlTagIsHidden) {
     const pattern = /<(\/?)([a-z][a-z0-9:-]*)\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi;
     for (const match of content.matchAll(pattern)) {
         const closing = match[1] === '/';
@@ -398,7 +403,7 @@ function updateHtmlVisibilityStack(stack, content) {
         if (selfClosing) continue;
         stack.push({
             tag,
-            hidden: Boolean(stack.at(-1)?.hidden) || htmlTagIsHidden(match[0]),
+            hidden: Boolean(stack.at(-1)?.hidden) || hiddenTag(match[0]),
         });
     }
 }

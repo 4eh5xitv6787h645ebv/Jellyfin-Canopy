@@ -664,6 +664,28 @@ test('context-dependent route ownership stops at completed sentences and prior b
             });
         }
     }
+
+    for (const [file, source] of [
+        [
+            'docs/getting-started.md',
+            `Bug reports use GitHub Issues. Release notes:\n\n`
+                + `[Click here](${DISCORD_ROUTE}) for release notes.\n`,
+        ],
+        [
+            'theme/partials/context-test.html',
+            '<p>Bug reports use GitHub Issues. Release notes:</p>'
+                + `<p><a href="${DISCORD_ROUTE}">Click here</a> for release notes.</p>\n`,
+        ],
+    ]) {
+        const files = validFixture();
+        files[file] = source;
+        fixture(files, root => {
+            assert.ok(!auditSupportContract({ root }).problems.some(problem => (
+                problem.startsWith(`${file}:`)
+                && problem.includes('bug intake links')
+            )), file);
+        });
+    }
 });
 
 test('category-specific form labels own direct and semicolon-delimited intake routes', () => {
@@ -1661,6 +1683,15 @@ test('distinguishes actionable Discussions guidance from explicit disabled-route
             'docs/getting-started.md: routes users to disabled GitHub Discussions'
         ));
     });
+
+    const historical = validFixture();
+    historical['docs/getting-started.md'] =
+        'GitHub Discussions previously held feature requests.\n';
+    fixture(historical, root => {
+        assert.ok(!auditSupportContract({ root }).problems.includes(
+            'docs/getting-started.md: routes users to disabled GitHub Discussions'
+        ));
+    });
 });
 
 test('allows relevance-gated and negated File Transformation guidance', () => {
@@ -1955,9 +1986,6 @@ test('pins every published Discord navigation source to the community route', ()
 test('hidden links cannot satisfy mandatory support routes', () => {
     for (const hidden of [
         'hidden',
-        'aria-hidden="true"',
-        'aria-hidden="tr&#117;e"',
-        'aria-hidden=tr&#117;e',
         'style="display:none"',
         'style=display:none',
         'style=visibility:hidden',
@@ -1996,7 +2024,6 @@ test('hidden links cannot satisfy mandatory support routes', () => {
 test('hidden Discussions links are ignored by link and prose audits', () => {
     for (const hidden of [
         'hidden',
-        'aria-hidden=true',
         'style=display:none',
         'style=visibility:hidden',
         'style="display&#58;none"',
@@ -2008,6 +2035,42 @@ test('hidden Discussions links are ignored by link and prose audits', () => {
             assert.ok(!auditSupportContract({ root }).problems.includes(
                 'docs/getting-started.md: routes users to disabled GitHub Discussions'
             ), hidden);
+        });
+    }
+});
+
+test('aria-hidden links remain governed because they are visible and clickable', () => {
+    const canonical = validFixture();
+    canonical['docs/help.md'] = canonical['docs/help.md'].replace(
+        `[Discord support](${DISCORD_ROUTE}).`,
+        `<a aria-hidden="true" href="${DISCORD_ROUTE}">Discord support</a>.`
+    );
+    fixture(canonical, root => {
+        assert.ok(!auditSupportContract({ root }).problems.includes(
+            'docs/help.md: must route every community-support link to the '
+            + 'Jellyfin Community Discord in "## Community and support"'
+        ));
+    });
+
+    for (const [source, message] of [
+        [
+            `<a aria-hidden="true" href="${DISCUSSIONS_ROUTE}">`
+                + 'GitHub Discussions support</a>\n',
+            'routes users to disabled GitHub Discussions',
+        ],
+        [
+            `<a aria-hidden="true" href="${ISSUES_ROUTE}">`
+                + 'Submit a vulnerability report</a>\n',
+            'security intake links must use private GitHub advisories',
+        ],
+    ]) {
+        const files = validFixture();
+        files['docs/getting-started.md'] = source;
+        fixture(files, root => {
+            assert.ok(auditSupportContract({ root }).problems.some(problem => (
+                problem.startsWith('docs/getting-started.md:')
+                && problem.includes(message)
+            )), message);
         });
     }
 });
@@ -2112,6 +2175,7 @@ test('rejects optional wording that leaves required bug environment fields blank
 
 test('audits route intent in expanded and previous-sentence call-to-action wording', () => {
     const cases = [
+        [`[Report a problem](${DISCORD_ROUTE}).`, 'bug intake links'],
         [`[Pitch an idea](${DISCORD_ROUTE}).`, 'feature intake links'],
         [`[Send us your feature idea](${DISCORD_ROUTE}).`, 'feature intake links'],
         [`Want to propose a feature? [Click here](${DISCORD_ROUTE}).`, 'feature intake links'],

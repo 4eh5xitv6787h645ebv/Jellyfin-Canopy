@@ -332,7 +332,7 @@ test('raw HTML link context excludes neighboring link labels but retains prose',
     }
 });
 
-test('hidden raw HTML and Markdown-in-HTML links are not actionable', () => {
+test('visually hidden links are not actionable but aria-hidden links remain clickable', () => {
     const links = extractLinks([
         '<a hidden href="https://example.com/hidden">Hidden</a>',
         '<a aria-hidden="true" href="https://example.com/aria-hidden">ARIA hidden</a>',
@@ -350,8 +350,23 @@ test('hidden raw HTML and Markdown-in-HTML links are not actionable', () => {
         '<a href="https://example.com/visible">Visible</a>',
         '',
     ].join('\n'));
-    assert.deepEqual(links.filter(isActionableLink).map(link => link.label), ['Visible']);
-    assert.ok(links.filter(link => link.label !== 'Visible').every(link => link.hidden));
+    assert.deepEqual(links.filter(isActionableLink).map(link => link.label), [
+        'ARIA hidden',
+        'Entity ARIA hidden',
+        'Unquoted entity ARIA hidden',
+        'Visible',
+    ]);
+    const visuallyHidden = new Set([
+        'Hidden',
+        'CSS hidden',
+        'Unquoted hidden',
+        'Unquoted invisible',
+        'Entity hidden',
+        'Ancestor hidden',
+        'Markdown hidden',
+        'Markdown-in-HTML hidden',
+    ]);
+    assert.ok(links.filter(link => visuallyHidden.has(link.label)).every(link => link.hidden));
 });
 
 test('inline style visibility follows declaration order and importance', () => {
