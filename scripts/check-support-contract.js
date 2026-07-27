@@ -141,6 +141,7 @@ const FEATURE_FORM_ROUTE_LABEL = new RegExp(
 const ROUTE_INTENT_TERM = /\b(?:assistance|bugs?|broken|defects?|enhancements?|exploits?|features?|help|ideas?|improvements?|questions?|security|support|vulnerab\w*)\b|community\s+(?:chat|forum|support)/i;
 const HTML_ROUTE_CONTEXT_BEFORE_CUE = /(?:\b(?:at|choose|follow|here|in|on|open|see|select|through|to|use|using|via|visit)\b|[:→])(?:\s+(?:a|an|our|the|this))?\s*$/i;
 const HTML_ROUTE_CONTEXT_AFTER_CUE = /^\s*(?:(?:[-–—:,(]\s*)|(?:for|to|where)\b)/i;
+const PRIOR_BLOCK_ROUTE_PROMPT = /[?:]\s*$/;
 const DISCUSSIONS_ACTION = /\b(?:ask|create|direct|go|join|open|post|route|send|start|submit|use)\b/i;
 const DISCUSSIONS_PURPOSE = /\b(?:bugs?|community|features?|help|ideas?|issues?|questions?|reports?|requests?|support)\b/i;
 const DISCUSSIONS_EXCEPTION = /\b(?:anywhere|nowhere)\s+(?:else\s+)?(?:but|except)\b|\b(?:anything\s+)?except\b|\bother\s+than\b/i;
@@ -546,6 +547,9 @@ function htmlExtendedContextBefore(link) {
     if (!link?.contextBeforeStartsAtLink || !link?.contextBeforePrior) {
         return String(link?.contextBefore || '');
     }
+    if (/[.!?;]\s*$/.test(String(link?.contextBefore || '').trim())) {
+        return String(link?.contextBefore || '');
+    }
     return `${link.contextBeforePrior} ${link.contextBefore || ''}`
         .replace(/\s+/g, ' ').trim();
 }
@@ -560,6 +564,7 @@ function linkWithPriorBlockContext(link, normalizedLabel, html) {
         .replace(/\s+/g, ' ').trim();
     if (!dependent.test(normalizedLabel)
         || !ROUTE_INTENT_TERM.test(prior)
+        || !PRIOR_BLOCK_ROUTE_PROMPT.test(prior)
         || ROUTE_INTENT_TERM.test(own)) {
         return link;
     }

@@ -599,6 +599,73 @@ test('context-dependent routes inherit intake prose across intervening links', (
     }
 });
 
+test('context-dependent route ownership stops at completed sentences and prior blocks', () => {
+    const categories = [
+        {
+            prior: 'Read the vulnerability reporting guide at',
+            safeLabel: 'the private guidance',
+            safeRoute: SECURITY_ADVISORY_ROUTE,
+            badRoute: ISSUES_ROUTE,
+            message: 'security intake links',
+        },
+        {
+            prior: 'Learn how to report a bug at',
+            safeLabel: 'the bug guide',
+            safeRoute: ISSUES_ROUTE,
+            badRoute: DISCORD_ROUTE,
+            message: 'bug intake links',
+        },
+        {
+            prior: 'Learn how to get support at',
+            safeLabel: 'the support guide',
+            safeRoute: DISCORD_ROUTE,
+            badRoute: ISSUES_ROUTE,
+            message: 'community-support links',
+        },
+        {
+            prior: 'Learn how to request a feature at',
+            safeLabel: 'the feature guide',
+            safeRoute: ISSUES_ROUTE,
+            badRoute: DISCORD_ROUTE,
+            message: 'feature intake links',
+        },
+    ];
+    for (const category of categories) {
+        const forms = [
+            {
+                file: 'docs/getting-started.md',
+                source: `${category.prior} `
+                    + `[${category.safeLabel}](${category.safeRoute}). `
+                    + `[click here](${category.badRoute}) for release notes.\n`,
+            },
+            {
+                file: 'docs/getting-started.md',
+                source: `${category.prior} `
+                    + `[${category.safeLabel}](${category.safeRoute}).\n\n`
+                    + `[click here](${category.badRoute}) for release notes.\n`,
+            },
+            {
+                file: 'theme/partials/context-test.html',
+                source: `<p>${category.prior} `
+                    + `<a href="${category.safeRoute}">${category.safeLabel}</a>.</p>`
+                    + `<p><a href="${category.badRoute}">click here</a> `
+                    + 'for release notes.</p>\n',
+            },
+        ];
+        for (const form of forms) {
+            const files = validFixture();
+            files[form.file] = form.source;
+            fixture(files, root => {
+                const problems = auditSupportContract({ root }).problems;
+                assert.ok(!problems.some(problem => (
+                    problem.startsWith(`${form.file}:`)
+                    && problem.includes(category.message)
+                )), `${form.file}: ${category.message}`);
+            });
+        }
+    }
+});
+
 test('category-specific form labels own direct and semicolon-delimited intake routes', () => {
     const cases = [
         {
@@ -1763,7 +1830,7 @@ test('audits generic security calls to action and plain source or built HTML pro
     });
 });
 
-test('security calls to action inherit adjacent block context', () => {
+test('calls to action inherit adjacent prompt-block context', () => {
     for (const [label, target] of [
         ['File it here', ISSUES_ROUTE],
         ['Email us', 'mailto:security@example.com'],
@@ -1789,6 +1856,50 @@ test('security calls to action inherit adjacent block context', () => {
                 && problem.includes('private GitHub advisories')
             )), label);
         });
+    }
+
+    for (const category of [
+        {
+            prompt: 'Found a vulnerability?',
+            badRoute: ISSUES_ROUTE,
+            message: 'security intake links',
+        },
+        {
+            prompt: 'Found a bug?',
+            badRoute: DISCORD_ROUTE,
+            message: 'bug intake links',
+        },
+        {
+            prompt: 'Need help?',
+            badRoute: ISSUES_ROUTE,
+            message: 'community-support links',
+        },
+        {
+            prompt: 'Want to suggest a feature?',
+            badRoute: DISCORD_ROUTE,
+            message: 'feature intake links',
+        },
+    ]) {
+        for (const [file, source] of [
+            [
+                'docs/getting-started.md',
+                `${category.prompt}\n\n[Click here](${category.badRoute}).\n`,
+            ],
+            [
+                'theme/partials/support.html',
+                `<p>${category.prompt}</p>`
+                    + `<p><a href="${category.badRoute}">Click here</a>.</p>\n`,
+            ],
+        ]) {
+            const files = validFixture();
+            files[file] = source;
+            fixture(files, root => {
+                assert.ok(auditSupportContract({ root }).problems.some(problem => (
+                    problem.startsWith(`${file}:`)
+                    && problem.includes(category.message)
+                )), `${file}: ${category.prompt}`);
+            });
+        }
     }
 });
 
