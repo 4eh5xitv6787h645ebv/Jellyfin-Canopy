@@ -123,9 +123,9 @@ const CONTEXT_DEPENDENT_ROUTE_LABEL = new RegExp(
     `^(?:${CONTEXTUAL_ACTION_LABEL}|(?:github\\s+)?issues?|discord|community\\s+(?:chat|forum))$`,
     'i'
 );
-const DIRECT_FORM_ROUTE_LABEL = /^(?:(?:open|use|visit)\b.{0,20}\b)?(?:bug|defect|feature(?:[- ]request)?|help|support)(?:[- ]report)?\s+(?:form|intake)$/i;
+const DIRECT_FORM_ROUTE_LABEL = /^(?:(?:open|use|visit)\b.{0,20}\b)?(?:bug|defect|feature(?:[- ]request)?|help|support)(?:[- ]report)?\s+(?:form|intake)\b/i;
 const ROUTE_INTENT_TERM = /\b(?:assistance|bugs?|broken|defects?|enhancements?|exploits?|features?|help|ideas?|improvements?|questions?|security|support|vulnerab\w*)\b|community\s+(?:chat|forum|support)/i;
-const HTML_ROUTE_CONTEXT_BEFORE_CUE = /(?:\b(?:at|choose|follow|here|in|on|open|see|select|through|to|use|using|via|visit)\b|[:→])\s*$/i;
+const HTML_ROUTE_CONTEXT_BEFORE_CUE = /(?:\b(?:at|choose|follow|here|in|on|open|see|select|through|to|use|using|via|visit)\b|[:→])(?:\s+(?:a|an|our|the|this))?\s*$/i;
 const HTML_ROUTE_CONTEXT_AFTER_CUE = /^\s*(?:(?:[-–—:,(]\s*)|(?:for|to|where)\b)/i;
 const DISCUSSIONS_ACTION = /\b(?:ask|create|direct|go|join|open|post|route|send|start|submit|use)\b/i;
 const DISCUSSIONS_PURPOSE = /\b(?:bugs?|community|features?|help|ideas?|issues?|questions?|reports?|requests?|support)\b/i;
@@ -513,6 +513,7 @@ function semanticLinkText(link) {
 
 function htmlContextOwnsRoute(link) {
     const before = String(link?.contextBefore || '').slice(-160);
+    const priorBefore = String(link?.contextBeforePrior || '').slice(-160);
     const after = String(link?.contextAfter || '').slice(0, 160);
     const ownsRoute = text => (
         BUG_ROUTE_INTENT.test(text)
@@ -520,8 +521,19 @@ function htmlContextOwnsRoute(link) {
         || SUPPORT_ROUTE_INTENT.test(text)
         || SECURITY_ROUTE_LABEL.test(text)
     );
-    return ownsRoute(before) && HTML_ROUTE_CONTEXT_BEFORE_CUE.test(before)
+    const extendedBefore = link?.contextBeforeStartsAtLink
+        ? `${priorBefore} ${before}`.replace(/\s+/g, ' ').trim()
+        : before;
+    return ownsRoute(extendedBefore) && HTML_ROUTE_CONTEXT_BEFORE_CUE.test(extendedBefore)
         || HTML_ROUTE_CONTEXT_AFTER_CUE.test(after) && ownsRoute(after);
+}
+
+function htmlExtendedContextBefore(link) {
+    if (!link?.contextBeforeStartsAtLink || !link?.contextBeforePrior) {
+        return String(link?.contextBefore || '');
+    }
+    return `${link.contextBeforePrior} ${link.contextBefore || ''}`
+        .replace(/\s+/g, ' ').trim();
 }
 
 function localMarkdownTarget(root, file, target) {
@@ -1090,24 +1102,43 @@ function routesSecurityTextPublicly(text) {
 }
 
 function routesSecurityIntakePublicly(tokens) {
-    let negatedSectionLevel = 0;
+    let securitySectionLevel = 0;
+    let prohibitionListLevel = 0;
     for (let index = 0; index < tokens.length; index += 1) {
         const token = tokens[index];
         const level = headingLevel(token);
         if (level > 0) {
-            if (negatedSectionLevel > 0 && level <= negatedSectionLevel) {
-                negatedSectionLevel = 0;
+            if (securitySectionLevel > 0 && level <= securitySectionLevel) {
+                securitySectionLevel = 0;
             }
-            if (/\b(?:do not|don't|never)\b/i.test(headingText(tokens, index))) {
-                negatedSectionLevel = level;
+            if (prohibitionListLevel > 0 && level <= prohibitionListLevel) {
+                prohibitionListLevel = 0;
+            }
+            const heading = headingText(tokens, index);
+            if (SECURITY_CONTEXT_HEADING.test(heading)) {
+                securitySectionLevel = level;
+            }
+            if (securitySectionLevel > 0
+                && /^(?:please\s+)?(?:do not|don't|never)\s*:?\s*$/i.test(heading)) {
+                prohibitionListLevel = level;
             }
             continue;
         }
         let text = '';
         if (token.type === 'inline') text = inlineVisibleText(token.children);
         if (token.type === 'html_block') text = visibleHtmlText(token.content);
-        if (!text || negatedSectionLevel > 0) continue;
+        if (!text || prohibitionListLevel > 0) continue;
         if (routesSecurityTextPublicly(text)) return true;
+        if (securitySectionLevel > 0
+            && text.split(/[.!?\n]+/).some(sentence => (
+                sentence.split(/;+/).some(clause => (
+                    PUBLIC_SECURITY_CHANNEL.test(clause)
+                    && SECURITY_ROUTE_CUE.test(clause)
+                    && !explicitlyRejectsPublicSecurityRoute(clause)
+                ))
+            ))) {
+            return true;
+        }
     }
     return false;
 }
@@ -1136,12 +1167,17 @@ function auditGlobalRouteLinks(file, surface, root, problems, options = {}) {
             .replace(/[^\p{L}\p{N}\s-]/gu, ' ')
             .replace(/\s+/g, ' ')
             .trim();
+        const ownsHtmlContext = options.html
+            && htmlContextOwnsRoute(link)
+            && absoluteUrl(link.target);
+        const contextualLink = ownsHtmlContext
+            ? { ...link, contextBefore: htmlExtendedContextBefore(link) }
+            : link;
         const scopedLink = options.html
             && !HTML_CONTEXT_DEPENDENT_ROUTE_LABEL.test(normalizedLabel)
-            && !(htmlContextOwnsRoute(link)
-                && absoluteUrl(link.target))
+            && !ownsHtmlContext
             ? { ...link, context: link.label, contextBefore: '', contextAfter: '' }
-            : link;
+            : contextualLink;
         const text = semanticLinkText(scopedLink);
         const location = `${file}:${link.line || 1}`;
         const isRenderedFragment = options.rendered && /^#[^#]/.test(link.target);

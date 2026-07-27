@@ -660,14 +660,20 @@ test('global route ownership combines destination names with explicit intake con
         },
         {
             file: 'theme/partials/support.html',
-            source: `<p>For support, use <a href="${ISSUES_ROUTE}">Support guide</a>.</p>\n`,
+            source: `<p>For support, use the <a href="${ISSUES_ROUTE}">Support guide</a>.</p>\n`,
             message: 'community-support links',
         },
         {
             file: 'theme/partials/support.html',
-            source: `<p>Submit vulnerabilities through <a href="${ISSUES_ROUTE}">`
+            source: `<p>Submit vulnerabilities through the <a href="${ISSUES_ROUTE}">`
                 + 'Security guide</a>.</p>\n',
             message: 'security intake links',
+        },
+        {
+            file: 'theme/partials/support.html',
+            source: '<p>For bugs, see <a href="../help/">the guide</a> and use '
+                + `<a href="${DISCORD_ROUTE}">the form</a>.</p>\n`,
+            message: 'bug intake links',
         },
         {
             file: 'theme/partials/support.html',
@@ -706,8 +712,10 @@ test('rendered category form links cannot hide behind local fragments', () => {
     const cases = [
         { label: 'Open the bug form', message: 'bug intake links' },
         { label: 'Bug report form', message: 'bug intake links' },
+        { label: 'Bug report form (recommended)', message: 'bug intake links' },
         { label: 'Open the feature-request form', message: 'feature intake links' },
         { label: 'Feature request form', message: 'feature intake links' },
+        { label: 'Feature request form — preferred', message: 'feature intake links' },
     ];
     for (const { label, message } of cases) {
         const files = validFixture();
@@ -1535,6 +1543,33 @@ test('distinguishes explicit security-route rejection from unrelated negation an
     fixture(safe, root => {
         assert.ok(!auditSupportContract({ root }).problems.includes(
             'docs/getting-started.md: security or vulnerability intake prose '
+            + 'must route only to private GitHub advisories'
+        ));
+    });
+
+    for (const source of [
+        '## Do not ignore security reports\nSubmit vulnerabilities on Discord.\n',
+        '## Never delay vulnerability reports\nUse Discord instead.\n',
+    ]) {
+        const negatedHeading = validFixture();
+        negatedHeading['.github/SUPPORT.md'] = source;
+        fixture(negatedHeading, root => {
+            assert.ok(auditSupportContract({ root }).problems.includes(
+                '.github/SUPPORT.md: security or vulnerability intake prose '
+                + 'must route only to private GitHub advisories'
+            ));
+        });
+    }
+
+    const negatedRoute = validFixture();
+    negatedRoute['.github/SUPPORT.md'] = [
+        '## Do not report vulnerabilities publicly',
+        'Do not use Discord for vulnerability reports.',
+        '',
+    ].join('\n');
+    fixture(negatedRoute, root => {
+        assert.ok(!auditSupportContract({ root }).problems.includes(
+            '.github/SUPPORT.md: security or vulnerability intake prose '
             + 'must route only to private GitHub advisories'
         ));
     });

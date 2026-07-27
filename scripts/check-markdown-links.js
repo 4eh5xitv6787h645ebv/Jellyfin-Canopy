@@ -345,6 +345,11 @@ function htmlAnchorRecords(content, labels = htmlIdLabels(content)) {
         const rawAfter = content.slice(anchorEnd, adjacentContextAfterEnd);
         const beforeBoundary = htmlContextBeforeBoundary(rawBefore);
         const afterBoundary = htmlContextAfterBoundary(rawAfter);
+        const previousAnchor = anchors.at(-1);
+        const contextBefore = compactVisibleText(
+            rawBefore.slice(beforeBoundary),
+            labels
+        );
         anchors.push({
             start: match.index,
             openingEnd,
@@ -354,10 +359,11 @@ function htmlAnchorRecords(content, labels = htmlIdLabels(content)) {
                 || htmlAttributeValue(openingTag, 'aria-label')
                 || nestedName
                 || htmlAttributeValue(openingTag, 'title'),
-            contextBefore: compactVisibleText(
-                rawBefore.slice(beforeBoundary),
-                labels
-            ),
+            contextBefore,
+            contextBeforePrior: previousAnchor && beforeBoundary === 0
+                ? `${previousAnchor.contextBeforePrior || ''} ${previousAnchor.contextBefore || ''}`
+                    .replace(/\s+/g, ' ').trim()
+                : '',
             contextAfter: compactVisibleText(
                 rawAfter.slice(0, afterBoundary),
                 labels
@@ -388,6 +394,7 @@ function htmlLinks(content, line, labels = htmlIdLabels(content)) {
                 label: anchor?.label || '',
                 context,
                 contextBefore: anchor?.contextBefore || '',
+                contextBeforePrior: anchor?.contextBeforePrior || '',
                 contextAfter: anchor?.contextAfter || '',
                 contextBeforeStartsAtLink: anchor?.contextBeforeStartsAtLink || false,
                 contextAfterEndsAtLink: anchor?.contextAfterEndsAtLink || false,
