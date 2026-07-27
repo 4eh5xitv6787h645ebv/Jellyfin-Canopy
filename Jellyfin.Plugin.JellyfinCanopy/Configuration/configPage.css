@@ -783,13 +783,28 @@
 .jc-tab-bar.jc-dragging {
     scroll-behavior: auto;
 }
+/* Verdant branch rail: the group list reads as a branch — a hairline stem
+   with a node dot per group; the active node fills leaf-green with a halo. */
+#JellyfinCanopyPage .jc-tab-bar {
+    position: relative;
+}
+#JellyfinCanopyPage .jc-tab-bar::before {
+    content: "";
+    position: absolute;
+    left: 9px;
+    top: 10px;
+    bottom: 10px;
+    width: 1px;
+    background: var(--jc-border);
+    pointer-events: none;
+}
 #JellyfinCanopyPage .jc-group-btn {
     position: relative;
     width: 100%;
     background: transparent;
     border: 1px solid transparent;
     border-radius: 10px;
-    padding: 11px 12px;
+    padding: 11px 12px 11px 24px;
     color: var(--jc-text-muted);
     cursor: pointer;
     font-family: inherit;
@@ -815,15 +830,24 @@
     border-color: var(--jc-accent-border);
     color: var(--jc-text-strong);
 }
-#JellyfinCanopyPage .jc-group-btn.active::before {
+#JellyfinCanopyPage .jc-group-btn::before {
     content: "";
     position: absolute;
-    left: 0;
-    top: 6px;
-    bottom: 6px;
-    width: 3px;
-    border-radius: 3px;
-    background: var(--jc-grad-rail);
+    left: 6px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--jc-border-strong);
+    transition: background-color 0.15s ease, box-shadow 0.15s ease;
+}
+#JellyfinCanopyPage .jc-group-btn:hover::before {
+    background: var(--jc-text-dim);
+}
+#JellyfinCanopyPage .jc-group-btn.active::before {
+    background: var(--jc-accent);
+    box-shadow: 0 0 0 3px var(--jc-accent-tint-20);
 }
 #JellyfinCanopyPage .jc-group-btn.active .jc-tab-icon {
     color: var(--jc-accent);
@@ -984,13 +1008,12 @@
     width: 100%;
     margin: 0;
     padding: 14px 22px;
-    /* Canopy rail: a 3px brand-gradient edge on the left of every card
-       header, layered over the existing legend sheen. */
-    background:
-        var(--jc-grad-rail) left / 3px 100% no-repeat,
-        var(--jc-legend-gradient);
-    font-size: 1.05em;
-    font-weight: 600;
+    /* Verdant rail: a 3px leaf-gradient edge on the left of every card
+       header. The old sheen layer is gone — serif titles on the flat card
+       surface carry the editorial look. */
+    background: var(--jc-grad-rail) left / 3px 100% no-repeat;
+    font-size: 1.18em;
+    font-weight: 500;
     letter-spacing: 0.2px;
     border-bottom: 1px solid var(--jc-border);
     box-sizing: border-box;
@@ -1065,26 +1088,35 @@
         grid-column: 1;
     }
 }
+/* Verdant editorial rows: settings read as calm hairline-separated rows on
+   the card surface instead of boxed sub-cards. Hover lifts gently onto
+   surface-1; keyboard focus keeps the accent inset ring. */
 #JellyfinCanopyPage .configSection > .inputContainer,
 #JellyfinCanopyPage .configSection > .checkboxContainer,
 #JellyfinCanopyPage .configSection > .selectContainer {
-    background: var(--jc-surface-1);
-    border: 1px solid var(--jc-border);
-    border-radius: 8px;
-    padding: 14px 18px;
+    background: transparent;
+    border: 1px solid transparent;
+    border-bottom: 1px solid var(--jc-border-subtle);
+    border-radius: 10px 10px 0 0;
+    padding: 13px 12px;
     margin-bottom: 5px !important;
     transition: border-color 0.2s ease, background-color 0.2s ease;
+}
+#JellyfinCanopyPage .configSection > .inputContainer:last-child,
+#JellyfinCanopyPage .configSection > .checkboxContainer:last-child,
+#JellyfinCanopyPage .configSection > .selectContainer:last-child {
+    border-bottom-color: transparent;
 }
 #JellyfinCanopyPage .configSection > .inputContainer:hover,
 #JellyfinCanopyPage .configSection > .checkboxContainer:hover,
 #JellyfinCanopyPage .configSection > .selectContainer:hover {
-    border-color: var(--jc-border);
     background: var(--jc-surface-1);
 }
 #JellyfinCanopyPage .configSection > .inputContainer:focus-within,
 #JellyfinCanopyPage .configSection > .checkboxContainer:focus-within,
 #JellyfinCanopyPage .configSection > .selectContainer:focus-within {
     border-color: var(--jc-accent);
+    border-radius: 10px;
     background: var(--jc-surface-2);
     box-shadow: 0 0 0 1px var(--jc-accent) inset;
 }
@@ -1361,7 +1393,7 @@
     width: 12px;
     height: 12px;
     border-radius: 50%;
-    background: #ddd;
+    background: var(--jc-text-dim);
     transform: translateY(-50%);
     transition: left 0.18s ease, background 0.18s ease;
 }

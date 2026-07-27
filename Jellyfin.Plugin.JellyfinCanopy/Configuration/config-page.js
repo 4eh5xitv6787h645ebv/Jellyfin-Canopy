@@ -367,7 +367,7 @@
                                 link.target = '_blank';
                                 link.rel = 'noopener';
                                 link.textContent = DOCS_URL;
-                                link.style.color = 'var(--primary-accent-color, #00a4dc)';
+                                link.style.color = 'var(--jc-accent)';
                                 fb.appendChild(msg);
                                 fb.appendChild(link);
                                 parent.replaceChild(fb, f);
@@ -1010,7 +1010,7 @@
             testSeerrBtn.disabled = true;
             seerrStatusIndicator.textContent = 'sync';
             seerrStatusIndicator.classList.add('status-check');
-            seerrStatusIndicator.style.color = 'var(--primary-accent-color, #00a4dc)';
+            seerrStatusIndicator.style.color = 'var(--jc-accent)';
 
             let validated = false;
             let lastError = '';
@@ -1044,12 +1044,12 @@
 
             if (validated) {
                 seerrStatusIndicator.textContent = 'check_circle';
-                seerrStatusIndicator.style.color = '#52b54b';
+                seerrStatusIndicator.style.color = 'var(--jc-success)';
                 try { setConnectionTestResult('seerr', 'ok', 'Connected', _testToken); } catch (e) { /* cache is best-effort */ }
                 jcTestAlert({ title: 'Success', message: 'Successfully connected to Seerr!' });
             } else {
                 seerrStatusIndicator.textContent = 'error';
-                seerrStatusIndicator.style.color = '#dc3545';
+                seerrStatusIndicator.style.color = 'var(--jc-danger)';
                 try { setConnectionTestResult('seerr', 'error', (lastError && lastError.length < 80) ? lastError : 'Connection failed', _testToken); } catch (e) { /* cache is best-effort */ }
                 jcTestAlert({ title: 'Connection Failed', message: lastError || 'Could not connect to any provided URL.' });
             }
@@ -1161,7 +1161,7 @@
             const input = document.querySelector('#maintainerrUrl');
             const url = jcNormalizeMaintainerrBaseUrl(input ? input.value || '' : '');
             if (!url) {
-                jcSetMaintainerrTestStatus('error', 'Failed', '#dc3545', false);
+                jcSetMaintainerrTestStatus('error', 'Failed', 'var(--jc-danger)', false);
                 Dashboard.alert({
                     title: 'Missing or invalid URL',
                     message: 'Provide an HTTP(S) Maintainerr base URL of at most 2048 characters without credentials, query, fragment, or path traversal.'
@@ -1178,7 +1178,7 @@
             jcSetMaintainerrTestStatus(
                 'sync',
                 'Testing\u2026',
-                'var(--primary-accent-color, #00a4dc)',
+                'var(--jc-accent)',
                 true
             );
 
@@ -1230,7 +1230,7 @@
                 jcSetMaintainerrTestStatus(
                     warning ? 'warning' : 'check_circle',
                     warning ? 'Connected with warning' : 'Connected',
-                    warning ? '#ffb300' : '#52b54b',
+                    warning ? 'var(--jc-warning)' : 'var(--jc-success)',
                     false
                 );
                 jcTestAlert({
@@ -1280,7 +1280,7 @@
                     testToken,
                     cacheBinding
                 );
-                jcSetMaintainerrTestStatus('error', 'Failed', '#dc3545', false);
+                jcSetMaintainerrTestStatus('error', 'Failed', 'var(--jc-danger)', false);
                 jcTestAlert({
                     title: 'Connection failed',
                     message: detail + '. Confirm the server-only URL, network access, and Maintainerr 3.18 configuration.'
@@ -1315,14 +1315,14 @@
 
             statusIndicator.textContent = 'sync';
             statusIndicator.classList.add('status-check');
-            statusIndicator.style.color = 'var(--primary-accent-color, #00a4dc)';
+            statusIndicator.style.color = 'var(--jc-accent)';
 
             try {
                 const validationUrl = ApiClient.getUrl(`/JellyfinCanopy/tmdb/validate`, { apiKey: apiKey });
                 await ApiClient.ajax({ type: 'GET', url: validationUrl });
 
                 statusIndicator.textContent = 'check_circle';
-                statusIndicator.style.color = '#52b54b';
+                statusIndicator.style.color = 'var(--jc-success)';
                 try { setConnectionTestResult('tmdb', 'ok', 'API key valid', _testToken); } catch (err) { /* cache is best-effort */ }
                 jcTestAlert({ title: 'Success', message: 'Successfully connected to TMDB!' });
 
@@ -1338,7 +1338,7 @@
                 }
 
                 statusIndicator.textContent = 'error';
-                statusIndicator.style.color = '#dc3545';
+                statusIndicator.style.color = 'var(--jc-danger)';
                 try {
                     var shortDetail = e.status === 401 ? 'API key rejected'
                         : (e.status === 500 || e.status === 0 || !e.status) ? 'Unreachable'
@@ -1692,7 +1692,7 @@
             var summaryDisabledSpan = createEl('span', {
                 className: 'arr-instance-summary-disabled',
                 textContent: '(disabled)',
-                style: 'color: #e5a00d; font-size: 0.85em; margin-right: 0.5em; display: ' + (initiallyEnabled ? 'none' : 'inline')
+                style: 'color: var(--jc-warning); font-size: 0.85em; margin-right: 0.5em; display: ' + (initiallyEnabled ? 'none' : 'inline')
             });
             var summaryNameSpan = createEl('span', { className: 'arr-instance-summary-name', textContent: instance.Name || defaultName });
             var summaryUrlSpan = createEl('span', { className: 'arr-instance-summary-url', textContent: instance.Url || '' });
@@ -1839,7 +1839,7 @@
             var banner = document.createElement('div');
             banner.className = 'arr-corrupt-banner';
             banner.setAttribute('data-arr-corrupt', type);
-            banner.style.cssText = 'padding: 0.8em 1em; margin-bottom: 1em; border: 1px solid #dc3545; background: rgba(220,53,69,0.15); border-radius: 4px;';
+            banner.style.cssText = 'padding: 0.8em 1em; margin-bottom: 1em; border: 1px solid var(--jc-danger); background: color-mix(in srgb, var(--jc-danger) 15%, transparent); border-radius: 4px;';
 
             var heading = document.createElement('strong');
             heading.textContent = '⚠ Stored ' + label + ' instance configuration is corrupted.';
@@ -3113,19 +3113,19 @@
                 // Drag and drop
                 dropZone.addEventListener('dragover', (e) => {
                     e.preventDefault();
-                    dropZone.style.borderColor = 'var(--primary-accent-color, #00a4dc)';
-                    dropZone.style.backgroundColor = 'color-mix(in srgb, var(--primary-accent-color, #00a4dc) 10%, transparent)';
+                    dropZone.style.borderColor = 'var(--jc-accent)';
+                    dropZone.style.backgroundColor = 'color-mix(in srgb, var(--jc-accent) 10%, transparent)';
                 });
 
                 dropZone.addEventListener('dragleave', (e) => {
                     e.preventDefault();
-                    dropZone.style.borderColor = 'color-mix(in srgb, var(--primary-accent-color, #00a4dc) 50%, transparent)';
+                    dropZone.style.borderColor = 'color-mix(in srgb, var(--jc-accent) 50%, transparent)';
                     dropZone.style.backgroundColor = 'rgba(255,255,255,0.05)';
                 });
 
                 dropZone.addEventListener('drop', (e) => {
                     e.preventDefault();
-                    dropZone.style.borderColor = 'color-mix(in srgb, var(--primary-accent-color, #00a4dc) 50%, transparent)';
+                    dropZone.style.borderColor = 'color-mix(in srgb, var(--jc-accent) 50%, transparent)';
                     dropZone.style.backgroundColor = 'rgba(255,255,255,0.05)';
                     if (e.dataTransfer.files.length > 0) {
                         uploadBrandingImage(e.dataTransfer.files[0], config, statusDiv);
@@ -3149,14 +3149,14 @@
             // Validate that it's an image file
             if (!file.type || !file.type.startsWith('image/')) {
                 statusDiv.textContent = '✗ Only image files allowed';
-                statusDiv.style.color = '#ff6b6b';
+                statusDiv.style.color = 'var(--jc-danger)';
                 return;
             }
 
             const maxFileSize = 10 * 1024 * 1024; // 10MB
             if (file.size > maxFileSize) {
                 statusDiv.textContent = `✗ File too large (max ${maxFileSize / (1024 * 1024)}MB)`;
-                statusDiv.style.color = '#ff6b6b';
+                statusDiv.style.color = 'var(--jc-danger)';
                 return;
             }
 
@@ -3186,7 +3186,7 @@
             }
 
             statusDiv.textContent = 'Uploading...';
-            statusDiv.style.color = '#ffa500';
+            statusDiv.style.color = 'var(--jc-warning)';
 
             try {
                 const formData = new FormData();
@@ -3208,18 +3208,18 @@
 
                 if (response.ok) {
                     statusDiv.textContent = '✓ Uploaded';
-                    statusDiv.style.color = '#51cf66';
+                    statusDiv.style.color = 'var(--jc-success)';
                     await refreshBrandingPreview(config);
                     setTimeout(() => { statusDiv.textContent = ''; }, 3000);
                 } else {
                     const error = await response.text();
                     statusDiv.textContent = `✗ ${error || 'Upload failed'}`;
-                    statusDiv.style.color = '#ff6b6b';
+                    statusDiv.style.color = 'var(--jc-danger)';
                 }
             } catch (error) {
                 console.error('Upload exception:', error);
                 statusDiv.textContent = `✗ ${error.message || 'Upload error'}`;
-                statusDiv.style.color = '#ff6b6b';
+                statusDiv.style.color = 'var(--jc-danger)';
             }
         }
 
@@ -3270,7 +3270,7 @@
 
         async function deleteBrandingImage(config, statusDiv) {
             statusDiv.textContent = 'Deleting...';
-            statusDiv.style.color = '#ffa500';
+            statusDiv.style.color = 'var(--jc-warning)';
 
             const formData = new FormData();
             formData.append('fileName', config.fileName);
@@ -3287,7 +3287,7 @@
 
                 if (response.ok) {
                     statusDiv.textContent = '✓ Deleted';
-                    statusDiv.style.color = '#51cf66';
+                    statusDiv.style.color = 'var(--jc-success)';
 
                     // Hide dimensions when image is deleted
                     const dimensionsDiv = document.getElementById(config.dimensionsId);
@@ -3298,11 +3298,11 @@
                 } else {
                     const error = await response.text();
                     statusDiv.textContent = `✗ ${error || 'Delete failed'}`;
-                    statusDiv.style.color = '#ff6b6b';
+                    statusDiv.style.color = 'var(--jc-danger)';
                 }
             } catch (err) {
                 statusDiv.textContent = `✗ ${err.message || 'Delete error'}`;
-                statusDiv.style.color = '#ff6b6b';
+                statusDiv.style.color = 'var(--jc-danger)';
             }
         }
 
@@ -3777,7 +3777,7 @@
                     var icon = document.createElement('i');
                     icon.className = 'material-icons dep-required-icon';
                     icon.textContent = dep.icon || 'key';
-                    icon.style.cssText = 'font-size: 16px; vertical-align: middle; margin-left: 8px; color: #ff9800;';
+                    icon.style.cssText = 'font-size: 16px; vertical-align: middle; margin-left: 8px; color: var(--jc-warning);';
                     icon.title = dep.hint;
                     span.appendChild(icon);
                 }
@@ -5014,7 +5014,7 @@
             // this element on subsequent Test clicks. classList.add leaves the
             // identifier class intact so repeated tests on the same card work.
             indicator.classList.add('status-check');
-            indicator.style.color = 'var(--primary-accent-color, #00a4dc)';
+            indicator.style.color = 'var(--jc-accent)';
 
             var arrCacheKey = type + ':' + _jeNormalizeArrUrl(urlVal);
             try {
@@ -5023,14 +5023,14 @@
                 await ApiClient.ajax({ type: 'GET', url: validationUrl, dataType: 'json', headers: { 'X-Arr-ApiKey': apiKeyVal } });
 
                 indicator.textContent = 'check_circle';
-                indicator.style.color = '#52b54b';
+                indicator.style.color = 'var(--jc-success)';
                 indicator.classList.remove('status-check');
                 try { setConnectionTestResult(arrCacheKey, 'ok', 'Connected', _testToken); } catch (err) { /* cache is best-effort */ }
                 jcTestAlert({ title: 'Success', message: 'Successfully connected to ' + nameVal + '!' });
             } catch (e) {
                 indicator.classList.remove('status-check');
                 indicator.textContent = 'error';
-                indicator.style.color = '#dc3545';
+                indicator.style.color = 'var(--jc-danger)';
 
                 var msg = connectionErrorMessage(e, nameVal, urlVal);
                 try {
@@ -5084,8 +5084,8 @@
             setBtnLabel('Validating...');
             resultDiv.textContent = '';
             resultDiv.style.display = 'block';
-            resultDiv.style.backgroundColor = 'color-mix(in srgb, var(--primary-accent-color, #00a4dc) 10%, transparent)';
-            resultDiv.style.borderLeft = '4px solid var(--primary-accent-color, #00a4dc)';
+            resultDiv.style.backgroundColor = 'color-mix(in srgb, var(--jc-accent) 10%, transparent)';
+            resultDiv.style.borderLeft = '4px solid var(--jc-accent)';
             resultDiv.textContent = 'Testing URLs...';
 
             // Collect all pairs with basic format validation first
@@ -5125,7 +5125,7 @@
             if (formatIssues.length > 0 && pairs.length === 0) {
                 resultDiv.textContent = '';
                 resultDiv.style.backgroundColor = 'rgba(220, 53, 69, 0.15)';
-                resultDiv.style.borderLeft = '4px solid #dc3545';
+                resultDiv.style.borderLeft = '4px solid var(--jc-danger)';
                 formatIssues.forEach(function(i) { addIssue(resultDiv, i); });
                 btn.disabled = false;
                 setBtnLabel('Validate Mappings');
@@ -5181,21 +5181,21 @@
             resultDiv.textContent = '';
             if (issues.length === 0 && warnings.length === 0) {
                 resultDiv.style.backgroundColor = 'rgba(82, 181, 75, 0.15)';
-                resultDiv.style.borderLeft = '4px solid #52b54b';
+                resultDiv.style.borderLeft = '4px solid var(--jc-success)';
                 var icon = document.createElement('i');
                 icon.className = 'material-icons';
-                icon.style.cssText = 'vertical-align: middle; color: #52b54b; margin-right: 0.5em;';
+                icon.style.cssText = 'vertical-align: middle; color: var(--jc-success); margin-right: 0.5em;';
                 icon.textContent = 'check_circle';
                 resultDiv.appendChild(icon);
                 resultDiv.appendChild(document.createTextNode(good + ' mapping' + (good !== 1 ? 's' : '') + ' verified.'));
             } else {
                 if (issues.length > 0) {
                     resultDiv.style.backgroundColor = 'rgba(220, 53, 69, 0.15)';
-                    resultDiv.style.borderLeft = '4px solid #dc3545';
+                    resultDiv.style.borderLeft = '4px solid var(--jc-danger)';
                     issues.forEach(function(i) { addIssue(resultDiv, i); });
                 } else {
                     resultDiv.style.backgroundColor = 'rgba(255, 193, 7, 0.15)';
-                    resultDiv.style.borderLeft = '4px solid #ffc107';
+                    resultDiv.style.borderLeft = '4px solid var(--jc-warning)';
                 }
                 warnings.forEach(function(w) { addIssue(resultDiv, w); });
                 if (good > 0) {
@@ -5228,10 +5228,10 @@
             resultDiv.style.display = 'block';
             if (result.issues.length === 0) {
                 resultDiv.style.backgroundColor = 'rgba(82, 181, 75, 0.15)';
-                resultDiv.style.borderLeft = '4px solid #52b54b';
+                resultDiv.style.borderLeft = '4px solid var(--jc-success)';
                 var icon = document.createElement('i');
                 icon.className = 'material-icons';
-                icon.style.cssText = 'vertical-align: middle; color: #52b54b; margin-right: 0.5em;';
+                icon.style.cssText = 'vertical-align: middle; color: var(--jc-success); margin-right: 0.5em;';
                 icon.textContent = 'check_circle';
                 resultDiv.appendChild(icon);
                 resultDiv.appendChild(document.createTextNode(
@@ -5239,7 +5239,7 @@
                 ));
             } else {
                 resultDiv.style.backgroundColor = 'rgba(220, 53, 69, 0.15)';
-                resultDiv.style.borderLeft = '4px solid #dc3545';
+                resultDiv.style.borderLeft = '4px solid var(--jc-danger)';
                 result.issues.forEach(function(issue) {
                     addIssue(resultDiv, issue);
                 });
@@ -5578,7 +5578,7 @@
             btn.disabled = true;
             status.textContent = 'sync';
             status.className = 'material-icons status-check';
-            status.style.color = '#00a4dc';
+            status.style.color = 'var(--jc-accent)';
 
             try {
                 const dispatch = await jcDispatchSeerrScanDomains(rawUrls, async (domains, signal) => {
@@ -5604,21 +5604,21 @@
 
                 if (summary.outcome === 'success') {
                     status.textContent = 'check_circle';
-                    status.style.color = '#52b54b';
+                    status.style.color = 'var(--jc-success)';
                     Dashboard.alert({
                         title: 'Scans Triggered',
                         message: `Triggered "Jellyfin Recently Added Scan" for all ${total} Seerr identity domain${total === 1 ? '' : 's'}.`
                     });
                 } else if (summary.outcome === 'partial') {
                     status.textContent = 'warning';
-                    status.style.color = '#ffb300';
+                    status.style.color = 'var(--jc-warning)';
                     Dashboard.alert({
                         title: 'Scans Partially Triggered',
                         message: `Triggered ${succeeded} of ${total} Seerr identity domains; ${failed} failed. Each URL was attempted once. Check the browser console and server log for failure details.`
                     });
                 } else {
                     status.textContent = 'error';
-                    status.style.color = '#dc3545';
+                    status.style.color = 'var(--jc-danger)';
                     Dashboard.alert({
                         title: 'Trigger Failed',
                         message: `None of the ${total} Seerr identity domain${total === 1 ? '' : 's'} accepted the scan trigger. Check the browser console and server log for failure details.`
@@ -5954,7 +5954,7 @@
             } catch (e) {
                 resultDiv.style.display = 'block';
                 resultDiv.textContent = 'Could not save config. Import was not attempted.';
-                resultDiv.style.color = '#f44336';
+                resultDiv.style.color = 'var(--jc-danger)';
                 console.error('Config save failed before import:', e);
                 btn.disabled = false;
                 btn.textContent = 'Import Users Now';
@@ -5995,12 +5995,12 @@
                 while (resultDiv.firstChild) resultDiv.removeChild(resultDiv.firstChild);
                 const summary = document.createElement('div');
                 summary.textContent = 'Imported ' + importedCount + ' new user(s) out of ' + totalCount + ' total.';
-                summary.style.color = errors.length > 0 ? '#ff9800' : '#4caf50';
+                summary.style.color = errors.length > 0 ? 'var(--jc-warning)' : 'var(--jc-success)';
                 resultDiv.appendChild(summary);
                 if (errors.length > 0) {
                     const list = document.createElement('ul');
                     list.style.marginTop = '6px';
-                    list.style.color = '#f44336';
+                    list.style.color = 'var(--jc-danger)';
                     list.style.fontSize = '0.9em';
                     for (const err of errors) {
                         const li = document.createElement('li');
@@ -6014,14 +6014,14 @@
                 while (resultDiv.firstChild) resultDiv.removeChild(resultDiv.firstChild);
                 const msg = document.createElement('div');
                 msg.textContent = 'Import failed. Check Seerr configuration and API key permissions.';
-                msg.style.color = '#f44336';
+                msg.style.color = 'var(--jc-danger)';
                 resultDiv.appendChild(msg);
                 // Show response.errors[] when the server returned 502 with structured errors.
                 const detailErrors = e && e.responseJSON && Array.isArray(e.responseJSON.errors) ? e.responseJSON.errors : [];
                 if (detailErrors.length > 0) {
                     const list = document.createElement('ul');
                     list.style.marginTop = '6px';
-                    list.style.color = '#f44336';
+                    list.style.color = 'var(--jc-danger)';
                     list.style.fontSize = '0.9em';
                     for (const err of detailErrors) {
                         const li = document.createElement('li');
@@ -6595,7 +6595,7 @@
                 if (navigator.clipboard && navigator.clipboard.writeText) {
                     navigator.clipboard.writeText(htmlCode).then(function() {
                         btnText.textContent = 'Copied!';
-                        btn.style.color = '#4CAF50';
+                        btn.style.color = 'var(--jc-success)';
                         setTimeout(function() {
                             btnText.textContent = 'Copy';
                             btn.style.color = '';
@@ -6622,7 +6622,7 @@
             try {
                 document.execCommand('copy');
                 btnText.textContent = 'Copied!';
-                btn.style.color = '#4CAF50';
+                btn.style.color = 'var(--jc-success)';
                 setTimeout(function() {
                     btnText.textContent = 'Copy';
                     btn.style.color = '';
