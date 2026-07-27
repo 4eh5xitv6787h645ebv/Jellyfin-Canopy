@@ -1899,6 +1899,21 @@ test('audits generic security calls to action and plain source or built HTML pro
                 && problem.includes('private GitHub advisories')
         ));
     });
+
+    const windowsBuiltHtml = validFixture();
+    const windowsSiteFile = 'site\\index.html';
+    windowsBuiltHtml[windowsSiteFile] = '<!doctype html><html><head>'
+        + '<title>Support</title></head><body hidden>'
+        + 'For vulnerabilities, contact us on Discord.</body></html>';
+    fixture(windowsBuiltHtml, root => {
+        assert.ok(!auditSupportContract({
+            root,
+            files: [...SUPPORT_FILES, windowsSiteFile],
+        }).problems.some(
+            problem => problem.startsWith(`${windowsSiteFile}:`)
+                && problem.includes('private GitHub advisories')
+        ));
+    });
 });
 
 test('calls to action inherit adjacent prompt-block context', () => {
@@ -2670,6 +2685,16 @@ test('normalizes inline markup and invisible format characters in route intent',
         ],
         [
             'Submit a vulnera<dialog style="display:inline">bil</dialog>ity '
+                + `report through <a href="${ISSUES_ROUTE}">here</a>`,
+            'security intake links',
+        ],
+        [
+            'Submit a vulnera<marquee style="display:inline">bil</marquee>ity '
+                + `report through <a href="${ISSUES_ROUTE}">here</a>`,
+            'security intake links',
+        ],
+        [
+            'Submit a vulnera<marquee style="display:contents">bil</marquee>ity '
                 + `report through <a href="${ISSUES_ROUTE}">here</a>`,
             'security intake links',
         ],

@@ -107,6 +107,10 @@ function stripHiddenHtml(
             offset = match.index + match[0].length;
             continue;
         }
+        const selfClosing = /\/>\s*$/.test(match[0]) || HTML_VOID_ELEMENTS.has(tag);
+        if (!closing && !selfClosing && stack.length >= MAX_HTML_TREE_DEPTH) {
+            return HTML_LABEL_OVERFLOW_MARKER;
+        }
         const openingState = closing
             ? null
             : htmlOpeningVisibilityState(stack, match[0], excludeAriaHidden);
@@ -365,7 +369,7 @@ const HTML_TABLE_CONTEXT_ELEMENTS = new Set([
 const HTML_RECOVERED_BOUNDARY_END_TAGS = new Set(['br', 'p']);
 const HTML_ATOMIC_TEXT_BOUNDARY_ELEMENTS = new Set([
     'audio', 'br', 'button', 'canvas', 'embed', 'hr', 'iframe', 'img', 'input',
-    'marquee', 'meter', 'object', 'output', 'progress', 'select', 'svg', 'textarea',
+    'meter', 'object', 'output', 'progress', 'select', 'svg', 'textarea',
     'video',
 ]);
 const HTML_DEFAULT_BLOCK_BOUNDARY_ELEMENTS = new Set(

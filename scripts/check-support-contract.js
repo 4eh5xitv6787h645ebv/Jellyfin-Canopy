@@ -1022,9 +1022,10 @@ function renderedSupportSurface(source, file) {
             /\{\{\s*config\.repo_url\s*\}\}/g,
             REPOSITORY
         );
+        const normalizedFile = file.replaceAll('\\', '/');
         const htmlOptions = {
-            documentMode: COMPLETE_HTML_DOCUMENTS.has(file)
-                || file.startsWith('site/'),
+            documentMode: COMPLETE_HTML_DOCUMENTS.has(normalizedFile)
+                || normalizedFile.startsWith('site/'),
         };
         return {
             links: extractRenderedHtmlLinks(expanded, htmlOptions),

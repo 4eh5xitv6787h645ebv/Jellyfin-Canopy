@@ -771,6 +771,14 @@ test('preserves inline text adjacency while retaining block boundaries', () => {
             'Report a vulnerability',
         ],
         [
+            'Report a vulnera<marquee style="display:inline">bil</marquee>ity',
+            'Report a vulnerability',
+        ],
+        [
+            'Report a vulnera<marquee style="display:contents">bil</marquee>ity',
+            'Report a vulnerability',
+        ],
+        [
             '<output>Report a vulnera<span style="display:inherit">bil</span>ity</output>',
             'Report a vulnerability',
         ],
@@ -881,6 +889,19 @@ test('bounds malformed table-context boundary parsing', () => {
     assert.ok(
         performance.now() - started < 4_000,
         'malformed table-context fragments must be depth-bounded'
+    );
+
+    const malformedDocument = '<!doctype html><html><head></head><body>'
+        + '<div>'.repeat(16_000)
+        + 'Report a vulnerability';
+    const documentStarted = performance.now();
+    assert.match(
+        governedHtmlText(malformedDocument, new Map(), {}, { documentMode: true }),
+        /\[label truncated:/
+    );
+    assert.ok(
+        performance.now() - documentStarted < 1_000,
+        'malformed complete documents must be depth-bounded before stack searches grow'
     );
 });
 
