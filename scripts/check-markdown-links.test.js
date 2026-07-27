@@ -556,6 +556,12 @@ test('aria-labelledby ignores ancestor-hidden metadata but retains painted SVG t
             + 'style="visibility:visible">Report a problem</span></div>',
         '<div id="route-name" style="visibility:hidden"><svg '
             + 'style="visibility:visible"><text>Report a problem</text></svg></div>',
+        '<div id="route-name" style="visibility:hidden"><img '
+            + 'style="visibility:visible" alt="Report a problem"></div>',
+        '<div id="route-name" style="visibility:hidden"><button '
+            + 'style="visibility:visible" aria-label="Report a problem"></button></div>',
+        '<div id="route-name" style="visibility:hidden"><svg '
+            + 'style="visibility:visible" aria-label="Report a problem"></svg></div>',
         '<span id="route-name"><span hidden>Decorative text</span>'
             + 'Report a problem</span>',
         '<svg><g id="route-name"><g style="display:none"><text>Decorative text</text>'
@@ -569,6 +575,28 @@ test('aria-labelledby ignores ancestor-hidden metadata but retains painted SVG t
             assert.ok(link, referenced);
             assert.equal(link.label, 'Report a problem', referenced);
             assert.equal(isActionableLink(link), true, referenced);
+        }
+    }
+});
+
+test('preserves accessible-name precedence for referenced ID elements', () => {
+    const target = 'https://example.com/route';
+    for (const referenced of [
+        '<span id="name">Report a problem</span>'
+            + '<span id="route-name" aria-labelledby="name" '
+            + 'aria-label="Need help" title="Documentation">Body</span>',
+        '<span id="name">Report a problem</span>'
+            + '<img id="route-name" aria-labelledby="name" '
+            + 'aria-label="Need help" alt="Other" title="Documentation">',
+        '<img id="route-name" alt="Report a problem" title="Documentation">',
+    ]) {
+        const source = referenced
+            + `<a aria-labelledby="route-name" href="${target}"></a>`;
+        for (const links of [extractLinks(source), extractRenderedHtmlLinks(source)]) {
+            const link = links.find(candidate => candidate.type === 'link');
+            assert.ok(link);
+            assert.equal(link.label, 'Report a problem');
+            assert.equal(isActionableLink(link), true);
         }
     }
 });
@@ -631,6 +659,14 @@ test('bounds cyclic and deep aria-labelledby dependency graphs', () => {
         assert.ok(performance.now() - started < 1_000);
     }
 
+    const duplicateReferences = '<span id="route-name">Report a problem</span>'
+        + `<a aria-labelledby="route-name route-name route-name" href="${target}"></a>`;
+    for (const extract of extractors) {
+        const link = extract(duplicateReferences).find(candidate => candidate.type === 'link');
+        assert.ok(link);
+        assert.equal(link.label, 'Report a problem');
+    }
+
     const fanOut = [
         '<span id="fan-0">Report a problem</span>',
         '<span id="fan-1">Need help</span>',
@@ -649,6 +685,15 @@ test('bounds cyclic and deep aria-labelledby dependency graphs', () => {
         assert.match(link.label, /\[label truncated:/);
         assert.equal(isActionableLink(link), true);
         assert.ok(performance.now() - started < 1_000);
+    }
+
+    const splitInlineTitle = `Before <a href="${target}" title="${'x'.repeat(9_000)}">\n`
+        + '</a> after';
+    for (const extract of extractors) {
+        const link = extract(splitInlineTitle).find(candidate => candidate.type === 'link');
+        assert.ok(link);
+        assert.equal(link.label.length, 8_192);
+        assert.match(link.label, /\[label truncated:/);
     }
 });
 

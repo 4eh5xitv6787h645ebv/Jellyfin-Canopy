@@ -2131,6 +2131,53 @@ test('browser-visible style overrides remain governed', () => {
     }
 });
 
+test('governs restored accessible labels and rejects truncated route labels', () => {
+    for (const restored of [
+        '<img style="visibility:visible" alt="Submit a vulnerability report">',
+        '<svg style="visibility:visible" aria-label="Submit a vulnerability report"></svg>',
+        '<button style="visibility:visible" '
+            + 'aria-label="Submit a vulnerability report"></button>',
+    ]) {
+        const files = validFixture();
+        files['theme/partials/support.html'] = '<div id="route-name" '
+            + `style="visibility:hidden">${restored}</div>`
+            + `<a aria-labelledby="route-name" href="${ISSUES_ROUTE}"></a>\n`;
+        fixture(files, root => {
+            assert.ok(auditSupportContract({ root }).problems.some(problem => (
+                problem.startsWith('theme/partials/support.html:')
+                && problem.includes('security intake links must use private GitHub advisories')
+            )), restored);
+        });
+    }
+
+    const precedence = validFixture();
+    precedence['theme/partials/support.html'] =
+        '<img id="route-name" alt="Submit a vulnerability report" title="Documentation">'
+        + `<a aria-labelledby="route-name" href="${ISSUES_ROUTE}"></a>\n`;
+    fixture(precedence, root => {
+        assert.ok(auditSupportContract({ root }).problems.some(problem => (
+            problem.startsWith('theme/partials/support.html:')
+            && problem.includes('security intake links must use private GitHub advisories')
+        )));
+    });
+
+    for (const source of [
+        `<a aria-label="${'x'.repeat(8_192)}" href="${SECURITY_ADVISORY_ROUTE}">`
+            + 'Get help and support</a>',
+        `Before <a title="${'x'.repeat(9_000)}" href="${SECURITY_ADVISORY_ROUTE}">\n`
+            + '</a> after',
+    ]) {
+        const files = validFixture();
+        files['theme/partials/support.html'] = source;
+        fixture(files, root => {
+            assert.ok(auditSupportContract({ root }).problems.some(problem => (
+                problem.startsWith('theme/partials/support.html:')
+                && problem.includes('route label exceeds the governed HTML label limit')
+            )));
+        });
+    }
+});
+
 test('malformed nested anchors cannot hide public vulnerability routes', () => {
     for (const [route, ending] of [
         [ISSUES_ROUTE, '</a></a>'],

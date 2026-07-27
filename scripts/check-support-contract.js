@@ -12,6 +12,7 @@ const {
     extractRenderedHtmlLinks,
     governedHtmlText,
     htmlAttributes,
+    htmlLabelIsTruncated,
     isActionableLink,
     markdownHeadingAnchors,
     normalizeLinkTarget,
@@ -1209,6 +1210,11 @@ function auditGlobalRouteLinks(file, surface, root, problems, options = {}) {
         );
     }
     for (const link of surface.links.filter(isActionableLink)) {
+        const location = `${file}:${link.line || 1}`;
+        if (htmlLabelIsTruncated(link.label)) {
+            problems.push(`${location}: route label exceeds the governed HTML label limit`);
+            continue;
+        }
         if (/\{\{|\{%/.test(link.target)) continue;
         const target = absoluteUrl(link.target);
         if (['ko-fi.com', 'www.buymeacoffee.com'].includes(target?.hostname.toLowerCase())) {
@@ -1239,7 +1245,6 @@ function auditGlobalRouteLinks(file, surface, root, problems, options = {}) {
             : contextualLink;
         const text = semanticLinkText(scopedLink);
         const securityOwned = isOwnedSecurityIntakeLink(scopedLink);
-        const location = `${file}:${link.line || 1}`;
         const isRenderedFragment = options.rendered && /^#[^#]/.test(link.target);
         const bugFormFragment = isRenderedFragment
             && BUG_FORM_ROUTE_LABEL.test(normalizedLabel);

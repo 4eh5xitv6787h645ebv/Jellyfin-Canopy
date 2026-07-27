@@ -354,6 +354,10 @@ function boundedDomText(parts) {
     return `${content}${content ? ' ' : ''}${HTML_LABEL_OVERFLOW_MARKER}`;
 }
 
+function htmlLabelIsTruncated(label) {
+    return String(label || '').includes(HTML_LABEL_OVERFLOW_MARKER);
+}
+
 function htmlLabelGraphComponents(dependencies) {
     const reverse = dependencies.map(() => []);
     for (const [node, edges] of dependencies.entries()) {
@@ -415,11 +419,14 @@ function resolvedHtmlIdLabels(records, ids) {
     );
 
     for (const record of records) {
+        const labelledBy = htmlAttributeValue(record.openingTag, 'aria-labelledby');
         record.referenceIds = [...new Set(
-            htmlAttributeValue(record.openingTag, 'aria-labelledby')
+            labelledBy
                 .split(/\s+/)
                 .filter(id => labelNodeById.has(id))
         )];
+        record.usesResolvedAccessibleName = ['img', 'svg'].includes(record.tag)
+            || Boolean(labelledBy);
         for (const part of record.parts) {
             if (typeof part !== 'string') {
                 dependencies[record.index].push({ node: part.index, reference: false });
@@ -436,10 +443,12 @@ function resolvedHtmlIdLabels(records, ids) {
     for (const [entryIndex, [, record]] of idEntries.entries()) {
         const directLabel = htmlAttributeValue(record.openingTag, 'aria-label')
             || htmlAttributeValue(record.openingTag, 'title');
-        if (!record.accessibilityState.hidden
-            && !directLabel
-            && !record.visualState.persistentHidden
-            && !record.accessibilityState.persistentHidden) {
+        const readsRecordValue = !record.visualState.persistentHidden
+            && !record.accessibilityState.persistentHidden
+            && (record.accessibilityState.hidden
+                || record.usesResolvedAccessibleName
+                || !directLabel);
+        if (readsRecordValue) {
             dependencies[records.length + entryIndex].push({
                 node: record.index,
                 reference: false,
@@ -499,9 +508,11 @@ function resolvedHtmlIdLabels(records, ids) {
             const [, record] = idEntries[node - records.length];
             let label = record.accessibilityState.hidden
                 ? ''
-                : htmlAttributeValue(record.openingTag, 'aria-label')
-                    || htmlAttributeValue(record.openingTag, 'title')
-                    || '';
+                : record.usesResolvedAccessibleName
+                    ? values[record.index]
+                    : htmlAttributeValue(record.openingTag, 'aria-label')
+                        || htmlAttributeValue(record.openingTag, 'title')
+                        || '';
             if (!record.visualState.persistentHidden && !label) {
                 label = record.accessibilityState.persistentHidden
                     ? record.visualText
@@ -602,10 +613,10 @@ function htmlIdLabels(content) {
 }
 
 function ariaLabelledText(openingTag, labels) {
-    return boundedDomText(htmlAttributeValue(openingTag, 'aria-labelledby')
+    const ids = new Set(htmlAttributeValue(openingTag, 'aria-labelledby')
         .split(/\s+/)
-        .filter(Boolean)
-        .map(id => labels.get(id) || ''));
+        .filter(Boolean));
+    return boundedDomText([...ids].map(id => labels.get(id) || ''));
 }
 
 function htmlOpeningTagEnd(content, start) {
@@ -927,7 +938,8 @@ function inlineHtmlAnchorRecord(children, start, labels) {
     const title = htmlAttributeValue(openingTag, 'title');
     let body = opening.slice(anchor.openingEnd);
     const record = (endIndex, autoClosed = false) => {
-        const label = combinedHtmlLabel(explicitName, governedHtmlText(body, labels)) || title;
+        const label = combinedHtmlLabel(explicitName, governedHtmlText(body, labels))
+            || boundedDomText([title]);
         return label ? { label, endIndex, autoClosed } : null;
     };
     for (let index = start + 1; index < children.length; index += 1) {
@@ -1367,6 +1379,7 @@ module.exports = {
     governedHtmlText,
     headingSlug,
     htmlAttributes,
+    htmlLabelIsTruncated,
     htmlTagIsHidden,
     isActionableLink,
     markdownAnchors,
