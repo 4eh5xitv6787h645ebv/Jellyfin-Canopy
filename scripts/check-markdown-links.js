@@ -304,10 +304,6 @@ function markdownAnchors(source, dialect = 'github') {
     return anchors;
 }
 
-function compactVisibleText(content, labels = new Map()) {
-    return visibleHtmlText(content, labels).replace(/\s+/g, ' ').trim();
-}
-
 function compactGovernedText(content, labels = new Map()) {
     return governedHtmlText(content, labels).replace(/\s+/g, ' ').trim();
 }
@@ -326,13 +322,21 @@ function htmlIdLabels(content) {
             opening.lastIndex = openingEnd;
             continue;
         }
-        let label = htmlAttributeValue(openingTag, 'aria-label')
-            || htmlAttributeValue(openingTag, 'title');
+        const ariaHidden = htmlTagIsAriaHidden(openingTag);
+        let label = ariaHidden
+            ? ''
+            : htmlAttributeValue(openingTag, 'aria-label')
+                || htmlAttributeValue(openingTag, 'title');
         if (!label && !/\/>\s*$/.test(openingTag)) {
             const closing = new RegExp(`</${match[1]}\\s*>`, 'ig');
             closing.lastIndex = openingEnd;
             const close = closing.exec(visible);
-            if (close) label = compactVisibleText(visible.slice(openingEnd, close.index), labels);
+            if (close) {
+                label = compactGovernedText(
+                    visible.slice(match.index, close.index + close[0].length),
+                    labels
+                );
+            }
         }
         if (label) labels.set(id, label.replace(/\s+/g, ' ').trim());
         opening.lastIndex = openingEnd;

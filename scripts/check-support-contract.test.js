@@ -2329,6 +2329,16 @@ test('hidden SVG metadata cannot govern document prose or adjacent routes', () =
                 `<a href="${DISCORD_ROUTE}">${hiddenMetadata}</a>\n`,
             ],
             [
+                'theme/partials/support.html',
+                `<span id="hidden-route-name">${hiddenMetadata}</span>`
+                    + `<a aria-labelledby="hidden-route-name" href="${DISCORD_ROUTE}"></a>\n`,
+            ],
+            [
+                'theme/partials/support.html',
+                hiddenMetadata.replace('<svg ', '<svg id="hidden-route-name" ')
+                    + `<a aria-labelledby="hidden-route-name" href="${DISCORD_ROUTE}"></a>\n`,
+            ],
+            [
                 'docs/getting-started.md',
                 `Prefix <a href="${DISCORD_ROUTE}">${hiddenMetadata}</a>.\n`,
             ],
@@ -2366,6 +2376,16 @@ test('hidden SVG metadata cannot govern document prose or adjacent routes', () =
             [
                 'theme/partials/support.html',
                 `<p>${metadata} <a href="${ISSUES_ROUTE}">Click here</a>.</p>\n`,
+            ],
+            [
+                'theme/partials/support.html',
+                `<span id="route-name">${metadata}</span>`
+                    + `<a aria-labelledby="route-name" href="${ISSUES_ROUTE}"></a>\n`,
+            ],
+            [
+                'theme/partials/support.html',
+                metadata.replace('<svg ', '<svg id="route-name" ')
+                    + `<a aria-labelledby="route-name" href="${ISSUES_ROUTE}"></a>\n`,
             ],
         ]) {
             const files = validFixture();
