@@ -2603,6 +2603,33 @@ test('audits generic aria-labelled HTML descendants as security intake links', (
     }
 });
 
+test('normalizes inline markup and invisible format characters in route intent', () => {
+    for (const source of [
+        `<a href="${ISSUES_ROUTE}">Submit a vulnera<span>bil</span>ity report</a>`,
+        `<a href="${ISSUES_ROUTE}">Submit a vulnera<wbr>bility report</a>`,
+        `<a href="${ISSUES_ROUTE}">Submit a vulnera\u200Bbility report</a>`,
+    ]) {
+        const files = validFixture();
+        files['theme/partials/support.html'] = source;
+        fixture(files, root => {
+            assert.ok(auditSupportContract({ root }).problems.some(problem => (
+                problem.startsWith('theme/partials/support.html:')
+                && problem.includes('security intake links must use private GitHub advisories')
+            )), source);
+        });
+    }
+
+    const context = validFixture();
+    context['docs/getting-started.md'] =
+        `Submit a vulnera\u200Bbility report through [this link](${ISSUES_ROUTE}).\n`;
+    fixture(context, root => {
+        assert.ok(auditSupportContract({ root }).problems.some(problem => (
+            problem.startsWith('docs/getting-started.md:')
+            && problem.includes('security intake links must use private GitHub advisories')
+        )));
+    });
+});
+
 test('rejects every independently reproduced support-contract bypass', () => {
     const securityContact = validFixture();
     securityContact['docs/getting-started.md'] = [

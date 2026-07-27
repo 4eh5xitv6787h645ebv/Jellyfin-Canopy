@@ -452,13 +452,17 @@ function hardSentenceBoundaries(text) {
     return boundaries;
 }
 
+function routeText(value) {
+    return String(value || '').replace(/\p{Cf}/gu, '');
+}
+
 function semanticLinkText(link) {
-    const label = String(link?.label || '').trim();
-    let before = String(link?.contextBefore || '');
-    let after = String(link?.contextAfter || '');
+    const label = routeText(link?.label).trim();
+    let before = routeText(link?.contextBefore);
+    let after = routeText(link?.contextAfter);
     if (!Object.hasOwn(link || {}, 'contextBefore')
         || !Object.hasOwn(link || {}, 'contextAfter')) {
-        const context = String(link?.context || '').trim();
+        const context = routeText(link?.context).trim();
         const offset = context.toLowerCase().indexOf(label.toLowerCase());
         if (!label || offset === -1) return `${label} ${context}`.trim();
         before = context.slice(0, offset);
@@ -523,9 +527,9 @@ function semanticLinkText(link) {
 }
 
 function htmlContextOwnsRoute(link) {
-    const before = String(link?.contextBefore || '').slice(-160);
-    const priorBefore = String(link?.contextBeforePrior || '').slice(-160);
-    const after = String(link?.contextAfter || '').slice(0, 160);
+    const before = routeText(link?.contextBefore).slice(-160);
+    const priorBefore = routeText(link?.contextBeforePrior).slice(-160);
+    const after = routeText(link?.contextAfter).slice(0, 160);
     const ownsRoute = text => (
         BUG_ROUTE_INTENT.test(text)
         || FEATURE_ROUTE_LABEL.test(text)
@@ -541,17 +545,17 @@ function htmlContextOwnsRoute(link) {
 
 function htmlExtendedContextBefore(link) {
     if (!link?.contextBeforeStartsAtLink || !link?.contextBeforePrior) {
-        return String(link?.contextBefore || '');
+        return routeText(link?.contextBefore);
     }
-    if (/[.!?;]\s*$/.test(String(link?.contextBefore || '').trim())) {
-        return String(link?.contextBefore || '');
+    if (/[.!?;]\s*$/.test(routeText(link?.contextBefore).trim())) {
+        return routeText(link?.contextBefore);
     }
-    return `${link.contextBeforePrior} ${link.contextBefore || ''}`
+    return `${routeText(link.contextBeforePrior)} ${routeText(link.contextBefore)}`
         .replace(/\s+/g, ' ').trim();
 }
 
 function linkWithPriorBlockContext(link, normalizedLabel, html) {
-    const prior = String(link?.contextBeforeBlock || '').replace(/\s+/g, ' ').trim();
+    const prior = routeText(link?.contextBeforeBlock).replace(/\s+/g, ' ').trim();
     if (!prior) return link;
     const promptEnd = prior.match(/[?:]\s*$/)?.index;
     const promptStart = promptEnd === undefined ? 0 : (
@@ -561,8 +565,10 @@ function linkWithPriorBlockContext(link, normalizedLabel, html) {
     const dependent = html
         ? HTML_CONTEXT_DEPENDENT_ROUTE_LABEL
         : CONTEXT_DEPENDENT_ROUTE_LABEL;
-    const own = `${link?.contextBefore || ''} ${link?.label || ''} ${link?.contextAfter || ''}`
-        .replace(/\s+/g, ' ').trim();
+    const own = (
+        `${routeText(link?.contextBefore)} ${routeText(link?.label)} `
+        + routeText(link?.contextAfter)
+    ).replace(/\s+/g, ' ').trim();
     if (!dependent.test(normalizedLabel)
         || !ROUTE_INTENT_TERM.test(prompt)
         || ROUTE_INTENT_TERM.test(own)) {
@@ -570,7 +576,8 @@ function linkWithPriorBlockContext(link, normalizedLabel, html) {
     }
     return {
         ...link,
-        contextBefore: `${prior} ${link?.contextBefore || ''}`.replace(/\s+/g, ' ').trim(),
+        contextBefore: `${prior} ${routeText(link?.contextBefore)}`
+            .replace(/\s+/g, ' ').trim(),
     };
 }
 
@@ -1110,7 +1117,7 @@ function routesToDiscussions(surface) {
         const pathname = link?.type === 'link' ? repositoryPath(link.target).toLowerCase() : '';
         return pathname === discussionPath || pathname.startsWith(`${discussionPath}/`);
     })) return true;
-    return surface.text.split(/(?:\r?\n|[.!?])+/).some((clause) => {
+    return routeText(surface.text).split(/(?:\r?\n|[.!?])+/).some((clause) => {
         if (!/\b(?:github\s+discussions?|discussions?.{0,80}\bgithub)\b/i.test(clause)) {
             return false;
         }
@@ -1144,7 +1151,7 @@ function explicitlyRejectsPublicSecurityRoute(clause) {
 }
 
 function routesSecurityTextPublicly(text) {
-    for (const sentence of text.split(/[.!?\n]+/)) {
+    for (const sentence of routeText(text).split(/[.!?\n]+/)) {
         if (NON_VULNERABILITY_CONTEXT.test(sentence)) continue;
         const securityContext = SECURITY_CONTEXT_HEADING.test(sentence);
         if (sentence.split(/;+/).some((clause) => (
@@ -1224,7 +1231,7 @@ function auditGlobalRouteLinks(file, surface, root, problems, options = {}) {
         // neutral labels inherit only explicit prose that directs the reader
         // through this link, so descriptive "Help & Community" references do
         // not absorb unrelated intake language later in the container.
-        const normalizedLabel = String(link.label || '')
+        const normalizedLabel = routeText(link.label)
             .replace(/[^\p{L}\p{N}\s-]/gu, ' ')
             .replace(/\s+/g, ' ')
             .trim();

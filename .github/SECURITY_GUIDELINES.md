@@ -262,7 +262,7 @@ We use the following tools:
 
 - [OWASP Top 10](https://owasp.org/www-project-top-ten/)
 - [CWE Top 25](https://cwe.mitre.org/top25/)
-- [.NET Security Guidelines](https://docs.microsoft.com/en-us/dotnet/standard/security/)
+- [.NET Security Guidelines](https://learn.microsoft.com/en-us/dotnet/standard/security/)
 - [Jellyfin Security](https://jellyfin.org/docs/general/security/)
 
 ## Questions?

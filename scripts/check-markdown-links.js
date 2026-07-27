@@ -121,7 +121,9 @@ function visuallyRenderedHtmlText(content, initialState = null) {
         // SVG title/description elements are metadata, but SVG <text> is
         // genuinely painted content and must remain available to route checks.
         .replace(/<(?:desc|title)\b[\s\S]*?<\/(?:desc|title)\s*>/gi, ' ')
-        .replace(/<[^>]*>/g, ' ');
+        .replace(/<\/?([a-z][a-z0-9:-]*)\b[^>]*>/gi, (tag, name) => (
+            HTML_TEXT_BOUNDARY_ELEMENTS.has(name.toLowerCase()) ? ' ' : ''
+        ));
     return markdown.utils.unescapeAll(visible);
 }
 
@@ -304,6 +306,42 @@ function boundedDomText(parts) {
         .slice(0, contentLimit)
         .trimEnd();
     return `${content}${content ? ' ' : ''}${HTML_LABEL_OVERFLOW_MARKER}`;
+}
+
+const HTML_TEXT_BOUNDARY_ELEMENTS = new Set([
+    'address', 'article', 'aside', 'blockquote', 'br', 'button', 'dd', 'details',
+    'div', 'dl', 'dt', 'fieldset', 'figcaption', 'figure', 'footer', 'form',
+    'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'header', 'hr', 'iframe', 'img', 'input',
+    'li', 'main', 'meter', 'nav', 'ol', 'output', 'p', 'pre', 'progress', 'section',
+    'select', 'summary', 'svg', 'table', 'tbody', 'td', 'textarea', 'tfoot', 'th',
+    'thead', 'tr', 'ul',
+]);
+
+function boundedHtmlParts(parts, valueForPart) {
+    let text = '';
+    let overflow = false;
+    const append = (value) => {
+        const fragment = String(value || '');
+        if (!fragment) return;
+        if (fragment.includes(HTML_LABEL_OVERFLOW_MARKER)) overflow = true;
+        const remaining = MAX_HTML_LABEL_LENGTH - text.length;
+        if (remaining <= 0) {
+            overflow = true;
+        } else if (fragment.length > remaining) {
+            text += fragment.slice(0, remaining);
+            overflow = true;
+        } else {
+            text += fragment;
+        }
+    };
+    for (const part of parts) {
+        const boundary = typeof part !== 'string'
+            && HTML_TEXT_BOUNDARY_ELEMENTS.has(part.tag);
+        if (boundary) append(' ');
+        append(valueForPart(part));
+        if (boundary) append(' ');
+    }
+    return boundedDomText(overflow ? [text, HTML_LABEL_OVERFLOW_MARKER] : [text]);
 }
 
 function htmlLabelIsTruncated(label) {
@@ -519,11 +557,11 @@ function htmlAccessibleTreeText(content, labels, excludeAriaHidden, initialState
     for (let index = records.length - 1; index >= 0; index -= 1) {
         const record = records[index];
         if (['script', 'style'].includes(record.tag)) continue;
-        const body = boundedDomText(record.parts.map(part => (
+        const body = boundedHtmlParts(record.parts, part => (
             typeof part === 'string'
                 ? record.accessibilityState.hidden ? '' : part
                 : values[part.index]
-        )));
+        ));
         let value = body;
         if (!record.accessibilityState.hidden) {
             const id = htmlAttributeValue(record.openingTag, 'id');
@@ -536,11 +574,11 @@ function htmlAccessibleTreeText(content, labels, excludeAriaHidden, initialState
         }
         values[index] = boundedDomText([value]);
     }
-    return boundedDomText(rootParts.map(part => (
+    return boundedHtmlParts(rootParts, part => (
         typeof part === 'string'
             ? initial.hidden ? '' : part
             : values[part.index]
-    )));
+    ));
 }
 
 const HTML_LABELABLE_ELEMENTS = new Set([
@@ -679,11 +717,11 @@ function resolvedHtmlIdLabels(records, ids) {
         if (node < records.length) {
             const record = records[node];
             if (!['script', 'style'].includes(record.tag)) {
-                const body = boundedDomText(record.parts.map(part => (
+                const body = boundedHtmlParts(record.parts, part => (
                     typeof part === 'string'
                         ? record.accessibilityState.hidden ? '' : part
                         : values[part.index]
-                )));
+                ));
                 let text = body;
                 if (!record.accessibilityState.hidden) {
                     const referenced = boundedDomText(record.referenceIds
@@ -719,9 +757,9 @@ function resolvedHtmlIdLabels(records, ids) {
             }
         } else if (node < idOffset) {
             const association = associationNodes[node - associationOffset];
-            const body = boundedDomText(association.parts.map(part => (
+            const body = boundedHtmlParts(association.parts, part => (
                 typeof part === 'string' ? part : values[part.index]
-            )));
+            ));
             values[node] = boundedDomText([
                 htmlAttributeText(association.label.openingTag, 'aria-label')
                     || body
@@ -729,11 +767,11 @@ function resolvedHtmlIdLabels(records, ids) {
             ]);
         } else {
             const [, record] = idEntries[node - idOffset];
-            const body = boundedDomText(record.parts.map(part => (
+            const body = boundedHtmlParts(record.parts, part => (
                 typeof part === 'string'
                     ? record.accessibilityState.hidden ? '' : part
                     : values[part.index]
-            )));
+            ));
             let label = record.accessibilityState.hidden ? '' : (
                 htmlEmbeddedControlValue(record, body, values)
                 || values[record.index]
@@ -836,11 +874,11 @@ function htmlIdLabels(content) {
             record.visualText = '';
             continue;
         }
-        record.visualText = boundedDomText(record.parts.map(part => (
+        record.visualText = boundedHtmlParts(record.parts, part => (
             typeof part === 'string'
                 ? record.visualState.hidden ? '' : part
                 : part.visualText
-        )));
+        ));
     }
     return resolvedHtmlIdLabels(records, ids);
 }

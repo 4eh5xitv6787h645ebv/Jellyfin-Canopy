@@ -756,6 +756,22 @@ test('resolves native names in direct anchor descendants', () => {
     }
 });
 
+test('preserves inline text adjacency while retaining block boundaries', () => {
+    const target = 'https://example.com/route';
+    for (const [body, expected] of [
+        ['Report a vulnera<span>bil</span>ity', 'Report a vulnerability'],
+        ['Report a vulnera<wbr>bility', 'Report a vulnerability'],
+        ['<div>Report a</div><div>vulnerability</div>', 'Report a vulnerability'],
+    ]) {
+        const source = `<a href="${target}">${body}</a>`;
+        for (const links of [extractLinks(source), extractRenderedHtmlLinks(source)]) {
+            const link = links.find(candidate => candidate.type === 'link');
+            assert.ok(link, body);
+            assert.equal(link.label, expected, body);
+        }
+    }
+});
+
 test('resolves nested same-tag ID labels with bounded traversal work', () => {
     const target = 'https://example.com/route';
     const depth = 500;
