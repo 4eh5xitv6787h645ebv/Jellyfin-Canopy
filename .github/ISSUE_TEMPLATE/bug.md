@@ -9,8 +9,8 @@ assignees: ''
 
 > [!IMPORTANT]
 > Do not report security vulnerabilities here. Follow
-> [the repository security policy](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/security/policy)
-> to contact a maintainer privately.
+> [the private vulnerability-reporting form](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/security/advisories/new)
+> to contact the maintainers without disclosing the report publicly.
 
 ## Security reports
 

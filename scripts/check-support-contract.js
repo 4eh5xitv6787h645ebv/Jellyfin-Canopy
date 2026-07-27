@@ -3,6 +3,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { URL } = require('node:url');
+const MarkdownIt = require('markdown-it');
 const { parseDocument } = require('yaml');
 const { extractLinks, validateMarkdownFile } = require('./check-markdown-links');
 
@@ -10,7 +11,7 @@ const ROOT = path.join(__dirname, '..');
 const REPOSITORY = 'https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy';
 const DISCUSSIONS_ROUTE = `${REPOSITORY}/discussions`;
 const ISSUES_ROUTE = `${REPOSITORY}/issues`;
-const SECURITY_POLICY_ROUTE = `${REPOSITORY}/security/policy`;
+const SECURITY_ADVISORY_ROUTE = `${REPOSITORY}/security/advisories/new`;
 const TEMPLATE_DIRECTORY = '.github/ISSUE_TEMPLATE';
 const TEMPLATE_ENTRIES = ['bug.md', 'config.yml', 'feature_request.md'];
 const SUPPORT_FILES = [
@@ -48,6 +49,8 @@ const FEATURE_INTAKE_FILES = [
     'docs/about.md',
     'docs/help.md',
 ];
+const markdown = new MarkdownIt({ html: true, linkify: true });
+markdown.linkify.set({ fuzzyEmail: false, fuzzyLink: false });
 
 function readRegularFile(root, file, problems) {
     const absolute = path.join(root, file);
@@ -146,10 +149,63 @@ function auditTemplateDirectory(root, problems) {
     }
 }
 
-function requireSections(body, file, sections, problems) {
-    const headings = new Set(
-        [...body.matchAll(/^##\s+(.+?)\s*$/gm)].map(match => match[1].trim())
-    );
+function visibleHtmlText(content) {
+    return content
+        .replace(/<!--[\s\S]*?-->/g, ' ')
+        .replace(/<(script|style)\b[\s\S]*?<\/\1\s*>/gi, ' ')
+        .replace(/<[^>]*>/g, ' ');
+}
+
+function inlineVisibleText(children = []) {
+    return children.map((token) => {
+        if (token.type === 'text') return token.content;
+        if (token.type === 'image') return token.content;
+        if (token.type === 'softbreak' || token.type === 'hardbreak') return ' ';
+        if (token.type === 'html_inline') return visibleHtmlText(token.content);
+        return '';
+    }).join('');
+}
+
+function renderedText(tokens) {
+    return tokens.map((token) => {
+        if (token.type === 'inline') return inlineVisibleText(token.children);
+        if (token.type === 'html_block') return visibleHtmlText(token.content);
+        return '';
+    }).join(' ').replace(/\s+/g, ' ').trim();
+}
+
+function headingText(tokens, index) {
+    const inline = tokens[index + 1];
+    return inline?.type === 'inline' ? inlineVisibleText(inline.children).trim() : '';
+}
+
+function sectionTokens(tokens, section) {
+    let start = -1;
+    for (let index = 0; index < tokens.length; index += 1) {
+        if (tokens[index].type !== 'heading_open' || tokens[index].tag !== 'h2') continue;
+        if (headingText(tokens, index) === section) {
+            start = index + 3;
+            break;
+        }
+    }
+    if (start === -1) return [];
+    let end = tokens.length;
+    for (let index = start; index < tokens.length; index += 1) {
+        if (tokens[index].type === 'heading_open' && tokens[index].tag === 'h2') {
+            end = index;
+            break;
+        }
+    }
+    return tokens.slice(start, end);
+}
+
+function requireSections(tokens, file, sections, problems) {
+    const headings = new Set();
+    for (let index = 0; index < tokens.length; index += 1) {
+        if (tokens[index].type === 'heading_open' && tokens[index].tag === 'h2') {
+            headings.add(headingText(tokens, index));
+        }
+    }
     for (const section of sections) {
         if (!headings.has(section)) problems.push(`${file}: missing required section "## ${section}"`);
     }
@@ -165,24 +221,40 @@ function requireRenderedIssueLinks(body, file, problems) {
 }
 
 function hasFileTransformationChecklist(body) {
-    const lines = body.replace(/\r\n?/g, '\n').split('\n');
-    const taskStart = /^\s*(?:(?:[-*+]|\d{1,9}[.)])\s+)?\[[ xX]\](?:[ \t]+(.*))?$/;
-    const listStart = /^\s*(?:[-*+]|\d{1,9}[.)])\s+/;
-    for (let index = 0; index < lines.length; index += 1) {
-        const start = lines[index].match(taskStart);
-        if (!start) continue;
-        const item = [start[1] || ''];
-        for (let next = index + 1; next < lines.length; next += 1) {
-            const line = lines[next];
-            if (!line.trim() || /^\s*#{1,6}\s+/.test(line) || listStart.test(line)) break;
-            item.push(line.trim());
+    const tokens = markdown.parse(body, {});
+    const isFileTransformationTask = (text) => {
+        if (!/^\s*\[[ xX]\](?:\s+|$)/.test(text)) return false;
+        return text.toLowerCase().replace(/[^a-z0-9]/g, '').includes('filetransformation');
+    };
+    for (let index = 0; index < tokens.length; index += 1) {
+        if (tokens[index].type === 'list_item_open') {
+            let depth = 1;
+            let end = index + 1;
+            for (; end < tokens.length; end += 1) {
+                if (tokens[end].type === 'list_item_open') depth += 1;
+                if (tokens[end].type === 'list_item_close') {
+                    depth -= 1;
+                    if (depth === 0) break;
+                }
+            }
+            if (isFileTransformationTask(renderedText(tokens.slice(index + 1, end)))) return true;
+            continue;
         }
-        if (item.join('').toLowerCase().replace(/[^a-z0-9]/g, '')
-            .includes('filetransformation')) {
-            return true;
-        }
+        if (tokens[index].type === 'inline'
+            && isFileTransformationTask(inlineVisibleText(tokens[index].children))) return true;
     }
     return false;
+}
+
+function renderedSupportSurface(source, file) {
+    if (file.endsWith('.yml') || file.endsWith('.yaml')) {
+        const document = parseDocument(source, { prettyErrors: false, uniqueKeys: true });
+        if (document.errors.length > 0) return '';
+        return JSON.stringify(document.toJS());
+    }
+    const tokens = markdown.parse(source, {});
+    const links = extractLinks(source).map(link => link.target || '');
+    return `${renderedText(tokens)} ${links.join(' ')}`;
 }
 
 function isAbsoluteHttpsUrl(value) {
@@ -237,11 +309,11 @@ function requireChooserConfig(config, file, problems) {
         }
     }
     const security = config.contact_links.find(contact => (
-        isMapping(contact) && contact.url === SECURITY_POLICY_ROUTE
+        isMapping(contact) && contact.url === SECURITY_ADVISORY_ROUTE
     ));
     if (!security || !/security|vulnerabil/i.test(String(security.name || ''))
         || !/privat/i.test(String(security.about || ''))) {
-        problems.push(`${file}: must provide a private security-report contact link to ${SECURITY_POLICY_ROUTE}`);
+        problems.push(`${file}: must provide a private security-report contact link to ${SECURITY_ADVISORY_ROUTE}`);
     }
 }
 
@@ -255,7 +327,8 @@ function auditSupportContract(options = {}) {
     for (const file of files) {
         const source = readRegularFile(root, file, problems);
         sources.set(file, source);
-        if (source.includes(DISCUSSIONS_ROUTE) || /\bGitHub Discussions\b/i.test(source)) {
+        const surface = renderedSupportSurface(source, file);
+        if (surface.includes(DISCUSSIONS_ROUTE) || /\bGitHub Discussions\b/i.test(surface)) {
             problems.push(`${file}: routes users to disabled GitHub Discussions`);
         }
     }
@@ -264,21 +337,26 @@ function auditSupportContract(options = {}) {
         problems.push(...validateMarkdownFile(file, root));
     }
     for (const file of FEATURE_INTAKE_FILES) {
-        if (!(sources.get(file) || '').includes(ISSUES_ROUTE)) {
+        const source = sources.get(file) || '';
+        if (!extractLinks(source).some(link => (
+            link.target === ISSUES_ROUTE || link.target?.startsWith(`${ISSUES_ROUTE}/`)
+        ))) {
             problems.push(`${file}: must route feature intake to GitHub Issues`);
         }
     }
 
     const bugFile = '.github/ISSUE_TEMPLATE/bug.md';
     const bug = issueTemplate(sources.get(bugFile) || '', bugFile, problems);
+    const bugTokens = markdown.parse(bug.body, {});
+    const bugText = renderedText(bugTokens);
     requireTemplateMetadata(bug.metadata, bugFile, 'bug', problems);
-    requireSections(bug.body, bugFile, BUG_SECTIONS, problems);
+    requireSections(bugTokens, bugFile, BUG_SECTIONS, problems);
     requireRenderedIssueLinks(bug.body, bugFile, problems);
-    if (!bug.body.includes(SECURITY_POLICY_ROUTE)
-        || !/do not report security vulnerabilities here/i.test(bug.body)) {
-        problems.push(`${bugFile}: must route vulnerability reports to the private repository security policy`);
+    if (!extractLinks(bug.body).some(link => link.target === SECURITY_ADVISORY_ROUTE)
+        || !/do not report security vulnerabilities here/i.test(bugText)) {
+        problems.push(`${bugFile}: must route vulnerability reports to private GitHub advisories`);
     }
-    if (!/redact/i.test(bug.body)) {
+    if (!/redact/i.test(renderedText(sectionTokens(bugTokens, 'Logs')))) {
         problems.push(`${bugFile}: logs section must require sensitive-data redaction`);
     }
     if (hasFileTransformationChecklist(bug.body)) {
@@ -287,8 +365,9 @@ function auditSupportContract(options = {}) {
 
     const featureFile = '.github/ISSUE_TEMPLATE/feature_request.md';
     const feature = issueTemplate(sources.get(featureFile) || '', featureFile, problems);
+    const featureTokens = markdown.parse(feature.body, {});
     requireTemplateMetadata(feature.metadata, featureFile, 'enhancement', problems);
-    requireSections(feature.body, featureFile, FEATURE_SECTIONS, problems);
+    requireSections(featureTokens, featureFile, FEATURE_SECTIONS, problems);
     requireRenderedIssueLinks(feature.body, featureFile, problems);
 
     const configFile = '.github/ISSUE_TEMPLATE/config.yml';
@@ -315,7 +394,7 @@ module.exports = {
     DISCUSSIONS_ROUTE,
     FEATURE_SECTIONS,
     ISSUES_ROUTE,
-    SECURITY_POLICY_ROUTE,
+    SECURITY_ADVISORY_ROUTE,
     SUPPORT_FILES,
     auditSupportContract,
 };

@@ -8,7 +8,7 @@ const test = require('node:test');
 const {
     DISCUSSIONS_ROUTE,
     ISSUES_ROUTE,
-    SECURITY_POLICY_ROUTE,
+    SECURITY_ADVISORY_ROUTE,
     SUPPORT_FILES,
     auditSupportContract,
 } = require('./check-support-contract');
@@ -22,7 +22,7 @@ assignees: ''
 ---
 
 > Do not report security vulnerabilities here. Follow
-> [the security policy](${SECURITY_POLICY_ROUTE}).
+> [the private advisory form](${SECURITY_ADVISORY_ROUTE}).
 
 ## Security reports
 Use the private route.
@@ -65,7 +65,7 @@ Context.
 const CONFIG = `blank_issues_enabled: false
 contact_links:
   - name: Security vulnerability
-    url: ${SECURITY_POLICY_ROUTE}
+    url: ${SECURITY_ADVISORY_ROUTE}
     about: Report vulnerabilities privately.
 `;
 
@@ -125,7 +125,7 @@ assignees: ''
             '.github/ISSUE_TEMPLATE/bug.md: missing required section "## Steps to reproduce"'
         ));
         assert.ok(problems.includes(
-            '.github/ISSUE_TEMPLATE/bug.md: must route vulnerability reports to the private repository security policy'
+            '.github/ISSUE_TEMPLATE/bug.md: must route vulnerability reports to private GitHub advisories'
         ));
         assert.ok(problems.includes(
             '.github/ISSUE_TEMPLATE/bug.md: logs section must require sensitive-data redaction'
@@ -136,21 +136,66 @@ assignees: ''
     });
 });
 
+test('non-rendered comments and fences cannot satisfy intake requirements', () => {
+    const files = validFixture();
+    files['README.md'] = `<!-- [GitHub Issues](${ISSUES_ROUTE}) -->\n`;
+    files['.github/ISSUE_TEMPLATE/bug.md'] = BUG_TEMPLATE
+        .replace(
+            `> Do not report security vulnerabilities here. Follow
+> [the private advisory form](${SECURITY_ADVISORY_ROUTE}).
+`,
+            `<!-- Do not report security vulnerabilities here.
+[Private advisory](${SECURITY_ADVISORY_ROUTE}). -->
+`
+        )
+        .replace('## Summary\nSummary.', '<!--\n## Summary\nSummary.\n-->')
+        .replace('## Steps to reproduce\nSteps.', '```md\n## Steps to reproduce\nSteps.\n```')
+        .replace('## Logs\nAttach redacted logs.', '## Logs\nAttach logs.\n<!-- redact these logs -->');
+    fixture(files, root => {
+        const problems = auditSupportContract({ root }).problems;
+        assert.ok(problems.includes('README.md: must route feature intake to GitHub Issues'));
+        assert.ok(problems.includes(
+            '.github/ISSUE_TEMPLATE/bug.md: missing required section "## Summary"'
+        ));
+        assert.ok(problems.includes(
+            '.github/ISSUE_TEMPLATE/bug.md: missing required section "## Steps to reproduce"'
+        ));
+        assert.ok(problems.includes(
+            '.github/ISSUE_TEMPLATE/bug.md: must route vulnerability reports to private GitHub advisories'
+        ));
+        assert.ok(problems.includes(
+            '.github/ISSUE_TEMPLATE/bug.md: logs section must require sensitive-data redaction'
+        ));
+    });
+});
+
+test('redaction guidance must render inside the Logs section', () => {
+    const files = validFixture();
+    files['.github/ISSUE_TEMPLATE/bug.md'] = BUG_TEMPLATE
+        .replace('Attach redacted logs.', 'Attach logs.')
+        .replace('## Additional context\nContext.', '## Additional context\nRedact unrelated context.');
+    fixture(files, root => {
+        assert.ok(auditSupportContract({ root }).problems.includes(
+            '.github/ISSUE_TEMPLATE/bug.md: logs section must require sensitive-data redaction'
+        ));
+    });
+});
+
 test('enforces GitHub template metadata and rendered issue-body link semantics', () => {
     const files = validFixture();
     files['.github/ISSUE_TEMPLATE/bug.md'] = BUG_TEMPLATE
         .replace('name: Bug report', 'name: Bug')
-        .replace(SECURITY_POLICY_ROUTE, '../../SECURITY.md');
+        .replace(SECURITY_ADVISORY_ROUTE, '../../SECURITY.md');
     fixture(files, root => {
         const problems = auditSupportContract({ root }).problems;
         assert.ok(problems.includes(
             '.github/ISSUE_TEMPLATE/bug.md: front matter name must contain 4 to 64 characters'
         ));
         assert.ok(problems.includes(
-            '.github/ISSUE_TEMPLATE/bug.md:2: rendered issue-body links must use an absolute HTTPS URL: ../../SECURITY.md'
+            '.github/ISSUE_TEMPLATE/bug.md:3: rendered issue-body links must use an absolute HTTPS URL: ../../SECURITY.md'
         ));
         assert.ok(problems.includes(
-            '.github/ISSUE_TEMPLATE/bug.md: must route vulnerability reports to the private repository security policy'
+            '.github/ISSUE_TEMPLATE/bug.md: must route vulnerability reports to private GitHub advisories'
         ));
     });
 });
@@ -210,6 +255,8 @@ test('rejects spaced and multiline File Transformation baseline checklists', () 
         '- [x] File\n  Transformation enabled',
         '- [ ] File\nTransformation installed',
         '1. [ ] File Transformation installed',
+        '> - [ ] File Transformation installed',
+        '- [ ] File\n\n  Transformation installed',
     ]) {
         const files = validFixture();
         files['.github/ISSUE_TEMPLATE/bug.md'] = BUG_TEMPLATE.replace(
@@ -256,7 +303,7 @@ test('requires a governed feature template and private security chooser route', 
             '.github/ISSUE_TEMPLATE/config.yml: blank_issues_enabled must be false'
         ));
         assert.ok(problems.includes(
-            `.github/ISSUE_TEMPLATE/config.yml: must provide a private security-report contact link to ${SECURITY_POLICY_ROUTE}`
+            `.github/ISSUE_TEMPLATE/config.yml: must provide a private security-report contact link to ${SECURITY_ADVISORY_ROUTE}`
         ));
     });
 });

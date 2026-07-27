@@ -62,7 +62,11 @@ test('hidden support templates and chooser URLs are part of the reviewed invento
         'CONTRIBUTING.md': '# Contributing\n',
         'docs/index.md': '# Home\n',
         'mkdocs.yml': 'site_name: Fixture\n',
-        '.github/ISSUE_TEMPLATE/bug.md': '[Help](https://unreviewed.example/bug-help)\n',
+        '.github/ISSUE_TEMPLATE/bug.md': [
+            '[Help](https://unreviewed.example/bug-help)',
+            'Bare https://unreviewed.example/bare-help',
+            '',
+        ].join('\n'),
         '.github/ISSUE_TEMPLATE/config.yml': [
             'contact_links:',
             '  - url: https://unreviewed.example/private',
@@ -78,6 +82,10 @@ test('hidden support templates and chooser URLs are part of the reviewed invento
         assert.ok(problems.includes(
             '.github/ISSUE_TEMPLATE/bug.md:1: external URL is absent from the reviewed offline inventory: '
             + 'https://unreviewed.example/bug-help'
+        ));
+        assert.ok(problems.includes(
+            '.github/ISSUE_TEMPLATE/bug.md:2: external URL is absent from the reviewed offline inventory: '
+            + 'https://unreviewed.example/bare-help'
         ));
         assert.ok(problems.includes(
             '.github/ISSUE_TEMPLATE/config.yml:2: external URL is absent from the reviewed offline inventory: '

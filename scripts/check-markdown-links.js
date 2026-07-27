@@ -6,7 +6,8 @@ const MarkdownIt = require('markdown-it');
 
 const ROOT = path.join(__dirname, '..');
 const REQUIRED_FILES = ['README.md', 'CONTRIBUTING.md'];
-const markdown = new MarkdownIt({ html: true });
+const markdown = new MarkdownIt({ html: true, linkify: true });
+markdown.linkify.set({ fuzzyEmail: false, fuzzyLink: false });
 
 function headingSlug(heading) {
     return heading
@@ -149,7 +150,8 @@ function markdownAnchors(source, dialect = 'github') {
 
 function htmlLinks(content, line) {
     const links = [];
-    for (const attribute of htmlAttributes(content)) {
+    const rendered = content.replace(/<!--[\s\S]*?-->/g, '');
+    for (const attribute of htmlAttributes(rendered)) {
         if (attribute.name === 'href' || attribute.name === 'src') {
             links.push({ target: attribute.value, line });
         } else if (attribute.name === 'srcset') {
@@ -169,10 +171,12 @@ function extractLinks(source) {
         const line = (token.map?.[0] || 0) + 1;
         if (token.type === 'html_block') links.push(...htmlLinks(token.content, line));
         if (token.type !== 'inline') continue;
+        let childLine = line;
         for (const child of token.children || []) {
-            if (child.type === 'link_open') links.push({ target: child.attrGet('href'), line });
-            else if (child.type === 'image') links.push({ target: child.attrGet('src'), line });
-            else if (child.type === 'html_inline') links.push(...htmlLinks(child.content, line));
+            if (child.type === 'link_open') links.push({ target: child.attrGet('href'), line: childLine });
+            else if (child.type === 'image') links.push({ target: child.attrGet('src'), line: childLine });
+            else if (child.type === 'html_inline') links.push(...htmlLinks(child.content, childLine));
+            if (child.type === 'softbreak' || child.type === 'hardbreak') childLine += 1;
         }
     }
     return links;

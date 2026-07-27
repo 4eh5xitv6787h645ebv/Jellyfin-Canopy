@@ -132,9 +132,8 @@ jobs:
             --summary "$GITHUB_STEP_SUMMARY" \
             --report "$RUNNER_TEMP/secret-scan/report.json"
 
-      # Durable, actionable report surface. (This private repo has no GitHub
-      # Advanced Security, so code-scanning SARIF ingest is unavailable — the
-      # artifact + step summary are the report, and no job claims SARIF.)
+      # Durable, actionable report surface. The artifact + step summary are the
+      # report surfaces for this workflow, and no job claims SARIF ingestion.
       #
       # Upload ONLY the redacted report from $RUNNER_TEMP. The raw results.jsonl
       # carries Raw/RawV2 match material for any real finding, so it is never
