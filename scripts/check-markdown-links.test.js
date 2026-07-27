@@ -105,6 +105,25 @@ test('ignores external links and links shown as code examples', () => {
     }, root => assert.deepEqual(validateMarkdownFile('CONTRIBUTING.md', root), []));
 });
 
+test('ignores Markdown-in-HTML links in comments and code examples', () => {
+    const source = [
+        '<!-- <div markdown="1">[Comment](missing-comment.md)</div> -->',
+        '',
+        '```md',
+        '<div markdown="1">[Fenced](missing-fenced.md)</div>',
+        '```',
+        '',
+        '`<span markdown="1">[Inline](missing-inline.md)</span>`',
+        '',
+        '<pre><code><div markdown="1">[HTML code](missing-html-code.md)</div></code></pre>',
+        '',
+    ].join('\n');
+    assert.deepEqual(extractLinks(source), []);
+    fixture({ 'CONTRIBUTING.md': source }, root => (
+        assert.deepEqual(validateMarkdownFile('CONTRIBUTING.md', root), [])
+    ));
+});
+
 test('extracts browser-equivalent links without treating images or empty anchors as actions', () => {
     const nonActions = extractLinks([
         '![Image](https://github.com/owner/repository/issues)',

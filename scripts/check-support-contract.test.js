@@ -717,12 +717,18 @@ test('rendered category form links cannot hide behind local fragments', () => {
         { label: 'Submit a bug report form — recommended', message: 'bug intake links' },
         { label: 'File the bug report form', message: 'bug intake links' },
         { label: 'Report a defect intake', message: 'bug intake links' },
+        { label: 'Create a defect intake', message: 'bug intake links' },
+        { label: 'Create a defect report form', message: 'bug intake links' },
+        { label: 'Recommended: create a bug report form', message: 'bug intake links' },
+        { label: 'Please complete the bug report form', message: 'bug intake links' },
         { label: 'Open the feature-request form', message: 'feature intake links' },
         { label: 'Feature request form', message: 'feature intake links' },
         { label: 'Feature request form — preferred', message: 'feature intake links' },
         { label: 'Create a feature-request form — preferred', message: 'feature intake links' },
         { label: 'Submit a feature-request form — preferred', message: 'feature intake links' },
         { label: 'File a feature request form', message: 'feature intake links' },
+        { label: 'Recommended: create a feature-request form', message: 'feature intake links' },
+        { label: 'Please fill out the feature request form', message: 'feature intake links' },
     ];
     for (const { label, message } of cases) {
         const files = validFixture();
@@ -1586,6 +1592,10 @@ test('audits generic security calls to action and plain source or built HTML pro
     for (const markdownSource of [
         `Found a vulnerability? [Click here](${DISCORD_ROUTE}).\n`,
         `Found a vulnerability? [Open a GitHub issue](${ISSUES_ROUTE}).\n`,
+        `Found a vulnerability? [File it here](${ISSUES_ROUTE}).\n`,
+        'Found a vulnerability? [Email us](mailto:security@example.com).\n',
+        'Found a vulnerability? [Contact the maintainers](mailto:security@example.com).\n',
+        `Found a vulnerability? [Send details](${DISCORD_ROUTE}).\n`,
         `Found an exploit? [Report it on Discord](${DISCORD_ROUTE}).\n`,
         `Need to report a vulnerability? [Use this link](${ISSUES_ROUTE}).\n`,
         `Security issue? [Open](${DISCORD_ROUTE}).\n`,
@@ -1596,7 +1606,7 @@ test('audits generic security calls to action and plain source or built HTML pro
             assert.ok(auditSupportContract({ root }).problems.some(problem => (
                 problem.startsWith('docs/getting-started.md:')
                 && problem.includes('private GitHub advisories')
-            )));
+            )), markdownSource);
         });
     }
 
@@ -1611,12 +1621,32 @@ test('audits generic security calls to action and plain source or built HTML pro
     });
 
     const contextualSourceHtml = validFixture();
-    contextualSourceHtml['theme/partials/support.html'] =
-        `<p>Found a vulnerability? <a href="${ISSUES_ROUTE}">Open a GitHub issue</a>.</p>\n`;
-    fixture(contextualSourceHtml, root => {
-        assert.ok(auditSupportContract({ root }).problems.some(problem => (
-            problem.startsWith('theme/partials/support.html:')
-            && problem.includes('security intake links must use private GitHub advisories')
+    for (const label of ['Open a GitHub issue', 'File it here', 'Email us', 'Contact the maintainers']) {
+        contextualSourceHtml['theme/partials/support.html'] =
+            `<p>Found a vulnerability? <a href="${ISSUES_ROUTE}">${label}</a>.</p>\n`;
+        fixture(contextualSourceHtml, root => {
+            assert.ok(auditSupportContract({ root }).problems.some(problem => (
+                problem.startsWith('theme/partials/support.html:')
+                && problem.includes('security intake links must use private GitHub advisories')
+            )));
+        });
+    }
+
+    const nonRenderedMarkdownInHtml = validFixture();
+    nonRenderedMarkdownInHtml['docs/getting-started.md'] = [
+        '<!-- <div markdown="1">[Ask for support](https://example.com/issues)</div> -->',
+        '',
+        '```md',
+        '<div markdown="1">[Ask for support](https://example.com/issues)</div>',
+        '```',
+        '',
+        '`<span markdown="1">[Ask for support](https://example.com/issues)</span>`',
+        '',
+    ].join('\n');
+    fixture(nonRenderedMarkdownInHtml, root => {
+        assert.ok(!auditSupportContract({ root }).problems.some(problem => (
+            problem.startsWith('docs/getting-started.md:')
+            && problem.includes('community-support links')
         )));
     });
 
@@ -1693,7 +1723,7 @@ test('audits route intent in expanded and previous-sentence call-to-action wordi
             assert.ok(auditSupportContract({ root }).problems.some(problem => (
                 problem.startsWith('docs/getting-started.md:')
                 && problem.includes(message)
-            )));
+            )), prose);
         });
     }
 });

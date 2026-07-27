@@ -585,41 +585,57 @@ function extractLinksFromTokens(tokens) {
     return links;
 }
 
-function markdownInHtmlLinks(source) {
+function maskNonRenderedHtml(content) {
+    const mask = value => value.replace(/[^\r\n]/g, ' ');
+    return content
+        .replace(/<!--[\s\S]*?(?:-->|$)/g, mask)
+        .replace(
+            /<(pre|code|script|style)\b(?:[^>"']|"[^"]*"|'[^']*')*>[\s\S]*?<\/\1\s*>/gi,
+            mask
+        );
+}
+
+function markdownInHtmlLinks(tokens) {
     const links = [];
-    const opening = /<([a-z][a-z0-9:-]*)\b/gi;
-    let match;
-    while ((match = opening.exec(source)) !== null) {
-        const openingEnd = htmlOpeningTagEnd(source, match.index);
-        if (openingEnd === -1) break;
-        const openingTag = source.slice(match.index, openingEnd);
-        const markdownMode = htmlAttributeValue(openingTag, 'markdown').toLowerCase();
-        const bareMarkdown = /\smarkdown(?=\s|\/?>)/i.test(openingTag);
-        if (!['1', 'block', 'span', 'markdown'].includes(markdownMode) && !bareMarkdown) {
-            opening.lastIndex = openingEnd;
-            continue;
+    for (const token of tokens) {
+        if (token.type !== 'html_block') continue;
+        const source = maskNonRenderedHtml(token.content);
+        const opening = /<([a-z][a-z0-9:-]*)\b/gi;
+        let match;
+        while ((match = opening.exec(source)) !== null) {
+            const openingEnd = htmlOpeningTagEnd(source, match.index);
+            if (openingEnd === -1) break;
+            const openingTag = source.slice(match.index, openingEnd);
+            const markdownMode = htmlAttributeValue(openingTag, 'markdown').toLowerCase();
+            const bareMarkdown = /\smarkdown(?=\s|\/?>)/i.test(openingTag);
+            if (!['1', 'block', 'span', 'markdown'].includes(markdownMode) && !bareMarkdown) {
+                opening.lastIndex = openingEnd;
+                continue;
+            }
+            const closing = new RegExp(`</${match[1]}\\s*>`, 'ig');
+            closing.lastIndex = openingEnd;
+            const close = closing.exec(source);
+            if (!close) {
+                opening.lastIndex = openingEnd;
+                continue;
+            }
+            const body = source.slice(openingEnd, close.index);
+            const lineOffset = (token.map?.[0] || 0)
+                + source.slice(0, openingEnd).split('\n').length - 1;
+            for (const link of extractLinks(body)) {
+                links.push({ ...link, line: link.line + lineOffset });
+            }
+            opening.lastIndex = close.index + close[0].length;
         }
-        const closing = new RegExp(`</${match[1]}\\s*>`, 'ig');
-        closing.lastIndex = openingEnd;
-        const close = closing.exec(source);
-        if (!close) {
-            opening.lastIndex = openingEnd;
-            continue;
-        }
-        const body = source.slice(openingEnd, close.index);
-        const lineOffset = source.slice(0, openingEnd).split('\n').length - 1;
-        for (const link of extractLinks(body)) {
-            links.push({ ...link, line: link.line + lineOffset });
-        }
-        opening.lastIndex = close.index + close[0].length;
     }
     return links;
 }
 
 function extractLinks(source) {
+    const tokens = markdown.parse(source, {});
     const links = [
-        ...extractLinksFromTokens(markdown.parse(source, {})),
-        ...markdownInHtmlLinks(source),
+        ...extractLinksFromTokens(tokens),
+        ...markdownInHtmlLinks(tokens),
     ];
     const seen = new Set();
     return links.filter((link) => {

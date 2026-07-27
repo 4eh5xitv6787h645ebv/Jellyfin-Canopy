@@ -90,7 +90,7 @@ const SUPPORT_ROUTE_LABEL = new RegExp(
     `(?:${SUPPORT_ROUTE_INTENT.source}|\\bdiscord\\b)`,
     'i'
 );
-const SECURITY_ACTION = '(?:alerts?|click(?:s|ed|ing)?|concerns?|contact(?:s|ed|ing)?|emails?|follow(?:s|ed|ing)?|instructions?|issues?|messages?|notifications?|notif(?:y|ies|ied|ying)|report(?:s|ed|ing)?|submissions?|submit(?:s|ted|ting)?|disclos(?:e|es|ed|ing|ures?)|intake|use(?:s|d|ing)?)';
+const SECURITY_ACTION = '(?:alerts?|click(?:s|ed|ing)?|concerns?|contact(?:s|ed|ing)?|emails?|file(?:s|d|ing)?|follow(?:s|ed|ing)?|instructions?|issues?|messages?|notifications?|notif(?:y|ies|ied|ying)|report(?:s|ed|ing)?|send|sent|submissions?|submit(?:s|ted|ting)?|disclos(?:e|es|ed|ing|ures?)|intake|use(?:s|d|ing)?)';
 const SECURITY_SUBJECT = '(?:exploits?|security|vulnerab\\w*)';
 const SECURITY_INTAKE_HEADING = new RegExp(
     `(?:\\b${SECURITY_ACTION}\\b.{0,80}\\b${SECURITY_SUBJECT}\\b`
@@ -108,7 +108,9 @@ const PUBLIC_SECURITY_NEGATION_ACTION = '(?:contact(?:ed|ing)?|disclos\\w*|email
 const CONTEXTUAL_ACTION_LABEL = '(?:click(?:\\s+here)?|continue|details?|follow|go|here'
     + '|learn\\s+more|link|more|open(?:\\s+it\\s+here)?|read\\s+more|this|this\\s+link'
     + '|open\\s+(?:the\\s+)?(?:bug|feature(?:-request)?|intake|report|support)\\s+form'
-    + '|use\\s+this\\s+link|view|(?:ask|report\\s+it|send\\s+it|tell\\s+us)'
+    + '|use\\s+this\\s+link|view|(?:(?:ask|file\\s+it(?:\\s+here)?|report\\s+it'
+    + '|send\\s+(?:details|it|the\\s+report)|tell\\s+us)'
+    + '|(?:contact|email|message|notify)(?:\\s+(?:the\\s+maintainers|us))?)'
     + '(?:\\s+(?:at|in|on|through|to|via)\\s+(?:discord|github|issues?|the\\s+forum))?'
     + '|visit\\s+our(?:\\s+community\\s+(?:chat|forum)|\\s+(?:at|in|on|through|to|via)'
     + '\\s+(?:discord|github|issues?|the\\s+forum))?|open\\s+(?:a\\s+)?github\\s+issue)';
@@ -123,7 +125,17 @@ const CONTEXT_DEPENDENT_ROUTE_LABEL = new RegExp(
     `^(?:${CONTEXTUAL_ACTION_LABEL}|(?:github\\s+)?issues?|discord|community\\s+(?:chat|forum))$`,
     'i'
 );
-const DIRECT_FORM_ROUTE_LABEL = /^(?:(?:create|file|open|report|submit|use|visit)\b.{0,20}\b)?(?:bug|defect|feature(?:[- ]request)?|help|support)(?:[- ]report)?\s+(?:form|intake)\b/i;
+const FORM_ROUTE_PREFIX = '(?:(?:preferred|recommended)\\s+)?(?:please\\s+)?'
+    + '(?:(?:complete|create|file|fill(?:\\s+out)?|open|report|start|submit|use|visit)'
+    + '\\b.{0,20}\\b)?';
+const BUG_FORM_ROUTE_LABEL = new RegExp(
+    `^${FORM_ROUTE_PREFIX}(?:bug|defect)(?:[- ]report)?\\s+(?:form|intake)\\b`,
+    'i'
+);
+const FEATURE_FORM_ROUTE_LABEL = new RegExp(
+    `^${FORM_ROUTE_PREFIX}feature(?:[- ]request)?\\s+(?:form|intake)\\b`,
+    'i'
+);
 const ROUTE_INTENT_TERM = /\b(?:assistance|bugs?|broken|defects?|enhancements?|exploits?|features?|help|ideas?|improvements?|questions?|security|support|vulnerab\w*)\b|community\s+(?:chat|forum|support)/i;
 const HTML_ROUTE_CONTEXT_BEFORE_CUE = /(?:\b(?:at|choose|follow|here|in|on|open|see|select|through|to|use|using|via|visit)\b|[:→])(?:\s+(?:a|an|our|the|this))?\s*$/i;
 const HTML_ROUTE_CONTEXT_AFTER_CUE = /^\s*(?:(?:[-–—:,(]\s*)|(?:for|to|where)\b)/i;
@@ -1181,10 +1193,12 @@ function auditGlobalRouteLinks(file, surface, root, problems, options = {}) {
         const text = semanticLinkText(scopedLink);
         const location = `${file}:${link.line || 1}`;
         const isRenderedFragment = options.rendered && /^#[^#]/.test(link.target);
-        const directFormFragment = isRenderedFragment
-            && DIRECT_FORM_ROUTE_LABEL.test(normalizedLabel);
-        if (BUG_ROUTE_INTENT.test(text)
-            && (!isRenderedFragment || directFormFragment)
+        const bugFormFragment = isRenderedFragment
+            && BUG_FORM_ROUTE_LABEL.test(normalizedLabel);
+        const featureFormFragment = isRenderedFragment
+            && FEATURE_FORM_ROUTE_LABEL.test(normalizedLabel);
+        if ((BUG_ROUTE_INTENT.test(text) || bugFormFragment)
+            && (!isRenderedFragment || bugFormFragment)
             && !semanticLinkMatches(
                 scopedLink,
                 BUG_ROUTE_INTENT,
@@ -1193,8 +1207,8 @@ function auditGlobalRouteLinks(file, surface, root, problems, options = {}) {
             )) {
             problems.push(`${location}: bug intake links must use a canonical GitHub Issues intake path`);
         }
-        if (FEATURE_ROUTE_LABEL.test(text)
-            && (!isRenderedFragment || directFormFragment)
+        if ((FEATURE_ROUTE_LABEL.test(text) || featureFormFragment)
+            && (!isRenderedFragment || featureFormFragment)
             && !semanticLinkMatches(
                 scopedLink,
                 FEATURE_ROUTE_LABEL,
