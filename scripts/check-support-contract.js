@@ -79,9 +79,17 @@ const SUPPORT_ROUTE_SECTIONS = new Map([
     ['docs/help.md', ['Community and support']],
     ['.github/SECURITY_GUIDELINES.md', ['Questions?']],
 ]);
-const BUG_ROUTE_LABEL = /\b(?:bug[- ]reports?|github bug-report issues|github issues|issue tracker|(?:something|anything|this|it)\s+(?:is\s+)?broken|broken\s+(?:behavior|feature|functionality|plugin)|(?:file|found|report|submit|tell)\b.{0,40}\b(?:a\s+)?(?:bugs?|defects?|issues?))\b/i;
+const BUG_ROUTE_INTENT = /\b(?:bug[- ]reports?|github bug-report issues|issue tracker|(?:something|anything|this|it)\s+(?:is\s+)?broken|broken\s+(?:behavior|feature|functionality|plugin)|(?:file|found|report|submit|tell)\b.{0,40}\b(?:a\s+)?(?:bugs?|defects?|issues?))\b/i;
+const BUG_ROUTE_LABEL = new RegExp(
+    `(?:${BUG_ROUTE_INTENT.source}|\\bgithub issues\\b)`,
+    'i'
+);
 const FEATURE_ROUTE_LABEL = /\b(?:feature[- ]requests?|feature\s+proposals?|(?:have|propose|request|share|suggest|submit|tell)\b.{0,50}\bimprovements?|improvements?\s+(?:ideas?|proposals?|requests?)|request(?:ing)?\b.{0,40}\b(?:features?|enhancements?)|(?:pitch|send|submit)(?:s|ed|ing)?\b.{0,40}\b(?:features?|ideas?|enhancements?)|suggest\b.{0,40}\b(?:features?|ideas?|enhancements?)|share\b.{0,40}\b(?:ideas?|enhancements?)|propos(?:e|als?)\b.{0,40}\b(?:features?|ideas?|enhancements?)|enhancement\s+(?:ideas?|issues?|proposals?|requests?|submission|template)|feature(?:-request)?\s+(?:issues?|template)|ideas?\s+(?:channel|submission|template))\b/i;
-const SUPPORT_ROUTE_LABEL = /(?:\b(?:assistance|discord|community\s+(?:chat|forum|support)|for\s+(?:help|support)|(?:ask|get|request|seek)\s+(?:for\s+|to\s+)?(?:assistance|help|support)|(?:help|support)\s+(?:channel|chat|community|forum|requests?|server))\b|(?:^|[.!?;]\s*)need\s+(?:for\s+|to\s+)?(?:assistance|help|support)\b)/i;
+const SUPPORT_ROUTE_INTENT = /(?:\b(?:assistance|community\s+(?:chat|forum|support)|for\s+(?:help|support)|(?:ask|get|request|seek)\s+(?:for\s+|to\s+)?(?:assistance|help|support)|(?:help|support)\s+(?:channel|chat|community|forum|requests?|server))\b|(?:^|[.!?;]\s*)(?:(?:(?:any|have)\s+)?questions?\s*\?|need\s+(?:for\s+|to\s+)?(?:assistance|help|support)\b))/i;
+const SUPPORT_ROUTE_LABEL = new RegExp(
+    `(?:${SUPPORT_ROUTE_INTENT.source}|\\bdiscord\\b)`,
+    'i'
+);
 const SECURITY_ACTION = '(?:alerts?|click(?:s|ed|ing)?|concerns?|contact(?:s|ed|ing)?|emails?|follow(?:s|ed|ing)?|instructions?|issues?|messages?|notifications?|notif(?:y|ies|ied|ying)|report(?:s|ed|ing)?|submissions?|submit(?:s|ted|ting)?|disclos(?:e|es|ed|ing|ures?)|intake|use(?:s|d|ing)?)';
 const SECURITY_SUBJECT = '(?:exploits?|security|vulnerab\\w*)';
 const SECURITY_INTAKE_HEADING = new RegExp(
@@ -418,6 +426,11 @@ function semanticLinkText(link) {
         const boundaries = [];
         for (let index = 0; index < text.length; index += 1) {
             const character = text[index];
+            if (character === ','
+                && /^\s+(?:and|but|or|whereas|while)\b/i.test(text.slice(index + 1))) {
+                boundaries.push(index);
+                continue;
+            }
             if (character === '!' || character === '?' || character === ';') {
                 boundaries.push(index);
                 continue;
@@ -1062,11 +1075,11 @@ function auditGlobalRouteLinks(file, surface, root, problems, options = {}) {
         const text = semanticLinkText(scopedLink);
         const location = `${file}:${link.line || 1}`;
         const isRenderedFragment = options.rendered && /^#[^#]/.test(link.target);
-        if (BUG_ROUTE_LABEL.test(text)
+        if (BUG_ROUTE_INTENT.test(text)
             && !isRenderedFragment
             && !semanticLinkMatches(
                 scopedLink,
-                BUG_ROUTE_LABEL,
+                BUG_ROUTE_INTENT,
                 isIssueIntakeRoute,
                 { root, file, visited: new Set([`${file}#`]), sectionMap: new Map() }
             )) {
@@ -1082,10 +1095,10 @@ function auditGlobalRouteLinks(file, surface, root, problems, options = {}) {
             )) {
             problems.push(`${location}: feature intake links must use a canonical GitHub Issues intake path`);
         }
-        if (SUPPORT_ROUTE_LABEL.test(text)
+        if (SUPPORT_ROUTE_INTENT.test(text)
             && !semanticLinkMatches(
                 scopedLink,
-                SUPPORT_ROUTE_LABEL,
+                SUPPORT_ROUTE_INTENT,
                 candidate => isExactHttpsRoute(candidate, DISCORD_ROUTE),
                 { root, file, visited: new Set([`${file}#`]), sectionMap: new Map() }
             )) {

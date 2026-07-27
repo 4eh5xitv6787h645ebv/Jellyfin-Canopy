@@ -473,18 +473,45 @@ test('semantic ownership keeps abbreviations and semicolons inside the owning se
     }
 });
 
-test('semantic ownership does not cross semicolon-delimited route clauses', () => {
+test('semantic ownership does not cross delimited route clauses', () => {
+    for (const separator of ['; ', ', and ']) {
+        const files = validFixture();
+        files['docs/getting-started.md'] =
+            `For bug reports, use [GitHub Issues](${ISSUES_ROUTE})${separator}`
+            + `for help, use [Discord](${DISCORD_ROUTE}).\n`;
+        fixture(files, root => {
+            assert.deepEqual(
+                auditSupportContract({ root }).problems.filter(problem => (
+                    problem.startsWith('docs/getting-started.md:')
+                )),
+                []
+            );
+        });
+    }
+});
+
+test('global route ownership distinguishes intake intent from destination names', () => {
     const files = validFixture();
-    files['docs/getting-started.md'] =
-        `For bug reports, use [GitHub Issues](${ISSUES_ROUTE}); `
-        + `for help, use [Discord](${DISCORD_ROUTE}).\n`;
+    files['research/design.md'] = [
+        '[Upstream GitHub Issues](https://github.com/example/dependency/issues) record history.',
+        '[Discord](https://discord.com/developers/docs) documents the integration API.',
+        '',
+    ].join('\n');
+    files['theme/partials/support.html'] = [
+        '<p><a href="https://github.com/example/dependency/issues">GitHub Issues</a> ',
+        'record dependency history.</p>',
+        '<p><a href="https://discord.com/developers/docs">Discord</a> ',
+        'documents the integration API.</p>',
+        '',
+    ].join('');
     fixture(files, root => {
-        assert.deepEqual(
-            auditSupportContract({ root }).problems.filter(problem => (
-                problem.startsWith('docs/getting-started.md:')
-            )),
-            []
-        );
+        const problems = auditSupportContract({ root }).problems;
+        for (const file of ['research/design.md', 'theme/partials/support.html']) {
+            assert.deepEqual(
+                problems.filter(problem => problem.startsWith(`${file}:`)),
+                []
+            );
+        }
     });
 });
 
@@ -1436,6 +1463,23 @@ test('audits route intent in expanded and previous-sentence call-to-action wordi
             )));
         });
     }
+});
+
+test('audits question intent in source and rendered call-to-action wording', () => {
+    const files = validFixture();
+    files['docs/getting-started.md'] =
+        `Questions? [Open a GitHub issue](${ISSUES_ROUTE}).\n`;
+    files['theme/partials/support.html'] =
+        `<p>Questions? <a href="${ISSUES_ROUTE}">Open a GitHub issue</a>.</p>\n`;
+    fixture(files, root => {
+        const problems = auditSupportContract({ root }).problems;
+        for (const file of ['docs/getting-started.md', 'theme/partials/support.html']) {
+            assert.ok(problems.some(problem => (
+                problem.startsWith(`${file}:`)
+                && problem.includes('community-support links')
+            )));
+        }
+    });
 });
 
 test('audits generic aria-labelled HTML descendants as security intake links', () => {
