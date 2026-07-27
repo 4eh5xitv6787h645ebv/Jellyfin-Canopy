@@ -154,16 +154,6 @@
     }
 }
 
-/* ---------------------------------------------------------------------------
-   Base Form Container & Typography
-   --------------------------------------------------------------------------- */
-#JellyfinCanopyPage {
-    /* Pair the page foreground with its own surface palette. Inheriting the
-       host color recreates the original dark-text/dark-card failure while a
-       light theme sheet and the plugin page initialize at different times. */
-    color: var(--jc-text-strong);
-    font-family: inherit;
-
 /* ===========================================================================
    2. BASE — page root, focus ownership, display type, motion
    =========================================================================== */
