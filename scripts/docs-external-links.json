@@ -39,6 +39,10 @@
       "reason": "Canonical Jellyfin Canopy project link."
     },
     {
+      "url": "https://4eh5xitv6787h645ebv.github.io/Jellyfin-Canopy/help/#gather-logs-before-you-report",
+      "reason": "Canonical Jellyfin Canopy support guidance linked from the bug-report template."
+    },
+    {
       "url": "https://4eh5xitv6787h645ebv.github.io/Jellyfin-Canopy/maintainerr/",
       "reason": "Canonical Jellyfin Canopy project link."
     },
@@ -75,6 +79,10 @@
       "reason": "Historical upstream attribution or source reference."
     },
     {
+      "url": "https://cwe.mitre.org/top25/",
+      "reason": "Reviewed secure-development reference published in the repository security guidelines."
+    },
+    {
       "url": "https://dash.cloudflare.com",
       "reason": "Reviewed public third-party documentation or asset."
     },
@@ -85,6 +93,10 @@
     {
       "url": "https://docs.api.jikan.moe/",
       "reason": "Official Jikan v4 API documentation for anime episode classifications."
+    },
+    {
+      "url": "https://docs.microsoft.com/en-us/dotnet/standard/security/",
+      "reason": "Reviewed .NET security reference published in the repository security guidelines."
     },
     {
       "url": "https://docs.maintainerr.info/api/",
@@ -147,6 +159,10 @@
     {
       "url": "https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/pulls",
       "reason": "Canonical Jellyfin Canopy project link."
+    },
+    {
+      "url": "https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/security/policy",
+      "reason": "Canonical private vulnerability-reporting route used by support intake."
     },
     {
       "url": "https://github.com/BobHasNoSoul/",
@@ -261,6 +277,10 @@
       "reason": "Reviewed public third-party documentation or asset."
     },
     {
+      "url": "https://jellyfin.org/docs/general/security/",
+      "reason": "Reviewed Jellyfin security reference published in the repository security guidelines."
+    },
+    {
       "url": "https://jellyfin.org/docs/general/server/plugins/",
       "reason": "Official Jellyfin plugin catalog for the recommended AniList metadata provider and the optional AniSearch provider."
     },
@@ -271,6 +291,10 @@
     {
       "url": "https://ko-fi.com/n00bcodr",
       "reason": "Historical upstream attribution or source reference."
+    },
+    {
+      "url": "https://owasp.org/www-project-top-ten/",
+      "reason": "Reviewed secure-development reference published in the repository security guidelines."
     },
     {
       "url": "https://storage.ko-fi.com/cdn/kofi1.png?v=6",

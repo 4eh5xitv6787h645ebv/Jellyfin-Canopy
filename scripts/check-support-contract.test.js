@@ -14,13 +14,15 @@ const {
 } = require('./check-support-contract');
 
 const BUG_TEMPLATE = `---
-name: Bug
+name: Bug report
 about: Report a reproducible problem
 title: "🐛[BUG] "
 labels: bug
+assignees: ''
 ---
 
-> Do not report security vulnerabilities here. Follow [SECURITY.md](../../SECURITY.md).
+> Do not report security vulnerabilities here. Follow
+> [the security policy](${SECURITY_POLICY_ROUTE}).
 
 ## Security reports
 Use the private route.
@@ -48,6 +50,7 @@ name: Feature request
 about: Propose an idea
 title: "➕[Feature Request] "
 labels: enhancement
+assignees: ''
 ---
 
 ## Problem or use case
@@ -106,10 +109,11 @@ test('rejects a support surface that routes users to disabled Discussions', () =
 test('rejects incomplete public bug intake and baseline File Transformation assumptions', () => {
     const files = validFixture();
     files['.github/ISSUE_TEMPLATE/bug.md'] = `---
-name: Bug
+name: Bug report
 about: Report a problem
 title: "Bug"
 labels: bug
+assignees: ''
 ---
 
 ## Summary
@@ -121,7 +125,7 @@ labels: bug
             '.github/ISSUE_TEMPLATE/bug.md: missing required section "## Steps to reproduce"'
         ));
         assert.ok(problems.includes(
-            '.github/ISSUE_TEMPLATE/bug.md: must route vulnerability reports away from public issues to SECURITY.md'
+            '.github/ISSUE_TEMPLATE/bug.md: must route vulnerability reports to the private repository security policy'
         ));
         assert.ok(problems.includes(
             '.github/ISSUE_TEMPLATE/bug.md: logs section must require sensitive-data redaction'
@@ -130,6 +134,92 @@ labels: bug
             '.github/ISSUE_TEMPLATE/bug.md: File Transformation cannot be a baseline bug-report requirement'
         ));
     });
+});
+
+test('enforces GitHub template metadata and rendered issue-body link semantics', () => {
+    const files = validFixture();
+    files['.github/ISSUE_TEMPLATE/bug.md'] = BUG_TEMPLATE
+        .replace('name: Bug report', 'name: Bug')
+        .replace(SECURITY_POLICY_ROUTE, '../../SECURITY.md');
+    fixture(files, root => {
+        const problems = auditSupportContract({ root }).problems;
+        assert.ok(problems.includes(
+            '.github/ISSUE_TEMPLATE/bug.md: front matter name must contain 4 to 64 characters'
+        ));
+        assert.ok(problems.includes(
+            '.github/ISSUE_TEMPLATE/bug.md:2: rendered issue-body links must use an absolute HTTPS URL: ../../SECURITY.md'
+        ));
+        assert.ok(problems.includes(
+            '.github/ISSUE_TEMPLATE/bug.md: must route vulnerability reports to the private repository security policy'
+        ));
+    });
+});
+
+test('rejects non-mapping and unsupported template and chooser schema', () => {
+    const files = validFixture();
+    files['.github/ISSUE_TEMPLATE/bug.md'] = '---\n[]\n---\n';
+    files['.github/ISSUE_TEMPLATE/config.yml'] = '[]\n';
+    fixture(files, root => {
+        const problems = auditSupportContract({ root }).problems;
+        assert.ok(problems.includes(
+            '.github/ISSUE_TEMPLATE/bug.md: front matter root must be a mapping'
+        ));
+        assert.ok(problems.includes(
+            '.github/ISSUE_TEMPLATE/config.yml: YAML root must be a mapping'
+        ));
+    });
+
+    const scalarFiles = validFixture();
+    scalarFiles['.github/ISSUE_TEMPLATE/feature_request.md'] = FEATURE_TEMPLATE.replace(
+        "assignees: ''",
+        'assignees:\n  - maintainer'
+    );
+    scalarFiles['.github/ISSUE_TEMPLATE/config.yml'] = [
+        'blank_issues_enabled: "false"',
+        'contact_links:',
+        '  - not-a-mapping',
+        '',
+    ].join('\n');
+    fixture(scalarFiles, root => {
+        const problems = auditSupportContract({ root }).problems;
+        assert.ok(problems.includes(
+            '.github/ISSUE_TEMPLATE/feature_request.md: front matter assignees must be a string'
+        ));
+        assert.ok(problems.includes(
+            '.github/ISSUE_TEMPLATE/config.yml: blank_issues_enabled must be a boolean'
+        ));
+        assert.ok(problems.includes(
+            '.github/ISSUE_TEMPLATE/config.yml: contact_links[0] must be a mapping'
+        ));
+    });
+});
+
+test('censuses the issue-template directory and rejects ungoverned intake files', () => {
+    const files = validFixture();
+    files['.github/ISSUE_TEMPLATE/question.md'] = '# Bypass\n';
+    fixture(files, root => {
+        assert.ok(auditSupportContract({ root }).problems.includes(
+            '.github/ISSUE_TEMPLATE: ungoverned entry "question.md" is not allowed'
+        ));
+    });
+});
+
+test('rejects spaced and multiline File Transformation baseline checklists', () => {
+    for (const checklist of [
+        '- [ ] File Transformation installed',
+        '- [x] File\n  Transformation enabled',
+    ]) {
+        const files = validFixture();
+        files['.github/ISSUE_TEMPLATE/bug.md'] = BUG_TEMPLATE.replace(
+            '## Additional context',
+            `${checklist}\n\n## Additional context`
+        );
+        fixture(files, root => {
+            assert.ok(auditSupportContract({ root }).problems.includes(
+                '.github/ISSUE_TEMPLATE/bug.md: File Transformation cannot be a baseline bug-report requirement'
+            ));
+        });
+    }
 });
 
 test('requires a governed feature template and private security chooser route', () => {

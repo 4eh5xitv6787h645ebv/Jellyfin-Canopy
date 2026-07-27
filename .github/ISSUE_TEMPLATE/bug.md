@@ -1,15 +1,16 @@
 ---
-name: Bug
+name: Bug report
 about: Report a reproducible Jellyfin Canopy problem
 title: "🐛[BUG] "
 labels: bug
-assignees:
+assignees: ''
 
 ---
 
 > [!IMPORTANT]
 > Do not report security vulnerabilities here. Follow
-> [SECURITY.md](../../SECURITY.md) to contact a maintainer privately.
+> [the repository security policy](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/security/policy)
+> to contact a maintainer privately.
 
 ## Security reports
 

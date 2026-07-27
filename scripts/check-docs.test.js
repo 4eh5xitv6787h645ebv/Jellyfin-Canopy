@@ -56,6 +56,35 @@ test('an unreviewed external link fails the offline fixture with file and line',
     });
 });
 
+test('hidden support templates and chooser URLs are part of the reviewed inventory', () => {
+    fixture({
+        'README.md': '# Fixture\n',
+        'CONTRIBUTING.md': '# Contributing\n',
+        'docs/index.md': '# Home\n',
+        'mkdocs.yml': 'site_name: Fixture\n',
+        '.github/ISSUE_TEMPLATE/bug.md': '[Help](https://unreviewed.example/bug-help)\n',
+        '.github/ISSUE_TEMPLATE/config.yml': [
+            'contact_links:',
+            '  - url: https://unreviewed.example/private',
+            '',
+        ].join('\n'),
+        'policy.json': JSON.stringify({ schemaVersion: 1, allowedUrls: [] }),
+    }, (root) => {
+        const problems = checkDocumentation({
+            root,
+            policyFile: path.join(root, 'policy.json'),
+        }).problems;
+        assert.ok(problems.includes(
+            '.github/ISSUE_TEMPLATE/bug.md:1: external URL is absent from the reviewed offline inventory: '
+            + 'https://unreviewed.example/bug-help'
+        ));
+        assert.ok(problems.includes(
+            '.github/ISSUE_TEMPLATE/config.yml:2: external URL is absent from the reviewed offline inventory: '
+            + 'https://unreviewed.example/private'
+        ));
+    });
+});
+
 test('published HTML and CSS theme URLs are part of the reviewed inventory', () => {
     fixture({
         'README.md': '# Fixture\n',

@@ -3,7 +3,7 @@ name: Feature request
 about: Propose a Jellyfin Canopy capability or behavior change
 title: "➕[Feature Request] "
 labels: enhancement
-assignees:
+assignees: ''
 
 ---
 

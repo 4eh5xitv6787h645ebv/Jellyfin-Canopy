@@ -17,6 +17,13 @@ const {
 
 const ROOT = path.join(__dirname, '..');
 const POLICY_FILE = path.join(__dirname, 'docs-external-links.json');
+const HIDDEN_SUPPORT_MARKDOWN = [
+    'SECURITY.md',
+    '.github/SECURITY_GUIDELINES.md',
+    '.github/ISSUE_TEMPLATE/bug.md',
+    '.github/ISSUE_TEMPLATE/feature_request.md',
+];
+const SUPPORT_CHOOSER = '.github/ISSUE_TEMPLATE/config.yml';
 const markdown = new MarkdownIt({ html: true });
 const SUPPORTED_FENCES = new Set(['bash', 'http', 'json', 'shell', 'sh', 'yaml', 'yml']);
 const DEAD_STATUSES = new Set([404, 410]);
@@ -325,6 +332,20 @@ function externalLinksInMkdocs(root = ROOT) {
     return links;
 }
 
+function externalLinksInSupportChooser(root = ROOT) {
+    const file = SUPPORT_CHOOSER;
+    const absolute = path.join(root, file);
+    if (!fs.existsSync(absolute)) return [];
+    const source = fs.readFileSync(absolute, 'utf8');
+    const links = [];
+    for (const [index, line] of source.split('\n').entries()) {
+        for (const match of line.matchAll(/https?:\/\/[^\s'"<>]+/g)) {
+            links.push({ file, line: index + 1, url: match[0] });
+        }
+    }
+    return links;
+}
+
 function themeSourceFiles(root = ROOT) {
     const themeRoot = path.join(root, 'theme');
     if (!fs.existsSync(themeRoot)) return [];
@@ -410,9 +431,14 @@ function externalLinksInTheme(root = ROOT) {
 }
 
 function externalLinkInventory(root = ROOT) {
-    const links = documentationFiles(root).flatMap(file => externalLinksInMarkdown(file, root));
+    const hiddenSupport = HIDDEN_SUPPORT_MARKDOWN.filter(file => (
+        fs.existsSync(path.join(root, file))
+    ));
+    const links = [...documentationFiles(root), ...hiddenSupport]
+        .flatMap(file => externalLinksInMarkdown(file, root));
     links.push(...externalLinksInMkdocs(root));
     links.push(...externalLinksInTheme(root));
+    links.push(...externalLinksInSupportChooser(root));
     return links.sort((left, right) => (
         left.url.localeCompare(right.url) || left.file.localeCompare(right.file) || left.line - right.line
     ));
@@ -693,6 +719,7 @@ module.exports = {
     classifyProbeAttempts,
     documentationFiles,
     externalLinkInventory,
+    externalLinksInSupportChooser,
     externalLinksInTheme,
     externalUrlProblem,
     isPublicIpAddress,
