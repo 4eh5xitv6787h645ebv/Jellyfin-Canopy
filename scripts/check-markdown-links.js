@@ -138,6 +138,7 @@ function stripHiddenHtml(
         ? initialState.map(state => ({
             tag: state.tag,
             insideSelect: Boolean(state.insideSelect),
+            insideTable: Boolean(state.insideTable),
             persistentHidden: Boolean(state.persistentHidden),
             visibilityHidden: Boolean(state.visibilityHidden),
             hidden: Boolean(state.persistentHidden || state.visibilityHidden),
@@ -145,6 +146,7 @@ function stripHiddenHtml(
         : initialState ? [{
             tag: null,
             insideSelect: false,
+            insideTable: false,
             persistentHidden: Boolean(initialState.persistentHidden),
             visibilityHidden: Boolean(initialState.visibilityHidden),
             hidden: Boolean(initialState.persistentHidden || initialState.visibilityHidden),
@@ -166,7 +168,12 @@ function stripHiddenHtml(
             continue;
         }
         const hiddenBefore = Boolean(stack.at(-1)?.hidden);
-        if (htmlElementIsIgnored(tag, stack.at(-1)?.insideSelect, documentMode)) {
+        if (htmlElementIsIgnored(
+            tag,
+            stack.at(-1)?.insideSelect,
+            documentMode,
+            stack.at(-1)?.insideTable
+        )) {
             offset = match.index + match[0].length;
             continue;
         }
@@ -460,27 +467,36 @@ const HTML_SCOPE_BOUNDARY_ELEMENTS = new Set([
     'applet', 'caption', 'html', 'marquee', 'object', 'table', 'td', 'template',
     'th',
 ]);
+const HTML_LIST_REPAIR_BOUNDARY_ELEMENTS = new Set([
+    'applet', 'area', 'article', 'aside', 'base', 'basefont', 'bgsound',
+    'blockquote', 'body', 'br', 'button', 'caption', 'center', 'col', 'colgroup',
+    'details', 'dir', 'dl', 'embed', 'fieldset', 'figcaption', 'figure', 'footer',
+    'form', 'frame', 'frameset', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'head',
+    'header', 'hgroup', 'hr', 'html', 'iframe', 'img', 'input', 'keygen', 'li',
+    'link', 'listing', 'main', 'marquee', 'menu', 'meta', 'nav', 'noembed',
+    'noframes', 'noscript', 'object', 'ol', 'param', 'plaintext', 'pre', 'script',
+    'search', 'section', 'select', 'source', 'style', 'summary', 'table', 'tbody',
+    'td', 'template', 'textarea', 'tfoot', 'th', 'thead', 'title', 'tr', 'track',
+    'ul', 'wbr', 'xmp',
+]);
 const HTML_BUTTON_SCOPE_BOUNDARY_ELEMENTS = new Set([
     ...HTML_SCOPE_BOUNDARY_ELEMENTS,
     'button',
-]);
-const HTML_LIST_ITEM_SCOPE_BOUNDARY_ELEMENTS = new Set([
-    ...HTML_SCOPE_BOUNDARY_ELEMENTS,
-    'ol',
-    'ul',
-]);
-const HTML_DEFINITION_ITEM_SCOPE_BOUNDARY_ELEMENTS = new Set([
-    ...HTML_SCOPE_BOUNDARY_ELEMENTS,
-    'dl',
 ]);
 const HTML_BUTTON_ELEMENTS = new Set(['button']);
 const HTML_LIST_ITEM_ELEMENTS = new Set(['li']);
 const HTML_DEFINITION_ITEM_ELEMENTS = new Set(['dd', 'dt']);
 const HTML_PARAGRAPH_ELEMENTS = new Set(['p']);
 
-function htmlElementIsIgnored(tag, insideSelect = false, documentMode = false) {
+function htmlElementIsIgnored(
+    tag,
+    insideSelect = false,
+    documentMode = false,
+    insideTable = false
+) {
     return insideSelect && !HTML_SELECT_CONTEXT_ELEMENTS.has(tag)
-        || !documentMode && HTML_FRAGMENT_IGNORED_ELEMENTS.has(tag);
+        || !documentMode && HTML_FRAGMENT_IGNORED_ELEMENTS.has(tag)
+        || HTML_TABLE_CONTEXT_ELEMENTS.has(tag) && !insideTable;
 }
 
 function lastHtmlStackTagIndexInScope(stack, tags, boundaries) {
@@ -524,7 +540,7 @@ function repairHtmlStackForOpening(stack, tag, documentMode = false) {
         const listItem = lastHtmlStackTagIndexInScope(
             stack,
             HTML_LIST_ITEM_ELEMENTS,
-            HTML_LIST_ITEM_SCOPE_BOUNDARY_ELEMENTS
+            HTML_LIST_REPAIR_BOUNDARY_ELEMENTS
         );
         if (listItem !== -1) stack.splice(listItem);
     }
@@ -532,12 +548,9 @@ function repairHtmlStackForOpening(stack, tag, documentMode = false) {
         const descriptionItem = lastHtmlStackTagIndexInScope(
             stack,
             HTML_DEFINITION_ITEM_ELEMENTS,
-            HTML_DEFINITION_ITEM_SCOPE_BOUNDARY_ELEMENTS
+            HTML_LIST_REPAIR_BOUNDARY_ELEMENTS
         );
         if (descriptionItem !== -1) stack.splice(descriptionItem);
-    }
-    if (/^h[1-6]$/.test(tag) && /^h[1-6]$/.test(stack.at(-1)?.tag || '')) {
-        stack.pop();
     }
     if (HTML_P_AUTOCLOSE_OPENING_ELEMENTS.has(tag)) {
         const paragraph = lastHtmlStackTagIndexInScope(
@@ -546,6 +559,9 @@ function repairHtmlStackForOpening(stack, tag, documentMode = false) {
             HTML_BUTTON_SCOPE_BOUNDARY_ELEMENTS
         );
         if (paragraph !== -1) stack.splice(paragraph);
+    }
+    if (/^h[1-6]$/.test(tag) && /^h[1-6]$/.test(stack.at(-1)?.tag || '')) {
+        stack.pop();
     }
     return false;
 }
@@ -598,7 +614,12 @@ function htmlTextWithBoundaries(content, options = {}) {
             offset = match.index + match[0].length;
             continue;
         }
-        if (htmlElementIsIgnored(tag, stack.at(-1)?.insideSelect, documentMode)) {
+        if (htmlElementIsIgnored(
+            tag,
+            stack.at(-1)?.insideSelect,
+            documentMode,
+            stack.at(-1)?.insideTable
+        )) {
             offset = match.index + match[0].length;
             continue;
         }
@@ -867,7 +888,12 @@ function htmlAccessibleTreeText(
             offset = match.index + match[0].length;
             continue;
         }
-        if (htmlElementIsIgnored(tag, stack.at(-1)?.insideSelect, documentMode)) {
+        if (htmlElementIsIgnored(
+            tag,
+            stack.at(-1)?.insideSelect,
+            documentMode,
+            stack.at(-1)?.insideTable
+        )) {
             offset = match.index + match[0].length;
             continue;
         }
@@ -1246,7 +1272,12 @@ function htmlIdLabels(content, options = {}) {
             offset = match.index + match[0].length;
             continue;
         }
-        if (htmlElementIsIgnored(tag, stack.at(-1)?.insideSelect, documentMode)) {
+        if (htmlElementIsIgnored(
+            tag,
+            stack.at(-1)?.insideSelect,
+            documentMode,
+            stack.at(-1)?.insideTable
+        )) {
             offset = match.index + match[0].length;
             continue;
         }
@@ -1476,7 +1507,12 @@ function updateHtmlVisibilityStack(
         const closing = match[1] === '/';
         const tag = match[2].toLowerCase();
         if (!closing && repairHtmlStackForOpening(stack, tag, documentMode)) continue;
-        if (htmlElementIsIgnored(tag, stack.at(-1)?.insideSelect, documentMode)) continue;
+        if (htmlElementIsIgnored(
+            tag,
+            stack.at(-1)?.insideSelect,
+            documentMode,
+            stack.at(-1)?.insideTable
+        )) continue;
         if (closing) {
             const opening = lastHtmlStackTagIndex(stack, tag);
             if (opening !== -1) stack.splice(opening);
@@ -1491,6 +1527,7 @@ function updateHtmlVisibilityStack(
         stack.push({
             tag,
             insideSelect: tag === 'select' || Boolean(stack.at(-1)?.insideSelect),
+            insideTable: tag === 'table' || Boolean(stack.at(-1)?.insideTable),
             ...htmlOpeningVisibilityState(stack, match[0], excludeAriaHidden),
         });
     }
@@ -1596,6 +1633,7 @@ function htmlVisibilityStateSnapshots(
         states.set(target, stack.map(state => ({
             tag: state.tag,
             insideSelect: state.insideSelect,
+            insideTable: state.insideTable,
             persistentHidden: state.persistentHidden,
             visibilityHidden: state.visibilityHidden,
             hidden: state.hidden,
@@ -1669,10 +1707,12 @@ function htmlAnchorRecords(content, labels = htmlIdLabels(content), options = {}
         anchors.push({
             start: match.index,
             openingEnd,
+            openingTag,
             end: anchorEnd,
             closed: Boolean(close) || autoClosed,
             autoClosed,
             label: combinedHtmlLabel(accessibleName, visualName),
+            target: htmlAttributeValue(openingTag, 'href'),
             hidden: hiddenStates.get(match.index) || false,
             contextBefore,
             contextBeforePrior: previousAnchor && beforeBoundary === 0
@@ -1768,7 +1808,12 @@ function htmlOpeningFieldsetDisabledStates(content, options = {}) {
             offset = match.index + match[0].length;
             continue;
         }
-        if (htmlElementIsIgnored(tag, stack.at(-1)?.insideSelect, documentMode)) {
+        if (htmlElementIsIgnored(
+            tag,
+            stack.at(-1)?.insideSelect,
+            documentMode,
+            stack.at(-1)?.insideTable
+        )) {
             offset = match.index + match[0].length;
             continue;
         }
@@ -1788,6 +1833,7 @@ function htmlOpeningFieldsetDisabledStates(content, options = {}) {
             stack.push({
                 tag,
                 insideSelect: tag === 'select' || Boolean(parent?.insideSelect),
+                insideTable: tag === 'table' || Boolean(parent?.insideTable),
                 ancestorFieldsetDisabled: inherited,
                 disabledByFieldset: inherited || ownDisabled,
                 firstLegendSeen: false,
@@ -1798,11 +1844,7 @@ function htmlOpeningFieldsetDisabledStates(content, options = {}) {
     return states;
 }
 
-function htmlAssociatedForm(control, forms, formsById) {
-    const explicitId = htmlAttributeValue(control.openingTag, 'form');
-    if (htmlTagHasAttribute(control.openingTag, 'form')) {
-        return formsById.get(explicitId) || null;
-    }
+function htmlContainingForm(control, forms) {
     let lower = 0;
     let upper = forms.length;
     while (lower < upper) {
@@ -1815,6 +1857,14 @@ function htmlAssociatedForm(control, forms, formsById) {
     }
     const candidate = forms[lower - 1];
     return candidate && control.start < candidate.end ? candidate : null;
+}
+
+function htmlAssociatedForm(control, forms, formsById) {
+    const explicitId = htmlAttributeValue(control.openingTag, 'form');
+    if (htmlTagHasAttribute(control.openingTag, 'form')) {
+        return formsById.get(explicitId) || null;
+    }
+    return htmlContainingForm(control, forms);
 }
 
 function htmlWrappingLabel(control, labelRecords) {
@@ -1948,22 +1998,46 @@ function htmlFormSubmissionLinks(
         const submission = submissions.get(control);
         return submission && !submission.hidden && Boolean(submission.label.trim());
     });
-    const nextSubmission = new Map();
-    const lastSubmissionByForm = new Map();
-    for (let index = actionableSubmissions.length - 1; index >= 0; index -= 1) {
-        const control = actionableSubmissions[index];
-        const { form } = submissions.get(control);
-        const next = lastSubmissionByForm.get(form);
-        if (next) nextSubmission.set(control, next);
-        lastSubmissionByForm.set(form, control);
+    const formActions = actionableSubmissions.map(control => ({
+        control,
+        form: submissions.get(control).form,
+        start: control.start,
+        end: control.end,
+        submission: true,
+    }));
+    for (const anchor of htmlAnchorRecords(content, labels, options)) {
+        if (!anchor.target || anchor.hidden || !anchor.label.trim()) continue;
+        if (actionableSubmissions.some(control => (
+            anchor.start < control.end && control.start < anchor.end
+        ))) {
+            continue;
+        }
+        const form = htmlContainingForm(anchor, forms);
+        if (!form) continue;
+        formActions.push({
+            form,
+            start: anchor.start,
+            end: anchor.end,
+            submission: false,
+        });
     }
-    const previousSubmission = new Map();
-    const firstSubmissionByForm = new Map();
-    for (const control of actionableSubmissions) {
-        const { form } = submissions.get(control);
-        const previous = firstSubmissionByForm.get(form);
-        if (previous) previousSubmission.set(control, previous);
-        firstSubmissionByForm.set(form, control);
+    formActions.sort((left, right) => left.start - right.start);
+    const previousFormAction = new Map();
+    const lastActionByForm = new Map();
+    for (const action of formActions) {
+        const previous = lastActionByForm.get(action.form);
+        if (action.submission && previous) {
+            previousFormAction.set(action.control, previous);
+        }
+        lastActionByForm.set(action.form, action);
+    }
+    const nextFormAction = new Map();
+    const nextActionByForm = new Map();
+    for (let index = formActions.length - 1; index >= 0; index -= 1) {
+        const action = formActions[index];
+        const next = nextActionByForm.get(action.form);
+        if (action.submission && next) nextFormAction.set(action.control, next);
+        nextActionByForm.set(action.form, action);
     }
     const contextOffsets = [];
     const contextPlans = new Map();
@@ -1972,8 +2046,14 @@ function htmlFormSubmissionLinks(
         const containedByForm = form
             && form.start < control.start
             && control.start < form.end;
+        const previousAction = previousFormAction.get(control);
+        const nextAction = nextFormAction.get(control);
         const contextStart = containedByForm
-            ? Math.max(form.openingEnd, control.start - MAX_HTML_CONTEXT_LENGTH)
+            ? Math.max(
+                form.openingEnd,
+                previousAction?.end || 0,
+                control.start - MAX_HTML_CONTEXT_LENGTH
+            )
             : Math.max(0, control.start - MAX_HTML_CONTEXT_LENGTH);
         const rawBefore = content.slice(contextStart, control.start);
         const beforeBoundary = containedByForm
@@ -1983,7 +2063,11 @@ function htmlFormSubmissionLinks(
             ? htmlContextBeforeSegments(rawBefore)
             : [{ start: beforeBoundary, end: rawBefore.length }];
         const contextEnd = containedByForm
-            ? Math.min(form.contentEnd, control.end + MAX_HTML_CONTEXT_LENGTH)
+            ? Math.min(
+                form.contentEnd,
+                nextAction?.start ?? content.length,
+                control.end + MAX_HTML_CONTEXT_LENGTH
+            )
             : Math.min(content.length, control.end + MAX_HTML_CONTEXT_LENGTH);
         const rawAfter = content.slice(control.end, contextEnd);
         const afterBoundary = htmlContextAfterBoundary(rawAfter);
@@ -2001,8 +2085,8 @@ function htmlFormSubmissionLinks(
             beforeSegments,
             afterBoundary,
             allowFormBeforeFallback: containedByForm
-                && !previousSubmission.has(control),
-            allowFormAfterFallback: containedByForm && !nextSubmission.has(control),
+                && !previousAction,
+            allowFormAfterFallback: containedByForm && !nextAction,
         });
     }
     const visualStates = htmlVisibilityStateSnapshots(

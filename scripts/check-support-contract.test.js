@@ -2723,6 +2723,24 @@ test('governs form submissions and hidden ID names while inert routes remain ina
         )));
     });
 
+    for (const repairedVisibleRoute of [
+        '<h1 hidden><p><h2>'
+            + `<a href="${ISSUES_ROUTE}">Submit a vulnerability report</a>`
+            + '</h2>',
+        '<button hidden><caption><button>'
+            + `<a href="${ISSUES_ROUTE}">Submit a vulnerability report</a>`
+            + '</button>',
+    ]) {
+        const visibleMalformedRoute = validFixture();
+        visibleMalformedRoute['docs/getting-started.md'] = repairedVisibleRoute;
+        fixture(visibleMalformedRoute, root => {
+            assert.ok(auditSupportContract({ root }).problems.some(problem => (
+                problem.startsWith('docs/getting-started.md:')
+                && problem.includes('security intake links must use private GitHub advisories')
+            )), repairedVisibleRoute);
+        });
+    }
+
     const visibleAfterParagraphClose = validFixture();
     visibleAfterParagraphClose['docs/getting-started.md'] =
         '<p hidden>\n\n'
@@ -2755,6 +2773,10 @@ test('governs form submissions and hidden ID names while inert routes remain ina
         `<form action="${ISSUES_ROUTE}">`
             + '<button>Continue</button><span>Click here.</span>'
             + '<p>Submit a vulnerability report below.</p></form>',
+        `<form action="${ISSUES_ROUTE}">`
+            + '<p>A typo does not constitute a vulnerability.</p>'
+            + '<p>Submit a vulnerability report below.</p>'
+            + '<button>Continue</button></form>',
         ...[
             '<button disabled>Ignored</button>',
             '<button hidden>Ignored</button>',
@@ -2774,6 +2796,20 @@ test('governs form submissions and hidden ID names while inert routes remain ina
             )), formSource);
         });
     }
+
+    const distinctPrivateAnchor = validFixture();
+    distinctPrivateAnchor['docs/getting-started.md'] =
+        `<form action="${ISSUES_ROUTE}">`
+        + '<p>Submit a vulnerability report through '
+        + `<a href="${SECURITY_ADVISORY_ROUTE}">private GitHub advisories</a>.</p>`
+        + '<p>Report a regular bug with this form.</p>'
+        + '<button>Continue</button></form>';
+    fixture(distinctPrivateAnchor, root => {
+        assert.ok(!auditSupportContract({ root }).problems.some(problem => (
+            problem.startsWith('docs/getting-started.md:')
+            && problem.includes('security intake links must use private GitHub advisories')
+        )));
+    });
 
     const formIntentAfterHiddenPrefix = validFixture();
     formIntentAfterHiddenPrefix['docs/getting-started.md'] =

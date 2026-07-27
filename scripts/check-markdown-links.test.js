@@ -759,6 +759,21 @@ test('extracts HTML form submissions and image-map routes with control names', (
         assert.equal(isActionableLink(scopedLink), false, scopedHiddenRoute);
     }
 
+    for (const repairedVisibleRoute of [
+        '<h1 hidden><p><h2>'
+            + `<a href="${browserScopeTarget}">Submit a vulnerability report</a>`
+            + '</h2>',
+        '<button hidden><caption><button>'
+            + `<a href="${browserScopeTarget}">Submit a vulnerability report</a>`
+            + '</button>',
+    ]) {
+        const repairedLink = extractLinks(repairedVisibleRoute)
+            .find(candidate => candidate.target === browserScopeTarget);
+        assert.ok(repairedLink, repairedVisibleRoute);
+        assert.equal(repairedLink.hidden, false, repairedVisibleRoute);
+        assert.equal(isActionableLink(repairedLink), true, repairedVisibleRoute);
+    }
+
     const paragraphAutoClose = '<p hidden>\n\n'
         + `<form action="${formTarget}">\n`
         + '<button>Submit a vulnerability report</button>\n'
@@ -784,6 +799,17 @@ test('extracts HTML form submissions and image-map routes with control names', (
         .find(candidate => candidate.target === formTarget);
     assert.ok(earlierFormIntentLink);
     assert.match(earlierFormIntentLink.contextBefore, /submit a vulnerability report below/i);
+
+    const distinctAnchorIntent = `<form action="${formTarget}">`
+        + `<p>Submit a vulnerability report through <a href="${overrideTarget}">`
+        + 'private GitHub advisories</a>.</p>'
+        + '<p>Report a regular bug with this form.</p>'
+        + '<button>Continue</button></form>';
+    const distinctAnchorIntentLink = extractLinks(distinctAnchorIntent)
+        .find(candidate => candidate.target === formTarget);
+    assert.ok(distinctAnchorIntentLink);
+    assert.match(distinctAnchorIntentLink.contextBefore, /report a regular bug/i);
+    assert.doesNotMatch(distinctAnchorIntentLink.contextBefore, /vulnerab/i);
 
     const laterFormIntent = `<form action="${formTarget}">`
         + '<button>Continue</button><span>Click here.</span>'
@@ -1216,13 +1242,13 @@ test('uses browser select repair and caller-provided document context', () => {
     assert.match(governedHtmlText(fragmentWithDoctype), /vulnerability/i);
 });
 
-test('bounds malformed table-context boundary parsing', () => {
+test('ignores out-of-table elements and bounds malformed document parsing', () => {
     const source = '<caption>'.repeat(6_000) + 'Report a vulnerability';
     const started = performance.now();
-    assert.match(governedHtmlText(source), /\[label truncated:/);
+    assert.equal(governedHtmlText(source), 'Report a vulnerability');
     assert.ok(
         performance.now() - started < 4_000,
-        'malformed table-context fragments must be depth-bounded'
+        'ignored out-of-table elements must remain bounded'
     );
 
     const malformedDocument = '<!doctype html><html><head></head><body>'

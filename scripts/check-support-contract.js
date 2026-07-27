@@ -664,9 +664,20 @@ function fragmentSectionTokens(tokens, fragment, file) {
 
 function isOwnedSecurityIntakeLink(link, securityContext = '') {
     const text = `${securityContext} ${semanticLinkText(link)}`.trim();
-    if (NON_VULNERABILITY_CONTEXT.test(text)) return false;
-    if (!SECURITY_ROUTE_LABEL.test(text)) return false;
-    return !NEUTRAL_SECURITY_REFERENCE.test(text) || SECURITY_ROUTE_CUE.test(text);
+    const boundaries = hardSentenceBoundaries(text);
+    const clauses = [];
+    let start = 0;
+    for (const boundary of boundaries) {
+        clauses.push(text.slice(start, boundary + 1));
+        start = boundary + 1;
+    }
+    clauses.push(text.slice(start));
+    const applicable = clauses
+        .filter(clause => !NON_VULNERABILITY_CONTEXT.test(clause))
+        .join(' ');
+    if (!SECURITY_ROUTE_LABEL.test(applicable)) return false;
+    return !NEUTRAL_SECURITY_REFERENCE.test(applicable)
+        || SECURITY_ROUTE_CUE.test(applicable);
 }
 
 function exactRouteResult(tokens, route, options) {
