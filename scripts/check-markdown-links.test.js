@@ -597,6 +597,61 @@ test('resolves nested same-tag ID labels with bounded traversal work', () => {
     );
 });
 
+test('bounds cyclic and deep aria-labelledby dependency graphs', () => {
+    const target = 'https://example.com/route';
+    const extractors = [extractLinks, extractRenderedHtmlLinks];
+    const chainDepth = 80;
+    const chain = Array.from({ length: chainDepth }, (_, index) => (
+        index === chainDepth - 1
+            ? `<span id="chain-${index}">Report a problem</span>`
+            : `<span id="chain-${index}" aria-labelledby="chain-${index + 1}"></span>`
+    )).join('')
+        + `<a aria-labelledby="chain-0" href="${target}"></a>`;
+    for (const extract of extractors) {
+        const link = extract(chain).find(candidate => candidate.type === 'link');
+        assert.ok(link);
+        assert.equal(link.label, 'Report a problem');
+        assert.equal(isActionableLink(link), true);
+    }
+
+    const filler = Array.from(
+        { length: 24 },
+        (_, index) => `<i id="filler-${index}"></i>`
+    ).join('');
+    const selfCycle = filler
+        + '<span id="route-name" aria-labelledby="route-name route-name">'
+        + 'Report a problem</span>'
+        + `<a aria-labelledby="route-name" href="${target}"></a>`;
+    for (const extract of extractors) {
+        const started = performance.now();
+        const link = extract(selfCycle).find(candidate => candidate.type === 'link');
+        assert.ok(link);
+        assert.equal(link.label, 'Report a problem');
+        assert.equal(isActionableLink(link), true);
+        assert.ok(performance.now() - started < 1_000);
+    }
+
+    const fanOut = [
+        '<span id="fan-0">Report a problem</span>',
+        '<span id="fan-1">Need help</span>',
+        ...Array.from(
+            { length: 28 },
+            (_, index) => `<span id="fan-${index + 2}" `
+                + `aria-labelledby="fan-${index} fan-${index + 1}"></span>`
+        ),
+        `<a aria-labelledby="fan-29" href="${target}"></a>`,
+    ].join('');
+    for (const extract of extractors) {
+        const started = performance.now();
+        const link = extract(fanOut).find(candidate => candidate.type === 'link');
+        assert.ok(link);
+        assert.ok(link.label.length <= 8_192);
+        assert.match(link.label, /\[label truncated:/);
+        assert.equal(isActionableLink(link), true);
+        assert.ok(performance.now() - started < 1_000);
+    }
+});
+
 test('extracts accessible names from nested SVG and labelled images', () => {
     const source = [
         '<span id="image-security-label">Submit a vulnerability report</span>',

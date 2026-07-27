@@ -6,6 +6,9 @@ const MarkdownIt = require('markdown-it');
 
 const ROOT = path.join(__dirname, '..');
 const REQUIRED_FILES = ['README.md', 'CONTRIBUTING.md'];
+const MAX_HTML_LABEL_LENGTH = 8_192;
+const HTML_LABEL_OVERFLOW_MARKER =
+    '[label truncated: support feature bug vulnerability security question help issue report request]';
 const markdown = new MarkdownIt({ html: true, linkify: true });
 markdown.linkify.set({ fuzzyEmail: false, fuzzyLink: false });
 const gfmWwwLinkifier = new MarkdownIt().linkify;
@@ -173,11 +176,11 @@ function visuallyRenderedHtmlText(content, initialState = null) {
 function combinedHtmlLabel(accessible, visual) {
     const accessibleLabel = accessible.replace(/\s+/g, ' ').trim();
     const visualLabel = visual.replace(/\s+/g, ' ').trim();
-    if (!accessibleLabel) return visualLabel;
+    if (!accessibleLabel) return boundedDomText([visualLabel]);
     if (!visualLabel || accessibleLabel.toLowerCase() === visualLabel.toLowerCase()) {
-        return accessibleLabel;
+        return boundedDomText([accessibleLabel]);
     }
-    return `${accessibleLabel} ${visualLabel}`;
+    return boundedDomText([accessibleLabel, visualLabel]);
 }
 
 function governedHtmlText(content, labels = new Map(), initialStates = {}) {
@@ -319,8 +322,203 @@ function compactGovernedText(content, labels = new Map(), initialStates = {}) {
     return governedHtmlText(content, labels, initialStates).replace(/\s+/g, ' ').trim();
 }
 
-function compactDomText(parts) {
-    return parts.filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+function boundedDomText(parts) {
+    let text = '';
+    let overflow = false;
+    for (const part of parts) {
+        const compact = String(part || '').replace(/\s+/g, ' ').trim();
+        if (!compact) continue;
+        if (compact.includes(HTML_LABEL_OVERFLOW_MARKER)) overflow = true;
+        const separator = text ? 1 : 0;
+        const remaining = MAX_HTML_LABEL_LENGTH - text.length - separator;
+        if (remaining <= 0) {
+            overflow = true;
+            break;
+        }
+        if (separator) text += ' ';
+        if (compact.length > remaining) {
+            text += compact.slice(0, remaining);
+            overflow = true;
+            break;
+        }
+        text += compact;
+    }
+    if (!overflow) return text;
+    const contentLimit = MAX_HTML_LABEL_LENGTH - HTML_LABEL_OVERFLOW_MARKER.length - 1;
+    const content = text
+        .replaceAll(HTML_LABEL_OVERFLOW_MARKER, '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, contentLimit)
+        .trimEnd();
+    return `${content}${content ? ' ' : ''}${HTML_LABEL_OVERFLOW_MARKER}`;
+}
+
+function htmlLabelGraphComponents(dependencies) {
+    const reverse = dependencies.map(() => []);
+    for (const [node, edges] of dependencies.entries()) {
+        for (const edge of edges) reverse[edge.node].push(node);
+    }
+
+    const visited = new Uint8Array(dependencies.length);
+    const order = [];
+    for (let start = 0; start < dependencies.length; start += 1) {
+        if (visited[start]) continue;
+        visited[start] = 1;
+        const stack = [{ node: start, edge: 0 }];
+        while (stack.length > 0) {
+            const frame = stack.at(-1);
+            const edges = dependencies[frame.node];
+            if (frame.edge < edges.length) {
+                const dependency = edges[frame.edge].node;
+                frame.edge += 1;
+                if (!visited[dependency]) {
+                    visited[dependency] = 1;
+                    stack.push({ node: dependency, edge: 0 });
+                }
+                continue;
+            }
+            order.push(frame.node);
+            stack.pop();
+        }
+    }
+
+    const components = new Int32Array(dependencies.length);
+    components.fill(-1);
+    let component = 0;
+    for (let index = order.length - 1; index >= 0; index -= 1) {
+        const start = order[index];
+        if (components[start] !== -1) continue;
+        components[start] = component;
+        const stack = [start];
+        while (stack.length > 0) {
+            const node = stack.pop();
+            for (const dependent of reverse[node]) {
+                if (components[dependent] !== -1) continue;
+                components[dependent] = component;
+                stack.push(dependent);
+            }
+        }
+        component += 1;
+    }
+    return components;
+}
+
+function resolvedHtmlIdLabels(records, ids) {
+    const idEntries = [...ids];
+    const labelNodeById = new Map(idEntries.map(
+        ([id], index) => [id, records.length + index]
+    ));
+    const dependencies = Array.from(
+        { length: records.length + idEntries.length },
+        () => []
+    );
+
+    for (const record of records) {
+        record.referenceIds = [...new Set(
+            htmlAttributeValue(record.openingTag, 'aria-labelledby')
+                .split(/\s+/)
+                .filter(id => labelNodeById.has(id))
+        )];
+        for (const part of record.parts) {
+            if (typeof part !== 'string') {
+                dependencies[record.index].push({ node: part.index, reference: false });
+            }
+        }
+        for (const id of record.referenceIds) {
+            dependencies[record.index].push({
+                node: labelNodeById.get(id),
+                reference: true,
+            });
+        }
+    }
+
+    for (const [entryIndex, [, record]] of idEntries.entries()) {
+        const directLabel = htmlAttributeValue(record.openingTag, 'aria-label')
+            || htmlAttributeValue(record.openingTag, 'title');
+        if (!record.accessibilityState.hidden
+            && !directLabel
+            && !record.visualState.persistentHidden
+            && !record.accessibilityState.persistentHidden) {
+            dependencies[records.length + entryIndex].push({
+                node: record.index,
+                reference: false,
+            });
+        }
+    }
+
+    const components = htmlLabelGraphComponents(dependencies);
+    const filtered = dependencies.map((edges, node) => edges.filter(edge => (
+        !edge.reference || components[node] !== components[edge.node]
+    )));
+    const dependents = filtered.map(() => []);
+    const pending = new Uint32Array(filtered.length);
+    for (const [node, edges] of filtered.entries()) {
+        pending[node] = edges.length;
+        for (const edge of edges) dependents[edge.node].push(node);
+    }
+
+    const values = Array(filtered.length).fill('');
+    const queue = [];
+    for (let node = 0; node < filtered.length; node += 1) {
+        if (pending[node] === 0) queue.push(node);
+    }
+    for (let cursor = 0; cursor < queue.length; cursor += 1) {
+        const node = queue[cursor];
+        if (node < records.length) {
+            const record = records[node];
+            if (!['script', 'style'].includes(record.tag)) {
+                const body = boundedDomText(record.parts.map(part => (
+                    typeof part === 'string'
+                        ? record.accessibilityState.hidden ? '' : part
+                        : values[part.index]
+                )));
+                let text = body;
+                if (!record.accessibilityState.hidden) {
+                    const referenced = boundedDomText(record.referenceIds
+                        .filter(id => (
+                            components[node] !== components[labelNodeById.get(id)]
+                        ))
+                        .map(id => values[labelNodeById.get(id)]));
+                    const ariaLabel = htmlAttributeValue(record.openingTag, 'aria-label');
+                    const title = htmlAttributeValue(record.openingTag, 'title');
+                    if (record.tag === 'img') {
+                        text = referenced
+                            || ariaLabel
+                            || htmlAttributeValue(record.openingTag, 'alt')
+                            || title;
+                    } else if (record.tag === 'svg'
+                        || ariaLabel
+                        || htmlAttributeValue(record.openingTag, 'aria-labelledby')) {
+                        text = referenced || ariaLabel || title || body;
+                    }
+                }
+                values[node] = boundedDomText([text]);
+            }
+        } else {
+            const [, record] = idEntries[node - records.length];
+            let label = record.accessibilityState.hidden
+                ? ''
+                : htmlAttributeValue(record.openingTag, 'aria-label')
+                    || htmlAttributeValue(record.openingTag, 'title')
+                    || '';
+            if (!record.visualState.persistentHidden && !label) {
+                label = record.accessibilityState.persistentHidden
+                    ? record.visualText
+                    : combinedHtmlLabel(values[record.index], record.visualText);
+            }
+            values[node] = boundedDomText([label]);
+        }
+        for (const dependent of dependents[node]) {
+            pending[dependent] -= 1;
+            if (pending[dependent] === 0) queue.push(dependent);
+        }
+    }
+
+    return new Map(idEntries.flatMap(([id], index) => {
+        const label = values[records.length + index];
+        return label ? [[id, label]] : [];
+    }));
 }
 
 function htmlIdLabels(content) {
@@ -369,6 +567,7 @@ function htmlIdLabels(content) {
             true
         );
         const record = {
+            index: records.length,
             tag,
             openingTag,
             visualState,
@@ -393,90 +592,20 @@ function htmlIdLabels(content) {
             record.visualText = '';
             continue;
         }
-        record.visualText = compactDomText(record.parts.map(part => (
+        record.visualText = boundedDomText(record.parts.map(part => (
             typeof part === 'string'
                 ? record.visualState.hidden ? '' : part
                 : part.visualText
         )));
     }
-
-    const labelledText = (record, labels) => {
-        const references = htmlAttributeValue(record.openingTag, 'aria-labelledby')
-            .split(/\s+/)
-            .filter(Boolean)
-            .map(id => labels.get(id) || '')
-            .filter(Boolean);
-        return compactDomText(references);
-    };
-
-    let labels = new Map();
-    const maximumPasses = Math.min(ids.size + 1, 32);
-    for (let pass = 0; pass < maximumPasses; pass += 1) {
-        for (let index = records.length - 1; index >= 0; index -= 1) {
-            const record = records[index];
-            if (['script', 'style'].includes(record.tag)) {
-                record.accessibleText = '';
-                continue;
-            }
-            const body = compactDomText(record.parts.map(part => (
-                typeof part === 'string'
-                    ? record.accessibilityState.hidden ? '' : part
-                    : part.accessibleText
-            )));
-            let text = body;
-            if (!record.accessibilityState.hidden) {
-                const referenced = labelledText(record, labels);
-                const ariaLabel = htmlAttributeValue(record.openingTag, 'aria-label');
-                const title = htmlAttributeValue(record.openingTag, 'title');
-                if (record.tag === 'img') {
-                    text = referenced
-                        || ariaLabel
-                        || htmlAttributeValue(record.openingTag, 'alt')
-                        || title;
-                } else if (record.tag === 'svg'
-                    || ariaLabel
-                    || htmlAttributeValue(record.openingTag, 'aria-labelledby')) {
-                    text = referenced || ariaLabel || title || body;
-                }
-            }
-            record.accessibleText = compactDomText([text]);
-        }
-
-        const nextLabels = new Map();
-        for (const [id, record] of ids) {
-            let label = record.accessibilityState.hidden
-                ? ''
-                : htmlAttributeValue(record.openingTag, 'aria-label')
-                    || htmlAttributeValue(record.openingTag, 'title')
-                    || '';
-            if (!record.visualState.persistentHidden && !label) {
-                label = record.accessibilityState.persistentHidden
-                    ? record.visualText
-                    : combinedHtmlLabel(record.accessibleText, record.visualText);
-            }
-            label = compactDomText([label]);
-            if (label) nextLabels.set(id, label);
-        }
-
-        if (nextLabels.size === labels.size
-            && [...nextLabels].every(([id, label]) => labels.get(id) === label)) {
-            labels = nextLabels;
-            break;
-        }
-        labels = nextLabels;
-    }
-    return labels;
+    return resolvedHtmlIdLabels(records, ids);
 }
 
 function ariaLabelledText(openingTag, labels) {
-    return htmlAttributeValue(openingTag, 'aria-labelledby')
+    return boundedDomText(htmlAttributeValue(openingTag, 'aria-labelledby')
         .split(/\s+/)
         .filter(Boolean)
-        .map(id => labels.get(id) || '')
-        .filter(Boolean)
-        .join(' ')
-        .replace(/\s+/g, ' ')
-        .trim();
+        .map(id => labels.get(id) || ''));
 }
 
 function htmlOpeningTagEnd(content, start) {
