@@ -713,9 +713,14 @@ test('rendered category form links cannot hide behind local fragments', () => {
         { label: 'Open the bug form', message: 'bug intake links' },
         { label: 'Bug report form', message: 'bug intake links' },
         { label: 'Bug report form (recommended)', message: 'bug intake links' },
+        { label: 'Submit a bug report form — recommended', message: 'bug intake links' },
+        { label: 'File the bug report form', message: 'bug intake links' },
+        { label: 'Report a defect intake', message: 'bug intake links' },
         { label: 'Open the feature-request form', message: 'feature intake links' },
         { label: 'Feature request form', message: 'feature intake links' },
         { label: 'Feature request form — preferred', message: 'feature intake links' },
+        { label: 'Submit a feature-request form — preferred', message: 'feature intake links' },
+        { label: 'File a feature request form', message: 'feature intake links' },
     ];
     for (const { label, message } of cases) {
         const files = validFixture();

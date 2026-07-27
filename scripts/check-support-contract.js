@@ -123,7 +123,7 @@ const CONTEXT_DEPENDENT_ROUTE_LABEL = new RegExp(
     `^(?:${CONTEXTUAL_ACTION_LABEL}|(?:github\\s+)?issues?|discord|community\\s+(?:chat|forum))$`,
     'i'
 );
-const DIRECT_FORM_ROUTE_LABEL = /^(?:(?:open|use|visit)\b.{0,20}\b)?(?:bug|defect|feature(?:[- ]request)?|help|support)(?:[- ]report)?\s+(?:form|intake)\b/i;
+const DIRECT_FORM_ROUTE_LABEL = /^(?:(?:file|open|report|submit|use|visit)\b.{0,20}\b)?(?:bug|defect|feature(?:[- ]request)?|help|support)(?:[- ]report)?\s+(?:form|intake)\b/i;
 const ROUTE_INTENT_TERM = /\b(?:assistance|bugs?|broken|defects?|enhancements?|exploits?|features?|help|ideas?|improvements?|questions?|security|support|vulnerab\w*)\b|community\s+(?:chat|forum|support)/i;
 const HTML_ROUTE_CONTEXT_BEFORE_CUE = /(?:\b(?:at|choose|follow|here|in|on|open|see|select|through|to|use|using|via|visit)\b|[:→])(?:\s+(?:a|an|our|the|this))?\s*$/i;
 const HTML_ROUTE_CONTEXT_AFTER_CUE = /^\s*(?:(?:[-–—:,(]\s*)|(?:for|to|where)\b)/i;
