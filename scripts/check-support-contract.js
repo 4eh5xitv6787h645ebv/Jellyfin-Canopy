@@ -1219,7 +1219,10 @@ function auditGlobalRouteLinks(file, surface, root, problems, options = {}) {
         const ownsHtmlContext = options.html
             && htmlContextOwnsRoute(blockContextLink)
             && absoluteUrl(link.target);
-        const contextualLink = ownsHtmlContext
+        const dependentLabel = options.html
+            ? HTML_CONTEXT_DEPENDENT_ROUTE_LABEL
+            : CONTEXT_DEPENDENT_ROUTE_LABEL;
+        const contextualLink = ownsHtmlContext || dependentLabel.test(normalizedLabel)
             ? { ...blockContextLink, contextBefore: htmlExtendedContextBefore(blockContextLink) }
             : blockContextLink;
         const scopedLink = options.html

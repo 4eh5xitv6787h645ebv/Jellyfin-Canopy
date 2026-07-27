@@ -531,6 +531,74 @@ test('security ownership does not cross adjacent ordinary links in Markdown', ()
     }
 });
 
+test('context-dependent routes inherit intake prose across intervening links', () => {
+    const categories = [
+        {
+            prompt: 'Found a vulnerability?',
+            safeLabel: 'Read the private guidance',
+            safeRoute: SECURITY_ADVISORY_ROUTE,
+            badRoute: ISSUES_ROUTE,
+            message: 'security intake links',
+        },
+        {
+            prompt: 'Found a bug?',
+            safeLabel: 'Read the bug guide',
+            safeRoute: ISSUES_ROUTE,
+            badRoute: DISCORD_ROUTE,
+            message: 'bug intake links',
+        },
+        {
+            prompt: 'Need help?',
+            safeLabel: 'Read the support guide',
+            safeRoute: DISCORD_ROUTE,
+            badRoute: ISSUES_ROUTE,
+            message: 'community-support links',
+        },
+        {
+            prompt: 'Want to suggest a feature?',
+            safeLabel: 'Read the feature guide',
+            safeRoute: ISSUES_ROUTE,
+            badRoute: DISCORD_ROUTE,
+            message: 'feature intake links',
+        },
+    ];
+    for (const category of categories) {
+        for (const separator of ['', ' and ', ' | ']) {
+            const forms = [
+                {
+                    file: 'docs/getting-started.md',
+                    source: `${category.prompt} `
+                        + `[${category.safeLabel}](${category.safeRoute})${separator}`
+                        + `[click here](${category.badRoute})\n`,
+                },
+                {
+                    file: 'docs/getting-started.md',
+                    source: `${category.prompt} `
+                        + `<a href="${category.safeRoute}">${category.safeLabel}</a>${separator}`
+                        + `<a href="${category.badRoute}">click here</a>\n`,
+                },
+                {
+                    file: 'theme/partials/context-test.html',
+                    source: `<p>${category.prompt} `
+                        + `<a href="${category.safeRoute}">${category.safeLabel}</a>${separator}`
+                        + `<a href="${category.badRoute}">click here</a></p>\n`,
+                },
+            ];
+            for (const form of forms) {
+                const files = validFixture();
+                files[form.file] = form.source;
+                fixture(files, root => {
+                    const problems = auditSupportContract({ root }).problems;
+                    assert.ok(problems.some(problem => (
+                        problem.startsWith(`${form.file}:`)
+                        && problem.includes(category.message)
+                    )), `${form.file}: ${category.prompt}: ${separator || 'adjacent'}`);
+                });
+            }
+        }
+    }
+});
+
 test('category-specific form labels own direct and semicolon-delimited intake routes', () => {
     const cases = [
         {
