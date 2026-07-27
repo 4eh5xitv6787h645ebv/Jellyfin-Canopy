@@ -2318,6 +2318,55 @@ test('painted SVG route text is governed while hidden SVG metadata is ignored', 
     }
 });
 
+test('hidden SVG metadata cannot govern document prose or adjacent routes', () => {
+    for (const hiddenMetadata of [
+        '<svg aria-hidden="true" aria-label="GitHub Discussions: support"></svg>',
+        '<svg aria-hidden="true"><title>Vulnerabilities go to Discord</title></svg>',
+    ]) {
+        for (const [file, source] of [
+            [
+                'theme/partials/support.html',
+                `<a href="${DISCORD_ROUTE}">${hiddenMetadata}</a>\n`,
+            ],
+            [
+                'docs/getting-started.md',
+                `Prefix <a href="${DISCORD_ROUTE}">${hiddenMetadata}</a>.\n`,
+            ],
+            [
+                'docs/getting-started.md',
+                `[${hiddenMetadata}](${DISCORD_ROUTE})\n`,
+            ],
+        ]) {
+            const files = validFixture();
+            files[file] = source;
+            fixture(files, root => {
+                const problems = auditSupportContract({ root }).problems;
+                assert.ok(!problems.some(problem => (
+                    problem.startsWith(`${file}:`)
+                    && (problem.includes('disabled GitHub Discussions')
+                        || problem.includes('private GitHub advisories'))
+                )), `${file}: ${hiddenMetadata}`);
+            });
+        }
+    }
+
+    for (const [metadata, governed] of [
+        ['<svg aria-hidden="true"><title>Need help?</title></svg>', false],
+        ['<svg aria-hidden="true"><text>Need help?</text></svg>', true],
+    ]) {
+        const files = validFixture();
+        files['docs/getting-started.md'] =
+            `${metadata} [Click here](${ISSUES_ROUTE}).\n`;
+        fixture(files, root => {
+            const problems = auditSupportContract({ root }).problems;
+            assert.equal(problems.some(problem => (
+                problem.startsWith('docs/getting-started.md:')
+                && problem.includes('community-support links')
+            )), governed, metadata);
+        });
+    }
+});
+
 test('audits question intent in source and rendered call-to-action wording', () => {
     const files = validFixture();
     files['docs/getting-started.md'] =

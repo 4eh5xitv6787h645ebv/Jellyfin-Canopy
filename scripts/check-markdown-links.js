@@ -176,6 +176,19 @@ function governedHtmlText(content, labels = new Map()) {
     );
 }
 
+function governedInlineText(children = []) {
+    const source = children.map((child) => {
+        if (child.type === 'text' || child.type === 'code_inline') {
+            return markdown.utils.escapeHtml(child.content);
+        }
+        if (child.type === 'image') return markdown.utils.escapeHtml(child.content);
+        if (child.type === 'softbreak' || child.type === 'hardbreak') return ' ';
+        if (child.type === 'html_inline') return child.content;
+        return '';
+    }).join('');
+    return governedHtmlText(source).replace(/\s+/g, ' ').trim();
+}
+
 function htmlAttributeRecords(content) {
     const attributes = [];
     const pattern = /(?:^|[\s<])(id|href|src|srcset)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/gi;
@@ -650,7 +663,7 @@ function normalizeLinkTarget(target) {
 }
 
 function inlineLabel(children, start) {
-    const source = [];
+    const label = [];
     let depth = 1;
     for (let index = start + 1; index < children.length; index += 1) {
         const child = children[index];
@@ -659,17 +672,9 @@ function inlineLabel(children, start) {
             depth -= 1;
             if (depth === 0) break;
         }
-        if (child.type === 'text' || child.type === 'code_inline') {
-            source.push(markdown.utils.escapeHtml(child.content));
-        } else if (child.type === 'image') {
-            source.push(markdown.utils.escapeHtml(child.content));
-        } else if (child.type === 'softbreak' || child.type === 'hardbreak') {
-            source.push(' ');
-        } else if (child.type === 'html_inline') {
-            source.push(child.content);
-        }
+        label.push(child);
     }
-    return governedHtmlText(source.join(''));
+    return governedInlineText(label);
 }
 
 function inlineLinkEnd(children, start) {
@@ -685,13 +690,7 @@ function inlineLinkEnd(children, start) {
 }
 
 function inlineSemanticText(children = []) {
-    return children.map((child) => {
-        if (child.type === 'text' || child.type === 'code_inline') return child.content;
-        if (child.type === 'image') return child.content;
-        if (child.type === 'softbreak' || child.type === 'hardbreak') return ' ';
-        if (child.type === 'html_inline') return visibleHtmlText(child.content);
-        return '';
-    }).join('').replace(/\s+/g, ' ').trim();
+    return governedInlineText(children);
 }
 
 function inlineLinkRegions(children, labels) {
@@ -1066,6 +1065,7 @@ module.exports = {
     extractLinks,
     extractLinksFromTokens,
     extractRenderedHtmlLinks,
+    governedHtmlText,
     headingSlug,
     htmlAttributes,
     htmlTagIsHidden,

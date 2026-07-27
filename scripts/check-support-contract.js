@@ -10,14 +10,12 @@ const {
     extractLinks,
     extractLinksFromTokens,
     extractRenderedHtmlLinks,
+    governedHtmlText,
     htmlAttributes,
-    htmlTagIsHidden,
     isActionableLink,
     markdownHeadingAnchors,
     normalizeLinkTarget,
-    updateHtmlVisibilityStack,
     validateMarkdownFile,
-    visibleHtmlText,
 } = require('./check-markdown-links');
 
 const ROOT = path.join(__dirname, '..');
@@ -286,32 +284,16 @@ function auditTemplateDirectory(root, problems) {
 }
 
 function inlineRenderedText(children = [], includeCode = false) {
-    const values = [];
-    const visibilityStack = [];
-    for (const token of children) {
-        if (token.type === 'html_inline') {
-            const hiddenBefore = Boolean(visibilityStack.at(-1)?.hidden);
-            const closing = /^\s*<\//.test(token.content);
-            const ownHidden = !closing && htmlTagIsHidden(token.content);
-            updateHtmlVisibilityStack(visibilityStack, token.content);
-            const hiddenAfter = Boolean(visibilityStack.at(-1)?.hidden);
-            if (closing
-                ? !hiddenBefore && !hiddenAfter
-                : !hiddenAfter && !ownHidden) {
-                values.push(visibleHtmlText(token.content));
-            }
-            continue;
-        }
-        if (visibilityStack.at(-1)?.hidden) continue;
+    const source = children.map((token) => {
         if (token.type === 'text' || (includeCode && token.type === 'code_inline')) {
-            values.push(token.content);
-        } else if (token.type === 'image') {
-            values.push(token.content);
-        } else if (token.type === 'softbreak' || token.type === 'hardbreak') {
-            values.push(' ');
+            return markdown.utils.escapeHtml(token.content);
         }
-    }
-    return values.join('');
+        if (token.type === 'image') return markdown.utils.escapeHtml(token.content);
+        if (token.type === 'softbreak' || token.type === 'hardbreak') return ' ';
+        if (token.type === 'html_inline') return token.content;
+        return '';
+    }).join('');
+    return governedHtmlText(source);
 }
 
 function inlineVisibleText(children = []) {
@@ -325,7 +307,7 @@ function inlineTaskText(children = []) {
 function renderedText(tokens) {
     return tokens.map((token) => {
         if (token.type === 'inline') return inlineVisibleText(token.children);
-        if (token.type === 'html_block') return visibleHtmlText(token.content);
+        if (token.type === 'html_block') return governedHtmlText(token.content);
         return '';
     }).join(' ').replace(/\p{Cf}/gu, '').replace(/\s+/g, ' ').trim();
 }
@@ -333,7 +315,7 @@ function renderedText(tokens) {
 function renderedTextWithCode(tokens) {
     return tokens.map((token) => {
         if (token.type === 'inline') return inlineTaskText(token.children);
-        if (token.type === 'html_block') return visibleHtmlText(token.content);
+        if (token.type === 'html_block') return governedHtmlText(token.content);
         return '';
     }).join(' ').replace(/\p{Cf}/gu, '').replace(/\s+/g, ' ').trim();
 }
@@ -817,7 +799,7 @@ function requireSectionFields(tokens, file, section, fields, problems) {
     if (occurrences.length !== 1) return;
     const prompts = occurrences[0].flatMap((token) => {
         if (token.type === 'inline') return [inlineTaskText(token.children)];
-        if (token.type === 'html_block') return [visibleHtmlText(token.content)];
+        if (token.type === 'html_block') return [governedHtmlText(token.content)];
         return [];
     }).flatMap(text => text.split(/(?<=[.!?;])\s+/))
         .map(text => text.replace(/\p{Cf}/gu, '').replace(/\s+/g, ' ').trim())
@@ -886,7 +868,7 @@ function hasFileTransformationRequirement(body) {
             }
             const item = tokens.slice(index + 1, end).map((token) => {
                 if (token.type === 'inline') return inlineTaskText(token.children);
-                if (token.type === 'html_block') return visibleHtmlText(token.content);
+                if (token.type === 'html_block') return governedHtmlText(token.content);
                 return '';
             }).join(' ').replace(/\s+/g, ' ').trim();
             if (isRequirement(item)) return true;
@@ -1028,7 +1010,7 @@ function renderedSupportSurface(source, file) {
         );
         return {
             links: extractRenderedHtmlLinks(expanded),
-            text: visibleHtmlText(expanded).replace(/\s+/g, ' ').trim(),
+            text: governedHtmlText(expanded).replace(/\s+/g, ' ').trim(),
         };
     }
     const tokens = markdown.parse(source, {});
@@ -1199,7 +1181,7 @@ function routesSecurityIntakePublicly(tokens) {
         }
         let text = '';
         if (token.type === 'inline') text = inlineVisibleText(token.children);
-        if (token.type === 'html_block') text = visibleHtmlText(token.content);
+        if (token.type === 'html_block') text = governedHtmlText(token.content);
         if (!text || prohibitionListLevel > 0) continue;
         if (routesSecurityTextPublicly(text)) return true;
         if (securitySectionLevel > 0
