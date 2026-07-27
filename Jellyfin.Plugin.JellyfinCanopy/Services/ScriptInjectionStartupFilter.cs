@@ -134,25 +134,23 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 context.Request.Path.Value ?? string.Empty,
                 context.Request.Headers["Accept-Encoding"],
                 scriptTags);
-            var isRangeRequest = context.Request.Headers.ContainsKey("Range");
             var representationGate = _representationGates[cacheKey[0] % RepresentationGateCount];
             await representationGate.WaitAsync(context.RequestAborted).ConfigureAwait(false);
             var ownsRepresentationGate = true;
-            // Range and If-Range must first be interpreted by Static Files. A genuine
-            // 206/416 is passed through; a stale/ignored range that becomes a full 200
-            // is still eligible for injection. Do not let a warm source revalidation
-            // turn the range into our cached full representation before the host has
-            // made that decision.
-            var cached = isRangeRequest ? null : GetCached(cacheKey);
+            var cached = GetCached(cacheKey);
 
             try
             {
                 var requestHeaders = context.Request.Headers;
                 var originalMethod = context.Request.Method;
+                var originalRange = requestHeaders["Range"];
+                var originalIfRange = requestHeaders["If-Range"];
                 var clientIfMatch = requestHeaders["If-Match"];
                 var clientIfNoneMatch = requestHeaders["If-None-Match"];
                 var originalIfUnmodifiedSince = requestHeaders["If-Unmodified-Since"];
                 var originalIfModifiedSince = requestHeaders["If-Modified-Since"];
+                var hadRange = requestHeaders.ContainsKey("Range");
+                var hadIfRange = requestHeaders.ContainsKey("If-Range");
                 var hadIfMatch = requestHeaders.ContainsKey("If-Match");
                 var hadIfNoneMatch = requestHeaders.ContainsKey("If-None-Match");
                 var hadIfUnmodifiedSince = requestHeaders.ContainsKey("If-Unmodified-Since");
@@ -162,26 +160,27 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 // compression middleware therefore selects the representation that lands
                 // in our bounded response stream; after injection we restore that same
                 // encoding and cache the rewritten representation.
-                // Preserve every request precondition while Static Files decides a
-                // Range/If-Range request. For ordinary full responses, Jellyfin's
-                // validators describe the source index whereas browsers know only the
-                // rewritten representation. Translate a warm entry back to source
-                // validators for a bodyless host revalidation; a cold request suppresses
-                // client validators because they cannot validate the source.
-                if (!isRangeRequest)
+                // A byte range of the source index is not a byte range of the rewritten
+                // representation. Ignore Range/If-Range for this shell and return the
+                // complete injected representation, preventing even a full-file 206 from
+                // exposing an uninjected page. Jellyfin's validators likewise describe
+                // the source index whereas browsers know only the rewritten representation.
+                // Translate a warm entry back to source validators for a bodyless host
+                // revalidation; a cold request suppresses client validators because they
+                // cannot validate the source.
+                requestHeaders.Remove("Range");
+                requestHeaders.Remove("If-Range");
+                requestHeaders.Remove("If-Match");
+                requestHeaders.Remove("If-Unmodified-Since");
+                if (cached != null)
                 {
-                    requestHeaders.Remove("If-Match");
-                    requestHeaders.Remove("If-Unmodified-Since");
-                    if (cached != null)
-                    {
-                        SetOrRemove(requestHeaders, "If-None-Match", cached.SourceETag);
-                        SetOrRemove(requestHeaders, "If-Modified-Since", cached.SourceLastModified);
-                    }
-                    else
-                    {
-                        requestHeaders.Remove("If-None-Match");
-                        requestHeaders.Remove("If-Modified-Since");
-                    }
+                    SetOrRemove(requestHeaders, "If-None-Match", cached.SourceETag);
+                    SetOrRemove(requestHeaders, "If-Modified-Since", cached.SourceLastModified);
+                }
+                else
+                {
+                    requestHeaders.Remove("If-None-Match");
+                    requestHeaders.Remove("If-Modified-Since");
                 }
 
                 var originalBody = context.Response.Body;
@@ -203,6 +202,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 {
                     context.Response.Body = originalBody;
                     context.Request.Method = originalMethod;
+                    RestoreHeader(requestHeaders, "Range", originalRange, hadRange);
+                    RestoreHeader(requestHeaders, "If-Range", originalIfRange, hadIfRange);
                     RestoreHeader(requestHeaders, "If-Match", clientIfMatch, hadIfMatch);
                     RestoreHeader(requestHeaders, "If-None-Match", clientIfNoneMatch, hadIfNoneMatch);
                     RestoreHeader(

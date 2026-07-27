@@ -21,12 +21,12 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 27486,
-        "totalLines": 36205
+        "coveredLines": 27505,
+        "totalLines": 36211
       },
       "tolerance": {
         "missingCoveredLines": 5,
-        "rationale": "The final #453 host-semantics review pass lets Static Files decide Range/If-Range before passing through genuine 206/416 responses or injecting ignored full responses, parses conditional entity tags with the installed typed parser, combines source preconditions with Static Files' native state ordering, ignores future dates, and normalizes fallback 304/412 metadata. Real Static Files plus malformed, future-date, weak-tag, and conflicting-precondition regressions advance the reviewed high-water by 52 covered lines while adding 38 instrumented lines. Six clean .NET 10.0.9/Coverlet runs on 2026-07-27 each passed all 2,310 tests at the same 36,205-line scope: the first measured the reviewed high-water at 27,486 covered lines (75.918%), one repeat measured 27,485, and four repeats measured 27,484. Retaining the existing evidence-bounded five-line Coverlet tolerance makes the minimum 27,481/36,205 (75.904%), stricter than the prior 27,429/36,167 tolerated floor (75.840%). coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, and broad-tolerance negative boundaries."
+        "rationale": "The final #453 host-semantics review pass ignores source Range/If-Range for the rewritten shell so every byte-range shape receives the complete injected representation and conditional requests are evaluated against its transformed ETag. Real Static Files regressions cover short, unsatisfiable, open-ended, oversized, and multi-range requests; related cache-capacity, non-cacheable-source, unknown-encoding, non-success, cold-HEAD, and bypass cases preserve the existing coverage ratchet while exercising the bounded fallback paths. Six clean .NET 10.0.9/Coverlet runs on 2026-07-27 each passed all 2,319 tests at the same 36,211-line scope: two measured 27,500 covered lines, three measured 27,503, and one measured the reviewed high-water at 27,505 (75.958%). Retaining the existing evidence-bounded five-line Coverlet tolerance makes the minimum 27,500/36,211 (75.944%), stricter than the prior 27,481/36,205 tolerated floor (75.904%). coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, and broad-tolerance negative boundaries."
       }
     }
   }
