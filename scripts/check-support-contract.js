@@ -79,7 +79,7 @@ const SUPPORT_ROUTE_SECTIONS = new Map([
     ['docs/help.md', ['Community and support']],
     ['.github/SECURITY_GUIDELINES.md', ['Questions?']],
 ]);
-const BUG_ROUTE_INTENT = /\b(?:bug[- ]reports?|github bug-report issues|issue tracker|(?:something|anything|this|it)\s+(?:is\s+)?broken|broken\s+(?:behavior|feature|functionality|plugin)|(?:file|found|report|submit|tell)\b.{0,40}\b(?:a\s+)?(?:bugs?|defects?|issues?))\b/i;
+const BUG_ROUTE_INTENT = /\b(?:bug[- ]reports?|github bug-report issues|issue tracker|(?:something|anything|this|it)\s+(?:is\s+)?broken|broken\s+(?:behavior|feature|functionality|plugin)|(?:file|found|report|submit|tell)\b.{0,40}\b(?:a\s+)?(?:bugs?|defects?|issues?)|(?:create|open|use|visit)\b.{0,40}\b(?:github\s+)?issues?\b.{0,20}\bfor\s+(?:a\s+)?(?:bugs?|defects?))\b/i;
 const BUG_ROUTE_LABEL = new RegExp(
     `(?:${BUG_ROUTE_INTENT.source}|\\bgithub issues\\b)`,
     'i'
@@ -107,11 +107,15 @@ const PUBLIC_SECURITY_EXCEPTION = /\b(?:anywhere|nowhere)\s+(?:else\s+)?(?:but|e
 const PUBLIC_SECURITY_NEGATION_ACTION = '(?:contact(?:ed|ing)?|disclos\\w*|email(?:ed|ing)?|file(?:d|ing)?|include(?:d|ing)?|message(?:d|ing)?|notif(?:y|ied|ying)|open(?:ed|ing)?|post(?:ed|ing)?|report(?:ed|ing)?|send|sent|submit(?:ted|ting)?|use(?:d|ing)?)';
 const CONTEXTUAL_ACTION_LABEL = '(?:click(?:\\s+here)?|continue|details?|follow|go|here'
     + '|learn\\s+more|link|more|open(?:\\s+it\\s+here)?|read\\s+more|this|this\\s+link'
+    + '|open\\s+(?:the\\s+)?(?:intake|report)\\s+form'
     + '|use\\s+this\\s+link|view|(?:ask|report\\s+it|send\\s+it|tell\\s+us)'
     + '(?:\\s+(?:at|in|on|through|to|via)\\s+(?:discord|github|issues?|the\\s+forum))?'
     + '|visit\\s+our(?:\\s+community\\s+(?:chat|forum)|\\s+(?:at|in|on|through|to|via)'
     + '\\s+(?:discord|github|issues?|the\\s+forum))?|open\\s+(?:a\\s+)?github\\s+issue)';
-const HTML_CONTEXT_DEPENDENT_ROUTE_LABEL = new RegExp(`^(?:${CONTEXTUAL_ACTION_LABEL})$`, 'i');
+const HTML_CONTEXT_DEPENDENT_ROUTE_LABEL = new RegExp(
+    `^(?:${CONTEXTUAL_ACTION_LABEL}|(?:github\\s+)?issues?|discord|community\\s+(?:chat|forum))$`,
+    'i'
+);
 const CONTEXT_DEPENDENT_ROUTE_LABEL = new RegExp(
     `^(?:${CONTEXTUAL_ACTION_LABEL}|(?:github\\s+)?issues?|discord|community\\s+(?:chat|forum))$`,
     'i'
@@ -422,15 +426,10 @@ function semanticLinkText(link) {
         before = context.slice(0, offset);
         after = context.slice(offset + label.length);
     }
-    const sentenceBoundaries = (text) => {
+    const hardSentenceBoundaries = (text) => {
         const boundaries = [];
         for (let index = 0; index < text.length; index += 1) {
             const character = text[index];
-            if (character === ','
-                && /^\s+(?:and|but|or|whereas|while)\b/i.test(text.slice(index + 1))) {
-                boundaries.push(index);
-                continue;
-            }
             if (character === '!' || character === '?' || character === ';') {
                 boundaries.push(index);
                 continue;
@@ -448,9 +447,32 @@ function semanticLinkText(link) {
         }
         return boundaries;
     };
-    const boundaries = sentenceBoundaries(after);
+    const sentenceBoundaries = (text, prefix = '', suffix = '') => {
+        const boundaries = hardSentenceBoundaries(text);
+        const combined = `${prefix}${text}${suffix}`;
+        const offset = prefix.length;
+        const combinedHardBoundaries = hardSentenceBoundaries(combined);
+        for (let index = 0; index < text.length; index += 1) {
+            if (text[index] !== ','
+                || !/^\s+(?:and|but|or|whereas|while)\b/i.test(text.slice(index + 1))) {
+                continue;
+            }
+            const combinedIndex = offset + index;
+            const previous = combinedHardBoundaries
+                .filter(boundary => boundary < combinedIndex).at(-1) ?? -1;
+            const next = combinedHardBoundaries
+                .find(boundary => boundary > combinedIndex) ?? combined.length;
+            const leftClause = combined.slice(previous + 1, combinedIndex);
+            const rightClause = combined.slice(combinedIndex + 1, next);
+            if (ROUTE_INTENT_TERM.test(leftClause) && ROUTE_INTENT_TERM.test(rightClause)) {
+                boundaries.push(index);
+            }
+        }
+        return boundaries.sort((left, right) => left - right);
+    };
+    const boundaries = sentenceBoundaries(after, `${before} ${label} `);
     const end = boundaries.length > 0 ? Math.min(...boundaries) : after.length;
-    const beforeBoundaries = sentenceBoundaries(before);
+    const beforeBoundaries = sentenceBoundaries(before, '', ` ${label} ${after}`);
     const ownStart = (beforeBoundaries.at(-1) ?? -1) + 1;
     const ownClause = `${before.slice(ownStart)} ${label} ${after.slice(0, end)}`
         .replace(/\s+/g, ' ').trim();

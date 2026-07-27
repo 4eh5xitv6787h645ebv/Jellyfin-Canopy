@@ -490,6 +490,23 @@ test('semantic ownership does not cross delimited route clauses', () => {
     }
 });
 
+test('comma conjunctions preserve trailing intake intent owned by the link', () => {
+    const files = validFixture();
+    files['docs/getting-started.md'] =
+        `[Open the report form](${DISCORD_ROUTE}), and submit a bug.\n`;
+    files['theme/partials/support.html'] =
+        `<p><a href="${DISCORD_ROUTE}">Open the report form</a>, and submit a bug.</p>\n`;
+    fixture(files, root => {
+        const problems = auditSupportContract({ root }).problems;
+        for (const file of ['docs/getting-started.md', 'theme/partials/support.html']) {
+            assert.ok(problems.some(problem => (
+                problem.startsWith(`${file}:`)
+                && problem.includes('bug intake links')
+            )));
+        }
+    });
+});
+
 test('global route ownership distinguishes intake intent from destination names', () => {
     const files = validFixture();
     files['research/design.md'] = [
@@ -513,6 +530,43 @@ test('global route ownership distinguishes intake intent from destination names'
             );
         }
     });
+});
+
+test('global route ownership combines destination names with explicit intake context', () => {
+    const cases = [
+        {
+            file: 'research/design.md',
+            source: 'Open [GitHub Issues](https://github.com/example/dependency/issues) for bugs.\n',
+            message: 'bug intake links',
+        },
+        {
+            file: 'theme/partials/support.html',
+            source: '<p>Report bugs in '
+                + '<a href="https://github.com/example/dependency/issues">GitHub Issues</a>.</p>\n',
+            message: 'bug intake links',
+        },
+        {
+            file: 'theme/partials/support.html',
+            source: '<p>For help, use '
+                + '<a href="https://discord.com/developers/docs">Discord</a>.</p>\n',
+            message: 'community-support links',
+        },
+        {
+            file: 'theme/partials/support.html',
+            source: `<p>Questions? <a href="${ISSUES_ROUTE}">GitHub Issues</a>.</p>\n`,
+            message: 'community-support links',
+        },
+    ];
+    for (const { file, source, message } of cases) {
+        const files = validFixture();
+        files[file] = source;
+        fixture(files, root => {
+            assert.ok(auditSupportContract({ root }).problems.some(problem => (
+                problem.startsWith(`${file}:`)
+                && problem.includes(message)
+            )));
+        });
+    }
 });
 
 test('semantic route ownership decodes rendered raw HTML labels', () => {

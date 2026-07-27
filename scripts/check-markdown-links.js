@@ -301,10 +301,27 @@ function htmlOpeningTagEnd(content, start) {
     return -1;
 }
 
+function htmlContextAfterBoundary(content) {
+    const boundary = /<\/?(?:address|article|aside|blockquote|div|footer|form|h[1-6]|header|li|main|nav|ol|p|section|table|td|th|tr|ul)\b(?:[^>"']|"[^"]*"|'[^']*')*>/i
+        .exec(content);
+    return boundary?.index ?? content.length;
+}
+
+function htmlContextBeforeBoundary(content) {
+    let start = 0;
+    for (const boundary of content.matchAll(
+        /<\/?(?:address|article|aside|blockquote|div|footer|form|h[1-6]|header|li|main|nav|ol|p|section|table|td|th|tr|ul)\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi
+    )) {
+        start = boundary.index + boundary[0].length;
+    }
+    return start;
+}
+
 function htmlAnchorRecords(content, labels = htmlIdLabels(content)) {
     const anchors = [];
     const opening = /<a\b/gi;
     const closing = /<\/a\s*>/gi;
+    let previousAnchorEnd = 0;
     let match;
     while ((match = opening.exec(content)) !== null) {
         const openingEnd = htmlOpeningTagEnd(content, match.index);
@@ -316,6 +333,16 @@ function htmlAnchorRecords(content, labels = htmlIdLabels(content)) {
         const nestedName = close
             ? accessibleHtmlText(content.slice(openingEnd, close.index), labels).replace(/\s+/g, ' ').trim()
             : '';
+        const following = content.slice(anchorEnd, Math.min(content.length, anchorEnd + 2_000));
+        const nextAnchorOffset = following.search(/<a\b/i);
+        const adjacentContextAfterEnd = nextAnchorOffset === -1
+            ? anchorEnd + following.length
+            : anchorEnd + nextAnchorOffset;
+        const rawBefore = content.slice(
+            Math.max(previousAnchorEnd, match.index - 2_000),
+            match.index
+        );
+        const rawAfter = content.slice(anchorEnd, adjacentContextAfterEnd);
         anchors.push({
             start: match.index,
             openingEnd,
@@ -326,11 +353,15 @@ function htmlAnchorRecords(content, labels = htmlIdLabels(content)) {
                 || nestedName
                 || htmlAttributeValue(openingTag, 'title'),
             contextBefore: compactVisibleText(
-                content.slice(Math.max(0, match.index - 2_000), match.index),
+                rawBefore.slice(htmlContextBeforeBoundary(rawBefore)),
                 labels
             ),
-            contextAfter: compactVisibleText(content.slice(anchorEnd, anchorEnd + 2_000), labels),
+            contextAfter: compactVisibleText(
+                rawAfter.slice(0, htmlContextAfterBoundary(rawAfter)),
+                labels
+            ),
         });
+        previousAnchorEnd = anchorEnd;
         opening.lastIndex = anchorEnd;
     }
     return anchors;

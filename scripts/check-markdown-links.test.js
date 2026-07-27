@@ -215,6 +215,29 @@ test('records each link position and scans quoted HTML delimiters before href', 
     assert.equal(isActionableLink(links[2]), true);
 });
 
+test('raw HTML link context excludes neighboring link labels but retains prose', () => {
+    const source = [
+        '<nav><a href="https://example.com/one">GitHub</a>',
+        '<a href="https://example.com/two">Discord</a>',
+        '<a href="https://example.com/three">Report an issue</a></nav>',
+        '<p>Before <a href="https://example.com/four">Four</a> between ',
+        '<a href="https://example.com/five">Five</a> after.</p>',
+    ].join('');
+    for (const links of [extractLinks(source), extractRenderedHtmlLinks(source)]) {
+        assert.deepEqual(links.map(link => ({
+            label: link.label,
+            before: link.contextBefore,
+            after: link.contextAfter,
+        })), [
+            { label: 'GitHub', before: '', after: '' },
+            { label: 'Discord', before: '', after: '' },
+            { label: 'Report an issue', before: '', after: '' },
+            { label: 'Four', before: 'Before', after: 'between' },
+            { label: 'Five', before: 'between', after: 'after.' },
+        ]);
+    }
+});
+
 test('extracts every MkDocs markdown-in-HTML mode and image-only accessible names', () => {
     const links = extractLinks([
         '<div markdown="1">',
