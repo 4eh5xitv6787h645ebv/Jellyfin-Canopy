@@ -206,6 +206,45 @@ function compactVisibleText(content) {
     return visibleHtmlText(content).replace(/\s+/g, ' ').trim();
 }
 
+function htmlIdLabels(content) {
+    const labels = new Map();
+    const visible = stripHtmlComments(content);
+    const opening = /<([a-z][a-z0-9:-]*)\b/gi;
+    let match;
+    while ((match = opening.exec(visible)) !== null) {
+        const openingEnd = htmlOpeningTagEnd(visible, match.index);
+        if (openingEnd === -1) break;
+        const openingTag = visible.slice(match.index, openingEnd);
+        const id = htmlAttributeValue(openingTag, 'id');
+        if (!id || labels.has(id)) {
+            opening.lastIndex = openingEnd;
+            continue;
+        }
+        let label = htmlAttributeValue(openingTag, 'aria-label')
+            || htmlAttributeValue(openingTag, 'title');
+        if (!label && !/\/>\s*$/.test(openingTag)) {
+            const closing = new RegExp(`</${match[1]}\\s*>`, 'ig');
+            closing.lastIndex = openingEnd;
+            const close = closing.exec(visible);
+            if (close) label = compactVisibleText(visible.slice(openingEnd, close.index));
+        }
+        if (label) labels.set(id, label.replace(/\s+/g, ' ').trim());
+        opening.lastIndex = openingEnd;
+    }
+    return labels;
+}
+
+function ariaLabelledText(openingTag, labels) {
+    return htmlAttributeValue(openingTag, 'aria-labelledby')
+        .split(/\s+/)
+        .filter(Boolean)
+        .map(id => labels.get(id) || '')
+        .filter(Boolean)
+        .join(' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
 function htmlOpeningTagEnd(content, start) {
     let quote = '';
     for (let index = start; index < content.length; index += 1) {
@@ -223,7 +262,7 @@ function htmlOpeningTagEnd(content, start) {
     return -1;
 }
 
-function htmlAnchorRecords(content) {
+function htmlAnchorRecords(content, labels = htmlIdLabels(content)) {
     const anchors = [];
     const opening = /<a\b/gi;
     const closing = /<\/a\s*>/gi;
@@ -243,7 +282,8 @@ function htmlAnchorRecords(content) {
             openingEnd,
             end: anchorEnd,
             closed: Boolean(close),
-            label: htmlAttributeValue(openingTag, 'aria-label')
+            label: ariaLabelledText(openingTag, labels)
+                || htmlAttributeValue(openingTag, 'aria-label')
                 || nestedName
                 || htmlAttributeValue(openingTag, 'title'),
             contextBefore: compactVisibleText(content.slice(Math.max(0, match.index - 2_000), match.index)),
@@ -254,11 +294,11 @@ function htmlAnchorRecords(content) {
     return anchors;
 }
 
-function htmlLinks(content, line) {
+function htmlLinks(content, line, labels = htmlIdLabels(content)) {
     const links = [];
     const visible = stripHtmlComments(content);
     const context = compactVisibleText(visible);
-    const anchors = htmlAnchorRecords(visible);
+    const anchors = htmlAnchorRecords(visible, labels);
     for (const attribute of htmlAttributeRecords(content)) {
         if (attribute.name === 'href') {
             const anchor = anchors.find(candidate => (
@@ -297,9 +337,9 @@ function htmlLinks(content, line) {
     return links;
 }
 
-function inlineHtmlAnchorRecord(children, start) {
+function inlineHtmlAnchorRecord(children, start, labels) {
     const opening = children[start]?.content || '';
-    const anchor = htmlAnchorRecords(opening)[0];
+    const anchor = htmlAnchorRecords(opening, labels)[0];
     if (!anchor) return null;
     if (anchor.closed && anchor.label) return { label: anchor.label, endIndex: start };
     let label = compactVisibleText(opening.slice(anchor.openingEnd));
@@ -392,9 +432,14 @@ function wwwAutolinks(content, line, context = '', contextBefore = '', contextAf
 
 function extractLinksFromTokens(tokens) {
     const links = [];
+    const htmlLabels = htmlIdLabels(tokens.flatMap((token) => {
+        if (token.type === 'html_block') return [token.content];
+        if (token.type === 'inline') return [token.content];
+        return [];
+    }).join('\n'));
     for (const token of tokens) {
         const line = (token.map?.[0] || 0) + 1;
-        if (token.type === 'html_block') links.push(...htmlLinks(token.content, line));
+        if (token.type === 'html_block') links.push(...htmlLinks(token.content, line, htmlLabels));
         if (token.type !== 'inline') continue;
         let childLine = line;
         let linkDepth = 0;
@@ -432,8 +477,8 @@ function extractLinksFromTokens(tokens) {
                     inlineSemanticText(children.slice(index + 1))
                 ));
             } else if (child.type === 'html_inline') {
-                const html = htmlLinks(child.content, childLine);
-                const record = inlineHtmlAnchorRecord(children, index);
+                const html = htmlLinks(child.content, childLine, htmlLabels);
+                const record = inlineHtmlAnchorRecord(children, index, htmlLabels);
                 const anchor = html.find(link => link.type === 'link');
                 if (anchor && record?.label) anchor.label = record.label;
                 for (const link of html) {

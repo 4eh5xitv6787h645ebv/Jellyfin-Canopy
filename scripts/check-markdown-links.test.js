@@ -9,6 +9,7 @@ const {
     checkMarkdownLinks,
     collectMarkdownFiles,
     extractLinks,
+    extractRenderedHtmlLinks,
     headingSlug,
     htmlAttributes,
     isActionableLink,
@@ -233,6 +234,22 @@ test('extracts MkDocs markdown-in-HTML links and image-only accessible names', (
         && link.label === 'Report bugs'
         && link.line === 5
     )));
+});
+
+test('resolves aria-labelledby accessible names in source and rendered HTML', () => {
+    const source = [
+        '<span id="security-route-label">Submit a vulnerability report</span>',
+        '<a aria-labelledby="security-route-label" href="https://github.com/owner/repository/issues">',
+        '  <svg aria-hidden="true"></svg>',
+        '</a>',
+        '',
+    ].join('\n');
+    for (const links of [extractLinks(source), extractRenderedHtmlLinks(source)]) {
+        const link = links.find(candidate => candidate.type === 'link');
+        assert.ok(link);
+        assert.equal(link.label, 'Submit a vulnerability report');
+        assert.equal(isActionableLink(link), true);
+    }
 });
 
 test('validates quoted and unquoted raw HTML links without reserving heading slugs', () => {

@@ -1138,6 +1138,21 @@ test('pins public template metadata and substantive bug-report fields', () => {
             + 'must include guidance or fields'
         ));
     });
+
+    const negated = validFixture();
+    negated['.github/ISSUE_TEMPLATE/bug.md'] = BUG_TEMPLATE.replace(
+        /## Server environment\n[\s\S]*?(?=## Client environment)/,
+        '## Server environment\n'
+        + 'Server operating system or platform and installation method are not relevant.\n'
+    );
+    fixture(negated, root => {
+        const problems = auditSupportContract({ root }).problems;
+        assert.ok(problems.some(problem => (
+            problem.includes('"## Server environment" must capture')
+            && problem.includes('server operating system or platform')
+            && problem.includes('installation method')
+        )));
+    });
 });
 
 test('globally governs support routes, duplicate sections, and canonical issue intake paths', () => {
@@ -1191,6 +1206,14 @@ test('distinguishes actionable Discussions guidance from explicit disabled-route
         ));
     });
 
+    const supportPhrase = validFixture();
+    supportPhrase['docs/getting-started.md'] = 'Get support in GitHub Discussions.\n';
+    fixture(supportPhrase, root => {
+        assert.ok(auditSupportContract({ root }).problems.includes(
+            'docs/getting-started.md: routes users to disabled GitHub Discussions'
+        ));
+    });
+
     const negated = validFixture();
     negated['docs/getting-started.md'] = 'GitHub Discussions is not an intake route.\n';
     fixture(negated, root => {
@@ -1219,6 +1242,68 @@ test('allows relevance-gated and negated File Transformation guidance', () => {
     }
 });
 
+test('rejects every independently reproduced support-contract bypass', () => {
+    const securityContact = validFixture();
+    securityContact['docs/getting-started.md'] = [
+        '# Getting started',
+        '## Security',
+        `For vulnerabilities, contact us on [Discord](${DISCORD_ROUTE}).`,
+        '',
+    ].join('\n');
+    fixture(securityContact, root => {
+        assert.ok(auditSupportContract({ root }).problems.some(problem => (
+            problem.startsWith('docs/getting-started.md:')
+            && problem.includes('private GitHub advisories')
+        )));
+    });
+
+    const labelledSecurity = validFixture();
+    labelledSecurity['theme/partials/support.html'] = [
+        '<span id="public-vulnerability-route">Submit a vulnerability report</span>',
+        `<a aria-labelledby="public-vulnerability-route" href="${ISSUES_ROUTE}">`,
+        '  <svg aria-hidden="true"></svg>',
+        '</a>',
+        '',
+    ].join('\n');
+    fixture(labelledSecurity, root => {
+        assert.ok(auditSupportContract({ root }).problems.some(problem => (
+            problem.startsWith('theme/partials/support.html:')
+            && problem.includes('security intake links must use private GitHub advisories')
+        )));
+    });
+
+    const githubSupport = validFixture();
+    githubSupport['.github/SUPPORT.md'] = 'Get support in GitHub Discussions.\n';
+    fixture(githubSupport, root => {
+        const result = auditSupportContract({ root });
+        assert.ok(result.files.includes('.github/SUPPORT.md'));
+        assert.ok(result.problems.includes(
+            '.github/SUPPORT.md: routes users to disabled GitHub Discussions'
+        ));
+    });
+
+    const secondFeatureRoute = validFixture();
+    secondFeatureRoute['README.md'] += `[Request an enhancement](${DISCORD_ROUTE}).\n`;
+    fixture(secondFeatureRoute, root => {
+        assert.ok(auditSupportContract({ root }).problems.some(problem => (
+            problem.startsWith('README.md:')
+            && problem.includes('feature intake links must use a canonical GitHub Issues intake path')
+        )));
+    });
+
+    const unconditionalTransformation = validFixture();
+    unconditionalTransformation['.github/ISSUE_TEMPLATE/bug.md'] = BUG_TEMPLATE.replace(
+        '## Additional context',
+        '- File Transformation details:\n\n## Additional context'
+    );
+    fixture(unconditionalTransformation, root => {
+        assert.ok(auditSupportContract({ root }).problems.includes(
+            '.github/ISSUE_TEMPLATE/bug.md: '
+            + 'File Transformation cannot be a baseline bug-report requirement'
+        ));
+    });
+});
+
 test('build, release, and docs workflows keep the support contract in the blocking docs gate', () => {
     const root = path.join(__dirname, '..');
     const scripts = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).scripts;
@@ -1231,6 +1316,7 @@ test('build, release, and docs workflows keep the support contract in the blocki
     const docsWorkflow = fs.readFileSync(path.join(root, '.github', 'workflows', 'docs.yml'), 'utf8');
     for (const watched of [
         "'SECURITY.md'",
+        "'.github/**/*.md'",
         "'.github/ISSUE_TEMPLATE/**'",
         "'scripts/check-support-contract.js'",
         "'scripts/check-support-contract.test.js'",

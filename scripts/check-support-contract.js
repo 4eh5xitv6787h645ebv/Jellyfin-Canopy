@@ -80,9 +80,9 @@ const SUPPORT_ROUTE_SECTIONS = new Map([
     ['.github/SECURITY_GUIDELINES.md', ['Questions?']],
 ]);
 const BUG_ROUTE_LABEL = /\b(?:bug[- ]reports?|github bug-report issues|github issues|issue tracker|report\b.{0,40}\b(?:bugs?|issues?))\b/i;
-const FEATURE_ROUTE_LABEL = /\b(?:feature[- ]requests?|feature\s+proposals?|request(?:ing)?\b.{0,40}\bfeatures?|suggest\b.{0,40}\b(?:features?|ideas?)|share\b.{0,40}\bideas?|propos(?:e|als?)\b.{0,40}\b(?:features?|ideas?)|feature(?:-request)?\s+(?:issues?|template)|ideas?\s+(?:channel|submission|template))\b/i;
+const FEATURE_ROUTE_LABEL = /\b(?:feature[- ]requests?|feature\s+proposals?|request(?:ing)?\b.{0,40}\b(?:features?|enhancements?)|suggest\b.{0,40}\b(?:features?|ideas?|enhancements?)|share\b.{0,40}\b(?:ideas?|enhancements?)|propos(?:e|als?)\b.{0,40}\b(?:features?|ideas?|enhancements?)|enhancement\s+(?:ideas?|issues?|proposals?|requests?|submission|template)|feature(?:-request)?\s+(?:issues?|template)|ideas?\s+(?:channel|submission|template))\b/i;
 const SUPPORT_ROUTE_LABEL = /\b(?:discord|community\s+(?:chat|support)|for\s+(?:help|support)|(?:ask|get|request|seek)\s+(?:for\s+)?(?:help|support)|(?:help|support)\s+(?:channel|chat|community|forum|requests?|server))\b/i;
-const SECURITY_ACTION = '(?:concerns?|instructions?|issues?|reports?|reporting|submissions?|submit(?:s|ting)?|disclos(?:e|es|ing|ures?)|intake)';
+const SECURITY_ACTION = '(?:alerts?|concerns?|contact(?:s|ed|ing)?|emails?|instructions?|issues?|messages?|notifications?|notif(?:y|ies|ied|ying)|reports?|reporting|submissions?|submit(?:s|ting)?|disclos(?:e|es|ing|ures?)|intake)';
 const SECURITY_SUBJECT = '(?:security|vulnerab\\w*)';
 const SECURITY_INTAKE_HEADING = new RegExp(
     `(?:\\b${SECURITY_ACTION}\\b.{0,80}\\b${SECURITY_SUBJECT}\\b`
@@ -91,10 +91,11 @@ const SECURITY_INTAKE_HEADING = new RegExp(
 );
 const SECURITY_ROUTE_LABEL = SECURITY_INTAKE_HEADING;
 const NEUTRAL_SECURITY_REFERENCE = /\b(?:background|documentation|guidelines?|policy|process|reference|timeline)\b/i;
-const SECURITY_ROUTE_CUE = /\b(?:alternative|create|file|form|instructions?|open|send|submit|through|use|via)\b/i;
+const SECURITY_ROUTE_CUE = /\b(?:alternative|contact|create|email|file|form|instructions?|message|notify|open|send|submit|through|use|via)\b/i;
 const NON_VULNERABILITY_CONTEXT = /\b(?:do(?:es)? not|doesn't|don't|not)\s+(?:constitute|involve|report)\b.{0,80}\bvulnerab/i;
 const SECURITY_CONTEXT_HEADING = /\b(?:security|vulnerab\w*)\b/i;
 const DISCUSSIONS_ACTION = /\b(?:ask|create|direct|go|join|open|post|route|send|start|submit|use)\b/i;
+const DISCUSSIONS_PURPOSE = /\b(?:bugs?|community|features?|help|ideas?|issues?|questions?|reports?|requests?|support)\b/i;
 const DISCUSSIONS_NEGATION = /\b(?:disabled|do not|don't|never|no longer|not|unavailable)\b/i;
 const TEMPLATE_METADATA = new Map([
     ['.github/ISSUE_TEMPLATE/bug.md', {
@@ -650,8 +651,20 @@ function requireSections(tokens, file, sections, problems) {
 function requireSectionFields(tokens, file, section, fields, problems) {
     const occurrences = sectionOccurrences(tokens, section);
     if (occurrences.length !== 1) return;
-    const text = renderedTextWithCode(occurrences[0]);
-    const missing = fields.filter(field => !field.pattern.test(text)).map(field => field.name);
+    const prompts = occurrences[0].flatMap((token) => {
+        if (token.type === 'inline') return [inlineTaskText(token.children)];
+        if (token.type === 'html_block') return [visibleHtmlText(token.content)];
+        return [];
+    }).flatMap(text => text.split(/(?<=[.!?;])\s+/))
+        .map(text => text.replace(/\p{Cf}/gu, '').replace(/\s+/g, ' ').trim())
+        .filter(Boolean);
+    const captureCue = /(?:[:?]\s*$|\b(?:attach|describe|enter|include|indicate|list|provide|record|report|select|specify|state|supply)\b)/i;
+    const captureOptOut = /\b(?:(?:is|are|was|were)\s+(?:not\s+(?:applicable|needed|relevant|required)|irrelevant|optional|unnecessary)|(?:do not|don't|never)\s+(?:attach|describe|enter|include|list|provide|record|report|specify|state|supply)|no need to\s+(?:attach|describe|enter|include|list|provide|record|report|specify|state|supply))\b/i;
+    const missing = fields.filter(field => !prompts.some((prompt) => {
+        if (!field.pattern.test(prompt)) return false;
+        if (field.allowNegatedPrompt) return true;
+        return captureCue.test(prompt) && !captureOptOut.test(prompt);
+    })).map(field => field.name);
     if (missing.length > 0) {
         problems.push(
             `${file}: "## ${section}" must capture ${missing.join(', ')}`
@@ -685,6 +698,8 @@ function hasFileTransformationRequirement(body) {
         if (conditional) return false;
         const normalized = compact.replace(/[`_*]/g, '');
         return /^\s*(?:[-*+]\s+|\d+[.)]\s+|>\s*)?\[[ xX]\](?:\s+|$)/.test(normalized)
+            || /\bfile\s*transformation\b[^.!?\n]{0,160}:\s*$/i.test(normalized)
+            || /(?:^|[.!?]\s*)[^.!?\n]{0,160}\bfile\s*transformation\b\s*:\s*$/i.test(normalized)
             || /\bfile\s*transformation\b.{0,80}\b(?:enabled|installed|version)\s*:/i.test(normalized)
             || /\b(?:enabled|installed|version)\b.{0,80}\bfile\s*transformation\b\s*:/i.test(normalized)
             || /\b(?:must|required|requires?|need(?:s|ed)?(?:\s+to)?)\b.{0,120}\bfile\s*transformation\b/i
@@ -878,6 +893,7 @@ function collectSupportSurfaceFiles(root, files) {
             surfaces.push(entry.name);
         }
     }
+    collectFiles(root, '.github', /\.md$/i, surfaces);
     if (fs.existsSync(path.join(root, 'mkdocs.yml'))) surfaces.push('mkdocs.yml');
     for (const candidate of RENDERED_HTML_ROOTS) {
         collectFiles(root, candidate, /\.html?$/i, surfaces);
@@ -895,7 +911,8 @@ function routesToDiscussions(surface) {
         if (!/\b(?:github\s+discussions?|discussions?.{0,80}\bgithub)\b/i.test(clause)) {
             return false;
         }
-        return !DISCUSSIONS_NEGATION.test(clause) && DISCUSSIONS_ACTION.test(clause);
+        return !DISCUSSIONS_NEGATION.test(clause)
+            && (DISCUSSIONS_ACTION.test(clause) || DISCUSSIONS_PURPOSE.test(clause));
     });
 }
 
@@ -1206,7 +1223,11 @@ function auditSupportContract(options = {}) {
         ]],
         ['Relevant configuration', [
             { name: 'relevant Canopy configuration', pattern: /\bcanopy\b.{0,80}\b(?:configuration|features?)\b/i },
-            { name: 'credential exclusion', pattern: /\b(?:do not|never)\b.{0,120}\b(?:api keys?|credentials?)\b/i },
+            {
+                name: 'credential exclusion',
+                pattern: /\b(?:do not|never)\b.{0,120}\b(?:api keys?|credentials?)\b/i,
+                allowNegatedPrompt: true,
+            },
         ]],
         ['Logs', [
             { name: 'server logs', pattern: /\bserver logs?\b/i },
