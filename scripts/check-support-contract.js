@@ -8,10 +8,12 @@ const { parseDocument } = require('yaml');
 const {
     extractLinks,
     extractLinksFromTokens,
+    headingSlug,
     isActionableLink,
+    mkdocsHeadingSlug,
     normalizeLinkTarget,
-    stripHtmlComments,
     validateMarkdownFile,
+    visibleHtmlText,
 } = require('./check-markdown-links');
 
 const ROOT = path.join(__dirname, '..');
@@ -174,12 +176,6 @@ function auditTemplateDirectory(root, problems) {
     }
 }
 
-function visibleHtmlText(content) {
-    return stripHtmlComments(content)
-        .replace(/<(script|style)\b[\s\S]*?<\/\1\s*>/gi, ' ')
-        .replace(/<[^>]*>/g, ' ');
-}
-
 function inlineVisibleText(children = []) {
     return children.map((token) => {
         if (token.type === 'text') return token.content;
@@ -268,7 +264,15 @@ function isLocalDocumentationReference(target) {
 }
 
 function repositoryPath(target) {
-    const url = absoluteUrl(target);
+    const normalized = normalizeLinkTarget(target);
+    if (/^\/(?!\/)/.test(normalized)) {
+        try {
+            return decodeURIComponent(normalized.split(/[?#]/, 1)[0]).replace(/\/+$/, '');
+        } catch {
+            return '';
+        }
+    }
+    const url = absoluteUrl(normalized);
     if (!url || !['http:', 'https:'].includes(url.protocol)) return '';
     const hostname = url.hostname.toLowerCase().replace(/\.$/, '').replace(/^www\./, '');
     if (hostname !== 'github.com') return '';
@@ -309,11 +313,107 @@ function hasOnlyExactHttpsRoute(tokens, route) {
         && links.every(link => isExactHttpsRoute(link, route));
 }
 
-function hasOnlySemanticRoute(tokens, labelPattern, predicate) {
-    const links = actionableLinks(tokens).filter(link => (
-        !isLocalDocumentationReference(link.target) && labelPattern.test(link.label)
-    ));
-    return links.length > 0 && links.every(predicate);
+function semanticLinkText(link) {
+    const label = String(link?.label || '').trim();
+    if (BUG_ROUTE_LABEL.test(label)
+        || FEATURE_ROUTE_LABEL.test(label)
+        || SUPPORT_ROUTE_LABEL.test(label)) return label;
+    const context = String(link?.context || '').trim();
+    const offset = context.toLowerCase().indexOf(label.toLowerCase());
+    if (!label || offset === -1) return `${label} ${context}`.trim();
+    const before = context.slice(0, offset);
+    const after = context.slice(offset + label.length);
+    const start = Math.max(
+        before.lastIndexOf('.'),
+        before.lastIndexOf('!'),
+        before.lastIndexOf('?'),
+        before.lastIndexOf(';')
+    ) + 1;
+    const boundaries = ['.', '!', '?', ';']
+        .map(boundary => after.indexOf(boundary))
+        .filter(index => index !== -1);
+    const end = boundaries.length > 0 ? Math.min(...boundaries) : after.length;
+    return `${label} ${before.slice(start)} ${after.slice(0, end)}`.replace(/\s+/g, ' ').trim();
+}
+
+function localMarkdownTarget(root, file, target) {
+    const normalized = normalizeLinkTarget(target);
+    if (absoluteUrl(normalized) || /^\/(?!\/)/.test(normalized)) return null;
+    const hashAt = normalized.indexOf('#');
+    const pathAndQuery = hashAt === -1 ? normalized : normalized.slice(0, hashAt);
+    const rawFragment = hashAt === -1 ? '' : normalized.slice(hashAt + 1);
+    const queryAt = pathAndQuery.indexOf('?');
+    const rawPath = queryAt === -1 ? pathAndQuery : pathAndQuery.slice(0, queryAt);
+    let pathname;
+    let fragment;
+    try {
+        pathname = decodeURIComponent(rawPath);
+        fragment = decodeURIComponent(rawFragment);
+    } catch {
+        return null;
+    }
+    if (pathname && path.extname(pathname).toLowerCase() !== '.md') return null;
+    const absolute = path.resolve(root, path.dirname(file), pathname || path.basename(file));
+    const relative = path.relative(root, absolute);
+    if (relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)
+        || !fs.existsSync(absolute)) return null;
+    const stat = fs.lstatSync(absolute);
+    if (!stat.isFile() || stat.isSymbolicLink()) return null;
+    return { file: relative.split(path.sep).join('/'), fragment };
+}
+
+function fragmentSectionTokens(tokens, fragment, file) {
+    if (!fragment) return tokens;
+    const slug = file.startsWith('docs/') ? mkdocsHeadingSlug : headingSlug;
+    for (let index = 0; index < tokens.length; index += 1) {
+        if (headingLevel(tokens[index]) === 0) continue;
+        let heading = headingText(tokens, index);
+        if (file.startsWith('docs/')) heading = heading.replace(/\s*\{[^}]+\}\s*$/, '');
+        if (slug(heading) === fragment) return headingSectionTokens(tokens, index);
+    }
+    return [];
+}
+
+function semanticLinkMatches(link, labelPattern, predicate, options) {
+    if (predicate(link)) return true;
+    const target = localMarkdownTarget(options.root, options.file, link.target);
+    if (!target) return false;
+    const key = `${target.file}#${target.fragment}`;
+    if (options.visited.has(key) || options.visited.size >= 8) return false;
+    const visited = new Set(options.visited);
+    visited.add(key);
+    const source = fs.readFileSync(path.join(options.root, target.file), 'utf8');
+    const documentTokens = markdown.parse(source, {});
+    const nestedOptions = {
+        root: options.root,
+        file: target.file,
+        visited,
+        sectionMap: options.sectionMap,
+    };
+    const ownedSections = target.fragment
+        ? []
+        : options.sectionMap.get(target.file) || [];
+    if (ownedSections.length > 0) {
+        return ownedSections.every((section) => {
+            const tokens = sectionTokens(documentTokens, section);
+            return tokens.length > 0
+                && hasOnlySemanticRoute(tokens, labelPattern, predicate, nestedOptions);
+        });
+    }
+    const tokens = fragmentSectionTokens(documentTokens, target.fragment, target.file);
+    return hasOnlySemanticRoute(tokens, labelPattern, predicate, nestedOptions);
+}
+
+function hasOnlySemanticRoute(tokens, labelPattern, predicate, options) {
+    const context = {
+        root: options.root,
+        file: options.file,
+        visited: options.visited || new Set([`${options.file}#`]),
+        sectionMap: options.sectionMap,
+    };
+    const links = actionableLinks(tokens).filter(link => labelPattern.test(semanticLinkText(link)));
+    return links.length > 0
+        && links.every(link => semanticLinkMatches(link, labelPattern, predicate, context));
 }
 
 function requireSectionRoute(tokens, file, section, predicate, message, problems) {
@@ -376,24 +476,55 @@ function hasFileTransformationRequirement(body) {
 }
 
 function requiresSensitiveRedaction(text) {
-    const rejectsRedaction = /\b(?:unredacted|do not redact|don't redact|never redact|no need to redact|not (?:required|needed|necessary|mandatory) to redact|without redacting)\b/i
-        .test(text)
-        || /\b(?:do not|don't|never)\s+(?:need|have)\s+to\s+(?:be\s+)?redact(?:ed|ing)?\b/i
-            .test(text)
-        || /\bneed\s+not\s+be\s+redacted\b/i.test(text)
-        || /\b(?:is|are)\s+not\s+(?:required|needed|necessary|mandatory)\s+to\s+be\s+redacted\b/i
-            .test(text)
-        || /\bredact(?:ion|ing)?\b.{0,160}\b(?:is|are)(?:\s+not|n't)\s+(?:required|needed|necessary|mandatory)\b/i
-            .test(text)
-        || /\bredact(?:ion|ing)?\b.{0,160}\b(?:is|are)\s+(?:optional|unnecessary)\b/i
-            .test(text)
-        || /\b(?:may|can)\s+(?:skip|omit|avoid)\s+(?:the\s+)?redact(?:ion|ing)?\b/i.test(text);
-    if (rejectsRedaction) return false;
+    const normalized = text
+        .replace(/[\u2018\u2019]/g, "'")
+        .replace(/\baren't\b/gi, 'are not')
+        .replace(/\bisn't\b/gi, 'is not')
+        .replace(/\bwasn't\b/gi, 'was not')
+        .replace(/\bweren't\b/gi, 'were not')
+        .replace(/\bdon't\b/gi, 'do not')
+        .replace(/\bdoesn't\b/gi, 'does not')
+        .replace(/\bdidn't\b/gi, 'did not')
+        .replace(/\bneedn't\b/gi, 'need not');
+    const clauses = normalized.split(/(?:\r?\n|[.!?;])+/)
+        .map(clause => clause.trim())
+        .filter(Boolean);
     const sensitive = '(?:api keys?|credentials?|personal|private|sensitive|tokens?|usernames?)';
-    return new RegExp(`\\bredact\\b.{0,240}\\b${sensitive}\\b`, 'i').test(text)
-        || new RegExp(`\\b(?:do not|never) include\\b.{0,240}\\b${sensitive}\\b`, 'i').test(text)
-        || new RegExp(`\\b${sensitive}\\b.{0,160}\\b(?:must|should|need(?:s)? to) be redacted\\b`, 'i')
-            .test(text);
+    const hasSensitiveSubject = (clause) => {
+        const subjects = clause.replace(/\bnon[- ]sensitive\b/gi, 'ordinary');
+        return new RegExp(`\\b${sensitive}\\b`, 'i').test(subjects);
+    };
+    const rejectsRedaction = (clause) => (
+        /\b(?:unredacted|do not redact|never redact|no need to redact|without redacting)\b/i
+            .test(clause)
+        || /\b(?:do not|never)\s+(?:need|have)\s+to\s+(?:be\s+)?redact(?:ed|ing)?\b/i
+            .test(clause)
+        || /\b(?:does|did)\s+not\s+need\s+to\s+(?:be\s+)?redact(?:ed|ing)?\b/i.test(clause)
+        || /\bneed\s+not\s+be\s+redacted\b/i.test(clause)
+        || /\b(?:is|are|was|were)\s+not\s+(?:required|needed|necessary|mandatory)\s+to\s+(?:be\s+)?redact(?:ed|ing)?\b/i
+            .test(clause)
+        || /\bnot\s+(?:required|needed|necessary|mandatory)\s+to\s+(?:be\s+)?redact(?:ed|ing)?\b/i
+            .test(clause)
+        || /\bredact(?:ion|ing)?\b.{0,160}\b(?:is|are|was|were)\s+not\s+(?:required|needed|necessary|mandatory)\b/i
+            .test(clause)
+        || /\bredact(?:ion|ing)?\b.{0,160}\b(?:is|are)\s+(?:optional|unnecessary)\b/i
+            .test(clause)
+        || /\b(?:may|can)\s+(?:skip|omit|avoid)\s+(?:the\s+)?redact(?:ion|ing)?\b/i
+            .test(clause)
+    );
+    if (clauses.some(clause => hasSensitiveSubject(clause) && rejectsRedaction(clause))) {
+        return false;
+    }
+    return clauses.some((clause) => {
+        if (!hasSensitiveSubject(clause)) return false;
+        return new RegExp(`\\bredact(?:ed|ing)?\\b.{0,240}\\b${sensitive}\\b`, 'i').test(clause)
+            || new RegExp(`\\b(?:do not|never) include\\b.{0,240}\\b${sensitive}\\b`, 'i')
+                .test(clause)
+            || new RegExp(
+                `\\b${sensitive}\\b.{0,160}\\b(?:must|should|need(?:s)? to) be redacted\\b`,
+                'i'
+            ).test(clause);
+    });
 }
 
 function stringValues(value) {
@@ -507,8 +638,7 @@ function auditSupportContract(options = {}) {
             problems.push(`${file}: routes users to disabled GitHub Discussions`);
         }
     }
-    for (const file of files.filter(candidate => candidate.startsWith('.github/')
-        && candidate.endsWith('.md'))) {
+    for (const file of files.filter(candidate => candidate.endsWith('.md'))) {
         problems.push(...validateMarkdownFile(file, root));
     }
     for (const [file, sections] of BUG_ROUTE_SECTIONS) {
@@ -522,7 +652,8 @@ function auditSupportContract(options = {}) {
                 owned => hasOnlySemanticRoute(
                     owned,
                     BUG_ROUTE_LABEL,
-                    link => isRepositoryRoute(link, '/issues', true)
+                    link => isRepositoryRoute(link, '/issues', true),
+                    { root, file, sectionMap: BUG_ROUTE_SECTIONS }
                 ),
                 'must route every bug intake link to GitHub Issues',
                 problems
@@ -540,7 +671,8 @@ function auditSupportContract(options = {}) {
                 owned => hasOnlySemanticRoute(
                     owned,
                     FEATURE_ROUTE_LABEL,
-                    link => isRepositoryRoute(link, '/issues', true)
+                    link => isRepositoryRoute(link, '/issues', true),
+                    { root, file, sectionMap: FEATURE_ROUTE_SECTIONS }
                 ),
                 'must route every feature intake link to GitHub Issues',
                 problems
@@ -557,7 +689,8 @@ function auditSupportContract(options = {}) {
                 owned => hasOnlySemanticRoute(
                     owned,
                     SUPPORT_ROUTE_LABEL,
-                    link => isExactHttpsRoute(link, DISCORD_ROUTE)
+                    link => isExactHttpsRoute(link, DISCORD_ROUTE),
+                    { root, file, sectionMap: SUPPORT_ROUTE_SECTIONS }
                 ),
                 'must route every community-support link to the Jellyfin Community Discord',
                 problems

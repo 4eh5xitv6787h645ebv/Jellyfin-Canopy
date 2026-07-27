@@ -157,6 +157,28 @@ test('extracts browser-equivalent links without treating images or empty anchors
     ), []);
 });
 
+test('decodes raw HTML labels and records each link rendered container text', () => {
+    const links = extractLinks([
+        'For support, [click here](https://github.com/owner/repository/issues).',
+        '',
+        '<div><a href="https://github.com/owner/repository/issues">Ask for supp&#111;rt</a></div>',
+        '',
+    ].join('\n'));
+    assert.deepEqual(links.map(link => ({
+        label: link.label,
+        context: link.context,
+    })), [
+        {
+            label: 'click here',
+            context: 'For support, click here.',
+        },
+        {
+            label: 'Ask for support',
+            context: 'Ask for support',
+        },
+    ]);
+});
+
 test('validates quoted and unquoted raw HTML links without reserving heading slugs', () => {
     fixture({
         'CONTRIBUTING.md': '<span id=local-id></span>\n[Local](#local-id)\n<img src=docs/missing.png>\n',

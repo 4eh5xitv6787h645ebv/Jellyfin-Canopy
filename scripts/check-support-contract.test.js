@@ -357,6 +357,51 @@ test('one correct semantic route cannot hide a second route to the wrong destina
     });
 });
 
+test('semantic route ownership includes prose surrounding click-here links', () => {
+    const files = validFixture();
+    files['CONTRIBUTING.md'] = files['CONTRIBUTING.md'].replace(
+        `[Jellyfin Community Discord](${DISCORD_ROUTE}).`,
+        `[Jellyfin Community Discord](${DISCORD_ROUTE}).\n`
+        + `For support, [click here](${ISSUES_ROUTE}).`
+    );
+    fixture(files, root => {
+        assert.ok(auditSupportContract({ root }).problems.includes(
+            'CONTRIBUTING.md: must route every community-support link to the '
+            + 'Jellyfin Community Discord in "## 💬 Getting Help"'
+        ));
+    });
+});
+
+test('semantic route ownership decodes rendered raw HTML labels', () => {
+    const files = validFixture();
+    files['CONTRIBUTING.md'] = files['CONTRIBUTING.md'].replace(
+        `[Jellyfin Community Discord](${DISCORD_ROUTE}).`,
+        `[Jellyfin Community Discord](${DISCORD_ROUTE}).\n`
+        + `<div><a href="${ISSUES_ROUTE}">Ask for supp&#111;rt</a></div>`
+    );
+    fixture(files, root => {
+        assert.ok(auditSupportContract({ root }).problems.includes(
+            'CONTRIBUTING.md: must route every community-support link to the '
+            + 'Jellyfin Community Discord in "## 💬 Getting Help"'
+        ));
+    });
+});
+
+test('semantic intake links follow relative Markdown targets in file context', () => {
+    const files = validFixture();
+    files['CONTRIBUTING.md'] = files['CONTRIBUTING.md'].replace(
+        `[Jellyfin Community Discord](${DISCORD_ROUTE}).`,
+        `[Jellyfin Community Discord](${DISCORD_ROUTE}).\n`
+        + '[Ask for support](README.md).'
+    );
+    fixture(files, root => {
+        assert.ok(auditSupportContract({ root }).problems.includes(
+            'CONTRIBUTING.md: must route every community-support link to the '
+            + 'Jellyfin Community Discord in "## 💬 Getting Help"'
+        ));
+    });
+});
+
 test('feature route ownership stops at a higher-level heading boundary', () => {
     const files = validFixture();
     files['docs/help.md'] = [
@@ -439,6 +484,15 @@ test('canonicalizes GFM and browser route representations before enforcing them'
             'README.md: routes users to disabled GitHub Discussions'
         ));
     });
+
+    const rootRelativeFiles = validFixture();
+    rootRelativeFiles['SECURITY.md'] += '\n'
+        + '[Discussions](/4eh5xitv6787h645ebv/Jellyfin-Canopy/discussions)\n';
+    fixture(rootRelativeFiles, root => {
+        assert.ok(auditSupportContract({ root }).problems.includes(
+            'SECURITY.md: routes users to disabled GitHub Discussions'
+        ));
+    });
 });
 
 test('redaction guidance requires positive, non-negated instructions in its owning section', () => {
@@ -469,6 +523,28 @@ test('redaction guidance requires positive, non-negated instructions in its owni
         'Credentials and private tokens must be redacted from attached logs.'
     );
     fixture(positive, root => {
+        assert.ok(!auditSupportContract({ root }).problems.includes(
+            '.github/ISSUE_TEMPLATE/bug.md: logs section must require sensitive-data redaction'
+        ));
+    });
+
+    const contractedNegative = validFixture();
+    contractedNegative['.github/ISSUE_TEMPLATE/bug.md'] = BUG_TEMPLATE.replace(
+        'Redact tokens and credentials from attached logs.',
+        "You aren't required to redact credentials or sensitive data."
+    );
+    fixture(contractedNegative, root => {
+        assert.ok(auditSupportContract({ root }).problems.includes(
+            '.github/ISSUE_TEMPLATE/bug.md: logs section must require sensitive-data redaction'
+        ));
+    });
+
+    const scopedPositive = validFixture();
+    scopedPositive['.github/ISSUE_TEMPLATE/bug.md'] = BUG_TEMPLATE.replace(
+        'Redact tokens and credentials from attached logs.',
+        'Redact credentials. Non-sensitive values do not need to be redacted.'
+    );
+    fixture(scopedPositive, root => {
         assert.ok(!auditSupportContract({ root }).problems.includes(
             '.github/ISSUE_TEMPLATE/bug.md: logs section must require sensitive-data redaction'
         ));

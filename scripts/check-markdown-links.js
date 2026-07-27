@@ -57,9 +57,10 @@ function stripHtmlComments(content) {
 }
 
 function visibleHtmlText(content) {
-    return stripHtmlComments(content)
+    const visible = stripHtmlComments(content)
         .replace(/<(script|style)\b[\s\S]*?<\/\1\s*>/gi, ' ')
         .replace(/<[^>]*>/g, ' ');
+    return markdown.utils.unescapeAll(visible);
 }
 
 function htmlAttributeRecords(content) {
@@ -181,6 +182,7 @@ function markdownAnchors(source, dialect = 'github') {
 function htmlLinks(content, line) {
     const links = [];
     const visible = stripHtmlComments(content);
+    const context = visibleHtmlText(visible).replace(/\s+/g, ' ').trim();
     const anchors = [...visible.matchAll(/<a\b[^>]*>([\s\S]*?)<\/a\s*>/gi)].map((match) => {
         const openingLength = match[0].indexOf('>') + 1;
         return {
@@ -199,6 +201,7 @@ function htmlLinks(content, line) {
                 line,
                 type: 'link',
                 label: anchor?.label || '',
+                context,
             });
         } else if (attribute.name === 'src') {
             links.push({
@@ -277,7 +280,17 @@ function inlineLabel(children, start) {
     return label.join('').replace(/\s+/g, ' ').trim();
 }
 
-function wwwAutolinks(content, line) {
+function inlineSemanticText(children = []) {
+    return children.map((child) => {
+        if (child.type === 'text' || child.type === 'code_inline') return child.content;
+        if (child.type === 'image') return child.content;
+        if (child.type === 'softbreak' || child.type === 'hardbreak') return ' ';
+        if (child.type === 'html_inline') return visibleHtmlText(child.content);
+        return '';
+    }).join('').replace(/\s+/g, ' ').trim();
+}
+
+function wwwAutolinks(content, line, context = '') {
     return (gfmWwwLinkifier.match(content) || [])
         .filter(match => /^www\./i.test(match.raw))
         .map(match => ({
@@ -285,6 +298,7 @@ function wwwAutolinks(content, line) {
             line,
             type: 'link',
             label: match.raw,
+            context,
         }));
 }
 
@@ -297,6 +311,7 @@ function extractLinksFromTokens(tokens) {
         let childLine = line;
         let linkDepth = 0;
         const children = token.children || [];
+        const context = inlineSemanticText(children);
         for (let index = 0; index < children.length; index += 1) {
             const child = children[index];
             if (child.type === 'link_open') {
@@ -305,6 +320,7 @@ function extractLinksFromTokens(tokens) {
                     line: childLine,
                     type: 'link',
                     label: inlineLabel(children, index),
+                    context,
                 });
                 linkDepth += 1;
             } else if (child.type === 'link_close') {
@@ -317,12 +333,13 @@ function extractLinksFromTokens(tokens) {
                     label: child.content.trim(),
                 });
             } else if (child.type === 'text' && linkDepth === 0) {
-                links.push(...wwwAutolinks(child.content, childLine));
+                links.push(...wwwAutolinks(child.content, childLine, context));
             } else if (child.type === 'html_inline') {
                 const html = htmlLinks(child.content, childLine);
                 const label = inlineHtmlAnchorLabel(children, index);
                 const anchor = html.find(link => link.type === 'link' && !link.label);
                 if (anchor && label) anchor.label = label;
+                for (const link of html) link.context = context;
                 links.push(...html);
             }
             if (child.type === 'softbreak' || child.type === 'hardbreak') childLine += 1;
@@ -452,4 +469,5 @@ module.exports = {
     normalizeLinkTarget,
     stripHtmlComments,
     validateMarkdownFile,
+    visibleHtmlText,
 };
