@@ -252,6 +252,27 @@ test('resolves aria-labelledby accessible names in source and rendered HTML', ()
     }
 });
 
+test('extracts accessible names from nested SVG and labelled images', () => {
+    const source = [
+        '<span id="image-security-label">Submit a vulnerability report</span>',
+        '<a href="https://github.com/owner/repository/issues">',
+        '  <svg role="img" aria-label="Submit a vulnerability report"></svg>',
+        '</a>',
+        '<a href="https://github.com/owner/repository/issues/new">',
+        '  <img src="shield.png" aria-labelledby="image-security-label">',
+        '</a>',
+        '',
+    ].join('\n');
+    for (const links of [extractLinks(source), extractRenderedHtmlLinks(source)]) {
+        const actionable = links.filter(link => link.type === 'link');
+        assert.deepEqual(
+            actionable.map(link => link.label),
+            ['Submit a vulnerability report', 'Submit a vulnerability report']
+        );
+        assert.ok(actionable.every(isActionableLink));
+    }
+});
+
 test('validates quoted and unquoted raw HTML links without reserving heading slugs', () => {
     fixture({
         'CONTRIBUTING.md': '<span id=local-id></span>\n[Local](#local-id)\n<img src=docs/missing.png>\n',

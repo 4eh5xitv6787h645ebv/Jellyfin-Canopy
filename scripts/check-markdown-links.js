@@ -66,16 +66,34 @@ function htmlAttributeValue(tag, name) {
     return match ? markdown.utils.unescapeAll(match[1] ?? match[2] ?? match[3]) : '';
 }
 
-function accessibleHtmlText(content) {
+function accessibleHtmlText(content, labels = new Map()) {
     const visible = stripHtmlComments(content)
         .replace(/<(script|style)\b[\s\S]*?<\/\1\s*>/gi, ' ')
         .replace(
             /<([a-z][a-z0-9:-]*)\b(?=[^>]*(?:\shidden(?:\s|=|>)|\saria-hidden\s*=\s*["']?true\b|\sstyle\s*=\s*["'][^"']*(?:display\s*:\s*none|visibility\s*:\s*hidden)))(?:[^>"']|"[^"]*"|'[^']*')*>[\s\S]*?<\/\1\s*>/gi,
             ' '
         )
-        .replace(/<img\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi, (tag) => {
-            const name = htmlAttributeValue(tag, 'alt')
+        .replace(
+            /<svg\b((?:[^>"']|"[^"]*"|'[^']*')*)>([\s\S]*?)<\/svg\s*>/gi,
+            (element, attributes, body) => {
+                const openingTag = `<svg${attributes}>`;
+                const name = ariaLabelledText(openingTag, labels)
+                    || htmlAttributeValue(openingTag, 'aria-label')
+                    || htmlAttributeValue(openingTag, 'title')
+                    || accessibleHtmlText(body, labels);
+                return name ? ` ${name} ` : ' ';
+            }
+        )
+        .replace(/<svg\b(?:[^>"']|"[^"]*"|'[^']*')*\/?>/gi, (tag) => {
+            const name = ariaLabelledText(tag, labels)
                 || htmlAttributeValue(tag, 'aria-label')
+                || htmlAttributeValue(tag, 'title');
+            return name ? ` ${name} ` : ' ';
+        })
+        .replace(/<img\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi, (tag) => {
+            const name = ariaLabelledText(tag, labels)
+                || htmlAttributeValue(tag, 'aria-label')
+                || htmlAttributeValue(tag, 'alt')
                 || htmlAttributeValue(tag, 'title');
             return name ? ` ${name} ` : ' ';
         })
@@ -83,8 +101,8 @@ function accessibleHtmlText(content) {
     return markdown.utils.unescapeAll(visible);
 }
 
-function visibleHtmlText(content) {
-    return accessibleHtmlText(content);
+function visibleHtmlText(content, labels = new Map()) {
+    return accessibleHtmlText(content, labels);
 }
 
 function htmlAttributeRecords(content) {
@@ -202,8 +220,8 @@ function markdownAnchors(source, dialect = 'github') {
     return anchors;
 }
 
-function compactVisibleText(content) {
-    return visibleHtmlText(content).replace(/\s+/g, ' ').trim();
+function compactVisibleText(content, labels = new Map()) {
+    return visibleHtmlText(content, labels).replace(/\s+/g, ' ').trim();
 }
 
 function htmlIdLabels(content) {
@@ -226,7 +244,7 @@ function htmlIdLabels(content) {
             const closing = new RegExp(`</${match[1]}\\s*>`, 'ig');
             closing.lastIndex = openingEnd;
             const close = closing.exec(visible);
-            if (close) label = compactVisibleText(visible.slice(openingEnd, close.index));
+            if (close) label = compactVisibleText(visible.slice(openingEnd, close.index), labels);
         }
         if (label) labels.set(id, label.replace(/\s+/g, ' ').trim());
         opening.lastIndex = openingEnd;
@@ -275,7 +293,7 @@ function htmlAnchorRecords(content, labels = htmlIdLabels(content)) {
         const close = closing.exec(content);
         const anchorEnd = close ? close.index + close[0].length : openingEnd;
         const nestedName = close
-            ? accessibleHtmlText(content.slice(openingEnd, close.index)).replace(/\s+/g, ' ').trim()
+            ? accessibleHtmlText(content.slice(openingEnd, close.index), labels).replace(/\s+/g, ' ').trim()
             : '';
         anchors.push({
             start: match.index,
@@ -286,8 +304,11 @@ function htmlAnchorRecords(content, labels = htmlIdLabels(content)) {
                 || htmlAttributeValue(openingTag, 'aria-label')
                 || nestedName
                 || htmlAttributeValue(openingTag, 'title'),
-            contextBefore: compactVisibleText(content.slice(Math.max(0, match.index - 2_000), match.index)),
-            contextAfter: compactVisibleText(content.slice(anchorEnd, anchorEnd + 2_000)),
+            contextBefore: compactVisibleText(
+                content.slice(Math.max(0, match.index - 2_000), match.index),
+                labels
+            ),
+            contextAfter: compactVisibleText(content.slice(anchorEnd, anchorEnd + 2_000), labels),
         });
         opening.lastIndex = anchorEnd;
     }
@@ -342,14 +363,15 @@ function inlineHtmlAnchorRecord(children, start, labels) {
     const anchor = htmlAnchorRecords(opening, labels)[0];
     if (!anchor) return null;
     if (anchor.closed && anchor.label) return { label: anchor.label, endIndex: start };
-    let label = compactVisibleText(opening.slice(anchor.openingEnd));
+    let label = compactVisibleText(opening.slice(anchor.openingEnd), labels);
     for (let index = start + 1; index < children.length; index += 1) {
         const child = children[index];
         if (child.type === 'html_inline') {
             const closing = child.content.search(/<\/a\s*>/i);
-            label += visibleHtmlText(closing === -1
-                ? child.content
-                : child.content.slice(0, closing));
+            label += visibleHtmlText(
+                closing === -1 ? child.content : child.content.slice(0, closing),
+                labels
+            );
             if (closing !== -1) {
                 return {
                     label: label.replace(/\s+/g, ' ').trim() || anchor.label,

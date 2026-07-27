@@ -1221,12 +1221,30 @@ test('distinguishes actionable Discussions guidance from explicit disabled-route
             'docs/getting-started.md: routes users to disabled GitHub Discussions'
         ));
     });
+
+    const unlike = validFixture();
+    unlike['docs/getting-started.md'] = 'Unlike GitHub Discussions, use Discord for support.\n';
+    fixture(unlike, root => {
+        assert.ok(!auditSupportContract({ root }).problems.includes(
+            'docs/getting-started.md: routes users to disabled GitHub Discussions'
+        ));
+    });
+
+    const hiddenAction = validFixture();
+    hiddenAction['docs/getting-started.md'] =
+        'GitHub Discussions is not just for feature ideas; get support there too.\n';
+    fixture(hiddenAction, root => {
+        assert.ok(auditSupportContract({ root }).problems.includes(
+            'docs/getting-started.md: routes users to disabled GitHub Discussions'
+        ));
+    });
 });
 
 test('allows relevance-gated and negated File Transformation guidance', () => {
     for (const guidance of [
         'File Transformation is not required for this report.',
         'If File Transformation is involved, include its version and enabled state.',
+        'File Transformation details, if applicable:',
     ]) {
         const files = validFixture();
         files['.github/ISSUE_TEMPLATE/bug.md'] = BUG_TEMPLATE.replace(
@@ -1257,6 +1275,40 @@ test('rejects every independently reproduced support-contract bypass', () => {
         )));
     });
 
+    const securityUse = validFixture();
+    securityUse['docs/getting-started.md'] =
+        `For vulnerabilities, use [Discord](${DISCORD_ROUTE}).\n`;
+    fixture(securityUse, root => {
+        assert.ok(auditSupportContract({ root }).problems.some(problem => (
+            problem.startsWith('docs/getting-started.md:')
+            && problem.includes('private GitHub advisories')
+        )));
+    });
+
+    const plainSecurityContact = validFixture();
+    plainSecurityContact['docs/getting-started.md'] = [
+        '# Getting started',
+        '## Security',
+        'For vulnerabilities, contact us on Discord.',
+        '',
+    ].join('\n');
+    fixture(plainSecurityContact, root => {
+        assert.ok(auditSupportContract({ root }).problems.includes(
+            'docs/getting-started.md: security or vulnerability intake prose '
+            + 'must route only to private GitHub advisories'
+        ));
+    });
+
+    const splitSecurityContact = validFixture();
+    splitSecurityContact['docs/getting-started.md'] =
+        'Do not report vulnerabilities here; use Discord instead.\n';
+    fixture(splitSecurityContact, root => {
+        assert.ok(auditSupportContract({ root }).problems.includes(
+            'docs/getting-started.md: security or vulnerability intake prose '
+            + 'must route only to private GitHub advisories'
+        ));
+    });
+
     const labelledSecurity = validFixture();
     labelledSecurity['theme/partials/support.html'] = [
         '<span id="public-vulnerability-route">Submit a vulnerability report</span>',
@@ -1266,6 +1318,35 @@ test('rejects every independently reproduced support-contract bypass', () => {
         '',
     ].join('\n');
     fixture(labelledSecurity, root => {
+        assert.ok(auditSupportContract({ root }).problems.some(problem => (
+            problem.startsWith('theme/partials/support.html:')
+            && problem.includes('security intake links must use private GitHub advisories')
+        )));
+    });
+
+    const nestedSvgSecurity = validFixture();
+    nestedSvgSecurity['theme/partials/support.html'] = [
+        `<a href="${ISSUES_ROUTE}">`,
+        '  <svg role="img" aria-label="Submit a vulnerability report"></svg>',
+        '</a>',
+        '',
+    ].join('\n');
+    fixture(nestedSvgSecurity, root => {
+        assert.ok(auditSupportContract({ root }).problems.some(problem => (
+            problem.startsWith('theme/partials/support.html:')
+            && problem.includes('security intake links must use private GitHub advisories')
+        )));
+    });
+
+    const labelledImageSecurity = validFixture();
+    labelledImageSecurity['theme/partials/support.html'] = [
+        '<span id="public-vulnerability-route">Submit a vulnerability report</span>',
+        `<a href="${ISSUES_ROUTE}">`,
+        '  <img src="shield.png" aria-labelledby="public-vulnerability-route">',
+        '</a>',
+        '',
+    ].join('\n');
+    fixture(labelledImageSecurity, root => {
         assert.ok(auditSupportContract({ root }).problems.some(problem => (
             problem.startsWith('theme/partials/support.html:')
             && problem.includes('security intake links must use private GitHub advisories')
@@ -1291,6 +1372,27 @@ test('rejects every independently reproduced support-contract bypass', () => {
         )));
     });
 
+    const submittedIdea = validFixture();
+    submittedIdea['README.md'] += `[Submit an idea](${DISCORD_ROUTE}).\n`;
+    fixture(submittedIdea, root => {
+        assert.ok(auditSupportContract({ root }).problems.some(problem => (
+            problem.startsWith('README.md:')
+            && problem.includes('feature intake links must use a canonical GitHub Issues intake path')
+        )));
+    });
+
+    const negatedServerFields = validFixture();
+    negatedServerFields['.github/ISSUE_TEMPLATE/bug.md'] = BUG_TEMPLATE.replace(
+        '- Server operating system or platform and version:\n- Jellyfin installation method:',
+        'Server operating system or platform and installation method need not be provided:'
+    );
+    fixture(negatedServerFields, root => {
+        assert.ok(auditSupportContract({ root }).problems.some(problem => (
+            problem.startsWith('.github/ISSUE_TEMPLATE/bug.md:')
+            && problem.includes('"## Server environment" must capture')
+        )));
+    });
+
     const unconditionalTransformation = validFixture();
     unconditionalTransformation['.github/ISSUE_TEMPLATE/bug.md'] = BUG_TEMPLATE.replace(
         '## Additional context',
@@ -1301,6 +1403,20 @@ test('rejects every independently reproduced support-contract bypass', () => {
             '.github/ISSUE_TEMPLATE/bug.md: '
             + 'File Transformation cannot be a baseline bug-report requirement'
         ));
+    });
+
+    const renderedContext = validFixture();
+    renderedContext['site/index.html'] = [
+        '<p>For vulnerabilities, ',
+        `<a href="${DISCORD_ROUTE}">click here</a>.`,
+        '</p>',
+        '',
+    ].join('');
+    fixture(renderedContext, root => {
+        assert.ok(auditSupportContract({ root, checkBuiltSite: true }).problems.some(problem => (
+            problem.startsWith('site/index.html:')
+            && problem.includes('security intake links must use private GitHub advisories')
+        )));
     });
 });
 
