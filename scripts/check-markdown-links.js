@@ -456,10 +456,39 @@ const HTML_P_AUTOCLOSE_OPENING_ELEMENTS = new Set([
     'form', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'header', 'hgroup', 'hr', 'main',
     'menu', 'nav', 'ol', 'p', 'pre', 'search', 'section', 'table', 'ul',
 ]);
+const HTML_SCOPE_BOUNDARY_ELEMENTS = new Set([
+    'applet', 'caption', 'html', 'marquee', 'object', 'table', 'td', 'template',
+    'th',
+]);
+const HTML_BUTTON_SCOPE_BOUNDARY_ELEMENTS = new Set([
+    ...HTML_SCOPE_BOUNDARY_ELEMENTS,
+    'button',
+]);
+const HTML_LIST_ITEM_SCOPE_BOUNDARY_ELEMENTS = new Set([
+    ...HTML_SCOPE_BOUNDARY_ELEMENTS,
+    'ol',
+    'ul',
+]);
+const HTML_DEFINITION_ITEM_SCOPE_BOUNDARY_ELEMENTS = new Set([
+    ...HTML_SCOPE_BOUNDARY_ELEMENTS,
+    'dl',
+]);
+const HTML_BUTTON_ELEMENTS = new Set(['button']);
+const HTML_LIST_ITEM_ELEMENTS = new Set(['li']);
+const HTML_DEFINITION_ITEM_ELEMENTS = new Set(['dd', 'dt']);
+const HTML_PARAGRAPH_ELEMENTS = new Set(['p']);
 
 function htmlElementIsIgnored(tag, insideSelect = false, documentMode = false) {
     return insideSelect && !HTML_SELECT_CONTEXT_ELEMENTS.has(tag)
         || !documentMode && HTML_FRAGMENT_IGNORED_ELEMENTS.has(tag);
+}
+
+function lastHtmlStackTagIndexInScope(stack, tags, boundaries) {
+    for (let index = stack.length - 1; index >= 0; index -= 1) {
+        if (tags.has(stack[index].tag)) return index;
+        if (boundaries.has(stack[index].tag)) return -1;
+    }
+    return -1;
 }
 
 function repairHtmlStackForOpening(stack, tag, documentMode = false) {
@@ -484,29 +513,38 @@ function repairHtmlStackForOpening(stack, tag, documentMode = false) {
         return true;
     }
     if (tag === 'button') {
-        const button = lastHtmlStackTagIndex(stack, 'button');
+        const button = lastHtmlStackTagIndexInScope(
+            stack,
+            HTML_BUTTON_ELEMENTS,
+            HTML_SCOPE_BOUNDARY_ELEMENTS
+        );
         if (button !== -1) stack.splice(button);
     }
     if (tag === 'li') {
-        const listItem = lastHtmlStackTagIndex(stack, 'li');
+        const listItem = lastHtmlStackTagIndexInScope(
+            stack,
+            HTML_LIST_ITEM_ELEMENTS,
+            HTML_LIST_ITEM_SCOPE_BOUNDARY_ELEMENTS
+        );
         if (listItem !== -1) stack.splice(listItem);
     }
     if (tag === 'dd' || tag === 'dt') {
-        const descriptionItem = Math.max(
-            lastHtmlStackTagIndex(stack, 'dd'),
-            lastHtmlStackTagIndex(stack, 'dt')
+        const descriptionItem = lastHtmlStackTagIndexInScope(
+            stack,
+            HTML_DEFINITION_ITEM_ELEMENTS,
+            HTML_DEFINITION_ITEM_SCOPE_BOUNDARY_ELEMENTS
         );
         if (descriptionItem !== -1) stack.splice(descriptionItem);
     }
-    if (/^h[1-6]$/.test(tag)) {
-        const heading = Math.max(
-            ...[1, 2, 3, 4, 5, 6]
-                .map(level => lastHtmlStackTagIndex(stack, `h${level}`))
-        );
-        if (heading !== -1) stack.splice(heading);
+    if (/^h[1-6]$/.test(tag) && /^h[1-6]$/.test(stack.at(-1)?.tag || '')) {
+        stack.pop();
     }
     if (HTML_P_AUTOCLOSE_OPENING_ELEMENTS.has(tag)) {
-        const paragraph = lastHtmlStackTagIndex(stack, 'p');
+        const paragraph = lastHtmlStackTagIndexInScope(
+            stack,
+            HTML_PARAGRAPH_ELEMENTS,
+            HTML_BUTTON_SCOPE_BOUNDARY_ELEMENTS
+        );
         if (paragraph !== -1) stack.splice(paragraph);
     }
     return false;
@@ -1875,21 +1913,62 @@ function htmlFormSubmissionLinks(
     const fieldsetDisabledStates = htmlOpeningFieldsetDisabledStates(content, options);
     const controls = [...buttons, ...inputs]
         .sort((left, right) => left.start - right.start);
-    const nextSubmission = new Map();
-    const lastSubmissionByForm = new Map();
-    for (let index = controls.length - 1; index >= 0; index -= 1) {
-        const control = controls[index];
-        if (!['submit', 'image'].includes(htmlSubmitControlType(control))) continue;
+    const submissions = new Map();
+    for (const control of controls) {
+        const type = htmlSubmitControlType(control);
+        if (!['submit', 'image'].includes(type)
+            || htmlTagHasAttribute(control.openingTag, 'disabled')
+            || fieldsetDisabledStates.get(control.start)) {
+            continue;
+        }
         const form = htmlAssociatedForm(control, forms, formsById);
         if (!form) continue;
+        const method = htmlTagHasAttribute(control.openingTag, 'formmethod')
+            ? htmlAttributeText(control.openingTag, 'formmethod')
+            : htmlAttributeText(form.openingTag, 'method');
+        if (method.toLowerCase() === 'dialog') continue;
+        const action = htmlTagHasAttribute(control.openingTag, 'formaction')
+            ? htmlAttributeValue(control.openingTag, 'formaction')
+            : form.action;
+        if (!action) continue;
+        submissions.set(control, {
+            form,
+            action,
+            label: htmlSubmitControlLabel(
+                control,
+                content,
+                labels,
+                labelRecords,
+                options
+            ),
+            hidden: hiddenStates.get(control.start) || false,
+        });
+    }
+    const actionableSubmissions = controls.filter((control) => {
+        const submission = submissions.get(control);
+        return submission && !submission.hidden && Boolean(submission.label.trim());
+    });
+    const nextSubmission = new Map();
+    const lastSubmissionByForm = new Map();
+    for (let index = actionableSubmissions.length - 1; index >= 0; index -= 1) {
+        const control = actionableSubmissions[index];
+        const { form } = submissions.get(control);
         const next = lastSubmissionByForm.get(form);
         if (next) nextSubmission.set(control, next);
         lastSubmissionByForm.set(form, control);
     }
+    const previousSubmission = new Map();
+    const firstSubmissionByForm = new Map();
+    for (const control of actionableSubmissions) {
+        const { form } = submissions.get(control);
+        const previous = firstSubmissionByForm.get(form);
+        if (previous) previousSubmission.set(control, previous);
+        firstSubmissionByForm.set(form, control);
+    }
     const contextOffsets = [];
     const contextPlans = new Map();
-    for (const control of controls) {
-        const form = htmlAssociatedForm(control, forms, formsById);
+    for (const [control, submission] of submissions) {
+        const { form } = submission;
         const containedByForm = form
             && form.start < control.start
             && control.start < form.end;
@@ -1921,6 +2000,8 @@ function htmlFormSubmissionLinks(
             beforeBoundary,
             beforeSegments,
             afterBoundary,
+            allowFormBeforeFallback: containedByForm
+                && !previousSubmission.has(control),
             allowFormAfterFallback: containedByForm && !nextSubmission.has(control),
         });
     }
@@ -1941,23 +2022,8 @@ function htmlFormSubmissionLinks(
         visual: visualStates.get(offset),
     });
     const links = [];
-    for (const control of controls) {
-        const type = htmlSubmitControlType(control);
-        if (!['submit', 'image'].includes(type)
-            || htmlTagHasAttribute(control.openingTag, 'disabled')
-            || fieldsetDisabledStates.get(control.start)) {
-            continue;
-        }
-        const form = htmlAssociatedForm(control, forms, formsById);
-        if (!form) continue;
-        const method = htmlTagHasAttribute(control.openingTag, 'formmethod')
-            ? htmlAttributeText(control.openingTag, 'formmethod')
-            : htmlAttributeText(form.openingTag, 'method');
-        if (method.toLowerCase() === 'dialog') continue;
-        const action = htmlTagHasAttribute(control.openingTag, 'formaction')
-            ? htmlAttributeValue(control.openingTag, 'formaction')
-            : form.action;
-        if (!action) continue;
+    for (const [control, submission] of submissions) {
+        const { action, label, hidden } = submission;
         const {
             containedByForm,
             contextStart,
@@ -1966,43 +2032,39 @@ function htmlFormSubmissionLinks(
             beforeBoundary,
             beforeSegments,
             afterBoundary,
+            allowFormBeforeFallback,
             allowFormAfterFallback,
         } = contextPlans.get(control);
         let contextBefore = '';
-        for (const segment of beforeSegments) {
+        if (allowFormBeforeFallback) {
             contextBefore = compactGovernedText(
-                rawBefore.slice(segment.start, segment.end),
+                rawBefore,
                 labels,
-                initialStatesAt(contextStart + segment.start),
+                initialStatesAt(contextStart),
                 options
             );
-            if (contextBefore) break;
+        } else {
+            for (const segment of beforeSegments) {
+                contextBefore = compactGovernedText(
+                    rawBefore.slice(segment.start, segment.end),
+                    labels,
+                    initialStatesAt(contextStart + segment.start),
+                    options
+                );
+                if (contextBefore) break;
+            }
         }
-        let contextAfter = compactGovernedText(
-            rawAfter.slice(0, afterBoundary),
+        const contextAfter = compactGovernedText(
+            allowFormAfterFallback ? rawAfter : rawAfter.slice(0, afterBoundary),
             labels,
             initialStatesAt(control.end),
             options
         );
-        if (!contextAfter && allowFormAfterFallback) {
-            contextAfter = compactGovernedText(
-                rawAfter,
-                labels,
-                initialStatesAt(control.end),
-                options
-            );
-        }
         links.push({
             target: normalizeLinkTarget(action),
             line,
             type: 'link',
-            label: htmlSubmitControlLabel(
-                control,
-                content,
-                labels,
-                labelRecords,
-                options
-            ),
+            label,
             contextBefore,
             contextBeforeBlock: containedByForm
                 ? ''
@@ -2013,7 +2075,9 @@ function htmlFormSubmissionLinks(
                     options
                 ),
             contextAfter,
-            hidden: hiddenStates.get(control.start) || false,
+            hidden,
+            ownsFormContextBefore: allowFormBeforeFallback,
+            ownsFormContextAfter: allowFormAfterFallback,
         });
     }
     return links;
@@ -2508,6 +2572,8 @@ function extractLinks(source) {
             link.contextBeforeBlock,
             link.contextAfter,
             link.hidden,
+            link.ownsFormContextBefore,
+            link.ownsFormContextAfter,
         ].join('\u0000');
         if (seen.has(key)) return false;
         seen.add(key);

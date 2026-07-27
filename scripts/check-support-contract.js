@@ -484,6 +484,9 @@ function semanticLinkText(link) {
         before = context.slice(0, offset);
         after = context.slice(offset + label.length);
     }
+    if (link?.ownsFormContextBefore || link?.ownsFormContextAfter) {
+        return `${before} ${label} ${after}`.replace(/\s+/g, ' ').trim();
+    }
     const sentenceBoundaries = (text, prefix = '', suffix = '', adjacentLink = false) => {
         const boundaries = hardSentenceBoundaries(text);
         const combined = `${prefix}${text}${suffix}`;

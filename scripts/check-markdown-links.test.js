@@ -728,6 +728,37 @@ test('extracts HTML form submissions and image-map routes with control names', (
     assert.equal(crossBlockLink.hidden, true);
     assert.equal(isActionableLink(crossBlockLink), false);
 
+    const hiddenNestedList = `<ul><li hidden><ul><li><form action="${formTarget}">`
+        + '<button>Submit a vulnerability report</button>'
+        + '</form></li></ul></li></ul>';
+    const hiddenNestedListLink = extractLinks(hiddenNestedList)
+        .find(candidate => candidate.target === formTarget);
+    assert.ok(hiddenNestedListLink);
+    assert.equal(hiddenNestedListLink.hidden, true);
+    assert.equal(isActionableLink(hiddenNestedListLink), false);
+
+    const browserScopeTarget = 'https://example.com/browser-scope';
+    for (const scopedHiddenRoute of [
+        '<dl><dd hidden><dl><dt>'
+            + `<a href="${browserScopeTarget}">Report a bug</a>`
+            + '</dt></dl></dd></dl>',
+        '<h1 hidden><div><h2>'
+            + `<a href="${browserScopeTarget}">Report a bug</a>`
+            + '</h2></div></h1>',
+        '<button hidden><table><tr><td><button>'
+            + `<a href="${browserScopeTarget}">Report a bug</a>`
+            + '</button></td></tr></table></button>',
+        '<p hidden><button><div>'
+            + `<a href="${browserScopeTarget}">Report a bug</a>`
+            + '</div></button></p>',
+    ]) {
+        const scopedLink = extractLinks(scopedHiddenRoute)
+            .find(candidate => candidate.target === browserScopeTarget);
+        assert.ok(scopedLink, scopedHiddenRoute);
+        assert.equal(scopedLink.hidden, true, scopedHiddenRoute);
+        assert.equal(isActionableLink(scopedLink), false, scopedHiddenRoute);
+    }
+
     const paragraphAutoClose = '<p hidden>\n\n'
         + `<form action="${formTarget}">\n`
         + '<button>Submit a vulnerability report</button>\n'
@@ -745,6 +776,40 @@ test('extracts HTML form submissions and image-map routes with control names', (
         .find(candidate => candidate.target === formTarget);
     assert.ok(formLocalLink);
     assert.match(formLocalLink.contextBefore, /submit a vulnerability report below/i);
+
+    const earlierFormIntent = `<form action="${formTarget}">`
+        + '<p>Submit a vulnerability report below.</p>'
+        + '<p>Click the next button.</p><button>Continue</button></form>';
+    const earlierFormIntentLink = extractLinks(earlierFormIntent)
+        .find(candidate => candidate.target === formTarget);
+    assert.ok(earlierFormIntentLink);
+    assert.match(earlierFormIntentLink.contextBefore, /submit a vulnerability report below/i);
+
+    const laterFormIntent = `<form action="${formTarget}">`
+        + '<button>Continue</button><span>Click here.</span>'
+        + '<p>Submit a vulnerability report below.</p></form>';
+    const laterFormIntentLink = extractLinks(laterFormIntent)
+        .find(candidate => candidate.target === formTarget);
+    assert.ok(laterFormIntentLink);
+    assert.match(laterFormIntentLink.contextAfter, /submit a vulnerability report below/i);
+
+    for (const inactiveControl of [
+        '<button disabled>Ignored</button>',
+        '<button hidden>Ignored</button>',
+        '<button formmethod="dialog">Ignored</button>',
+    ]) {
+        const inactiveTrailing = `<form action="${formTarget}">`
+            + '<button>Continue</button>'
+            + '<p>Submit a vulnerability report below.</p>'
+            + `${inactiveControl}</form>`;
+        const inactiveTrailingLink = extractLinks(inactiveTrailing)
+            .find(candidate => candidate.target === formTarget && !candidate.hidden);
+        assert.ok(inactiveTrailingLink);
+        assert.match(
+            inactiveTrailingLink.contextAfter,
+            /submit a vulnerability report below/i
+        );
+    }
 
     const truncatedHiddenPrefix = `<form action="${formTarget}">`
         + `<div hidden>${'x'.repeat(800)}</div>`

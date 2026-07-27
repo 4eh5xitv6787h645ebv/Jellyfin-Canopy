@@ -2711,6 +2711,18 @@ test('governs form submissions and hidden ID names while inert routes remain ina
         ));
     });
 
+    const hiddenNestedListRoute = validFixture();
+    hiddenNestedListRoute['docs/getting-started.md'] =
+        `<ul><li hidden><ul><li><form action="${ISSUES_ROUTE}">`
+        + '<button>Submit a vulnerability report</button>'
+        + '</form></li></ul></li></ul>';
+    fixture(hiddenNestedListRoute, root => {
+        assert.ok(!auditSupportContract({ root }).problems.some(problem => (
+            problem.startsWith('docs/getting-started.md:')
+            && problem.includes('security intake links must use private GitHub advisories')
+        )));
+    });
+
     const visibleAfterParagraphClose = validFixture();
     visibleAfterParagraphClose['docs/getting-started.md'] =
         '<p hidden>\n\n'
@@ -2735,6 +2747,33 @@ test('governs form submissions and hidden ID names while inert routes remain ina
             && problem.includes('security intake links must use private GitHub advisories')
         )));
     });
+
+    for (const formSource of [
+        `<form action="${ISSUES_ROUTE}">`
+            + '<p>Submit a vulnerability report below.</p>'
+            + '<p>Click the next button.</p><button>Continue</button></form>',
+        `<form action="${ISSUES_ROUTE}">`
+            + '<button>Continue</button><span>Click here.</span>'
+            + '<p>Submit a vulnerability report below.</p></form>',
+        ...[
+            '<button disabled>Ignored</button>',
+            '<button hidden>Ignored</button>',
+            '<button formmethod="dialog">Ignored</button>',
+        ].map(inactiveControl => (
+            `<form action="${ISSUES_ROUTE}"><button>Continue</button>`
+            + '<p>Submit a vulnerability report below.</p>'
+            + `${inactiveControl}</form>`
+        )),
+    ]) {
+        const retainedFormIntent = validFixture();
+        retainedFormIntent['docs/getting-started.md'] = formSource;
+        fixture(retainedFormIntent, root => {
+            assert.ok(auditSupportContract({ root }).problems.some(problem => (
+                problem.startsWith('docs/getting-started.md:')
+                && problem.includes('security intake links must use private GitHub advisories')
+            )), formSource);
+        });
+    }
 
     const formIntentAfterHiddenPrefix = validFixture();
     formIntentAfterHiddenPrefix['docs/getting-started.md'] =
