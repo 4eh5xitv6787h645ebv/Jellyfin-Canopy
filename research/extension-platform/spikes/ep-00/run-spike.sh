@@ -206,7 +206,9 @@ docker exec "$NAME" sh -c '
   ln -sfn "$R/hop-root/ssl" "$R/hop-etc"
   # A loop, to prove the reader rejects rather than throwing out of discovery.
   ln -sfn cycle2 "$R/cycle"
-  ln -sfn cycle  "$R/cycle2"'
+  ln -sfn cycle  "$R/cycle2"
+  # A named pipe. open(2) blocks on it until a writer appears.
+  mkfifo "$R/fifo" 2>/dev/null || true'
 docker restart "$NAME" >/dev/null
 wait_up
 # Plugin controllers are routed a little after the server answers /System/Info.
@@ -266,6 +268,9 @@ printf 'depth 200 -> '
 curl -s -X POST "$B/Ep00Spike/Echo" -H "$AUTH" -H 'Content-Type: application/json' \
   --data-binary "@$WORK/deep.json"
 echo
+
+log "Probe K — TOCTOU race: validate-then-open vs open-then-validate"
+curl -s -G "$B/Ep00Spike/Toctou" -H "$AUTH" --data-urlencode 'iterations=4000' | python3 -m json.tool
 
 log "Probe J — forged identity (non-admin token, injected user ids)"
 ADMIN_ID="$(curl -s "$B/Users/Me" -H "$AUTH" | python3 -c 'import json,sys; print(json.load(sys.stdin)["Id"])')"

@@ -20,12 +20,14 @@ public class Ep00SpikeController : ControllerBase
     private readonly ProviderBinder _binder;
     private readonly ManifestProbe _manifests;
     private readonly LoadContextWatcher _watcher;
+    private readonly ToctouProbe _toctou;
 
-    public Ep00SpikeController(ProviderBinder binder, ManifestProbe manifests, LoadContextWatcher watcher)
+    public Ep00SpikeController(ProviderBinder binder, ManifestProbe manifests, LoadContextWatcher watcher, ToctouProbe toctou)
     {
         _binder = binder;
         _manifests = manifests;
         _watcher = watcher;
+        _toctou = toctou;
     }
 
     /// <summary>Anonymous discovery: availability and protocol range only. No topology.</summary>
@@ -68,6 +70,11 @@ public class Ep00SpikeController : ControllerBase
     [HttpGet("Runtime")]
     [Authorize(Policy = Policies.RequiresElevation)]
     public ActionResult<object> Runtime([FromQuery] bool collect) => Ok(_watcher.Snapshot(collect));
+
+    /// <summary>EP-00.5: races a path swap against both read orders.</summary>
+    [HttpGet("Toctou")]
+    [Authorize(Policy = Policies.RequiresElevation)]
+    public ActionResult<object> Toctou([FromQuery] int iterations) => Ok(_toctou.Run(iterations));
 
     [HttpGet("Manifests")]
     [Authorize(Policy = Policies.RequiresElevation)]

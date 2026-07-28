@@ -516,6 +516,72 @@ after the restart.
 
 Recorded against [#493](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/493).
 
+## S16 — The manifest read is a TOCTOU, and a FIFO stalls it
+
+Replay: probe K in [`spikes/ep-00/run-spike.sh`](spikes/ep-00/run-spike.sh). The
+containment decision now lives in one place —
+[`PathContainment`](spikes/ep-00/Jellyfin.Plugin.Ep00Host/PathContainment.cs) —
+so EP-03 inherits it rather than re-deriving it.
+
+### The race is real, not theoretical
+
+A background task alternates one filename inside the root between an honest file
+and a symlink pointing outside it, while a reader loops. 4,000 iterations,
+~21,000 swaps, under half a second:
+
+| Read order | successful reads | **leaks** | torn reads | rejections |
+|---|---|---|---|---|
+| validate the path, then open it | 2,200 | **369** | ~400 | — |
+| open it, then validate the descriptor | 188 | **0** | 32 | 1,843 |
+
+The obvious order leaked the contents of a file outside the plugin root on **17%
+of its successful reads**. An extension can trigger this whenever it likes: it
+controls the files in its own directory, and the kernel reads manifests on a
+schedule the extension does not control but can observe.
+
+The correct order opens first and then decides about the **open descriptor**, via
+`/proc/self/fd`. Three details are load-bearing:
+
+- **Fail closed when the descriptor cannot be described.** A deleted inode
+  resolves to `"<path> (deleted)"`. Falling back to the pre-open decision there is
+  exactly the hole being closed — that is *precisely* when the pre-open decision is
+  least trustworthy. An earlier version kept the fallback and leaked on ~17% of its
+  reads, i.e. it fixed nothing.
+- **Resolve only the first hop of `/proc/self/fd/N`.** That link *is* the answer;
+  following further re-introduces a resolution the descriptor has already settled.
+- **Torn reads are not leaks.** The writer truncates before writing, so a reader
+  can legitimately see an empty file. An earlier version counted those as leaks and
+  made a working fix look broken. Only content matching the file *outside* the root
+  counts.
+
+The 1,843 rejections are the fix working: under contention the safe reader mostly
+declines rather than guessing. A real kernel retries; it does not relax the check.
+
+### A named pipe stalls the reader
+
+| Candidate | Result |
+|---|---|
+| `fifo` (a `mkfifo` named pipe) | `rejected: open blocked (not a regular file?)` |
+
+`open(2)` on a FIFO **blocks until a writer appears**. A plugin that ships a named
+pipe called `jellyfin-canopy-extension.json` would hang the reader indefinitely —
+and discovery iterates every plugin, so one such file stalls discovery for all of
+them. The open is now bounded and the candidate refused. Directories are rejected
+before the open rather than by failing it.
+
+Two related notes: a 5,000-character name is refused by the platform
+(`PathTooLongException`), and neither Unicode normalisation form of `café.json`
+collides with the other, so containment does not depend on filesystem
+normalisation behaviour.
+
+### Shapes that are accepted, and should be
+
+`./inside.json`, `sub/./../inside.json`, `inside.json/` and `inside.json/.` all
+resolve inside the root and are accepted. `.` is refused as a directory and `..`
+by containment.
+
+Recorded against [#494](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/494).
+
 ## What this spike did not establish
 
 Carried into later milestones rather than assumed.
@@ -547,8 +613,10 @@ Carried into later milestones rather than assumed.
 9. **Six of the eight lifecycle states** in
    [compatibility-terminology](compatibility-terminology.md#state-words) are design
    states with no probe. Only `absent` and `disabled` were shown distinguishable.
-10. **TOCTOU on manifest reads.** S5 validates a path and then opens it; nothing
-    re-validates on the open handle.
+10. ~~TOCTOU on manifest reads.~~ **Closed by
+    [S16](#s16--the-manifest-read-is-a-toctou-and-a-fifo-stalls-it):** the race is
+    demonstrated, the fix is measured at zero leaks, and the containment decision is
+    now a single shared function.
 
 ## Probe coverage of this file
 
