@@ -1,0 +1,7 @@
+{
+  "Error": true,
+  "Code": "payload_too_large",
+  "Message": "The request exceeds the platform limit for depth (32).",
+  "Retryable": false,
+  "CorrelationId": "0123456789abcdef0123456789abcdef"
+}

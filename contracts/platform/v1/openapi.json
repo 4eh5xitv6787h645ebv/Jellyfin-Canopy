@@ -1,0 +1,230 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Jellyfin Canopy \u2014 Platform v1",
+    "version": "1.0.0",
+    "summary": "The versioned, capability-scoped extension surface.",
+    "description": "This document is AUTHORED, not generated from the running server. Generating it from the code would document whatever the code happens to do, mistakes included, and would make a breaking change undetectable \u2014 the spec would simply move with the bug. Here the spec is the source of truth and the server is checked against it by PlatformContractTests.\n\nOnly routes under /JellyfinCanopy/Platform/v1 are described. The pre-platform /JellyfinCanopy/* routes are compatibility surfaces with their own shapes and are deliberately absent; they are never promoted into the platform implicitly.\n\nChanges within v1 are additive only (ADR-0010). Removing a path, removing a required property, or changing a property's type is a v2 concern, and contracts/platform/v1/frozen.json exists so CI can prove it rather than a reviewer having to notice."
+  },
+  "servers": [
+    {
+      "url": "/",
+      "description": "The Jellyfin server root. Platform routes sit under the plugin's own path because Jellyfin applies no prefix convention of its own, so an unprefixed family could collide with another plugin."
+    }
+  ],
+  "paths": {
+    "/JellyfinCanopy/Platform/v1/discovery": {
+      "get": {
+        "operationId": "getDiscovery",
+        "summary": "Whether the platform is present, and which protocol versions it speaks.",
+        "description": "The ONLY anonymous route in Platform v1. A client must be able to learn the platform exists before it has a reason to authenticate, and probing this reveals nothing an unauthenticated caller could not learn by noticing the plugin is installed.\n\nThe payload is deliberately uninteresting: no users, no installed extensions, no topology, no configuration, no server identity. Adding a property here widens what an unauthenticated caller learns.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "The platform is present.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlatformDiscoveryResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/JellyfinCanopy/Platform/v1/negotiate": {
+      "get": {
+        "operationId": "negotiate",
+        "summary": "The highest protocol version both sides speak.",
+        "description": "A client offers the range it supports; the host answers with what it will actually use.\n\nNo overlap is reported as a 200 with compatible=false, NOT as an error. A negotiation that concludes \"no common version\" has succeeded \u2014 it answered the question asked \u2014 and a client renders that differently from \"unavailable\" and from \"denied\". Collapsing the three would make a version mismatch indistinguishable from a permissions problem.\n\nA client that supplies no range is treated as speaking the oldest protocol only. Assuming it supports the newest would be optimistic about software the host knows nothing about.",
+        "parameters": [
+          {
+            "name": "protocolMinimum",
+            "in": "query",
+            "required": false,
+            "description": "Lowest protocol version the client supports. Defaults to the host's minimum.",
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "protocolMaximum",
+            "in": "query",
+            "required": false,
+            "description": "Highest protocol version the client supports. Defaults to the host's minimum, not its maximum.",
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Negotiation completed. Check compatible before using protocol.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlatformNegotiationResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/BareUnauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/BareForbidden"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "JellyfinToken": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "Authorization",
+        "description": "Jellyfin's own scheme: `Authorization: MediaBrowser Token=\"<token>\"`. EP-00 verified that the 10.x `?api_key=` query parameter has been removed in Jellyfin 12, while `?apikey=` and `?ApiKey=` still work; the platform documents only the header because a credential in a query string lands in logs and referrers."
+      }
+    },
+    "responses": {
+      "BareUnauthorized": {
+        "description": "No or invalid credentials. EP-00 measured that Jellyfin 12 returns this with ZERO body bytes, so it carries no platform error envelope \u2014 the envelope applies only after authorization succeeds (ADR-0002). A client must not attempt to parse this body."
+      },
+      "BareForbidden": {
+        "description": "Authenticated but not permitted. Zero body bytes, for the same reason as 401."
+      },
+      "PayloadTooLarge": {
+        "description": "A kernel-owned request bound was exceeded. The message names which axis, so a client knows whether to send fewer items, shorter strings, or a flatter shape.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/PlatformError"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "PlatformDiscoveryResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "Available",
+          "ProtocolMinimum",
+          "ProtocolMaximum"
+        ],
+        "properties": {
+          "Available": {
+            "type": "boolean",
+            "description": "Whether the platform is present and serving."
+          },
+          "ProtocolMinimum": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Lowest protocol version this host speaks."
+          },
+          "ProtocolMaximum": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Highest protocol version this host speaks."
+          }
+        }
+      },
+      "PlatformNegotiationResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "Compatible",
+          "HostProtocolMinimum",
+          "HostProtocolMaximum"
+        ],
+        "properties": {
+          "Compatible": {
+            "type": "boolean",
+            "description": "Whether the client and host ranges overlap at all."
+          },
+          "Protocol": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The agreed version. Meaningless when compatible is false."
+          },
+          "HostProtocolMinimum": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Echoed so a client can report a mismatch usefully rather than just failing."
+          },
+          "HostProtocolMaximum": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Echoed so a client can report a mismatch usefully rather than just failing."
+          }
+        }
+      },
+      "PlatformError": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "Error",
+          "Code",
+          "Message",
+          "Retryable",
+          "CorrelationId"
+        ],
+        "description": "The single Platform v1 error envelope, returned for every failure that occurs after authorization has succeeded. Deliberately a superset of the richest legacy shape ({ error, code, message }) so an adapter presenting a platform failure to a legacy consumer drops fields rather than translating them.",
+        "properties": {
+          "Error": {
+            "type": "boolean",
+            "const": true,
+            "description": "Always true. Carried so a consumer that already branches on a truthy error keeps working through an adapter."
+          },
+          "Code": {
+            "$ref": "#/components/schemas/PlatformErrorCode"
+          },
+          "Message": {
+            "type": "string",
+            "description": "Human-readable and safe to display. May be reworded or translated at any time, so it is never the thing a consumer branches on."
+          },
+          "Retryable": {
+            "type": "boolean",
+            "description": "Whether retrying the identical request could plausibly succeed. Derived from the code rather than chosen per endpoint, so two endpoints cannot disagree about the same code."
+          },
+          "CorrelationId": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{32}$",
+            "description": "Ties this response to the server log lines for the same request. Also returned in the X-Correlation-Id header. Generated by the host and never accepted from the caller."
+          }
+        }
+      },
+      "PlatformErrorCode": {
+        "type": "string",
+        "description": "Machine-readable failure code. Branch on this, never on the message. An unfamiliar code must be treated as a generic failure of its HTTP status class, which is why each code maps to exactly one status.",
+        "enum": [
+          "invalid_request",
+          "unsupported_protocol",
+          "not_found",
+          "conflict",
+          "payload_too_large",
+          "rate_limited",
+          "internal_error",
+          "unavailable",
+          "timeout"
+        ]
+      }
+    }
+  },
+  "security": [
+    {
+      "JellyfinToken": []
+    }
+  ]
+}
