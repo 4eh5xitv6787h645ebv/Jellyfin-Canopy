@@ -95,10 +95,6 @@
       "reason": "Official Jikan v4 API documentation for anime episode classifications."
     },
     {
-      "url": "https://learn.microsoft.com/en-us/dotnet/standard/security/",
-      "reason": "Reviewed .NET security reference published in the repository security guidelines."
-    },
-    {
       "url": "https://docs.maintainerr.info/api/",
       "reason": "Official Maintainerr API and security guidance for the read-only integration."
     },
@@ -155,6 +151,10 @@
     {
       "url": "https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/new",
       "reason": "Canonical Jellyfin Canopy project link."
+    },
+    {
+      "url": "https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/new/choose",
+      "reason": "Canonical Jellyfin Canopy issue chooser covering the bug, feature, and security intake routes."
     },
     {
       "url": "https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/pulls",
@@ -277,8 +277,8 @@
       "reason": "Reviewed public third-party documentation or asset."
     },
     {
-      "url": "https://jellyfin.org/docs/general/security/",
-      "reason": "Reviewed Jellyfin security reference published in the repository security guidelines."
+      "url": "https://jellyfin.org/docs/general/post-install/networking/",
+      "reason": "Reviewed Jellyfin networking and hardening reference published in the repository security guidelines."
     },
     {
       "url": "https://jellyfin.org/docs/general/server/plugins/",
@@ -291,6 +291,10 @@
     {
       "url": "https://ko-fi.com/n00bcodr",
       "reason": "Historical upstream attribution or source reference."
+    },
+    {
+      "url": "https://learn.microsoft.com/en-us/dotnet/standard/security/",
+      "reason": "Reviewed .NET security reference published in the repository security guidelines."
     },
     {
       "url": "https://owasp.org/www-project-top-ten/",

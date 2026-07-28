@@ -1111,8 +1111,8 @@ When proposing new features:
 2. **Provide Context**: Explain the use case and benefit
 3. **Be Specific**: Clear descriptions help implementation
 4. **Consider Scope**: Is this a core feature or niche use case?
-5. **Use the Feature Request Template**: Keep proposals in
-   [GitHub feature-request issues](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues)
+5. **Use the Feature Request Template**: Open proposals through the
+   [issue chooser](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/new/choose)
    so they follow the same triage path
 
 ## 🐛 Bug Reports
@@ -1121,7 +1121,7 @@ When reporting bugs:
 
 1. **Check Existing Issues**: Avoid duplicates
 2. **Check FAQs**
-3. **Provide Details** through the [GitHub bug-report issues](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues) and use the Bug report template
+3. **Provide Details** through the [issue chooser](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/new/choose) and use the Bug report template
 
 ## 💬 Getting Help
 

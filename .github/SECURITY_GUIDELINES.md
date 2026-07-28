@@ -252,18 +252,20 @@ The full disclosure policy and response timeline remain in [SECURITY.md](../SECU
 
 We use the following tools:
 
-1. **CodeQL**: Static analysis for C# and JavaScript
+1. **TruffleHog**: Secret scanning across the full git history, gated by a
+   redacted baseline
 2. **Dependabot**: Automated dependency updates
-3. **TruffleHog**: Secret scanning
-4. **OpenSSF Scorecard**: Security posture assessment
-5. **Dependency Review**: License and vulnerability checking
+3. **.NET dependency audit**: `dotnet list package --vulnerable` fails CI on any
+   known-vulnerable direct or transitive package
+
+[SECURITY.md](../SECURITY.md) describes how each of these gates runs in CI.
 
 ## Resources
 
 - [OWASP Top 10](https://owasp.org/www-project-top-ten/)
 - [CWE Top 25](https://cwe.mitre.org/top25/)
 - [.NET Security Guidelines](https://learn.microsoft.com/en-us/dotnet/standard/security/)
-- [Jellyfin Security](https://jellyfin.org/docs/general/security/)
+- [Jellyfin Networking & Hardening](https://jellyfin.org/docs/general/post-install/networking/)
 
 ## Questions?
 

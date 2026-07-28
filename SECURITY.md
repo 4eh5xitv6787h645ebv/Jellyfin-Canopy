@@ -100,7 +100,7 @@ CodeQL, Scorecard, and Dependency Review are **not** part of this workflow.
 ## Contact
 
 For security concerns that don't constitute a vulnerability, you can:
-- Open a regular GitHub issue
+- Open a regular GitHub issue through the issue chooser's bug-report or feature-request form
 - Ask in the [Jellyfin Community Discord](https://discord.gg/EYNFf7y4CG)
 - Contact the maintainers privately when the question contains sensitive details
 
