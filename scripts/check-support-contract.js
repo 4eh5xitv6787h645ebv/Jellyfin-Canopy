@@ -831,6 +831,23 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
         + ')$',
         'i'
     );
+    const linkedReferenceReplacementAntecedent = new RegExp(
+        '\\b(?:(?:an?|the|this|that)\\s+)?'
+        + '(?:(?:another|correct|dedicated|different|preferred|private|separate|security)'
+        + '\\s+){1,3}'
+        + '(?:advisory|channel|destination|form|guidance|link|page|policy|process'
+        + '|route|site)\\b',
+        'i'
+    );
+    const replacementAntecedentPrecedesRoute = (clause) => {
+        const replacement = linkedReferenceReplacementAntecedent.exec(clause);
+        if (!replacement) return false;
+        const routeMatch = linkedReferenceContinuationPatterns
+            .map(pattern => pattern.exec(clause))
+            .filter(Boolean)
+            .sort((left, right) => left.index - right.index)[0];
+        return !routeMatch || replacement.index < routeMatch.index;
+    };
     const linkedReferenceClauseApplicability = (clause, contextMatch) => {
         const prefix = clause.slice(0, contextMatch.index);
         const routeMatch = linkedReferenceContinuationPatterns
@@ -858,12 +875,18 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
         hardSentenceBoundaries(linkedReferenceRemainder);
     let linkedReferenceRemainderStart = 0;
     let linkedReferenceRemainderClosed = false;
+    let linkedReferenceNeutralRouteSkipped = false;
     let linkedReferenceApplicableRemainder = '';
     for (const boundary of linkedReferenceRemainderBoundaries) {
         const clause = linkedReferenceRemainder.slice(
             linkedReferenceRemainderStart,
             boundary + 1
         );
+        if (linkedReferenceNeutralRouteSkipped
+            && replacementAntecedentPrecedesRoute(clause)) {
+            linkedReferenceRemainderClosed = true;
+            break;
+        }
         const nonVulnerabilityContext = clause.match(NON_VULNERABILITY_CONTEXT);
         if (!nonVulnerabilityContext) {
             linkedReferenceApplicableRemainder += clause;
@@ -882,13 +905,16 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
             linkedReferenceRemainderClosed = true;
             break;
         }
+        linkedReferenceNeutralRouteSkipped = true;
         linkedReferenceRemainderStart = boundary + 1;
     }
     const linkedReferenceTrailingClause =
         linkedReferenceRemainder.slice(linkedReferenceRemainderStart);
     const trailingNonVulnerabilityContext =
         linkedReferenceTrailingClause.match(NON_VULNERABILITY_CONTEXT);
-    if (!linkedReferenceRemainderClosed) {
+    const trailingReplacementAntecedent = linkedReferenceNeutralRouteSkipped
+        && replacementAntecedentPrecedesRoute(linkedReferenceTrailingClause);
+    if (!linkedReferenceRemainderClosed && !trailingReplacementAntecedent) {
         if (!trailingNonVulnerabilityContext) {
             linkedReferenceApplicableRemainder += linkedReferenceTrailingClause;
         } else {
