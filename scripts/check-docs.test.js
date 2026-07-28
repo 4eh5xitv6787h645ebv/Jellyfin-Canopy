@@ -56,6 +56,57 @@ test('an unreviewed external link fails the offline fixture with file and line',
     });
 });
 
+test('hidden support templates and chooser URLs are part of the reviewed inventory', () => {
+    fixture({
+        'README.md': '# Fixture\n',
+        'CONTRIBUTING.md': '# Contributing\n',
+        'docs/index.md': '# Home\n',
+        'mkdocs.yml': 'site_name: Fixture\n',
+        '.github/ISSUE_TEMPLATE/bug.md': [
+            '[Help](https://unreviewed.example/bug-help)',
+            'Bare https://unreviewed.example/bare-help',
+            'www.unreviewed.com/www-help',
+            '<a href="https&colon;//unreviewed.example/entity-help">Entity</a>',
+            '',
+        ].join('\n'),
+        '.github/ISSUE_TEMPLATE/config.yml': [
+            'contact_links:',
+            '  - url: https://unreviewed.example/private',
+            '  - url: https://',
+            '',
+        ].join('\n'),
+        'policy.json': JSON.stringify({ schemaVersion: 1, allowedUrls: [] }),
+    }, (root) => {
+        const problems = checkDocumentation({
+            root,
+            policyFile: path.join(root, 'policy.json'),
+        }).problems;
+        assert.ok(problems.includes(
+            '.github/ISSUE_TEMPLATE/bug.md:1: external URL is absent from the reviewed offline inventory: '
+            + 'https://unreviewed.example/bug-help'
+        ));
+        assert.ok(problems.includes(
+            '.github/ISSUE_TEMPLATE/bug.md:2: external URL is absent from the reviewed offline inventory: '
+            + 'https://unreviewed.example/bare-help'
+        ));
+        assert.ok(problems.includes(
+            '.github/ISSUE_TEMPLATE/bug.md:3: external documentation URL must use HTTPS: '
+            + 'http://www.unreviewed.com/www-help'
+        ));
+        assert.ok(problems.includes(
+            '.github/ISSUE_TEMPLATE/bug.md:4: external URL is absent from the reviewed offline inventory: '
+            + 'https://unreviewed.example/entity-help'
+        ));
+        assert.ok(problems.includes(
+            '.github/ISSUE_TEMPLATE/config.yml:2: external URL is absent from the reviewed offline inventory: '
+            + 'https://unreviewed.example/private'
+        ));
+        assert.ok(problems.includes(
+            '.github/ISSUE_TEMPLATE/config.yml:3: malformed external URL: <redacted-malformed-url>'
+        ));
+    });
+});
+
 test('published HTML and CSS theme URLs are part of the reviewed inventory', () => {
     fixture({
         'README.md': '# Fixture\n',

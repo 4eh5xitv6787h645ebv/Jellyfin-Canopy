@@ -20,13 +20,10 @@ We take the security of Jellyfin Canopy seriously. If you believe you have found
 - Disclose the vulnerability publicly before it has been addressed
 
 ### Please DO:
-1. **Report it privately.** Reach a maintainer through the
-   [Jellyfin Community Discord](https://discord.gg/EYNFf7y4CG) (Jellyfin Canopy
-   channel) and ask to share the details privately — this is the reliable route
-   while the repository is private. If GitHub **private vulnerability reporting**
-   is enabled on the repository and you have access, you may instead use the
-   [Security tab](../../security/advisories) → **"Report a vulnerability."** Either
-   way, do not disclose the issue publicly first.
+1. **[Submit a private vulnerability report](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/security/advisories/new).**
+   GitHub sends the report directly to the maintainers in a private security
+   advisory. Do not include vulnerability details in an Issue, Discussion,
+   Discord message, or other public channel.
 
 2. **Include in your report:**
 
@@ -93,19 +90,18 @@ gate, not a formality:
   one-way fingerprint in `.github/secret-scan-baseline.json`, which cannot
   silently accept a *new* secret. Results are published as the run's step summary
   and a downloadable `secret-scan-report` artifact (no raw secret material is ever
-  written). This repository is private without GitHub Advanced Security, so
-  findings are not ingested into the code-scanning "Security" tab.
+  written). Findings are reported through the redacted workflow artifact and
+  step summary rather than ingested into the code-scanning "Security" tab.
 - **.NET dependency audit** — `dotnet list package --vulnerable` fails CI on any
   known-vulnerable direct or transitive package.
 
-CodeQL, Scorecard, and Dependency Review are **not** run (they require GitHub
-Advanced Security or a public repository).
+CodeQL, Scorecard, and Dependency Review are **not** part of this workflow.
 
 ## Contact
 
 For security concerns that don't constitute a vulnerability, you can:
-- Open a regular GitHub issue
-- Start a discussion in GitHub Discussions
-- Contact the maintainers directly
+- Open a regular GitHub issue through the issue chooser's bug-report or feature-request form
+- Ask in the [Jellyfin Community Discord](https://discord.gg/EYNFf7y4CG)
+- Contact the maintainers privately when the question contains sensitive details
 
 Thank you for helping keep Jellyfin Canopy secure!

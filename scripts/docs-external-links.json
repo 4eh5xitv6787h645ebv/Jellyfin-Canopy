@@ -39,6 +39,10 @@
       "reason": "Canonical Jellyfin Canopy project link."
     },
     {
+      "url": "https://4eh5xitv6787h645ebv.github.io/Jellyfin-Canopy/help/#gather-logs-before-you-report",
+      "reason": "Canonical Jellyfin Canopy support guidance linked from the bug-report template."
+    },
+    {
       "url": "https://4eh5xitv6787h645ebv.github.io/Jellyfin-Canopy/maintainerr/",
       "reason": "Canonical Jellyfin Canopy project link."
     },
@@ -73,6 +77,10 @@
     {
       "url": "https://contrib.rocks/image?repo=n00bcodr/Jellyfin-Enhanced",
       "reason": "Historical upstream attribution or source reference."
+    },
+    {
+      "url": "https://cwe.mitre.org/top25/",
+      "reason": "Reviewed secure-development reference published in the repository security guidelines."
     },
     {
       "url": "https://dash.cloudflare.com",
@@ -137,10 +145,6 @@
       "reason": "Canonical Jellyfin Canopy project link."
     },
     {
-      "url": "https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/discussions",
-      "reason": "Canonical Jellyfin Canopy project link."
-    },
-    {
       "url": "https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues",
       "reason": "Canonical Jellyfin Canopy project link."
     },
@@ -149,8 +153,16 @@
       "reason": "Canonical Jellyfin Canopy project link."
     },
     {
+      "url": "https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/new/choose",
+      "reason": "Canonical Jellyfin Canopy issue chooser covering the bug, feature, and security intake routes."
+    },
+    {
       "url": "https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/pulls",
       "reason": "Canonical Jellyfin Canopy project link."
+    },
+    {
+      "url": "https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/security/advisories/new",
+      "reason": "Canonical private vulnerability-reporting route used by support intake."
     },
     {
       "url": "https://github.com/BobHasNoSoul/",
@@ -265,6 +277,10 @@
       "reason": "Reviewed public third-party documentation or asset."
     },
     {
+      "url": "https://jellyfin.org/docs/general/post-install/networking/",
+      "reason": "Reviewed Jellyfin networking and hardening reference published in the repository security guidelines."
+    },
+    {
       "url": "https://jellyfin.org/docs/general/server/plugins/",
       "reason": "Official Jellyfin plugin catalog for the recommended AniList metadata provider and the optional AniSearch provider."
     },
@@ -275,6 +291,14 @@
     {
       "url": "https://ko-fi.com/n00bcodr",
       "reason": "Historical upstream attribution or source reference."
+    },
+    {
+      "url": "https://learn.microsoft.com/en-us/dotnet/standard/security/",
+      "reason": "Reviewed .NET security reference published in the repository security guidelines."
+    },
+    {
+      "url": "https://owasp.org/www-project-top-ten/",
+      "reason": "Reviewed secure-development reference published in the repository security guidelines."
     },
     {
       "url": "https://storage.ko-fi.com/cdn/kofi1.png?v=6",

@@ -1,17 +1,28 @@
 ---
 name: Feature request
-about: Suggest an idea for this project
-title: "➕[Feature Request]"
+about: Propose a Jellyfin Canopy capability or behavior change
+title: "➕[Feature Request] "
 labels: enhancement
-assignees:
+assignees: ''
 
 ---
 
-**Is your feature request related to a problem? Please describe.**
-A clear and concise description of what the problem is. Ex. I'm always frustrated when [...]
+## Problem or use case
 
-**Describe the solution you'd like**
-A clear and concise description of what you want to happen.
+Describe the user need, who benefits, and why the existing behavior does not
+cover it. Link a related issue instead if this is a reproducible bug.
 
-**Additional context**
-Add any other context or screenshots about the feature request here.
+## Proposed behavior
+
+Describe the outcome you want. Include a concrete example or mockup when it makes
+the request clearer.
+
+## Alternatives and scope
+
+Describe alternatives you considered, interactions with existing features, and
+anything that should explicitly remain out of scope.
+
+## Additional context
+
+Add relevant Jellyfin/client versions, screenshots, links, or implementation
+constraints. Do not include credentials or sensitive server information.

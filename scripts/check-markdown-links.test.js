@@ -4,12 +4,17 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { performance } = require('node:perf_hooks');
 const test = require('node:test');
 const {
     checkMarkdownLinks,
     collectMarkdownFiles,
+    extractLinks,
+    extractRenderedHtmlLinks,
+    governedHtmlText,
     headingSlug,
     htmlAttributes,
+    isActionableLink,
     markdownAnchors,
     mkdocsHeadingSlug,
     validateMarkdownFile,
@@ -102,6 +107,1534 @@ test('ignores external links and links shown as code examples', () => {
     }, root => assert.deepEqual(validateMarkdownFile('CONTRIBUTING.md', root), []));
 });
 
+test('ignores Markdown-in-HTML links in comments and code examples', () => {
+    const source = [
+        '<!-- <div markdown="1">[Comment](missing-comment.md)</div> -->',
+        '',
+        '```md',
+        '<div markdown="1">[Fenced](missing-fenced.md)</div>',
+        '```',
+        '',
+        '`<span markdown="1">[Inline](missing-inline.md)</span>`',
+        '',
+        '<pre><code><div markdown="1">[HTML code](missing-html-code.md)</div></code></pre>',
+        '',
+    ].join('\n');
+    assert.deepEqual(extractLinks(source), []);
+    fixture({ 'CONTRIBUTING.md': source }, root => (
+        assert.deepEqual(validateMarkdownFile('CONTRIBUTING.md', root), [])
+    ));
+});
+
+test('extracts browser-equivalent links without treating images or empty anchors as actions', () => {
+    const nonActions = extractLinks([
+        '![Image](https://github.com/owner/repository/issues)',
+        '[](https://github.com/owner/repository/issues)',
+        '',
+    ].join('\n'));
+    const browserForms = extractLinks([
+        'www.github.com/owner/repository/discussions',
+        '<a href="https&colon;//github.com/owner/repository/issues/../discussions">Entity</a>',
+        '',
+    ].join('\n'));
+
+    assert.deepEqual([...nonActions, ...browserForms].map(link => ({
+        target: link.target,
+        line: link.line,
+        type: link.type,
+        label: link.label,
+        actionable: isActionableLink(link),
+    })), [
+        {
+            target: 'https://github.com/owner/repository/issues',
+            line: 1,
+            type: 'image',
+            label: 'Image',
+            actionable: false,
+        },
+        {
+            target: 'https://github.com/owner/repository/issues',
+            line: 2,
+            type: 'link',
+            label: '',
+            actionable: false,
+        },
+        {
+            target: 'http://www.github.com/owner/repository/discussions',
+            line: 1,
+            type: 'link',
+            label: 'www.github.com/owner/repository/discussions',
+            actionable: true,
+        },
+        {
+            target: 'https://github.com/owner/repository/issues/../discussions',
+            line: 2,
+            type: 'link',
+            label: 'Entity',
+            actionable: true,
+        },
+    ]);
+    assert.deepEqual(extractLinks(
+        '<!-- [Hidden](https://github.com/owner/repository/issues)'
+    ), []);
+});
+
+test('decodes raw HTML labels and records each link rendered container text', () => {
+    const links = extractLinks([
+        'For support, [click here](https://github.com/owner/repository/issues).',
+        '',
+        '<div><a href="https://github.com/owner/repository/issues">Ask for supp&#111;rt</a></div>',
+        '',
+    ].join('\n'));
+    assert.deepEqual(links.map(link => ({
+        label: link.label,
+        context: link.context,
+    })), [
+        {
+            label: 'click here',
+            context: 'For support, click here.',
+        },
+        {
+            label: 'Ask for support',
+            context: 'Ask for support',
+        },
+    ]);
+});
+
+test('records each link position and scans quoted HTML delimiters before href', () => {
+    const links = extractLinks([
+        '[same](https://example.com/one). For support, [same](https://example.com/two).',
+        '',
+        '<a title="1 > 0" href="https://example.com/three">Ask for support</a>',
+        '',
+    ].join('\n'));
+    assert.deepEqual(links.map(link => ({
+        target: link.target,
+        label: link.label,
+        before: link.contextBefore,
+        after: link.contextAfter,
+    })), [
+        {
+            target: 'https://example.com/one',
+            label: 'same',
+            before: '',
+            after: '. For support,',
+        },
+        {
+            target: 'https://example.com/two',
+            label: 'same',
+            before: '. For support,',
+            after: '.',
+        },
+        {
+            target: 'https://example.com/three',
+            label: 'Ask for support',
+            before: '',
+            after: '',
+        },
+    ]);
+    assert.equal(isActionableLink(links[2]), true);
+});
+
+test('Markdown link context excludes neighboring labels but retains prose', () => {
+    const sources = [
+        'Before [One](https://example.com/one) between '
+            + '[Two](https://example.com/two) after.',
+        'Before <a href="https://example.com/one">One</a> between '
+            + '<a href="https://example.com/two">Two</a> after.',
+    ];
+    for (const source of sources) {
+        const links = extractLinks(source);
+        assert.deepEqual(links.map(link => ({
+            label: link.label,
+            before: link.contextBefore,
+            priorBefore: link.contextBeforePrior,
+            after: link.contextAfter,
+            beforeStartsAtLink: link.contextBeforeStartsAtLink,
+            afterEndsAtLink: link.contextAfterEndsAtLink,
+        })), [
+            {
+                label: 'One',
+                before: 'Before',
+                priorBefore: '',
+                after: 'between',
+                beforeStartsAtLink: false,
+                afterEndsAtLink: true,
+            },
+            {
+                label: 'Two',
+                before: 'between',
+                priorBefore: 'Before',
+                after: 'after.',
+                beforeStartsAtLink: true,
+                afterEndsAtLink: false,
+            },
+        ]);
+    }
+});
+
+test('raw HTML link context excludes neighboring link labels but retains prose', () => {
+    const source = [
+        '<nav><a href="https://example.com/one">GitHub</a>',
+        '<a href="https://example.com/two">Discord</a>',
+        '<a href="https://example.com/three">Report an issue</a></nav>',
+        '<p>Before <a href="https://example.com/four">Four</a> between ',
+        '<a href="https://example.com/five">Five</a> after.</p>',
+    ].join('');
+    for (const links of [extractLinks(source), extractRenderedHtmlLinks(source)]) {
+        assert.deepEqual(links.map(link => ({
+            label: link.label,
+            before: link.contextBefore,
+            priorBefore: link.contextBeforePrior,
+            after: link.contextAfter,
+            beforeStartsAtLink: link.contextBeforeStartsAtLink,
+            afterEndsAtLink: link.contextAfterEndsAtLink,
+        })), [
+            {
+                label: 'GitHub',
+                before: '',
+                priorBefore: '',
+                after: '',
+                beforeStartsAtLink: false,
+                afterEndsAtLink: true,
+            },
+            {
+                label: 'Discord',
+                before: '',
+                priorBefore: '',
+                after: '',
+                beforeStartsAtLink: true,
+                afterEndsAtLink: true,
+            },
+            {
+                label: 'Report an issue',
+                before: '',
+                priorBefore: '',
+                after: '',
+                beforeStartsAtLink: true,
+                afterEndsAtLink: false,
+            },
+            {
+                label: 'Four',
+                before: 'Before',
+                priorBefore: '',
+                after: 'between',
+                beforeStartsAtLink: false,
+                afterEndsAtLink: true,
+            },
+            {
+                label: 'Five',
+                before: 'between',
+                priorBefore: 'Before',
+                after: 'after.',
+                beforeStartsAtLink: true,
+                afterEndsAtLink: false,
+            },
+        ]);
+    }
+});
+
+test('visually hidden links are not actionable but aria-hidden links remain clickable', () => {
+    const links = extractLinks([
+        '<a hidden href="https://example.com/hidden">Hidden</a>',
+        '<a aria-hidden="true" href="https://example.com/aria-hidden">ARIA hidden</a>',
+        '<a aria-hidden="tr&#117;e" href="https://example.com/entity-aria-hidden">Entity ARIA hidden</a>',
+        '<a aria-hidden=tr&#117;e href="https://example.com/unquoted-entity-aria-hidden">Unquoted entity ARIA hidden</a>',
+        '<a style="display:none" href="https://example.com/css-hidden">CSS hidden</a>',
+        '<a style=display:none href="https://example.com/unquoted-hidden">Unquoted hidden</a>',
+        '<a style=visibility:hidden href="https://example.com/unquoted-invisible">Unquoted invisible</a>',
+        '<a style="display&#58;none" href="https://example.com/entity-hidden">Entity hidden</a>',
+        '<div hidden><a href="https://example.com/ancestor-hidden">Ancestor hidden</a></div>',
+        '<span hidden>[Markdown hidden](https://example.com/markdown-hidden)</span>',
+        '<div hidden markdown="1">',
+        '[Markdown-in-HTML hidden](https://example.com/markdown-in-html-hidden)',
+        '</div>',
+        '<a href="https://example.com/visible">Visible</a>',
+        '',
+    ].join('\n'));
+    assert.deepEqual(links.filter(isActionableLink).map(link => link.label), [
+        'ARIA hidden',
+        'Entity ARIA hidden',
+        'Unquoted entity ARIA hidden',
+        'Visible',
+    ]);
+    const visuallyHidden = new Set([
+        'Hidden',
+        'CSS hidden',
+        'Unquoted hidden',
+        'Unquoted invisible',
+        'Entity hidden',
+        'Ancestor hidden',
+        'Markdown hidden',
+        'Markdown-in-HTML hidden',
+    ]);
+    assert.ok(links.filter(link => visuallyHidden.has(link.label)).every(link => link.hidden));
+});
+
+test('retains visually rendered route text inside aria-hidden descendants', () => {
+    const source = [
+        '<a href="https://example.com/route">',
+        '  <span aria-hidden="true">Report a problem</span>',
+        '</a>',
+        '<a href="https://example.com/icon">',
+        '  <svg aria-hidden="true" aria-label="Invisible route label"></svg>',
+        '</a>',
+        '',
+    ].join('\n');
+    for (const links of [extractLinks(source), extractRenderedHtmlLinks(source)]) {
+        const routes = links.filter(link => link.type === 'link');
+        assert.equal(routes[0].label, 'Report a problem');
+        assert.equal(isActionableLink(routes[0]), true);
+        assert.equal(routes[1].label, '');
+        assert.equal(isActionableLink(routes[1]), false);
+    }
+
+    const paintedSvg = [
+        '<a href="https://example.com/painted">',
+        '  <svg aria-hidden="true"><text>Report a problem</text></svg>',
+        '</a>',
+        '',
+    ].join('\n');
+    for (const links of [extractLinks(paintedSvg), extractRenderedHtmlLinks(paintedSvg)]) {
+        const link = links.find(candidate => candidate.type === 'link');
+        assert.equal(link.label, 'Report a problem');
+        assert.equal(isActionableLink(link), true);
+    }
+
+    for (const hiddenMetadata of [
+        '<svg aria-hidden="true" aria-label="Report a problem"></svg>',
+        '<svg aria-hidden="true"><title>Report a problem</title></svg>',
+    ]) {
+        const raw = `<a href="https://example.com/metadata">${hiddenMetadata}</a>`;
+        const markdownLink = `[${hiddenMetadata}](https://example.com/metadata)`;
+        for (const links of [extractLinks(raw), extractRenderedHtmlLinks(raw), extractLinks(markdownLink)]) {
+            const link = links.find(candidate => candidate.type === 'link');
+            assert.equal(link.label, '');
+            assert.equal(isActionableLink(link), false);
+        }
+    }
+});
+
+test('inline style visibility follows declaration order and importance', () => {
+    for (const [style, hidden] of [
+        ['display:none;display:inline', false],
+        ['visibility:hidden;visibility:visible', false],
+        ['display:none!important;display:inline', true],
+        ['display:none;display:inline!important', false],
+        ['display:none!important;display:inline!important', false],
+        ['display:none;display:invalid', true],
+    ]) {
+        const source = `<a style="${style}" href="https://example.com/route">Route</a>`;
+        for (const links of [extractLinks(source), extractRenderedHtmlLinks(source)]) {
+            const link = links.find(candidate => candidate.type === 'link');
+            assert.ok(link, style);
+            assert.equal(link.hidden, hidden, style);
+            assert.equal(isActionableLink(link), !hidden, style);
+        }
+    }
+});
+
+test('repairs malformed nested anchors into independently actionable links', () => {
+    for (const ending of ['</a></a>', '']) {
+        const source = '<a href="https://example.com/private">'
+            + 'Submit a private vulnerability report '
+            + `<a href="https://example.com/public">here${ending}`;
+        for (const links of [extractLinks(source), extractRenderedHtmlLinks(source)]) {
+            const actionable = links.filter(isActionableLink);
+            assert.deepEqual(
+                actionable.map(link => ({ target: link.target, label: link.label })),
+                [
+                    {
+                        target: 'https://example.com/private',
+                        label: 'Submit a private vulnerability report',
+                    },
+                    { target: 'https://example.com/public', label: 'here' },
+                ],
+                ending || 'unclosed'
+            );
+            assert.match(actionable[1].contextBefore, /private vulnerability report/i);
+        }
+    }
+});
+
+test('extracts every MkDocs markdown-in-HTML mode and image-only accessible names', () => {
+    const links = extractLinks([
+        '<div markdown="1">',
+        '[Ask for support](https://github.com/owner/repository/discussions)',
+        '</div>',
+        '',
+        '<div markdown="block">',
+        '[Report a bug](https://github.com/owner/repository/issues/new?template=bug.md)',
+        '</div>',
+        '',
+        '<span markdown="span">',
+        '[Request a feature](https://github.com/owner/repository/issues/new?template=feature.md)',
+        '</span>',
+        '',
+        '<section markdown>',
+        '[Submit privately](https://github.com/owner/repository/security/advisories/new)',
+        '</section>',
+        '',
+        '<a href="https://discord.gg/example"><img alt="Report bugs" src="pixel.png"></a>',
+        '',
+    ].join('\n'));
+    assert.deepEqual(
+        links.filter(link => link.type === 'link')
+            .map(link => ({ label: link.label, line: link.line }))
+            .sort((left, right) => left.line - right.line),
+        [
+            { label: 'Ask for support', line: 2 },
+            { label: 'Report a bug', line: 6 },
+            { label: 'Request a feature', line: 10 },
+            { label: 'Submit privately', line: 14 },
+            { label: 'Report bugs', line: 17 },
+        ]
+    );
+});
+
+test('resolves aria-labelledby accessible names in source and rendered HTML', () => {
+    const source = [
+        '<span id="security-route-label">Submit a vulnerability report</span>',
+        '<a aria-labelledby="security-route-label" href="https://github.com/owner/repository/issues">',
+        '  <svg aria-hidden="true"></svg>',
+        '</a>',
+        '',
+    ].join('\n');
+    for (const links of [extractLinks(source), extractRenderedHtmlLinks(source)]) {
+        const link = links.find(candidate => candidate.type === 'link');
+        assert.ok(link);
+        assert.equal(link.label, 'Submit a vulnerability report');
+        assert.equal(isActionableLink(link), true);
+    }
+});
+
+test('aria-labelledby includes directly referenced hidden nodes but ignores inert IDs', () => {
+    const target = 'https://example.com/route';
+    for (const referenced of [
+        '<svg aria-hidden="true"><title id="route-name">Report a problem</title></svg>',
+        '<svg aria-hidden="true"><desc id="route-name">Report a problem</desc></svg>',
+        '<svg aria-hidden="true"><g id="route-name" aria-label="Report a problem"></g></svg>',
+        '<svg aria-hidden="true"><g id="route-name" title="Report a problem"></g></svg>',
+        '<div hidden><svg id="route-name" aria-label="Report a problem"></svg></div>',
+        '<div style="display:none"><span id="route-name">'
+            + '<svg aria-label="Report a problem"></svg></span></div>',
+        '<div hidden><span id="route-name" style="visibility:visible">'
+            + 'Report a problem</span></div>',
+        '<div style="display:none"><svg style="visibility:visible">'
+            + '<text id="route-name">Report a problem</text></svg></div>',
+        '<div style="visibility:hidden"><span id="route-name">'
+            + 'Report a problem</span></div>',
+        '<svg style="visibility:hidden"><text id="route-name">'
+            + 'Report a problem</text></svg>',
+        '<div style="visibility:hidden"><svg><text id="route-name">'
+            + 'Report a problem</text></svg></div>',
+        '<svg style="visibility:hidden"><title id="route-name">'
+            + 'Report a problem</title></svg>',
+        '<svg style="visibility:hidden"><desc id="route-name">'
+            + 'Report a problem</desc></svg>',
+        '<label for="route-name">Report a problem</label>'
+            + '<input id="route-name" hidden type="image" alt="Documentation">',
+        '<script>const template = \'<span id="route-name">Report a problem</span>\';'
+            + '</script>',
+    ]) {
+        const source = referenced
+            + `<a aria-labelledby="route-name" href="${target}"></a>`;
+        const inert = referenced.startsWith('<script>');
+        for (const links of [extractLinks(source), extractRenderedHtmlLinks(source)]) {
+            const link = links.find(candidate => candidate.type === 'link');
+            assert.ok(link, referenced);
+            assert.equal(link.label, inert ? '' : 'Report a problem', referenced);
+            assert.equal(isActionableLink(link), !inert, referenced);
+        }
+    }
+
+    for (const referenced of [
+        '<svg aria-hidden="true"><text id="route-name">Report a problem</text></svg>',
+        '<div aria-hidden="true"><span id="route-name">'
+            + '<svg><text>Report a problem</text></svg></span></div>',
+        '<div style="visibility:hidden"><span id="route-name" '
+            + 'style="visibility:visible">Report a problem</span></div>',
+        '<div style="visibility:hidden"><svg style="visibility:visible">'
+            + '<text id="route-name">Report a problem</text></svg></div>',
+        '<div id="route-name" style="visibility:hidden"><span '
+            + 'style="visibility:visible">Report a problem</span></div>',
+        '<div id="route-name" style="visibility:hidden"><svg '
+            + 'style="visibility:visible"><text>Report a problem</text></svg></div>',
+        '<div id="route-name" style="visibility:hidden"><img '
+            + 'style="visibility:visible" alt="Report a problem"></div>',
+        '<div id="route-name" style="visibility:hidden"><button '
+            + 'style="visibility:visible" aria-label="Report a problem"></button></div>',
+        '<div id="route-name" style="visibility:hidden"><button '
+            + 'style="visibility:visible" title="Report a problem"></button></div>',
+        '<div id="route-name" style="visibility:hidden"><input '
+            + 'style="visibility:visible" type="image" alt="Report a problem"></div>',
+        '<div id="route-name" style="visibility:hidden"><input '
+            + 'style="visibility:visible" type="button" value="Report a problem"></div>',
+        '<div id="route-name" style="visibility:hidden"><input '
+            + 'style="visibility:visible" type="text" '
+            + 'placeholder="Report a problem"></div>',
+        '<div id="route-name" style="visibility:hidden"><textarea '
+            + 'style="visibility:visible" placeholder="Report a problem"></textarea></div>',
+        '<div id="route-name" style="visibility:hidden"><iframe '
+            + 'style="visibility:visible" title="Report a problem"></iframe></div>',
+        '<div id="route-name" style="visibility:hidden"><svg '
+            + 'style="visibility:visible" aria-label="Report a problem"></svg></div>',
+        '<span id="route-name"><span hidden>Decorative text</span>'
+            + 'Report a problem</span>',
+        '<svg><g id="route-name"><g style="display:none"><text>Decorative text</text>'
+            + '</g><text>Report a problem</text></g></svg>',
+        '<span id="route-name">Report&#32;a&#32;problem</span>',
+    ]) {
+        const source = referenced
+            + `<a aria-labelledby="route-name" href="${target}"></a>`;
+        for (const links of [extractLinks(source), extractRenderedHtmlLinks(source)]) {
+            const link = links.find(candidate => candidate.type === 'link');
+            assert.ok(link, referenced);
+            assert.equal(link.label, 'Report a problem', referenced);
+            assert.equal(isActionableLink(link), true, referenced);
+        }
+    }
+});
+
+test('extracts HTML form submissions and image-map routes with control names', () => {
+    const formTarget = 'https://example.com/form-route';
+    const overrideTarget = 'https://example.com/override-route';
+    const securityTarget =
+        'https://github.com/example/project/security/advisories/new';
+    const issuesTarget = 'https://github.com/example/project/issues';
+    const discordTarget = 'https://discord.gg/example';
+    const areaTarget = 'https://example.com/area-route';
+    const sources = [
+        [
+            `<form action="${formTarget}">`
+                + '<button>Submit a vulnerability report</button></form>',
+            formTarget,
+            'Submit a vulnerability report',
+        ],
+        [
+            `<form action="${formTarget}">`
+                + `<button type="submit" formaction="${overrideTarget}" `
+                + 'aria-label="Report a bug"></button></form>',
+            overrideTarget,
+            'Report a bug',
+        ],
+        [
+            `<form id="route-form" action="${formTarget}"></form>`
+                + '<input form="route-form" type="submit" value="Request a feature">',
+            formTarget,
+            'Request a feature',
+        ],
+        [
+            `<form method="dialog" action="${formTarget}">`
+                + '<button formmethod="post">Report a bug</button></form>',
+            formTarget,
+            'Report a bug',
+        ],
+        [
+            `<form action="${formTarget}"><label for="submit-route">`
+                + 'Submit a vulnerability report</label>'
+                + '<button id="submit-route"></button></form>',
+            formTarget,
+            'Submit a vulnerability report',
+        ],
+        [
+            `<form action="${formTarget}"><label for="submit-route">`
+                + 'Documentation.</label><button id="submit-route">'
+                + 'Submit a vulnerability report</button></form>',
+            formTarget,
+            'Documentation. Submit a vulnerability report',
+        ],
+        [
+            `<form action="${formTarget}"><label>Submit a vulnerability report`
+                + '<button></button></label></form>',
+            formTarget,
+            'Submit a vulnerability report',
+        ],
+        [
+            `<form action="${formTarget}"><button type="invalid">`
+                + 'Report a bug</button></form>',
+            formTarget,
+            'Report a bug',
+        ],
+        [
+            `<form action="${formTarget}"><fieldset disabled><legend>`
+                + '<button>Report a bug</button></legend></fieldset></form>',
+            formTarget,
+            'Report a bug',
+        ],
+        [
+            `<form id="route-form" action="${formTarget}"></form>\n\n`
+                + 'Press <button form="route-form">Report a bug</button>.',
+            formTarget,
+            'Report a bug',
+        ],
+        [
+            `<form action="${formTarget}"><form action="${overrideTarget}">`
+                + '<button>Report a bug</button></form>',
+            formTarget,
+            'Report a bug',
+        ],
+        [
+            `<map><area href="${areaTarget}" alt="Report a bug"></map>`,
+            areaTarget,
+            'Report a bug',
+        ],
+    ];
+    for (const [source, target, label] of sources) {
+        for (const links of [extractLinks(source), extractRenderedHtmlLinks(source)]) {
+            const link = links.find(candidate => candidate.target === target);
+            assert.ok(link, source);
+            assert.equal(link.label, label, source);
+            assert.equal(isActionableLink(link), true, source);
+        }
+    }
+
+    for (const source of [
+        `<form action="${formTarget}"><button type="button" `
+            + `formaction="${overrideTarget}">Report a bug</button></form>`,
+        `<form action="${formTarget}"><button disabled>`
+            + 'Report a bug</button></form>',
+        `<form method="dialog" action="${formTarget}">`
+            + '<button>Report a bug</button></form>',
+        `<form action="${formTarget}"><button formmethod="dialog">`
+            + 'Report a bug</button></form>',
+        `<form action="${formTarget}"><button form="">`
+            + 'Report a bug</button></form>',
+        `<form action="${formTarget}"><button form>`
+            + 'Report a bug</button></form>',
+        `<form action="${formTarget}"><fieldset disabled>`
+            + '<button>Report a bug</button></fieldset></form>',
+    ]) {
+        for (const links of [extractLinks(source), extractRenderedHtmlLinks(source)]) {
+            assert.ok(!links.some(link => (
+                [formTarget, overrideTarget].includes(link.target)
+                && isActionableLink(link)
+            )), source);
+        }
+    }
+
+    const hidden = `<form hidden action="${formTarget}">`
+        + '<button>Report a bug</button></form>';
+    for (const links of [extractLinks(hidden), extractRenderedHtmlLinks(hidden)]) {
+        const link = links.find(candidate => candidate.target === formTarget);
+        assert.ok(link);
+        assert.equal(link.hidden, true);
+        assert.equal(isActionableLink(link), false);
+    }
+
+    const crossBlockHidden = '<div hidden>\n\n'
+        + `<form action="${formTarget}">\n`
+        + '<button>Submit a vulnerability report</button>\n'
+        + '</form>\n\n</div>\n';
+    const crossBlockLink = extractLinks(crossBlockHidden)
+        .find(candidate => candidate.target === formTarget);
+    assert.ok(crossBlockLink);
+    assert.equal(crossBlockLink.hidden, true);
+    assert.equal(isActionableLink(crossBlockLink), false);
+
+    const hiddenNestedList = `<ul><li hidden><ul><li><form action="${formTarget}">`
+        + '<button>Submit a vulnerability report</button>'
+        + '</form></li></ul></li></ul>';
+    const hiddenNestedListLink = extractLinks(hiddenNestedList)
+        .find(candidate => candidate.target === formTarget);
+    assert.ok(hiddenNestedListLink);
+    assert.equal(hiddenNestedListLink.hidden, true);
+    assert.equal(isActionableLink(hiddenNestedListLink), false);
+
+    const browserScopeTarget = 'https://example.com/browser-scope';
+    for (const scopedHiddenRoute of [
+        '<dl><dd hidden><dl><dt>'
+            + `<a href="${browserScopeTarget}">Report a bug</a>`
+            + '</dt></dl></dd></dl>',
+        '<h1 hidden><div><h2>'
+            + `<a href="${browserScopeTarget}">Report a bug</a>`
+            + '</h2></div></h1>',
+        '<button hidden><table><tr><td><button>'
+            + `<a href="${browserScopeTarget}">Report a bug</a>`
+            + '</button></td></tr></table></button>',
+        '<p hidden><button><div>'
+            + `<a href="${browserScopeTarget}">Report a bug</a>`
+            + '</div></button></p>',
+        '<li><dd hidden><li>'
+            + `<a href="${browserScopeTarget}">Report a bug</a>`,
+        '<li style="visibility:hidden"><dt><li>'
+            + `<a href="${browserScopeTarget}">Report a bug</a>`,
+        '<table><select><caption hidden>'
+            + `<a href="${browserScopeTarget}">Report a bug</a>`,
+        '<table><select><col>'
+            + `<a href="${browserScopeTarget}">Report a bug</a>`,
+        '<svg style="visibility:hidden"><foreignObject><caption '
+            + 'style="visibility:visible">'
+            + `<a href="${browserScopeTarget}">Report a bug</a>`
+            + '</caption></foreignObject></svg>',
+        '<math style="visibility:hidden">'
+            + '<annotation-xml encoding="text/html">'
+            + '<caption style="visibility:visible">'
+            + `<a href="${browserScopeTarget}">Report a bug</a>`
+            + '</caption></annotation-xml></math>',
+        '<div style="visibility:hidden"><math><svg><mi>'
+            + '<caption style="visibility:visible">'
+            + `<a href="${browserScopeTarget}">Report a bug</a>`,
+        '<div style="visibility:hidden"><math>'
+            + '<annotation-xml encoding="application/xml"><svg><foreignObject>'
+            + '<caption style="visibility:visible">'
+            + `<a href="${browserScopeTarget}">Report a bug</a>`,
+    ]) {
+        const scopedLink = extractLinks(scopedHiddenRoute)
+            .find(candidate => candidate.target === browserScopeTarget);
+        assert.ok(scopedLink, scopedHiddenRoute);
+        assert.equal(scopedLink.hidden, true, scopedHiddenRoute);
+        assert.equal(isActionableLink(scopedLink), false, scopedHiddenRoute);
+    }
+
+    for (const repairedVisibleRoute of [
+        '<h1 hidden><p><h2>'
+            + `<a href="${browserScopeTarget}">Submit a vulnerability report</a>`
+            + '</h2>',
+        '<button hidden><caption><button>'
+            + `<a href="${browserScopeTarget}">Submit a vulnerability report</a>`
+            + '</button>',
+        '<table><select><caption>'
+            + `<a href="${browserScopeTarget}">Submit a vulnerability report</a>`,
+        '<svg style="visibility:hidden"><caption style="visibility:visible">'
+            + `<a href="${browserScopeTarget}" aria-label="Submit a vulnerability report">`
+            + '<rect width="100" height="100"></rect></a></caption></svg>',
+        '<svg><select><table>'
+            + `<a href="${browserScopeTarget}" `
+            + 'aria-label="Submit a vulnerability report"></a>',
+        '<div style="visibility:hidden"><svg><math>'
+            + '<annotation-xml encoding="text/html">'
+            + '<caption style="visibility:visible">'
+            + `<a href="${browserScopeTarget}">Submit a vulnerability report</a>`,
+        '<div style="visibility:hidden"><math>'
+            + '<annotation-xml encoding="application/xml"><svg><mi>'
+            + '<caption style="visibility:visible">'
+            + `<a href="${browserScopeTarget}">Submit a vulnerability report</a>`,
+    ]) {
+        const repairedLink = extractLinks(repairedVisibleRoute)
+            .find(candidate => candidate.target === browserScopeTarget);
+        assert.ok(repairedLink, repairedVisibleRoute);
+        assert.equal(repairedLink.hidden, false, repairedVisibleRoute);
+        assert.equal(isActionableLink(repairedLink), true, repairedVisibleRoute);
+    }
+
+    const paragraphAutoClose = '<p hidden>\n\n'
+        + `<form action="${formTarget}">\n`
+        + '<button>Submit a vulnerability report</button>\n'
+        + '</form>\n';
+    const paragraphAutoCloseLink = extractLinks(paragraphAutoClose)
+        .find(candidate => candidate.target === formTarget);
+    assert.ok(paragraphAutoCloseLink);
+    assert.equal(paragraphAutoCloseLink.hidden, false);
+    assert.equal(isActionableLink(paragraphAutoCloseLink), true);
+
+    const formLocalIntent = `<form action="${formTarget}">`
+        + '<p>Submit a vulnerability report below.</p>'
+        + '<button>Continue</button></form>';
+    const formLocalLink = extractLinks(formLocalIntent)
+        .find(candidate => candidate.target === formTarget);
+    assert.ok(formLocalLink);
+    assert.match(formLocalLink.contextBefore, /submit a vulnerability report below/i);
+
+    for (const neutralReferenceLabel of [
+        'Use the documentation',
+        'Submit the documentation',
+    ]) {
+        const neutralReferenceBeforeSubmit = `<form action="${formTarget}">`
+            + '<p>Submit a vulnerability report below.</p>'
+            + `<a href="https://example.com/docs">${neutralReferenceLabel}</a>`
+            + '<button>Continue</button></form>';
+        const documentationReferenceFormLink = extractLinks(neutralReferenceBeforeSubmit)
+            .find(candidate => candidate.target === formTarget);
+        assert.ok(documentationReferenceFormLink);
+        assert.match(
+            documentationReferenceFormLink.contextBefore,
+            /submit a vulnerability report below/i
+        );
+    }
+
+    const earlierFormIntent = `<form action="${formTarget}">`
+        + '<p>Submit a vulnerability report below.</p>'
+        + '<p>Click the next button.</p><button>Continue</button></form>';
+    const earlierFormIntentLink = extractLinks(earlierFormIntent)
+        .find(candidate => candidate.target === formTarget);
+    assert.ok(earlierFormIntentLink);
+    assert.match(earlierFormIntentLink.contextBefore, /submit a vulnerability report below/i);
+
+    const distinctAnchorIntent = `<form action="${formTarget}">`
+        + `<p>Submit a vulnerability report through <a href="${overrideTarget}">`
+        + 'private GitHub advisories</a>.</p>'
+        + '<p>Report a regular bug with this form.</p>'
+        + '<button>Continue</button></form>';
+    const distinctAnchorIntentLink = extractLinks(distinctAnchorIntent)
+        .find(candidate => candidate.target === formTarget);
+    assert.ok(distinctAnchorIntentLink);
+    assert.match(distinctAnchorIntentLink.contextBefore, /report a regular bug/i);
+    assert.doesNotMatch(distinctAnchorIntentLink.contextBefore, /vulnerab/i);
+
+    for (const [referencePrefix, referenceLabel] of [
+        ['Read ', 'the security policy'],
+        ['Read ', 'the security reporting process'],
+        ['Do not use ', 'the security policy'],
+        ['Do not currently use ', 'the security policy'],
+        ['Do not ever use ', 'the security policy'],
+        ['You do not need to use ', 'the security policy'],
+        ['Please do not use ', 'the security policy'],
+        ['Contributors do not use ', 'the security policy'],
+        ['You should absolutely not use ', 'the security policy'],
+        ['Please refrain from using ', 'the security policy'],
+    ]) {
+        const neutralCanonicalReference = `<form action="${formTarget}">`
+            + `<p>Submit a vulnerability report below. ${referencePrefix}`
+            + `<a href="${securityTarget}">${referenceLabel}</a>.</p>`
+            + '<button>Continue</button></form>';
+        const neutralCanonicalFormLink = extractLinks(neutralCanonicalReference)
+            .find(candidate => candidate.target === formTarget);
+        assert.ok(neutralCanonicalFormLink, referenceLabel);
+        assert.match(neutralCanonicalFormLink.contextBefore, /vulnerab/i, referenceLabel);
+    }
+
+    const splitActionBoundary = `<form action="${formTarget}">`
+        + '<p>Need help? Use '
+        + `<a href="${discordTarget}">the community support process</a>.</p>`
+        + '<p>Request a feature with this form.</p>'
+        + '<button>Continue</button></form>';
+    const splitActionFormLink = extractLinks(splitActionBoundary)
+        .find(candidate => candidate.target === formTarget);
+    assert.ok(splitActionFormLink);
+    assert.match(splitActionFormLink.contextBefore, /request a feature/i);
+    assert.doesNotMatch(splitActionFormLink.contextBefore, /need help/i);
+
+    for (const affirmativePrefix of [
+        'Do not hesitate to use ',
+        'Do not email us, use ',
+    ]) {
+        const locallyAffirmativeBoundary = `<form action="${formTarget}">`
+            + `<p>Submit a vulnerability report below. ${affirmativePrefix}`
+            + `<a href="${securityTarget}">the security policy</a>.</p>`
+            + '<p>Report a regular bug with this form.</p>'
+            + '<button>Continue</button></form>';
+        const locallyAffirmativeFormLink = extractLinks(locallyAffirmativeBoundary)
+            .find(candidate => candidate.target === formTarget);
+        assert.ok(locallyAffirmativeFormLink, affirmativePrefix);
+        assert.match(
+            locallyAffirmativeFormLink.contextBefore,
+            /report a regular bug/i,
+            affirmativePrefix
+        );
+        assert.doesNotMatch(
+            locallyAffirmativeFormLink.contextBefore,
+            /vulnerab/i,
+            affirmativePrefix
+        );
+    }
+
+    for (const [routeTarget, routeLabel, precedingIntent] of [
+        [securityTarget, 'Open the security policy', 'Submit a vulnerability report'],
+        [securityTarget, 'Use the private security guidance', 'Submit a vulnerability report'],
+        [securityTarget, 'Report through the private security process', 'Submit a vulnerability report'],
+        [securityTarget, 'You can use the security policy', 'Submit a vulnerability report'],
+        [securityTarget, '→ Use the security policy', 'Submit a vulnerability report'],
+        [discordTarget, 'Use the community support process', 'Need help'],
+        [discordTarget, 'Ask in the community support process', 'Need help'],
+        [issuesTarget, 'Open the issue intake guide', 'Report a bug'],
+    ]) {
+        const neutralActionBoundary = `<form action="${formTarget}">`
+            + `<p>${precedingIntent} through `
+            + `<a href="${routeTarget}">${routeLabel}</a>.</p>`
+            + '<p>Request a feature with this form.</p>'
+            + '<button>Continue</button></form>';
+        const boundaryFormLink = extractLinks(neutralActionBoundary)
+            .find(candidate => candidate.target === formTarget);
+        assert.ok(boundaryFormLink, routeLabel);
+        assert.match(boundaryFormLink.contextBefore, /request a feature/i, routeLabel);
+        assert.doesNotMatch(
+            boundaryFormLink.contextBefore,
+            new RegExp(precedingIntent, 'i'),
+            routeLabel
+        );
+    }
+
+    const longNeutralLabel =
+        'private security process '.repeat(350).slice(0, 8_192);
+    const manyNeutralActions = `<form action="${formTarget}">`
+        + Array.from(
+            { length: 100 },
+            () => `<a href="${securityTarget}">${longNeutralLabel}</a>`
+        ).join('')
+        + '<button>Report a bug</button></form>';
+    const neutralActionsStarted = performance.now();
+    assert.ok(extractLinks(manyNeutralActions).length > 0);
+    assert.ok(
+        performance.now() - neutralActionsStarted < 4_000,
+        'neutral form-action boundaries must remain linear across long labels'
+    );
+
+    const parserInertAnchor = `<form action="${formTarget}">`
+        + '<p>Submit a vulnerability report below.</p>'
+        + `<select><a href="${overrideTarget}">private advisory</a></select>`
+        + '<button>Continue</button></form>';
+    const parserInertLinks = extractLinks(parserInertAnchor);
+    const parserInertFormLink = parserInertLinks
+        .find(candidate => candidate.target === formTarget);
+    const parserInertPrivateLink = parserInertLinks
+        .find(candidate => candidate.target === overrideTarget);
+    assert.ok(parserInertFormLink);
+    assert.ok(parserInertPrivateLink);
+    assert.match(parserInertFormLink.contextBefore, /submit a vulnerability report below/i);
+    assert.equal(parserInertPrivateLink.hidden, true);
+    assert.equal(isActionableLink(parserInertPrivateLink), false);
+
+    const neutralReferenceAnchor = `<form action="${formTarget}">`
+        + '<p>Submit a vulnerability report below. Read '
+        + '<a href="https://example.com/security-policy">our security policy</a>.</p>'
+        + '<button>Continue</button></form>';
+    const neutralReferenceFormLink = extractLinks(neutralReferenceAnchor)
+        .find(candidate => candidate.target === formTarget);
+    assert.ok(neutralReferenceFormLink);
+    assert.match(
+        neutralReferenceFormLink.contextBefore,
+        /submit a vulnerability report below/i
+    );
+
+    const laterFormIntent = `<form action="${formTarget}">`
+        + '<button>Continue</button><span>Click here.</span>'
+        + '<p>Submit a vulnerability report below.</p></form>';
+    const laterFormIntentLink = extractLinks(laterFormIntent)
+        .find(candidate => candidate.target === formTarget);
+    assert.ok(laterFormIntentLink);
+    assert.match(laterFormIntentLink.contextAfter, /submit a vulnerability report below/i);
+
+    for (const inactiveControl of [
+        '<button disabled>Ignored</button>',
+        '<button hidden>Ignored</button>',
+        '<button formmethod="dialog">Ignored</button>',
+    ]) {
+        const inactiveTrailing = `<form action="${formTarget}">`
+            + '<button>Continue</button>'
+            + '<p>Submit a vulnerability report below.</p>'
+            + `${inactiveControl}</form>`;
+        const inactiveTrailingLink = extractLinks(inactiveTrailing)
+            .find(candidate => candidate.target === formTarget && !candidate.hidden);
+        assert.ok(inactiveTrailingLink);
+        assert.match(
+            inactiveTrailingLink.contextAfter,
+            /submit a vulnerability report below/i
+        );
+    }
+
+    const truncatedHiddenPrefix = `<form action="${formTarget}">`
+        + `<div hidden>${'x'.repeat(800)}</div>`
+        + '<p>Submit a vulnerability report below.</p>'
+        + '<button>Continue</button></form>';
+    const truncatedHiddenPrefixLink = extractLinks(truncatedHiddenPrefix)
+        .find(candidate => candidate.target === formTarget);
+    assert.ok(truncatedHiddenPrefixLink);
+    assert.match(
+        truncatedHiddenPrefixLink.contextBefore,
+        /submit a vulnerability report below/i
+    );
+
+    const inheritedVisibility = '<div style="visibility:hidden">'
+        + `<form action="${formTarget}">`
+        + '<button style="visibility:visible">Continue</button>'
+        + ' for submitting a vulnerability report</form></div>';
+    const inheritedVisibilityLink = extractLinks(inheritedVisibility)
+        .find(candidate => candidate.target === formTarget);
+    assert.ok(inheritedVisibilityLink);
+    assert.equal(inheritedVisibilityLink.hidden, false);
+    assert.equal(inheritedVisibilityLink.contextAfter, '');
+
+    const restoredAfterAncestor = `<form action="${formTarget}">`
+        + '<div style="visibility:hidden">'
+        + '<button style="visibility:visible">Continue</button></div>'
+        + '<p>Submit a vulnerability report below.</p></form>';
+    const restoredAfterAncestorLink = extractLinks(restoredAfterAncestor)
+        .find(candidate => candidate.target === formTarget);
+    assert.ok(restoredAfterAncestorLink);
+    assert.match(
+        restoredAfterAncestorLink.contextAfter,
+        /submit a vulnerability report below/i
+    );
+
+    const splitFormRoutes = `<form action="${formTarget}">`
+        + '<p>Submit a vulnerability report '
+        + `<button formaction="${overrideTarget}">Privately</button></p>`
+        + '<p>Report a bug <button>Continue</button></p></form>';
+    const splitFormLinks = extractLinks(splitFormRoutes);
+    const privateFormLink = splitFormLinks.find(
+        candidate => candidate.target === overrideTarget
+    );
+    const publicFormLink = splitFormLinks.find(
+        candidate => candidate.target === formTarget
+    );
+    assert.ok(privateFormLink);
+    assert.ok(publicFormLink);
+    assert.match(privateFormLink.contextBefore, /submit a vulnerability report/i);
+    assert.doesNotMatch(privateFormLink.contextAfter, /report a bug/i);
+    assert.match(publicFormLink.contextBefore, /report a bug/i);
+    assert.doesNotMatch(publicFormLink.contextBefore, /vulnerability/i);
+
+    const inlineCode = '`<form action="' + formTarget
+        + '"><button>Report a bug</button></form>`';
+    assert.ok(!extractLinks(inlineCode).some(link => link.target === formTarget));
+
+    const count = 800;
+    const malformedWrappingLabel = `<form action="${formTarget}">`
+        + '<label>Report a bug'
+        + '<button></button>'.repeat(count)
+        + '</label></form>';
+    const started = performance.now();
+    const controls = extractLinks(malformedWrappingLabel)
+        .filter(link => link.target === formTarget);
+    assert.ok(controls.length > 0);
+    assert.ok(
+        performance.now() - started < 4_000,
+        'wrapping-label resolution must remain bounded across many controls'
+    );
+});
+
+test('ignores anchors and ID labels inside inert or raw-text HTML content', () => {
+    const inertTarget = 'https://example.com/inert-route';
+    const visibleTarget = 'https://example.com/visible-route';
+    for (const [opening, closing] of [
+        ['<script>', '</script>'],
+        ['<style>', '</style>'],
+        ['<template>', '</template>'],
+        ['<textarea>', '</textarea>'],
+    ]) {
+        const source = `${opening}<a href="${inertTarget}">Report a bug</a>${closing}`
+            + `<a href="${visibleTarget}">Documentation</a>`;
+        for (const links of [extractLinks(source), extractRenderedHtmlLinks(source)]) {
+            assert.ok(!links.some(link => link.target === inertTarget), opening);
+            const visible = links.find(link => link.target === visibleTarget);
+            assert.ok(visible, opening);
+            assert.equal(isActionableLink(visible), true, opening);
+        }
+    }
+
+    const templateLabel = '<template><span id="route-name">'
+        + 'Submit a vulnerability report</span></template>'
+        + `<a aria-labelledby="route-name" href="${visibleTarget}"></a>`;
+    for (const links of [extractLinks(templateLabel), extractRenderedHtmlLinks(templateLabel)]) {
+        const link = links.find(candidate => candidate.target === visibleTarget);
+        assert.ok(link);
+        assert.equal(link.label, '');
+        assert.equal(isActionableLink(link), false);
+    }
+
+    const plaintext = '<plaintext>Rendered as text</plaintext>'
+        + `<a href="${inertTarget}">Report a bug</a>`;
+    for (const links of [extractLinks(plaintext), extractRenderedHtmlLinks(plaintext)]) {
+        assert.ok(!links.some(link => link.target === inertTarget));
+    }
+
+    const reference = '<template>Rendered later</template> '
+        + '[Report a problem][route]\n\n'
+        + `[route]: ${visibleTarget}\n`;
+    const referenceLink = extractLinks(reference)
+        .find(candidate => candidate.target === visibleTarget);
+    assert.ok(referenceLink);
+    assert.equal(referenceLink.label, 'Report a problem');
+    assert.equal(isActionableLink(referenceLink), true);
+});
+
+test('preserves accessible-name precedence for referenced ID elements', () => {
+    const target = 'https://example.com/route';
+    for (const referenced of [
+        '<span id="name">Report a problem</span>'
+            + '<span id="route-name" aria-labelledby="name" '
+            + 'aria-label="Need help" title="Documentation">Body</span>',
+        '<span id="name">Report a problem</span>'
+            + '<img id="route-name" aria-labelledby="name" '
+            + 'aria-label="Need help" alt="Other" title="Documentation">',
+        '<img id="route-name" alt="Report a problem" title="Documentation">',
+    ]) {
+        const source = referenced
+            + `<a aria-labelledby="route-name" href="${target}"></a>`;
+        for (const links of [extractLinks(source), extractRenderedHtmlLinks(source)]) {
+            const link = links.find(candidate => candidate.type === 'link');
+            assert.ok(link);
+            assert.equal(link.label, 'Report a problem');
+            assert.equal(isActionableLink(link), true);
+        }
+    }
+});
+
+test('preserves native accessible-name precedence for restored controls', () => {
+    const target = 'https://example.com/route';
+    for (const referenced of [
+        '<div id="route-name" style="visibility:hidden"><button '
+            + 'style="visibility:visible" title="Documentation">'
+            + 'Report a problem</button></div>',
+        '<div id="route-name" style="visibility:hidden"><input '
+            + 'style="visibility:visible" type="image" '
+            + 'alt="Report a problem" title="Documentation"></div>',
+        '<div id="route-name" style="visibility:hidden"><input '
+            + 'style="visibility:visible" type="button" '
+            + 'value="Report a problem" title="Documentation"></div>',
+        '<div id="route-name" style="visibility:hidden"><input '
+            + 'style="visibility:visible" type="text" title="Report a problem" '
+            + 'placeholder="Documentation"></div>',
+    ]) {
+        const source = referenced
+            + `<a aria-labelledby="route-name" href="${target}"></a>`;
+        for (const links of [extractLinks(source), extractRenderedHtmlLinks(source)]) {
+            const link = links.find(candidate => candidate.type === 'link');
+            assert.ok(link);
+            assert.equal(link.label, 'Report a problem');
+            assert.equal(isActionableLink(link), true);
+        }
+    }
+});
+
+test('resolves associated labels before native control fallbacks', () => {
+    const target = 'https://example.com/route';
+    for (const referenced of [
+        '<label hidden for="route-name">Report a problem</label>'
+            + '<input id="route-name" type="image" alt="Documentation">',
+        '<label style="visibility:hidden">Report a problem'
+            + '<span><input id="route-name" style="visibility:visible" '
+            + 'type="image" alt="Documentation"></span>'
+            + '</label>',
+    ]) {
+        const source = referenced
+            + `<a aria-labelledby="route-name" href="${target}"></a>`;
+        for (const links of [extractLinks(source), extractRenderedHtmlLinks(source)]) {
+            const link = links.find(candidate => candidate.type === 'link');
+            assert.ok(link);
+            assert.equal(link.label, 'Report a problem');
+            assert.equal(isActionableLink(link), true);
+        }
+    }
+});
+
+test('resolves many associated labels with bounded traversal work', () => {
+    const target = 'https://example.com/route';
+    const count = 500;
+    const controls = Array.from({ length: count }, (_, index) => (
+        `<label for="control-${index}">${index === count - 1 ? 'Report a problem' : 'Filler'}</label>`
+        + `<input id="control-${index}" type="image" alt="Documentation">`
+    )).join('');
+    const source = controls
+        + `<a aria-labelledby="control-${count - 1}" href="${target}"></a>`;
+    const started = performance.now();
+    for (const links of [extractLinks(source), extractRenderedHtmlLinks(source)]) {
+        const link = links.find(candidate => candidate.type === 'link');
+        assert.ok(link);
+        assert.equal(link.label, 'Report a problem');
+    }
+    assert.ok(
+        performance.now() - started < 4_000,
+        'associated labels must not trigger quadratic control searches'
+    );
+});
+
+test('normalizes native fallbacks and resolves embedded control values', () => {
+    const target = 'https://example.com/route';
+    for (const referenced of [
+        '<input id="route-name" type="image" alt="   " title="Report a problem">',
+        '<input id="route-name" type="text" title="   " placeholder="Report a problem">',
+        '<input id="route-name" type="not-a-real-state" placeholder="Report a problem">',
+        '<input id="route-name" type="text" value="Report a problem">',
+        '<input id="route-name" type="image" alt="Report a problem" title="Documentation">',
+        '<input id="route-name" type="text" value="Report a problem" title="Documentation">',
+        '<input id="route-name" type="text" value="Report a problem" aria-label="Documentation">',
+        '<input id="route-name" type="range" aria-valuetext="Report a problem" '
+            + 'aria-valuenow="7" value="3" aria-label="Documentation">',
+        '<textarea id="route-name">Report a problem</textarea>',
+        '<select id="route-name" aria-label="Documentation">'
+            + '<option selected>Report a problem</option>'
+            + '<option>Documentation</option></select>',
+    ]) {
+        const source = referenced
+            + `<a aria-labelledby="route-name" href="${target}"></a>`;
+        for (const links of [extractLinks(source), extractRenderedHtmlLinks(source)]) {
+            const link = links.find(candidate => candidate.type === 'link');
+            assert.ok(link, referenced);
+            assert.equal(link.label, 'Report a problem', referenced);
+            assert.equal(isActionableLink(link), true, referenced);
+        }
+    }
+});
+
+test('uses only the selected option as an embedded select value', () => {
+    const target = 'https://example.com/route';
+    const referenced = '<select id="route-name" aria-label="Need help">'
+        + '<option selected>Documentation</option>'
+        + '<option>Report a problem</option></select>';
+    const source = referenced
+        + `<a aria-labelledby="route-name" href="${target}"></a>`;
+    for (const links of [extractLinks(source), extractRenderedHtmlLinks(source)]) {
+        const link = links.find(candidate => candidate.type === 'link');
+        assert.ok(link);
+        assert.equal(link.label, 'Documentation');
+    }
+});
+
+test('preserves long id and for keys when resolving associated labels', () => {
+    const target = 'https://example.com/route';
+    const id = `route-${'x'.repeat(9_000)}`;
+    const source = `<label for="${id}">Report a problem</label>`
+        + `<input id="${id}" type="image" alt="Documentation">`
+        + `<a aria-labelledby="${id}" href="${target}"></a>`;
+    for (const links of [extractLinks(source), extractRenderedHtmlLinks(source)]) {
+        const link = links.find(candidate => candidate.type === 'link');
+        assert.ok(link);
+        assert.equal(link.label, 'Report a problem');
+        assert.equal(isActionableLink(link), true);
+    }
+});
+
+test('resolves native names in direct anchor descendants', () => {
+    const target = 'https://example.com/route';
+    for (const descendant of [
+        '<button title="Report a problem"></button>',
+        '<input type="image" alt="Report a problem">',
+        '<abbr title="Report a problem"></abbr>',
+    ]) {
+        const source = `<a href="${target}">${descendant}</a>`;
+        for (const links of [extractLinks(source), extractRenderedHtmlLinks(source)]) {
+            const link = links.find(candidate => candidate.type === 'link');
+            assert.ok(link, descendant);
+            assert.equal(link.label, 'Report a problem', descendant);
+            assert.equal(isActionableLink(link), true, descendant);
+        }
+    }
+});
+
+test('preserves inline text adjacency while retaining block boundaries', () => {
+    const target = 'https://example.com/route';
+    for (const [body, expected] of [
+        ['Report a vulnera<span>bil</span>ity', 'Report a vulnerability'],
+        ['Report a vulnera<wbr>bility', 'Report a vulnerability'],
+        [
+            'Report a vulnera<search style="display:contents">bil</search>ity',
+            'Report a vulnerability',
+        ],
+        [
+            'Report a vulnera<dialog style="display:inline">bil</dialog>ity',
+            'Report a vulnerability',
+        ],
+        [
+            'Report a vulnera<marquee style="display:inline">bil</marquee>ity',
+            'Report a vulnerability',
+        ],
+        [
+            'Report a vulnera<marquee style="display:contents">bil</marquee>ity',
+            'Report a vulnerability',
+        ],
+        [
+            '<output>Report a vulnera<span style="display:inherit">bil</span>ity</output>',
+            'Report a vulnerability',
+        ],
+        ['Report a vulnera<body></body>bility', 'Report a vulnerability'],
+        ['Report a vulnera<html></html>bility', 'Report a vulnerability'],
+        ['Report a vulnera<caption></caption>bility', 'Report a vulnerability'],
+        ['Report a vulnera<audio></audio>bility', 'Report a vulnerability'],
+        ['Report a vulnera<dialog></dialog>bility', 'Report a vulnerability'],
+        ['<div>Report a</div><div>vulnerability</div>', 'Report a vulnerability'],
+        ['<span style="display:block">Need</span>help', 'Need help'],
+        ['<dialog open>Need</dialog>help', 'Need help'],
+        ['<legend>Need</legend>help', 'Need help'],
+        ['<search>Need</search>help', 'Need help'],
+        ['Need</br>help', 'Need help'],
+        ['Need</p>help', 'Need help'],
+    ]) {
+        const source = `<a href="${target}">${body}</a>`;
+        for (const links of [extractLinks(source), extractRenderedHtmlLinks(source)]) {
+            const link = links.find(candidate => candidate.type === 'link');
+            assert.ok(link, body);
+            assert.equal(link.label, expected, body);
+        }
+    }
+});
+
+test('uses browser select repair and caller-provided document context', () => {
+    const target = 'https://example.com/route';
+    const selected = '<select id="route-name"><option selected>'
+        + 'Report a vulnera<search>bil</search>ity</option></select>'
+        + `<a aria-labelledby="route-name" href="${target}"></a>`;
+    for (const links of [extractLinks(selected), extractRenderedHtmlLinks(selected)]) {
+        const link = links.find(candidate => candidate.type === 'link');
+        assert.ok(link);
+        assert.equal(link.label, 'Report a vulnerability');
+    }
+
+    for (const terminator of [
+        '<input>',
+        '<textarea></textarea>',
+        '<select>',
+    ]) {
+        const repaired = `<select>${terminator}<div id="route-name">Need help</div>`
+            + `<a aria-labelledby="route-name" href="${target}"></a>`;
+        for (const links of [extractLinks(repaired), extractRenderedHtmlLinks(repaired)]) {
+            const link = links.find(candidate => candidate.type === 'link');
+            assert.ok(link, terminator);
+            assert.equal(link.label, 'Need help', terminator);
+            assert.equal(isActionableLink(link), true, terminator);
+        }
+    }
+
+    for (const [source, hidden] of [
+        [
+            '<select hidden></select>'
+                + `<a href="${target}">Submit a vulnerability report</a>`,
+            false,
+        ],
+        [
+            '<select></select><div hidden>'
+                + `<a href="${target}">Submit a vulnerability report</a></div>`,
+            true,
+        ],
+    ]) {
+        for (const links of [extractLinks(source), extractRenderedHtmlLinks(source)]) {
+            const link = links.find(candidate => candidate.type === 'link');
+            assert.ok(link);
+            assert.equal(link.hidden, hidden, source);
+            assert.equal(isActionableLink(link), !hidden, source);
+        }
+    }
+
+    const discardedSelectAnchor = '<select>'
+        + `<a href="${target}">Submit a vulnerability report</a></select>`;
+    for (const links of [
+        extractLinks(discardedSelectAnchor),
+        extractRenderedHtmlLinks(discardedSelectAnchor),
+    ]) {
+        const link = links.find(candidate => candidate.target === target);
+        assert.ok(link);
+        assert.equal(link.hidden, true);
+        assert.equal(isActionableLink(link), false);
+    }
+
+    const hiddenDocument = '<!doctype html><html><head><title>Hidden</title></head>'
+        + '<body hidden>Submit a vulnerability report</body></html>';
+    assert.doesNotMatch(
+        governedHtmlText(hiddenDocument, new Map(), {}, { documentMode: true }),
+        /vulnerability/i
+    );
+
+    const omittedHeadClose = '<!doctype html><html><head><title>Support</title>'
+        + '<body>Submit a vulnerability report</body></html>';
+    assert.match(
+        governedHtmlText(omittedHeadClose, new Map(), {}, { documentMode: true }),
+        /vulnerability/i
+    );
+
+    const textClosesHead = '<!doctype html><html><head>'
+        + `Need help <a href="${target}">here</a></html>`;
+    const documentLinks = extractRenderedHtmlLinks(
+        textClosesHead,
+        { documentMode: true }
+    );
+    assert.equal(documentLinks[0].label, 'here');
+    assert.equal(documentLinks[0].hidden, false);
+    assert.match(
+        governedHtmlText(textClosesHead, new Map(), {}, { documentMode: true }),
+        /Need help/i
+    );
+
+    const fragmentWithDoctype =
+        '<!doctype html><head>Submit a vulnerability report via Discord.</head>';
+    assert.match(governedHtmlText(fragmentWithDoctype), /vulnerability/i);
+});
+
+test('ignores out-of-table elements and bounds malformed document parsing', () => {
+    const source = '<caption>'.repeat(6_000) + 'Report a vulnerability';
+    const started = performance.now();
+    assert.equal(governedHtmlText(source), 'Report a vulnerability');
+    assert.ok(
+        performance.now() - started < 4_000,
+        'ignored out-of-table elements must remain bounded'
+    );
+
+    const malformedDocument = '<!doctype html><html><head></head><body>'
+        + '<div>'.repeat(16_000)
+        + 'Report a vulnerability';
+    const documentStarted = performance.now();
+    assert.match(
+        governedHtmlText(malformedDocument, new Map(), {}, { documentMode: true }),
+        /\[label truncated:/
+    );
+    assert.ok(
+        performance.now() - documentStarted < 1_000,
+        'malformed complete documents must be depth-bounded before stack searches grow'
+    );
+});
+
+test('resolves nested same-tag ID labels with bounded traversal work', () => {
+    const target = 'https://example.com/route';
+    const depth = 500;
+    const referenced = Array.from(
+        { length: depth },
+        (_, index) => `<span id="route-name-${index}">`
+    ).join('')
+        + 'Report a problem'
+        + '</span>'.repeat(depth);
+    const source = referenced
+        + `<a aria-labelledby="route-name-0" href="${target}"></a>`;
+    const started = performance.now();
+    for (const links of [extractLinks(source), extractRenderedHtmlLinks(source)]) {
+        const link = links.find(candidate => candidate.type === 'link');
+        assert.ok(link);
+        assert.equal(link.label, 'Report a problem');
+        assert.equal(isActionableLink(link), true);
+    }
+    assert.ok(
+        performance.now() - started < 4_000,
+        '500 nested ID labels must not trigger quadratic subtree rescanning'
+    );
+});
+
+test('fails closed quickly for malformed nested label trees', () => {
+    const target = 'https://example.com/route';
+    const source = '<label>'.repeat(6_000)
+        + '<input id="route-name" type="image" alt="Documentation">'
+        + '</label>'.repeat(6_000)
+        + `<a aria-labelledby="route-name" href="${target}"></a>`;
+    const started = performance.now();
+    for (const links of [extractLinks(source), extractRenderedHtmlLinks(source)]) {
+        const link = links.find(candidate => candidate.type === 'link');
+        assert.ok(link);
+        assert.match(link.label, /\[label truncated:/);
+    }
+    assert.ok(
+        performance.now() - started < 4_000,
+        'malformed nested labels must be depth-bounded'
+    );
+});
+
+test('fails closed quickly for unclosed native descendants', () => {
+    const target = 'https://example.com/route';
+    const source = `<a href="${target}">`
+        + '<button title="Documentation">'.repeat(8_000)
+        + 'Report a problem</a>';
+    const started = performance.now();
+    for (const links of [extractLinks(source), extractRenderedHtmlLinks(source)]) {
+        const link = links.find(candidate => candidate.type === 'link');
+        assert.ok(link);
+        assert.match(link.label, /\[label truncated:/);
+    }
+    assert.ok(
+        performance.now() - started < 4_000,
+        'unclosed native descendants must be depth-bounded'
+    );
+});
+
+test('bounds cyclic and deep aria-labelledby dependency graphs', () => {
+    const target = 'https://example.com/route';
+    const extractors = [extractLinks, extractRenderedHtmlLinks];
+    const chainDepth = 80;
+    const chain = Array.from({ length: chainDepth }, (_, index) => (
+        index === chainDepth - 1
+            ? `<span id="chain-${index}">Report a problem</span>`
+            : `<span id="chain-${index}" aria-labelledby="chain-${index + 1}"></span>`
+    )).join('')
+        + `<a aria-labelledby="chain-0" href="${target}"></a>`;
+    for (const extract of extractors) {
+        const link = extract(chain).find(candidate => candidate.type === 'link');
+        assert.ok(link);
+        assert.equal(link.label, 'Report a problem');
+        assert.equal(isActionableLink(link), true);
+    }
+
+    const filler = Array.from(
+        { length: 24 },
+        (_, index) => `<i id="filler-${index}"></i>`
+    ).join('');
+    const selfCycle = filler
+        + '<span id="route-name" aria-labelledby="route-name route-name">'
+        + 'Report a problem</span>'
+        + `<a aria-labelledby="route-name" href="${target}"></a>`;
+    for (const extract of extractors) {
+        const started = performance.now();
+        const link = extract(selfCycle).find(candidate => candidate.type === 'link');
+        assert.ok(link);
+        assert.equal(link.label, 'Report a problem');
+        assert.equal(isActionableLink(link), true);
+        assert.ok(performance.now() - started < 1_000);
+    }
+
+    const duplicateReferences = '<span id="route-name">Report a problem</span>'
+        + `<a aria-labelledby="route-name route-name route-name" href="${target}"></a>`;
+    for (const extract of extractors) {
+        const link = extract(duplicateReferences).find(candidate => candidate.type === 'link');
+        assert.ok(link);
+        assert.equal(link.label, 'Report a problem');
+    }
+
+    const fanOut = [
+        '<span id="fan-0">Report a problem</span>',
+        '<span id="fan-1">Need help</span>',
+        ...Array.from(
+            { length: 28 },
+            (_, index) => `<span id="fan-${index + 2}" `
+                + `aria-labelledby="fan-${index} fan-${index + 1}"></span>`
+        ),
+        `<a aria-labelledby="fan-29" href="${target}"></a>`,
+    ].join('');
+    for (const extract of extractors) {
+        const started = performance.now();
+        const link = extract(fanOut).find(candidate => candidate.type === 'link');
+        assert.ok(link);
+        assert.ok(link.label.length <= 8_192);
+        assert.match(link.label, /\[label truncated:/);
+        assert.equal(isActionableLink(link), true);
+        assert.ok(performance.now() - started < 1_000);
+    }
+
+    const splitInlineTitle = `Before <a href="${target}" title="${'x'.repeat(9_000)}">\n`
+        + '</a> after';
+    for (const extract of extractors) {
+        const link = extract(splitInlineTitle).find(candidate => candidate.type === 'link');
+        assert.ok(link);
+        assert.equal(link.label.length, 8_192);
+        assert.match(link.label, /\[label truncated:/);
+    }
+});
+
+test('extracts accessible names from nested SVG and labelled images', () => {
+    const source = [
+        '<span id="image-security-label">Submit a vulnerability report</span>',
+        '<a href="https://github.com/owner/repository/issues">',
+        '  <svg role="img" aria-label="Submit a vulnerability report"></svg>',
+        '</a>',
+        '<a href="https://github.com/owner/repository/issues/new">',
+        '  <img src="shield.png" aria-labelledby="image-security-label">',
+        '</a>',
+        '',
+    ].join('\n');
+    for (const links of [extractLinks(source), extractRenderedHtmlLinks(source)]) {
+        const actionable = links.filter(link => link.type === 'link');
+        assert.deepEqual(
+            actionable.map(link => link.label),
+            ['Submit a vulnerability report', 'Submit a vulnerability report']
+        );
+        assert.ok(actionable.every(isActionableLink));
+    }
+});
+
+test('extracts accessible names from generic labelled HTML descendants', () => {
+    const source = [
+        '<a href="https://github.com/owner/repository/issues">',
+        '  <span role="img" aria-label="Submit a vulnerability report"></span>',
+        '</a>',
+        '<a href="https://github.com/owner/repository/issues/new">',
+        '  <i aria-label="Submit a vulnerability report"></i>',
+        '</a>',
+        '',
+    ].join('\n');
+    for (const links of [extractLinks(source), extractRenderedHtmlLinks(source)]) {
+        const actionable = links.filter(link => link.type === 'link');
+        assert.deepEqual(
+            actionable.map(link => link.label),
+            ['Submit a vulnerability report', 'Submit a vulnerability report']
+        );
+        assert.ok(actionable.every(isActionableLink));
+    }
+});
+
 test('validates quoted and unquoted raw HTML links without reserving heading slugs', () => {
     fixture({
         'CONTRIBUTING.md': '<span id=local-id></span>\n[Local](#local-id)\n<img src=docs/missing.png>\n',
@@ -188,4 +1721,67 @@ test('CI, release, and documentation workflows keep the shared docs gate blockin
     const client = build.slice(build.indexOf('  client-scripts:'), build.indexOf('  e2e_shard:'));
     assert.match(client, /run: npm run check:docs/);
     assert.doesNotMatch(docs, /continue-on-error:/);
+});
+
+test('attribute words inside quoted values never change element semantics', () => {
+    const hiddenValue = extractLinks(
+        '<div title="Show hidden files"><a href="./missing.md">Open the guide</a></div>'
+    );
+    assert.equal(hiddenValue.length, 1);
+    assert.ok(!hiddenValue[0].hidden);
+
+    const disabledValue = extractRenderedHtmlLinks(
+        '<form action="./report.md">'
+        + '<button type="submit" aria-label="Fix the disabled toggle">Send</button>'
+        + '</form>',
+        1,
+        new Map()
+    );
+    assert.equal(disabledValue.length, 1);
+    assert.equal(disabledValue[0].label, 'Fix the disabled toggle Send');
+
+    const forValue = extractRenderedHtmlLinks(
+        '<form action="./report.md">'
+        + '<label title="Ask for help">Contact us<input type="submit" value="Go"></label>'
+        + '</form>',
+        1,
+        new Map()
+    );
+    assert.equal(forValue.length, 1);
+    assert.equal(forValue[0].label, 'Contact us Go');
+});
+
+test('a wrapping label contributes its text once, without the control value', () => {
+    const links = extractRenderedHtmlLinks(
+        '<form action="./report.md">'
+        + '<label>Contact us<input type="submit" value="Go"></label>'
+        + '</form>',
+        1,
+        new Map()
+    );
+    assert.equal(links.length, 1);
+    assert.equal(links[0].label, 'Contact us Go');
+});
+
+test('cue punctuation runs and deep malformed nesting stay bounded', () => {
+    const punctuationStarted = performance.now();
+    const punctuated = extractLinks(
+        `<p><a href="./x.md">${'-'.repeat(60)} guide</a></p>`
+    );
+    assert.equal(punctuated.length, 1);
+    assert.ok(
+        performance.now() - punctuationStarted < 2_000,
+        'cue-prefix matching must not backtrack exponentially'
+    );
+
+    const nestingStarted = performance.now();
+    const nested = extractLinks(
+        `${'<div>'.repeat(8_000)}<a href="./x.md">Open the guide</a>${'</span>'.repeat(8_000)}`
+    );
+    assert.equal(nested.length, 1);
+    assert.ok(!nested[0].hidden);
+    assert.ok(
+        performance.now() - nestingStarted < 10_000,
+        'visibility tracking must stay bounded on deeply nested markup'
+    );
 });
