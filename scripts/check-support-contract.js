@@ -763,6 +763,17 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
         : linkedReferenceAfter.slice(linkedReferenceBoundary + 1);
     const linkedReferenceRemainderBoundaries =
         hardSentenceBoundaries(linkedReferenceRemainder);
+    const linkedReferenceApplicablePrefixLength = (clause, contextMatch) => {
+        const prefix = clause.slice(0, contextMatch.index);
+        const adversative = /[,;:–—-]\s*but\b/i.exec(prefix);
+        if (!adversative) return 0;
+        const affirmative = prefix.slice(0, adversative.index);
+        return securitySubject.test(affirmative)
+            || pluralObjectSecurityAnaphor.test(affirmative)
+            || subjectSecurityAnaphor.test(affirmative)
+            ? contextMatch.index
+            : 0;
+    };
     let linkedReferenceRemainderStart = 0;
     let linkedReferenceApplicableEnd = linkedReferenceRemainder.length;
     for (const boundary of linkedReferenceRemainderBoundaries) {
@@ -773,7 +784,11 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
         const nonVulnerabilityContext = clause.match(NON_VULNERABILITY_CONTEXT);
         if (nonVulnerabilityContext) {
             linkedReferenceApplicableEnd =
-                linkedReferenceRemainderStart + nonVulnerabilityContext.index;
+                linkedReferenceRemainderStart
+                + linkedReferenceApplicablePrefixLength(
+                    clause,
+                    nonVulnerabilityContext
+                );
             break;
         }
         linkedReferenceRemainderStart = boundary + 1;
@@ -785,7 +800,11 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
     if (linkedReferenceApplicableEnd === linkedReferenceRemainder.length
         && trailingNonVulnerabilityContext) {
         linkedReferenceApplicableEnd =
-            linkedReferenceRemainderStart + trailingNonVulnerabilityContext.index;
+            linkedReferenceRemainderStart
+            + linkedReferenceApplicablePrefixLength(
+                linkedReferenceTrailingClause,
+                trailingNonVulnerabilityContext
+            );
     }
     const linkedReferenceApplicableRemainder =
         linkedReferenceRemainder.slice(0, linkedReferenceApplicableEnd);

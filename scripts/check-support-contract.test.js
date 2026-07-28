@@ -3073,6 +3073,10 @@ test('governs form submissions and hidden ID names while inert routes remain ina
         'This form does not accept security vulnerabilities. '
             + 'To report them, use '
             + '[this link](https://example.com/template) as a style reference. '
+            + 'Submit reports there that do not involve a vulnerability.',
+        'This form does not accept security vulnerabilities. '
+            + 'To report them, use '
+            + '[this link](https://example.com/template) as a style reference. '
             + 'Submit vulnerabilities therefore only via '
             + `[the private advisory](${SECURITY_ADVISORY_ROUTE}).`,
         'This form does not accept security vulnerabilities. '
