@@ -831,7 +831,7 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
         + ')$',
         'i'
     );
-    const linkedReferenceApplicablePrefixLength = (clause, contextMatch) => {
+    const linkedReferenceClauseApplicability = (clause, contextMatch) => {
         const prefix = clause.slice(0, contextMatch.index);
         const routeMatch = linkedReferenceContinuationPatterns
             .map(pattern => pattern.exec(prefix))
@@ -842,29 +842,44 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
         const routeObject = routeMatch?.groups?.object || '';
         const restrictableReportRoute =
             /^(?:(?:the|these|those)\s+)?reports?$/i.test(routeObject);
-        return routeMatch
-            && !(restrictableReportRoute
-                && linkedReferenceRestrictiveQualifier.test(qualifier))
-            ? contextMatch.index
-            : 0;
+        const neutralQualifiedReportRoute = Boolean(
+            routeMatch
+            && restrictableReportRoute
+            && linkedReferenceRestrictiveQualifier.test(qualifier)
+        );
+        return {
+            applicablePrefixLength: routeMatch && !neutralQualifiedReportRoute
+                ? contextMatch.index
+                : 0,
+            neutralQualifiedReportRoute,
+        };
     };
     const linkedReferenceRemainderBoundaries =
         hardSentenceBoundaries(linkedReferenceRemainder);
     let linkedReferenceRemainderStart = 0;
-    let linkedReferenceApplicableEnd = linkedReferenceRemainder.length;
+    let linkedReferenceRemainderClosed = false;
+    let linkedReferenceApplicableRemainder = '';
     for (const boundary of linkedReferenceRemainderBoundaries) {
         const clause = linkedReferenceRemainder.slice(
             linkedReferenceRemainderStart,
             boundary + 1
         );
         const nonVulnerabilityContext = clause.match(NON_VULNERABILITY_CONTEXT);
-        if (nonVulnerabilityContext) {
-            linkedReferenceApplicableEnd =
-                linkedReferenceRemainderStart
-                + linkedReferenceApplicablePrefixLength(
-                    clause,
-                    nonVulnerabilityContext
-                );
+        if (!nonVulnerabilityContext) {
+            linkedReferenceApplicableRemainder += clause;
+            linkedReferenceRemainderStart = boundary + 1;
+            continue;
+        }
+        const applicability = linkedReferenceClauseApplicability(
+            clause,
+            nonVulnerabilityContext
+        );
+        if (!applicability.neutralQualifiedReportRoute) {
+            linkedReferenceApplicableRemainder += clause.slice(
+                0,
+                applicability.applicablePrefixLength
+            );
+            linkedReferenceRemainderClosed = true;
             break;
         }
         linkedReferenceRemainderStart = boundary + 1;
@@ -873,17 +888,23 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
         linkedReferenceRemainder.slice(linkedReferenceRemainderStart);
     const trailingNonVulnerabilityContext =
         linkedReferenceTrailingClause.match(NON_VULNERABILITY_CONTEXT);
-    if (linkedReferenceApplicableEnd === linkedReferenceRemainder.length
-        && trailingNonVulnerabilityContext) {
-        linkedReferenceApplicableEnd =
-            linkedReferenceRemainderStart
-            + linkedReferenceApplicablePrefixLength(
+    if (!linkedReferenceRemainderClosed) {
+        if (!trailingNonVulnerabilityContext) {
+            linkedReferenceApplicableRemainder += linkedReferenceTrailingClause;
+        } else {
+            const applicability = linkedReferenceClauseApplicability(
                 linkedReferenceTrailingClause,
                 trailingNonVulnerabilityContext
             );
+            if (!applicability.neutralQualifiedReportRoute) {
+                linkedReferenceApplicableRemainder +=
+                    linkedReferenceTrailingClause.slice(
+                        0,
+                        applicability.applicablePrefixLength
+                    );
+            }
+        }
     }
-    const linkedReferenceApplicableRemainder =
-        linkedReferenceRemainder.slice(0, linkedReferenceApplicableEnd);
     const linkedReferenceRouteContinuation = linkedReferenceContinuationPatterns
         .some(pattern => pattern.test(linkedReferenceApplicableRemainder));
     const neutralLinkedReference = contextualRouteLabel

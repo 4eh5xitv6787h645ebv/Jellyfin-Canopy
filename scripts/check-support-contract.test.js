@@ -3004,6 +3004,10 @@ test('governs form submissions and hidden ID names while inert routes remain ina
             + 'as a style reference. Submit vulnerabilities there only if they '
             + 'do not involve a vulnerability.',
         'This form does not accept security vulnerabilities. '
+            + `To report them, use [this link](${ISSUES_ROUTE}) `
+            + 'as a style reference. Submit reports through it only if they '
+            + 'do not involve a vulnerability. Submit vulnerabilities through it.',
+        'This form does not accept security vulnerabilities. '
             + `To report them, use [GitHub Issues](${ISSUES_ROUTE}).`,
         'Do not submit security vulnerabilities with this form; '
             + `instead submit them via [GitHub Issues](${ISSUES_ROUTE}).`,
