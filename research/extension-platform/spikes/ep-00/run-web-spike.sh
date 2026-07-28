@@ -34,6 +34,6 @@ bash e2e/docker/seed.sh
 
 log "Run the EP-00.2 sandbox spec"
 JF_BASE_URL="http://127.0.0.1:$JF_PORT" \
-  npx playwright test --config research/extension-platform/spikes/ep-00/web/playwright.config.ts
+  npx playwright test --config research/extension-platform/spikes/ep-00/browser/playwright.config.ts
 
 log "Done — the disposable stack is torn down on exit."
