@@ -805,13 +805,26 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
             'i'
         ),
     ];
+    const linkedReferenceQualifierAside =
+        '(?:\\s*,\\s*[^,;:–—.!?]{1,60}\\s*,\\s*){0,2}';
+    const linkedReferenceQualifierAdverbs =
+        '(?:(?:[a-z]+ly|generally|normally|often|usually)\\s+){0,3}';
+    const linkedReferenceRestrictedSubject =
+        '(?:they|it|these|those|'
+        + '(?:(?:an?|each|every|the|this|that|these|those|such)\\s+)?'
+        + '(?:[a-z][a-z-]*\\s+){0,3}'
+        + '(?:concerns?|issues?|reports?|requests?|submissions?))';
     const linkedReferenceRestrictiveQualifier = new RegExp(
         '^\\s*,?\\s*(?:'
-        + '(?:(?:but\\s+)?only\\s+)?'
+        + `(?:that|which)\\s*${linkedReferenceQualifierAside}`
+        + linkedReferenceQualifierAdverbs
+        + '|(?:(?:but\\s+)?only\\s+)?'
         + '(?:if|when|where|unless|provided(?:\\s+that)?|as\\s+long\\s+as|while)'
-        + '\\s+(?:(?!\\b(?:although|but|however|not(?:e|ing)|remember(?:ing)?)\\b)'
-        + '[^,;:–—.!?]){0,80}'
-        + '|(?:that|which)\\s*)$',
+        + `\\s*${linkedReferenceQualifierAside}`
+        + `${linkedReferenceRestrictedSubject}\\s+`
+        + linkedReferenceQualifierAside
+        + linkedReferenceQualifierAdverbs
+        + ')$',
         'i'
     );
     const linkedReferenceApplicablePrefixLength = (clause, contextMatch) => {
