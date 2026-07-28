@@ -775,7 +775,8 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
     const linkedReferenceContinuationPatterns = [
         new RegExp(
             `${linkedReferenceContinuationStart}\\b${anaphoricSecurityAction}\\b\\s+`
-            + `(?:(?:all|both|only)\\s+(?:of\\s+)?)?${linkedReferenceSecurityObject}`
+            + '(?:(?:all|both|only)\\s+(?:of\\s+)?)?'
+            + `(?<object>${linkedReferenceSecurityObject})`
             + linkedReferenceRouteDestination,
             'i'
         ),
@@ -783,14 +784,16 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
             `${linkedReferenceContinuationStart}${securityDirectiveActor}\\s+`
             + '(?:can|may|must|should|will)\\s+'
             + `${directiveModifier}\\b${anaphoricSecurityAction}\\b\\s+`
-            + `(?:(?:all|both|only)\\s+(?:of\\s+)?)?${linkedReferenceSecurityObject}`
+            + '(?:(?:all|both|only)\\s+(?:of\\s+)?)?'
+            + `(?<object>${linkedReferenceSecurityObject})`
             + linkedReferenceRouteDestination,
             'i'
         ),
         new RegExp(
             `${linkedReferenceContinuationStart}`
-            + `(?:${subjectSecurityAnaphorSource}|(?:(?:the|these|those)\\s+)?`
-            + '(?:security\\s+)?(?:exploits?|reports?|vulnerab\\w*))\\s+'
+            + `(?<object>(?:${subjectSecurityAnaphorSource}|`
+            + '(?:(?:the|these|those)\\s+)?'
+            + '(?:security\\s+)?(?:exploits?|reports?|vulnerab\\w*)))\\s+'
             + `(?:(?:can|may|must|should|will)\\s+${directiveModifier}(?:be\\s+)?`
             + '|(?:are|is)\\s+to\\s+(?:be\\s+)?)'
             + `\\b${anaphoricSecurityAction}\\b`
@@ -801,7 +804,8 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
             `${linkedReferenceContinuationStart}\\b(?:follow|go|open|use|visit)\\b\\s+`
             + `${linkedReferenceContinuationDestination}\\s+to\\s+`
             + `\\b${anaphoricSecurityAction}\\b\\s+`
-            + `(?:(?:all|both|only)\\s+(?:of\\s+)?)?${linkedReferenceSecurityObject}`,
+            + '(?:(?:all|both|only)\\s+(?:of\\s+)?)?'
+            + `(?<object>${linkedReferenceSecurityObject})`,
             'i'
         ),
     ];
@@ -835,10 +839,9 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
         const qualifier = routeMatch
             ? prefix.slice(routeMatch.index + routeMatch[0].length)
             : '';
-        const matchedRoute = routeMatch?.[0] || '';
-        const restrictableReportRoute = /\breports?\b/i.test(matchedRoute)
-            && !/\bsecurity\s+reports?\b|\b(?:exploits?|vulnerab\w*)\b/i.test(matchedRoute)
-            && !new RegExp(`\\b${objectSecurityAnaphor}\\b`, 'i').test(matchedRoute);
+        const routeObject = routeMatch?.groups?.object || '';
+        const restrictableReportRoute =
+            /^(?:(?:the|these|those)\s+)?reports?$/i.test(routeObject);
         return routeMatch
             && !(restrictableReportRoute
                 && linkedReferenceRestrictiveQualifier.test(qualifier))
