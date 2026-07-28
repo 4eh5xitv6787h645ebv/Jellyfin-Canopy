@@ -810,7 +810,7 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
     const linkedReferenceQualifierAdverbs =
         '(?:(?:[a-z]+ly|generally|normally|often|usually)\\s+){0,3}';
     const linkedReferenceRestrictedSubject =
-        '(?:they|it|these|those|'
+        '(?:they|it|these|those|what\\s+(?:is|was)\\s+reported|'
         + '(?:(?:an?|each|every|the|this|that|these|those|such)\\s+)?'
         + '(?:[a-z][a-z-]*\\s+){0,3}'
         + '(?:concerns?|issues?|reports?|requests?|submissions?))';
@@ -835,7 +835,17 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
         const qualifier = routeMatch
             ? prefix.slice(routeMatch.index + routeMatch[0].length)
             : '';
-        return routeMatch && !linkedReferenceRestrictiveQualifier.test(qualifier)
+        const routeObject = routeMatch?.[0].match(new RegExp(
+            `(?:^|\\s)(?<object>(?:(?:the|these|those)\\s+)?`
+            + '(?:security\\s+)?(?:exploits?|reports?|vulnerab\\w*)'
+            + `|${objectSecurityAnaphor})${linkedReferenceRouteDestination}$`,
+            'i'
+        ))?.groups?.object || '';
+        const restrictableReportRoute =
+            /^(?:(?:the|these|those)\s+)?reports?$/i.test(routeObject);
+        return routeMatch
+            && !(restrictableReportRoute
+                && linkedReferenceRestrictiveQualifier.test(qualifier))
             ? contextMatch.index
             : 0;
     };

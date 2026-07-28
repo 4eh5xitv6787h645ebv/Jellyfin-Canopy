@@ -2996,6 +2996,14 @@ test('governs form submissions and hidden ID names while inert routes remain ina
             + 'as a style reference. Submit vulnerabilities there as long as you '
             + 'include logs because a typo does not constitute a vulnerability.',
         'This form does not accept security vulnerabilities. '
+            + `To report them, use [this link](${ISSUES_ROUTE}) `
+            + 'as a style reference. Submit vulnerabilities there, which usually '
+            + 'does not constitute a vulnerability.',
+        'This form does not accept security vulnerabilities. '
+            + `To report them, use [this link](${ISSUES_ROUTE}) `
+            + 'as a style reference. Submit vulnerabilities there only if they '
+            + 'do not involve a vulnerability.',
+        'This form does not accept security vulnerabilities. '
             + `To report them, use [GitHub Issues](${ISSUES_ROUTE}).`,
         'Do not submit security vulnerabilities with this form; '
             + `instead submit them via [GitHub Issues](${ISSUES_ROUTE}).`,
@@ -3136,6 +3144,11 @@ test('governs form submissions and hidden ID names while inert routes remain ina
             + '[this link](https://example.com/template) as a style reference. '
             + 'Submit reports there that, after triage, usually '
             + 'do not involve a vulnerability.',
+        'This form does not accept security vulnerabilities. '
+            + 'To report them, use '
+            + '[this link](https://example.com/template) as a style reference. '
+            + 'Submit reports there only if what is reported '
+            + 'does not involve a vulnerability.',
         'This form does not accept security vulnerabilities. '
             + 'To report them, use '
             + '[this link](https://example.com/template) as a style reference. '
