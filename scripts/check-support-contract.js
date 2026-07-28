@@ -770,17 +770,22 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
             linkedReferenceRemainderStart,
             boundary + 1
         );
-        if (NON_VULNERABILITY_CONTEXT.test(clause)) {
-            linkedReferenceApplicableEnd = linkedReferenceRemainderStart;
+        const nonVulnerabilityContext = clause.match(NON_VULNERABILITY_CONTEXT);
+        if (nonVulnerabilityContext) {
+            linkedReferenceApplicableEnd =
+                linkedReferenceRemainderStart + nonVulnerabilityContext.index;
             break;
         }
         linkedReferenceRemainderStart = boundary + 1;
     }
+    const linkedReferenceTrailingClause =
+        linkedReferenceRemainder.slice(linkedReferenceRemainderStart);
+    const trailingNonVulnerabilityContext =
+        linkedReferenceTrailingClause.match(NON_VULNERABILITY_CONTEXT);
     if (linkedReferenceApplicableEnd === linkedReferenceRemainder.length
-        && NON_VULNERABILITY_CONTEXT.test(
-            linkedReferenceRemainder.slice(linkedReferenceRemainderStart)
-        )) {
-        linkedReferenceApplicableEnd = linkedReferenceRemainderStart;
+        && trailingNonVulnerabilityContext) {
+        linkedReferenceApplicableEnd =
+            linkedReferenceRemainderStart + trailingNonVulnerabilityContext.index;
     }
     const linkedReferenceApplicableRemainder =
         linkedReferenceRemainder.slice(0, linkedReferenceApplicableEnd);
