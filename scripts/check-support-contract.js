@@ -831,16 +831,21 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
         + ')$',
         'i'
     );
-    const linkedReferenceReplacementAntecedent = new RegExp(
+    const linkedReferenceReplacementSubject =
         '\\b(?:(?:an?|the|this|that)\\s+)?'
         + '(?:(?:another|correct|dedicated|different|preferred|private|separate|security)'
         + '\\s+){1,3}'
         + '(?:advisory|channel|destination|form|guidance|link|page|policy|process'
-        + '|route|site)\\b',
+        + '|route|site)\\b';
+    const linkedReferenceReplacementRoute = new RegExp(
+        linkedReferenceReplacementSubject
+        + '\\s+(?:(?:exclusively|instead|now|only|privately)\\s+)*'
+        + '(?:accepts?|collects?|handles?|receives?|routes?|takes?)\\s+'
+        + `(?:(?:all|both|only)\\s+(?:of\\s+)?)?${linkedReferenceSecurityObject}`,
         'i'
     );
-    const replacementAntecedentPrecedesRoute = (clause) => {
-        const replacement = linkedReferenceReplacementAntecedent.exec(clause);
+    const replacementRoutePrecedesLinkedRoute = (clause) => {
+        const replacement = linkedReferenceReplacementRoute.exec(clause);
         if (!replacement) return false;
         const routeMatch = linkedReferenceContinuationPatterns
             .map(pattern => pattern.exec(clause))
@@ -883,7 +888,7 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
             boundary + 1
         );
         if (linkedReferenceNeutralRouteSkipped
-            && replacementAntecedentPrecedesRoute(clause)) {
+            && replacementRoutePrecedesLinkedRoute(clause)) {
             linkedReferenceRemainderClosed = true;
             break;
         }
@@ -913,7 +918,7 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
     const trailingNonVulnerabilityContext =
         linkedReferenceTrailingClause.match(NON_VULNERABILITY_CONTEXT);
     const trailingReplacementAntecedent = linkedReferenceNeutralRouteSkipped
-        && replacementAntecedentPrecedesRoute(linkedReferenceTrailingClause);
+        && replacementRoutePrecedesLinkedRoute(linkedReferenceTrailingClause);
     if (!linkedReferenceRemainderClosed && !trailingReplacementAntecedent) {
         if (!trailingNonVulnerabilityContext) {
             linkedReferenceApplicableRemainder += linkedReferenceTrailingClause;
