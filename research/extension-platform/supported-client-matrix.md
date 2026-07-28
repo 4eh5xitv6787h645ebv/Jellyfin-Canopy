@@ -39,8 +39,11 @@ shape of the problem.
 | Kodi (JellyCon / add-on) | 4 | **no** | no | no | yes | **unsupported** unless adopted |
 | Companion services, scripts, bots | — | n/a | n/a | stream or long-poll | yes | **supported** via HTTP + a service credential |
 
-"planned" means the capability is designed but not verified — see the
-[unverified](#what-is-not-verified) section.
+"planned" means the capability is designed but not shipped. For the browser rows
+the *mechanism* is now verified — slot rendering, idempotent mounting, teardown and
+frame isolation all measured
+([S17](spike-evidence.md#s17--browser-slots-render-idempotently-the-frame-is-genuinely-isolated-and-there-is-no-csp)) — on the
+**modern layout only**. See [what is not verified](#what-is-not-verified).
 
 ## What "unsupported" means
 
@@ -96,9 +99,13 @@ not modify official Jellyfin clients.
 
 Stated plainly so the matrix is not read as stronger than the evidence:
 
-- **No browser spike ran.** Playwright is not provisioned here, so declarative
-  slot rendering, the opaque-origin frame and the `postMessage` broker are all
-  unverified. Every "planned" cell depends on the EP-00 web-sandbox child issue.
+- **The browser spike ran and passed, on the modern layout only.** Declarative slot
+  rendering, idempotent mounting, teardown, coexistence of two contributions and
+  opaque-origin frame isolation are all measured
+  ([S17](spike-evidence.md#s17--browser-slots-render-idempotently-the-frame-is-genuinely-isolated-and-there-is-no-csp)).
+  **Not** covered: the legacy, mobile and Web-TV layouts, accessibility,
+  localisation, D-pad focus order and the jank budgets — which are the majority of
+  EP-07's actual cost.
 - **No native or TV client was involved in any way**, including the first-party
   fork above. Nothing in the spike supports any claim about Android TV, Roku,
   Kodi or Swift behaviour.

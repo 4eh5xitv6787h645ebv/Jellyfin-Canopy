@@ -582,6 +582,97 @@ by containment.
 
 Recorded against [#494](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/494).
 
+## S17 — Browser: slots render idempotently, the frame is genuinely isolated, and there is no CSP
+
+Replay with [`spikes/ep-00/run-web-spike.sh`](spikes/ep-00/run-web-spike.sh). It
+builds Canopy, brings up the repository's **own** dockerized Jellyfin 12
+(`e2e/docker`), seeds it, and runs a throwaway Playwright spec against the real
+web client. The spec lives under `research/` with its own Playwright config so it
+can never join the required E2E suite.
+
+**Correcting an earlier claim:** EP-00 said "Playwright is not provisioned in this
+environment". That was wrong — it is a dependency of the repository and needed
+only `npm ci`. The browser half of EP-00's required verification was skipped for a
+reason that did not hold.
+
+### Jellyfin 12 serves no CSP
+
+```
+content-security-policy : (absent)
+x-frame-options         : (absent)
+```
+
+Nothing constrains what script in the app shell may do. For the platform this cuts
+both ways: there is no CSP to design a broker *within*, and equally no CSP that
+would contain a misbehaving contribution. **An opaque-origin iframe is the only
+isolation primitive actually available in the browser**, which raises the value of
+the deferred sandboxed-frame design rather than lowering it.
+
+### The facade is exactly as unprotected as the charter claimed
+
+```
+rootIsFrozen    : false
+coreIsFrozen    : false
+rootIsWritable  : true      ← page script replaced JC.escapeHtml and it took effect
+hasVersionField : false
+pluginVersion   : 2.0.0.0
+```
+
+Every claim [the charter](charter.md) made from reading the source is confirmed in
+a live browser. `window.JellyfinCanopy` is described in `src/facade.ts` as the
+"STABLE, FROZEN public surface"; at runtime it is an ordinary mutable object whose
+members any script on the page can replace — including `escapeHtml`, which the
+repository's own XSS guards route through. It also carries **no API version
+field**, so a consumer cannot ask what it is talking to.
+
+### A declarative descriptor renders correctly through the existing primitive
+
+A v1-shaped descriptor — no markup, no selectors, no script, and a deliberately
+hostile label of `Request <img src=x onerror=alert(1)>`:
+
+| Property | Result |
+|---|---|
+| mount called 3× → nodes rendered | **1** (idempotent) |
+| hostile label rendered as | **text**; child elements created: **0** |
+| injected script executed | **no** |
+| after `handle.remove()` → nodes | **0** (teardown really tears down) |
+| two vendors' contributions coexisting | **1 each, no collision** |
+
+This is the evidence ADR-0007 decisions 1–6 were missing. Canopy's
+`ensureInjected` supports the slot model directly, mounting is idempotent by key,
+teardown is real, and host-owned rendering neutralises a hostile label without the
+extension being trusted.
+
+**A contract gotcha worth writing down.** `buildFn` must **attach the node itself
+and return it** — the injector only stamps `data-jc-key`, it does not append.
+Returning a detached element renders nothing, silently. The first version of this
+spike did exactly that and measured zero nodes. EP-07's renderer must not repeat
+it.
+
+### The opaque-origin frame denies everything it should
+
+An `<iframe sandbox="allow-scripts">` — deliberately **without**
+`allow-same-origin`:
+
+| Probe | Result |
+|---|---|
+| frame's `location.origin` | `"null"` (opaque) |
+| frame reads `parent.document` | **false** |
+| frame reads `parent.localStorage` | **false** |
+| frame reads `parent.ApiClient.accessToken()` | **false** |
+| host reads `frame.contentWindow.document` | **false** |
+| every inbound message attributable to its frame | **true** (`event.source` identity) |
+| inbound `event.origin` | `"null"` |
+| host → frame message delivered | **true** |
+
+The isolation is mutual: the frame cannot reach the host, and the host cannot
+reach the frame, which is precisely what makes `postMessage` the only channel and
+therefore a place a capability filter can sit. `event.origin` is `"null"` for
+every opaque frame, so **origin is useless for attribution** — a broker must key on
+`event.source` identity, comparing against the frame elements it created.
+
+Recorded against [#491](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/491).
+
 ## What this spike did not establish
 
 Carried into later milestones rather than assumed.
@@ -597,11 +688,11 @@ Carried into later milestones rather than assumed.
 4. **No native or TV client was involved.** Nothing here supports any claim about
    Android TV, Roku, Kodi or Swift.
    → [#492](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/492)
-5. **No declarative web contribution, sandboxed frame or `postMessage` broker.**
-   Playwright is not provisioned here, so the browser half of EP-00's required
-   verification did not run and
-   [ADR-0007](adr/0007-declarative-web-contributions.md)'s sandboxed-frame
-   decision is deferred. → [#491](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/491)
+5. ~~No declarative web contribution, sandboxed frame or `postMessage` broker.~~
+   **Done — see [S17](#s17--browser-slots-render-idempotently-the-frame-is-genuinely-isolated-and-there-is-no-csp).**
+   The "Playwright is not provisioned" reason was simply wrong; it needed `npm ci`.
+   Still unproven: rendering across the legacy, mobile and Web-TV layouts, and
+   behaviour under a11y and localisation requirements.
 6. **Version negotiation.** `/Ep00Spike/Discovery` returns a static
    `{min:1,max:1}` and nothing negotiates against it, so
    [ADR-0002](adr/0002-protocol-and-version-negotiation.md)'s highest-common-version

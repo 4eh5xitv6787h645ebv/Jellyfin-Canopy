@@ -1,6 +1,6 @@
 # ADR-0007 — Declarative web contributions
 
-Status: **proposed** for decisions 1–6 · **deferred, not in v1** for the sandboxed-frame decision · Owner: web adapter
+Status: **proposed** for decisions 1–6, now browser-verified · the sandboxed-frame design remains **deferred, not in v1** · Owner: web adapter · Evidence: [S17](../spike-evidence.md#s17--browser-slots-render-idempotently-the-frame-is-genuinely-isolated-and-there-is-no-csp)
 
 ## Context
 
@@ -69,27 +69,49 @@ path as available.
 
 ## What is verified, and what is not
 
-**No browser spike ran.** Playwright is not provisioned in this environment, so
-slot rendering across the modern/legacy/mobile/Web-TV matrix, idempotent mounting
-and teardown across the view cache, CSP behaviour, and two contributions
-coexisting without collisions are all **unverified**.
+**Verified in a real browser** against the repository's own dockerized Jellyfin 12
+([S17](../spike-evidence.md#s17--browser-slots-render-idempotently-the-frame-is-genuinely-isolated-and-there-is-no-csp)):
+a v1-shaped descriptor renders through `ensureInjected`; mounting three times
+produces **one** node; `handle.remove()` leaves **zero**; a deliberately hostile
+label (`Request <img src=x onerror=alert(1)>`) renders as **text** with zero child
+elements and no script execution; and two vendors' contributions coexist without
+collision. Decisions 1–6 rest on measurement, not on reading the source.
 
-Decisions 1–6 rest on Canopy's existing client architecture, which is strong
-evidence: the injection primitive, the single multiplexed observer, the
-three-layer teardown model and the layout owner all exist and are
-machine-enforced today. They are therefore *proposed*, not provisional — and the
-real risk they carry is rendering breadth, which is what
-[#491](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/491) gates.
+Two findings changed how the rest of this ADR is written.
 
-The deferred sandboxed-frame decision rests on nothing yet, which is why it is deferred
-rather than merely unproven.
+**Jellyfin 12 serves no `Content-Security-Policy` at all.** There is no policy to
+design a broker within, and equally none that would contain a misbehaving
+contribution. This *raises* the value of the deferred opaque-origin frame — it is
+the only isolation primitive the browser actually offers here — while leaving it
+out of v1, because v1 has no untrusted content to put in it.
+
+**The frame works, and its isolation is mutual.** An `<iframe sandbox="allow-scripts">`
+without `allow-same-origin` gets origin `"null"` and cannot read the host DOM,
+`localStorage`, or `ApiClient.accessToken()`; the host equally cannot read into it.
+That mutual denial is what makes `postMessage` the only channel and therefore a
+place a capability filter can sit. **`event.origin` is `"null"` for every opaque
+frame, so origin is useless for attribution** — a broker must key on `event.source`
+identity against the frame elements it created. That constraint is now recorded
+rather than discovered later.
+
+**Still unverified:** rendering across the legacy, mobile and Web-TV layouts, and
+behaviour under the accessibility, localisation and jank budgets. Those are EP-07's
+real cost and remain the content of risk R-04.
+
+**An implementation contract, learned the hard way.** `buildFn` must **attach the
+node itself and return it**; the injector only stamps `data-jc-key`. Returning a
+detached element renders nothing, silently — the first version of this spike did
+exactly that and measured zero nodes.
 
 ## Consequences
 
 - Some legitimate extension ideas will not fit v1 slots. That is the cost of a
   bounded surface; the answer is to extend the slot vocabulary deliberately in a
   later version, not to add an escape hatch.
-- The web adapter becomes a first-class, separately versioned component.
+- The web adapter becomes a first-class, separately versioned component. The
+  facade it publishes needs a real version field: at runtime `window.JellyfinCanopy`
+  is an ordinary mutable object with **no version** and **no freeze** — page script
+  replaced `JC.escapeHtml` and the replacement took effect.
 - Two extensions must coexist without selector, CSS, id, listener, observer,
   route or lifecycle collisions — an explicit EP-07 acceptance criterion.
 

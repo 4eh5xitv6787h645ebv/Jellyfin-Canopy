@@ -123,8 +123,12 @@ Carried forward as EP-00 child issues rather than assumed either way.
    The context survives uninstall with its assemblies loaded, disable produces
    `PluginStatus.Restart` rather than `Disabled`, enable does not reverse it without
    a restart, and a runtime drop-in install is not discovered.
-2. Whether an opaque-origin iframe plus a `postMessage` broker behaves as
-   designed under Jellyfin's CSP. **No browser spike ran.**
+2. ~~Whether an opaque-origin iframe plus a `postMessage` broker behaves as designed
+   under Jellyfin's CSP.~~ **Answered ([S17](spike-evidence.md#s17--browser-slots-render-idempotently-the-frame-is-genuinely-isolated-and-there-is-no-csp)):**
+   Jellyfin 12 serves **no CSP at all**, and the opaque-origin frame denies the host
+   DOM, storage and token in both directions. `event.origin` is `"null"`, so a broker
+   must attribute by `event.source`. What remains unverified is layout breadth, not
+   mechanism.
 3. Whether native clients ignore or **crash on** an unexpected payload sent under
    a known `SessionMessageType`. Needs real Android TV / Roku hardware.
 4. Behaviour under concurrency and sustained load. Every probe was sequential.
