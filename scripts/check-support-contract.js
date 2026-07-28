@@ -501,7 +501,7 @@ function routeText(value) {
         .replace(/[\p{Cf}\p{Default_Ignorable_Code_Point}]/gu, '');
 }
 
-function semanticLinkText(link) {
+function semanticLinkText(link, beforeLimit = 80) {
     const label = routeText(link?.label).trim();
     let before = routeText(link?.contextBefore);
     let after = routeText(link?.contextAfter);
@@ -570,7 +570,7 @@ function semanticLinkText(link) {
         ? beforeBoundaries.at(-2)
         : beforeBoundaries.at(-1);
     const start = (startBoundary ?? -1) + 1;
-    return `${before.slice(Math.max(start, before.length - 80))} ${label} ${after.slice(0, Math.min(end, 80))}`
+    return `${before.slice(Math.max(start, before.length - beforeLimit))} ${label} ${after.slice(0, Math.min(end, 80))}`
         .replace(/\s+/g, ' ').trim();
 }
 
@@ -692,7 +692,7 @@ function fragmentSectionTokens(tokens, fragment, file) {
 }
 
 function isOwnedSecurityIntakeLink(link, securityContext = '') {
-    const text = `${securityContext} ${semanticLinkText(link)}`.trim();
+    const text = `${securityContext} ${semanticLinkText(link, 160)}`.trim();
     const boundaries = hardSentenceBoundaries(text);
     const clauses = [];
     let start = 0;
@@ -718,17 +718,29 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
     const explicitVulnerabilitySubject =
         /\b(?:about|for|regarding)\s+(?:security\s+)?vulnerab\w*\b/i;
     const pluralSecurityAnaphor =
-        /\b(?:them|these|those|such\s+(?:concerns?|issues?|reports?|vulnerab\w*))\b/i;
+        /\b(?:they|them|these|those|such\s+(?:concerns?|issues?|reports?|vulnerab\w*))\b/i;
     const singularSecurityAnaphor = /\bit\b/i;
     const securityFormSubject = new RegExp(`\\b${NEGATED_SECURITY_FORM_SUBJECT}\\b`, 'i');
     const anaphoricSecurityAction =
-        '(?:contact(?:s|ed|ing)?|disclos(?:e|es|ed|ing)|email(?:s|ed|ing)?'
-        + '|file(?:s|d|ing)?|message(?:s|d|ing)?|notif(?:y|ies|ied|ying)'
+        '(?:contact(?:s|ed|ing)?|direct(?:s|ed|ing)?|disclos(?:e|es|ed|ing)'
+        + '|email(?:s|ed|ing)?|file(?:s|d|ing)?|forward(?:s|ed|ing)?'
+        + '|message(?:s|d|ing)?|notif(?:y|ies|ied|ying)'
         + '|open(?:s|ed|ing)?|post(?:s|ed|ing)?|report(?:s|ed|ing)?'
-        + '|send|sending|sent|submit(?:s|ted|ting)?|use(?:s|d|ing)?)';
-    const anaphoricSecurityRoute = new RegExp(
-        `\\b${anaphoricSecurityAction}\\b.{0,40}`
-        + `(?:${pluralSecurityAnaphor.source}|${singularSecurityAnaphor.source})`,
+        + '|rais(?:e|es|ed|ing)|redirect(?:s|ed|ing)?|send|sending|sent'
+        + '|submit(?:s|ted|ting)?|use(?:s|d|ing)?)';
+    const securityAnaphor =
+        `(?:${pluralSecurityAnaphor.source}|${singularSecurityAnaphor.source})`;
+    const activeAnaphoricSecurityRoute = new RegExp(
+        '^(?:(?:instead|now|please)\\s*,?\\s+)*'
+        + '(?:(?:you|users?)\\s+(?:can|may|must|should|will)\\s+)?'
+        + `\\b${anaphoricSecurityAction}\\b.{0,40}${securityAnaphor}`,
+        'i'
+    );
+    const passiveAnaphoricSecurityRoute = new RegExp(
+        `^${securityAnaphor}\\s+`
+        + '(?:(?:can|may|must|should|will)\\s+(?:instead\\s+)?(?:be\\s+)?'
+        + '|(?:are|is)\\s+to\\s+(?:be\\s+)?)'
+        + `\\b${anaphoricSecurityAction}\\b`,
         'i'
     );
     const negatedAnaphoricAction = new RegExp(
@@ -737,7 +749,7 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
         + '(?:(?:absolutely|actually|currently|definitely|ever|necessarily|now|really)\\s+)*'
         + 'not)\\b.{0,40}'
         + '|(?:(?:there\\s+is|you\\s+have)\\s+)?no\\s+need\\s+to\\s+'
-        + '|(?:not\\s+required\\s+to|avoid|refrain\\s+from)\\s+)'
+        + '|(?:not\\s+required\\s+to|avoid|refrain\\s+from)\\s+(?:be\\s+)?)'
         + `\\b${anaphoricSecurityAction}\\b`,
         'i'
     );
@@ -752,12 +764,16 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
         if (positiveClause === clause) return false;
         const following = applicable[index + 1]?.replace(NEGATED_SECURITY_SUBJECT, ' ') || '';
         return [positiveClause, following].some((candidate) => {
+            const route = candidate.replace(/^[\s.!?;:–—-]+/u, '').trim();
+            const ambiguousFormIt = securityFormSubject.test(clause)
+                && /\buse(?:s|d|ing)?\s+it\b/i.test(route);
             const ownsAnaphor = pluralSecurityAnaphor.test(candidate)
                 || singularSecurityAnaphor.test(candidate)
-                    && !securityFormSubject.test(clause);
+                    && !ambiguousFormIt;
             return ownsAnaphor
-                && anaphoricSecurityRoute.test(candidate)
-                && !negatedAnaphoricAction.test(candidate);
+                && (activeAnaphoricSecurityRoute.test(route)
+                    || passiveAnaphoricSecurityRoute.test(route))
+                && !negatedAnaphoricAction.test(route);
         });
     });
     if (applicableGroups.some(applicable => (

@@ -2882,6 +2882,14 @@ test('governs form submissions and hidden ID names while inert routes remain ina
             + `Report them on [GitHub Issues](${ISSUES_ROUTE}).`,
         'This form does not accept security vulnerabilities. '
             + `Disclose them on [GitHub Issues](${ISSUES_ROUTE}).`,
+        'This form does not accept security vulnerabilities. '
+            + `These should be reported via [GitHub Issues](${ISSUES_ROUTE}).`,
+        'This form does not accept security vulnerabilities. '
+            + `They should be submitted via [GitHub Issues](${ISSUES_ROUTE}).`,
+        'This form does not accept security vulnerabilities. '
+            + `Forward them via [GitHub Issues](${ISSUES_ROUTE}).`,
+        'This form does not accept security reports. '
+            + `Submit it via [GitHub Issues](${ISSUES_ROUTE}).`,
         'Do not submit security vulnerabilities with this form; '
             + `instead submit them via [GitHub Issues](${ISSUES_ROUTE}).`,
         'Do not submit security vulnerabilities with this form—instead '
@@ -2913,6 +2921,12 @@ test('governs form submissions and hidden ID names while inert routes remain ina
             + `[GitHub Issues](${ISSUES_ROUTE}).`,
         'This form does not accept security vulnerabilities. '
             + `Use it via [GitHub Issues](${ISSUES_ROUTE}).`,
+        'This form does not accept security vulnerabilities. '
+            + `You should not report them on [GitHub Issues](${ISSUES_ROUTE}).`,
+        'Vulnerabilities are not accepted here. The release notes report them as fixed '
+            + '[here](https://example.com/releases).',
+        'Vulnerabilities are not accepted here. These were reported in '
+            + '[the release notes](https://example.com/releases).',
     ]) {
         const excludedSecurityIntent = validFixture();
         excludedSecurityIntent['docs/getting-started.md'] = nonRoutingSecurityReference;
