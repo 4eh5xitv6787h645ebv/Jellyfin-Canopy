@@ -36,8 +36,29 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
     [ApiController]
     [Authorize]
     [Produces("application/json")]
+    [TypeFilter(typeof(PlatformRequestFilter))]
     public abstract class PlatformControllerBase : ControllerBase
     {
+        /// <summary>
+        /// The correlation id for the current request, tying this response to the server
+        /// log lines it produced.
+        /// </summary>
+        protected string CorrelationId => PlatformCorrelation.For(HttpContext);
+
+        /// <summary>
+        /// Returns the one Platform v1 error envelope.
+        ///
+        /// The status and retryability follow from <paramref name="code"/>, so an action
+        /// chooses only what happened and how to say it. Use this rather than
+        /// <c>BadRequest</c>, <c>NotFound</c> or a bare <c>StatusCode</c>: those produce
+        /// the shapes the legacy surface already disagrees about.
+        /// </summary>
+        /// <param name="code">A code from <see cref="PlatformErrorCode"/>.</param>
+        /// <param name="message">Human-readable, safe to display, free of internals.</param>
+        /// <returns>A result carrying the envelope at the code's status.</returns>
+        protected ObjectResult PlatformProblem(string code, string message) =>
+            PlatformResults.Error(code, message, CorrelationId);
+
         /// <summary>
         /// The acting user, derived from Jellyfin's authentication claims and nothing
         /// else.
