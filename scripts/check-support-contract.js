@@ -835,14 +835,10 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
         const qualifier = routeMatch
             ? prefix.slice(routeMatch.index + routeMatch[0].length)
             : '';
-        const routeObject = routeMatch?.[0].match(new RegExp(
-            `(?:^|\\s)(?<object>(?:(?:the|these|those)\\s+)?`
-            + '(?:security\\s+)?(?:exploits?|reports?|vulnerab\\w*)'
-            + `|${objectSecurityAnaphor})${linkedReferenceRouteDestination}$`,
-            'i'
-        ))?.groups?.object || '';
-        const restrictableReportRoute =
-            /^(?:(?:the|these|those)\s+)?reports?$/i.test(routeObject);
+        const matchedRoute = routeMatch?.[0] || '';
+        const restrictableReportRoute = /\breports?\b/i.test(matchedRoute)
+            && !/\bsecurity\s+reports?\b|\b(?:exploits?|vulnerab\w*)\b/i.test(matchedRoute)
+            && !new RegExp(`\\b${objectSecurityAnaphor}\\b`, 'i').test(matchedRoute);
         return routeMatch
             && !(restrictableReportRoute
                 && linkedReferenceRestrictiveQualifier.test(qualifier))
