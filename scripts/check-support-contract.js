@@ -743,21 +743,23 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
         + '|people|reporters?|researchers?|users?)|you)';
     const directivePrefix = '(?:(?:instead|now|please)\\s*,?\\s+)*';
     const directiveModifier =
-        '(?:(?:always|directly|instead|now|please|privately|promptly)\\s+)*';
+        '(?:(?:always|directly|instead|now|only|please|privately|promptly)\\s+){0,3}';
     const linkedRouteLabel = routeText(link?.label).trim().split(/\s+/)
         .map(word => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
         .join('\\s+') || '(?!)';
     const contextualRouteLabel = /^(?:here|this\s+link)$/i
         .test(routeText(link?.label).trim());
     const neutralLinkedReference = new RegExp(
-        '^\\s*(?:as\\s+(?:(?:an?|the)\\s+)?'
+        '^\\s*(?:[,;:–—-]\\s*)?(?:only\\s+)?'
+        + '(?:as\\s+(?:(?:an?|the)\\s+)?'
         + '(?:example|reference|style\\s+reference)'
-        + '|for\\s+(?:background|documentation|guidance|reference))\\b',
+        + '|to\\s+(?:document|explain|illustrate))\\b',
         'i'
     ).test(routeText(link?.contextAfter));
     const anaphoricRouteDestination =
-        `(?:\\s+(?:at|in|on|through|to|(?:by\\s+)?using|via)\\s+${linkedRouteLabel}`
-        + (contextualRouteLabel ? `|\\s+${linkedRouteLabel}` : '')
+        `(?:\\s+${directiveModifier}`
+        + `(?:at|in|on|through|to|(?:by\\s+)?using|via)\\s+${linkedRouteLabel}`
+        + (contextualRouteLabel ? `|\\s+${directiveModifier}${linkedRouteLabel}` : '')
         + ')';
     const activeAnaphoricSecurityRoute = new RegExp(
         `^${directivePrefix}`

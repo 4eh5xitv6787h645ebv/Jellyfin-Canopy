@@ -2917,6 +2917,15 @@ test('governs form submissions and hidden ID names while inert routes remain ina
         'This form does not accept security vulnerabilities. '
             + `They should be reported [here](${ISSUES_ROUTE}) for review.`,
         'This form does not accept security vulnerabilities. '
+            + `Report them promptly via [GitHub Issues](${ISSUES_ROUTE}).`,
+        'This form does not accept security vulnerabilities. '
+            + `Users should report them privately via [GitHub Issues](${ISSUES_ROUTE}).`,
+        'This form does not accept security vulnerabilities. '
+            + `They should be reported promptly via [GitHub Issues](${ISSUES_ROUTE}).`,
+        'This form does not accept security vulnerabilities. '
+            + `Report them via [GitHub Issues](${ISSUES_ROUTE}) `
+            + 'for guidance from maintainers.',
+        'This form does not accept security vulnerabilities. '
             + `To report them, use [GitHub Issues](${ISSUES_ROUTE}).`,
         'Do not submit security vulnerabilities with this form; '
             + `instead submit them via [GitHub Issues](${ISSUES_ROUTE}).`,
@@ -2984,6 +2993,12 @@ test('governs form submissions and hidden ID names while inert routes remain ina
         'This form does not accept security vulnerabilities. '
             + 'Report them using '
             + '[this link](https://example.com/template) as a style reference.',
+        'This form does not accept security vulnerabilities. '
+            + 'Users should report them using '
+            + '[this link](https://example.com/template), as a style reference.',
+        'This form does not accept security vulnerabilities. '
+            + 'Users should report them using '
+            + '[this link](https://example.com/template) only as a style reference.',
     ]) {
         const excludedSecurityIntent = validFixture();
         excludedSecurityIntent['docs/getting-started.md'] = nonRoutingSecurityReference;
