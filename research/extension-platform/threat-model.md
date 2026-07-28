@@ -151,8 +151,12 @@ pass still let a two-hop chain escape; and a link cycle is rejected rather than
 throwing out of the reader, which would otherwise have taken manifest discovery
 down for every plugin. A symlink that stays inside the root is still accepted
 ([S5](spike-evidence.md#s5--path-containment-holds-against-traversal-symlinks-and-link-cycles)).
-Remaining gap: nothing re-validates on the open handle, so a TOCTOU window
-remains — [#494](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/494).
+The TOCTOU window is now **closed and measured**: validating a path and then
+opening it leaked a file from outside the root on 17% of successful reads under a
+swap race, and validating the open descriptor instead leaked zero
+([S16](spike-evidence.md#s16--the-manifest-read-is-a-toctou-and-a-fifo-stalls-it)).
+A FIFO shipped as a manifest, which would otherwise block discovery for every
+plugin, is refused by a bounded open.
 
 ### T-05 · Token theft through the provider boundary — **high, accepted**
 
