@@ -758,21 +758,70 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
             ? linkedReferenceAfter.length
             : linkedReferenceBoundary + 1
     );
-    const neutralLinkedReference = contextualRouteLabel && new RegExp(
-        '^\\s*(?:[,;:–—-]\\s*)?(?:'
-        + '(?:only\\s+)?'
-        + 'as\\s+(?:(?:an?|the)\\s+)?'
-        + '(?:example|reference|style\\s+reference)'
-        + '|(?:only\\s+)?for\\s+'
-        + '(?:background(?:\\s+information)?|documentation|reference)'
-        + '(?:\\s+only)?(?:\\s+(?:before|prior\\s+to)\\s+'
-        + '(?:opening|using|visiting)\\s+(?:(?:an?|the)\\s+)?'
-        + 'private(?:\\s+GitHub)?\\s+advisory'
-        + '|\\s*[.;]\\s*then\\s+(?:open|use|visit)\\s+'
-        + '(?:(?:an?|the)\\s+)?private(?:\\s+GitHub)?\\s+advisory))'
-        + '\\s*[.!?]?\\s*$',
-        'i'
-    ).test(linkedReferenceClause);
+    const linkedReferenceRemainder = linkedReferenceBoundary === undefined
+        ? ''
+        : linkedReferenceAfter.slice(linkedReferenceBoundary + 1);
+    const linkedReferenceContinuationStart = '(?:^|[.!?;])\\s*'
+        + '(?:(?:instead|now|please|then)\\s*,?\\s+)*';
+    const linkedReferenceContinuationDestination =
+        '(?:here|there|it|(?:this|that)\\s+link)';
+    const linkedReferenceSecurityObject =
+        `(?:${objectSecurityAnaphor}|(?:(?:the|these|those)\\s+)?`
+        + '(?:security\\s+)?(?:exploits?|reports?|vulnerab\\w*))';
+    const linkedReferenceRouteDestination =
+        `\\s+${directiveModifier}`
+        + `(?:(?:at|in|on|through|to|(?:by\\s+)?using|via)\\s+)?`
+        + linkedReferenceContinuationDestination;
+    const linkedReferenceRouteContinuation = [
+        new RegExp(
+            `${linkedReferenceContinuationStart}\\b${anaphoricSecurityAction}\\b\\s+`
+            + `(?:(?:all|both|only)\\s+(?:of\\s+)?)?${linkedReferenceSecurityObject}`
+            + linkedReferenceRouteDestination,
+            'i'
+        ),
+        new RegExp(
+            `${linkedReferenceContinuationStart}${securityDirectiveActor}\\s+`
+            + '(?:can|may|must|should|will)\\s+'
+            + `${directiveModifier}\\b${anaphoricSecurityAction}\\b\\s+`
+            + `(?:(?:all|both|only)\\s+(?:of\\s+)?)?${linkedReferenceSecurityObject}`
+            + linkedReferenceRouteDestination,
+            'i'
+        ),
+        new RegExp(
+            `${linkedReferenceContinuationStart}`
+            + `(?:${subjectSecurityAnaphorSource}|(?:(?:the|these|those)\\s+)?`
+            + '(?:security\\s+)?(?:exploits?|reports?|vulnerab\\w*))\\s+'
+            + `(?:(?:can|may|must|should|will)\\s+${directiveModifier}(?:be\\s+)?`
+            + '|(?:are|is)\\s+to\\s+(?:be\\s+)?)'
+            + `\\b${anaphoricSecurityAction}\\b`
+            + linkedReferenceRouteDestination,
+            'i'
+        ),
+        new RegExp(
+            `${linkedReferenceContinuationStart}\\b(?:follow|go|open|use|visit)\\b\\s+`
+            + `${linkedReferenceContinuationDestination}\\s+to\\s+`
+            + `\\b${anaphoricSecurityAction}\\b\\s+`
+            + `(?:(?:all|both|only)\\s+(?:of\\s+)?)?${linkedReferenceSecurityObject}`,
+            'i'
+        ),
+    ].some(pattern => pattern.test(linkedReferenceRemainder));
+    const neutralLinkedReference = contextualRouteLabel
+        && !linkedReferenceRouteContinuation
+        && new RegExp(
+            '^\\s*(?:[,;:–—-]\\s*)?(?:'
+            + '(?:only\\s+)?'
+            + 'as\\s+(?:(?:an?|the)\\s+)?'
+            + '(?:example|reference|style\\s+reference)'
+            + '|(?:only\\s+)?for\\s+'
+            + '(?:background(?:\\s+information)?|documentation|reference)'
+            + '(?:\\s+only)?(?:\\s+(?:before|prior\\s+to)\\s+'
+            + '(?:opening|using|visiting)\\s+(?:(?:an?|the)\\s+)?'
+            + 'private(?:\\s+GitHub)?\\s+advisory'
+            + '|\\s*[.;]\\s*then\\s+(?:open|use|visit)\\s+'
+            + '(?:(?:an?|the)\\s+)?private(?:\\s+GitHub)?\\s+advisory))'
+            + '\\s*[.!?]?\\s*$',
+            'i'
+        ).test(linkedReferenceClause);
     const anaphoricRouteDestination =
         `(?:\\s+${directiveModifier}`
         + `(?:at|in|on|through|to|(?:by\\s+)?using|via)\\s+${linkedRouteLabel}`

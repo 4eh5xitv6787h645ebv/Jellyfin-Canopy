@@ -2941,6 +2941,21 @@ test('governs form submissions and hidden ID names while inert routes remain ina
             + `To report them, [open a GitHub issue](${ISSUES_ROUTE}) `
             + 'as a reference and submit them there.',
         'This form does not accept security vulnerabilities. '
+            + `To report them, use [this link](${ISSUES_ROUTE}) `
+            + 'as a style reference. Then submit them there.',
+        'This form does not accept security vulnerabilities. '
+            + `To report them, use [this link](${ISSUES_ROUTE}) `
+            + 'as a style reference. Report them through it.',
+        'This form does not accept security vulnerabilities. '
+            + `To report them, use [this link](${ISSUES_ROUTE}) `
+            + 'as a style reference. Submit the vulnerabilities through that link.',
+        'This form does not accept security vulnerabilities. '
+            + `To report them, use [this link](${ISSUES_ROUTE}) `
+            + 'as a style reference. They should be submitted there.',
+        'This form does not accept security vulnerabilities. '
+            + `To report them, use [this link](${ISSUES_ROUTE}) `
+            + 'as a style reference. Go there to submit them.',
+        'This form does not accept security vulnerabilities. '
             + `To report them, use [GitHub Issues](${ISSUES_ROUTE}).`,
         'Do not submit security vulnerabilities with this form; '
             + `instead submit them via [GitHub Issues](${ISSUES_ROUTE}).`,
@@ -3042,6 +3057,10 @@ test('governs form submissions and hidden ID names while inert routes remain ina
             + 'To report them, use '
             + '[this link](https://example.com/template) as a style reference. '
             + 'It explains the required format.',
+        'This form does not accept security vulnerabilities. '
+            + 'To report them, use '
+            + '[this link](https://example.com/template) as a style reference. '
+            + 'It explains how to use this link as a reference.',
     ]) {
         const excludedSecurityIntent = validFixture();
         excludedSecurityIntent['docs/getting-started.md'] = nonRoutingSecurityReference;
