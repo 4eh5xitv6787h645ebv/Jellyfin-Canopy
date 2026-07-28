@@ -346,8 +346,14 @@ public sealed class MaintainerrClientContractTests
     [Fact]
     public async Task DashboardAndItemStatus_UseOneDeadlineAcrossSequentialPhases()
     {
+        // The per-request deadline is deliberately far above the per-operation ones.
+        // The point of this test is that ONE operation deadline spans the sequential
+        // phases rather than each phase restarting it; if it restarted, each call would
+        // instead run to the request deadline. Keeping those two an order of magnitude
+        // apart makes that distinction robust rather than a race with the CI scheduler.
+        var requestDeadline = TimeSpan.FromSeconds(30);
         var timings = new MaintainerrClient.MaintainerrClientTimings(
-            RequestDeadline: TimeSpan.FromSeconds(2),
+            RequestDeadline: requestDeadline,
             TestOperationDeadline: TimeSpan.FromMilliseconds(300),
             ItemStatusOperationDeadline: TimeSpan.FromMilliseconds(180),
             DashboardOperationDeadline: TimeSpan.FromMilliseconds(220),
@@ -384,9 +390,22 @@ public sealed class MaintainerrClientContractTests
             CancellationToken.None);
 
         stopwatch.Stop();
+
+        // These two are the contract, and they are deterministic: if the deadline
+        // restarted per phase, the second call would not have timed out at all.
         Assert.Equal(MaintainerrErrorCode.Timeout, dashboard.Error);
         Assert.Equal(MaintainerrErrorCode.Timeout, item.Error);
-        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(1));
+
+        // This one distinguishes the ~400ms operation deadlines from the request
+        // deadline. It was previously a bare `< 1s`, which on a shared two-core runner
+        // measured scheduler availability rather than plugin behaviour and failed
+        // intermittently on unrelated PRs. Deriving it from the configured request
+        // deadline keeps the same discrimination with a large margin either side.
+        Assert.True(
+            stopwatch.Elapsed < requestDeadline,
+            $"Both phases timed out, but the pair took {stopwatch.Elapsed.TotalSeconds:F1}s, "
+            + $"which suggests they ran to the {requestDeadline.TotalSeconds:F0}s request "
+            + "deadline rather than sharing one operation deadline.");
     }
 
     [Fact]
