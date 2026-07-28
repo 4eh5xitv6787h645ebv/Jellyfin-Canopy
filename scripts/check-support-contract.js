@@ -747,13 +747,18 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
     const linkedRouteLabel = routeText(link?.label).trim().split(/\s+/)
         .map(word => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
         .join('\\s+') || '(?!)';
-    const contextualRouteLabel = /^(?:here|this\s+link)$/i
+    const contextualRouteLabel = CONTEXT_DEPENDENT_ROUTE_LABEL
         .test(routeText(link?.label).trim());
     const neutralLinkedReference = contextualRouteLabel && new RegExp(
-        '^\\s*(?:[,;:–—-]\\s*)?(?:only\\s+)?'
-        + '(?:as\\s+(?:(?:an?|the)\\s+)?'
+        '^\\s*(?:[,;:–—-]\\s*)?(?:(?:only\\s+)?'
+        + 'as\\s+(?:(?:an?|the)\\s+)?'
         + '(?:example|reference|style\\s+reference)'
-        + '|for\\s+(?:background|documentation|reference))\\b',
+        + '|for\\s+(?:background(?:\\s+information)?|documentation|reference)'
+        + '(?:\\s+only)?(?:\\s+(?:before|prior\\s+to)\\s+'
+        + '(?:opening|using|visiting)\\s+(?:(?:an?|the)\\s+)?'
+        + 'private(?:\\s+GitHub)?\\s+advisory'
+        + '|\\s*[.;]\\s*then\\s+(?:open|use|visit)\\s+'
+        + '(?:(?:an?|the)\\s+)?private(?:\\s+GitHub)?\\s+advisory))\\b',
         'i'
     ).test(routeText(link?.contextAfter));
     const anaphoricRouteDestination =

@@ -2932,6 +2932,12 @@ test('governs form submissions and hidden ID names while inert routes remain ina
             + `Users should always now promptly privately report them via `
             + `[GitHub Issues](${ISSUES_ROUTE}).`,
         'This form does not accept security vulnerabilities. '
+            + `To report them, use [this link](${ISSUES_ROUTE}) `
+            + 'for documentation and triage.',
+        'This form does not accept security vulnerabilities. '
+            + `Report them [here](${ISSUES_ROUTE}) `
+            + 'for reference in the public tracker.',
+        'This form does not accept security vulnerabilities. '
             + `To report them, use [GitHub Issues](${ISSUES_ROUTE}).`,
         'Do not submit security vulnerabilities with this form; '
             + `instead submit them via [GitHub Issues](${ISSUES_ROUTE}).`,
@@ -3016,6 +3022,14 @@ test('governs form submissions and hidden ID names while inert routes remain ina
         'This form does not accept security vulnerabilities. '
             + 'To report them, use '
             + '[this link](https://example.com/docs) for documentation only '
+            + 'before opening the private advisory.',
+        'This form does not accept security vulnerabilities. '
+            + 'To report them, use '
+            + '[click here](https://example.com/docs) for documentation only '
+            + 'before opening the private advisory.',
+        'This form does not accept security vulnerabilities. '
+            + 'To report them, use '
+            + '[details](https://example.com/docs) for documentation only '
             + 'before opening the private advisory.',
     ]) {
         const excludedSecurityIntent = validFixture();
