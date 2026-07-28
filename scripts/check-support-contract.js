@@ -835,8 +835,8 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
         '\\b(?:(?:an?|the|this|that)\\s+)?'
         + '(?:(?:another|correct|dedicated|different|preferred|private|separate|security)'
         + '\\s+){1,3}'
-        + '(?:advisory|channel|destination|form|guidance|link|page|policy|process'
-        + '|route|site)\\b';
+        + '(?<replacementKind>advisory|channel|destination|form|guidance|link|page'
+        + '|policy|process|route|site)\\b';
     const linkedReferenceReplacementIntent =
         `(?:${linkedReferenceSecurityObject}|(?:the\\s+)?security\\s+intake)`;
     const linkedReferenceReplacementStart = '^\\s*'
@@ -890,40 +890,27 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
             'i'
         ),
     ];
-    const linkedReferenceClauses = (value) => {
-        const boundaries = hardSentenceBoundaries(value);
-        const clauses = [];
-        let start = 0;
-        for (const boundary of boundaries) {
-            clauses.push(value.slice(start, boundary + 1));
-            start = boundary + 1;
-        }
-        clauses.push(value.slice(start));
-        return clauses;
-    };
-    const explicitLinkedReferenceDestination = /^(?:this|that)\s+link$/i;
-    const routesBackToLinkedReference = value => (
-        linkedReferenceClauses(value).some(clause => (
-            linkedReferenceContinuationPatterns.some(pattern => {
-                const match = pattern.exec(clause);
-                return match?.groups?.destination
-                    && explicitLinkedReferenceDestination.test(
-                        match.groups.destination
-                    );
-            })
-        ))
+    const firstReplacementRoute = clause => (
+        linkedReferenceReplacementRoutePatterns
+            .map(pattern => pattern.exec(clause))
+            .filter(Boolean)
+            .filter(match => !NON_VULNERABILITY_CONTEXT.test(
+                clause.slice(match.index)
+            ))
+            .sort((left, right) => left.index - right.index)[0]
     );
-    const replacementRoutePrecedesLinkedRoute = (clause) => {
-        const replacement = linkedReferenceReplacementRoutePatterns
+    const firstLinkedReferenceRoute = clause => (
+        linkedReferenceContinuationPatterns
             .map(pattern => pattern.exec(clause))
             .filter(Boolean)
-            .sort((left, right) => left.index - right.index)[0];
-        if (!replacement) return false;
-        const routeMatch = linkedReferenceContinuationPatterns
-            .map(pattern => pattern.exec(clause))
-            .filter(Boolean)
-            .sort((left, right) => left.index - right.index)[0];
-        return !routeMatch || replacement.index < routeMatch.index;
+            .sort((left, right) => left.index - right.index)[0]
+    );
+    const replacementOwnsLinkedDestination = (replacement, route) => {
+        const destination = route?.groups?.destination || '';
+        if (/^(?:it|there)$/i.test(destination)) return true;
+        return /^(?:link|page|site)$/i.test(
+            replacement?.groups?.replacementKind || ''
+        ) && /^that\s+link$/i.test(destination);
     };
     const linkedReferenceClauseApplicability = (clause, contextMatch) => {
         const prefix = clause.slice(0, contextMatch.index);
@@ -953,19 +940,32 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
     let linkedReferenceRemainderStart = 0;
     let linkedReferenceRemainderClosed = false;
     let linkedReferenceNeutralRouteSkipped = false;
+    let linkedReferenceReplacementRoute = null;
     let linkedReferenceApplicableRemainder = '';
     for (const boundary of linkedReferenceRemainderBoundaries) {
         const clause = linkedReferenceRemainder.slice(
             linkedReferenceRemainderStart,
             boundary + 1
         );
-        if (linkedReferenceNeutralRouteSkipped
-            && replacementRoutePrecedesLinkedRoute(clause)
-            && !routesBackToLinkedReference(
-                linkedReferenceRemainder.slice(linkedReferenceRemainderStart)
-            )) {
-            linkedReferenceRemainderClosed = true;
-            break;
+        if (linkedReferenceReplacementRoute) {
+            const route = firstLinkedReferenceRoute(clause);
+            const replacementOwnsRoute = replacementOwnsLinkedDestination(
+                linkedReferenceReplacementRoute,
+                route
+            );
+            linkedReferenceReplacementRoute = null;
+            if (replacementOwnsRoute) {
+                linkedReferenceRemainderStart = boundary + 1;
+                continue;
+            }
+        }
+        const replacementRoute = linkedReferenceNeutralRouteSkipped
+            ? firstReplacementRoute(clause)
+            : null;
+        if (replacementRoute) {
+            linkedReferenceReplacementRoute = replacementRoute;
+            linkedReferenceRemainderStart = boundary + 1;
+            continue;
         }
         const nonVulnerabilityContext = clause.match(NON_VULNERABILITY_CONTEXT);
         if (!nonVulnerabilityContext) {
@@ -992,10 +992,18 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
         linkedReferenceRemainder.slice(linkedReferenceRemainderStart);
     const trailingNonVulnerabilityContext =
         linkedReferenceTrailingClause.match(NON_VULNERABILITY_CONTEXT);
-    const trailingReplacementRoute = linkedReferenceNeutralRouteSkipped
-        && replacementRoutePrecedesLinkedRoute(linkedReferenceTrailingClause)
-        && !routesBackToLinkedReference(linkedReferenceTrailingClause);
-    if (!linkedReferenceRemainderClosed && !trailingReplacementRoute) {
+    let skipLinkedReferenceTrailingClause = false;
+    if (linkedReferenceReplacementRoute) {
+        skipLinkedReferenceTrailingClause = replacementOwnsLinkedDestination(
+            linkedReferenceReplacementRoute,
+            firstLinkedReferenceRoute(linkedReferenceTrailingClause)
+        );
+    }
+    if (!skipLinkedReferenceTrailingClause && linkedReferenceNeutralRouteSkipped) {
+        skipLinkedReferenceTrailingClause =
+            Boolean(firstReplacementRoute(linkedReferenceTrailingClause));
+    }
+    if (!linkedReferenceRemainderClosed && !skipLinkedReferenceTrailingClause) {
         if (!trailingNonVulnerabilityContext) {
             linkedReferenceApplicableRemainder += linkedReferenceTrailingClause;
         } else {
