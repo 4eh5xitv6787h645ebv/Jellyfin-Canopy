@@ -145,6 +145,14 @@
       "reason": "Canonical Jellyfin Canopy project link."
     },
     {
+      "url": "https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/blob/main/research/extension-platform/adr/0010-deprecation-and-support-policy.md",
+      "reason": "ADR-0010 defines the additive-only rule the Platform v1 contract gate enforces."
+    },
+    {
+      "url": "https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/tree/main/contracts/platform/v1",
+      "reason": "The published Platform v1 contract artifacts a client author builds against."
+    },
+    {
       "url": "https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues",
       "reason": "Canonical Jellyfin Canopy project link."
     },

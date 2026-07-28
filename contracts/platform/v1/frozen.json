@@ -1,0 +1,67 @@
+{
+  "note": "The published Platform v1 surface. CI proves the live spec is a superset of this. Removing a path or method, removing a required property, or changing a property's type is a breaking change and belongs in v2 (ADR-0010). Regenerating this file to make a gate pass is the one thing it must never be used for; it is updated only when v1 grows.",
+  "paths": {
+    "/JellyfinCanopy/Platform/v1/discovery": [
+      "get"
+    ],
+    "/JellyfinCanopy/Platform/v1/negotiate": [
+      "get"
+    ]
+  },
+  "schemas": {
+    "PlatformDiscoveryResponse": {
+      "required": [
+        "Available",
+        "ProtocolMaximum",
+        "ProtocolMinimum"
+      ],
+      "propertyTypes": {
+        "Available": "boolean",
+        "ProtocolMaximum": "integer",
+        "ProtocolMinimum": "integer"
+      }
+    },
+    "PlatformNegotiationResponse": {
+      "required": [
+        "Compatible",
+        "HostProtocolMaximum",
+        "HostProtocolMinimum"
+      ],
+      "propertyTypes": {
+        "Compatible": "boolean",
+        "HostProtocolMaximum": "integer",
+        "HostProtocolMinimum": "integer",
+        "Protocol": "integer|null"
+      }
+    },
+    "PlatformError": {
+      "required": [
+        "Code",
+        "CorrelationId",
+        "Error",
+        "Message",
+        "Retryable"
+      ],
+      "propertyTypes": {
+        "Code": "#/components/schemas/PlatformErrorCode",
+        "CorrelationId": "string",
+        "Error": "boolean",
+        "Message": "string",
+        "Retryable": "boolean"
+      }
+    },
+    "PlatformErrorCode": {
+      "enum": [
+        "conflict",
+        "internal_error",
+        "invalid_request",
+        "not_found",
+        "payload_too_large",
+        "rate_limited",
+        "timeout",
+        "unavailable",
+        "unsupported_protocol"
+      ]
+    }
+  }
+}

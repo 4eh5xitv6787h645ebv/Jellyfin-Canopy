@@ -96,6 +96,8 @@
     "e2e/pages-lifecycle.spec.ts › pages lifecycle (shared framework) › non-admin: pages open and close cleanly too",
     "e2e/pages-lifecycle.spec.ts › pages lifecycle (shared framework) › page → page direct switch tears the first page down",
     "e2e/panel.spec.ts › panel › opens, has a section nav, switches sections, closes on Escape",
+    "e2e/platform-contract-smoke.spec.ts › Platform v1 contract — live smoke client › a client built only from the published contract discovers and negotiates",
+    "e2e/platform-contract-smoke.spec.ts › Platform v1 contract — live smoke client › an unauthenticated call to the authenticated route is refused with an unparseable body",
     "e2e/request-approvals.spec.ts › in-app request approvals › admin: affordance renders and the approve/decline endpoint round-trips",
     "e2e/request-approvals.spec.ts › in-app request approvals › non-admin: no approve/decline UI and the endpoint returns 403",
     "e2e/requests-long-title-responsive.spec.ts › responsive Requests and Issues cards (#466 finding 6) › modern: long request and issue titles ellipsize without card overflow",

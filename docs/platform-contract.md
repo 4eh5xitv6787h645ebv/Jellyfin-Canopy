@@ -1,0 +1,107 @@
+# Platform v1 contract
+
+Canopy publishes a machine-readable description of its extension surface. If you are
+writing a client — a web integration, a native app, another plugin — this is what you
+build against.
+
+The artifacts live in [`contracts/platform/v1/`](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/tree/main/contracts/platform/v1):
+
+| File | What it is |
+|---|---|
+| `openapi.json` | The contract. Routes, parameters, responses and schemas. |
+| `frozen.json` | The published v1 surface, so CI can prove changes stay additive. |
+| `fixtures/` | Golden request/response examples. |
+
+## The spec is authored, not generated
+
+This matters more than it sounds. A spec generated from the running server documents
+whatever the code happens to do — mistakes included — and moves silently whenever the
+code moves. A breaking change would rewrite the document that was supposed to catch it.
+
+Here the spec is the source of truth and the server is checked against it, in both
+directions:
+
+- a route with no spec entry fails the build
+- a spec entry with no route fails the build
+- a schema that drifts from the type it describes fails the build
+- a fixture that no longer round-trips fails the build
+
+## What is and is not covered
+
+Only routes under `/JellyfinCanopy/Platform/v1` are described.
+
+The older `/JellyfinCanopy/*` routes are **compatibility surfaces**. They keep their
+existing shapes, they are not documented here, and they are never promoted into the
+platform implicitly. If you are starting something new, use the platform routes.
+
+## Two things worth knowing before you write a client
+
+**`401` and `403` have no body.** Jellyfin returns both with zero bytes, so the contract
+documents them without a schema. Do not try to parse an error envelope from them — you
+will get an empty string. Every *other* failure, after authentication has succeeded,
+carries the one error envelope.
+
+**Branch on `Code`, never on `Message`.** The message is human-readable and may be
+reworded or translated at any time. The code set is enumerated in the spec, and each code
+maps to exactly one HTTP status. Treat a code you do not recognise as a generic failure of
+its status class.
+
+## Versioning
+
+The `v1` in the path is a **major** version. Within it, changes are additive only
+(see [ADR-0010](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/blob/main/research/extension-platform/adr/0010-deprecation-and-support-policy.md)):
+
+- new routes, new optional properties, new error codes — allowed
+- removing a route, removing a required property, changing a property's type — **not**
+  allowed, and CI rejects it
+
+An incompatible change becomes a `v2` route family that coexists with `v1`, so you upgrade
+on your own schedule rather than on ours.
+
+## The handshake
+
+Two routes, meant to be used as a pair:
+
+1. **`GET /JellyfinCanopy/Platform/v1/discovery`** — anonymous. Tells you whether the
+   platform is present and which protocol versions it speaks, and deliberately nothing
+   else. You need this before you have any reason to authenticate.
+2. **`GET /JellyfinCanopy/Platform/v1/negotiate`** — authenticated. You offer the range
+   you support; the host answers with what it will actually use.
+
+`negotiate` answers `200` with `Compatible: false` when there is no common version. That
+is **not** an error — the negotiation succeeded, it just concluded "no". Render it
+differently from "unavailable" and from "denied", because those are three different
+problems with three different fixes.
+
+A client that supplies no range is treated as speaking the oldest protocol only, so send
+your range explicitly.
+
+## Request limits
+
+The platform enforces its own bounds and reports a breach as a structured `413` naming
+which one you hit:
+
+| Limit | Value |
+|---|---|
+| Body size | 1,048,576 bytes |
+| Nesting depth | 32 |
+| Array elements | 10,000 per array |
+| Object keys | 1,000 per object |
+| String length | 65,536 bytes |
+
+One gap to be aware of: a request at or above **30,000,000 bytes** is rejected by
+Jellyfin itself before Canopy sees it, and surfaces as an opaque `500` rather than a
+`413`. The platform covers everything below that; it cannot cover the ceiling.
+
+## Pagination
+
+One dialect: opaque forward cursors. Pass the `NextCursor` you were given to fetch the
+next page, and stop when it is `null`.
+
+`null` is the only end-of-listing signal — a short page is not one, because pages can be
+short whenever rows are filtered after being read.
+
+Cursors are opaque on purpose. Do not decode, construct or reuse one across listings:
+they are bound to the listing that issued them and signed, so a foreign or edited cursor
+is **rejected** rather than silently restarting the walk from the beginning. Maximum page
+size is 200; larger requests are clamped rather than refused.
