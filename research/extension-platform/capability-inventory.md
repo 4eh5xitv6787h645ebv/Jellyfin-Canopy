@@ -98,7 +98,9 @@ milestone does not spend budget rediscovering them.
 | Declare a dependency between plugins | no such field in `meta.json`; no ordering attribute | JF12 source |
 | Control load order contractually | alphabetical by manifest `name` — deterministic but undocumented, untested, emergent from a private sort | [S13](spike-evidence.md#s13--lifecycle-matrix) |
 | Declare a maximum supported host version | `targetAbi` is a minimum with no ceiling | JF12 source |
-| Kill a runaway provider | not available on .NET; the deadline protects only the caller, and a cooperative provider is indistinguishable from an uncooperative one | [S6](spike-evidence.md#s6--provider-failure-modes-all-map-to-bounded-host-errors) |
+| Kill a runaway provider | not available on .NET; the deadline protects only the caller | [S6](spike-evidence.md#s6--provider-failure-modes-all-map-to-bounded-host-errors) |
+| Unload an extension's code, ever | the context is collectible but Jellyfin never unloads it; uninstall leaves the assemblies loaded for the life of the process | [S15](spike-evidence.md#s15--hot-lifecycle-nothing-is-ever-unloaded-and-disable-needs-a-restart) |
+| Disable or install an extension without a restart | disable yields `PluginStatus.Restart` and takes effect only on restart; a drop-in install is not discovered | [S15](spike-evidence.md#s15--hot-lifecycle-nothing-is-ever-unloaded-and-disable-needs-a-restart) |
 | A `413` for an oversized request | Kestrel's 30,000,000-byte default surfaces as an opaque `500` | [S11](spike-evidence.md#s11--request-size-and-json-depth-boundaries) |
 | Authenticate `EventSource` safely | it cannot set headers; the only option is a query-string token | [S8](spike-evidence.md#s8--browser-eventsource-cannot-authenticate-safely) |
 | Rely on same-origin as a boundary | host answers `Access-Control-Allow-Origin: *` with `authorization` allowed | [S10](spike-evidence.md#s10--host-cors-is-permissive) |
@@ -116,9 +118,11 @@ milestone does not spend budget rediscovering them.
 
 Carried forward as EP-00 child issues rather than assumed either way.
 
-1. Whether Jellyfin actually **unloads** a collectible context on disable or
-   uninstall without a restart. The contexts report `IsCollectible = true`; every
-   lifecycle case tested used a restart.
+1. ~~Whether Jellyfin unloads a collectible context on disable or uninstall.~~
+   **Answered: it never does** ([S15](spike-evidence.md#s15--hot-lifecycle-nothing-is-ever-unloaded-and-disable-needs-a-restart)).
+   The context survives uninstall with its assemblies loaded, disable produces
+   `PluginStatus.Restart` rather than `Disabled`, enable does not reverse it without
+   a restart, and a runtime drop-in install is not discovered.
 2. Whether an opaque-origin iframe plus a `postMessage` broker behaves as
    designed under Jellyfin's CSP. **No browser spike ran.**
 3. Whether native clients ignore or **crash on** an unexpected payload sent under

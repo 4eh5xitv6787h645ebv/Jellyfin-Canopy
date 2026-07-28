@@ -19,11 +19,13 @@ public class Ep00SpikeController : ControllerBase
 {
     private readonly ProviderBinder _binder;
     private readonly ManifestProbe _manifests;
+    private readonly LoadContextWatcher _watcher;
 
-    public Ep00SpikeController(ProviderBinder binder, ManifestProbe manifests)
+    public Ep00SpikeController(ProviderBinder binder, ManifestProbe manifests, LoadContextWatcher watcher)
     {
         _binder = binder;
         _manifests = manifests;
+        _watcher = watcher;
     }
 
     /// <summary>Anonymous discovery: availability and protocol range only. No topology.</summary>
@@ -61,6 +63,11 @@ public class Ep00SpikeController : ControllerBase
     [HttpGet("TypeIdentity")]
     [Authorize(Policy = Policies.RequiresElevation)]
     public ActionResult<object> TypeIdentity() => Ok(_binder.ProbeTypeIdentity());
+
+    /// <summary>EP-00.4: what the host can still see after a runtime lifecycle change.</summary>
+    [HttpGet("Runtime")]
+    [Authorize(Policy = Policies.RequiresElevation)]
+    public ActionResult<object> Runtime([FromQuery] bool collect) => Ok(_watcher.Snapshot(collect));
 
     [HttpGet("Manifests")]
     [Authorize(Policy = Policies.RequiresElevation)]

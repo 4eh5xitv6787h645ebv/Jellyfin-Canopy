@@ -456,6 +456,66 @@ context in [ADR-0004](adr/0004-provider-invocation.md) is therefore
 an explicit allow-list of derived values, never a pass-through, and this is
 recorded as threat **T-05**.
 
+## S15 — Hot lifecycle: nothing is ever unloaded, and disable needs a restart
+
+Replay with [`spikes/ep-00/run-hot-lifecycle.sh`](spikes/ep-00/run-hot-lifecycle.sh).
+Every transition below was driven through Jellyfin's **own admin endpoints** on a
+running server, with exactly one restart at the start and one at the end to show
+the contrast. A blocking GC with finalizers ran before each snapshot, so a
+collectible context had every chance to go away.
+
+| Transition | `pluginPresent` | `pluginStatus` | assembly loaded | DI resolves | invoke | contexts | first-seen ALC alive |
+|---|---|---|---|---|---|---|---|
+| baseline | true | `Active` | true | true | `ok` | 3 (2 collectible) | true |
+| `POST …/Disable` | true | **`Restart`** | true | true | `provider_absent` | 3 | true |
+| `POST …/Enable` | true | **`Restart`** | true | true | `provider_absent` | 3 | true |
+| `DELETE …` (uninstall) | **false** | — | — | false | `provider_absent` | **3** | **true** |
+| drop a new plugin directory in | false | — | — | false | `provider_absent` | 3 | true |
+| restart | true | `Active` | true | true | `ok` | 3 | true |
+
+Four results, and three of them contradict an assumption the earlier documents
+made.
+
+**1. The collectible context is never unloaded.** This is the headline. After the
+plugin was uninstalled and its directory deleted from disk, the weak reference
+taken at first sight was *still alive*, still holding two assemblies, and the
+collectible-context count never moved. `IsCollectible = true` means the runtime
+*may* unload a context; it does so only when the context is explicitly unloaded
+and nothing references it. Jellyfin never unloads one. **An extension's code stays
+in the process for the lifetime of the server**, whatever the registry says.
+
+**2. Disable does not mean disabled — it means `Restart`.** The status flips to
+`PluginStatus.Restart`, not `Disabled`. The instance is still there, the assembly
+is still loaded, and Jellyfin's DI still hands out the registered singleton. The
+only thing that changed is a string in the manifest. A platform that treats
+"disabled" as "cannot run" and does nothing else would keep invoking a disabled
+extension.
+
+**3. Enable-after-disable also requires a restart.** `POST …/Enable` returned
+`204` and left the status at `Restart`. There is no runtime path back to `Active`.
+
+**4. Runtime install is not discovered.** Dropping a fully formed plugin directory
+into `/config/plugins` on a running server did nothing; the plugin appeared only
+after the restart.
+
+**What this means for the platform.** Three things:
+
+- The registry's `disabled`, `revoked` and `absent` states must be **enforced by
+  the kernel at invocation**, not inferred from the host. The spike's binder was
+  already right to refuse on `Manifest.Status != Active` — that check is the only
+  reason `provider_absent` came back instead of a successful call to a plugin the
+  administrator had just disabled.
+- `Restart` is a **ninth lifecycle state** the compatibility terminology did not
+  have: *administratively changed, pending a restart to take effect*. It is
+  observably different from `disabled` and must be surfaced to an admin as "this
+  needs a restart", not as a completed action.
+- **Revocation cannot reclaim memory or stop loaded code.** It can only stop the
+  kernel from calling it. Any wording promising that a revoked extension "stops
+  working" must mean "stops being invoked by the platform", which is a strictly
+  weaker claim, and is now the wording used.
+
+Recorded against [#493](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/493).
+
 ## What this spike did not establish
 
 Carried into later milestones rather than assumed.
@@ -463,10 +523,10 @@ Carried into later milestones rather than assumed.
 1. **Byte-identical, same-version contract assemblies.** S2 used two *different*
    assembly versions. .NET load-context semantics say the same-version case
    behaves identically, but this spike did not show it.
-2. **Collectible does not mean unloaded.** The contexts report
-   `IsCollectible = true`, but nothing here proved Jellyfin unloads one on
-   disable or uninstall without a restart. Every lifecycle case used a restart.
-   → [#493](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/493)
+2. ~~Collectible does not mean unloaded.~~ **Answered by
+   [S15](#s15--hot-lifecycle-nothing-is-ever-unloaded-and-disable-needs-a-restart):**
+   the context is never unloaded, disable and enable both need a restart, and a
+   runtime drop-in install is not discovered.
 3. **No concurrency or sustained load.** Every probe was sequential.
 4. **No native or TV client was involved.** Nothing here supports any claim about
    Android TV, Roku, Kodi or Swift.

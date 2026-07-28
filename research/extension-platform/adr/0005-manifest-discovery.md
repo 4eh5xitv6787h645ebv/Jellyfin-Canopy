@@ -36,16 +36,23 @@ declared scopes — are each a distinct vulnerability.
    fingerprint or the requested scope set returns the extension to *pending*.
    Stale grants are never inherited.
 7. **Explicit lifecycle states**, rendered distinctly and never collapsed:
-   `discovered/pending`, `enabled`, `disabled`, `incompatible`, `unhealthy`,
-   `quarantined`, `revoked`, `absent`.
-8. **A plugin package may ship symlinks, and Jellyfin follows them.** A link to
+   `discovered/pending`, `enabled`, `disabled`, `restart-pending`, `incompatible`,
+   `unhealthy`, `quarantined`, `revoked`, `absent`. `restart-pending` is not
+   optional: Jellyfin's own disable produces `PluginStatus.Restart` and leaves the
+   assembly loaded and resolvable, so an admin UI that reports "disabled" would be
+   lying ([S15](../spike-evidence.md#s15--hot-lifecycle-nothing-is-ever-unloaded-and-disable-needs-a-restart)).
+8. **The kernel enforces state at invocation.** Because nothing is unloaded, a
+   disabled or revoked extension is still fully callable through Jellyfin's DI. The
+   registry's state is the *only* thing standing between an administrator's
+   decision and the extension continuing to run.
+9. **A plugin package may ship symlinks, and Jellyfin follows them.** A link to
    `/` inside a plugin directory prevented the server from starting at all during
    the spike. The registry cannot fix the host's own scan, but it must not add to
    the problem, and admin diagnostics should make such a root identifiable.
-9. **Nothing on the startup path.** Discovery, validation and registry recovery
+10. **Nothing on the startup path.** Discovery, validation and registry recovery
    run after startup, off the critical path. One malformed extension must not
    delay or fail Jellyfin or Canopy startup.
-10. **Crash-safe persistence** via the existing `AtomicFile` durable-write
+11. **Crash-safe persistence** via the existing `AtomicFile` durable-write
    primitive (temp sibling → fsync contents → rename → fsync parent directory),
    with quarantine-on-corruption and a versioned unhealthy marker — the same
    model `UserConfigurationStore` already uses.
@@ -72,9 +79,13 @@ declared scopes — are each a distinct vulnerability.
   presenting an opaque re-approval prompt.
 - The registry is a persisted store with migrations, recovery and its own
   corruption tests.
-- Discovery is restart-driven for v1. **Hot discovery is not claimed** — every
-  lifecycle case in the spike used a full restart, and whether Jellyfin actually
-  unloads a collectible context on disable was not established.
+- Discovery is restart-driven, and that is now a measured fact rather than a
+  caution: a fully formed plugin directory dropped into `/config/plugins` on a
+  running server is **not discovered**, and neither disable nor enable takes effect
+  until a restart ([S15](../spike-evidence.md#s15--hot-lifecycle-nothing-is-ever-unloaded-and-disable-needs-a-restart)).
+- **Uninstall does not reclaim anything.** The context stays alive with its
+  assemblies loaded for the life of the process. Admin diagnostics should say so
+  rather than implying the extension is gone.
 
 ## Rejected alternatives
 
