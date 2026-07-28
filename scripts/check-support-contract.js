@@ -750,15 +750,18 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
     const contextualRouteLabel = CONTEXT_DEPENDENT_ROUTE_LABEL
         .test(routeText(link?.label).trim());
     const neutralLinkedReference = contextualRouteLabel && new RegExp(
-        '^\\s*(?:[,;:–—-]\\s*)?(?:(?:only\\s+)?'
+        '^\\s*(?:[,;:–—-]\\s*)?(?:'
+        + '(?:only\\s+)?'
         + 'as\\s+(?:(?:an?|the)\\s+)?'
         + '(?:example|reference|style\\s+reference)'
-        + '|for\\s+(?:background(?:\\s+information)?|documentation|reference)'
+        + '|(?:only\\s+)?for\\s+'
+        + '(?:background(?:\\s+information)?|documentation|reference)'
         + '(?:\\s+only)?(?:\\s+(?:before|prior\\s+to)\\s+'
         + '(?:opening|using|visiting)\\s+(?:(?:an?|the)\\s+)?'
         + 'private(?:\\s+GitHub)?\\s+advisory'
         + '|\\s*[.;]\\s*then\\s+(?:open|use|visit)\\s+'
-        + '(?:(?:an?|the)\\s+)?private(?:\\s+GitHub)?\\s+advisory))\\b',
+        + '(?:(?:an?|the)\\s+)?private(?:\\s+GitHub)?\\s+advisory))'
+        + '\\s*[.!?]?\\s*$',
         'i'
     ).test(routeText(link?.contextAfter));
     const anaphoricRouteDestination =
