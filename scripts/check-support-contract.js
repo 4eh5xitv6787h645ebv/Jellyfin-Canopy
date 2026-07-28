@@ -806,17 +806,23 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
         ),
     ];
     const linkedReferenceRestrictiveQualifier = new RegExp(
-        `${linkedReferenceContinuationDestination}\\s*,?\\s*`
-        + '(?:(?:but\\s+)?only\\s+if|if|when|where|unless'
-        + '|provided(?:\\s+that)?|as\\s+long\\s+as|that|which'
-        + '|while\\s+(?:they|the(?:se)?\\s+reports?))\\b',
+        '^\\s*,?\\s*(?:'
+        + '(?:(?:but\\s+)?only\\s+)?'
+        + '(?:if|when|where|unless|provided(?:\\s+that)?|as\\s+long\\s+as|while)'
+        + '\\s+(?:(?!\\b(?:although|but|however|not(?:e|ing)|remember(?:ing)?)\\b)'
+        + '[^,;:–—.!?]){0,80}'
+        + '|(?:that|which)\\s*)$',
         'i'
     );
     const linkedReferenceApplicablePrefixLength = (clause, contextMatch) => {
         const prefix = clause.slice(0, contextMatch.index);
-        const ownsRoute = linkedReferenceContinuationPatterns
-            .some(pattern => pattern.test(prefix));
-        return ownsRoute && !linkedReferenceRestrictiveQualifier.test(prefix)
+        const routeMatch = linkedReferenceContinuationPatterns
+            .map(pattern => pattern.exec(prefix))
+            .find(Boolean);
+        const qualifier = routeMatch
+            ? prefix.slice(routeMatch.index + routeMatch[0].length)
+            : '';
+        return routeMatch && !linkedReferenceRestrictiveQualifier.test(qualifier)
             ? contextMatch.index
             : 0;
     };
