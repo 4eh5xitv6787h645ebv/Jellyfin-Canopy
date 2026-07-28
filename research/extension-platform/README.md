@@ -3,6 +3,10 @@
 Tracking issue: [#39 — EP-00](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/39)
 Roadmap board: [Jellyfin Elevate Extension Platform](https://github.com/users/4eh5xitv6787h645ebv/projects/3)
 
+> **Scope decided 2026-07-28:** v1 is **native-first** — EP-01, EP-02, EP-06 and
+> EP-08 only. See [ADR-0012](adr/0012-native-first-scope.md). Everything else is
+> deferred, not cancelled.
+
 **Nothing described here is implemented.** This directory is the decision record
 for EP-00, the research milestone that has to be finished before any platform
 code is written. Every document is *proposed* until its milestone's exit gate.
@@ -36,6 +40,7 @@ code is written. Every document is *proposed* until its milestone's exit gate.
 | [0009](adr/0009-packaging-and-kernel-placement.md) | packaging and kernel placement | proposed |
 | [0010](adr/0010-deprecation-and-support-policy.md) | deprecation and support policy | proposed |
 | [0011](adr/0011-identity-and-authority.md) | identity and authority | proposed |
+| [0012](adr/0012-native-first-scope.md) | **native-first scope for v1** | **accepted** |
 
 ## The five results that shaped everything
 

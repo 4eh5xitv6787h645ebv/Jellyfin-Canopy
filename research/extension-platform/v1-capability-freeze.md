@@ -1,8 +1,13 @@
 # Frozen v1 capability list
 
 Tracking issue: [#39 — EP-00](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/39)
-Status: **proposed** (EP-00). "Frozen" means *the list does not grow without a new
+Status: **re-scoped 2026-07-28** by [ADR-0012](adr/0012-native-first-scope.md) —
+v1 is **native-first**. "Frozen" means *the list does not grow without a new
 EP-00-level decision* — not that it is implemented. Nothing here exists yet.
+
+**In v1 scope:** C1, C2 (minimal), C3 (deferred), C6, C8, C9, C10.
+**Deferred:** C4, C5, C7 and the full C2/C3 registry and provider runtime — see
+the table at the end.
 
 Adding to this list requires named consumers, a security and authority analysis,
 failure and lifecycle behaviour, a compatibility policy and a bounded tracking
@@ -114,12 +119,12 @@ owning Canopy service. Exposed through that owner — never reimplemented.
 
 | Family | Axis | Candidate |
 |---|---|---|
+| Per-title user state | opaque action + per-user isolation | **Spoiler Guard** — already driven from Android TV as a hardcoded route ([androidtv#1](https://github.com/4eh5xitv6787h645ebv/jellyfin-androidtv/pull/1)); EP-06 turns it into a platform capability |
 | Per-user data workflow | state + per-user isolation | bookmarks / selected user state |
 | Integration action workflow | opaque action + upstream | a Seerr request action on item detail |
-| Admin live workflow | events + elevated authorization | Active Streams status and actions |
 
-A fourth candidate, the Discovery home row, is a stretch goal for EP-10 rather
-than a v1 commitment.
+The admin live workflow (Active Streams) moves out of v1 with EP-05's events. The
+Discovery home row remains a stretch goal, not a commitment.
 
 ## C10 — Diagnostics and audit
 
@@ -140,23 +145,42 @@ proxy · provider-to-provider calls · cross-extension state · blob or media
 storage · webhooks · custom Jellyfin WebSocket message types · modifying official
 Jellyfin clients · Jellyfin 13 support · telemetry.
 
-## Dependency order
+## Dependency order — native-first
 
 ```
-EP-00 ─▶ EP-01 ─▶ EP-02 ─▶ EP-03 ─┬─▶ EP-04 ─┐
-                                  └─▶ EP-05 ─┴─▶ EP-06 ─┬─▶ EP-07 ─┐
-                                                        └─▶ EP-08 ─┴─▶ EP-09 ─▶ EP-10 ─▶ EP-11 ─▶ EP-12
+EP-00 ─▶ EP-01 ─▶ EP-02 ─▶ EP-06 ─▶ EP-08          ← in scope
+                     ╎
+                     ╎ deferred: EP-03, EP-04, EP-05, EP-07,
+                     ╌╌╌╌╌╌╌╌╌╌  EP-09, EP-10, EP-11, EP-12
 ```
 
-| Capability | Delivered by |
+EP-06 no longer waits on EP-03/04/05. With no third-party extensions there is
+nothing to register and no provider to invoke, so the gateway calls Canopy's own
+owning services directly through the host adapter. Reinstating those milestones
+later is additive: the gateway gains a provider source, it does not change shape.
+
+### What each deferred milestone was going to give us, and why it can wait
+
+| Deferred | Why it can wait |
 |---|---|
-| C1 | EP-01, EP-06 |
-| C2 | EP-03 |
-| C3 | EP-04 |
-| C4 | EP-05 |
-| C5 | EP-05 |
-| C6 | EP-02, EP-06 |
-| C7 | EP-07 |
-| C8 | EP-08 |
-| C9 | EP-06, EP-10 |
-| C10 | EP-03, EP-11 |
+| EP-03 registry, admin approval, manifest lifecycle | nothing third-party to register; the kernel is the only provider |
+| EP-04 provider SDK + JSON ABI runtime | the ABI is proven ([S2](spike-evidence.md#s2--no-shared-type-identity-and-the-failure-is-silent), [S3](spike-evidence.md#s3--cross-plugin-di-works-but-only-by-foreign-concrete-type)) but has no consumer |
+| EP-05 namespaced state + events | EP-06 uses Canopy's existing stores; revisit when an extension needs its own |
+| EP-07 declarative web contributions | Canopy already owns the web surface; highest cost, lowest marginal value, layout breadth untested |
+| EP-09 SDKs, scaffolding, conformance kit | for external developers who do not exist yet |
+| EP-10 independent pilots | requires EP-09 |
+| EP-11 certification, beta, GA | requires a public contract, which this scope deliberately avoids |
+| EP-12 je12-dev adoption policy | applies to a finished platform |
+
+| Capability | Delivered by | v1 scope |
+|---|---|---|
+| C1 discovery/negotiation | EP-01, EP-06 | **in** |
+| C2 registry + lifecycle | EP-03 | **deferred** — no third-party extensions |
+| C3 provider invocation | EP-04 | **deferred** — no providers |
+| C4 namespaced state | EP-05 | **deferred** |
+| C5 events | EP-05 | **deferred** |
+| C6 opaque actions | EP-02, EP-06 | **in** |
+| C7 declarative web slots | EP-07 | **deferred** |
+| C8 native descriptor schema | EP-08 | **in** |
+| C9 reference capability families | EP-06 | **in** — Spoiler Guard first |
+| C10 diagnostics + audit | EP-02, EP-06 | **in**, minus registry diagnostics |
