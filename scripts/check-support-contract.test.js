@@ -2960,6 +2960,22 @@ test('governs form submissions and hidden ID names while inert routes remain ina
             + 'as a style reference. Submit vulnerabilities there, '
             + 'but a typo does not constitute a vulnerability.',
         'This form does not accept security vulnerabilities. '
+            + `To report them, use [this link](${ISSUES_ROUTE}) `
+            + 'as a style reference. Submit vulnerabilities there, '
+            + 'and remember that a typo does not constitute a vulnerability.',
+        'This form does not accept security vulnerabilities. '
+            + `To report them, use [this link](${ISSUES_ROUTE}) `
+            + 'as a style reference. Submit vulnerabilities there while remembering '
+            + 'that a typo does not constitute a vulnerability.',
+        'This form does not accept security vulnerabilities. '
+            + `To report them, use [this link](${ISSUES_ROUTE}) `
+            + 'as a style reference. Submit vulnerabilities there but remember '
+            + 'that a typo does not constitute a vulnerability.',
+        'This form does not accept security vulnerabilities. '
+            + `To report them, use [this link](${ISSUES_ROUTE}) `
+            + 'as a style reference. Submit the report there, but remember '
+            + 'that a typo does not constitute a vulnerability.',
+        'This form does not accept security vulnerabilities. '
             + `To report them, use [GitHub Issues](${ISSUES_ROUTE}).`,
         'Do not submit security vulnerabilities with this form; '
             + `instead submit them via [GitHub Issues](${ISSUES_ROUTE}).`,
@@ -3074,6 +3090,10 @@ test('governs form submissions and hidden ID names while inert routes remain ina
             + 'To report them, use '
             + '[this link](https://example.com/template) as a style reference. '
             + 'Submit reports there that do not involve a vulnerability.',
+        'This form does not accept security vulnerabilities. '
+            + 'To report them, use '
+            + '[this link](https://example.com/template) as a style reference. '
+            + 'Submit reports there only if they do not involve a vulnerability.',
         'This form does not accept security vulnerabilities. '
             + 'To report them, use '
             + '[this link](https://example.com/template) as a style reference. '

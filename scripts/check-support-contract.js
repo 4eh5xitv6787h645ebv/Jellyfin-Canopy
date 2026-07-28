@@ -761,19 +761,67 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
     const linkedReferenceRemainder = linkedReferenceBoundary === undefined
         ? ''
         : linkedReferenceAfter.slice(linkedReferenceBoundary + 1);
-    const linkedReferenceRemainderBoundaries =
-        hardSentenceBoundaries(linkedReferenceRemainder);
+    const linkedReferenceContinuationStart = '(?:^|[.!?;])\\s*'
+        + '(?:(?:instead|now|please|then)\\s*,?\\s+)*';
+    const linkedReferenceContinuationDestination =
+        '\\b(?:here|there|it|(?:this|that)\\s+link)\\b';
+    const linkedReferenceSecurityObject =
+        `(?:${objectSecurityAnaphor}|(?:(?:the|these|those)\\s+)?`
+        + '(?:security\\s+)?(?:exploits?|reports?|vulnerab\\w*))';
+    const linkedReferenceRouteDestination =
+        `\\s+${directiveModifier}`
+        + `(?:(?:at|in|on|through|to|(?:by\\s+)?using|via)\\s+)?`
+        + linkedReferenceContinuationDestination;
+    const linkedReferenceContinuationPatterns = [
+        new RegExp(
+            `${linkedReferenceContinuationStart}\\b${anaphoricSecurityAction}\\b\\s+`
+            + `(?:(?:all|both|only)\\s+(?:of\\s+)?)?${linkedReferenceSecurityObject}`
+            + linkedReferenceRouteDestination,
+            'i'
+        ),
+        new RegExp(
+            `${linkedReferenceContinuationStart}${securityDirectiveActor}\\s+`
+            + '(?:can|may|must|should|will)\\s+'
+            + `${directiveModifier}\\b${anaphoricSecurityAction}\\b\\s+`
+            + `(?:(?:all|both|only)\\s+(?:of\\s+)?)?${linkedReferenceSecurityObject}`
+            + linkedReferenceRouteDestination,
+            'i'
+        ),
+        new RegExp(
+            `${linkedReferenceContinuationStart}`
+            + `(?:${subjectSecurityAnaphorSource}|(?:(?:the|these|those)\\s+)?`
+            + '(?:security\\s+)?(?:exploits?|reports?|vulnerab\\w*))\\s+'
+            + `(?:(?:can|may|must|should|will)\\s+${directiveModifier}(?:be\\s+)?`
+            + '|(?:are|is)\\s+to\\s+(?:be\\s+)?)'
+            + `\\b${anaphoricSecurityAction}\\b`
+            + linkedReferenceRouteDestination,
+            'i'
+        ),
+        new RegExp(
+            `${linkedReferenceContinuationStart}\\b(?:follow|go|open|use|visit)\\b\\s+`
+            + `${linkedReferenceContinuationDestination}\\s+to\\s+`
+            + `\\b${anaphoricSecurityAction}\\b\\s+`
+            + `(?:(?:all|both|only)\\s+(?:of\\s+)?)?${linkedReferenceSecurityObject}`,
+            'i'
+        ),
+    ];
+    const linkedReferenceRestrictiveQualifier = new RegExp(
+        `${linkedReferenceContinuationDestination}\\s*,?\\s*`
+        + '(?:(?:but\\s+)?only\\s+if|if|when|where|unless'
+        + '|provided(?:\\s+that)?|as\\s+long\\s+as|that|which'
+        + '|while\\s+(?:they|the(?:se)?\\s+reports?))\\b',
+        'i'
+    );
     const linkedReferenceApplicablePrefixLength = (clause, contextMatch) => {
         const prefix = clause.slice(0, contextMatch.index);
-        const adversative = /[,;:–—-]\s*but\b/i.exec(prefix);
-        if (!adversative) return 0;
-        const affirmative = prefix.slice(0, adversative.index);
-        return securitySubject.test(affirmative)
-            || pluralObjectSecurityAnaphor.test(affirmative)
-            || subjectSecurityAnaphor.test(affirmative)
+        const ownsRoute = linkedReferenceContinuationPatterns
+            .some(pattern => pattern.test(prefix));
+        return ownsRoute && !linkedReferenceRestrictiveQualifier.test(prefix)
             ? contextMatch.index
             : 0;
     };
+    const linkedReferenceRemainderBoundaries =
+        hardSentenceBoundaries(linkedReferenceRemainder);
     let linkedReferenceRemainderStart = 0;
     let linkedReferenceApplicableEnd = linkedReferenceRemainder.length;
     for (const boundary of linkedReferenceRemainderBoundaries) {
@@ -808,50 +856,8 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
     }
     const linkedReferenceApplicableRemainder =
         linkedReferenceRemainder.slice(0, linkedReferenceApplicableEnd);
-    const linkedReferenceContinuationStart = '(?:^|[.!?;])\\s*'
-        + '(?:(?:instead|now|please|then)\\s*,?\\s+)*';
-    const linkedReferenceContinuationDestination =
-        '\\b(?:here|there|it|(?:this|that)\\s+link)\\b';
-    const linkedReferenceSecurityObject =
-        `(?:${objectSecurityAnaphor}|(?:(?:the|these|those)\\s+)?`
-        + '(?:security\\s+)?(?:exploits?|reports?|vulnerab\\w*))';
-    const linkedReferenceRouteDestination =
-        `\\s+${directiveModifier}`
-        + `(?:(?:at|in|on|through|to|(?:by\\s+)?using|via)\\s+)?`
-        + linkedReferenceContinuationDestination;
-    const linkedReferenceRouteContinuation = [
-        new RegExp(
-            `${linkedReferenceContinuationStart}\\b${anaphoricSecurityAction}\\b\\s+`
-            + `(?:(?:all|both|only)\\s+(?:of\\s+)?)?${linkedReferenceSecurityObject}`
-            + linkedReferenceRouteDestination,
-            'i'
-        ),
-        new RegExp(
-            `${linkedReferenceContinuationStart}${securityDirectiveActor}\\s+`
-            + '(?:can|may|must|should|will)\\s+'
-            + `${directiveModifier}\\b${anaphoricSecurityAction}\\b\\s+`
-            + `(?:(?:all|both|only)\\s+(?:of\\s+)?)?${linkedReferenceSecurityObject}`
-            + linkedReferenceRouteDestination,
-            'i'
-        ),
-        new RegExp(
-            `${linkedReferenceContinuationStart}`
-            + `(?:${subjectSecurityAnaphorSource}|(?:(?:the|these|those)\\s+)?`
-            + '(?:security\\s+)?(?:exploits?|reports?|vulnerab\\w*))\\s+'
-            + `(?:(?:can|may|must|should|will)\\s+${directiveModifier}(?:be\\s+)?`
-            + '|(?:are|is)\\s+to\\s+(?:be\\s+)?)'
-            + `\\b${anaphoricSecurityAction}\\b`
-            + linkedReferenceRouteDestination,
-            'i'
-        ),
-        new RegExp(
-            `${linkedReferenceContinuationStart}\\b(?:follow|go|open|use|visit)\\b\\s+`
-            + `${linkedReferenceContinuationDestination}\\s+to\\s+`
-            + `\\b${anaphoricSecurityAction}\\b\\s+`
-            + `(?:(?:all|both|only)\\s+(?:of\\s+)?)?${linkedReferenceSecurityObject}`,
-            'i'
-        ),
-    ].some(pattern => pattern.test(linkedReferenceApplicableRemainder));
+    const linkedReferenceRouteContinuation = linkedReferenceContinuationPatterns
+        .some(pattern => pattern.test(linkedReferenceApplicableRemainder));
     const neutralLinkedReference = contextualRouteLabel
         && !linkedReferenceRouteContinuation
         && new RegExp(
