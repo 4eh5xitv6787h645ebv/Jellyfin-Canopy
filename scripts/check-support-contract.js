@@ -749,6 +749,15 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
         .join('\\s+') || '(?!)';
     const contextualRouteLabel = CONTEXT_DEPENDENT_ROUTE_LABEL
         .test(routeText(link?.label).trim());
+    const linkedReferenceAfter = routeText(link?.contextAfter);
+    const linkedReferenceBoundary = hardSentenceBoundaries(linkedReferenceAfter)
+        .find(boundary => linkedReferenceAfter[boundary] !== ';');
+    const linkedReferenceClause = linkedReferenceAfter.slice(
+        0,
+        linkedReferenceBoundary === undefined
+            ? linkedReferenceAfter.length
+            : linkedReferenceBoundary + 1
+    );
     const neutralLinkedReference = contextualRouteLabel && new RegExp(
         '^\\s*(?:[,;:–—-]\\s*)?(?:'
         + '(?:only\\s+)?'
@@ -763,7 +772,7 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
         + '(?:(?:an?|the)\\s+)?private(?:\\s+GitHub)?\\s+advisory))'
         + '\\s*[.!?]?\\s*$',
         'i'
-    ).test(routeText(link?.contextAfter));
+    ).test(linkedReferenceClause);
     const anaphoricRouteDestination =
         `(?:\\s+${directiveModifier}`
         + `(?:at|in|on|through|to|(?:by\\s+)?using|via)\\s+${linkedRouteLabel}`
