@@ -12,5 +12,6 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<ManifestProbe>();
         serviceCollection.AddSingleton<LoadContextWatcher>();
         serviceCollection.AddSingleton<ToctouProbe>();
+        serviceCollection.AddSingleton<NativeSurface>();
     }
 }

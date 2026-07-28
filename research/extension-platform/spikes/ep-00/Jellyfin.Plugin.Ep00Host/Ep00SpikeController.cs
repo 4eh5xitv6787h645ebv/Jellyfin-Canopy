@@ -21,14 +21,25 @@ public class Ep00SpikeController : ControllerBase
     private readonly ManifestProbe _manifests;
     private readonly LoadContextWatcher _watcher;
     private readonly ToctouProbe _toctou;
+    private readonly NativeSurface _native;
 
-    public Ep00SpikeController(ProviderBinder binder, ManifestProbe manifests, LoadContextWatcher watcher, ToctouProbe toctou)
+    public Ep00SpikeController(
+        ProviderBinder binder,
+        ManifestProbe manifests,
+        LoadContextWatcher watcher,
+        ToctouProbe toctou,
+        NativeSurface native)
     {
         _binder = binder;
         _manifests = manifests;
         _watcher = watcher;
         _toctou = toctou;
+        _native = native;
     }
+
+    private string CallerId => User.Claims
+        .FirstOrDefault(c => string.Equals(c.Type, "Jellyfin-UserId", StringComparison.OrdinalIgnoreCase))?.Value
+        ?? string.Empty;
 
     /// <summary>Anonymous discovery: availability and protocol range only. No topology.</summary>
     [HttpGet("Discovery")]
@@ -75,6 +86,24 @@ public class Ep00SpikeController : ControllerBase
     [HttpGet("Toctou")]
     [Authorize(Policy = Policies.RequiresElevation)]
     public ActionResult<object> Toctou([FromQuery] int iterations) => Ok(_toctou.Run(iterations));
+
+    /// <summary>EP-00.3: highest-common-version negotiation for a native client.</summary>
+    [HttpPost("Native/Negotiate")]
+    [Authorize]
+    [Consumes(MediaTypeNames.Application.Json)]
+    public ActionResult<object> Negotiate([FromBody] JsonElement request) => Ok(_native.Negotiate(request));
+
+    /// <summary>EP-00.3: a catalog filtered to what the client said it can render.</summary>
+    [HttpPost("Native/Catalog")]
+    [Authorize]
+    [Consumes(MediaTypeNames.Application.Json)]
+    public ActionResult<object> Catalog([FromBody] JsonElement request) => Ok(_native.Catalog(request, CallerId));
+
+    /// <summary>EP-00.3: invoke an opaque action capability.</summary>
+    [HttpPost("Native/Invoke")]
+    [Authorize]
+    public ActionResult<object> NativeInvoke([FromQuery] string? capability, [FromQuery] bool providerDown) =>
+        Ok(_native.Invoke(capability, CallerId, providerDown));
 
     [HttpGet("Manifests")]
     [Authorize(Policy = Policies.RequiresElevation)]

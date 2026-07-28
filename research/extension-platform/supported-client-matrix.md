@@ -79,7 +79,11 @@ not closed.
 
 ## Adoption path for a native client
 
-Deliberately small, so that adopting it is a weekend rather than a quarter:
+Deliberately small, so that adopting it is a weekend rather than a quarter. Each
+step below is now exercised by a headless fixture
+([S18](spike-evidence.md#s18--a-headless-native-client-can-drive-the-protocol-and-every-refusal-is-distinct)), so a client
+author is implementing against something that has been driven end to end rather
+than against prose:
 
 1. call the authenticated negotiation endpoint, declaring supported protocol
    range, surface schemas, component set, input modes, layout constraints,
