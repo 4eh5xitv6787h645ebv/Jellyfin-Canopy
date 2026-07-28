@@ -37,6 +37,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
     [Authorize]
     [Produces("application/json")]
     [TypeFilter(typeof(PlatformRequestFilter))]
+    [TypeFilter(typeof(PlatformBoundedBodyFilter))]
     public abstract class PlatformControllerBase : ControllerBase
     {
         /// <summary>
