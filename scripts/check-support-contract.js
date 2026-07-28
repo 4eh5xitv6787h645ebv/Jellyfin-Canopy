@@ -741,19 +741,24 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
         '(?:(?:(?:community|project|repository|security)\\s+)?'
         + '(?:admins?|administrators?|contributors?|developers?|maintainers?|owners?'
         + '|people|reporters?|researchers?|users?)|you)';
+    const directivePrefix = '(?:(?:instead|now|please)\\s*,?\\s+)*';
     const directiveModifier =
         '(?:(?:always|directly|instead|now|please|privately|promptly)\\s+)*';
+    const anaphoricRouteDestination =
+        '(?:.{0,24}\\b(?:at|in|on|through|to|using|via)\\b'
+        + '|.{0,24}\\b(?:here|this\\s+link)\\b)';
     const activeAnaphoricSecurityRoute = new RegExp(
-        '^(?:(?:instead|now|please)\\s*,?\\s+)*'
+        `^${directivePrefix}`
         + `\\b${anaphoricSecurityAction}\\b\\s+`
-        + `(?:(?:all|both|only)\\s+)?${objectSecurityAnaphor}`,
+        + `(?:(?:all|both|only)\\s+(?:of\\s+)?)?${objectSecurityAnaphor}`,
         'i'
     );
     const modalAnaphoricSecurityRoute = new RegExp(
-        `^${securityDirectiveActor}\\s+(?:can|may|must|should|will)\\s+`
+        `^${directivePrefix}${securityDirectiveActor}\\s+`
+        + '(?:can|may|must|should|will)\\s+'
         + `${directiveModifier}\\b${anaphoricSecurityAction}\\b\\s+`
-        + `(?:(?:all|both|only)\\s+)?${objectSecurityAnaphor}`
-        + '.{0,24}\\b(?:at|in|on|through|to|via)\\b',
+        + `(?:(?:all|both|only)\\s+(?:of\\s+)?)?${objectSecurityAnaphor}`
+        + anaphoricRouteDestination,
         'i'
     );
     const purposeAnaphoricSecurityRoute = new RegExp(
@@ -767,7 +772,7 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
         + `(?:(?:can|may|must|should|will)\\s+${directiveModifier}(?:be\\s+)?`
         + '|(?:are|is)\\s+to\\s+(?:be\\s+)?)'
         + `\\b${anaphoricSecurityAction}\\b`
-        + '.{0,24}\\b(?:at|in|on|through|to|via)\\b',
+        + anaphoricRouteDestination,
         'i'
     );
     const reportDirectedIt = new RegExp(

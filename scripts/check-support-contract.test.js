@@ -2897,6 +2897,22 @@ test('governs form submissions and hidden ID names while inert routes remain ina
         'This form does not accept security vulnerabilities. '
             + `You can instead report them via [GitHub Issues](${ISSUES_ROUTE}).`,
         'This form does not accept security vulnerabilities. '
+            + `You should report them [here](${ISSUES_ROUTE}).`,
+        'This form does not accept security vulnerabilities. '
+            + `They should be reported [here](${ISSUES_ROUTE}).`,
+        'This form does not accept security vulnerabilities. '
+            + `They should be reported using [GitHub Issues](${ISSUES_ROUTE}).`,
+        'This form does not accept security vulnerabilities. '
+            + `Instead, users should report them via [GitHub Issues](${ISSUES_ROUTE}).`,
+        'This form does not accept security vulnerabilities. '
+            + `Now users should report them via [GitHub Issues](${ISSUES_ROUTE}).`,
+        'This form does not accept security vulnerabilities. '
+            + `Please, users should report them via [GitHub Issues](${ISSUES_ROUTE}).`,
+        'This form does not accept security vulnerabilities. '
+            + `Report all of them via [GitHub Issues](${ISSUES_ROUTE}).`,
+        'This form does not accept security vulnerabilities. '
+            + `You should report both of them via [GitHub Issues](${ISSUES_ROUTE}).`,
+        'This form does not accept security vulnerabilities. '
             + `To report them, use [GitHub Issues](${ISSUES_ROUTE}).`,
         'Do not submit security vulnerabilities with this form; '
             + `instead submit them via [GitHub Issues](${ISSUES_ROUTE}).`,
