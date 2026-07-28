@@ -130,19 +130,40 @@ public sealed class JikanAnimeFillerProviderTests
     [Fact]
     public async Task PerRequestDeadline_CoversAResponseBodyThatStallsAfterHeaders()
     {
+        // Deliberately far apart, so "which deadline fired" is not a close call.
+        var requestTimeout = TimeSpan.FromMilliseconds(50);
+        var operationTimeout = TimeSpan.FromSeconds(30);
+        var discriminator = TimeSpan.FromSeconds(5);
+
         var handler = new FixedOriginHandler { StallEpisodeBody = true };
         var provider = new JikanAnimeFillerProvider(
             new FixedOriginFactory(handler),
             NullLogger<JikanAnimeFillerProvider>.Instance,
             new ProviderRateGate(TimeSpan.Zero),
             new ProviderRateGate(TimeSpan.Zero),
-            requestTimeout: TimeSpan.FromMilliseconds(50),
-            operationTimeout: TimeSpan.FromSeconds(1));
+            requestTimeout: requestTimeout,
+            operationTimeout: operationTimeout);
         var started = DateTimeOffset.UtcNow;
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => provider.GetEpisodesAsync(20, CancellationToken.None));
 
-        Assert.True(DateTimeOffset.UtcNow - started < TimeSpan.FromSeconds(1));
+        // Both deadlines are internal linked CancellationTokenSources, so elapsed time
+        // is the only signal a caller has for WHICH one fired. That makes the bound
+        // unavoidable - but it must be derived from the gap between the two deadlines,
+        // not from a magic constant.
+        //
+        // It previously used a 1s operation deadline and asserted elapsed < 1s, i.e. it
+        // asserted the runner was not busy. On a two-core CI runner shared with five
+        // other jobs that failed intermittently on PRs that could not have caused it.
+        // The deadlines are now three orders of magnitude apart and the assertion sits
+        // ~100x above the expected value and ~6x below the failure value, so it
+        // discriminates the same thing without measuring scheduler latency.
+        var elapsed = DateTimeOffset.UtcNow - started;
+        Assert.True(
+            elapsed < discriminator,
+            $"Expected the {requestTimeout.TotalMilliseconds}ms REQUEST deadline to fire, but the call took "
+            + $"{elapsed.TotalSeconds:F1}s, which suggests it ran to the "
+            + $"{operationTimeout.TotalSeconds:F0}s OPERATION deadline instead.");
     }
 
     private sealed class FixedOriginFactory(HttpMessageHandler handler) : IHttpClientFactory
