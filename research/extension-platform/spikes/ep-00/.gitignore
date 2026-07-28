@@ -1,0 +1,4 @@
+# Throwaway spike build output. The spike is built on demand by run-spike.sh and
+# is never built by CI, so its artifacts must never reach the working tree.
+bin/
+obj/

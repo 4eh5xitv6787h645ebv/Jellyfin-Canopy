@@ -82,6 +82,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy
                 serviceCollection.AddSingleton(serviceType, sp => ActivatorUtilities.CreateInstance(sp, implementationType));
             }
 
+            // The platform kernel's only route to Jellyfin. Registering the interface
+            // rather than the adapter is the point: kernel code that takes IPlatformHost
+            // stays extractable, and PlatformHostSeamTests fails the build if any kernel
+            // file reaches past it to MediaBrowser directly (risk R-07).
+            serviceCollection.AddSingleton<Platform.Hosting.IPlatformHost, Platform.Hosting.Jellyfin.JellyfinPlatformHost>();
+
             // Live view over the plugin configuration (re-read per access, never
             // snapshotted) so admin saves take effect immediately in consumers.
             serviceCollection.AddSingleton<Services.IPluginConfigProvider, Services.PluginConfigProvider>();
