@@ -749,14 +749,21 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
         .join('\\s+') || '(?!)';
     const contextualRouteLabel = /^(?:here|this\s+link)$/i
         .test(routeText(link?.label).trim());
+    const neutralLinkedReference = new RegExp(
+        '^\\s*(?:as\\s+(?:(?:an?|the)\\s+)?'
+        + '(?:example|reference|style\\s+reference)'
+        + '|for\\s+(?:background|documentation|guidance|reference))\\b',
+        'i'
+    ).test(routeText(link?.contextAfter));
     const anaphoricRouteDestination =
-        `(?:\\s+(?:at|in|on|through|to|using|via)\\s+${linkedRouteLabel}`
+        `(?:\\s+(?:at|in|on|through|to|(?:by\\s+)?using|via)\\s+${linkedRouteLabel}`
         + (contextualRouteLabel ? `|\\s+${linkedRouteLabel}` : '')
-        + ')\\s*$';
+        + ')';
     const activeAnaphoricSecurityRoute = new RegExp(
         `^${directivePrefix}`
         + `\\b${anaphoricSecurityAction}\\b\\s+`
-        + `(?:(?:all|both|only)\\s+(?:of\\s+)?)?${objectSecurityAnaphor}`,
+        + `(?:(?:all|both|only)\\s+(?:of\\s+)?)?${objectSecurityAnaphor}`
+        + anaphoricRouteDestination,
         'i'
     );
     const modalAnaphoricSecurityRoute = new RegExp(
@@ -823,7 +830,8 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
                     || modalAnaphoricSecurityRoute.test(route)
                     || purposeAnaphoricSecurityRoute.test(route)
                     || passiveAnaphoricSecurityRoute.test(route))
-                && !negatedAnaphoricAction.test(route);
+                && !negatedAnaphoricAction.test(route)
+                && !neutralLinkedReference;
         });
     });
     if (applicableGroups.some(applicable => (

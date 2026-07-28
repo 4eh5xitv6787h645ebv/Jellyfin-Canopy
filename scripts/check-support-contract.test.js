@@ -2913,6 +2913,10 @@ test('governs form submissions and hidden ID names while inert routes remain ina
         'This form does not accept security vulnerabilities. '
             + `You should report both of them via [GitHub Issues](${ISSUES_ROUTE}).`,
         'This form does not accept security vulnerabilities. '
+            + `Users should report them via [GitHub Issues](${ISSUES_ROUTE}) now.`,
+        'This form does not accept security vulnerabilities. '
+            + `They should be reported [here](${ISSUES_ROUTE}) for review.`,
+        'This form does not accept security vulnerabilities. '
             + `To report them, use [GitHub Issues](${ISSUES_ROUTE}).`,
         'Do not submit security vulnerabilities with this form; '
             + `instead submit them via [GitHub Issues](${ISSUES_ROUTE}).`,
@@ -2973,6 +2977,12 @@ test('governs form submissions and hidden ID names while inert routes remain ina
             + '[this link](https://example.com/timeline).',
         'This form does not accept security vulnerabilities. '
             + 'Users should report them using '
+            + '[this link](https://example.com/template) as a style reference.',
+        'This form does not accept security vulnerabilities. '
+            + 'Report them using the vocabulary defined '
+            + '[here](https://example.com/glossary).',
+        'This form does not accept security vulnerabilities. '
+            + 'Report them using '
             + '[this link](https://example.com/template) as a style reference.',
     ]) {
         const excludedSecurityIntent = validFixture();
