@@ -35,10 +35,11 @@ it.
 | **Incompatible** | present, but its declared protocol range does not intersect the kernel's | present, never invoked, with an actionable reason |
 | **Unhealthy** | approved, but failing health probes | present, may be circuit-broken |
 | **Quarantined** | isolated after repeated failures or corrupt state | present, not invoked, admin action required |
-| **Revoked** | grants withdrawn; credentials invalid | present, all access refused immediately |
+| **Restart-pending** | an administrative change was accepted but does not take effect until the server restarts | Jellyfin reports `PluginStatus.Restart`; the assembly is **still loaded** and its DI registrations still resolve |
+| **Revoked** | grants withdrawn; credentials invalid | present, the kernel refuses to invoke it immediately — see the note below |
 | **Unsupported** | works, but this capability does not exist on this client class | contribution omitted, never approximated |
 
-**Only two of these eight are verified.** The [lifecycle
+**Three of these nine are verified.** The [lifecycle
 matrix](spike-evidence.md#s13--lifecycle-matrix) showed `absent` and `disabled`
 distinguishable — a disabled plugin reported `provider present but
 status=Disabled`, an uninstalled one reported `no plugin with GUID … in
