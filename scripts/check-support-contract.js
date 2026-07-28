@@ -764,7 +764,7 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
     const linkedReferenceContinuationStart = '(?:^|[.!?;])\\s*'
         + '(?:(?:instead|now|please|then)\\s*,?\\s+)*';
     const linkedReferenceContinuationDestination =
-        '\\b(?:here|there|it|(?:this|that)\\s+link)\\b';
+        '\\b(?<destination>here|there|it|(?:this|that)\\s+link)\\b';
     const linkedReferenceSecurityObject =
         `(?:${objectSecurityAnaphor}|(?:(?:the|these|those)\\s+)?`
         + '(?:security\\s+)?(?:exploits?|reports?|vulnerab\\w*))';
@@ -837,15 +837,87 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
         + '\\s+){1,3}'
         + '(?:advisory|channel|destination|form|guidance|link|page|policy|process'
         + '|route|site)\\b';
-    const linkedReferenceReplacementRoute = new RegExp(
-        linkedReferenceReplacementSubject
-        + '\\s+(?:(?:exclusively|instead|now|only|privately)\\s+)*'
-        + '(?:accepts?|collects?|handles?|receives?|routes?|takes?)\\s+'
-        + `(?:(?:all|both|only)\\s+(?:of\\s+)?)?${linkedReferenceSecurityObject}`,
-        'i'
+    const linkedReferenceReplacementIntent =
+        `(?:${linkedReferenceSecurityObject}|(?:the\\s+)?security\\s+intake)`;
+    const linkedReferenceReplacementStart = '^\\s*'
+        + '(?:(?:instead|now|please|then)\\s*,?\\s+)*';
+    const linkedReferenceReplacementRoutePatterns = [
+        new RegExp(
+            linkedReferenceReplacementStart
+            + `${linkedReferenceReplacementSubject}\\s+`
+            + '(?:(?:can|may|must|should|will)\\s+)?'
+            + '(?:(?:always|directly|exclusively|instead|now|only|privately)\\s+)*'
+            + '(?:accepts?|collects?|handles?|provides?|receives?|routes?|takes?)\\s+'
+            + `(?:(?:all|both|only)\\s+(?:of\\s+)?)?`
+            + linkedReferenceReplacementIntent,
+            'i'
+        ),
+        new RegExp(
+            linkedReferenceReplacementStart
+            + `${linkedReferenceReplacementSubject}\\s+`
+            + '(?:(?:(?:can|may|must|should|will)\\s+be|is)\\s+'
+            + '(?:intended|meant|used)\\s+(?:for|to)|(?:is|remains)\\s+'
+            + '(?:(?:directly|exclusively|only|privately)\\s+)*(?:the\\s+intake\\s+)?for)'
+            + `\\s+${linkedReferenceReplacementIntent}`,
+            'i'
+        ),
+        new RegExp(
+            linkedReferenceReplacementStart
+            + '\\b(?:follow|open|use|visit)\\b\\s+'
+            + linkedReferenceReplacementSubject
+            + `(?:\\s+(?:instead|for\\s+${linkedReferenceReplacementIntent}`
+            + `|to\\s+\\b${anaphoricSecurityAction}\\b\\s+`
+            + `${linkedReferenceReplacementIntent}))?(?:\\s*[.!?;]|\\s*$)`,
+            'i'
+        ),
+        new RegExp(
+            linkedReferenceReplacementStart
+            + `\\b${anaphoricSecurityAction}\\b\\s+`
+            + `(?:(?:all|both|only)\\s+(?:of\\s+)?)?`
+            + `${linkedReferenceReplacementIntent}\\s+`
+            + '(?:by|in|on|through|to|via|with)\\s+'
+            + linkedReferenceReplacementSubject,
+            'i'
+        ),
+        new RegExp(
+            linkedReferenceReplacementStart
+            + `${linkedReferenceReplacementIntent}\\s+`
+            + '(?:(?:(?:can|may|must|should|will)\\s+be|are|is)\\s+'
+            + '(?:accepted|collected|handled|received|routed|sent|submitted|taken)'
+            + '|(?:belong|go)(?:es)?)\\s+'
+            + '(?:by|in|on|through|to|via|with)\\s+'
+            + linkedReferenceReplacementSubject,
+            'i'
+        ),
+    ];
+    const linkedReferenceClauses = (value) => {
+        const boundaries = hardSentenceBoundaries(value);
+        const clauses = [];
+        let start = 0;
+        for (const boundary of boundaries) {
+            clauses.push(value.slice(start, boundary + 1));
+            start = boundary + 1;
+        }
+        clauses.push(value.slice(start));
+        return clauses;
+    };
+    const explicitLinkedReferenceDestination = /^(?:this|that)\s+link$/i;
+    const routesBackToLinkedReference = value => (
+        linkedReferenceClauses(value).some(clause => (
+            linkedReferenceContinuationPatterns.some(pattern => {
+                const match = pattern.exec(clause);
+                return match?.groups?.destination
+                    && explicitLinkedReferenceDestination.test(
+                        match.groups.destination
+                    );
+            })
+        ))
     );
     const replacementRoutePrecedesLinkedRoute = (clause) => {
-        const replacement = linkedReferenceReplacementRoute.exec(clause);
+        const replacement = linkedReferenceReplacementRoutePatterns
+            .map(pattern => pattern.exec(clause))
+            .filter(Boolean)
+            .sort((left, right) => left.index - right.index)[0];
         if (!replacement) return false;
         const routeMatch = linkedReferenceContinuationPatterns
             .map(pattern => pattern.exec(clause))
@@ -888,7 +960,10 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
             boundary + 1
         );
         if (linkedReferenceNeutralRouteSkipped
-            && replacementRoutePrecedesLinkedRoute(clause)) {
+            && replacementRoutePrecedesLinkedRoute(clause)
+            && !routesBackToLinkedReference(
+                linkedReferenceRemainder.slice(linkedReferenceRemainderStart)
+            )) {
             linkedReferenceRemainderClosed = true;
             break;
         }
@@ -917,9 +992,10 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
         linkedReferenceRemainder.slice(linkedReferenceRemainderStart);
     const trailingNonVulnerabilityContext =
         linkedReferenceTrailingClause.match(NON_VULNERABILITY_CONTEXT);
-    const trailingReplacementAntecedent = linkedReferenceNeutralRouteSkipped
-        && replacementRoutePrecedesLinkedRoute(linkedReferenceTrailingClause);
-    if (!linkedReferenceRemainderClosed && !trailingReplacementAntecedent) {
+    const trailingReplacementRoute = linkedReferenceNeutralRouteSkipped
+        && replacementRoutePrecedesLinkedRoute(linkedReferenceTrailingClause)
+        && !routesBackToLinkedReference(linkedReferenceTrailingClause);
+    if (!linkedReferenceRemainderClosed && !trailingReplacementRoute) {
         if (!trailingNonVulnerabilityContext) {
             linkedReferenceApplicableRemainder += linkedReferenceTrailingClause;
         } else {

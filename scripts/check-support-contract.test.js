@@ -3018,6 +3018,16 @@ test('governs form submissions and hidden ID names while inert routes remain ina
             + 'do not involve a vulnerability. A separate private form is unavailable. '
             + 'Submit vulnerabilities through this link.',
         'This form does not accept security vulnerabilities. '
+            + `To report them, use [this link](${ISSUES_ROUTE}) `
+            + 'as a style reference. Submit reports through it only if they '
+            + 'do not involve a vulnerability. A separate private form handles '
+            + 'vulnerabilities. Submit vulnerabilities through this link.',
+        'This form does not accept security vulnerabilities. '
+            + `To report them, use [this link](${ISSUES_ROUTE}) `
+            + 'as a style reference. Submit reports through it only if they '
+            + 'do not involve a vulnerability. A separate private form handles '
+            + 'vulnerabilities. Submit vulnerabilities through that link.',
+        'This form does not accept security vulnerabilities. '
             + `To report them, use [GitHub Issues](${ISSUES_ROUTE}).`,
         'Do not submit security vulnerabilities with this form; '
             + `instead submit them via [GitHub Issues](${ISSUES_ROUTE}).`,
@@ -3145,6 +3155,22 @@ test('governs form submissions and hidden ID names while inert routes remain ina
             + '[this link](https://example.com/template) as a style reference. '
             + 'Submit reports through it only if they do not involve a vulnerability. '
             + 'A separate private form handles vulnerabilities. Submit them through it.',
+        'This form does not accept security vulnerabilities. '
+            + 'To report them, use '
+            + '[this link](https://example.com/template) as a style reference. '
+            + 'Submit reports through it only if they do not involve a vulnerability. '
+            + 'A separate private form will handle vulnerabilities. Submit them through it.',
+        'This form does not accept security vulnerabilities. '
+            + 'To report them, use '
+            + '[this link](https://example.com/template) as a style reference. '
+            + 'Submit reports through it only if they do not involve a vulnerability. '
+            + 'Use a separate private form for vulnerabilities. Submit them through it.',
+        'This form does not accept security vulnerabilities. '
+            + 'To report them, use '
+            + '[this link](https://example.com/template) as a style reference. '
+            + 'Submit reports through it only if they do not involve a vulnerability. '
+            + 'Vulnerabilities must be handled by a separate private form. '
+            + 'Submit them through it.',
         'This form does not accept security vulnerabilities. '
             + 'To report them, use '
             + '[this link](https://example.com/template) as a style reference. '
