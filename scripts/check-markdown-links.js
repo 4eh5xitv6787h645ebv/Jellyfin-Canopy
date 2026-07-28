@@ -20,9 +20,12 @@ const HTML_FORM_ACTION_CUE_SOURCE =
     + '|report(?:s|ed|ing)?|request(?:s|ed|ing)?|send|sending|sent'
     + '|share(?:s|d|ing)?|submit(?:s|ted|ting)?|suggest(?:s|ed|ing)?'
     + '|tell(?:s|ing)?|told|use(?:s|d|ing)?|visit(?:s|ed|ing)?)';
+// Single-character punctuation steps keep this prefix free of nested
+// quantifier ambiguity; a run of cue punctuation must not backtrack
+// exponentially on labels that never reach an action verb.
 const HTML_FORM_ACTION_CUE_PREFIX =
-    '(?:(?:(?:please|now|(?:you|users?)\\s+(?:can|may|should))\\s+)'
-    + '|(?:[→›»:-]+\\s*))*';
+    '(?:(?:please|now|(?:you|users?)\\s+(?:can|may|should))\\s+'
+    + '|[→›»:-]\\s*)*';
 const HTML_FORM_ACTION_CUE =
     new RegExp(`^${HTML_FORM_ACTION_CUE_PREFIX}${HTML_FORM_ACTION_CUE_SOURCE}\\b`, 'i');
 const HTML_FORM_ADJACENT_ACTION_CUE = new RegExp(
@@ -945,13 +948,38 @@ function htmlNativeAccessibleName(record, body) {
     return title;
 }
 
+// Attribute presence must be decided against the tag with quoted values
+// blanked; otherwise attribute words inside values (title="Show hidden
+// files") are misread as boolean attributes of the element.
+const HTML_ATTRIBUTE_SEARCH_CACHE = new Map();
+
+function htmlTagAttributeSearchText(tag) {
+    if (!tag.includes('"') && !tag.includes("'")) return tag;
+    let blanked = HTML_ATTRIBUTE_SEARCH_CACHE.get(tag);
+    if (blanked === undefined) {
+        if (HTML_ATTRIBUTE_SEARCH_CACHE.size >= 10_000) {
+            HTML_ATTRIBUTE_SEARCH_CACHE.clear();
+        }
+        blanked = tag.replace(/"[^"]*"|'[^']*'/g, '""');
+        HTML_ATTRIBUTE_SEARCH_CACHE.set(tag, blanked);
+    }
+    return blanked;
+}
+
+const HTML_ATTRIBUTE_PRESENCE_PATTERNS = new Map();
+
 function htmlTagHasAttribute(tag, name) {
-    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    return new RegExp(
-        `(?:^|\\s)${escaped}(?:\\s*=\\s*(?:"[^"]*"|'[^']*'|[^\\s"'=<>` + '`' + `]+))?`
-        + '(?=\\s|/?>)',
-        'i'
-    ).test(tag);
+    let pattern = HTML_ATTRIBUTE_PRESENCE_PATTERNS.get(name);
+    if (!pattern) {
+        const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        pattern = new RegExp(
+            `(?:^|\\s)${escaped}(?:\\s*=\\s*(?:"[^"]*"|'[^']*'|[^\\s"'=<>` + '`' + `]+))?`
+            + '(?=\\s|/?>)',
+            'i'
+        );
+        HTML_ATTRIBUTE_PRESENCE_PATTERNS.set(name, pattern);
+    }
+    return pattern.test(htmlTagAttributeSearchText(tag));
 }
 
 function htmlSelectEmbeddedValue(record, values, body) {
@@ -1168,7 +1196,8 @@ function htmlAssociatedLabelNodes(records, ids) {
         wrappedControls.set(candidate.labelAncestorIndex, candidate);
     }
     for (const label of records.filter(record => record.tag === 'label')) {
-        const hasExplicitFor = /\sfor(?:\s*=|\s|\/?>)/i.test(label.openingTag);
+        const hasExplicitFor = /\sfor(?:\s*=|\s|\/?>)/i
+            .test(htmlTagAttributeSearchText(label.openingTag));
         const explicitId = htmlAttributeValue(label.openingTag, 'for');
         const control = hasExplicitFor ? ids.get(explicitId) : wrappedControls.get(label.index);
         if (!control || !HTML_LABELABLE_ELEMENTS.has(control.tag)) continue;
@@ -1567,7 +1596,7 @@ const HTML_VOID_ELEMENTS = new Set([
 
 function htmlTagHasHiddenAttribute(tag) {
     return /(?:^|\s)hidden(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?(?=\s|\/?>)/i
-        .test(tag);
+        .test(htmlTagAttributeSearchText(tag));
 }
 
 function htmlTagIsHidden(tag) {
@@ -1689,6 +1718,9 @@ function updateHtmlVisibilityStack(
         acceptedOpening = true;
         const selfClosing = /\/>\s*$/.test(match[0]) || HTML_VOID_ELEMENTS.has(tag);
         if (selfClosing) continue;
+        // Malformed documents past the depth bound flatten into the current
+        // node; the stack (and every full-stack repair scan) stays bounded.
+        if (stack.length >= MAX_HTML_TREE_DEPTH) continue;
         const parent = stack.at(-1) || null;
         stack.push({
             tag,
@@ -1999,7 +2031,8 @@ function htmlOpeningFieldsetDisabledStates(content, options = {}) {
             inherited = parent.ancestorFieldsetDisabled;
         }
         states.set(match.index, inherited);
-        const selfClosing = /\/>\s*$/.test(match[0]) || HTML_VOID_ELEMENTS.has(tag);
+        const selfClosing = /\/>\s*$/.test(match[0]) || HTML_VOID_ELEMENTS.has(tag)
+            || stack.length >= MAX_HTML_TREE_DEPTH;
         if (!selfClosing) {
             const ownDisabled = tag === 'fieldset'
                 && htmlTagHasAttribute(match[0], 'disabled');
@@ -2047,7 +2080,7 @@ function htmlFormAnchorHasActionCue(anchor) {
         && !HTML_FORM_NEGATED_ACTION_CUE.test(adjacentClause);
 }
 
-function htmlWrappingLabel(control, labelRecords) {
+function htmlWrappingLabel(control, labelRecords, content, labels, options) {
     let lower = 0;
     let upper = labelRecords.length;
     while (lower < upper) {
@@ -2064,7 +2097,24 @@ function htmlWrappingLabel(control, labelRecords) {
         || htmlTagHasAttribute(candidate.openingTag, 'for')) {
         return '';
     }
-    return candidate.label;
+    // A wrapping label names one control. It is resolved once, for the
+    // first control that claims it, with that control's subtree excised so
+    // the accessible name never counts the control's own value twice.
+    if (candidate.wrappedControlStart === undefined) {
+        candidate.wrappedControlStart = control.start;
+        const controlEnd = Math.min(
+            Math.max(control.end, control.openingEnd),
+            candidate.contentEnd
+        );
+        const source = content.slice(candidate.openingEnd, control.start)
+            + content.slice(controlEnd, candidate.contentEnd);
+        candidate.wrappedLabelText = governedHtmlText(source, labels, {}, options)
+            .replace(/\s+/g, ' ')
+            .trim();
+    }
+    return candidate.wrappedControlStart === control.start
+        ? candidate.wrappedLabelText
+        : '';
 }
 
 function htmlSubmitControlLabel(
@@ -2078,7 +2128,7 @@ function htmlSubmitControlLabel(
     const ariaLabel = htmlAttributeText(control.openingTag, 'aria-label');
     const id = htmlAttributeValue(control.openingTag, 'id');
     const associated = (id && labels.get(id))
-        || htmlWrappingLabel(control, labelRecords);
+        || htmlWrappingLabel(control, labelRecords, content, labels, options);
     const title = htmlAttributeText(control.openingTag, 'title');
     if (control.tag === 'button') {
         const source = content.slice(control.openingEnd, control.contentEnd);
@@ -2130,16 +2180,7 @@ function htmlFormSubmissionLinks(
         .map(record => ({ ...record, tag: 'button' }));
     const inputs = htmlOpeningElementRecords(content, 'input', true)
         .map(record => ({ ...record, tag: 'input' }));
-    const labelRecords = htmlOpeningElementRecords(content, 'label')
-        .map(record => ({
-            ...record,
-            label: governedHtmlText(
-                content.slice(record.openingEnd, record.contentEnd),
-                labels,
-                {},
-                options
-            ).replace(/\s+/g, ' ').trim(),
-        }));
+    const labelRecords = htmlOpeningElementRecords(content, 'label');
     const fieldsetDisabledStates = htmlOpeningFieldsetDisabledStates(content, options);
     const controls = [...buttons, ...inputs]
         .sort((left, right) => left.start - right.start);

@@ -1722,3 +1722,66 @@ test('CI, release, and documentation workflows keep the shared docs gate blockin
     assert.match(client, /run: npm run check:docs/);
     assert.doesNotMatch(docs, /continue-on-error:/);
 });
+
+test('attribute words inside quoted values never change element semantics', () => {
+    const hiddenValue = extractLinks(
+        '<div title="Show hidden files"><a href="./missing.md">Open the guide</a></div>'
+    );
+    assert.equal(hiddenValue.length, 1);
+    assert.ok(!hiddenValue[0].hidden);
+
+    const disabledValue = extractRenderedHtmlLinks(
+        '<form action="./report.md">'
+        + '<button type="submit" aria-label="Fix the disabled toggle">Send</button>'
+        + '</form>',
+        1,
+        new Map()
+    );
+    assert.equal(disabledValue.length, 1);
+    assert.equal(disabledValue[0].label, 'Fix the disabled toggle Send');
+
+    const forValue = extractRenderedHtmlLinks(
+        '<form action="./report.md">'
+        + '<label title="Ask for help">Contact us<input type="submit" value="Go"></label>'
+        + '</form>',
+        1,
+        new Map()
+    );
+    assert.equal(forValue.length, 1);
+    assert.equal(forValue[0].label, 'Contact us Go');
+});
+
+test('a wrapping label contributes its text once, without the control value', () => {
+    const links = extractRenderedHtmlLinks(
+        '<form action="./report.md">'
+        + '<label>Contact us<input type="submit" value="Go"></label>'
+        + '</form>',
+        1,
+        new Map()
+    );
+    assert.equal(links.length, 1);
+    assert.equal(links[0].label, 'Contact us Go');
+});
+
+test('cue punctuation runs and deep malformed nesting stay bounded', () => {
+    const punctuationStarted = performance.now();
+    const punctuated = extractLinks(
+        `<p><a href="./x.md">${'-'.repeat(60)} guide</a></p>`
+    );
+    assert.equal(punctuated.length, 1);
+    assert.ok(
+        performance.now() - punctuationStarted < 2_000,
+        'cue-prefix matching must not backtrack exponentially'
+    );
+
+    const nestingStarted = performance.now();
+    const nested = extractLinks(
+        `${'<div>'.repeat(8_000)}<a href="./x.md">Open the guide</a>${'</span>'.repeat(8_000)}`
+    );
+    assert.equal(nested.length, 1);
+    assert.ok(!nested[0].hidden);
+    assert.ok(
+        performance.now() - nestingStarted < 10_000,
+        'visibility tracking must stay bounded on deeply nested markup'
+    );
+});
