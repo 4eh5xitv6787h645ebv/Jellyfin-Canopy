@@ -78,6 +78,9 @@ contact_links:
   - name: Security vulnerability
     url: ${SECURITY_ADVISORY_ROUTE}
     about: Report vulnerabilities privately.
+  - name: Community support
+    url: ${DISCORD_ROUTE}
+    about: Ask questions in the Jellyfin Community Discord.
 `;
 
 function validFixture() {
@@ -287,7 +290,7 @@ test('security policy and every security chooser contact stay private-only', () 
             + 'must route only to private GitHub advisories'
         ));
         assert.ok(problems.includes(
-            '.github/ISSUE_TEMPLATE/config.yml: contact_links[1] '
+            '.github/ISSUE_TEMPLATE/config.yml: contact_links[2] '
             + 'routes security or vulnerability reports outside private GitHub advisories'
         ));
     });
@@ -1386,16 +1389,16 @@ test('rejects structurally invalid chooser contact URLs', () => {
     ].join('\n');
     fixture(files, root => {
         assert.ok(auditSupportContract({ root }).problems.includes(
-            '.github/ISSUE_TEMPLATE/config.yml: contact_links[1].url '
+            '.github/ISSUE_TEMPLATE/config.yml: contact_links[2].url '
             + 'must be a valid absolute HTTPS URL'
         ));
     });
 });
 
-test('restricts the issue chooser to the governed private-security contact', () => {
+test('restricts the issue chooser to the governed contact routes', () => {
     const files = validFixture();
     files['.github/ISSUE_TEMPLATE/config.yml'] = CONFIG + [
-        '  - name: Community support',
+        '  - name: Extra support channel',
         `    url: ${ISSUES_ROUTE}`,
         '    about: Ask questions and get help.',
         '',
@@ -1403,7 +1406,30 @@ test('restricts the issue chooser to the governed private-security contact', () 
     fixture(files, root => {
         assert.ok(auditSupportContract({ root }).problems.includes(
             '.github/ISSUE_TEMPLATE/config.yml: '
-            + 'contact_links must contain only the private security-report entry'
+            + 'contact_links must contain only the private security-report'
+            + ' and Discord community-support entries'
+        ));
+    });
+});
+
+test('requires the Discord community-support chooser contact', () => {
+    const files = validFixture();
+    files['.github/ISSUE_TEMPLATE/config.yml'] = `blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: ${SECURITY_ADVISORY_ROUTE}
+    about: Report vulnerabilities privately.
+`;
+    fixture(files, root => {
+        const problems = auditSupportContract({ root }).problems;
+        assert.ok(problems.includes(
+            '.github/ISSUE_TEMPLATE/config.yml: '
+            + `must provide a Discord community-support contact link to ${DISCORD_ROUTE}`
+        ));
+        assert.ok(problems.includes(
+            '.github/ISSUE_TEMPLATE/config.yml: '
+            + 'contact_links must contain only the private security-report'
+            + ' and Discord community-support entries'
         ));
     });
 });
@@ -4687,4 +4713,78 @@ test('build, release, and docs workflows keep the support contract in the blocki
     ]) {
         assert.ok(docsWorkflow.split(watched).length >= 3, `docs workflow does not watch ${watched} on PRs and pushes`);
     }
+});
+
+test('allows third-person and existential non-route Discussions prose', () => {
+    for (const prose of [
+        'Canopy does not use GitHub Discussions.',
+        "Canopy doesn't use GitHub Discussions.",
+        'We cannot use GitHub Discussions.',
+        'There is no GitHub Discussions forum; open an issue.',
+    ]) {
+        const files = validFixture();
+        files['docs/getting-started.md'] = `${prose}\n`;
+        fixture(files, root => {
+            assert.ok(!auditSupportContract({ root }).problems.includes(
+                'docs/getting-started.md: routes users to disabled GitHub Discussions'
+            ), prose);
+        });
+    }
+});
+
+test('block boundaries keep headings out of the next clause', () => {
+    const files = validFixture();
+    files['docs/getting-started.md'] =
+        '## GitHub Discussions\n\nUse the issue tracker instead.\n';
+    fixture(files, root => {
+        assert.ok(!auditSupportContract({ root }).problems.includes(
+            'docs/getting-started.md: routes users to disabled GitHub Discussions'
+        ));
+    });
+
+    const routed = validFixture();
+    routed['docs/getting-started.md'] = 'Use GitHub Discussions for support.\n';
+    fixture(routed, root => {
+        assert.ok(auditSupportContract({ root }).problems.includes(
+            'docs/getting-started.md: routes users to disabled GitHub Discussions'
+        ));
+    });
+});
+
+test('audits uppercase markdown extensions like lowercase ones', () => {
+    const files = validFixture();
+    files['docs/EXTRA.MD'] = 'See [missing page](./definitely-not-here.md).\n';
+    fixture(files, root => {
+        assert.ok(auditSupportContract({ root }).problems.some(problem => (
+            problem.startsWith('docs/EXTRA.MD:')
+            && problem.includes('does not exist')
+        )));
+    });
+});
+
+test('negated third-person security statements are not public routing', () => {
+    const files = validFixture();
+    files['docs/getting-started.md'] =
+        '## Security\n\nCanopy never sends data via Discord.\n';
+    fixture(files, root => {
+        assert.ok(!auditSupportContract({ root }).problems.some(problem => (
+            problem.startsWith('docs/getting-started.md:')
+            && problem.includes('security or vulnerability intake prose')
+        )));
+    });
+});
+
+test('canonical repository routes match case-insensitively', () => {
+    const files = validFixture();
+    files['README.md'] = [
+        '## 🌍 Contributing',
+        '[Report bugs](https://github.com/4eh5xitv6787h645ebv/jellyfin-canopy/issues).',
+        '[Suggest features](https://github.com/4eh5xitv6787h645ebv/jellyfin-canopy/issues).',
+        '',
+    ].join('\n');
+    fixture(files, root => {
+        assert.ok(!auditSupportContract({ root }).problems.some(problem => (
+            problem.startsWith('README.md:')
+        )));
+    });
 });

@@ -139,7 +139,7 @@ const NEGATED_SECURITY_SUBJECT = new RegExp(
 const SECURITY_CONTEXT_HEADING = /\b(?:security|vulnerab\w*)\b/i;
 const PUBLIC_SECURITY_CHANNEL = /\b(?:discord|e-?mail|github\s+(?:issues?|discussions?)|issue\s+tracker|public\s+(?:channel|forum|issues?|reports?|threads?)|[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,})\b/i;
 const PUBLIC_SECURITY_EXCEPTION = /\b(?:anywhere|nowhere)\s+(?:else\s+)?(?:but|except)\b|\b(?:except|other\s+than)\b/i;
-const PUBLIC_SECURITY_NEGATION_ACTION = '(?:contact(?:ed|ing)?|disclos\\w*|email(?:ed|ing)?|file(?:d|ing)?|include(?:d|ing)?|message(?:d|ing)?|notif(?:y|ied|ying)|open(?:ed|ing)?|post(?:ed|ing)?|report(?:ed|ing)?|send|sent|submit(?:ted|ting)?|use(?:d|ing)?)';
+const PUBLIC_SECURITY_NEGATION_ACTION = '(?:contact(?:s|ed|ing)?|disclos\\w*|email(?:s|ed|ing)?|file(?:s|d|ing)?|include(?:s|d|ing)?|message(?:s|d|ing)?|notif(?:y|ies|ied|ying)|open(?:s|ed|ing)?|post(?:s|ed|ing)?|report(?:s|ed|ing)?|send(?:s|ing)?|sent|submit(?:s|ted|ting)?|use(?:s|d|ing)?)';
 const CONTEXTUAL_ACTION_LABEL = '(?:click(?:\\s+here)?|continue|details?|follow|go|here'
     + '|learn\\s+more|link|more|open(?:\\s+it\\s+here)?|read\\s+more|this|this\\s+link'
     + '|open\\s+(?:the\\s+)?(?:bug|feature(?:-request)?|intake|report|support)\\s+form'
@@ -356,6 +356,19 @@ function renderedText(tokens) {
     }).join(' ').replace(/\p{Cf}/gu, '').replace(/\s+/g, ' ').trim();
 }
 
+// The audited support surface keeps one line per block so headings and list
+// items never merge into the following block's clause during route checks.
+function renderedBlockText(tokens) {
+    return tokens.map((token) => {
+        if (token.type === 'inline') return inlineVisibleText(token.children);
+        if (token.type === 'html_block') return governedHtmlText(token.content);
+        return '';
+    })
+        .map(block => block.replace(/\p{Cf}/gu, '').replace(/\s+/g, ' ').trim())
+        .filter(Boolean)
+        .join('\n');
+}
+
 function renderedTextWithCode(tokens) {
     return tokens.map((token) => {
         if (token.type === 'inline') return inlineTaskText(token.children);
@@ -448,11 +461,11 @@ function repositoryPath(target) {
 }
 
 function isRepositoryRoute(link, suffix) {
-    const expected = `/4eh5xitv6787h645ebv/Jellyfin-Canopy${suffix}`;
+    const expected = `/4eh5xitv6787h645ebv/Jellyfin-Canopy${suffix}`.toLowerCase();
     const url = absoluteUrl(link.target);
     if (url?.protocol !== 'https:' || url.hostname.toLowerCase() !== 'github.com'
         || url.username || url.password || url.port || url.search || url.hash) return false;
-    const pathname = url.pathname.replace(/\/+$/, '');
+    const pathname = url.pathname.replace(/\/+$/, '').toLowerCase();
     return pathname === expected;
 }
 
@@ -469,7 +482,8 @@ function isExactHttpsRoute(link, route) {
         && actual.username === ''
         && actual.password === ''
         && actual.port === expected.port
-        && actual.pathname.replace(/\/+$/, '') === expected.pathname.replace(/\/+$/, '')
+        && actual.pathname.replace(/\/+$/, '').toLowerCase()
+            === expected.pathname.replace(/\/+$/, '').toLowerCase()
         && actual.search === expected.search
         && actual.hash === expected.hash;
 }
@@ -2249,7 +2263,7 @@ function renderedSupportSurface(source, file) {
         };
     }
     const tokens = parseMarkdown(source);
-    return { links: extractLinks(source), text: renderedText(tokens) };
+    return { links: extractLinks(source), text: renderedBlockText(tokens) };
 }
 
 function requirePinnedCommunityRoute(file, surface, problems) {
@@ -2323,9 +2337,13 @@ function explicitlyRejectsDiscussionsRoute(clause) {
     if (/\b(?:github\s+)?discussions?\s+(?:disabled|unavailable)\b/i.test(clause)) {
         return true;
     }
+    if (/\b(?:there\s+(?:is|are)\s+no|no)\s+(?:github\s+)?discussions?\b/i.test(clause)) {
+        return true;
+    }
     const action = '(?:ask|create|direct|go|join|open|post|route|send|start|submit|use)';
     const beforeRoute = new RegExp(
-        `\\b(?:do not|don't|never|no longer)\\s+(?:ever\\s+)?${action}\\w*\\b`
+        `\\b(?:do(?:es)? not|don't|doesn't|cannot|can't|will not|won't|never|no longer)`
+        + `\\s+(?:ever\\s+)?${action}\\w*\\b`
         + `.{0,80}\\b(?:github\\s+)?discussions?\\b`,
         'i'
     );
@@ -2570,9 +2588,6 @@ function requireChooserConfig(config, file, problems) {
         problems.push(`${file}: contact_links must be an array`);
         return;
     }
-    if (config.contact_links.length !== 1) {
-        problems.push(`${file}: contact_links must contain only the private security-report entry`);
-    }
     if (config.contact_links.length > 10) {
         problems.push(`${file}: contact_links cannot contain more than 10 entries`);
     }
@@ -2608,6 +2623,23 @@ function requireChooserConfig(config, file, problems) {
         || !/privat/i.test(String(security.about || ''))) {
         problems.push(`${file}: must provide a private security-report contact link to ${SECURITY_ADVISORY_ROUTE}`);
     }
+    const community = config.contact_links.find(contact => (
+        isMapping(contact) && contact.url === DISCORD_ROUTE
+    ));
+    if (!community || !/community|support/i.test(String(community.name || ''))
+        || !/discord/i.test(String(community.about || ''))) {
+        problems.push(`${file}: must provide a Discord community-support contact link to ${DISCORD_ROUTE}`);
+    }
+    const governedRoutes = new Set([SECURITY_ADVISORY_ROUTE, DISCORD_ROUTE]);
+    if (config.contact_links.length !== 2
+        || config.contact_links.some(contact => (
+            !isMapping(contact) || !governedRoutes.has(contact.url)
+        ))) {
+        problems.push(
+            `${file}: contact_links must contain only the private security-report`
+            + ' and Discord community-support entries'
+        );
+    }
 }
 
 function auditSupportContract(options = {}) {
@@ -2627,7 +2659,7 @@ function auditSupportContract(options = {}) {
         });
         requirePinnedCommunityRoute(file, surface, problems);
     }
-    for (const file of auditedFiles.filter(candidate => candidate.endsWith('.md'))) {
+    for (const file of auditedFiles.filter(candidate => /\.md$/i.test(candidate))) {
         problems.push(...validateMarkdownFile(file, root));
     }
     for (const [file, sections] of BUG_ROUTE_SECTIONS) {
@@ -2702,7 +2734,7 @@ function auditSupportContract(options = {}) {
             `${securityFile}: "## Reporting a Vulnerability" must use only private GitHub advisories`
         );
     }
-    for (const file of auditedFiles.filter(candidate => candidate.endsWith('.md'))) {
+    for (const file of auditedFiles.filter(candidate => /\.md$/i.test(candidate))) {
         const tokens = parseMarkdown(sources.get(file) || '');
         if (routesSecurityIntakePublicly(tokens)) {
             problems.push(
@@ -2837,7 +2869,12 @@ function auditSupportContract(options = {}) {
     requireChooserConfig(config, configFile, problems);
 
     const renderedFiles = options.checkBuiltSite ? auditBuiltSite(root, problems) : [];
-    return { files: [...auditedFiles, ...renderedFiles], problems };
+    return {
+        files: [...auditedFiles, ...renderedFiles],
+        sourceCount: auditedFiles.length,
+        renderedCount: renderedFiles.length,
+        problems,
+    };
 }
 
 function main() {
@@ -2846,7 +2883,10 @@ function main() {
         for (const problem of result.problems) console.error(problem);
         return 1;
     }
-    console.log(`Support intake contract OK: ${result.files.length} source files`);
+    console.log(
+        `Support intake contract OK: ${result.sourceCount} source files, `
+        + `${result.renderedCount} rendered pages`
+    );
     return 0;
 }
 
