@@ -861,6 +861,89 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
         + '\\s+){1,3}'
         + '(?<replacementKind>advisory|channel|destination|form|guidance|link|page'
         + '|policy|process|route|site)\\b';
+    const linkedReferencePlainReplacementSubjects = [
+        '\\b(?:(?:an?|the|this|that)\\s+)?'
+            + '(?:(?:dedicated|private|security)\\s+){1,3}'
+            + '(?<replacementKind>advisory|channel|form|guidance|link|policy|process)\\b',
+        '\\b(?:(?:an?|the|this|that)\\s+)?'
+            + '(?:another|different|other|second|separate)\\s+'
+            + '(?:(?:correct|dedicated|preferred|private|security)\\s+){0,2}'
+            + '(?<replacementKind>advisory|channel|destination|form|guidance|link'
+            + '|page|policy|process|route|site)\\b',
+    ];
+    const linkedReferencePlainReplacementStart =
+        '(?:^|[.!?;])\\s*(?:(?:instead|now|please|then)\\s*,?\\s+)*';
+    const linkedReferencePlainActiveReplacementSubjects = [
+        linkedReferencePlainReplacementSubjects[0],
+        '\\b(?:(?:an?|the|this|that)\\s+)?'
+            + '(?:another|different|other|second|separate)\\s+'
+            + '(?:(?:dedicated|private|security)\\s+){1,2}'
+            + '(?<replacementKind>advisory|channel|destination|form|guidance|link'
+            + '|page|policy|process|route|site)\\b',
+    ];
+    const linkedReferencePlainReplacementRoutePatterns = [
+        ...linkedReferencePlainReplacementSubjects.map(subject => new RegExp(
+            linkedReferencePlainReplacementStart
+            + `${subject}\\s+(?:is|remains)\\s+`
+            + '(?:(?:currently|directly|exclusively|now|only|privately|still)'
+            + '\\s+)*(?:the\\s+)?(?:destination|link|page|route|site)\\s+for\\s+'
+            + `(?:${linkedReferenceSecurityObject}`
+            + '|(?:the\\s+)?security\\s+intake)',
+            'i'
+        )),
+        ...linkedReferencePlainReplacementSubjects.map(subject => new RegExp(
+            linkedReferencePlainReplacementStart
+            + `${subject}\\s+(?:is|remains)\\s+`
+            + '(?:(?:currently|now|still)\\s+)*(?:the\\s+)?'
+            + '(?:(?:current|only|preferred|primary|recommended|selected)\\s+)?'
+            + '(?:destination|link|page|route|site)\\b',
+            'i'
+        )),
+        ...linkedReferencePlainActiveReplacementSubjects.map(subject => new RegExp(
+            linkedReferencePlainReplacementStart
+            + `${subject}\\s+(?:is|remains)\\s+`
+            + '(?:(?:currently|now|still)\\s+)*(?:active|current)\\b',
+            'i'
+        )),
+        ...linkedReferencePlainActiveReplacementSubjects.map(subject => new RegExp(
+            linkedReferencePlainReplacementStart
+            + '(?:continue|keep)\\s+'
+            + `(?:following|opening|using|visiting)\\s+${subject}`,
+            'i'
+        )),
+        ...linkedReferencePlainReplacementSubjects.map(subject => new RegExp(
+            linkedReferencePlainReplacementStart
+            + `${subject}\\s+(?:(?:continues?\\s+to\\s+`
+            + '(?:accept|collect|handle|receive|route|take)'
+            + ')|(?:keeps?\\s+'
+            + '(?:accepting|collecting|handling|receiving|routing|taking)))\\s+'
+            + `(?:${linkedReferenceSecurityObject}`
+            + '|(?:the\\s+)?security\\s+intake)',
+            'i'
+        )),
+    ];
+    const linkedReferenceAffirmativeState =
+        '(?:(?:currently|now|still)\\s+)*(?:active|correct|current)';
+    const linkedReferenceAffirmativeAnswerSource =
+        '(?:(?:absolutely|certainly|correct|definitely|indeed|of\\s+course|yes)'
+        + '(?:\\s*,\\s*(?:it|that)\\s+(?:does|is)'
+        + `(?:\\s+${linkedReferenceAffirmativeState})?)?`
+        + '|(?:it|that)\\s+(?:does|is)'
+        + `(?:\\s+${linkedReferenceAffirmativeState})?)`;
+    const linkedReferenceAffirmativeAnswer = new RegExp(
+        `^\\s*${linkedReferenceAffirmativeAnswerSource}\\s*[.!]`,
+        'i'
+    );
+    const linkedReferenceInactiveAssertionSuffix = new RegExp(
+        `^\\s*(?:\\?(?!\\s*${linkedReferenceAffirmativeAnswerSource}\\s*[.!])`
+        + '|(?:is|was)\\s+(?:(?:clearly|demonstrably|obviously)\\s+)?'
+        + '(?:false|incorrect|not\\s+true|untrue)\\b'
+        + '|(?:only\\s+)?(?:for|in)\\s+(?:(?:an?|the)\\s+)?'
+        + '(?:archived|historical|obsolete|outdated|previous)\\s+'
+        + '(?:documentation|guidance|policy|record)\\b'
+        + '|in\\s+(?:an?\\s+|the\\s+)?future\\b)',
+        'i'
+    );
     const linkedReferenceReplacementIntent =
         `(?:${linkedReferenceSecurityObject}|(?:the\\s+)?security\\s+intake)`;
     const linkedReferenceReplacementStart = '^\\s*'
@@ -917,12 +1000,38 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
             'i'
         ),
     ];
-    const firstReplacementRoute = clause => (
-        linkedReferenceReplacementRoutePatterns
+    const firstReplacementRoute = (
+        clause,
+        restatableReplacementKinds = new Set()
+    ) => (
+        [
+            ...linkedReferenceReplacementRoutePatterns
             .map(pattern => pattern.exec(clause))
-            .filter(Boolean)
+            .filter(Boolean),
+            ...linkedReferencePlainReplacementRoutePatterns
+                .map((pattern) => {
+                    const match = pattern.exec(clause);
+                    if (match) match.plainReplacementRoute = true;
+                    return match;
+                })
+                .filter(match => (
+                    match
+                    && restatableReplacementKinds.has(
+                        linkedReferenceRouteKind(match.groups.replacementKind)
+                    )
+                )),
+        ]
             .filter(match => !NON_VULNERABILITY_CONTEXT.test(
                 clause.slice(match.index)
+            ))
+            .filter(match => !linkedReferenceInactiveAssertionSuffix.test(
+                clause.slice(match.index + match[0].length)
+            ))
+            .filter(match => (
+                !match.plainReplacementRoute
+                || !isLinkedReferenceNonSecurityReselection(
+                    clause.slice(match.index + match[0].length)
+                )
             ))
             .sort((left, right) => left.index - right.index)[0]
     );
@@ -947,6 +1056,40 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
         /\b(?:(?:(?:do not|don't|never)\s+(?:follow|open|use|visit)|stop\s+(?:following|opening|using|visiting))\s+(?:it|that)|(?:it|the\s+(?:advisory|channel|destination|form|guidance|link|page|policy|process|route|site))\s+(?:(?:is|was)\s+|became\s+|becomes?\s+)(?:(?:currently|now)\s+)*(?:closed|disabled|invalid|unavailable|withdrawn|not\s+(?:available|in\s+use|used)))\b/i;
     const linkedReferenceCompetingAntecedent =
         /\b(?:(?:an?|the|this|that)\s+)?(?:another|different|new|other|public|second)\s+(?:(?:ordinary|private|regular|security)\s+){0,2}(?:advisory|channel|destination|form|guidance|issue\s+(?:form|page|route|tracker)|link|page|policy|process|route|site|tracker)\b/i;
+    const linkedReferenceAuditedRouteMention = new RegExp(
+        `\\b(?:(?:this|that)\\s+link|${linkedRouteLabel}`
+        + `|${linkedCanonicalRouteLabel}`
+        + '|(?:(?:the|this|that)\\s+)?(?:above\\s+link|link\\s+above))\\b',
+        'i'
+    );
+    const linkedReferenceAuditedRouteRebindingMention = new RegExp(
+        `(?:\\b(?:follow|go\\s+to|open|return\\s+to|use|visit)\\s+`
+        + `(?:${linkedReferenceAuditedRouteMention.source})`
+        + `|(?:${linkedReferenceAuditedRouteMention.source})\\s+`
+        + '(?:is|remains)\\s+'
+        + '(?:(?:currently|now|still)\\s+)*(?:active|available|current)\\b'
+        + '|(?:this|that)\\s+link\\s+does(?=\\s*[.!?;]|\\s*$))',
+        'i'
+    );
+    const linkedReferenceAuditedSecurityRouteAssertionSource =
+        `(?:${linkedReferenceAuditedRouteMention.source})`
+        + '\\s+(?:(?:(?:accepts?|collects?|handles?|receives?|routes?|takes?)'
+        + '|does\\s+(?:accept|collect|handle|receive|route|take))\\s+'
+        + `(?:${linkedReferenceSecurityObject}|(?:the\\s+)?security\\s+intake)`
+        + '(?:\\s+(?:concerns?|issues?|reports?|submissions?))?'
+        + '|(?:is|remains)\\s+'
+        + '(?:(?:currently|now|still)\\s+)*(?:(?:the\\s+)?'
+        + '(?:destination|link|page|route|site)\\s+for|(?:active|current)\\s+for)\\s+'
+        + `(?:${linkedReferenceSecurityObject}|(?:the\\s+)?security\\s+intake)`
+        + '(?:\\s+(?:concerns?|issues?|reports?|submissions?))?)';
+    const linkedReferenceAuditedSecurityRouteAssertion = new RegExp(
+        linkedReferenceAuditedSecurityRouteAssertionSource,
+        'i'
+    );
+    const linkedReferenceAuditedSecurityRouteAssertions = new RegExp(
+        linkedReferenceAuditedSecurityRouteAssertionSource,
+        'gi'
+    );
     const linkedReferenceReselectedRoute = new RegExp(
         '\\b(?:(?<explicitLinkedReference>'
         + '(?:(?:the|this|that)\\s+)?'
@@ -965,6 +1108,7 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
         + '(?:(?:currently|now|still)\\s+)*'
         + '(?:(?:chosen|designated|selected)\\s+as\\s+)?'
         + '(?:(?:an?|our|the)\\s+)?'
+        + '(?:(?:new|newly)\\s+)?'
         + '(?:active|alternate|alternative|approved|backup|current|default'
         + '|emergency|exclusive|fallback|official|preferred|primary'
         + '|recommended|selected)\\s+'
@@ -1039,49 +1183,85 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
         + '|ever|letting|necessarily|now|plan(?:ning)?|propos(?:e|ed|ing)'
         + '|really|still|to)\\s+){0,5}$'
         + '|\\b(?:it|that)\\s+is\\s+(?:(?:clearly|obviously)\\s+)?'
-        + 'false\\s+that\\s*$',
+        + '(?:false|not\\s+true)\\s+that\\s*$'
+        + '|\\b(?:(?:have|has)\\s+not\\s+'
+        + '(?:(?:actually|currently|definitively|finally|yet)\\s+){0,3}'
+        + '(?:decided|determined|established)\\s+whether'
+        + '|(?:is|remains)\\s+(?:unclear|undecided)\\s+(?:that|whether)'
+        + '|(?:do(?:es)?\\s+not|don\'t|never)\\s+'
+        + '(?:assume|claim)\\s+that'
+        + '|(?:only\\s+)?(?:ask|asking|question(?:ed|ing)?)\\s+whether'
+        + '|(?:nobody|no\\s+one)\\s+(?:has\\s+)?'
+        + '(?:claimed|proposed|said)\\s+that'
+        + '|reject(?:ed|s|ing)?\\s+(?:the\\s+)?claim\\s+that'
+        + '|there\\s+(?:is|was)\\s+no\\s+(?:(?:clear|credible)\\s+)?'
+        + 'evidence\\s+that'
+        + '|if\\b[^.!?;]{0,100},'
+        + '|what\\s+if|suppose|consider\\s+whether|wonder\\s+whether)\\s*$',
         'i'
     );
-    const linkedReferenceInactiveSelectionSuffix =
-        /^\s+(?:is|was)\s+(?:(?:clearly|demonstrably|obviously)\s+)?(?:false|incorrect|not\s+true|untrue)\b/i;
     const firstLinkedReferenceDirectReselection = clause => (
         linkedReferenceDirectReselectionPatterns
             .map((pattern, directPatternIndex) => {
                 const match = pattern.exec(clause);
-                if (match) match.directPatternIndex = directPatternIndex;
+                if (!match) return null;
+                match.directPatternIndex = directPatternIndex;
+                const prefix = clause.slice(0, match.index);
+                const suffix = clause.slice(match.index + match[0].length);
+                match.inactiveDirectReselection =
+                    linkedReferenceHistoricalSelectionPrefix.test(prefix)
+                    || linkedReferenceDirectReselectionExcludedPrefix.test(prefix)
+                    || linkedReferenceInactiveAssertionSuffix.test(suffix);
                 return match;
             })
             .filter(Boolean)
-            .filter((match) => {
-                const prefix = clause.slice(0, match.index);
-                const suffix = clause.slice(match.index + match[0].length);
-                return !linkedReferenceHistoricalSelectionPrefix.test(prefix)
-                    && !linkedReferenceDirectReselectionExcludedPrefix.test(prefix)
-                    && !linkedReferenceInactiveSelectionSuffix.test(suffix);
-            })
             .sort((left, right) => left.index - right.index)[0]
+    );
+    const hasActiveLinkedReferenceDirectReselection = clause => (
+        linkedReferenceDirectReselectionPatterns.some((pattern) => {
+            const match = pattern.exec(clause);
+            if (!match) return false;
+            const prefix = clause.slice(0, match.index);
+            const suffix = clause.slice(match.index + match[0].length);
+            return !linkedReferenceHistoricalSelectionPrefix.test(prefix)
+                && !linkedReferenceDirectReselectionExcludedPrefix.test(prefix)
+                && !linkedReferenceInactiveAssertionSuffix.test(suffix)
+                && !isLinkedReferenceNonSecurityReselection(prefix)
+                && !isLinkedReferenceNonSecurityReselection(suffix);
+        })
     );
     const directReselectionCompetesWithReplacement = (replacement, clause) => {
         const directReselection = firstLinkedReferenceDirectReselection(clause);
-        if (!directReselection || directReselection.directPatternIndex !== 0) {
+        if (!directReselection) return null;
+        const replacementKind = linkedReferenceRouteKind(
+            replacement?.groups?.replacementKind
+        );
+        if (directReselection.inactiveDirectReselection) {
+            if (hasActiveLinkedReferenceDirectReselection(clause)) {
+                linkedReferenceRestatableReplacementKinds.delete(replacementKind);
+            } else {
+                linkedReferenceRestatableReplacementKinds.add(replacementKind);
+            }
             return directReselection;
         }
-        const replacementKind = String(
-            replacement?.groups?.replacementKind || ''
-        ).toLowerCase();
+        if (directReselection.directPatternIndex !== 0) {
+            return directReselection;
+        }
         const ownsAddedLinkAlias = replacementKind !== 'link'
             && replacement?.replacementAliasKinds?.has('link');
-        return ownsAddedLinkAlias
+        const competingReselection = ownsAddedLinkAlias
             && /\b(?:this|that)\s+link\b/i.test(directReselection[0])
             ? null
             : directReselection;
+        return competingReselection;
     };
     const linkedReferenceNonSecurityRouteObject =
         '(?:(?:all|only)\\s+)?'
         + '(?:(?:(?:non-security|ordinary|public|regular)\\s+)+'
         + '(?:issues?|reports?|requests?|submissions?)'
         + '|(?:(?:ordinary|public|regular)\\s+)*'
-        + '(?:bug\\s+reports?|bugs?|defects?|feature\\s+requests?|features?|ideas?'
+        + '(?:bug\\s+reports?|bugs?|defects?|docs?|documentation'
+        + '(?:\\s+(?:changes?|updates?))?|feature\\s+requests?|features?|ideas?'
         + '|improvements?|issue\\s+reports?|questions?|support))'
         + '(?:\\s+only)?';
     const linkedReferenceNonSecurityRouteObjects =
@@ -1215,7 +1395,12 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
     };
     const linkedReferenceHistoricalSelectionSuffix =
         /^\s*(?:(?:back\s+)?in|during)\s+(?:19|20)\d{2}\b/i;
+    const linkedReferenceRestatableReplacementKinds = new Set();
     const reselectedRouteCompetesWithReplacement = (replacement, clause) => {
+        let restatableReselection = null;
+        const replacementKind = linkedReferenceRouteKind(
+            replacement?.groups?.replacementKind
+        );
         for (const reselectedRoute of clause.matchAll(linkedReferenceReselectedRoute)) {
             const prefix = clause.slice(0, reselectedRoute.index);
             const suffix = clause.slice(
@@ -1237,29 +1422,111 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
                 linkedReferenceHistoricalSelectionPrefix.test(prefix);
             const inactiveSelection = historicalSelection
                 || linkedReferenceDirectReselectionExcludedPrefix.test(prefix)
-                || linkedReferenceInactiveSelectionSuffix.test(suffix);
-            if (privateSecurityContrast || inactiveSelection) {
+                || linkedReferenceInactiveAssertionSuffix.test(suffix);
+            if (privateSecurityContrast) {
                 continue;
             }
-            if (reselectedRoute.groups.explicitLinkedReference
+            if (inactiveSelection) {
+                restatableReselection ||= reselectedRoute;
+                continue;
+            }
+            const nonSecurityReselection =
+                isLinkedReferenceNonSecurityReselection(leadingQualifier)
+                || isLinkedReferenceNonSecurityReselection(suffix);
+            const competesWithReplacement =
+                reselectedRoute.groups.explicitLinkedReference
                 || reselectedRoute.groups.namedLinkedReference
-                || isLinkedReferenceNonSecurityReselection(leadingQualifier)
-                || isLinkedReferenceNonSecurityReselection(suffix)
+                || nonSecurityReselection
                 || !replacement.replacementAliasKinds?.has(
                     linkedReferenceRouteKind(reselectedRoute.groups.destinationKind)
-                )) {
-                return reselectedRoute;
+                );
+            if (!competesWithReplacement) continue;
+            if (nonSecurityReselection) {
+                restatableReselection ||= reselectedRoute;
+                continue;
+            }
+            linkedReferenceRestatableReplacementKinds.delete(replacementKind);
+            return reselectedRoute;
+        }
+        if (restatableReselection) {
+            linkedReferenceRestatableReplacementKinds.add(replacementKind);
+        }
+        return restatableReselection;
+    };
+    const firstLinkedReferenceAuditedSecurityRouteAssertion = (clause) => {
+        for (const assertion of clause.matchAll(
+            linkedReferenceAuditedSecurityRouteAssertions
+        )) {
+            const prefix = clause.slice(0, assertion.index);
+            const suffix = clause.slice(assertion.index + assertion[0].length);
+            if (!linkedReferenceDirectReselectionExcludedPrefix.test(prefix)
+                && !linkedReferenceInactiveAssertionSuffix.test(suffix)) {
+                return assertion;
             }
         }
         return null;
     };
     const firstReplacementRouteStateEnd = (replacement, clause) => {
+        const auditedRouteRebindingMention =
+            linkedReferenceAuditedRouteRebindingMention.exec(clause);
+        const rawAuditedSecurityRouteAssertion =
+            linkedReferenceAuditedSecurityRouteAssertion.exec(clause);
+        const auditedSecurityRouteAssertion =
+            firstLinkedReferenceAuditedSecurityRouteAssertion(clause);
+        const auditedRouteMentionSuffix = auditedRouteRebindingMention
+            ? clause.slice(
+                auditedRouteRebindingMention.index
+                + auditedRouteRebindingMention[0].length
+            )
+            : '';
+        const auditedRouteMentionIsNonSecurity = Boolean(
+            auditedRouteRebindingMention
+            && isLinkedReferenceNonSecurityReselection(
+                auditedRouteMentionSuffix
+            )
+        );
+        const auditedContrastStart = auditedRouteMentionSuffix.search(
+            /[,;:–—-]/u
+        );
+        const auditedMentionHasPrivateSecurityContrast = Boolean(
+            auditedContrastStart >= 0
+            && isLinkedReferencePrivateSecurityContrast(
+                auditedRouteMentionSuffix.slice(auditedContrastStart)
+            )
+        );
+        const replacementOwnsAuditedRouteMention = Boolean(
+            auditedRouteRebindingMention
+            && /(?:this|that)\s+link/i.test(auditedRouteRebindingMention[0])
+            && replacement.replacementAliasKinds?.has('link')
+        );
+        const auditedRouteMentionKeepsReplacement = Boolean(
+            replacementOwnsAuditedRouteMention
+            || auditedMentionHasPrivateSecurityContrast
+            || rawAuditedSecurityRouteAssertion
+                && !auditedSecurityRouteAssertion
+        );
+        const auditedRouteStateEnd = auditedRouteMentionKeepsReplacement
+            ? null
+            : auditedSecurityRouteAssertion || auditedRouteRebindingMention;
+        const reselectedRoute =
+            reselectedRouteCompetesWithReplacement(replacement, clause);
+        const directReselection =
+            directReselectionCompetesWithReplacement(replacement, clause);
         const matches = [
             linkedReferenceReplacementRevoked.exec(clause),
             linkedReferenceCompetingAntecedent.exec(clause),
-            reselectedRouteCompetesWithReplacement(replacement, clause),
-            directReselectionCompetesWithReplacement(replacement, clause),
+            reselectedRoute,
+            directReselection,
+            auditedRouteStateEnd,
         ].filter(Boolean).sort((left, right) => left.index - right.index);
+        if (matches[0] === auditedRouteRebindingMention
+            && auditedRouteMentionIsNonSecurity) {
+            linkedReferenceRestatableReplacementKinds.add(
+                linkedReferenceRouteKind(
+                    replacement?.groups?.replacementKind
+                )
+            );
+        }
         return matches[0];
     };
     const clauseAfterReplacementRouteStateEnd = (replacement, clause) => {
@@ -1299,7 +1566,13 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
         };
     };
     const linkedReferenceRemainderBoundaries =
-        hardSentenceBoundaries(linkedReferenceRemainder);
+        hardSentenceBoundaries(linkedReferenceRemainder)
+            .filter(boundary => (
+                linkedReferenceRemainder[boundary] !== '?'
+                || !linkedReferenceAffirmativeAnswer.test(
+                    linkedReferenceRemainder.slice(boundary + 1)
+                )
+            ));
     if (linkedReferenceRemainder.length > 0
         && linkedReferenceRemainderBoundaries.at(-1)
             !== linkedReferenceRemainder.length - 1) {
@@ -1309,6 +1582,14 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
     let linkedReferenceRemainderClosed = false;
     let linkedReferenceNeutralRouteSkipped = false;
     let linkedReferenceReplacementRoute = null;
+    const rememberLinkedReferenceReplacement = (replacement, clause) => {
+        rememberLinkedReferenceReplacementAliases(replacement, clause);
+        if (replacement.plainReplacementRoute) {
+            linkedReferenceRestatableReplacementKinds.delete(
+                linkedReferenceRouteKind(replacement.groups.replacementKind)
+            );
+        }
+    };
     let linkedReferenceApplicableRemainder = '';
     linkedReferenceClauseLoop:
     for (const boundary of linkedReferenceRemainderBoundaries) {
@@ -1316,6 +1597,10 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
             linkedReferenceRemainderStart,
             boundary + 1
         );
+        if (firstLinkedReferenceAuditedSecurityRouteAssertion(clause)
+            || hasActiveLinkedReferenceDirectReselection(clause)) {
+            linkedReferenceRestatableReplacementKinds.clear();
+        }
         if (linkedReferenceReplacementRoute) {
             addLinkedReferenceReplacementAliases(
                 linkedReferenceReplacementRoute,
@@ -1341,9 +1626,12 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
             if (route) {
                 linkedReferenceReplacementRoute = null;
             } else {
-                const successorReplacementRoute = firstReplacementRoute(clause);
+                const successorReplacementRoute = firstReplacementRoute(
+                    clause,
+                    linkedReferenceRestatableReplacementKinds
+                );
                 if (successorReplacementRoute) {
-                    rememberLinkedReferenceReplacementAliases(
+                    rememberLinkedReferenceReplacement(
                         successorReplacementRoute,
                         clause
                     );
@@ -1376,10 +1664,13 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
             }
         }
         const replacementRoute = linkedReferenceNeutralRouteSkipped
-            ? firstReplacementRoute(clause)
+            ? firstReplacementRoute(
+                clause,
+                linkedReferenceRestatableReplacementKinds
+            )
             : null;
         if (replacementRoute) {
-            rememberLinkedReferenceReplacementAliases(replacementRoute, clause);
+            rememberLinkedReferenceReplacement(replacementRoute, clause);
             const replacementRouteEnd =
                 replacementRoute.index + replacementRoute[0].length;
             const resumedClause = clauseAfterReplacementRouteStateEnd(
@@ -1418,6 +1709,13 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
     }
     const linkedReferenceTrailingClause =
         linkedReferenceRemainder.slice(linkedReferenceRemainderStart);
+    if (firstLinkedReferenceAuditedSecurityRouteAssertion(
+        linkedReferenceTrailingClause
+    ) || hasActiveLinkedReferenceDirectReselection(
+        linkedReferenceTrailingClause
+    )) {
+        linkedReferenceRestatableReplacementKinds.clear();
+    }
     const trailingNonVulnerabilityContext =
         linkedReferenceTrailingClause.match(NON_VULNERABILITY_CONTEXT);
     let skipLinkedReferenceTrailingClause = false;
@@ -1429,7 +1727,10 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
     }
     if (!skipLinkedReferenceTrailingClause && linkedReferenceNeutralRouteSkipped) {
         skipLinkedReferenceTrailingClause =
-            Boolean(firstReplacementRoute(linkedReferenceTrailingClause));
+            Boolean(firstReplacementRoute(
+                linkedReferenceTrailingClause,
+                linkedReferenceRestatableReplacementKinds
+            ));
     }
     if (!linkedReferenceRemainderClosed && !skipLinkedReferenceTrailingClause) {
         if (!trailingNonVulnerabilityContext) {

@@ -3042,6 +3042,168 @@ test('governs form submissions and hidden ID names while inert routes remain ina
             + `To report them, use [this link](${ISSUES_ROUTE}) `
             + 'as a style reference. Submit reports through it only if they '
             + 'do not involve a vulnerability. A separate private form handles '
+            + 'vulnerabilities. This link is now the new preferred route. '
+            + 'Submit vulnerabilities through it.',
+        'This form does not accept security vulnerabilities. '
+            + `To report them, use [this link](${ISSUES_ROUTE}) `
+            + 'as a style reference. Submit reports through it only if they '
+            + 'do not involve a vulnerability. A separate private form handles '
+            + 'vulnerabilities. This link is now the newly preferred route. '
+            + 'Submit vulnerabilities through it.',
+        'This form does not accept security vulnerabilities. '
+            + `To report them, use [this link](${ISSUES_ROUTE}) `
+            + 'as a style reference. Submit reports through it only if they '
+            + 'do not involve a vulnerability. A separate private form handles '
+            + 'vulnerabilities. The maintainers do agree that this link is now '
+            + 'the preferred route. Submit vulnerabilities through it.',
+        'This form does not accept security vulnerabilities. '
+            + `To report them, use [this link](${ISSUES_ROUTE}) `
+            + 'as a style reference. Submit reports through it only if they '
+            + 'do not involve a vulnerability. A separate private form handles '
+            + 'vulnerabilities. We can now say that this link is the preferred '
+            + 'route. Submit vulnerabilities through it.',
+        'This form does not accept security vulnerabilities. '
+            + `To report them, use [this link](${ISSUES_ROUTE}) `
+            + 'as a style reference. Submit reports through it only if they '
+            + 'do not involve a vulnerability. A separate private form handles '
+            + 'vulnerabilities. Only now can we say that this link is the preferred '
+            + 'route for vulnerability reports. The private form remains active. '
+            + 'Submit vulnerabilities through it.',
+        'This form does not accept security vulnerabilities. '
+            + `To report them, use [this link](${ISSUES_ROUTE}) `
+            + 'as a style reference. Submit reports through it only if they '
+            + 'do not involve a vulnerability. A separate private form handles '
+            + 'vulnerabilities. What if this link is the preferred route? '
+            + 'Submit vulnerabilities through it.',
+        'This form does not accept security vulnerabilities. '
+            + `To report them, use [this link](${ISSUES_ROUTE}) `
+            + 'as a style reference. Submit reports through it only if they '
+            + 'do not involve a vulnerability. A separate private form handles '
+            + 'vulnerabilities. What if maintainers select this link as the '
+            + 'preferred route? Submit vulnerabilities through it.',
+        'This form does not accept security vulnerabilities. '
+            + `To report them, use [this link](${ISSUES_ROUTE}) `
+            + 'as a style reference. Submit reports through it only if they '
+            + 'do not involve a vulnerability. A separate private form handles '
+            + 'vulnerabilities. This link is now the preferred route for regular '
+            + 'bug reports. The private form remains the route for vulnerabilities? '
+            + 'No, this link does. Submit vulnerabilities through it.',
+        'This form does not accept security vulnerabilities. '
+            + `To report them, use [this link](${ISSUES_ROUTE}) `
+            + 'as a style reference. Submit reports through it only if they '
+            + 'do not involve a vulnerability. A separate private form handles '
+            + 'vulnerabilities. This link is the preferred route for regular bugs. '
+            + 'The private form remains the route for vulnerabilities. This link '
+            + 'accepts vulnerability reports. Submit them through it.',
+        'This form does not accept security vulnerabilities. '
+            + `To report them, use [this link](${ISSUES_ROUTE}) `
+            + 'as a style reference. Submit reports through it only if they '
+            + 'do not involve a vulnerability. A separate private form handles '
+            + 'vulnerabilities. This link is the preferred route for regular bugs. '
+            + 'The private form remains current. Return to this link. Submit '
+            + 'vulnerabilities through it.',
+        'This form does not accept security vulnerabilities. '
+            + `To report them, use [this link](${ISSUES_ROUTE}) `
+            + 'as a style reference. Submit reports through it only if they '
+            + 'do not involve a vulnerability. A separate private form handles '
+            + 'vulnerabilities. This link is the preferred route for regular bugs. '
+            + 'A private form remains current for feature requests. Submit '
+            + 'vulnerabilities through it.',
+        'This form does not accept security vulnerabilities. '
+            + `To report them, use [this link](${ISSUES_ROUTE}) `
+            + 'as a style reference. Submit reports through it only if they '
+            + 'do not involve a vulnerability. A separate private form handles '
+            + 'vulnerabilities. This link is the preferred route for regular bugs. '
+            + 'A private form is the preferred route for documentation updates. '
+            + 'Submit vulnerabilities through it.',
+        'This form does not accept security vulnerabilities. '
+            + `To report them, use [this link](${ISSUES_ROUTE}) `
+            + 'as a style reference. Submit reports through it only if they '
+            + 'do not involve a vulnerability. A separate private form handles '
+            + 'vulnerabilities. Do not claim that this link is selected as the '
+            + 'preferred route, but maintainers now select this link as the '
+            + 'preferred route. The private form remains current. Submit '
+            + 'vulnerabilities through it.',
+        'This form does not accept security vulnerabilities. '
+            + `To report them, use [this link](${ISSUES_ROUTE}) `
+            + 'as a style reference. Submit reports through it only if they '
+            + 'do not involve a vulnerability. A separate private form handles '
+            + 'vulnerabilities. This link is the preferred route for regular bugs. '
+            + 'This link accepts vulnerability reports. The private form remains '
+            + 'current. Submit vulnerabilities through it.',
+        'This form does not accept security vulnerabilities. '
+            + `To report them, use [this link](${ISSUES_ROUTE}) `
+            + 'as a style reference. Submit reports through it only if they '
+            + 'do not involve a vulnerability. A separate private form handles '
+            + 'vulnerabilities. The claim that this link accepts vulnerability '
+            + 'reports is false, but this link accepts vulnerability reports. '
+            + 'The private form remains current. Submit vulnerabilities through it.',
+        'This form does not accept security vulnerabilities. '
+            + `To report them, use [this link](${ISSUES_ROUTE}) `
+            + 'as a style reference. Submit reports through it only if they '
+            + 'do not involve a vulnerability. A separate private form handles '
+            + 'vulnerabilities. This link does handle vulnerability reports. '
+            + 'The private form remains current. Submit vulnerabilities through it.',
+        'This form does not accept security vulnerabilities. '
+            + `To report them, use [this link](${ISSUES_ROUTE}) `
+            + 'as a style reference. Submit reports through it only if they '
+            + 'do not involve a vulnerability. The security link remains the '
+            + 'route for vulnerabilities. Submit vulnerabilities through it.',
+        'This form does not accept security vulnerabilities. '
+            + `To report them, use [this link](${ISSUES_ROUTE}) `
+            + 'as a style reference. Submit reports through it only if they '
+            + 'do not involve a vulnerability. This preferred link remains the '
+            + 'route for vulnerabilities. Submit vulnerabilities through it.',
+        'This form does not accept security vulnerabilities. '
+            + `To report them, use [this link](${ISSUES_ROUTE}) `
+            + 'as a style reference. Submit reports through it only if they '
+            + 'do not involve a vulnerability. This link is the private form. '
+            + 'The private form remains the route for vulnerabilities. '
+            + 'Submit vulnerabilities through it.',
+        'This form does not accept security vulnerabilities. '
+            + `To report them, use [this link](${ISSUES_ROUTE}) `
+            + 'as a style reference. Submit reports through it only if they '
+            + 'do not involve a vulnerability. We call this link the private form. '
+            + 'The private form remains the route for vulnerabilities. '
+            + 'Submit vulnerabilities through it.',
+        'This form does not accept security vulnerabilities. '
+            + `To report them, use [this link](${ISSUES_ROUTE}) `
+            + 'as a style reference. Submit reports through it only if they '
+            + 'do not involve a vulnerability. The link above is the private form. '
+            + 'The private form remains the route for vulnerabilities. '
+            + 'Submit vulnerabilities through it.',
+        'This form does not accept security vulnerabilities. '
+            + `To report them, use [this link](${ISSUES_ROUTE}) `
+            + 'as a style reference. Submit reports through it only if they '
+            + 'do not involve a vulnerability. A separate private form handles '
+            + 'vulnerabilities. This link is now the preferred route. This link is '
+            + 'now the private form. The private form remains the route for '
+            + 'vulnerabilities. Submit vulnerabilities through it.',
+        'This form does not accept security vulnerabilities. '
+            + `To report them, use [this link](${ISSUES_ROUTE}) `
+            + 'as a style reference. Submit reports through it only if they '
+            + 'do not involve a vulnerability. A separate private form handles '
+            + 'vulnerabilities. This link is now the preferred route. This link '
+            + 'serves as the private form. The private form remains the route for '
+            + 'vulnerabilities. Submit vulnerabilities through it.',
+        'This form does not accept security vulnerabilities. '
+            + `To report them, use [this link](${ISSUES_ROUTE}) `
+            + 'as a style reference. Submit reports through it only if they '
+            + 'do not involve a vulnerability. A separate private form handles '
+            + 'vulnerabilities. This link is now the preferred route. The private '
+            + 'form is this link. The private form remains the route for '
+            + 'vulnerabilities. Submit vulnerabilities through it.',
+        'This form does not accept security vulnerabilities. '
+            + `To report them, use [this link](${ISSUES_ROUTE}) `
+            + 'as a style reference. Submit reports through it only if they '
+            + 'do not involve a vulnerability. A separate private form handles '
+            + 'vulnerabilities. We have not decided whether to retire the private '
+            + 'form, but maintainers now state that this link is the preferred route. '
+            + 'Submit vulnerabilities through it.',
+        'This form does not accept security vulnerabilities. '
+            + `To report them, use [this link](${ISSUES_ROUTE}) `
+            + 'as a style reference. Submit reports through it only if they '
+            + 'do not involve a vulnerability. A separate private form handles '
             + 'vulnerabilities. This link is the fallback route. Submit '
             + 'vulnerabilities through it if the private form is unavailable.',
         'This form does not accept security vulnerabilities. '
@@ -3405,6 +3567,13 @@ test('governs form submissions and hidden ID names while inert routes remain ina
             + '[this link](https://example.com/template) as a style reference. '
             + 'Submit reports through it only if they do not involve a vulnerability. '
             + 'A separate private form handles vulnerabilities. This link is now '
+            + 'the preferred route for regular bug reports. The private form remains '
+            + 'the route for vulnerabilities. Submit vulnerabilities through it.',
+        'This form does not accept security vulnerabilities. '
+            + 'To report them, use '
+            + '[this link](https://example.com/template) as a style reference. '
+            + 'Submit reports through it only if they do not involve a vulnerability. '
+            + 'A separate private form handles vulnerabilities. This link is now '
             + 'the preferred route, but only for regular bug reports. The private form '
             + 'remains the preferred route for vulnerabilities. Submit vulnerabilities '
             + 'through it.',
@@ -3636,6 +3805,135 @@ test('governs form submissions and hidden ID names while inert routes remain ina
             + 'A separate private form handles vulnerabilities. The claim that this link '
             + 'is now the preferred route is false. The private form remains current. '
             + 'Submit vulnerabilities through it.',
+        'This form does not accept security vulnerabilities. '
+            + 'To report them, use '
+            + '[this link](https://example.com/template) as a style reference. '
+            + 'Submit reports through it only if they do not involve a vulnerability. '
+            + 'A separate private form handles vulnerabilities. It is not true that '
+            + 'this link is the new preferred route. The private form remains the route '
+            + 'for vulnerabilities. Submit vulnerabilities through it.',
+        'This form does not accept security vulnerabilities. '
+            + 'To report them, use '
+            + '[this link](https://example.com/template) as a style reference. '
+            + 'Submit reports through it only if they do not involve a vulnerability. '
+            + 'A separate private form handles vulnerabilities. We have not decided '
+            + 'whether this link is the newly preferred route. The private form remains '
+            + 'the route for vulnerabilities. Submit vulnerabilities through it.',
+        'This form does not accept security vulnerabilities. '
+            + 'To report them, use '
+            + '[this link](https://example.com/template) as a style reference. '
+            + 'Submit reports through it only if they do not involve a vulnerability. '
+            + 'A separate private form handles vulnerabilities. We have not yet decided '
+            + 'whether this link is the newly preferred route. The private form remains '
+            + 'the route for vulnerabilities. Submit vulnerabilities through it.',
+        'This form does not accept security vulnerabilities. '
+            + 'To report them, use '
+            + '[this link](https://example.com/template) as a style reference. '
+            + 'Submit reports through it only if they do not involve a vulnerability. '
+            + 'A separate private form handles vulnerabilities. What if this link is '
+            + 'the new preferred route? That is only a hypothetical; the private form '
+            + 'remains active. Submit vulnerabilities through it.',
+        'This form does not accept security vulnerabilities. '
+            + 'To report them, use '
+            + '[this link](https://example.com/template) as a style reference. '
+            + 'Submit reports through it only if they do not involve a vulnerability. '
+            + 'A separate private form handles vulnerabilities. Can the maintainers '
+            + 'agree that this link is the preferred route? That is only a question; '
+            + 'the private form remains active. Submit vulnerabilities through it.',
+        'This form does not accept security vulnerabilities. '
+            + 'To report them, use '
+            + '[this link](https://example.com/template) as a style reference. '
+            + 'Submit reports through it only if they do not involve a vulnerability. '
+            + 'A separate private form handles vulnerabilities. What if maintainers '
+            + 'select this link as the preferred route? The private form remains active. '
+            + 'Submit vulnerabilities through it.',
+        'This form does not accept security vulnerabilities. '
+            + 'To report them, use '
+            + '[this link](https://example.com/template) as a style reference. '
+            + 'Submit reports through it only if they do not involve a vulnerability. '
+            + 'A separate private form handles vulnerabilities. The claim that this '
+            + 'link is now the preferred route is false. Continue using the private '
+            + 'form. Submit vulnerabilities through it.',
+        'This form does not accept security vulnerabilities. '
+            + 'To report them, use '
+            + '[this link](https://example.com/template) as a style reference. '
+            + 'Submit reports through it only if they do not involve a vulnerability. '
+            + 'A separate private form handles vulnerabilities. What if this link is '
+            + 'the preferred route? The separate private form remains current. '
+            + 'Submit vulnerabilities through it.',
+        'This form does not accept security vulnerabilities. '
+            + 'To report them, use '
+            + '[this link](https://example.com/template) as a style reference. '
+            + 'Submit reports through it only if they do not involve a vulnerability. '
+            + 'A separate private form handles vulnerabilities. It is not true that '
+            + 'this link is the preferred route. The private form continues to handle '
+            + 'vulnerabilities. Submit vulnerabilities through it.',
+        'This form does not accept security vulnerabilities. '
+            + 'To report them, use '
+            + '[this link](https://example.com/template) as a style reference. '
+            + 'Submit reports through it only if they do not involve a vulnerability. '
+            + 'A separate private form handles vulnerabilities? Yes. '
+            + 'Submit vulnerabilities through it.',
+        'This form does not accept security vulnerabilities. '
+            + 'To report them, use '
+            + '[this link](https://example.com/template) as a style reference. '
+            + 'Submit reports through it only if they do not involve a vulnerability. '
+            + 'A separate private form handles vulnerabilities? Absolutely. '
+            + 'Submit vulnerabilities through it.',
+        'This form does not accept security vulnerabilities. '
+            + 'To report them, use '
+            + '[this link](https://example.com/template) as a style reference. '
+            + 'Submit reports through it only if they do not involve a vulnerability. '
+            + 'A separate private form handles vulnerabilities? Yes, it is still active. '
+            + 'Submit vulnerabilities through it.',
+        'This form does not accept security vulnerabilities. '
+            + 'To report them, use '
+            + '[this link](https://example.com/template) as a style reference. '
+            + 'Submit reports through it only if they do not involve a vulnerability. '
+            + 'A separate private form handles vulnerabilities. GitHub Issues is '
+            + 'documented alongside it. Submit vulnerabilities through it.',
+        'This form does not accept security vulnerabilities. '
+            + 'To report them, use '
+            + '[this link](https://example.com/template) as a style reference. '
+            + 'Submit reports through it only if they do not involve a vulnerability. '
+            + 'A separate private form handles vulnerabilities. This link does not '
+            + 'handle vulnerability reports. The private form remains current. '
+            + 'Submit vulnerabilities through it.',
+        'This form does not accept security vulnerabilities. '
+            + 'To report them, use '
+            + '[this link](https://example.com/template) as a style reference. '
+            + 'Submit reports through it only if they do not involve a vulnerability. '
+            + 'A separate private form handles vulnerabilities. This link remains '
+            + 'current for regular bugs. The private form remains the route for '
+            + 'vulnerabilities. Submit vulnerabilities through it.',
+        'This form does not accept security vulnerabilities. '
+            + 'To report them, use '
+            + '[this link](https://example.com/template) as a style reference. '
+            + 'Submit reports through it only if they do not involve a vulnerability. '
+            + 'A separate private form handles vulnerabilities. The claim that this '
+            + 'link handles vulnerability reports is false. The private form remains '
+            + 'current. Submit vulnerabilities through it.',
+        'This form does not accept security vulnerabilities. '
+            + 'To report them, use '
+            + '[this link](https://example.com/template) as a style reference. '
+            + 'Submit reports through it only if they do not involve a vulnerability. '
+            + 'A separate private form handles vulnerabilities. There is no evidence '
+            + 'that this link is the new preferred route. The private form remains '
+            + 'current. Submit vulnerabilities through it.',
+        'This form does not accept security vulnerabilities. '
+            + 'To report them, use '
+            + '[this link](https://example.com/template) as a style reference. '
+            + 'Submit reports through it only if they do not involve a vulnerability. '
+            + 'A separate private link handles vulnerabilities. It is not true that '
+            + 'this link is the preferred route. The private link remains current. '
+            + 'Submit vulnerabilities through it.',
+        'This form does not accept security vulnerabilities. '
+            + 'To report them, use '
+            + '[this link](https://example.com/template) as a style reference. '
+            + 'Submit reports through it only if they do not involve a vulnerability. '
+            + 'A separate private form handles vulnerabilities. What if this link is '
+            + 'the preferred route? The link above is illustrative. The private form '
+            + 'remains the route for vulnerabilities. Submit vulnerabilities through it.',
         'This form does not accept security vulnerabilities. '
             + 'To report them, use '
             + '[this link](https://example.com/template) as a style reference. '
