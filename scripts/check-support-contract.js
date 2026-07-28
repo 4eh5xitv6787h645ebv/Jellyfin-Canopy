@@ -717,8 +717,15 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
     const securityAction = new RegExp(`\\b${SECURITY_ACTION}\\b`, 'i');
     const explicitVulnerabilitySubject =
         /\b(?:about|for|regarding)\s+(?:security\s+)?vulnerab\w*\b/i;
-    const pluralSecurityAnaphor =
-        /\b(?:they|them|these|those|such\s+(?:concerns?|issues?|reports?|vulnerab\w*))\b/i;
+    const pluralObjectSecurityAnaphorSource =
+        '(?:them|these|those|such\\s+(?:concerns?|issues?|reports?|vulnerab\\w*))';
+    const pluralObjectSecurityAnaphor =
+        new RegExp(`\\b${pluralObjectSecurityAnaphorSource}\\b`, 'i');
+    const subjectSecurityAnaphorSource =
+        '(?:they|(?:these|those)(?:\\s+(?:concerns?|issues?|reports?|vulnerab\\w*))?'
+        + '|such\\s+(?:concerns?|issues?|reports?|vulnerab\\w*))';
+    const subjectSecurityAnaphor =
+        new RegExp(`\\b${subjectSecurityAnaphorSource}\\b`, 'i');
     const singularSecurityAnaphor = /\bit\b/i;
     const securityFormSubject = new RegExp(`\\b${NEGATED_SECURITY_FORM_SUBJECT}\\b`, 'i');
     const anaphoricSecurityAction =
@@ -728,21 +735,48 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
         + '|open(?:s|ed|ing)?|post(?:s|ed|ing)?|report(?:s|ed|ing)?'
         + '|rais(?:e|es|ed|ing)|redirect(?:s|ed|ing)?|send|sending|sent'
         + '|submit(?:s|ted|ting)?|use(?:s|d|ing)?)';
-    const securityAnaphor =
-        `(?:${pluralSecurityAnaphor.source}|${singularSecurityAnaphor.source})`;
+    const objectSecurityAnaphor =
+        `(?:${pluralObjectSecurityAnaphorSource}|${singularSecurityAnaphor.source})`;
+    const securityDirectiveActor =
+        '(?:(?:(?:community|project|repository|security)\\s+)?'
+        + '(?:admins?|administrators?|contributors?|developers?|maintainers?|owners?'
+        + '|people|reporters?|researchers?|users?)|you)';
+    const directiveModifier =
+        '(?:(?:always|directly|instead|now|please|privately|promptly)\\s+)*';
     const activeAnaphoricSecurityRoute = new RegExp(
         '^(?:(?:instead|now|please)\\s*,?\\s+)*'
-        + '(?:(?:you|users?)\\s+(?:can|may|must|should|will)\\s+)?'
-        + `\\b${anaphoricSecurityAction}\\b.{0,40}${securityAnaphor}`,
+        + `\\b${anaphoricSecurityAction}\\b\\s+`
+        + `(?:(?:all|both|only)\\s+)?${objectSecurityAnaphor}`,
+        'i'
+    );
+    const modalAnaphoricSecurityRoute = new RegExp(
+        `^${securityDirectiveActor}\\s+(?:can|may|must|should|will)\\s+`
+        + `${directiveModifier}\\b${anaphoricSecurityAction}\\b\\s+`
+        + `(?:(?:all|both|only)\\s+)?${objectSecurityAnaphor}`
+        + '.{0,24}\\b(?:at|in|on|through|to|via)\\b',
+        'i'
+    );
+    const purposeAnaphoricSecurityRoute = new RegExp(
+        `^to\\s+\\b${anaphoricSecurityAction}\\b\\s+${objectSecurityAnaphor}`
+        + '\\s*,?\\s+(?:(?:now|please)\\s+)*'
+        + '\\b(?:follow|open|use|visit)\\b',
         'i'
     );
     const passiveAnaphoricSecurityRoute = new RegExp(
-        `^${securityAnaphor}\\s+`
-        + '(?:(?:can|may|must|should|will)\\s+(?:instead\\s+)?(?:be\\s+)?'
+        `^${subjectSecurityAnaphorSource}\\s+`
+        + `(?:(?:can|may|must|should|will)\\s+${directiveModifier}(?:be\\s+)?`
         + '|(?:are|is)\\s+to\\s+(?:be\\s+)?)'
-        + `\\b${anaphoricSecurityAction}\\b`,
+        + `\\b${anaphoricSecurityAction}\\b`
+        + '.{0,24}\\b(?:at|in|on|through|to|via)\\b',
         'i'
     );
+    const reportDirectedIt = new RegExp(
+        '\\b(?:contact|direct|disclose|email|file|forward|message|notify|post'
+        + '|raise|redirect|report|send|submit)\\w*\\s+it\\b',
+        'i'
+    );
+    const distinctReportAntecedent =
+        /\b(?:(?:an?|one)\s+)?(?:security\s+)?(?:exploit|reports?|vulnerability)\b/i;
     const negatedAnaphoricAction = new RegExp(
         '\\b(?:(?:(?:do(?:es)? not|doesn\'t|don\'t|never|cannot|can\'t)'
         + '|(?:can|must|should)\\s+'
@@ -765,13 +799,18 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
         const following = applicable[index + 1]?.replace(NEGATED_SECURITY_SUBJECT, ' ') || '';
         return [positiveClause, following].some((candidate) => {
             const route = candidate.replace(/^[\s.!?;:–—-]+/u, '').trim();
+            const hasReportAntecedent = distinctReportAntecedent.test(clause);
             const ambiguousFormIt = securityFormSubject.test(clause)
-                && /\buse(?:s|d|ing)?\s+it\b/i.test(route);
-            const ownsAnaphor = pluralSecurityAnaphor.test(candidate)
+                && singularSecurityAnaphor.test(route)
+                && !(hasReportAntecedent && reportDirectedIt.test(route));
+            const ownsAnaphor = pluralObjectSecurityAnaphor.test(candidate)
+                || subjectSecurityAnaphor.test(candidate)
                 || singularSecurityAnaphor.test(candidate)
                     && !ambiguousFormIt;
             return ownsAnaphor
                 && (activeAnaphoricSecurityRoute.test(route)
+                    || modalAnaphoricSecurityRoute.test(route)
+                    || purposeAnaphoricSecurityRoute.test(route)
                     || passiveAnaphoricSecurityRoute.test(route))
                 && !negatedAnaphoricAction.test(route);
         });

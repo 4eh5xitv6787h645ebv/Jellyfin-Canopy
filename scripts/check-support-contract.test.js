@@ -2890,6 +2890,14 @@ test('governs form submissions and hidden ID names while inert routes remain ina
             + `Forward them via [GitHub Issues](${ISSUES_ROUTE}).`,
         'This form does not accept security reports. '
             + `Submit it via [GitHub Issues](${ISSUES_ROUTE}).`,
+        'This form does not accept security vulnerabilities. '
+            + `Contributors should report them via [GitHub Issues](${ISSUES_ROUTE}).`,
+        'This form does not accept security vulnerabilities. '
+            + `Project owners should forward them through [GitHub Issues](${ISSUES_ROUTE}).`,
+        'This form does not accept security vulnerabilities. '
+            + `You can instead report them via [GitHub Issues](${ISSUES_ROUTE}).`,
+        'This form does not accept security vulnerabilities. '
+            + `To report them, use [GitHub Issues](${ISSUES_ROUTE}).`,
         'Do not submit security vulnerabilities with this form; '
             + `instead submit them via [GitHub Issues](${ISSUES_ROUTE}).`,
         'Do not submit security vulnerabilities with this form—instead '
@@ -2927,6 +2935,14 @@ test('governs form submissions and hidden ID names while inert routes remain ina
             + '[here](https://example.com/releases).',
         'Vulnerabilities are not accepted here. These were reported in '
             + '[the release notes](https://example.com/releases).',
+        'This form does not accept security. Submit notes as they arrive '
+            + '[here](https://example.com/archive).',
+        'This form does not accept security. '
+            + `Open it via [GitHub Issues](${ISSUES_ROUTE}).`,
+        'This form does not accept security vulnerabilities. '
+            + `Submit it via [GitHub Issues](${ISSUES_ROUTE}).`,
+        'This intake does not accept security vulnerabilities. '
+            + `Submit it via [GitHub Issues](${ISSUES_ROUTE}).`,
     ]) {
         const excludedSecurityIntent = validFixture();
         excludedSecurityIntent['docs/getting-started.md'] = nonRoutingSecurityReference;
