@@ -21,12 +21,12 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 27505,
-        "totalLines": 36211
+        "coveredLines": 27545,
+        "totalLines": 36251
       },
       "tolerance": {
-        "missingCoveredLines": 5,
-        "rationale": "The final #453 host-semantics review pass ignores source Range/If-Range for the rewritten shell so every byte-range shape receives the complete injected representation and conditional requests are evaluated against its transformed ETag. Real Static Files regressions cover short, unsatisfiable, open-ended, oversized, and multi-range requests; related cache-capacity, non-cacheable-source, unknown-encoding, non-success, cold-HEAD, and bypass cases preserve the existing coverage ratchet while exercising the bounded fallback paths. Six clean .NET 10.0.9/Coverlet runs on 2026-07-27 each passed all 2,319 tests at the same 36,211-line scope: two measured 27,500 covered lines, three measured 27,503, and one measured the reviewed high-water at 27,505 (75.958%). Retaining the existing evidence-bounded five-line Coverlet tolerance makes the minimum 27,500/36,211 (75.944%), stricter than the prior 27,481/36,205 tolerated floor (75.904%). coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, and broad-tolerance negative boundaries."
+        "missingCoveredLines": 6,
+        "rationale": "EP-01.1 (#504) adds the Platform v1 route family: PlatformConstants, the deny-by-default PlatformControllerBase, and PlatformDiscoveryController, which move the instrumented scope from 36,211 to 36,251 lines. Every added line is exercised. PlatformDiscoveryControllerTests pins the anonymous discovery payload shape and the negotiation outcomes including the no-overlap and no-range-supplied paths; PlatformControllerBaseTests drives ActingUserId and ActingDeviceId directly from claims, including the absent, unparseable and empty-GUID cases and the EP-00 forgery attempt (spike-evidence S14) replayed as headers, cookie and route values that must not be consulted; PlatformAnonymousSurfaceTests pins the anonymous action allowlist, its anti-rot counterpart, and the fact that a Platform action declaring no policy inherits authentication. Eight clean .NET 10.0.9/Coverlet runs on 2026-07-28 each passed all 2,340 tests at the same 36,251-line scope and measured 27,543 covered lines five times, 27,545 twice, and 27,539 once, so the reviewed high-water is 27,545 (75.984%) over an observed Coverlet spread of six lines. The tolerance moves from five lines to six to match that measured spread exactly, because a five-line tolerance would put the floor at 27,540 and reject the 27,539 run that was observed on unchanged code; it is widened by measurement, not to absorb a failure. The resulting minimum of 27,539/36,251 (75.954%) is still stricter than the prior 27,500/36,211 tolerated floor (75.944%), so the ratchet tightens in percentage terms. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, and broad-tolerance negative boundaries."
       }
     }
   }
