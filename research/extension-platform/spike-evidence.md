@@ -673,6 +673,80 @@ every opaque frame, so **origin is useless for attribution** — a broker must k
 
 Recorded against [#491](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/491).
 
+## S18 — A headless native client can drive the protocol, and every refusal is distinct
+
+Replay: probe L in [`spikes/ep-00/run-spike.sh`](spikes/ep-00/run-spike.sh), which
+runs [`spikes/ep-00/native/fixture.py`](spikes/ep-00/native/fixture.py) against a
+minimal server surface (negotiate / catalog / invoke). The fixture speaks only
+HTTP and JSON and renders nothing — which is the only thing a fixture can honestly
+prove about a protocol. **20 checks, 20 passed.**
+
+### Negotiation and graceful omission
+
+| Behaviour | Result |
+|---|---|
+| client `1–2`, host `1–2` | negotiates **2** |
+| client `1–1` | negotiates **1** — an older client is not refused |
+| client `9–9` | `protocol_incompatible`, with both ranges echoed |
+| client declares only `row` | receives **only** rows |
+| components it cannot render | reported in `componentsOmitted` **by name** |
+| contributions it cannot render | reported in `omitted` with `component_not_supported_by_client` |
+
+Omission is explicit in both directions. A client author can see *what* was
+withheld and *why*, instead of wondering why a surface never appears — which is
+the failure mode that makes optional protocol features undebuggable.
+
+### The descriptor is sufficient to render
+
+A paginated row carries **item references only** (`itemId` + label), never rendered
+content, so the client fetches and draws with its own SDK. Paging reports
+`page`, `pageSize`, `totalItems` and `hasMore`, and the final page correctly says
+`hasMore: false`. A detail action carries a native-renderable confirmation
+(`title`, `confirmLabel`, `cancelLabel`) and an **opaque capability** — the string
+`method` appears nowhere in it.
+
+### Every refusal is its own machine code
+
+| Situation | Code |
+|---|---|
+| valid capability, first use | accepted |
+| same capability again | `action_replayed` |
+| no capability supplied | `action_missing` |
+| tampered signature | `action_signature_invalid` |
+| another user's capability | `action_wrong_user` |
+| the extension behind it is down | `provider_unavailable` |
+| unauthenticated | bare **401** — not a malformed catalog |
+
+`action_wrong_user` and `action_expired` are deliberately separate: a client
+retries one and re-authenticates for the other.
+
+### Two design defects the fixture caught
+
+Both would have shipped unnoticed without a client actually driving the protocol.
+
+1. **A delimiter-sensitive capability format.** The first version joined
+   `operationId`, `userId` and `expiry` with `.` and split on it. The operation id
+   was `ep00.action.request` — which contains dots — so **every valid capability
+   decoded as malformed**. The payload is now base64url-encoded with a unit
+   separator between fields. A capability format must not be delimiter-sensitive to
+   values its issuer does not control.
+2. **Single-use protection rejecting a legitimate second action.** Two capabilities
+   minted in the same second for the same `(operation, user)` were byte-identical,
+   so the replay check refused the second one. Each capability now carries a nonce.
+   This is the kind of defect that appears only under a real client's usage
+   pattern — fetch catalog, act, fetch catalog, act.
+
+### What this does not prove
+
+Nothing about any real client. No Android TV, Roku, Kodi or Swift code was
+involved. The fixture proves the protocol is *implementable* by a client that
+executes no downloaded content; the [client
+matrix](supported-client-matrix.md#the-first-native-adopter) records the
+first-party Android TV fork as the adopter that will test whether it is
+*pleasant* to implement.
+
+Recorded against [#492](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/492).
+
 ## What this spike did not establish
 
 Carried into later milestones rather than assumed.
@@ -685,9 +759,9 @@ Carried into later milestones rather than assumed.
    the context is never unloaded, disable and enable both need a restart, and a
    runtime drop-in install is not discovered.
 3. **No concurrency or sustained load.** Every probe was sequential.
-4. **No native or TV client was involved.** Nothing here supports any claim about
-   Android TV, Roku, Kodi or Swift.
-   → [#492](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/492)
+4. **No native or TV client was involved**, and that is still true —
+   [S18](#s18--a-headless-native-client-can-drive-the-protocol-and-every-refusal-is-distinct)
+   proves the protocol is implementable, not that any client implements it.
 5. ~~No declarative web contribution, sandboxed frame or `postMessage` broker.~~
    **Done — see [S17](#s17--browser-slots-render-idempotently-the-frame-is-genuinely-isolated-and-there-is-no-csp).**
    The "Playwright is not provisioned" reason was simply wrong; it needed `npm ci`.

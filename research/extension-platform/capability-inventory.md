@@ -137,5 +137,6 @@ Carried forward as EP-00 child issues rather than assumed either way.
 6. Whether two plugins shipping a **byte-identical, same-version** contract
    assembly behave as S2 showed for two *different* versions. Documented .NET
    behaviour says yes; this spike did not show it.
-7. Version negotiation of any kind — `/Ep00Spike/Discovery` returns a static
-   range and nothing negotiates against it.
+7. ~~Version negotiation of any kind.~~ **Done ([S18](spike-evidence.md#s18--a-headless-native-client-can-drive-the-protocol-and-every-refusal-is-distinct)):**
+   highest-common-version negotiation, an older client still negotiating, no-overlap
+   as its own error code, and component-level graceful omission reported by name.

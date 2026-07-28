@@ -269,6 +269,9 @@ curl -s -X POST "$B/Ep00Spike/Echo" -H "$AUTH" -H 'Content-Type: application/jso
   --data-binary "@$WORK/deep.json"
 echo
 
+log "Probe L — headless native-client fixture (EP-00.3)"
+python3 "$HERE/native/fixture.py" "$B" "$TOKEN" "$TOKEN2"
+
 log "Probe K — TOCTOU race: validate-then-open vs open-then-validate"
 curl -s -G "$B/Ep00Spike/Toctou" -H "$AUTH" --data-urlencode 'iterations=4000' | python3 -m json.tool
 
