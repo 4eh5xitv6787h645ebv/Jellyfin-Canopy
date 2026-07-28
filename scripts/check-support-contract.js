@@ -912,6 +912,10 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
             replacement?.groups?.replacementKind || ''
         ) && /^that\s+link$/i.test(destination);
     };
+    const linkedReferenceReplacementRevoked =
+        /\b(?:(?:do not|don't|never|stop)\s+(?:follow|open|use|visit)(?:ing)?\s+(?:it|that)|(?:it|the\s+(?:advisory|channel|destination|form|guidance|link|page|policy|process|route|site))\s+(?:(?:is|was)\s+|became\s+|becomes?\s+)(?:(?:currently|now)\s+)*(?:closed|disabled|invalid|unavailable|withdrawn|not\s+(?:available|in\s+use|used)))\b/i;
+    const linkedReferenceCompetingAntecedent =
+        /\b(?:(?:an?|the|this|that)\s+)?(?:another|different|new|other|public|second)\s+(?:(?:ordinary|private|regular|security)\s+){0,2}(?:advisory|channel|destination|form|guidance|link|page|policy|process|route|site)\b/i;
     const linkedReferenceClauseApplicability = (clause, contextMatch) => {
         const prefix = clause.slice(0, contextMatch.index);
         const routeMatch = linkedReferenceContinuationPatterns
@@ -953,10 +957,15 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
                 linkedReferenceReplacementRoute,
                 route
             );
-            linkedReferenceReplacementRoute = null;
-            if (replacementOwnsRoute) {
-                linkedReferenceRemainderStart = boundary + 1;
-                continue;
+            if (route) {
+                linkedReferenceReplacementRoute = null;
+                if (replacementOwnsRoute) {
+                    linkedReferenceRemainderStart = boundary + 1;
+                    continue;
+                }
+            } else if (linkedReferenceReplacementRevoked.test(clause)
+                || linkedReferenceCompetingAntecedent.test(clause)) {
+                linkedReferenceReplacementRoute = null;
             }
         }
         const replacementRoute = linkedReferenceNeutralRouteSkipped
