@@ -761,10 +761,33 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
     const linkedReferenceRemainder = linkedReferenceBoundary === undefined
         ? ''
         : linkedReferenceAfter.slice(linkedReferenceBoundary + 1);
+    const linkedReferenceRemainderBoundaries =
+        hardSentenceBoundaries(linkedReferenceRemainder);
+    let linkedReferenceRemainderStart = 0;
+    let linkedReferenceApplicableEnd = linkedReferenceRemainder.length;
+    for (const boundary of linkedReferenceRemainderBoundaries) {
+        const clause = linkedReferenceRemainder.slice(
+            linkedReferenceRemainderStart,
+            boundary + 1
+        );
+        if (NON_VULNERABILITY_CONTEXT.test(clause)) {
+            linkedReferenceApplicableEnd = linkedReferenceRemainderStart;
+            break;
+        }
+        linkedReferenceRemainderStart = boundary + 1;
+    }
+    if (linkedReferenceApplicableEnd === linkedReferenceRemainder.length
+        && NON_VULNERABILITY_CONTEXT.test(
+            linkedReferenceRemainder.slice(linkedReferenceRemainderStart)
+        )) {
+        linkedReferenceApplicableEnd = linkedReferenceRemainderStart;
+    }
+    const linkedReferenceApplicableRemainder =
+        linkedReferenceRemainder.slice(0, linkedReferenceApplicableEnd);
     const linkedReferenceContinuationStart = '(?:^|[.!?;])\\s*'
         + '(?:(?:instead|now|please|then)\\s*,?\\s+)*';
     const linkedReferenceContinuationDestination =
-        '(?:here|there|it|(?:this|that)\\s+link)';
+        '\\b(?:here|there|it|(?:this|that)\\s+link)\\b';
     const linkedReferenceSecurityObject =
         `(?:${objectSecurityAnaphor}|(?:(?:the|these|those)\\s+)?`
         + '(?:security\\s+)?(?:exploits?|reports?|vulnerab\\w*))';
@@ -804,7 +827,7 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
             + `(?:(?:all|both|only)\\s+(?:of\\s+)?)?${linkedReferenceSecurityObject}`,
             'i'
         ),
-    ].some(pattern => pattern.test(linkedReferenceRemainder));
+    ].some(pattern => pattern.test(linkedReferenceApplicableRemainder));
     const neutralLinkedReference = contextualRouteLabel
         && !linkedReferenceRouteContinuation
         && new RegExp(
