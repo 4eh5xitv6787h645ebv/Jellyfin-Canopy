@@ -744,9 +744,15 @@ function isOwnedSecurityIntakeLink(link, securityContext = '') {
     const directivePrefix = '(?:(?:instead|now|please)\\s*,?\\s+)*';
     const directiveModifier =
         '(?:(?:always|directly|instead|now|please|privately|promptly)\\s+)*';
+    const linkedRouteLabel = routeText(link?.label).trim().split(/\s+/)
+        .map(word => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+        .join('\\s+') || '(?!)';
+    const contextualRouteLabel = /^(?:here|this\s+link)$/i
+        .test(routeText(link?.label).trim());
     const anaphoricRouteDestination =
-        '(?:.{0,24}\\b(?:at|in|on|through|to|using|via)\\b'
-        + '|.{0,24}\\b(?:here|this\\s+link)\\b)';
+        `(?:\\s+(?:at|in|on|through|to|using|via)\\s+${linkedRouteLabel}`
+        + (contextualRouteLabel ? `|\\s+${linkedRouteLabel}` : '')
+        + ')\\s*$';
     const activeAnaphoricSecurityRoute = new RegExp(
         `^${directivePrefix}`
         + `\\b${anaphoricSecurityAction}\\b\\s+`

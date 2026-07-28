@@ -2959,6 +2959,21 @@ test('governs form submissions and hidden ID names while inert routes remain ina
             + `Submit it via [GitHub Issues](${ISSUES_ROUTE}).`,
         'This intake does not accept security vulnerabilities. '
             + `Submit it via [GitHub Issues](${ISSUES_ROUTE}).`,
+        'This form does not accept security vulnerabilities. '
+            + 'Users should report them using the vocabulary defined '
+            + '[here](https://example.com/glossary).',
+        'This form does not accept security vulnerabilities. '
+            + 'They should be reported using CVE terminology described '
+            + '[here](https://example.com/glossary).',
+        'This form does not accept security vulnerabilities. '
+            + 'You should report both of them using a CVSS score calculated '
+            + '[here](https://example.com/cvss).',
+        'This form does not accept security vulnerabilities. '
+            + 'They should be reported here only after consulting '
+            + '[this link](https://example.com/timeline).',
+        'This form does not accept security vulnerabilities. '
+            + 'Users should report them using '
+            + '[this link](https://example.com/template) as a style reference.',
     ]) {
         const excludedSecurityIntent = validFixture();
         excludedSecurityIntent['docs/getting-started.md'] = nonRoutingSecurityReference;
