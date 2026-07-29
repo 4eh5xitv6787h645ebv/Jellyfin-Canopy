@@ -129,8 +129,20 @@ interface UserFileRequest {
     postData: string;
 }
 
+/**
+ * Which credential a late stock probe carried when it 401'd.
+ *
+ * The distinction that matters is not "was it the revoked A2 token" but "could
+ * it have acted as another account". A probe carrying no credential at all is
+ * strictly safer than one carrying a revoked token — neither can leak, and which
+ * of the two happens depends on whether the stock client had finished tearing
+ * down its credentials before its own six-second timer fired. A probe carrying
+ * some OTHER account's token is the real defect this test exists to catch.
+ */
+type DelayedProbeCredential = 'revoked-a2' | 'anonymous' | 'foreign';
+
 interface DelayedLogoutProbeEvidence extends FailedResponse {
-    tokenMatchesRevokedA2: boolean;
+    credential: DelayedProbeCredential;
 }
 
 function bPayloadSentinel(segment: BSegment, file: (typeof USER_FILES)[number]): string {
@@ -1070,11 +1082,14 @@ test.describe('no-reload account identity switching', () => {
                 method: response.request().method(),
             };
             if (!isExactDelayedBitrateProbe(failedResponse, logoutA2)) return;
+            const token = authorizationToken(response.request().headers().authorization || '');
             delayedA2ProbeResponses.push({
                 ...failedResponse,
-                tokenMatchesRevokedA2: authorizationToken(
-                    response.request().headers().authorization || ''
-                ) === a2Login.token,
+                credential: token === a2Login.token
+                    ? 'revoked-a2'
+                    : token === ''
+                        ? 'anonymous'
+                        : 'foreign',
             });
         };
         page.on('response', recordDelayedA2Probe);
@@ -1125,12 +1140,30 @@ test.describe('no-reload account identity switching', () => {
         await expectSameDocument(page, documentIdentity);
         page.off('response', recordDelayedA2Probe);
         const observedB2Failures = consoleErrors.unexpected4xx();
-        const provenDelayedA2Failures = delayedA2ProbeResponses
-            .filter(({ tokenMatchesRevokedA2 }) => tokenMatchesRevokedA2);
+
+        // The real leak check, and the only one that can fail for a good reason:
+        // a late stock probe that carried SOME OTHER account's credential would
+        // mean the switch left a usable token behind.
         expect(
-            observedB2Failures.map(failedResponseKey).sort(),
-            'B2 has no 4xx except exact stock bitrate probes carrying the revoked A2 token'
-        ).toEqual(provenDelayedA2Failures.map(failedResponseKey).sort());
+            delayedA2ProbeResponses.filter(({ credential }) => credential === 'foreign'),
+            'no delayed stock probe carried a credential belonging to another account'
+        ).toEqual([]);
+
+        // Every 4xx seen during B2 must be one of those explained probes.
+        //
+        // Asserted as containment rather than set equality on purpose. Equality
+        // also required every recorded probe to have surfaced as a console error,
+        // and whether a given 401 does depends on when the stock client's own
+        // six-second timer fires relative to the switch — which is scheduling, not
+        // behaviour. That direction failed twice on changes that could not have
+        // affected it (a docs-only PR and a no-production-code PR, #518), while the
+        // property the test is named for was never in question. Containment keeps
+        // the half that can catch a defect: an unexplained 4xx still fails here.
+        const explainedKeys = new Set(delayedA2ProbeResponses.map(failedResponseKey));
+        expect(
+            observedB2Failures.map(failedResponseKey).filter((key) => !explainedKeys.has(key)),
+            'B2 has no 4xx beyond the stock host probes left over from the A2 logout'
+        ).toEqual([]);
         consoleErrors.acknowledgeExpected4xx(observedB2Failures);
         assertNoRuntimeErrors(consoleErrors);
     });
