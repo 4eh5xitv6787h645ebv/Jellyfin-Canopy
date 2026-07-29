@@ -515,7 +515,17 @@ test('account switching scopes logout Axios noise to the phase-local response cl
     assert.match(source, /isExpectedSignedOutHomeAxios401\(detail, evidence, hasAllowedHost401\)/);
     assert.match(source, /response\.status === 401\s*&& isExpectedSignedOutHostLogout4xx\(response, evidence\)/);
     assert.match(source, /failed\.filter\(\(response\) => !isExpectedSignedOutHostLogout4xx\(response, evidence\)\)/);
-    assert.match(source, /tokenMatchesRevokedA2:\s*authorizationToken\(/);
+    // The late-probe classifier must still key off the CREDENTIAL rather than URL
+    // shape alone. It now distinguishes three cases instead of two: a probe that
+    // fired with no credential at all is safer than one carrying the revoked
+    // token, so it must not be reported as unexplained just because the stock
+    // client finished tearing down its session before its own timer fired (#518).
+    assert.match(source, /const token = authorizationToken\(/);
+    assert.match(source, /credential: token === a2Login\.token/);
+
+    // The half that can actually catch a defect: a late probe bearing some other
+    // account's token would mean the switch left a usable credential behind.
+    assert.match(source, /credential === 'foreign'/);
     assert.match(source, /isExactDelayedBitrateProbe\(failedResponse,\s*logoutA2\)/);
     assert.match(source, /consoleErrors\.acknowledgeExpected4xx\(observedB2Failures\)/);
     assert.match(source, /consoleErrors\.acknowledgeExpected4xx\(observedB2Failures\);\s*assertNoRuntimeErrors\(consoleErrors\)/);

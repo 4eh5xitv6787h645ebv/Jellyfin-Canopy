@@ -20,6 +20,57 @@ const {
     validateMarkdownFile,
 } = require('./check-markdown-links');
 
+/**
+ * Asserts a parse is bounded in input size, rather than merely fast on this machine.
+ *
+ * The property these tests exist to protect is that cost does not explode with
+ * depth or repetition — a parser that backtracks exponentially is the defect. A
+ * fixed wall-clock budget cannot express that: it passes an exponential parser on
+ * an idle machine and fails a linear one on a busy CI runner. That is exactly how
+ * this suite produced #520, coming in at 4032 ms against a 4000 ms limit while the
+ * parser was behaving perfectly.
+ *
+ * Measuring the same parse at n and 2n and bounding the GROWTH cancels a uniformly
+ * slow machine out of the comparison: doubling the input may double the work, not
+ * square it. An exponential parser fails here on any hardware; a linear one passes
+ * on all of it.
+ *
+ * @param {string} message Failure description.
+ * @param {(size: number) => string} build Produces a source of the requested size.
+ * @param {(source: string) => void} parse The work under test.
+ * @param {{ size: number, maxGrowth?: number }} options Base size, and the largest
+ *   tolerated cost multiple for a doubled input. The default of 8 leaves room for
+ *   quadratic behaviour and constant-factor noise while still failing anything
+ *   super-polynomial, which is the class that actually hangs a build.
+ */
+function assertBoundedInInputSize(message, build, parse, { size, maxGrowth = 8 }) {
+    const smallSource = build(size);
+    const largeSource = build(size * 2);
+
+    // Warm up both shapes first so JIT compilation is not charged to the sample
+    // that happens to run first, which would invent growth that is not there.
+    parse(smallSource);
+    parse(largeSource);
+
+    const measure = (source) => {
+        const started = performance.now();
+        parse(source);
+        return performance.now() - started;
+    };
+
+    // Floor the baseline: a sub-millisecond small sample makes any ratio look
+    // enormous, which would reintroduce timer noise as a failure mode.
+    const small = Math.max(measure(smallSource), 0.5);
+    const large = measure(largeSource);
+    const growth = large / small;
+
+    assert.ok(
+        growth <= maxGrowth,
+        `${message}: doubling the input multiplied parse cost by ${growth.toFixed(1)}x `
+        + `(${small.toFixed(1)}ms -> ${large.toFixed(1)}ms), above the ${maxGrowth}x bound`
+    );
+}
+
 function fixture(files, callback) {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'jc-markdown-links-'));
     try {
@@ -1079,18 +1130,20 @@ test('extracts HTML form submissions and image-map routes with control names', (
         + '"><button>Report a bug</button></form>`';
     assert.ok(!extractLinks(inlineCode).some(link => link.target === formTarget));
 
-    const count = 800;
-    const malformedWrappingLabel = `<form action="${formTarget}">`
+    const buildWrappingLabel = (size) => `<form action="${formTarget}">`
         + '<label>Report a bug'
-        + '<button></button>'.repeat(count)
+        + '<button></button>'.repeat(size)
         + '</label></form>';
-    const started = performance.now();
-    const controls = extractLinks(malformedWrappingLabel)
+
+    const controls = extractLinks(buildWrappingLabel(800))
         .filter(link => link.target === formTarget);
     assert.ok(controls.length > 0);
-    assert.ok(
-        performance.now() - started < 4_000,
-        'wrapping-label resolution must remain bounded across many controls'
+
+    assertBoundedInInputSize(
+        'wrapping-label resolution must remain bounded across many controls',
+        buildWrappingLabel,
+        extractLinks,
+        { size: 800 }
     );
 });
 
@@ -1211,23 +1264,26 @@ test('resolves associated labels before native control fallbacks', () => {
 
 test('resolves many associated labels with bounded traversal work', () => {
     const target = 'https://example.com/route';
-    const count = 500;
-    const controls = Array.from({ length: count }, (_, index) => (
-        `<label for="control-${index}">${index === count - 1 ? 'Report a problem' : 'Filler'}</label>`
+    const build = (size) => Array.from({ length: size }, (_, index) => (
+        `<label for="control-${index}">${index === size - 1 ? 'Report a problem' : 'Filler'}</label>`
         + `<input id="control-${index}" type="image" alt="Documentation">`
-    )).join('');
-    const source = controls
-        + `<a aria-labelledby="control-${count - 1}" href="${target}"></a>`;
-    const started = performance.now();
-    for (const links of [extractLinks(source), extractRenderedHtmlLinks(source)]) {
+    )).join('')
+        + `<a aria-labelledby="control-${size - 1}" href="${target}"></a>`;
+
+    for (const links of [extractLinks(build(500)), extractRenderedHtmlLinks(build(500))]) {
         const link = links.find(candidate => candidate.type === 'link');
         assert.ok(link);
         assert.equal(link.label, 'Report a problem');
     }
-    assert.ok(
-        performance.now() - started < 4_000,
-        'associated labels must not trigger quadratic control searches'
-    );
+
+    for (const extract of [extractLinks, extractRenderedHtmlLinks]) {
+        assertBoundedInInputSize(
+            'associated labels must not trigger quadratic control searches',
+            build,
+            extract,
+            { size: 400 }
+        );
+    }
 });
 
 test('normalizes native fallbacks and resolves embedded control values', () => {
@@ -1441,85 +1497,102 @@ test('uses browser select repair and caller-provided document context', () => {
 });
 
 test('ignores out-of-table elements and bounds malformed document parsing', () => {
-    const source = '<caption>'.repeat(6_000) + 'Report a vulnerability';
-    const started = performance.now();
-    assert.equal(governedHtmlText(source), 'Report a vulnerability');
-    assert.ok(
-        performance.now() - started < 4_000,
-        'ignored out-of-table elements must remain bounded'
+    const buildCaptions = (size) => '<caption>'.repeat(size) + 'Report a vulnerability';
+    assert.equal(governedHtmlText(buildCaptions(6_000)), 'Report a vulnerability');
+    assertBoundedInInputSize(
+        'ignored out-of-table elements must remain bounded',
+        buildCaptions,
+        governedHtmlText,
+        { size: 3_000 }
     );
 
-    const malformedDocument = '<!doctype html><html><head></head><body>'
-        + '<div>'.repeat(16_000)
+    const buildDocument = (size) => '<!doctype html><html><head></head><body>'
+        + '<div>'.repeat(size)
         + 'Report a vulnerability';
-    const documentStarted = performance.now();
     assert.match(
-        governedHtmlText(malformedDocument, new Map(), {}, { documentMode: true }),
+        governedHtmlText(buildDocument(16_000), new Map(), {}, { documentMode: true }),
         /\[label truncated:/
     );
-    assert.ok(
-        performance.now() - documentStarted < 1_000,
-        'malformed complete documents must be depth-bounded before stack searches grow'
+    assertBoundedInInputSize(
+        'malformed complete documents must be depth-bounded before stack searches grow',
+        buildDocument,
+        (source) => governedHtmlText(source, new Map(), {}, { documentMode: true }),
+        { size: 8_000 }
     );
 });
 
 test('resolves nested same-tag ID labels with bounded traversal work', () => {
     const target = 'https://example.com/route';
-    const depth = 500;
-    const referenced = Array.from(
-        { length: depth },
+    const build = (size) => Array.from(
+        { length: size },
         (_, index) => `<span id="route-name-${index}">`
     ).join('')
         + 'Report a problem'
-        + '</span>'.repeat(depth);
-    const source = referenced
+        + '</span>'.repeat(size)
         + `<a aria-labelledby="route-name-0" href="${target}"></a>`;
-    const started = performance.now();
-    for (const links of [extractLinks(source), extractRenderedHtmlLinks(source)]) {
+
+    for (const links of [extractLinks(build(500)), extractRenderedHtmlLinks(build(500))]) {
         const link = links.find(candidate => candidate.type === 'link');
         assert.ok(link);
         assert.equal(link.label, 'Report a problem');
         assert.equal(isActionableLink(link), true);
     }
-    assert.ok(
-        performance.now() - started < 4_000,
-        '500 nested ID labels must not trigger quadratic subtree rescanning'
-    );
+
+    for (const extract of [extractLinks, extractRenderedHtmlLinks]) {
+        assertBoundedInInputSize(
+            'nested ID labels must not trigger quadratic subtree rescanning',
+            build,
+            extract,
+            { size: 400 }
+        );
+    }
 });
 
 test('fails closed quickly for malformed nested label trees', () => {
     const target = 'https://example.com/route';
-    const source = '<label>'.repeat(6_000)
+    const build = (size) => '<label>'.repeat(size)
         + '<input id="route-name" type="image" alt="Documentation">'
-        + '</label>'.repeat(6_000)
+        + '</label>'.repeat(size)
         + `<a aria-labelledby="route-name" href="${target}"></a>`;
-    const started = performance.now();
-    for (const links of [extractLinks(source), extractRenderedHtmlLinks(source)]) {
+
+    for (const links of [extractLinks(build(6_000)), extractRenderedHtmlLinks(build(6_000))]) {
         const link = links.find(candidate => candidate.type === 'link');
         assert.ok(link);
         assert.match(link.label, /\[label truncated:/);
     }
-    assert.ok(
-        performance.now() - started < 4_000,
-        'malformed nested labels must be depth-bounded'
-    );
+
+    for (const extract of [extractLinks, extractRenderedHtmlLinks]) {
+        assertBoundedInInputSize(
+            'malformed nested labels must be depth-bounded',
+            build,
+            extract,
+            { size: 3_000 }
+        );
+    }
 });
 
 test('fails closed quickly for unclosed native descendants', () => {
     const target = 'https://example.com/route';
-    const source = `<a href="${target}">`
-        + '<button title="Documentation">'.repeat(8_000)
+    const build = (size) => `<a href="${target}">`
+        + '<button title="Documentation">'.repeat(size)
         + 'Report a problem</a>';
-    const started = performance.now();
-    for (const links of [extractLinks(source), extractRenderedHtmlLinks(source)]) {
+
+    // Correctness first, at the original depth: the label must still be truncated
+    // rather than the parser running away.
+    for (const links of [extractLinks(build(8_000)), extractRenderedHtmlLinks(build(8_000))]) {
         const link = links.find(candidate => candidate.type === 'link');
         assert.ok(link);
         assert.match(link.label, /\[label truncated:/);
     }
-    assert.ok(
-        performance.now() - started < 4_000,
-        'unclosed native descendants must be depth-bounded'
-    );
+
+    for (const extract of [extractLinks, extractRenderedHtmlLinks]) {
+        assertBoundedInInputSize(
+            'unclosed native descendants must be depth-bounded',
+            build,
+            extract,
+            { size: 4_000 }
+        );
+    }
 });
 
 test('bounds cyclic and deep aria-labelledby dependency graphs', () => {
