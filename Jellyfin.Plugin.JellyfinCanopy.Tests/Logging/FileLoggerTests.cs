@@ -597,8 +597,16 @@ public sealed class FileLoggerTests : IDisposable
             gate.Open);
         provider.CreateLogger("shutdown-timeout").LogInformation("held write");
 
-        var stop = provider.StopAsync(options.ShutdownTimeout);
+        // Wait for the writer to actually be inside the gated write BEFORE asking it to
+        // shut down. Starting the 100 ms shutdown budget first made the two race: on a
+        // busy machine the budget could expire before the worker had even dequeued the
+        // entry, so nothing ever reached the gate and the test timed out waiting for a
+        // write that shutdown had already abandoned (#515). The property under test is
+        // that StopAsync gives up on an *in-flight* write, which requires one to be
+        // in flight.
         await gate.WriteStarted.Task.WaitAsync(TestTimeout);
+
+        var stop = provider.StopAsync(options.ShutdownTimeout);
 
         Assert.False(await stop);
         Assert.False(provider.ShutdownFlushed);
