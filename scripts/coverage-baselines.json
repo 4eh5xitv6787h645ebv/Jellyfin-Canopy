@@ -27,17 +27,17 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 27855,
-        "totalLines": 36572
+        "coveredLines": 27868,
+        "totalLines": 36585
       },
       "observations": {
-        "cleanRuns": 3,
-        "minimumCoveredLines": 27854,
-        "maximumCoveredLines": 27855
+        "cleanRuns": 5,
+        "minimumCoveredLines": 27867,
+        "maximumCoveredLines": 27868
       },
       "tolerance": {
         "missingCoveredLines": 6,
-        "rationale": "Fixing #456 adds three instrumented AnimeFillerService lines so cached episode freshness is recomputed from the fetch timestamp and the current clamped AnimeFillerCacheHours on every read. Three .NET 10.0.9/Coverlet measurements on 2026-08-01 had the same 36,572-line scope and measured 27,854, 27,854, and 27,855 covered lines; the high-water run passed all 2,465 server tests. The deterministic time-provider regressions exercise configuration reductions, increases, invalid values, clamp boundaries, and exact expiry without scheduler timing. The existing six-line tolerance is retained because the one-line spread here does not prove that the earlier observed five- and six-line Coverlet variation has disappeared; keeping it avoids turning instrumentation noise into failures while the floor still rises to 27,849/36,572 (76.148%) from 27,845/36,569 (76.144%). coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, and broad-tolerance negative boundaries."
+        "rationale": "Completing #160's quota-reset acceptance evidence adds 13 instrumented controller lines for a production-defaulted TimeProvider seam, allowing the integrated endpoint regressions to pin the exact rolling-window boundary while preserving runtime behavior. Five .NET 10.0.9/Coverlet measurements on 2026-08-01 had the same 36,585-line scope and measured 27,867, 27,867, 27,867, 27,868, and 27,867 covered lines; the high-water run passed all 2,469 server tests, including the >100-row old/declined-prefix case, explicit pagination safety bounds, and the 10,000-request performance profile. The existing six-line tolerance is retained because the one-line spread does not prove that the previously observed five- and six-line Coverlet variation has disappeared; keeping it avoids turning instrumentation noise into failures while the floor still rises to 27,862/36,585 (76.157%) from 27,849/36,572 (76.148%). coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, and broad-tolerance negative boundaries."
       }
     }
   }
