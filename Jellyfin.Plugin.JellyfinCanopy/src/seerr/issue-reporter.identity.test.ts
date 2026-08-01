@@ -127,4 +127,19 @@ describe('Seerr issue reporter identity fencing', () => {
 
         expect(fetchedIds).toEqual([1, 2, 3, 4, 5, 6]);
     });
+
+    it('fails the enrichment instead of publishing a partial history after one detail fails', async () => {
+        const { enrichIssuesForDisplay } = await import('./issue-reporter');
+        const issues = Array.from({ length: 20 }, (_, index) => ({ id: index + 1 }));
+        const fetchedIds: number[] = [];
+
+        await expect(enrichIssuesForDisplay(issues, issueId => {
+            fetchedIds.push(issueId);
+            return issueId === 1
+                ? Promise.reject(new Error('detail unavailable'))
+                : Promise.resolve({ id: issueId });
+        })).rejects.toThrow('detail unavailable');
+
+        expect(fetchedIds).toEqual([1, 2, 3, 4, 5, 6]);
+    });
 });

@@ -81,7 +81,51 @@ public class SeerrIssueViewPolicyTests
         // The read reached Seerr (which owns the ownership call) rather than being
         // stopped by Canopy's local no_issue_view_permission gate.
         Assert.True(DispatchedIssueRead(handler));
+        var dispatched = handler.Requests.Single(r =>
+            r.Method == HttpMethod.Get
+            && r.RequestUri!.AbsolutePath == new System.Uri($"http://seerr:5055{apiPath}").AbsolutePath);
+        Assert.True(dispatched.Headers.TryGetValues("X-Api-User", out var apiUser));
+        Assert.Equal("42", apiUser!.Single());
         Assert.NotEqual("no_issue_view_permission", GetCode((result as ObjectResult)?.Value));
+    }
+
+    [Theory]
+    [InlineData((long)SeerrPermission.CREATE_ISSUES)]
+    [InlineData((long)SeerrPermission.MANAGE_ISSUES)]
+    public async Task CreateOrManageIssues_IssueCreate_PassesPreflightAndCarriesPinnedUserIdentity(long permissions)
+    {
+        var (client, handler) = NewClient();
+        SeedUser(handler, permissions);
+        handler.AddResponse("/api/v1/issue", "{\"id\":71}");
+
+        var result = await client.ProxyRequestAsync(
+            "/api/v1/issue", HttpMethod.Post, "{}", new SeerrCaller(UserId, false));
+
+        var dispatched = handler.Requests.Single(r =>
+            r.Method == HttpMethod.Post
+            && r.RequestUri!.AbsolutePath == "/api/v1/issue");
+        Assert.True(dispatched.Headers.TryGetValues("X-Api-User", out var apiUser));
+        Assert.Equal("42", apiUser!.Single());
+        Assert.NotEqual("no_issue_permission", GetCode((result as ObjectResult)?.Value));
+    }
+
+    [Theory]
+    [InlineData((long)SeerrPermission.VIEW_ISSUES)]
+    [InlineData((long)SeerrPermission.REQUEST_MOVIE)]
+    public async Task WithoutCreateOrManageIssues_IssueCreate_LocallyRejectedBeforeDispatch(long permissions)
+    {
+        var (client, handler) = NewClient();
+        SeedUser(handler, permissions);
+        handler.AddResponse("/api/v1/issue", "{\"id\":71}");
+
+        var result = await client.ProxyRequestAsync(
+            "/api/v1/issue", HttpMethod.Post, "{}", new SeerrCaller(UserId, false));
+
+        var obj = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(403, obj.StatusCode);
+        Assert.Equal("no_issue_permission", GetCode(obj.Value));
+        Assert.DoesNotContain(handler.Sent, r =>
+            r.Method == HttpMethod.Post && r.Path == "/api/v1/issue");
     }
 
     [Fact]
@@ -129,19 +173,29 @@ public class SeerrIssueViewPolicyTests
     // ── VIEW_ISSUES / MANAGE_ISSUES semantics are unchanged ───────────────────
 
     [Theory]
-    [InlineData((long)SeerrPermission.VIEW_ISSUES)]
-    [InlineData((long)SeerrPermission.MANAGE_ISSUES)]
-    public async Task ViewOrManageIssues_IssueList_StillDispatches(long permissions)
+    [InlineData((long)SeerrPermission.VIEW_ISSUES, ListPath)]
+    [InlineData((long)SeerrPermission.VIEW_ISSUES, DetailPath)]
+    [InlineData((long)SeerrPermission.MANAGE_ISSUES, ListPath)]
+    [InlineData((long)SeerrPermission.MANAGE_ISSUES, DetailPath)]
+    public async Task ViewOrManageIssues_IssueRead_StillDispatchesWithPinnedUserIdentity(
+        long permissions,
+        string apiPath)
     {
         var (client, handler) = NewClient();
         SeedUser(handler, permissions);
         handler.AddResponse("/api/v1/issue", "{\"results\":[]}");
+        handler.AddResponse("/api/v1/issue/5", "{\"id\":5}");
 
         var result = await client.ProxyRequestAsync(
-            ListPath, HttpMethod.Get, null, new SeerrCaller(UserId, false));
+            apiPath, HttpMethod.Get, null, new SeerrCaller(UserId, false));
 
         Assert.IsNotType<ObjectResult>(result);
         Assert.True(DispatchedIssueRead(handler));
+        var dispatched = handler.Requests.Single(r =>
+            r.Method == HttpMethod.Get
+            && r.RequestUri!.AbsolutePath == new System.Uri($"http://seerr:5055{apiPath}").AbsolutePath);
+        Assert.True(dispatched.Headers.TryGetValues("X-Api-User", out var apiUser));
+        Assert.Equal("42", apiUser!.Single());
     }
 
     // ── The media-detail relation is UNFILTERED, so it stays VIEW/MANAGE-only ──

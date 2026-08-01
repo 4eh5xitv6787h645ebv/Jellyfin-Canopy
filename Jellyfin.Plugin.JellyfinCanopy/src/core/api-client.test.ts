@@ -11,7 +11,7 @@ import { classifyObjectDetails } from './cache-policy';
 import { getRefreshSafetyHoldCount } from './lifecycle';
 import { waitForSharedResult } from './shared-result';
 import { JC } from '../globals';
-import type { IdentityApi, IdentityContext, RetryConfig } from '../types/jc';
+import type { IdentityApi, IdentityContext, RequestManagerApi, RetryConfig } from '../types/jc';
 
 const originalApiClient = ApiClient;
 const originalIdentity = (JC as typeof JC & { identity?: IdentityApi }).identity;
@@ -358,6 +358,59 @@ describe('getCached / coreFetch falsy-cache sentinel', () => {
 });
 
 describe('response cache memory budgets', () => {
+    it.each([
+        ['clearCacheMatching', (manager: RequestManagerApi) => manager.clearCacheMatching('issue:')],
+        ['clearCache', (manager: RequestManagerApi) => manager.clearCache()],
+    ])('%s retires a held stale GET before a fresh same-key GET', async (_name, invalidate) => {
+        installIdentity();
+        installApiClient('user-a', 'token-a');
+        const api = JC.core.api!;
+        const url = 'http://jellyfin.test/held-issue';
+        const cacheKey = 'issue:held';
+        let resolveStale!: (response: Response) => void;
+        let resolveFresh!: (response: Response) => void;
+        const fetchSpy = vi.spyOn(globalThis, 'fetch')
+            .mockImplementationOnce(() => new Promise<Response>(resolve => { resolveStale = resolve; }))
+            .mockImplementationOnce(() => new Promise<Response>(resolve => { resolveFresh = resolve; }));
+
+        const stale = api.fetch(url, { cacheKey });
+        await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1));
+
+        invalidate(api.manager);
+        const fresh = api.fetch(url, { cacheKey });
+        await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(2));
+
+        resolveFresh(responseJson({ version: 'fresh' }));
+        await expect(fresh).resolves.toEqual({ version: 'fresh' });
+        resolveStale(responseJson({ version: 'stale' }));
+        await expect(stale).resolves.toEqual({ version: 'stale' });
+
+        await expect(api.fetch(url, { cacheKey })).resolves.toEqual({ version: 'fresh' });
+        expect(fetchSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not publish after cacheDisposition synchronously invalidates its key', async () => {
+        installIdentity();
+        installApiClient('user-a', 'token-a');
+        const api = JC.core.api!;
+        const url = 'http://jellyfin.test/reentrant-invalidation';
+        const cacheKey = 'issue:reentrant';
+        const fetchSpy = vi.spyOn(globalThis, 'fetch')
+            .mockResolvedValueOnce(responseJson({ version: 'stale' }))
+            .mockResolvedValueOnce(responseJson({ version: 'fresh' }));
+
+        await expect(api.fetch(url, {
+            cacheKey,
+            cacheDisposition: () => {
+                api.manager.clearCacheMatching(cacheKey);
+                return 'positive';
+            },
+        })).resolves.toEqual({ version: 'stale' });
+
+        await expect(api.fetch(url, { cacheKey })).resolves.toEqual({ version: 'fresh' });
+        expect(fetchSpy).toHaveBeenCalledTimes(2);
+    });
+
     it('uses a short TTL only for a successful authoritative null', async () => {
         vi.useFakeTimers();
         vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));

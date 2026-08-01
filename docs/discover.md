@@ -506,6 +506,8 @@ Issue types cover **Video** (quality, corruption, wrong file), **Audio** (sync, 
 
 To report one: open a movie or TV detail page, click the report icon in the action buttons, select the issue type, choose a season and episode for TV (optional), enter a description, and submit.
 
+After Seerr accepts the report, the modal stays open and refreshes the title's issue history, including the new issue's full detail and comments. A history-list or detail failure is shown as an error instead of looking like a successful empty history. Canopy preserves the acting Seerr user throughout: users with **Create Issues** can read their own reports, while Seerr continues to deny another user's issue unless the caller also has **View Issues**, **Manage Issues**, or admin access.
+
 Two related settings on the **Seerr** tab:
 
 | Setting | Default | What it does |
