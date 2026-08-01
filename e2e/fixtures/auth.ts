@@ -5,7 +5,7 @@
 // authenticate through the web client's own ApiClient.authenticateUserByName,
 // reload so the app boots authenticated, then wait for the plugin's
 // window.JellyfinCanopy.initialized === true flag.
-import { test as base, expect, type Page } from 'playwright/test';
+import { test as base, expect, type Page, type Request } from 'playwright/test';
 import {
     CURRENT_USER_TIMEOUT_MS,
     FAST_BOUNCE_TIMEOUT_MS,
@@ -144,6 +144,12 @@ export interface ConsoleErrors {
     /** Every HTTP 5xx response. Callers may narrowly classify proven host defects. */
     unexpected5xx(): FailedResponse[];
     /**
+     * Return the exact Playwright request that produced this collected response.
+     * Fabricated/value-equal FailedResponse objects have no owner. Callers must
+     * use the Request only for identity/provenance checks and never log headers.
+     */
+    requestFor(response: FailedResponse): Request | undefined;
+    /**
      * Remove only these exact collected 4xx objects after a test has independently
      * proved their request provenance. Object identity prevents lookalike bypasses.
      */
@@ -167,6 +173,7 @@ export const test = base.extend<Fixtures>({
         const all: string[] = [];
         const details: ConsoleErrorDetail[] = [];
         const failed: FailedResponse[] = [];
+        const requestByFailure = new WeakMap<FailedResponse, Request>();
         page.on('console', (message) => {
             if (message.type() !== 'error') return;
             const text = message.text();
@@ -201,11 +208,14 @@ export const test = base.extend<Fixtures>({
         page.on('response', (response) => {
             const status = response.status();
             if (status >= 400) {
-                failed.push({
+                const request = response.request();
+                const failedResponse: FailedResponse = {
                     url: safeResponseUrl(response.url()),
                     status,
-                    method: response.request().method(),
-                });
+                    method: request.method(),
+                };
+                requestByFailure.set(failedResponse, request);
+                failed.push(failedResponse);
             }
         });
         const sink: ConsoleErrors = {
@@ -226,6 +236,7 @@ export const test = base.extend<Fixtures>({
                         && !isExpectedCanopyPauseScreenImageProbe404(r, baseURL || '')
                 ),
             unexpected5xx: () => failed.filter((r) => r.status >= 500),
+            requestFor: (response) => requestByFailure.get(response),
             acknowledgeExpected4xx: (responses) => {
                 const acknowledged = new Set(responses);
                 for (let index = failed.length - 1; index >= 0; index--) {

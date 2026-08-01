@@ -31,6 +31,7 @@
     "e2e/bookmarks-responsive.spec.ts › Bookmarks responsive containment (#466 findings 1–2) › legacy: populated Bookmarks grid and footer fit 320px and 360px",
     "e2e/bookmarks-responsive.spec.ts › Bookmarks responsive containment (#466 findings 1–2) › legacy: Bookmark offset modal keeps close and actions reachable at 320x568",
     "e2e/boot.spec.ts › boot › initializes with all core namespaces and no real console errors",
+    "e2e/console-net.spec.ts › console and HTTP error safety net › late responses retain exact Request ownership across a sink reset",
     "e2e/console-net.spec.ts › console and HTTP error safety net › structured console errors retain their source script URL",
     "e2e/console-net.spec.ts › console and HTTP error safety net › unexpected4xx() catches a broken plugin endpoint but not an allowlisted url",
     "e2e/console-net.spec.ts › console and HTTP error safety net › unexpected5xx() preserves method/url and remains globally blocking",
