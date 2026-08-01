@@ -26,7 +26,7 @@ export interface SeerrApi {
     requestMedia: (tmdbId: any, mediaType: any, advancedSettings?: any, is4k?: boolean, mediaData?: any) => Promise<any>;
     requestTvSeasons: (tmdbId: any, seasonNumbers: any[], advancedSettings?: any, mediaData?: any, is4k?: boolean) => Promise<any>;
     fetchIssuesForMedia: (tmdbId: any, mediaType: any, options?: any) => Promise<any>;
-    fetchIssueById: (issueId: any) => Promise<any>;
+    fetchIssueById: (issueId: any, options?: any) => Promise<any>;
     fetchAdvancedRequestData: (mediaType: any) => Promise<{ servers: any[]; tags: any[]; error?: string }>;
     fetchUserQuota: (options?: any) => Promise<any>;
     fetchRequestSettings: () => Promise<SeerrRequestSettings>;
@@ -154,6 +154,11 @@ function assertCurrentIdentity(context: IdentityContext): void {
     if (!JC.identity.isCurrent(context)) throw identityChangedError();
 }
 
+function isExpectedCallerAbort(error: unknown, signal?: AbortSignal): boolean {
+    return signal?.aborted === true
+        && (error as { name?: string } | null)?.name === 'AbortError';
+}
+
 function statusGenerationChangedError(): Error {
     const error = new Error('Seerr user status belongs to a stale configuration');
     error.name = 'AbortError';
@@ -262,6 +267,25 @@ function invalidateRequestCaches(tmdbId: any, mediaType: any): void {
     }
 
     patterns.forEach(pattern => JC.requestManager!.clearCacheMatching(pattern));
+}
+
+/**
+ * Retire every client-side read that can carry the just-mutated issue relation.
+ * The post-create modal performs a cache-bypassing refresh as well, but clearing
+ * these entries keeps later indicators and detail-page reads from publishing a
+ * pre-create snapshot.
+ */
+function invalidateIssueCaches(tmdbId: any, mediaType: any): void {
+    if (!JC.requestManager) return;
+
+    JC.requestManager.clearCacheMatching('seerr:/issue');
+    const canonicalTmdbId = Number(tmdbId);
+    const normalizedMediaType = String(mediaType || '').toLowerCase();
+    if (Number.isSafeInteger(canonicalTmdbId)
+        && canonicalTmdbId > 0
+        && (normalizedMediaType === 'movie' || normalizedMediaType === 'tv')) {
+        JC.requestManager.clearCacheMatching(`seerr:/${normalizedMediaType}/${canonicalTmdbId}`);
+    }
 }
 
 /**
@@ -839,7 +863,15 @@ api.requestTvSeasons = async function(tmdbId, seasonNumbers, advancedSettings = 
  */
 api.fetchIssuesForMedia = async function(tmdbId, mediaType, options = {}) {
     const context = captureIdentity();
-    const { take = 20, skip = 0, filter = 'open', sort = 'added', all = false } = options;
+    const {
+        take = 20,
+        skip = 0,
+        filter = 'open',
+        sort = 'added',
+        all = false,
+        fresh = false,
+        signal,
+    } = options;
     try {
         const normalizedMediaType = String(mediaType || '').toLowerCase();
         const canonicalTmdbId = Number(tmdbId);
@@ -875,7 +907,10 @@ api.fetchIssuesForMedia = async function(tmdbId, mediaType, options = {}) {
             sort: canonicalSort
         });
 
-        const res = await get(`/issue?${query.toString()}`);
+        const res = await get(`/issue?${query.toString()}`, {
+            signal,
+            skipCache: fresh === true,
+        });
         assertCurrentIdentity(context);
         const pageInfo = res?.pageInfo;
         const contract = res?.jellyfinCanopyPagination;
@@ -901,7 +936,9 @@ api.fetchIssuesForMedia = async function(tmdbId, mediaType, options = {}) {
         return res;
     } catch (error: any) {
         assertCurrentIdentity(context);
-        console.error(`${logPrefix} Failed to fetch issues for ${mediaType} ${tmdbId}:`, error);
+        if (!isExpectedCallerAbort(error, signal)) {
+            console.error(`${logPrefix} Failed to fetch issues for ${mediaType} ${tmdbId}:`, error);
+        }
         throw error;
     }
 };
@@ -909,18 +946,33 @@ api.fetchIssuesForMedia = async function(tmdbId, mediaType, options = {}) {
 /**
  * Fetch a single issue by ID, including full comment details.
  * @param {number} issueId
- * @returns {Promise<object|null>}
+ * @returns {Promise<object>}
  */
-api.fetchIssueById = async function(issueId) {
+api.fetchIssueById = async function(issueId, options = {}) {
     const context = captureIdentity();
+    const canonicalIssueId = Number(issueId);
+    if (!Number.isSafeInteger(canonicalIssueId) || canonicalIssueId <= 0) {
+        throw new Error('Invalid Seerr issue detail id');
+    }
     try {
-        const res = await get(`/issue/${issueId}`);
+        const res = await get(`/issue/${canonicalIssueId}`, {
+            signal: options.signal,
+            skipCache: options.fresh === true,
+        });
         assertCurrentIdentity(context);
-        return res || null;
+        if (!res
+            || typeof res !== 'object'
+            || Array.isArray(res)
+            || Number(res.id) !== canonicalIssueId) {
+            throw new Error(`Invalid Seerr issue detail for id ${canonicalIssueId}`);
+        }
+        return res;
     } catch (error: any) {
         assertCurrentIdentity(context);
-        console.warn(`${logPrefix} Failed to fetch issue ${issueId}:`, error);
-        return null;
+        if (!isExpectedCallerAbort(error, options.signal)) {
+            console.warn(`${logPrefix} Failed to fetch issue ${canonicalIssueId}:`, error);
+        }
+        throw error;
     }
 };
 
@@ -1089,6 +1141,14 @@ api.reportIssue = async function(mediaId, mediaType, problemType, message = '', 
         console.debug(`${logPrefix} Sending issue report with body:`, body);
         const result = await post('/issue', body);
         assertCurrentIdentity(context);
+        if (!result
+            || typeof result !== 'object'
+            || Array.isArray(result)
+            || !Number.isSafeInteger(Number(result.id))
+            || Number(result.id) <= 0) {
+            throw new Error('Seerr returned an invalid issue create response');
+        }
+        invalidateIssueCaches(mediaId, mediaType);
         console.debug(`${logPrefix} Issue reported for Seerr media ID ${internalId} (TMDB ${mediaId}, ${mediaType}): ${problemType}`);
         return result;
     } catch (error: any) {

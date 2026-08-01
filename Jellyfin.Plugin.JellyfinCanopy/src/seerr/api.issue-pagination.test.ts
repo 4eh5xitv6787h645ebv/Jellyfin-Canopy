@@ -97,6 +97,78 @@ describe('Seerr issue query ownership', () => {
         expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 
+    it('rejects a held caller abort without logging an issue-list failure', async () => {
+        const controller = new AbortController();
+        const abortError = Object.assign(new Error('caller cancelled'), { name: 'AbortError' });
+        const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+        // eslint-disable-next-line @typescript-eslint/no-misused-promises -- held abort fixture
+        fetchMock.mockImplementation((_url, options: { signal?: AbortSignal }) =>
+            new Promise((_resolve, reject) => {
+                options.signal?.addEventListener('abort', () => reject(abortError), { once: true });
+            }));
+
+        const pending = JC.seerrAPI!.fetchIssuesForMedia(42, 'movie', {
+            signal: controller.signal,
+        });
+        await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+        controller.abort();
+
+        await expect(pending).rejects.toBe(abortError);
+        expect(errorSpy).not.toHaveBeenCalled();
+    });
+
+    it('uses the canonical detail route and preserves a detail failure', async () => {
+        const controller = new AbortController();
+        fetchMock.mockResolvedValueOnce({ id: 71, comments: [] });
+
+        await expect(JC.seerrAPI!.fetchIssueById(71, {
+            fresh: true,
+            signal: controller.signal,
+        })).resolves.toEqual({ id: 71, comments: [] });
+
+        const [url, options] = fetchMock.mock.calls[0] as [string, Record<string, unknown>];
+        expect(url).toContain('/JellyfinCanopy/seerr/issue/71');
+        expect(options).toEqual(expect.objectContaining({
+            cacheKey: null,
+            signal: controller.signal,
+            skipCache: true,
+        }));
+
+        fetchMock.mockRejectedValueOnce(new Error('detail unavailable'));
+        await expect(JC.seerrAPI!.fetchIssueById(71))
+            .rejects.toThrow('detail unavailable');
+    });
+
+    it('rejects a held caller abort without logging an issue-detail failure', async () => {
+        const controller = new AbortController();
+        const abortError = Object.assign(new Error('caller cancelled'), { name: 'AbortError' });
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        // eslint-disable-next-line @typescript-eslint/no-misused-promises -- held abort fixture
+        fetchMock.mockImplementation((_url, options: { signal?: AbortSignal }) =>
+            new Promise((_resolve, reject) => {
+                options.signal?.addEventListener('abort', () => reject(abortError), { once: true });
+            }));
+
+        const pending = JC.seerrAPI!.fetchIssueById(71, { signal: controller.signal });
+        await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+        controller.abort();
+
+        await expect(pending).rejects.toBe(abortError);
+        expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        null,
+        {},
+        { id: 72 },
+    ])('rejects malformed or mismatched detail evidence: %j', async (payload) => {
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        fetchMock.mockResolvedValue(payload);
+
+        await expect(JC.seerrAPI!.fetchIssueById(71))
+            .rejects.toThrow(/invalid Seerr issue detail/i);
+    });
+
     it('rejects a malformed projection instead of treating missing rows as zero issues', async () => {
         fetchMock.mockResolvedValue({ results: [] });
 

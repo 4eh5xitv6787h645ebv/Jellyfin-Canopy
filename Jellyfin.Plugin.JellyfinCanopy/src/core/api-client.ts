@@ -71,6 +71,16 @@ const responseCache = new Map<string, {
 }>();
 let responseCacheBytes = 0;
 
+// Cache invalidation also owns the finite set of cacheable GETs that are
+// currently queued or active. Retiring these request-scoped records prevents a
+// pre-invalidation response from publishing later without retaining an
+// unbounded history of key or pattern generations.
+interface ActiveCacheRequest {
+    readonly key: string;
+    retired: boolean;
+}
+const activeCacheRequests = new Set<ActiveCacheRequest>();
+
 // AbortController management per page/context
 const activeControllers = new Map<string, AbortController>();
 
@@ -582,6 +592,7 @@ function setCache(
 function clearCache(): void {
     responseCache.clear();
     responseCacheBytes = 0;
+    retireCacheRequestsMatching(() => true);
 }
 
 /**
@@ -592,6 +603,22 @@ function clearCacheMatching(pattern: string): void {
         if (key.includes(pattern)) {
             deleteCacheEntry(key);
         }
+    }
+    retireCacheRequestsMatching(key => key.includes(pattern));
+}
+
+/**
+ * Fence matching cacheable GETs that predate an invalidation. Removing their
+ * current dedup slots means a post-invalidation caller starts fresh; marking
+ * their live owner prevents an older response from overwriting that fresh
+ * cache entry when it eventually settles.
+ */
+function retireCacheRequestsMatching(matches: (key: string) => boolean): void {
+    for (const owner of activeCacheRequests) {
+        if (matches(owner.key)) owner.retired = true;
+    }
+    for (const key of inFlightRequests.keys()) {
+        if (matches(key)) inFlightRequests.delete(key);
     }
 }
 
@@ -860,6 +887,9 @@ async function coreFetch(
     }
 
     const identityCacheKey = cacheKey ? scopedKey(cacheKey, context) : undefined;
+    const cacheRequest = isGet && identityCacheKey
+        ? { key: identityCacheKey, retired: false } satisfies ActiveCacheRequest
+        : null;
 
     // Check cache first (GET only)
     if (isGet && !skipCache && identityCacheKey) {
@@ -927,7 +957,8 @@ async function coreFetch(
             );
         } catch (error) {
             const status = (error as HttpError | null)?.status;
-            if (isGet && identityCacheKey && cacheNotFound && status === 404) {
+            if (isGet && identityCacheKey && cacheRequest && !cacheRequest.retired
+                && cacheNotFound && status === 404) {
                 guard();
                 setCache(identityCacheKey, null, 4, CONFIG.cache.negativeTtlMs);
                 guard();
@@ -943,7 +974,7 @@ async function coreFetch(
         const data: unknown = text ? JSON.parse(text) : {};
         guard();
 
-        if (isGet && identityCacheKey) {
+        if (isGet && identityCacheKey && cacheRequest && !cacheRequest.retired) {
             guard();
             let disposition: 'positive' | 'negative' | 'skip' = data === null
                 ? 'skip'
@@ -955,7 +986,9 @@ async function coreFetch(
                     disposition = 'skip';
                 }
             }
-            if (disposition !== 'skip') {
+            // cacheDisposition is caller-owned and may synchronously invalidate
+            // this key, so re-check retirement at the actual publication point.
+            if (disposition !== 'skip' && !cacheRequest.retired) {
                 const responseBytes = new TextEncoder().encode(text || '{}').byteLength;
                 const ttlMs = disposition === 'negative'
                     ? CONFIG.cache.negativeTtlMs
@@ -973,12 +1006,13 @@ async function coreFetch(
     // abort an otherwise-independent waiter for the same cache key.
     const deduplicationSignal = signal || (timeoutMs && timeoutMs > 0 ? controller.signal : undefined);
     try {
+        if (cacheRequest) activeCacheRequests.add(cacheRequest);
         activeRequestControllers.add(controller);
         releaseMutationHold = isMutation
             ? JC.core.refreshSafety!.acquireHold('pending-write')
             : null;
         const result = await withConcurrencyLimit(
-            () => (isGet && identityCacheKey)
+            () => (isGet && identityCacheKey && !cacheRequest?.retired)
                 ? deduplicatedFetch(identityCacheKey, fetchFn, deduplicationSignal)
                 : fetchFn(),
             context,
@@ -990,6 +1024,7 @@ async function coreFetch(
         if (timeoutId) clearTimeout(timeoutId);
         if (unchain) unchain();
         activeRequestControllers.delete(controller);
+        if (cacheRequest) activeCacheRequests.delete(cacheRequest);
         releaseMutationHold?.();
     }
 }

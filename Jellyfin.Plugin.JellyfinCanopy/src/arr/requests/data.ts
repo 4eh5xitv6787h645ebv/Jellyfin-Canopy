@@ -1324,7 +1324,8 @@ export async function fetchIssues(signal?: AbortSignal): Promise<unknown> {
             state.issuesError = false;
             return null;
         }
-        // Stop trying if we already know the user lacks VIEW_ISSUES permission.
+        // Stop trying if the server already proved the user lacks every issue-read
+        // role (CREATE_ISSUES, VIEW_ISSUES and MANAGE_ISSUES).
         if (state.issuesPermissionDenied) return null;
 
         const skip = (requestedPage - 1) * 20;
@@ -1384,7 +1385,7 @@ export async function fetchIssues(signal?: AbortSignal): Promise<unknown> {
         state.issues = [];
         state.issuesTotalPages = 1;
         state.issuesError = true;
-        // 403 = no VIEW_ISSUES permission — surface once as a toast, then stop polling issues
+        // 403 = no issue-read permission — surface once, then stop polling issues.
         if ((error as { status?: number } | null)?.status === 403) {
             state.issuesPermissionDenied = true;
             if (typeof JC?.toast === 'function') {

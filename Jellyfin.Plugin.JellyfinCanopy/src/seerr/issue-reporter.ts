@@ -40,21 +40,32 @@ export async function enrichIssuesForDisplay(
 ): Promise<any[]> {
     const enriched = new Array(issues.length);
     let nextIndex = 0;
+    const failure: { caught: boolean; error: unknown } = {
+        caught: false,
+        error: undefined,
+    };
     const workerCount = Math.min(ISSUE_ENRICHMENT_CONCURRENCY, issues.length);
     const workers = Array.from({ length: workerCount }, async () => {
-        while (nextIndex < issues.length && shouldContinue()) {
+        while (nextIndex < issues.length && !failure.caught && shouldContinue()) {
             const index = nextIndex++;
             if (!shouldContinue()) return;
             const issue = issues[index];
             try {
-                enriched[index] = await fetchIssue(issue.id) || issue;
-            } catch (_: any) {
-                enriched[index] = issue;
+                const detail = await fetchIssue(issue.id);
+                if (!detail) throw new Error(`Issue ${String(issue.id)} detail was empty`);
+                enriched[index] = detail;
+            } catch (error: unknown) {
+                if (!failure.caught) {
+                    failure.caught = true;
+                    failure.error = error;
+                }
+                return;
             }
             if (!shouldContinue()) return;
         }
     });
     await Promise.all(workers);
+    if (failure.caught) throw failure.error;
     return enriched;
 }
 
@@ -213,6 +224,7 @@ issueReporter.showReportModal = function (tmdbId, itemName, mediaType, backdropU
             .seerr-issue-comment-meta { font-size: 12px; color: #9aa; margin-bottom: 2px; }
             .seerr-issue-comment-body { color: #eaeaea; font-size: 14px; white-space: pre-wrap; }
             .seerr-issues-empty { color: #9aa; padding: 8px 0; }
+            .seerr-issues-error { color: #fca5a5; padding: 8px 0; }
         </style>
         <div class="seerr-issue-form">
             <div class="seerr-form-group">
@@ -245,6 +257,11 @@ issueReporter.showReportModal = function (tmdbId, itemName, mediaType, backdropU
         </div>
     `;
 
+    let issueHistoryGeneration = 0;
+    let issueHistoryController: AbortController | null = null;
+    let refreshIssueHistory: (fresh?: boolean, expectedIssueId?: number) => Promise<void>
+        = () => Promise.resolve();
+
     // Create modal using the existing modal system
     const { modalElement, show } = JC.seerrModal!.create({
         title: JC.t!('seerr_report_issue_title'),
@@ -252,7 +269,7 @@ issueReporter.showReportModal = function (tmdbId, itemName, mediaType, backdropU
         bodyHtml: formHtml,
         backdropUrl: backdropUrl,
         buttonText: JC.t!('seerr_report_issue_submit'),
-        onSave: async (modalEl, button, closeModal) => {
+        onSave: async (modalEl, button) => {
             if (!isReporterIdentityCurrent(context) || !modalEl.isConnected) return;
             const issueType = modalEl.querySelector<HTMLInputElement>('input[name="issue-type"]:checked')?.value;
             const message = modalEl.querySelector<HTMLTextAreaElement>('#issue-message')!.value;
@@ -286,7 +303,16 @@ issueReporter.showReportModal = function (tmdbId, itemName, mediaType, backdropU
                 if (result) {
                     JC.toast!(JC.t!('seerr_report_issue_success'), 3000);
                     console.log(`${logPrefix} Issue successfully reported for ${itemName}`);
-                    closeModal();
+                    modalEl.querySelectorAll<HTMLInputElement>('input[name="issue-type"]')
+                        .forEach(input => { input.checked = false; });
+                    modalEl.querySelector<HTMLTextAreaElement>('#issue-message')!.value = '';
+                    // A successful create is not the end of this workflow: keep
+                    // the modal open and prove the new owner-visible issue through
+                    // a fresh list followed by its authenticated detail read.
+                    await refreshIssueHistory(true, Number(result.id));
+                    if (!isReporterIdentityCurrent(context) || !modalEl.isConnected) return;
+                    button.disabled = false;
+                    button.textContent = JC.t!('seerr_report_issue_submit');
                 } else {
                     throw new Error('No response from API');
                 }
@@ -304,23 +330,48 @@ issueReporter.showReportModal = function (tmdbId, itemName, mediaType, backdropU
                 button.disabled = false;
                 button.textContent = JC.t!('seerr_report_issue_submit');
             }
-        }
+        },
+        onClose: () => {
+            issueHistoryGeneration++;
+            issueHistoryController?.abort();
+            issueHistoryController = null;
+        },
     });
 
     ownReporterElement(modalElement, context);
 
     show();
 
-    // Load existing issues/comments for this item
-    void (async () => {
+    // Load existing issues/comments for this item. A newer refresh aborts and
+    // retires the previous generation so a pre-create empty list can never win
+    // the render race against the post-create owner snapshot.
+    refreshIssueHistory = async (fresh = false, expectedIssueId?: number) => {
+        const generation = ++issueHistoryGeneration;
+        issueHistoryController?.abort();
+        const controller = new AbortController();
+        issueHistoryController = controller;
         const bodyEl = modalElement.querySelector('#seerr-issues-body');
-        const loadingEl = modalElement.querySelector('#seerr-issues-loading');
-
-        const renderEmpty = (msg = JC.t!('seerr_no_issues_yet')) => {
-            if (bodyEl && isReporterIdentityCurrent(context) && modalElement.isConnected) {
-                bodyEl.innerHTML = `<div class="seerr-issues-empty">${msg}</div>`;
-            }
+        const isCurrent = () => generation === issueHistoryGeneration
+            && !controller.signal.aborted
+            && isReporterIdentityCurrent(context)
+            && modalElement.isConnected;
+        const renderMessage = (className: string, message: string, role?: string) => {
+            if (!bodyEl || !isCurrent()) return;
+            const element = document.createElement('div');
+            element.className = className;
+            element.textContent = message;
+            if (role) element.setAttribute('role', role);
+            bodyEl.replaceChildren(element);
         };
+        const renderEmpty = () => renderMessage(
+            'seerr-issues-empty',
+            JC.t!('seerr_no_issues_yet'),
+        );
+        const renderError = () => renderMessage(
+            'seerr-issues-error',
+            JC.t!('seerr_load_issues_error'),
+            'alert',
+        );
 
         const issueTypeLabels: Record<string | number, string> = {
             1: JC.t!('seerr_report_issue_type_video') || 'Video',
@@ -346,10 +397,23 @@ issueReporter.showReportModal = function (tmdbId, itemName, mediaType, backdropU
         };
 
         try {
-            if (loadingEl) loadingEl.textContent = JC.t!('seerr_loading_issues');
-            const res = await JC.seerrAPI!.fetchIssuesForMedia(tmdbId, mediaType, { all: true, filter: 'all' });
-            if (!isReporterIdentityCurrent(context) || !modalElement.isConnected) return;
-            let issues = res?.results || [];
+            renderMessage('seerr-issues-loading', JC.t!('seerr_loading_issues'));
+            const res = await JC.seerrAPI!.fetchIssuesForMedia(tmdbId, mediaType, {
+                all: true,
+                filter: 'all',
+                fresh,
+                signal: controller.signal,
+            });
+            if (!isCurrent()) return;
+            if (!res || !Array.isArray(res.results)) {
+                throw new Error('Canopy returned invalid issue-history evidence');
+            }
+            let issues = res.results;
+
+            if (expectedIssueId !== undefined
+                && !issues.some((issue: any) => Number(issue?.id) === expectedIssueId)) {
+                throw new Error(`Created issue ${expectedIssueId} was absent from the refreshed history`);
+            }
 
             if (!issues.length) {
                 renderEmpty();
@@ -358,10 +422,13 @@ issueReporter.showReportModal = function (tmdbId, itemName, mediaType, backdropU
 
             const enriched = await enrichIssuesForDisplay(
                 issues,
-                issueId => JC.seerrAPI!.fetchIssueById(issueId),
-                () => isReporterIdentityCurrent(context) && modalElement.isConnected,
+                issueId => JC.seerrAPI!.fetchIssueById(issueId, {
+                    fresh,
+                    signal: controller.signal,
+                }),
+                isCurrent,
             );
-            if (!isReporterIdentityCurrent(context) || !modalElement.isConnected) return;
+            if (!isCurrent()) return;
 
             issues = enriched;
 
@@ -433,16 +500,19 @@ issueReporter.showReportModal = function (tmdbId, itemName, mediaType, backdropU
                     `;
                 }).join('');
 
-            if (bodyEl && isReporterIdentityCurrent(context) && modalElement.isConnected) {
+            if (bodyEl && isCurrent()) {
                 bodyEl.innerHTML = sections;
             }
 
         } catch (err: any) {
-            if (!isReporterIdentityCurrent(context) || !modalElement.isConnected) return;
+            if (!isCurrent()) return;
             console.error(`${logPrefix} Failed to load existing issues:`, err);
-            renderEmpty(JC.t!('seerr_load_issues_error'));
+            renderError();
+        } finally {
+            if (issueHistoryController === controller) issueHistoryController = null;
         }
-    })();
+    };
+    void refreshIssueHistory();
 
     // If this is a TV item, augment the modal with season/episode selectors
     if (mediaType === 'tv') {

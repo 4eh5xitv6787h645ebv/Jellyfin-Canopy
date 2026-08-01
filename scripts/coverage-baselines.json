@@ -10,17 +10,17 @@
       "scope": "Jellyfin.Plugin.JellyfinCanopy/src/core/**",
       "report": "coverage/coverage-summary.json",
       "measured": {
-        "coveredLines": 2327,
-        "totalLines": 2667
+        "coveredLines": 2337,
+        "totalLines": 2677
       },
       "observations": {
         "cleanRuns": 2,
-        "minimumCoveredLines": 2327,
-        "maximumCoveredLines": 2327
+        "minimumCoveredLines": 2337,
+        "maximumCoveredLines": 2337
       },
       "tolerance": {
         "missingCoveredLines": 1,
-        "rationale": "The #369 body-observer ownership fix adds one instrumented and covered client/core line so stale handles compare their exact subscriber identity before cleanup, advancing the reviewed high-water from 2326/2666 (87.247%) to 2327/2667 (87.252%). Two clean Node 22.20/V8 runs on 2026-07-27 each passed all 1788 tests across 233 files and reproduced exactly 2327/2667. Retaining the existing one-line tolerance makes the minimum 2326/2667 (87.214%), stricter than the prior 2325/2666 tolerated floor (87.209%). coverage-baseline.test.js retains the exact below-floor, above-baseline, scope-change, and broad-tolerance negative boundaries."
+        "rationale": "Completing #171's cache-invalidation ownership adds ten instrumented and covered client/core lines so active or queued cacheable GETs are retired before invalidation and a stale response cannot publish after clearCache or clearCacheMatching. Two clean Node 22.20/V8 runs on 2026-08-01 each passed all 1,825 tests across 236 files and reproduced exactly 2,337/2,677, advancing the reviewed high-water from 2,327/2,667 (87.252%) to 2,337/2,677 (87.299%). Retaining the existing one-line tolerance makes the minimum 2,336/2,677 (87.262%), stricter than the prior 2,326/2,667 tolerated floor (87.214%). coverage-baseline.test.js retains the exact below-floor, above-baseline, scope-change, observed-high-water, and broad-tolerance negative boundaries."
       }
     },
     "server": {

@@ -70,4 +70,31 @@ describe('Seerr API identity-owned caches and issue writes', () => {
         await expect(pending).rejects.toThrow(/stale identity/i);
         expect(pluginMock).not.toHaveBeenCalled();
     });
+
+    it('posts to the canonical issue route and retires stale issue reads after create', async () => {
+        const clearCacheMatching = vi.fn();
+        JC.requestManager = { clearCacheMatching } as unknown as NonNullable<typeof JC.requestManager>;
+        fetchMock.mockResolvedValue({ mediaInfo: { id: 99 } });
+        pluginMock.mockResolvedValue({ id: 71 });
+
+        await expect(JC.seerrAPI!.reportIssue('42', 'movie', '1', 'bad video'))
+            .resolves.toEqual({ id: 71 });
+
+        expect(pluginMock).toHaveBeenCalledWith('/seerr/issue', expect.objectContaining({
+            method: 'POST',
+            skipRetry: true,
+            body: expect.objectContaining({ mediaId: 99, issueType: 1, message: 'bad video' }),
+        }));
+        expect(clearCacheMatching).toHaveBeenCalledWith('seerr:/issue');
+        expect(clearCacheMatching).toHaveBeenCalledWith('seerr:/movie/42');
+    });
+
+    it('rejects a malformed create response without publishing it as success', async () => {
+        vi.spyOn(console, 'error').mockImplementation(() => undefined);
+        fetchMock.mockResolvedValue({ mediaInfo: { id: 99 } });
+        pluginMock.mockResolvedValue({});
+
+        await expect(JC.seerrAPI!.reportIssue('42', 'movie', '1', 'bad video'))
+            .rejects.toThrow(/invalid issue create response/i);
+    });
 });
