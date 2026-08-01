@@ -10,9 +10,10 @@
  * Jellyfin.Plugin.JellyfinCanopy package and fails below the threshold.
  *
  * The threshold is read from scripts/coverage-baselines.json, shared with the
- * client gate. The artifact records exact repeated clean measurements, a tiny
- * instrumentation tolerance, and the complete instrumented scope. Coverage
- * or scope growth must update that reviewed artifact so gains cannot be lost.
+ * client gate. The artifact records the observed clean-run envelope, uses its
+ * high-water as the reviewed baseline, and carries a tiny downward
+ * instrumentation tolerance plus the complete instrumented scope. Coverage or
+ * scope growth must update that reviewed artifact so gains cannot be lost.
  *
  * Usage: node scripts/check-dotnet-coverage.js
  */

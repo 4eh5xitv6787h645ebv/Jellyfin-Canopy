@@ -18,8 +18,20 @@ const ROOT = path.join(__dirname, '..');
 const baselines = loadBaselines();
 
 test('reviewed coverage baselines match the clean measurement envelopes', () => {
+    assert.equal(baselines.schemaVersion, 2);
+    assert.equal(baselines.policy.baselineSelection, 'observed-high-water');
     assert.deepEqual(baselines.profiles.client.measured, { coveredLines: 2327, totalLines: 2667 });
     assert.deepEqual(baselines.profiles.server.measured, { coveredLines: 27855, totalLines: 36572 });
+    assert.deepEqual(baselines.profiles.client.observations, {
+        cleanRuns: 2,
+        minimumCoveredLines: 2327,
+        maximumCoveredLines: 2327,
+    });
+    assert.deepEqual(baselines.profiles.server.observations, {
+        cleanRuns: 3,
+        minimumCoveredLines: 27854,
+        maximumCoveredLines: 27855,
+    });
     assert.equal(baselines.profiles.client.tolerance.missingCoveredLines, 1);
     assert.equal(baselines.profiles.server.tolerance.missingCoveredLines, 6);
 });
@@ -62,6 +74,61 @@ for (const name of ['client', 'server']) {
         }, profile).reason, 'scope-drift');
     });
 }
+
+test('reviewed high-water accepts its bounded variants and rejects both outer edges', () => {
+    const profile = {
+        scope: 'synthetic fixed assembly scope',
+        measured: { coveredLines: 19201, totalLines: 27479 },
+        observations: {
+            cleanRuns: 4,
+            minimumCoveredLines: 19199,
+            maximumCoveredLines: 19201,
+        },
+        tolerance: {
+            missingCoveredLines: 2,
+            rationale: 'Synthetic two-line instrumentation envelope.',
+        },
+    };
+    const document = {
+        schemaVersion: 2,
+        policy: {
+            baselineSelection: 'observed-high-water',
+            maximumTolerancePercentagePoints: 0.15,
+        },
+        profiles: {
+            client: JSON.parse(JSON.stringify(profile)),
+            server: JSON.parse(JSON.stringify(profile)),
+        },
+    };
+
+    assert.doesNotThrow(() => validateBaselineDocument(document));
+    for (const coveredLines of [19199, 19200, 19201]) {
+        assert.equal(evaluateCoverage({ coveredLines, totalLines: 27479 }, profile).ok, true);
+    }
+    assert.equal(evaluateCoverage({ coveredLines: 19198, totalLines: 27479 }, profile).reason, 'regression');
+    assert.equal(evaluateCoverage({ coveredLines: 19202, totalLines: 27479 }, profile).reason, 'stale-baseline');
+
+    const selectedLowerValue = JSON.parse(JSON.stringify(document));
+    selectedLowerValue.profiles.server.measured.coveredLines = 19200;
+    assert.throws(
+        () => validateBaselineDocument(selectedLowerValue),
+        /coveredLines must equal the observed high-water 19201/,
+    );
+
+    const widerThanTolerance = JSON.parse(JSON.stringify(document));
+    widerThanTolerance.profiles.server.observations.minimumCoveredLines = 19198;
+    assert.throws(
+        () => validateBaselineDocument(widerThanTolerance),
+        /observations spread 3 exceeds the 2-line instrumentation tolerance/,
+    );
+
+    const singleRun = JSON.parse(JSON.stringify(document));
+    singleRun.profiles.server.observations.cleanRuns = 1;
+    assert.throws(
+        () => validateBaselineDocument(singleRun),
+        /observations\.cleanRuns must be an integer >= 2/,
+    );
+});
 
 test('baseline policy rejects a broad tolerance increase', () => {
     const fixture = JSON.parse(JSON.stringify(baselines));

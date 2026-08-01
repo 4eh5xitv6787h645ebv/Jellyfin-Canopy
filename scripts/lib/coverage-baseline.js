@@ -19,15 +19,44 @@ function validateProfile(name, profile, maximumTolerancePercentagePoints) {
         throw new Error(`profiles.${name}.scope must be a non-empty string`);
     }
     const measured = profile.measured;
+    const observations = profile.observations;
     const tolerance = profile.tolerance;
-    if (!measured || !tolerance) {
-        throw new Error(`profiles.${name} must define measured and tolerance`);
+    if (!measured || !observations || !tolerance) {
+        throw new Error(`profiles.${name} must define measured, observations and tolerance`);
     }
     requireInteger(measured.coveredLines, `profiles.${name}.measured.coveredLines`);
     requireInteger(measured.totalLines, `profiles.${name}.measured.totalLines`, 1);
     requireInteger(tolerance.missingCoveredLines, `profiles.${name}.tolerance.missingCoveredLines`);
     if (measured.coveredLines > measured.totalLines) {
         throw new Error(`profiles.${name}.measured.coveredLines exceeds totalLines`);
+    }
+    requireInteger(observations.cleanRuns, `profiles.${name}.observations.cleanRuns`, 2);
+    requireInteger(
+        observations.minimumCoveredLines,
+        `profiles.${name}.observations.minimumCoveredLines`,
+    );
+    requireInteger(
+        observations.maximumCoveredLines,
+        `profiles.${name}.observations.maximumCoveredLines`,
+    );
+    if (observations.minimumCoveredLines > observations.maximumCoveredLines) {
+        throw new Error(`profiles.${name}.observations minimum exceeds maximum`);
+    }
+    if (observations.maximumCoveredLines > measured.totalLines) {
+        throw new Error(`profiles.${name}.observations maximum exceeds totalLines`);
+    }
+    if (measured.coveredLines !== observations.maximumCoveredLines) {
+        throw new Error(
+            `profiles.${name}.measured.coveredLines must equal the observed high-water `
+            + `${observations.maximumCoveredLines}`,
+        );
+    }
+    const observedSpread = observations.maximumCoveredLines - observations.minimumCoveredLines;
+    if (observedSpread > tolerance.missingCoveredLines) {
+        throw new Error(
+            `profiles.${name}.observations spread ${observedSpread} exceeds the `
+            + `${tolerance.missingCoveredLines}-line instrumentation tolerance`,
+        );
     }
     if (tolerance.missingCoveredLines > measured.coveredLines) {
         throw new Error(`profiles.${name}.tolerance exceeds measured coverage`);
@@ -48,8 +77,11 @@ function validateBaselineDocument(document) {
     if (!document || typeof document !== 'object' || Array.isArray(document)) {
         throw new Error('coverage baseline must be an object');
     }
-    if (document.schemaVersion !== 1) {
+    if (document.schemaVersion !== 2) {
         throw new Error(`unsupported coverage baseline schemaVersion ${document.schemaVersion}`);
+    }
+    if (document.policy?.baselineSelection !== 'observed-high-water') {
+        throw new Error('policy.baselineSelection must be observed-high-water');
     }
     const maximum = document.policy?.maximumTolerancePercentagePoints;
     if (!Number.isFinite(maximum) || maximum < 0 || maximum > 1) {
@@ -109,14 +141,14 @@ function evaluateCoverage(measured, profile) {
         return {
             ok: false,
             reason: 'stale-baseline',
-            message: `coverage advanced beyond ${baseline.coveredLines} covered lines; raise the reviewed baseline so the gain cannot be lost`,
+            message: `coverage advanced beyond the reviewed observed high-water ${baseline.coveredLines}; record a new clean-run envelope so the gain cannot be lost`,
         };
     }
     return {
         ok: true,
         reason: measured.coveredLines === baseline.coveredLines ? 'exact' : 'within-tolerance',
         message: measured.coveredLines === baseline.coveredLines
-            ? 'measurement matches the reviewed baseline'
+            ? 'measurement matches the reviewed observed high-water'
             : `measurement is within the ${profile.tolerance.missingCoveredLines}-line instrumentation tolerance`,
     };
 }
@@ -128,7 +160,7 @@ function formatCoverage(name, measured, profile, result) {
     const baselinePercent = percentage(profile.measured.coveredLines, profile.measured.totalLines);
     return `${name}: measured ${measured.coveredLines}/${measured.totalLines} lines = ${measuredPercent.toFixed(3)}%; `
         + `required ${minimum}/${profile.measured.totalLines} = ${minimumPercent.toFixed(3)}%; `
-        + `reviewed baseline ${profile.measured.coveredLines}/${profile.measured.totalLines} = ${baselinePercent.toFixed(3)}% — ${result.message}`;
+        + `reviewed observed high-water ${profile.measured.coveredLines}/${profile.measured.totalLines} = ${baselinePercent.toFixed(3)}% — ${result.message}`;
 }
 
 module.exports = {

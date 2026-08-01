@@ -294,7 +294,7 @@ npm run e2e                    # JF_BASE_URL=... (default http://localhost:8099)
 npm run e2e:headed             # watch it run
 ```
 
-Coverage thresholds are **ratchets**: they were set just below measured coverage when introduced (`vitest.config.ts` for `src/core`, `scripts/check-dotnet-coverage.js` for the plugin assembly). Raise them as you add tests; never lower them. The coverage commands already execute the complete unit suite, so do not run the corresponding plain command immediately before them.
+Coverage thresholds are **ratchets**. For each fixed scope, `scripts/coverage-baselines.json` records a reviewed clean-run envelope and uses the observed high-water—not a modal or repeated lower result—as its baseline. A narrow downward instrumentation tolerance defines the floor. Update the envelope as coverage advances; never lower its floor without an explicit, justified scope change. The coverage commands already execute the complete unit suite, so do not run the corresponding plain command immediately before them.
 
 The ESLint warning cap (`--max-warnings` in the raw `npm run lint` script) is the same idea inverted: it is pinned at the reviewed count of typed-lint `no-unsafe-*` warnings in the converted legacy feature areas (`src/core` and `src/types` treat those rules as errors). Findings and cap breaches stay visible in logs and summaries but are advisory for delivery; the cap remains a review ratchet and must never be raised to make a branch green. When you type legacy shapes and the count drops, lower the cap to match. ESLint configuration, invocation, or internal failures are tooling failures and remain blocking.
 
