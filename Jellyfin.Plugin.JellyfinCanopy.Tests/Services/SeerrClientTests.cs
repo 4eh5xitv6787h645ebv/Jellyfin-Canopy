@@ -79,7 +79,7 @@ public class SeerrClientTests
     // ─── IPluginConfigProvider seam ──────────────────────────────────────────
 
     private static SeerrClient NewClient(FakePluginConfigProvider provider)
-        => new(new ThrowingHttpClientFactory(), NullLogger<SeerrClient>.Instance, null!, new SeerrCache(provider), provider, null!);
+        => new(new ThrowingHttpClientFactory(), NullLogger<SeerrClient>.Instance, null!, new SeerrCache(provider), provider, null!, null!);
 
     [Fact]
     public async Task GetSeerrUserId_ReadsConfigThroughInjectedProvider_AndSkipsWorkWhenUnconfigured()
@@ -115,6 +115,7 @@ public class SeerrClientTests
             null!,
             new SeerrCache(provider),
             provider,
+            null!,
             null!);
 
         var resolution = await client.ResolveSeerrUser(
@@ -143,6 +144,7 @@ public class SeerrClientTests
             null!,
             new SeerrCache(provider),
             provider,
+            null!,
             null!);
 
         Assert.Null(await client.GetWatchlistForUser("42"));
@@ -166,6 +168,7 @@ public class SeerrClientTests
             null!,
             new SeerrCache(provider),
             provider,
+            null!,
             null!);
 
         Assert.False(await client.GetStatusActiveAsync());
@@ -188,6 +191,7 @@ public class SeerrClientTests
             null!,
             new SeerrCache(provider),
             provider,
+            null!,
             null!);
 
         var statusTask = client.GetStatusActiveAsync();

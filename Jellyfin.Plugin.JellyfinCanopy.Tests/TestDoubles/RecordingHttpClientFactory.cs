@@ -46,6 +46,10 @@ public sealed class RecordingHttpMessageHandler : HttpMessageHandler
     /// disposed by the caller's <c>using</c> once SendAsync returns, so the body must be read here).</summary>
     public List<CapturedRequest> Sent { get; } = new();
 
+    public Action<HttpRequestMessage>? BeforeResponse { get; set; }
+
+    public Func<HttpRequestMessage, HttpResponseMessage?>? ResponseFactory { get; set; }
+
     public sealed record CapturedRequest(HttpMethod Method, string Path, string Body);
 
     public void AddResponse(string pathSuffix, string body, HttpStatusCode status = HttpStatusCode.OK)
@@ -66,6 +70,13 @@ public sealed class RecordingHttpMessageHandler : HttpMessageHandler
         Sent.Add(new CapturedRequest(request.Method, request.RequestUri!.AbsolutePath, body));
 
         var path = request.RequestUri!.AbsolutePath;
+        BeforeResponse?.Invoke(request);
+        var customResponse = ResponseFactory?.Invoke(request);
+        if (customResponse != null)
+        {
+            return Task.FromResult(customResponse);
+        }
+
         foreach (var (suffix, response) in _responses)
         {
             if (path.EndsWith(suffix, StringComparison.Ordinal))

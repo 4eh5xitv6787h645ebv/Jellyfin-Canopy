@@ -21,7 +21,7 @@ test('reviewed coverage baselines match the clean measurement envelopes', () => 
     assert.equal(baselines.schemaVersion, 2);
     assert.equal(baselines.policy.baselineSelection, 'observed-high-water');
     assert.deepEqual(baselines.profiles.client.measured, { coveredLines: 2337, totalLines: 2677 });
-    assert.deepEqual(baselines.profiles.server.measured, { coveredLines: 28067, totalLines: 36668 });
+    assert.deepEqual(baselines.profiles.server.measured, { coveredLines: 28559, totalLines: 37106 });
     assert.deepEqual(baselines.profiles.client.observations, {
         cleanRuns: 2,
         minimumCoveredLines: 2337,
@@ -29,8 +29,8 @@ test('reviewed coverage baselines match the clean measurement envelopes', () => 
     });
     assert.deepEqual(baselines.profiles.server.observations, {
         cleanRuns: 5,
-        minimumCoveredLines: 28066,
-        maximumCoveredLines: 28067,
+        minimumCoveredLines: 28558,
+        maximumCoveredLines: 28559,
     });
     assert.equal(baselines.profiles.client.tolerance.missingCoveredLines, 1);
     assert.equal(baselines.profiles.server.tolerance.missingCoveredLines, 1);

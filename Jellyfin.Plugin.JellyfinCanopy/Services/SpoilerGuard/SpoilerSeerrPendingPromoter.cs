@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading;
+using System.Threading.Channels;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
 using MediaBrowser.Controller.Entities;
@@ -15,173 +16,29 @@ using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyfinCanopy.Services
 {
-    // Promotes pending Spoiler Guard entries (UserSpoilerBlur.PendingTmdb) into
-    // real Series/Movies entries when matching library items land via Seerr or
-    // any other source. Hooks ILibraryManager.ItemAdded + ItemUpdated.
-    //
-    // Load discipline: library events fire in rapid bursts while a season is
-    // importing (each episode add refreshes the parent Series, so one download
-    // batch can raise dozens of Series ItemUpdated events in under a minute).
-    // Everything here is therefore designed to stay OFF the scanner's hot path
-    // and OFF the library database during those bursts:
-    //
-    //   1. _pendingUsersByKey maps "tv:{tmdb}"/"movie:{tmdb}" -> the set of
-    //      users who actually have that key pending. A sweep only ever touches
-    //      those users (usually exactly one) — never the whole user table.
-    //   2. Sweeps are coalesced per key: one in-flight sweep at a time, a
-    //      rerun flag for events that arrive mid-sweep, and a short settle
-    //      delay so an import burst collapses into a single sweep instead of
-    //      one library read + file RMW per event.
-    //   3. Keys are UNREGISTERED once no user holds them anymore (promotion,
-    //      user delete, or pending-DELETE endpoint), so a promoted show stops
-    //      costing anything on subsequent library events. The gate is a pure
-    //      performance optimization — per-user spoilerblur.json files remain
-    //      the source of truth, and sweeps re-verify against them.
-    //
-    // Per-user library access is checked via GetItemById(id, user) — a user
-    // who can't see the new item won't get the Spoiler Guard entry promoted
-    // for them (they stay registered and are retried on later events), which
-    // would otherwise be a UX bug (entry shows up in their management UI for
-    // a title they can't access).
+    /// <summary>
+    /// Promotes durable <see cref="UserSpoilerBlur.PendingTmdb"/> rows when the
+    /// corresponding media becomes visible in a user's library.  One bounded,
+    /// instance-owned worker serializes all file writes; library events only
+    /// record a coalesced key and never perform database or file I/O.
+    /// </summary>
     public sealed class SpoilerSeerrPendingPromoter : IHostedService
     {
-        // Populated on StartAsync from the per-user spoilerblur.json files and
-        // kept in sync by the controller endpoints + the sweeps below.
-        private static readonly ConcurrentDictionary<string, ConcurrentDictionary<Guid, byte>> _pendingUsersByKey
-            = new(StringComparer.OrdinalIgnoreCase);
+        internal const int DefaultQueueCapacity = 256;
+        private const int ReplayYieldInterval = 64;
 
-        // Per-key sweep coalescing. _sweepRunning holds keys with an active
-        // background sweep; _sweepRerun holds keys that saw another library
-        // event while their sweep was running (or scheduled) and need one more
-        // pass afterwards.
-        private static readonly ConcurrentDictionary<string, byte> _sweepRunning
-            = new(StringComparer.OrdinalIgnoreCase);
-        private static readonly ConcurrentDictionary<string, byte> _sweepRerun
-            = new(StringComparer.OrdinalIgnoreCase);
-
-        // How long a scheduled sweep waits before running. Two purposes:
-        // lets the burst of ItemAdded/ItemUpdated events a season import
-        // fires coalesce into one sweep, and keeps our library reads away
-        // from the exact moment the scanner is writing the item that raised
-        // the event. Promotion is not latency-sensitive — the entry only
-        // needs to flip before the user next browses the title.
-        private const int SweepSettleDelayMs = 2000;
-
-        // Exposed so the controller's POST/DELETE endpoints can keep the gate
-        // accurate without coupling to the hosted-service instance.
-        public static void RegisterPending(string pendingKey, Guid userId)
-        {
-            if (string.IsNullOrEmpty(pendingKey) || userId == Guid.Empty) return;
-            var users = _pendingUsersByKey.GetOrAdd(
-                pendingKey, _ => new ConcurrentDictionary<Guid, byte>());
-            users.TryAdd(userId, 0);
-        }
-
-        public static void UnregisterPending(string pendingKey, Guid userId)
-        {
-            if (string.IsNullOrEmpty(pendingKey) || userId == Guid.Empty) return;
-            if (!_pendingUsersByKey.TryGetValue(pendingKey, out var users)) return;
-            users.TryRemove(userId, out _);
-            if (users.IsEmpty)
-            {
-                // Remove the key, but atomically: a concurrent RegisterPending
-                // could add a user to `users` between our IsEmpty check and the
-                // removal, which would strand that user's pending row (no sweep
-                // until restart). TryRemove(KeyValuePair) only deletes if the
-                // mapped set is STILL the same (now-empty) instance; if a racer
-                // swapped in a fresh set via GetOrAdd, or repopulated this one,
-                // the delete is refused. Re-check the recovered set and merge
-                // any late arrivals back so nothing is lost.
-                if (((ICollection<KeyValuePair<string, ConcurrentDictionary<Guid, byte>>>)_pendingUsersByKey)
-                        .Remove(new KeyValuePair<string, ConcurrentDictionary<Guid, byte>>(pendingKey, users))
-                    && !users.IsEmpty)
-                {
-                    foreach (var lateUser in users.Keys)
-                    {
-                        RegisterPending(pendingKey, lateUser);
-                    }
-                }
-            }
-        }
-
-        // Test seams (Tests has InternalsVisibleTo) over the static gate.
-        internal static bool IsKeyRegisteredForTest(string pendingKey)
-            => _pendingUsersByKey.ContainsKey(pendingKey);
-
-        internal static int RegisteredUserCountForTest(string pendingKey)
-            => _pendingUsersByKey.TryGetValue(pendingKey, out var users) ? users.Count : 0;
-
-        // AsyncLocal keeps deterministic race/fault hooks isolated when xUnit
-        // runs controller classes in parallel. Task.Run carries the originating
-        // test's execution context, while an unrelated test can install its own
-        // hook without overwriting this one.
-        private static readonly AsyncLocal<Action<string, IReadOnlyCollection<string>>?>
-            _beforeAuthoritativeGateReconcileForTests = new();
-
-        internal static Action<string, IReadOnlyCollection<string>>?
-            BeforeAuthoritativeGateReconcileForTests
-        {
-            get => _beforeAuthoritativeGateReconcileForTests.Value;
-            set => _beforeAuthoritativeGateReconcileForTests.Value = value;
-        }
-
-        /// <summary>
-        /// Reconciles only the affected pending keys from the authoritative
-        /// store state while owning the same user/file lock as all writers.
-        /// A delayed remove can therefore never unregister a key that a newer
-        /// writer has already restored.
-        /// </summary>
-        internal static void ReconcilePendingKeys(
-            UserConfigurationManager configManager,
-            string userKey,
-            IEnumerable<string> affectedKeys)
-        {
-            if (!Guid.TryParseExact(userKey, "N", out var userId)
-                || userId == Guid.Empty)
-            {
-                return;
-            }
-
-            var keys = affectedKeys
-                .Where(static key => !string.IsNullOrEmpty(key))
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToArray();
-            if (keys.Length == 0) return;
-
-            BeforeAuthoritativeGateReconcileForTests?.Invoke(userKey, keys);
-            lock (configManager.GetUserFileLock(
-                userKey,
-                SpoilerBlurImageFilter.SpoilerBlurFileName))
-            {
-                var read = configManager.ReadExistingUserConfiguration<UserSpoilerBlur>(
-                    userKey,
-                    SpoilerBlurImageFilter.SpoilerBlurFileName);
-                if (read.IsFault || !read.HasUsableValue || read.Value == null)
-                {
-                    throw new IOException(
-                        $"Unable to reconcile pending gate from store status {read.Status}.");
-                }
-
-                foreach (var key in keys)
-                {
-                    if (read.Value.PendingTmdb.ContainsKey(key))
-                    {
-                        RegisterPending(key, userId);
-                    }
-                    else
-                    {
-                        UnregisterPending(key, userId);
-                    }
-                }
-            }
-        }
-
+        private readonly object _lifecycleSync = new();
         private readonly ILibraryManager _libraryManager;
         private readonly IUserManager _userManager;
         private readonly UserConfigurationManager _configManager;
         private readonly IPluginConfigProvider _configProvider;
         private readonly SpoilerPendingService _pendingService;
         private readonly ILogger<SpoilerSeerrPendingPromoter> _logger;
+        private readonly int _queueCapacity;
+
+        private WorkerGeneration? _generation;
+        private WorkerGeneration? _stoppingGeneration;
+        private Task _stoppingTask = Task.CompletedTask;
 
         public SpoilerSeerrPendingPromoter(
             ILibraryManager libraryManager,
@@ -189,88 +46,464 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             UserConfigurationManager configManager,
             IPluginConfigProvider configProvider,
             SpoilerPendingService pendingService,
-            ILogger<SpoilerSeerrPendingPromoter> logger)
+            ILogger<SpoilerSeerrPendingPromoter> logger,
+            int queueCapacity = DefaultQueueCapacity)
         {
+            if (queueCapacity <= 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(queueCapacity));
+            }
+
             _libraryManager = libraryManager;
             _userManager = userManager;
             _configManager = configManager;
             _configProvider = configProvider;
-            // Reused for the F5 user-scoped TMDB duplicate lookup. Depends only
-            // on the config/library/user managers (never ISeerrClient nor
-            // this promoter), so injecting it here introduces no DI cycle.
             _pendingService = pendingService;
             _logger = logger;
+            _queueCapacity = queueCapacity;
         }
 
-        public Task StartAsync(CancellationToken cancellationToken)
+        /// <summary>
+        /// Deterministic barrier used only by concurrency tests.  It runs on the
+        /// single worker immediately before a promotion attempt.
+        /// </summary>
+        internal Func<string, Task>? BeforePromotionForTest { get; set; }
+
+        internal Action<string>? AfterPromotionForTest { get; set; }
+
+        internal Action<string, int>? BeforeReplayWriteForTest { get; set; }
+
+        internal Action<string, Guid>? PendingDictionaryAcquiredForTest { get; set; }
+
+        internal bool IsKeyRegisteredForTest(string pendingKey)
         {
-            // Repopulate the in-memory gate from disk so a restart doesn't
-            // silently break promotion for users with already-pending entries.
-            try
+            var generation = GetGenerationForTest();
+            return generation != null && generation.PendingUsersByKey.ContainsKey(pendingKey);
+        }
+
+        internal int RegisteredUserCountForTest(string pendingKey)
+        {
+            var generation = GetGenerationForTest();
+            return generation != null
+                && generation.PendingUsersByKey.TryGetValue(pendingKey, out var users)
+                    ? users.Count
+                    : 0;
+        }
+
+        internal bool IsUserRegisteredForTest(string pendingKey, Guid userId)
+        {
+            var generation = GetGenerationForTest();
+            return generation != null
+                && generation.PendingUsersByKey.TryGetValue(pendingKey, out var users)
+                && users.ContainsKey(userId);
+        }
+
+        internal int ScheduledKeyCountForTest
+            => GetGenerationForTest()?.QueuedOrRunning.Count ?? 0;
+
+        internal Task ReplayCompletionForTest
+            => Volatile.Read(ref _generation)?.ReplayTask ?? Task.CompletedTask;
+
+        public async Task StartAsync(CancellationToken cancellationToken)
+        {
+            while (true)
             {
-                ScanExistingPendingKeys();
+                Task stoppingTask;
+                lock (_lifecycleSync)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (_generation != null)
+                    {
+                        return;
+                    }
+
+                    stoppingTask = _stoppingTask;
+                    if (stoppingTask.IsCompleted)
+                    {
+                        StartGenerationLocked();
+                        return;
+                    }
+                }
+
+                // The old worker owns its maps until it is fully joined. Waiting
+                // outside the short lifecycle lock prevents a concurrent restart
+                // from clearing state that an old generation can still touch.
+                await stoppingTask.WaitAsync(cancellationToken).ConfigureAwait(false);
             }
-            catch (Exception ex)
-            {
-                _logger.LogWarning($"SpoilerSeerrPromoter: startup scan failed (gate may miss already-pending entries until next write): {ex.Message}");
-            }
-            _libraryManager.ItemAdded += OnItemAdded;
-            // ItemAdded fires before Jellyfin's TMDB provider has fetched
-            // metadata — ProviderIds.Tmdb is typically empty at that moment.
-            // ItemUpdated fires after metadata refresh, at which point
-            // ProviderIds.Tmdb is populated, so we re-run the same logic.
-            // The sweep is idempotent (gate + ContainsKey checks) so the
-            // double-fire on items that arrive with metadata already in
-            // place is harmless.
-            _libraryManager.ItemUpdated += OnItemAdded;
-            return Task.CompletedTask;
         }
 
         public Task StopAsync(CancellationToken cancellationToken)
         {
-            _libraryManager.ItemAdded -= OnItemAdded;
-            _libraryManager.ItemUpdated -= OnItemAdded;
-            return Task.CompletedTask;
+            lock (_lifecycleSync)
+            {
+                var generation = _generation;
+                if (generation != null)
+                {
+                    generation.Accepting = false;
+                    Volatile.Write(ref _generation, null);
+                    Volatile.Write(ref _stoppingGeneration, generation);
+                    _pendingService.PendingRegistrationChanged -= OnPendingRegistrationChanged;
+                    _libraryManager.ItemAdded -= OnItemAdded;
+                    _libraryManager.ItemUpdated -= OnItemAdded;
+
+                    // Replay owns only ephemeral admission state. Cancel it for
+                    // every stop, then close admission; durable rows remain on disk
+                    // for the next generation. A host deadline additionally aborts
+                    // the worker's queued/in-flight ownership.
+                    generation.ReplayCancellation.Cancel();
+                    generation.Channel.Writer.TryComplete();
+                    RegisterStopDeadlineLocked(generation, cancellationToken);
+                    _stoppingTask = JoinGenerationAsync(generation);
+                }
+                else if (_stoppingGeneration != null)
+                {
+                    // Concurrent stop callers share the same join, but any caller's
+                    // deadline may still tighten that generation's shutdown.
+                    RegisterStopDeadlineLocked(_stoppingGeneration, cancellationToken);
+                }
+
+                return _stoppingTask;
+            }
         }
 
-        // Best-effort startup scan — corrupt or missing files are skipped on
-        // purpose: the gate is a performance optimization, not a correctness
-        // invariant. Reuses UserConfigurationManager's path + serializer
-        // discipline (GetAllUserIds enumerates the canonical per-user config
-        // dirs under {PluginsPath}/configurations/Jellyfin.Plugin.JellyfinCanopy;
-        // GetUserConfiguration is the lenient System.Text.Json read the store
-        // writes with) instead of a raw file read + separate deserializer.
-        private void ScanExistingPendingKeys()
+        private void StartGenerationLocked()
         {
-            int users = 0, keys = 0;
-            foreach (var userIdN in _configManager.GetAllUserIds())
+            var generation = new WorkerGeneration(_queueCapacity)
             {
-                if (!Guid.TryParseExact(userIdN, "N", out var userId)) continue;
+                Accepting = true,
+            };
+            Volatile.Write(ref _generation, generation);
+            _pendingService.PendingRegistrationChanged += OnPendingRegistrationChanged;
+            _libraryManager.ItemAdded += OnItemAdded;
+            _libraryManager.ItemUpdated += OnItemAdded;
+            generation.WorkerTask = RunWorkerAsync(generation);
+            generation.ReplayTask = ReplayExistingPendingKeysAsync(generation);
+        }
 
-                UserSpoilerBlur state;
+        private void RegisterStopDeadlineLocked(
+            WorkerGeneration generation,
+            CancellationToken cancellationToken)
+        {
+            if (!cancellationToken.CanBeCanceled)
+            {
+                return;
+            }
+
+            generation.StopRegistrations.Add(cancellationToken.Register(
+                static state => ((CancellationTokenSource)state!).Cancel(),
+                generation.WorkerCancellation));
+        }
+
+        private async Task JoinGenerationAsync(WorkerGeneration generation)
+        {
+            // Always yield so StopAsync can publish the shared join task while it
+            // still owns the lifecycle lock, even when both background tasks have
+            // already completed.
+            await Task.Yield();
+            try
+            {
                 try
                 {
-                    state = _configManager.GetUserConfiguration<UserSpoilerBlur>(
-                        userIdN, SpoilerBlurImageFilter.SpoilerBlurFileName);
+                    await generation.ReplayTask.ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                    when (generation.ReplayCancellation.IsCancellationRequested)
+                {
+                    // Expected generation shutdown.
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning($"SpoilerSeerrPromoter: skipping unreadable state for {userIdN}: {ex.GetType().Name}");
-                    continue;
+                    _logger.LogWarning(
+                        "SpoilerSeerrPromoter: replay worker stopped unexpectedly: {Message}",
+                        ex.Message);
                 }
 
-                if (state?.PendingTmdb == null || state.PendingTmdb.Count == 0) continue;
-                users++;
-                foreach (var key in state.PendingTmdb.Keys)
+                try
                 {
-                    if (string.IsNullOrEmpty(key)) continue;
-                    RegisterPending(key, userId);
-                    keys++;
+                    await generation.WorkerTask.ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                    when (generation.WorkerCancellation.IsCancellationRequested)
+                {
+                    // Expected host-deadline cancellation.
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(
+                        "SpoilerSeerrPromoter: promotion worker stopped unexpectedly: {Message}",
+                        ex.Message);
                 }
             }
-            if (keys > 0)
+            finally
             {
-                _logger.LogInformation($"SpoilerSeerrPromoter: gate primed with {keys} pending key(s) across {users} user file(s)");
+                CancellationTokenRegistration[] stopRegistrations;
+                lock (_lifecycleSync)
+                {
+                    if (ReferenceEquals(_stoppingGeneration, generation))
+                    {
+                        Volatile.Write(ref _stoppingGeneration, null);
+                    }
+
+                    stopRegistrations = generation.StopRegistrations.ToArray();
+                    generation.StopRegistrations.Clear();
+                }
+
+                foreach (var registration in stopRegistrations)
+                {
+                    registration.Dispose();
+                }
+
+                generation.PendingUsersByKey.Clear();
+                generation.QueuedOrRunning.Clear();
+                generation.Rerun.Clear();
+                generation.ReplayCancellation.Dispose();
+                generation.WorkerCancellation.Dispose();
+            }
+        }
+
+        private async Task ReplayExistingPendingKeysAsync(WorkerGeneration generation)
+        {
+            // Force all filesystem enumeration and durable admission off the
+            // hosted-service startup call, even when the first writes fit in the
+            // channel synchronously.
+            await Task.Yield();
+            var cancellationToken = generation.ReplayCancellation.Token;
+            var userCount = 0;
+            var rowCount = 0;
+            try
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var userIds = _configManager.GetAllUserIds();
+                cancellationToken.ThrowIfCancellationRequested();
+                foreach (var userIdN in userIds)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (!Guid.TryParseExact(userIdN, "N", out var userId))
+                    {
+                        continue;
+                    }
+
+                    try
+                    {
+                        if (_userManager.GetUserById(userId) == null)
+                        {
+                            // User configuration directories can outlive a deleted
+                            // Jellyfin user. Keep the durable file untouched for
+                            // explicit recovery, but never admit its rows to this
+                            // generation's bounded queue.
+                            _logger.LogInformation(
+                                "SpoilerSeerrPromoter: skipping durable pending state for deleted user {User}",
+                                userIdN);
+                            continue;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        // A transient user-store lookup failure is not proof that
+                        // the durable owner was deleted. Leave its rows on disk for
+                        // a later restart rather than failing plugin startup.
+                        _logger.LogWarning(
+                            "SpoilerSeerrPromoter: skipping user lookup failure for {User}: {ExceptionType}",
+                            userIdN,
+                            ex.GetType().Name);
+                        continue;
+                    }
+
+                    UserSpoilerBlur state;
+                    try
+                    {
+                        state = _configManager.GetUserConfiguration<UserSpoilerBlur>(
+                            userIdN,
+                            SpoilerBlurImageFilter.SpoilerBlurFileName);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(
+                            "SpoilerSeerrPromoter: skipping unreadable state for {User}: {ExceptionType}",
+                            userIdN,
+                            ex.GetType().Name);
+                        continue;
+                    }
+
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (state.PendingTmdb.Count == 0)
+                    {
+                        continue;
+                    }
+
+                    userCount++;
+                    foreach (var key in state.PendingTmdb.Keys)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        if (string.IsNullOrEmpty(key))
+                        {
+                            continue;
+                        }
+
+                        RegisterPending(generation, key, userId);
+                        rowCount++;
+                        await ScheduleReplayAsync(
+                            generation,
+                            key,
+                            cancellationToken).ConfigureAwait(false);
+
+                        if (rowCount % ReplayYieldInterval == 0)
+                        {
+                            await Task.Yield();
+                        }
+                    }
+                }
+
+                if (rowCount > 0)
+                {
+                    _logger.LogInformation(
+                        "SpoilerSeerrPromoter: replayed {Rows} durable pending row(s) across {Users} user file(s)",
+                        rowCount,
+                        userCount);
+                }
+            }
+            catch (OperationCanceledException)
+                when (cancellationToken.IsCancellationRequested)
+            {
+                // Stop owns cancellation; all unprocessed rows remain durable.
+            }
+            catch (ChannelClosedException) when (!generation.Accepting)
+            {
+                // Stop closed admission after canceling replay.
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(
+                    "SpoilerSeerrPromoter: durable replay stopped after {Rows} row(s): {Message}",
+                    rowCount,
+                    ex.Message);
+            }
+        }
+
+        private async Task ScheduleReplayAsync(
+            WorkerGeneration generation,
+            string pendingKey,
+            CancellationToken cancellationToken)
+        {
+            generation.Rerun[pendingKey] = 0;
+            if (!generation.QueuedOrRunning.TryAdd(pendingKey, 0))
+            {
+                return;
+            }
+
+            try
+            {
+                BeforeReplayWriteForTest?.Invoke(
+                    pendingKey,
+                    generation.QueuedOrRunning.Count);
+                await generation.Channel.Writer.WriteAsync(
+                    pendingKey,
+                    cancellationToken).ConfigureAwait(false);
+            }
+            catch
+            {
+                generation.QueuedOrRunning.TryRemove(pendingKey, out _);
+                generation.Rerun.TryRemove(pendingKey, out _);
+                throw;
+            }
+        }
+
+        private void OnPendingRegistrationChanged(string pendingKey, Guid userId, bool registered)
+        {
+            var generation = Volatile.Read(ref _generation);
+            if (generation == null || !generation.Accepting)
+            {
+                return;
+            }
+
+            if (registered)
+            {
+                RegisterPending(generation, pendingKey, userId);
+                TrySchedule(generation, pendingKey);
+            }
+            else
+            {
+                UnregisterPending(generation, pendingKey, userId);
+            }
+        }
+
+        internal void RegisterPending(string pendingKey, Guid userId)
+        {
+            var generation = Volatile.Read(ref _generation);
+            if (generation != null && generation.Accepting)
+            {
+                RegisterPending(generation, pendingKey, userId);
+            }
+        }
+
+        private void RegisterPending(
+            WorkerGeneration generation,
+            string pendingKey,
+            Guid userId)
+        {
+            if (string.IsNullOrEmpty(pendingKey) || userId == Guid.Empty)
+            {
+                return;
+            }
+
+            while (true)
+            {
+                var users = generation.PendingUsersByKey.GetOrAdd(
+                    pendingKey,
+                    static _ => new ConcurrentDictionary<Guid, byte>());
+                PendingDictionaryAcquiredForTest?.Invoke(pendingKey, userId);
+                users.TryAdd(userId, 0);
+
+                // An unregister can remove the last old user and detach this
+                // per-key dictionary between GetOrAdd and TryAdd. Publishing to
+                // that detached instance would lose the durable registration.
+                // Accept the add only while the outer map still owns exactly it;
+                // otherwise remove our stale copy and merge into the live map.
+                if (generation.PendingUsersByKey.TryGetValue(pendingKey, out var current)
+                    && ReferenceEquals(users, current))
+                {
+                    return;
+                }
+
+                users.TryRemove(userId, out _);
+            }
+        }
+
+        internal void UnregisterPending(string pendingKey, Guid userId)
+        {
+            var generation = Volatile.Read(ref _generation);
+            if (generation != null)
+            {
+                UnregisterPending(generation, pendingKey, userId);
+            }
+        }
+
+        private void UnregisterPending(
+            WorkerGeneration generation,
+            string pendingKey,
+            Guid userId)
+        {
+            if (string.IsNullOrEmpty(pendingKey)
+                || userId == Guid.Empty
+                || !generation.PendingUsersByKey.TryGetValue(pendingKey, out var users))
+            {
+                return;
+            }
+
+            users.TryRemove(userId, out _);
+            if (!users.IsEmpty)
+            {
+                return;
+            }
+
+            if (((ICollection<KeyValuePair<string, ConcurrentDictionary<Guid, byte>>>)generation.PendingUsersByKey)
+                    .Remove(new KeyValuePair<string, ConcurrentDictionary<Guid, byte>>(pendingKey, users))
+                && !users.IsEmpty)
+            {
+                foreach (var lateUser in users.Keys)
+                {
+                    RegisterPending(generation, pendingKey, lateUser);
+                }
             }
         }
 
@@ -278,160 +511,313 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         {
             try
             {
-                var cfg = _configProvider.ConfigurationOrNull;
-                if (cfg?.SpoilerBlurEnabled != true) return;
+                var generation = Volatile.Read(ref _generation);
+                if (generation == null
+                    || !generation.Accepting
+                    || _configProvider.ConfigurationOrNull?.SpoilerBlurEnabled != true)
+                {
+                    return;
+                }
 
-                var item = e?.Item;
-                if (item is not Series && item is not Movie) return;
+                var item = e.Item;
+                if (item is not Series && item is not Movie)
+                {
+                    return;
+                }
 
-                if (item.ProviderIds == null
-                    || !item.ProviderIds.TryGetValue("Tmdb", out var tmdbId)
+                if (!item.ProviderIds.TryGetValue("Tmdb", out var tmdbId)
                     || string.IsNullOrEmpty(tmdbId))
                 {
                     return;
                 }
-                var mediaType = item is Series ? "tv" : "movie";
-                var pendingKey = $"{mediaType}:{tmdbId}";
 
-                // Fast-path gate: if NO user has this key pending, we're done —
-                // this is the path every library event for non-pending items
-                // takes, so it must stay allocation- and I/O-free.
-                if (!_pendingUsersByKey.ContainsKey(pendingKey)) return;
+                var pendingKey = $"{(item is Series ? "tv" : "movie")}:{tmdbId}";
+                if (!generation.PendingUsersByKey.ContainsKey(pendingKey))
+                {
+                    return;
+                }
 
-                // PERF(S1): the scan-thread handler ends here — record the id +
-                // schedule a coalesced off-thread sweep; no DB query or file I/O
-                // runs synchronously. See docs/developers.md#performance-rules (S1).
-                ScheduleSweep(pendingKey, item.Id, item.Name ?? string.Empty, item is Series);
+                // PERF(S1): a constant-time coalescing signal is the end of the
+                // synchronous scan-thread path.  All lookups and RMWs are owned by
+                // the single hosted worker.
+                TrySchedule(generation, pendingKey);
             }
             catch (Exception ex)
             {
-                _logger.LogWarning($"SpoilerSeerrPromoter: handler failed before scheduling: {ex.Message}");
+                _logger.LogWarning(
+                    "SpoilerSeerrPromoter: handler failed before scheduling: {Message}",
+                    ex.Message);
             }
         }
 
-        // Coalesced background sweep scheduler. At most one sweep per key runs
-        // at a time; events that arrive while one is running (or settling) set
-        // the rerun flag and are folded into a single follow-up pass. This is
-        // what keeps a rapid-fire episode import (Series ItemUpdated storms)
-        // from turning into dozens of concurrent library reads + file RMWs
-        // racing the scanner.
-        private void ScheduleSweep(string pendingKey, Guid itemId, string itemName, bool isSeries)
+        private bool TrySchedule(WorkerGeneration generation, string pendingKey)
         {
-            _sweepRerun[pendingKey] = 0;
-            if (!_sweepRunning.TryAdd(pendingKey, 0)) return; // active sweep picks up the rerun flag
-
-            _ = Task.Run(async () =>
+            if (!generation.Accepting
+                || !generation.PendingUsersByKey.ContainsKey(pendingKey))
             {
-                try
-                {
-                    await Task.Delay(SweepSettleDelayMs).ConfigureAwait(false);
-                    while (_sweepRerun.TryRemove(pendingKey, out _))
-                    {
-                        SweepPendingUsers(pendingKey, itemId, itemName, isSeries);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning($"SpoilerSeerrPromoter: sweep for {pendingKey} failed: {ex.Message}");
-                }
-                finally
-                {
-                    _sweepRunning.TryRemove(pendingKey, out _);
-                    // Late-arrival race: an event may have set the rerun flag
-                    // after the loop's last check but before the running flag
-                    // cleared. Reschedule so it isn't lost.
-                    if (_sweepRerun.ContainsKey(pendingKey) && _pendingUsersByKey.ContainsKey(pendingKey))
-                    {
-                        ScheduleSweep(pendingKey, itemId, itemName, isSeries);
-                    }
-                }
-            });
+                return false;
+            }
+
+            generation.Rerun[pendingKey] = 0;
+            if (!generation.QueuedOrRunning.TryAdd(pendingKey, 0))
+            {
+                return true;
+            }
+
+            if (generation.Channel.Writer.TryWrite(pendingKey))
+            {
+                return true;
+            }
+
+            generation.QueuedOrRunning.TryRemove(pendingKey, out _);
+            generation.Rerun.TryRemove(pendingKey, out _);
+            _logger.LogWarning(
+                "SpoilerSeerrPromoter: bounded queue is full; {PendingKey} remains durable and will replay on restart or a later library event",
+                pendingKey);
+            return false;
         }
 
-        private void SweepPendingUsers(string pendingKey, Guid itemId, string itemName, bool isSeries)
+        private async Task RunWorkerAsync(WorkerGeneration generation)
         {
-            if (!_pendingUsersByKey.TryGetValue(pendingKey, out var users)) return;
+            var cancellationToken = generation.WorkerCancellation.Token;
+            try
+            {
+                await foreach (var pendingKey in generation.Channel.Reader
+                    .ReadAllAsync(cancellationToken).ConfigureAwait(false))
+                {
+                    var canceled = false;
+                    try
+                    {
+                        // One dequeue owns exactly one sweep. A signal arriving
+                        // during that sweep leaves Rerun set, and the finally path
+                        // admits it at the channel tail so later keys get a turn.
+                        generation.Rerun.TryRemove(pendingKey, out _);
+                        cancellationToken.ThrowIfCancellationRequested();
+                        if (BeforePromotionForTest != null)
+                        {
+                            await BeforePromotionForTest(pendingKey)
+                                .WaitAsync(cancellationToken).ConfigureAwait(false);
+                        }
 
-            // Snapshot: the set can be mutated concurrently by the controller.
+                        cancellationToken.ThrowIfCancellationRequested();
+                        SweepPendingUsers(generation, pendingKey, cancellationToken);
+                        cancellationToken.ThrowIfCancellationRequested();
+                        AfterPromotionForTest?.Invoke(pendingKey);
+                    }
+                    catch (OperationCanceledException)
+                        when (cancellationToken.IsCancellationRequested)
+                    {
+                        canceled = true;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(
+                            "SpoilerSeerrPromoter: sweep for {PendingKey} failed: {Message}",
+                            pendingKey,
+                            ex.Message);
+                    }
+                    finally
+                    {
+                        generation.QueuedOrRunning.TryRemove(pendingKey, out _);
+                        if (!canceled
+                            && !cancellationToken.IsCancellationRequested
+                            && generation.Rerun.ContainsKey(pendingKey)
+                            && generation.PendingUsersByKey.ContainsKey(pendingKey))
+                        {
+                            TrySchedule(generation, pendingKey);
+                        }
+                    }
+
+                    if (canceled)
+                    {
+                        break;
+                    }
+                }
+            }
+            catch (OperationCanceledException)
+                when (cancellationToken.IsCancellationRequested)
+            {
+                // The host deadline abandoned this generation's ownership.
+            }
+        }
+
+        private void SweepPendingUsers(
+            WorkerGeneration generation,
+            string pendingKey,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!generation.PendingUsersByKey.TryGetValue(pendingKey, out var users))
+            {
+                return;
+            }
+
             foreach (var userId in users.Keys.ToArray())
             {
                 try
                 {
-                    var outcome = PromoteForUser(userId, itemId, pendingKey, itemName, isSeries);
-                    if (outcome != PromotionOutcome.StillPending)
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var outcome = PromoteDurableIntent(
+                        userId,
+                        pendingKey,
+                        cancellationToken);
+                    if (outcome == PromotionOutcome.UserMissing)
                     {
-                        // Promoted, already gone, or user deleted — either way
-                        // this user no longer holds the pending key, so stop
-                        // sweeping them for it.
-                        ReconcilePendingKeys(
-                            _configManager,
+                        // A durable directory may survive user deletion. Do not
+                        // reconcile that orphan row: authoritative disk replay
+                        // would immediately re-register it, set the rerun marker while
+                        // this key is running, and starve every later queue item.
+                        UnregisterPending(generation, pendingKey, userId);
+                    }
+                    else if (outcome != PromotionOutcome.StillPending)
+                    {
+                        // Promoted or already absent: reconcile from disk. A
+                        // concurrent writer may have restored the key after
+                        // this promotion's RMW completed.
+                        _pendingService.ReconcilePendingKeysAfterCommit(
                             userId.ToString("N"),
                             new[] { pendingKey });
                     }
                 }
+                catch (OperationCanceledException)
+                    when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
                 catch (Exception ex)
                 {
-                    // Keep the user registered so a later event retries them.
-                    _logger.LogWarning($"SpoilerSeerrPromoter: per-user promotion failed for user {userId} on {pendingKey}: {ex.Message}");
+                    _logger.LogWarning(
+                        "SpoilerSeerrPromoter: per-user promotion failed for user {UserId} on {PendingKey}: {Message}",
+                        userId,
+                        pendingKey,
+                        ex.Message);
                 }
             }
         }
 
-        // Internal (Tests has InternalsVisibleTo) so the F5 duplicate-fallback
-        // path can be driven directly without racing the async sweep.
-        internal enum PromotionOutcome
+        private PromotionOutcome PromoteDurableIntent(
+            Guid userId,
+            string pendingKey,
+            CancellationToken cancellationToken)
         {
-            Promoted,      // pending row consumed (or already promoted earlier)
-            NotPending,    // user deleted / file no longer has the key
-            StillPending,  // user can't see the item yet — retry on later events
+            cancellationToken.ThrowIfCancellationRequested();
+            var jUser = _userManager.GetUserById(userId);
+            if (jUser == null)
+            {
+                return PromotionOutcome.UserMissing;
+            }
+
+            var separator = pendingKey.IndexOf(':', StringComparison.Ordinal);
+            if (separator <= 0 || separator >= pendingKey.Length - 1)
+            {
+                return PromotionOutcome.StillPending;
+            }
+
+            var mediaType = pendingKey.Substring(0, separator);
+            var tmdbId = pendingKey.Substring(separator + 1);
+            cancellationToken.ThrowIfCancellationRequested();
+            var item = _pendingService.FindLibraryItemByTmdb(jUser, mediaType, tmdbId);
+            if (item == null)
+            {
+                return PromotionOutcome.StillPending;
+            }
+
+            return PromoteForUser(
+                userId,
+                item.Id,
+                pendingKey,
+                item.Name ?? string.Empty,
+                item is Series,
+                cancellationToken);
         }
 
-        internal PromotionOutcome PromoteForUser(Guid userId, Guid itemId, string pendingKey, string itemName, bool isSeries)
+        internal enum PromotionOutcome
         {
-            var jUser = _userManager.GetUserById(userId);
-            if (jUser == null) return PromotionOutcome.NotPending;
+            Promoted,
+            NotPending,
+            StillPending,
+            UserMissing,
+        }
 
-            // Library-access gate: if the user can't see the item (filtered
-            // by library access), don't promote — they'd never see a card
-            // for it but would see a stranded entry in management UI.
+        internal PromotionOutcome PromoteForUser(
+            Guid userId,
+            Guid itemId,
+            string pendingKey,
+            string itemName,
+            bool isSeries,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var jUser = _userManager.GetUserById(userId);
+            if (jUser == null)
+            {
+                return PromotionOutcome.UserMissing;
+            }
+
             BaseItem? visibleItem;
             try
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 visibleItem = _libraryManager.GetItemById<BaseItem>(itemId, jUser);
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+            catch (OperationCanceledException)
+                when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception ex)
             {
-                _logger.LogWarning($"SpoilerSeerrPromoter: GetItemById({itemId},{userId}) threw {ex.GetType().Name}: {ex.Message}");
+                _logger.LogWarning(
+                    "SpoilerSeerrPromoter: GetItemById({ItemId},{UserId}) threw {ExceptionType}: {Message}",
+                    itemId,
+                    userId,
+                    ex.GetType().Name,
+                    ex.Message);
                 return PromotionOutcome.StillPending;
             }
+
             if (visibleItem == null)
             {
-                // F5: the event's itemId may be a library DUPLICATE this user
-                // cannot access (the same TMDB id also exists in a library they
-                // do have access to). Stranding the pending entry in that case
-                // is a bug — try a user-scoped TMDB lookup for an accessible
-                // duplicate of the right type and promote THAT id instead.
-                var dup = TryFindAccessibleDuplicate(jUser, pendingKey, isSeries);
-                if (dup == null) return PromotionOutcome.StillPending;
-                itemId = dup.Id;
-                if (!string.IsNullOrEmpty(dup.Name)) itemName = dup.Name;
+                var duplicate = TryFindAccessibleDuplicate(
+                    jUser,
+                    pendingKey,
+                    isSeries,
+                    cancellationToken);
+                if (duplicate == null)
+                {
+                    return PromotionOutcome.StillPending;
+                }
+
+                itemId = duplicate.Id;
+                if (!string.IsNullOrEmpty(duplicate.Name))
+                {
+                    itemName = duplicate.Name;
+                }
             }
 
             var userKey = userId.ToString("N");
-            var fileName = SpoilerBlurImageFilter.SpoilerBlurFileName;
             var itemKey = itemId.ToString("N");
             var persistedItemName = PersistedPayloadPolicy
                 .ClampPersistedDisplayName(itemName);
 
             try
             {
-                var stillHadPending = new[] { false };
-                var capacityExceeded = new[] { false };
+                cancellationToken.ThrowIfCancellationRequested();
+                var stillHadPending = false;
+                var capacityExceeded = false;
                 _configManager.RmwUserConfiguration<UserSpoilerBlur>(
-                    userKey, fileName, state =>
+                    userKey,
+                    SpoilerBlurImageFilter.SpoilerBlurFileName,
+                    state =>
                     {
-                        if (!state.PendingTmdb.ContainsKey(pendingKey)) return 0;
-                        stillHadPending[0] = true;
+                        cancellationToken.ThrowIfCancellationRequested();
+                        if (!state.PendingTmdb.ContainsKey(pendingKey))
+                        {
+                            return 0;
+                        }
+
+                        stillHadPending = true;
                         if (isSeries)
                         {
                             if (!state.Series.ContainsKey(itemKey)
@@ -439,18 +825,23 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                                     state.Series,
                                     itemKey))
                             {
-                                capacityExceeded[0] = true;
+                                capacityExceeded = true;
                                 return 0;
                             }
+
                             state.PendingTmdb.Remove(pendingKey);
                             SpoilerGuardOverridesRevision.Advance(state);
-                            if (state.Series.ContainsKey(itemKey)) return 1;
-                            state.Series[itemKey] = new SpoilerBlurSeriesEntry
+                            if (!state.Series.ContainsKey(itemKey))
                             {
-                                SeriesId = itemKey,
-                                SeriesName = persistedItemName,
-                                EnabledAt = DateTime.UtcNow.ToString("o", System.Globalization.CultureInfo.InvariantCulture),
-                            };
+                                state.Series[itemKey] = new SpoilerBlurSeriesEntry
+                                {
+                                    SeriesId = itemKey,
+                                    SeriesName = persistedItemName,
+                                    EnabledAt = DateTime.UtcNow.ToString(
+                                        "o",
+                                        System.Globalization.CultureInfo.InvariantCulture),
+                                };
+                            }
                         }
                         else
                         {
@@ -459,77 +850,156 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                                     state.Movies,
                                     itemKey))
                             {
-                                capacityExceeded[0] = true;
+                                capacityExceeded = true;
                                 return 0;
                             }
+
                             state.PendingTmdb.Remove(pendingKey);
                             SpoilerGuardOverridesRevision.Advance(state);
-                            if (state.Movies.ContainsKey(itemKey)) return 1;
-                            state.Movies[itemKey] = new SpoilerBlurMovieEntry
+                            if (!state.Movies.ContainsKey(itemKey))
                             {
-                                MovieId = itemKey,
-                                MovieName = persistedItemName,
-                                EnabledAt = DateTime.UtcNow.ToString("o", System.Globalization.CultureInfo.InvariantCulture),
-                            };
+                                state.Movies[itemKey] = new SpoilerBlurMovieEntry
+                                {
+                                    MovieId = itemKey,
+                                    MovieName = persistedItemName,
+                                    EnabledAt = DateTime.UtcNow.ToString(
+                                        "o",
+                                        System.Globalization.CultureInfo.InvariantCulture),
+                                };
+                            }
                         }
+
                         return 1;
                     });
-                if (capacityExceeded[0])
+
+                if (capacityExceeded)
                 {
                     _logger.LogWarning(
                         $"SpoilerSeerrPromoter: retained {pendingKey} for user {userId}; " +
                         $"{(isSeries ? "series" : "movie")} list is at capacity.");
                     return PromotionOutcome.StillPending;
                 }
-                if (stillHadPending[0])
+
+                if (!stillHadPending)
                 {
-                    // F7: Series/Movies changed — drop the user's cached state so
-                    // the image/strip filters blur the promoted title immediately.
-                    SpoilerUserResolver.InvalidateUser(userKey);
-                    _logger.LogInformation($"SpoilerSeerrPromoter: promoted {pendingKey} -> {(isSeries ? "series" : "movie")} {itemKey} for user {userId}");
-                    return PromotionOutcome.Promoted;
+                    return PromotionOutcome.NotPending;
                 }
-                // File no longer holds the key (promoted via the controller's
-                // TOCTOU path, or removed by the user) — nothing to do.
-                return PromotionOutcome.NotPending;
+
+                SpoilerUserResolver.InvalidateUser(userKey);
+                _logger.LogInformation(
+                    "SpoilerSeerrPromoter: promoted {PendingKey} -> {MediaType} {ItemKey} for user {UserId}",
+                    pendingKey,
+                    isSeries ? "series" : "movie",
+                    itemKey,
+                    userId);
+                return PromotionOutcome.Promoted;
+            }
+            catch (OperationCanceledException)
+                when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
             }
             catch (UserStoreUnhealthyException)
             {
-                // Keep the registration for a post-repair event, but do not log
-                // every library notification for the same durable generation.
                 return PromotionOutcome.StillPending;
             }
             catch (InvalidDataException ex)
             {
-                _logger.LogWarning($"SpoilerSeerrPromoter: skipping {userId}/{pendingKey} due to corrupt spoilerblur.json: {ex.Message}");
-                // Strict read will keep failing until the file is repaired;
-                // keep the user registered so repair + a later event recovers.
+                _logger.LogWarning(
+                    "SpoilerSeerrPromoter: skipping {UserId}/{PendingKey} due to corrupt spoilerblur.json: {Message}",
+                    userId,
+                    pendingKey,
+                    ex.Message);
                 return PromotionOutcome.StillPending;
             }
         }
 
-        // F5 helper: resolve an accessible library duplicate for the pending key
-        // (parsed as "{tv|movie}:{tmdbId}") scoped to the user, when the event's
-        // own itemId wasn't visible to them. Returns the item only when its type
-        // matches the pending media type. Reuses SpoilerPendingService's indexed
-        // TMDB lookup so the matching happens in the DB, not a client-side scan.
-        private BaseItem? TryFindAccessibleDuplicate(JUser jUser, string pendingKey, bool isSeries)
+        private BaseItem? TryFindAccessibleDuplicate(
+            JUser jUser,
+            string pendingKey,
+            bool isSeries,
+            CancellationToken cancellationToken)
         {
-            var sep = pendingKey.IndexOf(':');
-            if (sep <= 0 || sep >= pendingKey.Length - 1) return null;
-            var mediaType = pendingKey.Substring(0, sep);
-            var tmdb = pendingKey.Substring(sep + 1);
+            cancellationToken.ThrowIfCancellationRequested();
+            var separator = pendingKey.IndexOf(':', StringComparison.Ordinal);
+            if (separator <= 0 || separator >= pendingKey.Length - 1)
+            {
+                return null;
+            }
+
+            var mediaType = pendingKey.Substring(0, separator);
+            var tmdb = pendingKey.Substring(separator + 1);
             try
             {
-                var dup = _pendingService.FindLibraryItemByTmdb(jUser, mediaType, tmdb);
-                if (isSeries && dup is Series) return dup;
-                if (!isSeries && dup is Movie) return dup;
+                cancellationToken.ThrowIfCancellationRequested();
+                var duplicate = _pendingService.FindLibraryItemByTmdb(jUser, mediaType, tmdb);
+                cancellationToken.ThrowIfCancellationRequested();
+                if (isSeries && duplicate is Series)
+                {
+                    return duplicate;
+                }
+
+                if (!isSeries && duplicate is Movie)
+                {
+                    return duplicate;
+                }
+            }
+            catch (OperationCanceledException)
+                when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception ex)
             {
-                _logger.LogWarning($"SpoilerSeerrPromoter: duplicate TMDB lookup for {pendingKey} threw {ex.GetType().Name}: {ex.Message}");
+                _logger.LogWarning(
+                    "SpoilerSeerrPromoter: duplicate TMDB lookup for {PendingKey} threw {ExceptionType}: {Message}",
+                    pendingKey,
+                    ex.GetType().Name,
+                    ex.Message);
             }
+
             return null;
+        }
+
+        private WorkerGeneration? GetGenerationForTest()
+            => Volatile.Read(ref _generation) ?? Volatile.Read(ref _stoppingGeneration);
+
+        private sealed class WorkerGeneration
+        {
+            public WorkerGeneration(int queueCapacity)
+            {
+                Channel = System.Threading.Channels.Channel.CreateBounded<string>(
+                    new BoundedChannelOptions(queueCapacity)
+                    {
+                        SingleReader = true,
+                        SingleWriter = false,
+                        FullMode = BoundedChannelFullMode.Wait,
+                        AllowSynchronousContinuations = false,
+                    });
+            }
+
+            public Channel<string> Channel { get; }
+
+            public ConcurrentDictionary<string, ConcurrentDictionary<Guid, byte>> PendingUsersByKey { get; }
+                = new(StringComparer.OrdinalIgnoreCase);
+
+            public ConcurrentDictionary<string, byte> QueuedOrRunning { get; }
+                = new(StringComparer.OrdinalIgnoreCase);
+
+            public ConcurrentDictionary<string, byte> Rerun { get; }
+                = new(StringComparer.OrdinalIgnoreCase);
+
+            public CancellationTokenSource ReplayCancellation { get; } = new();
+
+            public CancellationTokenSource WorkerCancellation { get; } = new();
+
+            public List<CancellationTokenRegistration> StopRegistrations { get; } = new();
+
+            public Task ReplayTask { get; set; } = Task.CompletedTask;
+
+            public Task WorkerTask { get; set; } = Task.CompletedTask;
+
+            public volatile bool Accepting;
         }
     }
 }

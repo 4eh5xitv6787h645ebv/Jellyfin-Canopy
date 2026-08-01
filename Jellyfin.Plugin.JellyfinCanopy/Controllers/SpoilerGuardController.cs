@@ -26,9 +26,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
     /// accessor pair, the corruption-health surface, the per-series / per-movie /
     /// per-collection opt-in toggles, the per-user strip-override prefs and the
     /// pre-acquisition (Seerr / not-yet-downloaded) pending flow. All per-user state
-    /// lives in spoilerblur.json; the promoter's static gate is reconciled on every
-    /// pending-affecting write. Split out of the monolithic controller; routes are
-    /// identical to the reference so the client is unchanged.
+    /// lives in spoilerblur.json; the hosted promoter's instance gate is reconciled
+    /// from that authoritative file after every pending-affecting write. Split out
+    /// of the monolithic controller; routes are identical to the reference so the
+    /// client is unchanged.
     /// </summary>
     [Route("JellyfinCanopy")]
     [ApiController]
@@ -1860,8 +1861,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 SpoilerUserResolver.InvalidateUser(userKey);
                 // Either way the key is no longer pending for this user — keep the
                 // promoter's gate consistent so it stops sweeping this user.
-                SpoilerSeerrPendingPromoter.ReconcilePendingKeys(
-                    _userConfigurationManager,
+                _pendingService.ReconcilePendingKeys(
                     userKey,
                     new[] { pendingKey });
                 var (removedAnything, removedFrom, removedJellyfinId) = resultBox[0];
@@ -2155,8 +2155,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             string userKey,
             IEnumerable<string> priorPending,
             IEnumerable<string> currentPending)
-            => SpoilerSeerrPendingPromoter.ReconcilePendingKeys(
-                _userConfigurationManager,
+            => _pendingService.ReconcilePendingKeys(
                 userKey,
                 priorPending.Concat(currentPending));
 

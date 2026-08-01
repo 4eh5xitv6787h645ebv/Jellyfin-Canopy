@@ -42,7 +42,8 @@ public class SeerrPublicScopeHeaderTests
             null!,
             new SeerrCache(provider),
             provider,
-            new PassthroughParentalFilter());
+            new PassthroughParentalFilter(),
+            null!);
         return (client, handler);
     }
 
@@ -238,7 +239,8 @@ public class SeerrPublicScopeHeaderTests
             null!,
             new SeerrCache(provider),
             provider,
-            new PassthroughParentalFilter());
+            new PassthroughParentalFilter(),
+            null!);
         var caller = new SeerrCaller(UserId, IsAdmin: true);
 
         await client.ProxyRequestAsync(
@@ -281,7 +283,8 @@ public class SeerrPublicScopeHeaderTests
             null!,
             new SeerrCache(provider),
             provider,
-            new PassthroughParentalFilter());
+            new PassthroughParentalFilter(),
+            null!);
         var caller = new SeerrCaller(UserId, IsAdmin: true);
 
         await client.ProxyRequestAsync(
@@ -335,7 +338,8 @@ public class SeerrPublicScopeHeaderTests
             null!,
             cache,
             provider,
-            new PassthroughParentalFilter());
+            new PassthroughParentalFilter(),
+            null!);
 
         var result = Assert.IsType<ObjectResult>(await client.ProxyRequestAsync(
             "/api/v1/issue",

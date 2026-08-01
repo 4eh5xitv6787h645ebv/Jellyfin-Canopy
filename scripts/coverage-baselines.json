@@ -27,17 +27,17 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 28067,
-        "totalLines": 36668
+        "coveredLines": 28559,
+        "totalLines": 37106
       },
       "observations": {
         "cleanRuns": 5,
-        "minimumCoveredLines": 28066,
-        "maximumCoveredLines": 28067
+        "minimumCoveredLines": 28558,
+        "maximumCoveredLines": 28559
       },
       "tolerance": {
         "missingCoveredLines": 1,
-        "rationale": "Fixing #457 replaces up to 200 per-episode scalar lookups and 100 repeated full-series queries with two caller-scoped ID batches plus one page-bounded numbering scan per distinct series, backed by mixed-access, duplicate, fault, cancellation, pagination, and exact 100-ID regressions. Five clean .NET 10.0.9/Coverlet runs on 2026-08-01 each passed all 2,482 server tests at the identical 36,668-line scope and measured 28,066, 28,067, 28,066, 28,066, and 28,067 covered lines. The reviewed high-water is therefore 28,067/36,668 (76.544%). The fixed-scope one-line spread permits tightening the instrumentation tolerance from seven lines to one (0.003 percentage points), raising the enforced floor to 28,066/36,668 (76.541%) from 27,988/36,602 (76.466%). coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
+        "rationale": "Completing the independent review of #165 keeps durable Seerr acknowledgement behind the atomic per-user Spoiler Guard intent write, while moving the O(users x rows) startup replay out of the lifecycle gate into generation-owned incremental, cancellable background work. A host stop deadline now cancels replay plus queued and in-flight ownership, joins the whole generation before completing, leaves durable rows replayable, and prevents writes after completion. Each dequeue performs one bounded key sweep and tail-requeues any rerun so a hot key cannot monopolize the worker. The regressions prove startup returns while 258 distinct live keys reach an actually blocked bounded admission, a concurrent canceled stop aborts that blocked generation without a hook release, a fresh generation replays the durable row, and an interleaved cold key runs before a hot-key rerun. They also retain orphan-user, mid-sweep deletion, restart serialization, no-post-stop-write, and durable reconciliation controls. Test-only isolation serializes the process-wide BaseItem host mutation and covers pre-canceled Maintainerr URL preflight, removing unrelated nondeterministic coverage branches without widening the budget. Five clean .NET 10.0.9/Coverlet runs on 2026-08-01 each passed all 2,507 server tests at the identical 37,106-line scope and measured 28,559, 28,558, 28,558, 28,558, and 28,558 covered lines. The reviewed high-water is therefore 28,559/37,106 (76.966%). The fixed-scope one-line spread retains the existing one-line instrumentation tolerance and makes the enforced floor 28,558/37,106 (76.963%), above the prior 28,444/36,969 floor (76.940%). coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
       }
     }
   }

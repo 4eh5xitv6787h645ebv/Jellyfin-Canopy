@@ -72,7 +72,8 @@ public sealed class SeerrDownloadStatusPrivacyTests
             null!,
             cache,
             provider,
-            new PassthroughParentalFilter());
+            new PassthroughParentalFilter(),
+            spoilerPendingService: null!);
         var caller = new SeerrCaller(UserId, IsAdmin: true);
 
         var first = Assert.IsType<ContentResult>(await client.ProxyRequestAsync(
@@ -136,7 +137,8 @@ public sealed class SeerrDownloadStatusPrivacyTests
             null!,
             cache,
             provider,
-            new PassthroughParentalFilter());
+            new PassthroughParentalFilter(),
+            spoilerPendingService: null!);
         var caller = new SeerrCaller(UserId, IsAdmin: false);
 
         var first = Assert.IsType<ContentResult>(await client.ProxyRequestAsync(

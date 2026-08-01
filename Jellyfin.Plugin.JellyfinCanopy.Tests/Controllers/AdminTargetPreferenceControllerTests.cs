@@ -33,6 +33,8 @@ public sealed class AdminTargetPreferenceControllerTests : IDisposable
     private readonly StubUserManager _userManager;
     private readonly FakePluginConfigProvider _provider;
     private readonly CountingLibraryManager _library;
+    private readonly SpoilerPendingService _pending;
+    private readonly SpoilerSeerrPendingPromoter _promoter;
 
     public AdminTargetPreferenceControllerTests()
     {
@@ -53,15 +55,44 @@ public sealed class AdminTargetPreferenceControllerTests : IDisposable
             SpoilerBlurEnabled = true
         });
         _library = new CountingLibraryManager();
+        _pending = new SpoilerPendingService(
+            _manager,
+            _library,
+            _userManager,
+            NullLogger<SpoilerPendingService>.Instance);
+        _promoter = new SpoilerSeerrPendingPromoter(
+            _library,
+            _userManager,
+            _manager,
+            _provider,
+            _pending,
+            NullLogger<SpoilerSeerrPendingPromoter>.Instance);
+        _promoter.StartAsync(CancellationToken.None).GetAwaiter().GetResult();
+        _promoter.ReplayCompletionForTest.GetAwaiter().GetResult();
+        _pending.PendingRegistrationChanged += ApplyPendingRegistration;
     }
 
     public void Dispose()
     {
+        _pending.PendingRegistrationChanged -= ApplyPendingRegistration;
+        _promoter.StopAsync(CancellationToken.None).GetAwaiter().GetResult();
         HiddenContentResponseFilter.InvalidateUser(ActorId);
         HiddenContentResponseFilter.InvalidateUser(TargetId);
         SpoilerUserResolver.InvalidateUser(ActorId);
         SpoilerUserResolver.InvalidateUser(TargetId);
         try { Directory.Delete(_baseDir, recursive: true); } catch { /* best effort */ }
+    }
+
+    private void ApplyPendingRegistration(string pendingKey, Guid userId, bool registered)
+    {
+        if (registered)
+        {
+            _promoter.RegisterPending(pendingKey, userId);
+        }
+        else
+        {
+            _promoter.UnregisterPending(pendingKey, userId);
+        }
     }
 
     [Fact]
@@ -979,7 +1010,7 @@ public sealed class AdminTargetPreferenceControllerTests : IDisposable
                 ["FutureOverrideResource"] = resourceExtension.RootElement.Clone()
             }
         };
-        SpoilerSeerrPendingPromoter.RegisterPending(stalePendingKey, _target.Id);
+        _promoter.RegisterPending(stalePendingKey, _target.Id);
         SpoilerUserResolver.SeedUserStateCacheForTest(ActorId);
         SpoilerUserResolver.SeedUserStateCacheForTest(TargetId);
 
@@ -1054,8 +1085,8 @@ public sealed class AdminTargetPreferenceControllerTests : IDisposable
             Assert.Equal("Actor series", Assert.Single(actor.Series).Value.SeriesName);
             Assert.True(actor.Prefs.HideTags);
 
-            Assert.False(SpoilerSeerrPendingPromoter.IsKeyRegisteredForTest(stalePendingKey));
-            Assert.True(SpoilerSeerrPendingPromoter.IsKeyRegisteredForTest(pendingKey));
+            Assert.False(_promoter.IsKeyRegisteredForTest(stalePendingKey));
+            Assert.True(_promoter.IsKeyRegisteredForTest(pendingKey));
 
             var readController = SpoilerController();
             var readEnvelope = AssertOkEnvelope(
@@ -1073,8 +1104,8 @@ public sealed class AdminTargetPreferenceControllerTests : IDisposable
         }
         finally
         {
-            SpoilerSeerrPendingPromoter.UnregisterPending(stalePendingKey, _target.Id);
-            SpoilerSeerrPendingPromoter.UnregisterPending(pendingKey, _target.Id);
+            _promoter.UnregisterPending(stalePendingKey, _target.Id);
+            _promoter.UnregisterPending(pendingKey, _target.Id);
         }
     }
 
@@ -1319,7 +1350,7 @@ public sealed class AdminTargetPreferenceControllerTests : IDisposable
                 .ExtensionData["zOpaque"]
                 .GetRawText());
         Assert.Equal(0, _library.GetItemByIdUserCallCount);
-        SpoilerSeerrPendingPromoter.UnregisterPending(pendingKey, _target.Id);
+        _promoter.UnregisterPending(pendingKey, _target.Id);
     }
 
     [Fact]
@@ -1354,7 +1385,7 @@ public sealed class AdminTargetPreferenceControllerTests : IDisposable
         };
         var before = File.ReadAllBytes(UserFile(_target.Id, SpoilerFile));
         SpoilerUserResolver.SeedUserStateCacheForTest(TargetId);
-        SpoilerSeerrPendingPromoter.RegisterPending(pendingKey, _target.Id);
+        _promoter.RegisterPending(pendingKey, _target.Id);
 
         try
         {
@@ -1403,11 +1434,11 @@ public sealed class AdminTargetPreferenceControllerTests : IDisposable
                     TargetId,
                     SpoilerFile).OverridesRevision);
             Assert.True(SpoilerUserResolver.IsUserStateCachedForTest(TargetId));
-            Assert.True(SpoilerSeerrPendingPromoter.IsKeyRegisteredForTest(pendingKey));
+            Assert.True(_promoter.IsKeyRegisteredForTest(pendingKey));
         }
         finally
         {
-            SpoilerSeerrPendingPromoter.UnregisterPending(pendingKey, _target.Id);
+            _promoter.UnregisterPending(pendingKey, _target.Id);
         }
     }
 
@@ -1644,7 +1675,7 @@ public sealed class AdminTargetPreferenceControllerTests : IDisposable
         {
             foreach (var key in allKeys)
             {
-                SpoilerSeerrPendingPromoter.UnregisterPending(key, _target.Id);
+                _promoter.UnregisterPending(key, _target.Id);
             }
         }
     }
@@ -2513,7 +2544,7 @@ public sealed class AdminTargetPreferenceControllerTests : IDisposable
         });
         const string pendingKey = "movie:9090";
         SpoilerUserResolver.SeedUserStateCacheForTest(TargetId);
-        SpoilerSeerrPendingPromoter.BeforeAuthoritativeGateReconcileForTests =
+        _pending.BeforeAuthoritativeGateReconcileForTests =
             (userKey, _) =>
             {
                 if (userKey == TargetId)
@@ -2554,8 +2585,8 @@ public sealed class AdminTargetPreferenceControllerTests : IDisposable
         }
         finally
         {
-            SpoilerSeerrPendingPromoter.BeforeAuthoritativeGateReconcileForTests = null;
-            SpoilerSeerrPendingPromoter.UnregisterPending(pendingKey, _target.Id);
+            _pending.BeforeAuthoritativeGateReconcileForTests = null;
+            _promoter.UnregisterPending(pendingKey, _target.Id);
         }
     }
 
@@ -2593,11 +2624,6 @@ public sealed class AdminTargetPreferenceControllerTests : IDisposable
         long? ifMatch = null,
         string? rawIfMatch = null)
     {
-        var pending = new SpoilerPendingService(
-            _manager,
-            _library,
-            _userManager,
-            NullLogger<SpoilerPendingService>.Instance);
         var sessions = new CountingSessionManager();
         var requestIdentity = new RequestIdentityService(
             sessions,
@@ -2619,7 +2645,7 @@ public sealed class AdminTargetPreferenceControllerTests : IDisposable
             _provider,
             _manager,
             _library,
-            pending,
+            _pending,
             resolver,
             new StubUserDataManager());
         ConfigureController(controller, ifMatch, rawIfMatch);

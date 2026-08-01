@@ -42,12 +42,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             public required UserConfigurationManager Mgr { get; init; }
             public required CountingLibraryManager Lib { get; init; }
             public required SpoilerPendingService Pending { get; init; }
+            public required SpoilerSeerrPendingPromoter Promoter { get; init; }
             public required SpoilerGuardController Controller { get; init; }
             public required StubUserDataManager UserData { get; init; }
             public required User User { get; init; }
 
             public void Dispose()
             {
+                Promoter.StopAsync(CancellationToken.None).GetAwaiter().GetResult();
                 try { Directory.Delete(Dir, recursive: true); } catch { /* best-effort */ }
             }
         }
@@ -63,6 +65,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             var userManager = includeUserInManager ? new StubUserManager(user) : new StubUserManager();
             var provider = new FakePluginConfigProvider(cfg);
             var pending = new SpoilerPendingService(mgr, lib, userManager, NullLogger<SpoilerPendingService>.Instance);
+            var promoter = new SpoilerSeerrPendingPromoter(
+                lib,
+                userManager,
+                mgr,
+                provider,
+                pending,
+                NullLogger<SpoilerSeerrPendingPromoter>.Instance);
+            promoter.StartAsync(CancellationToken.None).GetAwaiter().GetResult();
+            promoter.ReplayCompletionForTest.GetAwaiter().GetResult();
             var sessions = new CountingSessionManager();
             var requestIdentity = new RequestIdentityService(
                 sessions,
@@ -90,7 +101,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                 HttpContext = new DefaultHttpContext { User = new ClaimsPrincipal(identity) },
             };
 
-            return new Harness { Dir = dir, Mgr = mgr, Lib = lib, Pending = pending, Controller = controller, UserData = userData, User = user };
+            return new Harness { Dir = dir, Mgr = mgr, Lib = lib, Pending = pending, Promoter = promoter, Controller = controller, UserData = userData, User = user };
         }
 
         // ─── Display-name sanitizer ───────────────────────────────────────────────
@@ -156,14 +167,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             const string keyA = "tv:101";
             const string keyB = "movie:202";
 
-            // First save registers both pending keys in the promoter's static gate.
+            // First save registers both pending keys in the promoter's instance gate.
             var first = new UserSpoilerBlur();
             first.PendingTmdb[keyA] = new SpoilerBlurPendingEntry { MediaType = "tv", TmdbId = "101" };
             first.PendingTmdb[keyB] = new SpoilerBlurPendingEntry { MediaType = "movie", TmdbId = "202" };
             var r1 = h.Controller.SaveUserSpoilerBlur(userId.ToString(), first);
             Assert.IsType<OkObjectResult>(r1);
-            Assert.True(SpoilerSeerrPendingPromoter.IsKeyRegisteredForTest(keyA));
-            Assert.True(SpoilerSeerrPendingPromoter.IsKeyRegisteredForTest(keyB));
+            Assert.True(h.Promoter.IsKeyRegisteredForTest(keyA));
+            Assert.True(h.Promoter.IsKeyRegisteredForTest(keyB));
             Assert.Equal(
                 1,
                 h.Mgr.GetUserConfigurationStrict<UserSpoilerBlur>(
@@ -175,8 +186,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             second.PendingTmdb[keyA] = new SpoilerBlurPendingEntry { MediaType = "tv", TmdbId = "101" };
             var r2 = h.Controller.SaveUserSpoilerBlur(userId.ToString(), second);
             Assert.IsType<OkObjectResult>(r2);
-            Assert.True(SpoilerSeerrPendingPromoter.IsKeyRegisteredForTest(keyA));
-            Assert.False(SpoilerSeerrPendingPromoter.IsKeyRegisteredForTest(keyB));
+            Assert.True(h.Promoter.IsKeyRegisteredForTest(keyA));
+            Assert.False(h.Promoter.IsKeyRegisteredForTest(keyB));
             Assert.Equal(
                 2,
                 h.Mgr.GetUserConfigurationStrict<UserSpoilerBlur>(
@@ -192,8 +203,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             Assert.IsType<ConflictObjectResult>(
                 h.Controller.SaveUserSpoilerBlur(userId.ToString(), stale));
 
-            // Cleanup so the static gate doesn't leak into other tests.
-            SpoilerSeerrPendingPromoter.UnregisterPending(keyA, userId);
+            // Cleanup keeps the harness state explicit before disposal.
+            h.Promoter.UnregisterPending(keyA, userId);
         }
 
         [Fact]
@@ -387,7 +398,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                     userKey,
                     SpoilerFile).OverridesRevision;
 
-            SpoilerSeerrPendingPromoter.UnregisterPending("tv:9876", h.User.Id);
+            h.Promoter.UnregisterPending("tv:9876", h.User.Id);
         }
 
         [Fact]
@@ -726,12 +737,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                     }
                 }
             });
-            SpoilerSeerrPendingPromoter.RegisterPending(pendingKey, h.User.Id);
+            h.Promoter.RegisterPending(pendingKey, h.User.Id);
             h.Controller.Request.Headers.IfMatch = "\"1\"";
             using var removalCommitted = new ManualResetEventSlim();
             using var allowDelayedReconcile = new ManualResetEventSlim();
             var firstReconcile = 0;
-            SpoilerSeerrPendingPromoter.BeforeAuthoritativeGateReconcileForTests =
+            h.Pending.BeforeAuthoritativeGateReconcileForTests =
                 (observedUser, keys) =>
                 {
                     if (observedUser == userKey
@@ -769,11 +780,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                         SpoilerGuardOverridesRevision.Advance(state);
                         return 1;
                     });
-                SpoilerSeerrPendingPromoter.ReconcilePendingKeys(
-                    h.Mgr,
+                h.Pending.ReconcilePendingKeys(
                     userKey,
                     new[] { pendingKey });
-                Assert.True(SpoilerSeerrPendingPromoter.IsKeyRegisteredForTest(pendingKey));
+                Assert.True(h.Promoter.IsKeyRegisteredForTest(pendingKey));
 
                 allowDelayedReconcile.Set();
                 Assert.IsType<OkObjectResult>(await removal);
@@ -785,7 +795,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                 Assert.Equal(
                     "Newer re-add",
                     stored.PendingTmdb[pendingKey].DisplayName);
-                Assert.True(SpoilerSeerrPendingPromoter.IsKeyRegisteredForTest(pendingKey));
+                Assert.True(h.Promoter.IsKeyRegisteredForTest(pendingKey));
             }
             finally
             {
@@ -794,8 +804,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                 {
                     try { await removal; } catch { /* asserted on the primary path */ }
                 }
-                SpoilerSeerrPendingPromoter.BeforeAuthoritativeGateReconcileForTests = null;
-                SpoilerSeerrPendingPromoter.UnregisterPending(pendingKey, h.User.Id);
+                h.Pending.BeforeAuthoritativeGateReconcileForTests = null;
+                h.Promoter.UnregisterPending(pendingKey, h.User.Id);
             }
         }
 
@@ -961,7 +971,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                 }
             });
             var before = File.ReadAllBytes(SpoilerPath(h));
-            SpoilerSeerrPendingPromoter.RegisterPending(pendingKey, h.User.Id);
+            h.Promoter.RegisterPending(pendingKey, h.User.Id);
 
             try
             {
@@ -982,11 +992,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                 Assert.True(stored.PendingTmdb.ContainsKey(pendingKey));
                 Assert.Equal(12, stored.OverridesRevision);
                 Assert.True(
-                    SpoilerSeerrPendingPromoter.IsKeyRegisteredForTest(pendingKey));
+                    h.Promoter.IsKeyRegisteredForTest(pendingKey));
             }
             finally
             {
-                SpoilerSeerrPendingPromoter.UnregisterPending(pendingKey, h.User.Id);
+                h.Promoter.UnregisterPending(pendingKey, h.User.Id);
             }
         }
 
@@ -1148,7 +1158,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             var userKey = h.User.Id.ToString("N");
             h.Mgr.SaveUserConfiguration(userKey, SpoilerFile, state);
             var before = File.ReadAllBytes(SpoilerPath(h));
-            SpoilerSeerrPendingPromoter.RegisterPending(pendingKey, h.User.Id);
+            h.Promoter.RegisterPending(pendingKey, h.User.Id);
 
             try
             {
@@ -1177,7 +1187,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             }
             finally
             {
-                SpoilerSeerrPendingPromoter.UnregisterPending(pendingKey, h.User.Id);
+                h.Promoter.UnregisterPending(pendingKey, h.User.Id);
             }
         }
 
@@ -1198,7 +1208,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             Assert.Equal(1, stored.OverridesRevision);
 
             // The recorded pending key primes the promoter gate; clean it up.
-            SpoilerSeerrPendingPromoter.UnregisterPending("tv:888", h.User.Id);
+            h.Promoter.UnregisterPending("tv:888", h.User.Id);
         }
 
         [Fact]
@@ -1220,7 +1230,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
 
             Assert.False(SpoilerUserResolver.IsUserStateCachedForTest(userKey));
 
-            SpoilerSeerrPendingPromoter.UnregisterPending("tv:999", h.User.Id);
+            h.Promoter.UnregisterPending("tv:999", h.User.Id);
         }
 
         // ─── Health endpoint: non-admin sees only own corruption events ───────────
@@ -1319,11 +1329,6 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
         public void PromoteForUser_EventItemInaccessible_PromotesAccessibleTmdbDuplicate()
         {
             using var h = Build();
-            var userManager = new StubUserManager(h.User);
-            var promoter = new SpoilerSeerrPendingPromoter(
-                h.Lib, userManager, h.Mgr, new FakePluginConfigProvider(null), h.Pending,
-                NullLogger<SpoilerSeerrPendingPromoter>.Instance);
-
             const string pendingKey = "tv:555";
             var state = new UserSpoilerBlur();
             state.PendingTmdb[pendingKey] = new SpoilerBlurPendingEntry { MediaType = "tv", TmdbId = "555" };
@@ -1336,7 +1341,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             h.Lib.GetItemListHook = _ =>
                 new List<BaseItem> { new Series { Id = dupId, Name = longName } };
 
-            var outcome = promoter.PromoteForUser(h.User.Id, eventItemId, pendingKey, "Orig", isSeries: true);
+            var outcome = h.Promoter.PromoteForUser(h.User.Id, eventItemId, pendingKey, "Orig", isSeries: true);
 
             Assert.Equal(SpoilerSeerrPendingPromoter.PromotionOutcome.Promoted, outcome);
             var stored = h.Mgr.GetUserConfiguration<UserSpoilerBlur>(h.User.Id.ToString("N"), SpoilerFile);
@@ -1356,13 +1361,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             bool isSeries)
         {
             using var h = Build();
-            var promoter = new SpoilerSeerrPendingPromoter(
-                h.Lib,
-                new StubUserManager(h.User),
-                h.Mgr,
-                new FakePluginConfigProvider(null),
-                h.Pending,
-                NullLogger<SpoilerSeerrPendingPromoter>.Instance);
+            var promoter = h.Promoter;
             var itemId = CapacityGuid(isSeries ? 4_301 : 4_302);
             var pendingKey = isSeries ? "tv:717171" : "movie:818181";
             h.Lib.GetItemByIdUserHook = (id, scopedUser) =>
@@ -1400,7 +1399,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             h.Mgr.SaveUserConfiguration(userKey, SpoilerFile, state);
             var before = File.ReadAllBytes(SpoilerPath(h));
             SpoilerUserResolver.SeedUserStateCacheForTest(userKey);
-            SpoilerSeerrPendingPromoter.RegisterPending(pendingKey, h.User.Id);
+            promoter.RegisterPending(pendingKey, h.User.Id);
 
             try
             {
@@ -1428,11 +1427,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                     isSeries ? stored.Series.Keys : stored.Movies.Keys);
                 Assert.True(SpoilerUserResolver.IsUserStateCachedForTest(userKey));
                 Assert.True(
-                    SpoilerSeerrPendingPromoter.IsKeyRegisteredForTest(pendingKey));
+                    promoter.IsKeyRegisteredForTest(pendingKey));
             }
             finally
             {
-                SpoilerSeerrPendingPromoter.UnregisterPending(pendingKey, h.User.Id);
+                promoter.UnregisterPending(pendingKey, h.User.Id);
             }
         }
 

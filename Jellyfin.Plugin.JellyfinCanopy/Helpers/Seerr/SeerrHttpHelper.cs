@@ -154,21 +154,70 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr
             string url,
             SeerrDispatchFence dispatchFence,
             CancellationToken ct = default)
-            => SendAndReadJsonAsync(httpClient, request, url, MaxBodyBytes, dispatchFence, ct);
+            => SendAndReadJsonCoreAsync(
+                httpClient,
+                request,
+                url,
+                MaxBodyBytes,
+                dispatchFence,
+                responseHeadersObserved: null,
+                ct);
 
-        internal static async Task<(string? Json, SeerrError? Error, int HttpStatus)> SendAndReadJsonAsync(
+        internal static Task<(string? Json, SeerrError? Error, int HttpStatus)> SendAndReadJsonAsync(
+            HttpClient httpClient,
+            HttpRequestMessage request,
+            string url,
+            SeerrDispatchFence dispatchFence,
+            Func<HttpResponseMessage, bool> responseHeadersObserved,
+            CancellationToken ct = default)
+            => SendAndReadJsonCoreAsync(
+                httpClient,
+                request,
+                url,
+                MaxBodyBytes,
+                dispatchFence,
+                responseHeadersObserved,
+                ct);
+
+        internal static Task<(string? Json, SeerrError? Error, int HttpStatus)> SendAndReadJsonAsync(
             HttpClient httpClient,
             HttpRequestMessage request,
             string url,
             int maxBodyBytes,
             SeerrDispatchFence dispatchFence,
             CancellationToken ct = default)
+            => SendAndReadJsonCoreAsync(
+                httpClient,
+                request,
+                url,
+                maxBodyBytes,
+                dispatchFence,
+                responseHeadersObserved: null,
+                ct);
+
+        private static async Task<(string? Json, SeerrError? Error, int HttpStatus)> SendAndReadJsonCoreAsync(
+            HttpClient httpClient,
+            HttpRequestMessage request,
+            string url,
+            int maxBodyBytes,
+            SeerrDispatchFence dispatchFence,
+            Func<HttpResponseMessage, bool>? responseHeadersObserved,
+            CancellationToken ct)
         {
             using var response = await SendResponseHeadersReadAsync(
                 httpClient,
                 request,
                 dispatchFence,
                 ct).ConfigureAwait(false);
+            // This synchronous boundary runs immediately after the upstream
+            // response headers arrive and before RequestAborted is observed by
+            // the bounded body reader. Mutation owners can durably record a
+            // confirmed 2xx side effect here without bypassing the shared
+            // timeout, cancellation, content-type, and body-size protections.
+            if (responseHeadersObserved?.Invoke(response) == false)
+            {
+                return (null, null, (int)response.StatusCode);
+            }
             var (json, error) = await ReadResponseAsync(response, url, maxBodyBytes, ct).ConfigureAwait(false);
             return (json, error, (int)response.StatusCode);
         }

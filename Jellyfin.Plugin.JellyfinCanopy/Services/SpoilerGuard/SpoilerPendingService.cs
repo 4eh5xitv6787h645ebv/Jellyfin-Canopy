@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
+using System.Linq;
 using System.Text;
 using System.Text.Json;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
@@ -16,8 +18,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
     /// Shared core for the pre-acquisition ("pending") Spoiler Guard flow. Owns the
     /// TMDB→library lookup, the pending-entry cap, the display-name sanitizer and the
     /// RMW promote/record logic so BOTH the HTTP endpoint (SpoilerGuardController's
-    /// POST/DELETE spoiler-blur/pending) AND the fire-and-forget Seerr auto-request
-    /// hook (SeerrProxyController) reuse one implementation.
+    /// POST/DELETE spoiler-blur/pending) and the synchronous SeerrClient success
+    /// boundary reuse one implementation.
     ///
     /// Registered as a singleton. Deliberately depends only on the config store,
     /// ILibraryManager and IUserManager — never on ISeerrClient — so it can be
@@ -36,6 +38,19 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         private readonly IUserManager _userManager;
         private readonly ILogger<SpoilerPendingService> _logger;
 
+        /// <summary>
+        /// Raised after the durable store has changed (or an existing durable row
+        /// has been re-observed).  The hosted promoter treats this only as a
+        /// bounded acceleration signal; <c>spoilerblur.json</c> remains the replay
+        /// authority when no worker is running or its queue is saturated.
+        /// </summary>
+        internal event Action<string, Guid, bool>? PendingRegistrationChanged;
+
+        internal Action? BeforeCapFallbackForTest { get; set; }
+
+        internal Action<string, IReadOnlyCollection<string>>?
+            BeforeAuthoritativeGateReconcileForTests { get; set; }
+
         public SpoilerPendingService(
             UserConfigurationManager userConfigurationManager,
             ILibraryManager libraryManager,
@@ -49,7 +64,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         }
 
         /// <summary>
-        /// Structured outcome shared by the HTTP layer and the fire-and-forget log layer.
+        /// Structured outcome shared by the HTTP layer and Seerr intent registration.
         /// <c>Promoted</c> is one of "series", "movie", "pending" or "cap-exceeded".
         /// <c>CapacityCategory</c> identifies which dictionary refused a new entry.
         /// </summary>
@@ -60,10 +75,267 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             bool WroteSomething,
             string? CapacityCategory = null);
 
-        // ─── Shared core (manual POST + auto-on-Seerr-request) ───────────────────
+        /// <summary>
+        /// Result of synchronously recording the local half of a successful Seerr
+        /// media request.  A successful result means either PendingTmdb or the
+        /// final Series/Movies collection was atomically persisted before the
+        /// caller received the Seerr acknowledgment.
+        /// </summary>
+        internal sealed record SeerrIntentRegistration(bool IsDurable, string Code, string? PendingKey = null);
+
+        /// <summary>
+        /// Persists the smallest replayable Spoiler Guard intent without doing a
+        /// library query first.  Promotion is signalled only after the strict RMW
+        /// returns, so an accepted worker item can never outrun its durable row.
+        /// </summary>
+        internal SeerrIntentRegistration RegisterSeerrIntent(Guid userId, string? requestBody)
+        {
+            if (!TryParseSeerrRequestTarget(
+                    requestBody,
+                    out var mediaType,
+                    out var canonicalTmdb,
+                    out var parseFailureCode))
+            {
+                return new SeerrIntentRegistration(false, parseFailureCode);
+            }
+
+            var jUser = _userManager.GetUserById(userId);
+            if (jUser == null)
+            {
+                return new SeerrIntentRegistration(false, "jellyfin_user_unavailable");
+            }
+
+            var pendingKey = $"{mediaType}:{canonicalTmdb}";
+            var userKey = userId.ToString("N");
+            var capExceeded = false;
+            _userConfigurationManager.RmwUserConfiguration<UserSpoilerBlur>(
+                userKey,
+                SpoilerBlurImageFilter.SpoilerBlurFileName,
+                state =>
+                {
+                    if (state.PendingTmdb.ContainsKey(pendingKey))
+                    {
+                        return 0;
+                    }
+
+                    if (state.PendingTmdb.Count >= MaxPendingTmdbPerUser
+                        || !SpoilerGuardOverrideCapacity.CanInsert(
+                            state.PendingTmdb,
+                            pendingKey))
+                    {
+                        capExceeded = true;
+                        return 0;
+                    }
+
+                    state.PendingTmdb[pendingKey] = new SpoilerBlurPendingEntry
+                    {
+                        MediaType = mediaType,
+                        TmdbId = canonicalTmdb,
+                        DisplayName = string.Empty,
+                        RequestedAt = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture),
+                    };
+                    SpoilerGuardOverridesRevision.Advance(state);
+                    return 1;
+                });
+
+            SpoilerUserResolver.InvalidateUser(userKey);
+            if (!capExceeded)
+            {
+                ReconcilePendingKeysAfterCommit(userKey, new[] { pendingKey });
+                return new SeerrIntentRegistration(true, "recorded", pendingKey);
+            }
+
+            // Preserve the pre-existing cap contract: an already-present,
+            // accessible title can still be protected directly even when all 500
+            // pre-acquisition slots are occupied.  This synchronous fallback is
+            // also durable before acknowledgment; only unresolved titles fail with
+            // the explicit partial-success contract at the Seerr boundary.
+            BeforeCapFallbackForTest?.Invoke();
+            var promoted = AddPending(userId, jUser, mediaType, canonicalTmdb, displayName: null);
+            return promoted.Promoted switch
+            {
+                "series" or "movie" => new SeerrIntentRegistration(true, "promoted", pendingKey),
+                // Capacity may open between the first strict cap check and the
+                // compatibility fallback. AddPending's `pending` result proves
+                // the target row is now durable, whether this invocation wrote it
+                // or re-observed a concurrent writer.
+                "pending" => new SeerrIntentRegistration(true, "recorded", pendingKey),
+                _ => new SeerrIntentRegistration(false, "pending_cap_exceeded", pendingKey),
+            };
+        }
+
+        private static bool TryParseSeerrRequestTarget(
+            string? requestBody,
+            out string mediaType,
+            out string canonicalTmdb,
+            out string failureCode)
+        {
+            mediaType = string.Empty;
+            canonicalTmdb = string.Empty;
+            failureCode = "invalid_request_target";
+            if (string.IsNullOrWhiteSpace(requestBody))
+            {
+                return false;
+            }
+
+            try
+            {
+                using var document = JsonDocument.Parse(requestBody);
+                var root = document.RootElement;
+                if (root.ValueKind != JsonValueKind.Object
+                    || !root.TryGetProperty("mediaType", out var mediaTypeElement)
+                    || mediaTypeElement.ValueKind != JsonValueKind.String
+                    || !root.TryGetProperty("mediaId", out var mediaIdElement))
+                {
+                    return false;
+                }
+
+                mediaType = mediaTypeElement.GetString()?.Trim().ToLowerInvariant() ?? string.Empty;
+                if (mediaType is not ("tv" or "movie"))
+                {
+                    failureCode = "unsupported_request_target";
+                    return false;
+                }
+
+                int tmdbId;
+                if (mediaIdElement.ValueKind == JsonValueKind.Number)
+                {
+                    if (!mediaIdElement.TryGetInt32(out tmdbId))
+                    {
+                        return false;
+                    }
+                }
+                else if (mediaIdElement.ValueKind == JsonValueKind.String)
+                {
+                    if (!int.TryParse(
+                            mediaIdElement.GetString(),
+                            NumberStyles.Integer,
+                            CultureInfo.InvariantCulture,
+                            out tmdbId))
+                    {
+                        return false;
+                    }
+                }
+                else
+                {
+                    return false;
+                }
+
+                if (tmdbId <= 0)
+                {
+                    return false;
+                }
+
+                canonicalTmdb = tmdbId.ToString(CultureInfo.InvariantCulture);
+                return true;
+            }
+            catch (JsonException)
+            {
+                return false;
+            }
+        }
+
+        internal void NotifyPendingRegistered(string pendingKey, Guid userId)
+        {
+            if (string.IsNullOrEmpty(pendingKey) || userId == Guid.Empty)
+            {
+                return;
+            }
+
+            PendingRegistrationChanged?.Invoke(pendingKey, userId, true);
+        }
+
+        internal void NotifyPendingRemoved(string pendingKey, Guid userId)
+        {
+            if (string.IsNullOrEmpty(pendingKey) || userId == Guid.Empty)
+            {
+                return;
+            }
+
+            PendingRegistrationChanged?.Invoke(pendingKey, userId, false);
+        }
+
+        /// <summary>
+        /// Publishes acceleration signals from the authoritative durable state while
+        /// holding the same user-file lock as every writer. A delayed reconciliation
+        /// can therefore never unregister a key restored by a newer write. The event
+        /// is intentionally ephemeral: a stopped or saturated hosted worker rebuilds
+        /// the complete gate from <c>spoilerblur.json</c> on its next start.
+        /// </summary>
+        internal void ReconcilePendingKeys(
+            string userKey,
+            IEnumerable<string> affectedKeys)
+        {
+            if (!Guid.TryParseExact(userKey, "N", out var userId)
+                || userId == Guid.Empty)
+            {
+                return;
+            }
+
+            var keys = affectedKeys
+                .Where(static key => !string.IsNullOrEmpty(key))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            if (keys.Length == 0)
+            {
+                return;
+            }
+
+            BeforeAuthoritativeGateReconcileForTests?.Invoke(userKey, keys);
+            lock (_userConfigurationManager.GetUserFileLock(
+                userKey,
+                SpoilerBlurImageFilter.SpoilerBlurFileName))
+            {
+                var read = _userConfigurationManager
+                    .ReadExistingUserConfiguration<UserSpoilerBlur>(
+                        userKey,
+                        SpoilerBlurImageFilter.SpoilerBlurFileName);
+                if (read.IsFault || !read.HasUsableValue || read.Value == null)
+                {
+                    throw new IOException(
+                        $"Unable to reconcile pending gate from store status {read.Status}.");
+                }
+
+                foreach (var key in keys)
+                {
+                    if (read.Value.PendingTmdb.ContainsKey(key))
+                    {
+                        NotifyPendingRegistered(key, userId);
+                    }
+                    else
+                    {
+                        NotifyPendingRemoved(key, userId);
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Best-effort acceleration after a durable commit. A signalling or reread
+        /// failure must not turn an already-persisted Seerr intent into a false
+        /// failure response; restart replay remains the correctness fallback.
+        /// </summary>
+        internal void ReconcilePendingKeysAfterCommit(
+            string userKey,
+            IEnumerable<string> affectedKeys)
+        {
+            try
+            {
+                ReconcilePendingKeys(userKey, affectedKeys);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(
+                    "Committed Spoiler Guard state for {User}, but pending-gate reconciliation failed ({ExceptionType}). Durable rows will replay on restart.",
+                    ResolveUserDisplay(userKey),
+                    ex.GetType().Name);
+            }
+        }
+
+        // ─── Shared core (manual POST + cap-full Seerr fallback) ─────────────────
         // Library lookup + RMW. Strict-read corruption (InvalidDataException /
         // JsonException) propagates to the caller so the HTTP endpoint can 503; the
-        // Seerr hook wraps this in a log-and-swallow.
+        // SeerrClient converts this into an explicit partial-success response.
         public SpoilerBlurPendingResult AddPending(
             Guid userId,
             JUser jUser,
@@ -117,10 +389,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                         false,
                         "series");
                 }
-                SpoilerSeerrPendingPromoter.ReconcilePendingKeys(
-                    _userConfigurationManager,
-                    userKey,
-                    new[] { pendingKey });
+                ReconcilePendingKeysAfterCommit(userKey, new[] { pendingKey });
                 SpoilerUserResolver.InvalidateUser(userKey); // F7: state changed (Series/Movies)
                 _logger.LogInformation($"Spoiler Guard pending resolved to existing series '{existingSeries.Name}' ({seriesKey}) for {ResolveUserDisplay(userKey)}");
                 return new SpoilerBlurPendingResult("series", seriesKey, existingSeries.Name, changed > 0);
@@ -166,10 +435,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                         false,
                         "movies");
                 }
-                SpoilerSeerrPendingPromoter.ReconcilePendingKeys(
-                    _userConfigurationManager,
-                    userKey,
-                    new[] { pendingKey });
+                ReconcilePendingKeysAfterCommit(userKey, new[] { pendingKey });
                 SpoilerUserResolver.InvalidateUser(userKey); // F7: state changed (Series/Movies)
                 _logger.LogInformation($"Spoiler Guard pending resolved to existing movie '{existingMovie.Name}' ({movieKey}) for {ResolveUserDisplay(userKey)}");
                 return new SpoilerBlurPendingResult("movie", movieKey, existingMovie.Name, changed > 0);
@@ -225,10 +491,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             }
             // Prime the promoter's fast-path gate so the next ItemAdded matching this
             // TMDB id sweeps THIS user instead of bailing.
-            SpoilerSeerrPendingPromoter.ReconcilePendingKeys(
-                _userConfigurationManager,
-                userKey,
-                new[] { pendingKey });
+            ReconcilePendingKeysAfterCommit(userKey, new[] { pendingKey });
             _logger.LogInformation($"Spoiler Guard pending recorded {pendingKey} for {ResolveUserDisplay(userKey)} (not yet in library)");
 
             // TOCTOU recovery: the scanner may have added the item between the
@@ -320,10 +583,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     false,
                     "series");
             }
-            SpoilerSeerrPendingPromoter.ReconcilePendingKeys(
-                _userConfigurationManager,
-                userKey,
-                new[] { pendingKey });
+            ReconcilePendingKeysAfterCommit(userKey, new[] { pendingKey });
             SpoilerUserResolver.InvalidateUser(userKey); // F7: state changed (Series)
             _logger.LogInformation($"Spoiler Guard pending TOCTOU-promoted to series '{series.Name}' ({seriesKey}) for {ResolveUserDisplay(userKey)}");
             return new SpoilerBlurPendingResult(
@@ -375,10 +635,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     false,
                     "movies");
             }
-            SpoilerSeerrPendingPromoter.ReconcilePendingKeys(
-                _userConfigurationManager,
-                userKey,
-                new[] { pendingKey });
+            ReconcilePendingKeysAfterCommit(userKey, new[] { pendingKey });
             SpoilerUserResolver.InvalidateUser(userKey); // F7: state changed (Movies)
             _logger.LogInformation($"Spoiler Guard pending TOCTOU-promoted to movie '{movie.Name}' ({movieKey}) for {ResolveUserDisplay(userKey)}");
             return new SpoilerBlurPendingResult(
@@ -422,54 +679,6 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 _logger.LogWarning($"FindLibraryItemByTmdb({mediaType}, {tmdbId}) threw {ex.GetType().Name}: {ex.Message}");
             }
             return null;
-        }
-
-        // Off-thread continuation for the Seerr auto-request hook — must NOT touch
-        // HttpContext / User (userId is captured by the caller before Task.Run). Parses
-        // the cloned request body, resolves the user, and delegates to AddPending.
-        // Log-and-swallow: a Spoiler Guard failure must never surface on the request.
-        public void TryAutoEnableFromSeerrRequest(Guid userId, JsonElement requestBody)
-        {
-            try
-            {
-                if (requestBody.ValueKind != JsonValueKind.Object) return;
-                if (!requestBody.TryGetProperty("mediaType", out var mtProp) || mtProp.ValueKind != JsonValueKind.String) return;
-                if (!requestBody.TryGetProperty("mediaId", out var miProp)) return;
-
-                var rawType = mtProp.GetString();
-                if (string.IsNullOrEmpty(rawType)) return;
-                var mediaType = rawType.ToLowerInvariant();
-                if (mediaType != "tv" && mediaType != "movie") return;
-
-                int tmdbInt;
-                if (miProp.ValueKind == JsonValueKind.Number)
-                {
-                    if (!miProp.TryGetInt32(out tmdbInt) || tmdbInt <= 0) return;
-                }
-                else if (miProp.ValueKind == JsonValueKind.String)
-                {
-                    if (!int.TryParse(miProp.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out tmdbInt)
-                        || tmdbInt <= 0) return;
-                }
-                else
-                {
-                    return;
-                }
-
-                var jUser = _userManager.GetUserById(userId);
-                if (jUser == null) return;
-
-                var canonicalTmdb = tmdbInt.ToString(CultureInfo.InvariantCulture);
-                var summary = AddPending(userId, jUser, mediaType, canonicalTmdb, displayName: null);
-                if (summary.WroteSomething)
-                {
-                    _logger.LogInformation($"Spoiler Guard auto-on-request {summary.Promoted} for {mediaType}:{canonicalTmdb} by {ResolveUserDisplay(userId.ToString("N"))}");
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning($"Spoiler Guard auto-on-request task threw {ex.GetType().Name}: {ex.Message}");
-            }
         }
 
         // Clamp + strip control / format chars so a poisoned modal payload can't grow
