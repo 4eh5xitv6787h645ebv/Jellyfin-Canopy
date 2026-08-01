@@ -202,6 +202,25 @@ export interface IdentityApi {
 
 export type NavigateCallback = (event?: Event) => void;
 
+export type HistoryMutationSource = 'pushState' | 'replaceState' | 'HISTORY_UPDATE';
+export type HistoryMutationAction = 'PUSH' | 'REPLACE' | 'POP';
+
+/**
+ * A host-visible history write observed after it became current, but before
+ * ordinary URL navigation subscribers are deduplicated and notified.
+ */
+export interface HistoryMutation {
+    source: HistoryMutationSource;
+    state: unknown;
+    href: string;
+    /** Exact router operation when the host exposes it. */
+    action?: HistoryMutationAction;
+    /** Host/router entry identity when supplied independently of state. */
+    entryKey?: string;
+}
+
+export type HistoryMutationCallback = (mutation: HistoryMutation) => void;
+
 export type ViewPageCallback = (
     view: string | null | undefined,
     element: Element | null | undefined,
@@ -229,6 +248,12 @@ export interface NavigationApi {
     routeHref(route: string, params?: Record<string, JellyfinRouteParam>): string;
     onNavigate(callback: NavigateCallback): () => void;
     offNavigate(callback: NavigateCallback): boolean;
+    /**
+     * Observe every patched push/replace and raw HISTORY_UPDATE, including
+     * same-URL writes that the route-level navigation fan-out deduplicates.
+     * Optional so hot chunks can coexist with an older navigation owner.
+     */
+    onHistoryMutation?(callback: HistoryMutationCallback): () => void;
     onViewPage(callback: ViewPageCallback, options?: ViewPageOptions): () => void;
     /**
      * Capture-phase 'viewbeforeshow' subscription: fires with the incoming

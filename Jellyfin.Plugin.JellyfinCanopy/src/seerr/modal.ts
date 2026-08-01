@@ -1,6 +1,7 @@
 // src/seerr/modal.ts
 import { JC } from '../globals';
 import { installModalA11y, type ModalA11yHandle } from '../core/modal-a11y';
+import type { HistoryMutation } from '../types/jc';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload shapes; typed incrementally */
 
@@ -57,6 +58,8 @@ interface ModalHistoryMarker {
     hostState: unknown;
     traversal: 'terminal' | 'bidirectional';
     nextDirection: 'back' | 'forward';
+    /** Exact older entry identity on Navigation API-capable clients. */
+    hostNavigationKey?: string;
 }
 
 interface ModalHistoryState extends Record<string, unknown> {
@@ -65,6 +68,16 @@ interface ModalHistoryState extends Record<string, unknown> {
 
 interface ModalHistoryRecord {
     token: string;
+    hostState: unknown;
+    hostStateFingerprint: string | null;
+    hostHref: string;
+    hostNavigationKey: string | null;
+    /** A host entry was prospectively observed above this live marker. */
+    buriedByHost: boolean;
+    /** A host write retained/copied this token after its private publication. */
+    hostMutationObserved: boolean;
+    /** The next browser pop is the owned Back issued from this exact marker. */
+    pendingOwnedBack: boolean;
     closeFromHistory: () => void;
     destroy: () => void;
 }
@@ -74,10 +87,41 @@ interface PendingBaseExit {
     hostState: unknown;
     hostStateFingerprint: string | null;
     hostHref: string;
+    hostNavigationKey: string | null;
     /** Durable direction to commit after the delayed Back crosses this marker. */
     nextDirectionAfterBack: 'forward' | null;
     /** Removes the temporary observer that detects replacement of this marker. */
     releaseReplaceStateWatch: (() => void) | null;
+}
+
+interface PendingOwnedTraversal {
+    token: string;
+    markerHref: string;
+    phase: 'queued' | 'issued' | 'superseded-queued' | 'superseded-issued' | 'superseded-reactive-push' | 'recovering-forward';
+    hostState: unknown;
+    hostStateFingerprint: string | null;
+    hostHref: string;
+    markerNavigationKey: string | null;
+    hostNavigationKey: string | null;
+    classicEntriesAboveBase: number;
+    lastHostEntryKey: string | null;
+    /** Recovery has crossed this transaction's private marker toward its target. */
+    recoveringMarkerCrossed: boolean;
+    /** Retagged private entry to restore while an issued traversal is still on it. */
+    markerSnapshot: ModalHistoryMarker | null;
+}
+
+interface RetiredModalBase {
+    token: string;
+    hostState: unknown;
+    hostStateFingerprint: string | null;
+    hostNavigationKey: string | null;
+}
+
+interface HostHistorySnapshot {
+    state: unknown;
+    href: string;
+    navigationKey: string | null;
 }
 
 interface ModalHistoryOwnerState {
@@ -93,8 +137,21 @@ interface ModalHistoryOwnerState {
      * so that one user Back still reaches the real predecessor.
      */
     pendingBaseExit: PendingBaseExit | null;
+    /** The one modal traversal that can own (or be superseded during) a browser Back. */
+    pendingOwnedTraversal: PendingOwnedTraversal | null;
+    /** A synchronous router PUSH observed from the immutable private marker pop. */
+    markerPopPushWinner: ModalHistoryMarker | null;
+    /** Exact older-side neighbors for buried markers skipped by history.go/menu jumps. */
+    retiredBases: Map<string, RetiredModalBase>;
+    /** Last real entry observed, used to quarantine a delayed copied private marker. */
+    lastHostEntry: HostHistorySnapshot | null;
     adoptionToken: string | null;
     configListener: (() => void) | null;
+    historyObserver: ((mutation: HistoryMutation) => void) | null;
+    routeObserver: ((event?: Event) => void) | null;
+    releaseNavigationObservers: (() => void) | null;
+    /** Suppresses the public mutation hook around this owner's private rewrites. */
+    internalHistoryWriteDepth: number;
 }
 
 type ModalHistoryWindow = Window & {
@@ -126,7 +183,8 @@ function taggedHistoryState(
     token: string,
     hostState: unknown,
     traversal: ModalHistoryMarker['traversal'] = 'terminal',
-    nextDirection: ModalHistoryMarker['nextDirection'] = 'back'
+    nextDirection: ModalHistoryMarker['nextDirection'] = 'back',
+    hostNavigationKey: string | null = null
 ): ModalHistoryState {
     const state = hostState !== null
         && typeof hostState === 'object'
@@ -142,6 +200,7 @@ function taggedHistoryState(
             hostState,
             traversal,
             nextDirection,
+            ...(hostNavigationKey ? { hostNavigationKey } : {}),
         },
     };
 }
@@ -209,13 +268,103 @@ function readPersistedHistoryLedger(): {
 }
 
 function historyStateFingerprint(state: unknown): string | null {
-    if (state === undefined) return 'undefined';
     try {
-        const serialized = JSON.stringify(state);
-        return serialized === undefined ? null : `${typeof state}:${serialized}`;
+        const seen = new Map<object, number>();
+        const encode = (value: unknown): unknown => {
+            if (value === null) return ['null'];
+            switch (typeof value) {
+                case 'undefined': return ['undefined'];
+                case 'boolean': return ['boolean', value];
+                case 'string': return ['string', value];
+                case 'bigint': return ['bigint', value.toString()];
+                case 'number':
+                    if (Number.isNaN(value)) return ['number', 'NaN'];
+                    if (value === Infinity) return ['number', 'Infinity'];
+                    if (value === -Infinity) return ['number', '-Infinity'];
+                    if (Object.is(value, -0)) return ['number', '-0'];
+                    return ['number', value];
+                case 'symbol':
+                case 'function':
+                    throw new TypeError('unsupported history state value');
+            }
+
+            const object = value;
+            const priorId = seen.get(object);
+            if (priorId !== undefined) return ['reference', priorId];
+            const id = seen.size;
+            seen.set(object, id);
+
+            if (Array.isArray(value)) {
+                const entries = Array.from({ length: value.length }, (_, index) =>
+                    Object.prototype.hasOwnProperty.call(value, index)
+                        ? encode(value[index])
+                        : ['hole']);
+                const extra = Object.keys(value)
+                    .filter((key) => !/^(?:0|[1-9]\d*)$/.test(key) || Number(key) >= value.length)
+                    .sort()
+                    .map((key) => [key, encode((value as unknown as Record<string, unknown>)[key])]);
+                return ['array', id, entries, extra];
+            }
+            if (value instanceof Date) {
+                return ['date', id, Number.isNaN(value.getTime()) ? 'invalid' : value.toISOString()];
+            }
+            if (value instanceof RegExp) return ['regexp', id, value.source, value.flags];
+            if (value instanceof Map) {
+                return ['map', id, Array.from(value, ([key, item]) => [encode(key), encode(item)])];
+            }
+            if (value instanceof Set) return ['set', id, Array.from(value, encode)];
+            if (value instanceof ArrayBuffer) {
+                return ['array-buffer', id, Array.from(new Uint8Array(value))];
+            }
+            if (ArrayBuffer.isView(value)) {
+                return [
+                    'array-buffer-view',
+                    id,
+                    value.constructor.name,
+                    Array.from(new Uint8Array(value.buffer, value.byteOffset, value.byteLength)),
+                ];
+            }
+            if (typeof Blob !== 'undefined' && value instanceof Blob) {
+                if (typeof File !== 'undefined' && value instanceof File) {
+                    return ['file', id, value.name, value.size, value.type, value.lastModified];
+                }
+                // Blob bytes are asynchronous-only. Size/type are the strongest
+                // synchronous structured-clone identity available, analogous to
+                // the structural fallback already required for plain objects.
+                return ['blob', id, value.size, value.type];
+            }
+            if (value instanceof Error) {
+                return [
+                    'error',
+                    id,
+                    value.name,
+                    value.message,
+                    'cause' in value ? encode(value.cause) : ['absent'],
+                ];
+            }
+
+            const record = value as Record<string, unknown>;
+            return [
+                'object',
+                id,
+                Object.keys(record).sort().map((key) => [key, encode(record[key])]),
+            ];
+        };
+        return JSON.stringify(encode(state));
     } catch {
         return null;
     }
+}
+
+function findMarkerInPrivateChain(state: unknown, token: string): ModalHistoryMarker | null {
+    const visited = new Set<string>();
+    let marker = readModalHistoryMarker(state);
+    while (marker && !visited.has(marker.token)) {
+        if (marker.token === token) return marker;
+        visited.add(marker.token);
+        marker = readModalHistoryMarker(marker.hostState);
+    }
+    return null;
 }
 
 function getHistoryOwner(): ModalHistoryOwnerState {
@@ -224,6 +373,15 @@ function getHistoryOwner(): ModalHistoryOwnerState {
     if (current?.version === 2
         && current.records instanceof Map
         && current.pendingBidirectional instanceof Map) {
+        if (!(current.retiredBases instanceof Map)) current.retiredBases = new Map();
+        if (current.lastHostEntry !== null
+            && (!current.lastHostEntry
+                || typeof current.lastHostEntry.href !== 'string')) {
+            current.lastHostEntry = null;
+        } else if (current.lastHostEntry
+            && typeof current.lastHostEntry.navigationKey !== 'string') {
+            current.lastHostEntry.navigationKey = null;
+        }
         const pending = current.pendingBaseExit;
         if (pending !== null
             && (!pending
@@ -234,11 +392,105 @@ function getHistoryOwner(): ModalHistoryOwnerState {
             // Adopt owners created by an earlier v2 chunk generation.
             current.pendingBaseExit = null;
         } else if (pending) {
+            if (typeof pending.hostNavigationKey !== 'string') {
+                pending.hostNavigationKey = null;
+            }
             if (pending.nextDirectionAfterBack !== 'forward') {
                 pending.nextDirectionAfterBack = null;
             }
             if (typeof pending.releaseReplaceStateWatch !== 'function') {
                 pending.releaseReplaceStateWatch = null;
+            }
+        }
+        const ownedTraversal = current.pendingOwnedTraversal;
+        if (ownedTraversal !== null
+            && (!ownedTraversal
+                || typeof ownedTraversal.token !== 'string'
+                || typeof ownedTraversal.markerHref !== 'string'
+                || ![
+                    'queued',
+                    'issued',
+                    'superseded-queued',
+                    'superseded-issued',
+                    'superseded-reactive-push',
+                    'recovering-forward',
+                ].includes(ownedTraversal.phase))) {
+            current.pendingOwnedTraversal = null;
+        } else if (ownedTraversal) {
+            if (typeof ownedTraversal.hostHref !== 'string') ownedTraversal.hostHref = '';
+            if (ownedTraversal.hostStateFingerprint !== null
+                && typeof ownedTraversal.hostStateFingerprint !== 'string') {
+                ownedTraversal.hostStateFingerprint = historyStateFingerprint(ownedTraversal.hostState);
+            }
+            if (typeof ownedTraversal.markerNavigationKey !== 'string') {
+                ownedTraversal.markerNavigationKey = null;
+            }
+            if (typeof ownedTraversal.hostNavigationKey !== 'string') {
+                ownedTraversal.hostNavigationKey = null;
+            }
+            if (!Number.isSafeInteger(ownedTraversal.classicEntriesAboveBase)
+                || ownedTraversal.classicEntriesAboveBase < 1) {
+                ownedTraversal.classicEntriesAboveBase = 1;
+            }
+            if (typeof ownedTraversal.lastHostEntryKey !== 'string') {
+                ownedTraversal.lastHostEntryKey = null;
+            }
+            if (typeof ownedTraversal.recoveringMarkerCrossed !== 'boolean') {
+                // An older hot chunk cannot prove which side of the marker its
+                // in-flight Forward reached. Fail closed against rewriting the
+                // durable base identity to an intermediate/newer entry.
+                ownedTraversal.recoveringMarkerCrossed = ownedTraversal.phase === 'recovering-forward';
+            }
+            if (!readModalHistoryMarker({ [HISTORY_STATE_KEY]: ownedTraversal.markerSnapshot })) {
+                ownedTraversal.markerSnapshot = null;
+            }
+        }
+        if (!readModalHistoryMarker({ [HISTORY_STATE_KEY]: current.markerPopPushWinner })) {
+            current.markerPopPushWinner = null;
+        }
+        if (!Number.isSafeInteger(current.internalHistoryWriteDepth)
+            || current.internalHistoryWriteDepth < 0) {
+            current.internalHistoryWriteDepth = 0;
+        }
+        if (typeof current.historyObserver !== 'function') current.historyObserver = null;
+        if (typeof current.routeObserver !== 'function') current.routeObserver = null;
+        if (typeof current.releaseNavigationObservers !== 'function') {
+            current.releaseNavigationObservers = null;
+        }
+        for (const record of current.records.values()) {
+            if (typeof record.hostHref === 'string'
+                && (record.hostNavigationKey === null
+                    || typeof record.hostNavigationKey === 'string')
+                && (record.hostStateFingerprint === null
+                    || typeof record.hostStateFingerprint === 'string')
+                && typeof record.buriedByHost === 'boolean'
+                && typeof record.hostMutationObserved === 'boolean'
+                && typeof record.pendingOwnedBack === 'boolean') continue;
+
+            // Adopt live records published by a pre-invariant v2 chunk. When
+            // its marker is still in the current private chain, the marker
+            // itself carries the exact base needed by the new owner.
+            const marker = findMarkerInPrivateChain(history.state, record.token);
+            if (marker) {
+                record.hostState = marker.hostState;
+                record.hostStateFingerprint = historyStateFingerprint(marker.hostState);
+                record.hostHref = location.href;
+                record.hostNavigationKey = marker.hostNavigationKey ?? null;
+                record.buriedByHost = false;
+                record.hostMutationObserved = false;
+                record.pendingOwnedBack = false;
+            } else {
+                // No supported API can recover an old buried entry's base.
+                // Keep its UI closable at the marker and conservatively retain
+                // two-way traversal rather than guessing from history.length.
+                record.hostState = undefined;
+                record.hostStateFingerprint = null;
+                record.hostHref = '';
+                record.hostNavigationKey = null;
+                record.buriedByHost = true;
+                record.hostMutationObserved = false;
+                record.pendingOwnedBack = false;
+                preserveHistoryTokenDirection(current, record.token, 'back');
             }
         }
         return current;
@@ -252,8 +504,20 @@ function getHistoryOwner(): ModalHistoryOwnerState {
         knownTokens: [...new Set(persisted.knownTokens)],
         pendingBidirectional: new Map(persisted.pending),
         pendingBaseExit: null,
+        pendingOwnedTraversal: null,
+        markerPopPushWinner: null,
+        retiredBases: new Map(),
+        lastHostEntry: readModalHistoryMarker(history.state) ? null : {
+            state: history.state,
+            href: location.href,
+            navigationKey: currentNavigationEntryKey(),
+        },
         adoptionToken: null,
         configListener: null,
+        historyObserver: null,
+        routeObserver: null,
+        releaseNavigationObservers: null,
+        internalHistoryWriteDepth: 0,
     };
     globalWindow[HISTORY_GLOBAL_KEY] = owner;
     return owner;
@@ -297,6 +561,487 @@ function forgetHistoryToken(owner: ModalHistoryOwnerState, token: string): void 
     owner.knownTokens = owner.knownTokens.filter((known) => known !== token);
     const pending = owner.pendingBidirectional.delete(token);
     if (pending || owner.knownTokens.length !== knownLength) persistHistoryLedger(owner);
+}
+
+function preserveHistoryTokenDirection(
+    owner: ModalHistoryOwnerState,
+    token: string,
+    direction: ModalHistoryMarker['nextDirection']
+): void {
+    rememberHistoryToken(owner, token);
+    if (!owner.pendingBidirectional.has(token)) {
+        owner.pendingBidirectional.set(token, direction);
+        persistHistoryLedger(owner);
+    }
+}
+
+function setHistoryTokenDirection(
+    owner: ModalHistoryOwnerState,
+    token: string,
+    direction: ModalHistoryMarker['nextDirection']
+): void {
+    rememberHistoryToken(owner, token);
+    owner.pendingBidirectional.set(token, direction);
+    persistHistoryLedger(owner);
+}
+
+function modalHistoryRecordBaseMatches(
+    record: ModalHistoryRecord,
+    state: unknown,
+    _href: string
+): boolean {
+    // event.state is the immutable traversal payload. An earlier popstate
+    // router may synchronously canonicalize location with replaceState before
+    // this capture listener runs, so current location.href is not authoritative
+    // for identifying the entry that actually produced the event.
+    const currentKey = currentNavigationEntryKey();
+    if (record.hostNavigationKey !== null && currentKey !== null) {
+        return currentKey === record.hostNavigationKey;
+    }
+    if (Object.is(state, record.hostState)) return true;
+    const fingerprint = historyStateFingerprint(state);
+    return record.hostStateFingerprint !== null
+        && fingerprint === record.hostStateFingerprint;
+}
+
+function historyStateMatches(
+    expectedState: unknown,
+    expectedFingerprint: string | null,
+    state: unknown
+): boolean {
+    if (Object.is(state, expectedState)) return true;
+    const fingerprint = historyStateFingerprint(state);
+    return expectedFingerprint !== null && fingerprint === expectedFingerprint;
+}
+
+function privateMarkerChainContainsToken(
+    state: unknown,
+    href: string,
+    token: string,
+    markerHref: string
+): boolean {
+    if (href !== markerHref) return false;
+    const visited = new Set<string>();
+    let marker = readModalHistoryMarker(state);
+    while (marker && !visited.has(marker.token)) {
+        if (marker.token === token) return true;
+        visited.add(marker.token);
+        marker = readModalHistoryMarker(marker.hostState);
+    }
+    return false;
+}
+
+function privateMarkerChainContains(
+    state: unknown,
+    href: string,
+    record: ModalHistoryRecord
+): boolean {
+    return privateMarkerChainContainsToken(state, href, record.token, record.hostHref);
+}
+
+function rememberRetiredBase(
+    owner: ModalHistoryOwnerState,
+    token: string,
+    hostState: unknown,
+    hostNavigationKey: string | null
+): void {
+    owner.retiredBases.delete(token);
+    owner.retiredBases.set(token, {
+        token,
+        hostState,
+        hostStateFingerprint: historyStateFingerprint(hostState),
+        hostNavigationKey,
+    });
+    while (owner.retiredBases.size > MAX_RETIRED_HISTORY_TOKENS) {
+        const oldest = owner.retiredBases.keys().next().value;
+        if (!oldest) break;
+        owner.retiredBases.delete(oldest);
+    }
+}
+
+function markRetiredBasesReached(
+    owner: ModalHistoryOwnerState,
+    state: unknown
+): void {
+    for (const base of owner.retiredBases.values()) {
+        const currentKey = currentNavigationEntryKey();
+        const matches = base.hostNavigationKey !== null && currentKey !== null
+            ? base.hostNavigationKey === currentKey
+            : historyStateMatches(base.hostState, base.hostStateFingerprint, state);
+        if (matches) {
+            setHistoryTokenDirection(owner, base.token, 'forward');
+        }
+    }
+}
+
+function markRecordBuriedByHost(
+    owner: ModalHistoryOwnerState,
+    record: ModalHistoryRecord
+): void {
+    record.buriedByHost = true;
+    record.pendingOwnedBack = false;
+    rememberRetiredBase(owner, record.token, record.hostState, record.hostNavigationKey);
+    preserveHistoryTokenDirection(owner, record.token, 'back');
+    // A live nested record can be the only remaining closure that proves a
+    // retired outer marker sits below it. Burying the live record buries that
+    // complete private ancestor chain as well.
+    const visited = new Set<string>();
+    let ancestor = readModalHistoryMarker(record.hostState);
+    while (ancestor && !visited.has(ancestor.token)) {
+        visited.add(ancestor.token);
+        rememberRetiredBase(
+            owner,
+            ancestor.token,
+            ancestor.hostState,
+            ancestor.hostNavigationKey ?? null
+        );
+        preserveHistoryTokenDirection(owner, ancestor.token, 'back');
+        ancestor = readModalHistoryMarker(ancestor.hostState);
+    }
+}
+
+function withInternalHistoryWrite<T>(owner: ModalHistoryOwnerState, write: () => T): T {
+    owner.internalHistoryWriteDepth += 1;
+    try {
+        return write();
+    } finally {
+        owner.internalHistoryWriteDepth -= 1;
+    }
+}
+
+function currentNavigationEntryKey(): string | null {
+    const navigation = (window as Window & {
+        navigation?: { currentEntry?: { key?: unknown } | null };
+    }).navigation;
+    const key = navigation?.currentEntry?.key;
+    return typeof key === 'string' && key.length > 0 ? key : null;
+}
+
+function rememberHostEntry(
+    owner: ModalHistoryOwnerState,
+    state: unknown,
+    href: string
+): void {
+    if (readModalHistoryMarker(state)) return;
+    owner.lastHostEntry = {
+        state,
+        href,
+        navigationKey: currentNavigationEntryKey(),
+    };
+}
+
+function restoreLastHostEntry(owner: ModalHistoryOwnerState): boolean {
+    const snapshot = owner.lastHostEntry;
+    if (!snapshot) return false;
+    const currentKey = currentNavigationEntryKey();
+    if (snapshot.navigationKey !== null
+        && currentKey !== null
+        && snapshot.navigationKey !== currentKey) return false;
+
+    try {
+        withInternalHistoryWrite(owner, () => {
+            History.prototype.replaceState.call(
+                history,
+                snapshot.state,
+                '',
+                snapshot.href
+            );
+        });
+        return true;
+    } catch (error) {
+        console.warn(`${logPrefix} could not restore a host entry overwritten by a copied marker:`, error);
+        return false;
+    }
+}
+
+function clearPendingOwnedTraversal(
+    owner: ModalHistoryOwnerState,
+    expected: PendingOwnedTraversal | null = owner.pendingOwnedTraversal
+): PendingOwnedTraversal | null {
+    if (!expected || owner.pendingOwnedTraversal !== expected) return null;
+    owner.pendingOwnedTraversal = null;
+    return expected;
+}
+
+function effectiveHistoryAction(mutation: HistoryMutation): 'PUSH' | 'REPLACE' | 'POP' | null {
+    if (mutation.action) return mutation.action;
+    if (mutation.source === 'pushState') return 'PUSH';
+    if (mutation.source === 'replaceState') return 'REPLACE';
+    return null;
+}
+
+/** Remove only our private field when a host write copied the current marker. */
+function stripCurrentCopiedMarker(owner: ModalHistoryOwnerState, token: string): boolean {
+    const currentState: unknown = history.state;
+    if (readModalHistoryMarker(currentState)?.token !== token
+        || currentState === null
+        || typeof currentState !== 'object') return false;
+
+    const replacement: Record<string, unknown> = {
+        ...(currentState as Record<string, unknown>),
+    };
+    Reflect.deleteProperty(replacement, HISTORY_STATE_KEY);
+    try {
+        withInternalHistoryWrite(owner, () => {
+            history.replaceState(replacement, '', location.href);
+        });
+        return true;
+    } catch (error) {
+        console.warn(`${logPrefix} could not remove a copied modal history marker:`, error);
+        return false;
+    }
+}
+
+/**
+ * Record host history ownership while each modal closure is still live. This
+ * prospective bit removes the ambiguity after a later traversal: an untagged
+ * entry may be this modal's base or a newer route that merely sits above it.
+ */
+function observePotentialHostBurial(
+    owner: ModalHistoryOwnerState,
+    state: unknown,
+    href: string,
+    definiteHistoryMutation: boolean
+): void {
+    const currentMarker = readModalHistoryMarker(state);
+    for (const record of Array.from(owner.records.values())) {
+        if (privateMarkerChainContains(state, href, record)) continue;
+        // A private marker can itself be another live record's exact nested
+        // base. Retagging or publishing that private chain is not a host burial.
+        if (currentMarker && modalHistoryRecordBaseMatches(record, state, href)) continue;
+        if (!definiteHistoryMutation && modalHistoryRecordBaseMatches(record, state, href)) continue;
+        markRecordBuriedByHost(owner, record);
+    }
+}
+
+function handleModalHistoryMutation(mutation: HistoryMutation): void {
+    const owner = getHistoryOwner();
+    if (owner.internalHistoryWriteDepth > 0) return;
+    const action = effectiveHistoryAction(mutation);
+    if (action === 'POP') return;
+
+    const activeEvent = (window as Window & { event?: Event }).event;
+    const insidePopState = activeEvent instanceof PopStateEvent;
+    const pending = owner.pendingOwnedTraversal;
+    if (action === 'PUSH' && insidePopState && pending === null) {
+        const activeMarker = readModalHistoryMarker(activeEvent.state);
+        if (activeMarker) owner.markerPopPushWinner = activeMarker;
+    }
+
+    const currentEntryKey = currentNavigationEntryKey();
+    if (action === 'REPLACE' && pending?.markerSnapshot) {
+        const stillOnIssuedMarker = pending.markerNavigationKey !== null
+            && currentEntryKey !== null
+            ? pending.markerNavigationKey === currentEntryKey
+            : !insidePopState;
+        if (stillOnIssuedMarker) {
+            // An earlier router scheduled work from the private pop, but the
+            // browser has not applied our Back/Forward yet. Keep that entry
+            // private until the next pop; otherwise the replacement becomes a
+            // visible ghost stop on the user's later reverse traversal.
+            replaceCurrentModalMarker(owner, pending.markerSnapshot, pending.markerHref);
+            return;
+        }
+    }
+    if (action === 'REPLACE'
+        && pending?.phase === 'issued'
+        && insidePopState) {
+        // The Back just reached its selected entry and an earlier SPA router is
+        // canonicalizing that same pop. It did not supersede the traversal.
+        // PopStateEvent.state remains the immutable entry payload and the owner
+        // listener below will consume/repair it as needed.
+        return;
+    }
+    const traversalReactiveRewrite = action === 'REPLACE'
+        && pending !== null
+        && ((pending.hostNavigationKey !== null
+            && currentEntryKey !== null
+            && currentEntryKey !== pending.hostNavigationKey)
+            // Once recovery has left the stale base, a REPLACE can only rewrite
+            // the entry currently being crossed. It cannot create a newer
+            // destination than the PUSH target already saved in the transaction.
+            // Classic Firefox has no Navigation entry key, and routers commonly
+            // defer this canonicalization through a task, MessageChannel, or rAF,
+            // after window.event is no longer the originating PopStateEvent.
+            || pending.phase === 'recovering-forward'
+            || (pending.phase === 'superseded-issued' && insidePopState));
+    const copiedMarker = readModalHistoryMarker(mutation.state);
+    const copiedRecord = copiedMarker
+        ? owner.records.get(copiedMarker.token) ?? null
+        : null;
+    if (copiedRecord) copiedRecord.hostMutationObserved = true;
+
+    const copiedPendingToken = copiedMarker !== null
+        && pending !== null
+        && copiedMarker.token === pending.token;
+    const copiedLiveToken = copiedRecord !== null;
+    const copiedRetiredToken = copiedMarker !== null
+        && !copiedLiveToken
+        && owner.retiredBases.has(copiedMarker.token);
+    if (action === 'REPLACE'
+        && copiedRetiredToken
+        && !insidePopState
+        && (!pending || pending.markerSnapshot === null)
+        && restoreLastHostEntry(owner)) {
+        // A router retained immutable marker event.state beyond the traversal
+        // that produced it, then replaced the already-reached host entry. The
+        // retained token and exact last-host snapshot prove this write is stale;
+        // restore that entry without publishing a synthetic navigation event.
+        return;
+    }
+    const markerWasStripped = (copiedPendingToken || copiedLiveToken || copiedRetiredToken)
+        ? stripCurrentCopiedMarker(owner, copiedMarker!.token)
+        : false;
+    const effectiveState: unknown = markerWasStripped ? history.state : mutation.state;
+    const effectiveHref = markerWasStripped ? location.href : mutation.href;
+
+    rememberHostEntry(owner, effectiveState, effectiveHref);
+
+    observePotentialHostBurial(owner, effectiveState, effectiveHref, true);
+
+    if (action === 'PUSH'
+        && pending?.phase === 'issued'
+        && !insidePopState
+        && pending.markerSnapshot?.traversal === 'bidirectional'
+        && pending.markerSnapshot.nextDirection === 'back') {
+        // Forward was issued from a retired marker, then an asynchronous router
+        // PUSH replaced the marker's complete Forward chain with this new entry.
+        // No owned pop can now arrive: the old target was truncated and the PUSH
+        // winner is already current. Settle immediately and leave the retained
+        // marker pointing Back from the new host route.
+        clearPendingOwnedTraversal(owner, pending);
+        setHistoryTokenDirection(owner, pending.token, 'back');
+        return;
+    }
+
+    if (action === 'REPLACE'
+        && pending?.phase === 'recovering-forward'
+        && !pending.recoveringMarkerCrossed) {
+        // This rewrite happened while recovery was still on the older side of
+        // the private marker. Preserve its canonicalized identity separately
+        // from the saved newer PUSH target, so a later history-menu/go(-N)
+        // arrival can arm the marker Forward instead of bouncing back here.
+        rememberRetiredBase(owner, pending.token, effectiveState, currentEntryKey);
+    }
+
+    if (pending
+        && owner.pendingOwnedTraversal === pending
+        && (pending.phase === 'queued'
+            || pending.phase === 'issued'
+            || pending.phase === 'superseded-queued'
+            || pending.phase === 'superseded-issued'
+            || pending.phase === 'superseded-reactive-push'
+            || pending.phase === 'recovering-forward')) {
+        const wasRecovering = pending.phase === 'recovering-forward';
+        const wasReactivePush = pending.phase === 'superseded-reactive-push';
+        const wasIssued = pending.phase === 'issued' || pending.phase === 'superseded-issued';
+        const previousTargetMatches = pending.hostHref === effectiveHref
+            && historyStateMatches(
+                pending.hostState,
+                pending.hostStateFingerprint,
+                effectiveState
+            );
+        const reactivePush = action === 'PUSH'
+            && (wasRecovering || wasReactivePush || insidePopState);
+        pending.phase = reactivePush
+            ? 'superseded-reactive-push'
+            : wasRecovering
+            ? 'recovering-forward'
+            : wasIssued ? 'superseded-issued' : 'superseded-queued';
+        if (!traversalReactiveRewrite) {
+            pending.hostState = effectiveState;
+            pending.hostStateFingerprint = historyStateFingerprint(effectiveState);
+            pending.hostHref = effectiveHref;
+            pending.hostNavigationKey = currentEntryKey;
+        }
+
+        if (wasIssued) {
+            // A host write after Back dispatch cannot cancel Chromium's queued
+            // traversal and can cancel Firefox's. Retire interaction now in
+            // both engines; the global transaction repairs only if a stale
+            // base pop subsequently arrives.
+            const record = owner.records.get(pending.token);
+            if (record) record.destroy();
+            if (mutation.source === 'replaceState' && copiedPendingToken) {
+                forgetHistoryToken(owner, pending.token);
+            } else {
+                preserveHistoryTokenDirection(owner, pending.token, 'back');
+            }
+            const entryKey = pending.hostNavigationKey ?? mutation.entryKey ?? null;
+            // The patched History method and Jellyfin's raw HISTORY_UPDATE bus
+            // can report the same PUSH. The direct method call is always a new
+            // entry; the later raw report merely supplies its router key.
+            const duplicateRawPush = mutation.source === 'HISTORY_UPDATE'
+                && previousTargetMatches
+                && (entryKey === null
+                    || pending.lastHostEntryKey === null
+                    || entryKey === pending.lastHostEntryKey);
+            const isNewPushEntry = action === 'PUSH'
+                && !duplicateRawPush
+                && (mutation.source !== 'HISTORY_UPDATE'
+                    || entryKey === null
+                    || entryKey !== pending.lastHostEntryKey);
+            if (action === 'PUSH' && entryKey !== null) {
+                pending.lastHostEntryKey = entryKey;
+            }
+            if (isNewPushEntry
+                && !reactivePush
+                && pending.hostNavigationKey === null) {
+                pending.classicEntriesAboveBase += 1;
+                try {
+                    // A late push can cancel Firefox's already-issued Back.
+                    // Reissuing the exact base delta coalesces with Chromium's
+                    // pending target and forces one deterministic owned pop.
+                    history.go(-pending.classicEntriesAboveBase);
+                } catch (error) {
+                    console.warn(`${logPrefix} could not settle a pushed route over modal Back:`, error);
+                }
+            }
+        }
+    }
+
+    if (copiedMarker && mutation.source === 'replaceState' && !copiedRetiredToken) {
+        // replaceState destroyed the one entry that carried this exact token;
+        // unlike a copied push, there is no private sentinel left to traverse.
+        forgetHistoryToken(owner, copiedMarker.token);
+    }
+}
+
+function handleModalRouteNavigation(): void {
+    const owner = getHistoryOwner();
+    rememberHostEntry(owner, history.state, location.href);
+    observePotentialHostBurial(
+        owner,
+        history.state,
+        location.href,
+        false
+    );
+}
+
+function ensureNavigationObservers(owner: ModalHistoryOwnerState): void {
+    if (owner.historyObserver === handleModalHistoryMutation
+        && owner.routeObserver === handleModalRouteNavigation) return;
+
+    owner.releaseNavigationObservers?.();
+    const releases: Array<() => void> = [];
+    const navigation = JC.core.navigation;
+    if (navigation?.onHistoryMutation) {
+        releases.push(navigation.onHistoryMutation(handleModalHistoryMutation));
+    }
+    if (navigation?.onNavigate) {
+        releases.push(navigation.onNavigate(handleModalRouteNavigation));
+    }
+    owner.historyObserver = handleModalHistoryMutation;
+    owner.routeObserver = handleModalRouteNavigation;
+    const releaseNavigationObservers = () => {
+        for (const release of releases.splice(0)) release();
+        if (owner.historyObserver === handleModalHistoryMutation) owner.historyObserver = null;
+        if (owner.routeObserver === handleModalRouteNavigation) owner.routeObserver = null;
+        if (owner.releaseNavigationObservers === releaseNavigationObservers) {
+            owner.releaseNavigationObservers = null;
+        }
+    };
+    owner.releaseNavigationObservers = releaseNavigationObservers;
 }
 
 function clearPendingBaseExit(owner: ModalHistoryOwnerState): PendingBaseExit | null {
@@ -366,6 +1111,7 @@ function armPendingBaseExit(
         hostState: marker.hostState,
         hostStateFingerprint: historyStateFingerprint(marker.hostState),
         hostHref: location.href,
+        hostNavigationKey: marker.hostNavigationKey ?? null,
         nextDirectionAfterBack,
         releaseReplaceStateWatch: null,
     };
@@ -378,6 +1124,10 @@ function pendingBaseExitMatchesState(
     state: unknown,
     href: string
 ): boolean {
+    const currentKey = currentNavigationEntryKey();
+    if (pending.hostNavigationKey !== null && currentKey !== null) {
+        return pending.hostNavigationKey === currentKey;
+    }
     if (href !== pending.hostHref) return false;
     if (Object.is(state, pending.hostState)) return true;
     const eventFingerprint = historyStateFingerprint(state);
@@ -444,18 +1194,26 @@ function topHistoryRecord(owner: ModalHistoryOwnerState): ModalHistoryRecord | n
     return result;
 }
 
-function replaceCurrentModalMarker(marker: ModalHistoryMarker): boolean {
+function replaceCurrentModalMarker(
+    owner: ModalHistoryOwnerState,
+    marker: ModalHistoryMarker,
+    href = location.href
+): boolean {
     try {
-        history.replaceState(
-            taggedHistoryState(
-                marker.token,
-                marker.hostState,
-                marker.traversal,
-                marker.nextDirection
-            ),
-            '',
-            location.href
-        );
+        withInternalHistoryWrite(owner, () => {
+            History.prototype.replaceState.call(
+                history,
+                taggedHistoryState(
+                    marker.token,
+                    marker.hostState,
+                    marker.traversal,
+                    marker.nextDirection,
+                    marker.hostNavigationKey ?? null
+                ),
+                '',
+                href
+            );
+        });
         return true;
     } catch (error) {
         console.warn(`${logPrefix} could not update a private modal history marker:`, error);
@@ -471,6 +1229,41 @@ function retiredMarkerDirection(
         ?? (marker.traversal === 'bidirectional' ? marker.nextDirection : 'back');
 }
 
+function armRetiredMarkerTraversal(
+    owner: ModalHistoryOwnerState,
+    marker: ModalHistoryMarker,
+    direction: ModalHistoryMarker['nextDirection']
+): { pending: PendingOwnedTraversal; created: boolean } {
+    const existing = owner.pendingOwnedTraversal;
+    if (existing) {
+        existing.markerSnapshot = marker;
+        return { pending: existing, created: false };
+    }
+
+    const retiredBase = direction === 'back'
+        ? owner.retiredBases.get(marker.token) ?? null
+        : null;
+    const hostState = retiredBase?.hostState ?? marker.hostState;
+    const pending: PendingOwnedTraversal = {
+        token: marker.token,
+        markerHref: location.href,
+        phase: 'issued',
+        hostState,
+        hostStateFingerprint: historyStateFingerprint(hostState),
+        hostHref: location.href,
+        markerNavigationKey: currentNavigationEntryKey(),
+        hostNavigationKey: direction === 'back'
+            ? retiredBase?.hostNavigationKey ?? marker.hostNavigationKey ?? null
+            : null,
+        classicEntriesAboveBase: 1,
+        lastHostEntryKey: null,
+        recoveringMarkerCrossed: false,
+        markerSnapshot: marker,
+    };
+    owner.pendingOwnedTraversal = pending;
+    return { pending, created: true };
+}
+
 function traverseRetiredMarker(
     owner: ModalHistoryOwnerState,
     marker: ModalHistoryMarker,
@@ -478,9 +1271,11 @@ function traverseRetiredMarker(
 ): void {
     const pendingDirection = owner.pendingBidirectional.get(marker.token);
     if (marker.traversal !== 'bidirectional' && !pendingDirection && !forceBidirectional) {
+        const armed = armRetiredMarkerTraversal(owner, marker, 'back');
         try {
             history.back();
         } catch (error) {
+            if (armed.created) clearPendingOwnedTraversal(owner, armed.pending);
             rememberHistoryToken(owner, marker.token);
             owner.pendingBidirectional.set(marker.token, 'back');
             persistHistoryLedger(owner);
@@ -492,11 +1287,12 @@ function traverseRetiredMarker(
 
     const direction = retiredMarkerDirection(owner, marker);
     const nextDirection = direction === 'back' ? 'forward' : 'back';
-    const retagged = replaceCurrentModalMarker({
+    const nextMarker: ModalHistoryMarker = {
         ...marker,
         traversal: 'bidirectional',
         nextDirection,
-    });
+    };
+    const retagged = replaceCurrentModalMarker(owner, nextMarker);
     if (!retagged) {
         // The marker remains terminal (or retains its old direction). Keep the
         // opposite traversal durably so the next encounter still reaches the
@@ -505,10 +1301,12 @@ function traverseRetiredMarker(
         owner.pendingBidirectional.set(marker.token, nextDirection);
         persistHistoryLedger(owner);
     }
+    const armed = armRetiredMarkerTraversal(owner, nextMarker, direction);
     try {
         if (direction === 'forward') history.forward();
         else history.back();
     } catch (error) {
+        if (armed.created) clearPendingOwnedTraversal(owner, armed.pending);
         // Retagging records the direction expected *after* a successful move.
         // A rejected move must retry its original direction instead.
         rememberHistoryToken(owner, marker.token);
@@ -519,20 +1317,200 @@ function traverseRetiredMarker(
     if (retagged) forgetHistoryToken(owner, marker.token);
 }
 
+function pendingOwnedTraversalTargetMatches(
+    pending: PendingOwnedTraversal,
+    state: unknown,
+    href: string
+): boolean {
+    const currentKey = currentNavigationEntryKey();
+    if (pending.hostNavigationKey !== null && currentKey !== null) {
+        return currentKey === pending.hostNavigationKey;
+    }
+    // PopStateEvent.state is immutable even when an earlier router rewrites
+    // the recovered route's URL before our capture listener runs.
+    if (historyStateMatches(
+        pending.hostState,
+        pending.hostStateFingerprint,
+        state
+    )) return true;
+    // Chromium can also collapse a Blob-bearing *target* entry to null. This
+    // fallback is scoped to the exact host href while recovery is active; an
+    // arbitrary null entry elsewhere is still traversed normally.
+    return state === null && href === pending.hostHref;
+}
+
+function handlePendingOwnedTraversalPop(
+    owner: ModalHistoryOwnerState,
+    event: PopStateEvent,
+    marker: ModalHistoryMarker | null
+): boolean {
+    const pending = owner.pendingOwnedTraversal;
+    if (!pending) return false;
+
+    if (pending.phase === 'queued' || pending.phase === 'superseded-queued') {
+        // A traversal not yet dispatched cannot own a browser event.
+        clearPendingOwnedTraversal(owner, pending);
+        return false;
+    }
+    if (pending.phase === 'issued') {
+        // This is the one pop owned by close(). The live record's exact flag
+        // supplies a safe fallback when Chromium loses Blob event.state.
+        clearPendingOwnedTraversal(owner, pending);
+        return false;
+    }
+
+    if (pending.phase === 'superseded-reactive-push') {
+        // A router PUSH performed while an older pop was being delivered has
+        // already won and truncated the stale Forward chain. Never expose that
+        // older event.state to later routers, and never try to traverse beyond
+        // the newly current route (which could leave this document).
+        event.stopImmediatePropagation();
+        clearPendingOwnedTraversal(owner, pending);
+        if (marker?.token === pending.token) {
+            // The PUSH was made while the retained marker was current, so it is
+            // still directly behind the new host entry and remains two-way.
+            setHistoryTokenDirection(owner, pending.token, 'back');
+        } else {
+            forgetHistoryToken(owner, pending.token);
+        }
+        return true;
+    }
+
+    if (pending.phase === 'superseded-issued') {
+        // The owned Back, or the exact PUSH-only go(-N) coalescing handshake,
+        // has reached the modal's original base. That base may itself be a
+        // lower live marker. Keep it live/private and recover Forward through
+        // only the retired token to the latest host target.
+        event.stopImmediatePropagation();
+        pending.phase = 'recovering-forward';
+        pending.recoveringMarkerCrossed = false;
+        setHistoryTokenDirection(owner, pending.token, 'forward');
+        try {
+            history.forward();
+        } catch (error) {
+            clearPendingOwnedTraversal(owner, pending);
+            console.warn(`${logPrefix} could not restore a route that superseded modal Back:`, error);
+        }
+        return true;
+    }
+
+    if (marker) {
+        if (pending.phase === 'recovering-forward' && marker.token === pending.token) {
+            // The stale base repair has reached the retained private marker.
+            // Its durable direction is already Forward. Traverse it locally:
+            // the generic marker path treats every live record before a retired
+            // token as "above" it, which would incorrectly close an older live
+            // outer modal in A→M1→M2→B recovery.
+            event.stopImmediatePropagation();
+            pending.recoveringMarkerCrossed = true;
+            try {
+                traverseRetiredMarker(owner, marker);
+            } catch (error) {
+                clearPendingOwnedTraversal(owner, pending);
+                console.warn(`${logPrefix} could not cross a recovering modal marker:`, error);
+            }
+            return true;
+        }
+
+        // Firefox cancels a queued Back when a later push wins. Its eventual
+        // real one-step user Back reaches the retained marker, not the old
+        // base. Drop supersession so ordinary Back-first marker traversal wins.
+        clearPendingOwnedTraversal(owner, pending);
+        return false;
+    }
+
+    if (pendingOwnedTraversalTargetMatches(pending, event.state, location.href)) {
+        clearPendingOwnedTraversal(owner, pending);
+        forgetHistoryToken(owner, pending.token);
+        return false;
+    }
+
+    if (pending.phase === 'recovering-forward') {
+        // Multiple host pushes can sit beyond the retained marker. Continue
+        // across intermediate real entries until the latest observed target.
+        event.stopImmediatePropagation();
+        try {
+            history.forward();
+        } catch (error) {
+            clearPendingOwnedTraversal(owner, pending);
+            console.warn(`${logPrefix} could not finish restoring a superseding route:`, error);
+        }
+        return true;
+    }
+
+    clearPendingOwnedTraversal(owner, pending);
+    return false;
+}
+
+function handleMarkerPopPushWinner(
+    owner: ModalHistoryOwnerState,
+    event: PopStateEvent,
+    marker: ModalHistoryMarker | null
+): boolean {
+    const winner = owner.markerPopPushWinner;
+    owner.markerPopPushWinner = null;
+    if (!winner || !marker || winner.token !== marker.token) return false;
+
+    // A router registered before the owner synchronously PUSHed a genuine host
+    // route while this immutable private pop was being delivered. The new route
+    // owns the current entry and truncates the old newer branch; never replace it
+    // with the stale marker snapshot or apply the marker's queued traversal.
+    event.stopImmediatePropagation();
+    clearPendingOwnedTraversal(owner);
+    const records = Array.from(owner.records.values());
+    for (let index = records.length - 1; index >= 0; index -= 1) {
+        const record = records[index];
+        const reachedOrAbove = record.token === marker.token
+            || findMarkerInPrivateChain(record.hostState, marker.token) !== null;
+        if (!reachedOrAbove) continue;
+        record.closeFromHistory();
+        setHistoryTokenDirection(owner, record.token, 'back');
+    }
+    setHistoryTokenDirection(owner, marker.token, 'back');
+    return true;
+}
+
 function handleModalHistoryPop(event: PopStateEvent): void {
     const owner = getHistoryOwner();
     owner.adoptionToken = null;
+    if (owner.pendingOwnedTraversal) {
+        // The issued Back/Forward has now left the marker that its snapshot was
+        // guarding. A later recovery marker pop will arm a fresh snapshot.
+        owner.pendingOwnedTraversal.markerSnapshot = null;
+    }
     const marker = readModalHistoryMarker(event.state);
+    if (!marker) rememberHostEntry(owner, history.state, location.href);
+    if (handleMarkerPopPushWinner(owner, event, marker)) return;
+    if (handlePendingOwnedTraversalPop(owner, event, marker)) return;
     if (handlePendingBaseExitPop(owner, event, marker)) return;
     if (!marker) {
         // Host/base entries are never wrapped. Their exact event.state is
         // delivered unchanged to routers registered before and after us.
-        let top = topHistoryRecord(owner);
-        while (top) {
-            const token = top.token;
-            top.closeFromHistory();
-            forgetHistoryToken(owner, token);
-            top = topHistoryRecord(owner);
+        markRetiredBasesReached(owner, event.state);
+        const records = Array.from(owner.records.values());
+        let crossedBaseIndex = -1;
+        // Only a record whose exact base became current was crossed. A newer
+        // host base (A→M1→B→M2→B) settles M2 but must leave M1 live at B.
+        for (let index = records.length - 1; index >= 0; index -= 1) {
+            if (records[index].pendingOwnedBack
+                || modalHistoryRecordBaseMatches(records[index], event.state, location.href)) {
+                crossedBaseIndex = index;
+                break;
+            }
+        }
+        if (crossedBaseIndex < 0) return;
+
+        for (let index = records.length - 1; index >= crossedBaseIndex; index -= 1) {
+            const record = records[index];
+            record.closeFromHistory();
+            if (record.buriedByHost) {
+                // A direct multi-entry traversal crossed this private marker
+                // from its newer host side. Its next encounter must continue
+                // Forward; the real host entry on that side remains reachable.
+                setHistoryTokenDirection(owner, record.token, 'forward');
+            } else {
+                forgetHistoryToken(owner, record.token);
+            }
         }
         return;
     }
@@ -541,21 +1519,30 @@ function handleModalHistoryPop(event: PopStateEvent): void {
     // destination. Repair any replaceState performed by an earlier router and
     // keep later routers from rendering the transient entry.
     const currentMarker = readModalHistoryMarker(history.state);
-    if (currentMarker?.token !== marker.token) replaceCurrentModalMarker(marker);
+    if (currentMarker?.token !== marker.token) replaceCurrentModalMarker(owner, marker);
     event.stopImmediatePropagation();
 
     // A multi-entry traversal can bypass more than one live nested modal.
     // Close every modal above the marker that the browser actually reached.
     let top = topHistoryRecord(owner);
-    let closedAbove = false;
+    const closedAbove: ModalHistoryRecord[] = [];
     while (top && top.token !== marker.token) {
+        const record = top;
         top.closeFromHistory();
-        closedAbove = true;
+        closedAbove.push(record);
         top = topHistoryRecord(owner);
     }
 
     const reached = owner.records.get(marker.token);
-    if (reached && closedAbove) {
+    if (reached && closedAbove.length > 0) {
+        // Reaching a still-live lower marker proves every buried live record
+        // above it was crossed by this traversal, even when history.go skipped
+        // their individual popstate events.
+        for (const record of closedAbove) {
+            if (record.buriedByHost) {
+                setHistoryTokenDirection(owner, record.token, 'forward');
+            }
+        }
         // A one-step Back from an inner modal lands on the still-live outer
         // modal marker. That marker is the intended current UI, not a ghost.
         return;
@@ -587,6 +1574,7 @@ function ensureHistoryOwner(): ModalHistoryOwnerState {
         window.addEventListener('popstate', handleModalHistoryPop, { capture: true });
         owner.listener = handleModalHistoryPop;
     }
+    ensureNavigationObservers(owner);
     return owner;
 }
 
@@ -709,6 +1697,10 @@ modal.create = function({ title, subtitle, bodyHtml, backdropPath, backdropUrl, 
     let removeTimer: ReturnType<typeof setTimeout> | null = null;
     let historyToken: string | null = null;
     let historyBackRequested = false;
+    let pendingCloseTransaction: (PendingOwnedTraversal & {
+        marker: ModalHistoryMarker;
+        immediate: boolean;
+    }) | null = null;
     const cleanups = new Set<() => void>();
     modalElement._jcIdentityCleanups = cleanups;
     const isCurrent = () => !!identity
@@ -733,9 +1725,17 @@ modal.create = function({ title, subtitle, bodyHtml, backdropPath, backdropUrl, 
         const owner = ensureHistoryOwner();
         const token = nextHistoryToken();
         const hostState: unknown = history.state;
+        const hostHref = location.href;
+        const hostNavigationKey = currentNavigationEntryKey();
         historyToken = token;
         try {
-            history.pushState(taggedHistoryState(token, hostState), '', location.href);
+            withInternalHistoryWrite(owner, () => {
+                history.pushState(
+                    taggedHistoryState(token, hostState, 'terminal', 'back', hostNavigationKey),
+                    '',
+                    location.href
+                );
+            });
         } catch (error) {
             // The base was never mutated, so cleanup is sufficient even when
             // the browser rejects the private sentinel.
@@ -745,6 +1745,13 @@ modal.create = function({ title, subtitle, bodyHtml, backdropPath, backdropUrl, 
         rememberHistoryToken(owner, token);
         owner.records.set(token, {
             token,
+            hostState,
+            hostStateFingerprint: historyStateFingerprint(hostState),
+            hostHref,
+            hostNavigationKey,
+            buriedByHost: false,
+            hostMutationObserved: false,
+            pendingOwnedBack: false,
             closeFromHistory: () => {
                 const restoreFocus = topHistoryRecord(owner)?.token === token;
                 closeInternal(false, restoreFocus);
@@ -818,6 +1825,107 @@ modal.create = function({ title, subtitle, bodyHtml, backdropPath, backdropUrl, 
             }, 300);
         }
     };
+    const settlePendingCloseTransaction = (
+        transaction: NonNullable<typeof pendingCloseTransaction>
+    ): void => {
+        if (pendingCloseTransaction !== transaction) return;
+        pendingCloseTransaction = null;
+        const owner = getHistoryOwner();
+        const token = historyToken;
+        const record = token === null ? null : owner.records.get(token) ?? null;
+        const current = readModalHistoryMarker(history.state);
+        const stillOwnsCurrentEntry = owner.pendingOwnedTraversal === transaction
+            && transaction.phase === 'queued'
+            && token !== null
+            && current?.token === token
+            && current.token === transaction.marker.token
+            && location.href === transaction.markerHref
+            && !record?.hostMutationObserved;
+
+        if (!stillOwnsCurrentEntry) {
+            // A host write won the same task after close() but before traversal
+            // dispatch. Never issue a stale Back over that real entry. Firefox
+            // may otherwise cancel the traversal and retain inert modal gates;
+            // Chromium may apply it from the new entry and skip the host route.
+            historyBackRequested = false;
+            if (token !== null
+                && !privateMarkerChainContainsToken(
+                    history.state,
+                    location.href,
+                    token,
+                    transaction.markerHref
+                )) {
+                if (record) markRecordBuriedByHost(owner, record);
+                else preserveHistoryTokenDirection(owner, token, 'back');
+            }
+            if (owner.pendingOwnedTraversal === transaction) {
+                clearPendingOwnedTraversal(owner, transaction);
+            }
+            if (!isClosing) closeInternal(transaction.immediate, false);
+            return;
+        }
+
+        transaction.phase = 'issued';
+        if (record) record.pendingOwnedBack = true;
+        try {
+            history.back();
+        } catch (error) {
+            // replaceState cannot remove the private entry: rewriting it to
+            // look like the host would merely turn the next Back into an
+            // invisible same-URL stop. A user close keeps the live modal
+            // interactive; synchronous teardown leaves a document-global
+            // tombstone that applies the next real Back after the hidden base.
+            historyBackRequested = false;
+            if (record) record.pendingOwnedBack = false;
+            if (owner.pendingOwnedTraversal === transaction) {
+                clearPendingOwnedTraversal(owner, transaction);
+            }
+            if (transaction.immediate && current) {
+                const nextDirection = current.traversal === 'bidirectional'
+                    || owner.pendingBidirectional.has(current.token)
+                    ? 'forward'
+                    : null;
+                armPendingBaseExit(owner, current, nextDirection);
+            }
+            console.warn(`${logPrefix} could not consume a modal history entry:`, error);
+            return;
+        }
+
+        if (transaction.immediate && token !== null) {
+            // The live record was retired before the asynchronous base pop, so
+            // that event cannot consume this terminal token for us.
+            forgetHistoryToken(owner, token);
+        }
+    };
+
+    const queueOwnedMarkerExit = (
+        marker: ModalHistoryMarker,
+        immediate: boolean
+    ): void => {
+        historyBackRequested = true;
+        const transaction = {
+            token: marker.token,
+            marker,
+            markerHref: location.href,
+            phase: 'queued' as const,
+            hostState: undefined,
+            hostStateFingerprint: null,
+            hostHref: '',
+            markerNavigationKey: currentNavigationEntryKey(),
+            hostNavigationKey: null,
+            classicEntriesAboveBase: 1,
+            lastHostEntryKey: null,
+            recoveringMarkerCrossed: false,
+            markerSnapshot: null,
+            immediate,
+        };
+        pendingCloseTransaction = transaction;
+        const owner = getHistoryOwner();
+        owner.pendingOwnedTraversal = transaction;
+        if (immediate) closeInternal(true, false);
+        setTimeout(() => settlePendingCloseTransaction(transaction), 0);
+    };
+
     const requestClose = (immediate: boolean) => {
         const owner = getHistoryOwner();
         if (isClosing) {
@@ -834,10 +1942,14 @@ modal.create = function({ title, subtitle, bodyHtml, backdropPath, backdropUrl, 
             return;
         }
         if (historyBackRequested) {
-            // A teardown boundary cannot wait for an already-requested browser
-            // traversal: retire stale controls now and consume the token here,
-            // because the pending host pop will no longer find its live record.
-            if (immediate) {
+            if (immediate && pendingCloseTransaction) {
+                // Upgrade the same-task ownership recheck without issuing Back
+                // early. Controls still retire synchronously at reset boundaries.
+                pendingCloseTransaction.immediate = true;
+                closeInternal(true, false);
+            } else if (immediate) {
+                // The recheck already issued traversal; retire stale controls
+                // while the pending pop remains owned by the global delegate.
                 closeInternal(true, false);
                 if (historyToken !== null) forgetHistoryToken(owner, historyToken);
             }
@@ -846,42 +1958,7 @@ modal.create = function({ title, subtitle, bodyHtml, backdropPath, backdropUrl, 
         const marker = readModalHistoryMarker(history.state);
         if (historyToken !== null
             && marker?.token === historyToken) {
-            historyBackRequested = true;
-            try {
-                history.back();
-            } catch (error) {
-                // replaceState cannot remove the private entry: rewriting it
-                // to look like the host would merely turn the next Back into
-                // an invisible same-URL stop. A user close keeps the live modal
-                // interactive; synchronous teardown retires stale UI but leaves
-                // a document-global tombstone that applies the next real Back
-                // after the exact hidden base transition.
-                historyBackRequested = false;
-                if (immediate) {
-                    closeInternal(true, false);
-                    const current = readModalHistoryMarker(history.state);
-                    if (current?.token === historyToken) {
-                        const nextDirection = current.traversal === 'bidirectional'
-                            || owner.pendingBidirectional.has(current.token)
-                            ? 'forward'
-                            : null;
-                        armPendingBaseExit(owner, current, nextDirection);
-                    } else if (!current) {
-                        markKnownTokensBidirectional(owner);
-                    }
-                }
-                console.warn(`${logPrefix} could not consume a modal history entry:`, error);
-                return;
-            }
-            // Identity/config teardown must synchronously retire stale controls.
-            if (immediate) {
-                closeInternal(true, false);
-                // The live record was removed before the asynchronous base
-                // pop, so that event cannot consume this token for us. Leaving
-                // it persisted would let a later install promote a terminal
-                // forward-only sentinel into a bidirectional dead end.
-                if (historyToken !== null) forgetHistoryToken(owner, historyToken);
-            }
+            queueOwnedMarkerExit(marker, immediate);
             return;
         }
 
@@ -889,16 +1966,11 @@ modal.create = function({ title, subtitle, bodyHtml, backdropPath, backdropUrl, 
         // Never back over it. A real host entry means every known private
         // marker behind it may need two-way skipping; a nested modal marker
         // alone does not create a newer real destination.
-        if (historyToken !== null
-            && !marker
-            && owner.records.has(historyToken)) {
-            // History exposes no supported entry identity or reliable way to
-            // distinguish a host push from a replace. Conservatively prepare
-            // every known private marker for two-way skipping; tokens for a
-            // replaced-away marker are harmless and both ledgers are bounded.
-            // This never uses history.length to guess and never navigates the
-            // host while a non-owned entry is current.
-            markKnownTokensBidirectional(owner);
+        if (historyToken !== null && owner.records.has(historyToken)) {
+            const record = owner.records.get(historyToken)!;
+            if (!privateMarkerChainContains(history.state, location.href, record)) {
+                markRecordBuriedByHost(owner, record);
+            }
         }
         closeInternal(immediate, false);
     };

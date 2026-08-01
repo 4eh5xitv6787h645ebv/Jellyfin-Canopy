@@ -25,35 +25,36 @@ test('reviewed coverage baselines match the clean measurement envelopes', () => 
         baselines.policy.description,
         /exact minimum directly observed by clean runs on the identical source, tests, and total-line scope/
     );
-    assert.deepEqual(baselines.profiles.client.measured, { coveredLines: 2738, totalLines: 3128 });
+    assert.deepEqual(baselines.profiles.client.measured, { coveredLines: 2775, totalLines: 3167 });
     assert.deepEqual(baselines.profiles.server.measured, { coveredLines: 28559, totalLines: 37106 });
     assert.deepEqual(baselines.profiles.client.observations, {
         cleanRuns: 2,
-        minimumCoveredLines: 2738,
-        maximumCoveredLines: 2738,
+        minimumCoveredLines: 2775,
+        maximumCoveredLines: 2775,
     });
     assert.deepEqual(baselines.profiles.server.observations, {
         cleanRuns: 7,
         minimumCoveredLines: 28557,
         maximumCoveredLines: 28559,
     });
-    assert.equal(baselines.profiles.client.tolerance.missingCoveredLines, 1);
+    assert.equal(baselines.profiles.client.tolerance.missingCoveredLines, 0);
     assert.equal(baselines.profiles.server.tolerance.missingCoveredLines, 2);
 });
 
 for (const name of ['client', 'server']) {
-    test(`${name} gate accepts its exact reviewed baseline and narrow instrumentation tolerance`, () => {
+    test(`${name} gate accepts its exact reviewed baseline and reviewed instrumentation floor`, () => {
         const profile = baselines.profiles[name];
         assert.equal(evaluateCoverage(profile.measured, profile).reason, 'exact');
         const tolerated = {
             coveredLines: minimumCoveredLines(profile),
             totalLines: profile.measured.totalLines,
         };
-        assert.deepEqual(evaluateCoverage(tolerated, profile), {
-            ok: true,
-            reason: 'within-tolerance',
-            message: `measurement is within the ${profile.tolerance.missingCoveredLines}-line instrumentation tolerance`,
-        });
+        const result = evaluateCoverage(tolerated, profile);
+        assert.equal(result.ok, true);
+        assert.equal(
+            result.reason,
+            profile.tolerance.missingCoveredLines === 0 ? 'exact' : 'within-tolerance'
+        );
     });
 
     test(`${name} negative fixture fails after representative covered lines are removed`, () => {
