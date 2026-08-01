@@ -27,17 +27,17 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 27868,
-        "totalLines": 36585
+        "coveredLines": 27995,
+        "totalLines": 36602
       },
       "observations": {
         "cleanRuns": 5,
-        "minimumCoveredLines": 27867,
-        "maximumCoveredLines": 27868
+        "minimumCoveredLines": 27988,
+        "maximumCoveredLines": 27995
       },
       "tolerance": {
-        "missingCoveredLines": 6,
-        "rationale": "Completing #160's quota-reset acceptance evidence adds 13 instrumented controller lines for a production-defaulted TimeProvider seam, allowing the integrated endpoint regressions to pin the exact rolling-window boundary while preserving runtime behavior. Five .NET 10.0.9/Coverlet measurements on 2026-08-01 had the same 36,585-line scope and measured 27,867, 27,867, 27,867, 27,868, and 27,867 covered lines; the high-water run passed all 2,469 server tests, including the >100-row old/declined-prefix case, explicit pagination safety bounds, and the 10,000-request performance profile. The existing six-line tolerance is retained because the one-line spread does not prove that the previously observed five- and six-line Coverlet variation has disappeared; keeping it avoids turning instrumentation noise into failures while the floor still rises to 27,862/36,585 (76.157%) from 27,849/36,572 (76.148%). coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, and broad-tolerance negative boundaries."
+        "missingCoveredLines": 7,
+        "rationale": "Fixing #365 adds explicit series ownership to the Spoiler Guard season-watched cache and event-path regressions for the affected (user, series), same-user unrelated-series, cross-user, synchronous season-eviction, and subscription-lifecycle boundaries. After rebasing on merged #160 and the schema-v2 observed-high-water policy from #349, five clean .NET 10.0.9/Coverlet runs on 2026-08-01 each passed all 2,471 server tests at the identical 36,602-line scope and measured 27,992, 27,988, 27,995, 27,993, and 27,993 covered lines. The reviewed high-water is therefore 27,995/36,602 (76.485%). The fixed-scope seven-line spread is direct evidence that the former six-line allowance is one line too narrow, so the tolerance advances only to seven; that remains 0.019 percentage points, far below the policy cap, and raises the enforced floor to 27,988/36,602 (76.466%) from 27,862/36,585 (76.157%). coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
       }
     }
   }
