@@ -20,6 +20,11 @@ const baselines = loadBaselines();
 test('reviewed coverage baselines match the clean measurement envelopes', () => {
     assert.equal(baselines.schemaVersion, 2);
     assert.equal(baselines.policy.baselineSelection, 'observed-high-water');
+    assert.match(baselines.policy.description, /high-water never decreases/);
+    assert.match(
+        baselines.policy.description,
+        /exact minimum directly observed by clean runs on the identical source, tests, and total-line scope/
+    );
     assert.deepEqual(baselines.profiles.client.measured, { coveredLines: 2337, totalLines: 2677 });
     assert.deepEqual(baselines.profiles.server.measured, { coveredLines: 28559, totalLines: 37106 });
     assert.deepEqual(baselines.profiles.client.observations, {
@@ -28,12 +33,12 @@ test('reviewed coverage baselines match the clean measurement envelopes', () => 
         maximumCoveredLines: 2337,
     });
     assert.deepEqual(baselines.profiles.server.observations, {
-        cleanRuns: 5,
-        minimumCoveredLines: 28558,
+        cleanRuns: 7,
+        minimumCoveredLines: 28557,
         maximumCoveredLines: 28559,
     });
     assert.equal(baselines.profiles.client.tolerance.missingCoveredLines, 1);
-    assert.equal(baselines.profiles.server.tolerance.missingCoveredLines, 1);
+    assert.equal(baselines.profiles.server.tolerance.missingCoveredLines, 2);
 });
 
 for (const name of ['client', 'server']) {
