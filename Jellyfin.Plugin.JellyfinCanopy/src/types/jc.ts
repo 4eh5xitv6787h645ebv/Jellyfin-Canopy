@@ -427,9 +427,72 @@ export interface SectionContainerOptions {
     className?: string;
 }
 
+/** How urgently assistive technology should announce a notification. */
+export type NotificationSeverity = 'info' | 'success' | 'warning' | 'error';
+
+/** Why a notification reached its single terminal state. */
+export type NotificationDismissReason = 'action' | 'timeout' | 'programmatic' | 'navigation' | 'identity';
+
+/** Idempotent controller returned by the shared notification owner. */
+export interface NotificationHandle {
+    readonly id: string;
+    readonly element: HTMLElement;
+    dismiss(): void;
+}
+
+/** A text-only, screen-reader-announced notification. */
+export interface NotificationOptions {
+    /** User-facing text. It is rendered with `textContent`, never as HTML. */
+    message: string;
+    /** Info/success are polite; warning/error are assertive. Defaults to info. */
+    severity?: NotificationSeverity;
+    /**
+     * Visible lifetime in ms. Defaults to 8s for actions, otherwise the configured toast duration.
+     * A failed action receives a fresh full lifetime after its retry control is restored.
+     */
+    duration?: number;
+    /** Keep visible until action or programmatic teardown instead of starting an expiry timer. */
+    persistent?: boolean;
+    /**
+     * Explicit AT-announcement coalescing key; the first pending announcement
+     * for a key wins its position and text. Action cards remain independently actionable.
+     */
+    dedupeKey?: string;
+    /** Called once after the notification reaches a terminal state. */
+    onDismiss?: (reason: NotificationDismissReason) => void;
+}
+
+/** A notification carrying one keyboard-reachable action. */
+export interface ActionableNotificationOptions extends NotificationOptions {
+    actionLabel: string;
+    onAction: () => void | Promise<void>;
+    /**
+     * Localized live-region copy that announces both the state change and that
+     * the action is available. Defaults to `message — actionLabel`.
+     */
+    actionAvailableAnnouncement?: string;
+    /** Optional one-time announcement after a successful action. */
+    actionAnnouncement?: string;
+    /** Assertive copy announced when the action fails before the same action is restored. */
+    actionErrorAnnouncement?: string;
+}
+
 export interface UiApi {
     escapeHtml(value: unknown): string;
-    toast(html: string, duration?: number): void;
+    /** Frozen HTML compatibility adapter. Callers must escape untrusted input. */
+    toast(html: string, duration?: number, severity?: NotificationSeverity): void;
+    /**
+     * Show a safe text notification through the shared document-life owner.
+     * @throws NotificationBackpressureError when the bounded card or announcement queue is full.
+     */
+    notify(options: NotificationOptions): NotificationHandle;
+    /**
+     * Show a safe text notification with one keyboard-reachable action.
+     * The returned action stays disabled while its promise is pending and is
+     * restored with visible + assertive failure state if that promise rejects.
+     * @throws NotificationBackpressureError when the bounded card or announcement queue is full.
+     */
+    notifyAction(options: ActionableNotificationOptions): NotificationHandle;
     injectCss(id: string, css: string): void;
     removeCss(id: string): boolean;
     /** Theme-token-aware MUI IconButton (clones the AppBar action-button markup). */
@@ -734,7 +797,7 @@ export interface JEGlobal extends JellyfinCanopyPublicApi {
     clientRefreshBootstrapUnavailableServerId?: string;
     initialized?: boolean;
     escapeHtml: (value: unknown) => string;
-    toast?: (html: string, duration?: number) => void;
+    toast?: (html: string, duration?: number, severity?: NotificationSeverity) => void;
     requestManager?: RequestManagerApi;
     /** Fail-open browser-storage owner installed before any feature code runs. */
     storage: BrowserStorageApi;

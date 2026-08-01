@@ -161,14 +161,14 @@ export function showOffsetAdjustmentModal(
         // blind setTimeout needed).
         renderActiveBookmarks(context);
       } else {
-        toast(JC.t!('bookmark_update_failed'), 3000);
+        toast(JC.t!('bookmark_update_failed'), 3000, 'error');
         btn.disabled = false;
         btn.querySelector('span:last-child')!.textContent = JC.t!('bookmark_apply_offset');
       }
     } catch (e) {
       if (!JC.identity.isCurrent(context)) return;
       console.error('Failed to apply offset:', e);
-      toast(JC.t!('bookmark_offset_failed'), 3000);
+      toast(JC.t!('bookmark_offset_failed'), 3000, 'error');
       btn.disabled = false;
       btn.querySelector('span:last-child')!.textContent = JC.t!('bookmark_apply_offset');
     }
@@ -482,7 +482,7 @@ export function showDuplicatesSyncModal(
       } catch (e) {
         if (!JC.identity.isCurrent(context)) return;
         console.error('Merge failed:', e);
-        toast(JC.t!('bookmark_merge_failed'), 3000);
+        toast(JC.t!('bookmark_merge_failed'), 3000, 'error');
         btn.disabled = false;
         btn.querySelector('span:last-child')!.textContent = JC.t!('bookmark_merge_primary');
       }

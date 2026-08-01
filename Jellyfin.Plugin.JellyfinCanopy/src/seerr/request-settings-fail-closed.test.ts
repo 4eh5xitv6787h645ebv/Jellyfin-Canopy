@@ -51,7 +51,7 @@ describe('Seerr request settings fail closed', () => {
         expect(fetchMock).toHaveBeenCalledTimes(1);
         expect(createModal).not.toHaveBeenCalled();
         expect(postMock).not.toHaveBeenCalled();
-        expect(toast).toHaveBeenCalledWith('seerr_toast_no_season_info', 4000);
+        expect(toast).toHaveBeenCalledWith('seerr_toast_no_season_info', 4000, 'warning');
     });
 
     it.each([
@@ -66,7 +66,7 @@ describe('Seerr request settings fail closed', () => {
 
         expect(createModal).not.toHaveBeenCalled();
         expect(postMock).not.toHaveBeenCalled();
-        expect(toast).toHaveBeenCalledWith('seerr_toast_no_season_info', 4000);
+        expect(toast).toHaveBeenCalledWith('seerr_toast_no_season_info', 4000, 'warning');
     });
 
     it('keeps a later outage unavailable instead of reusing unscoped last-good settings', async () => {

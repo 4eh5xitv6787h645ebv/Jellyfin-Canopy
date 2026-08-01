@@ -639,6 +639,8 @@
   "hidden_content_hide_button": "Masquer",
   "hidden_content_already_hidden": "Masqué",
   "hidden_content_item_hidden": "\"{name}\" masqué",
+  "hidden_content_undo_available": "« {name} » masqué. L’action Annuler est disponible.",
+  "hidden_content_item_restored": "\"{name}\" restauré",
   "hidden_content_undo": "Annuler",
   "hidden_content_unhide": "Afficher",
   "hidden_content_manage_button": "Gérer le contenu masqué",

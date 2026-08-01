@@ -639,6 +639,8 @@
   "hidden_content_hide_button": "إخفاء",
   "hidden_content_already_hidden": "مخفي",
   "hidden_content_item_hidden": "تم إخفاء \"{name}\"",
+  "hidden_content_undo_available": "تم إخفاء \"{name}\". يتوفر إجراء التراجع.",
+  "hidden_content_item_restored": "تمت استعادة \"{name}\"",
   "hidden_content_undo": "تراجع",
   "hidden_content_unhide": "إظهار",
   "hidden_content_manage_button": "إدارة المحتوى المخفي",

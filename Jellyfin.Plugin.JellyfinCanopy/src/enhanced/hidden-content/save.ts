@@ -118,7 +118,7 @@ async function recoverRevisionConflict(
     const conflictedRoot = sentRoot || getHiddenData();
     if (getHiddenData() !== conflictedRoot) {
         try {
-            toast(JC.t!('panel_admin_target_conflict_error'), 5000);
+            toast(JC.t!('panel_admin_target_conflict_error'), 5000, 'error');
         } catch { /* the in-memory intent remains fenced without a toast surface */ }
         return;
     }
@@ -129,7 +129,7 @@ async function recoverRevisionConflict(
         return;
     }
     try {
-        toast(JC.t!('panel_admin_target_conflict_error'), 5000);
+        toast(JC.t!('panel_admin_target_conflict_error'), 5000, 'error');
     } catch { /* the data recovery remains authoritative without a toast surface */ }
     if (recovered) {
         if (conflictFencedContext === context) conflictFencedContext = null;
@@ -913,7 +913,7 @@ function scheduleFlushRetry(attempt: number, context: IdentityContext): void {
         console.error('🪼 Jellyfin Canopy: hidden-content save retries exhausted; local change may be lost on reload');
         // User-visible toast — the bulk-save endpoint is genuinely down at this point.
         try {
-            toast(JC.t!('hidden_content_save_failed_persistent'), 5000);
+            toast(JC.t!('hidden_content_save_failed_persistent'), 5000, 'error');
         } catch (_) { /* toast helper unavailable, console.error above is best-effort */ }
         pendingRetryHandle = null;
         pendingRetryContext = null;

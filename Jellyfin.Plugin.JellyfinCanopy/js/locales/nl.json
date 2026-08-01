@@ -639,6 +639,8 @@
   "hidden_content_hide_button": "Verbergen",
   "hidden_content_already_hidden": "Hidden",
   "hidden_content_item_hidden": "\"{name}\" verborgen",
+  "hidden_content_undo_available": "\"{name}\" verborgen. De actie Ongedaan maken is beschikbaar.",
+  "hidden_content_item_restored": "\"{name}\" hersteld",
   "hidden_content_undo": "Ongedaan maken",
   "hidden_content_unhide": "Unhide",
   "hidden_content_manage_button": "Verborgen inhoud beheren",

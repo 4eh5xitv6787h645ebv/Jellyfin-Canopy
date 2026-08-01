@@ -638,6 +638,8 @@
   "hidden_content_hide_button": "Ukryj",
   "hidden_content_already_hidden": "Ukryte",
   "hidden_content_item_hidden": "\"{name}\" ukryte",
+  "hidden_content_undo_available": "„{name}” ukryte. Dostępna jest akcja Cofnij.",
+  "hidden_content_item_restored": "\"{name}\" przywrócone",
   "hidden_content_undo": "Cofnij",
   "hidden_content_unhide": "Pokaż",
   "hidden_content_manage_button": "Zarządzaj ukrytą zawartością",

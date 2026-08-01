@@ -639,6 +639,8 @@
   "hidden_content_hide_button": "Ocultar",
   "hidden_content_already_hidden": "Ocult",
   "hidden_content_item_hidden": "\"{name}\" ocult",
+  "hidden_content_undo_available": "S'ha ocultat \"{name}\". L'acció Desfer està disponible.",
+  "hidden_content_item_restored": "\"{name}\" restaurat",
   "hidden_content_undo": "Desfer",
   "hidden_content_unhide": "Mostrar",
   "hidden_content_manage_button": "Gestionar el contingut ocult",

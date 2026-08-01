@@ -639,6 +639,8 @@
   "hidden_content_hide_button": "隱藏",
   "hidden_content_already_hidden": "已隱藏",
   "hidden_content_item_hidden": "已隱藏「{name}」",
+  "hidden_content_undo_available": "已隱藏「{name}」。可使用「復原」操作。",
+  "hidden_content_item_restored": "已還原「{name}」",
   "hidden_content_undo": "復原",
   "hidden_content_unhide": "取消隱藏",
   "hidden_content_manage_button": "管理隱藏內容",

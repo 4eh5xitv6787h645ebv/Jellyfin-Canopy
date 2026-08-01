@@ -5,7 +5,7 @@ import { JC as JEBase } from '../globals';
 import { describeFetchError } from '../core/fetch-error';
 import { insertHeaderTrayButton, HeaderTrayOrder } from '../enhanced/header-tray';
 import { createStableMethodFacade } from '../core/feature-loader';
-import type { ApiApi, IdentityContext, LifecycleApi, LifecycleHandle, NavigationApi, PluginConfig, UiApi } from '../types/jc';
+import type { ApiApi, IdentityContext, LifecycleApi, LifecycleHandle, NavigationApi, NotificationSeverity, PluginConfig, UiApi } from '../types/jc';
 
 /**
  * Local view of the shared namespace adding the public member this module
@@ -14,7 +14,7 @@ import type { ApiApi, IdentityContext, LifecycleApi, LifecycleHandle, Navigation
 const JC = JEBase as typeof JEBase & {
     activeStreams?: { initialize(): void; destroy(): void };
     t?: (key: string, params?: Record<string, unknown>) => string;
-    toast?: (html: string, duration?: number) => void;
+    toast?: (html: string, duration?: number, severity?: NotificationSeverity) => void;
     currentUser?: { Policy?: { IsAdministrator?: boolean } };
     pluginConfig: PluginConfig & { ActiveStreamsEnabled?: boolean; ActiveStreamsAllUsers?: boolean };
     core: { api: ApiApi; navigation: NavigationApi; lifecycle: LifecycleApi; ui?: UiApi };
@@ -73,8 +73,16 @@ const isAdmin = (): boolean => JC?.currentUser?.Policy?.IsAdministrator === true
 // Fire a transient toast if the host exposes one (no-op under jsdom tests).
 // Callers only ever pass trusted localized strings (no session-derived data),
 // so no escaping is needed at these sites (X1).
-const notify = (message: string): void => {
-    try { (JC.toast || JC.core?.ui?.toast)?.(message); } catch (_) { /* non-fatal */ }
+const notify = (message: string, severity: NotificationSeverity = 'info'): void => {
+    try {
+        if (JC.core?.ui?.notify) {
+            JC.core.ui.notify({ message, severity });
+            return;
+        }
+        (JC.toast || JC.core?.ui?.toast)?.(message, undefined, severity);
+    } catch (error) {
+        console.error(`${LOG} notification rejected`, error);
+    }
 };
 
 // ── Live-update cadence ────────────────────────────────────────────────────
@@ -991,11 +999,11 @@ const sendSessionStop = async (sessionId: string, context: IdentityContext): Pro
             skipRetry: true,
         });
         if (!isCurrentContext(context)) return;
-        notify(JC.t?.('session_control_stopped') || 'Stream stopped');
+        notify(JC.t?.('session_control_stopped') || 'Stream stopped', 'success');
         void updateCounter({ live: true }, context);
     } catch (err) {
         if (!isCurrentContext(context)) return;
-        notify(JC.t?.('session_control_stop_failed') || 'Failed to stop the stream');
+        notify(JC.t?.('session_control_stop_failed') || 'Failed to stop the stream', 'error');
         console.warn(`${LOG} stop session failed:`, err);
     }
 };

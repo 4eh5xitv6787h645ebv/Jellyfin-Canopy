@@ -501,7 +501,7 @@ export function wireSpoilerGuardListeners(
                         setStatus(`${message} ${translatedStatus(
                             'panel_admin_target_refresh_status',
                         )}`, true);
-                        toast(escapeHtml(message));
+                        toast(escapeHtml(message), undefined, 'error');
                         setDisabled(false);
                         await panel.reconcileAfterSaveFailure();
                     },
@@ -582,7 +582,7 @@ export function wireSpoilerGuardListeners(
             console.error(`${logPrefix} saveSbPrefs failed:`, err);
             // Revert the box the user clicked so they see the change didn't stick.
             changedBox.checked = previousChecked;
-            JC.toast?.(JC.t!('spoiler_blur_error_toast'));
+            JC.toast?.(JC.t!('spoiler_blur_error_toast'), undefined, 'error');
         } finally {
             // A's stale finally must not re-enable a retained control after B
             // has synchronously torn the panel down.

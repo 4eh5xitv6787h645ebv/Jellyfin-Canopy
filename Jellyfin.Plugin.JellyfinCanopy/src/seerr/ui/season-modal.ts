@@ -60,7 +60,7 @@ ui.showSeasonSelectionModal = async function (tmdbId: any, mediaType: any, showT
     }
     if (!isCurrentGeneration()) return;
     if (!requestSettings?.available) {
-        JC.toast!(JC.t!('seerr_toast_no_season_info'), 4000);
+        JC.toast!(JC.t!('seerr_toast_no_season_info'), 4000, 'warning');
         return;
     }
     const { partialRequestsEnabled, enableSpecialEpisodes } = requestSettings;
@@ -83,7 +83,7 @@ ui.showSeasonSelectionModal = async function (tmdbId: any, mediaType: any, showT
     }
     if (!isCurrentGeneration() || initialRequestController.signal.aborted) return;
     if (!tvDetails?.seasons) {
-        JC.toast!(JC.t!('seerr_toast_no_season_info'), 4000);
+        JC.toast!(JC.t!('seerr_toast_no_season_info'), 4000, 'warning');
         return;
     }
 
@@ -125,7 +125,7 @@ ui.showSeasonSelectionModal = async function (tmdbId: any, mediaType: any, showT
             // barrier: the non-partial path does not read checkboxes at all.
             // Require the latest validated snapshot before either request path.
             if (seasonList?._requestStateValid !== true) {
-                JC.toast!(JC.t!('seerr_toast_no_season_info'), 4000);
+                JC.toast!(JC.t!('seerr_toast_no_season_info'), 4000, 'warning');
                 requestBtn.disabled = false;
                 requestBtn.textContent = is4k
                     ? (JC.t!('seerr_btn_request_4k') || 'Request in 4K')
@@ -139,7 +139,7 @@ ui.showSeasonSelectionModal = async function (tmdbId: any, mediaType: any, showT
                 const quality = modalEl.querySelector('#tv-quality').value;
                 const folder = modalEl.querySelector('#tv-folder').value;
                 if (!server || !quality || !folder) {
-                    JC.toast!(JC.t!('seerr_modal_toast_options_missing'), 3000);
+                    JC.toast!(JC.t!('seerr_modal_toast_options_missing'), 3000, 'warning');
                     requestBtn.disabled = false;
                     requestBtn.textContent = is4k ? (JC.t!('seerr_btn_request_4k') || 'Request in 4K') : (partialRequestsEnabled ? JC.t!('seerr_modal_request_selected') : JC.t!('seerr_modal_request'));
                     return;
@@ -152,7 +152,7 @@ ui.showSeasonSelectionModal = async function (tmdbId: any, mediaType: any, showT
                     // Partial requests enabled: request selected seasons (exclude the Select All checkbox)
                     const selectedSeasons = Array.from(modalEl.querySelectorAll('.seerr-season-item .seerr-season-checkbox:checked:not(:disabled)')).map((cb: any) => parseInt(cb.dataset.seasonNumber));
                     if (selectedSeasons.length === 0) {
-                        JC.toast!(JC.t!('seerr_modal_toast_select_season'), 3000);
+                        JC.toast!(JC.t!('seerr_modal_toast_select_season'), 3000, 'warning');
                         requestBtn.disabled = false;
                         requestBtn.textContent = is4k ? (JC.t!('seerr_btn_request_4k') || 'Request in 4K') : JC.t!('seerr_modal_request_selected');
                         return;
@@ -379,7 +379,7 @@ ui.showSeasonSelectionModal = async function (tmdbId: any, mediaType: any, showT
         } catch (error: any) {
             if (!isLiveModal()) return;
             console.error(`${logPrefix} Failed to load TV advanced options:`, error);
-            JC.toast!(JC.t!('seerr_err_load_server_options'), 3000);
+            JC.toast!(JC.t!('seerr_err_load_server_options'), 3000, 'error');
         }
     }
 };

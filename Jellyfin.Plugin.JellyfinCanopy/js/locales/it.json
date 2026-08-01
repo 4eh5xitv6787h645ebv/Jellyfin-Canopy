@@ -639,6 +639,8 @@
   "hidden_content_hide_button": "Nascondi",
   "hidden_content_already_hidden": "Nascosto",
   "hidden_content_item_hidden": "\"{name}\" nascosto",
+  "hidden_content_undo_available": "\"{name}\" nascosto. L'azione Annulla è disponibile.",
+  "hidden_content_item_restored": "\"{name}\" ripristinato",
   "hidden_content_undo": "Annulla",
   "hidden_content_unhide": "Mostra",
   "hidden_content_manage_button": "Gestisci contenuti nascosti",

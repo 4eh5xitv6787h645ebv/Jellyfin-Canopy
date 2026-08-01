@@ -315,12 +315,12 @@ export async function renderBookmarkItems(
               toast(JC.t!('toast_bookmark_updated'), 2000);
               renderActiveBookmarks(context);
             } else {
-              toast(JC.t!('toast_bookmark_save_failed'), 3000);
+              toast(JC.t!('toast_bookmark_save_failed'), 3000, 'error');
             }
           } catch (err) {
             if (!JC.identity.isCurrent(context)) return;
             console.error('Bookmark update failed', err);
-            toast(JC.t!('toast_bookmark_save_failed'), 3000);
+            toast(JC.t!('toast_bookmark_save_failed'), 3000, 'error');
           } finally {
             if (JC.identity.isCurrent(context)) {
               saveBtn.disabled = false;
@@ -344,7 +344,7 @@ export async function renderBookmarkItems(
           } catch (error) {
             if (!JC.identity.isCurrent(context)) return;
             console.error('Bookmark delete failed', error);
-            toast(JC.t!('bookmark_delete_failed'), 3000);
+            toast(JC.t!('bookmark_delete_failed'), 3000, 'error');
           }
         })(); });
 
@@ -376,7 +376,7 @@ async function playItemAtTime(
     const apiClient: any = window.ApiClient || (window as any).ConnectionManager?.currentApiClient();
     if (!apiClient) {
       console.warn(`${logPrefix} API client not available`);
-      toast(JC.t!('toast_api_client_unavailable'), 3000);
+      toast(JC.t!('toast_api_client_unavailable'), 3000, 'error');
       return;
     }
 
@@ -399,7 +399,7 @@ async function playItemAtTime(
 
     if (!currentSession) {
       console.warn(`${logPrefix} Could not find current session`);
-      toast(JC.t!('toast_session_not_found'), 3000);
+      toast(JC.t!('toast_session_not_found'), 3000, 'error');
       return;
     }
 
@@ -436,6 +436,6 @@ async function playItemAtTime(
   } catch (e) {
     if (!JC.identity.isCurrent(context)) return;
     console.error(`${logPrefix} Failed to play item:`, e);
-    toast(JC.t!('toast_playback_failed').replace('{error}', JC.escapeHtml((e as any).message || 'Unknown error')), 3000);
+    toast(JC.t!('toast_playback_failed').replace('{error}', JC.escapeHtml((e as any).message || 'Unknown error')), 3000, 'error');
   }
 }

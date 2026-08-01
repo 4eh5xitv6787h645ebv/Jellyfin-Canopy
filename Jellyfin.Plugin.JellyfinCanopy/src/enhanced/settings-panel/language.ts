@@ -180,7 +180,7 @@ export function wireLanguageControls(ctx: PanelContext): void {
                         && error.kind === 'cancelled')) return;
                 (e.target as HTMLSelectElement).value = previousLang;
                 if (editor.mode === 'admin-target') {
-                    toast(JC.t!('panel_admin_target_save_error'));
+                    toast(JC.t!('panel_admin_target_save_error'), undefined, 'error');
                 }
                 await ctx.reconcileAfterSaveFailure?.();
                 return;
@@ -201,7 +201,7 @@ export function wireLanguageControls(ctx: PanelContext): void {
             if (editor.mode === 'admin-target') {
                 toast(escapeHtml(JC.t!('panel_admin_target_refresh_notice')));
             } else if (newLang && !translationExists) {
-                toast(`${JC.icon!(JC.IconName!.WARNING)} Translation file not available for selected language. Falling back to English.`);
+                toast(`${JC.icon!(JC.IconName!.WARNING)} Translation file not available for selected language. Falling back to English.`, undefined, 'warning');
             } else {
                 toast(JC.t!('toast_language_changed'));
             }

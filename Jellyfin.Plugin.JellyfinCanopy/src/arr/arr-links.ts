@@ -103,6 +103,19 @@ function isActive(context: IdentityContext, expectedGeneration: number): boolean
     return arrLinksGeneration === expectedGeneration && JC.identity.isCurrent(context);
 }
 
+/** Route urgent integration failures through the typed assertive owner. */
+export function notifyArrLinkError(message: string, dedupeKey: string): void {
+    if (JC.core.ui?.notify) {
+        try {
+            JC.core.ui.notify({ message, severity: 'error', duration: 8000, dedupeKey });
+        } catch (error) {
+            console.error('🪼 Jellyfin Canopy: Arr link error notification rejected:', error);
+        }
+        return;
+    }
+    JC.toast?.(JC.escapeHtml(message), 8000, 'error');
+}
+
 function waitForRetry(context: IdentityContext, expectedGeneration: number, delay: number): Promise<void> {
     return new Promise((resolve) => {
         const finish = (): void => {
@@ -185,12 +198,18 @@ async function initializeArrLinks(): Promise<void> {
     // Surface stored-config corruption to the admin on first init rather than waiting for
     // an action endpoint. The backend ships boolean flags in /private-config so the frontend
     // can toast without round-tripping an action call.
-    if (JC?.pluginConfig?.SonarrInstancesCorrupt && typeof JC.toast === 'function') {
-        JC.toast('⚠ Sonarr instance configuration is corrupt. Open the Jellyfin Canopy config page to reset it.');
+    if (JC?.pluginConfig?.SonarrInstancesCorrupt) {
+        notifyArrLinkError(
+            'Sonarr instance configuration is corrupt. Open the Jellyfin Canopy config page to reset it.',
+            'arr-links:sonarr-config-corrupt'
+        );
         console.error(`${logPrefix} SonarrInstances stored JSON is corrupt.`);
     }
-    if (JC?.pluginConfig?.RadarrInstancesCorrupt && typeof JC.toast === 'function') {
-        JC.toast('⚠ Radarr instance configuration is corrupt. Open the Jellyfin Canopy config page to reset it.');
+    if (JC?.pluginConfig?.RadarrInstancesCorrupt) {
+        notifyArrLinkError(
+            'Radarr instance configuration is corrupt. Open the Jellyfin Canopy config page to reset it.',
+            'arr-links:radarr-config-corrupt'
+        );
         console.error(`${logPrefix} RadarrInstances stored JSON is corrupt.`);
     }
 
@@ -397,19 +416,6 @@ async function initializeArrLinks(): Promise<void> {
         const _toastedGlobalFailure: Record<string, boolean> = { sonarr: false, radarr: false };
         const _toastedInstanceErrors = new Set<string>();
 
-        // Alias the shared helper so the toast concatenations read short. JC.toast renders
-        // via innerHTML, so any caller-controlled field (admin-set instance name, upstream
-        // error reason) must pass through escape() to prevent stored XSS.
-        // The inline fallback is a real escaper so XSS is blocked even if helpers.js
-        // hasn't loaded yet (e.g. a load-order race on first init).
-        const esc = (s: unknown): string => {
-            if (JC.helpers?.escHtml) return JC.helpers.escHtml(s);
-            // eslint-disable-next-line @typescript-eslint/no-base-to-string -- frozen behavior: non-strings coerce via String()
-            return String(s == null ? '' : s)
-                .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-                .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-        };
-
         function surfaceInstanceErrors(kind: string, errors: InstanceError[] | undefined): void {
             if (!Array.isArray(errors) || errors.length === 0) {
                 // Empty-errors fetch means everything that was failing has recovered. Drop any
@@ -425,9 +431,10 @@ async function initializeArrLinks(): Promise<void> {
                 seenThisTick.add(key);
                 if (_toastedInstanceErrors.has(key)) return;
                 _toastedInstanceErrors.add(key);
-                if (typeof JC.toast === 'function') {
-                    JC.toast('⚠ ' + esc(kind) + ' instance "' + esc(err.instanceName || 'unknown') + '" failed: ' + esc(err.reason));
-                }
+                notifyArrLinkError(
+                    `${kind} instance "${err.instanceName || 'unknown'}" failed: ${err.reason || 'Unknown error'}`,
+                    `arr-links:${key}`
+                );
                 console.warn(`${logPrefix} ${kind} instance "${err.instanceName}" error: ${err.reason}`);
             });
             // Self-heal: drop memo entries for errors that didn't reappear this tick.
@@ -439,9 +446,10 @@ async function initializeArrLinks(): Promise<void> {
         function surfaceGlobalFailure(kind: string, detail: unknown): void {
             if (_toastedGlobalFailure[kind.toLowerCase()]) return;
             _toastedGlobalFailure[kind.toLowerCase()] = true;
-            if (typeof JC.toast === 'function') {
-                JC.toast('⚠ ' + esc(kind) + ' lookup failed; links unavailable. See console for details.');
-            }
+            notifyArrLinkError(
+                `${kind} lookup failed; links unavailable. See console for details.`,
+                `arr-links:${kind.toLowerCase()}:lookup-failed`
+            );
             console.warn(`${logPrefix} ${kind} lookup backend failed:`, detail);
         }
 

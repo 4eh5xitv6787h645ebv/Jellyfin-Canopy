@@ -3008,7 +3008,7 @@ test.describe('admin target user settings', () => {
                         }
                     }
                 });
-                observer.observe(document.body, { childList: true });
+                observer.observe(document.body, { childList: true, subtree: true });
                 scope.__jcAdminTargetIdentityFailureObserver = observer;
             }, loadError);
 
@@ -3295,7 +3295,7 @@ test.describe('admin target user settings', () => {
                         for (const node of Array.from(mutation.addedNodes)) observe(node);
                     }
                 });
-                observer.observe(document.body, { childList: true });
+                observer.observe(document.body, { childList: true, subtree: true });
                 scope.__jcAdminTargetUnauthorizedObserver = observer;
             }, unauthorizedText);
 

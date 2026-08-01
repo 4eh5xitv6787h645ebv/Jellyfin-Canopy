@@ -639,6 +639,8 @@
   "hidden_content_hide_button": "Skrýt",
   "hidden_content_already_hidden": "Skryto",
   "hidden_content_item_hidden": "\"{name}\" skryto",
+  "hidden_content_undo_available": "Položka „{name}“ byla skryta. Akce Vrátit zpět je k dispozici.",
+  "hidden_content_item_restored": "\"{name}\" obnoveno",
   "hidden_content_undo": "Vrátit zpět",
   "hidden_content_unhide": "Odkrýt",
   "hidden_content_manage_button": "Spravovat skrytý obsah",

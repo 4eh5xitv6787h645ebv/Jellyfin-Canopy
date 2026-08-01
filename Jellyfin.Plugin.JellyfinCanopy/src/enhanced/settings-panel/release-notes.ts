@@ -33,7 +33,7 @@ export async function showReleaseNotesNotification(): Promise<void> {
     } catch (error) {
         if (controller.signal.aborted || !JC.identity.isCurrent(context)) return;
         console.error('🪼 Jellyfin Canopy: Failed to fetch release notes:', error);
-        toast(JC.icon!(JC.IconName!.ERROR) + ' Could not load release notes.');
+        toast(JC.icon!(JC.IconName!.ERROR) + ' Could not load release notes.', undefined, 'error');
         return;
     } finally {
         releaseControllers.delete(controller);

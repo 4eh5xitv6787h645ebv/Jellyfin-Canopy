@@ -275,9 +275,10 @@ export async function fetchCalendarEvents(startDate: Date, endDate: Date, signal
         // flag it + toast once — otherwise the calendar would render "No
         // upcoming releases" as though the range were genuinely empty (W4-ERR-3).
         state.eventsError = true;
-        if (typeof JC.toast === 'function') {
-            JC.toast('⚠ ' + esc(describeFetchError(error, JC.t?.('calendar_load_error') || 'Unable to load calendar')));
-        }
+        notifyCalendarError(
+            describeFetchError(error, JC.t?.('calendar_load_error') || 'Unable to load calendar'),
+            'calendar:events-total-failure'
+        );
         return null;
     }
 }
@@ -286,17 +287,17 @@ export async function fetchCalendarEvents(startDate: Date, endDate: Date, signal
 // calendar refresh. Self-heals: when an error stops appearing the memo entry is dropped
 // so a future reoccurrence re-toasts.
 const _toastedCalendarErrors = new Set<string>();
-// Alias the shared HTML-escape helper to keep toast concatenations short. JC.toast uses
-// innerHTML so admin-set instance names + upstream error reasons must be escaped.
-// The inline fallback is a real escaper so XSS is blocked even if helpers.js
-// hasn't loaded yet (e.g. a load-order race on first init).
-const esc = (s: unknown): string => {
-    if (JC.helpers?.escHtml) return JC.helpers.escHtml(s);
-    // eslint-disable-next-line @typescript-eslint/no-base-to-string -- frozen behavior: non-strings coerce via String()
-    return String(s == null ? '' : s)
-        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-};
+function notifyCalendarError(message: string, dedupeKey: string): void {
+    if (JC.core.ui?.notify) {
+        try {
+            JC.core.ui.notify({ message, severity: 'error', duration: 8000, dedupeKey });
+        } catch (error) {
+            console.error(`${logPrefix} Error notification rejected:`, error);
+        }
+        return;
+    }
+    JC.toast?.(JC.escapeHtml(message), 8000, 'error');
+}
 function surfaceCalendarErrors(errors: CalendarErrorEntry[] | undefined): void {
     if (!Array.isArray(errors) || errors.length === 0) {
         // All previously-failing instances have recovered — drop the memo so future errors re-toast.
@@ -309,12 +310,10 @@ function surfaceCalendarErrors(errors: CalendarErrorEntry[] | undefined): void {
         seenThisTick.add(key);
         if (_toastedCalendarErrors.has(key)) return;
         _toastedCalendarErrors.add(key);
-        if (typeof JC.toast === 'function') {
-            JC.toast(
-                '⚠ ' + esc(err.source || 'Arr') + ' calendar instance "' +
-                esc(err.instanceName || 'unknown') + '" failed: ' + esc(err.reason)
-            );
-        }
+        notifyCalendarError(
+            `${err.source || 'Arr'} calendar instance "${err.instanceName || 'unknown'}" failed: ${err.reason || 'Unknown error'}`,
+            `calendar:instance:${key}`
+        );
         console.warn(`${logPrefix} ${err.source || 'Arr'} instance "${err.instanceName}" error: ${err.reason}`);
     });
     // Drop memo entries for errors that didn't reappear — lets future occurrences re-toast.
@@ -445,9 +444,10 @@ async function fetchUserRequests(signal?: AbortSignal): Promise<void> {
         state.requestedItems = new Set();
         state.requestedLoaded = false;
         state.requestedError = true;
-        if (typeof JC.toast === 'function') {
-            JC.toast('⚠ ' + esc(describeFetchError(error, JC.t?.('calendar_load_error') || 'Unable to load calendar')));
-        }
+        notifyCalendarError(
+            describeFetchError(error, JC.t?.('calendar_load_error') || 'Unable to load calendar'),
+            'calendar:requests-total-failure'
+        );
     } finally {
         if (!JC.identity.isCurrent(context)) return;
         // Releasing the latch is required on same-identity page teardown so a

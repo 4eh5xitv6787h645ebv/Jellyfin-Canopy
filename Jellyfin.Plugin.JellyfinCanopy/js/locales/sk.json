@@ -639,6 +639,8 @@
   "hidden_content_hide_button": "Skryť",
   "hidden_content_already_hidden": "Skryté",
   "hidden_content_item_hidden": "\"{name}\" skryté",
+  "hidden_content_undo_available": "„{name}“ skryté. Akcia Vrátiť späť je k dispozícii.",
+  "hidden_content_item_restored": "\"{name}\" obnovené",
   "hidden_content_undo": "Vrátiť späť",
   "hidden_content_unhide": "Odkryť",
   "hidden_content_manage_button": "Spravovať skrytý obsah",

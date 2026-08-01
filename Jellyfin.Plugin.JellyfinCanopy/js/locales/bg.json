@@ -639,6 +639,8 @@
   "hidden_content_hide_button": "Скрий",
   "hidden_content_already_hidden": "Скрито",
   "hidden_content_item_hidden": "„{name}“ е скрито",
+  "hidden_content_undo_available": "„{name}“ е скрито. Налично е действие „Отмяна“.",
+  "hidden_content_item_restored": "„{name}“ е възстановено",
   "hidden_content_undo": "Отмяна",
   "hidden_content_unhide": "Покажи",
   "hidden_content_manage_button": "Управление на скритото съдържание",

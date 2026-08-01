@@ -5,6 +5,7 @@
 // and a total downloads-fetch failure must toast once instead of silently
 // showing "No active downloads".
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { NotificationOptions } from '../../types/jc';
 // ui-kit installs the real JC.escapeHtml (the setup stub is a no-op) which the
 // render modules capture at import.
 import '../../core/ui-kit';
@@ -136,6 +137,7 @@ function mixedSourceEnvelope(): Record<string, unknown> {
 describe('requests page error state', () => {
     let plugin: ReturnType<typeof vi.fn>;
     let toast: ReturnType<typeof vi.fn>;
+    let notify: ReturnType<typeof vi.fn<(options: NotificationOptions) => void>>;
     let data: typeof import('./data');
     let render: typeof import('./render');
 
@@ -144,8 +146,9 @@ describe('requests page error state', () => {
         document.body.innerHTML = '';
         plugin = vi.fn();
         toast = vi.fn();
+        notify = vi.fn<(options: NotificationOptions) => void>();
         const JC = window.JellyfinCanopy as unknown as Record<string, unknown>;
-        JC.core = { api: { plugin } };
+        JC.core = { api: { plugin }, ui: { notify } };
         JC.pluginConfig = { SeerrEnabled: true, ShowDownloadsInRequests: true };
         JC.t = (k: string) => k;
         JC.toast = toast;
@@ -214,8 +217,13 @@ describe('requests page error state', () => {
         expect(data.state.downloadsError).toBe(true);
         expect(data.state.downloadsStale).toBe(true);
         expect(data.state.downloadsHasSnapshot).toBe(false);
-        expect(toast).toHaveBeenCalledTimes(1);
-        expect(String(toast.mock.calls[0][0])).toContain('downloads_load_error');
+        expect(notify).toHaveBeenCalledTimes(1);
+        expect(notify.mock.calls[0][0]).toMatchObject({
+            message: 'downloads_load_error',
+            severity: 'error',
+            dedupeKey: 'requests:downloads-total-failure',
+        });
+        expect(toast).not.toHaveBeenCalled();
 
         const container = document.createElement('div');
         document.body.appendChild(container);

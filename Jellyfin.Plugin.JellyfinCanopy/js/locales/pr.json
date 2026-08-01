@@ -639,6 +639,8 @@
   "hidden_content_hide_button": "Hide",
   "hidden_content_already_hidden": "Hidden, arrr",
   "hidden_content_item_hidden": "\"{name}\" be hidden now",
+  "hidden_content_undo_available": "\"{name}\" be hidden now. Undo be ready.",
+  "hidden_content_item_restored": "\"{name}\" be restored now",
   "hidden_content_undo": "Undo",
   "hidden_content_unhide": "Show",
   "hidden_content_manage_button": "Manage Hidden Booty",

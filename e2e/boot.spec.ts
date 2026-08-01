@@ -67,4 +67,96 @@ test.describe('boot', () => {
         }
         assertNoRuntimeErrors(consoleErrors);
     });
+
+    test('shared notifications are accessible, stacked, exact-once, and route-owned', async ({ page, consoleErrors }) => {
+        await loginAs(page, 'admin', consoleErrors);
+
+        const initial = await page.evaluate(() => {
+            const ui = (window as any).JellyfinCanopy.core.ui;
+            const ownerBefore = document.getElementById('jc-notification-owner');
+            (window as any).__jcNotificationActions = [];
+            (window as any).__jcNotificationAnnouncements = [];
+            const announcementObserver = new MutationObserver((mutations) => {
+                for (const mutation of mutations) {
+                    const target = mutation.target instanceof Element
+                        ? mutation.target
+                        : mutation.target.parentElement;
+                    const lane = target?.closest<HTMLElement>('[data-jc-announcer]');
+                    if (lane?.textContent) {
+                        (window as any).__jcNotificationAnnouncements.push(lane.textContent);
+                    }
+                }
+            });
+            if (ownerBefore) {
+                announcementObserver.observe(ownerBefore, { subtree: true, childList: true, characterData: true });
+            }
+            const first = ui.notifyAction({
+                message: 'First item hidden',
+                actionAvailableAnnouncement: 'First item hidden. Undo first is available.',
+                severity: 'success',
+                duration: 8_000,
+                actionLabel: 'Undo first',
+                onAction: () => (window as any).__jcNotificationActions.push('first'),
+            });
+            ui.notifyAction({
+                message: 'Second item hidden',
+                actionAvailableAnnouncement: 'Second item hidden. Undo second is available.',
+                severity: 'success',
+                duration: 8_000,
+                actionLabel: 'Undo second',
+                onAction: () => (window as any).__jcNotificationActions.push('second'),
+            });
+            (window as any).__jcRetainedNotificationButton = first.element.querySelector('button');
+            const owner = document.getElementById('jc-notification-owner');
+            const buttons = Array.from(owner?.querySelectorAll<HTMLButtonElement>('.jc-notification-action') || []);
+            return {
+                ownerPreinstalled: !!ownerBefore,
+                owners: document.querySelectorAll('#jc-notification-owner').length,
+                cards: owner?.querySelectorAll('.jc-notification').length,
+                politeRegions: owner?.querySelectorAll('[aria-live="polite"]').length,
+                assertiveRegions: owner?.querySelectorAll('[aria-live="assertive"]').length,
+                visualLiveValues: Array.from(owner?.querySelectorAll('.jc-notification') || [])
+                    .map((node) => node.getAttribute('aria-live')),
+                buttonTypes: buttons.map((button) => button.type),
+            };
+        });
+
+        expect(initial).toEqual({
+            ownerPreinstalled: true,
+            owners: 1,
+            cards: 2,
+            politeRegions: 1,
+            assertiveRegions: 1,
+            visualLiveValues: ['off', 'off'],
+            buttonTypes: ['button', 'button'],
+        });
+        await expect.poll(() => page.evaluate(() => (window as any).__jcNotificationAnnouncements))
+            .toEqual([
+                'First item hidden. Undo first is available.',
+                'Second item hidden. Undo second is available.',
+            ]);
+        await page.evaluate(() => {
+            const buttons = document.querySelectorAll<HTMLButtonElement>('.jc-notification-action');
+            buttons[1]?.click();
+            buttons[1]?.click();
+        });
+        await expect.poll(() => page.evaluate(() => (window as any).__jcNotificationActions))
+            .toEqual(['second']);
+
+        await page.evaluate(() => (window as any).JellyfinCanopy.core.ui.notify({
+            message: 'Urgent save failure',
+            severity: 'error',
+            duration: 8_000,
+            dedupeKey: 'e2e:urgent-save-failure',
+        }));
+        await expect.poll(() => page.locator('[data-jc-announcer="assertive"]').textContent())
+            .toBe('Urgent save failure');
+
+        await page.evaluate(() => history.pushState({}, '', '#/home?jc-notification-proof=1'));
+        await expect(page.locator('.jc-notification')).toHaveCount(0);
+        await page.evaluate(() => (window as any).__jcRetainedNotificationButton.click());
+        expect(await page.evaluate(() => (window as any).__jcNotificationActions)).toEqual(['second']);
+        await expect(page.locator('#jc-notification-owner')).toHaveCount(1);
+        assertNoRuntimeErrors(consoleErrors);
+    });
 });

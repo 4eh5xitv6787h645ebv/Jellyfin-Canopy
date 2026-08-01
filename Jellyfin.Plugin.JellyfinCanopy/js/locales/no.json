@@ -639,6 +639,8 @@
   "hidden_content_hide_button": "Skjul",
   "hidden_content_already_hidden": "Skjult",
   "hidden_content_item_hidden": "\"{name}\" skjult",
+  "hidden_content_undo_available": "\"{name}\" skjult. Handlingen Angre er tilgjengelig.",
+  "hidden_content_item_restored": "\"{name}\" gjenopprettet",
   "hidden_content_undo": "Angre",
   "hidden_content_unhide": "Vis",
   "hidden_content_manage_button": "Administrer skjult innhold",

@@ -192,13 +192,15 @@ async function armToastWatcher(page: Page): Promise<void> {
         const obs = new MutationObserver((muts) => {
             for (const m of muts) {
                 for (const n of Array.from(m.addedNodes)) {
-                    if (n instanceof HTMLElement && n.classList.contains('jellyfin-canopy-toast')) {
+                    if (n instanceof HTMLElement
+                        && (n.classList.contains('jellyfin-canopy-toast')
+                            || n.querySelector('.jellyfin-canopy-toast'))) {
                         (window as any).__jeToastSeen = true;
                     }
                 }
             }
         });
-        obs.observe(document.body, { childList: true });
+        obs.observe(document.body, { childList: true, subtree: true });
         (window as any).__jeToastObs = obs;
     });
 }

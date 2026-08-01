@@ -99,47 +99,6 @@ export function injectCSS(): void {
             background: rgba(255,255,255,0.08);
         }
 
-        .jc-undo-toast {
-            position: fixed;
-            bottom: 20px;
-            right: 20px;
-            color: #fff;
-            padding: 12px 16px;
-            border-radius: 8px;
-            z-index: 99999;
-            font-size: clamp(13px, 2vw, 16px);
-            font-weight: 500;
-            text-shadow: -1px -1px 10px black;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            transform: translateX(100%);
-            transition: transform 0.3s ease-out;
-            max-width: 380px;
-        }
-        .jc-undo-toast.jc-visible {
-            transform: translateX(0);
-        }
-        .jc-undo-toast-text {
-            flex: 1;
-        }
-        .jc-undo-btn {
-            background: rgba(255,255,255,0.15);
-            border: 1px solid rgba(255,255,255,0.25);
-            color: #fff;
-            padding: 4px 12px;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 13px;
-            font-weight: 600;
-            white-space: nowrap;
-            transition: background 0.2s ease, border-color 0.2s ease;
-        }
-        .jc-undo-btn:hover {
-            filter: brightness(1.3);
-        }
-
         .jc-hidden-management-overlay {
             position: fixed;
             inset: 0;

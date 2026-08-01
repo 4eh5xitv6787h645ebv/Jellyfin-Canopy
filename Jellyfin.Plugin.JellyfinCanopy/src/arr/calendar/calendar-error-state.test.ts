@@ -6,10 +6,12 @@
 // and remain retryable rather than silently under-populating the filter.
 import { describe, expect, it, beforeEach, vi } from 'vitest';
 import '../../core/ui-kit';
+import type { NotificationOptions } from '../../types/jc';
 
 describe('calendar page error state', () => {
     let plugin: ReturnType<typeof vi.fn>;
     let toast: ReturnType<typeof vi.fn>;
+    let notify: ReturnType<typeof vi.fn<(options: NotificationOptions) => void>>;
     let data: typeof import('./data');
     let views: typeof import('./render-views');
 
@@ -17,8 +19,9 @@ describe('calendar page error state', () => {
         vi.resetModules();
         plugin = vi.fn();
         toast = vi.fn();
+        notify = vi.fn<(options: NotificationOptions) => void>();
         const JC = window.JellyfinCanopy as unknown as Record<string, unknown>;
-        JC.core = { api: { plugin } };
+        JC.core = { api: { plugin }, ui: { notify } };
         JC.pluginConfig = { SeerrEnabled: true, CalendarFilterByLibraryAccess: true };
         JC.t = (k: string) => k;
         JC.toast = toast;
@@ -33,8 +36,10 @@ describe('calendar page error state', () => {
 
         expect(data.state.eventsError).toBe(true);
         expect(data.state.events.length).toBe(0);
-        expect(toast).toHaveBeenCalledTimes(1);
-        expect(String(toast.mock.calls[0][0])).toContain('calendar_load_error');
+        const notification = notify.mock.calls.at(-1)?.[0];
+        expect(notification?.message).toContain('calendar_load_error');
+        expect(notification?.severity).toBe('error');
+        expect(toast).not.toHaveBeenCalled();
 
         data.state.isLoading = false;
         const container = document.createElement('div');
@@ -67,6 +72,7 @@ describe('calendar page error state', () => {
         expect(data.state.requestedLoaded).toBe(true);
         expect(data.state.requestedError).toBe(false);
         expect(toast).not.toHaveBeenCalled();
+        expect(notify).not.toHaveBeenCalled();
     });
 
     it('flags a snapshot failure, publishes no partial keys, and allows a retry', async () => {
@@ -78,8 +84,10 @@ describe('calendar page error state', () => {
         expect(data.state.requestedError).toBe(true);
         expect(data.state.requestedLoaded).toBe(false);
         expect(data.state.requestedItems.size).toBe(0);
-        expect(toast).toHaveBeenCalledTimes(1);
-        expect(String(toast.mock.calls[0][0])).toContain('calendar_load_error');
+        const notification = notify.mock.calls.at(-1)?.[0];
+        expect(notification?.message).toContain('calendar_load_error');
+        expect(notification?.severity).toBe('error');
+        expect(toast).not.toHaveBeenCalled();
 
         plugin.mockResolvedValue({
             complete: true,
