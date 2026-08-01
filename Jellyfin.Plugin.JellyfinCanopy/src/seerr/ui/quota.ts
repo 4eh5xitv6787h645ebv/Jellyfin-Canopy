@@ -166,7 +166,7 @@ async function showQuotaErrorDialog(error: any, mediaType: any) {
             console.warn(`${logPrefix} Dashboard.alert threw, falling back to toast:`, err);
         }
     }
-    JC.toast!(escapeHtml(`${title}: ${lines.join(' — ')}`), 8000);
+    JC.toast!(escapeHtml(`${title}: ${lines.join(' — ')}`), 8000, 'warning');
 }
 
 async function handleRequestError(error: any, mediaType: any, requestBtn: any, resetLabel: any) {
@@ -177,7 +177,7 @@ async function handleRequestError(error: any, mediaType: any, requestBtn: any, r
         // Seerr 500 stack no longer leaks to the toast; a clean short message
         // still passes through. escapeHtml keeps the innerHTML toast sink safe
         // (and leaves the fallback's {{icon:error}} token intact) (W4-ERR-8).
-        JC.toast!(escapeHtml(describeFetchError(error, JC.t!('seerr_modal_toast_request_fail'))), 4000);
+        JC.toast!(escapeHtml(describeFetchError(error, JC.t!('seerr_modal_toast_request_fail'))), 4000, 'error');
     }
     if (requestBtn) {
         requestBtn.disabled = false;

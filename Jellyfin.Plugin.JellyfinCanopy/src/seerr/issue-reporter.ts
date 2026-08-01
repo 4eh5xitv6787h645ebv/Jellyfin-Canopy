@@ -288,7 +288,7 @@ issueReporter.showReportModal = function (tmdbId, itemName, mediaType, backdropU
             }
 
             if (!issueType) {
-                JC.toast!('Issue Type is required', 3000);
+                JC.toast!('Issue Type is required', 3000, 'warning');
                 return;
             }
 
@@ -321,11 +321,11 @@ issueReporter.showReportModal = function (tmdbId, itemName, mediaType, backdropU
                 console.error(`${logPrefix} Error reporting issue:`, error);
                 const errorMsg = error?.message || error?.toString() || '';
                 if (error?.status === 403) {
-                    JC.toast!(JC.t!('seerr_err_no_issue_permission'), 4000);
+                    JC.toast!(JC.t!('seerr_err_no_issue_permission'), 4000, 'error');
                 } else if (errorMsg.toLowerCase().includes('seerr') || errorMsg.toLowerCase().includes('unavailable') || error?.status === 503 || error?.status === 0) {
-                    JC.toast!('Seerr is not available', 4000);
+                    JC.toast!('Seerr is not available', 4000, 'error');
                 } else {
-                    JC.toast!(JC.t!('seerr_report_issue_error'), 4000);
+                    JC.toast!(JC.t!('seerr_report_issue_error'), 4000, 'error');
                 }
                 button.disabled = false;
                 button.textContent = JC.t!('seerr_report_issue_submit');
@@ -814,15 +814,15 @@ issueReporter.createUnavailableButton = function (container, itemName, mediaType
         e.stopPropagation();
         if (!isReporterIdentityCurrent(context)) return;
         if (reason === 'no-tmdb') {
-            JC.toast!('TMDB ID not found for this item', 4000);
+            JC.toast!('TMDB ID not found for this item', 4000, 'warning');
         } else if (reason === 'no-seerr') {
-            JC.toast!('Seerr is not available', 4000);
+            JC.toast!('Seerr is not available', 4000, 'error');
         } else if (reason === 'no-both') {
-            JC.toast!('TMDB ID not found and Seerr is not available', 4000);
+            JC.toast!('TMDB ID not found and Seerr is not available', 4000, 'error');
         } else if (reason === 'no-permissions') {
-            JC.toast!('You do not have permissions to report issues', 4000);
+            JC.toast!('You do not have permissions to report issues', 4000, 'error');
         } else {
-            JC.toast!(JC.t!('seerr_report_unavailable_toast'), 4000);
+            JC.toast!(JC.t!('seerr_report_unavailable_toast'), 4000, 'error');
         }
     });
 

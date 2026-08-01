@@ -272,7 +272,7 @@ export function wireHiddenContentListeners(ctx: PanelContext): void {
                         setStatus(`${message} ${translatedStatus(
                             'panel_admin_target_refresh_status',
                         )}`, true);
-                        toast(escapeHtml(message));
+                        toast(escapeHtml(message), undefined, 'error');
                         setDisabled(false);
                         await ctx.reconcileAfterSaveFailure();
                     },
@@ -310,7 +310,7 @@ export function wireHiddenContentListeners(ctx: PanelContext): void {
                     ),
                 );
                 setStatus(message, true);
-                toast(escapeHtml(message));
+                toast(escapeHtml(message), undefined, 'error');
             }
         });
         ctx.registerCleanup(() => {

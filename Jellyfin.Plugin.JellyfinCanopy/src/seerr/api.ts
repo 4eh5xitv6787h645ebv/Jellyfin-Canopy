@@ -402,7 +402,7 @@ api.surfaceUserStatusBanner = function(status) {
             ? JC.escapeHtml(rawMsg)
             : String(rawMsg).replace(/[&<>"']/g, function(c){return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'} as Record<string, string>)[c];});
         if (typeof JC !== 'undefined' && typeof JC.toast === 'function') {
-            JC.toast(`Seerr: ${msg}`, 6000);
+            JC.toast(`Seerr: ${msg}`, 6000, 'warning');
         } else {
             console.warn(`${logPrefix} ${rawMsg}`);
         }

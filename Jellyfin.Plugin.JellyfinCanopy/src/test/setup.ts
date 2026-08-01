@@ -260,6 +260,16 @@ window.JellyfinCanopy = bootstrapJE;
 // itself forever (100ms retry loop) waiting for the host router.
 window.Emby = { Page: {} };
 
+// Jellyfin 12 publishes the router event bus before the client bundle runs.
+// Supplying it here keeps navigation on its production subscription path and
+// prevents its bounded legacy-host retry timer from contaminating unrelated
+// fake-timer assertions after modules import the notification owner.
+window.Events = {
+    on: () => undefined,
+    off: () => undefined,
+    trigger: () => undefined,
+};
+
 // Minimal ApiClient: only what the core modules call at import/test time.
 const apiClientStub = {
     serverId: () => 'test-server-id',

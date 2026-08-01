@@ -472,7 +472,7 @@ describe('bookmark replacement library search', () => {
 
     await findAndOfferReplacement(group(), failedButton, failedContext);
 
-    expect(mocks.toast).toHaveBeenCalledWith('bookmark_search_failed', 3000);
+    expect(mocks.toast).toHaveBeenCalledWith('bookmark_search_failed', 3000, 'error');
     expect(mocks.toast).not.toHaveBeenCalledWith('bookmark_no_replacement', expect.anything());
     expect(failedButton.disabled).toBe(false);
     expect(document.querySelector('[data-jc-bookmark-library-modal="true"]')).toBeNull();
@@ -575,7 +575,7 @@ describe('bookmark replacement library search', () => {
 
     await findAllOrphanedAndOfferMigration({ first, second }, context);
 
-    expect(mocks.toast.mock.calls).toEqual([['bookmark_orphaned_search_failed:1', 4000]]);
+    expect(mocks.toast.mock.calls).toEqual([['bookmark_orphaned_search_failed:1', 4000, 'error']]);
     expect(document.querySelector('[data-jc-bookmark-library-modal="true"]')).toBeNull();
   });
 

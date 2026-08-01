@@ -9,8 +9,8 @@
     "maxBootRawBytes": 524288,
     "maxBootGzipBytes": 196608,
     "maxColdHomeRequests": 24,
-    "maxColdHomeRawBytes": 183961,
-    "maxColdHomeGzipBytes": 62422,
+    "maxColdHomeRawBytes": 198920,
+    "maxColdHomeGzipBytes": 66652,
     "maxFeatureRequests": 16,
     "maxFeatureRawBytes": 524288,
     "maxFeatureGzipBytes": 196608,
@@ -20,6 +20,6 @@
     "maxSourceMapRawBytes": 6000000,
     "maxTotalRawBytes": 7000000,
     "maxClientManifestRawBytes": 262144,
-    "maxPublishedRawBytes": 7000000
+    "maxPublishedRawBytes": 7068652
   }
 }

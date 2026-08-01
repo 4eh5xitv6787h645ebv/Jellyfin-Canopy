@@ -639,6 +639,8 @@
   "hidden_content_hide_button": "Dölj",
   "hidden_content_already_hidden": "Dold",
   "hidden_content_item_hidden": "\"{name}\" dold",
+  "hidden_content_undo_available": "\"{name}\" dold. Åtgärden Ångra är tillgänglig.",
+  "hidden_content_item_restored": "\"{name}\" återställt",
   "hidden_content_undo": "Ångra",
   "hidden_content_unhide": "Visa",
   "hidden_content_manage_button": "Hantera dolt innehåll",

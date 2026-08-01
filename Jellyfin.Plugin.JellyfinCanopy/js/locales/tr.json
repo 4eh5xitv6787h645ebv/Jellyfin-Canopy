@@ -639,6 +639,8 @@
   "hidden_content_hide_button": "Gizle",
   "hidden_content_already_hidden": "Gizli",
   "hidden_content_item_hidden": "\"{name}\" gizlendi",
+  "hidden_content_undo_available": "\"{name}\" gizlendi. Geri al işlemi kullanılabilir.",
+  "hidden_content_item_restored": "\"{name}\" geri yüklendi",
   "hidden_content_undo": "Geri al",
   "hidden_content_unhide": "Göster",
   "hidden_content_manage_button": "Gizli içeriği yönet",

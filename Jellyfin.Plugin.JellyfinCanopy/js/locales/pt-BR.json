@@ -639,6 +639,8 @@
   "hidden_content_hide_button": "Ocultar",
   "hidden_content_already_hidden": "Oculto",
   "hidden_content_item_hidden": "\"{name}\" oculto",
+  "hidden_content_undo_available": "\"{name}\" oculto. A ação Desfazer está disponível.",
+  "hidden_content_item_restored": "\"{name}\" restaurado",
   "hidden_content_undo": "Desfazer",
   "hidden_content_unhide": "Mostrar",
   "hidden_content_manage_button": "Gerir conteúdo oculto",

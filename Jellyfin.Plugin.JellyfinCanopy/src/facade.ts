@@ -18,7 +18,7 @@
 // (internal, still-typed-incrementally) members on top. Removing or renaming
 // any member here is a breaking change to the public contract.
 
-import type { JECore, PluginConfig, UserSettings } from './types/jc';
+import type { JECore, NotificationSeverity, PluginConfig, UserSettings } from './types/jc';
 
 /**
  * The frozen public API of window.JellyfinCanopy. Signatures here MUST match
@@ -42,7 +42,7 @@ export interface JellyfinCanopyPublicApi {
     /** Translation lookup — returns the key itself when no translation exists. */
     t?: (key: string, params?: Record<string, unknown>) => string;
     /** Shows a transient toast notification. */
-    toast?: (html: string, duration?: number) => void;
+    toast?: (html: string, duration?: number, severity?: NotificationSeverity) => void;
     /** Custom sidebar plugin links (config-page.js calls .refresh() to preview). */
     customPlugins?: { refresh: () => void };
 

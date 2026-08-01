@@ -201,7 +201,7 @@ export function showEnhancedPanel(launch: SettingsPanelLaunchContext | null = nu
             ? 'panel_admin_target_unauthorized'
             : 'panel_admin_target_load_error';
         console.warn('🪼 Jellyfin Canopy: Could not open Canopy User Settings:', error);
-        toast(JC.t!(key));
+        toast(JC.t!(key), undefined, 'error');
     }).finally(() => {
         if (openingPromise === opening) openingPromise = null;
         // Every early/stale return leaves the reservation in opening state.

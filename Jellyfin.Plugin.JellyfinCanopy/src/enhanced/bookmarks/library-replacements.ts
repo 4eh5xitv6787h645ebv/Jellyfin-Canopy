@@ -443,7 +443,7 @@ export async function findAndOfferReplacement(
         toast(JC.t!('bookmark_no_replacement'), 3000);
         return;
       case 'failed':
-        toast(JC.t!('bookmark_search_failed'), 3000);
+        toast(JC.t!('bookmark_search_failed'), 3000, 'error');
         return;
       case 'cancelled':
         return;
@@ -609,7 +609,7 @@ function showReplacementSelectionModal(
     } catch (e) {
       if (!isReplacementFlowCurrent(context, pageOwner)) return;
       console.error('Migration failed:', e);
-      toast(JC.t!('bookmark_migration_failed'), 3000);
+      toast(JC.t!('bookmark_migration_failed'), 3000, 'error');
       btn.disabled = false;
       btn.querySelector('span:last-child')!.textContent = JC.t!('bookmark_migrate');
     }
@@ -629,7 +629,7 @@ export async function findAllOrphanedAndOfferMigration(
   if (!context || !pageOwner || !JC.identity.isCurrent(context)) return;
   const apiClient = currentImageApiClient();
   if (!apiClient) {
-    toast(JC.t!('toast_api_client_unavailable'), 3000);
+    toast(JC.t!('toast_api_client_unavailable'), 3000, 'error');
     return;
   }
 
@@ -700,7 +700,7 @@ export async function findAllOrphanedAndOfferMigration(
   }
 
   if (failedSearchCount > 0) {
-    toast(JC.t!('bookmark_orphaned_search_failed').replace('{count}', String(failedSearchCount)), 4000);
+    toast(JC.t!('bookmark_orphaned_search_failed').replace('{count}', String(failedSearchCount)), 4000, 'error');
     return;
   }
 

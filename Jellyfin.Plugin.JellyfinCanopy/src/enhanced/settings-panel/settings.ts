@@ -77,7 +77,7 @@ function persistEditorSettings(ctx: PanelContext, editor: PanelEditorContext): P
                     : classified?.kind === 'conflict'
                         ? 'panel_admin_target_conflict_error'
                         : 'panel_admin_target_save_error';
-                toast(JC.t!(key));
+                toast(JC.t!(key), undefined, 'error');
             }
             await reconcileAfterFailure(ctx, editor);
             if (editor.appliesToActor && JC.identity.isCurrent(editor.actor)) {

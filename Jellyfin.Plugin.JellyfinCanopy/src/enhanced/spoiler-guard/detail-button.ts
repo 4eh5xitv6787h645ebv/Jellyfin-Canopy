@@ -281,7 +281,7 @@ function performToggle(
     }).catch((err) => {
         if (!isLiveButton(button, context, visiblePage)) return;
         console.error(`${logPrefix} Toggle failed:`, err);
-        JC.toast?.(JC.t!('spoiler_blur_error_toast'));
+        JC.toast?.(JC.t!('spoiler_blur_error_toast'), undefined, 'error');
     }).finally(() => {
         if (isLiveButton(button, context, visiblePage)) button.disabled = false;
     });

@@ -5,9 +5,11 @@
 // (Converted from js/enhanced/hidden-content-dialogs.js — bodies semantically identical.)
 
 import { JC } from '../../globals';
+import { NotificationBackpressureError, notifyAction } from '../../core/ui-kit';
 import { getSettings, hideItem, unhideItem } from './data';
+import { debouncedSave, flushPendingSave } from './save';
 import type { HideItemParams } from './data';
-import type { IdentityContext } from '../../types/jc';
+import type { IdentityContext, NotificationHandle } from '../../types/jc';
 
 /** Options customising the hide-confirmation dialog variants. */
 export interface HideDialogOptions {
@@ -34,10 +36,8 @@ interface DialogFence {
 }
 
 let dialogGeneration = 0;
-let activeUndoClose: (() => void) | null = null;
 let activeConfirmClose: (() => void) | null = null;
-const dialogTimeouts = new Set<number>();
-const dialogFrames = new Set<number>();
+const activeUndoNotifications = new Set<NotificationHandle>();
 
 function captureDialogFence(): DialogFence {
     return {
@@ -51,47 +51,15 @@ function isDialogFenceCurrent(fence: DialogFence): boolean {
         && (!fence.context || JC.identity.isCurrent(fence.context));
 }
 
-function scheduleDialogTimeout(callback: () => void, delay: number): number {
-    const handle = window.setTimeout(() => {
-        dialogTimeouts.delete(handle);
-        callback();
-    }, delay);
-    dialogTimeouts.add(handle);
-    return handle;
-}
-
-function cancelDialogTimeout(handle: number | null): void {
-    if (handle == null) return;
-    clearTimeout(handle);
-    dialogTimeouts.delete(handle);
-}
-
-function scheduleDialogFrame(callback: () => void): number {
-    const handle = requestAnimationFrame(() => {
-        dialogFrames.delete(handle);
-        callback();
-    });
-    dialogFrames.add(handle);
-    return handle;
-}
-
-function cancelDialogFrame(handle: number | null): void {
-    if (handle == null) return;
-    cancelAnimationFrame(handle);
-    dialogFrames.delete(handle);
-}
-
 export function resetDialogUi(): void {
     dialogGeneration += 1;
-    activeUndoClose?.();
+    for (const notification of activeUndoNotifications) notification.dismiss();
+    activeUndoNotifications.clear();
     activeConfirmClose?.();
-    activeUndoClose = null;
     activeConfirmClose = null;
-    for (const handle of dialogTimeouts) clearTimeout(handle);
-    for (const handle of dialogFrames) cancelAnimationFrame(handle);
-    dialogTimeouts.clear();
-    dialogFrames.clear();
-    document.querySelectorAll('.jc-undo-toast, .jc-hide-confirm-overlay').forEach((node) => {
+    // Shared notification handles own their exit timer and focus restoration.
+    // Remove only confirmation UI and pre-contract legacy Undo nodes here.
+    document.querySelectorAll('.jc-hide-confirm-overlay, .jc-undo-toast:not(.jc-notification)').forEach((node) => {
         JC.core.refreshSafety!.releaseElement(node);
         node.remove();
     });
@@ -115,76 +83,63 @@ function suppressionStorageKey(context: IdentityContext | null): string {
 export function showUndoToast(itemName: string, itemId: string): void {
     const fence = captureDialogFence();
     if (!isDialogFenceCurrent(fence)) return;
-    activeUndoClose?.();
-
-    const themeVars = JC.themer?.getThemeVariables?.() || {};
-    const toastBg = themeVars.secondaryBg || 'linear-gradient(135deg, rgba(0,0,0,0.9), rgba(40,40,40,0.9))';
-    const toastBorder = `1px solid ${themeVars.primaryAccent || 'rgba(255,255,255,0.1)'}`;
-    const blurValue = themeVars.blur || '30px';
-
-    const toast = document.createElement('div');
-    toast.className = 'jc-undo-toast';
-    toast.dataset.jcIdentityOwned = 'true';
-    Object.assign(toast.style, {
-        background: toastBg,
-        border: toastBorder,
-        backdropFilter: `blur(${blurValue})`
-    });
-
-    const textSpan = document.createElement('span');
-    textSpan.className = 'jc-undo-toast-text';
-    textSpan.textContent = JC.t!('hidden_content_item_hidden', { name: itemName });
-    toast.appendChild(textSpan);
-
-    const accentColor = themeVars.primaryAccent || 'rgba(255,255,255,0.15)';
-
-    const undoBtn = document.createElement('button');
-    undoBtn.className = 'jc-undo-btn';
-    Object.assign(undoBtn.style, {
-        background: `color-mix(in srgb, ${accentColor} 25%, transparent)`,
-        borderColor: accentColor
-    });
-    undoBtn.textContent = JC.t!('hidden_content_undo');
-    let frameHandle: number | null = null;
-    let dismissHandle: number | null = null;
-    let removalHandle: number | null = null;
-    const dispose = (): void => {
-        cancelDialogFrame(frameHandle);
-        cancelDialogTimeout(dismissHandle);
-        cancelDialogTimeout(removalHandle);
-        frameHandle = null;
-        dismissHandle = null;
-        removalHandle = null;
-        toast.remove();
-        if (activeUndoClose === dispose) activeUndoClose = null;
-    };
-    const dismiss = (): void => {
-        if (!isDialogFenceCurrent(fence)) {
-            dispose();
-            return;
-        }
-        toast.classList.remove('jc-visible');
-        cancelDialogTimeout(removalHandle);
-        removalHandle = scheduleDialogTimeout(dispose, 300);
-    };
-    activeUndoClose = dispose;
-
-    undoBtn.addEventListener('click', () => {
-        if (!isDialogFenceCurrent(fence)) return;
+    const message = JC.t!('hidden_content_item_hidden', { name: itemName });
+    const actionLabel = JC.t!('hidden_content_undo');
+    let undoApplied = false;
+    let notification: NotificationHandle | null = null;
+    try {
+        notification = notifyAction({
+            message,
+            severity: 'success',
+            duration: UNDO_TOAST_DURATION,
+            actionLabel,
+            actionAvailableAnnouncement: JC.t!('hidden_content_undo_available', { name: itemName }),
+            onAction: async () => {
+                if (!isDialogFenceCurrent(fence)) return;
+                if (!undoApplied) {
+                    // The visible action is immediate, but completion is not true
+                    // until the same identity's write has reached the server.
+                    unhideItem(itemId);
+                    undoApplied = true;
+                } else {
+                    // A rejected first flush already applied the local Undo. A
+                    // user retry must launch a fresh persistence attempt instead
+                    // of reporting success merely because no debounce remains.
+                    debouncedSave();
+                }
+                await flushPendingSave();
+            },
+            actionAnnouncement: JC.t!('hidden_content_item_restored', { name: itemName }),
+            actionErrorAnnouncement: JC.t!('hidden_content_save_failed_persistent'),
+            onDismiss: () => {
+                if (notification) activeUndoNotifications.delete(notification);
+            }
+        });
+    } catch (error) {
+        if (!(error instanceof NotificationBackpressureError)) throw error;
+        // Never commit a hide whose distinct Undo control could not be
+        // admitted. Restore it immediately and persist that rollback; the
+        // explicit diagnostic tells operators why the requested hide did not stick.
+        console.error('🪼 Jellyfin Canopy: Undo notification saturated; reverting hidden item', error);
         unhideItem(itemId);
-        dismiss();
-    });
-    toast.appendChild(undoBtn);
+        void flushPendingSave().catch((persistenceError) => {
+            console.error('🪼 Jellyfin Canopy: Saturation rollback could not be persisted', persistenceError);
+        });
+        return;
+    }
+    activeUndoNotifications.add(notification);
 
-    document.body.appendChild(toast);
-    frameHandle = scheduleDialogFrame(() => {
-        frameHandle = null;
-        if (isDialogFenceCurrent(fence)) toast.classList.add('jc-visible');
-    });
-    dismissHandle = scheduleDialogTimeout(() => {
-        dismissHandle = null;
-        if (toast.parentNode) dismiss();
-    }, UNDO_TOAST_DURATION);
+    // Preserve the feature's existing styling/test hooks while the lifecycle,
+    // action, timing, and announcements are owned by the shared notification kit.
+    notification.element.classList.add('jc-undo-toast');
+    notification.element.querySelector('.jc-notification-message')?.classList.add('jc-undo-toast-text');
+    const undoButton = notification.element.querySelector<HTMLElement>('.jc-notification-action');
+    undoButton?.classList.add('jc-undo-btn');
+    const accentColor = JC.themer?.getThemeVariables?.().primaryAccent || 'rgba(255,255,255,0.15)';
+    if (undoButton) {
+        undoButton.style.background = `color-mix(in srgb, ${accentColor} 25%, transparent)`;
+        undoButton.style.borderColor = accentColor;
+    }
 }
 
 // ============================================================

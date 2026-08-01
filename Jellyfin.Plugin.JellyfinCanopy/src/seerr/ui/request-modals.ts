@@ -41,7 +41,7 @@ ui.showMovieRequestModal = async function (tmdbId: any, title: any, searchResult
             const folderSelect = modalEl.querySelector<HTMLSelectElement>('#movie-folder');
 
             if (!serverSelect?.value || !qualitySelect?.value || !folderSelect?.value) {
-                JC.toast!(JC.t!('seerr_modal_toast_options_missing'), 3000);
+                JC.toast!(JC.t!('seerr_modal_toast_options_missing'), 3000, 'warning');
                 return;
             }
 
@@ -89,7 +89,7 @@ ui.showMovieRequestModal = async function (tmdbId: any, title: any, searchResult
     } catch (error: any) {
         if (!JC.identity.isCurrent(identity) || !modalElement.isConnected) return;
         console.error(`${logPrefix} Failed to load advanced options:`, error);
-        JC.toast!(JC.t!('seerr_err_load_server_options'), 3000);
+        JC.toast!(JC.t!('seerr_err_load_server_options'), 3000, 'error');
     }
 
 
@@ -153,12 +153,12 @@ ui.showCollectionRequestModal = async function (collectionId: any, collectionNam
         if (!JC.identity.isCurrent(identity)) return;
     } catch (error: any) {
         if (!JC.identity.isCurrent(identity)) return;
-        JC.toast!(JC.t!('seerr_toast_collection_fetch_failed'), 4000);
+        JC.toast!(JC.t!('seerr_toast_collection_fetch_failed'), 4000, 'error');
         return;
     }
 
     if (!collectionDetails?.parts || collectionDetails.parts.length === 0) {
-        JC.toast!(JC.t!('seerr_toast_no_movies_in_collection'), 4000);
+        JC.toast!(JC.t!('seerr_toast_no_movies_in_collection'), 4000, 'warning');
         return;
     }
 
@@ -286,7 +286,7 @@ ui.showCollectionRequestModal = async function (collectionId: any, collectionNam
                 const quality = modalEl.querySelector<HTMLSelectElement>('#movie-quality')?.value;
                 const folder = modalEl.querySelector<HTMLSelectElement>('#movie-folder')?.value;
                 if (!server || !quality || !folder) {
-                    JC.toast!(JC.t!('seerr_modal_toast_options_missing') || 'Please select all options', 3000);
+                    JC.toast!(JC.t!('seerr_modal_toast_options_missing') || 'Please select all options', 3000, 'warning');
                     requestBtn.disabled = false;
                     requestBtn.textContent = JC.t!('seerr_modal_request_selected_movies') || 'Request Selected Movies';
                     return;
@@ -300,7 +300,7 @@ ui.showCollectionRequestModal = async function (collectionId: any, collectionNam
                 )).map((checkbox) => Number.parseInt(checkbox.dataset.tmdbId || '', 10));
 
                 if (selectedMovies.length === 0) {
-                    JC.toast!(JC.t!('seerr_modal_toast_select_movie') || 'Please select at least one movie', 3000);
+                    JC.toast!(JC.t!('seerr_modal_toast_select_movie') || 'Please select at least one movie', 3000, 'warning');
                     requestBtn.disabled = false;
                     requestBtn.textContent = JC.t!('seerr_modal_request_selected_movies') || 'Request Selected Movies';
                     return;
@@ -333,7 +333,7 @@ ui.showCollectionRequestModal = async function (collectionId: any, collectionNam
                 if (otherFailures > 0) {
                     toastText += ' ' + JC.t!('seerr_toast_collection_failed_count', { count: otherFailures });
                 }
-                JC.toast!(toastText, 4000);
+                JC.toast!(toastText, 4000, otherFailures > 0 ? 'warning' : 'success');
                 if (quotaHitError) {
                     await ui.showQuotaErrorDialog(quotaHitError, 'movie');
                     if (!isCurrent()) return;
@@ -354,7 +354,7 @@ ui.showCollectionRequestModal = async function (collectionId: any, collectionNam
                 modalEl._jcIdentityCleanups?.add(() => clearTimeout(refreshTimer));
             } catch (error: any) {
                 if (!isCurrent()) return;
-                JC.toast!(JC.t!('seerr_modal_toast_request_fail') || 'Request failed', 4000);
+                JC.toast!(JC.t!('seerr_modal_toast_request_fail') || 'Request failed', 4000, 'error');
                 requestBtn.disabled = false;
                 requestBtn.textContent = JC.t!('seerr_modal_request_selected_movies') || 'Request Selected Movies';
             }

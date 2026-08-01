@@ -529,7 +529,7 @@ function emitPersistenceFailure(
     const now = Date.now();
     if (now - (_lastErrorToastAt.get(cacheKey) || 0) < 2000) return;
     _lastErrorToastAt.set(cacheKey, now);
-    toast(`{{icon:error}} ${escapeHtml(persistenceFailureMessage(error, rollbackApplied))}`, 5000);
+    toast(`{{icon:error}} ${escapeHtml(persistenceFailureMessage(error, rollbackApplied))}`, 5000, 'error');
 }
 
 function notifyPersistenceFailure(

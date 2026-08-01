@@ -244,7 +244,7 @@ function initializeSeerrScript(): void {
         } else if (data.error) {
             // Empty results WITH an error means the search backend failed —
             // surface it once instead of silently rendering no section (W4-ERR-4).
-            JC.toast?.(JC.escapeHtml(data.error));
+            JC.toast?.(JC.escapeHtml(data.error), undefined, 'error');
         }
     }
 
@@ -700,7 +700,7 @@ function initializeSeerrScript(): void {
                             errorMessage = error.responseJSON.message;
                         }
                         // Escape API error before display to prevent reflected XSS
-                        JC.toast!(escapeHtml(errorMessage), 4000);
+                        JC.toast!(escapeHtml(errorMessage), 4000, 'error');
                     }
                     item.disabled = false;
                     item.innerHTML = `<span>Request in 4K</span>`;

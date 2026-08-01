@@ -1153,9 +1153,12 @@ export async function fetchDownloads(signal?: AbortSignal): Promise<unknown> {
                     : Math.min(downloadsWholeSnapshotExpiresAt, transportDeadline);
         }
         scheduleDownloadsSnapshotExpiry();
-        if (!downloadsFailureToasted && typeof JC.toast === 'function') {
+        if (!downloadsFailureToasted) {
             downloadsFailureToasted = true;
-            JC.toast(JC.t?.('downloads_load_error') || 'Unable to load download activity');
+            notifyRequestError(
+                JC.t?.('downloads_load_error') || 'Unable to load download activity',
+                'requests:downloads-total-failure'
+            );
         }
         return null;
     } finally {
@@ -1171,6 +1174,30 @@ export async function fetchDownloads(signal?: AbortSignal): Promise<unknown> {
 /** Refresh only lifecycle/history data (search and History paging use this). */
 export function refreshDownloads(signal?: AbortSignal): Promise<unknown> {
     return fetchDownloads(signal ?? activeSignal ?? undefined);
+}
+
+function notifyRequestError(message: string, dedupeKey: string, duration = 8000): void {
+    if (JC.core.ui?.notify) {
+        try {
+            JC.core.ui.notify({ message, severity: 'error', duration, dedupeKey });
+        } catch (error) {
+            console.error(`${logPrefix} Error notification rejected:`, error);
+        }
+        return;
+    }
+    JC.toast?.(JC.escapeHtml(message), duration, 'error');
+}
+
+function notifyRequestSuccess(message: string, dedupeKey: string): void {
+    if (JC.core.ui?.notify) {
+        try {
+            JC.core.ui.notify({ message, severity: 'success', dedupeKey });
+        } catch (error) {
+            console.error(`${logPrefix} Success notification rejected:`, error);
+        }
+        return;
+    }
+    JC.toast?.(JC.escapeHtml(message));
 }
 
 /**
@@ -1388,9 +1415,11 @@ export async function fetchIssues(signal?: AbortSignal): Promise<unknown> {
         // 403 = no issue-read permission — surface once, then stop polling issues.
         if ((error as { status?: number } | null)?.status === 403) {
             state.issuesPermissionDenied = true;
-            if (typeof JC?.toast === 'function') {
-                JC.toast(JC.t?.('seerr_err_no_issue_view_permission') || 'No permission to view issues', 4000);
-            }
+            notifyRequestError(
+                JC.t?.('seerr_err_no_issue_view_permission') || 'No permission to view issues',
+                'requests:issues-permission',
+                4000
+            );
         }
         return null;
     } finally {
@@ -1476,13 +1505,10 @@ export async function handleRequestAction(btn: HTMLButtonElement, action: 'appro
             ...(requestSignal ? { signal: requestSignal } : {}),
         });
         if (requestSignal?.aborted || !JC.identity.isCurrent(context)) return;
-        // Static, param-free localized strings (class (a)) — no interpolation
-        // reaches toast()'s innerHTML, so no escaping is required here.
-        if (typeof JC.toast === 'function') {
-            JC.toast(action === 'approve'
-                ? (JC.t?.('requests_approved_toast') || 'Request approved')
-                : (JC.t?.('requests_declined_toast') || 'Request declined'));
-        }
+        const successMessage = action === 'approve'
+            ? (JC.t?.('requests_approved_toast') || 'Request approved')
+            : (JC.t?.('requests_declined_toast') || 'Request declined');
+        notifyRequestSuccess(successMessage, `requests:action-success:${action}:${requestId}`);
         await fetchRequests(requestSignal);
         if (requestSignal?.aborted || !JC.identity.isCurrent(context)) return;
         renderPage();
@@ -1491,9 +1517,10 @@ export async function handleRequestAction(btn: HTMLButtonElement, action: 'appro
         console.error(`${logPrefix} Failed to ${action} request ${requestId}:`, err);
         siblingButtons.forEach((b) => { b.disabled = false; });
         if (icon) icon.textContent = action === 'approve' ? 'check' : 'close';
-        if (typeof JC.toast === 'function') {
-            JC.toast(JC.t?.('requests_action_error') || 'Couldn’t update the request. Please try again.');
-        }
+        notifyRequestError(
+            JC.t?.('requests_action_error') || 'Couldn’t update the request. Please try again.',
+            `requests:action:${action}:${requestId}`
+        );
     }
 }
 

@@ -639,6 +639,8 @@
   "hidden_content_hide_button": "Elrejtés",
   "hidden_content_already_hidden": "Elrejtve",
   "hidden_content_item_hidden": "\"{name}\" elrejtve",
+  "hidden_content_undo_available": "„{name}” elrejtve. A Visszavonás művelet elérhető.",
+  "hidden_content_item_restored": "\"{name}\" visszaállítva",
   "hidden_content_undo": "Visszavonás",
   "hidden_content_unhide": "Megjelenítés",
   "hidden_content_manage_button": "Rejtett tartalom kezelése",

@@ -638,6 +638,8 @@
   "hidden_content_hide_button": "Скрыть",
   "hidden_content_already_hidden": "Скрыто",
   "hidden_content_item_hidden": "\"{name}\" скрыто",
+  "hidden_content_undo_available": "«{name}» скрыто. Доступно действие «Отменить».",
+  "hidden_content_item_restored": "\"{name}\" восстановлено",
   "hidden_content_undo": "Отменить",
   "hidden_content_unhide": "Показать",
   "hidden_content_manage_button": "Управление скрытым содержимым",

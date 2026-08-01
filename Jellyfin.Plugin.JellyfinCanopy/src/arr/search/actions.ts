@@ -124,7 +124,22 @@ export function toast(iconKey: string, message: string, duration = 4000): void {
 // Icon keys must exist in the JC.t icon registry (js/locales use these): search, success, error.
 export function toastInfo(message: string): void { toast('search', message); }
 export function toastSuccess(message: string): void { toast('success', message, 5000); }
-export function toastError(message: string): void { toast('error', message, 6000); }
+export function toastError(message: string): void {
+    if (JC.core.ui?.notify) {
+        try {
+            JC.core.ui.notify({ message, severity: 'error', duration: 6000 });
+        } catch (error) {
+            console.error(`${logPrefix} Error notification rejected:`, error);
+        }
+        return;
+    }
+    try {
+        const iconHtml = JC.t ? JC.t('{{icon:error}}') : '';
+        JC.toast!(`${iconHtml} ${JC.escapeHtml(message)}`, 6000, 'error');
+    } catch (error) {
+        console.error(`${logPrefix} Error notification rejected:`, error);
+    }
+}
 
 // ── Downloads-page deep-link (reuses the existing page; never a second one) ──
 

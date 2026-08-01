@@ -93,7 +93,7 @@ const openSettings = (cb: () => void): void => {
 const adjustPlaybackSpeed = (direction: 'increase' | 'decrease'): void => {
     const video = getVideo();
     if (!video) {
-        toast(JC.t!('toast_no_video_found'));
+        toast(JC.t!('toast_no_video_found'), undefined, 'warning');
         return;
     }
     const speeds = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
@@ -117,7 +117,7 @@ const adjustPlaybackSpeed = (direction: 'increase' | 'decrease'): void => {
 const resetPlaybackSpeed = (): void => {
     const video = getVideo();
     if (!video) {
-        toast(JC.t!('toast_no_video_found'));
+        toast(JC.t!('toast_no_video_found'), undefined, 'warning');
         return;
     }
     video.playbackRate = 1.0;
@@ -131,7 +131,7 @@ const resetPlaybackSpeed = (): void => {
 const jumpToPercentage = (percentage: number): void => {
     const video = getVideo();
     if (!video || !video.duration) {
-        toast(JC.t!('toast_no_video_found'));
+        toast(JC.t!('toast_no_video_found'), undefined, 'warning');
         return;
     }
     video.currentTime = video.duration * (percentage / 100);
@@ -347,7 +347,7 @@ const frameStep = async (direction: 'forward' | 'back'): Promise<void> => {
     const expectedGeneration = playbackGeneration;
     const video = getVideo();
     if (!video) {
-        toast(JC.t!('toast_no_video_found'));
+        toast(JC.t!('toast_no_video_found'), undefined, 'warning');
         return;
     }
     const playbackKey = getFpsCacheKey(context, getCurrentVideoItemId(), video);
@@ -461,11 +461,11 @@ const jumpToLastPosition = (): void => {
     if (!context) return;
     const video = getVideo();
     if (!video) {
-        toast(JC.t!('toast_no_video_found'));
+        toast(JC.t!('toast_no_video_found'), undefined, 'warning');
         return;
     }
     if (_lastPositionBeforeSeek === null) {
-        toast(tWithFallback('toast_no_last_position', '{{icon:rewind}} No previous position saved'));
+        toast(tWithFallback('toast_no_last_position', '{{icon:rewind}} No previous position saved'), undefined, 'warning');
         return;
     }
     const targetTime = _lastPositionBeforeSeek;
@@ -502,7 +502,7 @@ const skipIntroOutro = (): void => {
             toast('⏭️ Skipped');
         }
     } else {
-        toast(JC.t!('toast_no_skip_button'));
+        toast(JC.t!('toast_no_skip_button'), undefined, 'warning');
     }
 };
 
@@ -516,7 +516,7 @@ const cycleSubtitleTrack = (): void => {
         if (!JC.identity.isCurrent(context)) return;
         const allItems = document.querySelectorAll('.actionSheetContent .listItem');
         if (allItems.length === 0) {
-            toast(JC.t!('toast_no_subtitles_found'));
+            toast(JC.t!('toast_no_subtitles_found'), undefined, 'warning');
             document.body.click();
             return;
         }
@@ -527,7 +527,7 @@ const cycleSubtitleTrack = (): void => {
         });
 
         if (subtitleOptions.length === 0) {
-            toast(JC.t!('toast_no_subtitles_found'));
+            toast(JC.t!('toast_no_subtitles_found'), undefined, 'warning');
             document.body.click();
             return;
         }
@@ -570,7 +570,7 @@ const cycleAudioTrack = (): void => {
         const audioOptions = Array.from(document.querySelectorAll('.actionSheetContent .listItem')).filter(item => item.querySelector('.listItemBodyText.actionSheetItemText'));
 
         if (audioOptions.length === 0) {
-            toast(JC.t!('toast_no_audio_tracks_found'));
+            toast(JC.t!('toast_no_audio_tracks_found'), undefined, 'warning');
             document.body.click();
             return;
         }

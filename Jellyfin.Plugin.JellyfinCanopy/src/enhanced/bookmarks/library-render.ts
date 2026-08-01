@@ -243,7 +243,7 @@ export async function renderBookmarksLibrary(
     } catch (error) {
       if (!JC.identity.isCurrent(context)) return;
       console.error('Cleanup failed:', error);
-      toast(JC.t!('bookmark_cleanup_failed'), 3000);
+      toast(JC.t!('bookmark_cleanup_failed'), 3000, 'error');
     } finally {
       if (JC.identity.isCurrent(context)) {
         cleanupBtn.disabled = false;
@@ -273,7 +273,7 @@ export async function renderBookmarksLibrary(
     } catch (error) {
       if (!JC.identity.isCurrent(context)) return;
       console.error('Delete failed:', error);
-      toast(JC.t!('bookmark_delete_failed'), 3000);
+      toast(JC.t!('bookmark_delete_failed'), 3000, 'error');
     } finally {
       if (JC.identity.isCurrent(context)) {
         deleteAllBtn.disabled = false;

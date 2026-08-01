@@ -41,7 +41,7 @@ export function wireShortcutEditor(ctx: PanelContext): void {
                 : classified?.kind === 'authorization'
                     ? 'panel_admin_target_unauthorized'
                     : 'panel_admin_target_save_error';
-            toast(JC.t!(key));
+            toast(JC.t!(key), undefined, 'error');
         }
         keyElement.blur();
         await ctx.reconcileAfterSaveFailure?.();

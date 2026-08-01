@@ -639,6 +639,8 @@
   "hidden_content_hide_button": "Verbergen",
   "hidden_content_already_hidden": "Versteckt",
   "hidden_content_item_hidden": "\"{name}\" versteckt",
+  "hidden_content_undo_available": "„{name}“ wurde ausgeblendet. Die Aktion „Rückgängig“ ist verfügbar.",
+  "hidden_content_item_restored": "\"{name}\" wiederhergestellt",
   "hidden_content_undo": "Rückgängig",
   "hidden_content_unhide": "Anzeigen",
   "hidden_content_manage_button": "Versteckte Inhalte verwalten",

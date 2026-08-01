@@ -642,6 +642,8 @@
   "hidden_content_hide_button": "Hide",
   "hidden_content_already_hidden": "Hidden",
   "hidden_content_item_hidden": "\"{name}\" hidden",
+  "hidden_content_undo_available": "\"{name}\" hidden. Undo is available.",
+  "hidden_content_item_restored": "\"{name}\" restored",
   "hidden_content_undo": "Undo",
   "hidden_content_unhide": "Unhide",
   "hidden_content_manage_button": "Manage Hidden Content",

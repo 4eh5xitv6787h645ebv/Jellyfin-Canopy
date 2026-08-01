@@ -93,7 +93,7 @@ export function buildSeerrPendingToggle(data: any, mediaType: string): HTMLButto
             } catch (err) {
                 if (!isOwnedButton(true)) return;
                 console.warn(`${logPrefix} pending toggle failed:`, err);
-                JC.toast?.(JC.t!('spoiler_blur_pending_error_toast'));
+                JC.toast?.(JC.t!('spoiler_blur_pending_error_toast'), undefined, 'error');
             } finally {
                 if (isOwnedButton(true)) {
                     refreshLabel();

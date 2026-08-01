@@ -70,7 +70,7 @@ async function getRandomItem(context: IdentityContext): Promise<any> {
     } catch (error) {
         if (!JC.identity.isCurrent(context)) return null;
         console.error('🪼 Jellyfin Canopy: Error fetching random item:', error);
-        toast(`${JC.icon!(JC.IconName!.ERROR)} ${JC.escapeHtml((error as any)?.message || 'Unknown error')}`, 2000);
+        toast(`${JC.icon!(JC.IconName!.ERROR)} ${JC.escapeHtml((error as any)?.message || 'Unknown error')}`, 2000, 'error');
         return null;
     }
 }
@@ -97,7 +97,7 @@ function navigateToItem(context: IdentityContext, item: any): void {
         toast(JC.t!('toast_random_item_loaded'), 2000);
     } else {
         console.error('🪼 Jellyfin Canopy: Invalid item object or ID:', item);
-        toast(JC.t!('toast_generic_error'), 2000);
+        toast(JC.t!('toast_generic_error'), 2000, 'error');
     }
 }
 
