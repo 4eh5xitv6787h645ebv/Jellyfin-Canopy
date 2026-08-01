@@ -35,6 +35,7 @@ export interface ModalA11yHandle {
 interface ModalA11yEntry {
     root: HTMLElement;
     onEscape?: () => void;
+    returnFocus: HTMLElement | null;
 }
 
 interface ModalA11yOwner {
@@ -110,6 +111,18 @@ function removeModalEntry(owner: ModalA11yOwner, entry: ModalA11yEntry): boolean
     const index = owner.entries.indexOf(entry);
     if (index < 0) return false;
     const wasTop = index === owner.entries.length - 1;
+    // A newer modal normally captures a control inside the modal below it.
+    // When that buried modal is retired first, rebase every dependent return
+    // target before its fading/removed DOM can receive focus later.
+    const replacement = entry.returnFocus && !entry.root.contains(entry.returnFocus)
+        ? entry.returnFocus
+        : null;
+    for (let nestedIndex = index + 1; nestedIndex < owner.entries.length; nestedIndex += 1) {
+        const nested = owner.entries[nestedIndex];
+        if (nested.returnFocus && entry.root.contains(nested.returnFocus)) {
+            nested.returnFocus = replacement;
+        }
+    }
     owner.entries.splice(index, 1);
     if (owner.entries.length === 0) {
         if (owner.listener) document.removeEventListener('keydown', owner.listener, true);
@@ -136,7 +149,7 @@ export function installModalA11y(root: HTMLElement, opts: ModalA11yOptions = {})
     const prevFocused = document.activeElement as HTMLElement | null;
     const releaseRefreshSafety = JC.core.refreshSafety!.holdElement(root, 'modal');
     const owner = getModalOwner();
-    const entry: ModalA11yEntry = { root, onEscape: opts.onEscape };
+    const entry: ModalA11yEntry = { root, onEscape: opts.onEscape, returnFocus: prevFocused };
     owner.entries.push(entry);
     claimModalKeyboardOwner(owner);
 
@@ -161,8 +174,8 @@ export function installModalA11y(root: HTMLElement, opts: ModalA11yOptions = {})
             releaseRefreshSafety();
             if (restoreFocus
                 && wasTop
-                && prevFocused
-                && document.contains(prevFocused)) prevFocused.focus();
+                && entry.returnFocus
+                && document.contains(entry.returnFocus)) entry.returnFocus.focus();
         },
     };
 }

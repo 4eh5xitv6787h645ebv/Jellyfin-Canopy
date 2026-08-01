@@ -105,6 +105,8 @@ test.describe('Seerr modal history ownership', () => {
 
         const modals = page.locator('.seerr-season-modal');
         await expect(modals).toHaveCount(2);
+        await expect(modals.nth(0)).toHaveAccessibleName('Outer Escape proof');
+        await expect(modals.nth(1)).toHaveAccessibleName('Inner Escape proof');
         await page.keyboard.press('Escape');
         await expect.poll(() => page.evaluate(
             () => [...((window as any).__jcNestedModalCloseProof as string[])]

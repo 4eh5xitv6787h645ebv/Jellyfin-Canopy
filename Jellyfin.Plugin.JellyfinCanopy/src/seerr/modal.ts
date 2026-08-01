@@ -47,6 +47,7 @@ const HISTORY_STATE_KEY = '__jellyfinCanopySeerrModal';
 const HISTORY_OWNER = 'jellyfin-canopy/seerr-modal';
 const HISTORY_LEDGER_KEY = 'jellyfin-canopy:seerr-modal-history:v2';
 const HISTORY_GLOBAL_KEY = '__jellyfinCanopySeerrModalHistoryOwnerV2';
+const MODAL_TITLE_SEQUENCE_KEY = '__jellyfinCanopySeerrModalTitleSequenceV1';
 const MAX_RETIRED_HISTORY_TOKENS = 128;
 
 interface ModalHistoryMarker {
@@ -66,7 +67,6 @@ interface ModalHistoryRecord {
     token: string;
     closeFromHistory: () => void;
     destroy: () => void;
-    rebaseFocusReturn: (removedRoot: HTMLElement, replacement: HTMLElement | null) => void;
 }
 
 interface PendingBaseExit {
@@ -99,6 +99,7 @@ interface ModalHistoryOwnerState {
 
 type ModalHistoryWindow = Window & {
     [HISTORY_GLOBAL_KEY]?: ModalHistoryOwnerState;
+    [MODAL_TITLE_SEQUENCE_KEY]?: number;
 };
 
 let historyTokenSequence = 0;
@@ -151,6 +152,21 @@ function nextHistoryToken(): string {
     return uuid
         ? `${uuid}-${historyTokenSequence}`
         : `${Date.now().toString(36)}-${historyTokenSequence}`;
+}
+
+function nextModalTitleId(): string {
+    const globalWindow = window as ModalHistoryWindow;
+    const stored = globalWindow[MODAL_TITLE_SEQUENCE_KEY];
+    let sequence = Number.isSafeInteger(stored) && (stored ?? 0) > 0
+        ? stored as number
+        : 0;
+    let id: string;
+    do {
+        sequence = sequence >= Number.MAX_SAFE_INTEGER ? 1 : sequence + 1;
+        id = `seerr-modal-title-${sequence}`;
+    } while (document.getElementById(id));
+    globalWindow[MODAL_TITLE_SEQUENCE_KEY] = sequence;
+    return id;
 }
 
 function readPersistedHistoryLedger(): {
@@ -635,16 +651,17 @@ modal.create = function({ title, subtitle, bodyHtml, backdropPath, backdropUrl, 
 
     // Build modal structure — bodyHtml is intentionally trusted HTML from internal callers
     const contentEl = document.createElement('div');
+    const titleId = nextModalTitleId();
     contentEl.className = 'seerr-season-content';
     contentEl.setAttribute('role', 'document');
-    contentEl.setAttribute('aria-labelledby', 'seerr-modal-title');
+    contentEl.setAttribute('aria-labelledby', titleId);
 
     const headerEl = document.createElement('div');
     headerEl.className = 'seerr-season-header';
     headerEl.style.cssText = `background-image: ${backdropImage}; background-size: cover; background-position: center;`;
 
     const titleEl = document.createElement('div');
-    titleEl.id = 'seerr-modal-title';
+    titleEl.id = titleId;
     titleEl.className = 'seerr-season-title';
     titleEl.textContent = title;
 
@@ -692,7 +709,6 @@ modal.create = function({ title, subtitle, bodyHtml, backdropPath, backdropUrl, 
     let removeTimer: ReturnType<typeof setTimeout> | null = null;
     let historyToken: string | null = null;
     let historyBackRequested = false;
-    let focusReturnTarget: HTMLElement | null = null;
     const cleanups = new Set<() => void>();
     modalElement._jcIdentityCleanups = cleanups;
     const isCurrent = () => !!identity
@@ -734,16 +750,10 @@ modal.create = function({ title, subtitle, bodyHtml, backdropPath, backdropUrl, 
                 closeInternal(false, restoreFocus);
             },
             destroy: () => requestClose(true),
-            rebaseFocusReturn: (removedRoot, replacement) => {
-                if (focusReturnTarget && removedRoot.contains(focusReturnTarget)) {
-                    focusReturnTarget = replacement;
-                }
-            },
         });
         try {
-            focusReturnTarget = document.activeElement as HTMLElement | null;
             a11y = installModalA11y(modalElement, {
-                labelledBy: 'seerr-modal-title',
+                labelledBy: titleId,
                 initialFocus: () => modalElement.querySelector<HTMLElement>('button:not([disabled]), select, input'),
                 onEscape: () => requestClose(false),
             });
@@ -773,11 +783,6 @@ modal.create = function({ title, subtitle, bodyHtml, backdropPath, backdropUrl, 
         const owner = getHistoryOwner();
         if (historyToken !== null) {
             owner.records.delete(historyToken);
-            if (!restoreFocus) {
-                for (const record of owner.records.values()) {
-                    record.rebaseFocusReturn(modalElement, focusReturnTarget);
-                }
-            }
         }
 
         if (showTimer !== null) {
@@ -801,11 +806,8 @@ modal.create = function({ title, subtitle, bodyHtml, backdropPath, backdropUrl, 
             }
         }
 
-        a11y?.release(false);
+        a11y?.release(restoreFocus);
         a11y = null;
-        if (restoreFocus
-            && focusReturnTarget
-            && document.contains(focusReturnTarget)) focusReturnTarget.focus();
         modalElement.classList.remove('show');
         if (immediate) {
             finishClose();

@@ -43,11 +43,12 @@ describe('installModalA11y', () => {
         expect(document.activeElement).toBe(trigger); // focus restored
     });
 
-    it('can release a buried modal without stealing focus from the live modal above it', () => {
+    it('rebases eventual focus return when a buried modal is released first', () => {
         const trigger = document.createElement('button');
         document.body.appendChild(trigger);
         trigger.focus();
-        const outer = installModalA11y(modalWithButtons().root);
+        const outerRoot = modalWithButtons().root;
+        const outer = installModalA11y(outerRoot);
         const innerRoot = modalWithButtons().root;
         const inner = installModalA11y(innerRoot);
         const innerControl = innerRoot.querySelector('button')!;
@@ -57,7 +58,9 @@ describe('installModalA11y', () => {
 
         expect(document.activeElement).toBe(innerControl);
         expect(isAnyModalOpen()).toBe(true);
+        outerRoot.remove();
         inner.release();
+        expect(document.activeElement).toBe(trigger);
     });
 
     it('applies aria-label when no labelledBy is given', () => {
