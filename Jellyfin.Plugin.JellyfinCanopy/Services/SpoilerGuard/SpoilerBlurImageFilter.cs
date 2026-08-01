@@ -206,8 +206,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             if (!seasonId.HasValue && !seriesId.HasValue) return;
 
             // Season-scoped events: evict the single affected key SYNCHRONOUSLY.
-            // A ConcurrentDictionary.TryRemove is O(1) and allocation-free, so it
-            // is safe on the publish thread — and it closes the race where a user
+            // The bounded cache's TryRemove is O(1) and allocation-free, so it is
+            // safe on the publish thread — and it closes the race where a user
             // marks the season's only watched episode unplayed and immediately
             // re-requests the season art before a queued eviction has run (the
             // stale "AnyWatched=true" entry would pass CLEAR bytes through).
@@ -215,7 +215,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             // sweep iterates the whole cache and does not belong on this thread.
             if (seasonId.HasValue && seasonId.Value != Guid.Empty)
             {
-                _watchedCache.TryRemove(userId.ToString("N") + ":" + seasonId.Value.ToString("N"), out _);
+                _watchedCache.TryRemove(new SeasonWatchedCacheKey(userId, seasonId.Value), out _);
                 return;
             }
 
@@ -243,16 +243,19 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                         // Instance-field _disposed read at execution time
                         // so post-Dispose lambdas no-op fast.
                         if (_disposed) return;
-                        // Series-level event — invalidate every cached season
-                        // for this user (keys are "{userN}:{seasonN}", so we
-                        // iterate). Cheap: cache is small (≤512) and this is
-                        // rare. ToArray so the snapshot survives a concurrent
-                        // insert and future framework changes to Keys.
-                        var prefix = userId.ToString("N") + ":";
-                        foreach (var k in _watchedCache.Keys.ToArray())
+                        // Series-level event — invalidate only cached seasons
+                        // owned by this (user, series). The cache remains bounded
+                        // at 512 entries, and this rare sweep stays off the event
+                        // publisher thread. Enumerating takes a stable snapshot;
+                        // expected-value removal avoids deleting a concurrently
+                        // replaced entry whose season moved to another series.
+                        foreach (var entry in _watchedCache)
                         {
-                            if (k.StartsWith(prefix, StringComparison.Ordinal))
-                                _watchedCache.TryRemove(k, out _);
+                            if (entry.Key.UserId == userId
+                                && entry.Value.SeriesId == seriesId.Value)
+                            {
+                                _watchedCache.Remove(entry.Key, entry.Value);
+                            }
                         }
                     }
                     catch (Exception ex)
@@ -809,11 +812,42 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         // mark-watched → next-navigation roundtrips see fresh data.
         private static readonly TimeSpan SeasonWatchedCacheTtl = TimeSpan.FromSeconds(30);
 
-        private static readonly BoundedTtlCache<string, bool> _watchedCache = new(
+        private readonly record struct SeasonWatchedCacheKey(Guid UserId, Guid SeasonId);
+
+        private readonly record struct SeasonWatchedCacheEntry(Guid SeriesId, bool AnyWatched);
+
+        // The value retains the owning series so a rare Series-level event can
+        // target its aggregate seasons without discarding unrelated series for
+        // the same user. The key remains (user, season), preserving the O(1)
+        // synchronous eviction needed for Episode/Season watched-state changes.
+        private static readonly BoundedTtlCache<SeasonWatchedCacheKey, SeasonWatchedCacheEntry> _watchedCache = new(
             maximumEntries: 512,
             maximumWeight: 512,
-            comparer: StringComparer.Ordinal,
             defaultTtl: () => SeasonWatchedCacheTtl);
+
+        internal static void ClearWatchedCacheForTest()
+        {
+            _watchedCache.Clear();
+            _pendingInvalidations.Clear();
+        }
+
+        internal static void SeedWatchedCacheForTest(
+            Guid userId,
+            Guid seriesId,
+            Guid seasonId,
+            bool anyWatched)
+        {
+            _watchedCache.Set(
+                new SeasonWatchedCacheKey(userId, seasonId),
+                new SeasonWatchedCacheEntry(seriesId, anyWatched),
+                SeasonWatchedCacheTtl);
+        }
+
+        internal static bool IsSeasonWatchedCachedForTest(Guid userId, Guid seasonId)
+            => _watchedCache.ContainsKey(new SeasonWatchedCacheKey(userId, seasonId));
+
+        internal static bool IsSeriesInvalidationPendingForTest(Guid userId, Guid seriesId)
+            => _pendingInvalidations.ContainsKey((userId, seriesId));
 
         // Does this candidate's spoiler state cover the item at all? Used to
         // pick the effective user when a shared-IP request yields several
@@ -999,10 +1033,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         // uncertainty, not exposure.
         private bool HasWatchedAnyEpisodeInSeason(JUser user, Season season)
         {
-            var key = user.Id.ToString("N") + ":" + season.Id.ToString("N");
+            var key = new SeasonWatchedCacheKey(user.Id, season.Id);
             if (_watchedCache.TryGetValue(key, out var hit))
             {
-                return hit;
+                return hit.AnyWatched;
             }
 
             bool anyWatched = false;
@@ -1050,7 +1084,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             // succeeds.
             if (!determinationFailed)
             {
-                _watchedCache.Set(key, anyWatched, SeasonWatchedCacheTtl);
+                _watchedCache.Set(
+                    key,
+                    new SeasonWatchedCacheEntry(season.SeriesId, anyWatched),
+                    SeasonWatchedCacheTtl);
             }
 
             return anyWatched;

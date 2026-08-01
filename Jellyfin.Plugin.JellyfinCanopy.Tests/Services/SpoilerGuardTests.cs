@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
 using Jellyfin.Plugin.JellyfinCanopy.Services;
@@ -57,6 +58,111 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             Assert.False(SpoilerBlurImageFilter.ShouldBlur(new[] { true }));
             Assert.False(SpoilerBlurImageFilter.ShouldBlur(Array.Empty<bool>()));
         }
+
+        [Fact]
+        public void SeriesUserDataSaved_EvictsOnlyAffectedUserSeries()
+        {
+            SpoilerBlurImageFilter.ClearWatchedCacheForTest();
+            var userData = new StubUserDataManager();
+            var filter = CreateInvalidationFilter(userData);
+            var affectedUser = Guid.NewGuid();
+            var otherUser = Guid.NewGuid();
+            var affectedSeries = Guid.NewGuid();
+            var unrelatedSeries = Guid.NewGuid();
+            var affectedSeasonOne = Guid.NewGuid();
+            var affectedSeasonTwo = Guid.NewGuid();
+            var sameUserUnrelatedSeason = Guid.NewGuid();
+            var otherUserAffectedSeriesSeason = Guid.NewGuid();
+            var otherUserUnrelatedSeason = Guid.NewGuid();
+
+            try
+            {
+                Assert.Equal(1, userData.UserDataSavedSubscriberCount);
+                SpoilerBlurImageFilter.SeedWatchedCacheForTest(
+                    affectedUser, affectedSeries, affectedSeasonOne, anyWatched: true);
+                SpoilerBlurImageFilter.SeedWatchedCacheForTest(
+                    affectedUser, affectedSeries, affectedSeasonTwo, anyWatched: false);
+                SpoilerBlurImageFilter.SeedWatchedCacheForTest(
+                    affectedUser, unrelatedSeries, sameUserUnrelatedSeason, anyWatched: true);
+                SpoilerBlurImageFilter.SeedWatchedCacheForTest(
+                    otherUser, affectedSeries, otherUserAffectedSeriesSeason, anyWatched: true);
+                SpoilerBlurImageFilter.SeedWatchedCacheForTest(
+                    otherUser, unrelatedSeries, otherUserUnrelatedSeason, anyWatched: false);
+
+                userData.RaiseUserDataSaved(
+                    affectedUser,
+                    new StubSeries { Id = affectedSeries },
+                    UserDataSaveReason.TogglePlayed);
+
+                Assert.True(SpinWait.SpinUntil(
+                    () => !SpoilerBlurImageFilter.IsSeriesInvalidationPendingForTest(affectedUser, affectedSeries),
+                    TimeSpan.FromSeconds(5)));
+                Assert.False(SpoilerBlurImageFilter.IsSeasonWatchedCachedForTest(affectedUser, affectedSeasonOne));
+                Assert.False(SpoilerBlurImageFilter.IsSeasonWatchedCachedForTest(affectedUser, affectedSeasonTwo));
+                Assert.True(SpoilerBlurImageFilter.IsSeasonWatchedCachedForTest(affectedUser, sameUserUnrelatedSeason));
+                Assert.True(SpoilerBlurImageFilter.IsSeasonWatchedCachedForTest(otherUser, otherUserAffectedSeriesSeason));
+                Assert.True(SpoilerBlurImageFilter.IsSeasonWatchedCachedForTest(otherUser, otherUserUnrelatedSeason));
+            }
+            finally
+            {
+                filter.Dispose();
+                Assert.Equal(0, userData.UserDataSavedSubscriberCount);
+                SpoilerBlurImageFilter.ClearWatchedCacheForTest();
+            }
+        }
+
+        [Fact]
+        public void SeasonUserDataSaved_EvictsOnlyAffectedUserSeasonSynchronously()
+        {
+            SpoilerBlurImageFilter.ClearWatchedCacheForTest();
+            var userData = new StubUserDataManager();
+            var filter = CreateInvalidationFilter(userData);
+            var affectedUser = Guid.NewGuid();
+            var otherUser = Guid.NewGuid();
+            var seriesId = Guid.NewGuid();
+            var affectedSeason = Guid.NewGuid();
+            var siblingSeason = Guid.NewGuid();
+
+            try
+            {
+                SpoilerBlurImageFilter.SeedWatchedCacheForTest(
+                    affectedUser, seriesId, affectedSeason, anyWatched: true);
+                SpoilerBlurImageFilter.SeedWatchedCacheForTest(
+                    affectedUser, seriesId, siblingSeason, anyWatched: false);
+                SpoilerBlurImageFilter.SeedWatchedCacheForTest(
+                    otherUser, seriesId, affectedSeason, anyWatched: true);
+
+                userData.RaiseUserDataSaved(
+                    affectedUser,
+                    new StubEpisode
+                    {
+                        Id = Guid.NewGuid(),
+                        SeriesId = seriesId,
+                        SeasonId = affectedSeason,
+                    },
+                    UserDataSaveReason.TogglePlayed);
+
+                Assert.False(SpoilerBlurImageFilter.IsSeasonWatchedCachedForTest(affectedUser, affectedSeason));
+                Assert.True(SpoilerBlurImageFilter.IsSeasonWatchedCachedForTest(affectedUser, siblingSeason));
+                Assert.True(SpoilerBlurImageFilter.IsSeasonWatchedCachedForTest(otherUser, affectedSeason));
+            }
+            finally
+            {
+                filter.Dispose();
+                SpoilerBlurImageFilter.ClearWatchedCacheForTest();
+            }
+        }
+
+        private static SpoilerBlurImageFilter CreateInvalidationFilter(StubUserDataManager userData)
+            => new(
+                libraryManager: null!,
+                userManager: null!,
+                userDataManager: userData,
+                chapterManager: null!,
+                resolver: null!,
+                blurService: null!,
+                configProvider: null!,
+                logger: NullLogger<SpoilerBlurImageFilter>.Instance);
 
         // ─── F2: fail-closed on an unrecognized (content-bearing) result shape ────
 
