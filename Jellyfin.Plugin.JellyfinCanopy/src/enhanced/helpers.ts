@@ -122,42 +122,39 @@ export async function getItemCached(itemId: string, options: GetItemCachedOption
         throw new Error(`Shared item lookup capacity exceeded (${ITEM_CACHE_MAX_IN_FLIGHT} active requests)`);
     }
 
-    let token: ItemCacheEntry;
-    const promise = ApiClient.getItem(userId, itemId)
-        .then((item) => {
-            if (!JC.identity.isCurrent(context)) return null;
-            // A privacy reset or newer forced fetch may retire this request while
-            // it is in flight. Only the promise that still owns the key may publish.
-            if (inFlightItems.get(key) === token) {
-                setItemCache(key, {
-                    item,
-                    ts: Date.now(),
-                    promise: null,
-                    owner: context,
-                    userId: normalizedUserId,
-                    itemId: normalizedItemId
-                });
-                inFlightItems.delete(key);
-            }
-            return item;
-        })
-        .catch((err: unknown) => {
-            // Likewise, an older rejection must not delete a newer request/value.
-            if (inFlightItems.get(key) === token) inFlightItems.delete(key);
-            if (!JC.identity.isCurrent(context)) return null;
-            throw err;
-        });
-
-    token = {
+    const token: ItemCacheEntry = {
         item: null,
         ts: now,
-        promise,
+        promise: ApiClient.getItem(userId, itemId)
+            .then((item) => {
+                if (!JC.identity.isCurrent(context)) return null;
+                // A privacy reset or newer forced fetch may retire this request while
+                // it is in flight. Only the promise that still owns the key may publish.
+                if (inFlightItems.get(key) === token) {
+                    setItemCache(key, {
+                        item,
+                        ts: Date.now(),
+                        promise: null,
+                        owner: context,
+                        userId: normalizedUserId,
+                        itemId: normalizedItemId
+                    });
+                    inFlightItems.delete(key);
+                }
+                return item;
+            })
+            .catch((err: unknown) => {
+                // Likewise, an older rejection must not delete a newer request/value.
+                if (inFlightItems.get(key) === token) inFlightItems.delete(key);
+                if (!JC.identity.isCurrent(context)) return null;
+                throw err;
+            }),
         owner: context,
         userId: normalizedUserId,
         itemId: normalizedItemId
     };
     inFlightItems.set(key, token);
-    return promise;
+    return token.promise;
 }
 
 JC.identity.registerReset('enhanced-item-cache', () => {
