@@ -8,7 +8,13 @@ import '../../core/lifecycle';
 import '../../core/navigation';
 import '../../core/dom-observer';
 import { registerPage, resolvePage, orderedPages, pageAvailable } from './registry';
-import { initFallbackHost, adoptedPageId, drain, lateAdoptIfOnPage } from './fallback-host';
+import {
+    initFallbackHost,
+    adoptedPageId,
+    currentPageOwner,
+    drain,
+    lateAdoptIfOnPage,
+} from './fallback-host';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -217,6 +223,30 @@ describe('pages framework', () => {
         expect(renders).toEqual(['alpha', 'beta']);
         expect(fallback.querySelector('.jc-test-alpha')).toBeNull();
         expect(fallback.querySelector('.jc-test-beta')).not.toBeNull();
+    });
+
+    it('gives every page open a unique owner while reusing the lifecycle dispose bag', () => {
+        setHash('#/alpha');
+        const fallback = mountFallback();
+        fireViewBeforeShow(fallback);
+        const alphaOwner = currentPageOwner('alpha');
+
+        expect(alphaOwner).not.toBeNull();
+        expect(currentPageOwner('beta')).toBeNull();
+        expect(alphaOwner?.handle).toBe(currentPageOwner('alpha')?.handle);
+
+        setHash('#/beta');
+        const betaOwner = currentPageOwner('beta');
+
+        expect(betaOwner).not.toBeNull();
+        expect(betaOwner).not.toBe(alphaOwner);
+        expect(betaOwner?.handle).toBe(alphaOwner?.handle);
+        expect(currentPageOwner('alpha')).toBeNull();
+
+        setHash('#/alpha');
+        const nextAlphaOwner = currentPageOwner('alpha');
+        expect(nextAlphaOwner).not.toBe(alphaOwner);
+        expect(nextAlphaOwner?.handle).toBe(alphaOwner?.handle);
     });
 
     it('disconnect backstop: a wholesale element detach drains without any event', async () => {

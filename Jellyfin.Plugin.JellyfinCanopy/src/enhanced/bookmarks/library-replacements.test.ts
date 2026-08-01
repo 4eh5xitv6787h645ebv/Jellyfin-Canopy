@@ -4,12 +4,14 @@ import { getRefreshSafetyHoldCount } from '../../core/lifecycle';
 import type { ApiApi, IdentityContext } from '../../types/jc';
 
 const mocks = vi.hoisted(() => ({
+  currentPageOwner: vi.fn(),
   currentPageHandle: vi.fn(),
   getItemCached: vi.fn(),
   toast: vi.fn()
 }));
 
 vi.mock('../pages/fallback-host', () => ({
+  currentPageOwner: mocks.currentPageOwner,
   currentPageHandle: mocks.currentPageHandle
 }));
 vi.mock('../helpers', () => ({
@@ -44,6 +46,20 @@ interface TestBookmark {
   episodeNumber: number | null;
   episodeEndNumber: number | null;
   name: string;
+}
+
+interface TestPageAdoption {
+  pageId: string;
+  handle: { track: ReturnType<typeof vi.fn> };
+}
+
+let livePageAdoption: TestPageAdoption | null;
+
+function pageAdoption(
+  pageId = 'bookmarks',
+  handle: TestPageAdoption['handle'] = { track: vi.fn() }
+): TestPageAdoption {
+  return { pageId, handle };
 }
 
 function bookmark(overrides: Partial<TestBookmark> = {}): TestBookmark {
@@ -133,7 +149,13 @@ function expectMainRequest(
 describe('bookmark replacement library search', () => {
   beforeEach(() => {
     document.body.innerHTML = '';
-    mocks.currentPageHandle.mockReset().mockReturnValue({ track: vi.fn() });
+    livePageAdoption = pageAdoption();
+    mocks.currentPageOwner.mockReset().mockImplementation((expectedPageId?: string) => (
+      livePageAdoption && (!expectedPageId || livePageAdoption.pageId === expectedPageId)
+        ? livePageAdoption
+        : null
+    ));
+    mocks.currentPageHandle.mockReset().mockImplementation(() => livePageAdoption?.handle ?? null);
     mocks.getItemCached.mockReset();
     mocks.toast.mockReset();
     JC.t = (key: string) => key.startsWith('bookmark_orphaned_') ? `${key}:{count}` : key;
@@ -496,6 +518,46 @@ describe('bookmark replacement library search', () => {
     expect(button.disabled).toBe(false);
   });
 
+  it('does not start replacement work from a non-Bookmarks Canopy page', async () => {
+    livePageAdoption = pageAdoption('calendar');
+    const jf = vi.fn().mockResolvedValue(page([item('replacement', 'target-tmdb')], 1, 0));
+    installApi(jf);
+    const context = captureIdentity('foreign-page-user');
+    const button = document.createElement('button');
+
+    await findAndOfferReplacement(group(), button, context);
+
+    expect(jf).not.toHaveBeenCalled();
+    expect(document.querySelector('[data-jc-bookmark-library-modal="true"]')).toBeNull();
+    expect(mocks.toast).not.toHaveBeenCalled();
+    expect(button.disabled).toBe(false);
+  });
+
+  it('drops a replacement result after the originating Bookmarks adoption is replaced', async () => {
+    const sharedHandle = { track: vi.fn() };
+    const origin = pageAdoption('bookmarks', sharedHandle);
+    livePageAdoption = origin;
+    const held = deferred<unknown>();
+    const jf = vi.fn().mockReturnValueOnce(held.promise);
+    installApi(jf);
+    const context = captureIdentity('replaced-bookmarks-user');
+    const button = document.createElement('button');
+
+    const pending = findAndOfferReplacement(group(), button, context);
+    await vi.waitFor(() => expect(jf).toHaveBeenCalledTimes(1));
+
+    // The framework deliberately reuses one lifecycle dispose bag. Only the
+    // adoption token distinguishes this fresh Bookmarks instance from origin.
+    livePageAdoption = pageAdoption('bookmarks', sharedHandle);
+    held.resolve(page([item('replacement', 'target-tmdb')], 1, 0));
+    await pending;
+
+    expect(document.querySelector('[data-jc-bookmark-library-modal="true"]')).toBeNull();
+    expect(sharedHandle.track).not.toHaveBeenCalled();
+    expect(mocks.toast).not.toHaveBeenCalled();
+    expect(button.disabled).toBe(false);
+  });
+
   // AC6: a single failed search gates the whole batch — no migration modal, a
   // distinct failure toast rather than a false 'no replacement found'.
   it('never offers an orphan migration from failed partial search results', async () => {
@@ -527,6 +589,26 @@ describe('bookmark replacement library search', () => {
 
     expect(mocks.toast.mock.calls).toEqual([['bookmark_orphaned_no_replacement:1', 4000]]);
     expect(document.querySelector('[data-jc-bookmark-library-modal="true"]')).toBeNull();
+  });
+
+  it('drops an orphan summary when its Bookmarks owner is no longer current', async () => {
+    const orphan = bookmark({ itemId: 'missing-orphan' });
+    mocks.getItemCached.mockRejectedValue(Object.assign(new Error('not found'), { status: 404 }));
+    const held = deferred<unknown>();
+    const jf = vi.fn().mockReturnValueOnce(held.promise);
+    installApi(jf);
+    const context = captureIdentity('orphan-page-owner-user');
+
+    const pending = findAllOrphanedAndOfferMigration({ orphan }, context);
+    await vi.waitFor(() => expect(jf).toHaveBeenCalledTimes(1));
+
+    livePageAdoption = pageAdoption('calendar');
+    held.resolve(page([item('replacement', 'target-tmdb')], 1, 0));
+    await pending;
+
+    expect(document.querySelector('[data-jc-bookmark-library-modal="true"]')).toBeNull();
+    expect(livePageAdoption.handle.track).not.toHaveBeenCalled();
+    expect(mocks.toast).not.toHaveBeenCalled();
   });
 
   it('keeps one refresh-safety owner across the summary-to-selection modal handoff', async () => {

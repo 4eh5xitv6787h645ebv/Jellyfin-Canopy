@@ -26,6 +26,16 @@ export interface PageContext {
     signal: AbortSignal;
 }
 
+/**
+ * Unique owner for one routed-page adoption. The lifecycle handle is shared
+ * across adoptions, so consumers must compare the owner object itself when an
+ * async continuation needs to prove that its originating page is still live.
+ */
+export interface PageAdoptionOwner {
+    /** Shared dispose bag drained when this adoption leaves. */
+    readonly handle: LifecycleHandle;
+}
+
 /** A registered page. Descriptors carry NO lifecycle code — only content. */
 export interface PageDescriptor {
     /** Stable id, also the PagesOrder token (e.g. 'calendar'). */

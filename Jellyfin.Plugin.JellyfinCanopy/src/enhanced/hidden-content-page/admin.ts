@@ -6,7 +6,7 @@
 // identical; the JC.internals.hiddenContentPage bag is now real module exports.)
 
 import { JC } from '../../globals';
-import { currentPageHandle } from '../pages/fallback-host';
+import { currentPageOwner } from '../pages/fallback-host';
 import {
     cancelPageTimeout,
     capturePageFence,
@@ -697,7 +697,7 @@ export function openAdminAddModal(): void {
     // can never re-save and re-apply a 'hidden' that permanently locks the page.
     const prevBodyOverflow = hadStaleOverlay ? '' : document.body.style.overflow;
     const prevHtmlOverflow = hadStaleOverlay ? '' : document.documentElement.style.overflow;
-    const pageHandle = currentPageHandle();
+    const pageHandle = currentPageOwner('hidden-content')?.handle;
     let searchTimer: number | null = null;
     let searchToken = 0;
     let closed = false;
