@@ -149,8 +149,22 @@ test.describe('boot', () => {
             duration: 8_000,
             dedupeKey: 'e2e:urgent-save-failure',
         }));
-        await expect.poll(() => page.locator('[data-jc-announcer="assertive"]').textContent())
-            .toBe('Urgent save failure');
+        // A 500 ms live-lane dwell can happen entirely between poll reads.
+        // The observer log is durable evidence of every presented announcement.
+        await expect.poll(() => page.evaluate(() => {
+            const announcements = (window as any).__jcNotificationAnnouncements as string[];
+            return {
+                announcements,
+                urgentCount: announcements.filter((announcement) => announcement === 'Urgent save failure').length,
+            };
+        })).toEqual({
+            announcements: [
+                'First item hidden. Undo first is available.',
+                'Second item hidden. Undo second is available.',
+                'Urgent save failure',
+            ],
+            urgentCount: 1,
+        });
 
         await page.evaluate(() => history.pushState({}, '', '#/home?jc-notification-proof=1'));
         await expect(page.locator('.jc-notification')).toHaveCount(0);
