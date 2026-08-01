@@ -7,6 +7,7 @@
 import { JC } from '../../globals';
 import { flagSvgUrl } from '../../core/asset-urls';
 import { createBoundedCache } from '../../core/bounded-cache';
+import { injectCss } from '../../core/ui-kit';
 import { getItemCached } from '../helpers';
 import type { IdentityContext } from '../../types/jc';
 
@@ -24,6 +25,24 @@ const LANGUAGE_CACHE_TTL = 60 * 60 * 1000; // 1 hour
 const ERROR_CACHE_TTL = 30 * 1000;
 const FETCH_MAX_ATTEMPTS = 3;
 const RETRY_BASE_DELAY_MS = 2000;
+const AUDIO_LANGUAGES_SCROLL_STYLE_ID = 'jc-audio-languages-scroll';
+
+/**
+ * Installs the real pseudo-element rule required to hide WebKit scrollbars.
+ * Pseudo-elements cannot be targeted through an element's inline style.
+ */
+function ensureAudioLanguagesScrollStyles(): void {
+    if (document.getElementById(AUDIO_LANGUAGES_SCROLL_STYLE_ID)) return;
+    injectCss(AUDIO_LANGUAGES_SCROLL_STYLE_ID, `
+        .audio-languages-container.jc-audio-languages-scroll {
+            scrollbar-width: none;
+            -ms-overflow-style: none;
+        }
+        .audio-languages-container.jc-audio-languages-scroll::-webkit-scrollbar {
+            display: none;
+        }
+    `);
+}
 
 interface WatchProgressEntry {
     progress: number;
@@ -63,6 +82,7 @@ export function resetDetailsMediaInfo(): void {
     watchProgressCache.clear();
     fileSizeCache.clear();
     audioLanguageCache.clear();
+    document.getElementById(AUDIO_LANGUAGES_SCROLL_STYLE_ID)?.remove();
     document.querySelectorAll(
         '.mediaInfoItem-watchProgress, .mediaInfoItem-fileSize, .mediaInfoItem-audioLanguage',
     ).forEach((node) => node.remove());
@@ -542,6 +562,8 @@ export function displayAudioLanguages(itemId: string, container: HTMLElement): v
         scrollContainer.style.overflowY = 'hidden';
 
         if (languages.length > 3) { //if there are more than 3 languages, make it scrollable
+            ensureAudioLanguagesScrollStyles();
+            scrollContainer.classList.add('jc-audio-languages-scroll');
             scrollContainer.style.overflowX = 'auto';
             scrollContainer.style.scrollBehavior = 'smooth';
             scrollContainer.style.whiteSpace = 'nowrap';
@@ -549,10 +571,6 @@ export function displayAudioLanguages(itemId: string, container: HTMLElement): v
             scrollContainer.style.paddingBottom = '2px';
             scrollContainer.style.touchAction = 'pan-x';
             (scrollContainer.style as any).webkitOverflowScrolling = 'touch';
-
-            // Hide scrollbar
-            scrollContainer.style.scrollbarWidth = 'none';
-            (scrollContainer.style as any).msOverflowStyle = 'none';
             scrollContainer.style.overflowY = 'hidden';
             scrollContainer.addEventListener('wheel', (e) => {
                 if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
@@ -560,8 +578,6 @@ export function displayAudioLanguages(itemId: string, container: HTMLElement): v
                     e.preventDefault();
                 }
             }, { passive: false });
-            // Inject inline webkit scrollbar hide
-            scrollContainer.style.setProperty('::-webkit-scrollbar', 'display: none');
 
             // Add indicator showing scrollable content
             const indicator = document.createElement('span');

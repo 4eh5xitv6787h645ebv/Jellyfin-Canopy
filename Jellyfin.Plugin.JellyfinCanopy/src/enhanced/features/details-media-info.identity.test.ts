@@ -130,4 +130,34 @@ describe('details media-info identity lifecycle', () => {
         expect(container.querySelector('[data-lang="spa"]')).not.toBeNull();
         expect(container.querySelector('[data-lang="eng"]')).toBeNull();
     });
+
+    it('hides a long audio-language scrollbar with a real WebKit pseudo-element rule', async () => {
+        const container = mountContainer();
+        vi.spyOn(ApiClient, 'getItem').mockResolvedValue({
+            Type: 'Movie',
+            MediaSources: [{
+                MediaStreams: [
+                    { Type: 'Audio', Language: 'eng' },
+                    { Type: 'Audio', Language: 'spa' },
+                    { Type: 'Audio', Language: 'fra' },
+                    { Type: 'Audio', Language: 'deu' },
+                ],
+            }],
+        });
+
+        displayAudioLanguages('audio-scroll-item', container);
+        await flushPromises();
+
+        const scrollContainer = container.querySelector<HTMLElement>('.audio-languages-container');
+        const style = document.getElementById('jc-audio-languages-scroll');
+        expect(scrollContainer?.classList.contains('jc-audio-languages-scroll')).toBe(true);
+        expect(scrollContainer?.style.getPropertyValue('::-webkit-scrollbar')).toBe('');
+        expect(style?.textContent).toContain(
+            '.audio-languages-container.jc-audio-languages-scroll::-webkit-scrollbar',
+        );
+        expect(style?.textContent).toContain('scrollbar-width: none');
+
+        resetDetailsMediaInfo();
+        expect(document.getElementById('jc-audio-languages-scroll')).toBeNull();
+    });
 });
