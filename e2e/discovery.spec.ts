@@ -72,7 +72,7 @@ test.describe('Discovery / Trending — library placement', () => {
 
         // Cached native library roots may share ids across route transitions. Ownership must move
         // to the exact shown root and disappear completely once Discovery is no longer applicable.
-        await page.goto('/web/#/tvshows');
+        await page.goto('/web/#/tv');
         await expect(page.locator('[data-discovery-pane="movies"]')).toHaveCount(0, { timeout: 10_000 });
         await expect(page.locator('#moviesPage.jc-discovery-active')).toHaveCount(0);
         await expect(page.locator('#jc-discovery-toggle-movies')).toHaveCount(0);

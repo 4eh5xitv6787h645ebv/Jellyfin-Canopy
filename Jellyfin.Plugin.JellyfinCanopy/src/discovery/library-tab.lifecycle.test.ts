@@ -352,6 +352,28 @@ describe('Discovery library exact-root and generation ownership', () => {
         expect(document.querySelectorAll('.jc-discovery-pane')).toHaveLength(1);
     });
 
+    it('maps Jellyfin 12 TV routes to the tvshows page owner across param navigation', async () => {
+        const root = page('tvshowsPage');
+        show(root, '/web/#/tv?topParentId=A');
+        const firstFeed = immediateFeed('tv-library-a');
+        initialize();
+        document.querySelector<HTMLButtonElement>('#jc-discovery-toggle-tvshows')!.click();
+        await settle();
+
+        const secondFeed = immediateFeed('tv-library-b');
+        controls.navigationKey = '/web/#/tv?topParentId=B';
+        navigate();
+        await settle();
+
+        expect(firstFeed.destroy).toHaveBeenCalledTimes(1);
+        expect(secondFeed.destroy).not.toHaveBeenCalled();
+        expect(root.querySelector('[data-feed="tv-library-a"]')).toBeNull();
+        expect(root.querySelector('[data-feed="tv-library-b"]')).toBe(secondFeed.element);
+        expect(root.classList.contains('jc-discovery-active')).toBe(true);
+        expect(document.querySelectorAll('#jc-discovery-toggle-tvshows')).toHaveLength(1);
+        expect(document.querySelectorAll('.jc-discovery-pane')).toHaveLength(1);
+    });
+
     it('does not carry a still-visible outgoing root onto a different route', async () => {
         const root = page('moviesPage');
         show(root, '/web/#/movies?topParentId=A');

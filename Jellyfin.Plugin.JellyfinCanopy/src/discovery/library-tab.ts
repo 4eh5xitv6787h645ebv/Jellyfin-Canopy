@@ -138,7 +138,12 @@ function libraryRouteId(navigationKey: string): string | null {
         .at(-1)
         ?.replace(/\.html$/i, '')
         .toLowerCase();
-    return leaf === 'movies' || leaf === 'tvshows' ? leaf : null;
+    if (leaf === 'movies') return 'movies';
+    // Jellyfin 12's native Shows route is `/tv`; retain the legacy
+    // `/tvshows(.html)` spelling as a compatibility alias while mapping both
+    // routes to the `tvshowsPage` ownership slot.
+    if (leaf === 'tv' || leaf === 'tvshows') return 'tvshows';
+    return null;
 }
 
 function isVisibleConnectedRoot(root: HTMLElement): boolean {
