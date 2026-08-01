@@ -10,17 +10,17 @@
       "scope": "Jellyfin.Plugin.JellyfinCanopy/src/core/**",
       "report": "coverage/coverage-summary.json",
       "measured": {
-        "coveredLines": 2775,
-        "totalLines": 3167
+        "coveredLines": 2808,
+        "totalLines": 3201
       },
       "observations": {
-        "cleanRuns": 2,
-        "minimumCoveredLines": 2775,
-        "maximumCoveredLines": 2775
+        "cleanRuns": 3,
+        "minimumCoveredLines": 2808,
+        "maximumCoveredLines": 2808
       },
       "tolerance": {
         "missingCoveredLines": 0,
-        "rationale": "Completing the #176/#550 modal-history hardening adds HMR-safe history-mutation ownership and private modal-navigation suppression to the instrumented client/core scope. The reviewed production and regression changes expand that scope by 41 lines while advancing covered lines by the same 41. Two clean Node 22.20/V8 runs on 2026-08-02 each passed all 1,979 tests across 241 files with zero unhandled errors and reproduced exactly 2,775/3,167 (87.622%). The exact observed envelope needs no instrumentation tolerance, so the new floor is 2,775/3,167 (87.622%), stricter than the prior 2,733/3,126 floor (87.428%). coverage-baseline.test.js retains the exact below-floor, above-baseline, scope-change, observed-high-water, and broad-tolerance negative boundaries."
+        "rationale": "The combined rebased #128 and #176/#538/#550 client changes extend modal-history ownership, private navigation suppression, nested-modal accessibility, and navigation-ledger coverage in the instrumented client/core scope. Three clean Node 22.20/V8 runs on 2026-08-02 each passed all 2,011 tests across 243 files with zero unhandled errors and reproduced exactly 2,808/3,201 (87.723%). Relative to the reviewed #128 main baseline of 2,738/3,128 (87.532%), the combined tree adds 73 instrumented lines and 70 covered lines while increasing coverage percentage. The exact observed envelope needs no instrumentation tolerance, so the new floor is 2,808/3,201 (87.723%). coverage-baseline.test.js retains the exact below-floor, above-baseline, scope-change, observed-high-water, and broad-tolerance negative boundaries."
       }
     },
     "server": {
