@@ -43,6 +43,23 @@ describe('installModalA11y', () => {
         expect(document.activeElement).toBe(trigger); // focus restored
     });
 
+    it('can release a buried modal without stealing focus from the live modal above it', () => {
+        const trigger = document.createElement('button');
+        document.body.appendChild(trigger);
+        trigger.focus();
+        const outer = installModalA11y(modalWithButtons().root);
+        const innerRoot = modalWithButtons().root;
+        const inner = installModalA11y(innerRoot);
+        const innerControl = innerRoot.querySelector('button')!;
+        expect(document.activeElement).toBe(innerControl);
+
+        outer.release();
+
+        expect(document.activeElement).toBe(innerControl);
+        expect(isAnyModalOpen()).toBe(true);
+        inner.release();
+    });
+
     it('applies aria-label when no labelledBy is given', () => {
         const { root } = modalWithButtons();
         const handle = installModalA11y(root, { label: 'My dialog' });
@@ -74,6 +91,39 @@ describe('installModalA11y', () => {
         handle.release();
     });
 
+    it('routes Escape only to the topmost nested modal', () => {
+        const outerEscape = vi.fn();
+        const innerEscape = vi.fn();
+        const outer = installModalA11y(modalWithButtons().root, { onEscape: outerEscape });
+        const inner = installModalA11y(modalWithButtons().root, { onEscape: innerEscape });
+
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        expect(innerEscape).toHaveBeenCalledTimes(1);
+        expect(outerEscape).not.toHaveBeenCalled();
+
+        inner.release();
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        expect(innerEscape).toHaveBeenCalledTimes(1);
+        expect(outerEscape).toHaveBeenCalledTimes(1);
+        outer.release();
+    });
+
+    it('rolls back shared ownership when initial focus resolution fails', () => {
+        const trigger = document.createElement('button');
+        document.body.appendChild(trigger);
+        trigger.focus();
+        const { root } = modalWithButtons();
+
+        expect(() => installModalA11y(root, {
+            initialFocus: () => { throw new Error('focus resolver failed'); },
+        })).toThrow('focus resolver failed');
+
+        expect(isAnyModalOpen()).toBe(false);
+        expect(document.body.classList.contains('jc-modal-open')).toBe(false);
+        expect(getRefreshSafetyHoldCount('modal')).toBe(0);
+        expect(document.activeElement).toBe(trigger);
+    });
+
     it('nested modals keep the gate open until both are released', () => {
         const a = installModalA11y(modalWithButtons().root);
         const b = installModalA11y(modalWithButtons().root);
@@ -94,4 +144,5 @@ describe('installModalA11y', () => {
         handle.release();
         expect(isAnyModalOpen()).toBe(false);
     });
+
 });
