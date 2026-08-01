@@ -11,13 +11,148 @@ import {
     installEmbyHook,
     navDedupKey,
     offNavigate,
+    onHistoryMutation,
     onNavigate,
     onViewPage,
     routeHref,
     routePath
 } from './navigation';
 
+describe('history mutation ownership', () => {
+    it('notifies before route dedup for same-URL pushState and replaceState writes', () => {
+        history.replaceState({ proof: 'base' }, '', '/history-mutation-same-url');
+        const mutations: Array<{ source: string; state: unknown; href: string }> = [];
+        const navigations = vi.fn();
+        const releaseMutation = onHistoryMutation((mutation) => mutations.push(mutation));
+        const releaseNavigation = onNavigate(navigations);
+
+        history.pushState({ proof: 'push' }, '', location.href);
+        history.replaceState({ proof: 'replace' }, '', location.href);
+
+        expect(mutations).toEqual([
+            {
+                source: 'pushState',
+                state: { proof: 'push' },
+                href: location.href,
+                action: 'PUSH',
+            },
+            {
+                source: 'replaceState',
+                state: { proof: 'replace' },
+                href: location.href,
+                action: 'REPLACE',
+            },
+        ]);
+        expect(navigations).not.toHaveBeenCalled();
+        releaseMutation();
+        releaseNavigation();
+    });
+
+    it('observes every raw HISTORY_UPDATE even when route fan-out deduplicates it', () => {
+        History.prototype.replaceState.call(
+            history,
+            { proof: 'captured-router-write' },
+            '',
+            '/history-mutation-raw-update'
+        );
+        const mutation = vi.fn();
+        const navigation = vi.fn();
+        const releaseMutation = onHistoryMutation(mutation);
+        const releaseNavigation = onNavigate(navigation);
+
+        handleHistoryUpdate();
+        handleHistoryUpdate();
+
+        expect(mutation).toHaveBeenCalledTimes(2);
+        expect(mutation).toHaveBeenNthCalledWith(1, {
+            source: 'HISTORY_UPDATE',
+            state: { proof: 'captured-router-write' },
+            href: location.href,
+        });
+        expect(navigation).toHaveBeenCalledTimes(1);
+        releaseMutation();
+        releaseNavigation();
+    });
+
+    it('preserves raw router PUSH/REPLACE/POP action and entry identity', () => {
+        const mutation = vi.fn();
+        const release = onHistoryMutation(mutation);
+
+        handleHistoryUpdate(undefined, {
+            historyAction: 'PUSH',
+            location: { key: 'router-entry-b' },
+        });
+
+        expect(mutation).toHaveBeenCalledWith({
+            source: 'HISTORY_UPDATE',
+            state: history.state as unknown,
+            href: location.href,
+            action: 'PUSH',
+            entryKey: 'router-entry-b',
+        });
+        release();
+    });
+
+    it('isolates mutation subscriber failures and stops both callbacks after release', () => {
+        const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+        const throwing = vi.fn(() => { throw new Error('mutation subscriber bug'); });
+        const healthy = vi.fn();
+        const releaseThrowing = onHistoryMutation(throwing);
+        const releaseHealthy = onHistoryMutation(healthy);
+
+        history.pushState({ proof: 'isolated-write' }, '', location.href);
+        expect(throwing).toHaveBeenCalledTimes(1);
+        expect(healthy).toHaveBeenCalledTimes(1);
+        expect(consoleError).toHaveBeenCalledTimes(1);
+
+        releaseThrowing();
+        releaseHealthy();
+        history.replaceState({ proof: 'released-write' }, '', location.href);
+        expect(throwing).toHaveBeenCalledTimes(1);
+        expect(healthy).toHaveBeenCalledTimes(1);
+        consoleError.mockRestore();
+    });
+});
+
 describe('onNavigate dedup', () => {
+    it('defers fan-out while a private modal traversal marker is current', () => {
+        const callback = vi.fn();
+        const unsubscribe = onNavigate(callback);
+        const href = '/test-nav-private-modal-target';
+        const markerState = {
+            __jellyfinCanopySeerrModal: {
+                owner: 'jellyfin-canopy/seerr-modal',
+                version: 2,
+                token: 'private-navigation-test-token',
+                hostState: { route: 'private-modal-host' },
+                traversal: 'bidirectional',
+                nextDirection: 'back',
+            },
+        };
+
+        History.prototype.replaceState.call(history, markerState, '', href);
+        window.dispatchEvent(new PopStateEvent('popstate', { state: markerState }));
+        expect(callback).not.toHaveBeenCalled();
+
+        // An earlier router may synchronously publish a real route while the
+        // immutable pop payload still proves that this event came from M.
+        History.prototype.replaceState.call(
+            history,
+            { route: 'private-modal-reactive-host' },
+            '',
+            '/test-nav-private-modal-reactive-host'
+        );
+        window.dispatchEvent(new PopStateEvent('popstate', { state: markerState }));
+        expect(callback).not.toHaveBeenCalled();
+
+        const hostState = { route: 'private-modal-host' };
+        History.prototype.replaceState.call(history, hostState, '', href);
+        window.dispatchEvent(new PopStateEvent('popstate', { state: hostState }));
+        expect(callback).toHaveBeenCalledTimes(1);
+        expect(history.state).toEqual(hostState);
+        unsubscribe();
+    });
+
     it('notifies exactly once for a pushState URL change', () => {
         const callback = vi.fn();
         const unsubscribe = onNavigate(callback);

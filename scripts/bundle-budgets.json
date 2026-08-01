@@ -9,8 +9,8 @@
     "maxBootRawBytes": 524288,
     "maxBootGzipBytes": 196608,
     "maxColdHomeRequests": 24,
-    "maxColdHomeRawBytes": 199522,
-    "maxColdHomeGzipBytes": 66864,
+    "maxColdHomeRawBytes": 201800,
+    "maxColdHomeGzipBytes": 67639,
     "maxFeatureRequests": 16,
     "maxFeatureRawBytes": 524288,
     "maxFeatureGzipBytes": 196608,
@@ -18,8 +18,8 @@
     "maxFeatureExpandedRawBytes": 786432,
     "maxFeatureExpandedGzipBytes": 262144,
     "maxSourceMapRawBytes": 6000000,
-    "maxTotalRawBytes": 7005099,
+    "maxTotalRawBytes": 7148662,
     "maxClientManifestRawBytes": 262144,
-    "maxPublishedRawBytes": 7089842
+    "maxPublishedRawBytes": 7233410
   }
 }

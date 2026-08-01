@@ -67,6 +67,8 @@ declare global {
     interface History {
         /** Set once src/core/navigation.ts has patched pushState/replaceState. */
         __jePushed?: boolean;
+        /** Versioned owner for hot upgrades of the navigation history patch. */
+        __jcNavigationPatchVersion?: number;
     }
 }
 

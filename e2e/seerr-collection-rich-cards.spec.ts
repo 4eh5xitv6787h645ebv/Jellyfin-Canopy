@@ -111,7 +111,10 @@ async function openHermeticCollection(page: Page): Promise<Locator> {
 
     const modal = page.locator('.seerr-season-modal.show');
     await expect(modal).toBeVisible();
-    await expect(modal.locator('#seerr-modal-title')).toHaveText(/Request Collection/i);
+    const titleId = await modal.getAttribute('aria-labelledby');
+    expect(titleId, 'each live modal owns a unique accessible title ID')
+        .toMatch(/^seerr-modal-title-\d+$/);
+    await expect(modal.locator(`#${titleId}`)).toHaveText(/Request Collection/i);
     await expect(modal.locator('.seerr-season-subtitle')).toHaveText('JC Fixture Collection');
 
     // Finish only the modal's entrance transitions so geometry assertions read

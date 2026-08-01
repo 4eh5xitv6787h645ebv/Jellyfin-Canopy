@@ -15,6 +15,10 @@
 
 import { JC } from '../globals';
 import type {
+    HistoryMutation,
+    HistoryMutationAction,
+    HistoryMutationCallback,
+    HistoryMutationSource,
     JellyfinRouteParam,
     NavigateCallback,
     NavigationApi,
@@ -25,10 +29,86 @@ import type {
 JC.core = JC.core || {};
 
 const logPrefix = '🪼 Jellyfin Canopy: Navigation:';
+const HISTORY_MUTATION_CALLBACKS_KEY = '__jellyfinCanopyHistoryMutationCallbacksV1';
+const HISTORY_PATCH_VERSION = 2;
+const PRIVATE_MODAL_HISTORY_STATE_KEY = '__jellyfinCanopySeerrModal';
 
 // ── Navigation events (URL changes) ─────────────────────────────────────
 
 const navCallbacks = new Set<NavigateCallback>();
+type NavigationHistoryWindow = Window & {
+    [HISTORY_MUTATION_CALLBACKS_KEY]?: Set<HistoryMutationCallback>;
+};
+const navigationWindow = window as NavigationHistoryWindow;
+const historyMutationCallbacks = navigationWindow[HISTORY_MUTATION_CALLBACKS_KEY]
+    ?? new Set<HistoryMutationCallback>();
+navigationWindow[HISTORY_MUTATION_CALLBACKS_KEY] = historyMutationCallbacks;
+
+/**
+ * Notify entry-ownership subscribers before URL-level navigation dedup runs.
+ * Unlike onNavigate, this deliberately includes same-URL writes: a private
+ * same-URL sentinel can be buried by a host push without changing the route.
+ */
+function routerEntryKey(state: unknown): string | undefined {
+    if (state === null || typeof state !== 'object') return undefined;
+    const record = state as Record<string, unknown>;
+    const locationState = record.location;
+    if (locationState !== null && typeof locationState === 'object') {
+        const key = (locationState as Record<string, unknown>).key;
+        if (typeof key === 'string' && key.length > 0) return key;
+    }
+    return typeof record.key === 'string' && record.key.length > 0
+        ? record.key
+        : undefined;
+}
+
+function routerHistoryAction(state: unknown): HistoryMutationAction | undefined {
+    if (state === null || typeof state !== 'object') return undefined;
+    const action = (state as Record<string, unknown>).historyAction;
+    return action === 'PUSH' || action === 'REPLACE' || action === 'POP'
+        ? action
+        : undefined;
+}
+
+function isPrivateModalHistoryState(state: unknown): boolean {
+    if (state === null || typeof state !== 'object') return false;
+    const marker = (state as Record<string, unknown>)[PRIVATE_MODAL_HISTORY_STATE_KEY];
+    if (marker === null || typeof marker !== 'object') return false;
+    const candidate = marker as Record<string, unknown>;
+    return candidate.owner === 'jellyfin-canopy/seerr-modal'
+        && candidate.version === 2
+        && typeof candidate.token === 'string'
+        && candidate.token.length > 0;
+}
+
+function dispatchHistoryMutation(
+    source: HistoryMutationSource,
+    action?: HistoryMutationAction,
+    entryKey?: string
+): void {
+    const mutation: HistoryMutation = {
+        source,
+        state: history.state,
+        href: window.location.href,
+        ...(action ? { action } : {}),
+        ...(entryKey ? { entryKey } : {}),
+    };
+    for (const callback of historyMutationCallbacks) {
+        try {
+            callback(mutation);
+        } catch (err) {
+            console.error(`${logPrefix} Error in onHistoryMutation callback:`, err);
+        }
+    }
+}
+
+/** Subscribe to history writes before route-level navigation deduplication. */
+export function onHistoryMutation(callback: HistoryMutationCallback): () => void {
+    historyMutationCallbacks.add(callback);
+    return () => {
+        historyMutationCallbacks.delete(callback);
+    };
+}
 
 /**
  * Build an href for a Jellyfin SPA destination without assuming that the web
@@ -272,8 +352,11 @@ export function resetViewRootTrackingForTests(): void {
  * synthetic event instead of polling.
  */
 function patchNavigationEvents(): void {
-    if (history.__jePushed) return; // only patch once
+    if (history.__jcNavigationPatchVersion === HISTORY_PATCH_VERSION) return;
+    // `__jePushed` predates entry-mutation observers. A hot upgrade must wrap
+    // that legacy URL-only owner once instead of treating it as current.
     history.__jePushed = true;
+    history.__jcNavigationPatchVersion = HISTORY_PATCH_VERSION;
 
     const _push = history.pushState.bind(history);
     const _replace = history.replaceState.bind(history);
@@ -286,6 +369,7 @@ function patchNavigationEvents(): void {
     history.pushState = function (...args: Parameters<History['pushState']>): void {
         const before = window.location.href;
         _push(...args);
+        dispatchHistoryMutation('pushState', 'PUSH', routerEntryKey(history.state));
         if (window.location.href !== before) {
             window.dispatchEvent(new Event('jc:navigate'));
         }
@@ -293,6 +377,7 @@ function patchNavigationEvents(): void {
     history.replaceState = function (...args: Parameters<History['replaceState']>): void {
         const before = window.location.href;
         _replace(...args);
+        dispatchHistoryMutation('replaceState', 'REPLACE', routerEntryKey(history.state));
         if (window.location.href !== before) {
             window.dispatchEvent(new Event('jc:navigate'));
         }
@@ -315,7 +400,15 @@ function patchNavigationEvents(): void {
  *  - HISTORY_UPDATE's own double-fire (REPLACE normalization, §6.7) collapses
  *    to one dispatch because both carry the same pathname+search key.
  */
-export function handleHistoryUpdate(): void {
+export function handleHistoryUpdate(eventOrState?: unknown, suppliedState?: unknown): void {
+    const routerState = routerHistoryAction(suppliedState)
+        ? suppliedState
+        : routerHistoryAction(eventOrState) ? eventOrState : undefined;
+    dispatchHistoryMutation(
+        'HISTORY_UPDATE',
+        routerHistoryAction(routerState),
+        routerEntryKey(routerState)
+    );
     dispatchNavigate();
 }
 
@@ -349,6 +442,13 @@ function subscribeHistoryUpdate(attempt = 0): void {
  * change (popstate + hashchange pairs collapse to one dispatch).
  */
 function dispatchNavigate(event?: Event): void {
+    // Seerr modal markers are document-private traversal sentinels. The modal
+    // owner immediately crosses them, but this listener is installed earlier
+    // than feature listeners and can otherwise publish the transient state.
+    // Do not advance the URL dedup key here: the real host pop that follows
+    // must be the one subscribers observe.
+    if (isPrivateModalHistoryState(history.state)
+        || (event instanceof PopStateEvent && isPrivateModalHistoryState(event.state))) return;
     const key = navDedupKey();
     if (key === lastDispatchedKey) return;
     lastDispatchedKey = key;
@@ -652,6 +752,11 @@ function initialize(): void {
     // jc:navigate (our pushState patch) + hashchange/popstate cover legacy
     // routing and any nav our patch catches; HISTORY_UPDATE (subscribed below)
     // is the universal signal for the modern router's param-only navs.
+    // Seed the document's direct-boot location before accepting events. A
+    // same-URL history sentinel (for example, a modal-owned entry) can pop
+    // immediately after startup; that traversal is not a route change and
+    // must not tear down route-owned UI such as a just-created notification.
+    lastDispatchedKey = navDedupKey();
     window.addEventListener('jc:navigate', dispatchNavigate);
     window.addEventListener('hashchange', dispatchNavigate);
     window.addEventListener('popstate', dispatchNavigate);
@@ -671,6 +776,7 @@ const navigation: NavigationApi = {
     routeHref,
     onNavigate,
     offNavigate,
+    onHistoryMutation,
     onViewPage,
     onViewBeforeShow,
     getCurrentView,
