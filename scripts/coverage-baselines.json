@@ -21,12 +21,12 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 27851,
-        "totalLines": 36569
+        "coveredLines": 27855,
+        "totalLines": 36572
       },
       "tolerance": {
         "missingCoveredLines": 6,
-        "rationale": "Fixing #515 (PR #526) raised covered lines from 27,847 to 27,851 at an unchanged 36,569-line scope. The gain is real rather than measurement drift: the logger shutdown test previously started its 100ms shutdown budget before waiting for the gated write to begin, so on a busy machine shutdown abandoned the write before it started and the in-flight-abandon path went unexercised. Waiting for the write first makes that path run every time, which is both the point of the test and the source of the four extra covered lines. Ten clean .NET 10.0.9/Coverlet runs on 2026-07-29 each passed all tests at the same 36,569-line scope and every one measured exactly 27,851 covered lines (76.160%) - zero observed spread, which is itself evidence the path is now deterministic rather than sometimes-taken. The six-line tolerance is retained rather than narrowed to the observed zero, because earlier scopes in this repository showed spreads of five and six lines and CI hardware differs from the machine sampled here; narrowing to the luckiest window would convert ordinary Coverlet jitter into red builds. The floor rises to 27,845/36,569 (76.144%) from the prior 27,841/36,569 (76.133%). An eleventh run was discarded rather than counted: it failed TagCacheSpoilerStripProjectionTests.Benchmark15kBroadScope_StaysWithinCallAllocationAndTimeBudgets, a pre-existing 1500ms wall-clock benchmark budget unrelated to this change, filed as #527. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, and broad-tolerance negative boundaries."
+        "rationale": "Fixing #456 adds three instrumented AnimeFillerService lines so cached episode freshness is recomputed from the fetch timestamp and the current clamped AnimeFillerCacheHours on every read. Three .NET 10.0.9/Coverlet measurements on 2026-08-01 had the same 36,572-line scope and measured 27,854, 27,854, and 27,855 covered lines; the high-water run passed all 2,465 server tests. The deterministic time-provider regressions exercise configuration reductions, increases, invalid values, clamp boundaries, and exact expiry without scheduler timing. The existing six-line tolerance is retained because the one-line spread here does not prove that the earlier observed five- and six-line Coverlet variation has disappeared; keeping it avoids turning instrumentation noise into failures while the floor still rises to 27,849/36,572 (76.148%) from 27,845/36,569 (76.144%). coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, and broad-tolerance negative boundaries."
       }
     }
   }

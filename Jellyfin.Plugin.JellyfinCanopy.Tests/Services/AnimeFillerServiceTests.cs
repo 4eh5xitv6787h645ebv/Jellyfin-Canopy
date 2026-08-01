@@ -379,6 +379,95 @@ public sealed class AnimeFillerServiceTests
     }
 
     [Fact]
+    public async Task ClassifyAsync_ReducedCacheHours_ExpiresExistingEntryAtTheNewBoundary()
+    {
+        var time = new ManualTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
+        var initialConfig = EnabledConfig();
+        initialConfig.AnimeFillerCacheHours = 24;
+        var configProvider = new FakePluginConfigProvider(initialConfig);
+        var provider = new FakeProvider
+        {
+            Episodes = AnimeProviderEpisodes.Create(20, new Dictionary<int, bool> { [1] = true }),
+        };
+        var service = CreateService(provider, configProvider, time);
+        var identity = Identity(new Dictionary<string, string> { ["MAL"] = "20" });
+
+        var initial = await service.ClassifyAsync(identity, 1, CancellationToken.None);
+        time.Advance(TimeSpan.FromHours(1));
+        var reducedConfig = EnabledConfig();
+        reducedConfig.AnimeFillerCacheHours = 1;
+        configProvider.Current = reducedConfig;
+        provider.Episodes = AnimeProviderEpisodes.Create(20, new Dictionary<int, bool> { [1] = false });
+
+        var refreshed = await service.ClassifyAsync(identity, 1, CancellationToken.None);
+
+        Assert.Equal(AnimeEpisodeClassification.Filler, initial.Classification);
+        Assert.Equal(AnimeEpisodeClassification.Canon, refreshed.Classification);
+        Assert.Equal(2, provider.EpisodeCalls);
+    }
+
+    [Fact]
+    public async Task ClassifyAsync_IncreasedCacheHours_ExtendsExistingEntryFromItsFetchTime()
+    {
+        var time = new ManualTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
+        var initialConfig = EnabledConfig();
+        initialConfig.AnimeFillerCacheHours = 1;
+        var configProvider = new FakePluginConfigProvider(initialConfig);
+        var provider = new FakeProvider
+        {
+            Episodes = AnimeProviderEpisodes.Create(20, new Dictionary<int, bool> { [1] = true }),
+        };
+        var service = CreateService(provider, configProvider, time);
+        var identity = Identity(new Dictionary<string, string> { ["MAL"] = "20" });
+
+        var initial = await service.ClassifyAsync(identity, 1, CancellationToken.None);
+        time.Advance(TimeSpan.FromHours(1));
+        var increasedConfig = EnabledConfig();
+        increasedConfig.AnimeFillerCacheHours = 24;
+        configProvider.Current = increasedConfig;
+        provider.Episodes = AnimeProviderEpisodes.Create(20, new Dictionary<int, bool> { [1] = false });
+
+        var cached = await service.ClassifyAsync(identity, 1, CancellationToken.None);
+
+        Assert.Equal(AnimeEpisodeClassification.Filler, initial.Classification);
+        Assert.Equal(AnimeEpisodeClassification.Filler, cached.Classification);
+        Assert.Equal(1, provider.EpisodeCalls);
+    }
+
+    [Theory]
+    [InlineData(-1, 1)]
+    [InlineData(0, 1)]
+    [InlineData(1, 1)]
+    [InlineData(168, 168)]
+    [InlineData(169, 168)]
+    public async Task ClassifyAsync_CacheHours_AreClampedAndExpireAtTheExactBoundary(
+        int configuredHours,
+        int expectedHours)
+    {
+        var time = new ManualTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
+        var config = EnabledConfig();
+        config.AnimeFillerCacheHours = configuredHours;
+        var provider = new FakeProvider
+        {
+            Episodes = AnimeProviderEpisodes.Create(20, new Dictionary<int, bool> { [1] = true }),
+        };
+        var service = CreateService(provider, config, time);
+        var identity = Identity(new Dictionary<string, string> { ["MAL"] = "20" });
+
+        await service.ClassifyAsync(identity, 1, CancellationToken.None);
+        time.Advance(TimeSpan.FromHours(expectedHours) - TimeSpan.FromTicks(1));
+        await service.ClassifyAsync(identity, 1, CancellationToken.None);
+        Assert.Equal(1, provider.EpisodeCalls);
+
+        time.Advance(TimeSpan.FromTicks(1));
+        provider.Episodes = AnimeProviderEpisodes.Create(20, new Dictionary<int, bool> { [1] = false });
+        var refreshed = await service.ClassifyAsync(identity, 1, CancellationToken.None);
+
+        Assert.Equal(AnimeEpisodeClassification.Canon, refreshed.Classification);
+        Assert.Equal(2, provider.EpisodeCalls);
+    }
+
+    [Fact]
     public async Task ClassifyAsync_UsesExpiredLastGoodDataWhenRefreshFails()
     {
         var time = new ManualTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
@@ -403,9 +492,20 @@ public sealed class AnimeFillerServiceTests
         PluginConfiguration? config = null,
         TimeProvider? timeProvider = null,
         int maximumActiveProviderKeys = 128)
-        => new(
+        => CreateService(
             provider,
             new FakePluginConfigProvider(config ?? EnabledConfig()),
+            timeProvider,
+            maximumActiveProviderKeys);
+
+    private static AnimeFillerService CreateService(
+        FakeProvider provider,
+        FakePluginConfigProvider configProvider,
+        TimeProvider? timeProvider = null,
+        int maximumActiveProviderKeys = 128)
+        => new(
+            provider,
+            configProvider,
             NullLogger<AnimeFillerService>.Instance,
             timeProvider ?? TimeProvider.System,
             maximumActiveProviderKeys);

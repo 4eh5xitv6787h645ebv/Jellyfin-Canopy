@@ -178,10 +178,13 @@ public sealed class AnimeFillerService
     private async Task<AnimeProviderEpisodes?> GetEpisodesAsync(int malId, int configuredHours, CancellationToken cancellationToken)
     {
         var now = _timeProvider.GetUtcNow();
+        var freshnessLifetime = TimeSpan.FromHours(Math.Clamp(configuredHours, 1, 168));
         CachedEpisodes? lastGood = null;
         if (_episodeCache.TryGet(malId, out var cached))
         {
-            if (cached.FreshUntil > now) return cached.Value;
+            // Freshness is evaluated from the fetch time on every read so a live
+            // cache-hours change also governs entries created before that save.
+            if (now - cached.CachedAt < freshnessLifetime) return cached.Value;
             lastGood = cached;
         }
 
@@ -200,8 +203,10 @@ public sealed class AnimeFillerService
                     _errorBackoff.Set("episodes:" + malId.ToString(CultureInfo.InvariantCulture), true, TimeSpan.FromSeconds(30));
                     return null;
                 }
-                var hours = Math.Clamp(configuredHours, 1, 168);
-                _episodeCache.Set(malId, new CachedEpisodes(fetched, _timeProvider.GetUtcNow().AddHours(hours)), TimeSpan.FromDays(7));
+                _episodeCache.Set(
+                    malId,
+                    new CachedEpisodes(fetched, _timeProvider.GetUtcNow()),
+                    TimeSpan.FromDays(7));
                 return (object?)fetched;
             }, cancellationToken).ConfigureAwait(false);
             if (!flight.Accepted)
@@ -251,5 +256,5 @@ public sealed class AnimeFillerService
 
     private sealed record SeriesResolution(int? MyAnimeListId, bool TransientFailure);
 
-    private sealed record CachedEpisodes(AnimeProviderEpisodes Value, DateTimeOffset FreshUntil);
+    private sealed record CachedEpisodes(AnimeProviderEpisodes Value, DateTimeOffset CachedAt);
 }
