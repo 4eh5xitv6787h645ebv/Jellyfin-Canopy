@@ -1,8 +1,9 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "policy": {
+    "baselineSelection": "observed-high-water",
     "maximumTolerancePercentagePoints": 0.15,
-    "description": "Blocking line-coverage ratchets. Update measured counts in the same reviewed change whenever scope or coverage advances; never lower a floor without an explicit, justified scope change."
+    "description": "Blocking line-coverage ratchets. For a fixed scope, coveredLines is the highest value in the reviewed clean-run observation envelope, never a modal or repeated lower value. Update the envelope in the same reviewed change whenever scope or coverage advances; never lower a floor without an explicit, justified scope change."
   },
   "profiles": {
     "client": {
@@ -11,6 +12,11 @@
       "measured": {
         "coveredLines": 2327,
         "totalLines": 2667
+      },
+      "observations": {
+        "cleanRuns": 2,
+        "minimumCoveredLines": 2327,
+        "maximumCoveredLines": 2327
       },
       "tolerance": {
         "missingCoveredLines": 1,
@@ -23,6 +29,11 @@
       "measured": {
         "coveredLines": 27855,
         "totalLines": 36572
+      },
+      "observations": {
+        "cleanRuns": 3,
+        "minimumCoveredLines": 27854,
+        "maximumCoveredLines": 27855
       },
       "tolerance": {
         "missingCoveredLines": 6,
