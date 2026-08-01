@@ -524,23 +524,32 @@ test('account switching scopes logout Axios noise to the phase-local response cl
     assert.match(fixture, /const request = response\.request\(\)[\s\S]{0,250}requestByFailure\.set\(failedResponse, request\)/);
     assert.match(fixture, /requestFor: \(response\) => requestByFailure\.get\(response\)/);
 
-    // The regression holds an exact queryless host request after complete A2
-    // logout evidence, crosses the reset/B2-login boundary, then releases it.
+    // The regression now exercises both the formerly uncovered A1/B1 boundary
+    // and the original A2/B2 controls without a timer or broad route allowlist.
+    assert.match(source, /a1LateProbeTarget = `\$\{logoutA1\.origin\}\/System\/Endpoint`/);
+    assert.match(source, /await withDeadline\(a1LateProbeSeen/);
+    assert.match(source, /consoleErrors\.reset\(\);\s*segment = 'b1'/);
+    assert.match(source, /const b1Diagnostics = await readDiagnostics\(page\);[\s\S]{0,1200}releaseA1LateProbe\(\);[\s\S]{0,1200}acknowledgeExpected4xx\(provenDelayedA1Failures\);\s*\/\/ Repeat the switch[\s\S]{0,200}assertNoRuntimeErrors\(consoleErrors\)/);
     assert.match(source, /exactProbePath = '\/System\/Endpoint'/);
     assert.match(source, /await withDeadline\(heldLogoutProbesSeen/);
     assert.match(source, /consoleErrors\.reset\(\);\s*segment = 'b2';\s*const b2Login = await beginSpaLogin[\s\S]{0,200}releaseLateLogoutProbes\(\)/);
 
     // Selection is the intersection of exact Request-phase ownership and the
-    // complete-evidence route classifier. The former URL-key containment must
-    // not return, because it lets a B2 request impersonate an A2 response.
-    assert.match(source, /const token = request\s*\? authorizationToken\(request\.headers\(\)\.authorization \|\| ''\)\s*: '';\s*return !!request\s*&& a2LogoutRequests\.has\(request\)\s*&& isExactDelayedLogoutProbe\(response, logoutA2\)\s*&& \(token === '' \|\| token === a2Login\.token\)/);
+    // matching completed phase's evidence and revoked credential. The former
+    // A2-only set and URL-key containment must not return.
+    assert.equal((source.match(/completedLogoutPhases\.push\(/g) ?? []).length, 3);
+    assert.match(source, /const phase = phases\.find\(\(\{ requests \}\) => requests\.has\(request\)\)/);
+    assert.match(source, /!phase \|\| !isExactDelayedLogoutProbe\(response, phase\.evidence\)/);
+    assert.match(source, /return token === '' \|\| token === phase\.revokedToken/);
     assert.match(source, /\['500000', '1000000', '3000000'\]\.includes/);
+    assert.match(source, /acknowledgeExpected4xx\(provenDelayedA1Failures\)/);
     assert.match(source, /consoleErrors\.acknowledgeExpected4xx\(provenDelayedA2Failures\)/);
     assert.match(source, /b2-owned-same-path/);
     assert.match(source, /LOGOUT_FOREIGN_TOKEN_PROBE = 'logout-foreign-token'/);
     assert.match(source, /start\(exactPath, foreignTokenMarker, foreignToken\)/);
     assert.match(source, /logout-owned-foreign-token/);
     assert.match(source, /logout-owned-wrong-path/);
+    assert.doesNotMatch(source, /a2LogoutRequests/);
     assert.doesNotMatch(source, /failedResponseKey|explainedKeys/);
     assert.doesNotMatch(source, /'B2 \/ delayed Jellyfin logout probes'/);
     assert.doesNotMatch(source, /HOST_LOGOUT_NOISE[\s\S]*AxiosError/);
