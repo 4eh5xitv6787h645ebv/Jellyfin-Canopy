@@ -524,21 +524,34 @@ test('account switching scopes logout Axios noise to the phase-local response cl
     assert.match(fixture, /const request = response\.request\(\)[\s\S]{0,250}requestByFailure\.set\(failedResponse, request\)/);
     assert.match(fixture, /requestFor: \(response\) => requestByFailure\.get\(response\)/);
 
-    // The regression now exercises both the formerly uncovered A1/B1 boundary
-    // and the original A2/B2 controls without a timer or broad route allowlist.
+    // The regression exercises both the A1/B1 late-response boundary and the
+    // original A2/B2 failure with a real authentication held in flight.
     assert.match(source, /a1LateProbeTarget = `\$\{logoutA1\.origin\}\/System\/Endpoint`/);
     assert.match(source, /await withDeadline\(a1LateProbeSeen/);
     assert.match(source, /consoleErrors\.reset\(\);\s*segment = 'b1'/);
     assert.match(source, /const b1Diagnostics = await readDiagnostics\(page\);[\s\S]{0,1200}releaseA1LateProbe\(\);[\s\S]{0,1200}acknowledgeExpected4xx\(provenDelayedA1Failures\);\s*\/\/ Repeat the switch[\s\S]{0,200}assertNoRuntimeErrors\(consoleErrors\)/);
     assert.match(source, /exactProbePath = '\/System\/Endpoint'/);
     assert.match(source, /await withDeadline\(heldLogoutProbesSeen/);
-    assert.match(source, /consoleErrors\.reset\(\);\s*segment = 'b2';\s*const b2Login = await beginSpaLogin[\s\S]{0,200}releaseLateLogoutProbes\(\)/);
+    assert.match(source, /authenticationRouteTarget = `\$\{logoutA2\.origin\}\/Users\/\*\*`/);
+    assert.match(source, /request\.method\(\) !== 'POST'[\s\S]{0,150}new URL\(request\.url\(\)\)\.pathname\.toLowerCase\(\) !== '\/users\/authenticatebyname'/);
+    assert.match(source, /const b2LoginPromise = beginAuthenticationTransition\(logoutA2Phase, 'user'\);[\s\S]{0,200}await withDeadline\(b2AuthenticationSeen/);
+    assert.match(source, /releaseB2Authentication\(\);\s*const b2Login = await b2LoginPromise;[\s\S]{0,500}releaseLateLogoutProbes\(\)/);
 
-    // Selection is the intersection of exact Request-phase ownership and the
-    // matching completed phase's evidence and revoked credential. The former
-    // A2-only set and URL-key containment must not return.
+    // Every completed logout owns both its logout-dispatch set and the exact
+    // requests dispatched only while the immediately following real
+    // authentication is awaited. The ownership window clears in finally.
     assert.equal((source.match(/completedLogoutPhases\.push\(/g) ?? []).length, 3);
-    assert.match(source, /const phase = phases\.find\(\(\{ requests \}\) => requests\.has\(request\)\)/);
+    assert.equal((source.match(/authenticationTransitionRequests: new Set<Request>\(\)/g) ?? []).length, 3);
+    assert.match(source, /let authenticationTransitionOwner: CompletedLogoutPhase \| null = null/);
+    assert.match(source, /authenticationTransitionOwner\?\.authenticationTransitionRequests\.add\(request\)/);
+    assert.match(source, /completedLogoutPhases\.at\(-1\)[\s\S]{0,200}\.toBe\(phase\)/);
+    assert.match(source, /authenticationTransitionOwner = phase;\s*try \{\s*return await beginSpaLogin\(page, role, documentIdentity\);\s*\} finally \{\s*authenticationTransitionOwner = null/);
+    assert.match(source, /const b1Login = await beginAuthenticationTransition\(logoutA1Phase, 'user'\)/);
+    assert.match(source, /const a2Login = await beginAuthenticationTransition\(logoutB1Phase, 'admin'\)/);
+
+    // Selection remains the intersection of exact Request ownership, complete
+    // phase evidence, exact host shape, and an absent/revoked credential.
+    assert.match(source, /const phase = phases\.find\(\(\{ requests, authenticationTransitionRequests \}\) =>\s*requests\.has\(request\) \|\| authenticationTransitionRequests\.has\(request\)\)/);
     assert.match(source, /!phase \|\| !isExactDelayedLogoutProbe\(response, phase\.evidence\)/);
     assert.match(source, /return token === '' \|\| token === phase\.revokedToken/);
     assert.match(source, /\['500000', '1000000', '3000000'\]\.includes/);
@@ -547,8 +560,10 @@ test('account switching scopes logout Axios noise to the phase-local response cl
     assert.match(source, /b2-owned-same-path/);
     assert.match(source, /LOGOUT_FOREIGN_TOKEN_PROBE = 'logout-foreign-token'/);
     assert.match(source, /start\(exactPath, foreignTokenMarker, foreignToken\)/);
-    assert.match(source, /logout-owned-foreign-token/);
-    assert.match(source, /logout-owned-wrong-path/);
+    assert.match(source, /transitionOwned: logoutA2Phase\.authenticationTransitionRequests/);
+    assert.match(source, /transitionOwned: false/);
+    assert.match(source, /authentication-transition-owned-foreign-token/);
+    assert.match(source, /authentication-transition-owned-wrong-path/);
     assert.doesNotMatch(source, /a2LogoutRequests/);
     assert.doesNotMatch(source, /failedResponseKey|explainedKeys/);
     assert.doesNotMatch(source, /'B2 \/ delayed Jellyfin logout probes'/);
