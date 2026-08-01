@@ -10,17 +10,17 @@
       "scope": "Jellyfin.Plugin.JellyfinCanopy/src/core/**",
       "report": "coverage/coverage-summary.json",
       "measured": {
-        "coveredLines": 2701,
-        "totalLines": 3095
+        "coveredLines": 2705,
+        "totalLines": 3094
       },
       "observations": {
         "cleanRuns": 2,
-        "minimumCoveredLines": 2701,
-        "maximumCoveredLines": 2701
+        "minimumCoveredLines": 2705,
+        "maximumCoveredLines": 2705
       },
       "tolerance": {
         "missingCoveredLines": 1,
-        "rationale": "Repairing #170's final accessibility audit findings adds 112 instrumented client/core lines beyond the initial candidate for presentation-callback tickets that link expiry, retry, and completion timing to spoken admission, a bounded terminal-saturation fallback, reason-aware focus teardown, and a newest-drain delegate that re-arms active or gap timers inherited from the pre-callback v1 document owner; 91 net added lines are covered. Two clean Node 22.20/V8 runs on 2026-08-01 each passed all 1,879 tests across 238 files and reproduced exactly 2,701/3,095, advancing the absolute reviewed high-water from 2,610 covered lines while moving the expanded-scope percentage from 87.496% to 87.270%. Retaining the one-line instrumentation tolerance makes the new floor 2,700/3,095 (87.237%) versus the former 2,609/2,983 (87.462%); this explicit 0.225-point change is reviewed lifecycle/backpressure scope growth, not a fixed-scope regression. coverage-baseline.test.js retains the exact below-floor, above-baseline, scope-change, observed-high-water, and broad-tolerance negative boundaries."
+        "rationale": "Fixing #549 centralizes duplicate notification queue resets and adds an explicit detached-realm guard before the active-to-gap timer transition. The refactor contracts the instrumented client/core scope by one line while the deterministic teardown regression advances covered lines by four. Two clean Node 22.20/V8 runs on 2026-08-01 each passed all 1,880 tests across 238 files with zero unhandled errors and reproduced exactly 2,705/3,094 (87.427%), advancing the reviewed high-water from 2,701 covered lines. Retaining the one-line instrumentation tolerance makes the new floor 2,704/3,094 (87.395%), stricter than the prior 2,700/3,095 floor (87.237%). coverage-baseline.test.js retains the exact below-floor, above-baseline, scope-change, observed-high-water, and broad-tolerance negative boundaries."
       }
     },
     "server": {
