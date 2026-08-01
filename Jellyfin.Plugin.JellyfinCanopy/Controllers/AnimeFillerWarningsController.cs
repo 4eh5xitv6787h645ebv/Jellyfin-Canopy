@@ -1,4 +1,5 @@
 using Jellyfin.Data.Enums;
+using Jellyfin.Plugin.JellyfinCanopy.Data;
 using Jellyfin.Plugin.JellyfinCanopy.Helpers;
 using Jellyfin.Plugin.JellyfinCanopy.Services;
 using Jellyfin.Plugin.JellyfinCanopy.Services.AnimeFiller;
@@ -19,6 +20,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers;
 [ApiController]
 public sealed class AnimeFillerWarningsController : JellyfinCanopyControllerBase
 {
+    // PERF(S2): recursive per-series enumeration is page-bounded. Only one page is
+    // resident while the compact season-maximum numbering index is constructed.
+    private const int SeriesEpisodePageSize = 256;
+
     private readonly ILibraryManager _libraryManager;
     private readonly AnimeFillerService _animeFillerService;
     private readonly IAnimeFillerProvider _provider;
@@ -55,56 +60,74 @@ public sealed class AnimeFillerWarningsController : JellyfinCanopyControllerBase
         var user = userId.HasValue ? _userManager.GetUserById(userId.Value) : null;
         if (user is null) return Forbid();
 
-        var byId = new Dictionary<string, AnimeFillerItemResponse>(StringComparer.OrdinalIgnoreCase);
+        var cancellationToken = HttpContext.RequestAborted;
+        cancellationToken.ThrowIfCancellationRequested();
+        var validItemIds = uniqueIds
+            .Select(value => Guid.TryParse(value, out var itemId) ? itemId : Guid.Empty)
+            .Where(itemId => itemId != Guid.Empty)
+            .Distinct()
+            .ToArray();
+        var episodesById = GetCallerVisibleItems<Episode>(
+            validItemIds,
+            user,
+            BaseItemKind.Episode,
+            "episode",
+            cancellationToken);
+        var numberedEpisodes = episodesById.Values
+            .Where(IsNumberedEpisode)
+            .ToDictionary(episode => episode.Id);
+        var seriesIds = numberedEpisodes.Values
+            .Select(episode => episode.SeriesId)
+            .Where(seriesId => seriesId != Guid.Empty)
+            .Distinct()
+            .ToArray();
+        var seriesById = GetCallerVisibleItems<Series>(
+            seriesIds,
+            user,
+            BaseItemKind.Series,
+            "series",
+            cancellationToken);
+
+        var byId = new Dictionary<Guid, AnimeFillerItemResponse>();
         var mappings = _animeFillerService.GetMappings();
-        foreach (var requestedId in uniqueIds)
+        var numberingBySeries = new Dictionary<Guid, AnimeFillerEpisodeNumbering?>();
+        foreach (var itemId in validItemIds)
         {
-            if (!Guid.TryParse(requestedId, out var itemId))
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!numberedEpisodes.TryGetValue(itemId, out var episode))
             {
-                byId[requestedId] = Unknown(requestedId, "unavailable");
+                byId[itemId] = Unknown(itemId.ToString(), "unavailable");
                 continue;
             }
 
-            Episode? episode = null;
-            try
+            // Do not trust the relationship object cached on the episode: it can be
+            // incomplete, and it is not itself evidence that the caller can access the
+            // parent. The distinct parent batch above resolves it through the same
+            // caller-scoped library seam.
+            if (!seriesById.TryGetValue(episode.SeriesId, out var series) || !IsAnime(series))
             {
-                episode = _libraryManager.GetItemById<BaseItem>(itemId, user) as Episode;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogDebug(ex, "Caller-scoped anime episode lookup failed.");
-            }
-
-            if (episode is null || episode.ParentIndexNumber is null || episode.ParentIndexNumber <= 0 || episode.IndexNumber is null || episode.IndexNumber <= 0)
-            {
-                byId[requestedId] = Unknown(requestedId, "unavailable");
+                byId[itemId] = Unknown(itemId.ToString(), "not-recognized-as-anime");
                 continue;
             }
 
-            Series? series = null;
-            try
-            {
-                // Do not trust the relationship object cached on the episode: it can be
-                // incomplete, and it is not itself evidence that the caller can access the
-                // parent. Resolve the series through the same caller-scoped library seam.
-                series = _libraryManager.GetItemById<BaseItem>(episode.SeriesId, user) as Series;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogDebug(ex, "Caller-scoped anime series lookup failed.");
-            }
-
-            if (series is null || !IsAnime(series))
-            {
-                byId[requestedId] = Unknown(requestedId, "not-recognized-as-anime");
-                continue;
-            }
-
-            var seasonNumber = episode.ParentIndexNumber.Value;
+            var seasonNumber = episode.ParentIndexNumber.GetValueOrDefault();
             var usesSeasonMapping = mappings.Seasons.ContainsKey((series.Id, seasonNumber));
-            var providerEpisode = usesSeasonMapping
-                ? episode.IndexNumber.Value
-                : CalculateAbsoluteEpisodeNumber(series, episode, user);
+            int? providerEpisode;
+            if (usesSeasonMapping)
+            {
+                providerEpisode = episode.IndexNumber.GetValueOrDefault();
+            }
+            else
+            {
+                if (!numberingBySeries.TryGetValue(series.Id, out var numbering))
+                {
+                    numbering = LoadEpisodeNumbering(series, user, cancellationToken);
+                    numberingBySeries[series.Id] = numbering;
+                }
+
+                providerEpisode = numbering?.Calculate(seasonNumber, episode.IndexNumber.GetValueOrDefault());
+            }
+
             var identity = new AnimeSeriesIdentity(
                 series.Id,
                 seasonNumber,
@@ -115,16 +138,25 @@ public sealed class AnimeFillerWarningsController : JellyfinCanopyControllerBase
                 identity,
                 providerEpisode,
                 episode.Name,
-                HttpContext.RequestAborted).ConfigureAwait(false);
-            byId[requestedId] = new AnimeFillerItemResponse(
-                requestedId,
+                cancellationToken).ConfigureAwait(false);
+            byId[itemId] = new AnimeFillerItemResponse(
+                itemId.ToString(),
                 classification.Classification.ToString(),
                 classification.Reason,
                 classification.MyAnimeListId,
                 classification.SourceUrl);
         }
 
-        return Ok(new AnimeFillerBatchResponse(requestedIds.Select(id => byId[id]).ToArray()));
+        return Ok(new AnimeFillerBatchResponse(requestedIds.Select(requestedId =>
+        {
+            if (!Guid.TryParse(requestedId, out var itemId)
+                || !byId.TryGetValue(itemId, out var response))
+            {
+                return Unknown(requestedId, "unavailable");
+            }
+
+            return response with { ItemId = requestedId };
+        }).ToArray()));
     }
 
     /// <summary>Returns non-secret configuration and mapping validation for administrators.</summary>
@@ -192,25 +224,54 @@ public sealed class AnimeFillerWarningsController : JellyfinCanopyControllerBase
             && int.TryParse(value, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var id)
             && id > 0;
 
-    private int? CalculateAbsoluteEpisodeNumber(Series series, Episode current, Jellyfin.Database.Implementations.Entities.User user)
+    private IReadOnlyDictionary<Guid, T> GetCallerVisibleItems<T>(
+        IReadOnlyCollection<Guid> itemIds,
+        Jellyfin.Database.Implementations.Entities.User user,
+        BaseItemKind itemKind,
+        string itemDescription,
+        CancellationToken cancellationToken)
+        where T : BaseItem
+    {
+        if (itemIds.Count == 0) return new Dictionary<Guid, T>();
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var query = UserAccessQuery.BuildItemIds(_libraryManager, user, itemIds);
+            query.IncludeItemTypes = [itemKind];
+            query.Limit = itemIds.Count;
+            var requested = itemIds.ToHashSet();
+            var items = _libraryManager.GetItemList(query)
+                .OfType<T>()
+                .Where(item => requested.Contains(item.Id))
+                .GroupBy(item => item.Id)
+                .ToDictionary(group => group.Key, group => group.First());
+            cancellationToken.ThrowIfCancellationRequested();
+            return items;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Caller-scoped anime {ItemDescription} batch lookup failed.", itemDescription);
+            return new Dictionary<Guid, T>();
+        }
+    }
+
+    private AnimeFillerEpisodeNumbering? LoadEpisodeNumbering(
+        Series series,
+        Jellyfin.Database.Implementations.Entities.User user,
+        CancellationToken cancellationToken)
     {
         try
         {
-            var query = new InternalItemsQuery(user)
-            {
-                ParentId = series.Id,
-                IncludeItemTypes = [BaseItemKind.Episode],
-                Recursive = true,
-            };
-            var libraryEpisodes = _libraryManager.GetItemList(query)
-                .OfType<Episode>()
-                .Select(episode => (episode.ParentIndexNumber, episode.IndexNumber));
-            // A completely absent prior season makes absolute numbering unprovable.
-            // Virtual episodes are included by the recursive query and close normal file gaps.
-            return AnimeFillerMappingParser.CalculateAbsoluteEpisodeNumber(
-                current.ParentIndexNumber!.Value,
-                current.IndexNumber!.Value,
-                libraryEpisodes);
+            return AnimeFillerMappingParser.IndexAbsoluteEpisodeNumbers(
+                EnumerateSeriesEpisodeNumbers(series.Id, user, cancellationToken));
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -218,6 +279,43 @@ public sealed class AnimeFillerWarningsController : JellyfinCanopyControllerBase
             return null;
         }
     }
+
+    private IEnumerable<(int? Season, int? Episode)> EnumerateSeriesEpisodeNumbers(
+        Guid seriesId,
+        Jellyfin.Database.Implementations.Entities.User user,
+        CancellationToken cancellationToken)
+    {
+        var startIndex = 0;
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var query = new InternalItemsQuery(user)
+            {
+                ParentId = seriesId,
+                IncludeItemTypes = [BaseItemKind.Episode],
+                Recursive = true,
+                StartIndex = startIndex,
+                Limit = SeriesEpisodePageSize,
+                OrderBy =
+                [
+                    (ItemSortBy.ParentIndexNumber, JSortOrder.Ascending),
+                    (ItemSortBy.IndexNumber, JSortOrder.Ascending),
+                ],
+            };
+            var page = _libraryManager.GetItemList(query);
+            cancellationToken.ThrowIfCancellationRequested();
+            foreach (var episode in page.OfType<Episode>())
+            {
+                yield return (episode.ParentIndexNumber, episode.IndexNumber);
+            }
+
+            if (page.Count < SeriesEpisodePageSize) yield break;
+            startIndex = checked(startIndex + page.Count);
+        }
+    }
+
+    private static bool IsNumberedEpisode(Episode episode)
+        => episode.ParentIndexNumber is > 0 && episode.IndexNumber is > 0;
 
     private static AnimeFillerItemResponse Unknown(string itemId, string reason) => new(itemId, nameof(AnimeEpisodeClassification.Unknown), reason, null, null);
 }
