@@ -57,6 +57,7 @@ type Segment =
     | 'b2';
 
 type BSegment = Extract<Segment, 'b1' | 'b2'>;
+type LogoutSegment = Extract<Segment, 'logout-a1' | 'logout-b1' | 'logout-a2'>;
 
 interface DocumentIdentity {
     marker: string;
@@ -103,6 +104,12 @@ interface LogoutEvidence {
     requests: LogoutRequestEvidence[];
     responses: LogoutResponseEvidence[];
     signedOut: SignedOutEvidence;
+}
+
+interface CompletedLogoutPhase {
+    evidence: LogoutEvidence;
+    requests: ReadonlySet<Request>;
+    revokedToken: string;
 }
 
 interface IdentitySnapshot {
@@ -187,6 +194,10 @@ function parseUserFileRequest(request: Request, segment: Segment): UserFileReque
 
 function authorizationToken(authorization: string): string {
     return authorization.match(/\bToken="([^"]+)"/i)?.[1] || '';
+}
+
+function isLogoutSegment(segment: Segment): segment is LogoutSegment {
+    return segment === 'logout-a1' || segment === 'logout-b1' || segment === 'logout-a2';
 }
 
 async function withDeadline<T>(promise: Promise<T>, label: string, timeoutMs = 15_000): Promise<T> {
@@ -735,6 +746,20 @@ function isExactDelayedLogoutProbe(
             ));
 }
 
+function collectProvenDelayedLogoutFailures(
+    consoleErrors: ConsoleErrors,
+    phases: readonly CompletedLogoutPhase[]
+): FailedResponse[] {
+    return consoleErrors.unexpected4xx().filter((response) => {
+        const request = consoleErrors.requestFor(response);
+        if (!request) return false;
+        const phase = phases.find(({ requests }) => requests.has(request));
+        if (!phase || !isExactDelayedLogoutProbe(response, phase.evidence)) return false;
+        const token = authorizationToken(request.headers().authorization || '');
+        return token === '' || token === phase.revokedToken;
+    });
+}
+
 function assertOnlyHostLogoutNoise(
     consoleErrors: ConsoleErrors,
     label: string,
@@ -799,9 +824,14 @@ test.describe('no-reload account identity switching', () => {
 
         let segment: Segment = 'a-save';
         const requests: UserFileRequest[] = [];
-        const a2LogoutRequests = new Set<Request>();
+        const logoutRequestSets: Record<LogoutSegment, Set<Request>> = {
+            'logout-a1': new Set<Request>(),
+            'logout-b1': new Set<Request>(),
+            'logout-a2': new Set<Request>(),
+        };
+        const completedLogoutPhases: CompletedLogoutPhase[] = [];
         const recordOwnedRequest = (request: Request): void => {
-            if (segment === 'logout-a2') a2LogoutRequests.add(request);
+            if (isLogoutSegment(segment)) logoutRequestSets[segment].add(request);
             const parsed = parseUserFileRequest(request, segment);
             if (parsed) requests.push(parsed);
         };
@@ -962,6 +992,11 @@ test.describe('no-reload account identity switching', () => {
         segment = 'logout-a1';
         const logoutA1 = await spaLogout(page, documentIdentity, a1Token);
         const logoutA1Epoch = logoutA1.epoch;
+        completedLogoutPhases.push({
+            evidence: logoutA1,
+            requests: logoutRequestSets['logout-a1'],
+            revokedToken: a1Token,
+        });
         expect(logoutA1Epoch).toBeGreaterThan(a1.epoch);
 
         await page.waitForFunction(
@@ -992,6 +1027,51 @@ test.describe('no-reload account identity switching', () => {
             'the induced save race reports only the expected identity abort'
         ).toEqual([]);
         assertOnlyHostLogoutNoise(consoleErrors, 'A1 logout / held-save abort', logoutA1);
+
+        // Hold one exact stock signed-out request past both the completed A1
+        // logout evidence and the B1 authentication boundary. This reproduces
+        // the natural late Jellyfin Web responses from #340 without a sleep.
+        const a1LateProbeTarget = `${logoutA1.origin}/System/Endpoint`;
+        let a1LateProbeRequest: Request | undefined;
+        let releaseA1LateProbe!: () => void;
+        const a1LateProbeRelease = new Promise<void>((resolve) => {
+            releaseA1LateProbe = resolve;
+        });
+        let resolveA1LateProbeSeen!: () => void;
+        const a1LateProbeSeen = new Promise<void>((resolve) => {
+            resolveA1LateProbeSeen = resolve;
+        });
+        let resolveA1LateProbeFinished!: () => void;
+        const a1LateProbeFinished = new Promise<void>((resolve) => {
+            resolveA1LateProbeFinished = resolve;
+        });
+        const a1LateProbeHandler = async (route: Route): Promise<void> => {
+            const request = route.request();
+            if (request.headers()[LATE_LOGOUT_PROBE_HEADER] !== LOGOUT_EXACT_PROBE) {
+                await route.continue();
+                return;
+            }
+            a1LateProbeRequest = request;
+            resolveA1LateProbeSeen();
+            await a1LateProbeRelease;
+            try {
+                await route.fulfill({ status: 401, body: '' });
+            } catch { /* a failed assertion may close the page first */ } finally {
+                resolveA1LateProbeFinished();
+            }
+        };
+        await page.route(a1LateProbeTarget, a1LateProbeHandler);
+        page.once('close', releaseA1LateProbe);
+        await page.evaluate(({ header, marker, path }) => {
+            void fetch(path, { headers: { [header]: marker } })
+                .then((response) => response.body?.cancel())
+                .catch(() => undefined);
+        }, {
+            header: LATE_LOGOUT_PROBE_HEADER,
+            marker: LOGOUT_EXACT_PROBE,
+            path: '/System/Endpoint',
+        });
+        await withDeadline(a1LateProbeSeen, 'held A1 logout-owned 401 probe');
         consoleErrors.reset();
 
         segment = 'b1';
@@ -1015,6 +1095,27 @@ test.describe('no-reload account identity switching', () => {
             'B1 retains at most its one current-epoch initialization controller'
         ).toBeLessThanOrEqual(1);
 
+        // Release at the last asynchronous boundary before the B1 runtime
+        // gate. An early sweep after login would leave a window in which a
+        // naturally delayed A1 response could still recreate #340.
+        releaseA1LateProbe();
+        await withDeadline(a1LateProbeFinished, 'released A1 logout-owned 401 probe');
+        await page.unroute(a1LateProbeTarget, a1LateProbeHandler);
+        await expect.poll(() => consoleErrors.unexpected4xx().some(
+            (response) => consoleErrors.requestFor(response) === a1LateProbeRequest
+        )).toBe(true);
+        const provenDelayedA1Failures = collectProvenDelayedLogoutFailures(
+            consoleErrors,
+            completedLogoutPhases
+        );
+        expect(
+            provenDelayedA1Failures.some(
+                (response) => consoleErrors.requestFor(response) === a1LateProbeRequest
+            ),
+            'the held A1 request remains tied to its completed logout phase at the B1 gate'
+        ).toBe(true);
+        consoleErrors.acknowledgeExpected4xx(provenDelayedA1Failures);
+
         // Repeat the switch, but hold one of A's five loader reads so A can
         // authenticate without ever publishing a complete owner snapshot.
         assertNoRuntimeErrors(consoleErrors);
@@ -1022,6 +1123,11 @@ test.describe('no-reload account identity switching', () => {
         segment = 'logout-b1';
         const logoutB1 = await spaLogout(page, documentIdentity, b1Login.token);
         const logoutB1Epoch = logoutB1.epoch;
+        completedLogoutPhases.push({
+            evidence: logoutB1,
+            requests: logoutRequestSets['logout-b1'],
+            revokedToken: b1Login.token,
+        });
         expect(logoutB1Epoch).toBeGreaterThan(b1.epoch);
         assertOnlyHostLogoutNoise(consoleErrors, 'B1 logout', logoutB1);
         consoleErrors.reset();
@@ -1053,11 +1159,20 @@ test.describe('no-reload account identity switching', () => {
             new RegExp(`(?:^|;\\s*)jc-spoiler-uid=${aId}(?:;|$)`, 'i')
         );
 
+        consoleErrors.acknowledgeExpected4xx(collectProvenDelayedLogoutFailures(
+            consoleErrors,
+            completedLogoutPhases
+        ));
         assertNoRuntimeErrors(consoleErrors);
         consoleErrors.reset();
         segment = 'logout-a2';
         const logoutA2 = await spaLogout(page, documentIdentity, a2Login.token);
         const logoutA2Epoch = logoutA2.epoch;
+        completedLogoutPhases.push({
+            evidence: logoutA2,
+            requests: logoutRequestSets['logout-a2'],
+            revokedToken: a2Login.token,
+        });
         expect(logoutA2Epoch).toBeGreaterThan(a2.epoch);
         assertOnlyHostLogoutNoise(consoleErrors, 'A2 logout / held-loader abort', logoutA2);
 
@@ -1161,13 +1276,13 @@ test.describe('no-reload account identity switching', () => {
                     method: exactLogoutProbeRequest.method(),
                     pathname: new URL(exactLogoutProbeRequest.url()).pathname,
                     queryless: new URL(exactLogoutProbeRequest.url()).search === '',
-                    owned: a2LogoutRequests.has(exactLogoutProbeRequest),
+                    owned: logoutRequestSets['logout-a2'].has(exactLogoutProbeRequest),
                 }
                 : null,
             wrongPath: wrongPathLogoutProbeRequest
                 ? {
                     pathname: new URL(wrongPathLogoutProbeRequest.url()).pathname,
-                    owned: a2LogoutRequests.has(wrongPathLogoutProbeRequest),
+                    owned: logoutRequestSets['logout-a2'].has(wrongPathLogoutProbeRequest),
                 }
                 : null,
             foreignToken: foreignTokenLogoutProbeRequest
@@ -1177,7 +1292,7 @@ test.describe('no-reload account identity switching', () => {
                             === exactLogoutProbeRequest.method()
                         && foreignTokenLogoutProbeRequest.url()
                             === exactLogoutProbeRequest.url(),
-                    owned: a2LogoutRequests.has(foreignTokenLogoutProbeRequest),
+                    owned: logoutRequestSets['logout-a2'].has(foreignTokenLogoutProbeRequest),
                     usesForeignToken: authorizationToken(
                         foreignTokenLogoutProbeRequest.headers().authorization || ''
                     ) === FOREIGN_LOGOUT_TOKEN,
@@ -1233,7 +1348,7 @@ test.describe('no-reload account identity switching', () => {
                 && foreignB2ProbeRequest.method() === exactLogoutProbeRequest.method()
                 && foreignB2ProbeRequest.url() === exactLogoutProbeRequest.url(),
             logoutOwned: !!foreignB2ProbeRequest
-                && a2LogoutRequests.has(foreignB2ProbeRequest),
+                && logoutRequestSets['logout-a2'].has(foreignB2ProbeRequest),
             anonymous: !!foreignB2ProbeRequest
                 && authorizationToken(foreignB2ProbeRequest.headers().authorization || '') === '',
         }, 'the same-shaped control belongs only to B2').toEqual({
@@ -1286,24 +1401,17 @@ test.describe('no-reload account identity switching', () => {
         await expectSameDocument(page, documentIdentity);
         page.off('request', recordOwnedRequest);
         await page.unroute(lateProbeRouteTarget, lateProbeRouteHandler);
-        const observedB2Failures = consoleErrors.unexpected4xx();
 
         // URL/method/status equality cannot establish which identity phase sent
         // a request. Accept only fixture failures whose exact Playwright Request
-        // was initiated during A2 logout, whose route still satisfies the
-        // complete-evidence host classifier, and whose credential is absent or
-        // is the revoked A2 token. Natural late stock probes and the deliberately
-        // held exact probe follow the same owner path.
-        const provenDelayedA2Failures = observedB2Failures.filter((response) => {
-            const request = consoleErrors.requestFor(response);
-            const token = request
-                ? authorizationToken(request.headers().authorization || '')
-                : '';
-            return !!request
-                && a2LogoutRequests.has(request)
-                && isExactDelayedLogoutProbe(response, logoutA2)
-                && (token === '' || token === a2Login.token);
-        });
+        // was initiated during a completed logout, whose route still satisfies
+        // that phase's complete-evidence host classifier, and whose credential
+        // is absent or is that phase's exact revoked token. Natural late stock
+        // probes and both deliberately held exact probes follow this owner path.
+        const provenDelayedA2Failures = collectProvenDelayedLogoutFailures(
+            consoleErrors,
+            completedLogoutPhases
+        );
         expect(
             provenDelayedA2Failures.some(
                 (response) => consoleErrors.requestFor(response) === exactLogoutProbeRequest
