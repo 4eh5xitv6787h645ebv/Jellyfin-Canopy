@@ -143,18 +143,50 @@ internal static class AnimeFillerMappingParser
         int currentSeason,
         int currentEpisode,
         IEnumerable<(int? Season, int? Episode)> libraryEpisodes)
+        => IndexAbsoluteEpisodeNumbers(libraryEpisodes).Calculate(currentSeason, currentEpisode);
+
+    /// <summary>
+    /// Builds the per-series numbering index once so a classification batch can reuse it for
+    /// every requested episode in that series.
+    /// </summary>
+    internal static AnimeFillerEpisodeNumbering IndexAbsoluteEpisodeNumbers(
+        IEnumerable<(int? Season, int? Episode)> libraryEpisodes)
+    {
+        var seasonMaxima = new Dictionary<int, int>();
+        foreach (var value in libraryEpisodes)
+        {
+            if (value.Season is not > 0 || value.Episode is not > 0) continue;
+            if (!seasonMaxima.TryGetValue(value.Season.Value, out var maximum)
+                || value.Episode.Value > maximum)
+            {
+                seasonMaxima[value.Season.Value] = value.Episode.Value;
+            }
+        }
+
+        return new AnimeFillerEpisodeNumbering(seasonMaxima);
+    }
+}
+
+/// <summary>Compact per-series maximum-episode index used to prove absolute numbering.</summary>
+internal sealed class AnimeFillerEpisodeNumbering
+{
+    private readonly IReadOnlyDictionary<int, int> _seasonMaxima;
+
+    internal AnimeFillerEpisodeNumbering(IReadOnlyDictionary<int, int> seasonMaxima)
+    {
+        _seasonMaxima = seasonMaxima;
+    }
+
+    /// <summary>Returns the absolute episode number only when every prior season is present.</summary>
+    internal int? Calculate(int currentSeason, int currentEpisode)
     {
         if (currentSeason <= 0 || currentEpisode <= 0) return null;
         try
         {
-            var priorSeasons = libraryEpisodes
-                .Where(value => value.Season is > 0 && value.Season < currentSeason && value.Episode is > 0)
-                .GroupBy(value => value.Season!.Value)
-                .ToDictionary(group => group.Key, group => group.Max(value => value.Episode!.Value));
             var before = 0;
             for (var season = 1; season < currentSeason; season++)
             {
-                if (!priorSeasons.TryGetValue(season, out var maximumEpisode)) return null;
+                if (!_seasonMaxima.TryGetValue(season, out var maximumEpisode)) return null;
                 before = checked(before + maximumEpisode);
             }
 

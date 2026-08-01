@@ -27,17 +27,17 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 27995,
-        "totalLines": 36602
+        "coveredLines": 28067,
+        "totalLines": 36668
       },
       "observations": {
         "cleanRuns": 5,
-        "minimumCoveredLines": 27988,
-        "maximumCoveredLines": 27995
+        "minimumCoveredLines": 28066,
+        "maximumCoveredLines": 28067
       },
       "tolerance": {
-        "missingCoveredLines": 7,
-        "rationale": "Fixing #365 adds explicit series ownership to the Spoiler Guard season-watched cache and event-path regressions for the affected (user, series), same-user unrelated-series, cross-user, synchronous season-eviction, and subscription-lifecycle boundaries. After rebasing on merged #160 and the schema-v2 observed-high-water policy from #349, five clean .NET 10.0.9/Coverlet runs on 2026-08-01 each passed all 2,471 server tests at the identical 36,602-line scope and measured 27,992, 27,988, 27,995, 27,993, and 27,993 covered lines. The reviewed high-water is therefore 27,995/36,602 (76.485%). The fixed-scope seven-line spread is direct evidence that the former six-line allowance is one line too narrow, so the tolerance advances only to seven; that remains 0.019 percentage points, far below the policy cap, and raises the enforced floor to 27,988/36,602 (76.466%) from 27,862/36,585 (76.157%). coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
+        "missingCoveredLines": 1,
+        "rationale": "Fixing #457 replaces up to 200 per-episode scalar lookups and 100 repeated full-series queries with two caller-scoped ID batches plus one page-bounded numbering scan per distinct series, backed by mixed-access, duplicate, fault, cancellation, pagination, and exact 100-ID regressions. Five clean .NET 10.0.9/Coverlet runs on 2026-08-01 each passed all 2,482 server tests at the identical 36,668-line scope and measured 28,066, 28,067, 28,066, 28,066, and 28,067 covered lines. The reviewed high-water is therefore 28,067/36,668 (76.544%). The fixed-scope one-line spread permits tightening the instrumentation tolerance from seven lines to one (0.003 percentage points), raising the enforced floor to 28,066/36,668 (76.541%) from 27,988/36,602 (76.466%). coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
       }
     }
   }
