@@ -100,7 +100,7 @@ test('release reuses exact-SHA Build/Test and Security gates after ancestry proo
     assert.match(release, /security-gates:[\s\S]*?with:\n\s+verify_repository_policy: true/);
     assert.match(security, /workflow_call:[\s\S]*?secrets:\n\s+REPOSITORY_POLICY_TOKEN:[\s\S]*?required: true/);
     const repositoryPolicyCondition = security.match(
-        /  repository-policy:\n[\s\S]*?\n    if: ([^\n]+)\n/
+        / {2}repository-policy:\n[\s\S]*?\n {4}if: ([^\n]+)\n/
     )?.[1];
     assert.equal(
         repositoryPolicyCondition,
