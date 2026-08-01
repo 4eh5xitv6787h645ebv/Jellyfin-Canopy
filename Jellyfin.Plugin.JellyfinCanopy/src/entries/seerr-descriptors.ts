@@ -6,7 +6,7 @@ function enabled(): boolean {
 }
 
 function seerrRoute(routeKey: string): boolean {
-    return /#\/(?:search|movies|tvshows|details|list)(?:[/?#]|$)/i.test(routeKey);
+    return /#\/(?:search|movies|tv|tvshows|details|list)(?:[/?#]|$)/i.test(routeKey);
 }
 
 /**
@@ -54,13 +54,13 @@ export const seerrFeatureDescriptors: readonly ClientFeatureDescriptor[] = Objec
     {
         id: 'discovery-library',
         entry: 'discovery-library',
-        // Movie-library query switches intentionally reuse the same React root
+        // Movie/TV library query switches intentionally reuse the same React root
         // without viewshow; keep placement ownership alive across that seam.
         scope: 'identity',
         dependsOn: ['seerr-core'],
         restartOnConfigChange: true,
         isEnabled: (state) => Boolean(state.identity)
             && isDiscoveryLibraryConfigured(JC.pluginConfig),
-        isApplicable: (state) => /#\/(?:movies|tvshows)(?:[/?#]|$)/i.test(state.routeKey),
+        isApplicable: (state) => /#\/(?:movies|tv|tvshows)(?:[/?#]|$)/i.test(state.routeKey),
     },
 ]);

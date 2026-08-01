@@ -18,7 +18,7 @@ export function isDiscoveryEnabled(state: FeatureLoaderState): boolean {
 /** Only library surfaces should download the Discovery feature closure. */
 export function isDiscoveryLibraryRoute(state: FeatureLoaderState): boolean {
     const route = state.routeKey.toLowerCase();
-    return /#\/(?:movies|tvshows)(?:[/?#]|$)/.test(route);
+    return /#\/(?:movies|tv|tvshows)(?:[/?#]|$)/.test(route);
 }
 
 function disposeDiscovery(): void {
