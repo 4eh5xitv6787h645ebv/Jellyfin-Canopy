@@ -15,7 +15,7 @@ import {
     type ConsoleErrors,
     type FailedResponse,
 } from './fixtures/auth';
-import type { Page, Request, Response, Route } from 'playwright/test';
+import type { Page, Request, Route } from 'playwright/test';
 import {
     hasValidConcurrentLogoutResponses,
     isExpectedSignedOutHomeAxios401,
@@ -40,6 +40,12 @@ const EXPECTED_IDENTITY_ABORT =
 // host bundle; a CancelledError with any Canopy frame remains a failure.
 const HOST_LOGOUT_NOISE =
     /CancelledError[\s\S]*node_modules\.%40tanstack\.query-core\.bundle\.js/i;
+const LATE_LOGOUT_PROBE_HEADER = 'x-jc-e2e-late-logout-probe';
+const LOGOUT_EXACT_PROBE = 'logout-exact';
+const LOGOUT_WRONG_PATH_PROBE = 'logout-wrong-path';
+const LOGOUT_FOREIGN_TOKEN_PROBE = 'logout-foreign-token';
+const B2_SAME_PATH_PROBE = 'b2-same-path';
+const FOREIGN_LOGOUT_TOKEN = 'jc-e2e-foreign-logout-token';
 
 type Segment =
     | 'a-save'
@@ -127,22 +133,6 @@ interface UserFileRequest {
     authorization: string;
     explicitUserId: string;
     postData: string;
-}
-
-/**
- * Which credential a late stock probe carried when it 401'd.
- *
- * The distinction that matters is not "was it the revoked A2 token" but "could
- * it have acted as another account". A probe carrying no credential at all is
- * strictly safer than one carrying a revoked token — neither can leak, and which
- * of the two happens depends on whether the stock client had finished tearing
- * down its credentials before its own six-second timer fired. A probe carrying
- * some OTHER account's token is the real defect this test exists to catch.
- */
-type DelayedProbeCredential = 'revoked-a2' | 'anonymous' | 'foreign';
-
-interface DelayedLogoutProbeEvidence extends FailedResponse {
-    credential: DelayedProbeCredential;
 }
 
 function bPayloadSentinel(segment: BSegment, file: (typeof USER_FILES)[number]): string {
@@ -729,7 +719,7 @@ function authorizationParameter(authorization: string, name: 'Token' | 'DeviceId
     return match?.[1] || '';
 }
 
-function isExactDelayedBitrateProbe(
+function isExactDelayedLogoutProbe(
     response: FailedResponse,
     evidence: LogoutEvidence
 ): boolean {
@@ -740,11 +730,9 @@ function isExactDelayedBitrateProbe(
     return (parsed.pathname === '/System/Endpoint' && parsed.search === '')
         || (parsed.pathname === '/Playback/BitrateTest'
             && parsed.searchParams.size === 1
-            && parsed.searchParams.get('Size') === '500000');
-}
-
-function failedResponseKey(response: FailedResponse): string {
-    return `${response.method}\n${response.status}\n${response.url}`;
+            && ['500000', '1000000', '3000000'].includes(
+                parsed.searchParams.get('Size') || ''
+            ));
 }
 
 function assertOnlyHostLogoutNoise(
@@ -811,10 +799,13 @@ test.describe('no-reload account identity switching', () => {
 
         let segment: Segment = 'a-save';
         const requests: UserFileRequest[] = [];
-        page.on('request', (request) => {
+        const a2LogoutRequests = new Set<Request>();
+        const recordOwnedRequest = (request: Request): void => {
+            if (segment === 'logout-a2') a2LogoutRequests.add(request);
             const parsed = parseUserFileRequest(request, segment);
             if (parsed) requests.push(parsed);
-        });
+        };
+        page.on('request', recordOwnedRequest);
 
         let releaseHeldSave!: () => void;
         const heldSaveRelease = new Promise<void>((resolve) => { releaseHeldSave = resolve; });
@@ -1069,33 +1060,188 @@ test.describe('no-reload account identity switching', () => {
         const logoutA2Epoch = logoutA2.epoch;
         expect(logoutA2Epoch).toBeGreaterThan(a2.epoch);
         assertOnlyHostLogoutNoise(consoleErrors, 'A2 logout / held-loader abort', logoutA2);
-        consoleErrors.reset();
 
-        // Stock Jellyfin Web leaves one six-second bitrate timer alive across
-        // logout. Correlate any late 401 pair to the revoked A2 credential; URL
-        // shape alone is insufficient once the authenticated B2 phase begins.
-        const delayedA2ProbeResponses: DelayedLogoutProbeEvidence[] = [];
-        const recordDelayedA2Probe = (response: Response): void => {
-            const failedResponse: FailedResponse = {
-                url: response.url(),
-                status: response.status(),
-                method: response.request().method(),
-            };
-            if (!isExactDelayedBitrateProbe(failedResponse, logoutA2)) return;
-            const token = authorizationToken(response.request().headers().authorization || '');
-            delayedA2ProbeResponses.push({
-                ...failedResponse,
-                credential: token === a2Login.token
-                    ? 'revoked-a2'
-                    : token === ''
-                        ? 'anonymous'
-                        : 'foreign',
-            });
+        // Reproduce #340 without a timer: start three requests only after logout
+        // evidence is complete, hold their responses across the sink reset and
+        // B2 authentication boundary, then release all as 401s. One is the
+        // exact anonymous stock /System/Endpoint shape; the controls prove that
+        // request ownership alone cannot make a wrong path or foreign token
+        // acceptable.
+        const exactProbePath = '/System/Endpoint';
+        const wrongPathProbePath = '/System/Endpoint/not-logout-noise';
+        const lateProbeRouteTarget = `${logoutA2.origin}/System/Endpoint**`;
+        let exactLogoutProbeRequest: Request | undefined;
+        let wrongPathLogoutProbeRequest: Request | undefined;
+        let foreignTokenLogoutProbeRequest: Request | undefined;
+        let foreignB2ProbeRequest: Request | undefined;
+        let releaseLateLogoutProbes!: () => void;
+        const lateLogoutProbeRelease = new Promise<void>((resolve) => {
+            releaseLateLogoutProbes = resolve;
+        });
+        let resolveHeldLogoutProbesSeen!: () => void;
+        const heldLogoutProbesSeen = new Promise<void>((resolve) => {
+            resolveHeldLogoutProbesSeen = resolve;
+        });
+        let heldLogoutProbesSeenCount = 0;
+        let resolveHeldLogoutProbesFinished!: () => void;
+        const heldLogoutProbesFinished = new Promise<void>((resolve) => {
+            resolveHeldLogoutProbesFinished = resolve;
+        });
+        let heldLogoutProbesFinishedCount = 0;
+        let resolveForeignB2ProbeSeen!: () => void;
+        const foreignB2ProbeSeen = new Promise<void>((resolve) => {
+            resolveForeignB2ProbeSeen = resolve;
+        });
+        const lateProbeRouteHandler = async (route: Route): Promise<void> => {
+            const request = route.request();
+            const marker = request.headers()[LATE_LOGOUT_PROBE_HEADER] || '';
+            if (marker === LOGOUT_EXACT_PROBE
+                || marker === LOGOUT_WRONG_PATH_PROBE
+                || marker === LOGOUT_FOREIGN_TOKEN_PROBE) {
+                if (marker === LOGOUT_EXACT_PROBE) exactLogoutProbeRequest = request;
+                else if (marker === LOGOUT_WRONG_PATH_PROBE) {
+                    wrongPathLogoutProbeRequest = request;
+                } else {
+                    foreignTokenLogoutProbeRequest = request;
+                }
+                heldLogoutProbesSeenCount++;
+                if (heldLogoutProbesSeenCount === 3) resolveHeldLogoutProbesSeen();
+                await lateLogoutProbeRelease;
+                try {
+                    await route.fulfill({ status: 401, body: '' });
+                } catch { /* a failed assertion may close the page first */ }
+                heldLogoutProbesFinishedCount++;
+                if (heldLogoutProbesFinishedCount === 3) {
+                    resolveHeldLogoutProbesFinished();
+                }
+                return;
+            }
+            if (marker === B2_SAME_PATH_PROBE) {
+                foreignB2ProbeRequest = request;
+                await route.fulfill({ status: 401, body: '' });
+                resolveForeignB2ProbeSeen();
+                return;
+            }
+            await route.continue();
         };
-        page.on('response', recordDelayedA2Probe);
+        await page.route(lateProbeRouteTarget, lateProbeRouteHandler);
+        page.once('close', releaseLateLogoutProbes);
+        await page.evaluate(({
+            header,
+            exactPath,
+            wrongPath,
+            exactMarker,
+            wrongMarker,
+            foreignTokenMarker,
+            foreignToken,
+        }) => {
+            const start = (path: string, marker: string, token = ''): void => {
+                const headers: Record<string, string> = { [header]: marker };
+                if (token) headers.Authorization = `MediaBrowser Token="${token}"`;
+                void fetch(path, { headers })
+                    .then((response) => response.body?.cancel())
+                    .catch(() => undefined);
+            };
+            start(exactPath, exactMarker);
+            start(wrongPath, wrongMarker);
+            start(exactPath, foreignTokenMarker, foreignToken);
+        }, {
+            header: LATE_LOGOUT_PROBE_HEADER,
+            exactPath: exactProbePath,
+            wrongPath: wrongPathProbePath,
+            exactMarker: LOGOUT_EXACT_PROBE,
+            wrongMarker: LOGOUT_WRONG_PATH_PROBE,
+            foreignTokenMarker: LOGOUT_FOREIGN_TOKEN_PROBE,
+            foreignToken: FOREIGN_LOGOUT_TOKEN,
+        });
+        await withDeadline(heldLogoutProbesSeen, 'held logout-owned 401 probes');
+        expect({
+            exact: exactLogoutProbeRequest
+                ? {
+                    method: exactLogoutProbeRequest.method(),
+                    pathname: new URL(exactLogoutProbeRequest.url()).pathname,
+                    queryless: new URL(exactLogoutProbeRequest.url()).search === '',
+                    owned: a2LogoutRequests.has(exactLogoutProbeRequest),
+                }
+                : null,
+            wrongPath: wrongPathLogoutProbeRequest
+                ? {
+                    pathname: new URL(wrongPathLogoutProbeRequest.url()).pathname,
+                    owned: a2LogoutRequests.has(wrongPathLogoutProbeRequest),
+                }
+                : null,
+            foreignToken: foreignTokenLogoutProbeRequest
+                ? {
+                    sameMethodAndUrl: !!exactLogoutProbeRequest
+                        && foreignTokenLogoutProbeRequest.method()
+                            === exactLogoutProbeRequest.method()
+                        && foreignTokenLogoutProbeRequest.url()
+                            === exactLogoutProbeRequest.url(),
+                    owned: a2LogoutRequests.has(foreignTokenLogoutProbeRequest),
+                    usesForeignToken: authorizationToken(
+                        foreignTokenLogoutProbeRequest.headers().authorization || ''
+                    ) === FOREIGN_LOGOUT_TOKEN,
+                    notA2Token: authorizationToken(
+                        foreignTokenLogoutProbeRequest.headers().authorization || ''
+                    ) !== a2Login.token,
+                }
+                : null,
+        }, 'all held requests were initiated in the completed A2 logout phase').toEqual({
+            exact: {
+                method: 'GET',
+                pathname: exactProbePath,
+                queryless: true,
+                owned: true,
+            },
+            wrongPath: {
+                pathname: wrongPathProbePath,
+                owned: true,
+            },
+            foreignToken: {
+                sameMethodAndUrl: true,
+                owned: true,
+                usesForeignToken: true,
+                notA2Token: true,
+            },
+        });
+        consoleErrors.reset();
 
         segment = 'b2';
         const b2Login = await beginSpaLogin(page, 'user', documentIdentity);
+        releaseLateLogoutProbes();
+        await withDeadline(heldLogoutProbesFinished, 'released logout-owned 401 probes');
+
+        // PR #519 deliberately permits an anonymous late stock probe, so its
+        // URL-key containment would treat this B2-owned anonymous request as
+        // the same failure as the held A2 request. Exact Request ownership is
+        // the missing discriminator; credential shape cannot supply it.
+        expect(await page.evaluate(async ({ header, path, marker }) => {
+            const response = await fetch(path, {
+                headers: { [header]: marker },
+            });
+            await response.body?.cancel();
+            return response.status;
+        }, {
+            header: LATE_LOGOUT_PROBE_HEADER,
+            path: exactProbePath,
+            marker: B2_SAME_PATH_PROBE,
+        }), 'the deliberate B2-owned same-path control returns 401').toBe(401);
+        await withDeadline(foreignB2ProbeSeen, 'B2-owned same-path 401 probe');
+        expect({
+            sameMethodAndUrl: !!foreignB2ProbeRequest
+                && !!exactLogoutProbeRequest
+                && foreignB2ProbeRequest.method() === exactLogoutProbeRequest.method()
+                && foreignB2ProbeRequest.url() === exactLogoutProbeRequest.url(),
+            logoutOwned: !!foreignB2ProbeRequest
+                && a2LogoutRequests.has(foreignB2ProbeRequest),
+            anonymous: !!foreignB2ProbeRequest
+                && authorizationToken(foreignB2ProbeRequest.headers().authorization || '') === '',
+        }, 'the same-shaped control belongs only to B2').toEqual({
+            sameMethodAndUrl: true,
+            logoutOwned: false,
+            anonymous: true,
+        });
+
         const b2 = await finishSpaLogin(page, b2Login, documentIdentity);
         expect(b2.userId).toBe(normalizeIdentityPart(b2Login.userId));
         expect(b2Login.token === b1Login.token, 'B2 must be a fresh authenticated session').toBe(false);
@@ -1138,33 +1284,65 @@ test.describe('no-reload account identity switching', () => {
             }
         );
         await expectSameDocument(page, documentIdentity);
-        page.off('response', recordDelayedA2Probe);
+        page.off('request', recordOwnedRequest);
+        await page.unroute(lateProbeRouteTarget, lateProbeRouteHandler);
         const observedB2Failures = consoleErrors.unexpected4xx();
 
-        // The real leak check, and the only one that can fail for a good reason:
-        // a late stock probe that carried SOME OTHER account's credential would
-        // mean the switch left a usable token behind.
+        // URL/method/status equality cannot establish which identity phase sent
+        // a request. Accept only fixture failures whose exact Playwright Request
+        // was initiated during A2 logout, whose route still satisfies the
+        // complete-evidence host classifier, and whose credential is absent or
+        // is the revoked A2 token. Natural late stock probes and the deliberately
+        // held exact probe follow the same owner path.
+        const provenDelayedA2Failures = observedB2Failures.filter((response) => {
+            const request = consoleErrors.requestFor(response);
+            const token = request
+                ? authorizationToken(request.headers().authorization || '')
+                : '';
+            return !!request
+                && a2LogoutRequests.has(request)
+                && isExactDelayedLogoutProbe(response, logoutA2)
+                && (token === '' || token === a2Login.token);
+        });
         expect(
-            delayedA2ProbeResponses.filter(({ credential }) => credential === 'foreign'),
-            'no delayed stock probe carried a credential belonging to another account'
-        ).toEqual([]);
+            provenDelayedA2Failures.some(
+                (response) => consoleErrors.requestFor(response) === exactLogoutProbeRequest
+            ),
+            'the held queryless /System/Endpoint 401 is proven by exact logout Request identity'
+        ).toBe(true);
+        expect(
+            provenDelayedA2Failures.some((response) => {
+                const request = consoleErrors.requestFor(response);
+                return request === wrongPathLogoutProbeRequest
+                    || request === foreignTokenLogoutProbeRequest
+                    || request === foreignB2ProbeRequest;
+            }),
+            'wrong-path, foreign-token, and B2-owned failures stay fatal'
+        ).toBe(false);
+        consoleErrors.acknowledgeExpected4xx(provenDelayedA2Failures);
 
-        // Every 4xx seen during B2 must be one of those explained probes.
-        //
-        // Asserted as containment rather than set equality on purpose. Equality
-        // also required every recorded probe to have surfaced as a console error,
-        // and whether a given 401 does depends on when the stock client's own
-        // six-second timer fires relative to the switch — which is scheduling, not
-        // behaviour. That direction failed twice on changes that could not have
-        // affected it (a docs-only PR and a no-production-code PR, #518), while the
-        // property the test is named for was never in question. Containment keeps
-        // the half that can catch a defect: an unexplained 4xx still fails here.
-        const explainedKeys = new Set(delayedA2ProbeResponses.map(failedResponseKey));
+        const remainingB2Failures = consoleErrors.unexpected4xx();
+        const failureOwnerLabel = (response: FailedResponse): string => {
+            const request = consoleErrors.requestFor(response);
+            if (request === wrongPathLogoutProbeRequest) return 'logout-owned-wrong-path';
+            if (request === foreignTokenLogoutProbeRequest) {
+                return 'logout-owned-foreign-token';
+            }
+            if (request === foreignB2ProbeRequest) return 'b2-owned-same-path';
+            return `unexpected:${response.method}:${response.status}:${response.url}`;
+        };
         expect(
-            observedB2Failures.map(failedResponseKey).filter((key) => !explainedKeys.has(key)),
-            'B2 has no 4xx beyond the stock host probes left over from the A2 logout'
-        ).toEqual([]);
-        consoleErrors.acknowledgeExpected4xx(observedB2Failures);
+            remainingB2Failures.map(failureOwnerLabel).sort(),
+            'only the three deliberate fatal controls remain after exact logout acknowledgement'
+        ).toEqual([
+            'b2-owned-same-path',
+            'logout-owned-foreign-token',
+            'logout-owned-wrong-path',
+        ]);
+
+        // These failures exist only as negative controls. Remove their exact
+        // fixture objects after proving the production gate kept all three fatal.
+        consoleErrors.acknowledgeExpected4xx(remainingB2Failures);
         assertNoRuntimeErrors(consoleErrors);
     });
 });

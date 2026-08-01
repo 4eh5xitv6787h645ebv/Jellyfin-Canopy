@@ -510,25 +510,38 @@ test('both admin and non-admin Hidden Content paths use the strict host-noise as
 
 test('account switching scopes logout Axios noise to the phase-local response classifier', () => {
     const source = fs.readFileSync(path.join(ROOT, 'e2e/account-switch.spec.ts'), 'utf8');
+    const fixture = fs.readFileSync(path.join(ROOT, 'e2e/fixtures/auth.ts'), 'utf8');
     assert.match(source, /hasValidConcurrentLogoutResponses\(orderedResponses\)/);
     assert.doesNotMatch(source, /orderedResponses\[0\][\s\S]{0,200}status: 204/);
     assert.match(source, /isExpectedSignedOutHomeAxios401\(detail, evidence, hasAllowedHost401\)/);
     assert.match(source, /response\.status === 401\s*&& isExpectedSignedOutHostLogout4xx\(response, evidence\)/);
     assert.match(source, /failed\.filter\(\(response\) => !isExpectedSignedOutHostLogout4xx\(response, evidence\)\)/);
-    // The late-probe classifier must still key off the CREDENTIAL rather than URL
-    // shape alone. It now distinguishes three cases instead of two: a probe that
-    // fired with no credential at all is safer than one carrying the revoked
-    // token, so it must not be reported as unexplained just because the stock
-    // client finished tearing down its session before its own timer fired (#518).
-    assert.match(source, /const token = authorizationToken\(/);
-    assert.match(source, /credential: token === a2Login\.token/);
 
-    // The half that can actually catch a defect: a late probe bearing some other
-    // account's token would mean the switch left a usable credential behind.
-    assert.match(source, /credential === 'foreign'/);
-    assert.match(source, /isExactDelayedBitrateProbe\(failedResponse,\s*logoutA2\)/);
-    assert.match(source, /consoleErrors\.acknowledgeExpected4xx\(observedB2Failures\)/);
-    assert.match(source, /consoleErrors\.acknowledgeExpected4xx\(observedB2Failures\);\s*assertNoRuntimeErrors\(consoleErrors\)/);
+    // The fixture owns the only FailedResponse -> Request association. A
+    // value-equal object cannot manufacture provenance, and a reset cannot
+    // lose a request whose response has not settled yet.
+    assert.match(fixture, /new WeakMap<FailedResponse, Request>\(\)/);
+    assert.match(fixture, /const request = response\.request\(\)[\s\S]{0,250}requestByFailure\.set\(failedResponse, request\)/);
+    assert.match(fixture, /requestFor: \(response\) => requestByFailure\.get\(response\)/);
+
+    // The regression holds an exact queryless host request after complete A2
+    // logout evidence, crosses the reset/B2-login boundary, then releases it.
+    assert.match(source, /exactProbePath = '\/System\/Endpoint'/);
+    assert.match(source, /await withDeadline\(heldLogoutProbesSeen/);
+    assert.match(source, /consoleErrors\.reset\(\);\s*segment = 'b2';\s*const b2Login = await beginSpaLogin[\s\S]{0,200}releaseLateLogoutProbes\(\)/);
+
+    // Selection is the intersection of exact Request-phase ownership and the
+    // complete-evidence route classifier. The former URL-key containment must
+    // not return, because it lets a B2 request impersonate an A2 response.
+    assert.match(source, /const token = request\s*\? authorizationToken\(request\.headers\(\)\.authorization \|\| ''\)\s*: '';\s*return !!request\s*&& a2LogoutRequests\.has\(request\)\s*&& isExactDelayedLogoutProbe\(response, logoutA2\)\s*&& \(token === '' \|\| token === a2Login\.token\)/);
+    assert.match(source, /\['500000', '1000000', '3000000'\]\.includes/);
+    assert.match(source, /consoleErrors\.acknowledgeExpected4xx\(provenDelayedA2Failures\)/);
+    assert.match(source, /b2-owned-same-path/);
+    assert.match(source, /LOGOUT_FOREIGN_TOKEN_PROBE = 'logout-foreign-token'/);
+    assert.match(source, /start\(exactPath, foreignTokenMarker, foreignToken\)/);
+    assert.match(source, /logout-owned-foreign-token/);
+    assert.match(source, /logout-owned-wrong-path/);
+    assert.doesNotMatch(source, /failedResponseKey|explainedKeys/);
     assert.doesNotMatch(source, /'B2 \/ delayed Jellyfin logout probes'/);
     assert.doesNotMatch(source, /HOST_LOGOUT_NOISE[\s\S]*AxiosError/);
 });

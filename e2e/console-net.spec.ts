@@ -7,6 +7,7 @@
 // known-legacy / authz-degrade url (here the RequiresElevation /admin/ prefix)
 // must not be. This spec pins both halves.
 import { test, expect, loginAs, assertNoRuntimeErrors } from './fixtures/auth';
+import type { Request, Route } from 'playwright/test';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -15,6 +16,7 @@ const ALLOWED = '/JellyfinCanopy/admin/does-not-exist';
 const DELIBERATE_5XX = '/JellyfinCanopy/e2e-deliberate-503';
 const DELIBERATE_5XX_SECRET = 'jc-e2e-detector-query-secret';
 const CONSOLE_SOURCE = '/JellyfinCanopy/e2e-console-source.js';
+const REQUEST_OWNER_401 = '/JellyfinCanopy/e2e-request-owner-401';
 
 /**
  * Fetch a plugin path in the browser (same origin, authenticated) and return
@@ -132,6 +134,93 @@ test.describe('console and HTTP error safety net', () => {
         expect(deliberate[0].url).not.toContain(DELIBERATE_5XX_SECRET);
         consoleErrors.acknowledgeExpected5xx(deliberate);
         await page.unroute(`**${DELIBERATE_5XX}*`);
+    });
+
+    test('late responses retain exact Request ownership across a sink reset', async ({
+        page,
+        consoleErrors,
+    }) => {
+        await loginAs(page, 'admin', consoleErrors);
+
+        let firstRequest: Request | undefined;
+        let secondRequest: Request | undefined;
+        let releaseFirst!: () => void;
+        const firstRelease = new Promise<void>((resolve) => { releaseFirst = resolve; });
+        let markFirstSeen!: () => void;
+        const firstSeen = new Promise<void>((resolve) => { markFirstSeen = resolve; });
+        let markFirstFinished!: () => void;
+        const firstFinished = new Promise<void>((resolve) => { markFirstFinished = resolve; });
+        let attempts = 0;
+        const routePattern = `**${REQUEST_OWNER_401}`;
+        const routeHandler = async (route: Route): Promise<void> => {
+            attempts++;
+            if (attempts === 1) {
+                firstRequest = route.request();
+                markFirstSeen();
+                await firstRelease;
+                try {
+                    await route.fulfill({ status: 401, body: '' });
+                } catch { /* a failed assertion may close the page first */ } finally {
+                    markFirstFinished();
+                }
+                return;
+            }
+            secondRequest = route.request();
+            await route.fulfill({ status: 401, body: '' });
+        };
+        await page.route(routePattern, routeHandler);
+        page.once('close', releaseFirst);
+        consoleErrors.reset();
+
+        // Initiate the first request before the phase boundary, but do not let
+        // its HTTP failure reach the fixture until after the reset.
+        await page.evaluate((path) => {
+            void fetch(path).then((response) => response.body?.cancel()).catch(() => undefined);
+        }, REQUEST_OWNER_401);
+        await firstSeen;
+        consoleErrors.reset();
+        releaseFirst();
+        await firstFinished;
+
+        expect(
+            await page.evaluate(async (path) => (await fetch(path)).status, REQUEST_OWNER_401),
+            'the value-equal foreign request also returns the deliberate 401'
+        ).toBe(401);
+        await expect.poll(() => consoleErrors.unexpected4xx()).toHaveLength(2);
+
+        const failures = consoleErrors.unexpected4xx();
+        const firstFailure = failures.find(
+            (response) => consoleErrors.requestFor(response) === firstRequest
+        );
+        const secondFailure = failures.find(
+            (response) => consoleErrors.requestFor(response) === secondRequest
+        );
+        expect(firstFailure, 'the response settling after reset retains its initiating Request')
+            .toBeDefined();
+        expect(secondFailure, 'the equal-shaped response retains its distinct Request')
+            .toBeDefined();
+        expect(
+            consoleErrors.requestFor({ ...firstFailure! }),
+            'a fabricated value-equal failure has no request provenance'
+        ).toBeUndefined();
+
+        consoleErrors.acknowledgeExpected4xx([firstFailure!]);
+        const remaining = consoleErrors.unexpected4xx();
+        expect(
+            {
+                count: remaining.length,
+                belongsToSecondRequest:
+                    remaining.length === 1
+                    && consoleErrors.requestFor(remaining[0]) === secondRequest,
+            },
+            'acknowledging the exact late response leaves the equal-shaped foreign response fatal'
+        ).toEqual({ count: 1, belongsToSecondRequest: true });
+
+        // This test deliberately created the foreign control. Its exact object
+        // is acknowledged only after proving it remained in the blocking sink.
+        consoleErrors.acknowledgeExpected4xx([secondFailure!]);
+        assertNoRuntimeErrors(consoleErrors);
+        await page.unroute(routePattern, routeHandler);
     });
 
     test('structured console errors retain their source script URL', async ({
