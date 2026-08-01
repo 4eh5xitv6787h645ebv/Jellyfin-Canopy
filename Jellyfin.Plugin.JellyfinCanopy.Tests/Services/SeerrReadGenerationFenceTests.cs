@@ -313,7 +313,8 @@ public sealed class SeerrReadGenerationFenceTests
             userManager: null!,
             cache,
             provider,
-            parentalFilter);
+            parentalFilter,
+            spoilerPendingService: null!);
 
     private static PluginConfiguration Configuration(string source, string apiKey) => new()
     {

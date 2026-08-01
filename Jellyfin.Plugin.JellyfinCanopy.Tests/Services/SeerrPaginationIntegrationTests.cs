@@ -1164,7 +1164,8 @@ public class SeerrPaginationIntegrationTests
             userManager: null!,
             cache,
             provider,
-            parentalFilter: null!);
+            parentalFilter: null!,
+            spoilerPendingService: null!);
         return (client, cache);
     }
 
@@ -1178,7 +1179,8 @@ public class SeerrPaginationIntegrationTests
             userManager: null!,
             cache,
             provider,
-            parentalFilter: null!);
+            parentalFilter: null!,
+            spoilerPendingService: null!);
 
     private static object UserRow(int id, string jellyfinUserId) => new
     {

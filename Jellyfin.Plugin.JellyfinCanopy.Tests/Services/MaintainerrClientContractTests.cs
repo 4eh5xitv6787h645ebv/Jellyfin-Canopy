@@ -810,6 +810,19 @@ public sealed class MaintainerrClientContractTests
         Assert.Equal(MaintainerrErrorCode.Timeout, timedOut.Error);
     }
 
+    [Fact]
+    public async Task Test_PreCanceledCallerStopsBeforeAnyHttpRequest()
+    {
+        var handler = new RoutingHandler(SuccessResponse);
+
+        var result = await Client(handler, Provider()).TestAsync(
+            BaseUrl,
+            new CancellationToken(canceled: true));
+
+        Assert.Equal(MaintainerrErrorCode.Canceled, result.Error);
+        Assert.Empty(handler.Requests);
+    }
+
     [Theory]
     [InlineData(MachineId, true, null)]
     [InlineData("fedcba9876543210fedcba9876543210", false, "identity_mismatch")]

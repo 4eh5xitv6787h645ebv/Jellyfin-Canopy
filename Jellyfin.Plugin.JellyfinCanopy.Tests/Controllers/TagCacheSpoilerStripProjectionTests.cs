@@ -24,6 +24,12 @@ using Season = MediaBrowser.Controller.Entities.TV.Season;
 
 namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
 {
+    [CollectionDefinition(Name, DisableParallelization = true)]
+    public sealed class BaseItemStaticHostCollection
+    {
+        public const string Name = "BaseItem static host";
+    }
+
     /// <summary>
     /// BI-PERF-037 (#98): the Spoiler Guard tag-cache projection must acquire its
     /// runtime facts (item resolution, played state, season index/any-watched) in
@@ -33,6 +39,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
     /// season's watched aggregate per relevant revision, and failing CLOSED on
     /// cancellation (never a partially-unstripped 200).
     /// </summary>
+    [Collection(BaseItemStaticHostCollection.Name)]
     public sealed class TagCacheSpoilerStripProjectionTests
     {
         // ── AC1: bounded batch calls, never one manager call per entry ─────────

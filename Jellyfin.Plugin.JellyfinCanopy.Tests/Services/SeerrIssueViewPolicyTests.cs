@@ -46,7 +46,8 @@ public class SeerrIssueViewPolicyTests
             null!,
             new SeerrCache(provider),
             provider,
-            new PassthroughParentalFilter());
+            new PassthroughParentalFilter(),
+            spoilerPendingService: null!);
         return (client, handler);
     }
 

@@ -55,7 +55,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             "SeerrScanTriggerService.cs",     // cheap config/kind check -> counter + debounce timer
             "WatchlistMonitor.cs",            // constant-time gates -> bounded coalescing channel worker
             "ContinueWatchingPlaybackEvents.cs", // bounded id intake -> lifecycle-owned drain worker (GetUsers + per-user prune off-thread)
-            "SpoilerSeerrPendingPromoter.cs", // cheap gate ContainsKey -> coalesced Task.Run sweep (GetItemById + RMW off-thread)
+            "SpoilerSeerrPendingPromoter.cs", // cheap gate ContainsKey -> coalesced channel-worker sweep (GetItemById + RMW off-thread)
         };
 
         // Off-thread worker methods on the reviewed subscribers: invoked via a debounce Timer or
