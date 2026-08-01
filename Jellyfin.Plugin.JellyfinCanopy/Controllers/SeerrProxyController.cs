@@ -57,6 +57,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         private readonly ISeerrClient _seerr;
         private readonly ISeerrParentalFilter _parentalFilter;
         private readonly SpoilerPendingService _spoilerPending;
+        private readonly TimeProvider _timeProvider;
 
         internal Action? BeforeIssueProjectionPublishForTest { get; set; }
 
@@ -69,11 +70,36 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             ISeerrClient seerr,
             ISeerrParentalFilter parentalFilter,
             SpoilerPendingService spoilerPending)
+            : this(
+                httpClientFactory,
+                logger,
+                userManager,
+                seerrCache,
+                configProvider,
+                seerr,
+                parentalFilter,
+                spoilerPending,
+                TimeProvider.System)
+        {
+        }
+
+        internal SeerrProxyController(
+            IHttpClientFactory httpClientFactory,
+            ILogger<SeerrProxyController> logger,
+            IUserManager userManager,
+            ISeerrCache seerrCache,
+            IPluginConfigProvider configProvider,
+            ISeerrClient seerr,
+            ISeerrParentalFilter parentalFilter,
+            SpoilerPendingService spoilerPending,
+            TimeProvider timeProvider)
             : base(httpClientFactory, logger, userManager, seerrCache, configProvider)
         {
+            ArgumentNullException.ThrowIfNull(timeProvider);
             _seerr = seerr;
             _parentalFilter = parentalFilter;
             _spoilerPending = spoilerPending;
+            _timeProvider = timeProvider;
         }
 
         // Thin delegation kept so the ~35 proxy endpoints below read unchanged;
@@ -515,7 +541,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                     dispatchFence,
                     HttpContext.RequestAborted);
             });
-            var projectionNow = DateTime.UtcNow;
+            var projectionNow = _timeProvider.GetUtcNow().UtcDateTime;
 
             var movieTask = ComputeNextResetAsync(
                 quota,

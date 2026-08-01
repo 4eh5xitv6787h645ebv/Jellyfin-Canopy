@@ -411,6 +411,44 @@ public class SeerrQuotaSourceAffinityTests
     }
 
     [Fact]
+    public async Task GetQuota_OldAndDeclinedPrefixBeyondFirstPageDoesNotHideActiveReset()
+    {
+        var now = new DateTime(2026, 1, 15, 12, 0, 0, DateTimeKind.Utc);
+        var activeCreatedAt = now.AddDays(-1);
+        var rows = Enumerable.Range(1, 60)
+            .Select(id => RequestRow(id, now.AddDays(-8).AddMinutes(id), ignoreQuota: false))
+            .Concat(Enumerable.Range(61, 60)
+                .Select(id => RequestRow(id, now.AddDays(-6).AddMinutes(id), ignoreQuota: false, status: 3)))
+            .Append(RequestRow(121, activeCreatedAt, ignoreQuota: false))
+            .ToArray();
+        var handler = new RecordingHandler(request =>
+        {
+            var skip = QueryInt(request.RequestUri!, "skip");
+            return Json(new
+            {
+                results = rows.Skip(skip).Take(100).ToArray(),
+                pageInfo = new { page = (skip / 100) + 1, pages = 2, results = rows.Length },
+            });
+        });
+        var seerr = new PinnedQuotaClient(
+            new SeerrUser { Id = 7, SourceUrl = SourceA },
+            QuotaBody());
+        var controller = BuildController(
+            handler,
+            seerr,
+            timeProvider: new ManualTimeProvider(new DateTimeOffset(now)));
+
+        var result = Assert.IsType<ContentResult>(await controller.GetSeerrQuota());
+        var body = JsonNode.Parse(result.Content!)!.AsObject();
+
+        Assert.True((bool?)body["resetProjectionComplete"]);
+        Assert.Equal(
+            activeCreatedAt.AddDays(7),
+            DateTime.Parse((string)body["movie"]!["nextResetAt"]!, null, System.Globalization.DateTimeStyles.RoundtripKind));
+        Assert.Equal(new[] { 0, 100, 0, 100 }, handler.Requests.Select(request => QueryInt(request.Uri, "skip")));
+    }
+
+    [Fact]
     public async Task GetQuota_TvSeasonCountMismatch_OmitsProjection()
     {
         var handler = new RecordingHandler(_ => Json(new
@@ -442,23 +480,17 @@ public class SeerrQuotaSourceAffinityTests
     }
 
     [Fact]
-    public async Task GetQuota_DeclinedAndExpiredBoundaryRowsDoNotContribute()
+    public async Task GetQuota_ExactRollingBoundaryAndDeclinedRowsDoNotContribute()
     {
-        var now = DateTime.UtcNow;
-        var activeCreatedAt = now.AddDays(-1);
+        var now = new DateTime(2026, 1, 15, 12, 0, 0, DateTimeKind.Utc);
+        var windowBoundary = now.AddDays(-7);
+        var activeCreatedAt = windowBoundary.AddTicks(1);
         var handler = new RecordingHandler(_ => Json(new
         {
             results = new object[]
             {
-                RequestRow(1, now.AddDays(-8), ignoreQuota: false),
-                new
-                {
-                    id = 2,
-                    type = "movie",
-                    status = 3,
-                    createdAt = now.ToString("O", System.Globalization.CultureInfo.InvariantCulture),
-                    requestedBy = new { id = 7 },
-                },
+                RequestRow(1, windowBoundary, ignoreQuota: false),
+                RequestRow(2, now, ignoreQuota: false, status: 3),
                 RequestRow(3, activeCreatedAt, ignoreQuota: false),
             },
             pageInfo = new { page = 1, pages = 1, results = 3 },
@@ -466,7 +498,10 @@ public class SeerrQuotaSourceAffinityTests
         var seerr = new PinnedQuotaClient(
             new SeerrUser { Id = 7, SourceUrl = SourceA },
             QuotaBody());
-        var controller = BuildController(handler, seerr);
+        var controller = BuildController(
+            handler,
+            seerr,
+            timeProvider: new ManualTimeProvider(new DateTimeOffset(now)));
 
         var result = Assert.IsType<ContentResult>(await controller.GetSeerrQuota());
         var body = JsonNode.Parse(result.Content!)!.AsObject();
@@ -718,7 +753,8 @@ public class SeerrQuotaSourceAffinityTests
     private static SeerrProxyController BuildController(
         RecordingHandler handler,
         PinnedQuotaClient seerr,
-        FakePluginConfigProvider? provider = null)
+        FakePluginConfigProvider? provider = null,
+        TimeProvider? timeProvider = null)
     {
         provider ??= new FakePluginConfigProvider(Configuration());
         var controller = new SeerrProxyController(
@@ -729,7 +765,8 @@ public class SeerrQuotaSourceAffinityTests
             provider,
             seerr,
             parentalFilter: null!,
-            spoilerPending: null!);
+            spoilerPending: null!,
+            timeProvider: timeProvider ?? TimeProvider.System);
         var identity = new ClaimsIdentity(
             new[] { new Claim("Jellyfin-UserId", JellyfinUserId) },
             "TestAuth");
@@ -807,12 +844,12 @@ public class SeerrQuotaSourceAffinityTests
             },
         });
 
-    private static object RequestRow(int id, DateTime createdAt, bool ignoreQuota)
+    private static object RequestRow(int id, DateTime createdAt, bool ignoreQuota, int status = 2)
         => new
         {
             id,
             type = "movie",
-            status = 2,
+            status,
             ignoreQuota,
             createdAt = createdAt.ToString("O", System.Globalization.CultureInfo.InvariantCulture),
             requestedBy = new { id = 7 },
@@ -870,6 +907,12 @@ public class SeerrQuotaSourceAffinityTests
         return null;
     }
 
+    private static int QueryInt(Uri uri, string name)
+        => int.Parse(
+            QueryValue(uri, name)
+                ?? throw new InvalidOperationException($"Missing query parameter '{name}' from {uri}."),
+            System.Globalization.CultureInfo.InvariantCulture);
+
     private sealed record CapturedRequest(Uri Uri, string? ApiUser);
 
     private sealed class RecordingHandler : HttpMessageHandler
@@ -891,6 +934,11 @@ public class SeerrQuotaSourceAffinityTests
             Requests.Add(new CapturedRequest(request.RequestUri!, apiUser));
             return Task.FromResult(_route(request));
         }
+    }
+
+    private sealed class ManualTimeProvider(DateTimeOffset now) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => now;
     }
 
     private sealed class PinnedQuotaClient : ISeerrClient
