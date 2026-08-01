@@ -11,12 +11,12 @@
 
 import { JC, isDiscoveryLibraryConfigured } from '../globals';
 import {
+    carryViewRootAcrossNavigation,
     type CurrentViewRoot,
     navDedupKey,
     onNavigate,
     onViewPage,
     queryElementsById,
-    recordViewRootShown,
     resolveCurrentViewRoot,
 } from '../core/navigation';
 import { getHeaderRightContainer } from '../enhanced/helpers';
@@ -146,32 +146,36 @@ function libraryRouteId(navigationKey: string): string | null {
     return null;
 }
 
-function isVisibleConnectedRoot(root: HTMLElement): boolean {
-    if (!root.isConnected || root.hidden) return false;
-    if (root.getAttribute('aria-hidden') === 'true') return false;
-    return root.closest('.hide, [hidden], [aria-hidden="true"]') === null;
+/** Exact host route identity, excluding document/hash query parameters only. */
+function routePathIdentity(navigationKey: string): string {
+    const hashIndex = navigationKey.indexOf('#');
+    const documentPart = hashIndex >= 0 ? navigationKey.slice(0, hashIndex) : navigationKey;
+    const hashPart = hashIndex >= 0 ? navigationKey.slice(hashIndex) : '';
+    const documentPath = documentPart.split('?', 1)[0];
+    const hashPath = hashPart.split('?', 1)[0];
+    return `${documentPath}|${hashPath}`;
 }
 
 /**
  * Library query switches change the navigation key but intentionally reuse the
- * same React root and fire no view lifecycle event. Carry only an exact prior
- * Movie/TV owner when the route kind is unchanged and it remains the sole
- * visible instance; full route transitions continue to wait for viewshow.
+ * same React root and fire no view lifecycle event. The shared view ledger can
+ * prove that exact reuse even when this lazy feature had not activated on the
+ * prior query. It still requires one visible, previously shown root and the
+ * same library route kind; full route transitions continue to wait for
+ * viewshow.
  */
 function carryRootAcrossParamNavigation(): void {
     const currentNavigationKey = navDedupKey();
     const routeId = libraryRouteId(currentNavigationKey);
     if (!routeId) return;
+    const currentRouteIdentity = routePathIdentity(currentNavigationKey);
     const def = PAGES.find((candidate) => candidate.id === routeId);
-    const s = state.get(routeId);
-    if (!def || !s) return;
-    const root = s.owner?.root ?? s.toggleRoot;
-    const previousNavigationKey = s.owner?.navigationKey ?? s.toggleNavigationKey;
-    if (!root || !previousNavigationKey || previousNavigationKey === currentNavigationKey) return;
-    if (libraryRouteId(previousNavigationKey) !== routeId) return;
-    const visibleRoots = queryElementsById(def.pageId).filter(isVisibleConnectedRoot);
-    if (visibleRoots.length !== 1 || visibleRoots[0] !== root) return;
-    recordViewRootShown(root);
+    if (!def) return;
+    carryViewRootAcrossNavigation(
+        def.pageId,
+        (navigationKey) => libraryRouteId(navigationKey) === routeId
+            && routePathIdentity(navigationKey) === currentRouteIdentity,
+    );
 }
 
 /** The exact visible library page instance among cached Movies/TV roots, or null. */
@@ -425,6 +429,10 @@ function ensureToggle(def: LibraryPageDef, current: CurrentViewRoot, context: Id
 function inject(context: IdentityContext): void {
     if (!JC.identity.isCurrent(context)) return;
     if (!enabled()) return;
+    // Reconcile from the boot-owned route ledger here—not only from this lazy
+    // feature's listener—so activation after one or several parameter changes
+    // can still prove uninterrupted reuse of the exact native root.
+    carryRootAcrossParamNavigation();
     const view = currentPage();
     // Tear down panes/toggles for any page we've navigated away from.
     for (const p of PAGES) {
@@ -492,10 +500,7 @@ export function initLibraryTab(): void {
     lifecycle = JC.core.lifecycle!.register('discovery-library-tab');
     ensureCss();
     lifecycle.track(JC.core.dom!.onBodyMutation('jc-discovery-library', () => scheduleInject(context)));
-    lifecycle.track(onNavigate(() => {
-        carryRootAcrossParamNavigation();
-        scheduleInject(context);
-    }));
+    lifecycle.track(onNavigate(() => scheduleInject(context)));
     lifecycle.track(onViewPage(() => scheduleInject(context)));
     lifecycle.addListener(window, 'jc:config-changed', handleConfigChanged);
     scheduleInject(context);

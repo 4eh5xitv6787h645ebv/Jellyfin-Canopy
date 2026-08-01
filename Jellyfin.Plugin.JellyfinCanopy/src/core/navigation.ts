@@ -97,6 +97,7 @@ export function navDedupKey(
 
 interface ShownRootRecord {
     navigationKey: string;
+    navigationOrdinal: number;
     sequence: number;
 }
 
@@ -109,6 +110,29 @@ export interface CurrentViewRoot {
 let shownRoots = new WeakMap<HTMLElement, ShownRootRecord>();
 let showSequence = 0;
 let everRecordedViewLifecycle = false;
+
+interface NavigationEvidence {
+    key: string;
+    ordinal: number;
+}
+
+// Long enough for realistic cached-page reuse, while deliberately bounded so
+// a very old root is never trusted after its intervening route evidence has
+// been discarded.
+const NAVIGATION_EVIDENCE_LIMIT = 64;
+let navigationOrdinal = 0;
+let navigationEvidence: NavigationEvidence[] = [];
+
+function recordNavigationEvidence(key: string): number {
+    const latest = navigationEvidence.at(-1);
+    if (latest?.key === key) return latest.ordinal;
+    const entry = { key, ordinal: ++navigationOrdinal };
+    navigationEvidence.push(entry);
+    if (navigationEvidence.length > NAVIGATION_EVIDENCE_LIMIT) {
+        navigationEvidence = navigationEvidence.slice(-NAVIGATION_EVIDENCE_LIMIT);
+    }
+    return entry.ordinal;
+}
 
 function escapeAttributeValue(value: string): string {
     if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') {
@@ -137,8 +161,10 @@ function isVisibleConnectedRoot(root: HTMLElement): boolean {
 /** Record one native view instance as shown for the current navigation. */
 export function recordViewRootShown(element: Element | null | undefined): void {
     if (!(element instanceof HTMLElement)) return;
+    const navigationKey = navDedupKey();
     shownRoots.set(element, {
-        navigationKey: navDedupKey(),
+        navigationKey,
+        navigationOrdinal: recordNavigationEvidence(navigationKey),
         sequence: ++showSequence,
     });
     everRecordedViewLifecycle = true;
@@ -184,11 +210,58 @@ export function resolveCurrentViewRoot(pageId: string): CurrentViewRoot | null {
     return null;
 }
 
+/**
+ * Carry an exact, previously shown root across a navigation that the caller
+ * knows reuses the same native page instance (for example, a library query
+ * change). Unlike boot-time adoption, this requires the sole visible root to
+ * already have a lifecycle record, so an unstamped outgoing root can never be
+ * promoted after native view lifecycle tracking has started.
+ */
+export function carryViewRootAcrossNavigation(
+    pageId: string,
+    canCarryNavigationKey: (navigationKey: string) => boolean,
+): CurrentViewRoot | null {
+    const currentNavigationKey = navDedupKey();
+    const visibleRoots = queryElementsById(pageId).filter(isVisibleConnectedRoot);
+    if (visibleRoots.length !== 1) return null;
+
+    const root = visibleRoots[0];
+    const previous = shownRoots.get(root);
+    if (!previous) return null;
+    const firstRetained = navigationEvidence[0];
+    const latest = navigationEvidence.at(-1);
+    if (!firstRetained || !latest || latest.key !== currentNavigationKey) return null;
+    if (previous.navigationOrdinal < firstRetained.ordinal) return null;
+    const previousIndex = navigationEvidence.findIndex((entry) =>
+        entry.ordinal === previous.navigationOrdinal && entry.key === previous.navigationKey);
+    if (previousIndex < 0) return null;
+    const uninterruptedChain = navigationEvidence.slice(previousIndex);
+    if (!uninterruptedChain.every((entry) => canCarryNavigationKey(entry.key))) return null;
+
+    if (previous.navigationOrdinal === latest.ordinal) {
+        return {
+            root,
+            navigationKey: previous.navigationKey,
+            showSequence: previous.sequence,
+        };
+    }
+
+    recordViewRootShown(root);
+    const carried = shownRoots.get(root)!;
+    return {
+        root,
+        navigationKey: carried.navigationKey,
+        showSequence: carried.sequence,
+    };
+}
+
 /** Test-only reset for the module-level weak ownership ledger. */
 export function resetViewRootTrackingForTests(): void {
     shownRoots = new WeakMap<HTMLElement, ShownRootRecord>();
     showSequence = 0;
     everRecordedViewLifecycle = false;
+    navigationOrdinal = 0;
+    navigationEvidence = [];
 }
 
 /**
@@ -279,6 +352,7 @@ function dispatchNavigate(event?: Event): void {
     const key = navDedupKey();
     if (key === lastDispatchedKey) return;
     lastDispatchedKey = key;
+    recordNavigationEvidence(key);
     for (const callback of navCallbacks) {
         try {
             callback(event);

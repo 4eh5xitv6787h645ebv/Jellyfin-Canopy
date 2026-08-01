@@ -10,17 +10,17 @@
       "scope": "Jellyfin.Plugin.JellyfinCanopy/src/core/**",
       "report": "coverage/coverage-summary.json",
       "measured": {
-        "coveredLines": 2705,
-        "totalLines": 3094
+        "coveredLines": 2738,
+        "totalLines": 3128
       },
       "observations": {
         "cleanRuns": 2,
-        "minimumCoveredLines": 2705,
-        "maximumCoveredLines": 2705
+        "minimumCoveredLines": 2738,
+        "maximumCoveredLines": 2738
       },
       "tolerance": {
         "missingCoveredLines": 1,
-        "rationale": "Fixing #549 centralizes duplicate notification queue resets and adds an explicit detached-realm guard before the active-to-gap timer transition. The refactor contracts the instrumented client/core scope by one line while the deterministic teardown regression advances covered lines by four. Two clean Node 22.20/V8 runs on 2026-08-01 each passed all 1,880 tests across 238 files with zero unhandled errors and reproduced exactly 2,705/3,094 (87.427%), advancing the reviewed high-water from 2,701 covered lines. Retaining the one-line instrumentation tolerance makes the new floor 2,704/3,094 (87.395%), stricter than the prior 2,700/3,095 floor (87.237%). coverage-baseline.test.js retains the exact below-floor, above-baseline, scope-change, observed-high-water, and broad-tolerance negative boundaries."
+        "rationale": "Fixing #128 adds a bounded shared navigation-evidence ledger and fail-closed exact-root carry for uninterrupted library parameter transitions. The reviewed change expands the instrumented client/core scope by 34 lines and covers 33 of them. Two clean Node 22.20/V8 runs on 2026-08-01 each passed all 1,912 tests across 240 files with zero unhandled errors and reproduced exactly 2,738/3,128 (87.532%), advancing the reviewed high-water from 2,705/3,094 (87.427%). Retaining the one-line instrumentation tolerance makes the new floor 2,737/3,128 (87.500%), stricter than the prior 2,704/3,094 floor (87.395%). coverage-baseline.test.js retains the exact below-floor, above-baseline, scope-change, observed-high-water, and broad-tolerance negative boundaries."
       }
     },
     "server": {

@@ -4,8 +4,15 @@ import type { DiscoveryFeedHandle, DiscoveryFeedOwner } from './feed';
 
 const controls = vi.hoisted(() => ({
     navigationKey: 'discovery-test-start',
-    shownRoots: new WeakMap<HTMLElement, { navigationKey: string; sequence: number }>(),
+    shownRoots: new WeakMap<HTMLElement, {
+        navigationKey: string;
+        navigationOrdinal: number;
+        sequence: number;
+    }>(),
     showSequence: 0,
+    navigationOrdinal: 0,
+    navigationEvidence: [] as Array<{ key: string; ordinal: number }>,
+    recordNavigationEvidence: (_key: string): number => 0,
     everRecordedViewLifecycle: false,
     navigateHandlers: new Set<() => void>(),
     viewHandlers: new Set<() => void>(),
@@ -16,12 +23,24 @@ const controls = vi.hoisted(() => ({
 }));
 
 vi.mock('../core/navigation', () => {
+    const recordNavigationEvidence = (key: string): number => {
+        const latest = controls.navigationEvidence.at(-1);
+        if (latest?.key === key) return latest.ordinal;
+        const entry = { key, ordinal: ++controls.navigationOrdinal };
+        controls.navigationEvidence.push(entry);
+        if (controls.navigationEvidence.length > 64) {
+            controls.navigationEvidence = controls.navigationEvidence.slice(-64);
+        }
+        return entry.ordinal;
+    };
+    controls.recordNavigationEvidence = recordNavigationEvidence;
     const queryElementsById = (id: string): HTMLElement[] =>
         Array.from(document.querySelectorAll<HTMLElement>(`[id="${id}"]`));
     const recordViewRootShown = (element: Element | null | undefined): void => {
         if (!(element instanceof HTMLElement)) return;
         controls.shownRoots.set(element, {
             navigationKey: controls.navigationKey,
+            navigationOrdinal: recordNavigationEvidence(controls.navigationKey),
             sequence: ++controls.showSequence,
         });
         controls.everRecordedViewLifecycle = true;
@@ -31,7 +50,10 @@ vi.mock('../core/navigation', () => {
             root.isConnected && !root.hidden
             && root.getAttribute('aria-hidden') !== 'true'
             && root.closest('.hide, [hidden], [aria-hidden="true"]') === null);
-        let winner: { root: HTMLElement; record: { navigationKey: string; sequence: number } } | null = null;
+        let winner: {
+            root: HTMLElement;
+            record: { navigationKey: string; navigationOrdinal: number; sequence: number };
+        } | null = null;
         for (const root of visible) {
             const record = controls.shownRoots.get(root);
             if (!record || record.navigationKey !== controls.navigationKey) continue;
@@ -51,7 +73,33 @@ vi.mock('../core/navigation', () => {
         }
         return null;
     };
+    const carryViewRootAcrossNavigation = (
+        pageId: string,
+        canCarryNavigationKey: (navigationKey: string) => boolean,
+    ) => {
+        const visible = queryElementsById(pageId).filter((root) =>
+            root.isConnected && !root.hidden
+            && root.getAttribute('aria-hidden') !== 'true'
+            && root.closest('.hide, [hidden], [aria-hidden="true"]') === null);
+        if (visible.length !== 1) return null;
+        const root = visible[0];
+        const previous = controls.shownRoots.get(root);
+        if (!previous) return null;
+        const firstRetained = controls.navigationEvidence[0];
+        const latest = controls.navigationEvidence.at(-1);
+        if (!firstRetained || !latest || latest.key !== controls.navigationKey) return null;
+        if (previous.navigationOrdinal < firstRetained.ordinal) return null;
+        const previousIndex = controls.navigationEvidence.findIndex((entry) =>
+            entry.ordinal === previous.navigationOrdinal && entry.key === previous.navigationKey);
+        if (previousIndex < 0) return null;
+        if (!controls.navigationEvidence.slice(previousIndex)
+            .every((entry) => canCarryNavigationKey(entry.key))) return null;
+        if (previous.navigationOrdinal !== latest.ordinal) recordViewRootShown(root);
+        const record = controls.shownRoots.get(root)!;
+        return { root, navigationKey: record.navigationKey, showSequence: record.sequence };
+    };
     return {
+        carryViewRootAcrossNavigation,
         navDedupKey: () => controls.navigationKey,
         queryElementsById,
         recordViewRootShown,
@@ -59,6 +107,8 @@ vi.mock('../core/navigation', () => {
         resetViewRootTrackingForTests: () => {
             controls.shownRoots = new WeakMap();
             controls.showSequence = 0;
+            controls.navigationOrdinal = 0;
+            controls.navigationEvidence = [];
             controls.everRecordedViewLifecycle = false;
         },
         onNavigate: (handler: () => void) => {
@@ -158,6 +208,7 @@ function show(root: HTMLElement, navigationKey: string): void {
 }
 
 function navigate(): void {
+    controls.recordNavigationEvidence(controls.navigationKey);
     for (const handler of [...controls.navigateHandlers]) handler();
     flushFrames();
 }
@@ -350,6 +401,108 @@ describe('Discovery library exact-root and generation ownership', () => {
         expect(root.classList.contains('jc-discovery-active')).toBe(true);
         expect(document.querySelectorAll('#jc-discovery-toggle-movies')).toHaveLength(1);
         expect(document.querySelectorAll('.jc-discovery-pane')).toHaveLength(1);
+    });
+
+    it('carries the exact shown root when lazy activation finishes after param navigation', async () => {
+        const root = page('moviesPage');
+        show(root, '/web/#/movies?topParentId=A');
+        const feed = immediateFeed('late-library-b');
+
+        // The feature was not active when Jellyfin reused the root for B, so
+        // there is no local toggle/owner state and its onNavigate listener did
+        // not observe the transition.
+        controls.navigationKey = '/web/#/movies?topParentId=B';
+        navigate();
+        initialize();
+        document.querySelector<HTMLButtonElement>('#jc-discovery-toggle-movies')!.click();
+        await settle();
+
+        expect(document.querySelectorAll('#jc-discovery-toggle-movies')).toHaveLength(1);
+        expect(controls.shownRoots.get(root)?.navigationKey)
+            .toBe('/web/#/movies?topParentId=B');
+        expect(root.querySelector('[data-feed="late-library-b"]')).toBe(feed.element);
+        expect(feed.destroy).not.toHaveBeenCalled();
+    });
+
+    it('carries an exact pre-toggle root after a missing header becomes available', () => {
+        document.querySelector('.headerRight')?.remove();
+        const root = page('moviesPage');
+        show(root, '/web/#/movies?topParentId=A');
+        initialize();
+        expect(document.querySelector('.jc-discovery-toggle')).toBeNull();
+
+        controls.navigationKey = '/web/#/movies?topParentId=B';
+        navigate();
+        document.body.appendChild(document.createElement('div')).className = 'headerRight';
+        for (const handler of [...controls.mutationHandlers]) handler();
+        flushFrames();
+
+        expect(document.querySelectorAll('#jc-discovery-toggle-movies')).toHaveLength(1);
+        expect(controls.shownRoots.get(root)?.navigationKey)
+            .toBe('/web/#/movies?topParentId=B');
+    });
+
+    it('carries a rapid uninterrupted library parameter chain before activation', () => {
+        const root = page('moviesPage');
+        show(root, '/web/#/movies?topParentId=A');
+        controls.navigationKey = '/web/#/movies?topParentId=B';
+        navigate();
+        controls.navigationKey = '/web/#/movies?topParentId=C';
+        navigate();
+
+        initialize();
+
+        expect(document.querySelectorAll('#jc-discovery-toggle-movies')).toHaveLength(1);
+        expect(controls.shownRoots.get(root)?.navigationKey)
+            .toBe('/web/#/movies?topParentId=C');
+    });
+
+    it('rejects a root whose pre-activation route chain left the library', () => {
+        const root = page('moviesPage');
+        show(root, '/web/#/movies?topParentId=A');
+        controls.navigationKey = '/web/#/home';
+        navigate();
+        controls.navigationKey = '/web/#/movies?topParentId=B';
+        navigate();
+
+        initialize();
+        expect(document.querySelector('.jc-discovery-toggle')).toBeNull();
+
+        show(root, '/web/#/movies?topParentId=B');
+        for (const handler of [...controls.viewHandlers]) handler();
+        flushFrames();
+        expect(document.querySelectorAll('#jc-discovery-toggle-movies')).toHaveLength(1);
+    });
+
+    it.each([
+        {
+            name: 'TV alias change',
+            pageId: 'tvshowsPage' as const,
+            initial: '/web/#/tv?topParentId=A',
+            target: '/web/#/tvshows?topParentId=B',
+        },
+        {
+            name: 'legacy html spelling change',
+            pageId: 'moviesPage' as const,
+            initial: '/web/#/movies?topParentId=A',
+            target: '/web/#/movies.html?topParentId=B',
+        },
+        {
+            name: 'document mount-path change',
+            pageId: 'moviesPage' as const,
+            initial: '/foo/#/movies?topParentId=A',
+            target: '/web/#/movies?topParentId=B',
+        },
+    ])('rejects pre-activation carry across a $name', ({ pageId, initial, target }) => {
+        const root = page(pageId);
+        show(root, initial);
+        controls.navigationKey = target;
+        navigate();
+
+        initialize();
+
+        expect(document.querySelector('.jc-discovery-toggle')).toBeNull();
+        expect(controls.shownRoots.get(root)?.navigationKey).toBe(initial);
     });
 
     it('maps Jellyfin 12 TV routes to the tvshows page owner across param navigation', async () => {

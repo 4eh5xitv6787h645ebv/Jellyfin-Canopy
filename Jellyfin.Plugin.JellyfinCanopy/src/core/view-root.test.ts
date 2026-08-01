@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
+    carryViewRootAcrossNavigation,
     recordViewRootShown,
     resetViewRootTrackingForTests,
     resolveCurrentViewRoot,
@@ -70,5 +71,65 @@ describe('resolveCurrentViewRoot', () => {
 
         expect(resolveCurrentViewRoot('myPreferencesMenuPage')?.root).toBe(modern);
         expect(resolveCurrentViewRoot('myPreferencesMenuPage')?.root).not.toBe(legacy);
+    });
+
+    it('carries only one exact previously shown root across an approved navigation', () => {
+        history.replaceState({}, '', '/web/#/movies?topParentId=A');
+        const root = buildRoot();
+        recordViewRootShown(root);
+
+        history.replaceState({}, '', '/web/#/movies?topParentId=B');
+        const carried = carryViewRootAcrossNavigation(
+            'myPreferencesMenuPage',
+            (key) => key.includes('/movies?'),
+        );
+
+        expect(carried?.root).toBe(root);
+        expect(carried?.navigationKey).toBe('/web/#/movies?topParentId=B');
+        expect(resolveCurrentViewRoot('myPreferencesMenuPage')?.root).toBe(root);
+    });
+
+    it('does not carry an unstamped or ambiguous visible root', () => {
+        history.replaceState({}, '', '/web/#/movies?topParentId=A');
+        const shown = buildRoot();
+        recordViewRootShown(shown);
+
+        history.replaceState({}, '', '/web/#/movies?topParentId=B');
+        const unstamped = buildRoot();
+        expect(carryViewRootAcrossNavigation('myPreferencesMenuPage', () => true)).toBeNull();
+
+        shown.remove();
+        expect(carryViewRootAcrossNavigation('myPreferencesMenuPage', () => true)).toBeNull();
+        expect(resolveCurrentViewRoot('myPreferencesMenuPage')).toBeNull();
+        unstamped.remove();
+    });
+
+    it('rejects an interrupted route chain even when it returns to the same path', () => {
+        history.replaceState({}, '', '/web/#/movies?topParentId=A');
+        const root = buildRoot();
+        recordViewRootShown(root);
+
+        history.replaceState({}, '', '/web/#/home');
+        history.replaceState({}, '', '/web/#/movies?topParentId=B');
+
+        expect(carryViewRootAcrossNavigation(
+            'myPreferencesMenuPage',
+            (key) => key.includes('/movies?'),
+        )).toBeNull();
+    });
+
+    it('fails closed when a root predates the bounded navigation evidence', () => {
+        history.replaceState({}, '', '/web/#/movies?topParentId=A');
+        const root = buildRoot();
+        recordViewRootShown(root);
+
+        for (let index = 0; index < 70; index += 1) {
+            history.replaceState({}, '', `/web/#/movies?topParentId=${index}`);
+        }
+
+        expect(carryViewRootAcrossNavigation(
+            'myPreferencesMenuPage',
+            (key) => key.includes('/movies?'),
+        )).toBeNull();
     });
 });
