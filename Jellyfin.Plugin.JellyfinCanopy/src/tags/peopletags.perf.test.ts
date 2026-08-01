@@ -6,7 +6,8 @@
 // persist the localStorage cache ONCE per settled batch (not once per person,
 // which re-serialized the entire map every time = O(N^2) main-thread work).
 // Correctness contracts must be preserved exactly: identity/navigation
-// cancellation, per-person dedup, cache TTL/ownership semantics, and
+// cancellation, per-person lookup dedup, per-card render completion,
+// cache TTL/ownership semantics, and
 // identical rendered output (age chips / place banner / deceased poster).
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JC } from '../globals';
@@ -28,6 +29,7 @@ afterAll(() => {
  * TAG_FALLBACK_CONCURRENCY).
  */
 const CONCURRENCY_CAP = 6;
+const RETRY_DELAYS_MS = [250, 500, 1000, 2000] as const;
 
 const CACHE_KEY = 'JellyfinCanopy-peopleTagsCache';
 const CACHE_TIMESTAMP_KEY = 'JellyfinCanopy-peopleTagsCacheTimestamp';
@@ -98,9 +100,11 @@ function cardFor(personId: string): HTMLElement {
     return document.querySelector<HTMLElement>(`.personCard[data-id="${personId}"]`)!;
 }
 
-function fireObserver(callback: MutationCallback): void {
+function fireObserver(callback: MutationCallback, addedNode?: Node): void {
+    const fallbackNode = Array.from(document.querySelectorAll('.personCard')).at(-1)
+        ?? document.createElement('div');
     callback(
-        [{ addedNodes: [document.createElement('div')] }] as unknown as MutationRecord[],
+        [{ addedNodes: [addedNode ?? fallbackNode] }] as unknown as MutationRecord[],
         {} as MutationObserver,
     );
 }
@@ -179,6 +183,66 @@ describe('people tags bounded-concurrency batch (BI-PERF-137)', () => {
         localStorage.clear();
         resetDetailsViewTrackingForTests();
         vi.useRealTimers();
+    });
+
+    it('R9: discovers already-mounted duplicate cast and guest cards without a synthetic mutation', async () => {
+        const { plugin } = instrumentedPlugin(() => ({
+            currentAge: 38,
+            birthPlace: 'Perth, Australia',
+        }));
+        JC.core.api = { plugin } as unknown as typeof JC.core.api;
+        mountCastPage(
+            'item-initial-discovery',
+            ['person-already-mounted', 'person-already-mounted'],
+            ['person-already-mounted'],
+        );
+
+        // The cast predates initialization and no observer callback is fired.
+        // Observation is installed first, then one normal debounced pass owns
+        // the mounted page so all concrete occurrences share one lookup.
+        surface.initializePeopleTags!();
+        expect(observerCallbacks).toHaveLength(1);
+        await vi.advanceTimersByTimeAsync(99);
+        expect(plugin).toHaveBeenCalledTimes(0);
+        await vi.advanceTimersByTimeAsync(1);
+        await vi.advanceTimersByTimeAsync(5);
+
+        expect(plugin).toHaveBeenCalledTimes(1);
+        expect(document.querySelectorAll('.personCard')).toHaveLength(3);
+        expect(document.querySelectorAll('.jc-people-age-container')).toHaveLength(3);
+        expect(document.querySelectorAll('.jc-people-place-banner')).toHaveLength(3);
+    });
+
+    it('R9: same-identity reinitialization rediscovers a mounted cast without a synthetic mutation', async () => {
+        const { plugin } = instrumentedPlugin(() => ({
+            currentAge: 39,
+            birthPlace: 'Perth, Australia',
+        }));
+        JC.core.api = { plugin } as unknown as typeof JC.core.api;
+        mountCastPage(
+            'item-reinit-discovery',
+            ['person-reinit-mounted', 'person-reinit-mounted'],
+        );
+
+        surface.initializePeopleTags!();
+        await vi.advanceTimersByTimeAsync(105);
+        expect(plugin).toHaveBeenCalledTimes(1);
+        expect(document.querySelectorAll('.jc-people-age-container')).toHaveLength(2);
+
+        // Teardown removes the old projection, but the page and identity stay
+        // put. The replacement initializer must restore both occurrences from
+        // its persistent cache without depending on a future body mutation.
+        surface.initializePeopleTags!();
+        expect(observerCallbacks).toHaveLength(2);
+        expect(document.querySelectorAll('.jc-people-age-container')).toHaveLength(0);
+        await vi.advanceTimersByTimeAsync(99);
+        expect(document.querySelectorAll('.jc-people-age-container')).toHaveLength(0);
+        await vi.advanceTimersByTimeAsync(1);
+        await vi.advanceTimersByTimeAsync(5);
+
+        expect(plugin).toHaveBeenCalledTimes(1);
+        expect(document.querySelectorAll('.jc-people-age-container')).toHaveLength(2);
+        expect(document.querySelectorAll('.jc-people-place-banner')).toHaveLength(2);
     });
 
     it('AC1/AC5: drains a 20-person cast with >1 but <=cap requests in flight', async () => {
@@ -299,12 +363,13 @@ describe('people tags bounded-concurrency batch (BI-PERF-137)', () => {
         expect(plugin).toHaveBeenCalledTimes(inFlightBeforeNavigation);
     });
 
-    it('AC3: an identity transition mid-render applies no tags and persists nothing', async () => {
+    it('AC3: an identity transition mid-render applies no duplicate tags and persists nothing', async () => {
         const { plugin, pending } = instrumentedPlugin();
         JC.core.api = { plugin } as unknown as typeof JC.core.api;
-        mountCastPage('item-ident-a', ['person-ident-a', 'person-ident-b']);
+        mountCastPage('item-ident-a', ['person-ident-a', 'person-ident-a'], ['person-ident-a']);
+        const oldCards = Array.from(document.querySelectorAll<HTMLElement>('.personCard'));
         await startProcessing();
-        expect(plugin).toHaveBeenCalledTimes(2);
+        expect(plugin).toHaveBeenCalledTimes(1);
         const writeSpy = vi.spyOn(JC.storage.local, 'write');
 
         JC.identity.transition('people-perf-server-b', 'people-perf-user-b', 'people-perf-switch');
@@ -317,13 +382,22 @@ describe('people tags bounded-concurrency batch (BI-PERF-137)', () => {
         expect(document.querySelectorAll('.jc-people-age-container')).toHaveLength(0);
         expect(document.querySelectorAll('.jc-people-place-banner')).toHaveLength(0);
         expect(document.querySelectorAll('.jc-deceased-poster')).toHaveLength(0);
+        for (const card of oldCards) {
+            expect(card.querySelector('.jc-people-age-container')).toBeNull();
+            expect(card.querySelector('.jc-people-place-banner')).toBeNull();
+            expect(card.classList.contains('jc-deceased-poster')).toBe(false);
+        }
         const labels = writeSpy.mock.calls.map((call) => call[3]);
         expect(labels.filter((label) => label === 'cache-payload')).toHaveLength(0);
         expect(labels.filter((label) => label === 'cache-timestamps')).toHaveLength(0);
     });
 
-    it('AC3: duplicate person ids fetch once and only the cast-first card renders', async () => {
-        const { plugin } = instrumentedPlugin(() => ({ currentAge: 44, birthPlace: 'Perth, Australia' }));
+    it('AC3: duplicate person ids fetch once and render every card without changing cast order or identity', async () => {
+        const { plugin } = instrumentedPlugin(() => ({
+            isDeceased: true,
+            ageAtDeath: 44,
+            birthPlace: 'Perth, Australia',
+        }));
         JC.core.api = { plugin } as unknown as typeof JC.core.api;
         window.location.hash = '#/details?id=item-dup';
         document.body.innerHTML = `
@@ -332,18 +406,165 @@ describe('people tags bounded-concurrency batch (BI-PERF-137)', () => {
                 <div id="guestCastCollapsible">${personCardHtml('person-dup')}</div>
             </div>`;
         recordDetailsViewShown(document.querySelector('#itemDetailPage'));
+        const cardsBefore = Array.from(document.querySelectorAll<HTMLElement>('.personCard'));
 
         await startProcessing();
+        await vi.advanceTimersByTimeAsync(5);
+        const ageTagsBefore = cardsBefore.map((card) => card.querySelector('.jc-people-age-container'));
+        const placeTagsBefore = cardsBefore.map((card) => card.querySelector('.jc-people-place-banner'));
         // A second observer pass must not re-process anything.
         fireObserver(observerCallbacks[observerCallbacks.length - 1]);
         await vi.advanceTimersByTimeAsync(100);
         await vi.advanceTimersByTimeAsync(5);
 
         expect(plugin).toHaveBeenCalledTimes(1);
-        const cards = document.querySelectorAll<HTMLElement>('.personCard');
-        expect(cards[0].querySelector('.jc-people-age-container')).not.toBeNull();
-        expect(cards[1].querySelector('.jc-people-age-container')).toBeNull();
-        expect(cards[2].querySelector('.jc-people-age-container')).toBeNull();
+        const cardsAfter = Array.from(document.querySelectorAll<HTMLElement>('.personCard'));
+        expect(cardsAfter.map((card) => card.parentElement?.id)).toEqual([
+            'castCollapsible',
+            'castCollapsible',
+            'guestCastCollapsible',
+        ]);
+        cardsAfter.forEach((card, index) => {
+            // The projection decorates the existing Jellyfin card in place;
+            // it must not reorder or replace duplicate cast occurrences.
+            expect(card).toBe(cardsBefore[index]);
+            expect(card.classList.contains('jc-deceased-poster')).toBe(true);
+            expect(card.querySelectorAll('.jc-people-age-container')).toHaveLength(1);
+            expect(card.querySelectorAll('.jc-people-place-banner')).toHaveLength(1);
+            expect(card.querySelector('.jc-people-age-container')).toBe(ageTagsBefore[index]);
+            expect(card.querySelector('.jc-people-place-banner')).toBe(placeTagsBefore[index]);
+            expect(card.querySelector('.jc-people-age-text')?.textContent).toBe('44y');
+            expect(card.querySelector('.jc-people-place-text')?.textContent).toBe('Perth, Australia');
+            expect(card.querySelector('.jc-people-age-container')?.getAttribute('data-jc-identity-owned'))
+                .toBe('true');
+            expect(card.querySelector('.jc-people-place-banner')?.getAttribute('data-jc-identity-owned'))
+                .toBe('true');
+        });
+    });
+
+    it('AC3: one disconnected duplicate does not prevent other live occurrences from rendering', async () => {
+        const { plugin, pending } = instrumentedPlugin();
+        JC.core.api = { plugin } as unknown as typeof JC.core.api;
+        mountCastPage(
+            'item-partial-dup',
+            ['person-partial-dup', 'person-partial-dup'],
+            ['person-partial-dup'],
+        );
+
+        const cards = Array.from(document.querySelectorAll<HTMLElement>('.personCard'));
+        await startProcessing();
+        expect(plugin).toHaveBeenCalledTimes(1);
+        expect(pending).toHaveLength(1);
+
+        // Connectivity is an occurrence-level guard: dropping the first card
+        // must not abort projection onto the other cards sharing its lookup.
+        cards[0].remove();
+        pending[0].resolve({
+            isDeceased: true,
+            ageAtDeath: 44,
+            birthPlace: 'Perth, Australia',
+        });
+        await vi.advanceTimersByTimeAsync(5);
+
+        expect(cards[0].isConnected).toBe(false);
+        expect(cards[0].classList.contains('jc-deceased-poster')).toBe(false);
+        expect(cards[0].querySelector('.jc-people-age-container')).toBeNull();
+        expect(cards[0].querySelector('.jc-people-place-banner')).toBeNull();
+        for (const card of cards.slice(1)) {
+            expect(card.isConnected).toBe(true);
+            expect(card.classList.contains('jc-deceased-poster')).toBe(true);
+            expect(card.querySelector('.jc-people-age-container')).not.toBeNull();
+            expect(card.querySelector('.jc-people-place-banner')).not.toBeNull();
+        }
+    });
+
+    it('AC3: a post-quiet duplicate reopens processing, reuses hot data, and ignores unrelated churn', async () => {
+        const { plugin } = instrumentedPlugin(() => ({ currentAge: 44, birthPlace: 'Perth, Australia' }));
+        JC.core.api = { plugin } as unknown as typeof JC.core.api;
+        mountCastPage('item-late-dup', ['person-late-dup']);
+
+        await startProcessing();
+        await vi.advanceTimersByTimeAsync(5);
+        const castCard = cardFor('person-late-dup');
+        expect(castCard.querySelectorAll('.jc-people-age-container')).toHaveLength(1);
+
+        // Let the existing two-second quiet gate close before the duplicate
+        // occurrence mounts. Relevant cast mutations must reopen that gate.
+        await vi.advanceTimersByTimeAsync(2100);
+
+        document.querySelector('#guestCastCollapsible')!.insertAdjacentHTML(
+            'beforeend',
+            personCardHtml('person-late-dup'),
+        );
+        const guestCard = document.querySelector<HTMLElement>(
+            '#guestCastCollapsible .personCard[data-id="person-late-dup"]',
+        )!;
+        fireObserver(observerCallbacks[observerCallbacks.length - 1], guestCard);
+        await vi.advanceTimersByTimeAsync(100);
+        await vi.advanceTimersByTimeAsync(5);
+
+        // The first result is reused instead of issuing another /person call,
+        // but render completion remains owned by each concrete card.
+        expect(plugin).toHaveBeenCalledTimes(1);
+        expect(castCard.querySelectorAll('.jc-people-age-container')).toHaveLength(1);
+        expect(guestCard.querySelectorAll('.jc-people-age-container')).toHaveLength(1);
+        expect(guestCard.querySelectorAll('.jc-people-place-banner')).toHaveLength(1);
+
+        const guestAgeTag = guestCard.querySelector('.jc-people-age-container');
+        await vi.advanceTimersByTimeAsync(2100);
+
+        // Unrelated same-page additions after the next quiet period must not
+        // reopen processing or even arm the debounce timer.
+        const unrelated = document.createElement('div');
+        document.querySelector('#itemDetailPage')!.appendChild(unrelated);
+        const timerCountBefore = vi.getTimerCount();
+        fireObserver(observerCallbacks[observerCallbacks.length - 1], unrelated);
+        expect(vi.getTimerCount()).toBe(timerCountBefore);
+        await vi.advanceTimersByTimeAsync(500);
+        expect(plugin).toHaveBeenCalledTimes(1);
+        expect(castCard.querySelectorAll('.jc-people-age-container')).toHaveLength(1);
+        expect(guestCard.querySelectorAll('.jc-people-age-container')).toHaveLength(1);
+        expect(guestCard.querySelector('.jc-people-age-container')).toBe(guestAgeTag);
+    });
+
+    it('AC3/R8: structurally rejects large unrelated subtrees and outside-owned person cards', async () => {
+        const { plugin } = instrumentedPlugin(() => ({ currentAge: 39 }));
+        JC.core.api = { plugin } as unknown as typeof JC.core.api;
+        mountCastPage('item-owned-scan', ['person-owned-scan']);
+
+        await startProcessing();
+        await vi.advanceTimersByTimeAsync(5);
+        await vi.advanceTimersByTimeAsync(2100);
+        expect(plugin).toHaveBeenCalledTimes(1);
+
+        // An arbitrary body subtree may be enormous and may even contain
+        // selectors that LOOK like People Tags work. Ownership must be
+        // established against the concrete cast/guest sections before any
+        // descendant traversal or selector query is attempted.
+        const unrelated = document.createElement('section');
+        unrelated.innerHTML = Array.from(
+            { length: 1000 },
+            (_, index) => personCardHtml(`outside-nested-${index}`),
+        ).join('');
+        document.body.appendChild(unrelated);
+        const unrelatedQuery = vi.spyOn(unrelated, 'querySelectorAll');
+        const treeWalker = vi.spyOn(document, 'createTreeWalker');
+        const timersBefore = vi.getTimerCount();
+        fireObserver(observerCallbacks[observerCallbacks.length - 1], unrelated);
+
+        const outsideCard = document.createElement('div');
+        outsideCard.className = 'personCard';
+        outsideCard.dataset.id = 'outside-direct';
+        outsideCard.innerHTML = '<div class="cardScalable"></div>';
+        document.body.appendChild(outsideCard);
+        fireObserver(observerCallbacks[observerCallbacks.length - 1], outsideCard);
+
+        expect(unrelatedQuery).not.toHaveBeenCalled();
+        expect(treeWalker).not.toHaveBeenCalled();
+        expect(vi.getTimerCount()).toBe(timersBefore);
+        await vi.advanceTimersByTimeAsync(500);
+        expect(plugin).toHaveBeenCalledTimes(1);
+        expect(outsideCard.querySelector('.jc-people-age-container')).toBeNull();
     });
 
     it.each([true, false])(
@@ -536,12 +757,12 @@ describe('people tags bounded-concurrency batch (BI-PERF-137)', () => {
 
     it('AC3: cards replaced mid-batch on the SAME item are re-tagged, not permanently dropped', async () => {
         // Adversarial lifecycle case: React re-renders the cast cards for the
-        // SAME item while the bounded batch is in flight. Person ids were
-        // eagerly finalized at collection time, so the results for the old
-        // (now disconnected) cards were correctly dropped BUT the remembered
-        // rerun skipped every replacement card as "already processed",
-        // finishing with zero overlays. Ids must only finalize once an overlay
-        // lands on a LIVE card.
+        // SAME item while the bounded batch is in flight. The old id-level
+        // completion model eagerly finalized actors at collection time, so the
+        // results for the old (now disconnected) cards were correctly dropped
+        // BUT the remembered rerun skipped every replacement card as "already
+        // processed", finishing with zero overlays. Completion must belong to
+        // each concrete card and only land after a definitive live result.
         const { plugin, pending } = instrumentedPlugin();
         JC.core.api = { plugin } as unknown as typeof JC.core.api;
         const castIds = Array.from({ length: 8 }, (_, index) => `person-repl-${index}`);
@@ -577,10 +798,10 @@ describe('people tags bounded-concurrency batch (BI-PERF-137)', () => {
     it('AC3/AC4: a details→details transition never processes the outgoing view under the incoming item id', async () => {
         // During Jellyfin's details→details push the URL flips to item B while
         // item A's view is still the visible one and B is not mounted yet. A
-        // shared actor must NOT be fetched/marked-processed under itemId=B off
-        // the outgoing A view, or B's real card is skipped by processedPersonIds
-        // and never tagged. getVisibleDetailsPage() reports the transition
-        // (null) so the batch/rerun defers.
+        // shared actor must NOT be fetched/rendered under itemId=B off the
+        // outgoing A view, or the result can seed B-scoped hot-cache data from
+        // the wrong page and be reused by B's real card. getVisibleDetailsPage()
+        // reports the transition (null) so the batch/rerun defers.
         const { plugin, pending } = instrumentedPlugin();
         JC.core.api = { plugin } as unknown as typeof JC.core.api;
         mountCastPage('item-trans-a', ['person-shared', 'person-a-only']);
@@ -593,8 +814,8 @@ describe('people tags bounded-concurrency batch (BI-PERF-137)', () => {
         window.location.hash = '#/details?id=item-trans-b';
         fireObserver(observerCallbacks[observerCallbacks.length - 1]);
         await vi.advanceTimersByTimeAsync(100);
-        // Settle A's in-flight requests — they must apply nothing and, crucially,
-        // must not finalize the shared actor's id under item B.
+        // Settle A's in-flight requests — they must apply nothing and must not
+        // seed or reuse item-B cache data from the outgoing page.
         for (const request of pending.splice(0, pending.length)) {
             request.resolve({ currentAge: 30 });
         }
@@ -737,45 +958,484 @@ describe('people tags bounded-concurrency batch (BI-PERF-137)', () => {
         expect(document.querySelectorAll('.jc-people-age-container')).toHaveLength(7);
     });
 
-    it('AC3: a transient fetch failure does not finalize the id — a later pass re-fetches and tags', async () => {
-        // Fail-open contract: when /person rejects (backend/TMDB blip) the id
-        // must NOT be finalized in processedPersonIds. If it were, a later pass
-        // after the backend recovers — or a card re-render — would skip it and
-        // its overlays would be absent until a full item-state reset. The first
-        // attempt is deferred (rejected); a later attempt resolves with data.
+    it('AC3/R9: duplicate cards recover automatically on one grouped backoff retry', async () => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         seedOwnedCache({});
-        const attempts = new Map<string, number>();
-        const { plugin, pending } = instrumentedPlugin((path) => {
-            const n = (attempts.get(path) ?? 0) + 1;
-            attempts.set(path, n);
-            return n === 1 ? undefined : { currentAge: 40, birthPlace: 'Perth, Australia' };
+        let attempt = 0;
+        const plugin = vi.fn(() => {
+            attempt += 1;
+            if (attempt === 1) return Promise.reject(new Error('backend down'));
+            return Promise.resolve({ currentAge: 40, birthPlace: 'Perth, Australia' });
         });
         JC.core.api = { plugin } as unknown as typeof JC.core.api;
-        const castIds = ['person-retry-a', 'person-retry-b'];
-        mountCastPage('item-retry', castIds);
+        mountCastPage(
+            'item-retry',
+            ['person-retry', 'person-retry'],
+            ['person-retry'],
+        );
 
         await startProcessing();
-        // Fail every in-flight first attempt (a transient backend outage).
-        for (const request of pending.splice(0, pending.length)) {
-            request.reject(new Error('backend down'));
-        }
-        await vi.advanceTimersByTimeAsync(5);
+        expect(plugin).toHaveBeenCalledTimes(1);
         expect(document.querySelectorAll('.jc-people-age-container')).toHaveLength(0);
 
-        // The backend recovers and the cast re-renders (fresh elements, same
-        // ids) on the SAME item. Because the ids were released, not finalized,
-        // the replacement cards re-fetch and tag.
-        document.querySelector('#castCollapsible')!.innerHTML = castIds.map(personCardHtml).join('');
-        fireObserver(observerCallbacks[observerCallbacks.length - 1]);
+        // A relevant duplicate mounting during backoff joins the pending
+        // attempt instead of creating a parallel observer-owned retry chain.
+        document.querySelector('#guestCastCollapsible')!.insertAdjacentHTML(
+            'beforeend',
+            personCardHtml('person-retry'),
+        );
+        const addedCard = Array.from(document.querySelectorAll<HTMLElement>('.personCard')).at(-1)!;
+        fireObserver(observerCallbacks[observerCallbacks.length - 1], addedCard);
+        await vi.advanceTimersByTimeAsync(100);
+        expect(plugin).toHaveBeenCalledTimes(1);
+
+        // Recovery is automatic, and every duplicate shares the single
+        // request made by the backoff attempt.
+        await vi.advanceTimersByTimeAsync(RETRY_DELAYS_MS[0] - 100 - 1);
+        expect(plugin).toHaveBeenCalledTimes(1);
+        await vi.advanceTimersByTimeAsync(1);
+        await vi.advanceTimersByTimeAsync(5);
+
+        expect(plugin).toHaveBeenCalledTimes(2);
+        for (const card of document.querySelectorAll<HTMLElement>('.personCard')) {
+            expect(card.querySelector('.jc-people-age-container')).not.toBeNull();
+            expect(card.querySelector('.jc-people-place-banner')).not.toBeNull();
+        }
+    });
+
+    it('R9: disabling while a retry waits prevents every later call and render', async () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        let attempt = 0;
+        const plugin = vi.fn(() => {
+            attempt += 1;
+            if (attempt === 1) return Promise.reject(new Error('backend down'));
+            return Promise.resolve({
+                currentAge: 40,
+                birthPlace: 'Perth, Australia',
+            });
+        });
+        JC.core.api = { plugin } as unknown as typeof JC.core.api;
+        mountCastPage(
+            'item-disable-retry-wait',
+            ['person-disable-retry', 'person-disable-retry'],
+            ['person-disable-retry'],
+        );
+
+        surface.initializePeopleTags!();
+        await vi.advanceTimersByTimeAsync(100);
+        expect(plugin).toHaveBeenCalledTimes(1);
+        expect(document.querySelectorAll('.jc-people-age-container')).toHaveLength(0);
+
+        // The first failure has armed a retry whose backend result would now
+        // succeed. Disable before its boundary and let every ladder delay pass:
+        // the stale timer must retire its owner without issuing or projecting.
+        JC.currentSettings = { peopleTagsEnabled: false };
+        await vi.advanceTimersByTimeAsync(
+            RETRY_DELAYS_MS.reduce((total, delay) => total + delay, 0) + 10_000,
+        );
+
+        expect(plugin).toHaveBeenCalledTimes(1);
+        expect(document.querySelectorAll('.jc-people-age-container')).toHaveLength(0);
+        expect(document.querySelectorAll('.jc-people-place-banner')).toHaveLength(0);
+    });
+
+    it('R9: disabling during an in-flight lookup rejects its later render and retry work', async () => {
+        const { plugin, pending } = instrumentedPlugin();
+        JC.core.api = { plugin } as unknown as typeof JC.core.api;
+        mountCastPage(
+            'item-disable-inflight',
+            ['person-disable-inflight', 'person-disable-inflight'],
+            ['person-disable-inflight'],
+        );
+
+        surface.initializePeopleTags!();
+        await vi.advanceTimersByTimeAsync(100);
+        expect(plugin).toHaveBeenCalledTimes(1);
+        expect(pending).toHaveLength(1);
+
+        JC.currentSettings = { peopleTagsEnabled: false };
+        pending.shift()!.resolve({
+            currentAge: 40,
+            birthPlace: 'Perth, Australia',
+            isDeceased: true,
+        });
+        await vi.advanceTimersByTimeAsync(5);
+        await vi.advanceTimersByTimeAsync(
+            RETRY_DELAYS_MS.reduce((total, delay) => total + delay, 0) + 10_000,
+        );
+
+        expect(plugin).toHaveBeenCalledTimes(1);
+        expect(document.querySelectorAll('.jc-people-age-container')).toHaveLength(0);
+        expect(document.querySelectorAll('.jc-people-place-banner')).toHaveLength(0);
+        expect(document.querySelectorAll('.jc-deceased-poster')).toHaveLength(0);
+        expect(localStorage.getItem(CACHE_KEY)).toBeNull();
+    });
+
+    it('AC3/R9: in-flight additions coalesce into each counted retry at exact ladder boundaries', async () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        seedOwnedCache({});
+        const { plugin, pending } = instrumentedPlugin();
+        JC.core.api = { plugin } as unknown as typeof JC.core.api;
+        mountCastPage(
+            'item-retry-inflight',
+            ['person-retry-inflight', 'person-retry-inflight'],
+            ['person-retry-inflight'],
+        );
+
+        await startProcessing();
+        expect(plugin).toHaveBeenCalledTimes(1);
+
+        // Hold and fail the initial request plus the first three retries. A
+        // new owned duplicate mounts while EACH failing request is in flight.
+        // It must join the next scheduled fanout; it must never drain the
+        // remembered rerun immediately or create an uncounted parallel call.
+        for (let index = 0; index < RETRY_DELAYS_MS.length; index += 1) {
+            document.querySelector('#guestCastCollapsible')!.insertAdjacentHTML(
+                'beforeend',
+                personCardHtml('person-retry-inflight'),
+            );
+            const addedCard = Array.from(document.querySelectorAll<HTMLElement>('.personCard')).at(-1)!;
+            fireObserver(observerCallbacks[observerCallbacks.length - 1], addedCard);
+            await vi.advanceTimersByTimeAsync(100);
+
+            expect(plugin).toHaveBeenCalledTimes(index + 1);
+            const failingRequest = pending.shift();
+            expect(failingRequest).toBeDefined();
+            failingRequest!.reject(new Error(`backend down ${index}`));
+            await vi.advanceTimersByTimeAsync(0);
+
+            // No immediate rerun: the next request starts on, and only on,
+            // this ladder entry's exact boundary.
+            expect(plugin).toHaveBeenCalledTimes(index + 1);
+            await vi.advanceTimersByTimeAsync(RETRY_DELAYS_MS[index] - 1);
+            expect(plugin).toHaveBeenCalledTimes(index + 1);
+            await vi.advanceTimersByTimeAsync(1);
+            expect(plugin).toHaveBeenCalledTimes(index + 2);
+        }
+
+        // The fourth counted retry recovers. Every duplicate collected across
+        // the failed in-flight waves receives the one grouped result.
+        expect(plugin).toHaveBeenCalledTimes(1 + RETRY_DELAYS_MS.length);
+        const recovery = pending.shift();
+        expect(recovery).toBeDefined();
+        recovery!.resolve({ currentAge: 40, birthPlace: 'Perth, Australia' });
+        await vi.advanceTimersByTimeAsync(5);
+
+        expect(pending).toHaveLength(0);
+        expect(document.querySelectorAll('.personCard')).toHaveLength(7);
+        expect(document.querySelectorAll('.jc-people-age-container')).toHaveLength(7);
+        expect(document.querySelectorAll('.jc-people-place-banner')).toHaveLength(7);
+    });
+
+    it('AC3/R9: hidden time consumes neither retry calls nor retry-attempt budget', async () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        let hidden = false;
+        vi.spyOn(document, 'visibilityState', 'get').mockImplementation(
+            () => (hidden ? 'hidden' : 'visible'),
+        );
+        const plugin = vi.fn(() => Promise.reject(new Error('backend down')));
+        JC.core.api = { plugin } as unknown as typeof JC.core.api;
+        mountCastPage('item-retry-hidden', ['person-retry-hidden', 'person-retry-hidden']);
+
+        await startProcessing();
+        expect(plugin).toHaveBeenCalledTimes(1);
+
+        for (let index = 0; index < RETRY_DELAYS_MS.length; index += 1) {
+            hidden = true;
+            document.dispatchEvent(new Event('visibilitychange'));
+            await vi.advanceTimersByTimeAsync(50_000);
+            expect(plugin).toHaveBeenCalledTimes(index + 1);
+
+            hidden = false;
+            document.dispatchEvent(new Event('visibilitychange'));
+            await vi.advanceTimersByTimeAsync(RETRY_DELAYS_MS[index] - 1);
+            expect(plugin).toHaveBeenCalledTimes(index + 1);
+            await vi.advanceTimersByTimeAsync(1);
+            expect(plugin).toHaveBeenCalledTimes(index + 2);
+        }
+
+        // The same four-entry ladder is exhausted after visibility-resumed
+        // attempts; hidden intervals did not burn entries or spawn requests.
+        await vi.advanceTimersByTimeAsync(10_000);
+        expect(plugin).toHaveBeenCalledTimes(1 + RETRY_DELAYS_MS.length);
+    });
+
+    it('AC3/R9: persistent failure exhausts one bounded ladder and a future relevant mutation recovers', async () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        seedOwnedCache({});
+        let backendHealthy = false;
+        const plugin = vi.fn(() => {
+            if (!backendHealthy) return Promise.reject(new Error('backend down'));
+            return Promise.resolve({ currentAge: 41, birthPlace: 'Perth, Australia' });
+        });
+        JC.core.api = { plugin } as unknown as typeof JC.core.api;
+        mountCastPage(
+            'item-retry-cap',
+            ['person-retry-cap', 'person-retry-cap'],
+            ['person-retry-cap'],
+        );
+
+        await startProcessing();
+        await vi.advanceTimersByTimeAsync(
+            RETRY_DELAYS_MS.reduce((total, delay) => total + delay, 0) + 5,
+        );
+
+        // One initial lookup plus four retries, with duplicates still grouped.
+        expect(plugin).toHaveBeenCalledTimes(1 + RETRY_DELAYS_MS.length);
+        expect(document.querySelectorAll('.jc-people-age-container')).toHaveLength(0);
+        await vi.advanceTimersByTimeAsync(10_000);
+        expect(plugin).toHaveBeenCalledTimes(1 + RETRY_DELAYS_MS.length);
+
+        // Exhaustion is not permanent poison. A later relevant occurrence
+        // starts fresh and fans one recovered lookup out to every live card.
+        backendHealthy = true;
+        document.querySelector('#guestCastCollapsible')!.insertAdjacentHTML(
+            'beforeend',
+            personCardHtml('person-retry-cap'),
+        );
+        const addedCard = Array.from(document.querySelectorAll<HTMLElement>('.personCard')).at(-1)!;
+        fireObserver(observerCallbacks[observerCallbacks.length - 1], addedCard);
         await vi.advanceTimersByTimeAsync(100);
         await vi.advanceTimersByTimeAsync(5);
 
-        for (const id of castIds) {
-            expect(cardFor(id).querySelector('.jc-people-age-container')).not.toBeNull();
+        expect(plugin).toHaveBeenCalledTimes(2 + RETRY_DELAYS_MS.length);
+        expect(document.querySelectorAll('.jc-people-age-container')).toHaveLength(4);
+        expect(document.querySelectorAll('.jc-people-place-banner')).toHaveLength(4);
+    });
+
+    it('AC3/R9: same-identity navigation cancels the outgoing page retry ladder', async () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const plugin = vi.fn((path: string) => {
+            if (path.includes('person-retry-nav-a')) return Promise.reject(new Error('backend down'));
+            return Promise.resolve({ currentAge: 42 });
+        });
+        JC.core.api = { plugin } as unknown as typeof JC.core.api;
+        mountCastPage('item-retry-nav-a', ['person-retry-nav-a', 'person-retry-nav-a']);
+
+        await startProcessing();
+        expect(plugin).toHaveBeenCalledTimes(1);
+
+        mountCastPage('item-retry-nav-b', ['person-retry-nav-b']);
+        const currentCard = cardFor('person-retry-nav-b');
+        fireObserver(observerCallbacks[observerCallbacks.length - 1], currentCard);
+        await vi.advanceTimersByTimeAsync(100);
+        await vi.advanceTimersByTimeAsync(5);
+        await vi.advanceTimersByTimeAsync(10_000);
+
+        const paths = plugin.mock.calls.map((call) => String(call[0]));
+        expect(paths.filter((path) => path.includes('person-retry-nav-a'))).toHaveLength(1);
+        expect(paths.filter((path) => path.includes('person-retry-nav-b'))).toHaveLength(1);
+        expect(currentCard.querySelector('.jc-people-age-container')).not.toBeNull();
+    });
+
+    it('AC3/R9: details-to-non-details navigation releases a hidden retry owner before a fresh ladder', async () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        let hidden = false;
+        vi.spyOn(document, 'visibilityState', 'get').mockImplementation(
+            () => (hidden ? 'hidden' : 'visible'),
+        );
+        const addListener = vi.spyOn(document, 'addEventListener');
+        const removeListener = vi.spyOn(document, 'removeEventListener');
+        const plugin = vi.fn((path: string) => {
+            if (path.includes('person-retry-null-a')) return Promise.reject(new Error('backend down'));
+            return Promise.resolve({ currentAge: 42 });
+        });
+        JC.core.api = { plugin } as unknown as typeof JC.core.api;
+        mountCastPage('item-retry-null-a', ['person-retry-null-a']);
+
+        await startProcessing();
+        expect(plugin).toHaveBeenCalledTimes(1);
+        const visibilityHandler = addListener.mock.calls.find(
+            ([name]) => name === 'visibilitychange',
+        )?.[1];
+        expect(visibilityHandler).toBeDefined();
+
+        hidden = true;
+        document.dispatchEvent(new Event('visibilitychange'));
+        window.location.hash = '#/home';
+        document.body.innerHTML = '<main id="home-page"></main>';
+        fireObserver(observerCallbacks[observerCallbacks.length - 1], document.querySelector('#home-page')!);
+
+        expect(removeListener).toHaveBeenCalledWith('visibilitychange', visibilityHandler);
+        hidden = false;
+        document.dispatchEvent(new Event('visibilitychange'));
+        await vi.advanceTimersByTimeAsync(10_000);
+        expect(plugin).toHaveBeenCalledTimes(1);
+
+        // A later details item owns a fresh ladder. No callback retained from
+        // the null-route page may wake the exhausted/outgoing scope.
+        mountCastPage('item-retry-null-b', ['person-retry-null-b']);
+        const freshCard = cardFor('person-retry-null-b');
+        fireObserver(observerCallbacks[observerCallbacks.length - 1], freshCard);
+        await vi.advanceTimersByTimeAsync(100);
+        await vi.advanceTimersByTimeAsync(5);
+
+        const paths = plugin.mock.calls.map((call) => String(call[0]));
+        expect(paths.filter((path) => path.includes('person-retry-null-a'))).toHaveLength(1);
+        expect(paths.filter((path) => path.includes('person-retry-null-b'))).toHaveLength(1);
+        expect(freshCard.querySelector('.jc-people-age-container')).not.toBeNull();
+    });
+
+    it('AC3/R9: identity teardown cancels every pending retry attempt', async () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        let hidden = false;
+        vi.spyOn(document, 'visibilityState', 'get').mockImplementation(
+            () => (hidden ? 'hidden' : 'visible'),
+        );
+        const addListener = vi.spyOn(document, 'addEventListener');
+        const removeListener = vi.spyOn(document, 'removeEventListener');
+        const plugin = vi.fn(() => Promise.reject(new Error('backend down')));
+        JC.core.api = { plugin } as unknown as typeof JC.core.api;
+        mountCastPage('item-retry-identity', ['person-retry-identity']);
+
+        await startProcessing();
+        expect(plugin).toHaveBeenCalledTimes(1);
+        const visibilityHandler = addListener.mock.calls.find(
+            ([name]) => name === 'visibilitychange',
+        )?.[1];
+        expect(visibilityHandler).toBeDefined();
+
+        hidden = true;
+        document.dispatchEvent(new Event('visibilitychange'));
+
+        JC.identity.transition('people-retry-server-b', 'people-retry-user-b', 'people-retry-switch');
+        await vi.advanceTimersByTimeAsync(10_000);
+
+        expect(plugin).toHaveBeenCalledTimes(1);
+        expect(removeListener).toHaveBeenCalledWith('visibilitychange', visibilityHandler);
+        expect(document.querySelectorAll('.jc-people-age-container')).toHaveLength(0);
+    });
+
+    it('AC3: a partial person-card shell renders from hot data when its scalable anchor mounts', async () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const { plugin } = instrumentedPlugin(() => ({
+            currentAge: 43,
+            birthPlace: 'Perth, Australia',
+        }));
+        JC.core.api = { plugin } as unknown as typeof JC.core.api;
+        window.location.hash = '#/details?id=item-partial-shell';
+        document.body.innerHTML = `
+            <div id="itemDetailPage">
+                <div id="castCollapsible">
+                    <div class="personCard" data-id="person-partial-shell"></div>
+                </div>
+                <div id="guestCastCollapsible"></div>
+            </div>`;
+        recordDetailsViewShown(document.querySelector('#itemDetailPage'));
+        const card = cardFor('person-partial-shell');
+
+        await startProcessing();
+        await vi.advanceTimersByTimeAsync(5);
+        expect(plugin).toHaveBeenCalledTimes(1);
+        expect(card.querySelector('.jc-people-age-container')).toBeNull();
+        await vi.advanceTimersByTimeAsync(2100);
+
+        const shell = document.createElement('div');
+        shell.innerHTML = '<div class="cardScalable"></div>';
+        card.appendChild(shell);
+        fireObserver(observerCallbacks[observerCallbacks.length - 1], shell);
+        await vi.advanceTimersByTimeAsync(100);
+        await vi.advanceTimersByTimeAsync(5);
+
+        expect(plugin).toHaveBeenCalledTimes(1);
+        expect(card.querySelectorAll('.jc-people-age-container')).toHaveLength(1);
+        expect(card.querySelectorAll('.jc-people-place-banner')).toHaveLength(1);
+        const ageTag = card.querySelector('.jc-people-age-container');
+        const placeTag = card.querySelector('.jc-people-place-banner');
+
+        // Observer records caused by People Tags' own overlay appends are not
+        // structural shell additions and must not re-project the hot result.
+        fireObserver(observerCallbacks[observerCallbacks.length - 1], ageTag!);
+        fireObserver(observerCallbacks[observerCallbacks.length - 1], placeTag!);
+        await vi.advanceTimersByTimeAsync(500);
+        expect(plugin).toHaveBeenCalledTimes(1);
+        expect(card.querySelector('.jc-people-age-container')).toBe(ageTag);
+        expect(card.querySelector('.jc-people-place-banner')).toBe(placeTag);
+    });
+
+    it('AC3/R8: a direct scalable-anchor addition is detected inside the owned card', async () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const { plugin } = instrumentedPlugin(() => ({
+            currentAge: 43,
+            birthPlace: 'Perth, Australia',
+        }));
+        JC.core.api = { plugin } as unknown as typeof JC.core.api;
+        window.location.hash = '#/details?id=item-direct-anchor';
+        document.body.innerHTML = `
+            <div id="itemDetailPage">
+                <div id="castCollapsible">
+                    <div class="personCard" data-id="person-direct-anchor"></div>
+                </div>
+                <div id="guestCastCollapsible"></div>
+            </div>`;
+        recordDetailsViewShown(document.querySelector('#itemDetailPage'));
+        const card = cardFor('person-direct-anchor');
+
+        await startProcessing();
+        await vi.advanceTimersByTimeAsync(5);
+        await vi.advanceTimersByTimeAsync(2100);
+        expect(plugin).toHaveBeenCalledTimes(1);
+        expect(card.querySelector('.jc-people-age-container')).toBeNull();
+
+        const anchor = document.createElement('div');
+        anchor.className = 'cardScalable';
+        card.appendChild(anchor);
+        fireObserver(observerCallbacks[observerCallbacks.length - 1], anchor);
+        await vi.advanceTimersByTimeAsync(100);
+        await vi.advanceTimersByTimeAsync(5);
+
+        expect(plugin).toHaveBeenCalledTimes(1);
+        expect(card.querySelectorAll('.jc-people-age-container')).toHaveLength(1);
+        expect(card.querySelectorAll('.jc-people-place-banner')).toHaveLength(1);
+    });
+
+    it('AC3/R8: owned descendant traversal yields after the two-millisecond batch budget', async () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const { plugin } = instrumentedPlugin(() => ({ currentAge: 43 }));
+        JC.core.api = { plugin } as unknown as typeof JC.core.api;
+        window.location.hash = '#/details?id=item-budget-anchor';
+        document.body.innerHTML = `
+            <div id="itemDetailPage">
+                <div id="castCollapsible">
+                    <div class="personCard" data-id="person-budget-anchor"></div>
+                </div>
+                <div id="guestCastCollapsible"></div>
+            </div>`;
+        recordDetailsViewShown(document.querySelector('#itemDetailPage'));
+        const card = cardFor('person-budget-anchor');
+
+        await startProcessing();
+        await vi.advanceTimersByTimeAsync(5);
+        await vi.advanceTimersByTimeAsync(2100);
+        expect(card.querySelector('.jc-people-age-container')).toBeNull();
+
+        const shell = document.createElement('div');
+        let parent = shell;
+        for (let index = 0; index < 20; index += 1) {
+            const child = document.createElement('div');
+            parent.appendChild(child);
+            parent = child;
         }
-        // Two failed first attempts + two successful re-fetches.
-        expect(plugin).toHaveBeenCalledTimes(4);
+        parent.className = 'cardScalable';
+        card.appendChild(shell);
+
+        let clock = 0;
+        const performanceNow = vi.spyOn(performance, 'now').mockImplementation(() => {
+            clock += 1;
+            return clock;
+        });
+        fireObserver(observerCallbacks[observerCallbacks.length - 1], shell);
+
+        // The deep anchor is not reached in the observer callback. A zero-delay
+        // continuation owns the remaining traversal instead of letting one
+        // body mutation monopolise the main thread.
+        expect(performanceNow).toHaveBeenCalled();
+        expect(card.querySelector('.jc-people-age-container')).toBeNull();
+        expect(vi.getTimerCount()).toBeGreaterThan(0);
+
+        await vi.advanceTimersByTimeAsync(250);
+        expect(plugin).toHaveBeenCalledTimes(1);
+        expect(card.querySelectorAll('.jc-people-age-container')).toHaveLength(1);
     });
 
     it('AC4: a completion timer does not preempt a guest section still queued in the debounce', async () => {

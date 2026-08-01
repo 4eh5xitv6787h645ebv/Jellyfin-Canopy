@@ -66,7 +66,7 @@ describe('people tags identity lifecycle', () => {
         const disconnects: ReturnType<typeof vi.fn>[] = [];
         JC.helpers = {
             ...originalHelpers,
-            createObserver: vi.fn((_id, callback) => {
+            createObserver: vi.fn((_id: string, callback: MutationCallback) => {
                 callbacks.push(callback);
                 const disconnect = vi.fn();
                 disconnects.push(disconnect);
@@ -74,7 +74,7 @@ describe('people tags identity lifecycle', () => {
             }),
         };
 
-        const responseA = deferred<any>();
+        const responseA = deferred<unknown>();
         const plugin = vi.fn()
             .mockReturnValueOnce(responseA.promise)
             .mockResolvedValueOnce({ currentAge: 44, birthPlace: 'Perth, Australia' });
@@ -86,7 +86,7 @@ describe('people tags identity lifecycle', () => {
         surface.initializePeopleTags!();
         expect(callbacks).toHaveLength(1);
 
-        callbacks[0]([{ addedNodes: [document.createElement('div')] }] as unknown as MutationRecord[], {} as MutationObserver);
+        callbacks[0]([{ addedNodes: [cardA] }] as unknown as MutationRecord[], {} as MutationObserver);
         await vi.advanceTimersByTimeAsync(100);
         expect(plugin).toHaveBeenCalledTimes(1);
 
@@ -102,7 +102,7 @@ describe('people tags identity lifecycle', () => {
 
         // Even if a queued copy of A's observer callback is delivered, its
         // captured epoch keeps it dormant.
-        callbacks[0]([{ addedNodes: [document.createElement('div')] }] as unknown as MutationRecord[], {} as MutationObserver);
+        callbacks[0]([{ addedNodes: [cardA] }] as unknown as MutationRecord[], {} as MutationObserver);
         await vi.advanceTimersByTimeAsync(100);
         expect(plugin).toHaveBeenCalledTimes(1);
 
@@ -110,7 +110,7 @@ describe('people tags identity lifecycle', () => {
         const cardB = mountPersonCard('person-b');
         surface.initializePeopleTags!();
         expect(callbacks).toHaveLength(2);
-        callbacks[1]([{ addedNodes: [document.createElement('div')] }] as unknown as MutationRecord[], {} as MutationObserver);
+        callbacks[1]([{ addedNodes: [cardB] }] as unknown as MutationRecord[], {} as MutationObserver);
         await vi.advanceTimersByTimeAsync(100);
         await Promise.resolve();
         await Promise.resolve();

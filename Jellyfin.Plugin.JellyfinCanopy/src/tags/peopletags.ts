@@ -70,6 +70,21 @@ const JC = JEBase as typeof JEBase & {
 export const PEOPLE_TAGS_CONCURRENCY = 6;
 
 /**
+ * PERF(R9/#361): one bounded, item/page-owned retry ladder for transient
+ * person lookups. Four retries after the initial attempt cover short backend
+ * stalls without turning a persistent outage into an unbounded request loop.
+ */
+const PEOPLE_TAGS_RETRY_DELAYS_MS = [250, 500, 1000, 2000] as const;
+
+/**
+ * PERF(R8/#361): body-observer work may inspect descendants only after an
+ * added node is structurally proven to intersect the owned cast surfaces.
+ * Traversal then yields after this small synchronous budget and resumes from
+ * the same cursor asynchronously, keeping large React mounts off one frame.
+ */
+const PEOPLE_TAGS_OBSERVER_SCAN_BUDGET_MS = 2;
+
+/**
  * PERF(#359) GLOBAL request budget. The per-batch worker pool caps concurrency
  * WITHIN one generation, but a same-identity reinitialization (a supported
  * settings restart) starts a fresh pool while the retired generation's requests
@@ -172,12 +187,19 @@ function initializePeopleTags(): void {
     const context = JC.identity.capture();
     if (!context || !JC.identity.isCurrent(context)) return;
     // Capture THIS initializer's generation (teardown above already bumped the
-    // counter). isCurrent() now means "this closure is still the live one AND
-    // the identity is unchanged" — a later initialize/teardown makes the first
-    // conjunct false, retiring every guard downstream without a per-call edit.
+    // counter). generationIsCurrent() means "this closure is still the live
+    // one AND the identity is unchanged" — a later initialize/teardown makes
+    // the first conjunct false, retiring every guard downstream without a
+    // per-call edit.
     const myGeneration = peopleTagsGeneration;
-    const isCurrent = (): boolean =>
+    const generationIsCurrent = (): boolean =>
         peopleTagsGeneration === myGeneration && JC.identity.isCurrent(context);
+    // User settings can disable this feature without changing identity or
+    // generation. Treat that as an immediate work fence so waiting retries,
+    // semaphore waiters, in-flight results and render commits cannot outlive
+    // the visible toggle state.
+    const isCurrent = (): boolean =>
+        generationIsCurrent() && JC.currentSettings?.peopleTagsEnabled === true;
     const timers = new Set<number>();
     let observerHandle: { disconnect?: () => void; unsubscribe?: () => void } | null = null;
 
@@ -190,7 +212,11 @@ function initializePeopleTags(): void {
     const schedule = (fn: () => void, delay: number): number => {
         const timer = window.setTimeout(() => {
             timers.delete(timer);
-            if (isCurrent()) fn();
+            // Generation ownership, rather than feature eligibility, decides
+            // whether the callback may run: a timer whose feature was disabled
+            // still needs to clear its retry/debounce bookkeeping, but every
+            // work path below rechecks isCurrent() before fetching or rendering.
+            if (generationIsCurrent()) fn();
         }, delay);
         timers.add(timer);
         return timer;
@@ -275,7 +301,6 @@ function initializePeopleTags(): void {
     Hot.peopleTags = hotPeopleTags;
 
     let processedCastMembers = new WeakSet<Element>();
-    let processedPersonIds = new Set<string>();
     let lastProcessedItemId: string | null = null;
     let peopleTagsComplete = false; // Set true after all cast members tagged for current item
     let isProcessing = false;
@@ -286,7 +311,57 @@ function initializePeopleTags(): void {
     // stays untagged after a stale batch exits.
     let rerunRequested = false;
 
+    // PERF(R9/#361): a SINGLE retry ladder belongs to one concrete visible
+    // page + item under this initializer's captured identity/generation.
+    // `retryAttempts` counts automatic retries that actually STARTED while
+    // visible (the initial observer-driven request is not part of the four-
+    // entry delay table). A hidden tab owns no timer and consumes no entry.
+    let retryTimer: number | null = null;
+    let retryPage: HTMLElement | null = null;
+    let retryItemId: string | null = null;
+    let retryAttempts = 0;
+    let retryWaiting = false;
+    let retryVisibilityListener: (() => void) | null = null;
+    // Installed by initialize() once its observer scan cursor exists. Cleanup
+    // invokes the hook so no deferred traversal retains an old page/generation.
+    let cancelPendingObserverScan: (() => void) | null = null;
+
+    const retryScopeMatches = (page: HTMLElement, itemId: string): boolean =>
+        retryPage === page && retryItemId === itemId;
+
+    const pageScopeIsCurrent = (page: HTMLElement, itemId: string): boolean => {
+        if (!isCurrent()) return false;
+        const visible = getVisibleDetailsPage();
+        return visible !== null && visible.page === page && visible.itemId === itemId;
+    };
+
+    const clearRetryTimer = (): void => {
+        if (retryTimer !== null) {
+            clearTimeout(retryTimer);
+            timers.delete(retryTimer);
+        }
+        retryTimer = null;
+    };
+
+    const removeRetryVisibilityListener = (): void => {
+        if (retryVisibilityListener === null) return;
+        document.removeEventListener('visibilitychange', retryVisibilityListener);
+        retryVisibilityListener = null;
+    };
+
+    const resetRetryLadder = (): void => {
+        clearRetryTimer();
+        removeRetryVisibilityListener();
+        retryPage = null;
+        retryItemId = null;
+        retryAttempts = 0;
+        retryWaiting = false;
+    };
+
     activePeopleTagsCleanup = (clearPersistent) => {
+        cancelPendingObserverScan?.();
+        cancelPendingObserverScan = null;
+        resetRetryLadder();
         for (const timer of timers) clearTimeout(timer);
         timers.clear();
         if (observerHandle?.unsubscribe) observerHandle.unsubscribe();
@@ -388,9 +463,10 @@ function initializePeopleTags(): void {
      * map per person (that was O(N^2) main-thread JSON work across a cast).
      * `cacheChanged` tells the batch owner (processCastMembers) that one
      * settled-batch flush is required. `failed` distinguishes a TRANSIENT
-     * backend/network error (retryable — the id must NOT be finalized) from a
-     * genuine empty response (definitive — safe to finalize); only the fetch
-     * itself is gated by the global request budget so cache hits stay free.
+     * backend/network error (retryable — concrete cards remain unprocessed)
+     * from a genuine empty response (definitive — cards may be completed);
+     * only the fetch itself is gated by the global request budget so cache
+     * hits stay free.
      * @param personId
      * @param itemId (optional, for calculating age at release)
      */
@@ -428,6 +504,9 @@ function initializePeopleTags(): void {
         // batch has been retired mid-flight.
         await peopleTagsRequestGate.acquire();
         try {
+            // The setting or identity may have changed while this worker was
+            // queued behind another generation's global request permits.
+            if (!isCurrent()) return { data: null, cacheChanged: false, failed: false };
             const queryString = itemId ? `?itemId=${encodeURIComponent(itemId)}` : '';
             const data = await JC.core.api.plugin(`/person/${encodeURIComponent(personId)}${queryString}`, {
                 cacheKey: `people-tags:${cacheKey}`,
@@ -447,8 +526,8 @@ function initializePeopleTags(): void {
             return { data: null, cacheChanged: false, failed: false };
         } catch (error) {
             if (isCurrent()) console.warn(`${logPrefix} Failed to fetch person info for ${personId}:`, error);
-            // Transient failure — leave the id un-finalized so a later pass can
-            // recover it once the backend is healthy.
+            // Transient failure — let the projection owner leave every card
+            // unprocessed so a later pass can recover once the backend is healthy.
             return { data: null, cacheChanged: false, failed: true };
         } finally {
             peopleTagsRequestGate.release();
@@ -591,7 +670,7 @@ function initializePeopleTags(): void {
     }
 
     interface PersonCardTask {
-        card: HTMLElement;
+        cards: HTMLElement[];
         personId: string;
     }
 
@@ -599,23 +678,22 @@ function initializePeopleTags(): void {
      * Synchronously collect the unprocessed person-card tasks of one
      * cast/guest cast collapsible section within the OWNED visible page.
      *
-     * PERF(#359) dedup is two-tier so a card REPLACED mid-batch is never lost:
-     *  - `processedPersonIds` holds ids whose overlay already landed on a live
-     *    card in a PRIOR pass — never re-fetch those.
-     *  - `claimedIds` (batch-local) holds ids claimed by THIS collection so the
-     *    same person is fetched once even when it appears in both sections.
-     * An id is promoted into `processedPersonIds` ONLY once its overlay lands
-     * on a connected card (see the worker in processCastMembers). Eagerly
-     * marking ids processed here — as the first pass did — permanently starved
-     * every replacement card when React re-rendered the cast mid-batch.
+     * PERF(#359/#361) fetch dedup and render completion have different owners:
+     *  - `claimedTasks` groups every unprocessed card occurrence by person id,
+     *    so the batch performs one lookup even when the same person appears
+     *    repeatedly within cast or across cast/guest sections.
+     *  - `processedCastMembers` records completion per concrete card only after
+     *    a definitive result is applied. A later duplicate or React replacement
+     *    therefore reuses the hot/persistent person result and still receives
+     *    its own overlay instead of being skipped by a person-id render gate.
      * @param page - The owned visible details page to search within.
      * @param collapsibleSelector - CSS selector for the collapsible (e.g., '#castCollapsible' or '#guestCastCollapsible')
-     * @param claimedIds - Ids already claimed by this batch's collection.
+     * @param claimedTasks - Unique lookup tasks already claimed by this batch.
      */
     function collectSectionTasks(
         page: HTMLElement,
         collapsibleSelector: string,
-        claimedIds: Set<string>,
+        claimedTasks: Map<string, PersonCardTask>,
     ): PersonCardTask[] {
         const tasks: PersonCardTask[] = [];
         const collapsible = page.querySelector(collapsibleSelector);
@@ -628,18 +706,19 @@ function initializePeopleTags(): void {
 
         for (const card of castCards) {
             if (processedCastMembers.has(card)) continue;
-            processedCastMembers.add(card);
 
             const personId = card.getAttribute('data-id');
             if (!personId) continue;
 
-            // Already applied to a live card in a prior pass, or already
-            // claimed by this batch — either way, do not enqueue it again.
-            if (processedPersonIds.has(personId)) continue;
-            if (claimedIds.has(personId)) continue;
+            const claimed = claimedTasks.get(personId);
+            if (claimed) {
+                claimed.cards.push(card);
+                continue;
+            }
 
-            claimedIds.add(personId);
-            tasks.push({ card, personId });
+            const task = { cards: [card], personId };
+            claimedTasks.set(personId, task);
+            tasks.push(task);
         }
         return tasks;
     }
@@ -662,76 +741,85 @@ function initializePeopleTags(): void {
     interface PersonCardOutcome {
         /** Whether the lookup changed the persistent cache state. */
         cacheChanged: boolean;
-        /**
-         * Whether the person id may be finalized in `processedPersonIds`. True
-         * once a definitive attempt reached a LIVE card under the current batch
-         * (rendered, or the person genuinely had no data). False when the
-         * result was DROPPED because the target card disconnected, the page
-         * moved on, OR the fetch failed transiently — releasing the id so a
-         * remembered rerun (or a replacement card) re-attempts it instead of
-         * skipping it forever.
-         */
-        committed: boolean;
+        /** Whether every still-unprocessed occurrence needs a bounded retry. */
+        transientFailure: boolean;
     }
 
     /**
-     * Fetch and render one person card's overlays. Result application is
-     * guarded by the batch currency (identity + owned page/item) and card
-     * connectivity — a stale navigation mid-flight applies NO tags to the new
-     * page and does NOT commit the person id.
+     * Fetch one person's data and project it onto every matching card collected
+     * for this batch. Each application independently preserves the identity,
+     * owned-page, item, and connectivity guards; only a concrete card that
+     * receives a definitive current result is marked complete.
      */
-    async function processPersonCard(
+    async function processPersonCards(
         task: PersonCardTask,
         currentItemId: string,
         batchIsCurrent: () => boolean,
     ): Promise<PersonCardOutcome> {
-        const { card, personId } = task;
+        const { cards, personId } = task;
         try {
             const { data: personData, cacheChanged, failed } = await getPersonInfo(personId, currentItemId);
-            if (!batchIsCurrent() || !card.isConnected) return { cacheChanged, committed: false };
+            if (!batchIsCurrent()) return { cacheChanged, transientFailure: false };
             // A transient fetch failure is NOT a definitive no-data result:
-            // release the id (committed:false) so a remembered rerun or a
-            // replacement card re-attempts it once the backend recovers.
-            if (failed) return { cacheChanged, committed: false };
-            if (!personData) return { cacheChanged, committed: true };
+            // keep every concrete card unprocessed so a remembered observer
+            // pass can retry the same live elements after recovery.
+            if (failed) return { cacheChanged, transientFailure: true };
 
-            // Apply deceased styling to poster if applicable
-            if (personData.isDeceased) {
-                card.classList.add('jc-deceased-poster');
-                console.debug(`${logPrefix} Marked ${personId} as deceased`);
-            }
+            for (const card of cards) {
+                if (!batchIsCurrent()) break;
+                if (!card.isConnected) continue;
 
-            // Find the cardScalable element (image container with position: relative)
-            const cardScalable = card.querySelector('.cardScalable');
-            if (!cardScalable) {
-                console.warn(`${logPrefix} No cardScalable found for ${personId}`);
-                return { cacheChanged, committed: true };
-            }
+                // A genuine no-data result is definitive for this occurrence.
+                if (!personData) {
+                    processedCastMembers.add(card);
+                    continue;
+                }
 
-            // Remove existing tags if any
-            const existingAgeContainer = cardScalable.querySelector('.jc-people-age-container');
-            if (existingAgeContainer) {
-                existingAgeContainer.remove();
-            }
-            const existingPlaceBanner = cardScalable.querySelector('.jc-people-place-banner');
-            if (existingPlaceBanner) {
-                existingPlaceBanner.remove();
-            }
+                try {
+                    // Apply deceased styling to poster if applicable.
+                    if (personData.isDeceased) {
+                        card.classList.add('jc-deceased-poster');
+                        console.debug(`${logPrefix} Marked ${personId} as deceased`);
+                    }
 
-            // Create and append age chips (top-left) and place banner (bottom)
-            const tags = createPeopleTag(personData);
-            if (!batchIsCurrent() || !cardScalable.isConnected) return { cacheChanged, committed: false };
-            if (tags.ageContainer.children.length > 0) {
-                cardScalable.appendChild(tags.ageContainer);
+                    // Find the image container with position: relative.
+                    const cardScalable = card.querySelector('.cardScalable');
+                    if (!cardScalable) {
+                        console.warn(`${logPrefix} No cardScalable found for ${personId}`);
+                        // React may have mounted the person-card shell before
+                        // its scalable image anchor. This data-bearing card is
+                        // NOT complete; a relevant descendant mutation will
+                        // re-project the hot result once the anchor exists.
+                        continue;
+                    }
+
+                    // Remove existing tags if any.
+                    cardScalable.querySelector('.jc-people-age-container')?.remove();
+                    cardScalable.querySelector('.jc-people-place-banner')?.remove();
+
+                    // Create and append age chips (top-left) and place banner (bottom).
+                    const tags = createPeopleTag(personData);
+                    if (!batchIsCurrent() || !cardScalable.isConnected) continue;
+                    if (tags.ageContainer.children.length > 0) {
+                        cardScalable.appendChild(tags.ageContainer);
+                    }
+                    if (tags.placeContainer.children.length > 0) {
+                        cardScalable.appendChild(tags.placeContainer);
+                    }
+                    processedCastMembers.add(card);
+                } catch (error) {
+                    console.warn(`${logPrefix} Error projecting cast member ${personId}:`, error);
+                }
             }
-            if (tags.placeContainer.children.length > 0) {
-                cardScalable.appendChild(tags.placeContainer);
-            }
-            return { cacheChanged, committed: true };
+            return { cacheChanged, transientFailure: false };
         } catch (error) {
             console.warn(`${logPrefix} Error processing cast member ${personId}:`, error);
-            return { cacheChanged: false, committed: false };
+            return { cacheChanged: false, transientFailure: true };
         }
+    }
+
+    interface CastMembersOutcome {
+        transientFailure: boolean;
     }
 
     /**
@@ -744,33 +832,33 @@ function initializePeopleTags(): void {
      * renders individually as its result lands; the persistent cache is
      * flushed once after the whole batch settles.
      */
-    async function processCastMembers(page: HTMLElement, currentItemId: string): Promise<void> {
-        if (!isCurrent() || isProcessing) return;
+    async function processCastMembers(
+        page: HTMLElement,
+        currentItemId: string,
+    ): Promise<CastMembersOutcome> {
+        if (!isCurrent() || isProcessing) return { transientFailure: false };
         isProcessing = true;
+        let transientFailure = false;
 
         try {
-            // Collect both sections synchronously (cast first so duplicate
-            // person ids keep preferring the normal-cast card) from the OWNED
-            // page, then interleave so neither section starves behind the
-            // other. `claimedIds` dedups within the batch without prematurely
-            // finalizing dedup across passes.
-            const claimedIds = new Set<string>();
+            // Collect both sections synchronously from the OWNED page. Cast is
+            // collected first so the first normal-cast occurrence owns a
+            // shared person's task position; every later occurrence joins its
+            // card list. Unique cast/guest tasks are then interleaved so neither
+            // section starves behind the other.
+            const claimedTasks = new Map<string, PersonCardTask>();
             const tasks = interleaveTasks(
-                collectSectionTasks(page, '#castCollapsible', claimedIds),
-                collectSectionTasks(page, '#guestCastCollapsible', claimedIds),
+                collectSectionTasks(page, '#castCollapsible', claimedTasks),
+                collectSectionTasks(page, '#guestCastCollapsible', claimedTasks),
             );
-            if (tasks.length === 0) return;
+            if (tasks.length === 0) return { transientFailure: false };
 
             // The batch is current only while the SAME owned page is still the
             // visible details view for the SAME item. getVisibleDetailsPage()
             // returns null mid-transition (details→details push), so the batch
             // aborts rather than tagging the outgoing view under the incoming
             // item's id.
-            const batchIsCurrent = (): boolean => {
-                if (!isCurrent()) return false;
-                const visible = getVisibleDetailsPage();
-                return visible !== null && visible.page === page && visible.itemId === currentItemId;
-            };
+            const batchIsCurrent = (): boolean => pageScopeIsCurrent(page, currentItemId);
 
             let cacheChanged = false;
             let nextIndex = 0;
@@ -780,15 +868,12 @@ function initializePeopleTags(): void {
                     nextIndex += 1;
                     if (index >= tasks.length) return;
                     const task = tasks[index];
-                    const outcome = await processPersonCard(task, currentItemId, batchIsCurrent);
+                    const outcome = await processPersonCards(task, currentItemId, batchIsCurrent);
                     // Persist if ANY task changed the cache (aggregate-any, not
                     // last-write-wins — a later cache HIT must not erase an
                     // earlier fetch's need to flush).
                     if (outcome.cacheChanged) cacheChanged = true;
-                    // Finalize dedup ONLY after the overlay landed on a live
-                    // card; a dropped (disconnected) card releases its id so a
-                    // remembered rerun requeues the replacement.
-                    if (outcome.committed) processedPersonIds.add(task.personId);
+                    if (outcome.transientFailure) transientFailure = true;
                 }
             };
             const workerCount = Math.min(PEOPLE_TAGS_CONCURRENCY, tasks.length);
@@ -798,10 +883,13 @@ function initializePeopleTags(): void {
             // per person = O(N^2) across a cast).
             if (cacheChanged && isCurrent()) persistPeopleCache();
 
+            return { transientFailure };
+
         } catch (error) {
             if (isCurrent()) console.error(`${logPrefix} Error in processCastMembers:`, error);
+            return { transientFailure: true };
         } finally {
-            if (isCurrent()) isProcessing = false;
+            if (generationIsCurrent()) isProcessing = false;
         }
     }
 
@@ -814,8 +902,103 @@ function initializePeopleTags(): void {
         // Handle item details page display with an identity-owned debounce.
         // A helper-owned timeout cannot be cancelled synchronously on logout.
         let debounceTimer: number | null = null;
-        const runPeopleTags = () => {
-            if (!isCurrent()) return;
+
+        const clearDebounceTimer = (): void => {
+            if (debounceTimer === null) return;
+            clearTimeout(debounceTimer);
+            timers.delete(debounceTimer);
+            debounceTimer = null;
+        };
+
+        const documentIsVisible = (): boolean => document.visibilityState !== 'hidden';
+
+        /** Keep one listener only while a retry ladder owns a page/item. */
+        function ensureRetryVisibilityListener(): void {
+            if (retryVisibilityListener !== null) return;
+            retryVisibilityListener = () => {
+                const page = retryPage;
+                const itemId = retryItemId;
+                if (!page || !itemId || !pageScopeIsCurrent(page, itemId)) {
+                    resetRetryLadder();
+                    return;
+                }
+                if (!documentIsVisible()) {
+                    // Hidden time does not count down a partially elapsed
+                    // backoff. Visibility resumes this SAME entry in full.
+                    clearRetryTimer();
+                    return;
+                }
+                if (retryWaiting && retryTimer === null) armRetryTimer(page, itemId);
+            };
+            document.addEventListener('visibilitychange', retryVisibilityListener);
+        }
+
+        /** Arm the current unconsumed ladder entry, but only while visible. */
+        function armRetryTimer(page: HTMLElement, itemId: string): void {
+            if (!retryWaiting || retryTimer !== null) return;
+            if (!retryScopeMatches(page, itemId) || !pageScopeIsCurrent(page, itemId)) {
+                resetRetryLadder();
+                return;
+            }
+            ensureRetryVisibilityListener();
+            if (!documentIsVisible()) return;
+
+            const delay = PEOPLE_TAGS_RETRY_DELAYS_MS[retryAttempts];
+            retryTimer = schedule(() => {
+                retryTimer = null;
+                if (!retryWaiting || !retryScopeMatches(page, itemId)
+                    || !pageScopeIsCurrent(page, itemId)) {
+                    resetRetryLadder();
+                    return;
+                }
+                // A visibilitychange normally cancels this timer immediately.
+                // Recheck at the boundary for hosts that update visibilityState
+                // before delivering the event; the entry remains unconsumed.
+                if (!documentIsVisible()) return;
+
+                retryWaiting = false;
+                retryAttempts += 1;
+                peopleTagsComplete = false;
+                runPeopleTags();
+            }, delay);
+        }
+
+        /** Arm at most one automatic retry for the current page/item scope. */
+        const scheduleTransientRetry = (page: HTMLElement, itemId: string): void => {
+            if (!pageScopeIsCurrent(page, itemId)) {
+                if (retryScopeMatches(page, itemId)) resetRetryLadder();
+                return;
+            }
+            if (!retryScopeMatches(page, itemId)) {
+                resetRetryLadder();
+                retryPage = page;
+                retryItemId = itemId;
+            }
+            if (retryWaiting) return;
+            if (retryAttempts >= PEOPLE_TAGS_RETRY_DELAYS_MS.length) {
+                clearRetryTimer();
+                retryWaiting = false;
+                removeRetryVisibilityListener();
+                console.warn(`${logPrefix} Transient retry ladder exhausted for item ${itemId}`);
+                // Preserve the exhausted count as the automatic-attempt cap.
+                // Cards remain unprocessed; a future relevant mutation resets
+                // the ladder and can recover after the backend is healthy.
+                return;
+            }
+
+            retryWaiting = true;
+            ensureRetryVisibilityListener();
+            armRetryTimer(page, itemId);
+        };
+
+        function runPeopleTags(): void {
+            if (!isCurrent()) {
+                // A disabled feature may reach here from a timer already queued
+                // by the formerly enabled generation. Retire its strong page
+                // reference and visibility listener without issuing work.
+                if (generationIsCurrent()) resetRetryLadder();
+                return;
+            }
 
             // Resolve the visible details page and its item id as ONE owned
             // pair. getVisibleDetailsPage() returns null mid-transition
@@ -829,20 +1012,27 @@ function initializePeopleTags(): void {
 
             const castSection = page.querySelector('#castCollapsible');
             const guestCastSection = page.querySelector('#guestCastCollapsible');
-            if (!castSection && !guestCastSection) return;
+            if (!castSection && !guestCastSection) {
+                if (retryScopeMatches(page, itemId)) resetRetryLadder();
+                return;
+            }
 
             try {
                 // Reset cache when navigating to a new item
                 if (lastProcessedItemId !== itemId) {
+                    resetRetryLadder();
                     lastProcessedItemId = itemId;
                     processedCastMembers = new WeakSet();
-                    processedPersonIds = new Set();
                     peopleTagsComplete = false;
                     console.debug(`${logPrefix} New item detected: ${itemId}`);
                 }
 
                 // Skip if already fully processed for this item.
                 if (peopleTagsComplete) return;
+                // A queued observer debounce can outlive the failed batch that
+                // created the retry owner. It joins that counted attempt; it
+                // must not start an immediate, uncounted request in parallel.
+                if (retryScopeMatches(page, itemId) && retryWaiting) return;
                 // A batch is already draining: remember that another pass is
                 // owed (a late guest-cast mount, or a navigation to a new item)
                 // and let the settling batch pick it up. Dropping it here is
@@ -858,12 +1048,43 @@ function initializePeopleTags(): void {
                 // completions from previous navigations don't mark the wrong
                 // item as done.
                 const processingItemId = itemId;
-                void processCastMembers(page, itemId).then(() => {
-                    if (!isCurrent()) return;
-                    // A rerun was requested while this batch ran (guest cards
-                    // mounted, or the URL moved to a new item). Drain it now
-                    // instead of scheduling completion, so both sections and
-                    // the current page are always tagged.
+                void processCastMembers(page, itemId).then((outcome) => {
+                    if (!isCurrent()) {
+                        // In-flight requests cannot be forcibly aborted through
+                        // this API seam, but their result and retry owner are
+                        // synchronously fenced once they settle.
+                        if (generationIsCurrent()) resetRetryLadder();
+                        return;
+                    }
+                    // Scope retirement owns ordering first. A remembered rerun
+                    // on a DIFFERENT current page is still drained immediately;
+                    // an old page can never install a ladder for the new one.
+                    if (!pageScopeIsCurrent(page, processingItemId)) {
+                        if (retryScopeMatches(page, processingItemId)) resetRetryLadder();
+                        if (rerunRequested) {
+                            rerunRequested = false;
+                            runPeopleTags();
+                        }
+                        return;
+                    }
+                    if (outcome.transientFailure) {
+                        // Failure accounting owns same-scope reruns. Every card
+                        // added while this request was in flight is still live
+                        // and will be collected by the next COUNTED snapshot.
+                        // Cancel a not-yet-fired observer debounce for the same
+                        // reason: it coalesces into this one retry owner.
+                        rerunRequested = false;
+                        clearDebounceTimer();
+                        peopleTagsComplete = false;
+                        scheduleTransientRetry(page, processingItemId);
+                        return;
+                    }
+
+                    // A definitive settled pass ends any prior failure ladder.
+                    resetRetryLadder();
+                    // Definitive data may have landed while a new card mounted.
+                    // Its concrete occurrence was not in the settled snapshot,
+                    // so drain that owed projection now (the hot result is free).
                     if (rerunRequested) {
                         rerunRequested = false;
                         runPeopleTags();
@@ -881,6 +1102,8 @@ function initializePeopleTags(): void {
                         // newly mounted section untagged.
                         if (isCurrent() && !isProcessing && !rerunRequested
                             && debounceTimer === null
+                            && retryTimer === null
+                            && !retryWaiting
                             && lastProcessedItemId === processingItemId) {
                             peopleTagsComplete = true;
                         }
@@ -889,17 +1112,193 @@ function initializePeopleTags(): void {
             } catch (e) {
                 // Ignore errors (likely not on an item page)
             }
-        };
+        }
         const handlePeopleTags = () => {
             if (!isCurrent()) return;
-            if (debounceTimer !== null) {
-                clearTimeout(debounceTimer);
-                timers.delete(debounceTimer);
-            }
+            clearDebounceTimer();
             debounceTimer = schedule(() => {
                 debounceTimer = null;
                 runPeopleTags();
             }, 100);
+        };
+
+        /**
+         * One resumable ownership-first scan. `mutations` and TreeWalker keep
+         * their exact cursor positions across zero-delay slices; no selector
+         * query ever runs against an arbitrary added body subtree.
+         */
+        interface ObserverScanCursor {
+            page: HTMLElement;
+            itemId: string;
+            sections: Element[];
+            mutations: MutationRecord[];
+            mutationIndex: number;
+            addedNodeIndex: number;
+            pendingRoots: Element[];
+            seenRoots: WeakSet<Element>;
+            walker: TreeWalker | null;
+        }
+
+        type ObserverScanResult = 'complete' | 'overflow' | 'relevant';
+        const pendingObserverScans: ObserverScanCursor[] = [];
+        let observerScanTimer: number | null = null;
+
+        const clearPendingObserverScans = (): void => {
+            if (observerScanTimer !== null) {
+                clearTimeout(observerScanTimer);
+                timers.delete(observerScanTimer);
+            }
+            observerScanTimer = null;
+            pendingObserverScans.length = 0;
+        };
+        cancelPendingObserverScan = clearPendingObserverScans;
+
+        const cardBelongsToScan = (cursor: ObserverScanCursor, card: HTMLElement): boolean =>
+            cursor.page.contains(card) && cursor.sections.some((section) => section.contains(card));
+
+        const classifyObserverElement = (cursor: ObserverScanCursor, element: Element): boolean => {
+            if (element.matches('.personCard')
+                && cardBelongsToScan(cursor, element as HTMLElement)) {
+                return true;
+            }
+            if (!element.matches('.cardScalable')) return false;
+            const card = element.closest<HTMLElement>('.personCard');
+            if (!card || !cardBelongsToScan(cursor, card)) return false;
+            // A replacement/late anchor makes completion concrete again. This
+            // is harmless for a whole new card (it is absent from the WeakSet)
+            // and necessary for a previously completed shell.
+            processedCastMembers.delete(card);
+            return true;
+        };
+
+        /** Consume one added node (or mutation boundary) and queue owned roots. */
+        const queueNextOwnedRoots = (cursor: ObserverScanCursor): 'advanced' | 'done' => {
+            if (cursor.mutationIndex >= cursor.mutations.length) return 'done';
+            const mutation = cursor.mutations[cursor.mutationIndex];
+            if (cursor.addedNodeIndex >= mutation.addedNodes.length) {
+                cursor.mutationIndex += 1;
+                cursor.addedNodeIndex = 0;
+                return 'advanced';
+            }
+
+            const node = mutation.addedNodes[cursor.addedNodeIndex];
+            cursor.addedNodeIndex += 1;
+            if (!(node instanceof Element)) return 'advanced';
+
+            // Structural narrowing happens BEFORE descendant traversal. An
+            // added descendant scans itself; an added page/wrapper scans only
+            // the concrete cast section(s) it contains. An unrelated subtree
+            // is rejected here in O(number of owned sections).
+            for (const section of cursor.sections) {
+                let root: Element | null = null;
+                if (node === section || section.contains(node)) root = node;
+                else if (node.contains(section)) root = section;
+                if (root !== null && !cursor.seenRoots.has(root)) cursor.pendingRoots.push(root);
+            }
+            return 'advanced';
+        };
+
+        const drainObserverScan = (cursor: ObserverScanCursor): ObserverScanResult => {
+            if (!pageScopeIsCurrent(cursor.page, cursor.itemId)) return 'complete';
+            const startedAt = performance.now();
+            let didWork = false;
+
+            while (true) {
+                if (didWork && performance.now() - startedAt >= PEOPLE_TAGS_OBSERVER_SCAN_BUDGET_MS) {
+                    return 'overflow';
+                }
+
+                if (cursor.walker !== null) {
+                    const element = cursor.walker.nextNode() as Element | null;
+                    didWork = true;
+                    if (element === null) {
+                        cursor.walker = null;
+                        continue;
+                    }
+                    if (classifyObserverElement(cursor, element)) return 'relevant';
+                    continue;
+                }
+
+                const root = cursor.pendingRoots.pop();
+                if (root) {
+                    didWork = true;
+                    if (cursor.seenRoots.has(root) || !cursor.page.contains(root)) continue;
+                    cursor.seenRoots.add(root);
+                    cursor.walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+                    if (classifyObserverElement(cursor, root)) return 'relevant';
+                    continue;
+                }
+
+                const progress = queueNextOwnedRoots(cursor);
+                if (progress === 'done') return 'complete';
+                didWork = true;
+            }
+        };
+
+        const handleRelevantAddition = (page: HTMLElement, itemId: string): void => {
+            if (!pageScopeIsCurrent(page, itemId)) return;
+            clearPendingObserverScans();
+            peopleTagsComplete = false;
+            const matchesRetryScope = retryScopeMatches(page, itemId);
+            const retryExhausted = matchesRetryScope
+                && !retryWaiting
+                && retryAttempts >= PEOPLE_TAGS_RETRY_DELAYS_MS.length;
+            if ((retryPage !== null && !matchesRetryScope) || retryExhausted) {
+                resetRetryLadder();
+            } else if (matchesRetryScope && retryWaiting) {
+                // Timer-backed and hidden visibility-backed waits are the same
+                // owner: the new card joins its next counted snapshot.
+                return;
+            }
+            handlePeopleTags();
+        };
+
+        const scheduleObserverScanContinuation = (): void => {
+            if (observerScanTimer !== null || pendingObserverScans.length === 0) return;
+            observerScanTimer = schedule(() => {
+                observerScanTimer = null;
+                if (!isCurrent()) {
+                    clearPendingObserverScans();
+                    return;
+                }
+                const cursor = pendingObserverScans[0];
+                if (!cursor) return;
+                const result = drainObserverScan(cursor);
+                if (result === 'relevant') {
+                    handleRelevantAddition(cursor.page, cursor.itemId);
+                    return;
+                }
+                if (result === 'complete') pendingObserverScans.shift();
+                scheduleObserverScanContinuation();
+            }, 0);
+        };
+
+        const inspectRelevantAdditions = (
+            mutations: MutationRecord[],
+            page: HTMLElement,
+            itemId: string,
+            castSection: Element | null,
+            guestCastSection: Element | null,
+        ): void => {
+            const sections = [castSection, guestCastSection].filter((section): section is Element => section !== null);
+            const cursor: ObserverScanCursor = {
+                page,
+                itemId,
+                sections,
+                mutations,
+                mutationIndex: 0,
+                addedNodeIndex: 0,
+                pendingRoots: [],
+                seenRoots: new WeakSet<Element>(),
+                walker: null,
+            };
+            const result = drainObserverScan(cursor);
+            if (result === 'relevant') {
+                handleRelevantAddition(page, itemId);
+            } else if (result === 'overflow') {
+                pendingObserverScans.push(cursor);
+                scheduleObserverScanContinuation();
+            }
         };
 
         // Create managed observer for people tags.
@@ -908,28 +1307,35 @@ function initializePeopleTags(): void {
         observerHandle = JC.helpers.createObserver(
             'people-tags',
             (mutations) => {
-                if (!isCurrent() || !JC.currentSettings?.peopleTagsEnabled) return;
+                if (!generationIsCurrent()) return;
+                if (!isCurrent()) {
+                    clearDebounceTimer();
+                    clearPendingObserverScans();
+                    resetRetryLadder();
+                    rerunRequested = false;
+                    peopleTagsComplete = false;
+                    return;
+                }
 
-                // Reset completion flag when navigating to a different item
-                // (must happen BEFORE the peopleTagsComplete check)
+                // Navigation owns every queued callback, including the NULL id
+                // of details→non-details. Release the old page strongly held by
+                // an active OR exhausted retry and discard traversal/debounce
+                // cursors before probing whether the new route has cast work.
                 try {
                     const currentId = getItemIdFromUrl();
-                    if (currentId && currentId !== lastProcessedItemId) {
+                    if (currentId !== lastProcessedItemId) {
+                        clearDebounceTimer();
+                        clearPendingObserverScans();
+                        resetRetryLadder();
+                        rerunRequested = false;
                         peopleTagsComplete = false;
+                        if (currentId === null) {
+                            lastProcessedItemId = null;
+                            processedCastMembers = new WeakSet();
+                            return;
+                        }
                     }
                 } catch {}
-
-                if (peopleTagsComplete) return;
-
-                // Only react to actual node additions, not attribute changes
-                let hasNewNodes = false;
-                for (const mutation of mutations) {
-                    if (mutation.addedNodes.length > 0) {
-                        hasNewNodes = true;
-                        break;
-                    }
-                }
-                if (!hasNewNodes) return;
 
                 // Resolve the owned visible page (duplicate-id safe; null
                 // mid-transition). runPeopleTags re-resolves the same pair, so
@@ -941,7 +1347,13 @@ function initializePeopleTags(): void {
                 const guestCastSection = visible.page.querySelector('#guestCastCollapsible');
                 if (!castSection && !guestCastSection) return;
 
-                handlePeopleTags();
+                inspectRelevantAdditions(
+                    mutations,
+                    visible.page,
+                    visible.itemId,
+                    castSection,
+                    guestCastSection,
+                );
             },
             document.body,
             {
@@ -949,6 +1361,13 @@ function initializePeopleTags(): void {
                 subtree: true
             }
         );
+
+        // R9/#361: activation or a same-identity/config restart can occur after
+        // Jellyfin has already mounted the cast. Schedule one owned-page pass
+        // after observation begins so those cards cannot depend on an unrelated
+        // future body mutation; the normal debounce coalesces any simultaneous
+        // cast mount into this same bounded snapshot.
+        handlePeopleTags();
 
         console.debug(`${logPrefix} Initialization complete`);
     }
