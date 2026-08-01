@@ -10,7 +10,7 @@ export function isSeerrCoreEnabled(state: FeatureLoaderState): boolean {
 /** Union of routes served by dependent Seerr/Discovery feature chunks. */
 export function isSeerrCoreApplicable(state: FeatureLoaderState): boolean {
     const route = state.routeKey.toLowerCase();
-    return /#\/(?:search|movies|tvshows|details|list)(?:[/?#]|$)/.test(route);
+    return /#\/(?:search|movies|tv|tvshows|details|list)(?:[/?#]|$)/.test(route);
 }
 
 export const seerrCoreFeature: FeatureModule = Object.freeze({

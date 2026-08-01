@@ -93,6 +93,177 @@ export function navDedupKey(
     return `${loc.pathname}${loc.search}${loc.hash}`;
 }
 
+// ── Exact native-view ownership ─────────────────────────────────────────
+
+interface ShownRootRecord {
+    navigationKey: string;
+    navigationOrdinal: number;
+    sequence: number;
+}
+
+export interface CurrentViewRoot {
+    root: HTMLElement;
+    navigationKey: string;
+    showSequence: number;
+}
+
+let shownRoots = new WeakMap<HTMLElement, ShownRootRecord>();
+let showSequence = 0;
+let everRecordedViewLifecycle = false;
+
+interface NavigationEvidence {
+    key: string;
+    ordinal: number;
+}
+
+// Long enough for realistic cached-page reuse, while deliberately bounded so
+// a very old root is never trusted after its intervening route evidence has
+// been discarded.
+const NAVIGATION_EVIDENCE_LIMIT = 64;
+let navigationOrdinal = 0;
+let navigationEvidence: NavigationEvidence[] = [];
+
+function recordNavigationEvidence(key: string): number {
+    const latest = navigationEvidence.at(-1);
+    if (latest?.key === key) return latest.ordinal;
+    const entry = { key, ordinal: ++navigationOrdinal };
+    navigationEvidence.push(entry);
+    if (navigationEvidence.length > NAVIGATION_EVIDENCE_LIMIT) {
+        navigationEvidence = navigationEvidence.slice(-NAVIGATION_EVIDENCE_LIMIT);
+    }
+    return entry.ordinal;
+}
+
+function escapeAttributeValue(value: string): string {
+    if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') {
+        return CSS.escape(value);
+    }
+    return value.replace(/["\\]/g, '\\$&');
+}
+
+/**
+ * Enumerate every element carrying an exact id, including duplicate ids.
+ * Attribute selectors are intentional: selector engines may optimize `#id`
+ * through getElementById() and silently return only the first cached instance.
+ */
+export function queryElementsById(id: string, scope: ParentNode = document): HTMLElement[] {
+    return Array.from(
+        scope.querySelectorAll<HTMLElement>(`[id="${escapeAttributeValue(id)}"]`)
+    );
+}
+
+function isVisibleConnectedRoot(root: HTMLElement): boolean {
+    if (!root.isConnected || root.hidden) return false;
+    if (root.getAttribute('aria-hidden') === 'true') return false;
+    return root.closest('.hide, [hidden], [aria-hidden="true"]') === null;
+}
+
+/** Record one native view instance as shown for the current navigation. */
+export function recordViewRootShown(element: Element | null | undefined): void {
+    if (!(element instanceof HTMLElement)) return;
+    const navigationKey = navDedupKey();
+    shownRoots.set(element, {
+        navigationKey,
+        navigationOrdinal: recordNavigationEvidence(navigationKey),
+        sequence: ++showSequence,
+    });
+    everRecordedViewLifecycle = true;
+}
+
+/**
+ * Resolve the current visible instance of a native page id.
+ *
+ * Before the bundle has observed any view lifecycle event, one unique visible instance is
+ * safe to adopt: this is the normal "bundle booted on the page" case. After a
+ * lifecycle event has been observed, an unstamped visible element can be the
+ * outgoing half of a navigation transition, so callers wait for the incoming
+ * viewbeforeshow/viewshow.
+ */
+export function resolveCurrentViewRoot(pageId: string): CurrentViewRoot | null {
+    const navigationKey = navDedupKey();
+    const visibleRoots = queryElementsById(pageId).filter(isVisibleConnectedRoot);
+    let winner: { root: HTMLElement; record: ShownRootRecord } | null = null;
+
+    for (const root of visibleRoots) {
+        const record = shownRoots.get(root);
+        if (!record || record.navigationKey !== navigationKey) continue;
+        if (!winner || record.sequence > winner.record.sequence) {
+            winner = { root, record };
+        }
+    }
+
+    if (winner) {
+        return {
+            root: winner.root,
+            navigationKey: winner.record.navigationKey,
+            showSequence: winner.record.sequence,
+        };
+    }
+
+    if (!everRecordedViewLifecycle && visibleRoots.length === 1) {
+        const root = visibleRoots[0];
+        recordViewRootShown(root);
+        const record = shownRoots.get(root)!;
+        return { root, navigationKey: record.navigationKey, showSequence: record.sequence };
+    }
+
+    return null;
+}
+
+/**
+ * Carry an exact, previously shown root across a navigation that the caller
+ * knows reuses the same native page instance (for example, a library query
+ * change). Unlike boot-time adoption, this requires the sole visible root to
+ * already have a lifecycle record, so an unstamped outgoing root can never be
+ * promoted after native view lifecycle tracking has started.
+ */
+export function carryViewRootAcrossNavigation(
+    pageId: string,
+    canCarryNavigationKey: (navigationKey: string) => boolean,
+): CurrentViewRoot | null {
+    const currentNavigationKey = navDedupKey();
+    const visibleRoots = queryElementsById(pageId).filter(isVisibleConnectedRoot);
+    if (visibleRoots.length !== 1) return null;
+
+    const root = visibleRoots[0];
+    const previous = shownRoots.get(root);
+    if (!previous) return null;
+    const firstRetained = navigationEvidence[0];
+    const latest = navigationEvidence.at(-1);
+    if (!firstRetained || !latest || latest.key !== currentNavigationKey) return null;
+    if (previous.navigationOrdinal < firstRetained.ordinal) return null;
+    const previousIndex = navigationEvidence.findIndex((entry) =>
+        entry.ordinal === previous.navigationOrdinal && entry.key === previous.navigationKey);
+    if (previousIndex < 0) return null;
+    const uninterruptedChain = navigationEvidence.slice(previousIndex);
+    if (!uninterruptedChain.every((entry) => canCarryNavigationKey(entry.key))) return null;
+
+    if (previous.navigationOrdinal === latest.ordinal) {
+        return {
+            root,
+            navigationKey: previous.navigationKey,
+            showSequence: previous.sequence,
+        };
+    }
+
+    recordViewRootShown(root);
+    const carried = shownRoots.get(root)!;
+    return {
+        root,
+        navigationKey: carried.navigationKey,
+        showSequence: carried.sequence,
+    };
+}
+
+/** Test-only reset for the module-level weak ownership ledger. */
+export function resetViewRootTrackingForTests(): void {
+    shownRoots = new WeakMap<HTMLElement, ShownRootRecord>();
+    showSequence = 0;
+    everRecordedViewLifecycle = false;
+    navigationOrdinal = 0;
+    navigationEvidence = [];
+}
+
 /**
  * Patch history.pushState / history.replaceState to emit a 'jc:navigate'
  * event. Jellyfin's SPA router calls pushState for some transitions
@@ -181,6 +352,7 @@ function dispatchNavigate(event?: Event): void {
     const key = navDedupKey();
     if (key === lastDispatchedKey) return;
     lastDispatchedKey = key;
+    recordNavigationEvidence(key);
     for (const callback of navCallbacks) {
         try {
             callback(event);
@@ -229,9 +401,14 @@ export function onViewBeforeShow(callback: ViewBeforeShowCallback): () => void {
     };
 }
 
+function captureViewRootShown(event: Event): void {
+    recordViewRootShown(event.target as Element | null);
+}
+
 function dispatchViewBeforeShow(event: Event): void {
     const element = event.target;
     if (!(element instanceof Element)) return;
+    captureViewRootShown(event);
     for (const callback of viewBeforeShowCallbacks) {
         try {
             callback(element, event);
@@ -444,6 +621,7 @@ function initialize(): void {
     // expiry so a router-internal onViewShow that fires WITHOUT a preceding
     // viewshow (a later same-path resolve) can never consume this event.
     document.addEventListener('viewshow', (e) => {
+        captureViewRootShown(e);
         lastViewShowEvent = e as CustomEvent;
         if (lastViewShowClearTimer) clearTimeout(lastViewShowClearTimer);
         lastViewShowClearTimer = setTimeout(() => {

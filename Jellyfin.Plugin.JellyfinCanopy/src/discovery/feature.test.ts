@@ -68,6 +68,7 @@ describe('Discovery lazy feature contract', () => {
     it('gates download eligibility on shared config and the exact library route', () => {
         expect(isDiscoveryEnabled(state())).toBe(true);
         expect(isDiscoveryLibraryRoute(state('/web/#/movies?topParentId=1'))).toBe(true);
+        expect(isDiscoveryLibraryRoute(state('/web/#/tv?topParentId=2'))).toBe(true);
         expect(isDiscoveryLibraryRoute(state('/web/#/tvshows'))).toBe(true);
         expect(isDiscoveryLibraryRoute(state('/web/#/home'))).toBe(false);
 

@@ -33,18 +33,28 @@ describe('Seerr descriptor fragment', () => {
         const core = seerrFeatureDescriptors[0];
         expect(core.isApplicable(state('/web/#/home'))).toBe(false);
         expect(core.isApplicable(state('/web/#/movies'))).toBe(true);
+        expect(core.isApplicable(state('/web/#/tv?topParentId=shows'))).toBe(true);
     });
 
     it('keeps disabled and off-route closures ineligible', () => {
         const search = seerrFeatureDescriptors[1];
         const discovery = seerrFeatureDescriptors[4];
+        expect(discovery.scope).toBe('identity');
         expect(search.isApplicable(state('/web/#/home'))).toBe(false);
         expect(discovery.isApplicable(state('/web/#/home'))).toBe(false);
+        expect(discovery.isApplicable(state('/web/#/tv?topParentId=shows'))).toBe(true);
 
         JC.pluginConfig.SeerrEnabled = false;
         expect(search.isEnabled(state('/web/#/search'))).toBe(false);
         expect(discovery.isEnabled(state('/web/#/movies'))).toBe(false);
         expect(search.isEnabled(state('/web/#/search', false))).toBe(false);
+    });
+
+    it('keeps the lazy Seerr foundation eligible on Jellyfin 12\'s native TV route', async () => {
+        const { isSeerrCoreApplicable } = await import('./seerr-core');
+        expect(isSeerrCoreApplicable(state('/web/#/tv?topParentId=shows'))).toBe(true);
+        expect(isSeerrCoreApplicable(state('/web/#/tvshows'))).toBe(true);
+        expect(isSeerrCoreApplicable(state('/web/#/tving'))).toBe(false);
     });
 
     it.each([
