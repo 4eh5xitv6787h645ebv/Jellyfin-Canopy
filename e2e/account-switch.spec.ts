@@ -15,7 +15,12 @@ import {
     type ConsoleErrors,
     type FailedResponse,
 } from './fixtures/auth';
-import type { Page, Request, Route } from 'playwright/test';
+import type {
+    Page,
+    Request,
+    Route,
+    WebSocket as PlaywrightWebSocket,
+} from 'playwright/test';
 import {
     hasValidConcurrentLogoutResponses,
     isExpectedSignedOutHomeAxios401,
@@ -62,6 +67,11 @@ type LogoutSegment = Extract<Segment, 'logout-a1' | 'logout-b1' | 'logout-a2'>;
 interface DocumentIdentity {
     marker: string;
     timeOrigin: number;
+}
+
+interface HostSocketTracker {
+    openCount(): number;
+    dispose(): void;
 }
 
 interface LoginResult {
@@ -178,6 +188,51 @@ function normalizeIdentityPart(value: unknown): string {
     return String(value ?? '').trim().replace(/-/g, '').toLowerCase();
 }
 
+/**
+ * Track only the stock Jellyfin notification socket, never its credential-bearing
+ * query string. Waiting for every observed socket to close prevents a new login
+ * from overlapping the previous same-device session in the upstream server.
+ */
+function trackHostSockets(page: Page): HostSocketTracker {
+    const open = new Set<PlaywrightWebSocket>();
+    const onWebSocket = (socket: PlaywrightWebSocket): void => {
+        let isHostSocket = false;
+        try {
+            isHostSocket = new URL(socket.url()).pathname === '/socket';
+        } catch {
+            // A malformed URL cannot be the exact stock Jellyfin socket.
+        }
+        if (!isHostSocket) return;
+        open.add(socket);
+        socket.once('close', () => open.delete(socket));
+    };
+    page.on('websocket', onWebSocket);
+
+    let disposed = false;
+    return {
+        openCount: () => open.size,
+        dispose: () => {
+            if (disposed) return;
+            disposed = true;
+            page.off('websocket', onWebSocket);
+            open.clear();
+        },
+    };
+}
+
+async function waitForHostSocketDrain(
+    sockets: HostSocketTracker,
+    label: string
+): Promise<void> {
+    await expect.poll(
+        () => sockets.openCount(),
+        {
+            message: `${label}: every page-owned Jellyfin socket closes before the next identity`,
+            timeout: 15_000,
+        }
+    ).toBe(0);
+}
+
 function parseUserFileRequest(request: Request, segment: Segment): UserFileRequest | null {
     const match = new URL(request.url()).pathname.match(ACCOUNT_SWITCH_PATH);
     if (!match) return null;
@@ -289,7 +344,8 @@ async function readDiagnostics(page: Page): Promise<Diagnostics> {
 async function spaLogout(
     page: Page,
     documentIdentity: DocumentIdentity,
-    oldToken: string
+    oldToken: string,
+    sockets: HostSocketTracker
 ): Promise<LogoutEvidence> {
     const origin = new URL(page.url()).origin;
     const clientDeviceId = await page.evaluate(
@@ -493,6 +549,11 @@ async function spaLogout(
             signedOut.oldTokenStatus,
             'the pre-logout access token is independently revoked'
         ).toBe(401);
+        // Jellyfin server #16457 can terminate when two callbacks dispose the
+        // same session controller concurrently. Dashboard.logout() initiates
+        // the socket close asynchronously, so HTTP/logout completion alone is
+        // not a safe boundary before the same device authenticates again.
+        await waitForHostSocketDrain(sockets, 'logout');
         await expectSameDocument(page, documentIdentity);
         return {
             epoch: state.epoch,
@@ -760,7 +821,8 @@ function collectProvenDelayedLogoutFailures(
 function assertOnlyHostLogoutNoise(
     consoleErrors: ConsoleErrors,
     label: string,
-    evidence: LogoutEvidence
+    evidence: LogoutEvidence,
+    allowExpectedIdentityAbort = false
 ): void {
     expect(
         consoleErrors.unexpected5xx(),
@@ -775,7 +837,7 @@ function assertOnlyHostLogoutNoise(
         && isExpectedSignedOutHostLogout4xx(response, evidence));
     const unexpectedDetails = consoleErrors.realDetails().filter((detail) =>
         !HOST_LOGOUT_NOISE.test(detail.text)
-        && !EXPECTED_IDENTITY_ABORT.test(detail.text)
+        && !(allowExpectedIdentityAbort && EXPECTED_IDENTITY_ABORT.test(detail.text))
         && !isExpectedSignedOutHomeAxios401(detail, evidence, hasAllowedHost401)
         && !(syncPlay400 && /Failed to load resource:.*status of 400 \(Bad Request\)/i.test(detail.text)));
     expect(
@@ -794,6 +856,8 @@ test.describe('no-reload account identity switching', () => {
         consoleErrors,
     }) => {
         test.slow();
+        const hostSockets = trackHostSockets(page);
+        page.once('close', hostSockets.dispose);
         await loginAs(page, 'admin', consoleErrors);
         const documentIdentity = await installDocumentIdentity(page);
         const a1 = await currentIdentity(page);
@@ -1017,7 +1081,7 @@ test.describe('no-reload account identity switching', () => {
         }
 
         segment = 'logout-a1';
-        const logoutA1 = await spaLogout(page, documentIdentity, a1Token);
+        const logoutA1 = await spaLogout(page, documentIdentity, a1Token, hostSockets);
         const logoutA1Epoch = logoutA1.epoch;
         const logoutA1Phase: CompletedLogoutPhase = {
             evidence: logoutA1,
@@ -1055,7 +1119,12 @@ test.describe('no-reload account identity switching', () => {
             ),
             'the induced save race reports only the expected identity abort'
         ).toEqual([]);
-        assertOnlyHostLogoutNoise(consoleErrors, 'A1 logout / held-save abort', logoutA1);
+        assertOnlyHostLogoutNoise(
+            consoleErrors,
+            'A1 logout / held-save abort',
+            logoutA1,
+            true
+        );
 
         // Hold one exact stock signed-out request past both the completed A1
         // logout evidence and the B1 authentication boundary. This reproduces
@@ -1150,7 +1219,7 @@ test.describe('no-reload account identity switching', () => {
         assertNoRuntimeErrors(consoleErrors);
         consoleErrors.reset();
         segment = 'logout-b1';
-        const logoutB1 = await spaLogout(page, documentIdentity, b1Login.token);
+        const logoutB1 = await spaLogout(page, documentIdentity, b1Login.token, hostSockets);
         const logoutB1Epoch = logoutB1.epoch;
         const logoutB1Phase: CompletedLogoutPhase = {
             evidence: logoutB1,
@@ -1197,7 +1266,7 @@ test.describe('no-reload account identity switching', () => {
         assertNoRuntimeErrors(consoleErrors);
         consoleErrors.reset();
         segment = 'logout-a2';
-        const logoutA2 = await spaLogout(page, documentIdentity, a2Login.token);
+        const logoutA2 = await spaLogout(page, documentIdentity, a2Login.token, hostSockets);
         const logoutA2Epoch = logoutA2.epoch;
         const logoutA2Phase: CompletedLogoutPhase = {
             evidence: logoutA2,
@@ -1207,7 +1276,12 @@ test.describe('no-reload account identity switching', () => {
         };
         completedLogoutPhases.push(logoutA2Phase);
         expect(logoutA2Epoch).toBeGreaterThan(a2.epoch);
-        assertOnlyHostLogoutNoise(consoleErrors, 'A2 logout / held-loader abort', logoutA2);
+        assertOnlyHostLogoutNoise(
+            consoleErrors,
+            'A2 logout / held-loader abort',
+            logoutA2,
+            true
+        );
 
         // Reproduce #340 without a timer: hold the real B2 authentication
         // request, start three host requests while beginSpaLogin is awaiting
@@ -1544,6 +1618,23 @@ test.describe('no-reload account identity switching', () => {
         // These failures exist only as negative controls. Remove their exact
         // fixture objects after proving the production gate kept all three fatal.
         consoleErrors.acknowledgeExpected4xx(remainingB2Failures);
+        // Playwright otherwise closes the authenticated B2 page immediately.
+        // Perform the same evidence-backed native logout used by every earlier
+        // phase, drain its socket, then close the page so no request or console
+        // event can arrive after the final strict diagnostic gate (#405).
+        const finalB2Logout = await spaLogout(
+            page,
+            documentIdentity,
+            b2Login.token,
+            hostSockets
+        );
+        await page.close();
+        assertOnlyHostLogoutNoise(consoleErrors, 'final B2 logout', finalB2Logout);
+        const expectedFinalB2Failures = consoleErrors.unexpected4xx().filter((response) =>
+            isExpectedSignedOutHostLogout4xx(response, finalB2Logout));
+        consoleErrors.acknowledgeExpected4xx(expectedFinalB2Failures);
+        consoleErrors.reset();
         assertNoRuntimeErrors(consoleErrors);
+        hostSockets.dispose();
     });
 });
