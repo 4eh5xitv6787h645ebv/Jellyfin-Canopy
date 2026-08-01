@@ -19,7 +19,7 @@
 //    handler applies — rewrite it during adoption, then verify on a frame.
 
 import { JC } from '../../globals';
-import type { PageDescriptor } from './types';
+import type { PageAdoptionOwner, PageDescriptor } from './types';
 import { resolvePage, pageAvailable } from './registry';
 import { PAGE_NAV_ATTR } from './router-bridge';
 import { clearEarlyMask } from './early-mask';
@@ -166,12 +166,15 @@ function adopt(descriptor: PageDescriptor, host: HTMLElement): void {
 }
 
 /**
- * The live adoption's dispose bag, DOM-validated — page-owned overlays that
- * must append to document.body (dialogs, pickers) register their close
- * function here so navigating away can never strand them over another view.
+ * The unique owner token for the live adoption constrained to one page id.
+ * Object identity changes on every fresh adoption even though its lifecycle
+ * dispose bag is reused. Body-level overlays register teardown through handle.
  */
-export function currentPageHandle(): import('../../types/jc').LifecycleHandle | null {
-    return adoptedPageId() !== null ? adoption!.handle : null;
+export function currentPageOwner(expectedPageId: string): PageAdoptionOwner | null {
+    if (adoptedPageId() !== expectedPageId) return null;
+    // The internal Adoption object is already unique per open; expose only its
+    // lifecycle-owner surface instead of allocating a second identity object.
+    return adoption!;
 }
 
 /** Re-render the currently adopted page in place (entry-point re-click). */

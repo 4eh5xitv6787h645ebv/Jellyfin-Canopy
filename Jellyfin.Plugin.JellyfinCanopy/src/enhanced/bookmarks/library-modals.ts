@@ -5,7 +5,7 @@
 // (Converted from js/enhanced/bookmarks-library-modals.js — bodies semantically identical.)
 
 import { JC } from '../../globals';
-import { currentPageHandle } from '../pages/fallback-host';
+import { currentPageOwner } from '../pages/fallback-host';
 import { escapeHtml, toast } from '../../core/ui-kit';
 import { formatTimestamp, renderActiveBookmarks } from './library-render';
 import type { IdentityContext } from '../../types/jc';
@@ -118,7 +118,7 @@ export function showOffsetAdjustmentModal(
 
   const closeDialog = () => closeModal(modal);
   // Body-level modal: the page's dispose bag closes it on drain.
-  currentPageHandle()?.track(closeDialog);
+  currentPageOwner('bookmarks')?.handle.track(closeDialog);
 
   modal.querySelector('.jc-bm-library-modal-close')?.addEventListener('click', closeDialog);
   modal.querySelector('.jc-bookmark-btn-cancel')?.addEventListener('click', closeDialog);
@@ -384,7 +384,7 @@ export function showDuplicatesSyncModal(
 
   const closeDialog = () => closeModal(modal);
   // Body-level modal: the page's dispose bag closes it on drain.
-  currentPageHandle()?.track(closeDialog);
+  currentPageOwner('bookmarks')?.handle.track(closeDialog);
 
   modal.querySelector('.jc-bm-library-modal-close')?.addEventListener('click', closeDialog);
   modal.querySelector('.jc-bookmark-btn-cancel')?.addEventListener('click', closeDialog);

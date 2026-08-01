@@ -5,11 +5,12 @@
 // (Converted from js/enhanced/bookmarks-library-replacements.js — bodies semantically identical.)
 
 import { JC } from '../../globals';
-import { currentPageHandle } from '../pages/fallback-host';
+import { currentPageOwner } from '../pages/fallback-host';
 import { escapeHtml, toast } from '../../core/ui-kit';
 import { getItemCached } from '../helpers';
 import { renderActiveBookmarks } from './library-render';
 import type { IdentityContext } from '../../types/jc';
+import type { PageAdoptionOwner } from '../pages/types';
 import { normalizeBookmarkMediaType, replacementItemTypes } from './media-types';
 import {
   BOOKMARK_IDENTITY_VERSION,
@@ -24,6 +25,7 @@ export const SERIES_ENRICHMENT_MAX_URL_LENGTH = 2048;
 const REPLACEMENT_PAGE_SIZE = 500;
 const REPLACEMENT_MAX_PAGES = 1000;
 const REPLACEMENT_MAX_ITEMS = REPLACEMENT_PAGE_SIZE * REPLACEMENT_MAX_PAGES;
+const BOOKMARKS_PAGE_ID = 'bookmarks';
 
 /**
  * How many source bookmarks a MOVE-style migration durably relocated: every
@@ -201,6 +203,7 @@ function currentImageApiClient(): ImageApiClient | null {
 
 function scheduleReplacementTask(
   context: IdentityContext,
+  pageOwner: PageAdoptionOwner,
   callback: () => void,
   delay: number,
   cleanup?: () => void
@@ -209,13 +212,17 @@ function scheduleReplacementTask(
     replacementModalTimers.delete(timer);
     replacementModalTimerCleanups.delete(timer);
     try {
-      if (JC.identity.isCurrent(context)) callback();
+      if (isReplacementFlowCurrent(context, pageOwner)) callback();
     } finally {
       cleanup?.();
     }
   }, delay);
   replacementModalTimers.add(timer);
   if (cleanup) replacementModalTimerCleanups.set(timer, cleanup);
+}
+
+function isReplacementFlowCurrent(context: IdentityContext, pageOwner: PageAdoptionOwner): boolean {
+  return JC.identity.isCurrent(context) && currentPageOwner(BOOKMARKS_PAGE_ID) === pageOwner;
 }
 
 function ownReplacementModal(modal: HTMLElement): void {
@@ -419,17 +426,18 @@ export async function findAndOfferReplacement(
   triggerBtn: HTMLButtonElement,
   context: IdentityContext | null = JC.identity.capture()
 ): Promise<void> {
-  if (!context || !JC.identity.isCurrent(context)) return;
+  const pageOwner = currentPageOwner(BOOKMARKS_PAGE_ID);
+  if (!context || !pageOwner || !JC.identity.isCurrent(context)) return;
   triggerBtn.disabled = true;
 
   try {
     const result = await searchForReplacementItem(group.details, context);
     // The await can straddle an account transition; a stale continuation must
     // not paint this user's toast (or modal) over the next account's UI.
-    if (!JC.identity.isCurrent(context)) return;
+    if (!isReplacementFlowCurrent(context, pageOwner)) return;
     switch (result.status) {
       case 'match':
-        showReplacementSelectionModal(group, result.items, context);
+        showReplacementSelectionModal(group, result.items, context, pageOwner);
         return;
       case 'no-match':
         toast(JC.t!('bookmark_no_replacement'), 3000);
@@ -451,12 +459,12 @@ export async function findAndOfferReplacement(
 function showReplacementSelectionModal(
   oldGroup: BookmarkGroup,
   replacementItems: JellyfinReplacementItem[],
-  context: IdentityContext
+  context: IdentityContext,
+  pageOwner: PageAdoptionOwner
 ): void {
-  // These modals are reached from awaited flows (library search, orphan
-  // scan): the page can drain mid-await. A modal with no live adoption to
-  // own its teardown must not appear over the destination view.
-  if (!JC.identity.isCurrent(context) || !currentPageHandle()) return;
+  // Delayed callers fence the exact originating Bookmarks adoption before
+  // publishing or registering teardown in its dispose bag.
+  if (!isReplacementFlowCurrent(context, pageOwner)) return;
   const apiClient = currentImageApiClient();
   if (!apiClient) return;
 
@@ -517,6 +525,9 @@ function showReplacementSelectionModal(
     </div>
   `;
 
+  // getImageUrl is host-owned code; re-check after rendering the candidate
+  // list in case it synchronously re-entered navigation.
+  if (!isReplacementFlowCurrent(context, pageOwner)) return;
   document.body.appendChild(modal);
   JC.core.refreshSafety!.holdElement(modal, 'modal');
 
@@ -524,7 +535,7 @@ function showReplacementSelectionModal(
 
   const closeDialog = () => closeReplacementModal(modal);
   // Body-level modal: the page's dispose bag closes it on drain.
-  currentPageHandle()?.track(closeDialog);
+  pageOwner.handle.track(closeDialog);
 
   modal.querySelector('.jc-bm-library-modal-close')?.addEventListener('click', closeDialog);
   modal.querySelector('.jc-bookmark-btn-cancel')?.addEventListener('click', closeDialog);
@@ -535,7 +546,7 @@ function showReplacementSelectionModal(
   // Selection handlers
   modal.querySelectorAll<HTMLElement>('.replacement-option').forEach(option => {
     option.addEventListener('click', () => {
-      if (!JC.identity.isCurrent(context)) return;
+      if (!isReplacementFlowCurrent(context, pageOwner)) return;
       const idx = parseInt(option.dataset.itemIndex!);
       selectedItem = replacementItems[idx];
 
@@ -557,7 +568,7 @@ function showReplacementSelectionModal(
 
   // Migrate handler
   modal.querySelector('.jc-bookmark-btn-submit')?.addEventListener('click', () => { void (async () => {
-    if (!JC.identity.isCurrent(context)) return;
+    if (!isReplacementFlowCurrent(context, pageOwner)) return;
     if (!selectedItem) return;
 
     const btn = modal.querySelector<HTMLButtonElement>('.jc-bookmark-btn-submit')!;
@@ -567,7 +578,7 @@ function showReplacementSelectionModal(
     try {
       // Fetch full details for new item
       const fullItem = await getItemCached(selectedItem.Id, { userId: context.userId });
-      if (!JC.identity.isCurrent(context) || !isJellyfinReplacementItem(fullItem)) return;
+      if (!isReplacementFlowCurrent(context, pageOwner) || !isJellyfinReplacementItem(fullItem)) return;
 
       const newDetails = {
         ...replacementIdentity(selectedItem),
@@ -580,7 +591,7 @@ function showReplacementSelectionModal(
       // originals intact (the old pre-delete lost data if syncing failed).
       const oldIds = oldGroup.bookmarks.map((bookmark) => bookmark.id);
       await JC.bookmarks!.syncBookmarks(oldGroup.bookmarks, newDetails, 0, oldIds);
-      if (!JC.identity.isCurrent(context)) return;
+      if (!isReplacementFlowCurrent(context, pageOwner)) return;
 
       // syncBookmarks returns only the newly created target rows, but a MOVE
       // migrates every source — including any that deduplicated into an existing
@@ -596,7 +607,7 @@ function showReplacementSelectionModal(
       // setTimeout needed).
       renderActiveBookmarks(context);
     } catch (e) {
-      if (!JC.identity.isCurrent(context)) return;
+      if (!isReplacementFlowCurrent(context, pageOwner)) return;
       console.error('Migration failed:', e);
       toast(JC.t!('bookmark_migration_failed'), 3000);
       btn.disabled = false;
@@ -604,7 +615,7 @@ function showReplacementSelectionModal(
     }
   })(); });
 
-  scheduleReplacementTask(context, () => { if (modal.isConnected) modal.style.opacity = '1'; }, 10);
+  scheduleReplacementTask(context, pageOwner, () => { if (modal.isConnected) modal.style.opacity = '1'; }, 10);
 }
 
 /**
@@ -614,7 +625,8 @@ export async function findAllOrphanedAndOfferMigration(
   bookmarks: Record<string, StoredBookmark>,
   context: IdentityContext | null = JC.identity.capture()
 ): Promise<void> {
-  if (!context || !JC.identity.isCurrent(context)) return;
+  const pageOwner = currentPageOwner(BOOKMARKS_PAGE_ID);
+  if (!context || !pageOwner || !JC.identity.isCurrent(context)) return;
   const apiClient = currentImageApiClient();
   if (!apiClient) {
     toast(JC.t!('toast_api_client_unavailable'), 3000);
@@ -639,14 +651,13 @@ export async function findAllOrphanedAndOfferMigration(
 
   // Check each item
   for (const group of Object.values(byItem)) {
-    if (!JC.identity.isCurrent(context)) return;
     const itemId = group.details.itemId;
     try {
       await getItemCached(itemId, { userId });
-      if (!JC.identity.isCurrent(context)) return;
+      if (!isReplacementFlowCurrent(context, pageOwner)) return;
       // Item exists, not orphaned
     } catch (e) {
-      if (!JC.identity.isCurrent(context)) return;
+      if (!isReplacementFlowCurrent(context, pageOwner)) return;
       // DATA-SAFETY: only an explicit 404 means the item is truly gone. A
       // transient failure must not be treated as orphaned (which would offer a
       // destructive migration); keep it and warn.
@@ -672,8 +683,8 @@ export async function findAllOrphanedAndOfferMigration(
   const replacementResults: ReplacementResult[] = [];
   let failedSearchCount = 0;
   for (const group of orphanedGroups) {
-    if (!JC.identity.isCurrent(context)) return;
     const result = await searchForReplacementItem(group.details, context);
+    if (!isReplacementFlowCurrent(context, pageOwner)) return;
     switch (result.status) {
       case 'match':
         replacementResults.push({ group, matches: result.items });
@@ -688,10 +699,6 @@ export async function findAllOrphanedAndOfferMigration(
     }
   }
 
-  // The final search's await can resolve after an account transition; re-fence
-  // before publishing any batch outcome toast or the summary modal.
-  if (!JC.identity.isCurrent(context)) return;
-
   if (failedSearchCount > 0) {
     toast(JC.t!('bookmark_orphaned_search_failed').replace('{count}', String(failedSearchCount)), 4000);
     return;
@@ -703,15 +710,20 @@ export async function findAllOrphanedAndOfferMigration(
   }
 
   // Show summary modal
-  showOrphanedSummaryModal(replacementResults, context);
+  showOrphanedSummaryModal(replacementResults, context, pageOwner);
 }
 
 /**
  * Show summary of all orphaned items with replacements
  */
-function showOrphanedSummaryModal(replacementResults: ReplacementResult[], context: IdentityContext): void {
-  // Same delayed-flow guard as showReplacementSelectionModal.
-  if (!JC.identity.isCurrent(context) || !currentPageHandle()) return;
+function showOrphanedSummaryModal(
+  replacementResults: ReplacementResult[],
+  context: IdentityContext,
+  pageOwner: PageAdoptionOwner
+): void {
+  // The caller fenced after the final awaited search; retain the invariant at
+  // this publisher boundary so future call sites cannot omit exact ownership.
+  if (!isReplacementFlowCurrent(context, pageOwner)) return;
   const modal = document.createElement('div');
   modal.className = 'jc-bm-library-modal-overlay';
   ownReplacementModal(modal);
@@ -756,12 +768,13 @@ function showOrphanedSummaryModal(replacementResults: ReplacementResult[], conte
     </div>
   `;
 
+  if (!isReplacementFlowCurrent(context, pageOwner)) return;
   document.body.appendChild(modal);
   JC.core.refreshSafety!.holdElement(modal, 'modal');
 
   const closeDialog = () => closeReplacementModal(modal);
   // Body-level modal: the page's dispose bag closes it on drain.
-  currentPageHandle()?.track(closeDialog);
+  pageOwner.handle.track(closeDialog);
 
   modal.querySelector('.jc-bm-library-modal-close')?.addEventListener('click', closeDialog);
   modal.querySelector('.jc-bookmark-btn-cancel')?.addEventListener('click', closeDialog);
@@ -772,7 +785,7 @@ function showOrphanedSummaryModal(replacementResults: ReplacementResult[], conte
   // Migrate button handlers
   modal.querySelectorAll<HTMLElement>('.btnMigrateOrphaned').forEach(btn => {
     btn.addEventListener('click', () => {
-      if (!JC.identity.isCurrent(context)) return;
+      if (!isReplacementFlowCurrent(context, pageOwner)) return;
       const idx = parseInt(btn.dataset.resultIndex!);
       const result = replacementResults[idx];
       // This is one uninterrupted user flow: transfer a temporary safety hold
@@ -780,11 +793,11 @@ function showOrphanedSummaryModal(replacementResults: ReplacementResult[], conte
       // selection overlay has synchronously acquired its own modal hold.
       const releaseHandoff = JC.core.refreshSafety!.acquireHold('interaction');
       closeDialog();
-      scheduleReplacementTask(context, () => {
-        showReplacementSelectionModal(result.group, result.matches, context);
+      scheduleReplacementTask(context, pageOwner, () => {
+        showReplacementSelectionModal(result.group, result.matches, context, pageOwner);
       }, 300, releaseHandoff);
     });
   });
 
-  scheduleReplacementTask(context, () => { if (modal.isConnected) modal.style.opacity = '1'; }, 10);
+  scheduleReplacementTask(context, pageOwner, () => { if (modal.isConnected) modal.style.opacity = '1'; }, 10);
 }

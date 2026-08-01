@@ -8,7 +8,7 @@
 // detection that every other hidden-content-page-* module reads.
 
 import { JC } from '../../globals';
-import { currentPageHandle } from '../pages/fallback-host';
+import { currentPageOwner } from '../pages/fallback-host';
 import type { IdentityContext } from '../../types/jc';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -190,7 +190,7 @@ export function showUnhideConfirmation(message: string, onConfirm: () => void, i
     const overlay = document.createElement('div');
     overlay.className = 'jc-hide-confirm-overlay';
     overlay.dataset.jcIdentityOwned = 'true';
-    const pageHandle = currentPageHandle();
+    const pageHandle = currentPageOwner('hidden-content')?.handle;
 
     const dialog = document.createElement('div');
     dialog.className = 'jc-hide-confirm-dialog';
