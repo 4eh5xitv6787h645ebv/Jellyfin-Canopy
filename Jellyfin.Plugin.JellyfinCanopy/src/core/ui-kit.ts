@@ -351,6 +351,15 @@ function presentationCallbacksFor(announcement: Announcement): Array<() => void>
     return announcement.presentedCallbacks;
 }
 
+function resetAnnouncementQueueState(): void {
+    notificationRuntime.announcements.length = 0;
+    notificationRuntime.announcementTimer = null;
+    notificationRuntime.announcementActive = false;
+    notificationRuntime.announcementInGap = false;
+    notificationRuntime.activeAnnouncementKey = null;
+    notificationRuntime.activeAnnouncementAdmission = null;
+}
+
 function clearCentralAnnouncementLanes(): void {
     if (typeof document === 'undefined') return;
     document.getElementById(NOTIFICATION_OWNER_ID)
@@ -359,6 +368,10 @@ function clearCentralAnnouncementLanes(): void {
 }
 
 function scheduleAnnouncementGap(): void {
+    if (typeof document === 'undefined' || typeof window === 'undefined') {
+        resetAnnouncementQueueState();
+        return;
+    }
     notificationRuntime.announcementTimer = window.setTimeout(() => {
         notificationRuntime.announcementTimer = null;
         notificationRuntime.announcementInGap = false;
@@ -384,12 +397,7 @@ function drainAnnouncements(): void {
     // A real timer may outlive a jsdom document or a host WebView teardown.
     // Retire the detached queue without touching missing globals.
     if (typeof document === 'undefined' || typeof window === 'undefined') {
-        notificationRuntime.announcements.length = 0;
-        notificationRuntime.announcementTimer = null;
-        notificationRuntime.announcementActive = false;
-        notificationRuntime.announcementInGap = false;
-        notificationRuntime.activeAnnouncementKey = null;
-        notificationRuntime.activeAnnouncementAdmission = null;
+        resetAnnouncementQueueState();
         return;
     }
     // Queue admission enforces this invariant. Keep the bounded compare here
@@ -542,15 +550,10 @@ export function queueTerminalNotificationAnnouncementForTesting(
 }
 
 function clearAnnouncements(): void {
-    notificationRuntime.announcements.length = 0;
     if (notificationRuntime.announcementTimer != null) {
         clearTimeout(notificationRuntime.announcementTimer);
     }
-    notificationRuntime.announcementTimer = null;
-    notificationRuntime.announcementActive = false;
-    notificationRuntime.announcementInGap = false;
-    notificationRuntime.activeAnnouncementKey = null;
-    notificationRuntime.activeAnnouncementAdmission = null;
+    resetAnnouncementQueueState();
     if (typeof document !== 'undefined') {
         const owner = document.getElementById(NOTIFICATION_OWNER_ID);
         owner?.querySelectorAll<HTMLElement>('[data-jc-announcer]')

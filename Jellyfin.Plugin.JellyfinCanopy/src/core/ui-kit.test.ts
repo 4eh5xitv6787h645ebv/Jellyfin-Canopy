@@ -312,6 +312,51 @@ describe('toast scheduling', () => {
         expect(document.querySelectorAll('.jc-notification')).toHaveLength(3);
     });
 
+    it('retires the announcement queue if its browser realm disappears between dwell and gap', () => {
+        vi.useFakeTimers();
+        queueNotificationAnnouncementForTesting('Active before teardown', 'info', 'active-before-teardown');
+        queueNotificationAnnouncementForTesting('Pending before teardown', 'info', 'pending-before-teardown');
+        const runtime = Reflect.get(
+            window,
+            Symbol.for('JellyfinCanopy.notificationRuntime.v1')
+        ) as {
+            announcements: unknown[];
+            announcementTimer: number | null;
+            announcementActive: boolean;
+            announcementInGap: boolean;
+            activeAnnouncementKey: string | null;
+            activeAnnouncementAdmission: string | null;
+        };
+        expect(runtime.announcementActive).toBe(true);
+        expect(runtime.announcements).toHaveLength(1);
+
+        let callbackError: unknown;
+        vi.stubGlobal('window', undefined);
+        vi.stubGlobal('document', undefined);
+        try {
+            vi.advanceTimersByTime(500);
+        } catch (error) {
+            callbackError = error;
+        } finally {
+            vi.unstubAllGlobals();
+        }
+
+        expect(callbackError).toBeUndefined();
+        expect(runtime.announcements).toHaveLength(0);
+        expect(runtime.announcementTimer).toBeNull();
+        expect(runtime.announcementActive).toBe(false);
+        expect(runtime.announcementInGap).toBe(false);
+        expect(runtime.activeAnnouncementKey).toBeNull();
+        expect(runtime.activeAnnouncementAdmission).toBeNull();
+
+        expect(queueNotificationAnnouncementForTesting(
+            'Recovered after teardown',
+            'info',
+            'recovered-after-teardown'
+        )).toBe('queued');
+        expect(runtime.announcementActive).toBe(true);
+    });
+
     it('coalesces an explicit duplicate key in first-seen order', () => {
         vi.useFakeTimers();
         notify({ message: 'First copy', duration: 2_000, dedupeKey: 'same-event' });
