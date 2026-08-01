@@ -109,6 +109,7 @@ interface LogoutEvidence {
 interface CompletedLogoutPhase {
     evidence: LogoutEvidence;
     requests: ReadonlySet<Request>;
+    authenticationTransitionRequests: Set<Request>;
     revokedToken: string;
 }
 
@@ -395,11 +396,6 @@ async function spaLogout(
                 timeout: 10_000,
             }
         ).toEqual({ requests: 2, responses: 2, done: 2 });
-
-        // Drain host reads which were scheduled before token revocation. Under
-        // local multi-shard CPU pressure their responses can otherwise arrive
-        // after the next user's login and be misattributed to that owner epoch.
-        await page.waitForLoadState('networkidle', { timeout: 30_000 });
 
         const state = await page.evaluate(() => {
             const JC = (window as any).JellyfinCanopy;
@@ -753,7 +749,8 @@ function collectProvenDelayedLogoutFailures(
     return consoleErrors.unexpected4xx().filter((response) => {
         const request = consoleErrors.requestFor(response);
         if (!request) return false;
-        const phase = phases.find(({ requests }) => requests.has(request));
+        const phase = phases.find(({ requests, authenticationTransitionRequests }) =>
+            requests.has(request) || authenticationTransitionRequests.has(request));
         if (!phase || !isExactDelayedLogoutProbe(response, phase.evidence)) return false;
         const token = authorizationToken(request.headers().authorization || '');
         return token === '' || token === phase.revokedToken;
@@ -830,12 +827,42 @@ test.describe('no-reload account identity switching', () => {
             'logout-a2': new Set<Request>(),
         };
         const completedLogoutPhases: CompletedLogoutPhase[] = [];
+        let authenticationTransitionOwner: CompletedLogoutPhase | null = null;
         const recordOwnedRequest = (request: Request): void => {
             if (isLogoutSegment(segment)) logoutRequestSets[segment].add(request);
+            authenticationTransitionOwner?.authenticationTransitionRequests.add(request);
             const parsed = parseUserFileRequest(request, segment);
             if (parsed) requests.push(parsed);
         };
         page.on('request', recordOwnedRequest);
+
+        /**
+         * Attribute only the requests dispatched while the immediately
+         * following real host authentication is awaited to the completed
+         * logout phase that revoked their absent/old credential. A
+         * `networkidle` load state is not a new drain fence once the document
+         * has already reached it, so exact Request provenance closes the
+         * logout-to-authentication gap without admitting later owner traffic.
+         */
+        const beginAuthenticationTransition = async (
+            phase: CompletedLogoutPhase,
+            role: keyof typeof USERS
+        ): Promise<LoginResult> => {
+            expect(
+                completedLogoutPhases.at(-1),
+                'authentication transition belongs to the immediately prior completed logout'
+            ).toBe(phase);
+            expect(
+                authenticationTransitionOwner,
+                'authentication transition ownership windows never overlap'
+            ).toBeNull();
+            authenticationTransitionOwner = phase;
+            try {
+                return await beginSpaLogin(page, role, documentIdentity);
+            } finally {
+                authenticationTransitionOwner = null;
+            }
+        };
 
         let releaseHeldSave!: () => void;
         const heldSaveRelease = new Promise<void>((resolve) => { releaseHeldSave = resolve; });
@@ -992,11 +1019,13 @@ test.describe('no-reload account identity switching', () => {
         segment = 'logout-a1';
         const logoutA1 = await spaLogout(page, documentIdentity, a1Token);
         const logoutA1Epoch = logoutA1.epoch;
-        completedLogoutPhases.push({
+        const logoutA1Phase: CompletedLogoutPhase = {
             evidence: logoutA1,
             requests: logoutRequestSets['logout-a1'],
+            authenticationTransitionRequests: new Set<Request>(),
             revokedToken: a1Token,
-        });
+        };
+        completedLogoutPhases.push(logoutA1Phase);
         expect(logoutA1Epoch).toBeGreaterThan(a1.epoch);
 
         await page.waitForFunction(
@@ -1075,7 +1104,7 @@ test.describe('no-reload account identity switching', () => {
         consoleErrors.reset();
 
         segment = 'b1';
-        const b1Login = await beginSpaLogin(page, 'user', documentIdentity);
+        const b1Login = await beginAuthenticationTransition(logoutA1Phase, 'user');
         const b1 = await finishSpaLogin(page, b1Login, documentIdentity);
         expect(b1.userId).toBe(normalizeIdentityPart(b1Login.userId));
         expect(b1.userId === a1.userId, 'A and B must be distinct seeded accounts').toBe(false);
@@ -1123,18 +1152,20 @@ test.describe('no-reload account identity switching', () => {
         segment = 'logout-b1';
         const logoutB1 = await spaLogout(page, documentIdentity, b1Login.token);
         const logoutB1Epoch = logoutB1.epoch;
-        completedLogoutPhases.push({
+        const logoutB1Phase: CompletedLogoutPhase = {
             evidence: logoutB1,
             requests: logoutRequestSets['logout-b1'],
+            authenticationTransitionRequests: new Set<Request>(),
             revokedToken: b1Login.token,
-        });
+        };
+        completedLogoutPhases.push(logoutB1Phase);
         expect(logoutB1Epoch).toBeGreaterThan(b1.epoch);
         assertOnlyHostLogoutNoise(consoleErrors, 'B1 logout', logoutB1);
         consoleErrors.reset();
 
         holdA2Fetch = true;
         segment = 'a2';
-        const a2Login = await beginSpaLogin(page, 'admin', documentIdentity);
+        const a2Login = await beginAuthenticationTransition(logoutB1Phase, 'admin');
         try {
             await withDeadline(heldFetchSeen, 'held A loader settings GET');
         } catch (error) {
@@ -1168,23 +1199,26 @@ test.describe('no-reload account identity switching', () => {
         segment = 'logout-a2';
         const logoutA2 = await spaLogout(page, documentIdentity, a2Login.token);
         const logoutA2Epoch = logoutA2.epoch;
-        completedLogoutPhases.push({
+        const logoutA2Phase: CompletedLogoutPhase = {
             evidence: logoutA2,
             requests: logoutRequestSets['logout-a2'],
+            authenticationTransitionRequests: new Set<Request>(),
             revokedToken: a2Login.token,
-        });
+        };
+        completedLogoutPhases.push(logoutA2Phase);
         expect(logoutA2Epoch).toBeGreaterThan(a2.epoch);
         assertOnlyHostLogoutNoise(consoleErrors, 'A2 logout / held-loader abort', logoutA2);
 
-        // Reproduce #340 without a timer: start three requests only after logout
-        // evidence is complete, hold their responses across the sink reset and
-        // B2 authentication boundary, then release all as 401s. One is the
-        // exact anonymous stock /System/Endpoint shape; the controls prove that
-        // request ownership alone cannot make a wrong path or foreign token
-        // acceptable.
+        // Reproduce #340 without a timer: hold the real B2 authentication
+        // request, start three host requests while beginSpaLogin is awaiting
+        // that authentication, then keep their 401 responses held until the
+        // authentication transition returns. One is the exact anonymous stock
+        // /System/Endpoint shape; the controls prove that transition ownership
+        // alone cannot make a wrong path or foreign token acceptable.
         const exactProbePath = '/System/Endpoint';
         const wrongPathProbePath = '/System/Endpoint/not-logout-noise';
         const lateProbeRouteTarget = `${logoutA2.origin}/System/Endpoint**`;
+        const authenticationRouteTarget = `${logoutA2.origin}/Users/**`;
         let exactLogoutProbeRequest: Request | undefined;
         let wrongPathLogoutProbeRequest: Request | undefined;
         let foreignTokenLogoutProbeRequest: Request | undefined;
@@ -1207,6 +1241,34 @@ test.describe('no-reload account identity switching', () => {
         const foreignB2ProbeSeen = new Promise<void>((resolve) => {
             resolveForeignB2ProbeSeen = resolve;
         });
+        let releaseB2Authentication!: () => void;
+        const b2AuthenticationRelease = new Promise<void>((resolve) => {
+            releaseB2Authentication = resolve;
+        });
+        let resolveB2AuthenticationSeen!: () => void;
+        const b2AuthenticationSeen = new Promise<void>((resolve) => {
+            resolveB2AuthenticationSeen = resolve;
+        });
+        let b2AuthenticationRequests = 0;
+        let b2AuthenticationRouteErrors = 0;
+        const b2AuthenticationRouteHandler = async (route: Route): Promise<void> => {
+            const request = route.request();
+            if (request.method() !== 'POST'
+                || new URL(request.url()).pathname.toLowerCase() !== '/users/authenticatebyname') {
+                await route.continue();
+                return;
+            }
+            b2AuthenticationRequests++;
+            resolveB2AuthenticationSeen();
+            await b2AuthenticationRelease;
+            try {
+                // Continue to the real Jellyfin server: a locally fulfilled
+                // authentication would not exercise the host transition.
+                await route.continue();
+            } catch {
+                b2AuthenticationRouteErrors++;
+            }
+        };
         const lateProbeRouteHandler = async (route: Route): Promise<void> => {
             const request = route.request();
             const marker = request.headers()[LATE_LOGOUT_PROBE_HEADER] || '';
@@ -1240,7 +1302,14 @@ test.describe('no-reload account identity switching', () => {
             await route.continue();
         };
         await page.route(lateProbeRouteTarget, lateProbeRouteHandler);
+        await page.route(authenticationRouteTarget, b2AuthenticationRouteHandler);
         page.once('close', releaseLateLogoutProbes);
+        page.once('close', releaseB2Authentication);
+
+        consoleErrors.reset();
+        segment = 'b2';
+        const b2LoginPromise = beginAuthenticationTransition(logoutA2Phase, 'user');
+        await withDeadline(b2AuthenticationSeen, 'held real B2 authentication request');
         await page.evaluate(({
             header,
             exactPath,
@@ -1269,20 +1338,24 @@ test.describe('no-reload account identity switching', () => {
             foreignTokenMarker: LOGOUT_FOREIGN_TOKEN_PROBE,
             foreignToken: FOREIGN_LOGOUT_TOKEN,
         });
-        await withDeadline(heldLogoutProbesSeen, 'held logout-owned 401 probes');
+        await withDeadline(heldLogoutProbesSeen, 'held authentication-transition 401 probes');
         expect({
             exact: exactLogoutProbeRequest
                 ? {
                     method: exactLogoutProbeRequest.method(),
                     pathname: new URL(exactLogoutProbeRequest.url()).pathname,
                     queryless: new URL(exactLogoutProbeRequest.url()).search === '',
-                    owned: logoutRequestSets['logout-a2'].has(exactLogoutProbeRequest),
+                    transitionOwned: logoutA2Phase.authenticationTransitionRequests
+                        .has(exactLogoutProbeRequest),
+                    logoutOwned: logoutA2Phase.requests.has(exactLogoutProbeRequest),
                 }
                 : null,
             wrongPath: wrongPathLogoutProbeRequest
                 ? {
                     pathname: new URL(wrongPathLogoutProbeRequest.url()).pathname,
-                    owned: logoutRequestSets['logout-a2'].has(wrongPathLogoutProbeRequest),
+                    transitionOwned: logoutA2Phase.authenticationTransitionRequests
+                        .has(wrongPathLogoutProbeRequest),
+                    logoutOwned: logoutA2Phase.requests.has(wrongPathLogoutProbeRequest),
                 }
                 : null,
             foreignToken: foreignTokenLogoutProbeRequest
@@ -1292,7 +1365,9 @@ test.describe('no-reload account identity switching', () => {
                             === exactLogoutProbeRequest.method()
                         && foreignTokenLogoutProbeRequest.url()
                             === exactLogoutProbeRequest.url(),
-                    owned: logoutRequestSets['logout-a2'].has(foreignTokenLogoutProbeRequest),
+                    transitionOwned: logoutA2Phase.authenticationTransitionRequests
+                        .has(foreignTokenLogoutProbeRequest),
+                    logoutOwned: logoutA2Phase.requests.has(foreignTokenLogoutProbeRequest),
                     usesForeignToken: authorizationToken(
                         foreignTokenLogoutProbeRequest.headers().authorization || ''
                     ) === FOREIGN_LOGOUT_TOKEN,
@@ -1301,35 +1376,47 @@ test.describe('no-reload account identity switching', () => {
                     ) !== a2Login.token,
                 }
                 : null,
-        }, 'all held requests were initiated in the completed A2 logout phase').toEqual({
+        }, 'all held requests were initiated only while B2 authentication was pending').toEqual({
             exact: {
                 method: 'GET',
                 pathname: exactProbePath,
                 queryless: true,
-                owned: true,
+                transitionOwned: true,
+                logoutOwned: false,
             },
             wrongPath: {
                 pathname: wrongPathProbePath,
-                owned: true,
+                transitionOwned: true,
+                logoutOwned: false,
             },
             foreignToken: {
                 sameMethodAndUrl: true,
-                owned: true,
+                transitionOwned: true,
+                logoutOwned: false,
                 usesForeignToken: true,
                 notA2Token: true,
             },
         });
-        consoleErrors.reset();
 
-        segment = 'b2';
-        const b2Login = await beginSpaLogin(page, 'user', documentIdentity);
+        releaseB2Authentication();
+        const b2Login = await b2LoginPromise;
+        await page.unroute(authenticationRouteTarget, b2AuthenticationRouteHandler);
+        expect(b2AuthenticationRequests, 'B2 uses one real held authentication request').toBe(1);
+        expect(
+            b2AuthenticationRouteErrors,
+            'the held B2 authentication reaches the real Jellyfin server'
+        ).toBe(0);
         releaseLateLogoutProbes();
-        await withDeadline(heldLogoutProbesFinished, 'released logout-owned 401 probes');
+        await withDeadline(
+            heldLogoutProbesFinished,
+            'released authentication-transition 401 probes'
+        );
 
         // PR #519 deliberately permits an anonymous late stock probe, so its
-        // URL-key containment would treat this B2-owned anonymous request as
-        // the same failure as the held A2 request. Exact Request ownership is
-        // the missing discriminator; credential shape cannot supply it.
+        // URL-key containment would treat this post-bracket anonymous request
+        // as the same failure as the held transition request. Exact Request
+        // ownership is the missing discriminator; credential shape cannot
+        // supply it.
         expect(await page.evaluate(async ({ header, path, marker }) => {
             const response = await fetch(path, {
                 headers: { [header]: marker },
@@ -1347,12 +1434,15 @@ test.describe('no-reload account identity switching', () => {
                 && !!exactLogoutProbeRequest
                 && foreignB2ProbeRequest.method() === exactLogoutProbeRequest.method()
                 && foreignB2ProbeRequest.url() === exactLogoutProbeRequest.url(),
+            transitionOwned: !!foreignB2ProbeRequest
+                && logoutA2Phase.authenticationTransitionRequests.has(foreignB2ProbeRequest),
             logoutOwned: !!foreignB2ProbeRequest
-                && logoutRequestSets['logout-a2'].has(foreignB2ProbeRequest),
+                && logoutA2Phase.requests.has(foreignB2ProbeRequest),
             anonymous: !!foreignB2ProbeRequest
                 && authorizationToken(foreignB2ProbeRequest.headers().authorization || '') === '',
         }, 'the same-shaped control belongs only to B2').toEqual({
             sameMethodAndUrl: true,
+            transitionOwned: false,
             logoutOwned: false,
             anonymous: true,
         });
@@ -1404,10 +1494,11 @@ test.describe('no-reload account identity switching', () => {
 
         // URL/method/status equality cannot establish which identity phase sent
         // a request. Accept only fixture failures whose exact Playwright Request
-        // was initiated during a completed logout, whose route still satisfies
-        // that phase's complete-evidence host classifier, and whose credential
-        // is absent or is that phase's exact revoked token. Natural late stock
-        // probes and both deliberately held exact probes follow this owner path.
+        // was initiated during a completed logout or its immediately following
+        // authentication transition, whose route still satisfies that phase's
+        // complete-evidence host classifier, and whose credential is absent or
+        // is that phase's exact revoked token. Natural late stock probes and
+        // both deliberately held exact probes follow this owner path.
         const provenDelayedA2Failures = collectProvenDelayedLogoutFailures(
             consoleErrors,
             completedLogoutPhases
@@ -1416,7 +1507,7 @@ test.describe('no-reload account identity switching', () => {
             provenDelayedA2Failures.some(
                 (response) => consoleErrors.requestFor(response) === exactLogoutProbeRequest
             ),
-            'the held queryless /System/Endpoint 401 is proven by exact logout Request identity'
+            'the held queryless /System/Endpoint 401 has exact authentication-transition ownership'
         ).toBe(true);
         expect(
             provenDelayedA2Failures.some((response) => {
@@ -1432,9 +1523,11 @@ test.describe('no-reload account identity switching', () => {
         const remainingB2Failures = consoleErrors.unexpected4xx();
         const failureOwnerLabel = (response: FailedResponse): string => {
             const request = consoleErrors.requestFor(response);
-            if (request === wrongPathLogoutProbeRequest) return 'logout-owned-wrong-path';
+            if (request === wrongPathLogoutProbeRequest) {
+                return 'authentication-transition-owned-wrong-path';
+            }
             if (request === foreignTokenLogoutProbeRequest) {
-                return 'logout-owned-foreign-token';
+                return 'authentication-transition-owned-foreign-token';
             }
             if (request === foreignB2ProbeRequest) return 'b2-owned-same-path';
             return `unexpected:${response.method}:${response.status}:${response.url}`;
@@ -1443,9 +1536,9 @@ test.describe('no-reload account identity switching', () => {
             remainingB2Failures.map(failureOwnerLabel).sort(),
             'only the three deliberate fatal controls remain after exact logout acknowledgement'
         ).toEqual([
+            'authentication-transition-owned-foreign-token',
+            'authentication-transition-owned-wrong-path',
             'b2-owned-same-path',
-            'logout-owned-foreign-token',
-            'logout-owned-wrong-path',
         ]);
 
         // These failures exist only as negative controls. Remove their exact
