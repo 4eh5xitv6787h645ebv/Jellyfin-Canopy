@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JC } from '../../globals';
-import { driveOwnedFakeTimersUntil } from '../../test/owned-timer-driver';
+import { driveOwnedFakeTimersUntil, trackOwnedFakeTimers } from '../../test/owned-timer-driver';
 import { resetFromUserConfig } from './data';
 import {
     clearFilterIdentityState,
@@ -138,6 +138,10 @@ describe('hidden-content parent-Series resolution', () => {
 
     it('recovers overflow beyond both 1,000-entry backpressure tables', async () => {
         vi.useFakeTimers();
+        const ownedTimers = trackOwnedFakeTimers({
+            label: 'hidden parent-Series overflow recovery',
+            isOwned: stack => /[\\/]enhanced[\\/]hidden-content[\\/]filter\.ts/.test(stack),
+        });
         try {
             const responseItems = Array.from({ length: 1_001 }, (_value, index) => ({
                 Id: `overflow-episode-${index}`,
@@ -161,7 +165,8 @@ describe('hidden-content parent-Series resolution', () => {
                 label: 'hidden parent-Series overflow recovery',
                 isComplete: () => document.querySelectorAll('.card.jc-hidden').length === 1_001,
                 diagnostics: () => (
-                    `hidden=${document.querySelectorAll('.card.jc-hidden').length}; api calls=${calls}`
+                    `hidden=${document.querySelectorAll('.card.jc-hidden').length}; api calls=${calls}; `
+                    + `owned timers=${ownedTimers.pendingCount()}`
                 ),
             });
             expect(document.querySelectorAll('.card.jc-hidden')).toHaveLength(1_001);
@@ -172,8 +177,9 @@ describe('hidden-content parent-Series resolution', () => {
         } finally {
             clearFilterIdentityState();
             try {
-                expect(vi.getTimerCount()).toBe(0);
+                ownedTimers.assertNoPending();
             } finally {
+                ownedTimers.restore();
                 vi.clearAllTimers();
                 vi.useRealTimers();
             }

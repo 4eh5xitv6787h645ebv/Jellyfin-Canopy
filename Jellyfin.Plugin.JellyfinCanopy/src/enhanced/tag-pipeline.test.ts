@@ -7,7 +7,7 @@
 // card scan selector could otherwise surface — is still caught.
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import { JC } from '../globals';
-import { driveOwnedFakeTimersUntil } from '../test/owned-timer-driver';
+import { driveOwnedFakeTimersUntil, trackOwnedFakeTimers } from '../test/owned-timer-driver';
 import { getItemCached } from './helpers';
 import {
     applyContentResponse,
@@ -1176,6 +1176,10 @@ describe('watched/privacy projection response ordering (BI-SEC-035)', () => {
 
     it('drains 200 failed-batch cards with six workers and one lookup per duplicate id', async () => {
         vi.useFakeTimers();
+        const ownedTimers = trackOwnedFakeTimers({
+            label: 'tag fallback 200-card drain',
+            isOwned: stack => /[\\/]enhanced[\\/]tag-pipeline\.ts/.test(stack),
+        });
         document.body.innerHTML = '';
         const oldConfig = JC.pluginConfig;
         const oldUi = JC.core.ui;
@@ -1231,7 +1235,8 @@ describe('watched/privacy projection response ordering (BI-SEC-035)', () => {
                 isComplete: () => renderedTargets.size === 200,
                 diagnostics: () => (
                     `rendered=${renderedTargets.size}; fallback requests=${fallbackIds.length}; `
-                    + `active=${activeFallbacks}; max active=${maxActiveFallbacks}`
+                    + `active=${activeFallbacks}; max active=${maxActiveFallbacks}; `
+                    + `owned timers=${ownedTimers.pendingCount()}`
                 ),
             });
             expect(renderedTargets.size).toBe(200);
@@ -1252,8 +1257,9 @@ describe('watched/privacy projection response ordering (BI-SEC-035)', () => {
             document.body.innerHTML = '';
             resetTagPipelineIdentity();
             try {
-                expect(vi.getTimerCount()).toBe(0);
+                ownedTimers.assertNoPending();
             } finally {
+                ownedTimers.restore();
                 vi.clearAllTimers();
                 vi.useRealTimers();
             }
@@ -1397,6 +1403,10 @@ describe('watched/privacy projection response ordering (BI-SEC-035)', () => {
 
     it('bounds failed-batch fallback work and lets navigation preempt all stale requests', async () => {
         vi.useFakeTimers();
+        const ownedTimers = trackOwnedFakeTimers({
+            label: 'tag fallback navigation preemption',
+            isOwned: stack => /[\\/]enhanced[\\/]tag-pipeline\.ts/.test(stack),
+        });
         document.body.innerHTML = '';
         const oldConfig = JC.pluginConfig;
         const oldUi = JC.core.ui;
@@ -1477,7 +1487,8 @@ describe('watched/privacy projection response ordering (BI-SEC-035)', () => {
                 isComplete: () => fallbackStarted.length === 6,
                 diagnostics: () => (
                     `started=${fallbackStarted.length}; active=${activeFallbacks}; `
-                    + `max active=${maxActiveFallbacks}; batch calls=${batchCalls}`
+                    + `max active=${maxActiveFallbacks}; batch calls=${batchCalls}; `
+                    + `owned timers=${ownedTimers.pendingCount()}`
                 ),
             });
             expect(fallbackStarted).toHaveLength(6);
@@ -1499,7 +1510,8 @@ describe('watched/privacy projection response ordering (BI-SEC-035)', () => {
                     && document.querySelector(`.bounded-fallback-${nextItemId}`) !== null,
                 diagnostics: () => (
                     `aborted=${fallbackSignals.filter(signal => signal.aborted).length}/${fallbackSignals.length}; `
-                    + `started=${fallbackStarted.length}; active=${activeFallbacks}; renders=${staleRenders.join(',')}`
+                    + `started=${fallbackStarted.length}; active=${activeFallbacks}; `
+                    + `owned timers=${ownedTimers.pendingCount()}; renders=${staleRenders.join(',')}`
                 ),
             });
             expect(fallbackSignals.every(signal => signal.aborted)).toBe(true);
@@ -1519,8 +1531,9 @@ describe('watched/privacy projection response ordering (BI-SEC-035)', () => {
             document.body.innerHTML = '';
             resetTagPipelineIdentity();
             try {
-                expect(vi.getTimerCount()).toBe(0);
+                ownedTimers.assertNoPending();
             } finally {
+                ownedTimers.restore();
                 vi.clearAllTimers();
                 vi.useRealTimers();
             }
