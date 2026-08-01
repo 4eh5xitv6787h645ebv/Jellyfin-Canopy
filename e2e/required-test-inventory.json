@@ -132,6 +132,7 @@
     "e2e/seerr-modal-history.spec.ts › Seerr modal history ownership › one Escape closes only the topmost nested modal and keeps the shortcut gate",
     "e2e/seerr-modal-history.spec.ts › Seerr modal history ownership › intervening SPA history preserves one-step Back and Forward around a retired modal",
     "e2e/seerr-modal-history.spec.ts › Seerr modal history ownership › full reload on a private marker retires it before the next real Back",
+    "e2e/seerr-modal-history.spec.ts › Seerr modal history ownership › direct-boot modal success survives its same-URL sentinel pop and clears on real navigation",
     "e2e/seerr-parental-tags.spec.ts › Seerr parental tag blocking › blocked genre tag hides whole-genre titles the keyword block would miss",
     "e2e/seerr-parental-tags.spec.ts › Seerr parental tag blocking › blocked keyword tag gates search, detail, and request for the restricted user only",
     "e2e/seerr-parental.spec.ts › seerr parental-rating filter › restricted user is filtered server-side; admin and no-limit are not",

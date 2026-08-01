@@ -652,6 +652,11 @@ function initialize(): void {
     // jc:navigate (our pushState patch) + hashchange/popstate cover legacy
     // routing and any nav our patch catches; HISTORY_UPDATE (subscribed below)
     // is the universal signal for the modern router's param-only navs.
+    // Seed the document's direct-boot location before accepting events. A
+    // same-URL history sentinel (for example, a modal-owned entry) can pop
+    // immediately after startup; that traversal is not a route change and
+    // must not tear down route-owned UI such as a just-created notification.
+    lastDispatchedKey = navDedupKey();
     window.addEventListener('jc:navigate', dispatchNavigate);
     window.addEventListener('hashchange', dispatchNavigate);
     window.addEventListener('popstate', dispatchNavigate);

@@ -247,4 +247,86 @@ test.describe('Seerr modal history ownership', () => {
 
         assertNoRuntimeErrors(consoleErrors);
     });
+
+    test('direct-boot modal success survives its same-URL sentinel pop and clears on real navigation', async ({
+        page,
+        consoleErrors,
+    }) => {
+        await loginAs(page, 'admin', consoleErrors);
+        await page.evaluate(() => {
+            const documentPath = `${location.pathname}${location.search}`;
+            History.prototype.replaceState.call(
+                history,
+                { jcHistoryProof: 'direct-boot-base' },
+                '',
+                `${documentPath}#/search?query=history-owner-direct-boot`
+            );
+        });
+
+        // Reboot the plugin on the target route. This is the direct/deep-link
+        // shape where navigation's initial dedup key used to be unseeded. The
+        // native replace above deliberately avoided every SPA navigation hook.
+        await page.reload({ waitUntil: 'domcontentloaded' });
+        await page.waitForFunction(() => {
+            const jc = (window as any).JellyfinCanopy;
+            return jc?.initialized === true
+                && typeof jc?.seerrModal?.create === 'function'
+                && typeof jc?.toast === 'function'
+                && location.hash.includes('history-owner-direct-boot');
+        }, undefined, { timeout: 30_000 });
+
+        await page.evaluate(() => {
+            const jc = (window as any).JellyfinCanopy;
+            (window as any).__jcDirectBootUrl = location.href;
+            (window as any).__jcDirectBootNavigations = 0;
+            (window as any).__jcDirectBootOffNavigate = jc.core.navigation.onNavigate(() => {
+                (window as any).__jcDirectBootNavigations += 1;
+            });
+            const handle = jc.seerrModal.create({
+                title: 'Direct-boot notification proof',
+                subtitle: 'No upstream request is sent',
+                bodyHtml: '<p>Save, announce success, then consume the modal sentinel.</p>',
+                onSave: (_modal: HTMLElement, _button: HTMLButtonElement, close: () => void) => {
+                    // Match the real season/collection success consumers: they
+                    // publish through the legacy facade immediately before close.
+                    jc.toast('Direct-boot request saved', 60_000, 'success');
+                    close();
+                },
+            });
+            handle.show();
+        });
+
+        const modal = page.locator('.seerr-season-modal');
+        await expect(modal).toBeVisible();
+        expect(await page.evaluate(() => Boolean(
+            (history.state as Record<string, unknown> | null)?.__jellyfinCanopySeerrModal
+        ))).toBe(true);
+        await modal.locator('.seerr-modal-button-primary').click();
+        await expect(modal).toHaveCount(0, { timeout: 30_000 });
+        expect(await page.evaluate(() => ({
+            marker: Boolean(
+                (history.state as Record<string, unknown> | null)?.__jellyfinCanopySeerrModal
+            ),
+            navigations: (window as any).__jcDirectBootNavigations,
+            sameUrl: location.href === (window as any).__jcDirectBootUrl,
+        }))).toEqual({ marker: false, navigations: 0, sameUrl: true });
+        await expect(page.locator('.jellyfin-canopy-toast')).toHaveText('Direct-boot request saved');
+
+        // A genuine host route change remains observable and owns notification
+        // teardown; only the same-URL sentinel transition is suppressed.
+        await showRoute(page, '/home?jc-notification-proof=direct-boot');
+        await page.waitForFunction(
+            () => location.hash.includes('jc-notification-proof=direct-boot'),
+            undefined,
+            { timeout: 30_000 }
+        );
+        await expect(page.locator('.jc-notification')).toHaveCount(0);
+        expect(await page.evaluate(() => (window as any).__jcDirectBootNavigations)).toBe(1);
+        await page.evaluate(() => {
+            (window as any).__jcDirectBootOffNavigate();
+            delete (window as any).__jcDirectBootOffNavigate;
+        });
+
+        assertNoRuntimeErrors(consoleErrors);
+    });
 });
