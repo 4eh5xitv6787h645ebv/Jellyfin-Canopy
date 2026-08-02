@@ -1,0 +1,161 @@
+name: Refresh Jellyfin nightly
+
+# Canopy targets Jellyfin 12, which ships only as the `unstable` nightly, so the
+# E2E stack must keep testing against a current server build. That server is
+# pinned by immutable digest in three files which scripts/e2e/workflow-sharding.
+# test.js requires to stay byte-identical, and Dependabot owns only the Compose
+# manifest — so a bot bump can never satisfy the drift guard and the pin ages in
+# place instead. This job is the single writer that moves all three together,
+# every day, and hands the result to the ordinary required gate: the refreshed
+# digest becomes the CI baseline only after the full six-shard E2E suite passes
+# against it. The digest pin itself is never relaxed.
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One refresh branch at a time. Overlapping runs would publish competing pull
+# requests for the same channel and close each other's work.
+concurrency:
+  group: refresh-jellyfin-nightly
+  cancel-in-progress: false
+
+env:
+  IMAGE: jellyfin/jellyfin:unstable
+  BRANCH_PREFIX: chore/jellyfin-nightly-
+
+jobs:
+  refresh:
+    name: Refresh pinned Jellyfin digest
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+
+      - name: Require the dedicated automation token
+        env:
+          AUTOMATION_TOKEN: ${{ secrets.CANOPY_AUTOMATION_TOKEN }}
+        run: |
+          if [[ -z "${AUTOMATION_TOKEN}" ]]; then
+            echo "CANOPY_AUTOMATION_TOKEN is not configured." >&2
+            echo "A pull request opened with the default GITHUB_TOKEN never triggers Build & Test, so its required checks would never report and auto-merge could never complete. Configure a fine-grained token limited to this repository with contents:write and pull-requests:write." >&2
+            exit 1
+          fi
+
+      - name: Checkout reviewed source
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          # Deliberately not the default GITHUB_TOKEN: see the guard above.
+          token: ${{ secrets.CANOPY_AUTOMATION_TOKEN }}
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+
+      - name: Verify Node toolchain
+        run: node scripts/check-node-toolchain.js
+
+      # Resolve the multi-arch index digest the `unstable` tag currently points
+      # at. This is the same immutable form Dependabot commits and the only form
+      # scripts/e2e/pull-pinned-image.sh will pull.
+      - name: Resolve the current unstable digest
+        id: resolve
+        run: |
+          digest="$(docker buildx imagetools inspect "${IMAGE}" --format '{{.Manifest.Digest}}')"
+          if [[ ! "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "Refusing to pin ${IMAGE} to an unusable reference: ${digest}" >&2
+            exit 1
+          fi
+          echo "digest=${digest}" >> "${GITHUB_OUTPUT}"
+
+      - name: Rewrite the pinned references
+        id: refresh
+        env:
+          DIGEST: ${{ steps.resolve.outputs.digest }}
+        run: |
+          result="$(node scripts/e2e/refresh-jellyfin-digest.js "${DIGEST}")"
+          echo "${result}"
+          {
+            echo "changed=$(jq -er .changed <<<"${result}")"
+            echo "previous=$(jq -er .previousDigest <<<"${result}")"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Publish or reconcile the refresh pull request
+        env:
+          GH_TOKEN: ${{ secrets.CANOPY_AUTOMATION_TOKEN }}
+          CHANGED: ${{ steps.refresh.outputs.changed }}
+          DIGEST: ${{ steps.resolve.outputs.digest }}
+          PREVIOUS: ${{ steps.refresh.outputs.previous }}
+        run: |
+          short="${DIGEST#sha256:}"
+          export BRANCH="${BRANCH_PREFIX}${short:0:12}"
+
+          # Any other open refresh branch is obsolete: its digest was either
+          # superseded overnight or has already landed on main.
+          mapfile -t obsolete < <(
+            gh pr list --state open --json number,headRefName --jq \
+              '.[] | select(.headRefName | startswith(env.BRANCH_PREFIX))
+                   | select(.headRefName != env.BRANCH) | .number'
+          )
+          for number in "${obsolete[@]}"; do
+            gh pr close "${number}" --delete-branch \
+              --comment "Superseded: the pinned Jellyfin nightly has moved on."
+          done
+
+          if [[ "${CHANGED}" != "true" ]]; then
+            echo "main already pins ${DIGEST}; nothing to publish."
+            exit 0
+          fi
+
+          open_pr="$(gh pr list --state open --head "${BRANCH}" --json number --jq '.[0].number // empty')"
+          if [[ -z "${open_pr}" ]]; then
+            # The branch namespace belongs to this job alone, so a leftover ref
+            # with no open pull request (an inactivity close, an interrupted run)
+            # is safe to recreate from scratch.
+            git push origin --delete "${BRANCH}" 2>/dev/null || true
+
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git switch --create "${BRANCH}"
+            git add -- .github/workflows/build.yml e2e/docker/compose.yml e2e/docker/seed.sh
+            git commit -m "chore(e2e): refresh the pinned Jellyfin nightly digest"
+            git push --set-upstream origin "${BRANCH}"
+
+            gh pr create --base main --head "${BRANCH}" \
+              --title "chore(e2e): refresh the pinned Jellyfin nightly digest" \
+              --label "dependencies" --label "docker" \
+              --body "$(printf '%s\n' \
+                "The dockerized E2E stack pins its Jellyfin 12 server by immutable digest. This moves that pin to the current \`${IMAGE}\` nightly." \
+                "" \
+                "| | Digest |" \
+                "| --- | --- |" \
+                "| Before | \`${PREVIOUS}\` |" \
+                "| After | \`${DIGEST}\` |" \
+                "" \
+                "Updated together so the drift guard in \`scripts/e2e/workflow-sharding.test.js\` stays satisfied:" \
+                "" \
+                "- \`.github/workflows/build.yml\` — required E2E shard \`JF_IMAGE\`" \
+                "- \`e2e/docker/compose.yml\` — Compose environment default" \
+                "- \`e2e/docker/seed.sh\` — seed export default" \
+                "" \
+                "Opened by \`.github/workflows/refresh-jellyfin-image.yml\`. Auto-merge is enabled, so this lands only if the full required gate — including all six E2E shards — passes against the new server build. A red gate means the nightly broke Canopy and the pull request stays open for a human." \
+              )"
+          fi
+
+          # --auto defers the decision to the branch ruleset, which has no bypass
+          # actors and requires the E2E aggregate.
+          gh pr merge "${BRANCH}" --auto --squash
+
+          # Auto-merge never updates the branch itself, and the ruleset requires
+          # an up-to-date branch, so a refresh left BEHIND would wait forever.
+          state="$(gh pr view "${BRANCH}" --json mergeStateStatus --jq .mergeStateStatus)"
+          echo "Merge state: ${state}"
+          if [[ "${state}" == "BEHIND" ]]; then
+            gh pr update-branch "${BRANCH}"
+          fi
