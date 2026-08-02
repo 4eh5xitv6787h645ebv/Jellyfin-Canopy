@@ -11,6 +11,11 @@ import { formatTimestamp, renderActiveBookmarks } from './library-render';
 import type { IdentityContext } from '../../types/jc';
 import { normalizeBookmarkMediaType } from './media-types';
 import { bookmarkIdentityLabel } from './bookmark-identity';
+import {
+  createBookmarkModalControlId,
+  installBookmarkModalA11y,
+  releaseBookmarkModalA11y
+} from './modal-a11y';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -35,8 +40,9 @@ function ownModal(modal: HTMLElement): void {
 }
 
 function closeModal(modal: HTMLElement): void {
-  JC.core.refreshSafety!.releaseElement(modal);
-  if (!modal.isConnected) return;
+  releaseBookmarkModalA11y(modal);
+  if (!modal.isConnected || modal.dataset.jcClosing === 'true') return;
+  modal.dataset.jcClosing = 'true';
   modal.style.opacity = '0';
   const timer = window.setTimeout(() => {
     modalTimers.delete(timer);
@@ -49,7 +55,7 @@ export function resetBookmarksLibraryModals(): void {
   for (const timer of modalTimers) window.clearTimeout(timer);
   modalTimers.clear();
   document.querySelectorAll('[data-jc-bookmark-library-modal="true"]').forEach((modal) => {
-    JC.core.refreshSafety!.releaseElement(modal);
+    releaseBookmarkModalA11y(modal as HTMLElement);
     modal.remove();
   });
 }
@@ -69,13 +75,14 @@ export function showOffsetAdjustmentModal(
   }
   const previewBookmarks = syncedBookmarks.slice(0, BOOKMARK_OFFSET_PREVIEW_SIZE);
   const previewRemainder = syncedBookmarks.length - previewBookmarks.length;
+  const offsetInputId = createBookmarkModalControlId('offset');
 
   const modal = document.createElement('div');
   modal.className = 'jc-bm-library-modal-overlay';
   ownModal(modal);
   modal.innerHTML = `
     <div class="jc-bm-library-modal-container" style="max-width: 550px;">
-      <button class="jc-bm-library-modal-close">×</button>
+      <button type="button" class="jc-bm-library-modal-close" aria-label="Close bookmark offset dialog">×</button>
       <div class="jc-bm-library-modal-content">
         <div class="jc-bookmarks-modal-header">
           <span class="material-icons" aria-hidden="true" style="font-size: 48px; color: #2196f3; flex-shrink: 0;">schedule</span>
@@ -91,8 +98,8 @@ export function showOffsetAdjustmentModal(
         </div>
 
         <div style="margin-bottom: 24px;">
-          <label for="offset-adjustment-input" class="jc-modal-label"><span class="material-icons" style="font-size: 14px; vertical-align: middle;">schedule</span> ${JC.t!('bookmark_offset_label')}</label>
-          <input type="number" id="offset-adjustment-input" value="0" step="0.1" placeholder="0" class="jc-modal-input">
+          <label for="${offsetInputId}" class="jc-modal-label"><span class="material-icons" style="font-size: 14px; vertical-align: middle;">schedule</span> ${JC.t!('bookmark_offset_label')}</label>
+          <input type="number" id="${offsetInputId}" value="0" step="0.1" placeholder="0" class="jc-modal-input">
           <div class="jc-modal-help-text">${JC.t!('bookmark_offset_help')}</div>
         </div>
 
@@ -109,11 +116,11 @@ export function showOffsetAdjustmentModal(
       </div>
 
       <div class="jc-bookmark-modal-actions">
-        <button class="jc-bookmark-btn-cancel">
+        <button type="button" class="jc-bookmark-btn-cancel">
           <span class="material-icons" aria-hidden="true" style="font-size: 18px;">close</span>
           <span>Cancel</span>
         </button>
-        <button class="btnApplyOffset jc-modal-btn-primary">
+        <button type="button" class="btnApplyOffset jc-modal-btn-primary">
           <span class="material-icons" aria-hidden="true" style="font-size: 18px;">check</span>
           <span>${JC.t!('bookmark_apply_offset')}</span>
         </button>
@@ -122,7 +129,6 @@ export function showOffsetAdjustmentModal(
   `;
 
   document.body.appendChild(modal);
-  JC.core.refreshSafety!.holdElement(modal, 'modal');
 
   const closeDialog = () => closeModal(modal);
   // Body-level modal: the page's dispose bag closes it on drain.
@@ -133,11 +139,17 @@ export function showOffsetAdjustmentModal(
   modal.addEventListener('click', (e) => {
     if (e.target === modal) closeDialog();
   });
+  installBookmarkModalA11y(modal, {
+    title: modal.querySelector<HTMLElement>('.jc-modal-title')!,
+    description: modal.querySelector<HTMLElement>('.jc-modal-subtitle'),
+    initialFocus: modal.querySelector<HTMLInputElement>(`#${offsetInputId}`),
+    onEscape: closeDialog
+  });
 
   // Apply offset button handler
   modal.querySelector('.btnApplyOffset')?.addEventListener('click', () => { void (async () => {
     if (!JC.identity.isCurrent(context)) return;
-    const offset = parseFloat(modal.querySelector<HTMLInputElement>('#offset-adjustment-input')!.value) || 0;
+    const offset = parseFloat(modal.querySelector<HTMLInputElement>(`#${offsetInputId}`)!.value) || 0;
 
     const btn = modal.querySelector<HTMLButtonElement>('.btnApplyOffset')!;
     btn.disabled = true;
@@ -467,24 +479,24 @@ export function showDuplicatesSyncModal(
   modal.style.cssText = 'position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.85); z-index: 10000; display: flex; align-items: center; justify-content: center; opacity: 0; transition: opacity 0.2s;';
   modal.innerHTML = `
     <div class="jc-bm-library-modal-container" style="max-width: 700px; background: #181818; border-radius: 12px; padding: 24px; position: relative; box-shadow: 0 8px 32px rgba(0,0,0,0.8); max-height: 85vh; overflow-y: auto;">
-      <button class="jc-bm-library-modal-close" style="position: absolute; top: 16px; right: 16px; background: transparent; border: none; color: #fff; font-size: 32px; cursor: pointer; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; border-radius: 50%; transition: background 0.2s;">×</button>
+      <button type="button" class="jc-bm-library-modal-close" aria-label="Close duplicate bookmarks dialog" style="position: absolute; top: 16px; right: 16px; background: transparent; border: none; color: #fff; font-size: 32px; cursor: pointer; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; border-radius: 50%; transition: background 0.2s;">×</button>
       <div class="jc-bm-library-modal-content">
         <div class="jc-bookmarks-modal-header" style="display: flex; gap: 16px; align-items: flex-start; margin-bottom: 24px;">
           <span class="material-icons" aria-hidden="true" style="font-size: 48px; color: #ff9800; flex-shrink: 0;">merge</span>
           <div style="flex: 1;">
-            <h2 style="margin: 0 0 8px 0; font-size: 24px; font-weight: 700; color: #fff;">${JC.t!('bookmark_duplicate_title')}</h2>
-            <p style="margin: 0; font-size: 13px; color: #aaa;">${JC.t!('bookmark_duplicate_subtitle').replace('{count}', String(duplicates.length))}</p>
+            <h2 class="jc-modal-title" style="margin: 0 0 8px 0; font-size: 24px; font-weight: 700; color: #fff;">${JC.t!('bookmark_duplicate_title')}</h2>
+            <p class="jc-modal-subtitle" style="margin: 0; font-size: 13px; color: #aaa;">${JC.t!('bookmark_duplicate_subtitle').replace('{count}', String(duplicates.length))}</p>
           </div>
         </div>
         <div class="jc-duplicate-groups-page" style="margin-top: 20px;"></div>
         <div class="jc-duplicate-group-pagination" style="display:flex;align-items:center;justify-content:center;gap:12px;">
-          <button class="jc-btn jc-duplicate-groups-prev" aria-label="${escapeHtml(JC.t!('calendar_prev'))}"><span class="material-icons">chevron_left</span></button>
-          <span class="jc-duplicate-groups-status"></span>
-          <button class="jc-btn jc-duplicate-groups-next" aria-label="${escapeHtml(JC.t!('calendar_next'))}"><span class="material-icons">chevron_right</span></button>
+          <button type="button" class="jc-btn jc-duplicate-groups-prev" aria-label="${escapeHtml(JC.t!('calendar_prev'))}"><span class="material-icons" aria-hidden="true">chevron_left</span></button>
+          <span class="jc-duplicate-groups-status" aria-live="polite"></span>
+          <button type="button" class="jc-btn jc-duplicate-groups-next" aria-label="${escapeHtml(JC.t!('calendar_next'))}"><span class="material-icons" aria-hidden="true">chevron_right</span></button>
         </div>
       </div>
       <div class="jc-bookmark-modal-actions">
-        <button class="jc-bookmark-btn-cancel">
+        <button type="button" class="jc-bookmark-btn-cancel">
           <span class="material-icons" aria-hidden="true" style="font-size: 18px;">close</span>
           <span>Close</span>
         </button>
@@ -493,7 +505,6 @@ export function showDuplicatesSyncModal(
   `;
 
   document.body.appendChild(modal);
-  JC.core.refreshSafety!.holdElement(modal, 'modal');
 
   const closeDialog = () => closeModal(modal);
   // Body-level modal: the page's dispose bag closes it on drain.
@@ -504,7 +515,6 @@ export function showDuplicatesSyncModal(
   modal.addEventListener('click', (e) => {
     if (e.target === modal) closeDialog();
   });
-
   let groupPage = 0;
   const versionPages = new Map<number, number>();
   const selectedTargets = new Map<number, string>();
@@ -546,7 +556,7 @@ export function showDuplicatesSyncModal(
                 <input type="radio" class="jc-merge-target-choice" name="jc-merge-target-${dupIndex}" value="${escapeHtml(itemId)}" data-dup-index="${dupIndex}" ${isTarget ? 'checked' : ''}>
                 <span>${JC.t!('bookmark_select_target')}</span>
               </label>
-              <button class="jc-btn" data-offset-item-id="${escapeHtml(itemId)}" data-dup-index="${dupIndex}"><span class="material-icons">schedule</span><span>${JC.t!('bookmark_adjust_offset')}</span></button>
+              <button type="button" class="jc-btn" data-offset-item-id="${escapeHtml(itemId)}" data-dup-index="${dupIndex}"><span class="material-icons" aria-hidden="true">schedule</span><span>${JC.t!('bookmark_adjust_offset')}</span></button>
             </div>`;
         }).join('');
       return `
@@ -555,11 +565,11 @@ export function showDuplicatesSyncModal(
           <div style="font-size:12px;color:#888;margin-bottom:12px;">${JC.t!('bookmark_split_versions').replace('{count}', String(Number(dup.totalBookmarks) || 0)).replace('{versions}', String(itemIds.length))}</div>
           ${versions}
           <div class="jc-duplicate-version-pagination" style="display:flex;align-items:center;gap:8px;">
-            <button class="jc-btn jc-duplicate-versions-prev" data-dup-index="${dupIndex}" ${versionPage === 0 ? 'disabled' : ''}><span class="material-icons">chevron_left</span></button>
-            <span class="jc-duplicate-versions-status">${versionStart + 1}-${Math.min(versionStart + BOOKMARK_DUPLICATE_VERSION_PAGE_SIZE, itemIds.length)} / ${itemIds.length}</span>
-            <button class="jc-btn jc-duplicate-versions-next" data-dup-index="${dupIndex}" ${versionPage >= versionPageCount - 1 ? 'disabled' : ''}><span class="material-icons">chevron_right</span></button>
+            <button type="button" class="jc-btn jc-duplicate-versions-prev" aria-label="${escapeHtml(JC.t!('calendar_prev'))}" data-dup-index="${dupIndex}" ${versionPage === 0 ? 'disabled' : ''}><span class="material-icons" aria-hidden="true">chevron_left</span></button>
+            <span class="jc-duplicate-versions-status" aria-live="polite">${versionStart + 1}-${Math.min(versionStart + BOOKMARK_DUPLICATE_VERSION_PAGE_SIZE, itemIds.length)} / ${itemIds.length}</span>
+            <button type="button" class="jc-btn jc-duplicate-versions-next" aria-label="${escapeHtml(JC.t!('calendar_next'))}" data-dup-index="${dupIndex}" ${versionPage >= versionPageCount - 1 ? 'disabled' : ''}><span class="material-icons" aria-hidden="true">chevron_right</span></button>
           </div>
-          <button class="jc-btn jc-merge-execute" data-dup-index="${dupIndex}" ${selected ? '' : 'disabled'}><span class="material-icons">merge</span><span>${JC.t!('bookmark_merge_primary')}</span></button>
+          <button type="button" class="jc-btn jc-merge-execute" data-dup-index="${dupIndex}" ${selected ? '' : 'disabled'}><span class="material-icons" aria-hidden="true">merge</span><span>${JC.t!('bookmark_merge_primary')}</span></button>
         </div>`;
     }).join('');
 
@@ -572,14 +582,20 @@ export function showDuplicatesSyncModal(
         if (!JC.identity.isCurrent(context)) return;
         selectedTargets.set(Number(radio.dataset.dupIndex), radio.value);
         renderDuplicateModalPage();
+        [...groupsContainer.querySelectorAll<HTMLInputElement>('.jc-merge-target-choice')]
+          .find(candidate => candidate.value === radio.value)?.focus();
       });
     });
     groupsContainer.querySelectorAll<HTMLButtonElement>('.jc-duplicate-versions-prev, .jc-duplicate-versions-next').forEach(button => {
       button.addEventListener('click', () => {
         const index = Number(button.dataset.dupIndex);
         const delta = button.classList.contains('jc-duplicate-versions-next') ? 1 : -1;
+        const focusClass = delta > 0 ? 'jc-duplicate-versions-next' : 'jc-duplicate-versions-prev';
         versionPages.set(index, Math.max(0, (versionPages.get(index) || 0) + delta));
         renderDuplicateModalPage();
+        groupsContainer.querySelector<HTMLButtonElement>(
+          `.jc-duplicate-group[data-dup-index="${index}"] .${focusClass}`
+        )?.focus();
       });
     });
     groupsContainer.querySelectorAll<HTMLButtonElement>('[data-offset-item-id]').forEach(button => {
@@ -637,6 +653,13 @@ export function showDuplicatesSyncModal(
     renderDuplicateModalPage();
   });
   renderDuplicateModalPage();
+  installBookmarkModalA11y(modal, {
+    title: modal.querySelector<HTMLElement>('.jc-modal-title')!,
+    description: modal.querySelector<HTMLElement>('.jc-modal-subtitle'),
+    initialFocus: modal.querySelector<HTMLInputElement>('.jc-merge-target-choice')
+      ?? modal.querySelector<HTMLButtonElement>('.jc-bookmark-btn-cancel'),
+    onEscape: closeDialog
+  });
 
   scheduleModalTask(context, () => { if (modal.isConnected) modal.style.opacity = '1'; }, 10);
 }

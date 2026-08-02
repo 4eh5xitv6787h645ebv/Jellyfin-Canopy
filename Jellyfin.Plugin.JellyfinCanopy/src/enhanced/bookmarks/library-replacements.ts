@@ -17,6 +17,10 @@ import {
   compareBookmarkIdentity,
   type BookmarkIdentityRecord
 } from './bookmark-identity';
+import {
+  installBookmarkModalA11y,
+  releaseBookmarkModalA11y
+} from './modal-a11y';
 
 const replacementModalTimers = new Set<number>();
 const replacementModalTimerCleanups = new Map<number, () => void>();
@@ -231,8 +235,9 @@ function ownReplacementModal(modal: HTMLElement): void {
 }
 
 function closeReplacementModal(modal: HTMLElement): void {
-  JC.core.refreshSafety!.releaseElement(modal);
-  if (!modal.isConnected) return;
+  releaseBookmarkModalA11y(modal);
+  if (!modal.isConnected || modal.dataset.jcClosing === 'true') return;
+  modal.dataset.jcClosing = 'true';
   modal.style.opacity = '0';
   const timer = window.setTimeout(() => {
     replacementModalTimers.delete(timer);
@@ -247,7 +252,7 @@ export function resetBookmarksLibraryReplacementModals(): void {
   for (const cleanup of replacementModalTimerCleanups.values()) cleanup();
   replacementModalTimerCleanups.clear();
   document.querySelectorAll('[data-jc-bookmark-library-modal="true"]').forEach((modal) => {
-    JC.core.refreshSafety!.releaseElement(modal);
+    releaseBookmarkModalA11y(modal as HTMLElement);
     modal.remove();
   });
 }
@@ -474,7 +479,7 @@ function showReplacementSelectionModal(
   modal.style.cssText = 'position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.9); z-index: 10000; display: flex; align-items: center; justify-content: center; opacity: 0; transition: opacity 0.2s;';
   modal.innerHTML = `
     <div class="jc-bm-library-modal-container jc-replacement-modal-container">
-      <button class="jc-bm-library-modal-close">×</button>
+      <button type="button" class="jc-bm-library-modal-close" aria-label="Close replacement selection dialog">×</button>
       <div class="jc-bm-library-modal-content" style="padding: 28px;">
         <div class="jc-bookmarks-modal-header">
           <span class="material-icons" aria-hidden="true" style="font-size: 48px; color: #4caf50; flex-shrink: 0;">find_replace</span>
@@ -499,25 +504,25 @@ function showReplacementSelectionModal(
               tag: item.ImageTags?.Primary
             });
             return `
-              <div class="replacement-option" data-item-index="${idx}" style="display: flex; gap: 12px; background: rgba(76,175,80,0.05); border: 2px solid rgba(76,175,80,0.2); border-radius: 8px; padding: 12px; cursor: pointer; transition: all 0.2s; align-items: center;">
-                ${posterUrl ? `<img src="${escapeHtml(posterUrl)}" style="width: 60px; height: 90px; object-fit: cover; border-radius: 6px; flex-shrink: 0;">` : '<div style="width: 60px; height: 90px; background: rgba(255,255,255,0.05); border-radius: 6px; flex-shrink: 0;"></div>'}
+              <button type="button" class="replacement-option" data-item-index="${idx}" aria-pressed="false" style="display: flex; width: 100%; gap: 12px; background: rgba(76,175,80,0.05); border: 2px solid rgba(76,175,80,0.2); border-radius: 8px; padding: 12px; cursor: pointer; transition: all 0.2s; align-items: center; text-align: left; color: inherit; font: inherit;">
+                ${posterUrl ? `<img src="${escapeHtml(posterUrl)}" alt="" style="width: 60px; height: 90px; object-fit: cover; border-radius: 6px; flex-shrink: 0;">` : '<div aria-hidden="true" style="width: 60px; height: 90px; background: rgba(255,255,255,0.05); border-radius: 6px; flex-shrink: 0;"></div>'}
                 <div style="flex: 1;">
                   <div style="font-weight: 600; margin-bottom: 4px; color: #fff; font-size: 15px;">${escapeHtml(item.Name)}</div>
                   <div style="font-size: 12px; color: #aaa; margin-bottom: 4px;">${escapeHtml(item.ProductionYear || '')}</div>
                   <div style="font-size: 11px; color: #888;">Item ID: ${escapeHtml(item.Id.substring(0,16))}...</div>
                 </div>
                 <span class="material-icons" aria-hidden="true" style="color: #4caf50; font-size: 28px; display: none; flex-shrink: 0;">check_circle</span>
-              </div>
+              </button>
             `;
           }).join('')}
         </div>
       </div>
       <div class="jc-modal-actions-padded">
-        <button class="jc-modal-btn-cancel-alt jc-bookmark-btn-cancel">
+        <button type="button" class="jc-modal-btn-cancel-alt jc-bookmark-btn-cancel">
           <span class="material-icons" aria-hidden="true" style="font-size: 18px;">close</span>
           <span>Cancel</span>
         </button>
-        <button class="jc-modal-btn-submit jc-bookmark-btn-submit" disabled>
+        <button type="button" class="jc-modal-btn-submit jc-bookmark-btn-submit" disabled>
           <span class="material-icons" aria-hidden="true" style="font-size: 18px;">swap_horiz</span>
           <span>Migrate Bookmarks</span>
         </button>
@@ -529,7 +534,6 @@ function showReplacementSelectionModal(
   // list in case it synchronously re-entered navigation.
   if (!isReplacementFlowCurrent(context, pageOwner)) return;
   document.body.appendChild(modal);
-  JC.core.refreshSafety!.holdElement(modal, 'modal');
 
   let selectedItem: JellyfinReplacementItem | null = null;
 
@@ -542,6 +546,12 @@ function showReplacementSelectionModal(
   modal.addEventListener('click', (e) => {
     if (e.target === modal) closeDialog();
   });
+  installBookmarkModalA11y(modal, {
+    title: modal.querySelector<HTMLElement>('.jc-modal-title')!,
+    description: modal.querySelector<HTMLElement>('.jc-modal-subtitle'),
+    initialFocus: modal.querySelector<HTMLButtonElement>('.replacement-option'),
+    onEscape: closeDialog
+  });
 
   // Selection handlers
   modal.querySelectorAll<HTMLElement>('.replacement-option').forEach(option => {
@@ -553,11 +563,13 @@ function showReplacementSelectionModal(
       modal.querySelectorAll<HTMLElement>('.replacement-option').forEach(opt => {
         opt.style.borderColor = 'rgba(76,175,80,0.2)';
         opt.style.background = 'rgba(76,175,80,0.05)';
+        opt.setAttribute('aria-pressed', 'false');
         opt.querySelector<HTMLElement>('.material-icons')!.style.display = 'none';
       });
 
       option.style.borderColor = '#4caf50';
       option.style.background = 'rgba(76,175,80,0.15)';
+      option.setAttribute('aria-pressed', 'true');
       option.querySelector<HTMLElement>('.material-icons')!.style.display = 'block';
 
       const submitBtn = modal.querySelector<HTMLButtonElement>('.jc-bookmark-btn-submit')!;
@@ -730,13 +742,13 @@ function showOrphanedSummaryModal(
   modal.style.cssText = 'position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.85); z-index: 10000; display: flex; align-items: center; justify-content: center; opacity: 0; transition: opacity 0.2s;';
   modal.innerHTML = `
     <div class="jc-bm-library-modal-container" style="max-width: 700px; background: #181818; border-radius: 12px; padding: 24px; position: relative; box-shadow: 0 8px 32px rgba(0,0,0,0.8);">
-      <button class="jc-bm-library-modal-close" style="position: absolute; top: 16px; right: 16px; background: transparent; border: none; color: #fff; font-size: 32px; cursor: pointer; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; border-radius: 50%; transition: background 0.2s;">×</button>
+      <button type="button" class="jc-bm-library-modal-close" aria-label="Close orphaned bookmarks dialog" style="position: absolute; top: 16px; right: 16px; background: transparent; border: none; color: #fff; font-size: 32px; cursor: pointer; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; border-radius: 50%; transition: background 0.2s;">×</button>
       <div class="jc-bm-library-modal-content">
         <div class="jc-bookmarks-modal-header">
           <span class="material-icons" aria-hidden="true" style="font-size: 32px; color: #4caf50;">search</span>
           <div>
-            <h2 style="margin: 0 0 4px 0; font-size: 20px;">Orphaned Bookmarks</h2>
-            <p style="margin: 0; font-size: 13px; color: #999;">Found ${replacementResults.length} item(s) with replacements available</p>
+            <h2 class="jc-modal-title" style="margin: 0 0 4px 0; font-size: 20px;">Orphaned Bookmarks</h2>
+            <p class="jc-modal-subtitle" style="margin: 0; font-size: 13px; color: #999;">Found ${replacementResults.length} item(s) with replacements available</p>
           </div>
         </div>
         <div style="margin-top: 20px; max-height: 400px; overflow-y: auto;">
@@ -747,7 +759,7 @@ function showOrphanedSummaryModal(
                   <div class="jc-orphaned-result-name">${escapeHtml(result.group.details.name)}</div>
                   <div class="jc-orphaned-result-count">${result.group.bookmarks.length} bookmark(s) • ${result.matches.length} replacement(s) found</div>
                 </div>
-                <button class="btnMigrateOrphaned jc-btn" data-result-index="${idx}">
+                <button type="button" class="btnMigrateOrphaned jc-btn" data-result-index="${idx}">
                   <span class="material-icons" aria-hidden="true" style="font-size: 16px;">find_replace</span>
                   <span>Migrate</span>
                 </button>
@@ -760,7 +772,7 @@ function showOrphanedSummaryModal(
         </div>
       </div>
       <div class="jc-bookmark-modal-actions">
-        <button class="jc-bookmark-btn-cancel">
+        <button type="button" class="jc-bookmark-btn-cancel">
           <span class="material-icons" aria-hidden="true" style="font-size: 18px;">close</span>
           <span>Close</span>
         </button>
@@ -770,7 +782,6 @@ function showOrphanedSummaryModal(
 
   if (!isReplacementFlowCurrent(context, pageOwner)) return;
   document.body.appendChild(modal);
-  JC.core.refreshSafety!.holdElement(modal, 'modal');
 
   const closeDialog = () => closeReplacementModal(modal);
   // Body-level modal: the page's dispose bag closes it on drain.
@@ -780,6 +791,12 @@ function showOrphanedSummaryModal(
   modal.querySelector('.jc-bookmark-btn-cancel')?.addEventListener('click', closeDialog);
   modal.addEventListener('click', (e) => {
     if (e.target === modal) closeDialog();
+  });
+  installBookmarkModalA11y(modal, {
+    title: modal.querySelector<HTMLElement>('.jc-modal-title')!,
+    description: modal.querySelector<HTMLElement>('.jc-modal-subtitle'),
+    initialFocus: modal.querySelector<HTMLButtonElement>('.btnMigrateOrphaned'),
+    onEscape: closeDialog
   });
 
   // Migrate button handlers

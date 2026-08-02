@@ -15,6 +15,11 @@ import {
   persistedBookmarkIdentity,
   type BookmarkIdentityRecord
 } from './bookmark-identity';
+import {
+  createBookmarkModalControlId,
+  installBookmarkModalA11y,
+  releaseBookmarkModalA11y
+} from './modal-a11y';
 
 interface CancelableDebounced<T extends (...args: any[]) => void> {
   (...args: Parameters<T>): void;
@@ -1360,7 +1365,8 @@ import {
       const percent = (bookmark.timestamp / duration) * 100;
       const markerColor = bookmark.exactMatch ? '#00d4ff' : '#ffa500';
 
-      const marker = document.createElement('div');
+      const marker = document.createElement('button');
+      marker.type = 'button';
       marker.className = 'jc-bookmark-marker';
       marker.dataset.jcIdentityOwned = 'true';
       marker.dataset.jcIdentityEpoch = String(captured.context!.epoch);
@@ -1375,6 +1381,9 @@ import {
         z-index: 1000;
         pointer-events: all;
         cursor: pointer;
+        border: 0;
+        padding: 0;
+        background: transparent;
         display: flex;
         align-items: center;
         justify-content: center;
@@ -1382,6 +1391,7 @@ import {
 
       const icon = document.createElement('span');
       icon.className = 'material-icons';
+      icon.setAttribute('aria-hidden', 'true');
       icon.textContent = 'location_pin';
       icon.style.cssText = `
         font-size: 24px;
@@ -1395,6 +1405,7 @@ import {
       const labelText = bookmark.label || JC.t!('bookmark_no_label');
       const versionNote = !bookmark.exactMatch ? ` ${JC.t!('bookmark_file_changed')}` : '';
       marker.title = `${labelText} - ${formatTimestamp(bookmark.timestamp)}${versionNote}`;
+      marker.setAttribute('aria-label', marker.title);
 
       // Click to jump to bookmark
       marker.addEventListener('click', (e) => {
@@ -1519,6 +1530,8 @@ import {
       : Math.max(0, orderedExistingBookmarks.findIndex(bookmark => Number(bookmark.timestamp) >= currentTime));
     let existingBookmarkPage = Math.floor(selectedExistingIndex / bookmarkModalPageSize);
     const existingBookmarkPageCount = Math.max(1, Math.ceil(orderedExistingBookmarks.length / bookmarkModalPageSize));
+    const timeInputId = createBookmarkModalControlId('time');
+    const labelInputId = createBookmarkModalControlId('label');
     const existingBookmarkRows = (): string => orderedExistingBookmarks
       .slice(
         existingBookmarkPage * bookmarkModalPageSize,
@@ -1533,8 +1546,8 @@ import {
             ${!bm.exactMatch ? `<div class="jc-bookmark-item-warning">${JC.t!('bookmark_file_changed')}</div>` : ''}
           </div>
           <div class="jc-bookmark-item-actions">
-            <button class="jc-bookmark-btn jc-bookmark-btn-jump" data-bookmark-id="${escapeHtml(bm.id)}" title="${JC.t!('bookmark_jump')}"><span class="material-icons">forward</span></button>
-            <button class="jc-bookmark-btn jc-bookmark-btn-delete" data-bookmark-id="${escapeHtml(bm.id)}" title="${JC.t!('bookmark_delete_confirm')}"><span class="material-icons">delete</span></button>
+            <button type="button" class="jc-bookmark-btn jc-bookmark-btn-jump" data-bookmark-id="${escapeHtml(bm.id)}" title="${escapeHtml(JC.t!('bookmark_jump'))}" aria-label="${escapeHtml(`${JC.t!('bookmark_jump')}: ${formatTimestamp(bm.timestamp)}`)}"><span class="material-icons" aria-hidden="true">forward</span></button>
+            <button type="button" class="jc-bookmark-btn jc-bookmark-btn-delete" data-bookmark-id="${escapeHtml(bm.id)}" title="${escapeHtml(JC.t!('bookmark_delete_confirm'))}" aria-label="${escapeHtml(JC.t!('bookmark_delete_confirm'))}"><span class="material-icons" aria-hidden="true">delete</span></button>
           </div>
         </div>`).join('');
 
@@ -1593,6 +1606,11 @@ import {
         }
         .jc-bookmark-modal-close:hover {
           background: rgba(255,255,255,0.1);
+        }
+        .jc-bm-player-modal-overlay button:focus-visible,
+        .jc-bm-player-modal-overlay input:focus-visible {
+          outline: 3px solid #64b5f6;
+          outline-offset: 3px;
         }
         .jc-bookmark-modal-actions {
           display: flex;
@@ -1818,26 +1836,26 @@ import {
       </style>
       <div class="jc-bookmark-modal">
         <div class="jc-bookmark-hero">
-          <div class="jc-bookmark-hero-title">
+          <h2 class="jc-bookmark-hero-title">
             <span>${title}</span>
-          </div>
+          </h2>
           <div class="jc-bookmark-hero-subtitle">${escapeHtml(details.name)}</div>
         </div>
         <div class="jc-bookmark-form-grid">
           <div class="jc-bookmark-input-group">
-            <label for="bookmark-time">${JC.t!('bookmark_time_label')}</label>
+            <label for="${timeInputId}">${JC.t!('bookmark_time_label')}</label>
             <input
               type="text"
-              id="bookmark-time"
+              id="${timeInputId}"
               class="jc-bookmark-input"
               value="${formatTimestamp(timestamp)}"
               readonly>
           </div>
           <div class="jc-bookmark-input-group">
-            <label for="bookmark-label">${JC.t!('bookmark_label_label')}</label>
+            <label for="${labelInputId}">${JC.t!('bookmark_label_label')}</label>
             <input
               type="text"
-              id="bookmark-label"
+              id="${labelInputId}"
               class="jc-bookmark-input"
               placeholder="${JC.t!('bookmark_label_placeholder')}"
               value="${escapeHtml(label)}"
@@ -1852,9 +1870,9 @@ import {
             </div>
             <div class="jc-bookmark-items-page">${existingBookmarkRows()}</div>
             <div class="jc-bookmark-items-pagination" style="display:flex;align-items:center;justify-content:center;gap:12px;">
-              <button class="jc-bookmark-btn jc-bookmark-items-prev" ${existingBookmarkPage === 0 ? 'disabled' : ''}><span class="material-icons">chevron_left</span></button>
-              <span class="jc-bookmark-items-status"></span>
-              <button class="jc-bookmark-btn jc-bookmark-items-next" ${existingBookmarkPage >= existingBookmarkPageCount - 1 ? 'disabled' : ''}><span class="material-icons">chevron_right</span></button>
+              <button type="button" class="jc-bookmark-btn jc-bookmark-items-prev" aria-label="${escapeHtml(JC.t!('calendar_prev'))}" ${existingBookmarkPage === 0 ? 'disabled' : ''}><span class="material-icons" aria-hidden="true">chevron_left</span></button>
+              <span class="jc-bookmark-items-status" aria-live="polite"></span>
+              <button type="button" class="jc-bookmark-btn jc-bookmark-items-next" aria-label="${escapeHtml(JC.t!('calendar_next'))}" ${existingBookmarkPage >= existingBookmarkPageCount - 1 ? 'disabled' : ''}><span class="material-icons" aria-hidden="true">chevron_right</span></button>
             </div>
           </div>
         ` : `
@@ -1872,11 +1890,11 @@ import {
     modal.dataset.jcIdentityEpoch = String(captured.context.epoch);
     modal.innerHTML = `
       <div class="jc-bm-player-modal-container">
-        <button class="jc-bookmark-modal-close">×</button>
+        <button type="button" class="jc-bookmark-modal-close" aria-label="Close bookmark dialog">×</button>
         ${formHtml}
         <div class="jc-bookmark-modal-actions">
-          <button class="jc-bookmark-btn-submit">${isEdit ? JC.t!('bookmark_save') : JC.t!('bookmark_add')}</button>
-          <button class="jc-bookmark-btn-cancel">
+          <button type="button" class="jc-bookmark-btn-submit">${isEdit ? JC.t!('bookmark_save') : JC.t!('bookmark_add')}</button>
+          <button type="button" class="jc-bookmark-btn-cancel">
             <span class="material-icons" aria-hidden="true" style="font-size: 18px;">close</span>
             <span>Cancel</span>
           </button>
@@ -1886,7 +1904,6 @@ import {
 
     if (!isIdentityCurrent(captured)) return;
     document.body.appendChild(modal);
-    JC.core.refreshSafety!.holdElement(modal, 'modal');
 
     const modalTimers = new Set<number>();
     let removalTimer: number | null = null;
@@ -1910,7 +1927,7 @@ import {
       removalTimer = null;
       document.removeEventListener('viewshow', requestClose);
       activeModalDisposers.delete(modal);
-      JC.core.refreshSafety!.releaseElement(modal);
+      releaseBookmarkModalA11y(modal);
       modal.remove();
     };
 
@@ -1922,6 +1939,7 @@ import {
       }
       if (closing) return;
       closing = true;
+      releaseBookmarkModalA11y(modal);
       modal.style.opacity = '0';
       removalTimer = window.setTimeout(removeModalNow, 200);
     };
@@ -1951,6 +1969,12 @@ import {
     modal.addEventListener('click', (e) => {
       if (isIdentityCurrent(captured) && e.target === modal) requestClose();
     });
+    installBookmarkModalA11y(modal, {
+      title: modal.querySelector<HTMLElement>('.jc-bookmark-hero-title')!,
+      description: modal.querySelector<HTMLElement>('.jc-bookmark-hero-subtitle'),
+      initialFocus: modal.querySelector<HTMLInputElement>(`#${labelInputId}`),
+      onEscape: requestClose
+    });
 
     // Focus label input after modal opens
     scheduleModalTask(() => {
@@ -1958,15 +1982,13 @@ import {
         disposeModal(true);
         return;
       }
-      const labelInput = modal.querySelector<HTMLInputElement>('#bookmark-label');
-      if (labelInput) labelInput.focus();
       modal.style.opacity = '1';
     }, 10);
 
     // Submit
     modal.querySelector('.jc-bookmark-btn-submit')?.addEventListener('click', () => { void (async () => {
       if (!isModalOwnerCurrent()) return;
-      const labelInput = modal.querySelector<HTMLInputElement>('#bookmark-label')!.value.trim();
+      const labelInput = modal.querySelector<HTMLInputElement>(`#${labelInputId}`)!.value.trim();
 
       try {
         let saved: boolean | Record<string, unknown> | null;
@@ -2096,6 +2118,7 @@ import {
     bookmarkBtn.dataset.jcIdentityOwned = 'true';
     bookmarkBtn.dataset.jcIdentityEpoch = String(captured.context.epoch);
     bookmarkBtn.title = JC.t!('shortcut_BookmarkCurrentTime');
+    bookmarkBtn.setAttribute('aria-label', JC.t!('shortcut_BookmarkCurrentTime'));
     bookmarkBtn.innerHTML = '<span class="largePaperIconButton material-icons" aria-hidden="true">bookmark_add</span>';
 
     bookmarkBtn.onclick = (e) => {
@@ -2265,7 +2288,7 @@ import {
         invalidateBookmarkMarkerOutput();
         removeOwnedBookmarkButtons();
         document.querySelectorAll('.jc-bm-player-modal-overlay').forEach((node) => {
-          JC.core.refreshSafety!.releaseElement(node);
+          releaseBookmarkModalA11y(node as HTMLElement);
           node.remove();
         });
         initialized = false;
@@ -2295,7 +2318,7 @@ import {
     cleanupBookmarks = (): void => undefined;
     removeOwnedBookmarkButtons();
     document.querySelectorAll('.jc-bm-player-modal-overlay').forEach((node) => {
-      JC.core.refreshSafety!.releaseElement(node);
+      releaseBookmarkModalA11y(node as HTMLElement);
       node.remove();
     });
   }

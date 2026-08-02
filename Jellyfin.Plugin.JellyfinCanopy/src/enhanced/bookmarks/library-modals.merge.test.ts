@@ -66,6 +66,21 @@ function selectTarget(modal: HTMLElement, itemId: string): void {
   radio.dispatchEvent(new Event('change', { bubbles: true }));
 }
 
+function expectNamedDialog(modal: HTMLElement): void {
+  expect(modal.getAttribute('role')).toBe('dialog');
+  expect(modal.getAttribute('aria-modal')).toBe('true');
+  const titleId = modal.getAttribute('aria-labelledby');
+  const descriptionId = modal.getAttribute('aria-describedby');
+  expect(titleId).toBeTruthy();
+  expect(descriptionId).toBeTruthy();
+  expect(document.getElementById(titleId!)?.textContent?.trim()).not.toBe('');
+  expect(document.getElementById(descriptionId!)?.textContent?.trim()).not.toBe('');
+  for (const button of modal.querySelectorAll<HTMLButtonElement>('button')) {
+    const name = button.getAttribute('aria-label') || button.textContent?.trim() || button.title;
+    expect(name, `button ${button.className} needs an accessible name`).toBeTruthy();
+  }
+}
+
 describe('bookmarks duplicate merge modal', () => {
   const coverageRun = (import.meta as unknown as { env?: Record<string, string> }).env?.VITE_JC_V8_COVERAGE === '1';
   const renderBudgetMs = coverageRun ? 10_000 : 500;
@@ -113,6 +128,88 @@ describe('bookmarks duplicate merge modal', () => {
 
     modal.querySelector<HTMLButtonElement>('.jc-bookmark-btn-cancel')!.click();
     expect(getRefreshSafetyHoldCount('modal')).toBe(0);
+  });
+
+  it('exposes a named offset dialog, traps focus, closes on Escape, and restores its opener', () => {
+    const opener = document.createElement('button');
+    opener.textContent = 'Open offset';
+    document.body.appendChild(opener);
+    opener.focus();
+
+    showOffsetAdjustmentModal({
+      details: { name: 'Movie' },
+      bookmarks: [{ ...versionA, syncedFrom: 'source' }]
+    }, context);
+    const modal = modalElement();
+    expectNamedDialog(modal);
+    expect(document.activeElement).toBe(modal.querySelector('.jc-modal-input'));
+    expect(document.body.classList.contains('jc-modal-open')).toBe(true);
+
+    const apply = modal.querySelector<HTMLButtonElement>('.btnApplyOffset')!;
+    const close = modal.querySelector<HTMLButtonElement>('.jc-bm-library-modal-close')!;
+    apply.focus();
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+    expect(document.activeElement).toBe(close);
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(document.body.classList.contains('jc-modal-open')).toBe(false);
+    expect(document.activeElement).toBe(opener);
+  });
+
+  it('keeps control labels owned by the top dialog across repeated offset opens', () => {
+    const opener = document.createElement('button');
+    opener.textContent = 'Open repeated offsets';
+    document.body.appendChild(opener);
+    opener.focus();
+    const group = {
+      details: { name: 'Movie' },
+      bookmarks: [{ ...versionA, syncedFrom: 'source' }]
+    };
+
+    showOffsetAdjustmentModal(group, context);
+    showOffsetAdjustmentModal(group, context);
+
+    const dialogs = [...document.querySelectorAll<HTMLElement>('.jc-bm-library-modal-overlay')];
+    expect(dialogs).toHaveLength(2);
+    dialogs.forEach(expectNamedDialog);
+    const inputs = dialogs.map(dialog => dialog.querySelector<HTMLInputElement>('.jc-modal-input')!);
+    expect(inputs[0].id).not.toBe(inputs[1].id);
+    dialogs.forEach((dialog, index) => {
+      const label = dialog.querySelector<HTMLLabelElement>('.jc-modal-label')!;
+      expect(label.control).toBe(inputs[index]);
+      expect(inputs[index].labels).toHaveLength(1);
+    });
+    expect(document.activeElement).toBe(inputs[1]);
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(document.activeElement).toBe(inputs[0]);
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(document.activeElement).toBe(opener);
+  });
+
+  it('keeps one topmost bookmark modal owner across nested rapid opens and closes', () => {
+    const opener = document.createElement('button');
+    opener.textContent = 'Open dialogs';
+    document.body.appendChild(opener);
+    opener.focus();
+    showOffsetAdjustmentModal({
+      details: { name: 'Movie' },
+      bookmarks: [{ ...versionA, syncedFrom: 'source' }]
+    }, context);
+    const offsetInput = document.querySelector<HTMLInputElement>('.jc-modal-input')!;
+
+    showDuplicatesSyncModal(duplicateStore(), context);
+    const dialogs = [...document.querySelectorAll<HTMLElement>('[role="dialog"]')];
+    expect(dialogs).toHaveLength(2);
+    dialogs.forEach(expectNamedDialog);
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(document.body.classList.contains('jc-modal-open')).toBe(true);
+    expect(document.activeElement).toBe(offsetInput);
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(document.body.classList.contains('jc-modal-open')).toBe(false);
+    expect(document.activeElement).toBe(opener);
   });
 
   it('labels versions neutrally before selection and target/source only after it', () => {

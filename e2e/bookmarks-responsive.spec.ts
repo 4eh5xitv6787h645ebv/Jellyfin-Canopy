@@ -61,6 +61,7 @@ interface JellyfinItem {
     Id: string;
     Name?: string;
     Type?: string;
+    ProviderIds?: { Tmdb?: string; Tvdb?: string };
 }
 
 interface ItemsResponse {
@@ -108,6 +109,24 @@ async function bookmarkBatch(
             body: JSON.stringify({ Revision: revision, Operations: operations }),
         }
     );
+}
+
+async function addRawBookmarkFixture(
+    baseURL: string,
+    session: Session,
+    records: Array<{ id: string; bookmark: BookmarkItem & Record<string, unknown> }>
+): Promise<void> {
+    for (let attempt = 0; attempt < 6; attempt++) {
+        const current = await readBookmarkState(baseURL, session);
+        const response = await bookmarkBatch(baseURL, session, current.Revision, records.map((record) => ({
+            Type: 'add',
+            BookmarkId: record.id,
+            Bookmark: record.bookmark,
+        })));
+        if (response.status === 200) return;
+        if (response.status !== 409) throw new Error(`bookmark raw fixture add -> ${response.status}`);
+    }
+    throw new Error('bookmark raw fixture add could not acquire a stable revision');
 }
 
 async function addBookmarkFixture(
@@ -163,6 +182,24 @@ async function removeBookmarkFixture(
         }
     }
     throw new Error('bookmark fixture cleanup could not acquire a stable revision');
+}
+
+async function removeBookmarksByLabelPrefix(
+    baseURL: string,
+    session: Session,
+    prefix: string
+): Promise<void> {
+    for (let attempt = 0; attempt < 6; attempt++) {
+        const current = await readBookmarkState(baseURL, session);
+        const operations = Object.entries(current.Bookmarks)
+            .filter(([, bookmark]) => String(bookmark.Label || '').startsWith(prefix))
+            .map(([id]) => ({ Type: 'delete', BookmarkId: id }));
+        if (operations.length === 0) return;
+        const response = await bookmarkBatch(baseURL, session, current.Revision, operations);
+        if (response.status === 200) return;
+        if (response.status !== 409) throw new Error(`bookmark prefix cleanup -> ${response.status}`);
+    }
+    throw new Error('bookmark prefix cleanup could not acquire a stable revision');
 }
 
 async function seedLayout(page: Page, seed: string): Promise<void> {
@@ -411,6 +448,24 @@ test.describe.serial('Bookmarks responsive containment (#466 findings 1–2)', (
                 const apply = modal.locator('.btnApplyOffset');
                 await expect(modal).toBeVisible();
                 await expect(close).toBeVisible();
+                await expect(overlay).toHaveAttribute('role', 'dialog');
+                await expect(overlay).toHaveAttribute('aria-modal', 'true');
+                const titleId = await overlay.getAttribute('aria-labelledby');
+                const descriptionId = await overlay.getAttribute('aria-describedby');
+                expect(titleId).toBeTruthy();
+                expect(descriptionId).toBeTruthy();
+                await expect(page.locator(`#${titleId}`)).toHaveText(/Adjust Offset/i);
+                await expect(page.locator(`#${descriptionId}`)).not.toHaveText('');
+                await expect(page.locator('body')).toHaveClass(/jc-modal-open/);
+                const offsetInput = modal.locator('.jc-modal-input');
+                await expect(offsetInput).toBeFocused();
+
+                await offsetInput.press('Shift+Tab');
+                await expect(close).toBeFocused();
+                await close.press('Shift+Tab');
+                await expect(apply).toBeFocused();
+                await apply.press('Tab');
+                await expect(close).toBeFocused();
 
                 const initial = await modal.evaluate((element) => {
                     const rect = element.getBoundingClientRect();
@@ -474,12 +529,229 @@ test.describe.serial('Bookmarks responsive containment (#466 findings 1–2)', (
                     `fixed-bookmark-offset-${testCase.layout}-320x568-actions.png`
                 );
 
-                await modal.locator('.jc-bookmark-btn-cancel').click();
+                await page.keyboard.press('Escape');
                 await expect(overlay).toBeHidden();
+                await expect(page.locator('body')).not.toHaveClass(/jc-modal-open/);
+                await expect(card.locator('.btnAdjustOffset')).toBeFocused();
                 assertNoRuntimeErrors(consoleErrors);
             } finally {
                 await removeBookmarkFixture(baseURL!, admin, fixture.ids);
             }
         });
     }
+
+    test('keyboard users can add, activate, edit, and delete a bookmark through native controls', async ({
+        page,
+        consoleErrors,
+        baseURL,
+    }) => {
+        const labelPrefix = `JC keyboard ${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        try {
+            await seedLayout(page, 'modern');
+            await loginAs(page, 'admin', consoleErrors);
+            await expectExactLayout(page, 'modern');
+
+            await page.evaluate(() => {
+                (window as any).JellyfinCanopy.bookmarksPage.showPage();
+            });
+            await page.waitForFunction(
+                () => typeof (window as any).JellyfinCanopy.initializeBookmarks === 'function',
+                undefined,
+                { timeout: 20_000 }
+            );
+
+            await page.evaluate(({ itemId }) => {
+                document.getElementById('jc-e2e-bookmark-player')?.remove();
+                const canopy = (window as any).JellyfinCanopy;
+                (window as any).__jcE2eOriginalIsVideoPage = canopy.isVideoPage;
+                canopy.isVideoPage = () => true;
+                const host = document.createElement('div');
+                host.id = 'jc-e2e-bookmark-player';
+                host.innerHTML = `
+                    <div class="videoPlayerContainer"><video></video></div>
+                    <div class="videoOsdBottom">
+                        <button type="button" class="btnUserRating" data-id="${itemId}"></button>
+                        <div class="osdPositionSliderContainer"><input class="osdPositionSlider" type="range"></div>
+                        <div class="buttons focuscontainer-x"><button type="button" class="btnVideoOsdSettings">Settings</button></div>
+                    </div>`;
+                const video = host.querySelector('video')!;
+                Object.defineProperty(video, 'duration', { configurable: true, value: 600 });
+                Object.defineProperty(video, 'currentTime', { configurable: true, writable: true, value: 123 });
+                document.body.appendChild(host);
+                canopy.initializeBookmarks();
+            }, { itemId: movie.Id });
+
+            const osdAdd = page.locator('#jcBookmarkBtn');
+            await expect(osdAdd).toBeVisible({ timeout: 20_000 });
+            await expect(osdAdd).toHaveAttribute('aria-label', /bookmark|current time/i);
+            await osdAdd.focus();
+            await osdAdd.press('Enter');
+
+            const editor = page.getByRole('dialog', { name: /Add Bookmark/i });
+            await expect(editor).toBeVisible();
+            const editorLabelInput = editor.locator('.jc-bookmark-input:not([readonly])');
+            await expect(editorLabelInput).toBeFocused();
+            await editorLabelInput.fill(labelPrefix);
+            await editor.getByRole('button', { name: /^Add Bookmark$/i }).press('Enter');
+            await expect(editor).toBeHidden();
+
+            const marker = page.locator('.jc-bookmark-marker').filter({ has: page.locator('.material-icons') }).first();
+            await expect(marker).toBeVisible({ timeout: 20_000 });
+            await expect(marker).toHaveAttribute('aria-label', new RegExp(labelPrefix));
+            await page.locator('#jc-e2e-bookmark-player video').evaluate((video) => {
+                (video as HTMLVideoElement).currentTime = 1;
+            });
+            await marker.focus();
+            await marker.press('Enter');
+            expect(await page.locator('#jc-e2e-bookmark-player video').evaluate(
+                (video) => (video as HTMLVideoElement).currentTime
+            )).toBe(123);
+
+            await page.evaluate(() => {
+                const canopy = (window as any).JellyfinCanopy;
+                canopy.cleanupBookmarks();
+                canopy.isVideoPage = (window as any).__jcE2eOriginalIsVideoPage;
+                delete (window as any).__jcE2eOriginalIsVideoPage;
+                document.getElementById('jc-e2e-bookmark-player')?.remove();
+            });
+
+            await openBookmarks(page, labelPrefix);
+            let row = page.locator('.jc-bookmark-row').filter({ hasText: labelPrefix }).first();
+            await row.getByRole('button', { name: /Edit Bookmark/i }).press('Enter');
+            await expect(row.locator('.jc-input:not(.jc-input-label)')).toBeFocused();
+            const labelInput = row.locator('.jc-input-label');
+            await labelInput.fill(`${labelPrefix} edited`);
+            await row.getByRole('button', { name: /^Save$/i }).press('Enter');
+            row = page.locator('.jc-bookmark-row').filter({ hasText: `${labelPrefix} edited` }).first();
+            await expect(row).toBeVisible({ timeout: 20_000 });
+            await row.getByRole('button', { name: /delete/i }).press('Enter');
+            await expect(row).toBeHidden({ timeout: 20_000 });
+            assertNoRuntimeErrors(consoleErrors);
+        } finally {
+            await removeBookmarksByLabelPrefix(baseURL!, admin, labelPrefix);
+        }
+    });
+
+    test('keyboard duplicate, replacement, and migration flows expose named modal controls', async ({
+        page,
+        consoleErrors,
+        baseURL,
+    }) => {
+        const tmdbId = String(movie.ProviderIds?.Tmdb || '');
+        expect(tmdbId, 'seeded Movie exposes its deterministic TMDB identity').not.toBe('');
+        const nonce = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        const duplicatePrefix = `JC duplicate ${nonce}`;
+        const replacementPrefix = `JC replacement ${nonce}`;
+        const duplicateSourceItemId = crypto.randomUUID().replaceAll('-', '');
+        const replacementSourceItemId = crypto.randomUUID().replaceAll('-', '');
+        const duplicateIds = [`bm_keyboard_${nonce}_target`, `bm_keyboard_${nonce}_source`];
+        const replacementId = `bm_keyboard_${nonce}_replacement`;
+
+        try {
+            await addRawBookmarkFixture(baseURL!, admin, [
+                {
+                    id: duplicateIds[0],
+                    bookmark: {
+                        ItemId: movie.Id,
+                        ItemType: 'movie',
+                        MediaType: 'movie',
+                        IdentityVersion: 1,
+                        TmdbId: tmdbId,
+                        Timestamp: 40,
+                        Label: `${duplicatePrefix} target`,
+                        Name: movie.Name || 'Movie',
+                    },
+                },
+                {
+                    id: duplicateIds[1],
+                    bookmark: {
+                        ItemId: duplicateSourceItemId,
+                        ItemType: 'movie',
+                        MediaType: 'movie',
+                        IdentityVersion: 1,
+                        TmdbId: tmdbId,
+                        Timestamp: 80,
+                        Label: `${duplicatePrefix} source`,
+                        Name: movie.Name || 'Movie',
+                    },
+                },
+            ]);
+
+            await seedLayout(page, 'modern');
+            await loginAs(page, 'admin', consoleErrors);
+            await expectExactLayout(page, 'modern');
+            await openBookmarks(page, duplicatePrefix);
+
+            const duplicateTrigger = page.getByRole('button', { name: /Find Duplicates/i });
+            await duplicateTrigger.focus();
+            await duplicateTrigger.press('Enter');
+            const duplicateDialog = page.getByRole('dialog', { name: /Duplicate Detected/i });
+            await expect(duplicateDialog).toBeVisible();
+            await expect(page.locator('body')).toHaveClass(/jc-modal-open/);
+            const targetChoice = duplicateDialog.locator(
+                `.jc-merge-target-choice[value="${movie.Id}"]`
+            );
+            await targetChoice.focus();
+            await targetChoice.press('Space');
+            const merge = duplicateDialog.locator('.jc-merge-execute:not([disabled])');
+            await expect(merge).toBeEnabled();
+            page.once('dialog', (dialog) => dialog.accept());
+            await merge.press('Enter');
+            await expect(duplicateDialog).toBeHidden({ timeout: 20_000 });
+
+            await expect.poll(async () => {
+                const state = await readBookmarkState(baseURL!, admin);
+                return Object.values(state.Bookmarks)
+                    .filter((bookmark) => String(bookmark.Label || '').startsWith(duplicatePrefix))
+                    .map((bookmark) => bookmark.ItemId);
+            }).toEqual([movie.Id, movie.Id]);
+
+            await addRawBookmarkFixture(baseURL!, admin, [{
+                id: replacementId,
+                bookmark: {
+                    ItemId: replacementSourceItemId,
+                    ItemType: 'movie',
+                    MediaType: 'movie',
+                    IdentityVersion: 1,
+                    TmdbId: tmdbId,
+                    Timestamp: 120,
+                    Label: replacementPrefix,
+                    Name: movie.Name || 'Movie',
+                },
+            }]);
+            await page.reload();
+            await expectExactLayout(page, 'modern');
+            await openBookmarks(page, replacementPrefix);
+            const replacementCard = page.locator('.jc-bookmark-item')
+                .filter({ hasText: replacementPrefix })
+                .first();
+            const replacementTrigger = replacementCard.getByRole('button', { name: /Find Replacement/i });
+            await replacementTrigger.focus();
+            await replacementTrigger.press('Enter');
+
+            const replacementDialog = page.getByRole('dialog', { name: /Replacement Found/i });
+            await expect(replacementDialog).toBeVisible({ timeout: 30_000 });
+            const option = replacementDialog.locator('.replacement-option').first();
+            await expect(option).toBeFocused();
+            await option.press('Space');
+            await expect(option).toHaveAttribute('aria-pressed', 'true');
+            await replacementDialog.getByRole('button', { name: /Migrate Bookmarks/i }).press('Enter');
+            await expect(replacementDialog).toBeHidden({ timeout: 20_000 });
+
+            await expect.poll(async () => {
+                const state = await readBookmarkState(baseURL!, admin);
+                return {
+                    oldPresent: Object.hasOwn(state.Bookmarks, replacementId),
+                    itemIds: Object.entries(state.Bookmarks)
+                    .filter(([, bookmark]) => String(bookmark.Label || '').startsWith(replacementPrefix))
+                    .map(([, bookmark]) => bookmark.ItemId),
+                };
+            }).toEqual({ oldPresent: false, itemIds: [movie.Id] });
+            assertNoRuntimeErrors(consoleErrors);
+        } finally {
+            await removeBookmarksByLabelPrefix(baseURL!, admin, duplicatePrefix);
+            await removeBookmarksByLabelPrefix(baseURL!, admin, replacementPrefix);
+            await removeBookmarkFixture(baseURL!, admin, [...duplicateIds, replacementId]);
+        }
+    });
 });
