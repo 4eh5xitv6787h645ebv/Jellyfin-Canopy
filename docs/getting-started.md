@@ -130,6 +130,13 @@ Each confirmed service appears as its own row with an **Add** button, so
 If your services use custom hostnames or non-default ports, detection won't
 find them; enter those URLs manually as described below.
 
+!!! note "Two addresses for one service"
+    Canopy hides a detected endpoint that resolves to something you already
+    configured, so a Docker alias of a configured instance is not offered
+    twice. It cannot prove that two *different* addresses are the same server
+    though — a service reachable both on your LAN IP and through the Docker
+    gateway can appear as its own row. Check the URL before adding it.
+
 ### Import Sonarr and Radarr from Seerr
 
 If Seerr is already connected, the Sonarr and Radarr boxes also offer **Import
