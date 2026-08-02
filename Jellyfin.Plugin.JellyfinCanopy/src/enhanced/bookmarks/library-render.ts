@@ -103,6 +103,10 @@ let activeContainer: HTMLElement | null = null;
 let activeContainerIdentity: IdentityContext | null = null;
 let activeRenderController: AbortController | null = null;
 
+function isAbortError(error: unknown): boolean {
+  return (error as { name?: string } | null)?.name === 'AbortError';
+}
+
 /** Set (or clear) the render target for the current page adoption. */
 export function setActiveContainer(container: HTMLElement | null): void {
   activeContainer = container;
@@ -143,8 +147,20 @@ export function renderActiveBookmarks(context: IdentityContext | null = JC.ident
     if (!JC.identity.isCurrent(context)) return;
     const container = activeContainer;
     if (container && container.isConnected && activeContainerIdentity?.epoch === context.epoch) {
-      void renderBookmarksLibrary(container, context);
+      startBookmarksLibraryRender(container, context);
     }
+  });
+}
+
+/** Own a lifecycle-triggered render promise without hiding genuine failures. */
+export function startBookmarksLibraryRender(
+  container: HTMLElement,
+  context: IdentityContext | null = JC.identity.capture()
+): void {
+  if (!context || !JC.identity.isCurrent(context)) return;
+  void renderBookmarksLibrary(container, context).catch((error: unknown) => {
+    if (isAbortError(error) || !JC.identity.isCurrent(context)) return;
+    console.error(`${logPrefix} Render failed:`, error);
   });
 }
 
@@ -306,7 +322,7 @@ export async function renderBookmarksLibrary(
   const selectPage = (page: number): void => {
     if (signal.aborted || !JC.identity.isCurrent(context)) return;
     container.dataset[pageDatasetKey] = String(page);
-    void renderBookmarksLibrary(container, context);
+    startBookmarksLibraryRender(container, context);
   };
   previousPageBtn?.addEventListener('click', () => selectPage(currentPage - 1));
   nextPageBtn?.addEventListener('click', () => selectPage(currentPage + 1));
@@ -410,7 +426,7 @@ export async function renderBookmarksLibrary(
           container.dataset.currentTab = tab;
           const nextPageDatasetKey = `bookmarkPage${tab[0].toUpperCase()}${tab.slice(1)}`;
           container.dataset[nextPageDatasetKey] = '0';
-          void renderBookmarksLibrary(container, context);
+          startBookmarksLibraryRender(container, context);
         });
       });
     }

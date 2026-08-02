@@ -13,10 +13,10 @@
 
 import { JC } from '../../globals';
 import {
-    renderBookmarksLibrary,
     renderActiveBookmarks,
     resetBookmarksLibraryRender,
     setActiveContainer,
+    startBookmarksLibraryRender,
 } from './library-render';
 import { resetBookmarksLibraryPlayback } from './library-items';
 import { resetBookmarksLibraryModals } from './library-modals';
@@ -53,7 +53,7 @@ function render({ host, handle }: PageContext): void {
     // down to the host.)
     handle.addListener(document, 'jc-bookmarks-updated', () => renderActiveBookmarks());
 
-    void renderBookmarksLibrary(container);
+    startBookmarksLibraryRender(container);
 }
 
 export const bookmarksPageDescriptor: PageDescriptor & { id: 'bookmarks' } = {
