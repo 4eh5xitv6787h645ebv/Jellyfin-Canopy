@@ -80,8 +80,8 @@ function readPinnedFiles(root) {
 }
 
 /**
- * Compute every rewrite before touching the working tree so a mid-run failure
- * cannot leave the three pins disagreeing with each other.
+ * Compute every rewrite before touching the working tree, so no partially
+ * planned edit is ever written.
  *
  * @param {string} root Repository root.
  * @param {string} digest Target digest, `sha256:` prefixed.
@@ -120,8 +120,37 @@ function applyRefresh(root, digest) {
     const plan = planRefresh(root, digest);
     if (!plan.changed) return plan;
 
-    for (const update of plan.updates) {
-        fs.writeFileSync(path.join(root, update.file), update.next);
+    // Stage every rewrite beside its target first, then swap them all in. This
+    // is not a transaction — a process killed between two renames still leaves
+    // the pins disagreeing — but it narrows that window to consecutive renames
+    // instead of spanning three file writes, and no target is ever observed
+    // half-written. CI's drift guard is what actually bounds the blast radius:
+    // a partially refreshed tree fails workflow-sharding.test.js and cannot
+    // reach main.
+    const staged = plan.updates.map((update) => ({
+        target: path.join(root, update.file),
+        temporary: path.join(root, `${update.file}.refresh-jellyfin-digest.tmp`),
+        next: update.next,
+    }));
+
+    try {
+        for (const { temporary, next } of staged) {
+            fs.writeFileSync(temporary, next);
+        }
+    } catch (error) {
+        // Leave no staged file behind: it would carry a concrete digest that the
+        // repository-wide pin inventory counts as an unowned pin. Cleanup must
+        // never replace the failure that caused it.
+        for (const { temporary } of staged) {
+            try {
+                fs.rmSync(temporary, { force: true });
+            } catch { /* reported through the original failure below */ }
+        }
+        throw error;
+    }
+
+    for (const { target, temporary } of staged) {
+        fs.renameSync(temporary, target);
     }
 
     // Re-read rather than trusting the plan: the refreshed tree is what CI and

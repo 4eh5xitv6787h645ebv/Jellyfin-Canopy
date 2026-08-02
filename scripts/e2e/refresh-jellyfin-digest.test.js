@@ -192,6 +192,23 @@ test('the workflow merges only through the required checks', () => {
     assert.doesNotMatch(workflow, /workflow run|gh run rerun/);
 });
 
+test('staged rewrites are cleaned up rather than left carrying a digest', () => {
+    const root = fixture();
+    // Make the second staging write fail by turning its target's directory into
+    // an unwritable path component.
+    const blocked = path.join(root, `${PINNED_FILES[1]}.refresh-jellyfin-digest.tmp`);
+    fs.mkdirSync(blocked, { recursive: true });
+
+    assert.throws(() => applyRefresh(root, NEW_DIGEST));
+
+    const leftovers = PINNED_FILES
+        .map((file) => path.join(root, `${file}.refresh-jellyfin-digest.tmp`))
+        .filter((temporary) => fs.existsSync(temporary) && fs.statSync(temporary).isFile());
+    assert.deepEqual(leftovers, [], 'a staged rewrite was left behind');
+    // The targets are untouched, so the tree still agrees on the old digest.
+    assert.equal(new Set(readPinnedFiles(root).map((file) => file.digest)).size, 1);
+});
+
 test('the workflow reconciles the open refresh pull request instead of piling them up', () => {
     // Auto-merge does not update a branch when main advances, and the ruleset
     // requires an up-to-date branch, so an unattended refresh pull request would
@@ -200,4 +217,22 @@ test('the workflow reconciles the open refresh pull request instead of piling th
     assert.match(workflow, /BEHIND/);
     assert.match(workflow, /gh pr close/);
     assert.match(workflow, /--label "dependencies" --label "docker"/);
+
+    // Order matters as much as presence: superseded branches are reconciled
+    // before the unchanged-digest exit, the merge is enabled after the pull
+    // request exists, and the behind-branch recovery runs last so it also covers
+    // a pull request published moments earlier.
+    const at = (pattern) => {
+        const index = workflow.search(pattern);
+        assert.notEqual(index, -1, `${pattern} is missing`);
+        return index;
+    };
+    assert.ok(at(/gh pr close/) < at(/nothing to publish/));
+    assert.ok(at(/nothing to publish/) < at(/gh pr create/));
+    assert.ok(at(/gh pr create/) < at(/gh pr merge/));
+    assert.ok(at(/gh pr merge/) < at(/gh pr update-branch/));
+
+    // Best-effort cleanup: a superseded pull request that someone already closed
+    // must not abort the run before the refresh itself is published.
+    assert.match(workflow, /gh pr close[\s\S]{0,200}?\|\| echo/);
 });

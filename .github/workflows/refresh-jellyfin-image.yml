@@ -103,9 +103,14 @@ jobs:
               '.[] | select(.headRefName | startswith(env.BRANCH_PREFIX))
                    | select(.headRefName != env.BRANCH) | .number'
           )
+          # Cleanup is best effort on purpose. A superseded pull request that a
+          # maintainer closed between the query and this call, or a transient API
+          # failure, must not abort the run before the refresh itself is
+          # published — the leftover is reconciled again tomorrow.
           for number in "${obsolete[@]}"; do
             gh pr close "${number}" --delete-branch \
-              --comment "Superseded: the pinned Jellyfin nightly has moved on."
+              --comment "Superseded: the pinned Jellyfin nightly has moved on." \
+              || echo "Could not close superseded pull request #${number}; continuing." >&2
           done
 
           if [[ "${CHANGED}" != "true" ]]; then
@@ -149,8 +154,12 @@ jobs:
           fi
 
           # --auto defers the decision to the branch ruleset, which has no bypass
-          # actors and requires the E2E aggregate.
-          gh pr merge "${BRANCH}" --auto --squash
+          # actors and requires the E2E aggregate. Enable it only when it is not
+          # already enabled: a same-day dispatch finds its own pull request here.
+          enabled="$(gh pr view "${BRANCH}" --json autoMergeRequest --jq '.autoMergeRequest.enabledAt // empty')"
+          if [[ -z "${enabled}" ]]; then
+            gh pr merge "${BRANCH}" --auto --squash
+          fi
 
           # Auto-merge never updates the branch itself, and the ruleset requires
           # an up-to-date branch, so a refresh left BEHIND would wait forever.
