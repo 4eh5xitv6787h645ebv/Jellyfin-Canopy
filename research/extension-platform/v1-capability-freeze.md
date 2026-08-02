@@ -1,13 +1,16 @@
 # Frozen v1 capability list
 
 Tracking issue: [#39 — EP-00](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/39)
-Status: **re-scoped 2026-07-28** by [ADR-0012](adr/0012-native-first-scope.md) —
-v1 is **native-first**. "Frozen" means *the list does not grow without a new
-EP-00-level decision* — not that it is implemented. Nothing here exists yet.
+Status: **re-scoped 2026-07-28**, with the native-pilot clarification tracked by
+[ADR-0012](adr/0012-native-first-scope.md) and
+[#583](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/583) — v1
+is **native-first**. "Frozen" means *the list does not grow without a new
+EP-00-level decision* — not that it is implemented.
 
-**In v1 scope:** C1, C2 (minimal), C3 (deferred), C6, C8, C9, C10.
-**Deferred:** C4, C5, C7 and the full C2/C3 registry and provider runtime — see
-the table at the end.
+**In the native-first pilot:** C1, C6, the bounded C8 subset, C9 and the
+first-party audit subset of C10. **Deferred:** C2, C3, C4, C5, C7, the broader
+C8 surface language, registry diagnostics, and every third-party runtime or SDK
+surface — see the table at the end.
 
 Adding to this list requires named consumers, a security and authority analysis,
 failure and lifecycle behaviour, a compatibility policy and a bounded tracking
@@ -20,7 +23,7 @@ child. Removing from it is cheap and encouraged.
 | | |
 |---|---|
 | **Anonymous** | platform availability and supported protocol range. Nothing else — no users, no installed extensions, no topology, no configuration. |
-| **Authenticated** | negotiated protocol version, feature flags, and a catalog filtered to the caller's grants and Jellyfin access. |
+| **Authenticated** | negotiated protocol version, feature flags, and a catalog filtered to the first-party actor's current Jellyfin access. Future extension grants apply only if C2 is reinstated. |
 | Client declares | supported protocol range, surface schemas, component set, input modes, layout constraints, locale, accessibility, image support. |
 | ADR | [0002](adr/0002-protocol-and-version-negotiation.md) |
 
@@ -31,8 +34,10 @@ requested-versus-granted scopes; the lifecycle states in
 [compatibility-terminology](compatibility-terminology.md#state-words); a
 user-filtered catalog and admin diagnostics.
 
-Not in v1: hot discovery without restart, remote installation, publisher trust.
-ADR [0005](adr/0005-manifest-discovery.md).
+**Deferred in the native-first pilot.** Built-in Canopy families need no
+third-party manifest, approval or grant registry. Their effective availability
+and compatibility still appear in the caller-filtered C1/C6 catalog, but that is
+not an implementation of C2. ADR [0005](adr/0005-manifest-discovery.md).
 
 ## C3 — Server-plugin provider invocation
 
@@ -40,8 +45,10 @@ A convention-based entrypoint invoked over the JSON ABI with a derived context,
 a kernel-owned deadline, concurrency caps, bulkheads, circuit breakers, a
 response size cap, and stable failure codes.
 
-Not in v1: provider-to-provider calls, provider access to Jellyfin DI, the
-database or the filesystem, streaming provider responses.
+**Deferred in the native-first pilot.** EP-06 calls Canopy's in-process owning
+services; it does not ship a provider runtime. Provider-to-provider calls,
+provider access to Jellyfin DI, the database or the filesystem, and streaming
+provider responses also remain out of scope.
 ADRs [0003](adr/0003-json-abi.md), [0004](adr/0004-provider-invocation.md).
 
 ## C4 — Namespaced state
@@ -62,21 +69,36 @@ settings changes. Authenticated `fetch()` stream plus bounded long-poll, with
 event ids, per-stream cursors, heartbeats, reconnect, bounded retention and
 `resync-required`.
 
-Not in v1: webhooks, arbitrary outbound HTTP, exactly-once delivery, infinite
-retention, custom Jellyfin WebSocket message types.
+**Deferred in the native-first pilot.** Android TV refreshes through catalog
+revision/ETag, action-result refresh hints and refetch on the relevant client
+lifecycle transitions. Those mechanisms do not provide an event stream,
+reconnect cursor, retention buffer or `resync-required`, and no pilot evidence
+may be cited as satisfying C5.
+
+Also out of scope: webhooks, arbitrary outbound HTTP, exactly-once delivery,
+infinite retention and custom Jellyfin WebSocket message types.
 ADR [0006](adr/0006-client-event-transport.md).
 
 ## C6 — Opaque actions
 
-Short-lived, replay-protected action capabilities binding extension, operation,
-user, device, catalog revision, scopes and expiry — re-authorized at invocation.
-Idempotency keys, cancellation, progress and an operation-status resource for
-longer actions.
+Short-lived, replay-protected action capabilities binding operation,
+authenticated user, item/context, catalog revision, allowed inputs, expiry and a
+nonce — re-authorized against current Jellyfin access at invocation. A device id
+is attribution, never authority. Idempotency keys, cancellation, bounded work
+and stable failure codes apply to every pilot mutation.
 
-Not in v1: a client naming a provider method; a client supplying an arbitrary URL.
+Extension/grant bindings, provider operations, progress and a general
+operation-status resource remain deferred. Adding either of the latter two to
+the pilot requires a new EP-00-level scope decision rather than an implementation
+finding silently widening the freeze.
+
+Not in the pilot: a client naming a provider method; a client supplying an
+arbitrary URL.
 ADR [0011](adr/0011-identity-and-authority.md).
 
 ## C7 — Declarative web slots
+
+**Deferred full-program design.**
 
 Exactly nine, and no more, in v1:
 
@@ -102,11 +124,16 @@ have no content to carry while the preceding line holds. ADR
 
 ## C8 — Native-safe descriptor schema
 
-A strict subset of C7 that a native client can render with its own components:
-navigation, rows/cards, badges, item-detail actions and information, player
-actions/markers, forms/dialogs, notifications, paging, loading/empty/error
-states, deep links. Item references only; semantic icons only; bounded text,
-sizes, nesting and page counts.
+A strict subset of C7 that a native client renders with its own components. The
+pilot subset is item-detail action/status presentation, confirmation, bounded
+flat forms, notifications and loading/empty/error states. It uses Jellyfin item
+references, semantic icons, bounded localized text and bounded field/choice
+counts.
+
+Navigation, rows/cards, badges, item-detail information sections, player
+actions/markers, general paging and deep links remain deferred until a named
+consumer requires them. This pilot does not keep a speculative universal native
+UI language alive.
 
 Not in v1: anything requiring the client to execute downloaded content.
 ADR [0007](adr/0007-declarative-web-contributions.md), plus the
@@ -114,24 +141,31 @@ ADR [0007](adr/0007-declarative-web-contributions.md), plus the
 
 ## C9 — Reference capability families
 
-Three, chosen because each exercises a different axis and each already has an
-owning Canopy service. Exposed through that owner — never reimplemented.
+Three, chosen because each exercises a different axis. Each is exposed through
+its owning Canopy implementation/service layer — never reimplemented. Hidden
+Content does not yet have a single extracted owner service; that extraction is a
+prerequisite to its platform adapter, not permission to call its controller or
+duplicate its policy and mutation logic.
 
 | Family | Axis | Candidate |
 |---|---|---|
 | Per-title user state | opaque action + per-user isolation | **Spoiler Guard** — already driven from Android TV as a hardcoded route ([androidtv#1](https://github.com/4eh5xitv6787h645ebv/jellyfin-androidtv/pull/1)); EP-06 turns it into a platform capability |
-| Per-user data workflow | state + per-user isolation | bookmarks / selected user state |
+| Per-user content workflow | state/filtering + cross-user isolation | **Hidden Content** — replaces the unclaimed bookmarks/selected-user-state candidate; it does not add a fourth family |
 | Integration action workflow | opaque action + upstream | a Seerr request action on item detail |
 
-The admin live workflow (Active Streams) moves out of v1 with EP-05's events. The
-Discovery home row remains a stretch goal, not a commitment.
+These are the complete native-pilot product-family budget: **Spoiler Guard,
+Hidden Content and Seerr**. The admin live workflow (Active Streams) moves out of
+v1 with EP-05's events. Bookmarks/selected user state and the Discovery home row
+are deferred, not stretch additions to this pilot.
 
 ## C10 — Diagnostics and audit
 
-Local, redacted diagnostics: registry state, health, circuit state, recent
-failures with correlation ids, and a redacted diagnostic bundle. Audit records
-carry extension, operation, actor attribution, decision, result, duration and
-correlation id.
+The native pilot includes redacted action audit records carrying operation,
+actor/client attribution, decision, result, duration and correlation id. Local
+recent-failure diagnostics may expose only the same redacted fields.
+
+Registry state, provider circuit state, diagnostic bundles and third-party
+extension attribution remain deferred with the registry/provider runtime.
 
 Never: payloads, tokens, upstream keys, or any telemetry leaving the server.
 
@@ -159,6 +193,26 @@ nothing to register and no provider to invoke, so the gateway calls Canopy's own
 owning services directly through the host adapter. Reinstating those milestones
 later is additive: the gateway gains a provider source, it does not change shape.
 
+### Native-first pilot gates
+
+These gates decide whether the bounded Android TV pilot is evidenced. They do
+not rewrite a roadmap parent's live checklist and do not, by themselves, close
+that parent.
+
+| Epic | Pilot evidence required | Still deferred from the original parent |
+|---|---|---|
+| EP-02 | Claims-only first-party actor; invocation-time user/item/library/parental checks; replay/idempotency and request bounds; redacted action audit; cross-user and permission-revocation tests | manifest grants/approvals, service credentials, provider and companion-service actors, registry/event-subscription revocation, global audit administration |
+| EP-06 | Negotiation, caller-filtered catalog/surface resolution and opaque actions over the shared owners for Spoiler Guard, Hidden Content and Seerr; legacy/platform parity; Android TV plus independent headless-contract evidence | third-party provider fan-out, server-plugin/browser consumers, provider bulkheads/circuits, event discovery, general admin management and operation-status APIs |
+| EP-08 | Android TV and the headless fixture negotiate, safely omit unsupported content, render and invoke the bounded item-detail action/status + confirmation/form subset; D-pad/a11y/lifecycle/offline/security fallbacks pass | home rows and other broad native surfaces, C5 event-gap/resync behavior, public generated SDKs and generic multi-client adoption guides |
+
+Parent issues
+[#41](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/41),
+[#46](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/46) and
+[#47](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/47) remain
+open unless their live exit gates are formally re-scoped or every original
+criterion has evidence. A pilot gate is never evidence for a deferred row in
+the table above.
+
 ### What each deferred milestone was going to give us, and why it can wait
 
 | Deferred | Why it can wait |
@@ -181,6 +235,6 @@ later is additive: the gateway gains a provider source, it does not change shape
 | C5 events | EP-05 | **deferred** |
 | C6 opaque actions | EP-02, EP-06 | **in** |
 | C7 declarative web slots | EP-07 | **deferred** |
-| C8 native descriptor schema | EP-08 | **in** |
-| C9 reference capability families | EP-06 | **in** — Spoiler Guard first |
-| C10 diagnostics + audit | EP-02, EP-06 | **in**, minus registry diagnostics |
+| C8 native descriptor schema | EP-08 | **in, bounded pilot subset only** |
+| C9 reference capability families | EP-06 | **in** — exactly Spoiler Guard, Hidden Content and Seerr |
+| C10 diagnostics + audit | EP-02, EP-06 | **in, first-party action audit only**; registry/provider diagnostics deferred |

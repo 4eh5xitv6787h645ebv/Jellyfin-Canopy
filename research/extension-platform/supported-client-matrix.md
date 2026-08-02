@@ -26,22 +26,23 @@ shape of the problem.
 
 | Client | Class | Injection | Descriptor UI | Events | Server-side effects | v1 status |
 |---|---|---|---|---|---|---|
-| Jellyfin Web (browser, modern layout) | 1 | yes | planned | `fetch()` stream | yes | **primary target** |
-| Jellyfin Web (legacy layout) | 1 | yes | planned | `fetch()` stream | yes | **supported** — the repo keeps both layouts valid |
-| Jellyfin Web on mobile browser | 1 | yes | planned | `fetch()` stream | yes | **supported** |
-| Jellyfin Web TV mode (browser) | 1 | yes | planned | `fetch()` stream | yes | **supported** — *not* evidence of native TV support |
+| Jellyfin Web (browser, modern layout) | 1 | yes | deferred (EP-07) | deferred (C5) | yes | **platform adapter deferred** |
+| Jellyfin Web (legacy layout) | 1 | yes | deferred (EP-07) | deferred (C5) | yes | **platform adapter deferred** — the existing Canopy client still supports both layouts |
+| Jellyfin Web on mobile browser | 1 | yes | deferred (EP-07) | deferred (C5) | yes | **platform adapter deferred** |
+| Jellyfin Web TV mode (browser) | 1 | yes | deferred (EP-07) | deferred (C5) | yes | **platform adapter deferred** — *not* evidence of native TV support |
 | Jellyfin Android (mobile, WebView portions) | 2 | partial | no | no | yes | **best effort**, untested |
-| **`4eh5xitv6787h645ebv/jellyfin-androidtv`** (first-party fork, Kotlin) | 4 | **no** | **planned — committed adopter** | planned | yes | **design partner** — see below |
+| **`4eh5xitv6787h645ebv/jellyfin-androidtv`** (first-party fork, Kotlin) | 4 | **no** | **planned — committed adopter** | deferred (C5); refetch in pilot | yes | **native-first pilot** — see below |
 | Jellyfin Android TV (upstream) | 4 | **no** | no | no | yes | **unsupported** unless adopted |
 | Findroid, Plethorafin and other native Android clients | 4 | **no** | no | no | yes | **unsupported** unless adopted |
 | Swiftfin (iOS / tvOS) | 4 | **no** | no | no | yes | **unsupported** unless adopted |
 | Roku | 4 | **no** | no | no | yes | **unsupported** unless adopted |
 | Kodi (JellyCon / add-on) | 4 | **no** | no | no | yes | **unsupported** unless adopted |
-| Companion services, scripts, bots | — | n/a | n/a | stream or long-poll | yes | **supported** via HTTP + a service credential |
+| Companion services, scripts, bots | — | n/a | n/a | deferred (C5) | yes | **platform credentials/contract deferred** |
 
-"planned" means the capability is designed but not shipped. For the browser rows
-the *mechanism* is now verified — slot rendering, idempotent mounting, teardown and
-frame isolation all measured
+"planned" means the capability is in the active pilot but not shipped;
+"deferred" means it is outside the pilot. For the browser rows the *mechanism*
+is verified — slot rendering, idempotent mounting, teardown and frame isolation
+all measured
 ([S17](spike-evidence.md#s17--browser-slots-render-idempotently-the-frame-is-genuinely-isolated-and-there-is-no-csp)) — on the
 **modern layout only**. See [what is not verified](#what-is-not-verified).
 
@@ -67,8 +68,9 @@ the programme's shape in three ways:
 1. **The native protocol has a real design partner.** EP-08 can be validated
    against a client that actually renders descriptors, instead of only against a
    headless fixture ([#492](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/492)).
-2. **Kotlin model generation stops being speculative.** ADR-0009 lists Kotlin
-   models as "where practical"; there is now a concrete consumer for them.
+2. **First-party Kotlin models stop being speculative.** The Android TV adapter
+   needs schema-pinned models for its bounded pilot subset. That does not revive
+   EP-09's public Kotlin SDK or generated bindings for unrelated clients.
 3. **It does not change the rule.** This client is listed as an adopter only when
    a conformance run passes on it. Being the same owner earns no exemption, and
    nothing here implies upstream Android TV, Roku, Kodi or Swift support.
@@ -93,8 +95,13 @@ than against prose:
    HTML, CSS, JavaScript or bytecode, ever;
 4. invoke mutations only through short-lived opaque action capabilities, never by
    naming a provider method;
-5. handle platform-absent, offline, expired-action, permission-revoked, event-gap
-   and provider-unavailable states.
+5. handle platform-absent, offline, expired-action, permission-revoked and
+   provider-unavailable states; refresh through catalog revision/ETag,
+   action-result hints and refetch on relevant lifecycle transitions.
+
+The last step is deliberately not event delivery. C5's stream, reconnect cursor,
+retention window, event-gap and `resync-required` behavior remain deferred with
+EP-05.
 
 Every change needed lives in **that client's repository**. This repository will
 not modify official Jellyfin clients.
