@@ -110,6 +110,27 @@ public sealed class HiddenContentItemActionOwnerArchitectureTests
         Assert.DoesNotContain("PreserveExistingExtensionData", source, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void FullLegacyEvidence_IsInternalAndAbsentFromPlatformSources()
+    {
+        Assert.True(typeof(IHiddenContentLegacyItemActionOwner).IsNotPublic);
+        Assert.True(typeof(HiddenContentLegacyItemActionResult).IsNotPublic);
+        Assert.Empty(typeof(HiddenContentLegacyItemActionResult).GetConstructors());
+        Assert.Empty(typeof(HiddenContentLegacyItemActionResult).GetProperties());
+
+        var offenders = Directory
+            .EnumerateFiles(
+                Path.Combine(ProductionRoot(), "Platform"),
+                "*.cs",
+                SearchOption.AllDirectories)
+            .Where(file => PlatformHostSeamTests.CodeOnly(File.ReadAllText(file))
+                .Contains("HiddenContentLegacyItemAction", StringComparison.Ordinal))
+            .Select(Path.GetFileName)
+            .ToArray();
+
+        Assert.Empty(offenders);
+    }
+
     private static string OwnerSource([CallerFilePath] string sourceFile = "")
         => Path.GetFullPath(Path.Combine(
             Path.GetDirectoryName(sourceFile)!,

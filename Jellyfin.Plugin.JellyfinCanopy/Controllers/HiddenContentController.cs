@@ -1655,10 +1655,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 var scope = string.Equals(targetScope, "continuewatching", StringComparison.Ordinal)
                     ? HiddenContentItemScope.ContinueWatching
                     : HiddenContentItemScope.NextUp;
-                var result = _hiddenContentItemActionOwner.Configure(
+                if (_hiddenContentItemActionOwner is not IHiddenContentLegacyItemActionOwner legacyOwner)
+                {
+                    throw new InvalidOperationException(
+                        "The configured Hidden Content owner does not provide legacy response evidence.");
+                }
+
+                var legacyResult = legacyOwner.ConfigureLegacyHomeSurface(
                     new HiddenContentActorProjection(userId),
                     item,
                     HiddenContentItemConfiguration.LegacyHomeSurface(hidden: true, scope));
+                var result = legacyResult.Action;
                 if (result.Outcome == HiddenContentItemActionOutcome.CapacityExceeded)
                 {
                     return HiddenItemCapacityExceeded();
@@ -1677,7 +1684,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 {
                     success = true,
                     key = result.Key,
-                    entry = LegacyHiddenContentEntry(result.Entry),
+                    entry = legacyResult.Entry,
                     itemsRevision = result.ItemsRevision,
                     settingsRevision = result.SettingsRevision,
                     hiddenContentEnabled = result.HiddenContentEnabled,
@@ -1706,33 +1713,6 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 return StatusCode(500, new { success = false, message = "Failed to hide item." });
             }
         }
-
-        private static HiddenContentItem? LegacyHiddenContentEntry(HiddenContentItemState? entry)
-            => entry == null
-                ? null
-                : new HiddenContentItem
-                {
-                    ItemId = entry.ItemId,
-                    Name = entry.Name,
-                    Type = entry.Type,
-                    TmdbId = entry.TmdbId,
-                    Identity = entry.Identity == null
-                        ? null
-                        : new HiddenContentIdentity
-                        {
-                            Version = entry.Identity.Version,
-                            Provider = entry.Identity.Provider,
-                            MediaType = entry.Identity.MediaType,
-                            Id = entry.Identity.Id,
-                        },
-                    HiddenAt = entry.HiddenAt,
-                    PosterPath = entry.PosterPath,
-                    SeriesId = entry.SeriesId,
-                    SeriesName = entry.SeriesName,
-                    SeasonNumber = entry.SeasonNumber,
-                    EpisodeNumber = entry.EpisodeNumber,
-                    HideScope = entry.HideScope,
-                };
 
         // Shared implementation for "Remove from Continue Watching" / "Remove from Next Up".
         // Records a scoped HC entry (HideScope=continuewatching|nextup) under a server-side

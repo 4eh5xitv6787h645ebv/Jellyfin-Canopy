@@ -27,17 +27,17 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 33570,
-        "totalLines": 42567
+        "coveredLines": 33585,
+        "totalLines": 42586
       },
       "observations": {
-        "cleanRuns": 4,
-        "minimumCoveredLines": 33569,
-        "maximumCoveredLines": 33570
+        "cleanRuns": 3,
+        "minimumCoveredLines": 33584,
+        "maximumCoveredLines": 33585
       },
       "tolerance": {
         "missingCoveredLines": 1,
-        "rationale": "The independently reviewed combined #590/#594 tree retains the bounded redacted action-audit authority and adds the shared Hidden Content installed-item owner for accessible Movie/Series/Episode configuration. The Hidden Content scope includes authoritative actor/item projections, native exact-scope replacement/removal with revision preconditions, exact legacy home-surface merge/delete/TMDB/episode/poster parity, an opaque-data-free bounded action-result projection below the 64 KiB idempotency ceiling, durable forward-compatible extension preservation, deterministic linear first-wins alias merging with early aggregate bounds, full-graph validation, capacity and corruption fail-closed behavior, cache invalidation, strict access-boundary construction guards, and isolated orphan repair. The owner measures 93.880% line coverage, its result projections, mutation-evidence and legacy-row helpers 100%, the Platform adapter 96.960%, and shared defaults 100%. Four clean Coverlet runs on the identical rebased 2026-08-03 source and 42,567-line scope each passed all 2,942 server tests: three measured 33,569 covered lines and one measured 33,570. Relative to the reviewed #590 main high-water of 33,118/41,847 (79.141%), #594 adds 720 reviewed instrumented lines and raises the observed high-water by 452 covered lines to 33,570/42,567 (78.864%). The exact one-line 33,569-33,570 local instrumentation envelope therefore sets a 33,570 high-water with a one-line tolerance and a floor of 33,569/42,567 (78.862%). coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
+        "rationale": "The independently reviewed combined #590/#594 tree retains the bounded redacted action-audit authority and adds the shared Hidden Content installed-item owner for accessible Movie/Series/Episode configuration. The Hidden Content scope includes authoritative actor/item projections, native exact-scope replacement/removal with revision preconditions, exact legacy home-surface merge/delete/TMDB/episode/poster parity, an opaque-data-free bounded Platform action-result projection below the 64 KiB idempotency ceiling, a separate assembly-internal legacy-only deep-cloned response channel preserving bounded future identity fields and nested extension data, durable forward-compatible extension preservation, deterministic linear first-wins alias merging with early aggregate bounds, full-graph validation, capacity and corruption fail-closed behavior, cache invalidation, strict access-boundary construction guards, and isolated orphan repair. The owner measures 93.840% line coverage, its legacy response/result projections, mutation-evidence, owner-completion and legacy-row helpers 100%, the Platform adapter 96.960%, and shared defaults 100%. Three clean Coverlet runs on the identical rebased 2026-08-03 source and 42,586-line scope each passed all 2,943 server tests: two measured 33,584 covered lines and one measured 33,585. Relative to the reviewed #590 main high-water of 33,118/41,847 (79.141%), #594 adds 739 reviewed instrumented lines and raises the observed high-water by 467 covered lines to 33,585/42,586 (78.864%). The exact one-line 33,584-33,585 local instrumentation envelope therefore sets a 33,585 high-water with a one-line tolerance and a floor of 33,584/42,586 (78.862%). coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
       }
     }
   }

@@ -1382,6 +1382,7 @@ public sealed class HiddenContentPayloadControllerTests : IDisposable
     {
         var itemId = Guid.Parse("99999999-8888-7777-6666-555555555555");
         var dashed = itemId.ToString();
+        var futureId = new string('f', 96);
         _manager.SaveUserConfiguration(UserId, "hidden-content.json", new UserHiddenContent
         {
             Items = new Dictionary<string, HiddenContentItem>
@@ -1397,7 +1398,12 @@ public sealed class HiddenContentPayloadControllerTests : IDisposable
                         Version = 2,
                         Provider = "imdb",
                         MediaType = "movie",
-                        Id = "tt123"
+                        Id = futureId,
+                        ExtensionData = new Dictionary<string, System.Text.Json.JsonElement>
+                        {
+                            ["FutureIdentity"] = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(
+                                "{\"nested\":[1,{\"marker\":\"kept\"}]}")
+                        }
                     },
                     HideScope = "continuewatching"
                 }
@@ -1410,16 +1416,38 @@ public sealed class HiddenContentPayloadControllerTests : IDisposable
                 : null
         };
 
-        var result = Controller(NullLogger<HiddenContentController>.Instance, library)
-            .HideFromContinueWatching(dashed);
+        var result = Assert.IsType<OkObjectResult>(
+            Controller(NullLogger<HiddenContentController>.Instance, library)
+                .HideFromContinueWatching(dashed));
 
-        Assert.IsType<OkObjectResult>(result);
+        var acknowledgement = System.Text.Json.JsonSerializer.SerializeToElement(result.Value);
+        var responseIdentity = acknowledgement.GetProperty("entry").GetProperty("Identity");
+        Assert.Equal(2, responseIdentity.GetProperty("Version").GetInt32());
+        Assert.Equal(futureId, responseIdentity.GetProperty("Id").GetString());
+        Assert.Equal(
+            "kept",
+            responseIdentity.GetProperty("FutureIdentity")
+                .GetProperty("nested")[1]
+                .GetProperty("marker")
+                .GetString());
         var stored = _manager.GetUserConfigurationStrict<UserHiddenContent>(UserId, "hidden-content.json");
         var item = Assert.Single(stored.Items).Value;
         Assert.Equal("550", item.TmdbId);
         Assert.Equal(2, item.Identity?.Version);
         Assert.Equal("imdb", item.Identity?.Provider);
-        Assert.Equal("tt123", item.Identity?.Id);
+        Assert.Equal(futureId, item.Identity?.Id);
+        Assert.Equal(
+            "kept",
+            item.Identity?.ExtensionData["FutureIdentity"]
+                .GetProperty("nested")[1]
+                .GetProperty("marker")
+                .GetString());
+
+        var responseEntry = Assert.IsType<HiddenContentItem>(
+            result.Value!.GetType().GetProperty("entry")!.GetValue(result.Value));
+        responseEntry.Identity!.ExtensionData.Clear();
+        Assert.True(_manager.GetUserConfigurationStrict<UserHiddenContent>(UserId, "hidden-content.json")
+            .Items.Single().Value.Identity!.ExtensionData.ContainsKey("FutureIdentity"));
     }
 
     [Fact]
@@ -1763,7 +1791,9 @@ public sealed class HiddenContentPayloadControllerTests : IDisposable
         }
     }
 
-    private sealed class RecordingHiddenContentOwner : IHiddenContentItemActionOwner
+    private sealed class RecordingHiddenContentOwner :
+        IHiddenContentItemActionOwner,
+        IHiddenContentLegacyItemActionOwner
     {
         public int ConfigureCalls { get; private set; }
 
@@ -1790,6 +1820,18 @@ public sealed class HiddenContentPayloadControllerTests : IDisposable
             Configuration = configuration;
             return Result();
         }
+
+        public HiddenContentLegacyItemActionResult ConfigureLegacyHomeSurface(
+            HiddenContentActorProjection actor,
+            HiddenContentItemProjection item,
+            HiddenContentItemConfiguration configuration)
+            => new(
+                Configure(actor, item, configuration),
+                new HiddenContentItem
+                {
+                    ItemId = "item-key",
+                    HideScope = "continuewatching"
+                });
 
         private static HiddenContentItemActionResult Result() => new(
             HiddenContentItemActionOutcome.Configured,

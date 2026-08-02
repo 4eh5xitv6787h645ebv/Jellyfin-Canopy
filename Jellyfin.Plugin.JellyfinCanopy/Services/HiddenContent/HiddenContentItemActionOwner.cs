@@ -385,8 +385,37 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             HiddenContentItemConfiguration configuration);
     }
 
+    /// <summary>
+    /// Assembly-internal legacy response channel. Platform adapters cannot
+    /// return or serialize this full persisted-row evidence.
+    /// </summary>
+    internal interface IHiddenContentLegacyItemActionOwner
+    {
+        HiddenContentLegacyItemActionResult ConfigureLegacyHomeSurface(
+            HiddenContentActorProjection actor,
+            HiddenContentItemProjection item,
+            HiddenContentItemConfiguration configuration);
+    }
+
+    internal sealed class HiddenContentLegacyItemActionResult
+    {
+        internal HiddenContentLegacyItemActionResult(
+            HiddenContentItemActionResult action,
+            HiddenContentItem? entry)
+        {
+            Action = action;
+            Entry = entry;
+        }
+
+        internal HiddenContentItemActionResult Action { get; }
+
+        internal HiddenContentItem? Entry { get; }
+    }
+
     /// <summary>Locked persistence implementation for exact installed-item state.</summary>
-    public sealed class HiddenContentItemActionOwner : IHiddenContentItemActionOwner
+    public sealed class HiddenContentItemActionOwner :
+        IHiddenContentItemActionOwner,
+        IHiddenContentLegacyItemActionOwner
     {
         private const string FileName = "hidden-content.json";
         private readonly UserConfigurationManager _configurationManager;
@@ -443,11 +472,36 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             HiddenContentActorProjection actor,
             HiddenContentItemProjection item,
             HiddenContentItemConfiguration configuration)
+            => ConfigureCore(actor, item, configuration, captureLegacyEntry: false).Action;
+
+        HiddenContentLegacyItemActionResult IHiddenContentLegacyItemActionOwner.ConfigureLegacyHomeSurface(
+            HiddenContentActorProjection actor,
+            HiddenContentItemProjection item,
+            HiddenContentItemConfiguration configuration)
+        {
+            ArgumentNullException.ThrowIfNull(configuration);
+            if (!configuration.LegacyHomeSurfaceSemantics)
+            {
+                throw new ArgumentException(
+                    "The legacy response channel only accepts a legacy home-surface configuration.",
+                    nameof(configuration));
+            }
+
+            var completed = ConfigureCore(actor, item, configuration, captureLegacyEntry: true);
+            return new HiddenContentLegacyItemActionResult(completed.Action, completed.LegacyEntry);
+        }
+
+        private OwnerCompletion ConfigureCore(
+            HiddenContentActorProjection actor,
+            HiddenContentItemProjection item,
+            HiddenContentItemConfiguration configuration,
+            bool captureLegacyEntry)
         {
             ArgumentNullException.ThrowIfNull(configuration);
             ValidateArguments(actor, item, configuration.Scope);
             var userKey = actor.UserId.ToString("N");
             HiddenContentItemActionResult? result = null;
+            HiddenContentItem? legacyEntry = null;
 
             _configurationManager.TransactUserConfiguration<UserHiddenContent, int>(
                 userKey,
@@ -531,6 +585,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                         }
 
                         _configurationManager.SaveUserConfiguration(userKey, FileName, state);
+                        if (captureLegacyEntry)
+                        {
+                            legacyEntry = CloneFullEntry(entry);
+                        }
+
                         result = Result(
                             HiddenContentItemActionOutcome.Configured,
                             hidden: true,
@@ -593,7 +652,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 HiddenContentResponseFilter.InvalidateUser(userKey);
             }
 
-            return completed;
+            return new OwnerCompletion(completed, legacyEntry);
         }
 
         private UserConfigReadStatus RequireMutationRead(
@@ -712,6 +771,24 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 Id = identity.Id,
                 ExtensionData = identity.ExtensionData?.ToDictionary(pair => pair.Key, pair => pair.Value.Clone(), StringComparer.Ordinal)
                     ?? new Dictionary<string, System.Text.Json.JsonElement>(StringComparer.Ordinal),
+            };
+
+        private static HiddenContentItem CloneFullEntry(HiddenContentItem entry)
+            => new()
+            {
+                ItemId = entry.ItemId,
+                Name = entry.Name,
+                Type = entry.Type,
+                TmdbId = entry.TmdbId,
+                Identity = entry.Identity == null ? null : CloneIdentity(entry.Identity),
+                HiddenAt = entry.HiddenAt,
+                PosterPath = entry.PosterPath,
+                SeriesId = entry.SeriesId,
+                SeriesName = entry.SeriesName,
+                SeasonNumber = entry.SeasonNumber,
+                EpisodeNumber = entry.EpisodeNumber,
+                HideScope = entry.HideScope,
+                ExtensionData = PersistedPayloadPolicy.CloneExtensionData(entry.ExtensionData),
             };
 
         private static bool IsSupportedTmdbIdentity(HiddenContentIdentity identity)
@@ -946,6 +1023,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     state.Settings.Enabled);
             }
         }
+
+        private readonly record struct OwnerCompletion(
+            HiddenContentItemActionResult Action,
+            HiddenContentItem? LegacyEntry);
 
         private static void ValidateArguments(
             HiddenContentActorProjection actor,
