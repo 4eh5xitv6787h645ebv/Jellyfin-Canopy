@@ -256,6 +256,47 @@ with tooling images. There is no Dependabot auto-merge path: every bot PR must
 pass the normal security, build, unit, coverage, client-distribution reproducibility, and six
 shard unstable/nightly E2E gates before a maintainer can merge it.
 
+#### The Jellyfin nightly refresher
+
+Canopy targets Jellyfin 12, which ships only as the `unstable` nightly, so CI
+has to keep testing against a current server build. That server is pinned by
+digest in three files which `scripts/e2e/workflow-sharding.test.js` requires to
+stay byte-identical:
+
+- `.github/workflows/build.yml` — the required E2E shard's `JF_IMAGE`;
+- `e2e/docker/compose.yml` — the Compose environment default;
+- `e2e/docker/seed.sh` — the seed export default.
+
+Dependabot owns only the Compose manifest, so a bot bump can never satisfy that
+drift guard on its own and the pin would age in place.
+`.github/workflows/refresh-jellyfin-image.yml` closes that gap: daily, and on
+manual dispatch, it resolves the digest the `unstable` tag currently points at,
+rewrites all three references through `scripts/e2e/refresh-jellyfin-digest.js`,
+and opens one pull request. It never floats the tag, never accepts a non-digest
+reference, and never leaves the `unstable` channel.
+
+That refresher is the repository's **only** sanctioned auto-merge path, and
+`scripts/dependabot-policy.test.js` fails if any other workflow enables one. It
+is first-party rather than a Dependabot PR, it is reachable only from a schedule
+or a dispatch, and `--auto --squash` defers the decision entirely to the branch
+ruleset — no bypass actors, strict up-to-date branches, and the E2E aggregate
+required. A refreshed digest therefore becomes the CI baseline only after the
+full six-shard suite has passed against that exact server build; a nightly that
+breaks Canopy simply leaves the pull request open and red for a maintainer.
+
+The refresher requires a `CANOPY_AUTOMATION_TOKEN` secret — a fine-grained token
+limited to this repository with `contents: write` and `pull-requests: write`. A
+pull request opened with the default `GITHUB_TOKEN` does not trigger Build &
+Test, so its required checks would never report and auto-merge could never
+complete; the job fails loudly rather than publishing an unmergeable PR. Because
+auto-merge does not update a branch when `main` advances, each run also brings
+its open refresh PR up to date and closes any superseded one.
+
+The pinned image is also a seed input for the scale-benchmark baselines
+specified later in this document. Once that harness exists, the refresher
+becomes a baseline-invalidating writer and must regenerate the affected
+baselines in the same pull request.
+
 Dependabot alerts and security updates are enabled for this public repository.
 Version-update scheduling complements those alerts; it does not replace the
 private vulnerability-reporting process in [SECURITY.md](SECURITY.md).

@@ -15,6 +15,10 @@ const repositoryPolicy = JSON.parse(fs.readFileSync(
     'utf8'
 ));
 
+// The one workflow permitted to enable auto-merge. Its own contract is asserted
+// in scripts/e2e/refresh-jellyfin-digest.test.js.
+const AUTO_MERGE_WORKFLOW = 'refresh-jellyfin-image.yml';
+
 function updateEntries() {
     const starts = [...dependabot.matchAll(/^ {2}- package-ecosystem: "?([^"\s]+)"?\s*$/gm)];
     const entries = new Map();
@@ -198,12 +202,44 @@ test('Jellyfin Docker automation stays on unstable nightly and cannot bypass ful
     assert.match(buildWorkflow, /E2E_SHARD_TOTAL: "6"/);
     assert.match(buildWorkflow, pinnedNightly);
 
-    const workflowText = fs.readdirSync(path.join(ROOT, '.github', 'workflows'))
+    const workflows = fs.readdirSync(path.join(ROOT, '.github', 'workflows'))
         .filter((name) => name.endsWith('.yml') || name.endsWith('.yaml'))
-        .map((name) => fs.readFileSync(path.join(ROOT, '.github', 'workflows', name), 'utf8'))
-        .join('\n');
-    assert.doesNotMatch(workflowText, /github\.actor[^\n]*dependabot|dependabot[^\n]*github\.actor/i);
-    assert.doesNotMatch(workflowText, /gh pr merge[^\n]*--auto|enablePullRequestAutoMerge/i);
+        .sort()
+        .map((name) => ({
+            name,
+            source: fs.readFileSync(path.join(ROOT, '.github', 'workflows', name), 'utf8'),
+        }));
+    assert.doesNotMatch(
+        workflows.map((workflow) => workflow.source).join('\n'),
+        /github\.actor[^\n]*dependabot|dependabot[^\n]*github\.actor/i
+    );
+
+    // The nightly Jellyfin refresher is the single sanctioned auto-merge path.
+    // It is first-party (never a Dependabot pull request), it is reachable only
+    // from a schedule or a manual dispatch, and `--auto` defers the decision
+    // entirely to the branch ruleset asserted below: no bypass actors, strict
+    // up-to-date branches, and the E2E aggregate required. Every other workflow
+    // remains unable to merge its own work.
+    const refresher = workflows.find((workflow) => workflow.name === AUTO_MERGE_WORKFLOW);
+    assert.ok(refresher, `${AUTO_MERGE_WORKFLOW} no longer exists`);
+    for (const workflow of workflows.filter((entry) => entry !== refresher)) {
+        assert.doesNotMatch(
+            workflow.source,
+            /gh pr merge[^\n]*--auto|enablePullRequestAutoMerge/i,
+            `${workflow.name} must not merge its own pull requests`
+        );
+    }
+    assert.match(refresher.source, /gh pr merge "\$\{BRANCH\}" --auto --squash/);
+    assert.doesNotMatch(refresher.source, /--admin\b|gh api[^\n]*\/merges/);
+    assert.doesNotMatch(
+        refresher.source,
+        /pull_request:|issue_comment:|workflow_call:/,
+        'the auto-merge workflow must not be reachable from an untrusted event'
+    );
+    assert.match(
+        refresher.source,
+        /^on:\n {2}schedule:\n {4}- cron: "[^"]+"\n {2}workflow_dispatch:$/m
+    );
 
     const mainRuleset = repositoryPolicy.rulesets.find(rule => (
         rule.target === 'branch' && rule.conditions.ref_name.include.includes('~DEFAULT_BRANCH')
