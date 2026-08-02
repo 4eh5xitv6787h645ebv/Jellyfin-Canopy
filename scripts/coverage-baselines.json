@@ -27,17 +27,17 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 31688,
+        "coveredLines": 31689,
         "totalLines": 40320
       },
       "observations": {
-        "cleanRuns": 3,
+        "cleanRuns": 4,
         "minimumCoveredLines": 31688,
-        "maximumCoveredLines": 31688
+        "maximumCoveredLines": 31689
       },
       "tolerance": {
-        "missingCoveredLines": 0,
-        "rationale": "The #586 first-party actor boundary adds an immutable authenticated actor, fresh authoritative Jellyfin user and administrator resolution, bounded non-authoritative client/device attribution, fail-closed claim validation, and focused boundary, MVC-wire, architecture, and filter-order coverage. Three clean Coverlet runs on the identical 2026-08-03 source and 40,320-line scope each passed all 2,755 server tests and reproduced exactly 31,688 covered lines. Relative to the reviewed #522 baseline of 31,619/40,248 (78.560%), the reviewed implementation adds 72 instrumented lines and 69 covered lines while increasing the high-water to 31,688/40,320 (78.591%). The exact observed envelope needs no instrumentation tolerance, so the new floor is 31,688/40,320 (78.591%). coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
+        "missingCoveredLines": 1,
+        "rationale": "The #586 first-party actor boundary adds an immutable authenticated actor, fresh authoritative Jellyfin user and administrator resolution, bounded non-authoritative client/device attribution, fail-closed claim validation, and focused boundary, MVC-wire, architecture, and filter-order coverage. Four clean Coverlet observations on the identical 2026-08-03 source and 40,320-line scope each passed all 2,755 server tests: three local runs measured 31,688 covered lines, while GitHub Actions run 30759339499 measured 31,689. Relative to the reviewed #522 baseline of 31,619/40,248 (78.560%), the reviewed implementation adds 72 instrumented lines and raises the observed high-water by 70 covered lines to 31,689/40,320 (78.594%). The exact one-line 31,688-31,689 instrumentation envelope therefore sets a 31,689 high-water with a one-line tolerance and a floor of 31,688/40,320 (78.591%). coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
       }
     }
   }
