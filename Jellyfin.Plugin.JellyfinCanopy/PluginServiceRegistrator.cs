@@ -233,6 +233,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy
             serviceCollection.AddSingleton<Services.Seerr.ISeerrSpoilerIntentStore>(services =>
                 services.GetRequiredService<SpoilerPendingService>());
             serviceCollection.AddSingleton<Services.Seerr.ISeerrMediaRequestOwner, Services.Seerr.SeerrMediaRequestOwner>();
+            serviceCollection.AddSingleton<Services.Seerr.ISeerrItemPresentationRevisionAuthority, Services.Seerr.SeerrItemPresentationRevisionAuthority>();
             serviceCollection.AddSingleton<Services.Seerr.ISeerrItemRequestPresentationOwner, Services.Seerr.SeerrItemRequestPresentationOwner>();
             serviceCollection.AddHostedService<SpoilerSeerrPendingPromoter>();
             serviceCollection.AddScoped<IEventConsumer<PlaybackStartEventArgs>, SpoilerAutoEnableOnFirstPlayConsumer>();

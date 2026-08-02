@@ -2,6 +2,7 @@ using System.Collections.Immutable;
 using System.Net;
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
@@ -30,7 +31,7 @@ public sealed class SeerrItemRequestPresentationOwnerTests
         Assert.True(result.FourKRequestAvailable);
         Assert.Equal(SeerrItemRequestStatus.Unavailable, result.StandardStatus);
         Assert.Equal(SeerrItemRequestStatus.Unavailable, result.FourKStatus);
-        AssertRevisions(result, providerExpected: true);
+        AssertRevisions(result);
         var request = Assert.Single(harness.Handler.Requests);
         Assert.Equal(HttpMethod.Get, request.Method);
         Assert.Equal("/root/api/v1/movie/603", request.RequestUri!.AbsolutePath);
@@ -184,6 +185,19 @@ public sealed class SeerrItemRequestPresentationOwnerTests
     }
 
     [Fact]
+    public async Task ParentalPolicyIsRecheckedAfterProviderReadBeforePublication()
+    {
+        var harness = new Harness();
+        harness.Parental.SetDecisions(false, true);
+
+        var result = await harness.InvokeAsync(Item(HostItemKind.Movie, "151"));
+
+        AssertInvisible(result);
+        Assert.Single(harness.Handler.Sent);
+        Assert.Equal(2, harness.Parental.Calls);
+    }
+
+    [Fact]
     public async Task HostUserOrItemRevocationBeforeDispatchIsInvisible()
     {
         var deletedUser = new Harness();
@@ -329,30 +343,33 @@ public sealed class SeerrItemRequestPresentationOwnerTests
     {
         var providerError = new Harness();
         providerError.Handler.ResponseFactory = _ => JsonResponse("{}", HttpStatusCode.InternalServerError);
-        AssertProviderFailed(await providerError.InvokeAsync(Item(HostItemKind.Movie, "23")));
+        AssertInvisible(await providerError.InvokeAsync(Item(HostItemKind.Movie, "23")));
+
+        var transportFailure = new Harness();
+        transportFailure.Handler.ResponseFactory = _ => throw new HttpRequestException(
+            "https://secret.example/saved-secret-must-not-escape");
+        AssertInvisible(await transportFailure.InvokeAsync(Item(HostItemKind.Movie, "23")));
 
         var malformed = new Harness();
         malformed.SetBody("{\"mediaInfo\":{\"status\":99,\"status4k\":1}}");
-        AssertProviderFailed(await malformed.InvokeAsync(Item(HostItemKind.Movie, "23")));
+        AssertInvisible(await malformed.InvokeAsync(Item(HostItemKind.Movie, "23")));
 
         var deep = new Harness();
         deep.SetBody("{\"mediaInfo\":null,\"deep\":" + new string('[', 20) + "0" + new string(']', 20) + "}");
-        AssertProviderFailed(await deep.InvokeAsync(Item(HostItemKind.Movie, "23")));
+        AssertInvisible(await deep.InvokeAsync(Item(HostItemKind.Movie, "23")));
 
         var oversized = new Harness();
         oversized.SetBody("{\"padding\":\"" + new string('x', (256 * 1024) + 1) + "\"}");
-        AssertProviderFailed(await oversized.InvokeAsync(Item(HostItemKind.Movie, "23")));
+        AssertInvisible(await oversized.InvokeAsync(Item(HostItemKind.Movie, "23")));
 
         var standardOnly = new Harness();
         standardOnly.Admission.SetResolutions(Found(permissions: SeerrPermission.REQUEST_MOVIE));
         standardOnly.SetBody("{\"mediaInfo\":{\"status\":99}}");
-        var scopedFailure = await standardOnly.InvokeAsync(Item(HostItemKind.Movie, "23"));
-        Assert.Equal(SeerrItemRequestStatus.Failed, scopedFailure.StandardStatus);
-        Assert.Equal(SeerrItemRequestStatus.Unavailable, scopedFailure.FourKStatus);
+        AssertInvisible(await standardOnly.InvokeAsync(Item(HostItemKind.Movie, "23")));
     }
 
     [Fact]
-    public async Task ProviderFailureStillRequiresFinalIdentityReauthorization()
+    public async Task ProviderFailureOmitsWithoutPublishingIdentityOrRevisionEvidence()
     {
         var harness = new Harness();
         harness.Admission.SetResolutions(
@@ -363,7 +380,7 @@ public sealed class SeerrItemRequestPresentationOwnerTests
         var result = await harness.InvokeAsync(Item(HostItemKind.Movie, "231"));
 
         AssertInvisible(result);
-        Assert.Equal(1, harness.Admission.InvalidationCalls);
+        Assert.Equal(1, harness.Admission.ResolutionCalls);
     }
 
     [Fact]
@@ -372,11 +389,11 @@ public sealed class SeerrItemRequestPresentationOwnerTests
         var tooMany = new Harness();
         var rows = string.Join(',', Enumerable.Repeat("{\"status\":1,\"is4k\":false}", 65));
         tooMany.SetBody("{\"mediaInfo\":{\"status\":1,\"status4k\":1,\"requests\":[" + rows + "]}}");
-        AssertProviderFailed(await tooMany.InvokeAsync(Item(HostItemKind.Movie, "24")));
+        AssertInvisible(await tooMany.InvokeAsync(Item(HostItemKind.Movie, "24")));
 
         var malformed = new Harness();
         malformed.SetBody("{\"mediaInfo\":{\"status\":1,\"status4k\":1,\"requests\":[{\"status\":\"pending\"}]}}");
-        AssertProviderFailed(await malformed.InvokeAsync(Item(HostItemKind.Movie, "24")));
+        AssertInvisible(await malformed.InvokeAsync(Item(HostItemKind.Movie, "24")));
     }
 
     [Fact]
@@ -424,6 +441,90 @@ public sealed class SeerrItemRequestPresentationOwnerTests
     }
 
     [Fact]
+    public async Task ProviderRevisionIgnoresHiddenEditionAndNonWinningForeignRows()
+    {
+        var actorId = Guid.Parse("33333333-3333-3333-3333-333333333333");
+        var item = Item(HostItemKind.Movie, "251");
+        var first = new Harness(actorId: actorId);
+        first.Admission.SetResolutions(Found(permissions: SeerrPermission.REQUEST_MOVIE));
+        first.SetBody("{\"mediaInfo\":{\"status\":3,\"status4k\":2,\"requests\":[]}}");
+        var firstResult = await first.InvokeAsync(item);
+
+        var second = new Harness(actorId: actorId);
+        second.Admission.SetResolutions(Found(permissions: SeerrPermission.REQUEST_MOVIE));
+        second.SetBody("{\"mediaInfo\":{\"status\":3,\"status4k\":5,\"requests\":["
+            + "{\"status\":3,\"is4k\":false,\"requestedBy\":{\"id\":999}},"
+            + "{\"status\":4,\"is4k\":false,\"requestedBy\":{\"id\":998}},"
+            + "{\"status\":2,\"is4k\":true,\"requestedBy\":{\"id\":997}}]}}");
+        var secondResult = await second.InvokeAsync(item);
+
+        Assert.Equal(SeerrItemRequestStatus.AlreadyRequested, firstResult.StandardStatus);
+        Assert.Equal(firstResult.StandardStatus, secondResult.StandardStatus);
+        Assert.Equal(SeerrItemRequestStatus.Unavailable, firstResult.FourKStatus);
+        Assert.Equal(firstResult.FourKStatus, secondResult.FourKStatus);
+        Assert.Equal(firstResult.ProviderRevision, secondResult.ProviderRevision);
+    }
+
+    [Fact]
+    public void RevisionAuthorityUsesProcessSecretAndSeparatesKeysAndDomains()
+    {
+        const string enumerableMaterial = "27|32|https://seerr.example/root";
+        using var first = new SeerrItemPresentationRevisionAuthority(
+            Enumerable.Repeat((byte)0x11, 32).ToArray());
+        using var second = new SeerrItemPresentationRevisionAuthority(
+            Enumerable.Repeat((byte)0x22, 32).ToArray());
+
+        var userRevision = first.Create("user", enumerableMaterial);
+        var configurationRevision = first.Create("configuration", enumerableMaterial);
+        var otherProcessRevision = second.Create("user", enumerableMaterial);
+        var enumerableSha = "r1-" + Convert.ToHexString(
+            SHA256.HashData(Encoding.UTF8.GetBytes(enumerableMaterial)));
+
+        Assert.Matches("^r1-[0-9A-F]{64}$", userRevision);
+        Assert.NotEqual(userRevision, configurationRevision);
+        Assert.NotEqual(userRevision, otherProcessRevision);
+        Assert.NotEqual(enumerableSha, userRevision);
+        Assert.DoesNotContain("seerr", userRevision, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task FactoryAndInvalidSavedHeaderFailuresAreInvisibleAndNeverDispatch()
+    {
+        var factoryFailure = new Harness(httpClientFactory: new ThrowingHttpClientFactory());
+        AssertInvisible(await factoryFailure.InvokeAsync(Item(HostItemKind.Movie, "252")));
+        Assert.Empty(factoryFailure.Handler.Sent);
+
+        var invalidHeader = new Harness();
+        invalidHeader.Config.SeerrApiKey = "saved-secret\r\ninvalid-header";
+        AssertInvisible(await invalidHeader.InvokeAsync(Item(HostItemKind.Movie, "252")));
+        Assert.Empty(invalidHeader.Handler.Sent);
+    }
+
+    [Theory]
+    [InlineData(1, 0)]
+    [InlineData(2, 0)]
+    [InlineData(3, 1)]
+    public async Task CancellationDuringEveryHostLookupWinsBeforeDispatchOrPublication(
+        int cancelOnLookup,
+        int expectedDispatches)
+    {
+        var harness = new Harness();
+        using var cancellation = new CancellationTokenSource();
+        harness.Host.AccessibleLookupCallback = call =>
+        {
+            if (call == cancelOnLookup)
+            {
+                cancellation.Cancel();
+            }
+        };
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => harness.InvokeAsync(
+            Item(HostItemKind.Movie, "253"),
+            cancellation.Token));
+        Assert.Equal(expectedDispatches, harness.Handler.Sent.Count);
+    }
+
+    [Fact]
     public async Task CancellationPropagatesBeforeAnyProviderRead()
     {
         var harness = new Harness();
@@ -468,6 +569,20 @@ public sealed class SeerrItemRequestPresentationOwnerTests
         Assert.DoesNotContain("Controller", source, StringComparison.Ordinal);
         Assert.DoesNotContain("SeerrApiKey", source, StringComparison.Ordinal);
         Assert.DoesNotContain("SeerrUrls", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("exception.Message", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("SHA256.HashData", source, StringComparison.Ordinal);
+        Assert.Contains("_revisionAuthority.Create", source, StringComparison.Ordinal);
+
+        var constructor = Assert.Single(typeof(SeerrItemRequestPresentationOwner).GetConstructors(
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic));
+        Assert.Contains(
+            constructor.GetParameters(),
+            parameter => parameter.ParameterType == typeof(ISeerrItemPresentationRevisionAuthority));
+
+        var authoritySource = PlatformHostSeamTests.CodeOnly(File.ReadAllText(RevisionAuthoritySource()));
+        Assert.Contains("IncrementalHash.CreateHMAC", authoritySource, StringComparison.Ordinal);
+        Assert.Contains("RandomNumberGenerator.GetBytes", authoritySource, StringComparison.Ordinal);
+        Assert.Contains("CryptographicOperations.ZeroMemory", authoritySource, StringComparison.Ordinal);
     }
 
     private static string OwnerSource([CallerFilePath] string sourceFile = "")
@@ -479,6 +594,16 @@ public sealed class SeerrItemRequestPresentationOwnerTests
             "Services",
             "Seerr",
             "SeerrItemRequestPresentationOwner.cs"));
+
+    private static string RevisionAuthoritySource([CallerFilePath] string sourceFile = "")
+        => Path.GetFullPath(Path.Combine(
+            Path.GetDirectoryName(sourceFile)!,
+            "..",
+            "..",
+            "Jellyfin.Plugin.JellyfinCanopy",
+            "Services",
+            "Seerr",
+            "SeerrItemPresentationRevisionAuthority.cs"));
 
     private static void AssertInvisible(SeerrItemRequestPresentation result)
     {
@@ -493,31 +618,12 @@ public sealed class SeerrItemRequestPresentationOwnerTests
         Assert.Equal(string.Empty, result.ProviderRevision);
     }
 
-    private static void AssertProviderFailed(SeerrItemRequestPresentation result)
-    {
-        Assert.True(result.IsVisible);
-        Assert.False(result.StandardRequestAvailable);
-        Assert.False(result.FourKRequestAvailable);
-        Assert.Equal(SeerrItemRequestStatus.Failed, result.StandardStatus);
-        Assert.Equal(SeerrItemRequestStatus.Failed, result.FourKStatus);
-        AssertRevisions(result, providerExpected: false);
-    }
-
-    private static void AssertRevisions(
-        SeerrItemRequestPresentation result,
-        bool providerExpected)
+    private static void AssertRevisions(SeerrItemRequestPresentation result)
     {
         Assert.Matches("^r1-[0-9A-F]{64}$", result.ConfigurationRevision);
         Assert.Matches("^r1-[0-9A-F]{64}$", result.UserRevision);
         Assert.Matches("^r1-[0-9A-F]{64}$", result.ItemRevision);
-        if (providerExpected)
-        {
-            Assert.Matches("^r1-[0-9A-F]{64}$", result.ProviderRevision);
-        }
-        else
-        {
-            Assert.Equal(string.Empty, result.ProviderRevision);
-        }
+        Assert.Matches("^r1-[0-9A-F]{64}$", result.ProviderRevision);
     }
 
     private static HostAccessibleItem Item(HostItemKind kind, string tmdbId)
@@ -557,7 +663,9 @@ public sealed class SeerrItemRequestPresentationOwnerTests
     {
         public Harness(
             bool isElevated = false,
-            Guid? actorId = null)
+            Guid? actorId = null,
+            IHttpClientFactory? httpClientFactory = null,
+            byte[]? revisionKey = null)
         {
             Config = ActiveConfig();
             Provider = new GenerationConfigProvider(Config);
@@ -572,11 +680,13 @@ public sealed class SeerrItemRequestPresentationOwnerTests
             Host.IsAdministrator = isElevated;
             SetBody("{\"mediaInfo\":{\"status\":1,\"status4k\":1,\"requests\":[]}}");
             Owner = new SeerrItemRequestPresentationOwner(
-                new RecordingHttpClientFactory(Handler),
+                httpClientFactory ?? new RecordingHttpClientFactory(Handler),
                 Provider,
                 Host,
                 Admission,
                 Parental,
+                new SeerrItemPresentationRevisionAuthority(
+                    revisionKey ?? Enumerable.Repeat((byte)0x5A, 32).ToArray()),
                 NullLogger<SeerrItemRequestPresentationOwner>.Instance);
         }
 
@@ -698,7 +808,22 @@ public sealed class SeerrItemRequestPresentationOwnerTests
 
     private sealed class FakeParentalFilter : ISeerrParentalFilter
     {
+        private readonly Queue<bool> _decisions = new();
+
         public bool Blocked { get; set; }
+
+        public int Calls { get; private set; }
+
+        public void SetDecisions(params bool[] decisions)
+        {
+            _decisions.Clear();
+            foreach (var decision in decisions)
+            {
+                _decisions.Enqueue(decision);
+            }
+
+            Calls = 0;
+        }
 
         public Task<SeerrParentalResult> ApplyAsync(
             string json,
@@ -710,7 +835,10 @@ public sealed class SeerrItemRequestPresentationOwnerTests
             string mediaType,
             int tmdbId,
             SeerrCaller caller)
-            => Task.FromResult(Blocked);
+        {
+            Calls++;
+            return Task.FromResult(_decisions.Count > 0 ? _decisions.Dequeue() : Blocked);
+        }
 
         public Task<bool> IsTmdbProxyPathBlockedAsync(
             string tmdbApiPath,
@@ -736,6 +864,10 @@ public sealed class SeerrItemRequestPresentationOwnerTests
 
         public Func<HostAccessibleItem, HostAccessibleItem>? ItemTransform { get; set; }
 
+        public Action<int>? AccessibleLookupCallback { get; set; }
+
+        public int AccessibleLookupCalls { get; private set; }
+
         public IHostUsers Users { get; }
 
         public IHostLibrary Library { get; }
@@ -760,6 +892,8 @@ public sealed class SeerrItemRequestPresentationOwnerTests
 
             public HostItemAccessResult FindAccessible(Guid userId, Guid itemId)
             {
+                owner.AccessibleLookupCalls++;
+                owner.AccessibleLookupCallback?.Invoke(owner.AccessibleLookupCalls);
                 if (!owner.ItemAccessible
                     || !owner.UserExists
                     || owner.AdmittedItem.Id != itemId)
@@ -787,5 +921,11 @@ public sealed class SeerrItemRequestPresentationOwnerTests
         public IReadOnlyList<HostPlugin> Installed() => Array.Empty<HostPlugin>();
 
         public HostPlugin? Find(Guid id) => null;
+    }
+
+    private sealed class ThrowingHttpClientFactory : IHttpClientFactory
+    {
+        public HttpClient CreateClient(string name)
+            => throw new InvalidOperationException("factory-secret-must-not-escape");
     }
 }

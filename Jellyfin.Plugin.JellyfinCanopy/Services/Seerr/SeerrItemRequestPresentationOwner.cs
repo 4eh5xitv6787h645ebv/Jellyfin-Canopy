@@ -2,7 +2,6 @@ using System;
 using System.Globalization;
 using System.Linq;
 using System.Net.Http;
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
@@ -35,7 +34,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
         /// <summary>Only part of the requested title is available.</summary>
         Partial,
 
-        /// <summary>The provider read failed or returned an unsafe state.</summary>
+        /// <summary>A valid provider request row reports a terminal failure.</summary>
         Failed,
     }
 
@@ -107,27 +106,6 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                 string.Empty,
                 string.Empty);
 
-        internal static SeerrItemRequestPresentation ProviderFailed(
-            bool standardStatusVisible,
-            bool fourKStatusVisible,
-            string configurationRevision,
-            string userRevision,
-            string itemRevision)
-            => new(
-                isVisible: true,
-                standardRequestAvailable: false,
-                fourKRequestAvailable: false,
-                standardStatusVisible
-                    ? SeerrItemRequestStatus.Failed
-                    : SeerrItemRequestStatus.Unavailable,
-                fourKStatusVisible
-                    ? SeerrItemRequestStatus.Failed
-                    : SeerrItemRequestStatus.Unavailable,
-                configurationRevision,
-                userRevision,
-                itemRevision,
-                string.Empty);
-
         internal static SeerrItemRequestPresentation Available(
             bool standardRequestAvailable,
             bool fourKRequestAvailable,
@@ -176,6 +154,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
         private readonly IPlatformHost _host;
         private readonly ISeerrMediaRequestAdmission _admission;
         private readonly ISeerrParentalFilter _parentalFilter;
+        private readonly ISeerrItemPresentationRevisionAuthority _revisionAuthority;
         private readonly ILogger<SeerrItemRequestPresentationOwner> _logger;
 
         public SeerrItemRequestPresentationOwner(
@@ -184,6 +163,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             IPlatformHost host,
             ISeerrMediaRequestAdmission admission,
             ISeerrParentalFilter parentalFilter,
+            ISeerrItemPresentationRevisionAuthority revisionAuthority,
             ILogger<SeerrItemRequestPresentationOwner> logger)
         {
             _httpClientFactory = httpClientFactory ?? throw new ArgumentNullException(nameof(httpClientFactory));
@@ -191,6 +171,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             _host = host ?? throw new ArgumentNullException(nameof(host));
             _admission = admission ?? throw new ArgumentNullException(nameof(admission));
             _parentalFilter = parentalFilter ?? throw new ArgumentNullException(nameof(parentalFilter));
+            _revisionAuthority = revisionAuthority ?? throw new ArgumentNullException(nameof(revisionAuthority));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
@@ -201,11 +182,18 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
         {
             ArgumentNullException.ThrowIfNull(actor);
             cancellationToken.ThrowIfCancellationRequested();
-            if (!SeerrMediaTargetPolicy.TryProject(item, out var target)
-                || !CurrentHostMatches(actor, item, target))
+            if (!SeerrMediaTargetPolicy.TryProject(item, out var target))
             {
                 return SeerrItemRequestPresentation.Invisible();
             }
+
+            if (!CurrentHostMatches(actor, item, target))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                return SeerrItemRequestPresentation.Invisible();
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
 
             var integration = SeerrIntegrationPolicy.Capture(_configProvider);
             var config = integration.Configuration;
@@ -268,76 +256,117 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                 return SeerrItemRequestPresentation.Invisible();
             }
 
-            var configurationRevision = Revision("configuration", integration.GenerationIdentity);
-            var userRevision = UserRevision(actor, identity);
-            var itemRevision = ItemRevision(item, target);
-            var requestUri = string.Concat(
-                identity.SourceUrl,
-                "/api/v1/",
-                target.MediaType,
-                "/",
-                target.TmdbId.ToString(CultureInfo.InvariantCulture));
-            var httpClient = SeerrHttpHelper.CreateClient(_httpClientFactory);
-            httpClient.Timeout = ReadTimeout;
-            using var request = SeerrHttpHelper.BuildRequest(
-                HttpMethod.Get,
-                requestUri,
-                integration.ApiKey,
-                identity.UserId.ToString(CultureInfo.InvariantCulture));
-
-            // Factory/request construction are arbitrary-code boundaries. Re-enter
-            // the host immediately before the fixed GET dispatch.
-            cancellationToken.ThrowIfCancellationRequested();
-            if (!CurrentHostMatches(actor, item, target))
-            {
-                return SeerrItemRequestPresentation.Invisible();
-            }
-
-            string? json = null;
-            SeerrError? error = null;
-            var status = 0;
-            var providerReadFailed = false;
-            var providerState = default(ProviderState);
+            string requestUri;
+            HttpClient httpClient;
+            HttpRequestMessage request;
             try
             {
-                (json, error, status) = await SeerrHttpHelper.SendAndReadJsonAsync(
-                    httpClient,
-                    request,
+                requestUri = string.Concat(
+                    identity.SourceUrl,
+                    "/api/v1/",
+                    target.MediaType,
+                    "/",
+                    target.TmdbId.ToString(CultureInfo.InvariantCulture));
+                httpClient = SeerrHttpHelper.CreateClient(_httpClientFactory);
+                httpClient.Timeout = ReadTimeout;
+                request = SeerrHttpHelper.BuildRequest(
+                    HttpMethod.Get,
                     requestUri,
-                    MaximumProviderBodyBytes,
-                    integration.CreateDispatchFence(_configProvider),
-                    cancellationToken).ConfigureAwait(false);
+                    integration.ApiKey,
+                    identity.UserId.ToString(CultureInfo.InvariantCulture));
             }
-            catch (SeerrDispatchNotAttemptedException)
+            catch (Exception exception) when (exception is not OutOfMemoryException)
             {
-                return SeerrItemRequestPresentation.Invisible();
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                throw;
-            }
-            catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
-            {
+                cancellationToken.ThrowIfCancellationRequested();
                 _logger.LogWarning(
-                    "The bounded Seerr item-presentation read failed ({ExceptionType}).",
+                    "The bounded Seerr item-presentation request could not be constructed ({ExceptionType}).",
                     exception.GetType().Name);
-                providerReadFailed = true;
-            }
-
-            if (!integration.IsCurrent(_configProvider))
-            {
                 return SeerrItemRequestPresentation.Invisible();
             }
 
-            if (!providerReadFailed
-                && (error != null
+            using (request)
+            {
+                // Factory/request construction are arbitrary-code boundaries. Re-enter
+                // the host immediately before the fixed GET dispatch.
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!CurrentHostMatches(actor, item, target))
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    return SeerrItemRequestPresentation.Invisible();
+                }
+
+                cancellationToken.ThrowIfCancellationRequested();
+
+                string? json;
+                SeerrError? error;
+                int status;
+                try
+                {
+                    (json, error, status) = await SeerrHttpHelper.SendAndReadJsonAsync(
+                        httpClient,
+                        request,
+                        requestUri,
+                        MaximumProviderBodyBytes,
+                        integration.CreateDispatchFence(_configProvider),
+                        cancellationToken).ConfigureAwait(false);
+                }
+                catch (SeerrDispatchNotAttemptedException)
+                {
+                    return SeerrItemRequestPresentation.Invisible();
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception exception) when (exception is not OutOfMemoryException)
+                {
+                    _logger.LogWarning(
+                        "The bounded Seerr item-presentation read failed ({ExceptionType}).",
+                        exception.GetType().Name);
+                    return SeerrItemRequestPresentation.Invisible();
+                }
+
+                if (!integration.IsCurrent(_configProvider)
+                    || error != null
                     || status is < 200 or >= 300
                     || json == null
-                    || !TryParseProviderState(json, out providerState)))
-            {
-                providerReadFailed = true;
-            }
+                    || !TryParseProviderState(json, out var providerState))
+                {
+                    return SeerrItemRequestPresentation.Invisible();
+                }
 
+                return await PublishAuthorizedStateAsync(
+                    actor,
+                    item,
+                    target,
+                    identity,
+                    integration,
+                    caller,
+                    standardAuthorized,
+                    fourKAuthorized,
+                    fourKMasterEnabled,
+                    fourKAdmitted,
+                    initial4kCapability,
+                    providerState,
+                    cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        private async Task<SeerrItemRequestPresentation> PublishAuthorizedStateAsync(
+            PlatformActor actor,
+            HostAccessibleItem item,
+            SeerrMediaTarget target,
+            SeerrRequestIdentity identity,
+            SeerrIntegrationPolicy.SeerrIntegrationSnapshot integration,
+            SeerrCaller caller,
+            bool standardAuthorized,
+            bool fourKAuthorized,
+            bool fourKMasterEnabled,
+            bool fourKAdmitted,
+            Seerr4kCapability initial4kCapability,
+            ProviderState providerState,
+            CancellationToken cancellationToken)
+        {
             // Re-resolve source-local identity after the provider await. A cached
             // positive binding, permission mask or instance-local id cannot authorize
             // publication after revocation/rebinding.
@@ -366,20 +395,28 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                 }
             }
 
-            if (!CurrentHostMatches(actor, item, target)
+            // Parental policy is user-local mutable authority, independent of the
+            // provider response. Re-evaluate it after every provider await.
+            if (await _parentalFilter.IsBlockedAsync(
+                    target.MediaType,
+                    target.TmdbId,
+                    caller,
+                    cancellationToken).ConfigureAwait(false)
                 || !integration.IsCurrent(_configProvider))
             {
                 return SeerrItemRequestPresentation.Invisible();
             }
 
-            if (providerReadFailed)
+            if (!CurrentHostMatches(actor, item, target))
             {
-                return SeerrItemRequestPresentation.ProviderFailed(
-                    standardAuthorized,
-                    fourKAdmitted,
-                    configurationRevision,
-                    userRevision,
-                    itemRevision);
+                cancellationToken.ThrowIfCancellationRequested();
+                return SeerrItemRequestPresentation.Invisible();
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!integration.IsCurrent(_configProvider))
+            {
+                return SeerrItemRequestPresentation.Invisible();
             }
 
             var standardStatus = standardAuthorized
@@ -393,13 +430,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                 fourKAdmitted && providerState.FourKRequestable,
                 standardStatus,
                 fourKStatus,
-                configurationRevision,
-                userRevision,
-                itemRevision,
-                Revision(
-                    "provider",
-                    providerState.RevisionMaterial,
-                    fourKCapable ? "4k-on" : "4k-off"));
+                _revisionAuthority.Create("configuration", integration.GenerationIdentity),
+                UserRevision(actor, identity),
+                ItemRevision(item, target),
+                ProviderRevision(
+                    standardAuthorized,
+                    fourKAdmitted,
+                    standardStatus,
+                    fourKStatus,
+                    standardAuthorized && providerState.StandardRequestable,
+                    fourKAdmitted && providerState.FourKRequestable));
         }
 
         private bool CurrentHostMatches(
@@ -482,8 +522,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                         SeerrItemRequestStatus.Unavailable,
                         SeerrItemRequestStatus.Unavailable,
                         StandardRequestable: true,
-                        FourKRequestable: true,
-                        RevisionMaterial: "none");
+                        FourKRequestable: true);
                     return true;
                 }
 
@@ -544,10 +583,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                     standardStatus,
                     fourKStatus,
                     IsRequestable(standardMediaStatus, standardStatus),
-                    IsRequestable(fourKMediaStatus, fourKStatus),
-                    string.Create(
-                        CultureInfo.InvariantCulture,
-                        $"s:{standardMediaStatus}:{standardRequests.Mask};4:{fourKMediaStatus}:{fourKRequests.Mask}"));
+                    IsRequestable(fourKMediaStatus, fourKStatus));
                 return true;
             }
             catch (JsonException)
@@ -598,10 +634,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                     or SeerrItemRequestStatus.Denied
                     or SeerrItemRequestStatus.Failed;
 
-        private static string UserRevision(
+        private string UserRevision(
             PlatformActor actor,
             SeerrRequestIdentity identity)
-            => Revision(
+            => _revisionAuthority.Create(
                 "user",
                 actor.UserId.ToString("N"),
                 actor.IsElevated ? "1" : "0",
@@ -609,7 +645,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                 ((long)identity.Permissions).ToString(CultureInfo.InvariantCulture),
                 identity.SourceUrl);
 
-        private static string ItemRevision(
+        private string ItemRevision(
             HostAccessibleItem item,
             SeerrMediaTarget target)
         {
@@ -628,27 +664,50 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                 material.Append('|').Append(reference.Provider).Append('=').Append(reference.Value);
             }
 
-            return Revision("item", material.ToString());
+            return _revisionAuthority.Create("item", material.ToString());
         }
 
-        private static string Revision(params string[] parts)
+        private string ProviderRevision(
+            bool standardVisible,
+            bool fourKVisible,
+            SeerrItemRequestStatus standardStatus,
+            SeerrItemRequestStatus fourKStatus,
+            bool standardRequestable,
+            bool fourKRequestable)
         {
-            using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-            foreach (var part in parts)
+            if (standardVisible && fourKVisible)
             {
-                hash.AppendData(Encoding.UTF8.GetBytes(part));
-                hash.AppendData(new byte[] { 0 });
+                return _revisionAuthority.Create(
+                    "provider",
+                    "standard",
+                    ((int)standardStatus).ToString(CultureInfo.InvariantCulture),
+                    standardRequestable ? "requestable" : "closed",
+                    "four-k",
+                    ((int)fourKStatus).ToString(CultureInfo.InvariantCulture),
+                    fourKRequestable ? "requestable" : "closed");
             }
 
-            return "r1-" + Convert.ToHexString(hash.GetHashAndReset());
+            if (standardVisible)
+            {
+                return _revisionAuthority.Create(
+                    "provider",
+                    "standard",
+                    ((int)standardStatus).ToString(CultureInfo.InvariantCulture),
+                    standardRequestable ? "requestable" : "closed");
+            }
+
+            return _revisionAuthority.Create(
+                "provider",
+                "four-k",
+                ((int)fourKStatus).ToString(CultureInfo.InvariantCulture),
+                fourKRequestable ? "requestable" : "closed");
         }
 
         private readonly record struct ProviderState(
             SeerrItemRequestStatus StandardStatus,
             SeerrItemRequestStatus FourKStatus,
             bool StandardRequestable,
-            bool FourKRequestable,
-            string RevisionMaterial);
+            bool FourKRequestable);
 
         private readonly record struct RequestAggregate(int Mask)
         {

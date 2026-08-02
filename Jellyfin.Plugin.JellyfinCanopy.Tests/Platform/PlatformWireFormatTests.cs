@@ -253,6 +253,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
                 Assert.Single(services, descriptor => descriptor.ServiceType == typeof(ISeerrMediaRequestOwner)).Lifetime);
             Assert.Equal(
                 ServiceLifetime.Singleton,
+                Assert.Single(services, descriptor => descriptor.ServiceType == typeof(ISeerrItemPresentationRevisionAuthority)).Lifetime);
+            Assert.Equal(
+                ServiceLifetime.Singleton,
+                Assert.Single(services, descriptor => descriptor.ServiceType == typeof(ISeerrItemRequestPresentationOwner)).Lifetime);
+            Assert.Equal(
+                ServiceLifetime.Singleton,
                 Assert.Single(services, descriptor => descriptor.ServiceType == typeof(ISeerrMediaRequestAdmission)).Lifetime);
             Assert.Equal(
                 ServiceLifetime.Singleton,
