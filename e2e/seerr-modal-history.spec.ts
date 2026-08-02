@@ -304,7 +304,9 @@ test.describe('Seerr modal history ownership', () => {
         });
 
         await page.waitForFunction(() => {
+            const owner = (window as any).__jellyfinCanopySeerrModalHistoryOwnerV2;
             return location.hash === '#/search?jcHistoryProof=late-cap-route-b'
+                && !owner?.pendingOwnedTraversal
                 && !document.querySelector('.seerr-season-modal')
                 && !document.body.classList.contains('jc-modal-open')
                 && !document.body.classList.contains('seerr-modal-is-open');
@@ -371,6 +373,7 @@ test.describe('Seerr modal history ownership', () => {
                     rewriteSettled: false,
                 };
                 const originalForward = history.forward.bind(history);
+                const retainedMessageChannels = new Set<MessageChannel>();
                 let queuedRecoveryForward = false;
                 history.forward = () => {
                     if (proof.rewriteRuns > 0 && !proof.rewriteSettled) {
@@ -409,10 +412,15 @@ test.describe('Seerr modal history ownership', () => {
                         setTimeout(rewrite, 0);
                     } else if (asyncScheduler === 'MessageChannel') {
                         const channel = new MessageChannel();
+                        retainedMessageChannels.add(channel);
                         channel.port1.addEventListener('message', () => {
-                            rewrite();
-                            channel.port1.close();
-                            channel.port2.close();
+                            try {
+                                rewrite();
+                            } finally {
+                                channel.port1.close();
+                                channel.port2.close();
+                                retainedMessageChannels.delete(channel);
+                            }
                         }, { once: true });
                         channel.port1.start();
                         channel.port2.postMessage(undefined);
@@ -618,6 +626,7 @@ test.describe('Seerr modal history ownership', () => {
                         rewriteRuns: 0,
                         rewriteSettled: false,
                     };
+                    const retainedMessageChannels = new Set<MessageChannel>();
                     (window as any).__jcMarkerRewriteProof = proof;
                     window.addEventListener('popstate', (event) => {
                         const marker = (event.state as any)?.__jellyfinCanopySeerrModal;
@@ -634,10 +643,15 @@ test.describe('Seerr modal history ownership', () => {
                             setTimeout(rewrite, 0);
                         } else if (channel === 'MessageChannel') {
                             const messageChannel = new MessageChannel();
+                            retainedMessageChannels.add(messageChannel);
                             messageChannel.port1.addEventListener('message', () => {
-                                rewrite();
-                                messageChannel.port1.close();
-                                messageChannel.port2.close();
+                                try {
+                                    rewrite();
+                                } finally {
+                                    messageChannel.port1.close();
+                                    messageChannel.port2.close();
+                                    retainedMessageChannels.delete(messageChannel);
+                                }
                             }, { once: true });
                             messageChannel.port1.start();
                             messageChannel.port2.postMessage(undefined);
