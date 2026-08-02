@@ -31,13 +31,13 @@
         "totalLines": 43927
       },
       "observations": {
-        "cleanRuns": 3,
-        "minimumCoveredLines": 34752,
+        "cleanRuns": 4,
+        "minimumCoveredLines": 34751,
         "maximumCoveredLines": 34752
       },
       "tolerance": {
-        "missingCoveredLines": 0,
-        "rationale": "The rebased combined #592 and #595 tree retains the transport-neutral first-party invocation coordinator and installed Hidden Content, Spoiler Guard, and typed Seerr owners, then adds a test-owned native pilot conformance matrix over the real actor, body, lifecycle, capability, prepared-context, idempotency, admission, audit, fixed-dispatch, and coordinator components. The matrix includes authentic wrong-operation mismatch, lifecycle-filter cancellation arbitration, observable redaction surfaces, and direct capability-ledger, idempotency, and admission capacity negatives without adding production lines or changing the 43,927-line instrumented plugin scope. Three clean Coverlet runs on the identical 2026-08-03 combined source each passed all 3,075 server tests and reproduced exactly 34,752/43,927 covered lines (79.113%). Relative to merged #595 main's reviewed high-water of 34,744/43,927 (79.095%), #592 raises the covered-line high-water by eight at fixed scope. The exact observed envelope needs no instrumentation tolerance, so the new floor is 34,752/43,927 (79.113%). coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
+        "missingCoveredLines": 1,
+        "rationale": "The rebased combined #592 and #595 tree retains the transport-neutral first-party invocation coordinator and installed Hidden Content, Spoiler Guard, and typed Seerr owners, then adds a test-owned native pilot conformance matrix over the real actor, body, lifecycle, capability, prepared-context, idempotency, admission, audit, fixed-dispatch, and coordinator components. The matrix includes authentic wrong-operation mismatch, lifecycle-filter cancellation arbitration, observable redaction surfaces, and direct capability-ledger, idempotency, and admission capacity negatives without adding production lines or changing the 43,927-line instrumented plugin scope. Three clean local Coverlet runs on the identical 2026-08-03 combined source each passed all 3,075 server tests and reproduced exactly 34,752/43,927 covered lines (79.113%); the clean GitHub Actions Linux run passed the same 3,075 tests and measured 34,751/43,927 (79.111%). Relative to merged #595 main's reviewed high-water of 34,744/43,927 (79.095%), #592 raises the covered-line high-water by eight at fixed scope. The exact observed four-run envelope is 34,751-34,752, so the minimal one-line instrumentation tolerance preserves a new floor of 34,751/43,927 (79.111%). coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
       }
     }
   }
