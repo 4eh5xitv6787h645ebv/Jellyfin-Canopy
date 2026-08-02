@@ -49,7 +49,7 @@ services:
       start_period: 2s
 
   jellyfin:
-    image: "${JF_IMAGE:-jellyfin/jellyfin:unstable@sha256:9040e988eca1e53cd90679d16edf7bd842cc661bf85da124431e25452b4abeb5}"
+    image: "${JF_IMAGE:-jellyfin/jellyfin:unstable@sha256:f961d7bd9f38457b2bce2aea3a22f120ab50b3885573b184abf46e892dd59119}"
     depends_on:
       integrations:
         condition: service_healthy

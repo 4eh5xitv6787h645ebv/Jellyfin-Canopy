@@ -48,7 +48,7 @@ umask 077
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${HERE}/../.." && pwd)"
 FIXTURE_CONTRACT="${REPO_ROOT}/e2e/fixtures/media-fixtures.json"
-export JF_IMAGE="${JF_IMAGE:-jellyfin/jellyfin:unstable@sha256:9040e988eca1e53cd90679d16edf7bd842cc661bf85da124431e25452b4abeb5}"
+export JF_IMAGE="${JF_IMAGE:-jellyfin/jellyfin:unstable@sha256:f961d7bd9f38457b2bce2aea3a22f120ab50b3885573b184abf46e892dd59119}"
 export JF_MOCK_IMAGE="${JF_MOCK_IMAGE:-node:22-alpine@sha256:16e22a550f3863206a3f701448c45f7912c6896a62de43add43bb9c86130c3e2}"
 IMAGE="${JF_IMAGE}"
 
