@@ -17,18 +17,40 @@
       "get": {
         "operationId": "getDiscovery",
         "summary": "Whether the platform is present, and which protocol versions it speaks.",
-        "description": "The ONLY anonymous route in Platform v1. A client must be able to learn the platform exists before it has a reason to authenticate, and probing this reveals nothing an unauthenticated caller could not learn by noticing the plugin is installed.\n\nThe payload is deliberately uninteresting: no users, no installed extensions, no topology, no configuration, no server identity. Adding a property here widens what an unauthenticated caller learns.",
-        "security": [],
-        "responses": {
-          "200": {
-            "description": "The platform is present.",
-            "content": {
+      "description": "The ONLY anonymous route in Platform v1. A client must be able to learn the platform exists before it has a reason to authenticate, and probing this reveals nothing an unauthenticated caller could not learn by noticing the plugin is installed.\n\nThe payload is deliberately uninteresting: no users, no installed extensions, no topology, no configuration, no server identity. Adding a property here widens what an unauthenticated caller learns.",
+      "security": [],
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/IfMatch"
+        },
+        {
+          "$ref": "#/components/parameters/IfNoneMatch"
+        }
+      ],
+      "responses": {
+        "200": {
+          "description": "The platform is present.",
+          "headers": {
+            "ETag": {
+              "$ref": "#/components/headers/PlatformEntityTag"
+            }
+          },
+          "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/PlatformDiscoveryResponse"
                 }
               }
             }
+          },
+          "304": {
+            "$ref": "#/components/responses/NotModified"
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidConditionalRequest"
+          },
+          "412": {
+            "$ref": "#/components/responses/PreconditionFailed"
           },
           "504": {
             "$ref": "#/components/responses/Timeout"
@@ -52,21 +74,32 @@
               "format": "int32"
             }
           },
-          {
-            "name": "protocolMaximum",
+        {
+          "name": "protocolMaximum",
             "in": "query",
             "required": false,
             "description": "Highest protocol version the client supports. Defaults to the host's minimum, not its maximum.",
             "schema": {
               "type": "integer",
-              "format": "int32"
-            }
+            "format": "int32"
           }
-        ],
+        },
+        {
+          "$ref": "#/components/parameters/IfMatch"
+        },
+        {
+          "$ref": "#/components/parameters/IfNoneMatch"
+        }
+      ],
         "responses": {
-          "200": {
-            "description": "Negotiation completed. Check compatible before using protocol.",
-            "content": {
+        "200": {
+          "description": "Negotiation completed. Check compatible before using protocol.",
+          "headers": {
+            "ETag": {
+              "$ref": "#/components/headers/PlatformEntityTag"
+            }
+          },
+          "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/PlatformNegotiationResponse"
@@ -77,10 +110,19 @@
           "401": {
             "$ref": "#/components/responses/BareUnauthorized"
           },
-          "403": {
-            "$ref": "#/components/responses/BareForbidden"
-          },
-          "413": {
+        "403": {
+          "$ref": "#/components/responses/BareForbidden"
+        },
+        "304": {
+          "$ref": "#/components/responses/NotModified"
+        },
+        "400": {
+          "$ref": "#/components/responses/InvalidConditionalRequest"
+        },
+        "412": {
+          "$ref": "#/components/responses/PreconditionFailed"
+        },
+        "413": {
             "$ref": "#/components/responses/PayloadTooLarge"
           },
           "504": {
@@ -91,6 +133,15 @@
     }
   },
   "components": {
+    "headers": {
+      "PlatformEntityTag": {
+        "description": "A strong validator derived from SHA-256 over the exact Platform JSON response bytes.",
+        "required": true,
+        "schema": {
+          "$ref": "#/components/schemas/PlatformEntityTag"
+        }
+      }
+    },
     "securitySchemes": {
       "JellyfinToken": {
         "type": "apiKey",
@@ -100,6 +151,26 @@
       }
     },
     "parameters": {
+      "IfMatch": {
+        "name": "If-Match",
+        "in": "header",
+        "required": false,
+        "description": "Optional strong precondition. A wildcard or bounded entity-tag list is accepted; weak tags do not match the current representation.",
+        "schema": {
+          "type": "string",
+          "maxLength": 4096
+        }
+      },
+      "IfNoneMatch": {
+        "name": "If-None-Match",
+        "in": "header",
+        "required": false,
+        "description": "Optional cache revalidation precondition. A wildcard or bounded entity-tag list is accepted and compared weakly.",
+        "schema": {
+          "type": "string",
+          "maxLength": 4096
+        }
+      },
       "IdempotencyKey": {
         "name": "Idempotency-Key",
         "in": "header",
@@ -150,6 +221,24 @@
           }
         }
       },
+      "NotModified": {
+        "description": "The current representation weakly matches If-None-Match. The response has no body.",
+        "headers": {
+          "ETag": {
+            "$ref": "#/components/headers/PlatformEntityTag"
+          }
+        }
+      },
+      "InvalidConditionalRequest": {
+        "description": "A conditional header is malformed or exceeds the Platform parser bounds.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/PlatformError"
+            }
+          }
+        }
+      },
       "IdempotencyConflict": {
         "description": "A mutation key was reused with different semantics, or a prior execution is indeterminate. Returned as non-retryable 409 conflict.",
         "content": {
@@ -162,6 +251,21 @@
       },
       "IdempotencyAtCapacity": {
         "description": "The bounded process-local idempotency store or follower budget cannot admit work. Rejected before mutation execution as retryable 429 rate_limited.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/PlatformError"
+            }
+          }
+        }
+      },
+      "PreconditionFailed": {
+        "description": "No strong If-Match candidate matches the current representation.",
+        "headers": {
+          "ETag": {
+            "$ref": "#/components/headers/PlatformEntityTag"
+          }
+        },
         "content": {
           "application/json": {
             "schema": {
@@ -274,12 +378,19 @@
           "unsupported_protocol",
           "not_found",
           "conflict",
+          "precondition_failed",
           "payload_too_large",
           "rate_limited",
           "internal_error",
           "unavailable",
           "timeout"
         ]
+      },
+      "PlatformEntityTag": {
+        "type": "string",
+        "description": "A quoted, opaque strong SHA-256 representation validator.",
+        "pattern": "^\\\"sha256-[0-9a-f]{64}\\\"$",
+        "example": "\"sha256-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\""
       }
     }
   },

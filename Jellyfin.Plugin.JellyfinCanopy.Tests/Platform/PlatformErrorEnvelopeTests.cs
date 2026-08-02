@@ -64,6 +64,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
                     "invalid_request",
                     "not_found",
                     "payload_too_large",
+                    "precondition_failed",
                     "rate_limited",
                     "timeout",
                     "unavailable",
@@ -79,6 +80,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
         [InlineData(PlatformErrorCode.UnsupportedProtocol, 400, false)]
         [InlineData(PlatformErrorCode.NotFound, 404, false)]
         [InlineData(PlatformErrorCode.Conflict, 409, false)]
+        [InlineData(PlatformErrorCode.PreconditionFailed, 412, false)]
         [InlineData(PlatformErrorCode.PayloadTooLarge, 413, false)]
         [InlineData(PlatformErrorCode.RateLimited, 429, true)]
         [InlineData(PlatformErrorCode.InternalError, 500, true)]

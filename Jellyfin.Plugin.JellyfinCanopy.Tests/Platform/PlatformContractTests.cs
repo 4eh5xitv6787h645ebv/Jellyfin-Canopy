@@ -253,6 +253,61 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
                 operation.Operation.GetProperty("responses").GetProperty("504").GetProperty("$ref").GetString()));
         }
 
+        [Fact]
+        public void CacheableOperationsDocumentValidatorsAlongsideKernelFailures()
+        {
+            var cacheable = LiveRoutes()
+                .Where(route => route.Action.GetCustomAttribute<PlatformCacheableAttribute>() is not null)
+                .ToList();
+            Assert.NotEmpty(cacheable);
+            Assert.All(cacheable, route => Assert.Equal("get", route.Method));
+
+            var liveCacheable = cacheable
+                .Select(route => $"{route.Method} {route.Path}")
+                .OrderBy(route => route, StringComparer.Ordinal);
+            var documentedCacheable = SpecOperations()
+                .Where(entry => entry.Operation.GetProperty("responses").GetProperty("200")
+                    .TryGetProperty("headers", out var headers)
+                    && headers.TryGetProperty("ETag", out _))
+                .Select(entry => $"{entry.Method} {entry.Path}")
+                .OrderBy(route => route, StringComparer.Ordinal);
+            Assert.Equal(liveCacheable, documentedCacheable);
+
+            foreach (var route in cacheable)
+            {
+                var operation = SpecOperations().Single(entry =>
+                    string.Equals(entry.Path, route.Path, StringComparison.Ordinal)
+                    && string.Equals(entry.Method, route.Method, StringComparison.Ordinal)).Operation;
+                var responses = operation.GetProperty("responses");
+                var conditionalParameters = operation.GetProperty("parameters")
+                    .EnumerateArray()
+                    .Where(parameter => parameter.TryGetProperty("$ref", out _))
+                    .Select(parameter => parameter.GetProperty("$ref").GetString()!)
+                    .Where(reference => reference.StartsWith(
+                        "#/components/parameters/If",
+                        StringComparison.Ordinal))
+                    .ToArray();
+
+                Assert.Equal(
+                    new[] { "#/components/parameters/IfMatch", "#/components/parameters/IfNoneMatch" },
+                    conditionalParameters);
+                Assert.Equal(
+                    "#/components/headers/PlatformEntityTag",
+                    responses.GetProperty("200").GetProperty("headers")
+                        .GetProperty("ETag").GetProperty("$ref").GetString());
+                Assert.Equal("#/components/responses/NotModified", responses.GetProperty("304").GetProperty("$ref").GetString());
+                Assert.Equal("#/components/responses/InvalidConditionalRequest", responses.GetProperty("400").GetProperty("$ref").GetString());
+                Assert.Equal("#/components/responses/PreconditionFailed", responses.GetProperty("412").GetProperty("$ref").GetString());
+                Assert.Equal("#/components/responses/Timeout", responses.GetProperty("504").GetProperty("$ref").GetString());
+            }
+
+            // #522's future mutation components must remain in the same additive
+            // document when conditional GET support grows it.
+            var components = Spec.RootElement.GetProperty("components").GetProperty("responses");
+            Assert.True(components.TryGetProperty("IdempotencyConflict", out _));
+            Assert.True(components.TryGetProperty("IdempotencyAtCapacity", out _));
+        }
+
         [Theory]
         [InlineData("IdempotencyConflict")]
         [InlineData("IdempotencyAtCapacity")]

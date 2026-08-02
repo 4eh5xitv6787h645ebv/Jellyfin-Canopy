@@ -93,6 +93,33 @@ problems with three different fixes.
 A client that supplies no range is treated as speaking the oldest protocol only, so send
 your range explicitly.
 
+## Representation validators
+
+Successful discovery and negotiation responses carry a strong `ETag` in the form
+`"sha256-<64 lowercase hex characters>"`. The hash covers the exact Platform JSON bytes
+on the wire, not a timestamp, process-local counter, or separately serialized model.
+Clients may omit conditional headers; an ordinary request still returns `200` and the
+complete body.
+
+These small bootstrap envelopes are served with the `identity` content coding. This is
+intentional: host response compression would otherwise create byte-distinct gzip and
+identity representations after the validator was computed, making one strong validator
+name two different wire representations.
+
+- Send `If-None-Match` to revalidate a cached GET. Entity-tag lists and `*` are accepted,
+  and comparison is weak as required for GET revalidation. A match returns `304`, the
+  current `ETag`, and zero body bytes.
+- Send `If-Match` when the response is valid only for a known representation. Entity-tag
+  lists and `*` are accepted, but comparison is strong: `W/` validators never satisfy it.
+  A mismatch returns `412 precondition_failed` plus the current `ETag`.
+- Malformed conditional headers return `400 invalid_request`. Each of `If-Match` and
+  `If-None-Match` is limited to 16 field values, 4,096 combined characters (including
+  separators), and 32 parsed entity tags.
+
+For a future mutation, the resource owner must compare `If-Match` with the current
+representation and commit the change while holding the same owner lock. The GET result
+filter does not make a separate check-then-write sequence atomic.
+
 ## Request limits
 
 The platform enforces its own bounds and reports a breach as a structured `413` naming

@@ -268,12 +268,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
             await new PlatformJsonResultFilter().OnResultExecutionAsync(context, () =>
                 Task.FromResult(new ResultExecutedContext(action, new List<IFilterMetadata>(), context.Result, new object())));
 
-            var result = Assert.IsType<JsonResult>(context.Result);
-            Assert.Same(PlatformJson.SerializerOptions, result.SerializerSettings);
+            var result = Assert.IsType<PlatformJsonBodyResult>(context.Result);
             Assert.Equal(202, result.StatusCode);
 
-            using var json = JsonDocument.Parse(
-                JsonSerializer.Serialize(result.Value, result.Value!.GetType(), PlatformJson.SerializerOptions));
+            using var json = JsonDocument.Parse(result.Body);
             Assert.Equal(
                 "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
                 json.RootElement.GetProperty("Id").GetString());

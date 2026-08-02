@@ -27,17 +27,17 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 31619,
-        "totalLines": 40248
+        "coveredLines": 31730,
+        "totalLines": 40360
       },
       "observations": {
-        "cleanRuns": 4,
-        "minimumCoveredLines": 31617,
-        "maximumCoveredLines": 31619
+        "cleanRuns": 3,
+        "minimumCoveredLines": 31730,
+        "maximumCoveredLines": 31730
       },
       "tolerance": {
-        "missingCoveredLines": 2,
-        "rationale": "The #522 request-lifecycle and idempotency kernel adds a linked 30-second model-binding/action deadline, caller-first cancellation handling, bounded semantic replay state, bounded same-key follower coalescing, and focused lifecycle, concurrency, architecture, and contract coverage. Four clean Coverlet runs on the identical 2026-08-03 source and 40,248-line scope each passed all 2,736 server tests: the three local runs observed 31,618, 31,618, and 31,619 covered lines, while GitHub Actions run 30758176581 observed 31,617. Relative to the reviewed #587 baseline of 31,298/39,890 (78.461%), the reviewed implementation adds 358 instrumented lines and 321 covered high-water lines while increasing the high-water to 31,619/40,248 (78.560%) and the enforced floor to 31,617/40,248 (78.555%). The two-line allowance is exactly the observed same-head, fixed-scope local-and-CI instrumentation envelope; the 31,619 high-water is retained and broader regressions still fail. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
+        "missingCoveredLines": 0,
+        "rationale": "The #523 concurrency primitive adds exact-byte SHA-256 validators, bounded RFC entity-tag parsing, conditional GET result wiring, identity content coding to keep validators byte-accurate through host compression, and focused pipeline, parser, compression, contract, and source-guard coverage on top of the merged #522 lifecycle/idempotency kernel. Three clean Coverlet runs on the identical 2026-08-03 source and 40,360-line scope each passed all 2,765 server tests and reproduced exactly 31,730 covered lines. Relative to the reviewed #522 baseline of 31,619/40,248 (78.560%), the reviewed implementation adds 112 instrumented lines and 111 covered lines while increasing coverage to 31,730/40,360 (78.617%). The exact observed envelope needs no instrumentation tolerance, so the new floor is 31,730/40,360 (78.617%). coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
       }
     }
   }
