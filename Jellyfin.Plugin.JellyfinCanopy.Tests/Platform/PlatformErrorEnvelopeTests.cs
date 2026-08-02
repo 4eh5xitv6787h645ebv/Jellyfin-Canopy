@@ -67,6 +67,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
                     "rate_limited",
                     "timeout",
                     "unavailable",
+                    "unsupported_media_type",
                     "unsupported_protocol",
                 },
                 PlatformErrorCode.All.OrderBy(code => code, StringComparer.Ordinal));
@@ -74,6 +75,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
 
         [Theory]
         [InlineData(PlatformErrorCode.InvalidRequest, 400, false)]
+        [InlineData(PlatformErrorCode.UnsupportedMediaType, 415, false)]
         [InlineData(PlatformErrorCode.UnsupportedProtocol, 400, false)]
         [InlineData(PlatformErrorCode.NotFound, 404, false)]
         [InlineData(PlatformErrorCode.Conflict, 409, false)]

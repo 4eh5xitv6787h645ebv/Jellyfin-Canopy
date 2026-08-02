@@ -4,7 +4,7 @@
     "title": "Jellyfin Canopy \u2014 Platform v1",
     "version": "1.0.0",
     "summary": "The versioned, capability-scoped extension surface.",
-    "description": "This document is AUTHORED, not generated from the running server. Generating it from the code would document whatever the code happens to do, mistakes included, and would make a breaking change undetectable \u2014 the spec would simply move with the bug. Here the spec is the source of truth and the server is checked against it by PlatformContractTests.\n\nOnly routes under /JellyfinCanopy/Platform/v1 are described. The pre-platform /JellyfinCanopy/* routes are compatibility surfaces with their own shapes and are deliberately absent; they are never promoted into the platform implicitly.\n\nChanges within v1 are additive only (ADR-0010). Removing a path, removing a required property, or changing a property's type is a v2 concern, and contracts/platform/v1/frozen.json exists so CI can prove it rather than a reviewer having to notice."
+    "description": "This document is AUTHORED, not generated from the running server. Generating it from the code would document whatever the code happens to do, mistakes included, and would make a breaking change undetectable \u2014 the spec would simply move with the bug. Here the spec is the source of truth and the server is checked against it by PlatformContractTests.\n\nOnly routes under /JellyfinCanopy/Platform/v1 are described. The pre-platform /JellyfinCanopy/* routes are compatibility surfaces with their own shapes and are deliberately absent; they are never promoted into the platform implicitly.\n\nBody-bearing requests accept application/json only; a different or missing Content-Type is a structured 415 after authorization. Request readers ignore unknown object properties, reject unknown enum values as invalid_request, and require RFC 3339 UTC timestamps with an explicit UTC offset. GUIDs use lowercase canonical D form. Clients must ignore unknown response properties so additive v1 evolution remains usable.\n\nChanges within v1 are additive only (ADR-0010). Removing a path, removing a required property, or changing a property's type is a v2 concern, and contracts/platform/v1/frozen.json exists so CI can prove it rather than a reviewer having to notice."
   },
   "servers": [
     {
@@ -102,6 +102,16 @@
       },
       "PayloadTooLarge": {
         "description": "A kernel-owned request bound was exceeded. The message names which axis, so a client knows whether to send fewer items, shorter strings, or a flatter shape.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/PlatformError"
+            }
+          }
+        }
+      },
+      "UnsupportedMediaType": {
+        "description": "The authenticated request carries a body with a missing or non-JSON Content-Type.",
         "content": {
           "application/json": {
             "schema": {
@@ -210,6 +220,7 @@
         "description": "Machine-readable failure code. Branch on this, never on the message. An unfamiliar code must be treated as a generic failure of its HTTP status class, which is why each code maps to exactly one status.",
         "enum": [
           "invalid_request",
+          "unsupported_media_type",
           "unsupported_protocol",
           "not_found",
           "conflict",

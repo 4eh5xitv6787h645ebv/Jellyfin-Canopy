@@ -87,6 +87,15 @@ function assertMatchesSchema(payload: any, schema: any, where: string): void {
     }
 }
 
+/** A generated-client-shaped reader: consume known response fields, ignore future ones. */
+function readKnownResponse(payload: any, schema: any): any {
+    return Object.fromEntries(
+        Object.keys(schema.properties ?? {})
+            .filter((name) => name in payload)
+            .map((name) => [name, payload[name]]),
+    );
+}
+
 /** The one operation the contract marks anonymous. */
 function anonymousPath(): string {
     const entries = Object.entries<any>(CONTRACT.paths).filter(
@@ -157,6 +166,31 @@ test.describe('Platform v1 contract — live smoke client', () => {
         // If this ever fails, the two routes disagree about the same server.
         expect(negotiated.body.Compatible).toBe(true);
         expect(negotiated.body.Protocol).toBe(discovery.body.ProtocolMaximum);
+
+        // Additive v1 evolution may put a property on a future host that this
+        // contract-driven client does not know yet. Prove the reader preserves
+        // every known field and ignores that injected future field.
+        const negotiationSchema = responseSchema(negotiatePath, 'get', '200');
+        const forwardPayload = { ...negotiated.body, FutureCapability: { version: 2 } };
+        const forwardCompatible = readKnownResponse(forwardPayload, negotiationSchema);
+        expect(forwardCompatible).toEqual(negotiated.body);
+        expect(forwardCompatible.FutureCapability).toBeUndefined();
+
+        // Enum sets also grow additively. A client must preserve an unfamiliar
+        // response value so its default branch can treat the HTTP status class
+        // as a generic failure; schema validation belongs on the server, not in
+        // a forward-compatible response reader.
+        const errorSchema = CONTRACT.components.schemas.PlatformError;
+        const futureError = readKnownResponse({
+            Error: true,
+            Code: 'future_platform_code',
+            Message: 'A newer host returned a code this client does not know.',
+            Retryable: false,
+            CorrelationId: '0123456789abcdef0123456789abcdef',
+            FutureDetail: { revision: 2 },
+        }, errorSchema);
+        expect(futureError.Code).toBe('future_platform_code');
+        expect(futureError.FutureDetail).toBeUndefined();
 
         assertNoRuntimeErrors(consoleErrors);
     });

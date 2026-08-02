@@ -46,6 +46,23 @@ reworded or translated at any time. The code set is enumerated in the spec, and 
 maps to exactly one HTTP status. Treat a code you do not recognise as a generic failure of
 its status class.
 
+## JSON wire format
+
+Platform v1 pins one JSON format without changing any older `/JellyfinCanopy/*` route:
+
+- requests with a body must use `application/json`; after authentication, any other or
+  missing `Content-Type` returns a structured `415` with code `unsupported_media_type`
+- unknown request object properties are ignored, so a newer client can send optional
+  data to an older host
+- an unknown request enum value returns `400 invalid_request`; the safe message names
+  the field but never includes serializer internals or the rejected value
+- timestamps are RFC 3339 UTC values and always carry an explicit UTC offset
+- GUIDs use lowercase canonical `D` form (`aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee`)
+
+Response readers must ignore properties they do not recognise. New optional response
+properties are additive within v1; rejecting the whole response would turn a compatible
+host upgrade into a client failure.
+
 ## Versioning
 
 The `v1` in the path is a **major** version. Within it, changes are additive only

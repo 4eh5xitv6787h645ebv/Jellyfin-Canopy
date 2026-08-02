@@ -214,7 +214,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
             // The fixture is the documented example, so it has to agree with the server's
             // real range or the example teaches a consumer the wrong thing.
             var fixtureText = File.ReadAllText(ContractPath(Path.Combine("fixtures", "discovery.200.json")));
-            var fixture = JsonSerializer.Deserialize<PlatformDiscoveryResponse>(fixtureText)!;
+            var fixture = JsonSerializer.Deserialize<PlatformDiscoveryResponse>(fixtureText, PlatformJson.SerializerOptions)!;
 
             Assert.Equal(PlatformConstants.ProtocolMinimum, fixture.ProtocolMinimum);
             Assert.Equal(PlatformConstants.ProtocolMaximum, fixture.ProtocolMaximum);
@@ -232,8 +232,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
             // this gate is meant to catch.
             var original = File.ReadAllText(ContractPath(Path.Combine("fixtures", fixtureName)));
 
-            var parsed = JsonSerializer.Deserialize(original, type)!;
-            var reserialized = JsonSerializer.Serialize(parsed, type);
+            var parsed = JsonSerializer.Deserialize(original, type, PlatformJson.SerializerOptions)!;
+            var reserialized = JsonSerializer.Serialize(parsed, type, PlatformJson.SerializerOptions);
 
             using var before = JsonDocument.Parse(original);
             using var after = JsonDocument.Parse(reserialized);
@@ -250,7 +250,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
         public void TheErrorFixtureUsesADocumentedCodeAndAConformingCorrelationId()
         {
             var error = JsonSerializer.Deserialize<PlatformError>(
-                File.ReadAllText(ContractPath(Path.Combine("fixtures", "error.413.json"))))!;
+                File.ReadAllText(ContractPath(Path.Combine("fixtures", "error.413.json"))),
+                PlatformJson.SerializerOptions)!;
 
             Assert.True(PlatformErrorCode.IsKnown(error.Code));
             Assert.Equal(413, PlatformErrorCode.StatusFor(error.Code));

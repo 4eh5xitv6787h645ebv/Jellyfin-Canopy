@@ -22,7 +22,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
     /// not an implementation detail.
     /// </para>
     /// </summary>
-    public sealed class PlatformRequestFilter : IAsyncActionFilter, IAsyncExceptionFilter
+    public sealed class PlatformRequestFilter : IAsyncActionFilter, IAsyncExceptionFilter, IOrderedFilter
     {
         private readonly ILogger<PlatformRequestFilter> _logger;
 
@@ -32,6 +32,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
         {
             _logger = logger;
         }
+
+        /// <inheritdoc />
+        public int Order => int.MinValue;
 
         /// <inheritdoc />
         public async Task OnActionExecutionAsync(ActionExecutingContext context, ActionExecutionDelegate next)
@@ -45,6 +48,25 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
             // longer writable, and a streaming action would otherwise silently lose it.
             context.HttpContext.Response.Headers[PlatformCorrelation.HeaderName] = correlationId;
 
+            // ApiController's automatic model-state filter normally emits ProblemDetails.
+            // This filter is ordered ahead of it so malformed JSON and unknown enum values
+            // stay inside the one Platform error contract without exposing serializer text.
+            if (!context.ModelState.IsValid)
+            {
+                var field = context.ModelState
+                    .Where(entry => entry.Value?.Errors.Count > 0)
+                    .Select(entry => NormalizeField(entry.Key))
+                    .FirstOrDefault(value => value.Length > 0);
+
+                context.Result = PlatformResults.Error(
+                    PlatformErrorCode.InvalidRequest,
+                    field is null
+                        ? "The request body is invalid."
+                        : $"The request field '{field}' is invalid.",
+                    correlationId);
+                return;
+            }
+
             // The scope is what makes the id appear on log lines written by the action
             // itself, not just on the ones written here. That is the whole point - an id
             // that only appears in the envelope correlates a response with nothing.
@@ -55,6 +77,23 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
             {
                 await next().ConfigureAwait(false);
             }
+        }
+
+        internal static string NormalizeField(string? path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                return string.Empty;
+            }
+
+            var field = path.Trim().TrimStart('$', '.');
+            var separator = field.LastIndexOfAny(new[] { '.', '[', ']' });
+            if (separator >= 0 && separator + 1 < field.Length)
+            {
+                field = field[(separator + 1)..];
+            }
+
+            return new string(field.Where(character => char.IsLetterOrDigit(character) || character == '_').ToArray());
         }
 
         /// <inheritdoc />
