@@ -339,9 +339,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             string itemKey,
             ref bool capacityExceeded)
         {
-            var newName = PersistedPayloadPolicy.ClampPersistedDisplayName(item.DisplayName);
             if (state.Movies.TryGetValue(itemKey, out var existing))
             {
+                // The Platform's access projection intentionally carries no title.
+                // Treat that absence as "no authoritative rename" so a native
+                // idempotent enable cannot erase legacy presentation metadata.
+                var newName = item.DisplayName is null
+                    ? existing.MovieName
+                    : PersistedPayloadPolicy.ClampPersistedDisplayName(item.DisplayName);
                 if (string.Equals(existing.MovieName, newName, StringComparison.Ordinal))
                 {
                     return false;
@@ -352,6 +357,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 return true;
             }
 
+            var insertedName = PersistedPayloadPolicy.ClampPersistedDisplayName(item.DisplayName);
+
             if (!SpoilerGuardOverrideCapacity.CanInsert(state.Movies, itemKey))
             {
                 capacityExceeded = true;
@@ -361,7 +368,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             state.Movies[itemKey] = new SpoilerBlurMovieEntry
             {
                 MovieId = itemKey,
-                MovieName = newName,
+                MovieName = insertedName,
                 EnabledAt = UtcTimestamp(),
             };
             SpoilerGuardOverridesRevision.Advance(state);
