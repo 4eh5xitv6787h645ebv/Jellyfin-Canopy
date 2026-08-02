@@ -57,12 +57,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
                 .GetMethods(BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.DeclaredOnly)
                 .Where(method => !method.IsSpecialName)
                 .Select(method => method.Name)
-                .Where(name => name is "Mint" or "Inspect" or "ValidateCurrent" or "Consume" or "InvalidateOutstandingCapabilities")
+                .Where(name => name is "Mint" or "Inspect" or "IsInspectionFor" or "ValidateCurrent" or "Consume" or "InvalidateOutstandingCapabilities")
                 .OrderBy(name => name, StringComparer.Ordinal)
                 .ToArray();
 
             Assert.Equal(
-                new[] { "Consume", "Inspect", "InvalidateOutstandingCapabilities", "Mint", "ValidateCurrent" },
+                new[] { "Consume", "Inspect", "InvalidateOutstandingCapabilities", "IsInspectionFor", "Mint", "ValidateCurrent" },
                 methods);
             Assert.DoesNotContain(
                 typeof(PlatformActionCapabilityService).GetMethods(BindingFlags.Instance | BindingFlags.Public),

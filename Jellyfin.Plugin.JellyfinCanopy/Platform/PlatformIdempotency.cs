@@ -291,10 +291,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
     /// <summary>An idempotency decision and optional immutable semantic result.</summary>
     public sealed class PlatformIdempotencyOutcome
     {
-        internal PlatformIdempotencyOutcome(PlatformIdempotencyOutcomeKind kind, PlatformIdempotencyResult? result = null)
+        internal PlatformIdempotencyOutcome(
+            PlatformIdempotencyOutcomeKind kind,
+            PlatformIdempotencyResult? result = null,
+            bool wasCoalescedUnstored = false)
         {
             Kind = kind;
             Result = result;
+            WasCoalescedUnstored = wasCoalescedUnstored;
         }
 
         /// <summary>The decision.</summary>
@@ -302,6 +306,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
 
         /// <summary>Present only for executed or replayed work.</summary>
         public PlatformIdempotencyResult? Result { get; }
+
+        /// <summary>
+        /// Marks a coordinated follower that shared a pre-mutation refusal which was
+        /// deliberately not retained for later replay.
+        /// </summary>
+        internal bool WasCoalescedUnstored { get; }
 
         /// <summary>
         /// Existing Platform error code a future mutation route must use for this

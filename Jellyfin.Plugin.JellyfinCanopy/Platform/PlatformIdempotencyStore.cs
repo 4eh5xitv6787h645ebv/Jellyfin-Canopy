@@ -12,6 +12,47 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
     /// </summary>
     public sealed class PlatformIdempotencyStore
     {
+        /// <summary>
+        /// Store-issued evidence for one idempotency leader. The invocation
+        /// coordinator marks it immediately before spending a capability or entering
+        /// an owner; cancellation before that point is known not to have mutated state.
+        /// </summary>
+        internal sealed class PlatformIdempotencyExecution
+        {
+            private int _sideEffectStarted;
+            private PlatformIdempotencyResult? _abandonedResult;
+
+            internal PlatformIdempotencyExecution()
+            {
+            }
+
+            internal bool SideEffectStarted => Volatile.Read(ref _sideEffectStarted) != 0;
+
+            internal PlatformIdempotencyResult? AbandonedResult => Volatile.Read(ref _abandonedResult);
+
+            internal void MarkSideEffectStarted()
+            {
+                if (AbandonedResult is not null)
+                {
+                    throw new InvalidOperationException("An abandoned execution cannot cross the side-effect boundary.");
+                }
+
+                Interlocked.Exchange(ref _sideEffectStarted, 1);
+            }
+
+            internal PlatformIdempotencyResult AbandonBeforeSideEffect(PlatformIdempotencyResult result)
+            {
+                ArgumentNullException.ThrowIfNull(result);
+                if (SideEffectStarted
+                    || Interlocked.CompareExchange(ref _abandonedResult, result, comparand: null) is not null)
+                {
+                    throw new InvalidOperationException("The execution can be abandoned exactly once before side effects.");
+                }
+
+                return result;
+            }
+        }
+
         /// <summary>Terminal entries are reusable for this long.</summary>
         public static readonly TimeSpan EntryTimeToLive = TimeSpan.FromMinutes(10);
 
@@ -57,123 +98,180 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
             Func<CancellationToken, Task<PlatformIdempotencyResult>> execute,
             CancellationToken requestCancellationToken)
         {
+            ArgumentNullException.ThrowIfNull(execute);
+            return await ExecuteCoreAsync(
+                request,
+                async (execution, cancellationToken) =>
+                {
+                    // Preserve the original public contract: once its delegate is
+                    // entered, the store must conservatively treat an exception as an
+                    // ambiguous mutation.
+                    execution.MarkSideEffectStarted();
+                    return await execute(cancellationToken).ConfigureAwait(false);
+                },
+                requestCancellationToken).ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Executes a coordinator-owned leader with an explicit side-effect boundary.
+        /// A leader abandoned before that boundary is removed and one coalesced
+        /// follower retries admission; after it, ambiguity is retained as a tombstone.
+        /// </summary>
+        internal async Task<PlatformIdempotencyOutcome> ExecuteCoordinatedAsync(
+            PlatformIdempotencyRequest request,
+            Func<PlatformIdempotencyExecution, CancellationToken, Task<PlatformIdempotencyResult>> execute,
+            CancellationToken requestCancellationToken)
+            => await ExecuteCoreAsync(request, execute, requestCancellationToken).ConfigureAwait(false);
+
+        private async Task<PlatformIdempotencyOutcome> ExecuteCoreAsync(
+            PlatformIdempotencyRequest request,
+            Func<PlatformIdempotencyExecution, CancellationToken, Task<PlatformIdempotencyResult>> execute,
+            CancellationToken requestCancellationToken)
+        {
             ArgumentNullException.ThrowIfNull(request);
             ArgumentNullException.ThrowIfNull(execute);
             requestCancellationToken.ThrowIfCancellationRequested();
 
             var key = new StoreKey(request.ActingUserId, request.Operation, request.Key.Value);
-            Task<PlatformIdempotencyOutcome>? followerTask = null;
-            Entry? leaderEntry = null;
-            Entry? followerEntry = null;
-
-            lock (_gate)
+            while (true)
             {
-                RemoveExpiredEntries(_timeProvider.GetUtcNow());
-
-                if (_entries.TryGetValue(key, out var existing))
-                {
-                    if (!existing.Fingerprint.Matches(request.Fingerprint))
-                    {
-                        return new PlatformIdempotencyOutcome(PlatformIdempotencyOutcomeKind.Conflict);
-                    }
-
-                    if (existing.State == EntryState.Completed)
-                    {
-                        return new PlatformIdempotencyOutcome(PlatformIdempotencyOutcomeKind.Replay, existing.Result);
-                    }
-
-                    if (existing.State == EntryState.Tombstone)
-                    {
-                        return new PlatformIdempotencyOutcome(PlatformIdempotencyOutcomeKind.Indeterminate);
-                    }
-
-                    if (existing.FollowerCount >= MaximumFollowersPerEntry
-                        || _followerCount >= MaximumFollowers)
-                    {
-                        return new PlatformIdempotencyOutcome(PlatformIdempotencyOutcomeKind.AtCapacity);
-                    }
-
-                    existing.FollowerCount++;
-                    _followerCount++;
-                    followerEntry = existing;
-                    followerTask = existing.Completion.Task;
-                }
-                else
-                {
-                    if (_entries.Count >= MaximumEntries
-                        || _storedBytes + _reservedBytes + request.MaximumResultBytes > MaximumStoredResultBytes)
-                    {
-                        return new PlatformIdempotencyOutcome(PlatformIdempotencyOutcomeKind.AtCapacity);
-                    }
-
-                    leaderEntry = new Entry(request.Fingerprint, request.MaximumResultBytes);
-                    _entries.Add(key, leaderEntry);
-                    _reservedBytes += request.MaximumResultBytes;
-                }
-            }
-
-            if (followerTask is not null)
-            {
-                try
-                {
-                    return await followerTask.WaitAsync(requestCancellationToken).ConfigureAwait(false);
-                }
-                finally
-                {
-                    lock (_gate)
-                    {
-                        followerEntry!.FollowerCount--;
-                        _followerCount--;
-                    }
-                }
-            }
-
-            var executionStarted = false;
-            try
-            {
-                requestCancellationToken.ThrowIfCancellationRequested();
-                executionStarted = true;
-                var result = await execute(requestCancellationToken).ConfigureAwait(false);
-                ArgumentNullException.ThrowIfNull(result);
+                Task<EntryCompletion>? followerTask = null;
+                Entry? leaderEntry = null;
+                Entry? followerEntry = null;
 
                 lock (_gate)
                 {
-                    _reservedBytes -= leaderEntry!.ReservedBytes;
-                    if (result.SerializedSizeBytes > leaderEntry.ReservedBytes
-                        || result.SerializedSizeBytes > MaximumResultBytes)
-                    {
-                        MarkTombstone(leaderEntry, _timeProvider.GetUtcNow());
-                        return new PlatformIdempotencyOutcome(PlatformIdempotencyOutcomeKind.Indeterminate);
-                    }
+                    RemoveExpiredEntries(_timeProvider.GetUtcNow());
 
-                    leaderEntry.State = EntryState.Completed;
-                    leaderEntry.Result = result;
-                    leaderEntry.ExpiresAt = _timeProvider.GetUtcNow() + EntryTimeToLive;
-                    _storedBytes += result.SerializedSizeBytes;
-                    leaderEntry.Completion.TrySetResult(
-                        new PlatformIdempotencyOutcome(PlatformIdempotencyOutcomeKind.Replay, result));
-                }
-
-                return new PlatformIdempotencyOutcome(PlatformIdempotencyOutcomeKind.Executed, result);
-            }
-            catch
-            {
-                lock (_gate)
-                {
-                    _reservedBytes -= leaderEntry!.ReservedBytes;
-                    if (executionStarted)
+                    if (_entries.TryGetValue(key, out var existing))
                     {
-                        MarkTombstone(leaderEntry, _timeProvider.GetUtcNow());
+                        if (!existing.Fingerprint.Matches(request.Fingerprint))
+                        {
+                            return new PlatformIdempotencyOutcome(PlatformIdempotencyOutcomeKind.Conflict);
+                        }
+
+                        if (existing.State == EntryState.Completed)
+                        {
+                            return new PlatformIdempotencyOutcome(PlatformIdempotencyOutcomeKind.Replay, existing.Result);
+                        }
+
+                        if (existing.State == EntryState.Tombstone)
+                        {
+                            return new PlatformIdempotencyOutcome(PlatformIdempotencyOutcomeKind.Indeterminate);
+                        }
+
+                        if (existing.FollowerCount >= MaximumFollowersPerEntry
+                            || _followerCount >= MaximumFollowers)
+                        {
+                            return new PlatformIdempotencyOutcome(PlatformIdempotencyOutcomeKind.AtCapacity);
+                        }
+
+                        existing.FollowerCount++;
+                        _followerCount++;
+                        followerEntry = existing;
+                        followerTask = existing.Completion.Task;
                     }
                     else
                     {
-                        _entries.Remove(key);
-                        leaderEntry.Completion.TrySetResult(
-                            new PlatformIdempotencyOutcome(PlatformIdempotencyOutcomeKind.Indeterminate));
+                        if (_entries.Count >= MaximumEntries
+                            || _storedBytes + _reservedBytes + request.MaximumResultBytes > MaximumStoredResultBytes)
+                        {
+                            return new PlatformIdempotencyOutcome(PlatformIdempotencyOutcomeKind.AtCapacity);
+                        }
+
+                        leaderEntry = new Entry(request.Fingerprint, request.MaximumResultBytes);
+                        _entries.Add(key, leaderEntry);
+                        _reservedBytes += request.MaximumResultBytes;
                     }
                 }
 
-                throw;
+                if (followerTask is not null)
+                {
+                    EntryCompletion completion;
+                    try
+                    {
+                        completion = await followerTask.WaitAsync(requestCancellationToken).ConfigureAwait(false);
+                    }
+                    finally
+                    {
+                        lock (_gate)
+                        {
+                            followerEntry!.FollowerCount--;
+                            _followerCount--;
+                        }
+                    }
+
+                    if (completion.Retry)
+                    {
+                        requestCancellationToken.ThrowIfCancellationRequested();
+                        continue;
+                    }
+
+                    return completion.Outcome!;
+                }
+
+                var execution = new PlatformIdempotencyExecution();
+                try
+                {
+                    requestCancellationToken.ThrowIfCancellationRequested();
+                    var result = await execute(execution, requestCancellationToken).ConfigureAwait(false);
+                    ArgumentNullException.ThrowIfNull(result);
+
+                    lock (_gate)
+                    {
+                        _reservedBytes -= leaderEntry!.ReservedBytes;
+                        var abandoned = execution.AbandonedResult;
+                        if ((abandoned is not null && !ReferenceEquals(abandoned, result))
+                            || result.SerializedSizeBytes > leaderEntry.ReservedBytes
+                            || result.SerializedSizeBytes > MaximumResultBytes)
+                        {
+                            MarkTombstone(leaderEntry, _timeProvider.GetUtcNow());
+                            return new PlatformIdempotencyOutcome(PlatformIdempotencyOutcomeKind.Indeterminate);
+                        }
+
+                        if (abandoned is not null)
+                        {
+                            _entries.Remove(key);
+                            leaderEntry.Completion.TrySetResult(
+                                EntryCompletion.FromOutcome(
+                                    new PlatformIdempotencyOutcome(
+                                        PlatformIdempotencyOutcomeKind.Executed,
+                                        abandoned,
+                                        wasCoalescedUnstored: true)));
+                            return new PlatformIdempotencyOutcome(
+                                PlatformIdempotencyOutcomeKind.Executed,
+                                abandoned);
+                        }
+
+                        leaderEntry.State = EntryState.Completed;
+                        leaderEntry.Result = result;
+                        leaderEntry.ExpiresAt = _timeProvider.GetUtcNow() + EntryTimeToLive;
+                        _storedBytes += result.SerializedSizeBytes;
+                        leaderEntry.Completion.TrySetResult(
+                            EntryCompletion.FromOutcome(
+                                new PlatformIdempotencyOutcome(PlatformIdempotencyOutcomeKind.Replay, result)));
+                    }
+
+                    return new PlatformIdempotencyOutcome(PlatformIdempotencyOutcomeKind.Executed, result);
+                }
+                catch
+                {
+                    lock (_gate)
+                    {
+                        _reservedBytes -= leaderEntry!.ReservedBytes;
+                        if (execution.SideEffectStarted)
+                        {
+                            MarkTombstone(leaderEntry, _timeProvider.GetUtcNow());
+                        }
+                        else
+                        {
+                            _entries.Remove(key);
+                            leaderEntry.Completion.TrySetResult(EntryCompletion.RetryAdmission);
+                        }
+                    }
+
+                    throw;
+                }
             }
         }
 
@@ -206,7 +304,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
             entry.Result = null;
             entry.ExpiresAt = now + EntryTimeToLive;
             entry.Completion.TrySetResult(
-                new PlatformIdempotencyOutcome(PlatformIdempotencyOutcomeKind.Indeterminate));
+                EntryCompletion.FromOutcome(
+                    new PlatformIdempotencyOutcome(PlatformIdempotencyOutcomeKind.Indeterminate)));
         }
 
         private void RemoveExpiredEntries(DateTimeOffset now)
@@ -250,7 +349,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
             {
                 Fingerprint = fingerprint;
                 ReservedBytes = reservedBytes;
-                Completion = new TaskCompletionSource<PlatformIdempotencyOutcome>(
+                Completion = new TaskCompletionSource<EntryCompletion>(
                     TaskCreationOptions.RunContinuationsAsynchronously);
             }
 
@@ -266,7 +365,25 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
 
             internal int FollowerCount { get; set; }
 
-            internal TaskCompletionSource<PlatformIdempotencyOutcome> Completion { get; }
+            internal TaskCompletionSource<EntryCompletion> Completion { get; }
+        }
+
+        private sealed class EntryCompletion
+        {
+            private EntryCompletion(bool retry, PlatformIdempotencyOutcome? outcome)
+            {
+                Retry = retry;
+                Outcome = outcome;
+            }
+
+            internal static EntryCompletion RetryAdmission { get; } = new(true, outcome: null);
+
+            internal bool Retry { get; }
+
+            internal PlatformIdempotencyOutcome? Outcome { get; }
+
+            internal static EntryCompletion FromOutcome(PlatformIdempotencyOutcome outcome)
+                => new(false, outcome);
         }
     }
 }

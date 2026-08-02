@@ -40,6 +40,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy
             // One process-local 256-bit authority and nonce ledger for short-lived
             // native action capabilities. Restart intentionally invalidates every token.
             serviceCollection.AddSingleton<PlatformActionCapabilityService>();
+            // Server-private prepared preconditions remain process-local and expire no
+            // later than their opaque capability. Invocation concurrency is bounded by
+            // authoritative actor and the closed operation vocabulary.
+            serviceCollection.AddSingleton<PlatformPreparedActionContextOwner>();
+            serviceCollection.AddSingleton<PlatformActionAdmissionLimiter>();
             // One process-wide, fixed-capacity owner for redacted terminal Platform
             // action audit. It exposes no route and retains no caller payload.
             serviceCollection.AddSingleton<PlatformAuditStore>();

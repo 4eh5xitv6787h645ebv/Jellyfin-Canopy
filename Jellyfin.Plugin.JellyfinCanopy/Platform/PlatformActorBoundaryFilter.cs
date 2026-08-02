@@ -120,6 +120,29 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
                 "The Platform actor boundary did not establish an authenticated actor.");
         }
 
+        /// <summary>
+        /// Reissues the same boundary identity with the host's current elevation bit.
+        /// Actor construction remains confined to this authority boundary even when a
+        /// long-running action repeats its user lookup immediately before mutation.
+        /// </summary>
+        internal static PlatformActor? Reauthorize(
+            PlatformActor boundaryActor,
+            HostUser? currentUser)
+        {
+            ArgumentNullException.ThrowIfNull(boundaryActor);
+            if (currentUser is not HostUser user || user.Id != boundaryActor.UserId)
+            {
+                return null;
+            }
+
+            return new PlatformActor(
+                user.Id,
+                user.IsAdministrator,
+                boundaryActor.CorrelationId,
+                boundaryActor.ClientName,
+                boundaryActor.DeviceId);
+        }
+
         private static string? ReadAttribution(
             System.Collections.Generic.IEnumerable<System.Security.Claims.Claim> claims,
             string claimType,

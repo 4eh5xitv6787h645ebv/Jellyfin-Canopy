@@ -55,15 +55,21 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
     /// <summary>An opaque capability string, present only when minting succeeded.</summary>
     internal sealed class PlatformCapabilityMintOutcome
     {
-        internal PlatformCapabilityMintOutcome(PlatformCapabilityMintOutcomeKind kind, string? capability = null)
+        internal PlatformCapabilityMintOutcome(
+            PlatformCapabilityMintOutcomeKind kind,
+            string? capability = null,
+            DateTimeOffset? expiresAt = null)
         {
             Kind = kind;
             Capability = capability;
+            ExpiresAt = expiresAt;
         }
 
         internal PlatformCapabilityMintOutcomeKind Kind { get; }
 
         internal string? Capability { get; }
+
+        internal DateTimeOffset? ExpiresAt { get; }
     }
 
     /// <summary>An authenticated decoded capability. Inspection never consumes it.</summary>
@@ -73,12 +79,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
             PlatformCapabilityInspectionKind kind,
             PlatformActionCapabilityService? owner = null,
             object? claims = null,
-            byte[]? tag = null)
+            byte[]? tag = null,
+            byte[]? capabilityDigest = null)
         {
             Kind = kind;
             Owner = owner;
             Claims = claims;
             Tag = tag;
+            CapabilityDigest = capabilityDigest;
         }
 
         internal PlatformCapabilityInspectionKind Kind { get; }
@@ -88,6 +96,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
         internal object? Claims { get; }
 
         internal byte[]? Tag { get; }
+
+        internal byte[]? CapabilityDigest { get; }
     }
 
     /// <summary>
@@ -290,7 +300,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
                 var capability = ToBase64Url(raw);
 
                 _ledger.Add(nonceKey, new LedgerEntry(expiresAt, _authorityRevision, tag));
-                return new PlatformCapabilityMintOutcome(PlatformCapabilityMintOutcomeKind.Issued, capability);
+                return new PlatformCapabilityMintOutcome(
+                    PlatformCapabilityMintOutcomeKind.Issued,
+                    capability,
+                    expiresAt);
             }
         }
 
@@ -328,7 +341,31 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
                     PlatformCapabilityInspectionKind.Authentic,
                     this,
                     claims,
-                    expectedTag);
+                    expectedTag,
+                    SHA256.HashData(Encoding.ASCII.GetBytes(capability!)));
+            }
+        }
+
+        /// <summary>
+        /// Proves that an authentic inspection came from this service for the exact
+        /// opaque spelling a prepared-context owner is about to resolve.
+        /// </summary>
+        internal bool IsInspectionFor(
+            PlatformCapabilityInspection? inspection,
+            string? capability)
+        {
+            lock (_gate)
+            {
+                ThrowIfDisposed();
+                return inspection is not null
+                    && inspection.Kind == PlatformCapabilityInspectionKind.Authentic
+                    && ReferenceEquals(inspection.Owner, this)
+                    && inspection.CapabilityDigest is { Length: 32 } expected
+                    && capability is not null
+                    && capability.Length <= MaximumTokenCharacters
+                    && CryptographicOperations.FixedTimeEquals(
+                        expected,
+                        SHA256.HashData(Encoding.ASCII.GetBytes(capability)));
             }
         }
 
