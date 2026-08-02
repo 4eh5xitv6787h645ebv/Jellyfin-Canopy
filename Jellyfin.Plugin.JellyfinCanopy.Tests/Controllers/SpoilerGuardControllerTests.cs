@@ -1500,6 +1500,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                 Assert.Equal(itemId, call.Item.ItemId);
                 Assert.Equal(kind, call.Item.Kind);
                 Assert.Equal(enabled, call.Configuration.Enabled);
+                Assert.Null(call.Configuration.ExpectedOverridesRevision);
             }
         }
 
@@ -1598,6 +1599,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
         private sealed class RecordingItemActionOwner : ISpoilerGuardItemActionOwner
         {
             public List<ItemActionCall> Calls { get; } = new();
+
+            public SpoilerGuardItemState GetState(
+                SpoilerGuardActorProjection actor,
+                SpoilerGuardItemProjection item)
+                => new(enabled: false, overridesRevision: 0);
 
             public SpoilerGuardItemActionResult Configure(
                 SpoilerGuardActorProjection actor,

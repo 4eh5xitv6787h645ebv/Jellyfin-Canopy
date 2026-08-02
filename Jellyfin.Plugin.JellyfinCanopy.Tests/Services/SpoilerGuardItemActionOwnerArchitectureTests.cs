@@ -19,10 +19,12 @@ public sealed class SpoilerGuardItemActionOwnerArchitectureTests
     [Fact]
     public void OwnerContractIsHttpFreeAndAcceptsOnlySafeProjections()
     {
-        var method = typeof(ISpoilerGuardItemActionOwner).GetMethod(
+        var configure = typeof(ISpoilerGuardItemActionOwner).GetMethod(
             nameof(ISpoilerGuardItemActionOwner.Configure));
+        var getState = typeof(ISpoilerGuardItemActionOwner).GetMethod(
+            nameof(ISpoilerGuardItemActionOwner.GetState));
 
-        Assert.NotNull(method);
+        Assert.NotNull(configure);
         Assert.Equal(
             new[]
             {
@@ -30,8 +32,13 @@ public sealed class SpoilerGuardItemActionOwnerArchitectureTests
                 typeof(SpoilerGuardItemProjection),
                 typeof(SpoilerGuardItemConfiguration),
             },
-            method!.GetParameters().Select(parameter => parameter.ParameterType));
-        Assert.Equal(typeof(SpoilerGuardItemActionResult), method.ReturnType);
+            configure!.GetParameters().Select(parameter => parameter.ParameterType));
+        Assert.Equal(typeof(SpoilerGuardItemActionResult), configure.ReturnType);
+        Assert.NotNull(getState);
+        Assert.Equal(
+            new[] { typeof(SpoilerGuardActorProjection), typeof(SpoilerGuardItemProjection) },
+            getState!.GetParameters().Select(parameter => parameter.ParameterType));
+        Assert.Equal(typeof(SpoilerGuardItemState), getState.ReturnType);
 
         foreach (var type in new[]
         {
@@ -39,6 +46,7 @@ public sealed class SpoilerGuardItemActionOwnerArchitectureTests
             typeof(SpoilerGuardItemProjection),
             typeof(SpoilerGuardItemConfiguration),
             typeof(SpoilerGuardItemActionResult),
+            typeof(SpoilerGuardItemState),
         })
         {
             Assert.True(type.IsSealed);
@@ -53,10 +61,38 @@ public sealed class SpoilerGuardItemActionOwnerArchitectureTests
 
         Assert.DoesNotMatch(ForbiddenOwnerDependency, code);
         Assert.Contains("RmwUserConfiguration<UserSpoilerBlur>", code, StringComparison.Ordinal);
+        Assert.Contains("ReadUserConfiguration<UserSpoilerBlur>", code, StringComparison.Ordinal);
+        Assert.Contains("configuration.ExpectedOverridesRevision", code, StringComparison.Ordinal);
         Assert.Contains("SpoilerUserResolver.InvalidateUser", code, StringComparison.Ordinal);
 
         Assert.Matches(ForbiddenOwnerDependency, "using Microsoft.AspNetCore.Mvc;");
         Assert.Matches(ForbiddenOwnerDependency, "private BaseItem _item;");
+    }
+
+    [Fact]
+    public void PlatformAdapterAcceptsOnlyAuthoritativeProjectionsAndHasNoStoreDependency()
+    {
+        var code = PlatformHostSeamTests.CodeOnly(File.ReadAllText(AdapterSource()));
+        var methods = typeof(global::Jellyfin.Plugin.JellyfinCanopy.Platform.SpoilerGuardPlatformItemActionAdapter)
+            .GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.DeclaredOnly);
+
+        Assert.Equal(2, methods.Length);
+        Assert.All(methods, method =>
+        {
+            var parameters = method.GetParameters().Select(parameter => parameter.ParameterType).ToArray();
+            Assert.Equal(
+                typeof(global::Jellyfin.Plugin.JellyfinCanopy.Platform.PlatformActor),
+                parameters[0]);
+            Assert.Equal(
+                typeof(global::Jellyfin.Plugin.JellyfinCanopy.Platform.Hosting.HostAccessibleItem),
+                parameters[1]);
+            Assert.DoesNotContain(typeof(Guid), parameters);
+            Assert.DoesNotContain(typeof(string), parameters);
+        });
+        Assert.DoesNotContain("UserConfigurationManager", code, StringComparison.Ordinal);
+        Assert.DoesNotContain("ReadUserConfiguration", code, StringComparison.Ordinal);
+        Assert.DoesNotContain("RmwUserConfiguration", code, StringComparison.Ordinal);
+        Assert.Contains("ExpectedOverridesRevision", code, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -84,4 +120,10 @@ public sealed class SpoilerGuardItemActionOwnerArchitectureTests
             Path.GetDirectoryName(sourceFile)!,
             "..", "..", "Jellyfin.Plugin.JellyfinCanopy", "Controllers",
             "SpoilerGuardController.cs"));
+
+    private static string AdapterSource([CallerFilePath] string sourceFile = "")
+        => Path.GetFullPath(Path.Combine(
+            Path.GetDirectoryName(sourceFile)!,
+            "..", "..", "Jellyfin.Plugin.JellyfinCanopy", "Platform",
+            "SpoilerGuardPlatformItemActionAdapter.cs"));
 }
