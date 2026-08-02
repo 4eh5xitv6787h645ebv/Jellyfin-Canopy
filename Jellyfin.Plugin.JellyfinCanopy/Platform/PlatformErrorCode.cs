@@ -22,6 +22,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
         /// <summary>The request was malformed, missing something required, or self-contradictory.</summary>
         public const string InvalidRequest = "invalid_request";
 
+        /// <summary>The request body is not carried as a JSON media type.</summary>
+        public const string UnsupportedMediaType = "unsupported_media_type";
+
         /// <summary>No protocol version is common to the client and this host. See the negotiate endpoint.</summary>
         public const string UnsupportedProtocol = "unsupported_protocol";
 
@@ -58,6 +61,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
             new(new Dictionary<string, (int, bool)>(StringComparer.Ordinal)
             {
                 [InvalidRequest] = (400, false),
+                [UnsupportedMediaType] = (415, false),
                 [UnsupportedProtocol] = (400, false),
                 [NotFound] = (404, false),
                 [Conflict] = (409, false),

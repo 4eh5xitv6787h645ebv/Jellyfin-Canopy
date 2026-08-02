@@ -36,8 +36,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
     [ApiController]
     [Authorize]
     [Produces("application/json")]
-    [TypeFilter(typeof(PlatformRequestFilter))]
-    [TypeFilter(typeof(PlatformBoundedBodyFilter))]
+    [TypeFilter(typeof(PlatformRequestFilter), Order = int.MinValue)]
+    [TypeFilter(typeof(PlatformJsonResultFilter))]
+    [TypeFilter(typeof(PlatformJsonMediaTypeFilter), Order = int.MinValue)]
+    [TypeFilter(typeof(PlatformBoundedBodyFilter), Order = int.MinValue + 1)]
     public abstract class PlatformControllerBase : ControllerBase
     {
         /// <summary>

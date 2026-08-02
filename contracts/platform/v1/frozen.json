@@ -60,6 +60,7 @@
         "rate_limited",
         "timeout",
         "unavailable",
+        "unsupported_media_type",
         "unsupported_protocol"
       ]
     }
