@@ -26,9 +26,11 @@ import {
 import {
     clearMaintainerrAudit,
     readMaintainerrAudit,
+    readMaintainerrInFlight,
     seededMaintainerrItemId,
     setMaintainerrMode,
     type MaintainerrAuditRow,
+    type MaintainerrInFlightRow,
 } from './fixtures/maintainerr';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -125,7 +127,7 @@ function assertSanitizedProjection(value: unknown): void {
     );
 }
 
-function assertSafeAudit(rows: readonly MaintainerrAuditRow[]): void {
+function assertSafeAuditRows(rows: readonly MaintainerrInFlightRow[]): void {
     expect(rows.length, 'Maintainerr audit remains bounded').toBeLessThanOrEqual(256);
     for (const row of rows) {
         expect(row.schemaVersion).toBe(1);
@@ -137,6 +139,10 @@ function assertSafeAudit(rows: readonly MaintainerrAuditRow[]): void {
             (key) => key === 'size' || key === 'sort' || key === 'sortOrder',
         )).toBe(true);
     }
+}
+
+function assertSafeAudit(rows: readonly MaintainerrAuditRow[]): void {
+    assertSafeAuditRows(rows);
 }
 
 async function assertSafeExternalLink(
@@ -798,18 +804,36 @@ test.describe.serial('Maintainerr integration', () => {
             (window as any).JellyfinCanopy.maintainerrPage.showPage();
         });
         await dashboardRequest;
+
+        let upstreamSequence = 0;
+        await expect.poll(
+            async () => {
+                const inFlight = await readMaintainerrInFlight();
+                assertSafeAuditRows(inFlight);
+                upstreamSequence = inFlight.find((row) => row.mode === 'slow')?.sequence || 0;
+                return upstreamSequence;
+            },
+            {
+                message: 'a sanitized slow upstream request is accepted before route exit',
+                timeout: 15_000,
+                intervals: [100, 250, 500],
+            },
+        ).toBeGreaterThan(0);
+
         await showRoute(page, '/home');
         await waitForHash(page, '/home');
         await expect(page.locator('#jc-maintainerr-container')).toHaveCount(0);
 
         await expect.poll(
-            async () => (await readMaintainerrAudit()).filter((row) => row.aborted).length,
+            async () => (await readMaintainerrAudit()).some(
+                (row) => row.sequence === upstreamSequence && row.aborted,
+            ),
             {
-                message: 'the last downstream waiter cancels slow upstream probes',
+                message: 'the observed upstream request aborts after its last waiter leaves',
                 timeout: 15_000,
                 intervals: [100, 250, 500],
             },
-        ).toBeGreaterThan(0);
+        ).toBe(true);
         const audit = await readMaintainerrAudit();
         assertSafeAudit(audit);
         expect(audit.every((row) => row.aborted), 'no slow response completes after route exit')

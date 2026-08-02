@@ -131,6 +131,37 @@ describe('Maintainerr native page', () => {
         expect(plugin).not.toHaveBeenCalled();
     });
 
+    it('accepts cancellation before upstream work starts and publishes no stale dashboard', async () => {
+        let upstreamStarted = false;
+        let requestSignal: AbortSignal | undefined;
+        const plugin = vi.fn((
+            _path: string,
+            options?: { signal?: AbortSignal },
+        ) => new Promise<unknown>((resolve, reject) => {
+            requestSignal = options?.signal;
+            requestSignal?.addEventListener('abort', () => {
+                reject(new DOMException('canceled before upstream start', 'AbortError'));
+            }, { once: true });
+            queueMicrotask(() => {
+                if (requestSignal?.aborted) return;
+                upstreamStarted = true;
+                resolve(dashboard());
+            });
+        }));
+        JC.core.api = { plugin } as unknown as ApiApi;
+
+        void maintainerrPageDescriptor.render({ host, handle, signal: adoption.signal });
+        adoption.abort();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(requestSignal?.aborted).toBe(true);
+        expect(upstreamStarted).toBe(false);
+        expect(host.querySelectorAll('.jc-maintainerr-collection')).toHaveLength(0);
+        expect(host.textContent).not.toContain('Weekend cleanup');
+        expect(host.querySelector('[role="alert"]')).toBeNull();
+    });
+
     it('renders safe views, local controls, binary units, and modal focus lifecycle', async () => {
         const plugin = vi.fn((path: string) => {
             if (path === '/maintainerr/dashboard') return Promise.resolve(dashboard());
