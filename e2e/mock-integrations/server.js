@@ -15,6 +15,7 @@ const MAX_BODY_BYTES = 1024 * 1024;
 const MAX_MAINTAINERR_AUDIT_ROWS = 256;
 const MAINTAINERR_SLOW_MS = 20_000;
 const MAINTAINERR_SECRET_SENTINEL = 'UPSTREAM_SECRET_MUST_NOT_ESCAPE';
+let nextMaintainerrAuditSequence = 1;
 // Maintainerr 3.18 only SQL-pages the default/deleteSoonest shape. Every
 // media-metadata sort hydrates the full collection before slicing.
 const MAINTAINERR_SORT_FIELDS = new Set(['deleteSoonest']);
@@ -434,44 +435,85 @@ function maintainerrAuditQuery(url) {
     return safe;
 }
 
-function appendMaintainerrAudit(row) {
-    let current = { schemaVersion: 1, requests: [] };
+function readMaintainerrAuditState() {
+    let current = { schemaVersion: 1, requests: [], inFlight: [] };
     try {
         const parsed = JSON.parse(fs.readFileSync(MAINTAINERR_AUDIT_FILE, 'utf8'));
-        if (parsed?.schemaVersion === 1 && Array.isArray(parsed.requests)) current = parsed;
+        if (parsed?.schemaVersion === 1 && Array.isArray(parsed.requests)) {
+            current = {
+                schemaVersion: 1,
+                requests: parsed.requests,
+                inFlight: Array.isArray(parsed.inFlight) ? parsed.inFlight : [],
+            };
+        }
     } catch {
         // A missing audit file is the normal initial state for every shard.
     }
-    const lastSequence = current.requests.reduce(
-        (maximum, entry) => Math.max(maximum, Number(entry?.sequence) || 0),
-        0
-    );
-    const requestsForAudit = [...current.requests, {
+    return current;
+}
+
+function writeMaintainerrAuditState(current) {
+    const next = `${JSON.stringify({
         schemaVersion: 1,
-        sequence: lastSequence + 1,
-        ...row,
-    }].slice(-MAX_MAINTAINERR_AUDIT_ROWS);
-    const next = `${JSON.stringify({ schemaVersion: 1, requests: requestsForAudit }, null, 2)}\n`;
+        requests: current.requests.slice(-MAX_MAINTAINERR_AUDIT_ROWS),
+        inFlight: current.inFlight.slice(-MAX_MAINTAINERR_AUDIT_ROWS),
+    }, null, 2)}\n`;
     const temporary = `${MAINTAINERR_AUDIT_FILE}.${process.pid}.tmp`;
     fs.writeFileSync(temporary, next, { mode: 0o600 });
     fs.renameSync(temporary, MAINTAINERR_AUDIT_FILE);
 }
 
+function beginMaintainerrAudit(row) {
+    const current = readMaintainerrAuditState();
+    const lastSequence = [...current.requests, ...current.inFlight].reduce(
+        (maximum, entry) => Math.max(maximum, Number(entry?.sequence) || 0),
+        0
+    );
+    const sequence = Math.max(nextMaintainerrAuditSequence, lastSequence + 1);
+    nextMaintainerrAuditSequence = sequence + 1;
+    const inFlightRow = {
+        schemaVersion: 1,
+        sequence,
+        ...row,
+    };
+    writeMaintainerrAuditState({
+        ...current,
+        inFlight: [...current.inFlight, inFlightRow],
+    });
+    return inFlightRow;
+}
+
+function completeMaintainerrAudit(inFlightRow, status, aborted) {
+    const current = readMaintainerrAuditState();
+    writeMaintainerrAuditState({
+        ...current,
+        requests: [...current.requests, {
+            ...inFlightRow,
+            status,
+            aborted,
+        }],
+        inFlight: current.inFlight.filter(entry => entry?.sequence !== inFlightRow.sequence),
+    });
+}
+
 function trackMaintainerrRequest(request, response, url, mode) {
+    const inFlightRow = beginMaintainerrAudit({
+        method: request.method || '',
+        path: maintainerrAuditPath(url.pathname),
+        query: maintainerrAuditQuery(url),
+        mode,
+        credentialHeadersPresent: Object.keys(request.headers)
+            .some(name => /authorization|api[-_]?key|token|cookie|credential/i.test(name)),
+    });
     let recorded = false;
     const record = aborted => {
         if (recorded) return;
         recorded = true;
-        appendMaintainerrAudit({
-            method: request.method || '',
-            path: maintainerrAuditPath(url.pathname),
-            query: maintainerrAuditQuery(url),
-            status: response.headersSent ? response.statusCode : 0,
-            mode,
-            aborted,
-            credentialHeadersPresent: Object.keys(request.headers)
-                .some(name => /authorization|api[-_]?key|token|cookie|credential/i.test(name)),
-        });
+        completeMaintainerrAudit(
+            inFlightRow,
+            response.headersSent ? response.statusCode : 0,
+            aborted
+        );
     };
     response.once('finish', () => record(false));
     response.once('close', () => record(!response.writableEnded));

@@ -16,21 +16,25 @@ export type MaintainerrMode =
     | 'redirect'
     | 'oversized';
 
-export interface MaintainerrAuditRow {
+export interface MaintainerrInFlightRow {
     schemaVersion: 1;
     sequence: number;
     method: string;
     path: string;
     query: Record<string, string>;
-    status: number;
     mode: MaintainerrMode;
-    aborted: boolean;
     credentialHeadersPresent: boolean;
+}
+
+export interface MaintainerrAuditRow extends MaintainerrInFlightRow {
+    status: number;
+    aborted: boolean;
 }
 
 interface MaintainerrAuditFile {
     schemaVersion: 1;
     requests: MaintainerrAuditRow[];
+    inFlight: MaintainerrInFlightRow[];
 }
 
 interface FixtureState {
@@ -108,7 +112,7 @@ export async function setMaintainerrMode(mode: MaintainerrMode): Promise<Maintai
 
 /** Clear only the bounded, sanitized request ledger owned by the current shard. */
 export async function clearMaintainerrAudit(): Promise<void> {
-    await writeAtomically(auditPath(), { schemaVersion: 1, requests: [] });
+    await writeAtomically(auditPath(), { schemaVersion: 1, requests: [], inFlight: [] });
 }
 
 /** Read the current shard's bounded, sanitized Maintainerr request ledger. */
@@ -119,6 +123,20 @@ export async function readMaintainerrAudit(): Promise<MaintainerrAuditRow[]> {
             throw new Error('invalid hermetic Maintainerr request ledger');
         }
         return parsed.requests;
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+        throw error;
+    }
+}
+
+/** Read sanitized requests accepted by the fixture but not yet completed. */
+export async function readMaintainerrInFlight(): Promise<MaintainerrInFlightRow[]> {
+    try {
+        const parsed = JSON.parse(await fs.readFile(auditPath(), 'utf8')) as Partial<MaintainerrAuditFile>;
+        if (parsed.schemaVersion !== 1 || !Array.isArray(parsed.inFlight)) {
+            throw new Error('invalid hermetic Maintainerr in-flight ledger');
+        }
+        return parsed.inFlight;
     } catch (error) {
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
         throw error;

@@ -110,6 +110,10 @@ test('Maintainerr is a private strict read-only fixture with bounded sanitized e
     assert.match(mockServer, /hermetic Maintainerr fixture is read-only/);
     assert.match(mockServer, /MAX_MAINTAINERR_AUDIT_ROWS = 256/);
     assert.match(mockServer, /maintainerr-requests\.json/);
+    assert.match(mockServer, /inFlight: current\.inFlight\.slice\(-MAX_MAINTAINERR_AUDIT_ROWS\)/);
+    assert.match(mockServer, /beginMaintainerrAudit/);
+    assert.match(mockServer, /completeMaintainerrAudit/);
+    assert.match(mockServer, /current\.inFlight\.filter/);
     assert.match(mockServer, /writeFileSync\(temporary, next, \{ mode: 0o600 \}\)/);
     assert.match(mockServer, /renameSync\(temporary, MAINTAINERR_AUDIT_FILE\)/);
     assert.match(mockServer, /credentialHeadersPresent/);
