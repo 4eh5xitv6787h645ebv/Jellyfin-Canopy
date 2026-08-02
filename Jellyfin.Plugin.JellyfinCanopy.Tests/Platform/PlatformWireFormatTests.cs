@@ -242,6 +242,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
                 descriptor => descriptor.ServiceType == typeof(PlatformIdempotencyStore));
             Assert.Equal(ServiceLifetime.Singleton, idempotencyRegistration.Lifetime);
 
+            var auditRegistration = Assert.Single(
+                services,
+                descriptor => descriptor.ServiceType == typeof(PlatformAuditStore));
+            Assert.Equal(ServiceLifetime.Singleton, auditRegistration.Lifetime);
+
             Assert.True(CanRead(formatter, typeof(TestController)));
             Assert.False(CanRead(formatter, typeof(LegacyController)));
         }

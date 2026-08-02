@@ -218,7 +218,11 @@ this reason — Jellyfin 12 *does* accept `?apikey=`, so the safe choice must be
 made deliberately
 ([S8](spike-evidence.md#s8--browser-eventsource-cannot-authenticate-safely),
 [ADR-0006](adr/0006-client-event-transport.md)). Audit and diagnostics are
-redacted by construction.
+redacted by construction: terminal native-action records have a closed typed
+allowlist, client and device attribution is domain-separated HMAC-SHA-256, and
+caller operation text is discarded when resolution fails. Tokens, capabilities,
+request bodies, titles, Seerr keys and URLs, and upstream responses have no audit
+or structured-log field.
 *Residual.* **Low.**
 
 ### T-09 · SSRF via extension-supplied URLs — **medium**
@@ -244,7 +248,9 @@ host's only free limit is Kestrel's 30,000,000 bytes and exceeding it produces a
 opaque `500`, not a `413`
 ([S11](spike-evidence.md#s11--request-size-and-json-depth-boundaries)). Per-extension
 concurrency caps, bulkheads, circuit breakers, coalescing, bounded retention and
-disconnect-and-resync for slow consumers.
+disconnect-and-resync for slow consumers. Native-action audit uses one fixed
+1,024-record FIFO ring with constant-size failure health state; concurrent appends
+cannot grow storage, and audit/logging failure never retries an action.
 *Residual.* **Medium.** No load or concurrency testing has been done; every spike
 probe was sequential.
 
