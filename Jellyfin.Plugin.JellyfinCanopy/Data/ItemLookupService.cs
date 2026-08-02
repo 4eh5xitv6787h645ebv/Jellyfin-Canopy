@@ -190,17 +190,20 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Data
         /// </summary>
         internal static Dictionary<(string Provider, string Value), IReadOnlyList<ItemLookupCandidate>> MapProviderPairs(
             IEnumerable<BaseItem> items,
-            IReadOnlyCollection<(string Provider, string Value)> pairs)
-            => MapProviderPairsCore(items, pairs, int.MaxValue, out _);
+            IReadOnlyCollection<(string Provider, string Value)> pairs,
+            Action? membershipProbe = null)
+            => MapProviderPairsCore(items, pairs, int.MaxValue, out _, membershipProbe);
 
         private static Dictionary<(string Provider, string Value), IReadOnlyList<ItemLookupCandidate>> MapProviderPairsCore(
             IEnumerable<BaseItem> items,
             IReadOnlyCollection<(string Provider, string Value)> pairs,
             int maxCandidates,
-            out bool complete)
+            out bool complete,
+            Action? membershipProbe = null)
         {
             var requested = new HashSet<(string, string)>(pairs);
             var map = new Dictionary<(string Provider, string Value), List<ItemLookupCandidate>>();
+            var seenCandidates = new HashSet<(string Provider, string Value, Guid ItemId)>();
             var candidateCount = 0;
 
             foreach (var item in items)
@@ -223,20 +226,21 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Data
                         map[key] = candidates;
                     }
 
-                    if (candidates.All(candidate => candidate.ItemId != item.Id))
-                    {
-                        if (candidateCount >= maxCandidates)
-                        {
-                            complete = false;
-                            return new Dictionary<(string, string), IReadOnlyList<ItemLookupCandidate>>();
-                        }
+                    membershipProbe?.Invoke();
+                    if (!seenCandidates.Add((kv.Key, kv.Value, item.Id)))
+                        continue;
 
-                        var kind = GetItemKind(item);
-                        var hasMediaFile = kind is ItemLookupKind.Movie or ItemLookupKind.Episode
-                            && !string.IsNullOrWhiteSpace(item.Path);
-                        candidates.Add(new ItemLookupCandidate(item.Id, kind, item.Path, hasMediaFile));
-                        candidateCount++;
+                    if (candidateCount >= maxCandidates)
+                    {
+                        complete = false;
+                        return new Dictionary<(string, string), IReadOnlyList<ItemLookupCandidate>>();
                     }
+
+                    var kind = GetItemKind(item);
+                    var hasMediaFile = kind is ItemLookupKind.Movie or ItemLookupKind.Episode
+                        && !string.IsNullOrWhiteSpace(item.Path);
+                    candidates.Add(new ItemLookupCandidate(item.Id, kind, item.Path, hasMediaFile));
+                    candidateCount++;
                 }
             }
 

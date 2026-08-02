@@ -158,6 +158,30 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Data
         }
 
         [Fact]
+        public void MapProviderPairs_MembershipWorkIsLinearForUniqueAndRepeatedEditions()
+        {
+            const int uniqueEditionCount = 4_096;
+            var uniqueItems = Enumerable.Range(1, uniqueEditionCount)
+                .Select(index => MovieWith(new Guid(index, 0, 0, new byte[8]), ("Tmdb", "603")))
+                .ToArray();
+            var repeatedItems = uniqueItems
+                .Select(item => MovieWith(item.Id, ("Tmdb", "603")));
+            var items = uniqueItems.Cast<BaseItem>().Concat(repeatedItems).ToArray();
+            var membershipChecks = 0;
+
+            var map = ItemLookupService.MapProviderPairs(
+                items,
+                new List<(string, string)> { ("Tmdb", "603") },
+                () => membershipChecks++);
+
+            Assert.Equal(items.Length, membershipChecks);
+            Assert.Equal(uniqueEditionCount, map[("Tmdb", "603")].Count);
+            Assert.Equal(
+                uniqueItems.Select(item => item.Id).OrderBy(id => id),
+                map[("Tmdb", "603")].Select(candidate => candidate.ItemId));
+        }
+
+        [Fact]
         public void MapProviderPairs_PreservesCandidateMediaType()
         {
             var movie = MovieWith(Guid.NewGuid(), ("Tmdb", "42"));
