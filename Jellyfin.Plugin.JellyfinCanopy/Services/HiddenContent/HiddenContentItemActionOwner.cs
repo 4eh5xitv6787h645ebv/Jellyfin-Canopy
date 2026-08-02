@@ -221,6 +221,101 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         RevisionConflict,
     }
 
+    /// <summary>Minimal bounded identity evidence returned by the installed-item owner.</summary>
+    public sealed class HiddenContentItemIdentityState
+    {
+        internal HiddenContentItemIdentityState(int version, string provider, string mediaType, string id)
+        {
+            Version = version;
+            Provider = provider;
+            MediaType = mediaType;
+            Id = id;
+        }
+
+        /// <summary>Gets the identity schema version.</summary>
+        public int Version { get; }
+
+        /// <summary>Gets the provider name.</summary>
+        public string Provider { get; }
+
+        /// <summary>Gets the provider media type.</summary>
+        public string MediaType { get; }
+
+        /// <summary>Gets the provider item id.</summary>
+        public string Id { get; }
+    }
+
+    /// <summary>
+    /// Minimal bounded installed-item evidence. Opaque durable extension data is
+    /// deliberately excluded so one action result always remains safely replayable.
+    /// </summary>
+    public sealed class HiddenContentItemState
+    {
+        internal HiddenContentItemState(
+            string itemId,
+            string name,
+            string type,
+            string tmdbId,
+            HiddenContentItemIdentityState? identity,
+            string hiddenAt,
+            string posterPath,
+            string seriesId,
+            string seriesName,
+            int? seasonNumber,
+            int? episodeNumber,
+            string hideScope)
+        {
+            ItemId = itemId;
+            Name = name;
+            Type = type;
+            TmdbId = tmdbId;
+            Identity = identity;
+            HiddenAt = hiddenAt;
+            PosterPath = posterPath;
+            SeriesId = seriesId;
+            SeriesName = seriesName;
+            SeasonNumber = seasonNumber;
+            EpisodeNumber = episodeNumber;
+            HideScope = hideScope;
+        }
+
+        /// <summary>Gets the Jellyfin item id.</summary>
+        public string ItemId { get; }
+
+        /// <summary>Gets bounded presentation text.</summary>
+        public string Name { get; }
+
+        /// <summary>Gets the stored item kind.</summary>
+        public string Type { get; }
+
+        /// <summary>Gets the legacy TMDB id.</summary>
+        public string TmdbId { get; }
+
+        /// <summary>Gets typed identity evidence when present.</summary>
+        public HiddenContentItemIdentityState? Identity { get; }
+
+        /// <summary>Gets the original hide timestamp.</summary>
+        public string HiddenAt { get; }
+
+        /// <summary>Gets the bounded legacy poster path.</summary>
+        public string PosterPath { get; }
+
+        /// <summary>Gets episode series ancestry.</summary>
+        public string SeriesId { get; }
+
+        /// <summary>Gets bounded episode series presentation text.</summary>
+        public string SeriesName { get; }
+
+        /// <summary>Gets the bounded season index.</summary>
+        public int? SeasonNumber { get; }
+
+        /// <summary>Gets the bounded episode index.</summary>
+        public int? EpisodeNumber { get; }
+
+        /// <summary>Gets the stored hide scope.</summary>
+        public string HideScope { get; }
+    }
+
     /// <summary>HTTP-independent item state and revision evidence.</summary>
     public sealed class HiddenContentItemActionResult
     {
@@ -229,7 +324,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             bool hidden,
             bool changed,
             string key,
-            HiddenContentItem? entry,
+            HiddenContentItemState? entry,
             long itemsRevision,
             long settingsRevision,
             bool hiddenContentEnabled,
@@ -259,7 +354,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         public string Key { get; }
 
         /// <summary>Gets the committed row for a successful hide.</summary>
-        public HiddenContentItem? Entry { get; }
+        public HiddenContentItemState? Entry { get; }
 
         /// <summary>Gets the item-resource revision after the decision.</summary>
         public long ItemsRevision { get; }
@@ -338,7 +433,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 HasScope(matches, scope),
                 changed: false,
                 item.ItemId.ToString(),
-                DetachedBoundedEntry(matches.Select(pair => pair.Value).FirstOrDefault()),
+                matches.Select(pair => pair.Value).FirstOrDefault(),
                 state,
                 settingsChanged: false);
         }
@@ -632,41 +727,75 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             IEnumerable<HiddenContentItem> entries)
         {
             var merged = new Dictionary<string, System.Text.Json.JsonElement>(StringComparer.Ordinal);
+            var nodeCount = 0;
             foreach (var entry in entries)
             {
-                merged = PersistedPayloadPolicy.PreserveExistingExtensionData(
-                    entry.ExtensionData,
-                    merged);
+                foreach (var pair in entry.ExtensionData)
+                {
+                    if (!PersistedPayloadPolicy.TryAddMergedExtensionValue(
+                            merged,
+                            pair.Key,
+                            pair.Value,
+                            ref nodeCount))
+                    {
+                        throw new InvalidDataException(
+                            "Merged hidden-content extension data exceeds supported bounds.");
+                    }
+                }
             }
 
             return merged;
         }
 
-        private static HiddenContentItem? DetachedBoundedEntry(HiddenContentItem? entry)
+        private static HiddenContentItemState? ProjectResultEntry(HiddenContentItem? entry)
         {
             if (entry == null)
             {
                 return null;
             }
 
-            return new HiddenContentItem
+            var identity = entry.Identity == null
+                ? null
+                : new HiddenContentItemIdentityState(
+                    entry.Identity.Version,
+                    Bounded(entry.Identity.Provider, 64),
+                    Bounded(entry.Identity.MediaType, 64),
+                    Bounded(entry.Identity.Id, 32));
+            return new HiddenContentItemState(
+                Bounded(entry.ItemId, 128),
+                Bounded(entry.Name, 512),
+                Bounded(entry.Type, 64),
+                Bounded(entry.TmdbId, 32),
+                identity,
+                Bounded(entry.HiddenAt, 64),
+                Bounded(entry.PosterPath, 512),
+                Bounded(entry.SeriesId, 128),
+                Bounded(entry.SeriesName, 512),
+                PersistedPayloadPolicy.NormalizeHiddenIndex(entry.SeasonNumber),
+                PersistedPayloadPolicy.NormalizeHiddenIndex(entry.EpisodeNumber),
+                Bounded(entry.HideScope, 64));
+        }
+
+        private static string Bounded(string? value, int maximum)
+        {
+            if (string.IsNullOrEmpty(value))
             {
-                ItemId = entry.ItemId,
-                Name = PersistedPayloadPolicy.ClampPersistedDisplayName(entry.Name),
-                Type = entry.Type,
-                TmdbId = entry.TmdbId,
-                Identity = entry.Identity == null ? null : CloneIdentity(entry.Identity),
-                HiddenAt = entry.HiddenAt,
-                PosterPath = entry.PosterPath,
-                SeriesId = entry.SeriesId,
-                SeriesName = PersistedPayloadPolicy.ClampPersistedDisplayName(entry.SeriesName),
-                SeasonNumber = PersistedPayloadPolicy.NormalizeHiddenIndex(entry.SeasonNumber),
-                EpisodeNumber = PersistedPayloadPolicy.NormalizeHiddenIndex(entry.EpisodeNumber),
-                HideScope = entry.HideScope,
-                ExtensionData = PersistedPayloadPolicy.PreserveExistingExtensionData(
-                    candidate: null,
-                    current: entry.ExtensionData),
-            };
+                return string.Empty;
+            }
+
+            if (value.Length <= maximum)
+            {
+                return value;
+            }
+
+            var length = maximum;
+            if (char.IsHighSurrogate(value[length - 1])
+                && char.IsLowSurrogate(value[length]))
+            {
+                length--;
+            }
+
+            return value[..length];
         }
 
         private static IEnumerable<KeyValuePair<string, HiddenContentItem>> MatchingRows(
@@ -776,7 +905,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 hidden,
                 changed,
                 key,
-                entry,
+                ProjectResultEntry(entry),
                 state.ItemsRevision,
                 state.Settings.Revision,
                 state.Settings.Enabled,
@@ -799,7 +928,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
         private readonly record struct MutationEvidence(
             bool Hidden,
-            HiddenContentItem? Entry,
+            HiddenContentItemState? Entry,
             long ItemsRevision,
             long SettingsRevision,
             bool HiddenContentEnabled)
@@ -811,7 +940,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             {
                 return new MutationEvidence(
                     HasScope(matches, scope),
-                    DetachedBoundedEntry(matches.Select(pair => pair.Value).FirstOrDefault()),
+                    ProjectResultEntry(matches.Select(pair => pair.Value).FirstOrDefault()),
                     state.ItemsRevision,
                     state.Settings.Revision,
                     state.Settings.Enabled);

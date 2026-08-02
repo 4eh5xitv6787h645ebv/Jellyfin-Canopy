@@ -87,6 +87,29 @@ public sealed class HiddenContentItemActionOwnerArchitectureTests
         Assert.Matches(construction, "new HiddenContentItemProjection(itemId, kind, null, null, null, null, null, null)");
     }
 
+    [Fact]
+    public void ResultEvidence_IsOpaqueDataFreeAndCannotBeMintedByPublicCallers()
+    {
+        Assert.Empty(typeof(HiddenContentItemState).GetConstructors());
+        Assert.Empty(typeof(HiddenContentItemIdentityState).GetConstructors());
+        Assert.Null(typeof(HiddenContentItemState).GetProperty("ExtensionData"));
+        Assert.Null(typeof(HiddenContentItemIdentityState).GetProperty("ExtensionData"));
+        Assert.Equal(
+            typeof(HiddenContentItemState),
+            typeof(HiddenContentItemActionResult)
+                .GetProperty(nameof(HiddenContentItemActionResult.Entry))!
+                .PropertyType);
+    }
+
+    [Fact]
+    public void OwnerExtensionMerge_UsesOnePassBoundedAccumulator()
+    {
+        var source = PlatformHostSeamTests.CodeOnly(File.ReadAllText(OwnerSource()));
+
+        Assert.Contains("TryAddMergedExtensionValue", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("PreserveExistingExtensionData", source, StringComparison.Ordinal);
+    }
+
     private static string OwnerSource([CallerFilePath] string sourceFile = "")
         => Path.GetFullPath(Path.Combine(
             Path.GetDirectoryName(sourceFile)!,

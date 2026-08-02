@@ -1,7 +1,10 @@
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
+using Jellyfin.Plugin.JellyfinCanopy.Platform;
 using Jellyfin.Plugin.JellyfinCanopy.Services;
 using Jellyfin.Plugin.JellyfinCanopy.Tests.TestDoubles;
 using Microsoft.Extensions.Logging.Abstractions;
+using System.Diagnostics;
+using System.Text.Json;
 using Xunit;
 
 namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services;
@@ -265,10 +268,24 @@ public sealed class HiddenContentItemActionOwnerTests : IDisposable
     }
 
     [Fact]
-    public void ExactMutation_PreservesDetachedNestedItemExtensionData()
+    public void ExactMutation_PreservesLargeNestedExtensionOnlyOnDisk_AndReturnsReplaySafeEvidence()
     {
         var actor = Actor(Guid.NewGuid());
         var item = Movie(Guid.NewGuid());
+        var extensions = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+        for (var index = 0; index < 24; index++)
+        {
+            extensions[$"future-{index:D2}"] = JsonSerializer.Deserialize<JsonElement>(JsonSerializer.Serialize(new
+            {
+                nested = new
+                {
+                    value = new string((char)('a' + (index % 26)), PersistedPayloadPolicy.MaximumExtensionStringLength),
+                    marker = $"kept-{index:D2}"
+                }
+            }));
+        }
+
+        Assert.True(JsonSerializer.SerializeToUtf8Bytes(extensions).Length > PlatformIdempotencyStore.MaximumResultBytes);
         Save(actor, new UserHiddenContent
         {
             ItemsRevision = 2,
@@ -278,11 +295,7 @@ public sealed class HiddenContentItemActionOwnerTests : IDisposable
                 {
                     ItemId = item.ItemId.ToString(),
                     HideScope = "global",
-                    ExtensionData = new Dictionary<string, System.Text.Json.JsonElement>
-                    {
-                        ["future"] = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(
-                            "{\"nested\":[1,{\"value\":\"kept\"}]}")
-                    }
+                    ExtensionData = extensions
                 }
             }
         });
@@ -295,18 +308,95 @@ public sealed class HiddenContentItemActionOwnerTests : IDisposable
                 HiddenContentItemScope.ContinueWatching,
                 2));
 
+        Assert.Null(typeof(HiddenContentItemState).GetProperty("ExtensionData"));
+        Assert.Null(typeof(HiddenContentItemIdentityState).GetProperty("ExtensionData"));
+        var resultBytes = JsonSerializer.SerializeToUtf8Bytes(result);
+        Assert.True(resultBytes.Length < PlatformIdempotencyStore.MaximumResultBytes);
+        Assert.DoesNotContain("future-", System.Text.Encoding.UTF8.GetString(resultBytes), StringComparison.Ordinal);
+        var durable = Assert.Single(Read(actor).Items).Value;
+        Assert.Equal(24, durable.ExtensionData.Count);
         Assert.Equal(
-            "kept",
-            result.Entry?.ExtensionData["future"]
-                .GetProperty("nested")[1]
-                .GetProperty("value")
+            "kept-23",
+            durable.ExtensionData["future-23"]
+                .GetProperty("nested")
+                .GetProperty("marker")
                 .GetString());
+    }
+
+    [Fact]
+    public void ExactMutation_MergesAliasesFirstWins_AndFailsClosedAtAggregateExtensionBound()
+    {
+        var actor = Actor(Guid.NewGuid());
+        var item = Movie(Guid.NewGuid());
+        var state = new UserHiddenContent { ItemsRevision = 7 };
+        for (var index = 0; index <= PersistedPayloadPolicy.MaximumExtensionProperties; index++)
+        {
+            state.Items[(index + 1).ToString("x32")] = new HiddenContentItem
+            {
+                ItemId = item.ItemId.ToString(),
+                HideScope = "global",
+                ExtensionData = new Dictionary<string, JsonElement>(StringComparer.Ordinal)
+                {
+                    [$"opaque-{index:D4}"] = JsonSerializer.Deserialize<JsonElement>($"{{\"order\":{index}}}")
+                }
+            };
+        }
+
+        Save(actor, state);
+        var path = Path.Combine(UserDirectory(actor.UserId), "hidden-content.json");
+        var before = File.ReadAllBytes(path);
+        var stopwatch = Stopwatch.StartNew();
+
+        Assert.Throws<InvalidDataException>(() => _owner.Configure(
+            actor,
+            item,
+            HiddenContentItemConfiguration.Exact(
+                true,
+                HiddenContentItemScope.ContinueWatching,
+                expectedItemsRevision: 7)));
+
+        stopwatch.Stop();
+        Assert.Equal(before, File.ReadAllBytes(path));
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(5), $"Aggregate rejection took {stopwatch.Elapsed}.");
+    }
+
+    [Fact]
+    public void ExactMutation_DuplicateAliasExtensionKeysKeepFirstValue()
+    {
+        var actor = Actor(Guid.NewGuid());
+        var item = Movie(Guid.NewGuid());
+        var state = new UserHiddenContent { ItemsRevision = 2 };
+        foreach (var index in new[] { 1, 2 })
+        {
+            state.Items[index.ToString("x32")] = new HiddenContentItem
+            {
+                ItemId = item.ItemId.ToString(),
+                HideScope = "global",
+                ExtensionData = new Dictionary<string, JsonElement>(StringComparer.Ordinal)
+                {
+                    ["same"] = JsonSerializer.Deserialize<JsonElement>($"{{\"order\":{index}}}")
+                }
+            };
+        }
+
+        var validation = PersistedPayloadPolicy.ValidateMutationCandidate(state);
+        Assert.True(validation.IsValid, validation.Code);
+        Save(actor, state);
+        Assert.Equal(2, Read(actor).ItemsRevision);
+        Assert.Equal(2, Read(actor).Items.Count);
+        var result = _owner.Configure(
+            actor,
+            item,
+            HiddenContentItemConfiguration.Exact(
+                true,
+                HiddenContentItemScope.ContinueWatching,
+                expectedItemsRevision: 2));
+
+        Assert.Equal(HiddenContentItemActionOutcome.Configured, result.Outcome);
+        Assert.True(result.Changed);
         Assert.Equal(
-            "kept",
-            Assert.Single(Read(actor).Items).Value.ExtensionData["future"]
-                .GetProperty("nested")[1]
-                .GetProperty("value")
-                .GetString());
+            1,
+            Assert.Single(Read(actor).Items).Value.ExtensionData["same"].GetProperty("order").GetInt32());
     }
 
     [Fact]
@@ -366,7 +456,8 @@ public sealed class HiddenContentItemActionOwnerTests : IDisposable
         var result = _owner.GetState(actor, item, HiddenContentItemScope.Global);
 
         Assert.True(result.Hidden);
-        Assert.Equal(512, result.Entry?.Name.Length);
+        Assert.Equal(511, result.Entry?.Name.Length);
+        Assert.Equal(new string('n', 511), result.Entry?.Name);
         Assert.Equal(before, File.ReadAllBytes(path));
     }
 
@@ -388,7 +479,8 @@ public sealed class HiddenContentItemActionOwnerTests : IDisposable
                 expectedItemsRevision: 3));
 
         Assert.Equal(HiddenContentItemActionOutcome.RevisionConflict, result.Outcome);
-        Assert.Equal(512, result.Entry?.Name.Length);
+        Assert.Equal(511, result.Entry?.Name.Length);
+        Assert.Equal(new string('n', 511), result.Entry?.Name);
         Assert.Equal(4, result.ItemsRevision);
         Assert.Equal(before, File.ReadAllBytes(path));
     }
@@ -558,7 +650,7 @@ public sealed class HiddenContentItemActionOwnerTests : IDisposable
                 [itemId.ToString()] = new()
                 {
                     ItemId = itemId.ToString(),
-                    Name = new string('n', 2048),
+                    Name = new string('n', 511) + "😀" + new string('x', 1535),
                     Type = "Movie",
                     HideScope = "global"
                 }

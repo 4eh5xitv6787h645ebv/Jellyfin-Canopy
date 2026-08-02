@@ -1033,6 +1033,36 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
             return merged;
         }
 
+        internal static bool TryAddMergedExtensionValue(
+            Dictionary<string, JsonElement> aggregate,
+            string key,
+            JsonElement value,
+            ref int aggregateNodeCount)
+        {
+            ArgumentNullException.ThrowIfNull(aggregate);
+            if (aggregate.ContainsKey(key))
+            {
+                return true;
+            }
+
+            if (aggregate.Count >= MaximumExtensionProperties
+                || !IsBoundedRequiredString(key, MaximumExtensionPropertyNameLength))
+            {
+                return false;
+            }
+
+            var valueNodeCount = 0;
+            if (!VisitExtensionValue(value, 1, ref valueNodeCount)
+                || aggregateNodeCount > MaximumExtensionNodes - valueNodeCount)
+            {
+                return false;
+            }
+
+            aggregate.Add(key, value.Clone());
+            aggregateNodeCount += valueNodeCount;
+            return true;
+        }
+
         private static bool VisitExtensionValue(JsonElement element, int depth, ref int nodeCount)
         {
             nodeCount++;
