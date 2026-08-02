@@ -217,7 +217,7 @@ test.describe.serial('connected-service auto-discovery', () => {
         assertNoConfigPageRuntimeErrors(consoleErrors);
     });
 
-    test('Detect marks configured endpoints as already added and never rewrites them', async ({ page, baseURL, consoleErrors }) => {
+    test('Detect never re-offers an alias of a configured instance and never rewrites it', async ({ page, baseURL, consoleErrors }) => {
         // Seed a deliberate non-fixture Maintainerr URL and a Seerr list, plus the
         // fixture's own seeded arr instances (restored from `original`).
         await saveConfiguration(baseURL!, {
@@ -240,12 +240,13 @@ test.describe.serial('connected-service auto-discovery', () => {
 
         await configPage.locator('.jellyfin-tab-button[data-tab="maintainerr"]').click();
         await configPage.locator('#detectMaintainerrBtn').click();
-        // The only reachable Maintainerr is exactly what is already configured,
-        // so the server omits that endpoint entirely: the admin is told there is
-        // nothing new, offered no action, and the saved value is untouched.
         const maintainerrResult = configPage.locator('#maintainerrDetectResult');
-        await expect(maintainerrResult).toContainText('No Maintainerr instance found', { timeout: 30_000 });
-        await expect(maintainerrResult.locator('.jc-detect-add')).toHaveCount(0);
+        await expect(maintainerrResult).toBeVisible({ timeout: 30_000 });
+        // `maintainerr` and the configured `integrations` are the same fixture
+        // container, so that alias must never be offered as a new instance —
+        // adopting it would duplicate one service under two names.
+        await expect(maintainerrResult).not.toContainText('http://maintainerr:6246');
+        // Detecting never rewrites the configured value either way.
         await expect(configPage.locator('#maintainerrUrl')).toHaveValue('http://integrations:6246');
 
         assertNoConfigPageRuntimeErrors(consoleErrors);

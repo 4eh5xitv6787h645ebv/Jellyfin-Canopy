@@ -162,7 +162,7 @@
     "e2e/service-discovery.spec.ts › connected-service auto-discovery › endpoint is admin-only: 200 admin, bare 403 non-admin, 401 anonymous",
     "e2e/service-discovery.spec.ts › connected-service auto-discovery › Detect fills empty arr, Seerr, and Maintainerr fields from the fixture network",
     "e2e/service-discovery.spec.ts › connected-service auto-discovery › Import from Seerr adopts Sonarr and Radarr servers with their API keys",
-    "e2e/service-discovery.spec.ts › connected-service auto-discovery › Detect marks configured endpoints as already added and never rewrites them",
+    "e2e/service-discovery.spec.ts › connected-service auto-discovery › Detect never re-offers an alias of a configured instance and never rewrites it",
     "e2e/session-control.spec.ts › session control › admin sees the live session and can stop / message it",
     "e2e/session-control.spec.ts › session control › non-admin gets no session surface and is forbidden from controls",
     "e2e/settings-panel-responsive.spec.ts › Enhanced Settings responsive containment (#466 finding 3) › modern: every 320px settings pane and 390px Playback/Subtitle controls stay contained",

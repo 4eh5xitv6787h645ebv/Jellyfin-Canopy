@@ -220,6 +220,43 @@ public sealed class ServiceDiscoveryServiceTests
     }
 
     [Fact]
+    public async Task Discover_OmitsAWellKnownAliasOfAnAlreadyConfiguredInstance()
+    {
+        // The admin configured Maintainerr as "integrations"; the well-known
+        // "maintainerr" alias resolves to the same container, so offering it
+        // again would invite a duplicate pointing at one instance.
+        var fixture = new Fixture();
+        var shared = IPAddress.Parse("10.0.0.20");
+        fixture.Resolves["maintainerr"] = shared;
+        fixture.Resolves["integrations"] = shared;
+        fixture.Resolves["seerr"] = IPAddress.Parse("10.0.0.21");
+        fixture.Respond("http://maintainerr:6246/api/app/status", "{\"version\":\"3.18.0\"}", contentType: "text/html");
+        fixture.Respond("http://seerr:5055/api/v1/status", "{\"version\":\"2.7.3\"}", contentType: "application/json");
+
+        var config = Config(maintainerrUrl: "http://integrations:6246");
+        var results = await fixture.Build(config).DiscoverAsync();
+
+        Assert.DoesNotContain(results, r => r.Service == "maintainerr");
+        // An unrelated service at a different address is still reported.
+        Assert.Contains(results, r => r is { Service: "seerr", Url: "http://seerr:5055" });
+    }
+
+    [Fact]
+    public async Task Discover_StillOffersAnUnresolvableConfiguredServicesCandidates()
+    {
+        // A configured host that cannot be resolved yields no comparison key,
+        // so discovery fails open and still reports what it can reach.
+        var fixture = new Fixture();
+        fixture.Resolves["maintainerr"] = IPAddress.Parse("10.0.0.20");
+        fixture.Respond("http://maintainerr:6246/api/app/status", "{\"version\":\"3.18.0\"}", contentType: "text/html");
+
+        var config = Config(maintainerrUrl: "http://retired-host:6246");
+        var results = await fixture.Build(config).DiscoverAsync();
+
+        Assert.Contains(results, r => r is { Service: "maintainerr", Url: "http://maintainerr:6246" });
+    }
+
+    [Fact]
     public async Task Discover_NeverAttachesCredentialsToProbes()
     {
         var fixture = new Fixture();

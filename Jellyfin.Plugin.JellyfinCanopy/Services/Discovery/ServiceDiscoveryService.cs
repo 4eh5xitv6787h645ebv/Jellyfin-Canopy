@@ -166,6 +166,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Discovery
             var client = PluginHttpClients.CreateDiscoveryClient(_httpClientFactory);
             using var gate = new SemaphoreSlim(MaxConcurrentProbes, MaxConcurrentProbes);
 
+            // Configured endpoints keyed by RESOLVED address, so a well-known
+            // alias of an instance the admin already has (docker name vs. IP vs.
+            // compose alias) is recognized as the same service and never offered
+            // as a new one. Name-only comparison happens earlier in
+            // BuildCandidates; this is the address-level equivalent.
+            var configuredEndpoints = await ResolveConfiguredEndpointsAsync(config, overallCts.Token)
+                .ConfigureAwait(false);
+
             var probes = candidates
                 .Select(candidate => ProbeCandidateAsync(client, gate, candidate, overallCts.Token))
                 .ToArray();
@@ -184,9 +192,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Discovery
                     continue;
                 }
 
+                var endpointKey = $"{outcome.Candidate.Service}|{outcome.EndpointKey}";
                 var count = perServiceCounts.GetValueOrDefault(outcome.Candidate.Service);
                 if (count >= MaxResultsPerService
-                    || !seenEndpoints.Add($"{outcome.Candidate.Service}|{outcome.EndpointKey}"))
+                    || configuredEndpoints.Contains(endpointKey)
+                    || !seenEndpoints.Add(endpointKey))
                 {
                     continue;
                 }
@@ -201,6 +211,64 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Discovery
         }
 
         private sealed record ProbeOutcome(DiscoveryCandidate Candidate, string EndpointKey);
+
+        /// <summary>
+        /// Resolves every configured service URL to the same
+        /// <c>service|address:port</c> key the probes produce. A URL that cannot
+        /// be parsed or resolved contributes no key, so discovery fails open and
+        /// still offers the candidate rather than hiding a reachable service.
+        /// </summary>
+        private async Task<HashSet<string>> ResolveConfiguredEndpointsAsync(
+            PluginConfiguration config,
+            CancellationToken ct)
+        {
+            var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var (service, url) in EnumerateConfiguredUrls(config))
+            {
+                if (!ServiceUrlResolver.TryNormalizeHttpBaseUrl(url, out var normalized)
+                    || !Uri.TryCreate(normalized, UriKind.Absolute, out var uri))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    var addresses = await _resolveHost(uri.Host, ct).ConfigureAwait(false);
+                    foreach (var address in addresses)
+                    {
+                        keys.Add($"{service}|{address}:{uri.Port}");
+                    }
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    // Unresolvable configured host: nothing to compare against.
+                }
+            }
+
+            return keys;
+        }
+
+        private static IEnumerable<(string Service, string? Url)> EnumerateConfiguredUrls(PluginConfiguration config)
+        {
+            foreach (var instance in config.GetSonarrInstances())
+            {
+                yield return ("sonarr", instance?.Url);
+            }
+
+            foreach (var instance in config.GetRadarrInstances())
+            {
+                yield return ("radarr", instance?.Url);
+            }
+
+            yield return ("bazarr", config.BazarrUrl);
+            foreach (var line in (config.SeerrUrls ?? string.Empty)
+                .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                yield return ("seerr", line);
+            }
+
+            yield return ("maintainerr", config.MaintainerrUrl);
+        }
 
         private async Task<ProbeOutcome?> ProbeCandidateAsync(
             HttpClient client,
@@ -572,24 +640,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Discovery
                 }
             }
 
-            foreach (var instance in config.GetSonarrInstances())
+            foreach (var (service, url) in EnumerateConfiguredUrls(config))
             {
-                AddConfigured("sonarr", instance?.Url);
+                AddConfigured(service, url);
             }
-
-            foreach (var instance in config.GetRadarrInstances())
-            {
-                AddConfigured("radarr", instance?.Url);
-            }
-
-            AddConfigured("bazarr", config.BazarrUrl);
-            foreach (var line in (config.SeerrUrls ?? string.Empty)
-                .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
-            {
-                AddConfigured("seerr", line);
-            }
-
-            AddConfigured("maintainerr", config.MaintainerrUrl);
 
             var candidates = new List<DiscoveryCandidate>();
             var seen = new HashSet<string>(StringComparer.Ordinal);
