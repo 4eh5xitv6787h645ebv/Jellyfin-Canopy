@@ -199,8 +199,9 @@ test.describe('Platform v1 contract — live smoke client', () => {
         expect(matchedNegotiation.status, 'a matching strong validator must preserve the 200 response').toBe(200);
         expect(matchedNegotiation.etag).toBe(negotiated.etag);
 
+        const staleValidator = '"sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"';
         const staleNegotiation = await getJson(page, negotiatePath + query, true, {
-            'If-Match': '"sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"',
+            'If-Match': staleValidator,
         });
         expect(staleNegotiation.status, 'a stale strong validator must fail closed').toBe(412);
         expect(staleNegotiation.etag).toBe(negotiated.etag);
@@ -210,6 +211,32 @@ test.describe('Platform v1 contract — live smoke client', () => {
             `GET ${negotiatePath} stale If-Match`,
         );
         expect(staleNegotiation.body.Code).toBe('precondition_failed');
+
+        // A real browser reports the deliberate 412 through both the URL-aware
+        // response sink and a URL-less Chromium console line. Prove the exact
+        // request provenance before acknowledging only that collected response,
+        // then narrow only its matching console diagnostic at the final gate.
+        const deliberatePreconditionFailures = consoleErrors.unexpected4xx().filter((failure) => {
+            const url = new URL(failure.url);
+            return failure.status === 412
+                && failure.method === 'GET'
+                && url.pathname + url.search === negotiatePath + query;
+        });
+        expect(deliberatePreconditionFailures, 'only the proved stale validator returns 412')
+            .toHaveLength(1);
+        const staleRequest = consoleErrors.requestFor(deliberatePreconditionFailures[0]);
+        expect(staleRequest, 'the deliberate 412 retains its initiating browser request').toBeDefined();
+        expect(staleRequest!.headers()['if-match']).toBe(staleValidator);
+        consoleErrors.acknowledgeExpected4xx(deliberatePreconditionFailures);
+
+        const expectedPreconditionConsole =
+            /^Failed to load resource: the server responded with a status of 412 \(Precondition Failed\)$/i;
+        expect(
+            consoleErrors.realDetails().filter(
+                detail => detail.source === 'console' && expectedPreconditionConsole.test(detail.text)
+            ),
+            'Chromium reports exactly the proved stale-validator response'
+        ).toHaveLength(1);
 
         // Additive v1 evolution may put a property on a future host that this
         // contract-driven client does not know yet. Prove the reader preserves
@@ -236,7 +263,16 @@ test.describe('Platform v1 contract — live smoke client', () => {
         expect(futureError.Code).toBe('future_platform_code');
         expect(futureError.FutureDetail).toBeUndefined();
 
-        assertNoRuntimeErrors(consoleErrors);
+        assertNoRuntimeErrors({
+            ...consoleErrors,
+            real: () => consoleErrors.real().filter(
+                text => !expectedPreconditionConsole.test(text)
+            ),
+            realDetails: () => consoleErrors.realDetails().filter(
+                detail => !(detail.source === 'console'
+                    && expectedPreconditionConsole.test(detail.text))
+            ),
+        });
     });
 
     test('an unauthenticated call to the authenticated route is refused with an unparseable body', async ({ page, consoleErrors }) => {
