@@ -31,13 +31,13 @@
         "totalLines": 40248
       },
       "observations": {
-        "cleanRuns": 3,
-        "minimumCoveredLines": 31618,
+        "cleanRuns": 4,
+        "minimumCoveredLines": 31617,
         "maximumCoveredLines": 31619
       },
       "tolerance": {
-        "missingCoveredLines": 1,
-        "rationale": "The #522 request-lifecycle and idempotency kernel adds a linked 30-second model-binding/action deadline, caller-first cancellation handling, bounded semantic replay state, bounded same-key follower coalescing, and focused lifecycle, concurrency, architecture, and contract coverage. Three clean Coverlet runs on the identical 2026-08-03 source and 40,248-line scope each passed all 2,736 server tests: two observed 31,618 covered lines and one observed 31,619. Relative to the reviewed #587 baseline of 31,298/39,890 (78.461%), the reviewed implementation adds 358 instrumented lines and 321 covered high-water lines while increasing the high-water to 31,619/40,248 (78.560%) and the enforced floor to 31,618/40,248 (78.558%). The one-line allowance is exactly the observed same-head, fixed-scope instrumentation envelope; the 31,619 high-water is retained and broader regressions still fail. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
+        "missingCoveredLines": 2,
+        "rationale": "The #522 request-lifecycle and idempotency kernel adds a linked 30-second model-binding/action deadline, caller-first cancellation handling, bounded semantic replay state, bounded same-key follower coalescing, and focused lifecycle, concurrency, architecture, and contract coverage. Four clean Coverlet runs on the identical 2026-08-03 source and 40,248-line scope each passed all 2,736 server tests: the three local runs observed 31,618, 31,618, and 31,619 covered lines, while GitHub Actions run 30758176581 observed 31,617. Relative to the reviewed #587 baseline of 31,298/39,890 (78.461%), the reviewed implementation adds 358 instrumented lines and 321 covered high-water lines while increasing the high-water to 31,619/40,248 (78.560%) and the enforced floor to 31,617/40,248 (78.555%). The two-line allowance is exactly the observed same-head, fixed-scope local-and-CI instrumentation envelope; the 31,619 high-water is retained and broader regressions still fail. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
       }
     }
   }
