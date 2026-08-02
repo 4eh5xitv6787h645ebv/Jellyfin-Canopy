@@ -7,6 +7,7 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyfinCanopy;
 using Jellyfin.Plugin.JellyfinCanopy.Platform;
+using Jellyfin.Plugin.JellyfinCanopy.Services.Seerr;
 using MediaBrowser.Controller;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
@@ -246,6 +247,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
                 services,
                 descriptor => descriptor.ServiceType == typeof(PlatformAuditStore));
             Assert.Equal(ServiceLifetime.Singleton, auditRegistration.Lifetime);
+
+            Assert.Equal(
+                ServiceLifetime.Singleton,
+                Assert.Single(services, descriptor => descriptor.ServiceType == typeof(ISeerrMediaRequestOwner)).Lifetime);
+            Assert.Equal(
+                ServiceLifetime.Singleton,
+                Assert.Single(services, descriptor => descriptor.ServiceType == typeof(ISeerrMediaRequestAdmission)).Lifetime);
+            Assert.Equal(
+                ServiceLifetime.Singleton,
+                Assert.Single(services, descriptor => descriptor.ServiceType == typeof(ISeerrSpoilerIntentStore)).Lifetime);
 
             Assert.True(CanRead(formatter, typeof(TestController)));
             Assert.False(CanRead(formatter, typeof(LegacyController)));

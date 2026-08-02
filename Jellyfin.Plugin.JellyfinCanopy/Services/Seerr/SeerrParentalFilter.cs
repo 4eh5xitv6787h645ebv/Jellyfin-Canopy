@@ -202,10 +202,18 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             }
         }
 
-        public async Task<bool> IsBlockedAsync(string mediaType, int tmdbId, SeerrCaller caller)
+        public Task<bool> IsBlockedAsync(string mediaType, int tmdbId, SeerrCaller caller)
+            => IsBlockedAsync(mediaType, tmdbId, caller, CancellationToken.None);
+
+        public async Task<bool> IsBlockedAsync(
+            string mediaType,
+            int tmdbId,
+            SeerrCaller caller,
+            CancellationToken cancellationToken)
         {
             try
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 var gate = await ResolveGateAsync(caller).ConfigureAwait(false);
                 if (gate is null)
                 {
@@ -213,7 +221,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                 }
 
                 var normalized = string.Equals(mediaType, "tv", StringComparison.OrdinalIgnoreCase) ? "tv" : "movie";
-                return await IsTitleBlockedAsync(normalized, tmdbId, gate.Value).ConfigureAwait(false);
+                return await IsTitleBlockedAsync(
+                    normalized,
+                    tmdbId,
+                    gate.Value,
+                    cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception ex)
             {
@@ -407,7 +423,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             return !IsAllowed(signature, mediaType, gate.Policy);
         }
 
-        private async Task<bool> IsTitleBlockedAsync(string mediaType, int tmdbId, GateContext gate)
+        private async Task<bool> IsTitleBlockedAsync(
+            string mediaType,
+            int tmdbId,
+            GateContext gate,
+            CancellationToken cancellationToken = default)
         {
             if (tmdbId <= 0)
             {
@@ -419,10 +439,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                 return true;
             }
 
-            using var cts = new CancellationTokenSource(PerFetchTimeout);
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            cts.CancelAfter(PerFetchTimeout);
             var signature = await GetSignatureAsync(
                 CacheKey(mediaType, tmdbId, gate.Region), mediaType, tmdbId, gate,
                 needTags: gate.Policy.HasTagRules, cts.Token).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
             if (signature is null || !IsCurrentConfiguration(gate))
             {
                 return true; // fetch failed, stale generation, or unverifiable -> fail closed

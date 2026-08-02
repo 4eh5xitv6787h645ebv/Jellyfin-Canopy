@@ -6,6 +6,7 @@ using System.Linq;
 using System.Text;
 using System.Text.Json;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
+using Jellyfin.Plugin.JellyfinCanopy.Services.Seerr;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Entities.TV;
@@ -25,7 +26,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
     /// ILibraryManager and IUserManager — never on ISeerrClient — so it can be
     /// consumed by the Seerr proxy controller without introducing a DI cycle.
     /// </summary>
-    public sealed class SpoilerPendingService
+    public sealed class SpoilerPendingService : ISeerrSpoilerIntentStore
     {
         // Hard cap on PendingTmdb — defensive against an auth'd user spamming the
         // modal/Seerr hook to grow spoilerblur.json without bound. 500 is well above
@@ -99,6 +100,28 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 return new SeerrIntentRegistration(false, parseFailureCode);
             }
 
+            var kind = mediaType == "tv"
+                ? SeerrMediaRequestKind.Series
+                : SeerrMediaRequestKind.Movie;
+            return RegisterSeerrIntent(
+                userId,
+                kind,
+                int.Parse(canonicalTmdb, NumberStyles.None, CultureInfo.InvariantCulture));
+        }
+
+        internal SeerrIntentRegistration RegisterSeerrIntent(
+            Guid userId,
+            SeerrMediaRequestKind kind,
+            int tmdbId)
+        {
+            if (userId == Guid.Empty || !Enum.IsDefined(kind) || tmdbId <= 0)
+            {
+                return new SeerrIntentRegistration(false, "invalid_request_target");
+            }
+
+            var mediaType = kind == SeerrMediaRequestKind.Series ? "tv" : "movie";
+            var canonicalTmdb = tmdbId.ToString(CultureInfo.InvariantCulture);
+
             var jUser = _userManager.GetUserById(userId);
             if (jUser == null)
             {
@@ -163,6 +186,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 _ => new SeerrIntentRegistration(false, "pending_cap_exceeded", pendingKey),
             };
         }
+
+        bool ISeerrSpoilerIntentStore.TryRegister(
+            Guid userId,
+            SeerrMediaRequestKind kind,
+            int tmdbId)
+            => RegisterSeerrIntent(userId, kind, tmdbId).IsDurable;
 
         private static bool TryParseSeerrRequestTarget(
             string? requestBody,

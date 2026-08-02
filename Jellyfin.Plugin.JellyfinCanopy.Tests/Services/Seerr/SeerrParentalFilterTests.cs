@@ -397,6 +397,25 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services.Seerr
         }
 
         [Fact]
+        public async Task IsBlockedAsync_CallerCancellationPropagatesInsteadOfBecomingACompletedDecision()
+        {
+            var filter = BuildFilter(
+                maxScore: 13,
+                maxSub: null,
+                block: Array.Empty<UnratedItem>(),
+                featureEnabled: true,
+                seed: null);
+            using var cancellation = new CancellationTokenSource();
+            cancellation.Cancel();
+
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => filter.IsBlockedAsync(
+                "movie",
+                100,
+                new SeerrCaller(CallerGuid, false),
+                cancellation.Token));
+        }
+
+        [Fact]
         public async Task Gate_InactiveWhenSeerrNotConfigured()
         {
             // Without a Seerr URL/key the gate can't verify certs, so it stays inactive
