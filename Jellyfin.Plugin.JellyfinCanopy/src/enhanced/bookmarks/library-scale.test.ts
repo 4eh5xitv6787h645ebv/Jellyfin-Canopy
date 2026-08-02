@@ -8,7 +8,11 @@ vi.mock('./library-modals', () => ({
 }));
 
 import { renderBookmarkItems } from './library-items';
-import { renderBookmarksLibrary, resetBookmarksLibraryRender } from './library-render';
+import {
+  renderBookmarksLibrary,
+  resetBookmarksLibraryRender,
+  startBookmarksLibraryRender,
+} from './library-render';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -134,6 +138,57 @@ describe('bookmark library scale bounds', () => {
     await rendering;
 
     expect(container.querySelectorAll('.jc-bookmark-row')).toHaveLength(0);
+  });
+
+  it('quietly retires interaction-owned pagination and tab renders', async () => {
+    store = bookmarkStore(1000);
+    const normal = plugin.getMockImplementation() as (
+      path: string,
+      options?: { body?: any; signal?: AbortSignal }
+    ) => Promise<any>;
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    for (const selector of ['.jc-bookmark-page-next', '.jc-tab[data-tab="tv"]']) {
+      resetBookmarksLibraryRender();
+      plugin.mockImplementation(normal);
+      const container = document.createElement('div');
+      document.body.replaceChildren(container);
+      await renderBookmarksLibrary(container);
+
+      let heldSignal: AbortSignal | undefined;
+      plugin.mockImplementation((path: string, options?: { body?: any; signal?: AbortSignal }) => {
+        if (!path.includes('/page?')) return normal(path, options);
+        heldSignal = options?.signal;
+        return new Promise((_resolve, reject) => {
+          heldSignal?.addEventListener('abort', () => {
+            reject(Object.assign(new Error('Request was aborted'), { name: 'AbortError' }));
+          }, { once: true });
+        });
+      });
+
+      container.querySelector<HTMLButtonElement>(selector)!.click();
+      await vi.waitFor(() => expect(heldSignal).toBeDefined());
+      resetBookmarksLibraryRender();
+      await vi.waitFor(() => expect(heldSignal?.aborted).toBe(true));
+      await Promise.resolve();
+    }
+
+    expect(consoleError).not.toHaveBeenCalled();
+  });
+
+  it('reports a genuine fire-and-forget render failure', async () => {
+    const failure = new Error('bookmark page transport failed');
+    plugin.mockRejectedValueOnce(failure);
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+
+    startBookmarksLibraryRender(container);
+
+    await vi.waitFor(() => expect(consoleError).toHaveBeenCalledWith(
+      '🪼 Jellyfin Canopy: Bookmarks Library: Render failed:',
+      failure
+    ));
   });
 
   it('renders fifty rows with three requests and stays responsive at the supported maximum', async () => {
