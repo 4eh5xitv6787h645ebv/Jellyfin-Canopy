@@ -26,16 +26,16 @@ test('reviewed coverage baselines match the clean measurement envelopes', () => 
         /exact minimum directly observed by clean runs on the identical source, tests, and total-line scope/
     );
     assert.deepEqual(baselines.profiles.client.measured, { coveredLines: 2808, totalLines: 3201 });
-    assert.deepEqual(baselines.profiles.server.measured, { coveredLines: 28559, totalLines: 37106 });
+    assert.deepEqual(baselines.profiles.server.measured, { coveredLines: 29245, totalLines: 37825 });
     assert.deepEqual(baselines.profiles.client.observations, {
         cleanRuns: 3,
         minimumCoveredLines: 2808,
         maximumCoveredLines: 2808,
     });
     assert.deepEqual(baselines.profiles.server.observations, {
-        cleanRuns: 7,
-        minimumCoveredLines: 28557,
-        maximumCoveredLines: 28559,
+        cleanRuns: 4,
+        minimumCoveredLines: 29243,
+        maximumCoveredLines: 29245,
     });
     assert.equal(baselines.profiles.client.tolerance.missingCoveredLines, 0);
     assert.equal(baselines.profiles.server.tolerance.missingCoveredLines, 2);
@@ -50,11 +50,17 @@ for (const name of ['client', 'server']) {
             totalLines: profile.measured.totalLines,
         };
         const result = evaluateCoverage(tolerated, profile);
-        assert.equal(result.ok, true);
-        assert.equal(
-            result.reason,
-            profile.tolerance.missingCoveredLines === 0 ? 'exact' : 'within-tolerance'
-        );
+        assert.deepEqual(result, profile.tolerance.missingCoveredLines === 0
+            ? {
+                ok: true,
+                reason: 'exact',
+                message: 'measurement matches the reviewed observed high-water',
+            }
+            : {
+                ok: true,
+                reason: 'within-tolerance',
+                message: `measurement is within the ${profile.tolerance.missingCoveredLines}-line instrumentation tolerance`,
+            });
     });
 
     test(`${name} negative fixture fails after representative covered lines are removed`, () => {

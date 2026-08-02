@@ -39,7 +39,8 @@ public sealed class MonitorSubscriptionLifecycleTests
                 null!,
                 null!,
                 NullLogger<WatchlistMonitor>.Instance,
-                Provider);
+                Provider,
+                new StubItemLookupService());
             AutoMovie = new AutoMovieRequestMonitor(
                 Sessions,
                 null!,

@@ -12,6 +12,7 @@ using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
 using Jellyfin.Database.Implementations.Entities;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
+using Jellyfin.Plugin.JellyfinCanopy.Data;
 using Jellyfin.Plugin.JellyfinCanopy.Helpers;
 using Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr;
 using Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks;
@@ -35,6 +36,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         private readonly UserConfigurationManager _userConfigurationManager;
         private readonly ILogger<WatchlistMonitor> _logger;
         private readonly IPluginConfigProvider _configProvider;
+        private readonly WatchlistLibraryResolver _watchlistLibraryResolver;
         private const int WorkQueueCapacity = 1024;
         // A local mutation batch can be partially committed before an unexpected exception.
         // Do not replay it automatically; the next Jellyfin update event is the safe re-drive.
@@ -62,7 +64,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             IHttpClientFactory httpClientFactory,
             UserConfigurationManager userConfigurationManager,
             ILogger<WatchlistMonitor> logger,
-            IPluginConfigProvider configProvider)
+            IPluginConfigProvider configProvider,
+            IItemLookupService itemLookup)
         {
             _libraryManager = libraryManager;
             _userManager = userManager;
@@ -71,6 +74,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             _userConfigurationManager = userConfigurationManager;
             _configProvider = configProvider;
             _logger = logger;
+            _watchlistLibraryResolver = new WatchlistLibraryResolver(
+                libraryManager,
+                itemLookup);
             _workQueue = new BoundedCoalescingWorker<Guid, WatchlistWorkItem>(
                 WorkQueueCapacity,
                 WorkMaximumAttempts,
@@ -461,41 +467,33 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     .Where(id => !blockedIds.Contains(id))
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToList();
+                var requesterUsers = requesterIds
+                    .Select(id => usersByNormalizedId.GetValueOrDefault(id))
+                    .Where(static user => user != null)
+                    .Cast<User>()
+                    .ToList();
+                var mediaKey = new WatchlistMediaKey(mediaType, tmdbId);
 
                 // Stage every local decision without changing UserItemData or processed-marker
                 // files. A later ownership/configuration failure therefore produces zero partial
                 // local writes across a multi-requester event.
-                var pendingMutations = new List<PendingWatchlistMutation>();
-                foreach (var jellyfinUserId in requesterIds)
+                var preparedLibrary = _watchlistLibraryResolver.Resolve(
+                    new[] { mediaKey },
+                    requesterUsers,
+                    new[] { item },
+                    cancellationToken);
+                if (!preparedLibrary.IsComplete)
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
-
-                    if (!usersByNormalizedId.TryGetValue(jellyfinUserId, out var user))
-                    {
-                        continue;
-                    }
-
-                    // Check if prevention is enabled and item was already processed
-                    if (config.PreventWatchlistReAddition)
-                    {
-                        var processedItems = _userConfigurationManager.GetProcessedWatchlistItems(user.Id);
-                        if (processedItems.Items.Any(p => p.TmdbId == tmdbId && p.MediaType == mediaType))
-                        {
-                            continue; // Skip this user, item was already processed
-                        }
-                    }
-
-                    var userData = _userDataManager.GetUserData(user, item);
-                    if (userData != null && userData.Likes != true)
-                    {
-                        pendingMutations.Add(new PendingWatchlistMutation(user, userData, addLike: true));
-                    }
-                    else if (userData != null && userData.Likes == true && config.PreventWatchlistReAddition)
-                    {
-                        pendingMutations.Add(new PendingWatchlistMutation(user, userData, addLike: false));
-                    }
+                    _logger.LogWarning(
+                        "[Watchlist] The bounded Jellyfin candidate lookup was incomplete; no local watchlists were changed.");
+                    return;
                 }
 
+                var pendingMutations = BuildPendingMutations(
+                    requesterUsers,
+                    preparedLibrary,
+                    mediaKey,
+                    config);
                 if (pendingMutations.Count == 0) return;
 
                 // Ownership can be rebound while request rows and local user data are being
@@ -527,6 +525,28 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     return;
                 }
 
+                // Access may be revoked (or an edition replaced) during the
+                // awaited ownership proof. Resolve the complete candidate set and
+                // every requester projection again at the final local-write barrier.
+                var dispatchLibrary = _watchlistLibraryResolver.Resolve(
+                    new[] { mediaKey },
+                    requesterUsers,
+                    new[] { item },
+                    cancellationToken);
+                if (!dispatchLibrary.IsComplete)
+                {
+                    _logger.LogWarning(
+                        "[Watchlist] The final bounded Jellyfin access lookup was incomplete; no local watchlists were changed.");
+                    return;
+                }
+
+                pendingMutations = BuildPendingMutations(
+                    requesterUsers,
+                    dispatchLibrary,
+                    mediaKey,
+                    config);
+                if (pendingMutations.Count == 0) return;
+
                 var addedCount = 0;
                 var addedUsers = new List<string>();
                 foreach (var pending in pendingMutations)
@@ -539,13 +559,61 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                         return;
                     }
 
-                    if (pending.AddLike)
+                    // The final bulk snapshot precedes this loop. Re-project every
+                    // bounded edition immediately before each save/marker, then
+                    // re-read current user data and select again. This closes both
+                    // access revocation and stale liked-edition decisions.
+                    var currentAccessibleItems = _watchlistLibraryResolver.RevalidateAccessibleItems(
+                        pending.User,
+                        mediaKey,
+                        dispatchLibrary.Get(pending.User, mediaKey).AccessibleItems,
+                        cancellationToken);
+                    if (currentAccessibleItems.Count == 0)
                     {
-                        pending.UserData.Likes = true;
+                        _logger.LogDebug(
+                            "[Watchlist] Suppressed TMDB {TmdbId} for {User} because no edition is still accessible.",
+                            tmdbId,
+                            pending.User.Username);
+                        continue;
+                    }
+
+                    // The access query is synchronous but can overlap an admin
+                    // save. Fence its completion, then fence the current user-data
+                    // read as well, before any local write.
+                    if (!IsCurrentMutationAuthorized(configStamp))
+                    {
+                        _logger.LogWarning(
+                            "[Watchlist] Configuration changed during final access validation; remaining writes were suppressed.");
+                        return;
+                    }
+
+                    var currentUserData = _userDataManager.GetUserDataBatch(
+                        currentAccessibleItems,
+                        pending.User);
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (!IsCurrentMutationAuthorized(configStamp))
+                    {
+                        _logger.LogWarning(
+                            "[Watchlist] Configuration changed during final user-data validation; remaining writes were suppressed.");
+                        return;
+                    }
+
+                    var currentMatch = new WatchlistLibraryMatch(
+                        WatchlistLibraryMatchState.Accessible,
+                        currentAccessibleItems);
+                    var currentSelection = currentMatch.SelectPreferred(currentUserData);
+                    if (currentSelection == null)
+                    {
+                        continue;
+                    }
+
+                    if (currentSelection.UserData.Likes != true)
+                    {
+                        currentSelection.UserData.Likes = true;
                         _userDataManager.SaveUserData(
                             pending.User,
-                            item,
-                            pending.UserData,
+                            currentSelection.Item,
+                            currentSelection.UserData,
                             UserDataSaveReason.UpdateUserRating,
                             cancellationToken);
                         addedCount++;
@@ -557,7 +625,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                             TryMarkProcessed(pending.User.Id, tmdbId, mediaType, "monitor");
                         }
                     }
-                    else if (IsCurrentMutationAuthorized(configStamp))
+                    else if (config.PreventWatchlistReAddition
+                        && IsCurrentMutationAuthorized(configStamp))
                     {
                         TryMarkProcessed(pending.User.Id, tmdbId, mediaType, "existing");
                     }
@@ -566,7 +635,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 // Only log if we actually added the item to at least one watchlist
                 if (addedCount > 0)
                 {
-                    _logger.LogInformation($"[Watchlist] ✓ Added '{item.Name}' to watchlist for {string.Join(", ", addedUsers)}");
+                    _logger.LogInformation($"[Watchlist] ✓ Added TMDB {tmdbId} to watchlist for {string.Join(", ", addedUsers)}");
                 }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -578,6 +647,37 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 _logger.LogError($"[Watchlist] Error in ProcessItemForWatchlist: {ex.Message}\nStack trace: {ex.StackTrace}");
                 throw;
             }
+        }
+
+        private List<PendingWatchlistMutation> BuildPendingMutations(
+            IReadOnlyCollection<User> users,
+            WatchlistLibraryBatch library,
+            WatchlistMediaKey mediaKey,
+            PluginConfiguration config)
+        {
+            var pendingMutations = new List<PendingWatchlistMutation>();
+            foreach (var user in users)
+            {
+                if (config.PreventWatchlistReAddition)
+                {
+                    var processedItems = _userConfigurationManager.GetProcessedWatchlistItems(user.Id);
+                    if (processedItems.Items.Any(p => p.TmdbId == mediaKey.TmdbId
+                        && p.MediaType == mediaKey.MediaType))
+                    {
+                        continue;
+                    }
+                }
+
+                var libraryMatch = library.Get(user, mediaKey);
+                if (libraryMatch.AccessibleItems.Count == 0)
+                {
+                    continue;
+                }
+
+                pendingMutations.Add(new PendingWatchlistMutation(user));
+            }
+
+            return pendingMutations;
         }
 
         // Serialize the processed-watchlist marker append through the locked RMW primitive so a
@@ -1047,18 +1147,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
         private sealed class PendingWatchlistMutation
         {
-            public PendingWatchlistMutation(User user, UserItemData userData, bool addLike)
+            public PendingWatchlistMutation(User user)
             {
                 User = user;
-                UserData = userData;
-                AddLike = addLike;
             }
 
             public User User { get; }
-
-            public UserItemData UserData { get; }
-
-            public bool AddLike { get; }
         }
 
         // Model for Seerr request items with requesting user

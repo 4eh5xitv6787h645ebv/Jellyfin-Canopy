@@ -111,7 +111,8 @@ public class SeerrCacheTests
             null!,
             null!,
             NullLogger<WatchlistMonitor>.Instance,
-            provider);
+            provider,
+            new StubItemLookupService());
         // Disabled auto monitors with null event sources: reconciliation must not
         // dereference session-manager events when no subscription exists or is desired.
         var autoMovie = new AutoMovieRequestMonitor(
