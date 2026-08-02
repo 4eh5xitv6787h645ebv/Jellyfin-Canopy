@@ -96,7 +96,9 @@ Not in the pilot: a client naming a provider method; a client supplying an
 arbitrary URL.
 ADR [0011](adr/0011-identity-and-authority.md).
 
-## C7 — Declarative web slots (deferred full-program design)
+## C7 — Declarative web slots
+
+**Deferred full-program design.**
 
 Exactly nine, and no more, in v1:
 
