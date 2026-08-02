@@ -9,7 +9,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
     public sealed class PlatformJsonMediaTypeFilter : IAsyncResourceFilter, IOrderedFilter
     {
         /// <inheritdoc />
-        public int Order => int.MinValue;
+        public int Order => PlatformFilterOrder.JsonMediaType;
 
         /// <inheritdoc />
         public async Task OnResourceExecutionAsync(ResourceExecutingContext context, ResourceExecutionDelegate next)

@@ -1,6 +1,3 @@
-using System;
-using System.Linq;
-using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -36,13 +33,21 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
     [ApiController]
     [Authorize]
     [Produces("application/json")]
+    [TypeFilter(typeof(PlatformActorBoundaryFilter), Order = PlatformFilterOrder.ActorBoundary)]
     [TypeFilter(typeof(PlatformRequestFilter), Order = int.MinValue)]
     [TypeFilter(typeof(PlatformJsonResultFilter))]
-    [TypeFilter(typeof(PlatformJsonMediaTypeFilter), Order = int.MinValue)]
-    [TypeFilter(typeof(PlatformBoundedBodyFilter), Order = int.MinValue + 1)]
-    [TypeFilter(typeof(PlatformRequestLifecycleFilter), Order = int.MinValue + 2)]
+    [TypeFilter(typeof(PlatformJsonMediaTypeFilter), Order = PlatformFilterOrder.JsonMediaType)]
+    [TypeFilter(typeof(PlatformBoundedBodyFilter), Order = PlatformFilterOrder.BoundedBody)]
+    [TypeFilter(typeof(PlatformRequestLifecycleFilter), Order = PlatformFilterOrder.RequestLifecycle)]
     public abstract class PlatformControllerBase : ControllerBase
     {
+        /// <summary>
+        /// The immutable authenticated actor established at the controller boundary.
+        /// Only this allow-listed value may be passed into Platform services; the
+        /// principal and HTTP context remain above the boundary.
+        /// </summary>
+        protected PlatformActor Actor => PlatformActorBoundaryFilter.Require(HttpContext);
+
         /// <summary>
         /// The correlation id for the current request, tying this response to the server
         /// log lines it produced.
@@ -63,34 +68,5 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
         protected ObjectResult PlatformProblem(string code, string message) =>
             PlatformResults.Error(code, message, CorrelationId);
 
-        /// <summary>
-        /// The acting user, derived from Jellyfin's authentication claims and nothing
-        /// else.
-        ///
-        /// EP-00 verified that this cannot be forged: with a non-admin token, injected
-        /// <c>Jellyfin-UserId</c>, <c>X-Jellyfin-User-Id</c>, <c>X-Emby-Authorization</c>
-        /// header values and a <c>jellyfin-userid</c> cookie all still resolved to the
-        /// caller's own id (spike-evidence S14). No route value, header, cookie or
-        /// payload field may ever be consulted instead of this.
-        /// </summary>
-        protected Guid? ActingUserId
-        {
-            get
-            {
-                var raw = User.Claims.FirstOrDefault(claim =>
-                    string.Equals(claim.Type, "Jellyfin-UserId", StringComparison.OrdinalIgnoreCase))?.Value;
-
-                return Guid.TryParse(raw, out var parsed) && parsed != Guid.Empty ? parsed : null;
-            }
-        }
-
-        /// <summary>
-        /// The device the caller is using, for attribution only.
-        ///
-        /// Attribution is never authority: a device identifier is caller-supplied and
-        /// may not influence any access decision (ADR-0011).
-        /// </summary>
-        protected string? ActingDeviceId => User.Claims.FirstOrDefault(claim =>
-            string.Equals(claim.Type, "Jellyfin-DeviceId", StringComparison.OrdinalIgnoreCase))?.Value;
     }
 }

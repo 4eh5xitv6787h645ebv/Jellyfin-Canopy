@@ -218,7 +218,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
             var filter = new PlatformBoundedBodyFilter();
 
             Assert.IsAssignableFrom<IAsyncResourceFilter>(filter);
-            Assert.Equal(int.MinValue, filter.Order);
+            Assert.Equal(PlatformFilterOrder.BoundedBody, filter.Order);
         }
 
         [Fact]
