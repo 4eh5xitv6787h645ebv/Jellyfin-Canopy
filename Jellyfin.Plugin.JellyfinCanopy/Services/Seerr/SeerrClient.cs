@@ -32,7 +32,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
     /// shared <see cref="ISeerrCache"/> user caches so every caller format
     /// (dashed/N/upper) hits the same entry.
     /// </summary>
-    public sealed class SeerrClient : ISeerrClient
+    public sealed class SeerrClient : ISeerrClient, ISeerrMediaRequestAdmission
     {
         private readonly IHttpClientFactory _httpClientFactory;
         private readonly ILogger<SeerrClient> _logger;
@@ -105,6 +105,61 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                 normalizedCandidate,
                 StringComparison.Ordinal));
         }
+
+        async Task<SeerrRequestIdentityResolution> ISeerrMediaRequestAdmission.ResolveAsync(
+            Guid jellyfinUserId,
+            SeerrRequestIdentityResolutionMode mode,
+            CancellationToken cancellationToken)
+        {
+            if (!Enum.IsDefined(mode))
+            {
+                throw new ArgumentOutOfRangeException(nameof(mode));
+            }
+
+            var resolution = await ResolveSeerrUser(
+                jellyfinUserId.ToString("D"),
+                bypassCache: true,
+                allowAutoImport: mode == SeerrRequestIdentityResolutionMode.InitialAdmission,
+                cancellationToken).ConfigureAwait(false);
+            if (!resolution.IsFound || resolution.User == null)
+            {
+                return new SeerrRequestIdentityResolution(
+                    resolution.Status switch
+                    {
+                        SeerrUserResolutionStatus.NotFound => SeerrRequestIdentityStatus.NotFound,
+                        SeerrUserResolutionStatus.Blocked => SeerrRequestIdentityStatus.Blocked,
+                        _ => SeerrRequestIdentityStatus.Unavailable,
+                    },
+                    default);
+            }
+
+            var source = SeerrUrlIdentity.Normalize(resolution.User.SourceUrl);
+            if (resolution.User.Id <= 0 || string.IsNullOrEmpty(source))
+            {
+                return new SeerrRequestIdentityResolution(
+                    SeerrRequestIdentityStatus.Unavailable,
+                    default);
+            }
+
+            return new SeerrRequestIdentityResolution(
+                SeerrRequestIdentityStatus.Found,
+                new SeerrRequestIdentity(
+                    resolution.User.Id,
+                    resolution.User.Permissions,
+                    source));
+        }
+
+        Task<Seerr4kCapability> ISeerrMediaRequestAdmission.Get4kCapabilityAsync(
+            SeerrRequestIdentity admittedIdentity,
+            bool isAdministrator,
+            CancellationToken cancellationToken)
+            => GetBoundSeerr4kCapabilityAsync(
+                admittedIdentity,
+                isAdministrator,
+                cancellationToken);
+
+        void ISeerrMediaRequestAdmission.InvalidateIdentity(Guid jellyfinUserId)
+            => InvalidateUserIdentityCache(jellyfinUserId.ToString("D"));
 
         // ── Status probe ─────────────────────────────────────────────────────
 
@@ -243,8 +298,81 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
 
         // ── 4K capability ────────────────────────────────────────────────────
 
-        public async Task<Seerr4kCapability> GetSeerr4kCapabilityAsync(string jellyfinUserId, bool isAdmin = false)
+        public Task<Seerr4kCapability> GetSeerr4kCapabilityAsync(
+            string jellyfinUserId,
+            bool isAdmin = false)
+            => GetSeerr4kCapabilityCoreAsync(jellyfinUserId, isAdmin, CancellationToken.None);
+
+        private async Task<Seerr4kCapability> GetBoundSeerr4kCapabilityAsync(
+            SeerrRequestIdentity admittedIdentity,
+            bool isAdmin,
+            CancellationToken cancellationToken)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (admittedIdentity.UserId <= 0 || string.IsNullOrEmpty(admittedIdentity.SourceUrl))
+            {
+                return new Seerr4kCapability(false, false, false, false);
+            }
+
+            var integration = SeerrIntegrationPolicy.Capture(_configProvider);
+            if (!integration.IsActive)
+            {
+                return new Seerr4kCapability(false, false, false, false);
+            }
+
+            var config = integration.Configuration!;
+            var configurationRevision = integration.ConfigurationRevision;
+            var configStamp = SeerrMutationConfigStamp.Capture(config, configurationRevision);
+            var configuredUrls = integration.Urls;
+            var sourceUrl = configuredUrls.FirstOrDefault(url => string.Equals(
+                url,
+                admittedIdentity.SourceUrl,
+                StringComparison.Ordinal));
+            bool IsConfigurationCurrent() => integration.IsCurrent(_configProvider)
+                && configStamp.Matches(
+                    _configProvider.ConfigurationOrNull,
+                    _configProvider.ConfigurationRevision);
+            if (sourceUrl == null || !IsConfigurationCurrent())
+            {
+                return new Seerr4kCapability(false, false, false, false);
+            }
+
+            var (movie4k, series4k) = await GetPublic4kSettingsAsync(
+                sourceUrl,
+                configuredUrls,
+                integration.ApiKey,
+                config.SeerrDisableCache,
+                configurationRevision,
+                configStamp,
+                cancellationToken).ConfigureAwait(false);
+            if (!IsConfigurationCurrent())
+            {
+                return new Seerr4kCapability(false, false, false, false);
+            }
+
+            if (isAdmin)
+            {
+                return new Seerr4kCapability(
+                    movie4k,
+                    series4k,
+                    movie4k && config.SeerrEnable4KRequests,
+                    series4k && config.SeerrEnable4KTvRequests);
+            }
+
+            var permissions = admittedIdentity.Permissions;
+            return new Seerr4kCapability(
+                movie4k,
+                series4k,
+                movie4k && SeerrPermissionHelper.CanRequest4k(permissions, isTv: false),
+                series4k && SeerrPermissionHelper.CanRequest4k(permissions, isTv: true));
+        }
+
+        private async Task<Seerr4kCapability> GetSeerr4kCapabilityCoreAsync(
+            string jellyfinUserId,
+            bool isAdmin,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
             var integration = SeerrIntegrationPolicy.Capture(_configProvider);
             if (!integration.IsActive)
             {
@@ -274,7 +402,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             var resolution = await ResolveSeerrUser(
                 jellyfinUserId,
                 bypassCache: true,
-                allowAutoImport: false).ConfigureAwait(false);
+                allowAutoImport: false,
+                cancellationToken).ConfigureAwait(false);
             if (!IsConfigurationCurrent())
             {
                 return new Seerr4kCapability(false, false, false, false);
@@ -299,7 +428,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                 apiKey,
                 cacheDisabled,
                 configurationRevision,
-                configStamp).ConfigureAwait(false);
+                configStamp,
+                cancellationToken).ConfigureAwait(false);
             if (!IsConfigurationCurrent())
             {
                 return new Seerr4kCapability(false, false, false, false);
@@ -338,7 +468,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             string capturedApiKey,
             bool cacheDisabled,
             long configurationRevision,
-            SeerrMutationConfigStamp configStamp)
+            SeerrMutationConfigStamp configStamp,
+            CancellationToken cancellationToken)
         {
             bool IsConfigurationCurrent() => configStamp.Matches(
                 _configProvider.ConfigurationOrNull,
@@ -397,7 +528,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                     requestUri,
                     integration
                         .CreateDispatchFence(_configProvider)
-                        .Restrict(IsConfigurationCurrent)).ConfigureAwait(false);
+                        .Restrict(IsConfigurationCurrent),
+                    cancellationToken).ConfigureAwait(false);
                 if (!IsConfigurationCurrent())
                 {
                     return (false, false);
@@ -463,6 +595,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             catch (HttpRequestException ex)
             {
                 _logger.LogWarning(ex, "Transport error fetching Seerr public settings at {Url}", configuredSource);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
             }
             catch (TaskCanceledException)
             {

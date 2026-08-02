@@ -349,6 +349,22 @@ public sealed class SeerrIntentDurabilityTests : IDisposable
         Assert.True(ReadState(setup).PendingTmdb.ContainsKey("movie:878"));
     }
 
+    [Fact]
+    public void TypedOwnerIntent_DurablyUsesTrustedKindAndCanonicalPositiveTmdbId()
+    {
+        var setup = CreateClientHarness();
+
+        var registration = setup.Pending.RegisterSeerrIntent(
+            setup.User.Id,
+            SeerrMediaRequestKind.Series,
+            879);
+
+        Assert.True(registration.IsDurable);
+        var entry = Assert.IsType<SpoilerBlurPendingEntry>(ReadState(setup).PendingTmdb["tv:879"]);
+        Assert.Equal("tv", entry.MediaType);
+        Assert.Equal("879", entry.TmdbId);
+    }
+
     private ClientHarness CreateClientHarness(ISeerrParentalFilter? parentalFilter = null)
     {
         var user = new User("intent-harness", "provider", "password-provider");

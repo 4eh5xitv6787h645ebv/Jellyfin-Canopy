@@ -144,7 +144,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy
             // All Seerr plumbing (user resolution + auto-import, proxy core,
             // watchlist/request helpers) extracted from the controller base.
             // Singleton: stateless besides the injected ISeerrCache.
-            serviceCollection.AddSingleton<Services.Seerr.ISeerrClient, Services.Seerr.SeerrClient>();
+            serviceCollection.AddSingleton<Services.Seerr.SeerrClient>();
+            serviceCollection.AddSingleton<Services.Seerr.ISeerrClient>(services =>
+                services.GetRequiredService<Services.Seerr.SeerrClient>());
+            serviceCollection.AddSingleton<Services.Seerr.ISeerrMediaRequestAdmission>(services =>
+                services.GetRequiredService<Services.Seerr.SeerrClient>());
             // Shared SSRF-guarded Sonarr/Radarr fetch plumbing for the Arr controllers.
             serviceCollection.AddSingleton<Services.Arr.ArrFetchService>();
             // Bounded, privacy-safe lifecycle/history owner shared by Requests and admin status.
@@ -226,6 +230,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy
             // auto-request success boundary. Depends only on the config store + library +
             // user managers (never ISeerrClient), so it stays cycle-free.
             serviceCollection.AddSingleton<SpoilerPendingService>();
+            serviceCollection.AddSingleton<Services.Seerr.ISeerrSpoilerIntentStore>(services =>
+                services.GetRequiredService<SpoilerPendingService>());
+            serviceCollection.AddSingleton<Services.Seerr.ISeerrMediaRequestOwner, Services.Seerr.SeerrMediaRequestOwner>();
             serviceCollection.AddHostedService<SpoilerSeerrPendingPromoter>();
             serviceCollection.AddScoped<IEventConsumer<PlaybackStartEventArgs>, SpoilerAutoEnableOnFirstPlayConsumer>();
             // Identity-cache invalidation on user create/delete — the

@@ -133,6 +133,24 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services.Seerr
                 provider);
         }
 
+        private static SeerrParentalFilter BuildStrictPolicyFilter(IUserManager userManager)
+        {
+            var provider = new FakePluginConfigProvider(new PluginConfiguration
+            {
+                SeerrEnabled = true,
+                SeerrRespectParentalRatings = true,
+                SeerrUrls = "http://seerr:5055",
+                SeerrApiKey = "key",
+            });
+            return new SeerrParentalFilter(
+                new RecordingHttpClientFactory(new RecordingHttpMessageHandler()),
+                NullLogger<SeerrParentalFilter>.Instance,
+                userManager,
+                new FakeLocalization(),
+                new SeerrCache(provider),
+                provider);
+        }
+
         private static Task<SeerrParentalResult> ApplyAsync(
             string body,
             string apiPath,
@@ -397,6 +415,25 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services.Seerr
         }
 
         [Fact]
+        public async Task IsBlockedAsync_CallerCancellationPropagatesInsteadOfBecomingACompletedDecision()
+        {
+            var filter = BuildFilter(
+                maxScore: 13,
+                maxSub: null,
+                block: Array.Empty<UnratedItem>(),
+                featureEnabled: true,
+                seed: null);
+            using var cancellation = new CancellationTokenSource();
+            cancellation.Cancel();
+
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => filter.IsBlockedAsync(
+                "movie",
+                100,
+                new SeerrCaller(CallerGuid, false),
+                cancellation.Token));
+        }
+
+        [Fact]
         public async Task Gate_InactiveWhenSeerrNotConfigured()
         {
             // Without a Seerr URL/key the gate can't verify certs, so it stays inactive
@@ -518,6 +555,58 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services.Seerr
                 "movie",
                 100,
                 new SeerrCaller(CallerGuid, false)));
+        }
+
+        [Fact]
+        public async Task ExactMutationGate_MissingUserOrPolicyFailsClosed_WithoutChangingLegacyReadPath()
+        {
+            var userId = Guid.Parse(CallerGuid);
+            var missingUser = BuildStrictPolicyFilter(
+                new StubPolicyUserManager(new Dictionary<Guid, (User, UserPolicy)>()));
+            Assert.True(await missingUser.IsBlockedAsync(
+                "movie",
+                100,
+                new SeerrCaller(CallerGuid, false),
+                CancellationToken.None));
+            Assert.False(await missingUser.IsBlockedAsync(
+                "movie",
+                100,
+                new SeerrCaller(CallerGuid, false)));
+
+            var user = new User("policy-missing", "Prov", "PwProv");
+            var registry = new Dictionary<Guid, (User, UserPolicy)>
+            {
+                [userId] = (user, new UserPolicy()),
+            };
+            var missingPolicy = BuildStrictPolicyFilter(new StubPolicyUserManager(
+                registry,
+                new HashSet<Guid> { userId }));
+            Assert.True(await missingPolicy.IsBlockedAsync(
+                "movie",
+                100,
+                new SeerrCaller(CallerGuid, false),
+                CancellationToken.None));
+        }
+
+        [Fact]
+        public async Task ExactMutationGate_AuthoritativeUnrestrictedUserIsAllowed()
+        {
+            var userId = Guid.Parse(CallerGuid);
+            var user = new User("unrestricted", "Prov", "PwProv")
+            {
+                MaxParentalRatingScore = null,
+                MaxParentalRatingSubScore = null,
+            };
+            var filter = BuildStrictPolicyFilter(new StubPolicyUserManager(
+                userId,
+                user,
+                new UserPolicy { BlockUnratedItems = Array.Empty<UnratedItem>() }));
+
+            Assert.False(await filter.IsBlockedAsync(
+                "movie",
+                100,
+                new SeerrCaller(CallerGuid, false),
+                CancellationToken.None));
         }
 
         [Fact]
