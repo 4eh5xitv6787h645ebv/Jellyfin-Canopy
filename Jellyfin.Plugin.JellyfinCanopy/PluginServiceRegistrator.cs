@@ -52,6 +52,27 @@ namespace Jellyfin.Plugin.JellyfinCanopy
             // One process-wide, fixed-capacity owner for redacted terminal Platform
             // action audit. It exposes no route and retains no caller payload.
             serviceCollection.AddSingleton<PlatformAuditStore>();
+            // The native pilot has one closed three-family composition and dispatch
+            // graph. There is intentionally no handler registry or enumerable plugin
+            // surface: adding another contribution of an existing native shape changes
+            // Canopy's fixed composer, not Android networking or authentication.
+            serviceCollection.AddSingleton<PlatformNativeCatalogRevisionAuthority>();
+            serviceCollection.AddSingleton<PlatformNativeCatalogService>();
+            serviceCollection.AddSingleton<ISpoilerGuardPlatformActionPort, SpoilerGuardPlatformActionPort>();
+            serviceCollection.AddSingleton<IHiddenContentPlatformActionPort, HiddenContentPlatformActionPort>();
+            serviceCollection.AddSingleton<ISeerrPlatformActionPort, SeerrPlatformActionPort>();
+            serviceCollection.AddSingleton(serviceProvider => new PlatformFirstPartyActionDispatcher(
+                serviceProvider.GetRequiredService<ISpoilerGuardPlatformActionPort>(),
+                serviceProvider.GetRequiredService<IHiddenContentPlatformActionPort>(),
+                serviceProvider.GetRequiredService<ISeerrPlatformActionPort>()));
+            serviceCollection.AddSingleton(serviceProvider => new PlatformActionInvocationCoordinator(
+                serviceProvider.GetRequiredService<Platform.Hosting.IPlatformHost>(),
+                serviceProvider.GetRequiredService<PlatformPreparedActionContextOwner>(),
+                serviceProvider.GetRequiredService<PlatformActionCapabilityService>(),
+                serviceProvider.GetRequiredService<PlatformIdempotencyStore>(),
+                serviceProvider.GetRequiredService<PlatformActionAdmissionLimiter>(),
+                serviceProvider.GetRequiredService<PlatformFirstPartyActionDispatcher>(),
+                serviceProvider.GetRequiredService<PlatformAuditStore>()));
 
             // a named HttpClient with AllowAutoRedirect=false so
             // forward-auth proxies (Authelia / Pangolin / Authentik) returning

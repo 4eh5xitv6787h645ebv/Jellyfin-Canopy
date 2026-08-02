@@ -11,7 +11,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
     /// <summary>Wire and collection bounds shared by the native item-detail pilot.</summary>
     internal static class PlatformNativeCatalogBounds
     {
-        internal const int MaximumContributions = 16;
+        internal const int MaximumContributions = 7;
         internal const int MaximumFields = 8;
         internal const int MaximumOptions = 32;
         internal const int MaximumCapabilityValues = 16;
@@ -96,7 +96,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
 
     /// <summary>Strict Android-compatible item-detail resolve request.</summary>
     [JsonConverter(typeof(PlatformItemDetailResolveRequestConverter))]
-    internal sealed class PlatformItemDetailResolveRequest
+    public sealed class PlatformItemDetailResolveRequest
     {
         internal PlatformItemDetailResolveRequest(
             int protocol,
@@ -121,7 +121,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
 
     /// <summary>Strict Android-compatible prepare request.</summary>
     [JsonConverter(typeof(PlatformActionPrepareRequestConverter))]
-    internal sealed class PlatformActionPrepareRequest
+    public sealed class PlatformActionPrepareRequest
     {
         internal PlatformActionPrepareRequest(string prepareHandle)
         {
@@ -136,7 +136,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
         internal string PrepareHandle { get; }
     }
 
-    internal sealed class PlatformItemDetailResolveResponse
+    public sealed class PlatformItemDetailResolveResponse
     {
         internal PlatformItemDetailResolveResponse(
             string catalogRevision,
@@ -157,7 +157,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
         public ImmutableArray<PlatformNativeContribution> Contributions { get; }
     }
 
-    internal sealed class PlatformNativeContribution
+    public sealed class PlatformNativeContribution
     {
         private PlatformNativeContribution(
             string id,
@@ -238,7 +238,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
             ImmutableHashSet.Create(StringComparer.Ordinal, "neutral", "positive", "warning", "negative");
     }
 
-    internal sealed class PlatformActionPrepareResponse
+    public sealed class PlatformActionPrepareResponse
     {
         internal PlatformActionPrepareResponse(
             string capability,
@@ -279,7 +279,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
         public ImmutableArray<PlatformNativeField> Fields { get; }
     }
 
-    internal sealed class PlatformNativeField
+    public sealed class PlatformNativeField
     {
         private PlatformNativeField(
             string id,
@@ -396,9 +396,47 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
                 null,
                 null);
         }
+
+        internal static PlatformNativeField MultiSelect(
+            string id,
+            string label,
+            string? description,
+            bool required,
+            ImmutableArray<PlatformNativeOption> options,
+            ImmutableArray<string> defaultOptionIds,
+            int minimumSelections,
+            int maximumSelections)
+        {
+            if (options.IsDefaultOrEmpty
+                || options.Length > PlatformNativeCatalogBounds.MaximumOptions
+                || defaultOptionIds.IsDefault
+                || options.Select(option => option.Id).Distinct(StringComparer.Ordinal).Count() != options.Length
+                || defaultOptionIds.Distinct(StringComparer.Ordinal).Count() != defaultOptionIds.Length
+                || defaultOptionIds.Any(id => !options.Any(option => option.Id == id && !option.Disabled))
+                || minimumSelections < 0
+                || maximumSelections < minimumSelections
+                || maximumSelections > options.Count(option => !option.Disabled)
+                || defaultOptionIds.Length < minimumSelections
+                || defaultOptionIds.Length > maximumSelections)
+            {
+                throw new ArgumentException("The multi-select options are invalid.", nameof(options));
+            }
+
+            return new(
+                id,
+                "multi_select",
+                label,
+                description,
+                required,
+                null,
+                options,
+                defaultOptionIds,
+                minimumSelections,
+                maximumSelections);
+        }
     }
 
-    internal sealed class PlatformNativeOption
+    public sealed class PlatformNativeOption
     {
         internal PlatformNativeOption(string id, string label, string? description = null, bool disabled = false)
         {

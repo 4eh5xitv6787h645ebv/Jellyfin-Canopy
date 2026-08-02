@@ -29,7 +29,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
 
     /// <summary>The exact Android-compatible Platform v1 invoke body.</summary>
     [JsonConverter(typeof(PlatformActionInvokeRequestConverter))]
-    internal sealed class PlatformActionInvokeRequest
+    public sealed class PlatformActionInvokeRequest
     {
         internal PlatformActionInvokeRequest(
             string capability,

@@ -169,6 +169,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
         [Theory]
         [InlineData(nameof(PlatformDiscoveryResponse), typeof(PlatformDiscoveryResponse))]
         [InlineData(nameof(PlatformNegotiationResponse), typeof(PlatformNegotiationResponse))]
+        [InlineData(nameof(PlatformItemDetailResolveResponse), typeof(PlatformItemDetailResolveResponse))]
+        [InlineData(nameof(PlatformNativeContribution), typeof(PlatformNativeContribution))]
+        [InlineData(nameof(PlatformActionPrepareResponse), typeof(PlatformActionPrepareResponse))]
+        [InlineData(nameof(PlatformNativeField), typeof(PlatformNativeField))]
+        [InlineData(nameof(PlatformNativeOption), typeof(PlatformNativeOption))]
         [InlineData(nameof(PlatformError), typeof(PlatformError))]
         public void SchemasDoNotDriftFromTheTypesTheyDescribe(string schemaName, Type type)
         {
@@ -266,6 +271,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
                 .Select(route => $"{route.Method} {route.Path}")
                 .OrderBy(route => route, StringComparer.Ordinal);
             var documentedCacheable = SpecOperations()
+                .Where(entry => !entry.Operation.TryGetProperty(
+                    "x-canopy-validated-representation",
+                    out var validated)
+                    || !validated.GetBoolean())
                 .Where(entry => entry.Operation.GetProperty("responses").GetProperty("200")
                     .TryGetProperty("headers", out var headers)
                     && headers.TryGetProperty("ETag", out _))
@@ -306,6 +315,47 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
             var components = Spec.RootElement.GetProperty("components").GetProperty("responses");
             Assert.True(components.TryGetProperty("IdempotencyConflict", out _));
             Assert.True(components.TryGetProperty("IdempotencyAtCapacity", out _));
+        }
+
+        [Fact]
+        public void ValidatedPostRepresentationsDocumentExactByteValidatorsWithoutGetSemantics()
+        {
+            var validated = LiveRoutes()
+                .Where(route => route.Action.GetCustomAttribute<PlatformValidatedRepresentationAttribute>() is not null)
+                .ToList();
+            Assert.NotEmpty(validated);
+            Assert.All(validated, route => Assert.Equal("post", route.Method));
+
+            var liveValidated = validated
+                .Select(route => $"{route.Method} {route.Path}")
+                .OrderBy(route => route, StringComparer.Ordinal);
+            var documentedValidated = SpecOperations()
+                .Where(entry => entry.Operation.TryGetProperty(
+                    "x-canopy-validated-representation",
+                    out var marker)
+                    && marker.GetBoolean())
+                .Select(entry => $"{entry.Method} {entry.Path}")
+                .OrderBy(route => route, StringComparer.Ordinal);
+            Assert.Equal(liveValidated, documentedValidated);
+
+            foreach (var route in validated)
+            {
+                var operation = SpecOperations().Single(entry =>
+                    string.Equals(entry.Path, route.Path, StringComparison.Ordinal)
+                    && string.Equals(entry.Method, route.Method, StringComparison.Ordinal)).Operation;
+                var responses = operation.GetProperty("responses");
+                Assert.Equal(
+                    "#/components/headers/PlatformEntityTag",
+                    responses.GetProperty("200").GetProperty("headers")
+                        .GetProperty("ETag").GetProperty("$ref").GetString());
+                Assert.False(responses.TryGetProperty("304", out _));
+                Assert.False(operation.TryGetProperty("parameters", out var parameters)
+                    && parameters.EnumerateArray().Any(parameter =>
+                        parameter.TryGetProperty("$ref", out var reference)
+                        && reference.GetString()!.StartsWith(
+                            "#/components/parameters/If",
+                            StringComparison.Ordinal)));
+            }
         }
 
         [Theory]
