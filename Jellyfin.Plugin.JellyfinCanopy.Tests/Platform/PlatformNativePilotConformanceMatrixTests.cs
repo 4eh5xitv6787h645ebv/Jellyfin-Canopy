@@ -18,7 +18,7 @@ using Microsoft.AspNetCore.Mvc.Abstractions;
 using Microsoft.AspNetCore.Mvc.Filters;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Primitives;
 using Xunit;
 
@@ -62,10 +62,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
             Assert.Equal(404, stolen!.Result.StatusCode);
             Assert.Equal(new[] { Fixture.UserA, Fixture.UserB }, fixture.Port.OwnerActors);
             Assert.Equal(new[] { true, false }, fixture.Port.OwnerElevation);
-            var observable = fixture.ObservableText()
-                + outcomeA.Result.Value.GetRawText()
-                + outcomeB.Result.Value.GetRawText()
-                + stolen.Result.Value.GetRawText();
+            Assert.Equal(new[] { "android-tv", "android-tv" }, fixture.Port.OwnerClientNames);
+            Assert.Equal(new[] { "living-room", "living-room" }, fixture.Port.OwnerDeviceIds);
+            var observable = fixture.ObservableText(outcomeA, outcomeB, stolen);
             Assert.DoesNotContain(SecretCanary, observable, StringComparison.Ordinal);
         }
 
@@ -106,9 +105,28 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
             using var fixture = new Fixture(clock);
             var valid = fixture.Prepare(Fixture.UserA);
             var otherUser = fixture.Prepare(Fixture.UserB);
-            var wrongOperation = fixture.Prepare(
-                Fixture.UserA,
-                PlatformOperationDefinition.HiddenContentConfigureItem);
+            var validInspection = fixture.Capabilities.Inspect(valid.Capability);
+            var validContext = Assert.IsType<PlatformPreparedActionContext>(
+                fixture.Contexts.Resolve(valid.Capability, validInspection));
+            var wrongOperation = fixture.Capabilities.Mint(
+                fixture.Actor(Fixture.UserA),
+                PlatformOperationDefinition.HiddenContentConfigureItem.Id.Value,
+                fixture.Host.Item.Id,
+                fixture.Host.Item.Kind,
+                validContext.Digest.Span,
+                attenuateToCurrentDevice: false);
+            Assert.Equal(PlatformCapabilityMintOutcomeKind.Issued, wrongOperation.Kind);
+            var wrongInspection = fixture.Capabilities.Inspect(wrongOperation.Capability);
+            Assert.Equal(PlatformCapabilityInspectionKind.Authentic, wrongInspection.Kind);
+            Assert.Equal(
+                PlatformCapabilityValidationKind.WrongOperation,
+                fixture.Capabilities.ValidateCurrent(
+                    wrongInspection,
+                    fixture.Actor(Fixture.UserA),
+                    PlatformOperationDefinition.SpoilerGuardConfigureItem.Id.Value,
+                    fixture.Host.Item.Id,
+                    fixture.Host.Item.Kind,
+                    validContext.Digest.Span).Kind);
             var wrongOperationResult = await fixture.InvokeAsync(
                 Fixture.UserA,
                 fixture.Request(wrongOperation.Capability!, "wrong-operation"));
@@ -129,7 +147,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
             clock.Advance(PlatformActionCapabilityService.CapabilityTimeToLive + TimeSpan.FromTicks(1));
             var expired = await fixture.InvokeAsync(Fixture.UserA, fixture.Request(expiring.Capability!, "expired"));
 
-            Assert.Equal(400, wrongOperationResult.Result.StatusCode);
+            Assert.Equal(404, wrongOperationResult.Result.StatusCode);
             Assert.Equal(404, wrongItem.Result.StatusCode);
             Assert.Equal(404, swapped.Result.StatusCode);
             Assert.Equal(200, first.Result.StatusCode);
@@ -235,11 +253,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
             var prepared = fixture.Prepare(Fixture.UserA);
             using var caller = new CancellationTokenSource();
             using var deadline = new CancellationTokenSource();
-            using var linked = CancellationTokenSource.CreateLinkedTokenSource(caller.Token, deadline.Token);
-            var invocation = fixture.Coordinator.InvokeAsync(
-                fixture.Actor(Fixture.UserA),
+            var invocation = fixture.InvokeThroughLifecycleAsync(
+                fixture.Http(Fixture.UserA, IPAddress.Loopback, elevatedRole: false),
                 fixture.Request(prepared.Capability!, "cancel-key"),
-                new PlatformInvocationCancellation(linked.Token, caller.Token, deadline.Token));
+                caller.Token,
+                deadline.Token);
             await fixture.Port.OwnerEntered.Task;
 
             if (kind is "caller" or "simultaneous")
@@ -253,8 +271,22 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
             }
 
             fixture.Port.ReleaseOwner.TrySetResult();
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => invocation);
+            var lifecycle = await invocation;
+            if (kind == "deadline")
+            {
+                var timeout = Assert.IsType<ObjectResult>(lifecycle.Result);
+                Assert.Equal(504, timeout.StatusCode);
+            }
+            else
+            {
+                Assert.IsType<EmptyResult>(lifecycle.Result);
+            }
+
+            Assert.True(lifecycle.ExceptionHandled);
+            Assert.IsAssignableFrom<OperationCanceledException>(lifecycle.Exception);
+            Assert.Null(lifecycle.Outcome);
             Assert.Equal((PlatformAuditResultCode)expectedAuditValue, fixture.Audit.Snapshot()[^1].ResultCode);
+            Assert.DoesNotContain(SecretCanary, fixture.ObservableText(), StringComparison.Ordinal);
         }
 
         [Fact]
@@ -329,7 +361,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
         }
 
         [Fact]
-        public void CapabilityContextAndCanonicalInputBoundsHaveClosedNegativeCases()
+        public async Task BoundedOwnersHaveDirectClosedZeroDispatchNegativeCases()
         {
             using var fixture = new Fixture();
             Assert.Throws<ArgumentException>(() => new PlatformPreparedActionRequest(
@@ -341,6 +373,32 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
                 new FixedPort.BooleanInput(true),
                 new byte[PlatformPreparedActionContextOwner.MaximumPrivateStateBytes + 1]));
             Assert.False(PlatformIdempotencyKey.TryParse(new string('k', PlatformIdempotencyKey.MaximumLength + 1), out _));
+
+            var capabilityDigest = Enumerable.Repeat((byte)23, 32).ToArray();
+            for (var index = 0; index < PlatformActionCapabilityService.MaximumLedgerEntries; index++)
+            {
+                Assert.Equal(
+                    PlatformCapabilityMintOutcomeKind.Issued,
+                    fixture.Capabilities.Mint(
+                        fixture.Actor(Fixture.UserA),
+                        PlatformOperationDefinition.SpoilerGuardConfigureItem.Id.Value,
+                        fixture.Host.Item.Id,
+                        fixture.Host.Item.Kind,
+                        capabilityDigest,
+                        attenuateToCurrentDevice: false).Kind);
+            }
+
+            Assert.Equal(
+                PlatformCapabilityMintOutcomeKind.AtCapacity,
+                fixture.Capabilities.Mint(
+                    fixture.Actor(Fixture.UserA),
+                    PlatformOperationDefinition.SpoilerGuardConfigureItem.Id.Value,
+                    fixture.Host.Item.Id,
+                    fixture.Host.Item.Kind,
+                    capabilityDigest,
+                    attenuateToCurrentDevice: false).Kind);
+            fixture.Capabilities.InvalidateOutstandingCapabilities();
+
             for (var index = 0; index < PlatformPreparedActionContextOwner.MaximumEntries; index++)
             {
                 Assert.Equal(PlatformPreparedActionIssueKind.Issued, fixture.Prepare(Fixture.UserA).Kind);
@@ -360,6 +418,218 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
             }
 
             Assert.Equal(PlatformAuditStore.MaximumRecords, fixture.Audit.Snapshot().Count);
+
+            var entryStore = new PlatformIdempotencyStore(fixture.Clock);
+            for (var index = 0; index < PlatformIdempotencyStore.MaximumEntries; index++)
+            {
+                var outcome = await entryStore.ExecuteAsync(
+                    IdempotencyRequest(index, maximumResultBytes: 64),
+                    _ => Task.FromResult(SuccessResult()),
+                    CancellationToken.None);
+                Assert.Equal(PlatformIdempotencyOutcomeKind.Executed, outcome.Kind);
+            }
+
+            var entryOverflow = await entryStore.ExecuteAsync(
+                IdempotencyRequest(PlatformIdempotencyStore.MaximumEntries, maximumResultBytes: 64),
+                _ => throw new InvalidOperationException("An entry-cap refusal executed its owner."),
+                CancellationToken.None);
+            Assert.Equal(PlatformIdempotencyOutcomeKind.AtCapacity, entryOverflow.Kind);
+
+            var followerStore = new PlatformIdempotencyStore(fixture.Clock);
+            var followerRelease = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var followerEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var followerRequest = IdempotencyRequest(0, maximumResultBytes: 64);
+            var followerLeader = followerStore.ExecuteAsync(
+                followerRequest,
+                async _ =>
+                {
+                    followerEntered.TrySetResult();
+                    await followerRelease.Task;
+                    return SuccessResult();
+                },
+                CancellationToken.None);
+            await followerEntered.Task;
+            var followers = Enumerable.Range(0, PlatformIdempotencyStore.MaximumFollowersPerEntry)
+                .Select(_ => followerStore.ExecuteAsync(
+                    followerRequest,
+                    _ => throw new InvalidOperationException("A coalesced follower executed its owner."),
+                    CancellationToken.None))
+                .ToArray();
+            await EventuallyAsync(() =>
+                followerStore.FollowerCount == PlatformIdempotencyStore.MaximumFollowersPerEntry);
+            var followerOverflow = await followerStore.ExecuteAsync(
+                followerRequest,
+                _ => throw new InvalidOperationException("A follower-cap refusal executed its owner."),
+                CancellationToken.None);
+            Assert.Equal(PlatformIdempotencyOutcomeKind.AtCapacity, followerOverflow.Kind);
+            followerRelease.TrySetResult();
+            await followerLeader;
+            Assert.All(await Task.WhenAll(followers), outcome =>
+                Assert.Equal(PlatformIdempotencyOutcomeKind.Replay, outcome.Kind));
+
+            var byteStore = new PlatformIdempotencyStore(fixture.Clock);
+            var byteRelease = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var byteLeaders = new List<Task<PlatformIdempotencyOutcome>>();
+            var reservationCount =
+                PlatformIdempotencyStore.MaximumStoredResultBytes / PlatformIdempotencyStore.MaximumResultBytes;
+            for (var index = 0; index < reservationCount; index++)
+            {
+                byteLeaders.Add(byteStore.ExecuteAsync(
+                    IdempotencyRequest(index, PlatformIdempotencyStore.MaximumResultBytes),
+                    async _ =>
+                    {
+                        await byteRelease.Task;
+                        return SuccessResult();
+                    },
+                    CancellationToken.None));
+            }
+
+            Assert.Equal(reservationCount, byteStore.EntryCount);
+            var byteOverflow = await byteStore.ExecuteAsync(
+                IdempotencyRequest(reservationCount, PlatformIdempotencyStore.MaximumResultBytes),
+                _ => throw new InvalidOperationException("A byte-cap refusal executed its owner."),
+                CancellationToken.None);
+            Assert.Equal(PlatformIdempotencyOutcomeKind.AtCapacity, byteOverflow.Kind);
+            byteRelease.TrySetResult();
+            await Task.WhenAll(byteLeaders);
+
+            await AssertAdmissionBoundsAsync();
+            Assert.Equal(0, fixture.Port.OwnerCalls);
+        }
+
+        private static async Task AssertAdmissionBoundsAsync()
+        {
+            var keyLimiter = new PlatformActionAdmissionLimiter();
+            var keyLeases = new List<PlatformActionAdmission>();
+            for (var index = 0; index < PlatformActionAdmissionLimiter.MaximumKeys; index++)
+            {
+                keyLeases.Add(await keyLimiter.AcquireAsync(
+                    BoundedActor(index),
+                    PlatformOperationDefinition.SpoilerGuardConfigureItem,
+                    CancellationToken.None));
+            }
+
+            Assert.All(keyLeases, lease => Assert.Equal(PlatformActionAdmissionKind.Acquired, lease.Kind));
+            using (var keyOverflow = await keyLimiter.AcquireAsync(
+                BoundedActor(PlatformActionAdmissionLimiter.MaximumKeys),
+                PlatformOperationDefinition.SpoilerGuardConfigureItem,
+                CancellationToken.None))
+            {
+                Assert.Equal(PlatformActionAdmissionKind.AtCapacity, keyOverflow.Kind);
+            }
+
+            foreach (var lease in keyLeases)
+            {
+                lease.Dispose();
+            }
+
+            Assert.Equal(0, keyLimiter.KeyCount);
+
+            var waiterLimiter = new PlatformActionAdmissionLimiter();
+            var actor = BoundedActor(0);
+            using var blocker = await waiterLimiter.AcquireAsync(
+                actor,
+                PlatformOperationDefinition.SpoilerGuardConfigureItem,
+                CancellationToken.None);
+            var waiters = Enumerable.Range(0, PlatformActionAdmissionLimiter.MaximumWaitersPerKey)
+                .Select(_ => waiterLimiter.AcquireAsync(
+                    actor,
+                    PlatformOperationDefinition.SpoilerGuardConfigureItem,
+                    CancellationToken.None))
+                .ToArray();
+            await EventuallyAsync(() =>
+                waiterLimiter.WaiterCount == PlatformActionAdmissionLimiter.MaximumWaitersPerKey);
+            using (var waiterOverflow = await waiterLimiter.AcquireAsync(
+                actor,
+                PlatformOperationDefinition.SpoilerGuardConfigureItem,
+                CancellationToken.None))
+            {
+                Assert.Equal(PlatformActionAdmissionKind.AtCapacity, waiterOverflow.Kind);
+            }
+
+            blocker.Dispose();
+            foreach (var waiter in waiters)
+            {
+                (await waiter).Dispose();
+            }
+
+            var globalLimiter = new PlatformActionAdmissionLimiter();
+            var globalBlockers = new List<PlatformActionAdmission>();
+            var globalWaiterGroups = new List<List<Task<PlatformActionAdmission>>>();
+            var keysForGlobalLimit =
+                PlatformActionAdmissionLimiter.MaximumWaiters
+                / PlatformActionAdmissionLimiter.MaximumWaitersPerKey
+                + 1;
+            for (var key = 0; key < keysForGlobalLimit; key++)
+            {
+                var keyActor = BoundedActor(key);
+                globalBlockers.Add(await globalLimiter.AcquireAsync(
+                    keyActor,
+                    PlatformOperationDefinition.SpoilerGuardConfigureItem,
+                    CancellationToken.None));
+                var waiterLimit = key < keysForGlobalLimit - 2
+                    ? PlatformActionAdmissionLimiter.MaximumWaitersPerKey
+                    : key == keysForGlobalLimit - 2 ? 7 : 1;
+                var group = new List<Task<PlatformActionAdmission>>();
+                globalWaiterGroups.Add(group);
+                for (var waiter = 0; waiter < waiterLimit; waiter++)
+                {
+                    group.Add(globalLimiter.AcquireAsync(
+                        keyActor,
+                        PlatformOperationDefinition.SpoilerGuardConfigureItem,
+                        CancellationToken.None));
+                }
+            }
+
+            await EventuallyAsync(() =>
+                globalLimiter.WaiterCount == PlatformActionAdmissionLimiter.MaximumWaiters);
+            using (var globalOverflow = await globalLimiter.AcquireAsync(
+                BoundedActor(keysForGlobalLimit - 2),
+                PlatformOperationDefinition.SpoilerGuardConfigureItem,
+                CancellationToken.None))
+            {
+                Assert.Equal(PlatformActionAdmissionKind.AtCapacity, globalOverflow.Kind);
+            }
+
+            for (var key = 0; key < globalBlockers.Count; key++)
+            {
+                globalBlockers[key].Dispose();
+                foreach (var waiter in globalWaiterGroups[key])
+                {
+                    (await waiter).Dispose();
+                }
+            }
+
+            Assert.Equal(0, globalLimiter.KeyCount);
+            Assert.Equal(0, globalLimiter.WaiterCount);
+        }
+
+        private static PlatformActor BoundedActor(int index)
+        {
+            Span<byte> bytes = stackalloc byte[16];
+            BitConverter.TryWriteBytes(bytes, index + 1);
+            return new PlatformActor(new Guid(bytes), false, new string('b', 32), null, null);
+        }
+
+        private static PlatformIdempotencyRequest IdempotencyRequest(
+            int index,
+            int maximumResultBytes)
+        {
+            Assert.True(PlatformIdempotencyKey.TryParse($"matrix-{index}", out var key));
+            var fingerprint = new byte[32];
+            BitConverter.GetBytes(index).CopyTo(fingerprint, 0);
+            return new PlatformIdempotencyRequest(
+                Fixture.UserA,
+                "matrix-operation",
+                key,
+                new PlatformSemanticFingerprint(fingerprint),
+                maximumResultBytes);
+        }
+
+        private static PlatformIdempotencyResult SuccessResult()
+        {
+            using var document = JsonDocument.Parse("{}");
+            return new PlatformIdempotencyResult(200, "succeeded", document.RootElement);
         }
 
         private static PlatformBoundBreach Breach(string json) =>
@@ -403,6 +673,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
 
             Assert.True(predicate(), "The bounded asynchronous condition was not reached.");
         }
+
+        private sealed record LifecycleRun(
+            IActionResult? Result,
+            Exception? Exception,
+            bool ExceptionHandled,
+            PlatformActionInvocationOutcome? Outcome);
 
         private sealed class PilotController : PlatformControllerBase
         {
@@ -448,7 +724,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
                 Limiter = new PlatformActionAdmissionLimiter();
                 Idempotency = new PlatformIdempotencyStore(Clock);
                 Audit = new PlatformAuditStore(
-                    NullLogger<PlatformAuditStore>.Instance,
+                    Logger,
                     Clock,
                     Enumerable.Repeat((byte)19, 32).ToArray());
                 Coordinator = new PlatformActionInvocationCoordinator(
@@ -470,6 +746,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
             internal PlatformIdempotencyStore Idempotency { get; }
             internal PlatformAuditStore Audit { get; }
             internal PlatformActionInvocationCoordinator Coordinator { get; }
+            internal RecordingLogger<PlatformAuditStore> Logger { get; } = new();
 
             internal PlatformActor Actor(Guid userId)
             {
@@ -550,6 +827,59 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
                 return outcome;
             }
 
+            internal async Task<LifecycleRun> InvokeThroughLifecycleAsync(
+                DefaultHttpContext http,
+                PlatformActionInvokeRequest request,
+                CancellationToken callerToken,
+                CancellationToken deadlineToken)
+            {
+                using var linked = CancellationTokenSource.CreateLinkedTokenSource(callerToken, deadlineToken);
+                http.RequestAborted = linked.Token;
+                http.Items[PlatformRequestLifecycleState.ItemKey] =
+                    new PlatformRequestLifecycleState(callerToken, deadlineToken);
+                PlatformActionInvocationOutcome? outcome = null;
+                ActionExecutedContext? terminal = null;
+                var boundaryResult = await RunActorBoundaryAsync(http, async context =>
+                {
+                    var controller = new PilotController(Coordinator)
+                    {
+                        ControllerContext = new ControllerContext { HttpContext = context },
+                    };
+                    var action = ActionContext(context);
+                    var filters = new List<IFilterMetadata>();
+                    var executing = new ActionExecutingContext(
+                        action,
+                        filters,
+                        new Dictionary<string, object?>(),
+                        controller);
+                    await new PlatformRequestLifecycleFilter().OnActionExecutionAsync(
+                        executing,
+                        async () =>
+                        {
+                            terminal = new ActionExecutedContext(action, filters, controller);
+                            try
+                            {
+                                outcome = await controller.InvokeAsync(request);
+                                terminal.Result = new ObjectResult(outcome);
+                            }
+                            catch (Exception exception)
+                            {
+                                terminal.Exception = exception;
+                            }
+
+                            return terminal;
+                        });
+                });
+
+                Assert.Null(boundaryResult);
+                Assert.NotNull(terminal);
+                return new LifecycleRun(
+                    terminal!.Result,
+                    terminal.Exception,
+                    terminal.ExceptionHandled,
+                    outcome);
+            }
+
             internal async Task<IActionResult?> RunActorBoundaryAsync(
                 DefaultHttpContext http,
                 Func<HttpContext, Task> continuation)
@@ -566,11 +896,26 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
                 return resource.Result;
             }
 
-            internal string ObservableText()
+            internal string ObservableText(params PlatformActionInvocationOutcome?[] outcomes)
             {
                 var audit = string.Join("|", Audit.Snapshot().Select(record =>
-                    $"{record.Operation}:{record.ActorUserId}:{record.ResultCode}:{record.ClientAttributionDigest}:{record.DeviceAttributionDigest}"));
-                return audit + "|" + string.Join("|", Port.OwnerActors);
+                    $"{record.Operation}:{record.Family}:{record.ActorUserId}:{record.ActorWasElevated}:"
+                    + $"{record.ResultCode}:{record.Decision}:{record.ClientAttributionDigest}:"
+                    + $"{record.DeviceAttributionDigest}:{record.CorrelationId}"));
+                var responses = string.Join("|", outcomes
+                    .Where(outcome => outcome is not null)
+                    .Select(outcome =>
+                        $"{outcome!.Result.StatusCode}:{outcome.Result.OutcomeCode}:"
+                        + $"{outcome.Result.Value.GetRawText()}:{outcome.Replayed}"));
+                return string.Join(
+                    "|",
+                    audit,
+                    responses,
+                    string.Join("|", Logger.Messages),
+                    string.Join("|", Port.OwnerActors),
+                    string.Join("|", Port.OwnerElevation),
+                    string.Join("|", Port.OwnerClientNames),
+                    string.Join("|", Port.OwnerDeviceIds));
             }
 
             internal void Revoke(string kind)
@@ -622,6 +967,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
             internal int OwnerCalls { get; private set; }
             internal List<Guid> OwnerActors { get; } = new();
             internal List<bool> OwnerElevation { get; } = new();
+            internal List<string?> OwnerClientNames { get; } = new();
+            internal List<string?> OwnerDeviceIds { get; } = new();
             internal TaskCompletionSource OwnerEntered { get; private set; } = NewSignal();
             internal TaskCompletionSource ReleaseOwner { get; private set; } = NewSignal();
 
@@ -655,6 +1002,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
                 OwnerCalls++;
                 OwnerActors.Add(actor.UserId);
                 OwnerElevation.Add(actor.IsElevated);
+                OwnerClientNames.Add(actor.ClientName);
+                OwnerDeviceIds.Add(actor.DeviceId);
                 OwnerEntered.TrySetResult();
                 if (BlockOwner)
                 {
@@ -755,6 +1104,55 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
             }
             public Task SignInAsync(HttpContext context, string? scheme, ClaimsPrincipal principal, AuthenticationProperties? properties) => throw new NotSupportedException();
             public Task SignOutAsync(HttpContext context, string? scheme, AuthenticationProperties? properties) => throw new NotSupportedException();
+        }
+
+        private sealed class RecordingLogger<T> : ILogger<T>
+        {
+            private readonly object _gate = new();
+            private readonly List<string> _messages = new();
+
+            internal IReadOnlyList<string> Messages
+            {
+                get
+                {
+                    lock (_gate)
+                    {
+                        return _messages.ToArray();
+                    }
+                }
+            }
+
+            public IDisposable? BeginScope<TState>(TState state)
+                where TState : notnull => NullScope.Instance;
+
+            public bool IsEnabled(LogLevel logLevel) => true;
+
+            public void Log<TState>(
+                LogLevel logLevel,
+                EventId eventId,
+                TState state,
+                Exception? exception,
+                Func<TState, Exception?, string> formatter)
+            {
+                var rendered = formatter(state, exception);
+                if (exception is not null)
+                {
+                    rendered += $"|{exception.GetType().Name}:{exception.Message}";
+                }
+
+                lock (_gate)
+                {
+                    _messages.Add(rendered);
+                }
+            }
+
+            private sealed class NullScope : IDisposable
+            {
+                internal static NullScope Instance { get; } = new();
+                public void Dispose()
+                {
+                }
+            }
         }
 
         private sealed class ThrowOnReadStream : Stream
