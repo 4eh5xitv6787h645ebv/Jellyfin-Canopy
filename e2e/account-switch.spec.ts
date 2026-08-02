@@ -23,6 +23,7 @@ import type {
 } from 'playwright/test';
 import {
     hasValidConcurrentLogoutResponses,
+    isExpectedJellyfinWebTanStackCancellation,
     isExpectedSignedOutHomeAxios401,
     isExpectedSignedOutHostLogout4xx,
 } from '../scripts/e2e/jellyfin-host-noise';
@@ -40,11 +41,6 @@ const USER_FILES = [
 const ACCOUNT_SWITCH_PATH = /\/JellyfinCanopy\/user-settings\/([^/?]+)\/([^/?]+)(?:\?|$)/i;
 const EXPECTED_IDENTITY_ABORT =
     /Failed to save settings\.json.*(?:IdentityStaleError|AbortError|Request was aborted)/i;
-// Jellyfin Web's TanStack query layer logs its own cancellation stack when
-// Dashboard.logout() revokes the active query client. Scope this to the exact
-// host bundle; a CancelledError with any Canopy frame remains a failure.
-const HOST_LOGOUT_NOISE =
-    /CancelledError[\s\S]*node_modules\.%40tanstack\.query-core\.bundle\.js/i;
 const LATE_LOGOUT_PROBE_HEADER = 'x-jc-e2e-late-logout-probe';
 const LOGOUT_EXACT_PROBE = 'logout-exact';
 const LOGOUT_WRONG_PATH_PROBE = 'logout-wrong-path';
@@ -836,7 +832,7 @@ function assertOnlyHostLogoutNoise(
         response.status === 401
         && isExpectedSignedOutHostLogout4xx(response, evidence));
     const unexpectedDetails = consoleErrors.realDetails().filter((detail) =>
-        !HOST_LOGOUT_NOISE.test(detail.text)
+        !isExpectedJellyfinWebTanStackCancellation(detail, evidence)
         && !(allowExpectedIdentityAbort && EXPECTED_IDENTITY_ABORT.test(detail.text))
         && !isExpectedSignedOutHomeAxios401(detail, evidence, hasAllowedHost401)
         && !(syncPlay400 && /Failed to load resource:.*status of 400 \(Bad Request\)/i.test(detail.text)));

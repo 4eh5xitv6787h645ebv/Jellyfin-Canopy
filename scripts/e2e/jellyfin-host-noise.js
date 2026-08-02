@@ -14,6 +14,7 @@ const JELLYFIN_WEB_CHUNK_FRAME = /(?:^|\n)[^\n]*(?:(?:https?:\/\/[^/\s)]+)|(?<![
 const CANOPY_STACK_FRAME = /(?:^|\n)[^\n]*(?:\bJellyfinCanopy\b|\/JellyfinCanopy(?:\/|[?#]))/i;
 const HOME_TAB_SOURCE = /^\/web\/hometab\.[A-Za-z0-9]{12,}\.chunk\.js$/;
 const AXIOS_BUNDLE_PATH = '/web/node_modules.axios.bundle.js';
+const TANSTACK_QUERY_BUNDLE_PATH = '/web/node_modules.%40tanstack.query-core.bundle.js';
 
 /**
  * @typedef {object} SignedOutEvidence
@@ -328,6 +329,84 @@ function isExpectedSignedOutHomeAxios401(detail, evidence, hasAllowedHost401) {
     });
 }
 
+/**
+ * Classifies the stock TanStack cancellation stack emitted by Jellyfin Web
+ * while logout revokes its active query client. Require a console error whose
+ * first line and source chunk match the observed host event, followed by the
+ * exact observed TanStack-only frame sequence. Any missing, reordered,
+ * substituted, malformed, credential-bearing, Canopy, or additional frame
+ * fails closed.
+ *
+ * @param {{text: string, url?: string, source?: string}} detail
+ * @param {LogoutEvidence} evidence
+ */
+function isExpectedJellyfinWebTanStackCancellation(detail, evidence) {
+    if (detail?.source !== 'console' || !hasCompleteSignedOutEvidence(evidence)) return false;
+
+    let origin;
+    try {
+        origin = new URL(evidence.origin);
+    } catch {
+        return false;
+    }
+    if (origin.username !== '' || origin.password !== ''
+        || origin.pathname !== '/' || origin.search !== '' || origin.hash !== '') return false;
+
+    try {
+        const source = new URL(String(detail.url || ''));
+        if (source.origin !== origin.origin
+            || source.username !== ''
+            || source.password !== ''
+            || !HOME_TAB_SOURCE.test(source.pathname)
+            || source.search !== ''
+            || source.hash !== '') return false;
+    } catch {
+        return false;
+    }
+
+    const text = String(detail.text || '');
+    if (CANOPY_STACK_FRAME.test(text)) return false;
+    const lines = text.split('\n');
+    if (lines[0] !== 'e: CancelledError' || lines.length !== 11) return false;
+
+    const expectedFrames = [
+        { frame: /^\s+at Object\.cancel \((https?:\/\/[^)\s]+)\)$/, coordinates: '2:90321' },
+        { frame: /^\s+at e\.value \((https?:\/\/[^)\s]+)\)$/, coordinates: '2:42018' },
+        { frame: /^\s+at e\.value \((https?:\/\/[^)\s]+)\)$/, coordinates: '2:42232' },
+        { frame: /^\s+at e\.value \((https?:\/\/[^)\s]+)\)$/, coordinates: '2:53013' },
+        { frame: /^\s+at (https?:\/\/\S+)$/, coordinates: '2:53199' },
+        { frame: /^\s+at Array\.forEach \(<anonymous>\)$/ },
+        { frame: /^\s+at (https?:\/\/\S+)$/, coordinates: '2:53176' },
+        { frame: /^\s+at Object\.batch \((https?:\/\/[^)\s]+)\)$/, coordinates: '2:26154' },
+        { frame: /^\s+at e\.value \((https?:\/\/[^)\s]+)\)$/, coordinates: '2:53147' },
+        { frame: /^\s+at t\.value \((https?:\/\/[^)\s]+)\)$/, coordinates: '2:72222' },
+    ];
+    let bundleVersion = '';
+    for (let index = 0; index < expectedFrames.length; index += 1) {
+        const line = lines[index + 1];
+        const expected = expectedFrames[index];
+        const match = line.match(expected.frame);
+        if (!match) return false;
+        if (!match[1]) continue;
+        const coordinates = match[1].match(/:(\d+):(\d+)$/);
+        if (!coordinates || `${coordinates[1]}:${coordinates[2]}` !== expected.coordinates) return false;
+        try {
+            const frame = new URL(match[1].slice(0, -coordinates[0].length));
+            if (frame.origin !== origin.origin
+                || frame.username !== ''
+                || frame.password !== ''
+                || frame.hash !== ''
+                || !/^\?[A-Za-z0-9]{12,}$/.test(frame.search)
+                || frame.pathname !== TANSTACK_QUERY_BUNDLE_PATH) return false;
+            if (bundleVersion === '') bundleVersion = frame.search;
+            else if (frame.search !== bundleVersion) return false;
+        } catch {
+            return false;
+        }
+    }
+    return true;
+}
+
 module.exports = {
     HOME_LOGOUT_AXIOS_401,
     HOME_SELECTED_INDEX_ERROR,
@@ -338,6 +417,7 @@ module.exports = {
     isKnownHiddenContentHostNoise,
     isKnownJellyfinWebScrollHandlerError,
     isKnownJellyfinWebHostNoise,
+    isExpectedJellyfinWebTanStackCancellation,
     isExpectedSignedOutHostLogout4xx,
     isExpectedSignedOutHomeAxios401,
 };
