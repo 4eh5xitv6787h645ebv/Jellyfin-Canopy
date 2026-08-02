@@ -34,12 +34,20 @@ The older `/JellyfinCanopy/*` routes are **compatibility surfaces**. They keep t
 existing shapes, they are not documented here, and they are never promoted into the
 platform implicitly. If you are starting something new, use the platform routes.
 
-## Two things worth knowing before you write a client
+## Three things worth knowing before you write a client
 
 **`401` and `403` have no body.** Jellyfin returns both with zero bytes, so the contract
 documents them without a schema. Do not try to parse an error envelope from them — you
-will get an empty string. Every *other* failure, after authentication has succeeded,
-carries the one error envelope.
+will get an empty string. Business and protocol failures reached after the authenticated
+actor boundary carry the one error envelope.
+
+**The acting user is the authenticated Jellyfin user.** For every authenticated
+Platform route, Canopy accepts only Jellyfin's `Jellyfin-UserId` authentication claim,
+then re-reads that current host user and elevation state for the request. Route, query,
+body, cookie, header, marker, IP, client-name and device-id values cannot select or
+elevate an actor. Client and device values are bounded attribution only. A missing,
+malformed or deleted authenticated user fails closed with a bare `403`; service/API-key
+actors remain outside the native-first pilot.
 
 **Branch on `Code`, never on `Message`.** The message is human-readable and may be
 reworded or translated at any time. The code set is enumerated in the spec, and each code
