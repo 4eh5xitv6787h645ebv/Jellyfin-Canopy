@@ -215,6 +215,36 @@ request identity rather than only the current Jellyfin item, and any future pilo
 addition needs its own fixed operation, bounded schema, owning service and authority
 review.
 
+### Prepared action capabilities
+
+Preparing one of these operations issues an opaque capability for 60 seconds. The
+process-local singleton signs a canonical, length-prefixed binary claim set with a
+fresh 256-bit HMAC-SHA-256 authority and the complete 256-bit tag. It binds the exact
+operation and server-selected schema, authenticated user, item id and kind, prepared
+input SHA-256 digest, operation generation, current authority revision, expiry and a
+unique 256-bit nonce. The base64url spelling is canonical and unpadded; its binary
+layout is an implementation detail, not a client contract.
+
+Optional device binding is attenuation only. A client cannot name a device: the
+server may bind the current actor's bounded device attribution as a domain-separated
+keyed digest. The raw device id is never placed in the decodable token. An unbound
+capability remains portable between the same user's devices because device attribution
+is not authority; a bound capability additionally requires an exact current-device
+digest match and can never widen access or change the acting user.
+
+The nonce is reserved when minting, not on first invocation. At most 1,024 unexpired
+minted nonces exist process-wide, consumed entries remain until expiry, and capacity
+never evicts a live entry. Expired entries are removed deterministically. An authority
+or catalog revision change invalidates outstanding claims immediately; a process
+restart creates a new HMAC authority and invalidates every earlier capability.
+
+Inspection, current-authority validation and atomic consumption are deliberately
+separate operations. The invocation coordinator can authenticate and reauthorize a
+capability, return a previously stored identical idempotent result without consuming
+again, and consume only when admitting a new owner execution. Concurrent or later
+consumption of the same nonce is refused as replay. This primitive has no HTTP route,
+controller, provider credential, durable token or long-running operation handle.
+
 ## Pagination
 
 One dialect: opaque forward cursors. Pass the `NextCursor` you were given to fetch the
