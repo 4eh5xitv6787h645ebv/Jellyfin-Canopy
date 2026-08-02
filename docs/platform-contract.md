@@ -191,6 +191,40 @@ or coordinate multiple server processes.
 Coalesced waits are bounded too: at most 64 followers per in-flight key and 1,024 across
 the process. Excess followers receive the same pre-execution `429 rate_limited` outcome.
 
+## Native action audit
+
+Every action admitted to the native Platform coordinator creates one internal attempt.
+Closing that attempt appends exactly one terminal record for success, denial,
+idempotency replay, capability replay or expiry, cancellation, timeout, conflict,
+rate limiting, indeterminate execution, or owner failure. Exceptional disposal closes
+the attempt as an internal failure. Pre-admission HTTP failures, including a request
+rejected before an authoritative actor or operation is established, are outside this
+action audit.
+
+The record is a closed allowlist: a typed code-owned operation and family (or the fixed
+`unresolved` sentinel), actor user ID and elevated-state bit, decision, result code,
+duration, host correlation ID, and start/completion timestamps. Optional client and
+device attribution is HMAC-SHA-256 reduced with a process-random key and separate
+`client` and `device` domains. Invalid attribution and correlation are discarded rather
+than copied. Caller operation text is discarded on failed resolution.
+
+No token, capability, idempotency key, request body, item ID or title, Seerr key or URL,
+upstream response, exception, or arbitrary message has a record or logging field. The
+corresponding structured log uses only the same fixed, reduced values; its correlation
+ID is the same one returned by an ordinary action response. A caller disconnect has no
+response to join, but the terminal audit still carries the host correlation ID.
+
+Retention is an in-process fixed ring of exactly 1,024 records. Appends are serialized,
+constant-time, and evict the oldest completed record deterministically at capacity.
+The ring therefore has constant cardinality independent of users, library size, and
+request volume. Audit append or logging failures never replace or retry the selected
+action outcome. Only constant-size per-stage failure counters and last-failure metadata
+are retained, and the fallback warning is coalesced.
+
+There is deliberately no audit HTTP route or global read surface in Platform v1.
+Persistent or distributed retention, admin UI, export, and telemetry integration are
+future work and require a separate authority and privacy review.
+
 ## Closed native-pilot operation vocabulary
 
 Native actions do not name a controller, route, HTTP method, service or upstream

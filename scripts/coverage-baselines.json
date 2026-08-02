@@ -27,17 +27,17 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 32799,
-        "totalLines": 41516
+        "coveredLines": 33118,
+        "totalLines": 41847
       },
       "observations": {
         "cleanRuns": 3,
-        "minimumCoveredLines": 32798,
-        "maximumCoveredLines": 32799
+        "minimumCoveredLines": 33117,
+        "maximumCoveredLines": 33118
       },
       "tolerance": {
         "missingCoveredLines": 1,
-        "rationale": "The #589 HTTP-free prepared-action capability service builds on the combined #588/#593 tree with a process-local 256-bit HMAC authority, canonical length-prefixed claims, full tags and keyed device attenuation, a bounded mint-time nonce ledger, exact current-vocabulary validation, service-sealed current-validation evidence, one-shot consumption, and revision/restart invalidation. Three clean Coverlet runs on the identical rebased 2026-08-03 source and 41,516-line scope each passed all 2,882 server tests: two measured 32,799 covered lines and one measured 32,798. Relative to the reviewed #593 main high-water of 32,364/41,049 (78.842%), #589 adds 467 instrumented lines and raises the observed high-water by 435 covered lines to 32,799/41,516 (79.003%). The exact one-line 32,798-32,799 instrumentation envelope therefore sets a 32,799 high-water with a one-line tolerance and a floor of 32,798/41,516 (79.001%). coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
+        "rationale": "The rebased #589 plus bounded native-action audit #590 tree retains the process-local prepared-action capability authority and adds a closed typed terminal record, irreversible domain-separated client/device attribution, one-shot completion, deterministic 1,024-record FIFO retention, failure isolation, and architecture guards against audit HTTP exposure or free-form data paths. Three clean Coverlet runs on the identical rebased 2026-08-03 source and 41,847-line scope each passed all 2,910 server tests: one measured 33,118 covered lines and two measured 33,117. Relative to the reviewed #589 main high-water of 32,799/41,516 (79.003%), #590 adds 331 instrumented lines and raises the observed high-water by 319 covered lines to 33,118/41,847 (79.141%). The exact one-line 33,117-33,118 local instrumentation envelope therefore sets a 33,118 high-water with a one-line tolerance and a floor of 33,117/41,847 (79.138%). coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
       }
     }
   }
