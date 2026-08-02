@@ -3,6 +3,7 @@ using Jellyfin.Plugin.JellyfinCanopy.Configuration;
 using Jellyfin.Plugin.JellyfinCanopy.EventHandlers;
 using Jellyfin.Plugin.JellyfinCanopy.Services;
 using Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks;
+using Jellyfin.Plugin.JellyfinCanopy.Platform;
 using MediaBrowser.Controller.Events;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Plugins;
@@ -29,6 +30,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy
             serviceCollection.AddSingleton<IStartupFilter, BrandingAssetStartupFilter>();
 
             serviceCollection.AddHttpClient();
+
+            // Platform v1 owns a wire format without changing any legacy controller.
+            serviceCollection.Configure<MvcOptions>(options =>
+                options.InputFormatters.Insert(0, new PlatformJsonInputFormatter()));
 
             // a named HttpClient with AllowAutoRedirect=false so
             // forward-auth proxies (Authelia / Pangolin / Authentik) returning
