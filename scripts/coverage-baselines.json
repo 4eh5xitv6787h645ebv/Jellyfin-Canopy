@@ -27,17 +27,17 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 32248,
+        "coveredLines": 32249,
         "totalLines": 40928
       },
       "observations": {
-        "cleanRuns": 4,
+        "cleanRuns": 5,
         "minimumCoveredLines": 32247,
-        "maximumCoveredLines": 32248
+        "maximumCoveredLines": 32249
       },
       "tolerance": {
-        "missingCoveredLines": 1,
-        "rationale": "The #588 closed first-party operation vocabulary adds exactly three immutable code-owned pilot definitions, bounded namespaced operation and input-schema identifiers, exact ordinal fail-closed lookup, fixed authority/item-kind/mutation/generation metadata, private constructors with exact allowlisted instances, and production-wide construction guards including planted target-typed and alias escapes. Four clean local Coverlet observations on the identical combined #598/#523/#588 source and 40,928-line scope each passed all 2,849 server tests: one measured 32,248 covered lines and three measured 32,247. Relative to the reviewed #598/#523 main high-water of 32,109/40,790 (78.718%), #588 adds 138 instrumented lines and raises the observed high-water by 139 covered lines to 32,248/40,928 (78.792%). The exact one-line 32,247-32,248 instrumentation envelope therefore sets a 32,248 high-water with a one-line tolerance and a floor of 32,247/40,928 (78.790%). coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
+        "missingCoveredLines": 2,
+        "rationale": "The #588 closed first-party operation vocabulary adds exactly three immutable code-owned pilot definitions, bounded namespaced operation and input-schema identifiers, exact ordinal fail-closed lookup, fixed authority/item-kind/mutation/generation metadata, private constructors with exact allowlisted instances, and production-wide construction guards including planted target-typed and alias escapes. Five clean Coverlet observations on the identical combined #598/#523/#588 source and 40,928-line scope each passed all 2,849 server tests: four local runs measured 32,248 once and 32,247 three times, while the clean GitHub Actions Ubuntu runner measured 32,249. Relative to the reviewed #598/#523 main high-water of 32,109/40,790 (78.718%), #588 adds 138 instrumented lines and raises the observed high-water by 140 covered lines to 32,249/40,928 (78.794%). The exact two-line 32,247-32,249 cross-runner instrumentation envelope therefore sets a 32,249 high-water with a two-line tolerance and a floor of 32,247/40,928 (78.790%). coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
       }
     }
   }
