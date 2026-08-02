@@ -13,6 +13,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
 using Jellyfin.Plugin.JellyfinCanopy.Helpers;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyfinCanopy.Services.Discovery
@@ -21,6 +22,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Discovery
     /// <param name="Service">Stable service id: <c>sonarr</c>, <c>radarr</c>, <c>bazarr</c>, <c>seerr</c> or <c>maintainerr</c>.</param>
     /// <param name="Url">The confirmed internal base URL (server-reachable, never probe-page content).</param>
     public sealed record DiscoveredService(string Service, string Url);
+
+    /// <summary>
+    /// A Sonarr/Radarr instance imported from Seerr's own configuration,
+    /// carrying the API key Seerr already holds so the admin adopts it in one
+    /// click instead of retyping URL and key.
+    /// </summary>
+    /// <param name="Service"><c>sonarr</c> or <c>radarr</c>.</param>
+    /// <param name="Name">Seerr's display name for the server.</param>
+    /// <param name="Url">Reconstructed base URL (scheme, host, port, base path).</param>
+    /// <param name="ApiKey">The API key Seerr stores for that server.</param>
+    public sealed record ImportedArrInstance(string Service, string Name, string Url, string ApiKey);
 
     /// <summary>One probe target: a service id expected at <c>http://Host:Port</c>.</summary>
     internal sealed record DiscoveryCandidate(string Service, string Host, int Port)
@@ -383,6 +395,147 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Discovery
             => IPAddress.TryParse(host, out var literal)
                 ? Task.FromResult(new[] { literal.IsIPv4MappedToIPv6 ? literal.MapToIPv4() : literal })
                 : Dns.GetHostAddressesAsync(host, ct);
+
+        /// <summary>
+        /// Reads the Sonarr/Radarr servers Seerr already has configured and
+        /// projects them to importable instances. The caller supplies the
+        /// Seerr transport (the central <c>ISeerrClient</c> proxy), so this
+        /// method owns only parsing and normalization — no new outbound Seerr
+        /// path, cache, or credential handling of its own. Servers whose URL
+        /// fails normalization or whose key is missing are skipped; a Seerr
+        /// error yields an empty list rather than failing the admin action.
+        /// </summary>
+        public async Task<IReadOnlyList<ImportedArrInstance>> ImportArrInstancesFromSeerrAsync(
+            Func<string, CancellationToken, Task<IActionResult>> proxy,
+            CancellationToken ct)
+        {
+            ArgumentNullException.ThrowIfNull(proxy);
+            var imported = new List<ImportedArrInstance>();
+            foreach (var service in new[] { "sonarr", "radarr" })
+            {
+                string? json;
+                try
+                {
+                    var result = await proxy($"/api/v1/settings/{service}", ct).ConfigureAwait(false);
+                    json = ExtractOkJson(result);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.LogWarning(
+                        $"Seerr {service} settings import failed ({ex.GetType().Name}); no instances imported.");
+                    continue;
+                }
+
+                if (json == null)
+                {
+                    continue;
+                }
+
+                imported.AddRange(ParseSeerrArrSettings(service, json));
+            }
+
+            _logger.LogInformation($"Seerr import produced {imported.Count} arr instance(s).");
+            return imported;
+        }
+
+        /// <summary>
+        /// Unwraps the JSON body of a successful proxy result. Anything that is
+        /// not a 2xx object result carries no importable settings.
+        /// </summary>
+        private static string? ExtractOkJson(IActionResult? result) => result switch
+        {
+            ContentResult { StatusCode: null or (>= 200 and <= 299) } content => content.Content,
+            ObjectResult { StatusCode: null or (>= 200 and <= 299) } obj => obj.Value switch
+            {
+                string s => s,
+                null => null,
+                var value => JsonSerializer.Serialize(value),
+            },
+            _ => null,
+        };
+
+        /// <summary>
+        /// Projects Seerr's <c>/api/v1/settings/{sonarr|radarr}</c> array to
+        /// importable instances. Seerr stores the pieces separately
+        /// (<c>hostname</c>, <c>port</c>, <c>useSsl</c>, <c>baseUrl</c>), so the
+        /// base URL is reassembled and then revalidated through the shared
+        /// normalizer before it can reach configuration.
+        /// </summary>
+        internal static List<ImportedArrInstance> ParseSeerrArrSettings(string service, string json)
+        {
+            var results = new List<ImportedArrInstance>();
+            JsonDocument document;
+            try
+            {
+                document = JsonDocument.Parse(json);
+            }
+            catch (JsonException)
+            {
+                return results;
+            }
+
+            using (document)
+            {
+                if (document.RootElement.ValueKind != JsonValueKind.Array)
+                {
+                    return results;
+                }
+
+                foreach (var server in document.RootElement.EnumerateArray())
+                {
+                    if (server.ValueKind != JsonValueKind.Object
+                        || !TryGetString(server, "hostname", out var hostname)
+                        || !TryGetString(server, "apiKey", out var apiKey))
+                    {
+                        continue;
+                    }
+
+                    var useSsl = server.TryGetProperty("useSsl", out var ssl)
+                        && ssl.ValueKind == JsonValueKind.True;
+                    var scheme = useSsl ? "https" : "http";
+                    var port = server.TryGetProperty("port", out var portElement)
+                        && portElement.ValueKind == JsonValueKind.Number
+                        && portElement.TryGetInt32(out var parsedPort)
+                        && parsedPort is > 0 and <= 65535
+                            ? parsedPort
+                            : (useSsl ? 443 : 80);
+                    var basePath = TryGetString(server, "baseUrl", out var rawBase)
+                        ? "/" + rawBase.Trim('/')
+                        : string.Empty;
+                    var candidate = $"{scheme}://{hostname}:{port}{basePath}";
+                    if (!ServiceUrlResolver.TryNormalizeHttpBaseUrl(candidate, out var url))
+                    {
+                        continue;
+                    }
+
+                    var name = TryGetString(server, "name", out var serverName)
+                        ? serverName
+                        : service == "sonarr" ? "Sonarr" : "Radarr";
+                    results.Add(new ImportedArrInstance(service, name, url, apiKey));
+                }
+            }
+
+            return results;
+        }
+
+        private static bool TryGetString(JsonElement element, string property, out string value)
+        {
+            value = string.Empty;
+            if (!element.TryGetProperty(property, out var found)
+                || found.ValueKind != JsonValueKind.String)
+            {
+                return false;
+            }
+
+            var raw = found.GetString();
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                return false;
+            }
+
+            value = raw.Trim();
+            return true;
+        }
 
         /// <summary>
         /// Builds the ordered, deduplicated, capped candidate list for a

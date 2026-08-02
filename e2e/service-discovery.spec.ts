@@ -103,42 +103,91 @@ test.describe.serial('connected-service auto-discovery', () => {
         await loginAs(page, 'admin', consoleErrors);
         const configPage = await openConfigPage(page);
 
-        // Media Managers tab: one click adds Sonarr/Radarr cards and fills Bazarr.
-        await configPage.locator('.jellyfin-tab-button[data-tab="arr"]').click();
-        await expect(configPage.locator('#detectArrServicesBtn')).toBeVisible();
-        const arrScan = discoverResponse(page);
-        await configPage.locator('#detectArrServicesBtn').click();
-        expect((await arrScan).status()).toBe(200);
-        await expect(configPage.locator('#arrDetectResult')).toBeVisible();
         // createInstanceCard assigns the value property (not the attribute), so
         // read live input values rather than using attribute selectors.
         const instanceUrls = (list: string) => configPage
             .locator(`${list} .arr-instance-url`)
             .evaluateAll((els: HTMLInputElement[]) => els.map((el) => el.value));
+
+        // Media Managers tab: each service detects independently and nothing is
+        // adopted until the admin presses that result row's Add button.
+        await configPage.locator('.jellyfin-tab-button[data-tab="arr"]').click();
+        const sonarrScan = discoverResponse(page);
+        await configPage.locator('#detectSonarrBtn').click();
+        expect((await sonarrScan).status()).toBe(200);
+        const sonarrRow = configPage.locator('#sonarrDetectResult .jc-detect-row')
+            .filter({ hasText: 'http://sonarr:8989' });
+        await expect(sonarrRow).toBeVisible({ timeout: 30_000 });
+        expect(await instanceUrls('#sonarrInstancesList')).not.toContain('http://sonarr:8989');
+        await sonarrRow.locator('button').click();
         await expect.poll(() => instanceUrls('#sonarrInstancesList'), { timeout: 30_000 })
             .toContain('http://sonarr:8989');
+
+        await configPage.locator('#detectRadarrBtn').click();
+        const radarrRow = configPage.locator('#radarrDetectResult .jc-detect-row')
+            .filter({ hasText: 'http://radarr:7878' });
+        await expect(radarrRow).toBeVisible({ timeout: 30_000 });
+        await radarrRow.locator('button').click();
         await expect.poll(() => instanceUrls('#radarrInstancesList'), { timeout: 30_000 })
             .toContain('http://radarr:7878');
+
+        await configPage.locator('#detectBazarrBtn').click();
+        const bazarrRow = configPage.locator('#bazarrDetectResult .jc-detect-row')
+            .filter({ hasText: 'http://bazarr:6767' });
+        await expect(bazarrRow).toBeVisible({ timeout: 30_000 });
+        await bazarrRow.locator('button').click();
         await expect(configPage.locator('#bazarrUrl')).toHaveValue('http://bazarr:6767');
 
-        // Seerr tab: fills the empty URL list via the legacy jellyseerr DNS name.
+        // Seerr tab: the legacy jellyseerr DNS name is still a valid Seerr host.
         await configPage.locator('.jellyfin-tab-button[data-tab="seerr"]').click();
-        await expect(configPage.locator('#detectSeerrBtn')).toBeVisible();
         await configPage.locator('#detectSeerrBtn').click();
-        await expect(configPage.locator('#seerrUrls')).toHaveValue('http://jellyseerr:5055', { timeout: 30_000 });
-        await expect(configPage.locator('#seerrDetectResult')).toContainText('Found Seerr');
+        const seerrRow = configPage.locator('#seerrDetectResult .jc-detect-row')
+            .filter({ hasText: 'http://jellyseerr:5055' });
+        await expect(seerrRow).toBeVisible({ timeout: 30_000 });
+        await seerrRow.locator('button').click();
+        await expect(configPage.locator('#seerrUrls')).toHaveValue('http://jellyseerr:5055');
 
-        // Maintainerr tab: fills the empty internal URL.
+        // Maintainerr tab.
         await configPage.locator('.jellyfin-tab-button[data-tab="maintainerr"]').click();
-        await expect(configPage.locator('#detectMaintainerrBtn')).toBeVisible();
         await configPage.locator('#detectMaintainerrBtn').click();
-        await expect(configPage.locator('#maintainerrUrl')).toHaveValue('http://maintainerr:6246', { timeout: 30_000 });
-        await expect(configPage.locator('#maintainerrDetectResult')).toContainText('Found Maintainerr');
+        const maintainerrRow = configPage.locator('#maintainerrDetectResult .jc-detect-row')
+            .filter({ hasText: 'http://maintainerr:6246' });
+        await expect(maintainerrRow).toBeVisible({ timeout: 30_000 });
+        await maintainerrRow.locator('button').click();
+        await expect(configPage.locator('#maintainerrUrl')).toHaveValue('http://maintainerr:6246');
 
         await assertNoRuntimeErrors(consoleErrors);
     });
 
-    test('Detect never overwrites configured values and reports finds instead', async ({ page, baseURL, consoleErrors }) => {
+    test('Import from Seerr adopts Sonarr and Radarr servers with their API keys', async ({ page, baseURL, consoleErrors }) => {
+        await blankConnections(baseURL!);
+        await loginAs(page, 'admin', consoleErrors);
+        const configPage = await openConfigPage(page);
+        await configPage.locator('.jellyfin-tab-button[data-tab="arr"]').click();
+
+        const importResponse = page.waitForResponse(
+            (response: any) => response.url().includes('/JellyfinCanopy/services/import-from-seerr')
+                && response.request().method() === 'POST',
+            { timeout: 60_000 },
+        );
+        await configPage.locator('#importSonarrFromSeerrBtn').click();
+        expect((await importResponse).status()).toBe(200);
+
+        const importedRow = configPage.locator('#sonarrDetectResult .jc-detect-row')
+            .filter({ hasText: 'E2E Sonarr from Seerr' });
+        await expect(importedRow).toBeVisible({ timeout: 30_000 });
+        await importedRow.locator('button').click();
+
+        // The adopted card carries both the URL and the key Seerr already held.
+        const card = configPage.locator('#sonarrInstancesList .arr-instance-card').last();
+        await expect(card.locator('.arr-instance-url')).toHaveValue('http://sonarr:8989');
+        await expect(card.locator('.arr-instance-apikey')).toHaveValue('jc-e2e-arr');
+        await expect(card.locator('.arr-instance-name')).toHaveValue('E2E Sonarr from Seerr');
+
+        await assertNoRuntimeErrors(consoleErrors);
+    });
+
+    test('Detect marks configured endpoints as already added and never rewrites them', async ({ page, baseURL, consoleErrors }) => {
         // Seed a deliberate non-fixture Maintainerr URL and a Seerr list, plus the
         // fixture's own seeded arr instances (restored from `original`).
         await saveConfiguration(baseURL!, {
@@ -152,22 +201,22 @@ test.describe.serial('connected-service auto-discovery', () => {
 
         await configPage.locator('.jellyfin-tab-button[data-tab="arr"]').click();
         const scan = discoverResponse(page);
-        await configPage.locator('#detectArrServicesBtn').click();
+        await configPage.locator('#detectBazarrBtn').click();
         expect((await scan).status()).toBe(200);
-        await expect(configPage.locator('#arrDetectResult')).toBeVisible();
-        // The configured Bazarr URL is untouched; the find is only reported.
+        // A detected endpoint that differs from the configured one is offered,
+        // but merely detecting never rewrites the admin's value.
+        await expect(configPage.locator('#bazarrDetectResult')).toBeVisible({ timeout: 30_000 });
         await expect(configPage.locator('#bazarrUrl')).toHaveValue('http://bazarr-configured:6767');
-        await expect(configPage.locator('#arrDetectResult')).toContainText('left unchanged');
-
-        await configPage.locator('.jellyfin-tab-button[data-tab="seerr"]').click();
-        await configPage.locator('#detectSeerrBtn').click();
-        await expect(configPage.locator('#seerrDetectResult')).toBeVisible({ timeout: 30_000 });
-        // The configured (non-empty) Seerr list is never appended to.
-        await expect(configPage.locator('#seerrUrls')).toHaveValue('http://integrations:5055');
 
         await configPage.locator('.jellyfin-tab-button[data-tab="maintainerr"]').click();
         await configPage.locator('#detectMaintainerrBtn').click();
-        await expect(configPage.locator('#maintainerrDetectResult')).toBeVisible({ timeout: 30_000 });
+        // The fixture Maintainerr is exactly what is already configured, so the
+        // row reports it as already added and exposes no Add action.
+        const alreadyRow = configPage.locator('#maintainerrDetectResult .jc-detect-row')
+            .filter({ hasText: 'http://integrations:6246' });
+        await expect(alreadyRow).toBeVisible({ timeout: 30_000 });
+        await expect(alreadyRow.locator('.jc-detect-row-note')).toHaveText('already added');
+        await expect(alreadyRow.locator('button')).toHaveCount(0);
         await expect(configPage.locator('#maintainerrUrl')).toHaveValue('http://integrations:6246');
 
         await assertNoRuntimeErrors(consoleErrors);

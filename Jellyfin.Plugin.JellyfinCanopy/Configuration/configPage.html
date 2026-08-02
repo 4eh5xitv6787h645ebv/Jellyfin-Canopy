@@ -1169,8 +1169,10 @@
                             <div class="inputContainer">
                                 <label class="inputLabel" for="seerrUrls">Seerr URL(s) <span style="font-size:0.8em; opacity:0.6;">(One per line)</span></label>
                                 <textarea class="emby-textarea emby-input jc-textarea-medium" id="seerrUrls" name="seerrUrls" placeholder="http://192.168.1.10:5055&#10;https://seerr.example.com"></textarea>
-                                <button is="emby-button" type="button" id="detectSeerrBtn" class="raised emby-button" style="margin-top: 0.5em;">Detect Seerr</button>
-                                <div id="seerrDetectResult" class="jc-validation-result" style="display:none;"></div>
+                                <div class="jc-arr-action-row">
+                                    <button is="emby-button" type="button" id="detectSeerrBtn" class="raised emby-button">Detect Seerr</button>
+                                </div>
+                                <div id="seerrDetectResult" class="jc-detect-result" style="display:none;"></div>
                             </div>
                                 <div class="jc-setting-description" data-desc-for="seerrUrls">
                                     <div class="fieldDescription">Internal URL(s) the Jellyfin server uses to reach Seerr, one per line. Treat each distinct URL as a separate Seerr identity domain: user-scoped reads and mutations stay pinned to the instance where that user was resolved, while safe public reads may try the configured order. Do not list multiple aliases for the same instance. If Seerr sits behind an auth proxy (Authentik, Authelia, Cloudflare Access, etc.), put the INTERNAL address here and set the External URL below for user-facing links.</div>
@@ -1703,10 +1705,10 @@
                             <div class="jc-setting-description" data-desc-for="maintainerrUrl">
                                 <div class="fieldDescription jc-field-desc-xl">Server-only base URL used by Jellyfin to reach Maintainerr. Include any reverse-proxy base path. It must be an absolute HTTP(S) URL without credentials, query, or fragment. The connection test sends this value in a small authenticated JSON request to Canopy, never in a URL, header, or browser request to Maintainerr.</div>
                             </div>
-                            <div class="inputContainer">
+                            <div class="jc-arr-action-row">
                                 <button is="emby-button" type="button" id="detectMaintainerrBtn" class="raised emby-button">Detect Maintainerr</button>
-                                <div id="maintainerrDetectResult" class="jc-validation-result" style="display:none;"></div>
                             </div>
+                            <div id="maintainerrDetectResult" class="jc-detect-result" style="display:none;"></div>
 
                             <div class="inputContainer">
                                 <label class="inputLabel" for="maintainerrExternalUrl">Maintainerr browser URL <span style="font-size:0.8em; opacity:0.6;">(optional)</span></label>
@@ -1761,10 +1763,6 @@
                             Connect Jellyfin Canopy to your <strong>Sonarr</strong>, <strong>Radarr</strong>, and <strong>Bazarr</strong> instances.<br/>Each service gets its own box below — add as many Sonarr/Radarr instances as you want (one per quality profile / library), plus a single Bazarr endpoint. Each instance can be enabled, disabled, or removed independently.
                         </div>
                     </div>
-                    <div class="jc-arr-action-row jc-fieldset-wide">
-                        <button is="emby-button" type="button" id="detectArrServicesBtn" class="raised emby-button">Detect services</button>
-                        <div id="arrDetectResult" class="jc-validation-result" style="display:none;"></div>
-                    </div>
 
                     <fieldset data-dep-setup>
                         <legend class="sectionTitle"><img class="jc-legend-icon-img" src="../JellyfinCanopy/assets/icons/sonarr.svg" onerror="this.onerror=null;this.src='../JellyfinCanopy/assets/branding/canopy-mark.svg';" alt="">Sonarr</legend>
@@ -1775,8 +1773,11 @@
                             <div id="sonarrInstancesList"></div>
                             <div class="jc-arr-action-row">
                                 <button id="addSonarrInstance" class="emby-button raised" type="button">+ Add Sonarr instance</button>
+                                <button is="emby-button" type="button" id="detectSonarrBtn" class="raised emby-button">Detect Sonarr</button>
+                                <button is="emby-button" type="button" id="importSonarrFromSeerrBtn" class="raised emby-button">Import from Seerr</button>
                                 <button is="emby-button" type="button" id="validateSonarrMappingsBtn" class="raised emby-button">Validate Mappings</button>
                             </div>
+                            <div id="sonarrDetectResult" class="jc-detect-result" style="display:none;"></div>
                             <div id="sonarrMappingsValidationResult"></div>
                         </div>
                     </fieldset>
@@ -1790,8 +1791,11 @@
                             <div id="radarrInstancesList"></div>
                             <div class="jc-arr-action-row">
                                 <button id="addRadarrInstance" class="emby-button raised" type="button">+ Add Radarr instance</button>
+                                <button is="emby-button" type="button" id="detectRadarrBtn" class="raised emby-button">Detect Radarr</button>
+                                <button is="emby-button" type="button" id="importRadarrFromSeerrBtn" class="raised emby-button">Import from Seerr</button>
                                 <button is="emby-button" type="button" id="validateRadarrMappingsBtn" class="raised emby-button">Validate Mappings</button>
                             </div>
+                            <div id="radarrDetectResult" class="jc-detect-result" style="display:none;"></div>
                             <div id="radarrMappingsValidationResult"></div>
                         </div>
                     </fieldset>
@@ -1827,8 +1831,10 @@
                                 <div class="fieldDescription">Map Jellyfin access URLs to Bazarr URLs. Format: <code>jellyfin_url|bazarr_url</code> (one per line).</div>
                             </div>
                             <div class="jc-arr-action-row">
+                                <button is="emby-button" type="button" id="detectBazarrBtn" class="raised emby-button">Detect Bazarr</button>
                                 <button is="emby-button" type="button" id="validateBazarrMappingsBtn" class="raised emby-button">Validate Mappings</button>
                             </div>
+                            <div id="bazarrDetectResult" class="jc-detect-result" style="display:none;"></div>
                             <div id="bazarrMappingsValidationResult"></div>
                         </div>
                     </fieldset>

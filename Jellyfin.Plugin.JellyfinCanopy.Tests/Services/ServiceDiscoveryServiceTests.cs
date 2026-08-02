@@ -5,6 +5,7 @@ using System.Text.Json;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
 using Jellyfin.Plugin.JellyfinCanopy.Services.Discovery;
 using Jellyfin.Plugin.JellyfinCanopy.Tests.TestDoubles;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
@@ -406,6 +407,94 @@ public sealed class ServiceDiscoveryServiceTests
         gate.SetResult();
         var results = await first;
         Assert.Contains(results, r => r is { Service: "sonarr", Url: "http://sonarr:8989" });
+    }
+
+    // ── Seerr arr import ─────────────────────────────────────────────────────
+
+    [Fact]
+    public void ParseSeerrArrSettings_ProjectsHostPortSslAndBasePathToInstances()
+    {
+        var json = """
+        [
+          {"id":0,"name":"Sonarr HD","hostname":"sonarr","port":8989,"apiKey":"key-hd","useSsl":false,"baseUrl":""},
+          {"id":1,"name":"Sonarr 4K","hostname":"sonarr4k.example.com","port":443,"apiKey":"key-4k","useSsl":true,"baseUrl":"/sonarr"}
+        ]
+        """;
+
+        var parsed = ServiceDiscoveryService.ParseSeerrArrSettings("sonarr", json);
+
+        Assert.Collection(
+            parsed,
+            first =>
+            {
+                Assert.Equal("sonarr", first.Service);
+                Assert.Equal("Sonarr HD", first.Name);
+                Assert.Equal("http://sonarr:8989", first.Url);
+                Assert.Equal("key-hd", first.ApiKey);
+            },
+            second =>
+            {
+                Assert.Equal("Sonarr 4K", second.Name);
+                Assert.Equal("https://sonarr4k.example.com/sonarr", second.Url);
+                Assert.Equal("key-4k", second.ApiKey);
+            });
+    }
+
+    [Theory]
+    // Missing key, missing hostname, unusable port, and hostile URL shapes are
+    // all dropped rather than reaching configuration.
+    [InlineData("""[{"name":"No key","hostname":"sonarr","port":8989,"useSsl":false}]""")]
+    [InlineData("""[{"name":"No host","port":8989,"apiKey":"k","useSsl":false}]""")]
+    [InlineData("""[{"name":"Bad host","hostname":"so narr","port":8989,"apiKey":"k"}]""")]
+    [InlineData("""[{"name":"Creds","hostname":"user:pass@sonarr","port":8989,"apiKey":"k"}]""")]
+    [InlineData("""{"not":"an array"}""")]
+    [InlineData("not json at all")]
+    public void ParseSeerrArrSettings_DropsUnusableServers(string json)
+        => Assert.Empty(ServiceDiscoveryService.ParseSeerrArrSettings("sonarr", json));
+
+    [Fact]
+    public async Task ImportFromSeerr_ReadsBothServicesAndSurvivesOneFailing()
+    {
+        var fixture = new Fixture();
+        var service = fixture.Build(Config());
+        var requested = new List<string>();
+
+        var imported = await service.ImportArrInstancesFromSeerrAsync(
+            (path, _) =>
+            {
+                requested.Add(path);
+                if (path.EndsWith("radarr", StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException("seerr unavailable");
+                }
+
+                return Task.FromResult<IActionResult>(new ContentResult
+                {
+                    StatusCode = 200,
+                    Content = """[{"name":"TV","hostname":"sonarr","port":8989,"apiKey":"k"}]""",
+                });
+            },
+            CancellationToken.None);
+
+        Assert.Equal(new[] { "/api/v1/settings/sonarr", "/api/v1/settings/radarr" }, requested);
+        var only = Assert.Single(imported);
+        Assert.Equal(new ImportedArrInstance("sonarr", "TV", "http://sonarr:8989", "k"), only);
+    }
+
+    [Fact]
+    public async Task ImportFromSeerr_IgnoresNonSuccessProxyResults()
+    {
+        var fixture = new Fixture();
+        var service = fixture.Build(Config());
+
+        var imported = await service.ImportArrInstancesFromSeerrAsync(
+            (_, _) => Task.FromResult<IActionResult>(new ObjectResult(new { error = true })
+            {
+                StatusCode = 403,
+            }),
+            CancellationToken.None);
+
+        Assert.Empty(imported);
     }
 
     [Fact]

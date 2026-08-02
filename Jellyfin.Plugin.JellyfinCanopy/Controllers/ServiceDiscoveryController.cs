@@ -24,6 +24,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
     public sealed class ServiceDiscoveryController : JellyfinCanopyControllerBase
     {
         private readonly ServiceDiscoveryService _discovery;
+        private readonly ISeerrClient _seerr;
 
         public ServiceDiscoveryController(
             IHttpClientFactory httpClientFactory,
@@ -31,10 +32,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             IUserManager userManager,
             ISeerrCache seerrCache,
             IPluginConfigProvider configProvider,
-            ServiceDiscoveryService discovery)
+            ServiceDiscoveryService discovery,
+            ISeerrClient seerr)
             : base(httpClientFactory, logger, userManager, seerrCache, configProvider)
         {
             _discovery = discovery;
+            _seerr = seerr;
         }
 
         /// <summary>
@@ -50,6 +53,32 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             return Ok(new
             {
                 services = services.Select(s => new { service = s.Service, url = s.Url }).ToArray()
+            });
+        }
+
+        /// <summary>
+        /// Imports the Sonarr/Radarr servers already configured inside Seerr,
+        /// including their API keys, so an admin can adopt a whole arr setup
+        /// without retyping it. Seerr's <c>/api/v1/settings/{sonarr,radarr}</c>
+        /// routes are administrator-scoped, so this endpoint is elevated-only
+        /// and its response is never cached (those paths are outside the Seerr
+        /// proxy's cacheable allowlist).
+        /// </summary>
+        [HttpPost("services/import-from-seerr")]
+        [Authorize(Policy = Policies.RequiresElevation)]
+        public async Task<IActionResult> ImportFromSeerr()
+        {
+            var instances = await _discovery
+                .ImportArrInstancesFromSeerrAsync(
+                    (path, ct) => _seerr.ProxyRequestAsync(path, HttpMethod.Get, null, SeerrCaller(), ct),
+                    HttpContext.RequestAborted)
+                .ConfigureAwait(false);
+
+            return Ok(new
+            {
+                instances = instances
+                    .Select(i => new { service = i.Service, name = i.Name, url = i.Url, apiKey = i.ApiKey })
+                    .ToArray()
             });
         }
     }

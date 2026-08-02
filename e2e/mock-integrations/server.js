@@ -232,6 +232,32 @@ async function handleSeerr(request, response) {
     // service auto-discovery identifies Seerr by it without any credential.
     if (url.pathname === '/api/v1/status') return json(response, 200, { version: '2.7.3-e2e', initialized: true });
     if (!requireSeerrKey(request, response)) return;
+    // Administrator-scoped arr settings: the source Canopy imports Sonarr and
+    // Radarr servers (URL + API key) from. Key-gated like the real product.
+    if (url.pathname === '/api/v1/settings/sonarr') {
+        return json(response, 200, [{
+            id: 0,
+            name: 'E2E Sonarr from Seerr',
+            hostname: 'sonarr',
+            port: 8989,
+            apiKey: 'jc-e2e-arr',
+            useSsl: false,
+            baseUrl: '',
+            isDefault: true,
+        }]);
+    }
+    if (url.pathname === '/api/v1/settings/radarr') {
+        return json(response, 200, [{
+            id: 0,
+            name: 'E2E Radarr from Seerr',
+            hostname: 'radarr',
+            port: 7878,
+            apiKey: 'jc-e2e-arr',
+            useSsl: false,
+            baseUrl: '',
+            isDefault: true,
+        }]);
+    }
     if (url.pathname === '/api/v1/settings/public') {
         return json(response, 200, { movie4kEnabled: true, series4kEnabled: true });
     }

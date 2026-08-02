@@ -5334,13 +5334,15 @@
         }
 
         // ==================== Connected-service auto-discovery ====================
-        // One admin click POSTs /JellyfinCanopy/services/discover (elevated,
-        // credential-free, bounded server-side probe of well-known candidate
-        // hosts). Results only ever fill fields that are currently EMPTY — a
-        // discovered service is reported but never overwrites or duplicates an
-        // existing entry (a well-known alias and an already-configured IP can be
-        // the same physical instance, which the client cannot prove) — and
-        // nothing is persisted until the admin presses Save.
+        // Each service section owns a Detect button. One click POSTs
+        // /JellyfinCanopy/services/discover (elevated, credential-free, bounded
+        // server-side probe of well-known candidate hosts) and renders every hit
+        // for that service as a row with an explicit Add button, so the admin
+        // decides what is adopted even when instances already exist. The Seerr
+        // import instead POSTs /JellyfinCanopy/services/import-from-seerr, which
+        // returns the Sonarr/Radarr servers Seerr already knows — name, URL and
+        // API key — so an arr instance can be adopted without typing anything.
+        // Nothing is persisted until the admin presses Save.
         var _jcDetectInFlight = null;
         function _jcDiscoverServices() {
             if (_jcDetectInFlight) return _jcDetectInFlight;
@@ -5358,108 +5360,219 @@
             return _jcDetectInFlight;
         }
 
-        function _jcShowDetectResult(resultId, lines) {
-            var el = document.getElementById(resultId);
-            if (!el) return;
-            // textContent sink: discovery lines carry service ids and
-            // server-validated URLs, but they must never become markup.
-            el.textContent = lines.join('\n');
-            el.style.whiteSpace = 'pre-line';
-            el.style.display = 'block';
+        var _jcSeerrImportInFlight = null;
+        function _jcImportArrFromSeerr() {
+            if (_jcSeerrImportInFlight) return _jcSeerrImportInFlight;
+            _jcSeerrImportInFlight = ApiClient.ajax({
+                type: 'POST',
+                url: ApiClient.getUrl('/JellyfinCanopy/services/import-from-seerr'),
+                dataType: 'json'
+            }).then(function(result) {
+                _jcSeerrImportInFlight = null;
+                return (result && result.instances) || [];
+            }, function(err) {
+                _jcSeerrImportInFlight = null;
+                throw err;
+            });
+            return _jcSeerrImportInFlight;
         }
 
-        function _jcBindDetectButton(btnId, resultId, applyFn) {
+        /** Normalized host:port identity so trailing-slash/case variants match. */
+        function _jcUrlKey(value) {
+            try {
+                var parsed = new URL(String(value || '').trim());
+                return parsed.host.toLowerCase() + parsed.pathname.replace(/\/+$/, '');
+            } catch (err) {
+                return String(value || '').trim().toLowerCase().replace(/\/+$/, '');
+            }
+        }
+
+        function _jcConfiguredInstanceKeys(listSelector) {
+            var keys = [];
+            document.querySelectorAll(listSelector + ' .arr-instance-url').forEach(function(input) {
+                if ((input.value || '').trim()) keys.push(_jcUrlKey(input.value));
+            });
+            return keys;
+        }
+
+        /** Clears and returns a section's result container. */
+        function _jcResultBox(resultId) {
+            var el = document.getElementById(resultId);
+            if (!el) return null;
+            while (el.firstChild) el.removeChild(el.firstChild);
+            el.style.display = 'block';
+            return el;
+        }
+
+        /**
+         * One result row: label plus an Add button (or an "already added" note).
+         * Every value is placed with textContent — probe targets and Seerr data
+         * are untrusted input and must never become markup.
+         */
+        function _jcResultRow(box, label, actionLabel, alreadyAdded, onAdd) {
+            var text = createEl('span', { className: 'jc-detect-row-text', textContent: label });
+            var row = createEl('div', { className: 'jc-detect-row' }, [text]);
+            if (alreadyAdded) {
+                row.appendChild(createEl('span', { className: 'jc-detect-row-note', textContent: 'already added' }));
+            } else {
+                var btn = createEl('button', { className: 'emby-button raised jc-detect-add', type: 'button', textContent: actionLabel });
+                btn.addEventListener('click', function() {
+                    onAdd();
+                    btn.disabled = true;
+                    btn.textContent = 'Added';
+                });
+                row.appendChild(btn);
+            }
+            box.appendChild(row);
+            return row;
+        }
+
+        function _jcResultMessage(box, message) {
+            box.appendChild(createEl('div', { className: 'jc-detect-row-text', textContent: message }));
+        }
+
+        function _jcBindDetectButton(btnId, resultId, handler) {
             var btn = document.getElementById(btnId);
             if (!btn) return;
             btn.addEventListener('click', function() {
                 var original = btn.textContent;
                 btn.disabled = true;
-                btn.textContent = 'Scanning…';
-                _jcDiscoverServices().then(function(services) {
-                    _jcShowDetectResult(resultId, applyFn(services));
-                }, function(err) {
-                    console.error('[JC] service discovery failed:', err);
-                    _jcShowDetectResult(resultId, ['Discovery failed — check the Jellyfin server log.']);
-                }).then(function() {
-                    btn.disabled = false;
-                    btn.textContent = original;
-                });
+                btn.textContent = 'Scanning\u2026';
+                Promise.resolve()
+                    .then(handler)
+                    .catch(function(err) {
+                        console.error('[JC] service discovery failed:', err);
+                        var box = _jcResultBox(resultId);
+                        if (box) _jcResultMessage(box, 'Discovery failed \u2014 check the Jellyfin server log.');
+                    })
+                    .then(function() {
+                        btn.disabled = false;
+                        btn.textContent = original;
+                    });
             });
         }
 
-        // Fills a single-URL input only when it is empty; otherwise reports the
-        // find and leaves the admin's value untouched.
-        function _jcFillIfEmpty(inputId, hit, label, lines) {
-            var input = document.getElementById(inputId);
-            if (!input || !hit) return;
-            if ((input.value || '').trim()) {
-                lines.push('Found ' + label + ' at ' + hit.url + ' — existing URL left unchanged.');
-                return;
-            }
-            input.value = hit.url;
-            input.dispatchEvent(new Event('change', { bubbles: true }));
-            lines.push('Found ' + label + ' at ' + hit.url + ' — filled in; press Save to keep it.');
-        }
-
-        function _jcApplyArrDiscovery(services) {
-            var lines = [];
-            [['sonarr', 'Sonarr', '#sonarrInstancesList'], ['radarr', 'Radarr', '#radarrInstancesList']].forEach(function(def) {
-                var type = def[0], label = def[1], listSelector = def[2];
+        /** Sonarr/Radarr: every hit becomes an addable instance-card row. */
+        function _jcDetectArrInstances(type, label, listSelector, resultId) {
+            return _jcDiscoverServices().then(function(services) {
+                var box = _jcResultBox(resultId);
+                if (!box) return;
+                var configured = _jcConfiguredInstanceKeys(listSelector);
                 var hits = services.filter(function(s) { return s.service === type; });
-                if (!hits.length) return;
-                if (document.querySelectorAll(listSelector + ' .arr-instance-card').length) {
-                    hits.forEach(function(s) {
-                        lines.push('Found ' + label + ' at ' + s.url + ' — you already have ' + label + ' instance(s); add it manually if it is a different server.');
-                    });
+                if (!hits.length) {
+                    _jcResultMessage(box, 'No ' + label + ' instance found on the well-known addresses.');
                     return;
                 }
-                hits.forEach(function(s) {
-                    document.querySelector(listSelector).appendChild(
-                        createInstanceCard(type, { Name: '', Url: s.url, ExternalUrl: '', ApiKey: '', UrlMappings: '' }, true)
-                    );
-                    lines.push('Found ' + label + ' at ' + s.url + ' — added an instance; paste its API key and press Save.');
+                hits.forEach(function(hit) {
+                    var already = configured.indexOf(_jcUrlKey(hit.url)) !== -1;
+                    _jcResultRow(box, label + ' at ' + hit.url, 'Add', already, function() {
+                        document.querySelector(listSelector).appendChild(
+                            createInstanceCard(type, { Name: '', Url: hit.url, ExternalUrl: '', ApiKey: '', UrlMappings: '' }, true)
+                        );
+                        updateAllDependencies();
+                    });
                 });
+                _jcResultMessage(box, 'Added instances still need their API key, then press Save.');
             });
-            var bazarrHit = services.filter(function(s) { return s.service === 'bazarr'; })[0];
-            _jcFillIfEmpty('bazarrUrl', bazarrHit, 'Bazarr', lines);
-            if (!lines.length) lines.push('No new Sonarr, Radarr, or Bazarr services found.');
-            updateAllDependencies();
-            return lines;
         }
 
-        function _jcApplySeerrDiscovery(services) {
-            var lines = [];
-            var textarea = document.getElementById('seerrUrls');
-            var hit = services.filter(function(s) { return s.service === 'seerr'; })[0];
-            if (textarea && hit) {
-                if ((textarea.value || '').trim()) {
-                    // Each Seerr URL is a separate identity domain and aliases of
-                    // the same instance must not be listed twice, so never append
-                    // to a non-empty list automatically.
-                    lines.push('Found Seerr at ' + hit.url + ' — you already have Seerr URL(s); add it manually if it is a different instance.');
-                } else {
-                    textarea.value = hit.url;
-                    textarea.dispatchEvent(new Event('change', { bubbles: true }));
-                    lines.push('Found Seerr at ' + hit.url + ' — filled in; set the API key and press Save.');
+        /** Single-URL services: the row fills the field when the admin adds it. */
+        function _jcDetectSingleUrl(type, label, inputId, resultId) {
+            return _jcDiscoverServices().then(function(services) {
+                var box = _jcResultBox(resultId);
+                var input = document.getElementById(inputId);
+                if (!box || !input) return;
+                var hits = services.filter(function(s) { return s.service === type; });
+                if (!hits.length) {
+                    _jcResultMessage(box, 'No ' + label + ' instance found on the well-known addresses.');
+                    return;
                 }
-            }
-            if (!lines.length) lines.push('No new Seerr instance found.');
-            updateAllDependencies();
-            return lines;
+                hits.forEach(function(hit) {
+                    var already = _jcUrlKey(input.value) === _jcUrlKey(hit.url);
+                    _jcResultRow(box, label + ' at ' + hit.url, 'Use this URL', already, function() {
+                        input.value = hit.url;
+                        input.dispatchEvent(new Event('change', { bubbles: true }));
+                        updateAllDependencies();
+                    });
+                });
+                _jcResultMessage(box, 'Press Save to keep the selected URL.');
+            });
         }
 
-        function _jcApplyMaintainerrDiscovery(services) {
-            var lines = [];
-            var hit = services.filter(function(s) { return s.service === 'maintainerr'; })[0];
-            _jcFillIfEmpty('maintainerrUrl', hit, 'Maintainerr', lines);
-            if (!lines.length) lines.push('No new Maintainerr instance found.');
-            updateAllDependencies();
-            return lines;
+        /** Seerr URL list: adding appends a line rather than replacing the list. */
+        function _jcDetectSeerr() {
+            return _jcDiscoverServices().then(function(services) {
+                var box = _jcResultBox('seerrDetectResult');
+                var textarea = document.getElementById('seerrUrls');
+                if (!box || !textarea) return;
+                var hits = services.filter(function(s) { return s.service === 'seerr'; });
+                if (!hits.length) {
+                    _jcResultMessage(box, 'No Seerr instance found on the well-known addresses.');
+                    return;
+                }
+                hits.forEach(function(hit) {
+                    var existing = (textarea.value || '').split(/\r?\n/).map(_jcUrlKey);
+                    var already = existing.indexOf(_jcUrlKey(hit.url)) !== -1;
+                    _jcResultRow(box, 'Seerr at ' + hit.url, 'Add URL', already, function() {
+                        var current = (textarea.value || '').replace(/\s+$/, '');
+                        textarea.value = current ? current + '\n' + hit.url : hit.url;
+                        textarea.dispatchEvent(new Event('change', { bubbles: true }));
+                        updateAllDependencies();
+                    });
+                });
+                _jcResultMessage(box, 'Each URL is a separate Seerr identity \u2014 do not add aliases of one instance. Set the API key, then press Save.');
+            });
         }
 
-        _jcBindDetectButton('detectArrServicesBtn', 'arrDetectResult', _jcApplyArrDiscovery);
-        _jcBindDetectButton('detectSeerrBtn', 'seerrDetectResult', _jcApplySeerrDiscovery);
-        _jcBindDetectButton('detectMaintainerrBtn', 'maintainerrDetectResult', _jcApplyMaintainerrDiscovery);
+        /** Adopt Sonarr/Radarr servers (URL + API key) straight out of Seerr. */
+        function _jcImportArrForType(type, label, listSelector, resultId) {
+            return _jcImportArrFromSeerr().then(function(instances) {
+                var box = _jcResultBox(resultId);
+                if (!box) return;
+                var configured = _jcConfiguredInstanceKeys(listSelector);
+                var hits = instances.filter(function(i) { return i.service === type; });
+                if (!hits.length) {
+                    _jcResultMessage(box, 'Seerr reported no ' + label + ' servers (check the Seerr URL and API key on the Seerr tab).');
+                    return;
+                }
+                hits.forEach(function(hit) {
+                    var already = configured.indexOf(_jcUrlKey(hit.url)) !== -1;
+                    _jcResultRow(box, 'From Seerr: ' + hit.name + ' \u2014 ' + hit.url, 'Add with API key', already, function() {
+                        document.querySelector(listSelector).appendChild(
+                            createInstanceCard(type, {
+                                Name: hit.name || '',
+                                Url: hit.url,
+                                ExternalUrl: '',
+                                ApiKey: hit.apiKey || '',
+                                UrlMappings: ''
+                            }, true)
+                        );
+                        updateAllDependencies();
+                    });
+                });
+                _jcResultMessage(box, 'Imported instances arrive with their API key \u2014 press Save to keep them.');
+            });
+        }
+
+        _jcBindDetectButton('detectSonarrBtn', 'sonarrDetectResult', function() {
+            return _jcDetectArrInstances('sonarr', 'Sonarr', '#sonarrInstancesList', 'sonarrDetectResult');
+        });
+        _jcBindDetectButton('detectRadarrBtn', 'radarrDetectResult', function() {
+            return _jcDetectArrInstances('radarr', 'Radarr', '#radarrInstancesList', 'radarrDetectResult');
+        });
+        _jcBindDetectButton('detectBazarrBtn', 'bazarrDetectResult', function() {
+            return _jcDetectSingleUrl('bazarr', 'Bazarr', 'bazarrUrl', 'bazarrDetectResult');
+        });
+        _jcBindDetectButton('detectMaintainerrBtn', 'maintainerrDetectResult', function() {
+            return _jcDetectSingleUrl('maintainerr', 'Maintainerr', 'maintainerrUrl', 'maintainerrDetectResult');
+        });
+        _jcBindDetectButton('detectSeerrBtn', 'seerrDetectResult', _jcDetectSeerr);
+        _jcBindDetectButton('importSonarrFromSeerrBtn', 'sonarrDetectResult', function() {
+            return _jcImportArrForType('sonarr', 'Sonarr', '#sonarrInstancesList', 'sonarrDetectResult');
+        });
+        _jcBindDetectButton('importRadarrFromSeerrBtn', 'radarrDetectResult', function() {
+            return _jcImportArrForType('radarr', 'Radarr', '#radarrInstancesList', 'radarrDetectResult');
+        });
         // ==================== End connected-service auto-discovery ====================
         // Safety-net wrapper used by the three mapping-validate buttons.
         // Mirrors the .catch + button-reset handler inside _jeValidateInstanceMappings
