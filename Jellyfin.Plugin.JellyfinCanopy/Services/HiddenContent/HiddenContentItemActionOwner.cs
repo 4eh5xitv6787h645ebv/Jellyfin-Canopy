@@ -338,7 +338,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 HasScope(matches, scope),
                 changed: false,
                 item.ItemId.ToString(),
-                matches.Select(pair => pair.Value).FirstOrDefault(),
+                DetachedBoundedEntry(matches.Select(pair => pair.Value).FirstOrDefault()),
                 state,
                 settingsChanged: false);
         }
@@ -536,7 +536,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 ? BuildTmdbIdentity(item)
                 : CloneIdentity(identitySource.Identity);
             var tmdbId = identitySource?.Identity != null
-                ? identitySource.TmdbId
+                ? IsSupportedTmdbIdentity(identitySource.Identity)
+                    ? identitySource.Identity.Id
+                    : identitySource.TmdbId
                 : identity?.Id ?? existing.Select(value => value.TmdbId).FirstOrDefault(value => !string.IsNullOrEmpty(value)) ?? string.Empty;
             var hiddenAt = existing.Select(value => value.HiddenAt)
                 .Where(value => DateTime.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out _))
@@ -544,8 +546,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 .FirstOrDefault()
                 ?? _timeProvider.GetUtcNow().UtcDateTime.ToString("o", CultureInfo.InvariantCulture);
             var scope = legacyHomeSurfaceSemantics
-                ? existing.Select(value => value.HideScope)
-                    .Aggregate(ScopeValue(requestedScope), WiderScope)
+                ? MergeLegacyHomeScope(
+                    existing.Select(value => value.HideScope)
+                        .Aggregate((string?)null, WiderLegacyStoredScope),
+                    ScopeValue(requestedScope))
                 : ScopeValue(requestedScope);
             var seriesId = legacyHomeSurfaceSemantics
                 ? item.SeriesId?.ToString() ?? string.Empty
@@ -579,6 +583,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     ? item.EpisodeNumber
                     : item.EpisodeNumber ?? existing.Select(value => value.EpisodeNumber).FirstOrDefault(value => value.HasValue),
                 HideScope = scope,
+                ExtensionData = legacyHomeSurfaceSemantics
+                    ? new Dictionary<string, System.Text.Json.JsonElement>(StringComparer.Ordinal)
+                    : MergeItemExtensionData(existing),
             };
         }
 
@@ -608,9 +615,59 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 Provider = identity.Provider,
                 MediaType = identity.MediaType,
                 Id = identity.Id,
-                ExtensionData = identity.ExtensionData?.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal)
+                ExtensionData = identity.ExtensionData?.ToDictionary(pair => pair.Key, pair => pair.Value.Clone(), StringComparer.Ordinal)
                     ?? new Dictionary<string, System.Text.Json.JsonElement>(StringComparer.Ordinal),
             };
+
+        private static bool IsSupportedTmdbIdentity(HiddenContentIdentity identity)
+            => identity.Version == 1
+                && string.Equals(identity.Provider, "tmdb", StringComparison.Ordinal)
+                && (string.Equals(identity.MediaType, "movie", StringComparison.Ordinal)
+                    || string.Equals(identity.MediaType, "tv", StringComparison.Ordinal))
+                && identity.Id.Length <= 32
+                && identity.Id.All(character => character is >= '0' and <= '9')
+                && identity.Id.Any(character => character != '0');
+
+        private static Dictionary<string, System.Text.Json.JsonElement> MergeItemExtensionData(
+            IEnumerable<HiddenContentItem> entries)
+        {
+            var merged = new Dictionary<string, System.Text.Json.JsonElement>(StringComparer.Ordinal);
+            foreach (var entry in entries)
+            {
+                merged = PersistedPayloadPolicy.PreserveExistingExtensionData(
+                    entry.ExtensionData,
+                    merged);
+            }
+
+            return merged;
+        }
+
+        private static HiddenContentItem? DetachedBoundedEntry(HiddenContentItem? entry)
+        {
+            if (entry == null)
+            {
+                return null;
+            }
+
+            return new HiddenContentItem
+            {
+                ItemId = entry.ItemId,
+                Name = PersistedPayloadPolicy.ClampPersistedDisplayName(entry.Name),
+                Type = entry.Type,
+                TmdbId = entry.TmdbId,
+                Identity = entry.Identity == null ? null : CloneIdentity(entry.Identity),
+                HiddenAt = entry.HiddenAt,
+                PosterPath = entry.PosterPath,
+                SeriesId = entry.SeriesId,
+                SeriesName = PersistedPayloadPolicy.ClampPersistedDisplayName(entry.SeriesName),
+                SeasonNumber = PersistedPayloadPolicy.NormalizeHiddenIndex(entry.SeasonNumber),
+                EpisodeNumber = PersistedPayloadPolicy.NormalizeHiddenIndex(entry.EpisodeNumber),
+                HideScope = entry.HideScope,
+                ExtensionData = PersistedPayloadPolicy.PreserveExistingExtensionData(
+                    candidate: null,
+                    current: entry.ExtensionData),
+            };
+        }
 
         private static IEnumerable<KeyValuePair<string, HiddenContentItem>> MatchingRows(
             UserHiddenContent state,
@@ -672,21 +729,38 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             _ => throw new ArgumentOutOfRangeException(nameof(scope)),
         };
 
-        private static string WiderScope(string current, string? candidate)
+        private static string? WiderLegacyStoredScope(string? current, string? candidate)
         {
+            if (string.IsNullOrEmpty(current)) return candidate;
             if (string.IsNullOrEmpty(candidate)) return current;
-            var left = current.ToLowerInvariant();
-            var right = candidate.ToLowerInvariant();
-            if (left == right) return left;
-            if (left == "global" || right == "global") return "global";
-            if (left == "homesections" || right == "homesections") return "homesections";
-            if ((left == "continuewatching" && right == "nextup")
-                || (left == "nextup" && right == "continuewatching"))
+            var currentRank = LegacyScopeRank(current);
+            var candidateRank = LegacyScopeRank(candidate);
+            if (currentRank == 2
+                && candidateRank == 2
+                && !string.Equals(current, candidate, StringComparison.OrdinalIgnoreCase))
             {
                 return "homesections";
             }
 
-            return current;
+            return currentRank >= candidateRank ? current : candidate;
+        }
+
+        private static int LegacyScopeRank(string scope)
+        {
+            if (string.Equals(scope, "global", StringComparison.OrdinalIgnoreCase)) return 4;
+            if (string.Equals(scope, "homesections", StringComparison.OrdinalIgnoreCase)) return 3;
+            if (string.Equals(scope, "continuewatching", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(scope, "nextup", StringComparison.OrdinalIgnoreCase)) return 2;
+            return 1;
+        }
+
+        private static string MergeLegacyHomeScope(string? existing, string requested)
+        {
+            if (string.IsNullOrEmpty(existing)) return requested;
+            if (string.Equals(existing, "global", StringComparison.OrdinalIgnoreCase)) return "global";
+            if (string.Equals(existing, "homesections", StringComparison.OrdinalIgnoreCase)) return "homesections";
+            if (string.Equals(existing, requested, StringComparison.OrdinalIgnoreCase)) return requested;
+            return "homesections";
         }
 
         private static HiddenContentItemActionResult Result(
@@ -737,7 +811,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             {
                 return new MutationEvidence(
                     HasScope(matches, scope),
-                    matches.Select(pair => pair.Value).FirstOrDefault(),
+                    DetachedBoundedEntry(matches.Select(pair => pair.Value).FirstOrDefault()),
                     state.ItemsRevision,
                     state.Settings.Revision,
                     state.Settings.Enabled);

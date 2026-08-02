@@ -230,6 +230,169 @@ public sealed class HiddenContentItemActionOwnerTests : IDisposable
         Assert.Single(durable.Items);
     }
 
+    [Theory]
+    [InlineData("series")]
+    public void LegacyScopedMutation_SeriesScopeComposesToHomeSections(
+        string storedScope)
+    {
+        var actor = Actor(Guid.NewGuid());
+        var item = Movie(Guid.NewGuid());
+        Save(actor, new UserHiddenContent
+        {
+            ItemsRevision = 9,
+            Items = new Dictionary<string, HiddenContentItem>
+            {
+                [item.ItemId.ToString()] = new()
+                {
+                    ItemId = item.ItemId.ToString(),
+                    HideScope = storedScope
+                }
+            }
+        });
+
+        var result = _owner.Configure(
+            actor,
+            item,
+            HiddenContentItemConfiguration.LegacyHomeSurface(
+                true,
+                HiddenContentItemScope.ContinueWatching));
+
+        Assert.Equal("homesections", result.Entry?.HideScope);
+        Assert.Equal(10, result.ItemsRevision);
+        Assert.Equal(
+            "homesections",
+            Assert.Single(Read(actor).Items).Value.HideScope);
+    }
+
+    [Fact]
+    public void ExactMutation_PreservesDetachedNestedItemExtensionData()
+    {
+        var actor = Actor(Guid.NewGuid());
+        var item = Movie(Guid.NewGuid());
+        Save(actor, new UserHiddenContent
+        {
+            ItemsRevision = 2,
+            Items = new Dictionary<string, HiddenContentItem>
+            {
+                [item.ItemId.ToString()] = new()
+                {
+                    ItemId = item.ItemId.ToString(),
+                    HideScope = "global",
+                    ExtensionData = new Dictionary<string, System.Text.Json.JsonElement>
+                    {
+                        ["future"] = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(
+                            "{\"nested\":[1,{\"value\":\"kept\"}]}")
+                    }
+                }
+            }
+        });
+
+        var result = _owner.Configure(
+            actor,
+            item,
+            HiddenContentItemConfiguration.Exact(
+                true,
+                HiddenContentItemScope.ContinueWatching,
+                2));
+
+        Assert.Equal(
+            "kept",
+            result.Entry?.ExtensionData["future"]
+                .GetProperty("nested")[1]
+                .GetProperty("value")
+                .GetString());
+        Assert.Equal(
+            "kept",
+            Assert.Single(Read(actor).Items).Value.ExtensionData["future"]
+                .GetProperty("nested")[1]
+                .GetProperty("value")
+                .GetString());
+    }
+
+    [Fact]
+    public void LegacyMutation_BackfillsBlankTmdbIdFromValidTypedIdentity()
+    {
+        var actor = Actor(Guid.NewGuid());
+        var itemId = Guid.NewGuid();
+        Save(actor, new UserHiddenContent
+        {
+            Items = new Dictionary<string, HiddenContentItem>
+            {
+                [itemId.ToString()] = new()
+                {
+                    ItemId = itemId.ToString(),
+                    TmdbId = string.Empty,
+                    Identity = new HiddenContentIdentity
+                    {
+                        Version = 1,
+                        Provider = "tmdb",
+                        MediaType = "movie",
+                        Id = "456"
+                    },
+                    HideScope = "continuewatching"
+                }
+            }
+        });
+        var item = new HiddenContentItemProjection(
+            itemId,
+            HiddenContentItemKind.Movie,
+            "Movie",
+            tmdbId: null,
+            seriesId: null,
+            seriesName: null,
+            seasonNumber: null,
+            episodeNumber: null);
+
+        var result = _owner.Configure(
+            actor,
+            item,
+            HiddenContentItemConfiguration.LegacyHomeSurface(
+                true,
+                HiddenContentItemScope.ContinueWatching));
+
+        Assert.Equal("456", result.Entry?.TmdbId);
+        Assert.Equal("456", Assert.Single(Read(actor).Items).Value.TmdbId);
+    }
+
+    [Fact]
+    public void GetState_ReturnsDetachedBoundedLegacyEntryWithoutRewritingDisk()
+    {
+        var actor = Actor(Guid.NewGuid());
+        var item = Movie(Guid.NewGuid());
+        Save(actor, LegacyUnboundedState(item.ItemId, revision: 4));
+        var path = Path.Combine(UserDirectory(actor.UserId), "hidden-content.json");
+        var before = File.ReadAllBytes(path);
+
+        var result = _owner.GetState(actor, item, HiddenContentItemScope.Global);
+
+        Assert.True(result.Hidden);
+        Assert.Equal(512, result.Entry?.Name.Length);
+        Assert.Equal(before, File.ReadAllBytes(path));
+    }
+
+    [Fact]
+    public void RevisionRejection_ReturnsDetachedBoundedLegacyEntryWithoutRewritingDisk()
+    {
+        var actor = Actor(Guid.NewGuid());
+        var item = Movie(Guid.NewGuid());
+        Save(actor, LegacyUnboundedState(item.ItemId, revision: 4));
+        var path = Path.Combine(UserDirectory(actor.UserId), "hidden-content.json");
+        var before = File.ReadAllBytes(path);
+
+        var result = _owner.Configure(
+            actor,
+            item,
+            HiddenContentItemConfiguration.Exact(
+                true,
+                HiddenContentItemScope.Global,
+                expectedItemsRevision: 3));
+
+        Assert.Equal(HiddenContentItemActionOutcome.RevisionConflict, result.Outcome);
+        Assert.Equal(512, result.Entry?.Name.Length);
+        Assert.Equal(4, result.ItemsRevision);
+        Assert.Equal(before, File.ReadAllBytes(path));
+    }
+
     [Fact]
     public void CorruptStore_FailsClosedAndPublishesRecoveryMarker()
     {
@@ -385,6 +548,22 @@ public sealed class HiddenContentItemActionOwnerTests : IDisposable
 
     private UserHiddenContent Read(HiddenContentActorProjection actor)
         => _manager.GetUserConfigurationStrict<UserHiddenContent>(actor.UserId.ToString("N"), "hidden-content.json");
+
+    private static UserHiddenContent LegacyUnboundedState(Guid itemId, long revision)
+        => new()
+        {
+            ItemsRevision = revision,
+            Items = new Dictionary<string, HiddenContentItem>
+            {
+                [itemId.ToString()] = new()
+                {
+                    ItemId = itemId.ToString(),
+                    Name = new string('n', 2048),
+                    Type = "Movie",
+                    HideScope = "global"
+                }
+            }
+        };
 
     private static string Padding(ref int remaining)
     {
