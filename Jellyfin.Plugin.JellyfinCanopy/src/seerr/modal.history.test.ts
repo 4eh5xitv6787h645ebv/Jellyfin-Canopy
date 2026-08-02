@@ -633,6 +633,10 @@ describe('Seerr request modal history ownership', () => {
                 const markerAfterIssue: unknown = history.state;
                 expect(historyOwnerForTest()?.pendingOwnedTraversal?.phase).toBe('issued');
                 vi.advanceTimersByTime(0);
+                // The router PUSH runs in the first timer and queues the
+                // classic fallback from inside that callback. Advance the
+                // clock so the newly queued retry gets its own task.
+                vi.advanceTimersByTime(1);
 
                 expect(history.state).toEqual(routeGState);
                 if (direction === 'forward') {
@@ -1412,6 +1416,7 @@ describe('Seerr request modal history ownership', () => {
         observeCurrentHistoryMutation('pushState');
         const routeBState: unknown = history.state;
         const routeBHref = location.href;
+        vi.advanceTimersByTime(0);
 
         expect(onClose).toHaveBeenCalledTimes(1);
         expect(isAnyModalOpen()).toBe(false);
@@ -1432,6 +1437,38 @@ describe('Seerr request modal history ownership', () => {
         expect(historyOwnerForTest()?.records.size).toBe(0);
     });
 
+    it('cancels the deferred classic retry when the original Back pop wins first', () => {
+        const routeAState: unknown = history.state;
+        const routeAHref = location.href;
+        vi.spyOn(history, 'back').mockImplementation(() => undefined);
+        const go = vi.spyOn(history, 'go').mockImplementation(() => undefined);
+        const forward = vi.spyOn(history, 'forward').mockImplementation(() => undefined);
+        const shown = showModal();
+
+        shown.handle.close();
+        vi.advanceTimersByTime(0);
+        history.pushState({ host: 'capped-route-b' }, '', '/web/index.html#/capped-route-b');
+        observeCurrentHistoryMutation('pushState');
+        const routeBState: unknown = history.state;
+        const routeBHref = location.href;
+
+        expect(historyOwnerForTest()?.pendingOwnedTraversal?.phase).toBe('superseded-issued');
+        // Model the browser delivering the already-issued Back before the
+        // separately queued classic retry task. dispatchPop() normally drains
+        // close timers first, which would invert this exact race.
+        History.prototype.replaceState.call(history, routeAState, '', routeAHref);
+        window.dispatchEvent(new PopStateEvent('popstate', { state: routeAState }));
+        expect(historyOwnerForTest()?.pendingOwnedTraversal?.phase).toBe('recovering-forward');
+        vi.advanceTimersByTime(0);
+        expect(go).not.toHaveBeenCalled();
+
+        dispatchPop(shown.modalState, routeAHref);
+        expect(forward).toHaveBeenCalledTimes(2);
+        dispatchPop(routeBState, routeBHref);
+        expect(historyOwnerForTest()?.pendingOwnedTraversal).toBeNull();
+        expect(history.state).toEqual(routeBState);
+    });
+
     it('keeps an older live modal open while recovering through a retired nested marker', () => {
         const routeAHref = location.href;
         const outerClose = vi.fn();
@@ -1449,6 +1486,7 @@ describe('Seerr request modal history ownership', () => {
         observeCurrentHistoryMutation('pushState');
         const routeBState: unknown = history.state;
         const routeBHref = location.href;
+        vi.advanceTimersByTime(0);
 
         expect(go).toHaveBeenCalledWith(-2);
         expect(innerClose).toHaveBeenCalledTimes(1);
@@ -1473,7 +1511,7 @@ describe('Seerr request modal history ownership', () => {
         expect(innerClose).toHaveBeenCalledTimes(1);
     });
 
-    it('reissues the exact classic base delta once for every distinct late push', () => {
+    it('coalesces same-task late pushes into one retry at the latest classic base delta', () => {
         const routeAState: unknown = history.state;
         const routeAHref = location.href;
         vi.spyOn(history, 'back').mockImplementation(() => undefined);
@@ -1491,8 +1529,9 @@ describe('Seerr request modal history ownership', () => {
         observeCurrentHistoryMutation('pushState');
         const routeCState: unknown = history.state;
         const routeCHref = location.href;
+        vi.advanceTimersByTime(0);
 
-        expect(go.mock.calls).toEqual([[-2], [-3]]);
+        expect(go.mock.calls).toEqual([[-3]]);
         dispatchPop(routeAState, routeAHref);
         dispatchPop(shown.modalState, routeAHref);
         dispatchPop(routeBState, routeBHref);
@@ -1518,6 +1557,7 @@ describe('Seerr request modal history ownership', () => {
         observeCurrentHistoryMutation('pushState', 'PUSH', 'raw-push-entry-b');
         observeCurrentHistoryMutation('HISTORY_UPDATE', 'PUSH', 'raw-push-entry-b');
         observeCurrentHistoryMutation('HISTORY_UPDATE', 'POP', 'raw-push-entry-b');
+        vi.advanceTimersByTime(0);
 
         expect(go.mock.calls).toEqual([[-2]]);
         expect(historyOwnerForTest()?.pendingOwnedTraversal?.phase).toBe('superseded-issued');
@@ -1555,6 +1595,7 @@ describe('Seerr request modal history ownership', () => {
             vi.advanceTimersByTime(0);
             history.pushState({ host: 'superseded-route-b' }, '', '/web/index.html#/superseded-route-b');
             observeCurrentHistoryMutation('pushState');
+            vi.advanceTimersByTime(0);
             expect(go.mock.calls).toEqual([[-2]]);
 
             dispatchPop(routeAState, routeAHref);
@@ -1586,6 +1627,7 @@ describe('Seerr request modal history ownership', () => {
         observeCurrentHistoryMutation('pushState');
         const routeBState: unknown = history.state;
         const routeBHref = location.href;
+        vi.advanceTimersByTime(0);
 
         expect(go).toHaveBeenCalledWith(-2);
         expect(historyOwnerForTest()?.pendingOwnedTraversal?.phase).toBe('superseded-issued');
@@ -1734,6 +1776,7 @@ describe('Seerr request modal history ownership', () => {
                 observeCurrentHistoryMutation('pushState');
                 const routeBState: unknown = history.state;
                 const routeBHref = location.href;
+                vi.advanceTimersByTime(0);
 
                 expect(go).toHaveBeenCalledWith(-2);
                 dispatchPop(routeAState, routeAHref);
@@ -1896,6 +1939,7 @@ describe('Seerr request modal history ownership', () => {
         vi.advanceTimersByTime(0);
         history.pushState(structuredClone(sameState), '', sameHref);
         observeCurrentHistoryMutation('pushState');
+        vi.advanceTimersByTime(0);
         expect(go).toHaveBeenCalledWith(-2);
 
         dispatchPop(structuredClone(sameState), sameHref);

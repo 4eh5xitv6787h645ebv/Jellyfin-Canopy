@@ -104,6 +104,8 @@ interface PendingOwnedTraversal {
     markerNavigationKey: string | null;
     hostNavigationKey: string | null;
     classicEntriesAboveBase: number;
+    /** One deferred classic retry; canceled logically when the original Back wins. */
+    classicRetryQueued: boolean;
     lastHostEntryKey: string | null;
     /** Recovery has crossed this transaction's private marker toward its target. */
     recoveringMarkerCrossed: boolean;
@@ -431,6 +433,9 @@ function getHistoryOwner(): ModalHistoryOwnerState {
             if (!Number.isSafeInteger(ownedTraversal.classicEntriesAboveBase)
                 || ownedTraversal.classicEntriesAboveBase < 1) {
                 ownedTraversal.classicEntriesAboveBase = 1;
+            }
+            if (typeof ownedTraversal.classicRetryQueued !== 'boolean') {
+                ownedTraversal.classicRetryQueued = false;
             }
             if (typeof ownedTraversal.lastHostEntryKey !== 'string') {
                 ownedTraversal.lastHostEntryKey = null;
@@ -988,13 +993,24 @@ function handleModalHistoryMutation(mutation: HistoryMutation): void {
                 && !reactivePush
                 && pending.hostNavigationKey === null) {
                 pending.classicEntriesAboveBase += 1;
-                try {
-                    // A late push can cancel Firefox's already-issued Back.
-                    // Reissuing the exact base delta coalesces with Chromium's
-                    // pending target and forces one deterministic owned pop.
-                    history.go(-pending.classicEntriesAboveBase);
-                } catch (error) {
-                    console.warn(`${logPrefix} could not settle a pushed route over modal Back:`, error);
+                if (!pending.classicRetryQueued) {
+                    pending.classicRetryQueued = true;
+                    setTimeout(() => {
+                        pending.classicRetryQueued = false;
+                        if (owner.pendingOwnedTraversal !== pending
+                            || pending.phase !== 'superseded-issued'
+                            || pending.hostNavigationKey !== null) return;
+                        try {
+                            // A late push can cancel Firefox's already-issued
+                            // Back. Retry only if that Back did not produce a
+                            // pop first; issuing both traversals synchronously
+                            // can leave a queued Forward at Chromium's capped
+                            // history boundary and undo the user's next Back.
+                            history.go(-pending.classicEntriesAboveBase);
+                        } catch (error) {
+                            console.warn(`${logPrefix} could not settle a pushed route over modal Back:`, error);
+                        }
+                    }, 0);
                 }
             }
         }
@@ -1256,6 +1272,7 @@ function armRetiredMarkerTraversal(
             ? retiredBase?.hostNavigationKey ?? marker.hostNavigationKey ?? null
             : null,
         classicEntriesAboveBase: 1,
+        classicRetryQueued: false,
         lastHostEntryKey: null,
         recoveringMarkerCrossed: false,
         markerSnapshot: marker,
@@ -1914,6 +1931,7 @@ modal.create = function({ title, subtitle, bodyHtml, backdropPath, backdropUrl, 
             markerNavigationKey: currentNavigationEntryKey(),
             hostNavigationKey: null,
             classicEntriesAboveBase: 1,
+            classicRetryQueued: false,
             lastHostEntryKey: null,
             recoveringMarkerCrossed: false,
             markerSnapshot: null,
