@@ -258,8 +258,8 @@ public sealed class SeerrItemRequestPresentationOwnerTests
 
     [Theory]
     [InlineData(1, SeerrItemRequestStatus.Unavailable, true)]
-    [InlineData(2, SeerrItemRequestStatus.Pending, false)]
-    [InlineData(3, SeerrItemRequestStatus.AlreadyRequested, false)]
+    [InlineData(2, SeerrItemRequestStatus.Unavailable, true)]
+    [InlineData(3, SeerrItemRequestStatus.Unavailable, true)]
     [InlineData(4, SeerrItemRequestStatus.Partial, false)]
     [InlineData(5, SeerrItemRequestStatus.Approved, false)]
     [InlineData(6, SeerrItemRequestStatus.Denied, false)]
@@ -308,8 +308,8 @@ public sealed class SeerrItemRequestPresentationOwnerTests
                 status4k = 7,
                 requests = new[]
                 {
-                    new { status = requestStatus, is4k = false },
-                    new { status = requestStatus, is4k = true },
+                    new { status = requestStatus, is4k = false, requestedBy = new { id = 27 } },
+                    new { status = requestStatus, is4k = true, requestedBy = new { id = 27 } },
                 },
             },
         }));
@@ -415,7 +415,7 @@ public sealed class SeerrItemRequestPresentationOwnerTests
                     {
                         status = 2,
                         is4k = false,
-                        requestedBy = new { displayName = foreignName },
+                        requestedBy = new { id = 999, displayName = foreignName },
                         apiKey = providerSecret,
                     },
                 },
@@ -458,11 +458,59 @@ public sealed class SeerrItemRequestPresentationOwnerTests
             + "{\"status\":2,\"is4k\":true,\"requestedBy\":{\"id\":997}}]}}");
         var secondResult = await second.InvokeAsync(item);
 
-        Assert.Equal(SeerrItemRequestStatus.AlreadyRequested, firstResult.StandardStatus);
+        Assert.Equal(SeerrItemRequestStatus.Unavailable, firstResult.StandardStatus);
+        Assert.True(firstResult.StandardRequestAvailable);
         Assert.Equal(firstResult.StandardStatus, secondResult.StandardStatus);
+        Assert.Equal(firstResult.StandardRequestAvailable, secondResult.StandardRequestAvailable);
         Assert.Equal(SeerrItemRequestStatus.Unavailable, firstResult.FourKStatus);
         Assert.Equal(firstResult.FourKStatus, secondResult.FourKStatus);
         Assert.Equal(firstResult.ProviderRevision, secondResult.ProviderRevision);
+    }
+
+    [Fact]
+    public async Task CompleteRequestRelationProjectsOnlyExactOwnedStandardAnd4kRows()
+    {
+        var item = Item(HostItemKind.Movie, "2511");
+        const string relation = "{\"mediaInfo\":{\"status\":2,\"status4k\":3,\"requests\":["
+            + "{\"status\":1,\"is4k\":false,\"requestedBy\":{\"id\":27}},"
+            + "{\"status\":4,\"is4k\":true,\"requestedBy\":{\"id\":27}},"
+            + "{\"status\":4,\"is4k\":false,\"requestedBy\":{\"id\":91}},"
+            + "{\"status\":2,\"is4k\":true,\"requestedBy\":{\"id\":91}}]}}";
+
+        var first = new Harness(actorId: Guid.Parse("44444444-4444-4444-4444-444444444444"));
+        first.Admission.SetResolutions(Found(userId: 27));
+        first.SetBody(relation);
+        var firstResult = await first.InvokeAsync(item);
+
+        var second = new Harness(actorId: Guid.Parse("55555555-5555-5555-5555-555555555555"));
+        second.Admission.SetResolutions(Found(userId: 91));
+        second.SetBody(relation);
+        var secondResult = await second.InvokeAsync(item);
+
+        Assert.Equal(SeerrItemRequestStatus.Pending, firstResult.StandardStatus);
+        Assert.False(firstResult.StandardRequestAvailable);
+        Assert.Equal(SeerrItemRequestStatus.Failed, firstResult.FourKStatus);
+        Assert.True(firstResult.FourKRequestAvailable);
+
+        Assert.Equal(SeerrItemRequestStatus.Failed, secondResult.StandardStatus);
+        Assert.True(secondResult.StandardRequestAvailable);
+        Assert.Equal(SeerrItemRequestStatus.AlreadyRequested, secondResult.FourKStatus);
+        Assert.False(secondResult.FourKRequestAvailable);
+        Assert.NotEqual(firstResult.ProviderRevision, secondResult.ProviderRevision);
+    }
+
+    [Fact]
+    public async Task MissingOrAmbiguousRequestOwnershipOmitsEntirePresentation()
+    {
+        var missing = new Harness();
+        missing.SetBody("{\"mediaInfo\":{\"status\":1,\"status4k\":1,\"requests\":["
+            + "{\"status\":1,\"is4k\":false}]}}");
+        AssertInvisible(await missing.InvokeAsync(Item(HostItemKind.Movie, "2512")));
+
+        var ambiguous = new Harness();
+        ambiguous.SetBody("{\"mediaInfo\":{\"status\":1,\"status4k\":1,\"requests\":["
+            + "{\"status\":1,\"is4k\":false,\"requestedBy\":{\"id\":27,\"id\":91}}]}}");
+        AssertInvisible(await ambiguous.InvokeAsync(Item(HostItemKind.Movie, "2512")));
     }
 
     [Fact]

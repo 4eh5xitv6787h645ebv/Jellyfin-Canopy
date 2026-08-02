@@ -147,6 +147,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
         private const int MaximumProviderDepth = 16;
         private const int MaximumRequestRows = 64;
         private const int MaximumRequestProperties = 32;
+        private const int MaximumMediaInfoProperties = 64;
         private static readonly TimeSpan ReadTimeout = TimeSpan.FromSeconds(15);
 
         private readonly IHttpClientFactory _httpClientFactory;
@@ -330,7 +331,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                     || error != null
                     || status is < 200 or >= 300
                     || json == null
-                    || !TryParseProviderState(json, out var providerState))
+                    || !TryParseProviderState(json, identity.UserId, out var providerState))
                 {
                     return SeerrItemRequestPresentation.Invisible();
                 }
@@ -496,9 +497,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
 
         private static bool TryParseProviderState(
             string json,
+            int exactSeerrUserId,
             out ProviderState state)
         {
             state = default;
+            if (exactSeerrUserId <= 0)
+            {
+                return false;
+            }
+
             try
             {
                 using var document = JsonDocument.Parse(
@@ -515,8 +522,24 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                     return false;
                 }
 
-                if (!root.TryGetProperty("mediaInfo", out var mediaInfo)
-                    || mediaInfo.ValueKind == JsonValueKind.Null)
+                var mediaInfoCount = CountProperties(root, "mediaInfo");
+                if (mediaInfoCount == 0)
+                {
+                    state = new ProviderState(
+                        SeerrItemRequestStatus.Unavailable,
+                        SeerrItemRequestStatus.Unavailable,
+                        StandardRequestable: true,
+                        FourKRequestable: true);
+                    return true;
+                }
+
+                if (mediaInfoCount != 1
+                    || !root.TryGetProperty("mediaInfo", out var mediaInfo))
+                {
+                    return false;
+                }
+
+                if (mediaInfo.ValueKind == JsonValueKind.Null)
                 {
                     state = new ProviderState(
                         SeerrItemRequestStatus.Unavailable,
@@ -527,6 +550,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                 }
 
                 if (mediaInfo.ValueKind != JsonValueKind.Object
+                    || mediaInfo.EnumerateObject().Take(MaximumMediaInfoProperties + 1).Count() > MaximumMediaInfoProperties
                     || !TryReadMediaStatus(mediaInfo, "status", out var standardMediaStatus)
                     || !TryReadMediaStatus(mediaInfo, "status4k", out var fourKMediaStatus))
                 {
@@ -535,8 +559,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
 
                 var standardRequests = default(RequestAggregate);
                 var fourKRequests = default(RequestAggregate);
-                if (mediaInfo.TryGetProperty("requests", out var requests))
+                var requestsCount = CountProperties(mediaInfo, "requests");
+                if (requestsCount > 1)
                 {
+                    return false;
+                }
+
+                if (requestsCount == 1)
+                {
+                    _ = mediaInfo.TryGetProperty("requests", out var requests);
                     if (requests.ValueKind != JsonValueKind.Array
                         || requests.GetArrayLength() > MaximumRequestRows)
                     {
@@ -547,7 +578,20 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                     {
                         if (row.ValueKind != JsonValueKind.Object
                             || row.EnumerateObject().Take(MaximumRequestProperties + 1).Count() > MaximumRequestProperties
-                            || !row.TryGetProperty("status", out var statusElement)
+                            || !TryReadExactRequestOwner(row, out var requestOwnerId))
+                        {
+                            return false;
+                        }
+
+                        // The endpoint returns the complete title relation. Foreign
+                        // rows are valid provider state but have no bearing on this
+                        // caller's status, action availability or revision.
+                        if (requestOwnerId != exactSeerrUserId)
+                        {
+                            continue;
+                        }
+
+                        if (!TryGetSingleProperty(row, "status", out var statusElement)
                             || statusElement.ValueKind != JsonValueKind.Number
                             || !statusElement.TryGetInt32(out var requestStatus)
                             || requestStatus is < 1 or > 5)
@@ -556,8 +600,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                         }
 
                         var is4k = false;
-                        if (row.TryGetProperty("is4k", out var is4kElement))
+                        var is4kCount = CountProperties(row, "is4k");
+                        if (is4kCount > 1)
                         {
+                            return false;
+                        }
+
+                        if (is4kCount == 1)
+                        {
+                            _ = row.TryGetProperty("is4k", out var is4kElement);
                             if (is4kElement.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
                             {
                                 return false;
@@ -599,12 +650,19 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
         {
             if (!mediaInfo.TryGetProperty(propertyName, out var element))
             {
+                if (CountProperties(mediaInfo, propertyName) != 0)
+                {
+                    status = default;
+                    return false;
+                }
+
                 status = 1;
                 return true;
             }
 
             status = default;
-            return element.ValueKind == JsonValueKind.Number
+            return CountProperties(mediaInfo, propertyName) == 1
+                && element.ValueKind == JsonValueKind.Number
                 && element.TryGetInt32(out status)
                 && status is >= 1 and <= 7;
         }
@@ -612,14 +670,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
         private static SeerrItemRequestStatus MapStatus(
             int mediaStatus,
             RequestAggregate requests)
+            // PENDING/PROCESSING are title-global and can be caused solely by a
+            // foreign request. Only the exact-owned relation may publish those
+            // workflow states; global availability/partial/block state remains
+            // valid for every authorized viewer of the title.
             => mediaStatus switch
             {
-                2 => SeerrItemRequestStatus.Pending,
-                3 => SeerrItemRequestStatus.AlreadyRequested,
                 4 => SeerrItemRequestStatus.Partial,
                 5 => SeerrItemRequestStatus.Approved,
                 6 => SeerrItemRequestStatus.Denied,
                 _ when requests.Pending => SeerrItemRequestStatus.Pending,
+                3 when requests.ApprovedOrCompleted => SeerrItemRequestStatus.AlreadyRequested,
                 _ when requests.ApprovedOrCompleted => SeerrItemRequestStatus.Approved,
                 _ when requests.Failed => SeerrItemRequestStatus.Failed,
                 _ when requests.Declined => SeerrItemRequestStatus.Denied,
@@ -629,10 +690,49 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
         private static bool IsRequestable(
             int mediaStatus,
             SeerrItemRequestStatus status)
-            => mediaStatus is 1 or 7
+            => mediaStatus is not (4 or 5 or 6)
                 && status is SeerrItemRequestStatus.Unavailable
                     or SeerrItemRequestStatus.Denied
                     or SeerrItemRequestStatus.Failed;
+
+        private static bool TryReadExactRequestOwner(
+            JsonElement row,
+            out int ownerId)
+        {
+            ownerId = default;
+            if (!TryGetSingleProperty(row, "requestedBy", out var requestedBy)
+                || requestedBy.ValueKind != JsonValueKind.Object
+                || requestedBy.EnumerateObject().Take(MaximumRequestProperties + 1).Count() > MaximumRequestProperties
+                || !TryGetSingleProperty(requestedBy, "id", out var id)
+                || id.ValueKind != JsonValueKind.Number
+                || !id.TryGetInt32(out ownerId)
+                || ownerId <= 0)
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        private static bool TryGetSingleProperty(
+            JsonElement value,
+            string propertyName,
+            out JsonElement property)
+        {
+            property = default;
+            if (CountProperties(value, propertyName) != 1)
+            {
+                return false;
+            }
+
+            return value.TryGetProperty(propertyName, out property);
+        }
+
+        private static int CountProperties(JsonElement value, string propertyName)
+            => value.EnumerateObject().Count(property => string.Equals(
+                property.Name,
+                propertyName,
+                StringComparison.Ordinal));
 
         private string UserRevision(
             PlatformActor actor,
