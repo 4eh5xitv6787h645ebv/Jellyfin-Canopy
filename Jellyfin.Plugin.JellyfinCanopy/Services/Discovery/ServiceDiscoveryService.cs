@@ -13,7 +13,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
 using Jellyfin.Plugin.JellyfinCanopy.Helpers;
-using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyfinCanopy.Services.Discovery
@@ -62,6 +61,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Discovery
         internal const int MaxResultsPerService = 5;
         internal static readonly TimeSpan PerProbeTimeout = TimeSpan.FromSeconds(3);
         internal static readonly TimeSpan OverallTimeout = TimeSpan.FromSeconds(15);
+        internal static readonly TimeSpan ConfiguredLookupTimeout = TimeSpan.FromSeconds(4);
         internal const int MaxStatusBodyBytes = 8 * 1024;
         internal const int MaxTitleBodyBytes = 64 * 1024;
 
@@ -171,7 +171,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Discovery
             // compose alias) is recognized as the same service and never offered
             // as a new one. Name-only comparison happens earlier in
             // BuildCandidates; this is the address-level equivalent.
-            var configuredEndpoints = await ResolveConfiguredEndpointsAsync(config, overallCts.Token)
+            // Bounded and non-fatal: this lookup only suppresses duplicates, so
+            // it gets its own short budget and can never consume the scan's
+            // deadline or fault the request (a stale configured hostname must
+            // not turn a working scan into a 500).
+            using var dedupCts = CancellationTokenSource.CreateLinkedTokenSource(overallCts.Token);
+            dedupCts.CancelAfter(ConfiguredLookupTimeout);
+            var configuredEndpoints = await ResolveConfiguredEndpointsAsync(config, dedupCts.Token)
                 .ConfigureAwait(false);
 
             var probes = candidates
@@ -239,7 +245,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Discovery
                         keys.Add($"{service}|{address}:{uri.Port}");
                     }
                 }
-                catch (Exception ex) when (ex is not OperationCanceledException)
+                catch (OperationCanceledException)
+                {
+                    // The dedup budget expired. Keep what was resolved so far and
+                    // stop; the scan still publishes its probe results.
+                    break;
+                }
+                catch (Exception)
                 {
                     // Unresolvable configured host: nothing to compare against.
                 }
@@ -467,25 +479,25 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Discovery
         /// <summary>
         /// Reads the Sonarr/Radarr servers Seerr already has configured and
         /// projects them to importable instances. The caller supplies the
-        /// Seerr transport (the central <c>ISeerrClient</c> proxy), so this
-        /// method owns only parsing and normalization — no new outbound Seerr
-        /// path, cache, or credential handling of its own. Servers whose URL
-        /// fails normalization or whose key is missing are skipped; a Seerr
-        /// error yields an empty list rather than failing the admin action.
+        /// administrator-scoped Seerr settings reader
+        /// (<c>ISeerrClient.GetAdminSettingsJsonAsync</c>), so this method owns
+        /// only parsing and normalization — no new outbound Seerr path, cache,
+        /// or credential handling of its own. Servers whose URL fails
+        /// normalization or whose key is missing are skipped; a Seerr failure
+        /// yields no instances for that service rather than failing the action.
         /// </summary>
         public async Task<IReadOnlyList<ImportedArrInstance>> ImportArrInstancesFromSeerrAsync(
-            Func<string, CancellationToken, Task<IActionResult>> proxy,
+            Func<string, CancellationToken, Task<string?>> readSettings,
             CancellationToken ct)
         {
-            ArgumentNullException.ThrowIfNull(proxy);
+            ArgumentNullException.ThrowIfNull(readSettings);
             var imported = new List<ImportedArrInstance>();
             foreach (var service in new[] { "sonarr", "radarr" })
             {
                 string? json;
                 try
                 {
-                    var result = await proxy($"/api/v1/settings/{service}", ct).ConfigureAwait(false);
-                    json = ExtractOkJson(result);
+                    json = await readSettings(service, ct).ConfigureAwait(false);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
@@ -505,22 +517,6 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Discovery
             _logger.LogInformation($"Seerr import produced {imported.Count} arr instance(s).");
             return imported;
         }
-
-        /// <summary>
-        /// Unwraps the JSON body of a successful proxy result. Anything that is
-        /// not a 2xx object result carries no importable settings.
-        /// </summary>
-        private static string? ExtractOkJson(IActionResult? result) => result switch
-        {
-            ContentResult { StatusCode: null or (>= 200 and <= 299) } content => content.Content,
-            ObjectResult { StatusCode: null or (>= 200 and <= 299) } obj => obj.Value switch
-            {
-                string s => s,
-                null => null,
-                var value => JsonSerializer.Serialize(value),
-            },
-            _ => null,
-        };
 
         /// <summary>
         /// Projects Seerr's <c>/api/v1/settings/{sonarr|radarr}</c> array to

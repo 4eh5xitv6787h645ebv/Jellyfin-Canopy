@@ -20,6 +20,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
     public sealed record SeerrCaller(string? JellyfinUserId, bool IsAdmin);
 
     /// <summary>
+    /// The administrator-scoped Seerr settings collections Canopy may read.
+    /// A closed enum keeps a caller-supplied path out of the upstream URL.
+    /// </summary>
+    public enum SeerrAdminSettings
+    {
+        Sonarr,
+        Radarr,
+    }
+
+    /// <summary>
     /// A watchlist/request entry reduced to the identity JC needs (moved from
     /// the former protected nested class on the controller base).
     /// </summary>
@@ -129,6 +139,25 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
 
         /// <summary>Live /api/v1/status probe across the configured URLs (uncached).</summary>
         Task<bool> GetStatusActiveAsync();
+
+        /// <summary>
+        /// Reads one administrator-scoped Seerr settings collection with the
+        /// configured API key alone (no Seerr user resolution or impersonation),
+        /// returning the raw JSON body or <see langword="null"/> when the
+        /// integration is inactive or no configured URL answered. Callers must
+        /// be elevated: the body carries the arr API keys Seerr stores.
+        /// </summary>
+        /// <remarks>
+        /// Defaulted like the interface's other convenience members so the many
+        /// feature-specific test doubles need no edit: the default reports "no
+        /// settings available", which every consumer already handles as an
+        /// inactive integration. <see cref="SeerrClient"/> is the sole
+        /// production implementation and overrides it.
+        /// </remarks>
+        Task<string?> GetAdminSettingsJsonAsync(
+            SeerrAdminSettings settings,
+            System.Threading.CancellationToken cancellationToken = default)
+            => Task.FromResult<string?>(null);
 
         /// <summary>
         /// Resolves whether 4K requests are available for a Jellyfin user: reads

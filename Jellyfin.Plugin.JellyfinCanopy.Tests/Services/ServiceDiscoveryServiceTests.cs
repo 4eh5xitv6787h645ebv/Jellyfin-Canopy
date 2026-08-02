@@ -5,7 +5,6 @@ using System.Text.Json;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
 using Jellyfin.Plugin.JellyfinCanopy.Services.Discovery;
 using Jellyfin.Plugin.JellyfinCanopy.Tests.TestDoubles;
-using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
@@ -497,38 +496,33 @@ public sealed class ServiceDiscoveryServiceTests
         var requested = new List<string>();
 
         var imported = await service.ImportArrInstancesFromSeerrAsync(
-            (path, _) =>
+            (settings, _) =>
             {
-                requested.Add(path);
-                if (path.EndsWith("radarr", StringComparison.Ordinal))
+                requested.Add(settings);
+                if (settings == "radarr")
                 {
                     throw new InvalidOperationException("seerr unavailable");
                 }
 
-                return Task.FromResult<IActionResult>(new ContentResult
-                {
-                    StatusCode = 200,
-                    Content = """[{"name":"TV","hostname":"sonarr","port":8989,"apiKey":"k"}]""",
-                });
+                return Task.FromResult<string?>(
+                    """[{"name":"TV","hostname":"sonarr","port":8989,"apiKey":"k"}]""");
             },
             CancellationToken.None);
 
-        Assert.Equal(new[] { "/api/v1/settings/sonarr", "/api/v1/settings/radarr" }, requested);
+        Assert.Equal(new[] { "sonarr", "radarr" }, requested);
         var only = Assert.Single(imported);
         Assert.Equal(new ImportedArrInstance("sonarr", "TV", "http://sonarr:8989", "k"), only);
     }
 
     [Fact]
-    public async Task ImportFromSeerr_IgnoresNonSuccessProxyResults()
+    public async Task ImportFromSeerr_IgnoresAnUnavailableIntegration()
     {
         var fixture = new Fixture();
         var service = fixture.Build(Config());
 
+        // A null body is how the client reports "inactive or nothing answered".
         var imported = await service.ImportArrInstancesFromSeerrAsync(
-            (_, _) => Task.FromResult<IActionResult>(new ObjectResult(new { error = true })
-            {
-                StatusCode = 403,
-            }),
+            (_, _) => Task.FromResult<string?>(null),
             CancellationToken.None);
 
         Assert.Empty(imported);

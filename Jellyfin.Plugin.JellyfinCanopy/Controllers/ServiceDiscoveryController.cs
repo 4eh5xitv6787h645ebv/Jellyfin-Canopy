@@ -61,8 +61,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         /// including their API keys, so an admin can adopt a whole arr setup
         /// without retyping it. Seerr's <c>/api/v1/settings/{sonarr,radarr}</c>
         /// routes are administrator-scoped, so this endpoint is elevated-only
-        /// and its response is never cached (those paths are outside the Seerr
-        /// proxy's cacheable allowlist).
+        /// and its response is never cached. The read uses the configured Seerr
+        /// API key alone, without resolving or impersonating a Seerr user, so a
+        /// Jellyfin administrator with no linked Seerr account can still import.
         /// </summary>
         [HttpPost("services/import-from-seerr")]
         [Authorize(Policy = Policies.RequiresElevation)]
@@ -70,7 +71,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         {
             var instances = await _discovery
                 .ImportArrInstancesFromSeerrAsync(
-                    (path, ct) => _seerr.ProxyRequestAsync(path, HttpMethod.Get, null, SeerrCaller(), ct),
+                    (service, ct) => _seerr.GetAdminSettingsJsonAsync(
+                        service == "sonarr" ? SeerrAdminSettings.Sonarr : SeerrAdminSettings.Radarr,
+                        ct),
                     HttpContext.RequestAborted)
                 .ConfigureAwait(false);
 
