@@ -154,6 +154,83 @@ describe('bookmark player identity ownership', () => {
     expect(modal.textContent).toContain('551-600 / 1000');
   });
 
+  it('publishes named native OSD controls and a keyboard-owned player dialog', async () => {
+    const api = await loadModule();
+    const opener = document.createElement('button');
+    opener.textContent = 'Open bookmark editor';
+    document.body.appendChild(opener);
+    opener.focus();
+
+    await api.updateMarkers();
+    const marker = document.querySelector<HTMLButtonElement>('.jc-bookmark-marker')!;
+    expect(marker.tagName).toBe('BUTTON');
+    expect(marker.type).toBe('button');
+    expect(marker.getAttribute('aria-label')).toContain('A');
+    marker.click();
+    expect(video.currentTime).toBe(40);
+
+    await api.showModal('view');
+    const modal = document.querySelector<HTMLElement>('.jc-bm-player-modal-overlay')!;
+    expect(modal.getAttribute('role')).toBe('dialog');
+    expect(modal.getAttribute('aria-modal')).toBe('true');
+    const titleId = modal.getAttribute('aria-labelledby')!;
+    const descriptionId = modal.getAttribute('aria-describedby')!;
+    expect(document.getElementById(titleId)?.textContent).toContain('Your Bookmarks');
+    expect(document.getElementById(descriptionId)?.textContent).toContain('Movie A');
+    expect(document.activeElement).toBe(modal.querySelector('.jc-bookmark-input:not([readonly])'));
+    expect(document.body.classList.contains('jc-modal-open')).toBe(true);
+
+    for (const button of modal.querySelectorAll<HTMLButtonElement>('button')) {
+      const name = button.getAttribute('aria-label') || button.textContent?.trim() || button.title;
+      expect(name, `button ${button.className} needs an accessible name`).toBeTruthy();
+    }
+
+    const cancel = modal.querySelector<HTMLButtonElement>('.jc-bookmark-btn-cancel')!;
+    const close = modal.querySelector<HTMLButtonElement>('.jc-bookmark-modal-close')!;
+    cancel.focus();
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+    expect(document.activeElement).toBe(close);
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(document.body.classList.contains('jc-modal-open')).toBe(false);
+    expect(document.activeElement).toBe(opener);
+  });
+
+  it('keeps player input labels unique across repeated same-type dialogs', async () => {
+    const api = await loadModule();
+    const opener = document.createElement('button');
+    opener.textContent = 'Open repeated bookmark editors';
+    document.body.appendChild(opener);
+    opener.focus();
+
+    await api.showModal('view');
+    await api.showModal('view');
+
+    const dialogs = [...document.querySelectorAll<HTMLElement>('.jc-bm-player-modal-overlay')];
+    expect(dialogs).toHaveLength(2);
+    const editableInputs = dialogs.map(dialog =>
+      dialog.querySelector<HTMLInputElement>('.jc-bookmark-input:not([readonly])')!
+    );
+    const timeInputs = dialogs.map(dialog =>
+      dialog.querySelector<HTMLInputElement>('.jc-bookmark-input[readonly]')!
+    );
+    expect(new Set([...editableInputs, ...timeInputs].map(input => input.id)).size).toBe(4);
+    dialogs.forEach((dialog, index) => {
+      const labels = [...dialog.querySelectorAll<HTMLLabelElement>('.jc-bookmark-input-group label')];
+      expect(labels).toHaveLength(2);
+      expect(labels[0].control).toBe(timeInputs[index]);
+      expect(labels[1].control).toBe(editableInputs[index]);
+      expect(timeInputs[index].labels).toHaveLength(1);
+      expect(editableInputs[index].labels).toHaveLength(1);
+    });
+    expect(document.activeElement).toBe(editableInputs[1]);
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(document.activeElement).toBe(editableInputs[0]);
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(document.activeElement).toBe(opener);
+  });
+
   it('makes retained A markers, OSD buttons, and every modal control inert after a server switch', async () => {
     const api = await loadModule();
     await api.updateMarkers();

@@ -513,7 +513,20 @@ describe('bookmark replacement library search', () => {
 
     await findAndOfferReplacement(group(), button, context);
 
-    expect(document.querySelector('[data-jc-bookmark-library-modal="true"]')).not.toBeNull();
+    const modal = document.querySelector<HTMLElement>('[data-jc-bookmark-library-modal="true"]')!;
+    expect(modal.getAttribute('role')).toBe('dialog');
+    expect(modal.getAttribute('aria-modal')).toBe('true');
+    expect(document.getElementById(modal.getAttribute('aria-labelledby')!)?.textContent)
+      .toContain('Replacement Found');
+    expect(document.getElementById(modal.getAttribute('aria-describedby')!)?.textContent)
+      .toContain('Migrate 1 bookmark');
+    const replacement = modal.querySelector<HTMLButtonElement>('.replacement-option')!;
+    expect(replacement.tagName).toBe('BUTTON');
+    expect(replacement.getAttribute('aria-pressed')).toBe('false');
+    expect(document.activeElement).toBe(replacement);
+    replacement.click();
+    expect(replacement.getAttribute('aria-pressed')).toBe('true');
+    expect(modal.querySelector('.jc-bm-library-modal-close')?.getAttribute('aria-label')).toBeTruthy();
     expect(mocks.toast).not.toHaveBeenCalled();
     expect(button.disabled).toBe(false);
   });
@@ -621,6 +634,14 @@ describe('bookmark replacement library search', () => {
     await findAllOrphanedAndOfferMigration({ orphan }, context);
     expect(getRefreshSafetyHoldCount()).toBe(1);
 
+    const summary = document.querySelector<HTMLElement>('[data-jc-bookmark-library-modal="true"]')!;
+    expect(summary.getAttribute('role')).toBe('dialog');
+    expect(document.getElementById(summary.getAttribute('aria-labelledby')!)?.textContent)
+      .toContain('Orphaned Bookmarks');
+    expect(document.getElementById(summary.getAttribute('aria-describedby')!)?.textContent)
+      .toContain('replacements available');
+    expect(document.activeElement).toBe(summary.querySelector('.btnMigrateOrphaned'));
+
     document.querySelector<HTMLButtonElement>('.btnMigrateOrphaned')!.click();
     expect(getRefreshSafetyHoldCount()).toBe(1);
     expect(getRefreshSafetyHoldCount('interaction')).toBe(1);
@@ -632,5 +653,9 @@ describe('bookmark replacement library search', () => {
     expect(getRefreshSafetyHoldCount()).toBe(1);
     expect(getRefreshSafetyHoldCount('interaction')).toBe(0);
     expect(getRefreshSafetyHoldCount('modal')).toBe(1);
+    const selection = [...document.querySelectorAll<HTMLElement>('[data-jc-bookmark-library-modal="true"]')]
+      .find(element => element.querySelector('.replacement-option'))!;
+    expect(selection.getAttribute('role')).toBe('dialog');
+    expect(document.activeElement).toBe(selection.querySelector('.replacement-option'));
   });
 });

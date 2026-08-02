@@ -46,7 +46,7 @@ describe('bookmark details navigation', () => {
             group: {
                 type: 'movie',
                 details: { itemId, name: 'Base URL fixture' },
-                bookmarks: [],
+                bookmarks: [{ id: 'bookmark-one', itemId, timestamp: 42, label: 'Scene' }],
             },
         }, 'movie');
 
@@ -56,6 +56,21 @@ describe('bookmark details navigation', () => {
         expect(title?.href).toBe(
             'http://localhost:3000/jellyfin/web/index.html#/details?id=item%2Fwith%20%3F%23%26%20delimiters'
         );
+
+        const posterLink = container.querySelector<HTMLAnchorElement>('.jc-bookmark-item-poster-link');
+        expect(posterLink?.tagName).toBe('A');
+        expect(posterLink?.getAttribute('href')).toBe(title?.getAttribute('href'));
+        expect(posterLink?.getAttribute('aria-label')).toBe('Base URL fixture');
+
+        const timestamp = container.querySelector<HTMLButtonElement>('.jc-bm-time');
+        expect(timestamp?.tagName).toBe('BUTTON');
+        expect(timestamp?.type).toBe('button');
+        expect(timestamp?.getAttribute('aria-label')).toContain('bookmark_jump');
+
+        for (const button of container.querySelectorAll<HTMLButtonElement>('button')) {
+            const name = button.getAttribute('aria-label') || button.textContent?.trim() || button.title;
+            expect(name, `button ${button.className} needs an accessible name`).toBeTruthy();
+        }
 
         container.querySelector<HTMLElement>('.jc-bookmark-item-poster')?.click();
         expect(show).toHaveBeenCalledWith(

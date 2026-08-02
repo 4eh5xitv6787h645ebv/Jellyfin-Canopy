@@ -209,6 +209,13 @@ export function injectBookmarksLibraryStyles(): void {
       background: rgba(255,255,255,0.1);
     }
 
+    .jc-bm-library-modal-overlay button:focus-visible,
+    .jc-bm-library-modal-overlay input:focus-visible,
+    .jc-bm-library-modal-overlay a:focus-visible {
+      outline: 3px solid #64b5f6;
+      outline-offset: 3px;
+    }
+
     .jc-bookmarks-modal-header {
       display: flex;
       gap: 16px;
@@ -419,13 +426,26 @@ export function injectBookmarksLibraryStyles(): void {
       transform: scale(1.1);
     }
 
+    .jc-bookmark-item-poster-link {
+      width: 86px;
+      height: 129px;
+      border-radius: 6px;
+      display: block;
+      flex-shrink: 0;
+    }
+
+    .jc-bookmark-item-poster-link:focus-visible {
+      outline: 3px solid #64b5f6;
+      outline-offset: 3px;
+    }
+
     .jc-bookmark-item-poster {
       width: 86px;
       height: 129px;
       object-fit: cover;
       border-radius: 6px;
       cursor: pointer;
-      flex-shrink: 0;
+      display: block;
     }
 
     .jc-bookmark-item-placeholder {
@@ -524,6 +544,25 @@ export function injectBookmarksLibraryStyles(): void {
 
     .jc-bookmark-time:hover {
       color: #ccc;
+    }
+
+    /* #90: keep the legacy class until #570 resolves its separate styling
+       mismatch, but make the now-native timestamp button visually neutral and
+       give keyboard focus a durable affordance. */
+    .jc-bm-time {
+      appearance: none;
+      border: 0;
+      padding: 0;
+      background: transparent;
+      color: inherit;
+      font: inherit;
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .jc-bm-time:focus-visible {
+      outline: 3px solid #64b5f6;
+      outline-offset: 3px;
     }
 
     .jc-bookmark-actions {

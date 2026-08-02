@@ -145,12 +145,18 @@ export async function renderBookmarkItems(
 
     // Create the card header HTML
     const detailsHref = routeHref('details', { id: group.details.itemId || '' });
+    const detailsLabel = escapeHtml(group.details.name || 'Unknown Item');
     const headerHtml = `
       <div class="jc-bookmark-item-header">
         ${posterUrl ? `
-          <img src="${escapeHtml(posterUrl)}"
-               class="jc-bookmark-item-poster"
-               data-item-id="${escapeHtml(group.details.itemId)}">
+          <a href="${escapeHtml(detailsHref)}"
+             class="jc-bookmark-item-poster-link"
+             data-item-id="${escapeHtml(group.details.itemId)}"
+             aria-label="${detailsLabel}">
+            <img src="${escapeHtml(posterUrl)}"
+                 alt=""
+                 class="jc-bookmark-item-poster">
+          </a>
         ` : `
           <div class="jc-bookmark-item-placeholder"><span class="material-icons" style="font-size: 48px; opacity: 0.3;">image_not_supported</span></div>
         `}
@@ -162,12 +168,12 @@ export async function renderBookmarkItems(
           </div>
         </div>
         ${orphaned && group.details.tmdbId ? `
-          <button class="btnFindReplacement jc-btn-find-replacement" data-group-key="${escapeHtml(key)}" title="${JC.t!('bookmark_find_replacement')}">
+          <button type="button" class="btnFindReplacement jc-btn-find-replacement" data-group-key="${escapeHtml(key)}" title="${escapeHtml(JC.t!('bookmark_find_replacement'))}" aria-label="${escapeHtml(JC.t!('bookmark_find_replacement'))}">
             <span class="material-icons" aria-hidden="true">find_replace</span>
           </button>
         ` : ''}
         ${!orphaned && group.bookmarks.some((bm: any) => bm.syncedFrom) ? `
-          <button class="btnAdjustOffset jc-offset-icon" data-group-key="${escapeHtml(key)}" title="${JC.t!('bookmark_adjust_offset')}">
+          <button type="button" class="btnAdjustOffset jc-offset-icon" data-group-key="${escapeHtml(key)}" title="${escapeHtml(JC.t!('bookmark_adjust_offset'))}" aria-label="${escapeHtml(JC.t!('bookmark_adjust_offset'))}">
             <span class="material-icons" aria-hidden="true">schedule</span>
           </button>
         ` : ''}
@@ -197,10 +203,11 @@ export async function renderBookmarkItems(
     }
 
     // Add poster click handler
-    const poster = itemCard.querySelector<HTMLElement>('.jc-bookmark-item-poster');
+    const poster = itemCard.querySelector<HTMLAnchorElement>('.jc-bookmark-item-poster-link');
     if (poster) {
-      poster.addEventListener('click', () => {
+      poster.addEventListener('click', (event) => {
         if (!JC.identity.isCurrent(context)) return;
+        event.preventDefault();
         const itemId = poster.dataset.itemId;
         if (itemId) {
           (window.Emby?.Page as { show?: (path: string) => void } | undefined)
@@ -226,30 +233,36 @@ export async function renderBookmarkItems(
         info.className = 'jc-bookmark-info';
         info.innerHTML = `
           ${bm.label ? `<div class="jc-bookmark-label">${escapeHtml(bm.label)}</div>` : ''}
-          <div class="jc-bm-time" data-item-id="${escapeHtml(bm.itemId)}" data-time="${Number(bm.timestamp) || 0}">
+          <button type="button" class="jc-bm-time" data-item-id="${escapeHtml(bm.itemId)}" data-time="${Number(bm.timestamp) || 0}" aria-label="${escapeHtml(`${JC.t!('bookmark_jump')}: ${formatTimestamp(bm.timestamp)}`)}">
             <span>${bm.progress ? `${Number(bm.progress) || 0}% • ` : ''}${formatTimestamp(bm.timestamp)}</span>
-          </div>
+          </button>
         `;
 
         const actions = document.createElement('div');
         actions.className = 'jc-bookmark-actions';
 
         const deleteBtn = document.createElement('button');
+        deleteBtn.type = 'button';
         deleteBtn.className = 'btnDeleteBookmark jc-btn jc-btn-delete';
         deleteBtn.innerHTML = '<span class="material-icons" aria-hidden="true">delete</span>';
         deleteBtn.dataset.bookmarkId = bm.id;
+        deleteBtn.setAttribute('aria-label', JC.t!('bookmark_delete_confirm'));
 
         // Only add play and edit buttons if not orphaned
         if (!orphaned) {
           const playBtn = document.createElement('button');
+          playBtn.type = 'button';
           playBtn.className = 'btnPlayBookmark jc-btn';
           playBtn.innerHTML = '<span class="material-icons" aria-hidden="true">play_arrow</span>';
           playBtn.dataset.itemId = bm.itemId;
           playBtn.dataset.time = bm.timestamp;
+          playBtn.setAttribute('aria-label', `${JC.t!('bookmark_jump')}: ${formatTimestamp(bm.timestamp)}`);
 
           const editBtn = document.createElement('button');
+          editBtn.type = 'button';
           editBtn.className = 'btnEditBookmark jc-btn';
           editBtn.innerHTML = '<span class="material-icons" aria-hidden="true">edit</span>';
+          editBtn.setAttribute('aria-label', JC.t!('bookmark_edit_title'));
 
           actions.appendChild(playBtn);
           actions.appendChild(editBtn);
@@ -269,6 +282,7 @@ export async function renderBookmarkItems(
         timeInput.className = 'jc-input';
         timeInput.value = formatTimestamp(bm.timestamp);
         timeInput.placeholder = JC.t!('bookmark_time_placeholder');
+        timeInput.setAttribute('aria-label', JC.t!('bookmark_time_label'));
 
         const labelInput = document.createElement('input');
         labelInput.type = 'text';
@@ -276,14 +290,19 @@ export async function renderBookmarkItems(
         labelInput.value = bm.label || '';
         labelInput.placeholder = JC.t!('bookmark_label_placeholder');
         labelInput.maxLength = 100;
+        labelInput.setAttribute('aria-label', JC.t!('bookmark_label_label'));
 
         const saveBtn = document.createElement('button');
+        saveBtn.type = 'button';
         saveBtn.className = 'jc-btn-action';
         saveBtn.innerHTML = '<span class="material-icons" aria-hidden="true">save</span>';
+        saveBtn.setAttribute('aria-label', JC.t!('bookmark_save'));
 
         const cancelBtn = document.createElement('button');
+        cancelBtn.type = 'button';
         cancelBtn.className = 'jc-btn-action jc-btn-cancel';
         cancelBtn.innerHTML = '<span class="material-icons" aria-hidden="true">close</span>';
+        cancelBtn.setAttribute('aria-label', 'Cancel bookmark edit');
 
         editRow.appendChild(timeInput);
         editRow.appendChild(labelInput);
