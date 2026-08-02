@@ -68,6 +68,32 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Helpers
             // silently lose the no-redirect and connect-time SSRF guarantees.
             => factory.CreateClient(MaintainerrClient);
 
+        /// <summary>
+        /// Credential-free service auto-discovery client. Targets are
+        /// server-chosen private-network candidates, so it must use the
+        /// connect-time SSRF fence; like Maintainerr, no unguarded fallback.
+        /// </summary>
+        public const string DiscoveryClient = "JellyfinCanopyDiscovery";
+
+        public static HttpClient CreateDiscoveryClient(IHttpClientFactory factory)
+            => factory.CreateClient(DiscoveryClient);
+
+        internal static SocketsHttpHandler CreateDiscoveryHandler()
+        {
+            // NO automatic redirects: a hostile responder on a well-known
+            // candidate could otherwise steer the probe to an arbitrary
+            // otherwise-allowed private host/port/path. ServiceDiscoveryService
+            // follows a bounded number of redirects explicitly and only within
+            // the exact candidate origin.
+            var handler = ArrUrlGuard.CreateGuardedHandler(allowAutoRedirect: false);
+            handler.UseCookies = false;
+            handler.Credentials = null;
+            // A proxy would resolve/connect on our behalf, bypassing ArrUrlGuard's
+            // authoritative connect-time DNS-rebinding check.
+            handler.UseProxy = false;
+            return handler;
+        }
+
         internal static SocketsHttpHandler CreateMaintainerrHandler()
         {
             var handler = ArrUrlGuard.CreateGuardedHandler(allowAutoRedirect: false);

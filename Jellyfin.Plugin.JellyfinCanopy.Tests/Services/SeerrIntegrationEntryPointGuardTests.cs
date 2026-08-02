@@ -158,6 +158,17 @@ public sealed class SeerrIntegrationEntryPointGuardTests
             "HttpCompletionOption.ResponseHeadersRead",
             "deadline.Token"),
         ["Services/Seerr/SeerrParentalFilter.cs:FetchCertFromTmdbAsync"] = new(1, "CreateTmdbClient", "https://api.themoviedb.org", "httpClient.GetAsync(requestUri, ct)"),
+        // Service auto-discovery transport: the single raw GET used by both
+        // probe kinds. Credential-free, over the guarded no-redirect Discovery
+        // named client (created once in RunScanAsync); redirects are followed
+        // explicitly and only within the exact candidate origin, with capped
+        // reads and per-probe cancellation. Reviewed with the
+        // ServiceDiscoveryService tests (SEC-REDIRECT-SCOPE).
+        ["Services/Discovery/ServiceDiscoveryService.cs:FetchWithinCandidateOriginAsync"] = new(
+            1,
+            "client.GetAsync(current, HttpCompletionOption.ResponseHeadersRead, ct)",
+            "MaxRedirects",
+            "IsSameOriginRedirectTarget(current, target)"),
     };
 
     private static readonly Dictionary<string, RawEdgeContract> ExactSetupRawTransportMethods = new(StringComparer.Ordinal)

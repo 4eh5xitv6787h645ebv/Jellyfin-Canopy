@@ -37,7 +37,18 @@ To enable the on-page links:
 
 1. Go to **Dashboard → Plugins → Jellyfin Canopy** and open the **\*arr** tab.
 2. Check **"Enable \*arr Links on Detail Pages"**.
-3. Add one or more Sonarr and/or Radarr instances (below).
+3. Add one or more Sonarr and/or Radarr instances (below). Two shortcuts sit
+   next to each Add button:
+    - **Import from Seerr** — adopts the Sonarr/Radarr servers Seerr already
+      has configured, *including their API keys*, so an instance needs no
+      typing at all. Requires a working Seerr connection.
+    - **Detect Sonarr** / **Detect Radarr** / **Detect Bazarr** — finds
+      services answering on well-known addresses (e.g. `http://sonarr:8989`)
+      and offers each as an addable row; you supply the API key.
+
+    Both list what they find with an **Add** button per row and never
+    overwrite or duplicate what you already configured. See
+    [Getting started](getting-started.md#detect-services-automatically).
 4. Optionally add a **Bazarr URL** for subtitle-management links (see [Bazarr](#bazarr)).
 5. Optional: check **"Show links as text"** for text links instead of icons.
 6. Click **Save**.

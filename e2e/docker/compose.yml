@@ -41,6 +41,14 @@ services:
           # The plugin deliberately uses TMDB's production hostname. Docker's
           # test-only network resolves it to the TLS fixture instead.
           - api.themoviedb.org
+          # Well-known Docker DNS names probed by connected-service
+          # auto-discovery; each resolves to this fixture container, which
+          # serves the matching identify route on that service's default port.
+          - sonarr
+          - radarr
+          - bazarr
+          - jellyseerr
+          - maintainerr
     healthcheck:
       test: ["CMD", "node", "-e", "const net=require('node:net');const maintainerr=new Promise((resolve,reject)=>{const socket=net.createConnection({host:'127.0.0.1',port:6246},()=>{socket.end();resolve()});socket.once('error',reject)});Promise.all([fetch('http://127.0.0.1:5055/health').then(r=>{if(!r.ok)throw new Error('not ready')}),maintainerr]).catch(()=>process.exit(1))"]
       interval: 2s

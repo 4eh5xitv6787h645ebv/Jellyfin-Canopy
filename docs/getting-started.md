@@ -107,6 +107,48 @@ A TMDB API key is the single highest-value thing to set up first. One key unlock
 
 Enter the key on the **Elsewhere** tab. **Elsewhere itself is on by default**, but it stays inert until a valid TMDB key is set — so without the key, none of the features above appear. See [Discover & Request](discover.md).
 
+### Detect services automatically
+
+Every service has its own **Detect** button next to its Add button — **Detect
+Sonarr**, **Detect Radarr**, **Detect Bazarr**, **Detect Seerr**, **Detect
+Maintainerr** — so you often don't have to type a URL at all. The Jellyfin
+*server* probes a small, fixed set of likely addresses (well-known Docker
+hostnames such as `sonarr`, `radarr`, `bazarr`, `seerr` — plus the still-valid
+legacy `jellyseerr`/`overseerr` names — and `maintainerr` on their default
+ports, the local machine, the Docker gateway, and hosts you already configured
+for sibling services) and confirms what actually answers.
+
+Each confirmed service appears as its own row with an **Add** button, so
+**you** decide what gets adopted:
+
+- Nothing is changed until you press a row's Add button, and nothing is stored
+  until you press **Save**.
+- An endpoint you already have is shown as *already added* with no Add button,
+  so detection can never overwrite or duplicate your configuration.
+- Probes are **credential-free** — no API key is ever sent to a probe target.
+
+If your services use custom hostnames or non-default ports, detection won't
+find them; enter those URLs manually as described below.
+
+!!! note "Two addresses for one service"
+    Canopy hides a detected endpoint that resolves to something you already
+    configured, so a Docker alias of a configured instance is not offered
+    twice. It cannot prove that two *different* addresses are the same server
+    though — a service reachable both on your LAN IP and through the Docker
+    gateway can appear as its own row. Check the URL before adding it.
+
+### Import Sonarr and Radarr from Seerr
+
+If Seerr is already connected, the Sonarr and Radarr boxes also offer **Import
+from Seerr**. Seerr stores each arr server it talks to — name, address, and
+**API key** — so Canopy can adopt a fully-configured instance in one click,
+with no key to copy by hand. Imported rows are added the same way as detected
+ones: press **Add with API key** on the row you want, then **Save**.
+
+This reads Seerr's administrator-scoped settings using the Seerr API key you
+already gave Canopy, so it works only for administrators and only when the
+Seerr connection is valid.
+
 ### Connect Seerr
 
 A [Seerr](discover.md) connection powers two things at once: **media requests** and the **Discovery** feed.
